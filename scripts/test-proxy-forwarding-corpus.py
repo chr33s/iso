@@ -41,7 +41,7 @@ def main():
     cases = json.loads(CORPUS.read_text())
     assert cases and len({case["id"] for case in cases}) == len(cases)
     commands = {
-        "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
                   "sharedForwardingCorpusThroughTLS"],
     }
     required = {

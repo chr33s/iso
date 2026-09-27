@@ -53,7 +53,7 @@ Lima runs as the current user. No `sudo` is required for any Lima operation: set
 
 ## macOS / Apple sandbox (opt-in)
 
-Build with `cargo build --release --features apple-container` to replace Lima with **coop-sandbox**, coop's own runtime on Apple's [`containerization`](https://github.com/apple/containerization) package ([`macos/coop-sandbox`](../macos/coop-sandbox)). Selecting the feature on a non-macOS target is a compile error. The default macOS build never calls, requires, or modifies it.
+Build with `cargo build --release --features apple-container` to replace Lima with **coop-sandbox**, coop's own runtime on Apple's [`containerization`](https://github.com/apple/containerization) package ([`coop-sandbox`](../coop-sandbox)). Selecting the feature on a non-macOS target is a compile error. The default macOS build never calls, requires, or modifies it.
 
 Each instance is one Linux VM running systemd from its own ext4 disk, on its own vmnet network, with no host mounts, socket relays, published ports, or host SSH-agent forwarding. The runtime's sandbox record has no field for any of those, and coop verifies the running VM's effective configuration before every hand-out. [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md) records why this replaced the earlier `container machine` fork.
 
@@ -73,7 +73,7 @@ Neither Lima nor host Docker is needed. Docker runs *inside* the guest.
 scripts/build-coop-sandbox.sh            # installs ~/.local/opt/coop-sandbox/bin/coop-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `[apple_container] binary` to match. Rebuild after pulling changes to `macos/coop-sandbox`; coop refuses a runtime whose protocol or `containerization` version differs from the one it was built for.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `[apple_container] binary` to match. Rebuild after pulling changes to `coop-sandbox`; coop refuses a runtime whose protocol or `containerization` version differs from the one it was built for.
 
 ### Supported combinations
 

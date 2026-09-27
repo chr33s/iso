@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "macos/coop-proxy"
+PACKAGE = ROOT / "coop-proxy"
 FILES = ["Capability.swift", "OperationPolicy.swift", "HeaderPolicy.swift", "RequestTarget.swift"]
 
 

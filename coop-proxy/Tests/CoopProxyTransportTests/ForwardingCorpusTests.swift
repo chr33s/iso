@@ -49,7 +49,7 @@ private struct ObservedRequest: Sendable {
 
 private let repository: URL = {
   var path = URL(fileURLWithPath: #filePath)
-  for _ in 0..<5 { path.deleteLastPathComponent() }
+  for _ in 0..<4 { path.deleteLastPathComponent() }
   return path
 }()
 

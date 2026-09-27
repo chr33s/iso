@@ -42,7 +42,7 @@ def main():
     print(f"Stream memory evidence: {work}", flush=True)
     captured = work / "observations.json"
     logfile = work / "swift.log"
-    command = ["swift", "test", "--package-path", "macos/coop-proxy", "--filter", TEST]
+    command = ["swift", "test", "--package-path", "coop-proxy", "--filter", TEST]
     with logfile.open("w") as log:
         result = subprocess.run(command, cwd=ROOT,
             env=dict(os.environ, COOP_PROXY_STREAM_MEMORY_GATE="1", COOP_STREAM_OBSERVATIONS=str(captured)),

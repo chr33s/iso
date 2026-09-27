@@ -282,7 +282,7 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 ## Apple sandbox backend (opt-in `apple-container` feature)
 
 The same VM boundary applies. The backend drives coop-sandbox
-(`macos/coop-sandbox`), a runtime coop builds on `apple/containerization`. The
+(`coop-sandbox`), a runtime coop builds on `apple/containerization`. The
 isolation contract lives in two layers: the runtime cannot express host
 exposure, and coop verifies the effective configuration anyway
 (`src/apple_container/`).

@@ -47,7 +47,7 @@ def main():
     parser.add_argument("--skip-tls", action="store_true")
     args = parser.parse_args()
     directory = subprocess.check_output(
-        ["swift", "build", "--package-path", str(ROOT / "macos/coop-proxy"), "--show-bin-path"], text=True).strip()
+        ["swift", "build", "--package-path", str(ROOT / "coop-proxy"), "--show-bin-path"], text=True).strip()
     binary = (Path(directory) / "coop-proxy-swift").resolve()
     command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(binary),
                "-f", str(ROOT / "src/seatbelt-proxy.sb"), str(binary)]

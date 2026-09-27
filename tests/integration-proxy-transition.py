@@ -87,7 +87,7 @@ def main():
         phase("Build private runtime")
         run([ROOT / "scripts/build-coop-sandbox.sh", work])
         if args.controlled_upstream:
-            run(["swift", "test", "--package-path", ROOT / "macos/coop-proxy",
+            run(["swift", "test", "--package-path", ROOT / "coop-proxy",
                  "--force-resolved-versions", "--filter", "VMProxyFixture"])
         for name in ["coop", "coop-proxy"]:
             shutil.copy2(ROOT / "target/debug" / name, work / "bin" / name)

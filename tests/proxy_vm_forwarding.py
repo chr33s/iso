@@ -199,7 +199,7 @@ def exercise(work, provider, port, token, credential, guest_command, log):
     guest = None
     try:
         directory = subprocess.check_output(
-            ["swift", "build", "--package-path", str(ROOT / "macos/coop-proxy"), "--show-bin-path"], text=True).strip()
+            ["swift", "build", "--package-path", str(ROOT / "coop-proxy"), "--show-bin-path"], text=True).strip()
         xctest = subprocess.check_output(["xcrun", "--find", "xctest"], text=True).strip()
         bundle = Path(directory) / "CoopProxyTransportTests.xctest"
         command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(Path(xctest).resolve()),

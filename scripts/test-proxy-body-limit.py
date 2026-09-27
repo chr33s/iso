@@ -41,7 +41,7 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-body-limit-"))
     print(f"Body-limit evidence: {work}", flush=True)
     commands = {
-        "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
                   "realTLSDeclaredBodyLimitAcceptsExactAndRefusesExcess"],
     }
     markers = {"swift": "Test realTLSDeclaredBodyLimitAcceptsExactAndRefusesExcess() passed"}

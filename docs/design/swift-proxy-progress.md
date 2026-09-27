@@ -2,7 +2,11 @@
 
 The governing specification is `coop-proxy-swift-port-spec.md` at the repository
 root. This record tracks implementation evidence; it does not replace or narrow
-the specification. Rust remains the production implementation.
+the specification. Swift is now the sole credential-proxy implementation in
+`coop-proxy/`; the Rust host CLI remains. Entries below are chronological
+historical evidence, including the removed Rust implementation and the former
+`macos/` package layout. See [current acceptance status](swift-proxy-acceptance.md)
+for completed and outstanding gates.
 
 ## Phase 0: Rust reference
 
@@ -42,12 +46,12 @@ bound in the specification.
 
 ## Phase 1: Swift pure policy
 
-`macos/coop-proxy` now contains CoopProxyCore with fixed provider policy,
+`coop-proxy` now contains CoopProxyCore with fixed provider policy,
 strict startup configuration, redacted secrets, CryptoKit HMAC verification of
 capabilities, raw-target validation, exact operations, request/response header
 filtering, and resource constants. It has no socket or process dependencies.
 
-- `swift test --package-path macos/coop-proxy`: 8 table-driven tests passed.
+- `swift test --package-path coop-proxy`: 8 table-driven tests passed.
 - `python3 scripts/test-swift-proxy-mutations.py`: all five required policy
   mutations were killed and the restored baseline passed. This targeted gate
   supplements a future full Swift mutation sweep.
@@ -63,7 +67,7 @@ operation policy, declared and streamed body caps, trailer rejection, header/bod
 timeouts, connection capacity, and response-lifetime request leases are enforced
 by the gate. Request buffers pass through incrementally without aggregation.
 
-Evidence: `swift test --package-path macos/coop-proxy` passes 8 pure policy and
+Evidence: `swift test --package-path coop-proxy` passes 8 pure policy and
 11 transport tests. These include real socket rejection, malformed/incomplete
 header limits, ambiguous framing, 64 MiB in chunks followed by a rejected excess
 byte, 256 held responses with rejection of the 257th, long response survival,
@@ -137,7 +141,7 @@ Verification on 2026-09-27:
 
 - Swift build passes; unit suite has 22 passing tests and one opt-in live test
   skipped during ordinary offline execution.
-- `COOP_PROXY_LIVE_TLS_TEST=1 swift test --package-path macos/coop-proxy --filter
+- `COOP_PROXY_LIVE_TLS_TEST=1 swift test --package-path coop-proxy --filter
   liveProviderSystemTrust` passes for both fixed providers without credentials.
 - `python3 scripts/test-swift-proxy-process.py` passes: refusal while unconfined
   before stdin is supplied; invalid/oversized input rejection with redacted

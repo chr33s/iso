@@ -105,7 +105,7 @@ if [[ "${0##*/}" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
         result = self.run_preflight()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.log.read_text().splitlines()
-        self.assertIn('swift test --package-path macos/coop-proxy --force-resolved-versions', calls)
+        self.assertIn('swift test --package-path coop-proxy --force-resolved-versions', calls)
         self.assertIn('swift-process-gate', calls)
 
     def test_proxy_forward_failure_is_fatal(self):

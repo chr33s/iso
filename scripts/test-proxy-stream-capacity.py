@@ -49,7 +49,7 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-stream-capacity-"))
     print(f"Capacity evidence: {work}", flush=True)
     commands = {
-        "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
                   "realTLSStreamsHold256SlotsUntilCompletionOrDisconnect"],
     }
     markers = {"swift": "Test realTLSStreamsHold256SlotsUntilCompletionOrDisconnect() passed"}

@@ -58,8 +58,8 @@ jobs:
       - name: Build Swift proxy (macOS 27+)
         if: runner.os == 'macOS'
         run: |
-          swift build --package-path macos/coop-proxy -c release --force-resolved-versions
-          proxy_dir="$(swift build --package-path macos/coop-proxy -c release --show-bin-path)"
+          swift build --package-path coop-proxy -c release --force-resolved-versions
+          proxy_dir="$(swift build --package-path coop-proxy -c release --show-bin-path)"
           cp "$proxy_dir/coop-proxy-swift" "target/${{ matrix.target }}/release/coop-proxy"
           codesign --verify --strict "target/${{ matrix.target }}/release/coop-proxy"
 

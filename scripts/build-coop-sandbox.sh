@@ -5,7 +5,7 @@ set -euo pipefail
 # feature build drives, and install it into a directory only you (or root)
 # can write.
 #
-# coop-sandbox (macos/coop-sandbox) runs each coop instance as a persistent
+# coop-sandbox (coop-sandbox) runs each coop instance as a persistent
 # Linux VM on apple/containerization, with its own vmnet network and no host
 # mounts, socket relays, published ports, or SSH-agent forwarding. This script
 # builds it in release mode, signs it ad hoc with the hardened runtime and the
@@ -39,7 +39,7 @@ if [[ "${prefix}" != /* ]]; then
     exit 1
 fi
 
-pkg="$(cd "$(dirname "$0")/../macos/coop-sandbox" && pwd)"
+pkg="$(cd "$(dirname "$0")/../coop-sandbox" && pwd)"
 swift build --package-path "${pkg}" -c release --force-resolved-versions
 built="$(swift build --package-path "${pkg}" -c release --show-bin-path)/coop-sandbox"
 

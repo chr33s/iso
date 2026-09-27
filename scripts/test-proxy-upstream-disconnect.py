@@ -18,7 +18,7 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-upstream-disconnect-"))
     print(f"Disconnect evidence: {work}", flush=True)
     commands = {
-        "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
                   "upstreamDisconnectClosesGuestAndRestoresPermits"],
     }
     markers = {

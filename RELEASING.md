@@ -2,6 +2,17 @@
 
 How a `coop` release is cut, and what to check before cutting one.
 
+## Fork distribution status
+
+This is `chr33s/coop`, a fork of `trailofbits/coop`. The inherited installer,
+updater, and provenance verification still target `trailofbits/coop`; publishing
+a fork artifact does not make those clients install it. This document describes
+the inherited automation, not a completed fork distribution channel. Build this
+fork from source until its channel and provenance policy are established.
+The Apple-backend build disables self-update. Hosted Swift candidate attestation
+and remaining acceptance gates are tracked in
+[the acceptance map](docs/design/swift-proxy-acceptance.md).
+
 ## How the automation works
 
 - **`ci.yml`** runs on pushes to `main` and on every PR: `fmt --check`, `clippy -D warnings`,
@@ -123,7 +134,7 @@ CI can't run the full VM integration suite or the extra-toolchain checks
 
 ## If the tag run fails
 
-**Immutable releases are enabled org-wide, so a version cannot be recovered.**
+**The upstream process assumes immutable releases. Do not reuse a published version.**
 Once `vX.Y.Z` is pushed, that version is spent: you cannot move or re-tag it and
 re-run the release. A red `release.yml` run means you **bump to the next patch
 version and cut a fresh release** — go back to step 2 with `vX.Y.(Z+1)`.

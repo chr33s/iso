@@ -3,8 +3,8 @@
 The macOS VM runtime behind coop's opt-in `apple-container` build: persistent
 Linux sandboxes on [`apple/containerization`](https://github.com/apple/containerization)
 0.45.0 (pinned exactly in `Package.swift`). coop drives it through the JSON CLI
-below; see [`docs/backends.md`](../../docs/backends.md) for the coop side and
-[`docs/trust-model.md`](../../docs/trust-model.md) for the isolation contract.
+below; see [`docs/backends.md`](../docs/backends.md) for the coop side and
+[`docs/trust-model.md`](../docs/trust-model.md) for the isolation contract.
 
 Each sandbox is one Linux VM running systemd from its own ext4 disk, on its own
 vmnet network, with no host mounts, socket relays, published ports, or SSH-agent
@@ -19,7 +19,7 @@ it if it is killed, and nothing starts at login.
 
 ```bash
 scripts/build-coop-sandbox.sh [PREFIX]    # default ~/.local/opt/coop-sandbox
-swift test --package-path macos/coop-sandbox --no-parallel
+swift test --package-path coop-sandbox --no-parallel
 ./tests/integration-apple-sandbox.sh      # boots real VMs; ~10 min
 ```
 
@@ -112,7 +112,7 @@ never overwrites a newer one.
   version's disk with another's metadata. All are flock(2) locks, released by
   the kernel when their holder dies; `FileLock` in `Layout.swift` documents
   the order they are taken in. The invariants behind this are in
-  [`docs/design/apple-sandbox-transactions.md`](../../docs/design/apple-sandbox-transactions.md).
+  [`docs/design/apple-sandbox-transactions.md`](../docs/design/apple-sandbox-transactions.md).
 - **Console log.** The serial console is copied to `boot.log`, capped at
   8 MiB: past the cap the file restarts with a marker line, so a guest
   flooding its console cannot fill the host disk. `logs -n` reads only the

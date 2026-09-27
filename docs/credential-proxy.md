@@ -181,7 +181,7 @@ credentials are not supported by this proxy.
 
 ## Swift implementation
 
-The sole implementation lives in `macos/coop-proxy`. It uses macOS system trust
+The sole implementation lives in `coop-proxy`. It uses macOS system trust
 through Security.framework, including administrator/MDM-installed roots.
 Hostname and full-chain verification are mandatory; the guest cannot disable
 them or supply trust roots.
@@ -204,7 +204,7 @@ TLS to both providers under that profile and fails when this permission is
 removed:
 
 ```sh
-swift build --package-path macos/coop-proxy
+swift build --package-path coop-proxy
 python3 scripts/test-swift-proxy-process.py
 ```
 

@@ -47,7 +47,7 @@ def main():
     configuration = "release" if args.release else "debug"
     cargo_flags = ["--release"] if args.release else []
     run("cargo", "build", "--locked", "-p", "coop", "--features", "apple-container", *cargo_flags)
-    package = ROOT / "macos/coop-proxy"
+    package = ROOT / "coop-proxy"
     run("swift", "build", "--package-path", str(package), "-c", configuration,
         "--force-resolved-versions")
     swift_bin = Path(subprocess.check_output(

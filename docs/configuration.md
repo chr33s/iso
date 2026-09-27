@@ -463,7 +463,10 @@ Each timeout must be between 1 and 86400 seconds.
 
 ## `updates` section
 
-Background update-check behavior for `coop update`. Defaults are safe; most users do not need to set anything here.
+Background update-check behavior for `coop update`. The inherited channel targets
+upstream Trail of Bits releases, not this fork. Use source rebuilds to retain
+this fork; set `mode = "off"` to suppress upstream notices. Development builds
+and Apple-backend builds suppress these checks.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

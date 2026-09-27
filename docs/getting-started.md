@@ -1,6 +1,6 @@
 # Getting Started
 
-coop runs Claude Code and Codex inside isolated virtual machines. On Linux, it spins up Firecracker microVMs backed by KVM. On macOS, it uses Lima with Apple's Virtualization.framework. Each VM gets its own filesystem, network stack, and Docker daemon. Agent CLIs never touch your host.
+coop runs Claude Code and Codex inside isolated virtual machines. On Linux, it spins up Firecracker microVMs backed by KVM. On macOS, it uses Lima with Apple's Virtualization.framework. Each VM gets its own filesystem, network stack, and Docker daemon. The VM is the isolation boundary; host workspace mounts and synchronization still expose the files you choose to share.
 
 ## Prerequisites
 
@@ -21,7 +21,10 @@ coop runs Claude Code and Codex inside isolated virtual machines. On Linux, it s
 
 ## Install
 
-Install the latest release:
+For this fork, follow [Build from source](#build-from-source). Its Swift-only
+proxy rewrite is not distributed by the inherited upstream installer/updater.
+
+The following installs **upstream Trail of Bits coop**, not this fork:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/trailofbits/coop/main/install.sh | bash
@@ -46,7 +49,7 @@ instead, which it will only do when `gh` is logged in. `install.sh` and `coop
 update` use that API path themselves for releases published without a usable
 bundle.
 
-## Upgrading from v0.5.4
+## Upgrading upstream from v0.5.4
 
 Rerun the installer above when upgrading from v0.5.4 to a release that includes
 credential proxy support. The v0.5.4 updater replaces only `coop`; it does not
@@ -64,6 +67,8 @@ updater.
 Install [Rust](https://rustup.rs/), then:
 
 ```
+git clone https://github.com/chr33s/coop.git
+cd coop
 cargo build --workspace --release
 ```
 
@@ -71,13 +76,19 @@ The host CLI lands at `target/release/coop`. For credential-proxy mode on
 macOS 27+, also build the Swift companion with Xcode 27:
 
 ```sh
-swift build --package-path macos/coop-proxy -c release --force-resolved-versions
-proxy_dir="$(swift build --package-path macos/coop-proxy -c release --show-bin-path)"
+swift build --package-path coop-proxy -c release --force-resolved-versions
+proxy_dir="$(swift build --package-path coop-proxy -c release --show-bin-path)"
 cp "$proxy_dir/coop-proxy-swift" target/release/coop-proxy
 ```
 
 Install `coop` and `coop-proxy` in the same directory. Linux supports the host
 CLI and Firecracker backend but no longer supports credential-proxy mode.
+
+For the opt-in Apple backend, build with `--features apple-container` and
+install the runtime using `./scripts/build-coop-sandbox.sh`; see
+[Apple backend setup](backends.md#macos--apple-sandbox-opt-in) for prerequisites.
+Update this fork by pulling and rebuilding. The inherited `coop update`
+targets upstream releases; Apple-backend builds disable it.
 
 ## Configuration
 

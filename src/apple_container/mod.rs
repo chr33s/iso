@@ -1,7 +1,7 @@
 //! Apple sandbox backend (`apple-container` feature, macOS only).
 //!
 //! Runs each coop instance as a persistent `coop-sandbox` VM
-//! (`macos/coop-sandbox`, built on `apple/containerization`): one VM per
+//! (`coop-sandbox`, built on `apple/containerization`): one VM per
 //! instance, each on its own vmnet network, with no host mounts, socket
 //! relays, published ports, or SSH-agent forwarding. coop reuses its SSH-based
 //! guest operations over a pinned per-instance host key. Workspaces are

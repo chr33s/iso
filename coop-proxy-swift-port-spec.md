@@ -8,10 +8,12 @@
 # Specification: Swift Port of `coop-proxy`
 
 **Status:** Approved for implementation  
-**Scope:** `chr33s/coop`, macOS 27+, Apple Silicon, Swift-only host architecture  
+**Scope:** `chr33s/coop`, macOS 27+, Apple Silicon, Swift-only credential proxy; Rust host CLI retained
+
 **Baseline:** `chr33s/coop` at `2e1bf205f7659a06be506b1bbd24a028f9da3773`  
 **Guest:** Existing Linux/Ubuntu guest  
-**VM backend:** `coop-sandbox` only  
+**VM backend for acceptance:** `coop-sandbox`; the implementation also supports Lima
+
 **Security sensitivity:** High — credential-bearing boundary
 
 ---
@@ -38,15 +40,15 @@ mechanical language translation.
 
 ## 2. Approved architecture decisions
 
-### D-001 — Swift-only host implementation
+### D-001 — Separate Swift credential-proxy implementation
 
 **Decision: APPROVED**
 
-The production host implementation MAY become Swift-only after parity gates in
-this specification are satisfied.
+The credential proxy is implemented in Swift. The host `coop` CLI remains Rust;
+the optional `coop-sandbox` runtime is a separate Swift package. Rewriting the
+host CLI is outside this proxy port’s scope.
 
-The proxy remains a **separate executable** even though `coop`, `coop-sandbox`,
-and `coop-proxy` are all implemented in Swift.
+The proxy remains a **separate executable** from the host CLI and VM runtime.
 
 Required process separation:
 

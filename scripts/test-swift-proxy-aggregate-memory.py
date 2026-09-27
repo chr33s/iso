@@ -41,7 +41,7 @@ def main():
     for rounds in [2, 8]:
         captured = work / f"{rounds}.json"
         logfile = work / f"{rounds}.log"
-        command = ["swift", "test", "--package-path", "macos/coop-proxy", "--filter", TEST]
+        command = ["swift", "test", "--package-path", "coop-proxy", "--filter", TEST]
         environment = dict(os.environ, COOP_PROXY_AGGREGATE_MEMORY_GATE="1",
                            COOP_MEMORY_ROUNDS=str(rounds), COOP_MEMORY_OBSERVATIONS=str(captured))
         with logfile.open("w") as log:

@@ -89,7 +89,7 @@ jobs:
   # too, since shared backend, SSH, and lifecycle code compiles differently on
   # macOS than on the Linux jobs.
   apple-container:
-    # Pinned: macos/coop-sandbox needs Swift 6.2+ and the macOS 26 SDK
+    # Pinned: coop-sandbox needs Swift 6.2+ and the macOS 26 SDK
     # (vmnet networks); this image's default Xcode is 26.x.
     runs-on: macos-26
     steps:
@@ -112,7 +112,7 @@ jobs:
       - name: coop-sandbox build and unit tests
         run: |
           swift --version
-          swift test --package-path macos/coop-sandbox --force-resolved-versions --no-parallel
+          swift test --package-path coop-sandbox --force-resolved-versions --no-parallel
 
   # The proxy intentionally targets macOS 27 system trust. macos-latest does
   # not guarantee that SDK/runtime; xcode-27 is GitHub's macOS 27 preview image.
@@ -129,8 +129,8 @@ jobs:
         shell: bash
         run: |
           ulimit -n 8192
-          swift format lint --recursive --strict macos/coop-proxy/Sources macos/coop-proxy/Tests
-          swift test --package-path macos/coop-proxy --force-resolved-versions
+          swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
+          swift test --package-path coop-proxy --force-resolved-versions
           python3 scripts/test-swift-proxy-process.py --skip-tls
 
       - name: Shared forwarding and disconnect corpus

@@ -1,6 +1,6 @@
 //! Runtime qualification and the isolation gate.
 //!
-//! coop drives `coop-sandbox` (`macos/coop-sandbox`), a runtime built for it
+//! coop drives `coop-sandbox` (`coop-sandbox`), a runtime built for it
 //! on `apple/containerization`: one VM per sandbox, each on its own vmnet
 //! network, with no host mounts, socket relays, published ports, or SSH-agent
 //! forwarding. Its record type cannot express those, but coop still verifies
@@ -304,11 +304,11 @@ mod tests {
     fn pins_match_the_runtime_sources() {
         let layout = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/macos/coop-sandbox/Sources/CoopSandboxCore/Layout.swift"
+            "/coop-sandbox/Sources/CoopSandboxCore/Layout.swift"
         ));
         let package = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/macos/coop-sandbox/Package.swift"
+            "/coop-sandbox/Package.swift"
         ));
         let protocol = format!("public let protocolVersion = {PROTOCOL}\n");
         let layout_pin = format!("public let containerizationVersion = \"{CONTAINERIZATION}\"\n");

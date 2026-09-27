@@ -12,7 +12,7 @@ Other supported arguments include `--full`, `--profile LIST`, and `--name NAME`.
 The opt-in Apple sandbox runtime (`apple-container` build) has its own
 real-hardware suite, `./tests/integration-apple-sandbox.sh` (macOS 26+, stock
 `container` for image builds; `--only PHASES`). Run it for changes to
-`macos/coop-sandbox`, its `containerization` pin, or the isolation gate.
+`coop-sandbox`, its `containerization` pin, or the isolation gate.
 
 Confirm the requested platform and prerequisites. A single host covers only one
 backend; never describe one backend as proving both. Run the suite with output

@@ -1,4 +1,4 @@
-# Authoring and reviewing Rust code
+# Code style
 
 These notes are coop's project-specific Rust conventions. They complement the
 global Rust guidance (clippy lint policy, `thiserror`/`anyhow`, `tracing`,
@@ -12,6 +12,20 @@ codebase.
 Apply these patterns when they pay for themselves; skip them when a primitive is
 genuinely fine. A type system that fights the reader is worse than one that lets
 a bug through.
+
+## Swift packages
+
+The root `coop-proxy/` and `coop-sandbox/` packages use SwiftPM. Keep package
+versions pinned in `Package.resolved`; build and test each package independently
+of Cargo. The proxy CI formatting gate is:
+
+```sh
+swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
+```
+
+Preserve the proxy’s bounded resource ownership, cancellation, and fail-closed
+confinement invariants. For runtime changes, preserve transaction recovery and
+per-sandbox locking. See [testing](testing.md) and the [trust model](trust-model.md).
 
 ## Lean on the type system before lean on validation
 

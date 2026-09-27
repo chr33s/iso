@@ -75,7 +75,7 @@ def main():
         for offered in sizes:
             captured = work / f"{direction}-{offered}.json"
             logfile = work / f"{direction}-{offered}.log"
-            command = ["swift", "test", "--package-path", "macos/coop-proxy", "--filter", test]
+            command = ["swift", "test", "--package-path", "coop-proxy", "--filter", test]
             environment = dict(os.environ, COOP_MEMORY_OBSERVATIONS=str(captured))
             environment.update({enabled: "1", size_variable: str(offered)})
             environment["COOP_MEMORY_CONNECTIONS"] = str(args.connections)

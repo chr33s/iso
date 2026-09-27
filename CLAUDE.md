@@ -7,6 +7,11 @@ under [`.claude/commands/`](.claude/commands/) invoke those workflows.
 <!-- The remainder is retained as a standalone fallback for clients that do
 not follow the shared entrypoint link. Keep normative changes in AGENTS.md. -->
 
+This is the `chr33s/coop` fork. The host CLI remains Rust; the Swift-only
+credential proxy (`coop-proxy/`, macOS 27+) and optional Apple VM runtime
+(`coop-sandbox/`) are root-level Swift packages. Cargo does not build them.
+See [README.md](README.md) for motivation and fork installation guidance.
+
 ## Agent entrypoint
 
 Shared entrypoint for Claude, Codex, and humans. Keep this short and
@@ -61,6 +66,8 @@ cargo fmt -- --check                                           # format check
 cargo clippy --all-targets -- -D warnings                      # lints (zero-warnings)
 cargo clippy --all-targets --features apple-container -- -D warnings  # macOS: Apple backend
 cargo test                                                     # unit tests (lib)
+swift test --package-path coop-proxy --force-resolved-versions   # macOS 27+: proxy
+swift test --package-path coop-sandbox --no-parallel             # macOS: runtime
 cargo deny check                                               # advisories/licenses/bans
 taplo format --check                                           # TOML formatting
 prek run                                                       # all pre-commit hooks

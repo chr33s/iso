@@ -3,6 +3,13 @@
 System-of-record map for `coop`. The root [`AGENTS.md`](../AGENTS.md) is the
 short navigational entrypoint; durable detail lives here.
 
+This is the `chr33s/coop` fork of Trail of Bits’ coop. The Rust host CLI retains
+Firecracker, Lima, and the opt-in Apple backend. The credential proxy is now
+Swift-only (macOS 27+), in [`coop-proxy/`](../coop-proxy/); the Apple runtime is
+[`coop-sandbox/`](../coop-sandbox/). See the [fork motivation](../README.md#why-this-fork)
+and [source installation](getting-started.md#build-from-source). Design records
+preserve historical experiments; the acceptance map identifies outstanding gates.
+
 ## For contributors (engineering)
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — module map, the backend design,

@@ -1,6 +1,6 @@
 # Design: Apple sandbox mutations — transactions, serialization, and maintenance
 
-**Status:** implemented (runtime 0.2.0, protocol 2) · **Scope:** `macos/coop-sandbox` and `src/apple_container/`; the backend contract is in [`backends.md`](../backends.md), the security spec in [`trust-model.md`](../trust-model.md)
+**Status:** implemented (runtime 0.2.0, protocol 2) · **Scope:** `coop-sandbox` and `src/apple_container/`; the backend contract is in [`backends.md`](../backends.md), the security spec in [`trust-model.md`](../trust-model.md)
 **Date:** 2026-09-26
 
 ---

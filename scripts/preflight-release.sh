@@ -157,7 +157,7 @@ run_swift_proxy() {
     warn "Swift proxy validation requires macOS 27+ — run its package/process gates before tagging"
     return 0
   fi
-  swift test --package-path macos/coop-proxy --force-resolved-versions || return
+  swift test --package-path coop-proxy --force-resolved-versions || return
   python3 scripts/test-swift-proxy-process.py --skip-tls
 }
 

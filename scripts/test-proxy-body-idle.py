@@ -32,7 +32,7 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-body-idle-"))
     print(f"Body-idle evidence: {work}", flush=True)
     commands = {
-        "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
                   "realTLSUploadIdleDeadlineResetsAndCancelsUpstream"],
     }
     markers = {"swift": "Test realTLSUploadIdleDeadlineResetsAndCancelsUpstream() passed"}

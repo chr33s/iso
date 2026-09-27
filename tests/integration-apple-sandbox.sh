@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Real-hardware checks for coop-sandbox (macos/coop-sandbox), the runtime
+# Real-hardware checks for coop-sandbox (coop-sandbox), the runtime
 # behind the `apple-container` build. Unit tests cannot boot VMs; this boots
 # real ones and checks what the backend's isolation contract relies on
 # (docs/trust-model.md): peer isolation between sandboxes, no host mounts,

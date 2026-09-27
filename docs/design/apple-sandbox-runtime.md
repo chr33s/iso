@@ -8,7 +8,7 @@
 ## 0. TL;DR
 
 - **Build coop's own runtime on `apple/containerization`.** That runtime is
-  [`macos/coop-sandbox`](../../macos/coop-sandbox), and it replaces the
+  [`coop-sandbox`](../../coop-sandbox), and it replaces the
   `container machine` fork previously vendored at `vendor/container`.
 - **Stock Apple containers are secure but incomplete.** With systemd as
   PID 1, one network per container, and no host integration, they pass every

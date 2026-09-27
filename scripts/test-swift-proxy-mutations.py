@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "macos/coop-proxy"
+PACKAGE = ROOT / "coop-proxy"
 SOURCES = PACKAGE / "Sources"
 MUTATIONS = [
     ("deny becomes allow", "CoopProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',

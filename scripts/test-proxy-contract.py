@@ -159,7 +159,7 @@ def main():
         parser.error("replay must be at most 96 KiB and contain no valid capability")
     fuzz_count = 1 if replay is not None else args.fuzz_cases
     if args.swift is None:
-        directory = subprocess.check_output(["swift", "build", "--package-path", str(ROOT / "macos/coop-proxy"),
+        directory = subprocess.check_output(["swift", "build", "--package-path", str(ROOT / "coop-proxy"),
                                              "--show-bin-path"], text=True).strip()
         args.swift = Path(directory) / "coop-proxy-swift"
     cases = json.loads((ROOT / "tests/fixtures/credential-proxy/refusals.json").read_text())

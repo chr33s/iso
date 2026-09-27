@@ -2,12 +2,12 @@
 
 `coop` is a Rust CLI that orchestrates isolated VM environments for running AI
 coding agents (Claude Code, Codex). It manages the full VM lifecycle — setup,
-start, shell, stop, destroy, status, logs — behind two platform backends:
+start, shell, stop, destroy, status, logs — behind platform backends:
 
 - **Linux** — Firecracker microVMs on KVM.
 - **macOS** — Lima VMs on Apple Virtualization.framework (`limactl`).
 - **macOS, opt-in** — `coop-sandbox` VMs on `apple/containerization`
-  ([`macos/coop-sandbox`](../macos/coop-sandbox)), with the `apple-container`
+  ([`coop-sandbox`](../coop-sandbox)), with the `apple-container`
   Cargo feature. See [`backends.md`](backends.md).
 
 This document maps the modules, the backend design, the data flow from host
@@ -58,7 +58,8 @@ coop/
 │   ├── prompt.rs           # TTY prompts
 │   ├── update.rs           # `coop update` self-update + background notifier
 │   └── commands/           # one module per command domain (see below)
-├── macos/coop-proxy/       # Swift binary: credential injection, policy, TLS, Seatbelt
+├── coop-sandbox/           # Swift Apple Containerization VM runtime
+├── coop-proxy/             # Swift binary: credential injection, policy, TLS, Seatbelt
 ├── scripts/guest/          # guest-image provisioning scripts (embedded at build)
 ├── guest/init.sh           # guest first-boot init
 ├── tests/                  # integration test scripts (see AGENTS.md "Before committing")
@@ -85,7 +86,7 @@ through it. Three implementations exist:
 - `LimaBackend` — `#[cfg(target_os = "macos")]`; delegates to `lima`.
 - `AppleContainerBackend` — `#[cfg(all(target_os = "macos", feature =
   "apple-container"))]`; `src/apple_container/`, driving the Swift runtime in
-  `macos/coop-sandbox/` over its JSON CLI. It replaces Lima as the macOS
+  `coop-sandbox/` over its JSON CLI. It replaces Lima as the macOS
   `PlatformBackend` only when the feature is enabled. Its disk and resource
   mutations follow the invariants in
   [`design/apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md).

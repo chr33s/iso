@@ -8,7 +8,7 @@
 # args) only touches this repo's own TOML. revm-kani is a gitignored vendored
 # checkout used for the kani proofs; target and the Swift package's .build are
 # build output.
-exclude = ["revm-kani/**", "target/**", "macos/coop-sandbox/.build/**"]
+exclude = ["revm-kani/**", "target/**", "coop-sandbox/.build/**", "coop-proxy/.build/**"]
 
 [formatting]
 indent_string = "  "

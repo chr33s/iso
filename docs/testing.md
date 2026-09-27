@@ -177,7 +177,7 @@ tool-use probe retains its 180-second limit.
 The shared malformed HTTP harness runs the real Swift proxy under Seatbelt:
 
 ```bash
-swift build --package-path macos/coop-proxy
+swift build --package-path coop-proxy
 python3 scripts/test-proxy-contract.py --fuzz-cases 10000 --seed 20260927
 python3 scripts/test-proxy-contract.py --replay /path/to/request.bin
 ```
@@ -284,7 +284,7 @@ injection and same-sandbox locking); none of them boots a VM:
 ```bash
 cargo clippy --all-targets --features apple-container -- -D warnings
 cargo test --features apple-container
-swift test --package-path macos/coop-sandbox --no-parallel
+swift test --package-path coop-sandbox --no-parallel
 ```
 
 The Swift tests run serially: several take, release, and re-probe `flock`
@@ -600,7 +600,7 @@ its queued request is cancelled. Reproduce with a local TCP fixture that receive
 the TLS ClientHello but never answers it:
 
 ```bash
-COOP_PROXY_HANDSHAKE_AUDIT=1 swift test --package-path macos/coop-proxy --filter auditCancellationDuringTLSHandshake
+COOP_PROXY_HANDSHAKE_AUDIT=1 swift test --package-path coop-proxy --filter auditCancellationDuringTLSHandshake
 ```
 
 This opt-in dependency audit fails the two-second upstream socket closure
@@ -609,12 +609,12 @@ for the thirty-second establishment deadline. It uses the pinned client's TLS
 configuration, a local synthetic destination, and no credentials. Forwarding now
 uses direct SwiftNIO/NIOSSL with owned sockets; this audit preserves the reason
 for that replacement and is not the acceptance test for the new bridge.
-Run `swift test --package-path macos/coop-proxy --filter bridgeCancellationClosesStalledTLSHandshake`
+Run `swift test --package-path coop-proxy --filter bridgeCancellationClosesStalledTLSHandshake`
 for guest-disconnect coverage through the new bridge, for both provider identities.
 
 ### Cancellable Swift TLS connection component
 
-Run `swift test --package-path macos/coop-proxy --filter ownedTLS` for the direct
+Run `swift test --package-path coop-proxy --filter ownedTLS` for the direct
 SwiftNIO/NIOSSL connection component. It owns candidate sockets before TCP
 connect and retains that ownership through TLS. Local tests cover cancellation
 of stalled and established TLS sockets, late DNS results after cancellation,
@@ -639,7 +639,7 @@ DNS/candidate admission has the dedicated tests below.
 Run:
 
 ```bash
-swift test --package-path macos/coop-proxy --filter 'tlsProbeCancellation|productionClientSharesSocketBudget'
+swift test --package-path coop-proxy --filter 'tlsProbeCancellation|productionClientSharesSocketBudget'
 ```
 
 The client registers native HTTP requests and DNS/TLS probes before admitting
@@ -661,7 +661,7 @@ not itself assert that every socket close future has completed.
 Run:
 
 ```bash
-swift test --package-path macos/coop-proxy --filter 'cancelledDNS|dnsCancellation|dnsFailurePreserves|guestCancellationCannot|productionClientSharesSocketBudget|cancelledSocketKeepsAdmission'
+swift test --package-path coop-proxy --filter 'cancelledDNS|dnsCancellation|dnsFailurePreserves|guestCancellationCannot|productionClientSharesSocketBudget|cancelledSocketKeepsAdmission'
 ```
 
 The production client shares budgets for 256 underlying DNS lookups and 256
@@ -694,7 +694,7 @@ status, partial provider body, guest EOF, and one-slot capacity recovery. Local
 For the Swift matrix and complete-response regression alone, run:
 
 ```bash
-swift test --package-path macos/coop-proxy --filter 'upstreamDisconnectClosesGuestAndRestoresPermits|completedResponseDrainsAfterUpstreamClosesDuringGuestWrite'
+swift test --package-path coop-proxy --filter 'upstreamDisconnectClosesGuestAndRestoresPermits|completedResponseDrainsAfterUpstreamClosesDuringGuestWrite'
 ```
 
 The verified local TLS fixture closes before response headers or during an
@@ -810,7 +810,7 @@ connections or HTTP requests. Both paths require guest EOF and upstream socket
 closure; The Rust reference evidence is historical. The runner validates and
 compares six complete records, retaining logs and raw observations in a printed
 temporary directory. Test-only `COOP_BODY_LIMIT_OBSERVATIONS` captures counts
-and digest. The individual gate is `swift test --package-path macos/coop-proxy --filter realTLSDeclaredBodyLimit`.
+and digest. The individual gate is `swift test --package-path coop-proxy --filter realTLSDeclaredBodyLimit`.
 A chunked request with
 `Expect: 100-continue` must receive 411 as its first response, with zero upstream
 connections, requests, body bytes, or injected credentials. The shared runner
@@ -827,7 +827,7 @@ compares both providers' status, partial body and closure observations, retainin
 raw elapsed times while excluding scheduler timing from equality comparison.
 Logs, raw observations and comparison evidence are retained in a printed
 temporary directory. `COOP_IDLE_OBSERVATIONS` is consumed only by test code.
-The individual gate is `swift test --package-path macos/coop-proxy --filter realTLSUploadIdleDeadline`.
+The individual gate is `swift test --package-path coop-proxy --filter realTLSUploadIdleDeadline`.
 
 Run the compared TLS stream-capacity gate on macOS:
 
@@ -843,7 +843,7 @@ incorrect field types fail validation. Record order is ignored. The optional
 `COOP_STREAM_OBSERVATIONS` path is read only by test code. Individual gates are:
 
 ```bash
-swift test --package-path macos/coop-proxy --filter realTLSStreamsHold256Slots
+swift test --package-path coop-proxy --filter realTLSStreamsHold256Slots
 ```
 
 For each provider they hold 256 responses after their first SSE chunk and
@@ -923,7 +923,7 @@ TCP connect remains a separate case.
 
 ### Swift proxy policy mutation sweep
 
-`macos/coop-proxy/muter.conf.yml` scopes the four policy files required by the
+`coop-proxy/muter.conf.yml` scopes the four policy files required by the
 port specification. Build [Muter](https://github.com/muter-mutation-testing/muter)
 at revision `7f1f2584e0a27fc05c952a5c8cdd52b10cc9513f`. In that checkout, apply
 `scripts/patches/muter-preserve-syntax-identity.patch` from this repository using

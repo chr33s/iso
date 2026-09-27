@@ -42,8 +42,8 @@ if [[ -z "$REMOTE_HOST" ]]; then
     cargo build --release --manifest-path "$PROJECT_DIR/Cargo.toml"
 
     if [[ "$(uname -s)" == Darwin && "$(sw_vers -productVersion | cut -d. -f1)" -ge 27 ]]; then
-        swift build --package-path "$PROJECT_DIR/macos/coop-proxy" -c release --force-resolved-versions
-        proxy_dir="$(swift build --package-path "$PROJECT_DIR/macos/coop-proxy" -c release --show-bin-path)"
+        swift build --package-path "$PROJECT_DIR/coop-proxy" -c release --force-resolved-versions
+        proxy_dir="$(swift build --package-path "$PROJECT_DIR/coop-proxy" -c release --show-bin-path)"
         cp "$proxy_dir/coop-proxy-swift" "$PROJECT_DIR/target/release/coop-proxy"
     fi
 
@@ -114,8 +114,8 @@ if [[ "$build_swift_on_remote" == "1" ]]; then
     ssh "$REMOTE_HOST" "
         set -e
         cd '$REMOTE_DIR/src'
-        swift build --package-path macos/coop-proxy -c release --force-resolved-versions
-        proxy_dir=\$(swift build --package-path macos/coop-proxy -c release --show-bin-path)
+        swift build --package-path coop-proxy -c release --force-resolved-versions
+        proxy_dir=\$(swift build --package-path coop-proxy -c release --show-bin-path)
         cp \"\$proxy_dir/coop-proxy-swift\" '$REMOTE_DIR/coop-proxy'
     "
 fi

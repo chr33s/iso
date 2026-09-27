@@ -3,6 +3,11 @@
 Isolated VM environment for running Codex and Claude Code — Firecracker on
 Linux, Lima on macOS.
 
+This is the `chr33s/coop` fork. The host CLI remains Rust; the Swift-only
+credential proxy (`coop-proxy/`, macOS 27+) and optional Apple VM runtime
+(`coop-sandbox/`) are root-level Swift packages. Cargo does not build them.
+See [README.md](README.md) for motivation and fork installation guidance.
+
 ## Agent entrypoint
 
 Shared entrypoint for coding agents and humans. Keep this short and
@@ -56,7 +61,7 @@ cargo build --workspace
 cargo fmt -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --all-targets --features apple-container -- -D warnings  # macOS only
-swift test --package-path macos/coop-sandbox --no-parallel             # macOS only
+swift test --package-path coop-sandbox --no-parallel             # macOS only
 cargo test --workspace
 cargo deny --workspace check
 taplo format --check
@@ -64,7 +69,7 @@ prek run
 ```
 
 Cargo builds the Rust host CLI. The credential proxy is Swift-only on macOS 27+:
-run `swift test --package-path macos/coop-proxy --force-resolved-versions` and
+run `swift test --package-path coop-proxy --force-resolved-versions` and
 `python3 scripts/test-swift-proxy-process.py --skip-tls` when changing it.
 
 Install pinned local dev tools (prek, taplo, cargo-deny, cargo-mutants,

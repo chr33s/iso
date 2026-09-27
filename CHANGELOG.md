@@ -2,11 +2,20 @@
 
 ## Unreleased
 
+### Fork rewrite
+
+- Replace the Rust credential proxy with the Swift-only macOS 27+ implementation;
+  retain the Rust host CLI and Linux/Firecracker support without proxy mode.
+- Move the Swift packages to root-level `coop-proxy/` and `coop-sandbox/` and
+  update build, test, workflow, and documentation paths.
+- Document the fork’s reduced proxy implementation/dependency surface, source
+  installation, and outstanding acceptance and distribution gates.
+
 ### New features
 
 - **Opt-in Apple sandbox backend (macOS)** — building with
   `--features apple-container` replaces Lima with coop-sandbox
-  ([`macos/coop-sandbox`](macos/coop-sandbox)), a Swift runtime on Apple's
+  ([`coop-sandbox`](coop-sandbox)), a Swift runtime on Apple's
   `containerization` 0.45.0 built with `scripts/build-coop-sandbox.sh`. Each
   instance is its own VM on its own vmnet network with no host mounts, socket
   relays, published ports, or host SSH-agent forwarding. coop verifies the

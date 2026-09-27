@@ -4,7 +4,9 @@ Thanks for your interest in contributing to coop. This document covers how to
 build the project, run its tests, and submit changes.
 
 coop is a Rust CLI that orchestrates disposable VMs for running agent CLIs —
-Firecracker microVMs on Linux, Lima on macOS. Because it drives real
+Firecracker microVMs on Linux, Lima or the opt-in Swift `coop-sandbox` runtime
+on macOS. The Swift-only credential proxy lives in `coop-proxy/`; the runtime
+lives in `coop-sandbox/`. Because it drives real
 virtualization backends, some tests only run on a host with the matching
 backend. The sections below note where that applies.
 
@@ -38,13 +40,13 @@ backend. The sections below note where that applies.
 Clone the repository and build:
 
 ```bash
-git clone https://github.com/trailofbits/coop
+git clone https://github.com/chr33s/coop
 cd coop
 cargo build --release
 ```
 
 The host CLI lands at `target/release/coop`. On macOS 27+, also build the
-credential proxy with `swift build --package-path macos/coop-proxy -c release`.
+credential proxy with `swift build --package-path coop-proxy -c release`.
 Install the SwiftPM `coop-proxy-swift` product as `coop-proxy` beside the host
 CLI; see [the source build instructions](docs/getting-started.md#build-from-source).
 
@@ -56,7 +58,7 @@ Install the hooks once, then let them run on every commit:
 prek install
 ```
 
-The hooks run `cargo fmt -- --check`, `cargo clippy --all-targets --all-features
+The hooks run `cargo fmt -- --check`, `cargo clippy --all-targets
 -- -D warnings`, `cargo test`, `taplo format --check` (TOML formatting, also
 enforced by CI), and a set of file checks (trailing whitespace, end-of-file,
 YAML, large files, merge conflicts). Run them by hand at any time with:
@@ -66,8 +68,13 @@ prek run --all-files
 ```
 
 The local clippy and test hooks cover only `coop`. Before submitting, also
-run `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
-`swift test --package-path macos/coop-proxy` on macOS 27+ to cover the proxy.
+run `cargo clippy --workspace --all-targets -- -D warnings` and
+`swift test --package-path coop-proxy` on macOS 27+ to cover the proxy.
+
+On macOS, also run `cargo clippy --workspace --all-targets --features
+apple-container -- -D warnings`, `cargo test --features apple-container`, and
+`swift test --package-path coop-sandbox --no-parallel` for the Apple backend.
+The `apple-container` feature deliberately fails compilation on Linux.
 
 Fix every warning before committing. coop has a zero-warnings policy — clippy
 runs with `-D warnings`, so a warning fails the build.
@@ -118,7 +125,7 @@ parsing, the JSONC reader, the arithmetic kernels — see
 ## Code style
 
 - Format with `cargo fmt`; lint with `cargo clippy --workspace --all-targets
-  --all-features -- -D warnings`. Both are enforced in CI.
+  -- -D warnings`. Both are enforced in CI.
 - Lean on the type system to make illegal states unrepresentable rather than
   validating at runtime: parse untrusted input into strong types at the
   boundary, use newtypes over bare primitives that carry an invariant, and use
@@ -153,8 +160,8 @@ CI must pass before a pull request can merge. The
 [CI workflow](.github/workflows/ci.yml) runs:
 
 - **`cargo fmt -- --check`** — formatting.
-- **`cargo clippy --workspace --all-targets --all-features -- -D warnings`** — lints.
-- **`cargo test --workspace`** — tests for both crates.
+- **`cargo clippy --workspace --all-targets -- -D warnings`** — lints.
+- **`cargo test --workspace`** — tests for the Rust host CLI.
 - **`./tests/integration-install.sh`**, **`./tests/integration-update.sh`**,
   and **`./tests/integration-uninstall.sh`** — installer provenance, update,
   and uninstall flows.
@@ -173,7 +180,7 @@ described above.
 
 ## Reporting issues
 
-Open an issue on the [issue tracker](https://github.com/trailofbits/coop/issues).
+Open an issue on the [issue tracker](https://github.com/chr33s/coop/issues).
 For bug reports, include the platform and backend, the command you ran, and the
 output (coop's tracing output goes to stderr — `RUST_LOG=debug` adds detail).
 

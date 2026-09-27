@@ -1,5 +1,12 @@
 # Security Policy
 
+This fork adds the Swift credential proxy and Apple runtime described in
+[the trust model](docs/trust-model.md). The upstream reporting channels below
+belong to Trail of Bits and cover upstream code; they are not a promise that
+Trail of Bits maintains this fork. For fork-specific changes, arrange a private
+report with the fork maintainer through their
+[GitHub profile](https://github.com/chr33s); do not publish exploit details.
+
 ## Reporting a Vulnerability
 
 Do not report security vulnerabilities through public GitHub issues, pull
@@ -22,12 +29,12 @@ Include as much of the following as you can:
 - Steps to reproduce, a proof of concept, or the affected code path.
 - Any suggested remediation.
 
-## Response
+## Upstream response
 
 We coordinate disclosure with the reporter. Once a fix is ready we publish it in
 a release and credit you unless you ask us not to.
 
-## Supported Versions
+## Upstream supported versions
 
 coop ships as a rolling release. Only the latest release receives security
 fixes. Fixes land on `main` and go out in the next tagged release; there are no
@@ -38,7 +45,7 @@ attestation.
 ## Scope
 
 coop provisions isolated virtual machines — Firecracker microVMs on Linux, Lima
-VMs on macOS — to run coding agents such as Claude Code and Codex. **The
+VMs or the opt-in Apple Containerization runtime on macOS — to run coding agents such as Claude Code and Codex. **The
 security boundary is the VM.** coop's job is to stand that boundary up and hand
 work to it without weakening it.
 
