@@ -6,7 +6,7 @@
 
 # Swift proxy acceptance map
 
-Audit date: 2026-09-27. Contract: [approved specification](../../coop-proxy-swift-port-spec.md).
+Audit date: 2026-09-27. Contract: [approved specification](swift-proxy-spec.md).
 This is a requirement/evidence map, **not a completion declaration**. The
 [progress ledger](swift-proxy-progress.md) contains individual commands, faults,
 results, and limits. Historical test results are not substitutes for the final

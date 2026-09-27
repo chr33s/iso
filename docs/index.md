@@ -29,6 +29,8 @@ preserve historical experiments; the acceptance map identifies outstanding gates
   - [`apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
     its mutation invariants, disk-update recovery, per-sandbox locking, and
     maintenance image.
+  - [`swift-proxy-spec.md`](design/swift-proxy-spec.md): approved Swift proxy
+    contract and acceptance requirements;
   - [`swift-proxy-acceptance.md`](design/swift-proxy-acceptance.md): Swift proxy
     requirement/evidence map, remaining decisions, and cutover gates;
     [`swift-proxy-progress.md`](design/swift-proxy-progress.md) records the

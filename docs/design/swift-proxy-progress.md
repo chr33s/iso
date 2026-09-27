@@ -1,7 +1,6 @@
 # Swift proxy implementation progress
 
-The governing specification is `coop-proxy-swift-port-spec.md` at the repository
-root. This record tracks implementation evidence; it does not replace or narrow
+The governing specification is [the Swift proxy specification](swift-proxy-spec.md). This record tracks implementation evidence; it does not replace or narrow
 the specification. Swift is now the sole credential-proxy implementation in
 `coop-proxy/`; the Rust host CLI remains. Entries below are chronological
 historical evidence, including the removed Rust implementation and the former
