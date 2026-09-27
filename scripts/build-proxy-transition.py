@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build local macOS Swift proxy artifacts beside an apple-container coop binary.
+"""Build a local macOS coop candidate with the Apple backend and Swift proxy.
 
 Swift is the only proxy implementation. This does not install or publish releases.
 """
@@ -41,7 +41,7 @@ def source_state(expected_revision=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", action="store_true")
-    parser.add_argument("--archive", type=Path, help="write a local Apple-backend transition tarball")
+    parser.add_argument("--archive", type=Path, help="write a local Apple-backend candidate tarball")
     parser.add_argument("--include-runtime", action="store_true", help="include the signed coop-sandbox runtime")
     parser.add_argument("--expected-revision", help="require this exact clean Git revision before and after building")
     parser.add_argument("--sign", action="store_true",
@@ -128,18 +128,18 @@ def write_archive(args, destination, configuration, revision, dirty):
         staged = Path(staging) / "archive.tar.gz"
         with tarfile.open(staged, "w:gz") as bundle:
             for name in names:
-                bundle.add(destination / name, arcname=f"coop-proxy-transition/{name}", recursive=False)
-            bundle.add(ROOT / "LICENSE", arcname="coop-proxy-transition/LICENSE", recursive=False)
+                bundle.add(destination / name, arcname=f"coop/{name}", recursive=False)
+            bundle.add(ROOT / "LICENSE", arcname="coop/LICENSE", recursive=False)
             for name, content in [
                 ("SHA256SUMS", "".join(checksums).encode()),
                 ("BUILD.json", (json.dumps(manifest, indent=2) + "\n").encode()),
             ]:
-                entry = tarfile.TarInfo(f"coop-proxy-transition/{name}")
+                entry = tarfile.TarInfo(f"coop/{name}")
                 entry.size = len(content)
                 entry.mode = 0o644
                 bundle.addfile(entry, io.BytesIO(content))
         os.replace(staged, archive)
-    print(f"Local transition archive: {archive}")
+    print(f"Local candidate archive: {archive}")
 
 
 if __name__ == "__main__":

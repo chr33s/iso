@@ -2,12 +2,17 @@
 
 How a `coop` release is cut, and what to check before cutting one.
 
+**Supported host and release target: macOS 27+ on Apple Silicon
+(`aarch64-apple-darwin`) only.** Linux guests remain supported. Linux/Firecracker
+host failures are outside acceptance scope.
+
 ## Fork distribution status
 
 The installer, updater, and repository provenance checks target `chr33s/coop`.
 Release tags must point to commits reachable from the `swift` branch. macOS
 artifacts use `apple-container` and bundle the signed `coop-sandbox` runtime
-and Swift `coop-proxy`; Linux artifacts retain Firecracker. Lima source builds
+and Swift `coop-proxy`. Linux artifacts are outside the intended release
+channel. Lima source builds
 refuse self-update because the macOS release uses a different backend.
 
 This configures the channel; no hosted candidate or fork release has been
@@ -15,9 +20,19 @@ published or verified as part of this change. Build from source until those
 gates pass. Hosted attestation and remaining acceptance gates are tracked in
 [the acceptance map](docs/design/swift-proxy-acceptance.md).
 
-## How the automation works
+## Automation alignment still required
 
-- **`ci.yml`** runs on pushes to `swift` and `swift` and on every PR: `fmt --check`, `clippy -D warnings`,
+The checked-in release matrix and preflight still include Linux targets, and
+CI retains Linux jobs. These are inherited implementation details, not the
+fork’s supported-host policy. Align the release matrix, installer platform
+selection, CI gates, and preflight with macOS 27+ before the next release.
+A Linux runner may still be useful for platform-neutral checks; it does not
+create a Linux host support obligation. Do not treat a failed required GitHub
+job as passing: update the configured gates to match this policy.
+
+## Current automation (includes inherited Linux jobs)
+
+- **`ci.yml`** runs on pushes to the configured branches and on every PR: `fmt --check`, `clippy -D warnings`,
   `cargo test --workspace`, the preflight/probe regression tests, Linux bridge
   isolation, `integration-proxy-forward.sh`, `integration-install.sh`, `integration-update.sh`,
   `integration-uninstall.sh`, the macOS 27 Swift proxy package/process gates,
@@ -37,6 +52,54 @@ gates pass. Hosted attestation and remaining acceptance gates are tracked in
 So pushing the tag is the release. Everything below is about making sure that
 push succeeds and ships something correct.
 
+## Candidate download and verification
+
+Run the **Release candidate** workflow (`.github/workflows/candidate.yml`)
+against `swift`. Its downloadable artifact is
+`coop-candidate-<commit>-aarch64-apple-darwin`, containing:
+
+- `coop-<commit>-aarch64-apple-darwin.tar.gz`
+- `SHA256SUMS`
+- `attestations.jsonl`
+
+After unzipping the GitHub artifact, enter its directory. Set `REVISION` to the
+full commit SHA from the workflow run, then verify before extracting:
+
+```bash
+REVISION="FULL_COMMIT_SHA_FROM_WORKFLOW_RUN"
+ARCHIVE="coop-${REVISION}-aarch64-apple-darwin.tar.gz"
+shasum -a 256 -c SHA256SUMS
+gh attestation verify "$ARCHIVE" \
+  --repo chr33s/coop \
+  --bundle attestations.jsonl \
+  --signer-workflow chr33s/coop/.github/workflows/candidate.yml \
+  --source-ref refs/heads/swift \
+  --source-digest "$REVISION"
+```
+
+After both checks succeed, extract into a fresh directory and check the bundle:
+
+```bash
+(
+set -e
+mkdir candidate
+tar -xzf "$ARCHIVE" -C candidate
+cd candidate/coop
+shasum -a 256 -c SHA256SUMS
+for binary in coop coop-proxy coop-sandbox; do
+  codesign --verify --strict "$binary"
+done
+cat BUILD.json
+./coop --version
+./coop-sandbox version
+)
+```
+
+The manifest must match the expected commit, with `source_dirty: false`,
+`local_build: false`, and `includes_runtime: true`. All three binaries stay
+together. Earlier downloads retain their original archive layout and signer
+workflow identity; use those original identities when verifying old artifacts.
+
 ## macOS signing
 
 The `sign-macos` job in `release.yml` runs
@@ -49,7 +112,7 @@ to Apple's notary service, and fails the release unless notarization is
 `xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled ticket,
 so Gatekeeper checks notarization online on first launch.
 
-`swift-candidate.yml` signs the same way through
+`candidate.yml` signs the same way through
 `scripts/build-proxy-transition.py --sign`, which signs before writing the
 archive's `SHA256SUMS`. The builder strips the signing secrets from every
 cargo and swift subprocess, so only the signing script sees them.
@@ -79,7 +142,7 @@ environment before tagging.
 | Version ↔ lock ↔ CHANGELOG ↔ tag agreement | | ✓ | |
 | Release builds (3 targets) | native only | ✓ (per installed toolchain) | |
 | Formal verification (`cargo kani`) | | ✓ (if installed) | |
-| Full VM integration, both platforms | | ✓ (local + 1 remote) | pick remote host |
+| Supported macOS VM integration | | inherited runner needs alignment | Apple runtime/proxy; Lima for shared changes |
 | Mutation testing (`--mutants`) | | opt-in | when logic changed |
 | Fuzzing (`--fuzz`) | | opt-in | when a parser changed |
 
@@ -110,16 +173,20 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    ```
 
    A successful exit with warnings is incomplete validation: resolve skipped
-   tools, targets, and platform gates before tagging.
+   tools and supported macOS gates before tagging. Linux-only requirements
+   in this inherited script need removal as described above.
 
-   The full VM suite runs on **this machine** (one platform) plus **one remote
-   host** you give for the other platform — so run the preflight from a
-   macOS/Lima box and point `--remote` at a Linux/Firecracker box, or vice
-   versa. It prompts for the host, or pass it up front:
+   Run the Apple runtime and proxy VM gates on macOS 27+ Apple Silicon:
 
    ```bash
-   ./scripts/preflight-release.sh --remote you@other-platform-box
+   ./tests/integration-apple-sandbox.sh
+   python3 tests/integration-proxy-transition.py --controlled-upstream
    ```
+
+   Also run `./tests/run-integration.sh --full` on macOS for shared changes
+   affecting the Lima source build. Dedicated live-provider and guest-agent
+   tests remain required for proxy acceptance; see [testing](docs/testing.md).
+   No Linux/Firecracker VM gate or remote Linux host is required.
 
 6. **Run the deep checks when the diff warrants it** (these are slow and not CI
    gates — see `AGENTS.md`):
@@ -129,7 +196,7 @@ CI can't run the full VM integration suite or the extra-toolchain checks
      (`parse_repo_slug`, `jsonc_to_json`, `config_load`).
 
    ```bash
-   ./scripts/preflight-release.sh --remote you@other-platform-box --mutants --fuzz
+   ./scripts/preflight-release.sh --mutants --fuzz
    ```
 
 7. **Open the bump PR** (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`), get it
@@ -178,19 +245,11 @@ Once `vX.Y.Z` is pushed, that version is spent: you cannot move or re-tag it and
 re-run the release. A red `release.yml` run means you **bump to the next patch
 version and cut a fresh release** — go back to step 2 with `vX.Y.(Z+1)`.
 
-This is why the preflight matters: `release.yml` re-runs CI and then builds the
-workspace for three targets, and a failure in *either* burns the version. Run
-`./scripts/preflight-release.sh` before every tag — it mirrors the CI checks
-**and** builds the host CLI for release targets locally (for each
-rustup target you have installed; pass `--install-targets` to `rustup target add` any that are
-missing — the cross-linker tools must already be installed), so build failures
-can be caught before the tag. The release workflow uses
-native macOS ARM64, Linux x86_64, and Linux ARM64 runners; Linux needs
-`musl-tools`, with `musl-gcc` as the Rust linker; macOS needs Xcode 27
-for the Swift proxy (see `release.yml`). Cross-building locally
-also needs a C toolchain and linker configured for each target; installing the
-Rust target alone is insufficient. Check any targets skipped by the preflight
-on matching hosts before tagging.
+The release must pass the configured checks and build/sign/notarize the
+macOS ARM64 bundle with Xcode 27. Align the inherited three-target preflight
+and workflow first; Linux cross-compilation is not a release requirement for
+this fork. Then verify the hosted artifact’s checksum, source revision,
+provenance, signatures, and execution on a supported macOS host.
 
 Do **not** attempt `git push origin :refs/tags/vX.Y.Z` to delete and reuse a
 tag — immutable releases reject it, and reusing a spent version is not allowed.

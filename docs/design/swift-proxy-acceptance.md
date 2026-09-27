@@ -12,6 +12,15 @@ This is a requirement/evidence map, **not a completion declaration**. The
 results, and limits. Historical test results are not substitutes for the final
 whole-branch review and required platform gates.
 
+## Supported host scope
+
+The user confirmed **macOS 27+ Apple Silicon hosts only**. Linux guest VMs
+remain in scope. Linux/Firecracker host testing and its four historical
+lifecycle failures are outside acceptance; they are not blockers for this
+fork. Earlier cross-platform requirements are superseded by this decision.
+Inherited workflow/installer/preflight Linux targets still need alignment;
+see [release policy](../../RELEASING.md#automation-alignment-still-required).
+
 ## Required next decisions and gates
 
 | Requirement | Current evidence | What remains |
@@ -23,7 +32,7 @@ whole-branch review and required platform gates.
 | §16 phase 6: Swift default | Host resolves only `coop-proxy`; no selector or fallback remains. | User authorized immediate cutover. Validate Swift-only packaging/lifecycle; hosted distribution remains pending. |
 | §16 phase 7 / §20: observation and Rust removal | User waived observation and authorized deletion. Rust proxy crate, dependencies, and selector removed; Swift retains language-neutral fixtures. | Other acceptance gates remain open independently of deletion. |
 | §21 validation: final review | Independent whole-branch correctness/tests and security/API reviews of `2e1bf205` → `daca9ffd`, followed by release-channel delta reviews, found no surviving findings. | Review remains tied to that snapshot and the reviewed working delta; later changes require another review. External acceptance gates remain open. |
-| Repository platform gates | Final standard Lima run at `daca9ffd`: 250 passed, 0 failed, 8 skipped across 52 phases. Controlled Apple gate passed. Prior Firecracker run had four lifecycle failures. | Firecracker shutdown durability and repaired-filesystem exit handling remain separate lifecycle follow-ups; affected source is unchanged from the approved baseline. Linux gate is not green. Full-only Lima tests were not run. |
+| Repository platform gates | Final standard Lima run at `daca9ffd`: 250 passed, 0 failed, 8 skipped across 52 phases. Controlled Apple gate passed. Prior Firecracker run had four lifecycle failures. | Firecracker failures are historical and outside this fork’s macOS-only acceptance scope. Required gates cover the Apple runtime/proxy and applicable macOS shared behavior. Full-only Lima tests were not run. |
 
 ## Specification coverage
 

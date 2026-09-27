@@ -1,3 +1,7 @@
+> **Current fork support:** macOS 27+ Apple Silicon hosts only. Any lower
+> macOS API/deployment floor in this design record is historical or component
+> detail; Linux guests remain in scope.
+
 # Experiment Specification: Stock Apple Containers vs Direct Containerization for coop
 
 **Status:** Run and concluded: results and decision in [`apple-sandbox-runtime.md`](apple-sandbox-runtime.md); Track B's checks live on as [`tests/integration-apple-sandbox.sh`](../../tests/integration-apple-sandbox.sh)

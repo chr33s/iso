@@ -1,3 +1,7 @@
+> **Current fork support:** macOS 27+ Apple Silicon hosts only. Any lower
+> macOS API/deployment floor in this design record is historical or component
+> detail; Linux guests remain in scope.
+
 # Design: Apple sandbox runtime — stock containers vs `containerization` vs a machine fork
 
 **Status:** decided and implemented (`USE_DIRECT_CONTAINERIZATION`) · **Scope:** the VM runtime behind the `apple-container` build; the coop-side backend contract is in [`backends.md`](../backends.md) and [`trust-model.md`](../trust-model.md)

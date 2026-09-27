@@ -1,5 +1,9 @@
 # Running Multiple Instances
 
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
 coop runs multiple VM instances simultaneously. Each instance gets its own name, disk, network identity, and lifecycle.
 
 ## Named vs. auto-named instances

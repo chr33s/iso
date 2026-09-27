@@ -2,7 +2,8 @@
 
 A fork of [Trail of Bits’ coop](https://github.com/trailofbits/coop) for running
 Claude Code and Codex in isolated VMs, with a focused Swift credential proxy
-and an optional Apple Containerization runtime.
+and an Apple Containerization runtime. **Supported hosts: macOS 27+ on Apple
+Silicon only.** Linux runs inside the guest VMs.
 
 ## Why this fork?
 
@@ -15,8 +16,9 @@ dependencies, and platform combinations that need security review and maintenanc
 The aim is a smaller attack surface and fewer places for vulnerabilities to
 arise; it is not a guarantee of fewer vulnerabilities or complete isolation.
 
-The host CLI remains Rust. Linux/Firecracker and macOS/Lima remain available;
-credential-proxy mode requires macOS 27+. The Apple runtime is opt-in through
+The host CLI remains Rust. macOS/Lima remains a source-build option;
+Linux/Firecracker host support is outside this fork’s scope. The Apple runtime
+is selected through
 `apple-container`. The root Swift packages are [`coop-proxy/`](coop-proxy/) and
 [`coop-sandbox/`](coop-sandbox/). See the
 [acceptance record](docs/design/swift-proxy-acceptance.md) for remaining validation
@@ -46,11 +48,16 @@ Then build the VM template image:
 coop setup
 ```
 
-On Linux, `coop setup` also installs Firecracker and fetches a guest kernel. On macOS, install Lima first (`brew install lima`) — setup fails without it. coop is tested on macOS arm64 (Apple Silicon) and Linux x86_64; Linux arm64 builds are available but untested. Each backend has its own host requirements — see [Prerequisites](docs/getting-started.md#prerequisites).
+The source command above builds the Lima variant and requires Lima
+(`brew install lima`). The release variant uses the Apple backend; see
+[Prerequisites](docs/getting-started.md#prerequisites) and
+[Apple backend setup](docs/backends.md#macos--apple-sandbox-opt-in). Both require
+a macOS 27+ Apple Silicon host.
 
 The release channel targets `chr33s/coop`, with tagged commits from `swift`.
 macOS release archives use the Apple backend and include `coop-proxy` and
-`coop-sandbox`; Linux archives use Firecracker. Lima builds remain available
+`coop-sandbox`. Linux artifacts are outside the release scope; inherited
+automation still needs to be aligned (see [release status](RELEASING.md)). Lima builds remain available
 from source and refuse self-update to avoid changing backends. Until the first
 verified fork release is published, install this fork from source.
 See [release status](RELEASING.md) and [`coop update`](docs/commands.md#update).

@@ -1,6 +1,10 @@
 # Command Reference
 
-coop creates isolated VM environments for running Claude Code and Codex. It runs Firecracker microVMs on Linux and Lima VMs on macOS, selecting the backend automatically based on platform.
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
+coop creates isolated VM environments for running Claude Code and Codex. Supported hosts are macOS 27+ Apple Silicon. Release builds use the Apple backend; default source builds use Lima.
 
 ## Global Flags
 

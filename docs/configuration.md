@@ -1,5 +1,9 @@
 # Configuration Reference
 
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
 coop reads configuration from `~/.coop/config.toml` by default (`~/.coop-apple/config.toml` in the `apple-container` build). Pass `--config <path>` to use a different file. Files with a `.json` extension are parsed as JSON for backward compatibility.
 
 If the file does not exist, coop falls back to built-in defaults. A valid minimal config is an empty file.
@@ -345,8 +349,8 @@ materialized into guest config.
 
 ## `proxy` section
 
-Credential-proxy mode requires macOS 27+ (Lima or Apple Container). The Swift
-proxy is unavailable on Linux; other Firecracker features remain supported.
+Credential-proxy mode requires macOS 27+ (Lima or Apple Container).
+Linux hosts, including retained Firecracker features, are outside support scope.
 
 `[proxy.anthropic]` and `[proxy.openai]` declare host-side
 credential-injecting upstreams for Claude Code and Codex. When an upstream is

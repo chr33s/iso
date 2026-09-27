@@ -1,23 +1,19 @@
 # Getting Started
 
-coop runs Claude Code and Codex inside isolated virtual machines. On Linux, it spins up Firecracker microVMs backed by KVM. On macOS, it uses Lima with Apple's Virtualization.framework. Each VM gets its own filesystem, network stack, and Docker daemon. The VM is the isolation boundary; host workspace mounts and synchronization still expose the files you choose to share.
+coop runs Claude Code and Codex inside isolated Linux guest VMs on
+**macOS 27+ Apple Silicon hosts only**. Release builds use the Apple
+Containerization backend; Lima remains a source-build option.
 
 ## Prerequisites
 
-**macOS (Lima backend)**
+- macOS 27 or later on Apple Silicon (arm64).
+- Apple backend: stock Apple `container` service and guest kernel. See
+  [Apple backend setup](backends.md#macos--apple-sandbox-opt-in).
+- Lima source builds: [Lima](https://github.com/lima-vm/lima), with `limactl`
+  on `PATH` (`brew install lima`). Rosetta 2 is needed for x86_64 guests.
+- Source builds: pinned Rust toolchain and Xcode 27 for the Swift packages.
 
-- [Lima](https://github.com/lima-vm/lima) installed with `limactl` on your `PATH`
-  (`brew install lima`) — `coop setup` fails without it
-- Apple Silicon (arm64)
-- Rosetta 2 for x86_64 guests on Apple Silicon: `softwareupdate --install-rosetta`
-
-**Linux (Firecracker backend)**
-
-- KVM access (`/dev/kvm` must exist and be writable by your user)
-- x86_64 or arm64 architecture (x86_64 is the primary test target; arm64 builds are available but untested)
-- `sudo` privileges (Firecracker uses jailer and TAP networking)
-- `curl`, `tar`, `e2fsprogs` (for `mkfs.ext4`, `resize2fs`)
-- Setup also checks for `setfacl`, `unsquashfs`, `ssh`, and `rsync`. Automatic installation of missing tools requires `apt-get`; on other hosts, install the packages providing the reported tools manually and rerun `coop setup`. See [backend prerequisites](backends.md#prerequisites-1).
+Linux/Firecracker hosts and macOS 26 are outside this fork’s support scope.
 
 ## Install
 
@@ -25,7 +21,7 @@ Until a verified fork release is published, follow [Build from source](#build-fr
 The configured release channel is `chr33s/coop`, built from tagged commits on
 `swift`. Its macOS archives use the Apple backend (macOS 27+) and install
 `coop`, `coop-proxy`, and `coop-sandbox` together; see [Apple prerequisites](backends.md).
-Linux archives use Firecracker. Once the channel has a verified release:
+Once the macOS channel has a verified release:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/chr33s/coop/swift/install.sh | bash
@@ -76,8 +72,7 @@ proxy_dir="$(swift build --package-path coop-proxy -c release --show-bin-path)"
 cp "$proxy_dir/coop-proxy-swift" target/release/coop-proxy
 ```
 
-Install `coop` and `coop-proxy` in the same directory. Linux supports the host
-CLI and Firecracker backend but no longer supports credential-proxy mode.
+Install `coop` and `coop-proxy` in the same directory. Linux host builds are outside this fork’s support scope.
 
 For the opt-in Apple backend, build with `--features apple-container` and
 install the runtime using `./scripts/build-coop-sandbox.sh`; see

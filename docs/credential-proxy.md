@@ -176,7 +176,7 @@ See [trust model](trust-model.md) for the accepted limitations.
 
 The Swift proxy requires **macOS 27+**, using either Lima or Apple Container for
 the guest. Linux credential-proxy mode is unavailable after removal of the Rust
-proxy; the Linux host CLI and Firecracker backend remain available. GitHub
+proxy; Linux hosts are outside this fork’s support scope. GitHub
 credentials are not supported by this proxy.
 
 ## Swift implementation
@@ -222,7 +222,7 @@ On Apple Silicon macOS 27+, build the Apple-backend host and Swift proxy:
 
 ```sh
 python3 scripts/build-proxy-transition.py
-python3 scripts/build-proxy-transition.py --release --include-runtime --archive /tmp/coop-swift.tar.gz
+python3 scripts/build-proxy-transition.py --release --include-runtime --archive /tmp/coop-candidate.tar.gz
 ```
 
 The SwiftPM product is named `coop-proxy-swift`; installation uses the stable
@@ -231,17 +231,17 @@ and `coop-proxy` beside one another in Cargo's
 output directory. `--include-runtime` adds the ad-hoc signed `coop-sandbox`.
 The archive includes LICENSE, per-binary SHA256SUMS, and BUILD.json with source
 revision, dirty state, backend, and minimum OS. Local checksums do not establish
-release provenance. The manual **Swift release candidate** workflow requires a
+release provenance. The manual **Release candidate** workflow requires a
 clean exact revision, verifies binary signatures, and attests its candidate
 archive. It has not yet been executed on GitHub.
 
 The `chr33s/coop` release workflow requires tagged commits from `swift` and
 packages the Apple host, Swift proxy, and signed runtime together on macOS.
-Linux archives contain only the host CLI. Installer and updater provenance
+Only macOS 27+ Apple Silicon hosts are supported. Inherited Linux release
+automation is outside the intended channel and still needs alignment. Installer and updater provenance
 checks pin `chr33s/coop`. Apple archives must include both companions; missing
 companions or obsolete `coop-proxy-rs`/`coop-proxy-swift` transition artifacts
-are rejected before replacement. Linux archives without companions preserve
-existing files. Verification precedes installation; companion replacements
+are rejected before replacement. Retained Linux installer behavior is historical and not an acceptance requirement. Verification precedes installation; companion replacements
 precede the host replacement. Lima source builds refuse self-update to avoid
 switching backends. Hosted candidate and release verification remain pending.
 

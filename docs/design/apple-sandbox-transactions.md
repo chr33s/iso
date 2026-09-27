@@ -1,3 +1,7 @@
+> **Current fork support:** macOS 27+ Apple Silicon hosts only. Any lower
+> macOS API/deployment floor in this design record is historical or component
+> detail; Linux guests remain in scope.
+
 # Design: Apple sandbox mutations — transactions, serialization, and maintenance
 
 **Status:** implemented (runtime 0.2.0, protocol 2) · **Scope:** `coop-sandbox` and `src/apple_container/`; the backend contract is in [`backends.md`](../backends.md), the security spec in [`trust-model.md`](../trust-model.md)

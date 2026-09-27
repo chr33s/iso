@@ -1,5 +1,9 @@
 # Trust model
 
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
 This is the engineering-facing trust model for `coop` — the authoritative list
 of trust boundaries, taint sources, and the invariants that hold the isolation
 together. The shared [`review`](../.agents/skills/review/SKILL.md) workflow
@@ -13,8 +17,8 @@ they don't introduce one.
 
 ## The core boundary: the VM
 
-**coop's isolation boundary is the guest VM itself** — a Firecracker microVM on
-Linux, a Lima VM (Apple Virtualization.framework) on macOS. The point of the
+**coop's isolation boundary is the Linux guest VM itself** — an Apple
+Containerization or Lima VM on a macOS 27+ Apple Silicon host. The point of the
 tool is to run AI coding agents (Claude Code, Codex) with broad autonomy
 *inside* that boundary, so the guest is deliberately permissive:
 

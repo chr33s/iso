@@ -3,8 +3,10 @@
 System-of-record map for `coop`. The root [`AGENTS.md`](../AGENTS.md) is the
 short navigational entrypoint; durable detail lives here.
 
-This is the `chr33s/coop` fork of Trail of Bits’ coop. The Rust host CLI retains
-Firecracker, Lima, and the opt-in Apple backend. The credential proxy is now
+This is the `chr33s/coop` fork of Trail of Bits’ coop. Supported hosts are
+**macOS 27+ on Apple Silicon only**; guests run Linux. The Rust host CLI uses
+the Apple backend for releases, with Lima available as a source-build option.
+Retained Firecracker code and historical documentation do not imply Linux host support. The credential proxy is now
 Swift-only (macOS 27+), in [`coop-proxy/`](../coop-proxy/); the Apple runtime is
 [`coop-sandbox/`](../coop-sandbox/). See the [fork motivation](../README.md#why-this-fork)
 and [source installation](getting-started.md#build-from-source). Design records
@@ -41,7 +43,7 @@ preserve historical experiments; the acceptance map identifies outstanding gates
 - [`getting-started.md`](getting-started.md) — install and first VM.
 - [`commands.md`](commands.md) — every `coop` subcommand.
 - [`configuration.md`](configuration.md) — `config.toml` reference.
-- [`backends.md`](backends.md) — Lima (macOS), Firecracker (Linux), and the opt-in Apple sandbox backend (`coop-sandbox` on `apple/containerization`).
+- [`backends.md`](backends.md) — macOS Lima and Apple sandbox backends, plus inherited Firecracker implementation notes (`coop-sandbox` on `apple/containerization`).
 - [`images-and-profiles.md`](images-and-profiles.md),
   [`workspaces.md`](workspaces.md), [`multi-instance.md`](multi-instance.md),
   [`devcontainer.md`](devcontainer.md), [`editor.md`](editor.md),

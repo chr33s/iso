@@ -1,5 +1,9 @@
 # Platform notes and gotchas
 
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
 Durable, non-obvious environment facts that repeatedly bite contributors. These
 are engineering notes, not user documentation — for user-facing backend setup
 see [`backends.md`](backends.md).

@@ -1,10 +1,14 @@
 # Architecture
 
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
 `coop` is a Rust CLI that orchestrates isolated VM environments for running AI
 coding agents (Claude Code, Codex). It manages the full VM lifecycle — setup,
 start, shell, stop, destroy, status, logs — behind platform backends:
 
-- **Linux** — Firecracker microVMs on KVM.
+- **Inherited, unsupported host** — Linux/Firecracker microVMs on KVM.
 - **macOS** — Lima VMs on Apple Virtualization.framework (`limactl`).
 - **macOS, opt-in** — `coop-sandbox` VMs on `apple/containerization`
   ([`coop-sandbox`](../coop-sandbox)), with the `apple-container`
@@ -72,7 +76,7 @@ is a thin shim calling `coop::run()`. Its unit and mutation tests target the
 library. The credential proxy is a separate Swift package targeting macOS 27+;
 Cargo builds and tests the host CLI only. Build/test the proxy with SwiftPM.
 The host resolves only `coop-proxy` beside its own executable. Linux proxy
-mode is unsupported; the Firecracker backend remains available without it.
+mode and Linux hosts are outside this fork’s support scope.
 
 ## The backend design
 
@@ -227,7 +231,7 @@ Hold these when changing the code; the review agents check for their violation:
    view; guest-authored data must not escalate into host code execution or
    filesystem escape. See [`trust-model.md`](trust-model.md).
 2. **Backend selection is compile-time.** Don't add a runtime backend enum;
-   keep shared code correct for both Firecracker and Lima.
+   keep shared code correct for the Apple and Lima macOS backends.
 3. **Liveness is a type, not a flag.** Route VM operations through
    `RunningInstance`/`StoppedInstance` and `boot_preflight`, not ad-hoc
    `if is_running` checks.

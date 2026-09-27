@@ -116,9 +116,9 @@ class CandidateSourceTests(unittest.TestCase):
                 self.assertTrue(archive.is_file(), "clean exact revision must package")
                 with tarfile.open(archive) as bundle:
                     self.assertEqual(set(bundle.getnames()), {
-                        "coop-proxy-transition/" + name for name in
+                        "coop/" + name for name in
                         ["coop", "coop-proxy", "coop-sandbox", "LICENSE", "SHA256SUMS", "BUILD.json"]})
-                    manifest = json.load(bundle.extractfile("coop-proxy-transition/BUILD.json"))
+                    manifest = json.load(bundle.extractfile("coop/BUILD.json"))
                     self.assertEqual(manifest["default_proxy"], "swift")
                 self.assertEqual((binaries / "coop-proxy").read_bytes(), b"fixture Swift binary")
                 self.assertFalse((binaries / "coop-proxy-swift").exists())
@@ -131,12 +131,12 @@ class CandidateSourceTests(unittest.TestCase):
                 transition.main()
                 self.assertTrue(calls[-1][0].endswith("macos-sign-notarize.sh"))
                 with tarfile.open(archive) as bundle:
-                    sums = bundle.extractfile("coop-proxy-transition/SHA256SUMS").read().decode()
+                    sums = bundle.extractfile("coop/SHA256SUMS").read().decode()
                     for name in ["coop", "coop-proxy", "coop-sandbox"]:
-                        content = bundle.extractfile(f"coop-proxy-transition/{name}").read()
+                        content = bundle.extractfile(f"coop/{name}").read()
                         self.assertTrue(content.startswith(b"signed "), f"{name} archived unsigned")
                         self.assertIn(f"{hashlib.sha256(content).hexdigest()}  {name}\n", sums)
-                    manifest = json.load(bundle.extractfile("coop-proxy-transition/BUILD.json"))
+                    manifest = json.load(bundle.extractfile("coop/BUILD.json"))
                     self.assertTrue(manifest["developer_id_signed"])
                 self.assertEqual((binaries / "coop-proxy").read_bytes(), b"fixture Swift binary")
                 arguments.remove("--sign")

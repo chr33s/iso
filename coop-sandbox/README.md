@@ -24,7 +24,9 @@ swift test --package-path coop-sandbox --no-parallel
 ```
 
 The binary needs only the `com.apple.security.virtualization` entitlement and is
-signed ad hoc. Requires Xcode (Swift 6.2+) and macOS 26+ on Apple Silicon.
+signed ad hoc. This fork requires macOS 27+ on Apple Silicon and Xcode 27. The package’s
+underlying API/deployment floor remains macOS 26; that is not a supported-host
+claim for the complete fork.
 
 ## CLI (protocol 2)
 

@@ -1,4 +1,4 @@
-name: Swift release candidate
+name: Release candidate
 
 on:
   workflow_dispatch:
@@ -31,7 +31,7 @@ jobs:
 
       # The builder strips the signing secrets from every cargo/swift
       # subprocess; only scripts/macos-sign-notarize.sh receives them.
-      - name: Build, sign, and notarize same-revision Apple transition candidate
+      - name: Build, sign, and notarize same-revision Apple candidate
         env:
           REVISION: ${{ github.sha }}
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -43,14 +43,14 @@ jobs:
         run: |
           python3 scripts/build-proxy-transition.py --release --include-runtime --sign \
             --expected-revision "$REVISION" \
-            --archive "$RUNNER_TEMP/coop-proxy-transition-${REVISION}-aarch64-apple-darwin.tar.gz"
-          echo "TARBALL=$RUNNER_TEMP/coop-proxy-transition-${REVISION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
+            --archive "$RUNNER_TEMP/coop-${REVISION}-aarch64-apple-darwin.tar.gz"
+          echo "TARBALL=$RUNNER_TEMP/coop-${REVISION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
 
       - name: Check archive contents and signatures
         run: |
-          mkdir "$RUNNER_TEMP/proxy-candidate"
-          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/proxy-candidate"
-          cd "$RUNNER_TEMP/proxy-candidate/coop-proxy-transition"
+          mkdir "$RUNNER_TEMP/coop-candidate"
+          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/coop-candidate"
+          cd "$RUNNER_TEMP/coop-candidate/coop"
           shasum -a 256 -c SHA256SUMS
           for binary in coop coop-proxy coop-sandbox; do
             test -x "$binary"
@@ -79,7 +79,7 @@ jobs:
       # or change the stable install/update channel.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: proxy-transition-${{ github.sha }}-aarch64-apple-darwin
+          name: coop-candidate-${{ github.sha }}-aarch64-apple-darwin
           path: |
             ${{ env.TARBALL }}
             ${{ runner.temp }}/SHA256SUMS

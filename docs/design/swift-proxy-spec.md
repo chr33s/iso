@@ -1,3 +1,9 @@
+> **Host scope clarification:** This fork supports macOS 27+ Apple Silicon
+> hosts only; guest VMs still run Linux. Earlier requirements to pass Linux/
+> Firecracker host gates are superseded. Historical failures remain recorded
+> as evidence, not current acceptance blockers. Applicable macOS VM, live
+> provider/agent, review, and release-provenance gates remain required.
+
 > **2026-09-27 user decision:** Remove the Rust proxy now and waive the
 > observation period. This supersedes the transition selector, dual-binary
 > packaging, rollback retention, and pre-deletion sequencing below. Swift is

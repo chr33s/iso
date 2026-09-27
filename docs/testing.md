@@ -13,17 +13,19 @@ VM integration uses two scripts:
 - `tests/run-integration.sh` — the runner. Builds, deploys (if remote), and
   invokes the test suite.
 
-Run on **both platforms** before every commit:
+Supported host: **macOS 27+ Apple Silicon only**. Run the applicable macOS
+integration suites for guest-visible/lifecycle changes. Linux guests are in
+scope; Linux/Firecracker host failures are not acceptance blockers. Retained
+Linux CI checks and remote-runner options are inherited automation.
+
+For shared changes and the Lima source-build option:
 
 ```bash
 # Local (macOS/Lima) — builds and runs automatically
 ./tests/run-integration.sh
 
-# Remote (Linux/Firecracker) — detects remote arch, cross-compiles, copies, runs
-./tests/run-integration.sh --remote user@remote-host
-
 # With options (forwarded to integration.sh)
-./tests/run-integration.sh --remote user@remote-host --full
+./tests/run-integration.sh --full
 ./tests/run-integration.sh --profile python,node --name my-test
 ```
 
@@ -43,6 +45,7 @@ boot session through `post_start` for fresh `up`, `start`, and a stopped-project
 `up`, checks that model credentials still arrive, and witnesses normal GitHub
 forwarding on an intervening invocation without the flag.
 
+For Apple runtime changes, run `./tests/integration-apple-sandbox.sh`.
 For the macOS 27+ Swift proxy transition, build the local Swift artifacts and
 run the dedicated Apple sandbox gate:
 
@@ -280,7 +283,7 @@ PID namespaces. No user SSH configuration or keys are used. Namespace teardown
 removes all children and temporary files on success, failure, or timeout.
 Linux CI and release preflight run this gate explicitly; ordinary unit tests
 mark it ignored, and macOS preflight reports it as unrun. This host test does
-not replace the Firecracker and Lima VM integration gates.
+not replace the applicable Apple and Lima VM integration gates on macOS 27+.
 
 ## Apple sandbox backend (macOS, opt-in)
 

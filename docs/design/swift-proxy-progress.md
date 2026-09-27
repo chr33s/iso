@@ -1,3 +1,9 @@
+> **Host scope clarification:** This fork supports macOS 27+ Apple Silicon
+> hosts only; guest VMs still run Linux. Earlier requirements to pass Linux/
+> Firecracker host gates are superseded. Historical failures remain recorded
+> as evidence, not current acceptance blockers. Applicable macOS VM, live
+> provider/agent, review, and release-provenance gates remain required.
+
 # Swift proxy implementation progress
 
 The governing specification is [the Swift proxy specification](swift-proxy-spec.md). This record tracks implementation evidence; it does not replace or narrow
@@ -2502,3 +2508,33 @@ Remaining external gates: dedicated live-provider credential references and
 approved models; hosted same-revision candidate/attestation execution and
 artifact verification; and a published, verified fork release. No push, tag,
 workflow dispatch, or publication was performed in this work.
+
+
+## Host support decision: macOS 27+ only
+
+The user clarified that this fork is macOS-host-only and selected macOS 27+
+as the minimum. This applies to the whole fork, not only credential-proxy
+mode. Apple Silicon is the release architecture; Linux remains the guest OS.
+The four historical Firecracker lifecycle failures do not block acceptance.
+No Linux rerun or lifecycle fix is required to validate the Apple candidate.
+
+Documentation and contributor/agent gates now reflect that scope. Retained
+Linux source and implementation notes are not a support commitment. This was
+a documentation change: workflow matrices, installer platform selection, and
+preflight still need alignment before the next release. Standalone runtime
+API/deployment compatibility with macOS 26 does not lower the fork’s macOS 27
+host requirement. Live provider/agent success and artifact provenance remain
+independent acceptance requirements.
+
+
+## Candidate artifact naming
+
+The candidate workflow is now `.github/workflows/candidate.yml`, displayed as
+**Release candidate**. New archives are named
+`coop-<commit>-aarch64-apple-darwin.tar.gz` and contain a `coop/` directory.
+The downloadable GitHub artifact is
+`coop-candidate-<commit>-aarch64-apple-darwin`. The existing builder command
+`scripts/build-proxy-transition.py` now writes this layout. Historical archive
+names and workflow identities above describe the artifacts produced then;
+previous downloads and attestations are unchanged. New attestation verification
+must pin `.github/workflows/candidate.yml` as the signer workflow.

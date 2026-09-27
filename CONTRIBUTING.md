@@ -4,8 +4,8 @@ Thanks for your interest in contributing to coop. This document covers how to
 build the project, run its tests, and submit changes.
 
 coop is a Rust CLI that orchestrates disposable VMs for running agent CLIs —
-Firecracker microVMs on Linux, Lima or the opt-in Swift `coop-sandbox` runtime
-on macOS. The Swift-only credential proxy lives in `coop-proxy/`; the runtime
+Linux guests through Lima or the Swift `coop-sandbox` runtime
+on macOS 27+ Apple Silicon hosts only. The Swift-only credential proxy lives in `coop-proxy/`; the runtime
 lives in `coop-sandbox/`. Because it drives real
 virtualization backends, some tests only run on a host with the matching
 backend. The sections below note where that applies.
@@ -27,10 +27,11 @@ backend. The sections below note where that applies.
   installing a floating `latest`. CI pins its own copies of taplo and cargo-deny
   in `.github/workflows/ci.yml`, so keep those in sync when bumping.
 - To run the full integration suite you need a working backend:
-  - **macOS**: Apple Silicon with [Lima](https://github.com/lima-vm/lima)
+  - **macOS 27+**: Apple Silicon with [Lima](https://github.com/lima-vm/lima)
     (`limactl` on your PATH).
-  - **Linux**: x86_64 or arm64 with KVM access (`/dev/kvm`), `sudo`, and
-    `curl`, `tar`, `e2fsprogs`.
+  - **Apple backend**: stock Apple `container` service and guest kernel; see
+    [backend setup](docs/backends.md#macos--apple-sandbox-opt-in).
+  Linux/Firecracker hosts are outside this fork’s support and acceptance scope.
 
   See [docs/getting-started.md](docs/getting-started.md#prerequisites) for the
   full backend requirements.
@@ -100,15 +101,16 @@ The integration suite exercises the full VM lifecycle (setup → start → statu
 → shell → guest environment → Docker → stop → destroy). It is too slow for the
 pre-commit hooks, so run it before submitting a change.
 
-Run it on **both platforms** — macOS/Lima and Linux/Firecracker — because the
-two backends share an abstraction but exercise different code paths:
+Run the applicable suites on **macOS 27+ Apple Silicon**. Apple runtime and
+proxy changes require their dedicated VM gates; shared changes also need Lima:
 
 ```bash
 # Local (whichever backend this host provides) — builds and runs
 ./tests/run-integration.sh
 
-# Remote host running the other backend — cross-compiles, copies, and runs
-./tests/run-integration.sh --remote user@remote-host
+# Apple runtime and controlled proxy VM gates
+./tests/integration-apple-sandbox.sh
+python3 tests/integration-proxy-transition.py --controlled-upstream
 ```
 
 When you add a command or a guest-visible change, consider whether it needs a
@@ -150,7 +152,7 @@ detail, including the Rust patterns reviewers look for.
 
 1. Branch from the latest `main`.
 2. Make your change, keeping commits focused.
-3. Run the pre-commit hooks and the integration suite on both platforms.
+3. Run the pre-commit hooks and the applicable macOS integration suites.
 4. Open a pull request describing what the change does. Describe the code as it
    stands — not discarded approaches or prior iterations — and use plain,
    factual language.

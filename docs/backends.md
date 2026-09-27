@@ -1,6 +1,11 @@
 # Platform Backends
 
-coop selects its VM backend at compile time. macOS builds use Lima. Linux builds use Firecracker. A macOS build with the opt-in `apple-container` feature uses coop-sandbox VMs on Apple's `containerization` package instead of Lima (see [macOS / Apple sandbox](#macos--apple-sandbox-opt-in)). The binary determines the backend; there is no runtime override.
+> **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
+> guests remain supported. Retained Linux/Firecracker host details describe
+> inherited implementation, not a supported host or a release acceptance gate.
+
+coop selects its VM backend at compile time. Default source builds use Lima. Retained Linux builds use Firecracker, outside
+this fork’s supported-host scope. A macOS build with the opt-in `apple-container` feature uses coop-sandbox VMs on Apple's `containerization` package instead of Lima (see [macOS / Apple sandbox](#macos--apple-sandbox-opt-in)). The binary determines the backend; there is no runtime override.
 
 All backends expose the same CLI commands and produce the same guest environment: Ubuntu with Docker, GitHub CLI, Claude Code, and Codex pre-installed. The backends differ in how they create and manage the VM underneath.
 
@@ -59,7 +64,8 @@ Each instance is one Linux VM running systemd from its own ext4 disk, on its own
 
 ### Prerequisites
 
-- Apple Silicon, macOS 26 or later (vmnet's per-network API). Validated on macOS 27.0.
+- Apple Silicon, macOS 27 or later. The runtime’s underlying vmnet API has a
+  macOS 26 floor, but this fork’s supported host minimum is macOS 27.
 - `coop-sandbox`, built with `scripts/build-coop-sandbox.sh` (Xcode with Swift 6.2+ required).
 - Stock Apple `container` 1.4.1 or later, with its service running (`container system start`). coop uses it only to **build** images (`container build`) and to supply the guest kernel it installs; instances never run on it. coop never starts, stops, or restarts that service.
 
@@ -209,7 +215,7 @@ Validated on macOS 27.0 (Apple M5 Max) with coop-sandbox 0.1.0 and containerizat
 
 Not covered: other macOS releases or kernels, and live-provider API calls.
 
-## Linux / Firecracker
+## Inherited Linux / Firecracker
 
 The Firecracker backend runs [Firecracker microVMs](https://firecracker-microvm.github.io/) with KVM hardware virtualization. Each instance is a lightweight VM with its own rootfs, TAP network device, and Firecracker process.
 

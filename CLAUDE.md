@@ -7,7 +7,9 @@ under [`.claude/commands/`](.claude/commands/) invoke those workflows.
 <!-- The remainder is retained as a standalone fallback for clients that do
 not follow the shared entrypoint link. Keep normative changes in AGENTS.md. -->
 
-This is the `chr33s/coop` fork. The host CLI remains Rust; the Swift-only
+This is the `chr33s/coop` fork, supporting **macOS 27+ on Apple Silicon hosts
+only**. Linux guests remain supported; Linux/Firecracker host testing is outside
+this fork’s acceptance scope. The host CLI remains Rust; the Swift-only
 credential proxy (`coop-proxy/`, macOS 27+) and optional Apple VM runtime
 (`coop-sandbox/`) are root-level Swift packages. Cargo does not build them.
 See [README.md](README.md) for motivation and fork installation guidance.
@@ -34,12 +36,12 @@ navigational; durable detail lives in [`docs/`](docs/).
 
 A Rust CLI that orchestrates VM lifecycle (setup → up/start → shell → stop →
 destroy → status/logs). Backends are selected at **compile time** by `#[cfg]`
-behind the `backend::VmBackend` trait / `PlatformBackend` alias: Firecracker
-microVMs on Linux (KVM), Lima VMs on macOS (Virtualization.framework), or the
-opt-in Apple sandbox backend on macOS (`apple-container` Cargo feature, which
-replaces Lima). Everything above the trait — SSH, workspace sync,
-config/secret injection, agent bootstrap, `commands/` — is backend-shared and
-must hold for all of them. Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+behind the `backend::VmBackend` trait / `PlatformBackend` alias. The release
+uses the Apple sandbox backend (`apple-container` Cargo feature); Lima remains
+a source-build option. Both run Linux guests on macOS 27+ Apple Silicon hosts.
+Retained Firecracker code is inherited and outside supported-host scope.
+Shared SSH, workspace, config/secret injection, and agent bootstrap contracts
+must hold for the supported macOS backends. Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Trust model
 
@@ -82,12 +84,13 @@ install`. CI pins its own taplo/cargo-deny versions in
 
 Pre-commit hooks (prek) run automatically: `cargo fmt`, `cargo clippy`, `cargo
 test`, `taplo format --check`, plus trailing-whitespace / EOF / large-file /
-merge-conflict checks. After hooks pass, run the integration suite on **both
-platforms** — too slow for hooks:
+merge-conflict checks. After hooks pass, run the integration suite on the applicable **macOS
+backends** — too slow for hooks:
 
 ```bash
 ./tests/run-integration.sh                       # local (macOS/Lima)
-./tests/run-integration.sh --remote user@host    # remote (Linux/Firecracker)
+./tests/integration-apple-sandbox.sh             # macOS/Apple runtime
+python3 tests/integration-proxy-transition.py --controlled-upstream
 ```
 
 The `/integration` command wraps this; [`docs/testing.md`](docs/testing.md) has
@@ -108,7 +111,7 @@ adding a runtime check.
 - **One PR = one logical change.** Refactors/renames first, then behavior —
   never mixed. Split if the description needs "and" / unrelated bullets.
 - Run the gates before opening: `cargo fmt -- --check`, `cargo clippy … -D
-  warnings`, `cargo test`, and the integration suite on both platforms for
+  warnings`, `cargo test`, and the integration suite on the applicable macOS backends for
   guest-visible or lifecycle changes.
 - Keep cross-file infra in sync in the same PR — a new CLI flag/config field ↔
   `config.example.toml` + `docs/`; tool-version pins ↔ CI; a new shell-out/IO
