@@ -58,7 +58,7 @@ def main():
         parser.error("requires macOS 27 or newer")
     configuration = "release" if args.release else "debug"
     cargo_flags = ["--release"] if args.release else []
-    run("cargo", "build", "--locked", "-p", "coop", "--features", "apple-container", *cargo_flags)
+    run("cargo", "build", "--locked", "-p", "coop", *cargo_flags)
     package = ROOT / "coop-proxy"
     run("swift", "build", "--package-path", str(package), "-c", configuration,
         "--force-resolved-versions")

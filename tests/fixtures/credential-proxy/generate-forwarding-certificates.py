@@ -16,13 +16,17 @@ with tempfile.TemporaryDirectory(prefix="coop-forward-ca-") as temporary:
 
     openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
             "-out", "ca.pem", "-days", "2", "-subj", "/CN=coop test CA",
-            "-addext", "basicConstraints=critical,CA:TRUE")
+            "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+            "-addext", "subjectKeyIdentifier=hash")
     openssl("req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", "leaf.key",
             "-out", "leaf.csr", "-subj", "/CN=api.anthropic.com")
     (work / "extensions").write_text(
         "basicConstraints=critical,CA:FALSE\n"
         "keyUsage=critical,digitalSignature,keyEncipherment\n"
         "extendedKeyUsage=serverAuth\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid\n"
         "subjectAltName=DNS:api.anthropic.com,DNS:api.openai.com\n")
     openssl("x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key",
             "-CAcreateserial", "-days", "1", "-extfile", "extensions", "-out", "leaf.pem")

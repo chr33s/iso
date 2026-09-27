@@ -7,24 +7,20 @@ set -euo pipefail
 # jobs (fmt, clippy, test, deny, the lightweight integration scripts) so a
 # doomed tag is never pushed, and adds the checks CI does not perform:
 #   - Cargo.toml / Cargo.lock / CHANGELOG / git-tag version agreement
-#   - release builds of all three target binaries (CI builds only the native
+#   - release builds for the supported macOS ARM64 target (CI builds the native
 #     target; a cross-compile break otherwise first surfaces on the tag, which
 #     burns the version under immutable releases)
 #   - formal verification (kani), and opt-in mutation testing and fuzzing
-#   - the cross-platform VM integration suite, driven over SSH the same way
-#     tests/run-integration.sh does (these need Firecracker/Lima hardware and
+#   - the Apple VM integration suite, driven through the native runtime as
+#     tests/run-integration.sh does (these need Apple virtualization hardware and
 #     cannot run in GitHub-hosted CI)
 #
-# The full integration suite runs on THIS machine (one platform) plus one
-# remote host you specify for the other platform.
+# The full integration suite runs on this macOS 27+ Apple Silicon host.
 #
 # Usage:
 #   ./scripts/preflight-release.sh [options]
 #
 # Options:
-#   --remote USER@HOST   Run the full integration suite on this remote host (the
-#                        other platform). Local always runs too. If omitted and
-#                        running interactively, you are prompted for it.
 #   --mutants            Run mutation testing on lines changed since the last tag.
 #   --fuzz               Build and briefly run every fuzz target (needs nightly).
 #   --install-targets    rustup target add any missing release targets (the
@@ -39,7 +35,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-REMOTE=""
 RUN_MUTANTS=0
 RUN_FUZZ=0
 RUN_INSTALL_TARGETS=0
@@ -52,7 +47,6 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --remote) REMOTE="$2"; shift 2 ;;
     --mutants) RUN_MUTANTS=1; shift ;;
     --fuzz) RUN_FUZZ=1; shift ;;
     --install-targets) RUN_INSTALL_TARGETS=1; shift ;;
@@ -144,14 +138,6 @@ run_deny() {
   cargo deny --workspace check
 }
 
-run_bridge_isolation() {
-  if [[ "$(uname -s)" != Linux ]]; then
-    warn "Bridge isolation requires Linux — run tests/integration-network.sh on a Linux host before tagging"
-    return 0
-  fi
-  ./tests/integration-network.sh
-}
-
 run_swift_proxy() {
   if [[ "$(uname -s)" != Darwin ]] || [[ "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]]; then
     warn "Swift proxy validation requires macOS 27+ — run its package/process gates before tagging"
@@ -159,14 +145,6 @@ run_swift_proxy() {
   fi
   swift test --package-path coop-proxy --force-resolved-versions || return
   python3 scripts/test-swift-proxy-process.py --skip-tls
-}
-
-run_proxy_forward() {
-  if [[ "$(uname -s)" != Linux ]]; then
-    warn "Proxy reverse forwarding requires Linux — run tests/integration-proxy-forward.sh on a Linux host before tagging"
-    return 0
-  fi
-  ./tests/integration-proxy-forward.sh
 }
 
 run_taplo() {
@@ -231,7 +209,7 @@ run_fuzz() {
 }
 
 # Release-build targets, matching the matrix in .github/workflows/release.yml.
-RELEASE_TARGETS=(aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl)
+RELEASE_TARGETS=(aarch64-apple-darwin)
 
 # Report missing rustup targets and always explain how to install them.
 # `rustup target add` installs only the std library — cross-LINKING also needs
@@ -243,7 +221,7 @@ handle_missing_targets() {
   printf 'Install the standard libraries with:\n'
   printf '  rustup target add %s\n' "${targets[*]}"
   printf 'The Swift proxy requires Xcode 27 on macOS 27+.\n'
-  printf 'Release CI uses native runners with musl-gcc on Linux; see RELEASING.md.\n'
+  printf 'Release CI uses a native macOS 27 runner; see RELEASING.md.\n'
   if [[ "$RUN_INSTALL_TARGETS" == 1 ]]; then
     rustup target add "${targets[@]}" || warn "rustup target add failed for: ${targets[*]}"
   else
@@ -259,7 +237,7 @@ build_release_targets() {
     warn "rustup not found — release targets not built locally; release.yml builds them on the tag (a failure there burns the version)."
     return 0
   fi
-  local installed target built=0 missing=() features=()
+  local installed target built=0 missing=()
   installed="$(rustup target list --installed 2>/dev/null || true)"
   for target in "${RELEASE_TARGETS[@]}"; do
     grep -qx "$target" <<<"$installed" || missing+=("$target")
@@ -271,11 +249,7 @@ build_release_targets() {
   for target in "${RELEASE_TARGETS[@]}"; do
     if grep -qx "$target" <<<"$installed"; then
       printf 'Building %s...\n' "$target"
-      features=()
-      if [[ "$target" == aarch64-apple-darwin ]]; then
-        features=(--features apple-container)
-      fi
-      cargo build --release --workspace --target "$target" "${features[@]}" || return 1
+      cargo build --release --workspace --target "$target" || return 1
       built=$((built + 1))
     else
       warn "release target $target not built locally (toolchain absent) — release.yml builds it on the tag, uncaught here."
@@ -285,21 +259,6 @@ build_release_targets() {
     warn "no release targets built locally — cross-compile breakage won't surface until the tag is pushed. Build each target on a matching host or configure its C compiler and linker (see RELEASING.md)."
   fi
   return 0
-}
-
-prompt_for_remote() {
-  if [[ -n "$REMOTE" || "$QUICK" == 1 ]]; then
-    return
-  fi
-  if [[ ! -t 0 ]]; then
-    warn "No --remote host and not a TTY — the other platform's integration suite is NOT run. Pass --remote user@host, or run ./tests/run-integration.sh --remote user@host yourself."
-    return
-  fi
-  printf '\nThe full suite runs here (this platform). Enter a remote user@host for\n'
-  printf 'the other platform (Firecracker on Linux, Lima on macOS), blank to skip: '
-  local line
-  read -r line || true
-  REMOTE="$line"
 }
 
 # ── Run ──────────────────────────────────────────────────────────
@@ -316,8 +275,6 @@ step "Workflow audit (zizmor)" run_zizmor
 step "TOML formatting" run_taplo
 step "Integration probe regression tests" python3 tests/test-integration-probes.py
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
-step "Integration — bridge isolation" run_bridge_isolation
-step "Integration — proxy reverse forwarding" run_proxy_forward
 step "Integration — installer provenance" ./tests/integration-install.sh
 step "Integration — coop update" ./tests/integration-update.sh
 step "Integration — coop uninstall" ./tests/integration-uninstall.sh
@@ -336,15 +293,10 @@ elif [[ "$QUICK" != 1 ]]; then
 fi
 
 if [[ "$QUICK" == 1 ]]; then
-  warn "--quick: full cross-platform integration suite skipped"
+  warn "--quick: Apple VM integration suite skipped"
 else
-  prompt_for_remote
-  step "Full integration (local host)" ./tests/run-integration.sh
-  if [[ -n "$REMOTE" ]]; then
-    step "Full integration ($REMOTE)" ./tests/run-integration.sh --remote "$REMOTE"
-  else
-    warn "No remote host given — only the local platform's integration suite ran; the other platform was not covered."
-  fi
+  step "Apple VM integration" ./tests/run-integration.sh
+
 fi
 
 # ── Summary ──────────────────────────────────────────────────────

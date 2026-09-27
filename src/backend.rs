@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-#[cfg(target_os = "macos")]
-use std::fs;
 use std::num::{NonZeroU8, NonZeroU16};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,6 +21,7 @@ use crate::setup::SetupOptions;
 mod capabilities;
 mod endpoint_plan;
 mod host_keys;
+#[cfg(any(not(target_os = "macos"), test))]
 mod unproven_stop;
 
 pub use crate::backend::capabilities::{BackendCapabilities, Capability};
@@ -30,7 +29,7 @@ pub use crate::backend::endpoint_plan::{LocalEndpointRoute, ReverseTunnel, plan_
 use crate::backend::endpoint_plan::{local_endpoint, local_endpoint_tunnels};
 pub use crate::backend::host_keys::HostKeyPolicy;
 #[cfg_attr(
-    all(not(feature = "apple-container"), not(test)),
+    all(not(target_os = "macos"), not(test)),
     expect(
         unused_imports,
         reason = "constructed only by the apple-container backend"
@@ -38,6 +37,7 @@ pub use crate::backend::host_keys::HostKeyPolicy;
 )]
 pub use crate::backend::host_keys::PinnedHostKey;
 pub(crate) use crate::backend::host_keys::quote_ssh_value;
+#[cfg(not(target_os = "macos"))]
 use crate::backend::unproven_stop::stop_if_probed_running;
 
 // ── Operation modes ───────────────────────────────────────────
@@ -1212,222 +1212,10 @@ impl VmBackend for FirecrackerBackend {
     }
 }
 
-// ── Lima backend ──────────────────────────────────────────────
-
-#[cfg(target_os = "macos")]
-pub struct LimaBackend;
-
-#[cfg(target_os = "macos")]
-#[cfg_attr(
-    feature = "apple-container",
-    expect(dead_code, reason = "apple-container replaces Lima as PlatformBackend")
-)]
-impl LimaBackend {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Construct for a loaded config. This backend has no config-dependent
-    /// state; the constructor exists so every `PlatformBackend` is built the
-    /// same way.
-    pub fn for_config(_cfg: &CoopConfig) -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl std::fmt::Display for LimaBackend {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("lima")
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl VmBackend for LimaBackend {
-    fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities::new(&[
-            Capability::LiveMounts,
-            Capability::DiskResize,
-            Capability::DiskSnapshots,
-            Capability::MachineResources,
-        ])
-    }
-
-    fn setup(&self, cfg: &CoopConfig, opts: &SetupOptions) -> Result<()> {
-        boot_preflight(cfg)?;
-        crate::lima::setup(cfg, opts)
-    }
-
-    fn create_and_start(
-        &self,
-        cfg: &CoopConfig,
-        inst: &Instance,
-        disk_gib: Option<crate::config::GiB>,
-        mounts: &[crate::config::Mount],
-    ) -> Result<()> {
-        boot_preflight(cfg)?;
-        crate::lima::create_and_start(cfg, inst, disk_gib, mounts)
-    }
-
-    fn start_existing(&self, cfg: &CoopConfig, inst: &Instance) -> Result<()> {
-        boot_preflight(cfg)?;
-        crate::lima::start_existing(cfg, inst)
-    }
-
-    fn stop(&self, _cfg: &CoopConfig, running: RunningInstance) -> Result<()> {
-        let (inst, _target) = running.into_parts();
-        crate::lima::stop_running(&inst)
-    }
-
-    fn stop_unproven(&self, _cfg: &CoopConfig, inst: &Instance) -> Result<()> {
-        stop_if_probed_running(crate::lima::probe_running(inst), || {
-            crate::lima::stop_running(inst)
-        })
-    }
-
-    fn destroy_instance(&self, _cfg: &CoopConfig, inst: &Instance) -> Result<()> {
-        crate::lima::destroy(inst)?;
-        if inst.dir.exists()
-            && let Err(e) = fs::remove_dir_all(&inst.dir)
-        {
-            tracing::debug!(
-                "Failed to remove instance dir {} (non-fatal): {e}",
-                inst.dir.display()
-            );
-        }
-        Ok(())
-    }
-
-    fn destroy_shared(&self, cfg: &CoopConfig) {
-        let images_dir = cfg.images_dir();
-        if images_dir.exists()
-            && let Err(e) = fs::remove_dir_all(&images_dir)
-        {
-            tracing::debug!("Failed to remove images dir (non-fatal): {e}");
-        }
-    }
-
-    fn destroy_image(&self, cfg: &CoopConfig, image: &ImageName) -> Result<()> {
-        let dir = cfg.image_dir(image);
-        if !dir.exists() {
-            bail!("Image '{image}' does not exist");
-        }
-        fs::remove_dir_all(&dir)
-            .with_context(|| format!("Failed to remove image dir {}", dir.display()))?;
-        tracing::info!("Removed image '{image}'");
-        Ok(())
-    }
-
-    fn resize_disk(
-        &self,
-        cfg: &CoopConfig,
-        stopped: &StoppedInstance,
-        new_size: crate::config::GiB,
-    ) -> Result<()> {
-        crate::lima::resize_disk(cfg, stopped.instance(), new_size)
-    }
-
-    fn set_machine_resources(
-        &self,
-        cfg: &CoopConfig,
-        stopped: &StoppedInstance,
-        mem: Option<VmMemory>,
-        vcpus: Option<NonZeroU8>,
-        start_after: bool,
-    ) -> Result<()> {
-        crate::lima::set_machine_resources(
-            cfg,
-            stopped.instance(),
-            mem.map(VmMemory::get),
-            vcpus,
-            start_after,
-        )
-    }
-
-    fn commit_disk(
-        &self,
-        cfg: &CoopConfig,
-        stopped: &StoppedInstance,
-        image: &ImageName,
-    ) -> Result<()> {
-        crate::lima::commit_disk(cfg, stopped.instance(), image)
-    }
-
-    fn restore_disk(
-        &self,
-        cfg: &CoopConfig,
-        stopped: &StoppedInstance,
-        image: &ImageName,
-    ) -> Result<()> {
-        crate::lima::restore_disk(cfg, stopped.instance(), image)
-    }
-
-    fn is_running(&self, inst: &Instance) -> bool {
-        crate::lima::is_running(inst)
-    }
-
-    fn probe_running(&self, inst: &Instance) -> Result<bool> {
-        crate::lima::probe_running(inst)
-    }
-
-    fn as_running(&self, cfg: &CoopConfig, inst: Instance) -> Result<Option<RunningInstance>> {
-        if !crate::lima::is_running(&inst) {
-            return Ok(None);
-        }
-        let target = crate::lima::ssh_target(cfg, &inst)?;
-        Ok(Some(RunningInstance::new(inst, target)))
-    }
-
-    fn as_stopped(&self, inst: Instance) -> Result<StoppedInstance> {
-        if crate::lima::is_running(&inst) {
-            bail!(
-                "Instance '{}' is running — stop it first with \
-                 `coop stop {}`",
-                inst.name,
-                inst.name,
-            );
-        }
-        Ok(StoppedInstance::new(inst))
-    }
-
-    fn status(&self, cfg: &CoopConfig, running: &RunningInstance) -> Result<String> {
-        crate::lima::status(cfg, running.instance())
-    }
-
-    fn stream_logs(
-        &self,
-        _cfg: &CoopConfig,
-        running: &RunningInstance,
-        mode: LogMode,
-    ) -> Result<()> {
-        crate::lima::stream_logs(running.instance(), mode)
-    }
-
-    fn ssh_target(&self, cfg: &CoopConfig, inst: &Instance) -> Result<SshTarget> {
-        crate::lima::ssh_target(cfg, inst)
-    }
-
-    fn disk_path(&self, inst: &Instance) -> Result<PathBuf> {
-        crate::lima::disk_path(inst)
-    }
-
-    fn local_endpoint_route(&self, _network: &NetworkConfig) -> LocalEndpointRoute {
-        // Lima injects this hostname into the guest, resolving to the host.
-        LocalEndpointRoute::HostAddress(crate::lima::HOST_GATEWAY.to_string())
-    }
-
-    fn image_is_built(&self, cfg: &CoopConfig, image: &ImageName) -> bool {
-        cfg.lima_base_path(image).exists() && cfg.lima_template_path(image).exists()
-    }
-}
-
 // ── Platform type alias ───────────────────────────────────────
 
-#[cfg(all(target_os = "macos", feature = "apple-container"))]
+#[cfg(target_os = "macos")]
 pub type PlatformBackend = crate::apple_container::AppleContainerBackend;
-
-#[cfg(all(target_os = "macos", not(feature = "apple-container")))]
-pub type PlatformBackend = LimaBackend;
 
 #[cfg(not(target_os = "macos"))]
 pub type PlatformBackend = FirecrackerBackend;

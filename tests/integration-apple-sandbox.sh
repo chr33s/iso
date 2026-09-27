@@ -17,10 +17,10 @@ set -uo pipefail
 #   killed at these percentages of the time an uninterrupted one took;
 #   COOP_KILL_FRACTIONS="25 50 75" the same for coop's.
 #
-# Needs Apple Silicon, macOS 26+, Swift 6.2+, jq, and stock Apple `container`
+# Needs Apple Silicon, macOS 27+, Xcode 27, jq, and stock Apple `container`
 # with its service running (builds the test image, supplies the kernel). It
 # touches nothing but its own state root and image tag, both removed on exit.
-# The coop phase also builds `coop --features apple-container` (into the work
+# The coop phase also builds `coop` (into the work
 # directory) and drives it end to end against a data directory there; the
 # images `coop setup` builds in the stock `container` store are deleted too.
 
@@ -832,7 +832,7 @@ if want coop; then
     write_cfg 'boot_timeout_seconds = 15' >"$CCFG_FAIL"
     mkdir -p "$WORK/project"
     echo "$RUN" >"$WORK/project/marker"
-    if cargo build --quiet --features apple-container --target-dir "$WORK/target" >"$WORK/coop-build.log" 2>&1 &&
+    if cargo build --quiet --target-dir "$WORK/target" >"$WORK/coop-build.log" 2>&1 &&
         coop setup -y >"$WORK/coop-setup.log" 2>&1; then
         pass "coop setup builds, verifies, and publishes the image"
     else

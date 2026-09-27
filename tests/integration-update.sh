@@ -122,15 +122,10 @@ JSON
 # Both `cargo build` invocations must run before HOME is redirected — cargo
 # uses $HOME for its registry and toolchain caches.
 
-BUILD_FEATURES=()
-if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
-    BUILD_FEATURES=(--features apple-container)
-fi
-
 echo "==> Building release binary..."
 (
     cd "$PROJECT_DIR"
-    COOP_FORCE_BUILD_KIND=release cargo build --release --quiet "${BUILD_FEATURES[@]}"
+    COOP_FORCE_BUILD_KIND=release cargo build --release --quiet
 )
 # Stash the release binary at a stable path. The dev build below shares
 # `target/release/coop`, so we can't keep referring to that path after
@@ -146,7 +141,7 @@ echo "==> Building dev binary..."
 # build.rs correctly bakes kind=release, which would defeat test 4.
 (
     cd "$PROJECT_DIR"
-    COOP_FORCE_BUILD_KIND=dev cargo build --release --quiet "${BUILD_FEATURES[@]}"
+    COOP_FORCE_BUILD_KIND=dev cargo build --release --quiet
 )
 cp "$PROJECT_DIR/target/release/coop" "$TMPDIR/bin/coop-dev"
 

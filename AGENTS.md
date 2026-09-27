@@ -33,11 +33,11 @@ navigational; durable detail lives in [`docs/`](docs/).
 A Rust CLI that orchestrates VM lifecycle (setup → up/start → shell → stop →
 destroy → status/logs). Backends are selected at **compile time** by `#[cfg]`
 behind the `backend::VmBackend` trait / `PlatformBackend` alias. The release
-uses the Apple sandbox backend (`apple-container` Cargo feature); Lima remains
-a source-build option. Both run Linux guests on macOS 27+ Apple Silicon hosts.
+uses the Apple sandbox backend by default, as do source builds.
+It runs Linux guests on macOS 27+ Apple Silicon hosts.
 Retained Firecracker code is inherited and outside supported-host scope.
 Shared SSH, workspace, config/secret injection, and agent bootstrap contracts
-must hold for the supported macOS backends. Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+must hold for the supported Apple backend. Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Trust model
 
@@ -62,7 +62,7 @@ Runtime: Rust `1.94.0` (see `rust-toolchain.toml`), edition 2024.
 cargo build --workspace
 cargo fmt -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --all-targets --features apple-container -- -D warnings  # macOS only
+cargo clippy --all-targets -- -D warnings  # macOS only
 swift test --package-path coop-sandbox --no-parallel             # macOS only
 cargo test --workspace
 cargo deny --workspace check
@@ -87,7 +87,7 @@ checks. After hooks pass, run the integration suite on the applicable **macOS ba
 guest-visible and lifecycle changes:
 
 ```bash
-./tests/run-integration.sh                       # local (macOS/Lima)
+./tests/run-integration.sh                       # local (macOS/Apple Containerization)
 ./tests/integration-apple-sandbox.sh             # macOS/Apple runtime
 python3 tests/integration-proxy-transition.py --controlled-upstream
 ```

@@ -4,6 +4,7 @@ import http.server
 import os
 from pathlib import Path
 import re
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,14 @@ def shell(script, **env):
         ["bash", "-c", script], env={**os.environ, **env},
         capture_output=True, text=True, timeout=45,
     )
+
+
+class LoopbackHTTPServer(http.server.HTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind() reverse-resolves the address before listen(),
+        # which stalls for DNS timeouts on macOS CI runners.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
 
 
 class ProbeTests(unittest.TestCase):
@@ -234,7 +243,7 @@ class ProbeTests(unittest.TestCase):
                     def log_message(self, *_args):
                         pass
 
-                with http.server.HTTPServer(("127.0.0.1", 0), Handler) as server:
+                with LoopbackHTTPServer(("127.0.0.1", 0), Handler) as server:
                     thread = threading.Thread(target=server.serve_forever)
                     thread.start()
                     try:

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
 from unittest import mock
 
@@ -165,7 +166,11 @@ with mock.patch.object(os, 'geteuid', return_value=0), mock.patch.object(socket.
                 cleanup = threading.Thread(target=close, daemon=True)
                 cleanup.start()
                 cleanup.join(timeout=2)
-                self.assertFalse(cleanup.is_alive(), "idle TLS peer prevented cleanup")
+                if cleanup.is_alive():
+                    stacks = "".join(
+                        f"\n--- {thread.name}\n" + "".join(traceback.format_stack(sys._current_frames()[thread.ident]))
+                        for thread in threading.enumerate() if thread.ident in sys._current_frames())
+                    self.fail("idle TLS peer prevented cleanup" + stacks)
             finally:
                 idle.close()
                 if cleanup:

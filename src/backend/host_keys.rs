@@ -23,7 +23,7 @@ pub enum HostKeyPolicy {
     /// channel, looked up under a stable alias rather than the (reassignable)
     /// address.
     #[cfg_attr(
-        all(not(feature = "apple-container"), not(test)),
+        all(not(target_os = "macos"), not(test)),
         expect(dead_code, reason = "constructed only by the apple-container backend")
     )]
     Pinned(PinnedHostKey),

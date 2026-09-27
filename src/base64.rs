@@ -28,7 +28,7 @@ pub(crate) fn encode(bytes: &[u8]) -> String {
 
 /// Decode `s`, with or without trailing `=` padding. `None` when a character
 /// is outside the alphabet.
-#[cfg(all(target_os = "macos", feature = "apple-container"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn decode(s: &str) -> Option<Vec<u8>> {
     let s = s.trim_end_matches('=');
     let mut out = Vec::with_capacity(s.len() * 3 / 4);
@@ -47,10 +47,7 @@ pub(crate) fn decode(s: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[cfg_attr(
-    all(target_os = "macos", feature = "apple-container"),
-    expect(clippy::unwrap_used, reason = "tests")
-)]
+#[cfg_attr(target_os = "macos", expect(clippy::unwrap_used, reason = "tests"))]
 mod tests {
     use super::*;
 
@@ -63,7 +60,7 @@ mod tests {
         assert_eq!(encode(b"archive-bytes"), "YXJjaGl2ZS1ieXRlcw==");
     }
 
-    #[cfg(all(target_os = "macos", feature = "apple-container"))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn decodes_known_vectors_and_round_trips() {
         for (enc, dec) in [

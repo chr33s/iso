@@ -30,7 +30,6 @@ exclude_globs = [
   # Pure helpers split out into src/backend/ (host-key options, capabilities,
   # local-endpoint planning, the unproven-stop decision) stay in scope.
   "src/backend.rs",
-  "src/lima.rs",
   "src/setup.rs",
   "src/update.rs",
   "src/shell.rs",
@@ -156,7 +155,7 @@ exclude_re = [
   # apple_container/mod.rs — the backend's calls to the real system (platform
   # probe, key generation, default install/kernel paths, instance-dir removal).
   # Everything else there runs against the scripted runtime in its tests, so it
-  # stays in scope for the `--features apple-container` sweep (docs/testing.md).
+  # stays in scope for the Apple backend sweep (docs/testing.md).
   "\\bcheck_platform\\b",
   "apple_container.*\\bensure_ssh_key\\b",
   "\\bdefault_runtimes\\b",

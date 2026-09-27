@@ -262,7 +262,7 @@ impl Owner {
         {
             bail!(AppleError::IdentityConflict(format!(
                 "data_dir {} already holds {foreign} from a default coop build; refusing to \
-                 share it. Use a separate data_dir (the default is ~/.coop-apple).",
+                 share it. Use a separate data_dir and --config.",
                 cfg.data_dir.display()
             )));
         }

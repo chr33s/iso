@@ -1067,24 +1067,24 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
 // The Apple sandbox build keeps its own marker and alias namespace so it
 // can share `~/.ssh/config` with a default build: neither build's cleanup
 // matches the other's blocks, and same-named instances do not collide.
-#[cfg(not(feature = "apple-container"))]
+#[cfg(not(target_os = "macos"))]
 const MARKER_PREFIX: &str = "# coop START";
-#[cfg(not(feature = "apple-container"))]
+#[cfg(not(target_os = "macos"))]
 const MARKER_END: &str = "# coop END";
-#[cfg(not(feature = "apple-container"))]
+#[cfg(not(target_os = "macos"))]
 const HOST_ALIAS_PREFIX: &str = "coop-";
-#[cfg(feature = "apple-container")]
+#[cfg(target_os = "macos")]
 const MARKER_PREFIX: &str = "# coop-apple START";
-#[cfg(feature = "apple-container")]
+#[cfg(target_os = "macos")]
 const MARKER_END: &str = "# coop-apple END";
-#[cfg(feature = "apple-container")]
+#[cfg(target_os = "macos")]
 const HOST_ALIAS_PREFIX: &str = "coop-apple-";
 /// The other build's marker. The two alias namespaces overlap (a default
 /// build instance named `apple-foo` is `coop-apple-foo`), so neither build
 /// writes an alias the other already owns.
-#[cfg(not(feature = "apple-container"))]
+#[cfg(not(target_os = "macos"))]
 const FOREIGN_MARKER_PREFIX: &str = "# coop-apple START";
-#[cfg(feature = "apple-container")]
+#[cfg(target_os = "macos")]
 const FOREIGN_MARKER_PREFIX: &str = "# coop START";
 
 fn ssh_config_host(inst: &Instance) -> String {
@@ -1437,7 +1437,7 @@ mod tests {
         assert!(check_alias_not_foreign(&foreign, &format!("{HOST_ALIAS_PREFIX}other")).is_ok());
     }
 
-    #[cfg(feature = "apple-container")]
+    #[cfg(target_os = "macos")]
     #[test]
     fn apple_build_leaves_default_build_blocks_alone() {
         let default_blocks = "\

@@ -128,7 +128,7 @@
 #                                   # Applies only in remote model mode
 #                                   # (`coop model <vm> remote`); local mode
 #                                   # takes precedence. Requires macOS 27+
-#                                   # (Lima or Apple Container); unavailable on Linux.
+#                                   # (Apple Containerization); unavailable on Linux.
 # `coop proxy setup [--openai] [--vm <name>]` writes this for you: it takes a
 # pasted credential, stores it in Keychain / 1Password / a 0600 file, and fills
 # in the `cmd:` reference. Anthropic covers Claude Code; openai covers Codex.
@@ -155,8 +155,7 @@
 # mode = "notify"                # off | notify (default: notify)
 # check_interval_hours = 24      # minimum age before background re-check
 
-# Apple sandbox backend — read only by builds made with
-# `--features apple-container` (macOS). See docs/backends.md.
+# Apple sandbox backend — the default on macOS. See docs/backends.md.
 # [apple_container]
 # binary = "/absolute/path/to/coop-sandbox"  # default: ~/.local/opt/coop-sandbox/bin/coop-sandbox,
 #                                            # then /usr/local/bin, /opt/homebrew/bin

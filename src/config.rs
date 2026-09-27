@@ -889,7 +889,7 @@ fn default_apple_build_timeout() -> TimeoutSecs {
 /// if any: the Apple sandbox build keeps everything under
 /// `backends/apple-container-v1`; the default backends use `data_dir` itself.
 /// See [`CoopConfig::state_root`].
-const BACKEND_ROOT: Option<&str> = if cfg!(feature = "apple-container") {
+const BACKEND_ROOT: Option<&str> = if cfg!(target_os = "macos") {
     Some("backends/apple-container-v1")
 } else {
     None
@@ -2072,8 +2072,7 @@ fn check_local_marketplaces(field: &str, entries: &[String], errors: &mut Vec<St
 }
 
 impl CoopConfig {
-    /// Default config path: `~/.coop/config.toml` (`~/.coop-apple/config.toml`
-    /// in the `apple-container` build).
+    /// Default config path: `~/.coop/config.toml`.
     pub fn default_path() -> PathBuf {
         default_data_dir().join("config.toml")
     }
@@ -2081,15 +2080,44 @@ impl CoopConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let mut cfg: Self = if path.exists() {
             let content = std::fs::read_to_string(path).context("Failed to read config file")?;
-            if path.extension().is_some_and(|ext| ext == "json") {
-                serde_json::from_str(&content).context("Failed to parse JSON config file")?
-            } else {
-                toml::from_str(&content).context("Failed to parse TOML config file")?
+            let (mut loaded, explicit_data_dir): (Self, bool) =
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    let value: serde_json::Value = serde_json::from_str(&content)
+                        .context("Failed to parse JSON config file")?;
+                    let explicit = value.get("data_dir").is_some();
+                    (
+                        serde_json::from_value(value)
+                            .context("Failed to parse JSON config file")?,
+                        explicit,
+                    )
+                } else {
+                    let value: toml::Value =
+                        toml::from_str(&content).context("Failed to parse TOML config file")?;
+                    let explicit = value.get("data_dir").is_some();
+                    (
+                        value
+                            .try_into()
+                            .context("Failed to parse TOML config file")?,
+                        explicit,
+                    )
+                };
+            if cfg!(target_os = "macos")
+                && !explicit_data_dir
+                && dirs::home_dir().is_some_and(|home| path == home.join(".coop-apple/config.toml"))
+            {
+                loaded.data_dir = ConfigPath::new(path.parent().context("config has no parent")?);
             }
+            loaded
         } else {
             tracing::debug!("No config file found at {}, using defaults", path.display());
             Self::default()
         };
+        if cfg!(target_os = "macos")
+            && !path.exists()
+            && dirs::home_dir().is_some_and(|home| path == home.join(".coop-apple/config.toml"))
+        {
+            cfg.data_dir = ConfigPath::new(path.parent().context("config has no parent")?);
+        }
         cfg.expand_user_paths();
         Ok(cfg)
     }
@@ -2105,12 +2133,10 @@ impl CoopConfig {
         )
     }
 
-    /// The directory `uninstall --purge` may remove wholesale: `data_dir`
-    /// when this build owns it outright (the default backends, or the Apple
-    /// build's own `~/.coop-apple`), otherwise only [`Self::state_root`], so a
-    /// `data_dir` shared with another build is never wiped.
+    /// The directory `uninstall --purge` may remove wholesale. On macOS,
+    /// only backend state is owned; config and unrelated files are preserved.
     pub fn owned_data_dir(&self) -> PathBuf {
-        if BACKEND_ROOT.is_none() || self.data_dir == default_data_dir() {
+        if BACKEND_ROOT.is_none() {
             self.data_dir.to_path_buf()
         } else {
             self.state_root()
@@ -2279,16 +2305,6 @@ impl CoopConfig {
     /// Path to the template config for a named image.
     pub fn template_config_path_for(&self, image: &ImageName) -> PathBuf {
         self.image_dir(image).join("template-config.json")
-    }
-
-    /// Path to the Lima base image for a named image.
-    pub fn lima_base_path(&self, image: &ImageName) -> PathBuf {
-        self.image_dir(image).join("lima-base.img")
-    }
-
-    /// Path to the Lima start template for a named image.
-    pub fn lima_template_path(&self, image: &ImageName) -> PathBuf {
-        self.image_dir(image).join("lima-template.yaml")
     }
 
     /// Path to the default template rootfs image (shorthand).
@@ -2807,20 +2823,12 @@ fn is_firecracker_process(pid: u32) -> bool {
 
 // ── Defaults ──────────────────────────────────────────────────
 
-/// `~/.coop`, or `~/.coop-apple` for the `apple-container` build. The feature
-/// build gets its own application directory so an older default build's
-/// `uninstall --purge` (which removes its whole `data_dir`) cannot reach
-/// Apple sandbox state.
+/// Default application directory for this fork.
 fn default_data_dir() -> ConfigPath {
-    let dir = if cfg!(feature = "apple-container") {
-        ".coop-apple"
-    } else {
-        ".coop"
-    };
     ConfigPath::new(
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(dir),
+            .join(".coop"),
     )
 }
 
@@ -4763,10 +4771,6 @@ skip = ["not-a-slug"]
                 cfg.template_path_for(&python_dev),
                 "/my/data/images/python-dev/rootfs-template.ext4",
             ),
-            (
-                cfg.lima_base_path(&python_dev),
-                "/my/data/images/python-dev/lima-base.img",
-            ),
             (cfg.ssh_key_path(), "/my/data/vm_key"),
             (cfg.instances_dir(), "/my/data/instances"),
             (cfg.images_dir(), "/my/data/images"),
@@ -4788,11 +4792,7 @@ skip = ["not-a-slug"]
     #[test]
     fn default_data_dir_is_under_home() {
         let dir = default_data_dir();
-        let expected = if cfg!(feature = "apple-container") {
-            ".coop-apple"
-        } else {
-            ".coop"
-        };
+        let expected = ".coop";
         assert!(
             dir.ends_with(expected),
             "expected path ending with {expected}, got: {dir:?}"
@@ -4832,7 +4832,7 @@ skip = ["not-a-slug"]
         fs::write(&path, format!("data_dir = {:?}\n", tmp.path().join("d"))).unwrap();
         let cfg = CoopConfig::load(&path).unwrap();
         assert_eq!(&*cfg.data_dir, tmp.path().join("d").as_path());
-        let root = if cfg!(feature = "apple-container") {
+        let root = if cfg!(target_os = "macos") {
             tmp.path().join("d/backends/apple-container-v1")
         } else {
             tmp.path().join("d")
@@ -4842,7 +4842,10 @@ skip = ["not-a-slug"]
         assert_eq!(cfg.ssh_key_path(), root.join("vm_key"));
         // A data_dir shared with another build is never wiped wholesale.
         assert_eq!(cfg.owned_data_dir(), root);
-        assert_eq!(CoopConfig::default().owned_data_dir(), *default_data_dir());
+        assert_eq!(
+            CoopConfig::default().owned_data_dir(),
+            CoopConfig::default().state_root()
+        );
     }
 
     // ── Config validation ─────────────────────────────────────
@@ -5311,14 +5314,6 @@ skip = ["not-a-slug"]
         assert_eq!(
             cfg.template_config_path_for(&foo),
             root.join("images/foo/template-config.json")
-        );
-        assert_eq!(
-            cfg.lima_base_path(&foo),
-            root.join("images/foo/lima-base.img")
-        );
-        assert_eq!(
-            cfg.lima_template_path(&foo),
-            root.join("images/foo/lima-template.yaml")
         );
     }
 

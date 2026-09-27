@@ -29,7 +29,7 @@ def response(*events):
 class LiveSmokeTests(unittest.TestCase):
     def test_orchestration_against_synthetic_loopback_process(self):
         server = r'''
-import http.server,json,signal,sys
+import http.server,json,signal,socketserver,sys
 config=json.load(sys.stdin)
 token=config["capability_token"]
 provider=config["provider"]
@@ -61,7 +61,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length",str(len(data))); self.send_header("Connection","close")
         self.end_headers(); self.wfile.write(data)
 signal.signal(signal.SIGTERM,lambda *_: sys.exit(0))
-http.server.HTTPServer(("127.0.0.1",int(config["listen"].rsplit(":",1)[1])),Handler).serve_forever()
+class Server(http.server.HTTPServer):
+    # Skip HTTPServer's reverse DNS lookup; it stalls before listen() on macOS CI runners.
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name,self.server_port="localhost",self.server_address[1]
+Server(("127.0.0.1",int(config["listen"].rsplit(":",1)[1])),Handler).serve_forever()
 '''
         original = subprocess.Popen
         for provider in ["anthropic", "openai"]:

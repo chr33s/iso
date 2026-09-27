@@ -10,7 +10,7 @@ coop creates isolated VM environments for running Claude Code and Codex. Support
 
 | Flag | Description |
 |------|-------------|
-| `--config <path>` | Path to config file (default: `~/.coop/config.toml`, or `~/.coop-apple/config.toml` in the `apple-container` build) |
+| `--config <path>` | Path to config file (default: `~/.coop/config.toml`) |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
 | `--version` | Print version and exit. |
 
@@ -148,7 +148,7 @@ mounting (or bails in a non-TTY); pass `--no-workspace` to skip the mount.
 
 ### `init`
 
-Generate a starter config file at `~/.coop/config.toml` (`~/.coop-apple/config.toml` in the `apple-container` build).
+Generate a starter config file at `~/.coop/config.toml`.
 
 ```
 coop init

@@ -96,23 +96,35 @@ seed_state() {
 JSON
 }
 
+# Match the owned state and SSH namespace of this target's default backend.
+if [[ "$(uname -s)" == Darwin ]]; then
+    DATA_DIR="$HOME/.coop/backends/apple-container-v1"
+    CONFIG_DIR="$HOME/.coop"
+    SSH_PREFIX="coop-apple"
+else
+    DATA_DIR="$HOME/.coop"
+    CONFIG_DIR="$HOME/.coop"
+    SSH_PREFIX="coop"
+fi
+
 # Pre-populate ~/.coop with stub files so we can assert it's preserved or wiped.
 seed_data_dir() {
-    local data_dir="$HOME/.coop"
+    local data_dir="$DATA_DIR"
     mkdir -p "$data_dir/images" "$data_dir/instances"
     # Touch a config so config_path_is_under_data_dir has something to look at.
-    : > "$data_dir/config.toml"
+    mkdir -p "$CONFIG_DIR"
+    : > "$CONFIG_DIR/config.toml"
 }
 
 # Pre-populate ~/.ssh/config with a coop marker block; uninstall should strip
 # it. Markers must match the literal MARKER_PREFIX / MARKER_END strings used by
 # src/workspace.rs (`# coop START <host>` and `# coop END`).
-SSH_MARKER_BEGIN="# coop START coop-uninstall-test"
-SSH_MARKER_END="# coop END"
+SSH_MARKER_BEGIN="# $SSH_PREFIX START $SSH_PREFIX-uninstall-test"
+SSH_MARKER_END="# $SSH_PREFIX END"
 seed_ssh_config() {
     cat > "$HOME/.ssh/config" << EOF
 $SSH_MARKER_BEGIN
-Host coop-uninstall-test
+Host $SSH_PREFIX-uninstall-test
     HostName 172.16.0.42
 $SSH_MARKER_END
 
@@ -126,6 +138,11 @@ EOF
 fresh_binary() {
     cp "$STABLE_BIN" "$TMPDIR/bin/coop"
 }
+
+if [[ "$(uname -s)" == Darwin ]]; then
+    mkdir -p "$HOME/.coop/unrelated"
+    printf '%s\n' unrelated >"$HOME/.coop/unrelated/sentinel"
+fi
 
 # ── Test 1: --yes --keep-data preserves the data directory ───────────────────
 
@@ -141,7 +158,7 @@ if "$TMPDIR/bin/coop" uninstall --yes --keep-data > "$TMPDIR/t1.log" 2>&1; then
     else
         pass "binary removed"
     fi
-    if [[ -d "$HOME/.coop" ]]; then
+    if [[ -d "$DATA_DIR" ]]; then
         pass "data directory preserved"
     else
         fail "data directory was removed despite --keep-data"
@@ -179,7 +196,7 @@ if "$TMPDIR/bin/coop" uninstall --yes --purge > "$TMPDIR/t2.log" 2>&1; then
     else
         pass "binary removed"
     fi
-    if [[ -d "$HOME/.coop" ]]; then
+    if [[ -d "$DATA_DIR" ]]; then
         fail "data directory still present after --purge"
     else
         pass "data directory removed"
@@ -196,6 +213,14 @@ if "$TMPDIR/bin/coop" uninstall --yes --purge > "$TMPDIR/t2.log" 2>&1; then
     fi
 else
     fail "uninstall --yes --purge exited non-zero" "$(tail -5 "$TMPDIR/t2.log")"
+fi
+
+if [[ "$(uname -s)" == Darwin ]]; then
+    if [[ -f "$CONFIG_DIR/config.toml" && "$(cat "$HOME/.coop/unrelated/sentinel")" == unrelated ]]; then
+        pass "purge preserves config outside the owned backend root"
+    else
+        fail "purge removed config outside the owned backend root"
+    fi
 fi
 
 # ── Test 3: non-TTY without --yes fails with a helpful message ───────────────

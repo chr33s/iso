@@ -686,7 +686,7 @@ fn replace_sibling_proxy_at(extract_dir: &Path, current_exe: &Path) -> Result<()
 
 /// Apple releases require their qualified runtime beside the host. Reject a
 /// missing companion before replacing any installed binary.
-#[cfg(feature = "apple-container")]
+#[cfg(target_os = "macos")]
 fn replace_sibling_runtime(extract_dir: &Path) -> Result<()> {
     for obsolete in ["coop-proxy-rs", "coop-proxy-swift"] {
         ensure!(
@@ -712,21 +712,7 @@ fn replace_sibling_runtime(extract_dir: &Path) -> Result<()> {
 
 // ── Main update flow ─────────────────────────────────────────────────────────
 
-/// Whether this binary is a variant the release artifacts cannot replace.
-/// Fork macOS releases carry the Apple backend; a Lima build must not
-/// silently switch backends through self-update.
-const fn is_unreleased_variant() -> bool {
-    cfg!(all(target_os = "macos", not(feature = "apple-container")))
-}
-
 pub fn run(opts: &UpdateOpts) -> Result<()> {
-    if is_unreleased_variant() {
-        bail!(
-            "LIMA_UPDATE_VARIANT_UNSUPPORTED: fork macOS releases use the Apple backend. \
-             This Lima build cannot self-update without changing backends; rebuild \
-             from source instead. Nothing was changed."
-        );
-    }
     if is_dev_build() {
         bail!(
             "This is a dev build ({}); `coop update` only replaces release binaries.\n\
@@ -834,7 +820,7 @@ fn perform_update(release: &Release, triple: &str) -> Result<()> {
     // Swap the sibling proxy first (from the same verified tarball) so a
     // proxy-write failure aborts before coop itself is replaced, keeping the
     // two in lockstep.
-    #[cfg(feature = "apple-container")]
+    #[cfg(target_os = "macos")]
     replace_sibling_runtime(&extract_dir)?;
     replace_sibling_proxy(&extract_dir)?;
     atomic_replace_self(&extracted)
@@ -859,11 +845,6 @@ fn state_path() -> Option<PathBuf> {
 ///
 /// Best-effort — used by `coop uninstall`. Returns `Ok` even if nothing exists.
 pub fn remove_state() -> Result<()> {
-    // Builds outside the release channel never write this state; leave
-    // a release-compatible installation's shared state alone.
-    if is_unreleased_variant() {
-        return Ok(());
-    }
     let Some(path) = state_path() else {
         return Ok(());
     };
@@ -917,7 +898,7 @@ fn persist_state(tag: Option<&str>) {
 // ── Disable sources (env + TTY + dev) ────────────────────────────────────────
 
 fn background_check_disabled() -> bool {
-    if is_dev_build() || is_unreleased_variant() {
+    if is_dev_build() {
         return true;
     }
     if env::var("COOP_NO_UPDATE_CHECK")
@@ -1002,14 +983,6 @@ fn interval_elapsed(now: u64, last_checked_at: u64, interval_hours: u64) -> bool
 #[expect(clippy::panic, reason = "tests use panic! for unreachable arms")]
 mod tests {
     use super::*;
-
-    #[test]
-    fn release_channel_preserves_backend() {
-        #[cfg(all(target_os = "macos", not(feature = "apple-container")))]
-        assert!(is_unreleased_variant());
-        #[cfg(any(not(target_os = "macos"), feature = "apple-container"))]
-        assert!(!is_unreleased_variant());
-    }
 
     #[test]
     fn strip_v_removes_leading_v() {

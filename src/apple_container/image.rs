@@ -126,7 +126,7 @@ pub(crate) struct BuildInputs<'a> {
 
 impl BuildContext {
     pub(crate) fn render(inputs: &BuildInputs<'_>) -> Self {
-        let provision = crate::lima::compose_provision_script(
+        let provision = crate::apple_container::provision::compose_provision_script(
             inputs.pubkey,
             inputs.profiles,
             inputs.oci_features,

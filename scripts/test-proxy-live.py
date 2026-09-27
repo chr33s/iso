@@ -198,9 +198,9 @@ def main():
                 if probe.getresponse().status != 401:
                     raise SmokeFailure("proxy readiness did not reject unauthenticated request")
                 break
-            except (ConnectionError, TimeoutError):
+            except (ConnectionError, TimeoutError) as error:
                 if time.monotonic() >= deadline:
-                    raise SmokeFailure("proxy readiness deadline")
+                    raise SmokeFailure("proxy readiness deadline: " + type(error).__name__)
                 time.sleep(.03)
             finally:
                 probe.close()

@@ -4,7 +4,7 @@ Thanks for your interest in contributing to coop. This document covers how to
 build the project, run its tests, and submit changes.
 
 coop is a Rust CLI that orchestrates disposable VMs for running agent CLIs —
-Linux guests through Lima or the Swift `coop-sandbox` runtime
+Linux guests through the Swift `coop-sandbox` runtime
 on macOS 27+ Apple Silicon hosts only. The Swift-only credential proxy lives in `coop-proxy/`; the runtime
 lives in `coop-sandbox/`. Because it drives real
 virtualization backends, some tests only run on a host with the matching
@@ -27,10 +27,8 @@ backend. The sections below note where that applies.
   installing a floating `latest`. CI pins its own copies of taplo and cargo-deny
   in `.github/workflows/ci.yml`, so keep those in sync when bumping.
 - To run the full integration suite you need a working backend:
-  - **macOS 27+**: Apple Silicon with [Lima](https://github.com/lima-vm/lima)
-    (`limactl` on your PATH).
-  - **Apple backend**: stock Apple `container` service and guest kernel; see
-    [backend setup](docs/backends.md#macos--apple-sandbox-opt-in).
+  - **macOS 27+ Apple Silicon**: stock Apple `container` service and guest kernel; see
+    [backend setup](docs/backends.md#macos--apple-sandbox).
   Linux/Firecracker hosts are outside this fork’s support and acceptance scope.
 
   See [docs/getting-started.md](docs/getting-started.md#prerequisites) for the
@@ -72,10 +70,8 @@ The local clippy and test hooks cover only `coop`. Before submitting, also
 run `cargo clippy --workspace --all-targets -- -D warnings` and
 `swift test --package-path coop-proxy` on macOS 27+ to cover the proxy.
 
-On macOS, also run `cargo clippy --workspace --all-targets --features
-apple-container -- -D warnings`, `cargo test --features apple-container`, and
-`swift test --package-path coop-sandbox --no-parallel` for the Apple backend.
-The `apple-container` feature deliberately fails compilation on Linux.
+Also run `swift test --package-path coop-sandbox --no-parallel` for the runtime.
+Default Cargo builds include the Apple backend; no feature flag is required.
 
 Fix every warning before committing. coop has a zero-warnings policy — clippy
 runs with `-D warnings`, so a warning fails the build.
@@ -102,7 +98,7 @@ The integration suite exercises the full VM lifecycle (setup → start → statu
 pre-commit hooks, so run it before submitting a change.
 
 Run the applicable suites on **macOS 27+ Apple Silicon**. Apple runtime and
-proxy changes require their dedicated VM gates; shared changes also need Lima:
+proxy changes require their dedicated VM gates:
 
 ```bash
 # Local (whichever backend this host provides) — builds and runs

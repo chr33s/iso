@@ -16,6 +16,7 @@
 mod cli;
 mod image;
 mod protocol;
+mod provision;
 mod security;
 mod ssh;
 mod state;

@@ -15,11 +15,15 @@ pub enum LocalEndpointRoute {
     /// The guest routes to the host at this address, so loopback endpoint
     /// URLs are rewritten to it (Firecracker's TAP gateway, Lima's
     /// `host.lima.internal`).
+    #[cfg_attr(
+        all(target_os = "macos", not(test)),
+        expect(dead_code, reason = "legacy Firecracker route")
+    )]
     HostAddress(String),
     /// The guest has no route to the host; each loopback endpoint is carried
     /// over a per-instance `ssh -R` tunnel onto the guest's own loopback.
     #[cfg_attr(
-        all(not(feature = "apple-container"), not(test)),
+        all(not(target_os = "macos"), not(test)),
         expect(dead_code, reason = "constructed only by the apple-container backend")
     )]
     ReverseTunnel,

@@ -76,6 +76,7 @@ class ControlledTLSServer(http.server.ThreadingHTTPServer):
         self.failures = queue.Queue()
         self.active = set()
         self.active_lock = threading.Lock()
+        self.closing = threading.Event()
 
     def get_request(self):
         connection, address = self.socket.accept()
@@ -91,8 +92,19 @@ class ControlledTLSServer(http.server.ThreadingHTTPServer):
         return connection, address
 
     def process_request_thread(self, request, client_address):
+        # Poll so server_close() never depends on another thread's shutdown()
+        # waking a blocked handshake read, which is platform-dependent.
+        deadline = time.monotonic() + 5
         try:
-            request.do_handshake()
+            request.settimeout(.1)
+            while True:
+                try:
+                    request.do_handshake()
+                    break
+                except socket.timeout:
+                    if self.closing.is_set() or time.monotonic() > deadline:
+                        raise
+            request.settimeout(5)
         except OSError as error:
             self.failures.put(RuntimeError("controlled upstream TLS handshake failed: " + type(error).__name__))
             self.shutdown_request(request)
@@ -105,6 +117,7 @@ class ControlledTLSServer(http.server.ThreadingHTTPServer):
         super().shutdown_request(request)
 
     def server_close(self):
+        self.closing.set()
         with self.active_lock:
             active = list(self.active)
         for connection in active:

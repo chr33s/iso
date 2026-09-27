@@ -65,9 +65,7 @@ impl InstanceState {
 pub(crate) enum BackendKind {
     #[cfg(not(target_os = "macos"))]
     Firecracker,
-    #[cfg(all(target_os = "macos", not(feature = "apple-container")))]
-    Lima,
-    #[cfg(all(target_os = "macos", feature = "apple-container"))]
+    #[cfg(target_os = "macos")]
     AppleContainer,
 }
 
@@ -75,13 +73,9 @@ impl BackendKind {
     /// The backend kind for this build. `PlatformBackend` is a compile-time
     /// type alias, so this is fixed per target OS and feature set.
     pub(crate) fn of(_be: &backend::PlatformBackend) -> Self {
-        #[cfg(all(target_os = "macos", feature = "apple-container"))]
+        #[cfg(target_os = "macos")]
         {
             Self::AppleContainer
-        }
-        #[cfg(all(target_os = "macos", not(feature = "apple-container")))]
-        {
-            Self::Lima
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -195,10 +189,8 @@ mod tests {
     /// The backend token for the host — the only variant that exists in
     /// this build.
     fn platform_backend_token() -> &'static str {
-        if cfg!(all(target_os = "macos", feature = "apple-container")) {
+        if cfg!(target_os = "macos") {
             "apple-container"
-        } else if cfg!(target_os = "macos") {
-            "lima"
         } else {
             "firecracker"
         }

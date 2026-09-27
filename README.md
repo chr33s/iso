@@ -16,10 +16,8 @@ dependencies, and platform combinations that need security review and maintenanc
 The aim is a smaller attack surface and fewer places for vulnerabilities to
 arise; it is not a guarantee of fewer vulnerabilities or complete isolation.
 
-The host CLI remains Rust. macOS/Lima remains a source-build option;
-Linux/Firecracker host support is outside this fork’s scope. The Apple runtime
-is selected through
-`apple-container`. The root Swift packages are [`coop-proxy/`](coop-proxy/) and
+The host CLI remains Rust. Source and release builds use the Apple runtime by
+default; no Cargo feature flag is required. The root Swift packages are [`coop-proxy/`](coop-proxy/) and
 [`coop-sandbox/`](coop-sandbox/). See the
 [acceptance record](docs/design/swift-proxy-acceptance.md) for remaining validation
 and distribution gates.
@@ -48,18 +46,15 @@ Then build the VM template image:
 coop setup
 ```
 
-The source command above builds the Lima variant and requires Lima
-(`brew install lima`). The release variant uses the Apple backend; see
+Build and install `coop-sandbox` before setup; see
 [Prerequisites](docs/getting-started.md#prerequisites) and
-[Apple backend setup](docs/backends.md#macos--apple-sandbox-opt-in). Both require
-a macOS 27+ Apple Silicon host.
+[Apple backend setup](docs/backends.md#macos--apple-sandbox).
 
 The release channel targets `chr33s/coop`, with tagged commits from `swift`.
-macOS release archives use the Apple backend and include `coop-proxy` and
-`coop-sandbox`. Linux artifacts are outside the release scope; inherited
-automation still needs to be aligned (see [release status](RELEASING.md)). Lima builds remain available
-from source and refuse self-update to avoid changing backends. Until the first
-verified fork release is published, install this fork from source.
+macOS release archives include `coop-proxy` and `coop-sandbox`.
+Configuration defaults to `~/.coop/config.toml`. Existing `~/.coop-apple`
+installations migrate only when `~/.coop` is absent; a compatibility symlink
+preserves existing absolute paths. See [state migration](docs/backends.md#state).
 See [release status](RELEASING.md) and [`coop update`](docs/commands.md#update).
 
 ## Usage

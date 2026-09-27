@@ -295,8 +295,8 @@ protocol, reconcile, and in `TransactionTests.swift` disk-update failure
 injection and same-sandbox locking); none of them boots a VM:
 
 ```bash
-cargo clippy --all-targets --features apple-container -- -D warnings
-cargo test --features apple-container
+cargo clippy --all-targets -- -D warnings
+cargo test
 swift test --package-path coop-sandbox --no-parallel
 ```
 
@@ -393,7 +393,7 @@ parsing, or state composition:
   The module compiles only with its feature on macOS, so sweep it separately:
 
   ```bash
-  cargo mutants --features apple-container -f 'src/apple_container/*.rs'
+  cargo mutants -f 'src/apple_container/*.rs'
   ```
 
 **Don't bother with:** `backend.rs`, `lima.rs`, `setup.rs`, `update.rs`,

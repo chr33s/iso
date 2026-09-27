@@ -5,7 +5,7 @@
 //! way lets fuzz targets and integration tests depend on `coop` directly
 //! (e.g. `coop::config::CoopConfig`) instead of `#[path]`-including modules.
 
-#[cfg(all(target_os = "macos", feature = "apple-container"))]
+#[cfg(target_os = "macos")]
 mod apple_container;
 mod backend;
 mod base64;
@@ -13,6 +13,8 @@ mod cmd;
 mod commands;
 mod completions;
 pub mod config;
+#[cfg(target_os = "macos")]
+mod data_migration;
 mod devcontainer;
 mod devcontainer_oci;
 mod fs_util;
@@ -26,29 +28,17 @@ mod guest_env_state;
 pub mod jsonc;
 mod model_state;
 mod naming;
+#[cfg_attr(target_os = "macos", expect(dead_code, reason = "Firecracker-only"))]
+mod network;
 mod pat_prompt;
 mod paths;
 mod port_forward;
+mod prompt;
 mod proxy;
 mod proxy_state;
 mod remote_command;
 mod secret_store;
 mod sha256_hash;
-#[cfg(all(feature = "apple-container", not(target_os = "macos")))]
-compile_error!(
-    "the `apple-container` feature selects the Apple sandbox backend, which exists only on \
-     macOS; build without it on this target (Linux uses Firecracker)"
-);
-// Lima is an interactive CLI workflow — stderr output is intentional user communication.
-#[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "Lima-only"))]
-#[expect(
-    clippy::print_stderr,
-    reason = "lima setup is interactive CLI — stderr is user communication"
-)]
-mod lima;
-#[cfg_attr(target_os = "macos", expect(dead_code, reason = "Firecracker-only"))]
-mod network;
-mod prompt;
 mod signal;
 // Setup is an interactive CLI workflow — stderr output is intentional user communication.
 #[cfg_attr(
@@ -671,7 +661,7 @@ enum Commands {
         #[arg(long)]
         probe: bool,
     },
-    /// Generate a starter config file at ~/.coop/config.toml (~/.coop-apple/config.toml in the apple-container build)
+    /// Generate a starter config file at ~/.coop/config.toml
     Init,
     /// Replace the running coop binary with the latest GitHub release
     Update {
@@ -1016,6 +1006,9 @@ pub fn run() -> Result<()> {
         completions::emit_static(shell);
         return Ok(());
     }
+    #[cfg(target_os = "macos")]
+    let _data_directory_guard = data_migration::prepare(&cli.config)?;
+
     if matches!(cli.command, Commands::Init) {
         return cmd_init(&cli.config);
     }

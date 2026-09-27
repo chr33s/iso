@@ -6,7 +6,7 @@ use std::fmt;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{CoopConfig, CustomProfile};
+use crate::config::CustomProfile;
 use crate::paths::GuestPath;
 
 /// Devcontainer feature ids (bare names) that map to builtin profiles.
@@ -440,44 +440,6 @@ pub fn lookup_profile(name: &str, custom: &HashMap<String, CustomProfile>) -> Re
     })
 }
 
-/// Collect combined marketplace and plugin lists from global config
-/// and all active profiles. Results are sorted and deduplicated.
-pub fn collect_baked_lists(
-    cfg: &CoopConfig,
-    profiles: &[ProfileDef],
-) -> (Vec<String>, Vec<String>) {
-    let mut marketplaces = cfg.claude.marketplaces.clone();
-    let mut plugins = cfg.claude.plugins.clone();
-
-    for def in profiles {
-        marketplaces.extend(def.marketplaces.iter().cloned());
-        plugins.extend(def.plugins.iter().cloned());
-    }
-
-    marketplaces.sort_unstable();
-    marketplaces.dedup();
-    plugins.sort_unstable();
-    plugins.dedup();
-
-    (marketplaces, plugins)
-}
-
-/// Collect Codex marketplace and plugin lists from global config.
-/// Results are sorted and deduplicated. Unlike [`collect_baked_lists`],
-/// profiles contribute nothing here: profile plugin lists are
-/// Claude-only, so Codex plugins come solely from `[codex]`.
-pub fn collect_codex_baked_lists(cfg: &CoopConfig) -> (Vec<String>, Vec<String>) {
-    let mut marketplaces = cfg.codex.marketplaces.clone();
-    let mut plugins = cfg.codex.plugins.clone();
-
-    marketplaces.sort_unstable();
-    marketplaces.dedup();
-    plugins.sort_unstable();
-    plugins.dedup();
-
-    (marketplaces, plugins)
-}
-
 #[cfg(test)]
 #[expect(clippy::panic, reason = "tests use panic for assertion failures")]
 #[expect(clippy::unwrap_used, reason = "tests use unwrap for brevity")]
@@ -648,37 +610,6 @@ mod tests {
             SCRIPT_CODEX_ACCOUNT.contains("this VM has no guest keyring yet"),
             "wrapper should explain that the first prompt chooses a password",
         );
-    }
-
-    #[test]
-    fn collect_baked_lists_merges_global_and_profile_entries() {
-        let mut cfg = CoopConfig::default();
-        cfg.claude.marketplaces = vec!["z".into(), "a".into(), "a".into()];
-        cfg.claude.plugins = vec!["p2@z".into(), "p1@a".into()];
-        cfg.codex.marketplaces = vec!["codex-only".into()];
-        cfg.codex.plugins = vec!["codex-only-plugin".into()];
-        let profile = ProfileDef {
-            name: "custom".into(),
-            apt_packages: vec![],
-            pre_install: None,
-            post_install: None,
-            marketplaces: vec!["b".into(), "a".into()],
-            plugins: vec!["p3@b".into(), "p1@a".into()],
-        };
-
-        let (marketplaces, plugins) = collect_baked_lists(&cfg, &[profile]);
-        assert_eq!(marketplaces, ["a", "b", "z"]);
-        assert_eq!(plugins, ["p1@a", "p2@z", "p3@b"]);
-    }
-
-    #[test]
-    fn collect_codex_baked_lists_sorts_and_dedups() {
-        let mut cfg = CoopConfig::default();
-        cfg.codex.marketplaces = vec!["b".into(), "a".into(), "a".into()];
-        cfg.codex.plugins = vec!["p2@b".into(), "p1@a".into(), "p2@b".into()];
-        let (marketplaces, plugins) = collect_codex_baked_lists(&cfg);
-        assert_eq!(marketplaces, vec!["a".to_string(), "b".to_string()]);
-        assert_eq!(plugins, vec!["p1@a".to_string(), "p2@b".to_string()]);
     }
 
     #[test]

@@ -2,13 +2,13 @@
 
 coop runs Claude Code and Codex inside isolated Linux guest VMs on
 **macOS 27+ Apple Silicon hosts only**. Release builds use the Apple
-Containerization backend; Lima remains a source-build option.
+Containerization backend for both source and release builds.
 
 ## Prerequisites
 
 - macOS 27 or later on Apple Silicon (arm64).
 - Apple backend: stock Apple `container` service and guest kernel. See
-  [Apple backend setup](backends.md#macos--apple-sandbox-opt-in).
+  [Apple backend setup](backends.md#macos--apple-sandbox).
 - Lima source builds: [Lima](https://github.com/lima-vm/lima), with `limactl`
   on `PATH` (`brew install lima`). Rosetta 2 is needed for x86_64 guests.
 - Source builds: pinned Rust toolchain and Xcode 27 for the Swift packages.
@@ -74,11 +74,11 @@ cp "$proxy_dir/coop-proxy-swift" target/release/coop-proxy
 
 Install `coop` and `coop-proxy` in the same directory. Linux host builds are outside this fork’s support scope.
 
-For the opt-in Apple backend, build with `--features apple-container` and
+For the default Apple backend, build with `cargo build --release` and
 install the runtime using `./scripts/build-coop-sandbox.sh`; see
-[Apple backend setup](backends.md#macos--apple-sandbox-opt-in) for prerequisites.
+[Apple backend setup](backends.md#macos--apple-sandbox) for prerequisites.
 Until a verified fork release exists, update by pulling and rebuilding.
-The configured `coop update` channel is `chr33s/coop`; Lima builds disable it.
+The configured `coop update` channel is `chr33s/coop`.
 
 ## Configuration
 

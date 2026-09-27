@@ -4,7 +4,7 @@
 > guests remain supported. Retained Linux/Firecracker host details describe
 > inherited implementation, not a supported host or a release acceptance gate.
 
-coop reads configuration from `~/.coop/config.toml` by default (`~/.coop-apple/config.toml` in the `apple-container` build). Pass `--config <path>` to use a different file. Files with a `.json` extension are parsed as JSON for backward compatibility.
+coop reads configuration from `~/.coop/config.toml` by default. Pass `--config <path>` to use a different file. Files with a `.json` extension are parsed as JSON for backward compatibility.
 
 If the file does not exist, coop falls back to built-in defaults. A valid minimal config is an empty file.
 
@@ -16,7 +16,7 @@ Run `coop validate` to surface errors and warnings before anything touches a VM.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `data_dir` | string (path) | `~/.coop` (`~/.coop-apple` in the `apple-container` build) | Directory for VM artifacts: images, instances, keys, kernel, Firecracker binary. |
+| `data_dir` | string (path) | `~/.coop` | Directory for VM artifacts: images, instances, keys, kernel, Firecracker binary. |
 | `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
 | `firecracker_bin` | string (path) | `~/.coop/firecracker` | Path to the Firecracker binary. Linux only; ignored on macOS (Lima backend). |
 | `github` | string or table | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
@@ -494,7 +494,7 @@ Several config values accept per-invocation overrides via flags:
 | `--template-size <GiB>` | `setup` | `vm.template_size_gib` |
 | `--disk <GiB>` | `up` | Per-instance disk size (grows from template if larger) |
 | `--env KEY=VALUE` | `up`, `start` | Adds or overrides a `guest_env` entry (repeatable) |
-| `--config <path>` | all commands | Config file path (default: `~/.coop/config.toml`, or `~/.coop-apple/config.toml` in the `apple-container` build) |
+| `--config <path>` | all commands | Config file path (default: `~/.coop/config.toml`) |
 
 ## Examples
 
@@ -554,3 +554,7 @@ post_install = "cargo install ast-grep"
 
 forward_ports = [3000, "8080:18080"]
 ```
+
+The default directory migration and purge ownership rules are documented in
+[backend state](backends.md#state). Custom `--config` paths bypass migration;
+explicit `data_dir` values are preserved.

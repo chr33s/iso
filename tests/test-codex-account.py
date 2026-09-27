@@ -117,8 +117,8 @@ time.sleep(60)
                         self.assertEqual(result.returncode, 23, result.stderr)
                         self.assertEqual(json.loads(result.stdout), (OVERRIDE if keyring else []) + args)
             # Exercise the actual provisioned yolo command, including its bypass flag.
-            lima = (ROOT / 'src/lima.rs').read_text()
-            yolo = lima.split("cat > /usr/local/bin/codex-yolo <<'YOLOEOF'\n", 1)[1].split('\nYOLOEOF', 1)[0]
+            provision = (ROOT / 'src/apple_container/provision.rs').read_text()
+            yolo = provision.split("cat > /usr/local/bin/codex-yolo <<'YOLOEOF'\n", 1)[1].split('\nYOLOEOF', 1)[0]
             shortcut = root / 'codex-yolo'
             executable(shortcut, yolo.replace('/usr/local/bin/codex-account', str(wrapper)))
             result = subprocess.run([str(shortcut), 'hello world'], env=env,

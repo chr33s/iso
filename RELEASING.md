@@ -12,8 +12,7 @@ The installer, updater, and repository provenance checks target `chr33s/coop`.
 Release tags must point to commits reachable from the `swift` branch. macOS
 artifacts use `apple-container` and bundle the signed `coop-sandbox` runtime
 and Swift `coop-proxy`. Linux artifacts are outside the intended release
-channel. Lima source builds
-refuse self-update because the macOS release uses a different backend.
+channel. Source and release builds use the same Apple backend.
 
 This configures the channel; no hosted candidate or fork release has been
 published or verified as part of this change. Build from source until those
@@ -142,7 +141,7 @@ environment before tagging.
 | Version ↔ lock ↔ CHANGELOG ↔ tag agreement | | ✓ | |
 | Release builds (3 targets) | native only | ✓ (per installed toolchain) | |
 | Formal verification (`cargo kani`) | | ✓ (if installed) | |
-| Supported macOS VM integration | | inherited runner needs alignment | Apple runtime/proxy; Lima for shared changes |
+| Supported macOS VM integration | | inherited runner needs alignment | Apple runtime/proxy and shared host behavior |
 | Mutation testing (`--mutants`) | | opt-in | when logic changed |
 | Fuzzing (`--fuzz`) | | opt-in | when a parser changed |
 
@@ -183,8 +182,7 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    python3 tests/integration-proxy-transition.py --controlled-upstream
    ```
 
-   Also run `./tests/run-integration.sh --full` on macOS for shared changes
-   affecting the Lima source build. Dedicated live-provider and guest-agent
+   `./tests/run-integration.sh` invokes the Apple runtime suite. Live-provider and guest-agent
    tests remain required for proxy acceptance; see [testing](docs/testing.md).
    No Linux/Firecracker VM gate or remote Linux host is required.
 
