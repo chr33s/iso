@@ -10,12 +10,13 @@ jobs:
     if: github.repository == 'chr33s/coop' && github.ref == 'refs/heads/swift'
     permissions:
       contents: read
-    uses: ./.github/workflows/ci.yml
+    uses: $/.github/workflows/ci.yml
 
   candidate:
     needs: ci
     runs-on: xcode-27
     timeout-minutes: 45
+    environment: release
     permissions:
       contents: read
       id-token: write
@@ -25,12 +26,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build same-revision Apple transition candidate
+      - name: Test candidate builder
+        run: python3 tests/test-proxy-transition-build.py
+
+      # The builder strips the signing secrets from every cargo/swift
+      # subprocess; only scripts/macos-sign-notarize.sh receives them.
+      - name: Build, sign, and notarize same-revision Apple transition candidate
         env:
           REVISION: ${{ github.sha }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
         run: |
-          python3 tests/test-proxy-transition-build.py
-          python3 scripts/build-proxy-transition.py --release --include-runtime \
+          python3 scripts/build-proxy-transition.py --release --include-runtime --sign \
             --expected-revision "$REVISION" \
             --archive "$RUNNER_TEMP/coop-proxy-transition-${REVISION}-aarch64-apple-darwin.tar.gz"
           echo "TARBALL=$RUNNER_TEMP/coop-proxy-transition-${REVISION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
@@ -44,6 +55,7 @@ jobs:
           for binary in coop coop-proxy coop-sandbox; do
             test -x "$binary"
             codesign --verify --strict "$binary"
+            spctl --assess --type open --context context:primary-signature --verbose=2 "$binary"
           done
           ./coop --version
           ./coop-sandbox version

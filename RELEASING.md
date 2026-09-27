@@ -27,13 +27,47 @@ gates pass. Hosted attestation and remaining acceptance gates are tracked in
   targets
   (`aarch64-apple-darwin`, `x86_64-unknown-linux-musl`,
   `aarch64-unknown-linux-musl`), checks the built CLI reports the tagged release
-  version, builds and packages Swift `coop-proxy` and signed `coop-sandbox` for macOS only, generates `SHA256SUMS`, attests
+  version, builds and packages Swift `coop-proxy` and signed `coop-sandbox` for macOS only,
+  re-signs the macOS binaries with Developer ID and notarizes them (the
+  `sign-macos` job, see [macOS signing](#macos-signing)), generates `SHA256SUMS`, attests
   build provenance, extracts the `## vX.Y.Z` section from `CHANGELOG.md` as the
   release notes, and publishes the GitHub release. **It fails if there is no
   matching CHANGELOG section.**
 
 So pushing the tag is the release. Everything below is about making sure that
 push succeeds and ships something correct.
+
+## macOS signing
+
+The `sign-macos` job in `release.yml` runs
+[`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
+unsigned macOS archive. It signs `coop`, `coop-proxy`, and `coop-sandbox`
+with a Developer ID Application certificate (hardened runtime, secure
+timestamp; `coop-sandbox` keeps its virtualization entitlement), submits them
+to Apple's notary service, and fails the release unless notarization is
+`Accepted`. A browser-downloaded archive then runs without
+`xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled ticket,
+so Gatekeeper checks notarization online on first launch.
+
+`swift-candidate.yml` signs the same way through
+`scripts/build-proxy-transition.py --sign`, which signs before writing the
+archive's `SHA256SUMS`. The builder strips the signing secrets from every
+cargo and swift subprocess, so only the signing script sees them.
+
+Both jobs use the `release` GitHub environment, which must define these
+secrets:
+
+| Secret | Value |
+|--------|-------|
+| `MACOS_CERTIFICATE_P12` | base64 of the Developer ID Application `.p12` (certificate + private key) |
+| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
+| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `NOTARY_API_KEY_P8` | base64 of an App Store Connect API key (`.p8`, Developer role) |
+| `NOTARY_API_KEY_ID` | that key's ID |
+| `NOTARY_API_ISSUER_ID` | the App Store Connect issuer ID |
+
+A missing secret fails the release, which burns the version, so configure the
+environment before tagging.
 
 ## What runs where
 
@@ -116,6 +150,9 @@ CI can't run the full VM integration suite or the extra-toolchain checks
      archive also contains Swift `coop-proxy` and signed `coop-sandbox`, plus release-level `SHA256SUMS`
      and `attestations.jsonl`,
    - the build-provenance attestation is attached,
+   - the macOS binaries are notarized: after extracting the macOS archive,
+     `spctl --assess --type open --context context:primary-signature -v coop`
+     reports `source=Notarized Developer ID`,
    - the notes match the `## vX.Y.Z` CHANGELOG section.
 
    Then smoke-test the install path with credentials stripped, so the

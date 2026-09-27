@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Verify candidate source identity against an actual isolated Git checkout."""
+import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -69,8 +71,17 @@ class CandidateSourceTests(unittest.TestCase):
                 if argv[0] == "swift":
                     return str(swift)
                 return original_output(argv, **kwargs)
-            def build(*args):
+            def build(*args, signing=False):
                 calls.append(args)
+                if args[0].endswith("macos-sign-notarize.sh"):
+                    self.assertTrue(signing, "signing script must receive signing secrets")
+                    signed = Path(args[1])
+                    self.assertEqual(sorted(p.name for p in signed.iterdir()),
+                                     ["coop", "coop-proxy", "coop-sandbox"])
+                    for binary in signed.iterdir():
+                        binary.write_bytes(b"signed " + binary.read_bytes())
+                    return
+                self.assertFalse(signing, "build step received signing secrets")
                 if mutate_during_build:
                     (root / "source").write_text("source changed during build\n")
                 if args[0] == "cargo":
@@ -113,6 +124,22 @@ class CandidateSourceTests(unittest.TestCase):
                 self.assertFalse((binaries / "coop-proxy-swift").exists())
                 self.assertFalse((binaries / "coop-proxy-rs").exists())
                 self.assertFalse(any("coop-proxy" in call and call[0] == "cargo" for call in calls))
+                self.assertFalse(any(call[0].endswith("macos-sign-notarize.sh") for call in calls))
+                archive.unlink()
+                calls.clear()
+                arguments.append("--sign")
+                transition.main()
+                self.assertTrue(calls[-1][0].endswith("macos-sign-notarize.sh"))
+                with tarfile.open(archive) as bundle:
+                    sums = bundle.extractfile("coop-proxy-transition/SHA256SUMS").read().decode()
+                    for name in ["coop", "coop-proxy", "coop-sandbox"]:
+                        content = bundle.extractfile(f"coop-proxy-transition/{name}").read()
+                        self.assertTrue(content.startswith(b"signed "), f"{name} archived unsigned")
+                        self.assertIn(f"{hashlib.sha256(content).hexdigest()}  {name}\n", sums)
+                    manifest = json.load(bundle.extractfile("coop-proxy-transition/BUILD.json"))
+                    self.assertTrue(manifest["developer_id_signed"])
+                self.assertEqual((binaries / "coop-proxy").read_bytes(), b"fixture Swift binary")
+                arguments.remove("--sign")
                 archive.unlink()
                 calls.clear()
                 mutate_during_build = True
@@ -120,6 +147,17 @@ class CandidateSourceTests(unittest.TestCase):
                     transition.main()
                 self.assertTrue(calls, "post-build case never reached the compiler")
                 self.assertFalse(archive.exists(), "changed source was packaged")
+
+
+class SigningEnvironmentTests(unittest.TestCase):
+    def test_secrets_reach_only_the_signing_call(self):
+        secrets = {name: "secret" for name in transition.SIGNING_ENV}
+        with patch.dict(os.environ, secrets), patch.object(transition.subprocess, "run") as spawn:
+            transition.run("cargo", "build")
+            self.assertFalse(transition.SIGNING_ENV & spawn.call_args.kwargs["env"].keys())
+            self.assertIn("PATH", spawn.call_args.kwargs["env"])
+            transition.run("sign", signing=True)
+            self.assertIsNone(spawn.call_args.kwargs["env"])
 
 
 if __name__ == "__main__":
