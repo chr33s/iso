@@ -7,6 +7,7 @@ The optional controlled-upstream phase sends allowed operations only to local
 TLS fixtures. Live agent/provider smoke is separate.
 """
 import argparse
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -15,10 +16,11 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
-from proxy_vm_forwarding import exercise as exercise_controlled_upstream
+from proxy_vm_forwarding import exercise as exercise_controlled_upstream, https_listener
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKES = ["proxy-vm-test-openai", "proxy-vm-test-anthropic", "proxy-vm-host-openai", "proxy-vm-host-anthropic"]
@@ -27,8 +29,12 @@ FAKES = ["proxy-vm-test-openai", "proxy-vm-test-anthropic", "proxy-vm-host-opena
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controlled-upstream", action="store_true",
-                        help="also test admitted streaming through local TLS; requires sudo access to bind 443")
+                        help="also test admitted streaming through local TLS; reserves port 443 before setup (may prompt for sudo)")
+    parser.add_argument("--controlled-upstream-preflight", action="store_true",
+                        help="test both local confined TLS streams on port 443 without building or booting VMs")
     args = parser.parse_args()
+    if args.controlled_upstream_preflight:
+        args.controlled_upstream = True
     work = Path(tempfile.mkdtemp(prefix="coop-proxy-vm-"))
     print(f"Artifacts: {work}", flush=True)
     log = (work / "run.log").open("w")
@@ -83,12 +89,30 @@ def main():
                       endpoint + "/v1/responses", capture=True)
         assert status.strip() == str(expected), f"{name}: guest refusal status expected {expected}"
     succeeded = False
+    listener_scope = contextlib.ExitStack()
     try:
-        phase("Build private runtime")
-        run([ROOT / "scripts/build-coop-sandbox.sh", work])
+        if args.controlled_upstream:
+            phase("Reserve controlled TLS listener on 127.0.0.1:443")
+            listener = listener_scope.enter_context(https_listener(work, log, interactive=sys.stdin.isatty()))
         if args.controlled_upstream:
             run(["swift", "test", "--package-path", ROOT / "coop-proxy",
                  "--force-resolved-versions", "--filter", "VMProxyFixture"])
+            phase("Preflight both controlled TLS streams without VMs")
+            for provider_name in ["openai", "anthropic"]:
+                with socket.socket() as available:
+                    available.bind(("127.0.0.1", 0))
+                    port = available.getsockname()[1]
+                result = exercise_controlled_upstream(
+                    work / ("preflight-" + provider_name), provider_name, port,
+                    "0" * 64, "synthetic-preflight-credential", [], log, listener=listener)
+                log.write(json.dumps(result) + "\n")
+                log.flush()
+            if args.controlled_upstream_preflight:
+                phase("PASS controlled TLS preflight (no VM coverage)")
+                succeeded = True
+                return
+        phase("Build private runtime")
+        run([ROOT / "scripts/build-coop-sandbox.sh", work])
         for name in ["coop", "coop-proxy"]:
             shutil.copy2(ROOT / "target/debug" / name, work / "bin" / name)
         kernel = (Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve(strict=True)
@@ -254,7 +278,8 @@ auth = "bearer"
                     time.sleep(0.02)
                 result = exercise_controlled_upstream(
                     work / ("tls-" + provider_name), provider_name, port, token, credential,
-                    [str(host), "--config", str(config), "shell", "proxy-gate", "--"], log)
+                    [str(host), "--config", str(config), "shell", "proxy-gate", "--"], log,
+                    listener=listener)
                 log.write(json.dumps(result) + "\n")
                 log.flush()
             coop("stop", "proxy-gate")
@@ -262,6 +287,10 @@ auth = "bearer"
         succeeded = True
     finally:
         cleanup_errors = []
+        try:
+            listener_scope.close()
+        except Exception as error:
+            cleanup_errors.append(error)
         if host.exists() and config.exists():
             phase("Cleanup private VMs")
             for name in ["proxy-peer", "proxy-gate"]:

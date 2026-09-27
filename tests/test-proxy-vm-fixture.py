@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("fixture", ROOT / "tests/proxy_vm_forwarding.py")
@@ -22,6 +23,83 @@ SPEC.loader.exec_module(fixture)
 
 
 class FixtureCleanupTests(unittest.TestCase):
+    def test_bind_helper_lives_until_listener_lease_closes(self):
+        child_code = """import os,runpy,socket,sys
+from unittest import mock
+helper, endpoint = sys.argv[1:]
+sys.argv = [helper, endpoint]
+os.environ.update(SUDO_UID=str(os.getuid()), SUDO_GID=str(os.getgid()))
+real_bind = socket.socket.bind
+def bind(sock, address):
+    return real_bind(sock, ('127.0.0.1', 0) if address == ('127.0.0.1', 443) else address)
+with mock.patch.object(os, 'geteuid', return_value=0), mock.patch.object(socket.socket, 'bind', bind), \
+     mock.patch.object(os, 'setgroups') as groups, mock.patch.object(os, 'setgid') as gid, \
+     mock.patch.object(os, 'setuid') as uid:
+    runpy.run_path(helper, run_name='__main__')
+    groups.assert_called_once_with([])
+    gid.assert_called_once_with(os.getgid())
+    uid.assert_called_once_with(os.getuid())
+"""
+        real_bind = socket.socket.bind
+        real_popen = subprocess.Popen
+        children = []
+        def bind(sock, address):
+            if address == ("127.0.0.1", 443):
+                raise PermissionError("test requires helper path")
+            return real_bind(sock, address)
+        def spawn(command, **kwargs):
+            child = real_popen([sys.executable, "-c", child_code, *command[-2:]], **kwargs)
+            children.append(child)
+            return child
+        with tempfile.TemporaryDirectory() as temporary, open(os.devnull, "w") as log:
+            try:
+                with mock.patch.object(socket.socket, "bind", bind), mock.patch.object(fixture.subprocess, "Popen", spawn):
+                    with fixture.https_listener(Path(temporary), log) as listener:
+                        self.assertEqual(len(children), 1)
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            children[0].wait(timeout=0.2)
+                        with socket.create_connection(listener.getsockname(), timeout=1):
+                            peer, _ = listener.accept()
+                            peer.close()
+                    self.assertEqual(children[0].poll(), 0)
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+
+    def test_exited_group_permission_error_is_reaped(self):
+        process = mock.Mock(pid=123, poll=mock.Mock(return_value=1))
+        with mock.patch.object(fixture.os, "killpg", side_effect=PermissionError):
+            fixture.stop_process_group(process)
+        process.wait.assert_called_once_with(timeout=5)
+
+    def test_live_group_permission_error_is_not_suppressed(self):
+        process = mock.Mock(pid=123, poll=mock.Mock(return_value=None))
+        with mock.patch.object(fixture.os, "killpg", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                fixture.stop_process_group(process)
+        process.wait.assert_not_called()
+
+    def test_reserved_listener_survives_sequential_provider_cleanup(self):
+        with tempfile.TemporaryDirectory(prefix="coop-reserved-listener-") as directory:
+            with socket.socket() as reserved:
+                reserved.bind(("127.0.0.1", 0))
+                reserved.listen(8)
+                address = reserved.getsockname()
+                for provider in ["openai", "anthropic"]:
+                    # Fail after server startup: exercise must clean up its
+                    # duplicate without consuming the caller's reservation.
+                    with mock.patch.object(fixture.subprocess, "check_output",
+                                           side_effect=RuntimeError("fixture startup failure")):
+                        with self.assertRaisesRegex(RuntimeError, "fixture startup failure"):
+                            fixture.exercise(Path(directory) / provider, provider, 0,
+                                             "0" * 64, "synthetic", [], sys.stderr,
+                                             listener=reserved)
+                    self.assertEqual(reserved.getsockname(), address)
+            with socket.socket() as probe:
+                probe.bind(address)
+
     def test_cleanup_closes_descendant_stdout(self):
         command = "import subprocess,sys,time; child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print(child.pid,flush=True); time.sleep(60)"
         process = subprocess.Popen([sys.executable, "-c", command], stdout=subprocess.PIPE,

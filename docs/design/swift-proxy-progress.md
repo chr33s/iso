@@ -2416,3 +2416,39 @@ provider/agent success, final whole-goal review/platform gates, hosted artifact
 verification and the intended Apple-backend install/update channel. Neither
 Lima nor Firecracker was rerun here; prior Firecracker lifecycle failures are
 not resolved by this removal. No commit, merge, push, or publication was done.
+
+
+## 2026-09-27: retained listener and admitted Apple VM forwarding
+
+The controlled fixture's 502/TLS EOF was reproduced without a VM: on this macOS
+host a transferred socket failed TLS after its creator exited, including on an
+unprivileged high port. Retaining the creator produced HTTP 204 in the minimal
+reproduction and successful confined streams for both provider identities.
+The bind helper now retains its socket until the control channel closes (bounded
+to one hour), after dropping supplementary groups, GID, and UID. The harness
+owns that lease across both providers. Cleanup no longer masks an exited-child
+EPERM, and both upstream TLS errors and the Swift transport error are observable.
+Six fixture regressions pass; removing the real helper's wait fails the lifetime
+test. The privilege boundary is mocked in that regression.
+
+The full Apple VM gate then exited 0 using a borrowed retained listener with the
+unchanged production profile. Both providers passed real guest → SSH tunnel →
+confined Swift → controlled TLS exchanges, with exact request/response hashes
+and `first_event_before_completion: true`. The 19,501-file synthetic credential
+scan, canary/configuration witnesses, cross-VM capability rejection, transport
+failure observations (Codex 10 events, Claude 13), startup refusals, and cleanup
+all passed. The substituted exiting binary was killed by SIGKILL; no normal
+exit status is inferred. All 940 transcript lines were independently reviewed.
+The private work directory and owner `8cfd51c0` containers/images were removed;
+the retained listener and diagnostic helper were closed.
+
+Evidence summary: `/tmp/coop-listener-lifetime-result.json`. This run validates
+controlled admitted Apple VM traffic, not real provider calls, Lima, Firecracker,
+production system-trust behavior against the fixture CA, or release provenance.
+The canonical sudo/privilege-drop helper subsequently passed both confined TLS
+preflights in the user's Terminal (12:56 local, artifact `coop-proxy-vm-hlr5h4gp`).
+Both request/response hashes matched and the first SSE event preceded completion;
+the complete user-supplied transcript reports PASS. The initial unconfigured
+Swift fixture skip is expected; both configured fixture executions ran and passed.
+The full VM run borrowed the diagnostic helper's retained socket; the separate
+canonical preflight validates the final privileged helper path.

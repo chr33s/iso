@@ -70,12 +70,15 @@ The gate also removes the selected Swift artifact and substitutes an executable
 that exits immediately, checking that both starts fail with the expected reason
 and create no proxy PID records without a fallback implementation.
 
-The additional controlled-upstream phase is under development and has not yet
-passed its real-VM gate:
+The controlled-upstream phase passed for both providers on the Apple backend
+using a retained port-443 listener; see the [acceptance map](design/swift-proxy-acceptance.md)
+for its fixture boundaries and remaining acceptance/distribution gates:
 
 ```bash
-sudo -v
 python3 tests/integration-proxy-transition.py --controlled-upstream
+
+# Diagnose confined local TLS on port 443 first, without building or booting VMs:
+python3 tests/integration-proxy-transition.py --controlled-upstream-preflight
 ```
 
 It replaces each owned Swift proxy with an opt-in XCTest process using the same
@@ -86,11 +89,18 @@ it does not establish production system-trust or resource-limit parity. It check
 both providers' injected synthetic credential, fixed Host/SNI, request hash,
 header stripping, and response hash. The TLS upstream withholds the last SSE
 event until the guest acknowledges the first, to detect response aggregation.
-macOS requires privilege for loopback port 443: a short-lived helper binds that
-port and passes the listener to the unprivileged harness over a private Unix
-socket. The helper handles no TLS or HTTP and receives no credentials. No host
+macOS requires privilege for loopback port 443: a helper binds that port, drops
+its root UID/GID and supplementary groups, and passes the listener over a private
+Unix socket. It stays alive until the harness closes the control connection
+(or one hour elapses): on the tested macOS host, TLS on transferred sockets
+reset when their creator exited. The helper handles no TLS or HTTP and receives
+no credentials. No host
 trust-store changes or production endpoint overrides are made. Port 443 must be
-free. This fixture is not linked into the production executable.
+free. The runner reserves it before any build or VM setup and retains it across
+both provider exchanges. In an interactive Terminal, sudo can prompt at that
+initial step; unattended runs require noninteractive sudo authorization. No
+later phase needs a refreshed sudo timestamp. This fixture is not linked into
+the production executable.
 
 ### Live proxy API smoke
 

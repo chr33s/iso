@@ -62,6 +62,11 @@ final class VMProxyFixture: XCTestCase {
               let task = OwnedHTTPRequest(
                 request: request, relay: relay, eventLoop: eventLoop,
                 tlsConfiguration: fixtureTLS, connectHost: "127.0.0.1")
+              task.futureResult.whenFailure { error in
+                // This synthetic-credential fixture runs only under the test harness.
+                // Report transport failures before the guest's 502 triggers cleanup.
+                FileHandle.standardError.write(Data("VM_PROXY_UPSTREAM_FAILED: \(error)\n".utf8))
+              }
               task.futureResult.flatMap { channel.closeFuture }.whenComplete(finish)
               return task
             })

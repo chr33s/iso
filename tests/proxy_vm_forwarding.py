@@ -1,5 +1,6 @@
 """Controlled TLS fixture shared by the host preflight and real-VM gate."""
 import concurrent.futures
+import contextlib
 import array
 import hashlib
 import http.server
@@ -54,6 +55,11 @@ def stop_process_group(process):
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # Darwin can report EPERM for a group whose last process has exited.
+        # Do not suppress a denial while the owned child is still running.
+        if process.poll() is None:
+            raise
     process.wait(timeout=5)
 
 
@@ -67,6 +73,7 @@ class ControlledTLSServer(http.server.ThreadingHTTPServer):
         self.context = context
         self.server_name = "localhost"
         self.server_port = listener.getsockname()[1]
+        self.failures = queue.Queue()
         self.active = set()
         self.active_lock = threading.Lock()
 
@@ -86,7 +93,8 @@ class ControlledTLSServer(http.server.ThreadingHTTPServer):
     def process_request_thread(self, request, client_address):
         try:
             request.do_handshake()
-        except OSError:
+        except OSError as error:
+            self.failures.put(RuntimeError("controlled upstream TLS handshake failed: " + type(error).__name__))
             self.shutdown_request(request)
             return
         super().process_request_thread(request, client_address)
@@ -108,41 +116,63 @@ class ControlledTLSServer(http.server.ThreadingHTTPServer):
         super().server_close()
 
 
-def https_listener(work, log):
-    """Use sudo only for bind; TLS and HTTP run as the calling user."""
-    listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        listener.bind(("127.0.0.1", 443))
-        listener.listen(8)
-        return listener
-    except PermissionError:
-        listener.close()
+@contextlib.contextmanager
+def https_listener(work, log, *, interactive=False):
+    """Reserve HTTPS and keep its socket creator alive until the lease ends."""
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            listener.bind(("127.0.0.1", 443))
+        except PermissionError:
+            pass
+        else:
+            listener.listen(8)
+            yield listener
+            return
     with tempfile.TemporaryDirectory(prefix="coop-bind-", dir="/tmp") as directory, socket.socket(socket.AF_UNIX) as control:
         path = Path(directory) / "bind.sock"
         control.bind(str(path))
         control.listen(1)
-        control.settimeout(5)
+        control.settimeout(0.2)
+        helper = subprocess.Popen(
+            ["sudo", *([] if interactive else ["-n"]), "/usr/bin/python3",
+             str(ROOT / "tests/fixtures/credential-proxy/bind-test-https.py"), str(path)],
+            stdout=log, stderr=None if interactive else log)
+        peer = None
         try:
-            subprocess.run(["sudo", "-n", "/usr/bin/python3",
-                            str(ROOT / "tests/fixtures/credential-proxy/bind-test-https.py"), str(path)],
-                           check=True, stdout=log, stderr=log, timeout=10)
-            peer, _ = control.accept()
-            with peer:
-                peer.settimeout(5)
-                _, ancillary, flags, _ = peer.recvmsg(32, socket.CMSG_SPACE(array.array("i").itemsize))
-            assert not flags & socket.MSG_CTRUNC
+            deadline = time.monotonic() + (120 if interactive else 10)
+            while peer is None:
+                try:
+                    peer, _ = control.accept()
+                except socket.timeout:
+                    if helper.poll() is not None:
+                        raise RuntimeError("HTTPS bind helper exited before socket handoff; inspect run.log")
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("HTTPS bind helper handoff timed out")
+            peer.settimeout(5)
+            _, ancillary, flags, _ = peer.recvmsg(32, socket.CMSG_SPACE(array.array("i").itemsize))
             descriptors = array.array("i")
             for level, kind, data in ancillary:
                 if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
                     descriptors.frombytes(data)
-            assert len(descriptors) == 1
-            return socket.socket(fileno=descriptors[0])
+            with contextlib.ExitStack() as received:
+                sockets = [received.enter_context(socket.socket(fileno=fd)) for fd in descriptors]
+                assert not flags & socket.MSG_CTRUNC and len(sockets) == 1
+                yield sockets[0]
         finally:
+            if peer is not None:
+                peer.close()
+            control.close()
             path.unlink(missing_ok=True)
+            try:
+                helper.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # The sudo monitor may still be waiting for authentication.
+                helper.terminate()
+                helper.wait(timeout=5)
 
 
-def exercise(work, provider, port, token, credential, guest_command, log):
+def exercise(work, provider, port, token, credential, guest_command, log, *, listener):
     """One admitted operation; host releases the last SSE event only after guest ACK."""
     work.mkdir(mode=0o700, parents=True, exist_ok=True)
     subprocess.run(["python3", str(ROOT / "tests/fixtures/credential-proxy/generate-forwarding-certificates.py"), str(work)],
@@ -165,15 +195,15 @@ def exercise(work, provider, port, token, credential, guest_command, log):
         def do_POST(self):
             try:
                 self.connection.settimeout(20)
-                assert self.path == path
-                assert self.headers.get_all("Host") == ["api." + provider + ".com"]
-                assert self.headers.get_all("Authorization") == ["Bearer " + credential]
-                assert self.headers.get("x-api-key") is None
-                assert self.headers.get("x-private") is None
+                assert self.path == path, "upstream path mismatch"
+                assert self.headers.get_all("Host") == ["api." + provider + ".com"], "upstream Host mismatch"
+                assert self.headers.get_all("Authorization") == ["Bearer " + credential], "upstream credential mismatch"
+                assert self.headers.get("x-api-key") is None, "unexpected upstream API key header"
+                assert self.headers.get("x-private") is None, "nominated header reached upstream"
                 length = int(self.headers["Content-Length"])
-                assert length == len(BODY)
+                assert length == len(BODY), "upstream body length mismatch"
                 body = self.rfile.read(length)
-                assert body == BODY
+                assert body == BODY, "upstream body content mismatch"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Content-Length", str(len(FIRST) + len(LAST)))
@@ -192,7 +222,10 @@ def exercise(work, provider, port, token, credential, guest_command, log):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(work / "leaf.pem", work / "key.pem")
     context.set_servername_callback(lambda _socket, name, _context: names.put(name))
-    server = ControlledTLSServer(https_listener(work, log), context, Handler)
+    # Each provider owns a duplicate; closing its server preserves the reserved
+    # listener so later phases never need to authenticate to sudo again.
+    server = ControlledTLSServer(
+        listener.dup(), context, Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     fixture = None
@@ -233,7 +266,21 @@ def exercise(work, provider, port, token, credential, guest_command, log):
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as readers:
             first = readers.submit(guest.stdout.readline)
             try:
-                assert first.result(timeout=20).strip() == "VM_GUEST_FIRST"
+                if first.result(timeout=20).strip() != "VM_GUEST_FIRST":
+                    # Give XCTest time to emit the client-side TLS error before
+                    # cleanup terminates it. The wait remains bounded.
+                    try:
+                        fixture.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    for failures in [observed, server.failures]:
+                        try:
+                            failure = failures.get_nowait()
+                        except queue.Empty:
+                            continue
+                        if isinstance(failure, BaseException):
+                            raise failure
+                    raise RuntimeError("guest exited before first SSE event; inspect guest stderr in run.log")
             except BaseException:
                 stop_process_group(guest)
                 raise
@@ -251,8 +298,10 @@ def exercise(work, provider, port, token, credential, guest_command, log):
         return dict(observation, **response, first_event_before_completion=True)
     finally:
         release.set()
-        for process in [guest, fixture]:
-            stop_process_group(process)
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        # Attempt every cleanup even when one process refuses a signal.
+        with contextlib.ExitStack() as cleanup:
+            cleanup.callback(thread.join, timeout=5)
+            cleanup.callback(server.server_close)
+            cleanup.callback(server.shutdown)
+            for process in [fixture, guest]:
+                cleanup.callback(stop_process_group, process)
