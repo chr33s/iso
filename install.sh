@@ -226,28 +226,20 @@ info "Installing to ${INSTALL_DIR}..."
 EXTRACTED_DIR="${TMPDIR}/${BINARY}-${VERSION}-${TRIPLE}"
 EXTRACTED="${EXTRACTED_DIR}/${BINARY}"
 [ -f "$EXTRACTED" ] || die "Binary not found in tarball"
-RUST_PROXY="${EXTRACTED_DIR}/${BINARY}-proxy-rs"
-SWIFT_PROXY="${EXTRACTED_DIR}/${BINARY}-proxy-swift"
-if [ -f "$RUST_PROXY" ] && [ -f "$SWIFT_PROXY" ]; then
-    PROXY_NAMES="${BINARY}-proxy-rs ${BINARY}-proxy-swift"
-elif [ -e "$RUST_PROXY" ] || [ -e "$SWIFT_PROXY" ]; then
-    die "Release contains an incomplete proxy transition pair"
-else
-    PROXY_NAMES="${BINARY}-proxy"
-fi
-LEGACY_PROXY_PRESENT=no
-[ ! -f "${EXTRACTED_DIR}/${BINARY}-proxy" ] || LEGACY_PROXY_PRESENT=yes
-mkdir -p "$INSTALL_DIR"
-for proxy_name in $PROXY_NAMES; do
-    if [ -f "${EXTRACTED_DIR}/${proxy_name}" ]; then
-        mv "${EXTRACTED_DIR}/${proxy_name}" "${INSTALL_DIR}/${proxy_name}"
-        chmod +x "${INSTALL_DIR}/${proxy_name}"
-    fi
+for obsolete in "${BINARY}-proxy-rs" "${BINARY}-proxy-swift"; do
+    [ ! -e "${EXTRACTED_DIR}/${obsolete}" ] || die "Release contains an obsolete proxy transition artifact"
 done
-if [ "$PROXY_NAMES" = "${BINARY}-proxy" ] && [ "$LEGACY_PROXY_PRESENT" = yes ]; then
-    # The host prefers the explicit Rust transition name. Remove stale names
-    # when returning to a legacy release so it cannot select an older proxy.
-    rm -f "${INSTALL_DIR}/${BINARY}-proxy-rs" "${INSTALL_DIR}/${BINARY}-proxy-swift"
+PROXY_NAME="${BINARY}-proxy"
+if [ -e "${EXTRACTED_DIR}/${PROXY_NAME}" ] && [ ! -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
+    die "Proxy artifact is not a regular file"
+fi
+mkdir -p "$INSTALL_DIR"
+if [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
+    mv "${EXTRACTED_DIR}/${PROXY_NAME}" "${INSTALL_DIR}/${PROXY_NAME}"
+    chmod +x "${INSTALL_DIR}/${PROXY_NAME}"
+    for stale in "${BINARY}-proxy-rs" "${BINARY}-proxy" "${BINARY}-proxy-swift"; do
+        [ "$stale" = "$PROXY_NAME" ] || rm -f "${INSTALL_DIR}/${stale}"
+    done
 fi
 mv "$EXTRACTED" "${INSTALL_DIR}/${BINARY}"
 chmod +x "${INSTALL_DIR}/${BINARY}"

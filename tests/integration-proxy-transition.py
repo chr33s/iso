@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Real Apple sandbox gate for both proxy implementations, using fake credentials.
+"""Real Apple sandbox gate for the Swift proxy, using fake credentials.
 
 Requires scripts/build-proxy-transition.py first. Builds a private runtime and
-VM image, checks guest refusal paths, rolls Swift back to Rust, and tears down.
+VM image, checks guest refusal paths, checks Swift startup failures, and tears down.
 The optional controlled-upstream phase sends allowed operations only to local
 TLS fixtures. Live agent/provider smoke is separate.
 """
@@ -89,7 +89,7 @@ def main():
         if args.controlled_upstream:
             run(["swift", "test", "--package-path", ROOT / "macos/coop-proxy",
                  "--force-resolved-versions", "--filter", "VMProxyFixture"])
-        for name in ["coop", "coop-proxy-rs", "coop-proxy-swift"]:
+        for name in ["coop", "coop-proxy"]:
             shutil.copy2(ROOT / "target/debug" / name, work / "bin" / name)
         kernel = (Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve(strict=True)
         # JSON string quoting is compatible with TOML basic strings for these host paths.
@@ -114,129 +114,122 @@ auth = "bearer"
         (work / "peer-project").mkdir()
         phase("Build VM images")
         coop("setup", "-y")
-        for implementation in ["swift", "rust"]:
-            env["COOP_PROXY_IMPLEMENTATION"] = implementation
-            phase(f"Boot and bootstrap with {implementation}")
-            if implementation == "swift":
-                coop("up", work / "project", "--name", "proxy-gate", "--no-github", "--no-devcontainer")
-                coop("up", work / "peer-project", "--name", "proxy-peer", "--no-github", "--no-devcontainer")
-                phase("Install guest scanner dependency")
-                coop("exec", "proxy-gate", "--", "sudo", "apt-get", "update")
-                coop("exec", "proxy-gate", "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
-            else:
-                coop("start", "proxy-gate", "--no-github")
-            endpoint, token = guest_proxy("proxy-gate")
-            peer_endpoint, peer_token = guest_proxy("proxy-peer")
-            assert token != peer_token, "VMs share a capability"
-            # GET is always forbidden, so even a broken capability gate cannot
-            # cause a model operation or deliver the synthetic credential.
-            phase(f"{implementation}: guest gate and cross-VM capability rejection")
-            refused("proxy-gate", endpoint, None, 401)
-            refused("proxy-gate", endpoint, token, 403)
-            refused("proxy-gate", endpoint, peer_token, 401)
-            refused("proxy-peer", peer_endpoint, peer_token, 403)
-            refused("proxy-peer", peer_endpoint, token, 401)
-            phase(f"{implementation}: scan guest files for synthetic credentials")
-            scanner = (ROOT / "tests/fixtures/credential-proxy/scan-guest-secrets.py").read_text()
-            observation = json.loads(coop("shell", "proxy-gate", "--", "sudo", "python3", "-c",
-                                          scanner, input=json.dumps(FAKES), capture=True))
-            assert observation["matches"] == 0 and observation["canary_detected_and_removed"]
-            log.write(json.dumps(observation) + "\n")
-            instance = state / "instances/proxy-gate"
-            for name in ["openai", "anthropic"]:
-                pid = int((instance / f"proxy-{name}.pid").read_text().strip())
-                command = run(["ps", "-p", str(pid), "-o", "comm="], capture=True, timeout=10)
-                expected = "coop-proxy-swift" if implementation == "swift" else "coop-proxy-rs"
-                assert expected in command, "launcher selected the wrong implementation"
-            phase(f"{implementation}: proxy termination is visible to the guest client")
-            pid = int((instance / "proxy-openai.pid").read_text().strip())
-            selected_name = "coop-proxy-swift" if implementation == "swift" else "coop-proxy-rs"
-            command = run(["ps", "-p", str(pid), "-o", "comm="], capture=True, timeout=10).strip()
-            assert Path(command).resolve(strict=True) == (work / "bin" / selected_name).resolve(strict=True), \
-                f"proxy identity changed before termination: {command}"
-            os.kill(pid, signal.SIGTERM)
-            deadline = time.monotonic() + 5
-            while True:
-                with socket.socket() as peer:
-                    peer.settimeout(1)
-                    if peer.connect_ex(("127.0.0.1", int(endpoint.rsplit(":", 1)[1]))) != 0:
-                        break
-                assert time.monotonic() < deadline, "terminated proxy listener remains open"
-                time.sleep(0.02)
-            log.flush()
-            offset = os.lseek(log.fileno(), 0, os.SEEK_CUR)
-            status = coop("exec", "proxy-gate", "--", "curl", "--silent", "--show-error", "--max-time", "10",
-                          "--output", "/dev/null", endpoint + "/v1/responses", check=False)
-            log.flush()
-            diagnostic = (work / "run.log").read_bytes()[offset:].decode(errors="replace")
-            assert status != 0 and re.search(r"curl: \((7|52|56)\)", diagnostic), "guest did not report a curl transport failure"
-            phase(f"{implementation}: actual agents report terminated proxy transport failure")
-            # Stop the other provider too: these probes must never send a model
-            # operation to an upstream, even with this gate's synthetic keys.
-            claude_settings = json.loads(coop("exec", "proxy-gate", "--", "cat",
-                                             "./.claude/settings.json", capture=True))["env"]
-            claude_endpoint = claude_settings["ANTHROPIC_BASE_URL"]
-            assert re.fullmatch(r"http://127\.0\.0\.1:[0-9]+", claude_endpoint)
-            claude_pid = int((instance / "proxy-anthropic.pid").read_text().strip())
-            command = run(["ps", "-p", str(claude_pid), "-o", "comm="], capture=True, timeout=10).strip()
-            assert Path(command).resolve(strict=True) == (work / "bin" / selected_name).resolve(strict=True)
-            os.kill(claude_pid, signal.SIGTERM)
-            deadline = time.monotonic() + 5
-            while True:
-                with socket.socket() as probe:
-                    probe.settimeout(1)
-                    if probe.connect_ex(("127.0.0.1", int(claude_endpoint.rsplit(":", 1)[1]))) != 0:
-                        break
-                assert time.monotonic() < deadline, "terminated Anthropic listener remains open"
-                time.sleep(0.02)
-            agent_probe = (ROOT / "tests/fixtures/credential-proxy/agent-tool-smoke.py").read_text()
-            for agent in ["codex", "claude"]:
-                observation = json.loads(coop(
-                    "shell", "proxy-gate", "--", "python3", "-c", agent_probe,
-                    "--agent", agent, "--model", "coop-transport-failure-probe",
-                    "--expect-transport-failure", capture=True, timeout=330))
-                assert observation["terminal_transport_failure"] is True
-                assert observation["tool_result_and_final_answer"] is False
-                log.write(json.dumps(observation) + "\n")
-            phase(f"Stop {implementation} and verify listener teardown")
-            coop("stop", "proxy-gate")
-            port = int(endpoint.rsplit(":", 1)[1])
+        phase(f"Boot and bootstrap with Swift")
+        coop("up", work / "project", "--name", "proxy-gate", "--no-github", "--no-devcontainer")
+        coop("up", work / "peer-project", "--name", "proxy-peer", "--no-github", "--no-devcontainer")
+        phase("Install guest scanner dependency")
+        coop("exec", "proxy-gate", "--", "sudo", "apt-get", "update")
+        coop("exec", "proxy-gate", "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
+        endpoint, token = guest_proxy("proxy-gate")
+        peer_endpoint, peer_token = guest_proxy("proxy-peer")
+        assert token != peer_token, "VMs share a capability"
+        # GET is always forbidden, so even a broken capability gate cannot
+        # cause a model operation or deliver the synthetic credential.
+        phase(f"Swift: guest gate and cross-VM capability rejection")
+        refused("proxy-gate", endpoint, None, 401)
+        refused("proxy-gate", endpoint, token, 403)
+        refused("proxy-gate", endpoint, peer_token, 401)
+        refused("proxy-peer", peer_endpoint, peer_token, 403)
+        refused("proxy-peer", peer_endpoint, token, 401)
+        phase(f"Swift: scan guest files for synthetic credentials")
+        scanner = (ROOT / "tests/fixtures/credential-proxy/scan-guest-secrets.py").read_text()
+        observation = json.loads(coop("shell", "proxy-gate", "--", "sudo", "python3", "-c",
+                                      scanner, input=json.dumps(FAKES), capture=True))
+        assert observation["matches"] == 0 and observation["canary_detected_and_removed"]
+        log.write(json.dumps(observation) + "\n")
+        instance = state / "instances/proxy-gate"
+        for name in ["openai", "anthropic"]:
+            pid = int((instance / f"proxy-{name}.pid").read_text().strip())
+            command = run(["ps", "-p", str(pid), "-o", "comm="], capture=True, timeout=10)
+            expected = "coop-proxy"
+            assert expected in command, "launcher selected the wrong implementation"
+        phase(f"Swift: proxy termination is visible to the guest client")
+        pid = int((instance / "proxy-openai.pid").read_text().strip())
+        selected_name = "coop-proxy"
+        command = run(["ps", "-p", str(pid), "-o", "comm="], capture=True, timeout=10).strip()
+        assert Path(command).resolve(strict=True) == (work / "bin" / selected_name).resolve(strict=True), \
+            f"proxy identity changed before termination: {command}"
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while True:
             with socket.socket() as peer:
                 peer.settimeout(1)
-                assert peer.connect_ex(("127.0.0.1", port)) != 0, "proxy listener survived stop"
-            if implementation == "swift":
-                selected = work / "bin/coop-proxy-swift"
-                saved = work / "bin/coop-proxy-swift.saved"
-                selected.rename(saved)
-                try:
-                    for failure in ["missing", "exits"]:
-                        phase(f"Swift {failure}: launch must fail without Rust fallback")
-                        if failure == "exits":
-                            # Do not copy macOS protected-system file flags.
-                            shutil.copyfile("/usr/bin/false", selected)
-                            selected.chmod(0o755)
-                        log.flush()
-                        offset = os.lseek(log.fileno(), 0, os.SEEK_CUR)
-                        status = coop("start", "proxy-gate", "--no-github", check=False)
-                        assert status != 0, "failed Swift startup silently fell back or succeeded"
-                        log.flush()
-                        diagnostic = (work / "run.log").read_bytes()[offset:].decode(errors="replace")
-                        if failure == "missing":
-                            assert "selected proxy coop-proxy-swift not found" in diagnostic
-                        else:
-                            assert any(marker in diagnostic for marker in [
-                                "credential proxy exited before it began serving",
-                                "Failed to write proxy startup config to stdin",
-                            ]), "launch failed for an unexpected reason"
-                        for name in ["openai", "anthropic"]:
-                            assert not (instance / f"proxy-{name}.pid").exists(), "failed startup left a proxy running"
-                        coop("stop", "proxy-gate")
-                finally:
-                    selected.unlink(missing_ok=True)
-                    saved.rename(selected)
+                if peer.connect_ex(("127.0.0.1", int(endpoint.rsplit(":", 1)[1]))) != 0:
+                    break
+            assert time.monotonic() < deadline, "terminated proxy listener remains open"
+            time.sleep(0.02)
+        log.flush()
+        offset = os.lseek(log.fileno(), 0, os.SEEK_CUR)
+        status = coop("exec", "proxy-gate", "--", "curl", "--silent", "--show-error", "--max-time", "10",
+                      "--output", "/dev/null", endpoint + "/v1/responses", check=False)
+        log.flush()
+        diagnostic = (work / "run.log").read_bytes()[offset:].decode(errors="replace")
+        assert status != 0 and re.search(r"curl: \((7|52|56)\)", diagnostic), "guest did not report a curl transport failure"
+        phase(f"Swift: actual agents report terminated proxy transport failure")
+        # Stop the other provider too: these probes must never send a model
+        # operation to an upstream, even with this gate's synthetic keys.
+        claude_settings = json.loads(coop("exec", "proxy-gate", "--", "cat",
+                                         "./.claude/settings.json", capture=True))["env"]
+        claude_endpoint = claude_settings["ANTHROPIC_BASE_URL"]
+        assert re.fullmatch(r"http://127\.0\.0\.1:[0-9]+", claude_endpoint)
+        claude_pid = int((instance / "proxy-anthropic.pid").read_text().strip())
+        command = run(["ps", "-p", str(claude_pid), "-o", "comm="], capture=True, timeout=10).strip()
+        assert Path(command).resolve(strict=True) == (work / "bin" / selected_name).resolve(strict=True)
+        os.kill(claude_pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while True:
+            with socket.socket() as probe:
+                probe.settimeout(1)
+                if probe.connect_ex(("127.0.0.1", int(claude_endpoint.rsplit(":", 1)[1]))) != 0:
+                    break
+            assert time.monotonic() < deadline, "terminated Anthropic listener remains open"
+            time.sleep(0.02)
+        agent_probe = (ROOT / "tests/fixtures/credential-proxy/agent-tool-smoke.py").read_text()
+        for agent in ["codex", "claude"]:
+            observation = json.loads(coop(
+                "shell", "proxy-gate", "--", "python3", "-c", agent_probe,
+                "--agent", agent, "--model", "coop-transport-failure-probe",
+                "--expect-transport-failure", capture=True, timeout=330))
+            assert observation["terminal_transport_failure"] is True
+            assert observation["tool_result_and_final_answer"] is False
+            log.write(json.dumps(observation) + "\n")
+        phase(f"Stop Swift and verify listener teardown")
+        coop("stop", "proxy-gate")
+        port = int(endpoint.rsplit(":", 1)[1])
+        with socket.socket() as peer:
+            peer.settimeout(1)
+            assert peer.connect_ex(("127.0.0.1", port)) != 0, "proxy listener survived stop"
+        selected = work / "bin/coop-proxy"
+        saved = work / "bin/coop-proxy.saved"
+        selected.rename(saved)
+        try:
+            for failure in ["missing", "exits"]:
+                phase(f"Swift {failure}: launch must fail closed")
+                if failure == "exits":
+                    # Do not copy macOS protected-system file flags.
+                    shutil.copyfile("/usr/bin/false", selected)
+                    selected.chmod(0o755)
+                log.flush()
+                offset = os.lseek(log.fileno(), 0, os.SEEK_CUR)
+                status = coop("start", "proxy-gate", "--no-github", check=False)
+                assert status != 0, "failed Swift startup silently fell back or succeeded"
+                log.flush()
+                diagnostic = (work / "run.log").read_bytes()[offset:].decode(errors="replace")
+                if failure == "missing":
+                    assert "Swift proxy coop-proxy not found" in diagnostic
+                else:
+                    assert any(marker in diagnostic for marker in [
+                        "credential proxy exited before it began serving",
+                        "Failed to write proxy startup config to stdin",
+                    ]), "launch failed for an unexpected reason"
+                for name in ["openai", "anthropic"]:
+                    assert not (instance / f"proxy-{name}.pid").exists(), "failed startup left a proxy running"
+                coop("stop", "proxy-gate")
+        finally:
+            selected.unlink(missing_ok=True)
+            saved.rename(selected)
         if args.controlled_upstream:
             phase("Controlled TLS upstream through the real guest reverse tunnels")
-            env["COOP_PROXY_IMPLEMENTATION"] = "swift"
             coop("start", "proxy-gate", "--no-github")
             openai_endpoint, openai_token = guest_proxy("proxy-gate")
             claude = json.loads(coop("exec", "proxy-gate", "--", "cat", "./.claude/settings.json", capture=True))["env"]
@@ -248,7 +241,7 @@ auth = "bearer"
                 # Replace only this owned proxy process; keep its real SSH tunnel.
                 pid = int((instance / f"proxy-{provider_name}.pid").read_text())
                 command = run(["ps", "-p", str(pid), "-o", "comm="], capture=True, timeout=10).strip()
-                assert Path(command).resolve(strict=True) == (work / "bin/coop-proxy-swift").resolve(strict=True)
+                assert Path(command).resolve(strict=True) == (work / "bin/coop-proxy").resolve(strict=True)
                 os.kill(pid, signal.SIGTERM)
                 port = int(endpoint.rsplit(":", 1)[1])
                 deadline = time.monotonic() + 5
@@ -265,7 +258,7 @@ auth = "bearer"
                 log.write(json.dumps(result) + "\n")
                 log.flush()
             coop("stop", "proxy-gate")
-        phase("PASS Swift launch, guest isolation checks, Rust rollback, and teardown")
+        phase("PASS Swift launch, guest isolation checks, startup failures, and teardown")
         succeeded = True
     finally:
         cleanup_errors = []

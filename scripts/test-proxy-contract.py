@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared raw HTTP refusal corpus against both real confined executables.
+"""Shared raw HTTP refusal corpus against the real confined Swift executable.
 
 Uses synthetic startup credentials. Cases are restricted to unauthenticated or
 GET/DELETE/TRACE/CONNECT requests; no allowed model operation is sent. Forwarding
@@ -142,7 +142,6 @@ def fuzz_inputs(seed, count):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rust", type=Path, default=ROOT / "target/debug/coop-proxy")
     parser.add_argument("--swift", type=Path)
     parser.add_argument("--fuzz-cases", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260927)
@@ -168,7 +167,7 @@ def main():
         cases = []
     results = {}
     failures = []
-    for label, binary in [("rust", args.rust.resolve()), ("swift", args.swift.resolve())]:
+    for label, binary in [("swift", args.swift.resolve())]:
         for provider in ["anthropic", "openai"]:
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
@@ -234,18 +233,13 @@ def main():
                     stdout, stderr = child.communicate(timeout=5)
                 assert SECRET.encode() not in stdout + stderr and TOKEN.encode() not in stdout + stderr
                 assert b"panicked at" not in stderr and b"Fatal error:" not in stderr, "proxy reported a runtime panic"
-    for provider in ["anthropic", "openai"]:
-        for case in cases:
-            key = (provider, case["name"])
-            if results[("rust", *key)] != results[("swift", *key)]:
-                failures.append(f"Rust/Swift difference: {provider}/{case['name']}")
     if failures:
         raise SystemExit("\n".join(failures))
     if cases:
-        print(f"PASS {len(cases)} shared refusal cases x 2 providers x 2 confined implementations")
+        print(f"PASS {len(cases)} shared refusal cases x 2 providers x 1 confined Swift implementation")
     if fuzz_count:
         source = str(args.replay) if replay is not None else f"seed {args.seed}"
-        print(f"PASS {fuzz_count} raw HTTP inputs x 2 providers x 2 confined implementations; {source}")
+        print(f"PASS {fuzz_count} raw HTTP inputs x 2 providers x 1 confined Swift implementation; {source}")
 
 
 if __name__ == "__main__":

@@ -14,12 +14,15 @@ Install the latest release:
 curl -fsSL https://raw.githubusercontent.com/trailofbits/coop/main/install.sh | bash
 ```
 
-Or build from source (requires [Rust](https://rustup.rs/) and CMake):
+Or build the host CLI from source (requires [Rust](https://rustup.rs/)):
 
 ```shell
 cargo build --workspace --release
-cp target/release/coop target/release/coop-proxy /usr/local/bin/
+cp target/release/coop /usr/local/bin/
 ```
+
+For credential-proxy mode on macOS 27+, also build and install the Swift
+companion as described in [Build from source](docs/getting-started.md#build-from-source).
 
 Then build the VM template image:
 

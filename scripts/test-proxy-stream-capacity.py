@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare real Rust/Swift TLS stream admission and cleanup on macOS.
+"""Validate real Swift TLS stream admission and cleanup on macOS.
 
 Runs both providers through disconnect/completion/disconnect rounds, each with
 256 held streams and an excess authenticated request. Uses synthetic secrets
@@ -45,21 +45,14 @@ def validate(records):
     return [actual[key] for key in sorted(actual)]
 
 
-def compare(observations):
-    assert observations["rust"] == observations["swift"], "Rust/Swift capacity observations differ"
-
-
 def main():
     work = Path(tempfile.mkdtemp(prefix="coop-stream-capacity-"))
     print(f"Capacity evidence: {work}", flush=True)
     commands = {
-        "rust": ["cargo", "test", "-p", "coop-proxy", "--bin", "coop-proxy",
-                 "real_tls_streams_hold_256_slots_until_completion_or_disconnect"],
         "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
                   "realTLSStreamsHold256SlotsUntilCompletionOrDisconnect"],
     }
-    markers = {"rust": "test result: ok. 1 passed;",
-               "swift": "Test realTLSStreamsHold256SlotsUntilCompletionOrDisconnect() passed"}
+    markers = {"swift": "Test realTLSStreamsHold256SlotsUntilCompletionOrDisconnect() passed"}
     observations = {}
     report = {}
     for implementation, command in commands.items():
@@ -78,8 +71,7 @@ def main():
         observations[implementation] = validate(json.loads(captured.read_text()))
         print(f"PASS {implementation}: six stream-capacity rounds", flush=True)
     (work / "comparison.json").write_text(json.dumps(observations, indent=2) + "\n")
-    compare(observations)
-    print("PASS observed stream capacity and cleanup agree", flush=True)
+    print("PASS observed stream capacity and cleanup validated", flush=True)
 
 
 if __name__ == "__main__":

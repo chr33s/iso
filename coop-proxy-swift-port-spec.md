@@ -1,3 +1,10 @@
+> **2026-09-27 user decision:** Remove the Rust proxy now and waive the
+> observation period. This supersedes the transition selector, dual-binary
+> packaging, rollback retention, and pre-deletion sequencing below. Swift is
+> the sole proxy implementation. Other unexecuted acceptance/release gates
+> remain open and must not be reported as passed. The Rust host CLI is outside
+> this proxy-port deletion scope.
+
 # Specification: Swift Port of `coop-proxy`
 
 **Status:** Approved for implementation  
@@ -996,7 +1003,7 @@ Add only minimum permissions required for system trust.
 
 Pass jail self-test.
 
-### Phase 5 — differential test period
+### Phase 5 — differential test period (historical)
 
 Ship/build both:
 
@@ -1013,16 +1020,16 @@ The guest MUST NOT control implementation selection.
 
 ### Phase 6 — Swift default
 
-After all acceptance gates pass:
+At the user-authorized immediate cutover:
 
-- Swift becomes default;
-- Rust remains an explicit host-side rollback option;
+- Swift is the sole proxy implementation;
+- package it as `coop-proxy` for compatibility with existing updaters;
 - Swift startup failure MUST fail VM startup;
-- no automatic Rust fallback.
+- no fallback implementation or selector remains.
 
 ### Phase 7 — remove Rust
 
-After the defined observation period and security review:
+The user waived observation and authorized immediate removal on 2026-09-27:
 
 - delete Rust `coop-proxy`;
 - remove Tokio/Hyper/Rustls/Landlock proxy dependencies;
@@ -1206,37 +1213,23 @@ Use dedicated test credentials.
 
 ## 20. Release and rollback
 
-### Transition release
+Package the Swift proxy as `coop-proxy` beside the host CLI in the same
+signed/attested macOS artifact and from the same source revision. Preserve
+checksum and provenance verification before installation. The Rust rollback
+implementation and host selector are removed; startup failure must fail closed.
 
-Bundle both proxy binaries in the same signed/attested product artifact.
-
-They MUST be from the same source revision.
-
-### Rollback
-
-Rust rollback during the transition is explicit host-side configuration or
-developer/release selection.
-
-It is NOT automatic.
-
-Reason:
-
-automatic fallback can:
-
-- hide Swift sandbox failures;
-- make the active security implementation depend on an error condition;
-- cause deployment regressions to pass unnoticed.
-
-### Removal condition
-
-Rust may be removed only after all acceptance criteria below have passed and
-the Swift implementation has completed the agreed observation period.
+The user waived the observation period and authorized immediate Rust proxy
+removal on 2026-09-27. This supersedes the earlier pre-deletion sequencing.
+Unexecuted validation and publication gates still remain required for full goal
+completion; removal does not imply they passed.
 
 ---
 
 ## 21. Acceptance criteria
 
-All are mandatory before Rust deletion.
+These remain the full-goal acceptance criteria. The user-authorized immediate
+Rust deletion is independent of any unexecuted criteria below. Historical
+Rust/Swift comparison and explicit rollback evidence predates deletion.
 
 ### Architecture
 

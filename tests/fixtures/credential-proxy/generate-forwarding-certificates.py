@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate disposable TLS fixtures for both proxy implementations."""
+"""Generate disposable TLS fixtures for the Swift proxy."""
 from pathlib import Path
 import subprocess
 import sys

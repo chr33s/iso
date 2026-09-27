@@ -410,33 +410,17 @@ exclude_re = [
   # bare binary) — IO/spawn wrappers, not `--lib`-observable. `await_proxy_ready`
   # has a unit test for its fail-closed early-exit branch; the poll/timeout loop
   # itself stays excluded (IO-bound, slow timeout path). `wire_config_json`
-  # stays IN scope, pinned by the wire_json_* shape tests. coop-proxy's own
-  # `jail.rs` (the Landlock ruleset) is not in this sweep — coop-proxy is a
-  # separate, non-default workspace member — so it is asserted by
-  # `coop-proxy --jail-selftest` in tests/integration.sh instead.
+  # stays IN scope, pinned by the wire_json_* shape tests. Swift confinement
+  # is covered by scripts/test-swift-proxy-process.py.
   "src/proxy\\.rs:.*\\bawait_proxy_ready\\b",
   "src/proxy\\.rs:.*\\bproxy_http_ready\\b",
   "src/proxy\\.rs:.*\\bconfined_command\\b",
   "src/proxy\\.rs:.*\\bwrite_token_file\\b",
   "src/proxy\\.rs:.*\\blocate_proxy_binary\\b",
+  "src/proxy\\.rs:.*\\bproxy_binary_next_to\\b",
   "src/proxy\\.rs:.*\\bpid_path\\b",
   "src/proxy\\.rs:.*\\bfwd_pid_path\\b",
   "src/proxy\\.rs:.*\\btoken_path\\b",
-
-  # Rust reference proxy: stdin ownership is outside the binary unit-test
-  # sweep; coop-proxy/tests/gate.rs exercises the executable startup pipe.
-  # `decode` and the subprocess-tested `disable_core_dumps` stay in scope.
-  "coop-proxy/src/startup\\.rs:.*\\bread_config\\b",
-  # Equivalent for the secrecy contract: omitting Debug text still discloses
-  # no credential. Keep other Secret operations and format mutations in scope.
-  "coop-proxy/src/config\\.rs:.*replace <impl fmt::Debug for Secret>::fmt -> fmt::Result with Ok\\(Default::default\\(\\)\\)",
-  # Equivalent: this static body-error label carries no status or secret;
-  # typed Failure/status assertions cover the observable rejection contract.
-  "coop-proxy/src/request_body\\.rs:.*replace <impl std::fmt::Display for Failure>::fmt -> std::fmt::Result with Ok\\(Default::default\\(\\)\\)",
-  # Equivalent under http 1.4.2 Uri invariants: scheme requires authority;
-  # authority without scheme has no allowed path. Only the final URI-component
-  # connector at column 57 is skipped; method/policy mutants stay in scope.
-  "coop-proxy/src/proxy\\.rs:[0-9]+:57: replace \\|\\| with && in operation_allowed$",
 
   # NOTE on `delete field … from struct …` mutants: cargo-mutants (27.x) does
   # not honour exclude_re for these — the regex never matches their name (not

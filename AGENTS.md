@@ -63,9 +63,9 @@ taplo format --check
 prek run
 ```
 
-Workspace builds include `coop-proxy` and require CMake. Plain `cargo build`
-and the local clippy/test hooks cover only `coop`; run the workspace commands
-above before submitting.
+Cargo builds the Rust host CLI. The credential proxy is Swift-only on macOS 27+:
+run `swift test --package-path macos/coop-proxy --force-resolved-versions` and
+`python3 scripts/test-swift-proxy-process.py --skip-tls` when changing it.
 
 Install pinned local dev tools (prek, taplo, cargo-deny, cargo-mutants,
 cargo-fuzz, kani) with `./scripts/install-dev-tools.sh --all`, then `prek

@@ -1,4 +1,4 @@
-name: Proxy transition candidate
+name: Swift proxy candidate
 
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
           tar -xzf "$TARBALL" -C "$RUNNER_TEMP/proxy-candidate"
           cd "$RUNNER_TEMP/proxy-candidate/coop-proxy-transition"
           shasum -a 256 -c SHA256SUMS
-          for binary in coop coop-proxy-rs coop-proxy-swift coop-sandbox; do
+          for binary in coop coop-proxy coop-sandbox; do
             test -x "$binary"
             codesign --verify --strict "$binary"
           done
@@ -63,7 +63,7 @@ jobs:
           test -s attestations.jsonl
 
       # This is an opt-in candidate artifact. It does not publish a release,
-      # select Swift by default, or change the stable install/update channel.
+      # or change the stable install/update channel.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: proxy-transition-${{ github.sha }}-aarch64-apple-darwin

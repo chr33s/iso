@@ -265,34 +265,32 @@ repack_fixture() {
     fi
 }
 
-echo "==> Test 7: transition package installs both named proxies"
-for name in coop-proxy-rs coop-proxy-swift; do
-    printf '#!/bin/sh\necho %s\n' "$name" >"$FIXTURE/$ARCHIVE_DIR/$name"
-done
+echo "==> Test 7: Swift-only package installs its proxy"
+printf '#!/bin/sh\necho coop-proxy\n' >"$FIXTURE/$ARCHIVE_DIR/coop-proxy"
 repack_fixture
 if run_installer >"$TEST_ROOT/t7.log" 2>&1 \
-    && [[ "$("$INSTALL_DIR/coop-proxy-rs")" == coop-proxy-rs \
-       && "$("$INSTALL_DIR/coop-proxy-swift")" == coop-proxy-swift ]]; then
-    pass "verified transition package installs both executable siblings"
+    && [[ "$("$INSTALL_DIR/coop-proxy")" == coop-proxy ]]; then
+    pass "verified transition package installs the Swift executable"
 else
-    fail "verified transition package installs both executable siblings" "$(tail -10 "$TEST_ROOT/t7.log")"
+    fail "verified transition package installs the Swift executable" "$(tail -10 "$TEST_ROOT/t7.log")"
 fi
 
-echo "==> Test 8: incomplete transition package is rejected before replacement"
-rm "$FIXTURE/$ARCHIVE_DIR/coop-proxy-swift"
+echo "==> Test 8: obsolete Rust package is rejected before replacement"
+rm "$FIXTURE/$ARCHIVE_DIR/coop-proxy"
+printf old-rust >"$FIXTURE/$ARCHIVE_DIR/coop-proxy-rs"
 printf '%s\n' keep-host >"$INSTALL_DIR/coop"
 printf '%s\n' keep-rust >"$INSTALL_DIR/coop-proxy-rs"
 printf '%s\n' keep-swift >"$INSTALL_DIR/coop-proxy-swift"
 repack_fixture
 if run_installer >"$TEST_ROOT/t8.log" 2>&1; then
-    fail "incomplete transition pair aborts installation"
-elif grep -q 'incomplete proxy transition pair' "$TEST_ROOT/t8.log" \
+    fail "obsolete Rust pair aborts installation"
+elif grep -q 'obsolete proxy transition artifact' "$TEST_ROOT/t8.log" \
     && [[ "$(cat "$INSTALL_DIR/coop")" == keep-host \
        && "$(cat "$INSTALL_DIR/coop-proxy-rs")" == keep-rust \
        && "$(cat "$INSTALL_DIR/coop-proxy-swift")" == keep-swift ]]; then
-    pass "incomplete transition pair leaves all installed files unchanged"
+    pass "obsolete Rust pair leaves all installed files unchanged"
 else
-    fail "incomplete transition pair leaves all installed files unchanged" "$(tail -10 "$TEST_ROOT/t8.log")"
+    fail "obsolete Rust pair leaves all installed files unchanged" "$(tail -10 "$TEST_ROOT/t8.log")"
 fi
 
 echo "==> Test 9: legacy package removes stale transition selection"

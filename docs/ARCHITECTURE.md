@@ -58,7 +58,7 @@ coop/
 │   ├── prompt.rs           # TTY prompts
 │   ├── update.rs           # `coop update` self-update + background notifier
 │   └── commands/           # one module per command domain (see below)
-├── coop-proxy/             # separate binary crate: credential injection, policy, TLS, jail
+├── macos/coop-proxy/       # Swift binary: credential injection, policy, TLS, Seatbelt
 ├── scripts/guest/          # guest-image provisioning scripts (embedded at build)
 ├── guest/init.sh           # guest first-boot init
 ├── tests/                  # integration test scripts (see AGENTS.md "Before committing")
@@ -68,9 +68,10 @@ coop/
 
 The main CLI logic lives in the **library crate** (`src/lib.rs`); `main.rs`
 is a thin shim calling `coop::run()`. Its unit and mutation tests target the
-library. The credential proxy is a separate binary crate in the same Cargo
-workspace; `--workspace` builds and tests both crates. Plain `cargo build`
-and `cargo test` select only the root `coop` package.
+library. The credential proxy is a separate Swift package targeting macOS 27+;
+Cargo builds and tests the host CLI only. Build/test the proxy with SwiftPM.
+The host resolves only `coop-proxy` beside its own executable. Linux proxy
+mode is unsupported; the Firecracker backend remains available without it.
 
 ## The backend design
 

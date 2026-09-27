@@ -13,8 +13,7 @@
 ;; children and cannot be relaxed from inside.
 ;;
 ;; `sandbox-exec`/SBPL is officially deprecated but still functional and widely
-;; relied on; Apple has shipped no CLI successor. This is the pragmatic macOS
-;; analog of the Linux Landlock jail. See docs/trust-model.md.
+;; relied on; Apple has shipped no CLI successor. See docs/trust-model.md.
 (version 1)
 (deny default)
 
@@ -64,5 +63,5 @@
 ;; names via mach (allowed above), so this may be unnecessary or scopeable to a
 ;; specific path (e.g. path-literal "/var/run/mDNSResponder") — a candidate to
 ;; tighten once validated on a Mac. Kept for now so name resolution cannot
-;; break; no weaker than Linux, where Landlock does not gate UNIX sockets.
+;; break.
 (allow network-outbound (remote unix-socket))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare early upstream disconnects through both production proxy bridges.
+"""Compare early upstream disconnects through the Swift production proxy bridge.
 
 Uses verified loopback TLS and synthetic credentials. Local 502 message text is
 implementation-specific; preserve it in artifacts and check each exact value.
@@ -18,13 +18,10 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-upstream-disconnect-"))
     print(f"Disconnect evidence: {work}", flush=True)
     commands = {
-        "rust": ["cargo", "test", "-p", "coop-proxy", "--bin", "coop-proxy",
-                 "upstream_disconnect_closes_guest_and_restores_permits"],
         "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
                   "upstreamDisconnectClosesGuestAndRestoresPermits"],
     }
     markers = {
-        "rust": "test result: ok. 1 passed;",
         "swift": "Test upstreamDisconnectClosesGuestAndRestoresPermits() passed",
     }
     matrix = list(itertools.product(
@@ -51,7 +48,7 @@ def main():
         normalized[implementation] = {}
         for record in records:
             before_headers = "-beforeHeaders-" in record["id"]
-            local_message = "upstream request failed" if implementation == "rust" else ""
+            local_message = ""
             assert record == {
                 "id": record["id"], "response_status": 502 if before_headers else 200,
                 "response_body": local_message if before_headers else "part",
@@ -63,8 +60,7 @@ def main():
             normalized[implementation][record["id"]] = comparable
         print(f"PASS {implementation}: {len(records)} disconnect exchanges", flush=True)
     (work / "comparison.json").write_text(json.dumps(normalized, indent=2) + "\n")
-    assert normalized["rust"] == normalized["swift"], work
-    print("PASS status, partial body, guest EOF and capacity recovery agree", flush=True)
+    print("PASS status, partial body, guest EOF and capacity recovery validated", flush=True)
 
 
 if __name__ == "__main__":

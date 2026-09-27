@@ -127,7 +127,8 @@
 #                                   # the raw API key is no longer forwarded.
 #                                   # Applies only in remote model mode
 #                                   # (`coop model <vm> remote`); local mode
-#                                   # takes precedence. Works on both backends.
+#                                   # takes precedence. Requires macOS 27+
+#                                   # (Lima or Apple Container); unavailable on Linux.
 # `coop proxy setup [--openai] [--vm <name>]` writes this for you: it takes a
 # pasted credential, stores it in Keychain / 1Password / a 0600 file, and fills
 # in the `cmd:` reference. Anthropic covers Claude Code; openai covers Codex.

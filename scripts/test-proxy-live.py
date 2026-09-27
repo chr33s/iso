@@ -153,7 +153,7 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--scheme", choices=["bearer", "x_api_key"], default="bearer")
     parser.add_argument("--max-output-tokens", type=int, default=256)
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/coop-proxy-swift")
+    parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/coop-proxy")
     args = parser.parse_args()
     if not 16 <= args.max_output_tokens <= 1024:
         parser.error("output token budget must be 16..1024 per generation request")

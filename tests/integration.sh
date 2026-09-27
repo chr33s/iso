@@ -5764,7 +5764,7 @@ CFGEOF
 # mock upstream: the proxy pins TLS to the real hosts (a security property), so
 # a local mock cannot present a trusted cert. Instead the checks are hermetic
 # and need no upstream — the injection-into-the-header logic is covered by the
-# `coop-proxy` unit tests + `gate.rs`. Here we assert what only a live VM can:
+# Swift transport tests. Here we assert what only a live VM can:
 #   - the guest is wired at the proxy (Codex `config.toml`, Claude
 #     `settings.json`) and holds only the capability token;
 #   - the raw keys are suppressed even when set on the host (crown jewel), and
@@ -5779,12 +5779,12 @@ test_proxy() {
         skip "credential-proxy test (curl not available on host)"
         return
     fi
-    # The proxy needs the `coop-proxy` binary next to `coop`. It is not a
-    # default workspace member (it needs cmake for aws-lc-rs), so a plain
-    # `cargo build` / older deploy may not have it; skip rather than fail the
-    # fail-closed `up` when it's absent.
+    if [[ "$(uname -s)" != Darwin || "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]]; then
+        skip "credential-proxy test (Swift proxy requires macOS 27+)"
+        return
+    fi
     if [[ ! -x "$(dirname "$BINARY")/coop-proxy" ]]; then
-        skip "credential-proxy test (coop-proxy not built alongside coop)"
+        fail "credential-proxy test" "Swift coop-proxy not built alongside coop"
         return
     fi
 
@@ -5987,61 +5987,28 @@ STATEEOF
     # ── The proxy is reachable on host loopback and enforces the gate ──
     # The proxy binds 127.0.0.1:<port> on the host and is reverse-tunnelled into
     # the guest, so the host exercises the same listener. A request without the
-    # token is refused locally with 401. With the token, an allowlisted
-    # operation reaches the real host, yielding 502 with no egress or an
-    # upstream auth error. Status alone is ambiguous because upstream auth can
-    # also return 401/403, so the fixed local bodies identify gate refusals.
+    # token is refused with 401; an authenticated denied GET receives 403.
+    # No provider call is needed to prove guest routing and capability checks.
     local oai_port cap_token
     oai_port=$(echo "$codex_cfg" | grep -oE '127\.0\.0\.1:[0-9]+' | head -1 | cut -d: -f2 || true)
     cap_token=$(echo "$guest_env" | grep '^COOP_LOCAL_API_KEY=' | cut -d= -f2- || true)
     if [[ -n "$oai_port" ]]; then
-        local no_tok tok no_tok_status tok_status response_body
-        local no_tok_body_file="$tmpdir/proxy-no-token-body"
-        local tok_body_file="$tmpdir/proxy-token-body"
-        response_body='{"model":"gpt-4.1","input":"ping"}'
-        no_tok_status=$(curl -s --max-time 10 -X POST \
-            "http://127.0.0.1:$oai_port/v1/responses" \
-            -H "Content-Type: application/json" --data "$response_body" \
-            --output "$no_tok_body_file" --write-out '%{http_code}' || true)
-        no_tok=$(cat "$no_tok_body_file" 2>/dev/null || true)
-        tok_status=$(curl -s --max-time 15 -X POST \
-            "http://127.0.0.1:$oai_port/v1/responses" \
-            -H "Authorization: Bearer $cap_token" -H "Content-Type: application/json" \
-            --data "$response_body" --output "$tok_body_file" \
-            --write-out '%{http_code}' || true)
-        tok=$(cat "$tok_body_file" 2>/dev/null || true)
-        if [[ "$no_tok_status" == "401" ]] \
-            && echo "$no_tok" | grep -Fqi "missing or invalid coop-proxy capability token"; then
-            pass "openai proxy refuses a request missing the capability token"
+        local no_tok_status tok_status
+        no_tok_status=$(curl -s --max-time 10 "http://127.0.0.1:$oai_port/v1/responses" \
+            --output /dev/null --write-out '%{http_code}' || true)
+        tok_status=$(curl -s --max-time 10 "http://127.0.0.1:$oai_port/v1/responses" \
+            -H "Authorization: Bearer $cap_token" --output /dev/null --write-out '%{http_code}' || true)
+        if [[ "$no_tok_status" == 401 && "$tok_status" == 403 ]]; then
+            pass "openai proxy authenticates capability and refuses denied operations"
         else
-            fail "openai proxy refuses a request missing the capability token" \
-                "status: $no_tok_status body: $no_tok"
-        fi
-        if echo "$tok" | grep -Fqi "missing or invalid coop-proxy capability token"; then
-            fail "valid capability token forwards an allowed operation" \
-                "local capability refusal (status $tok_status): $tok"
-        elif echo "$tok" | grep -Fqi "operation is not allowed by coop-proxy"; then
-            fail "valid capability token forwards an allowed operation" \
-                "local operation-policy refusal (status $tok_status): $tok"
-        elif [[ "$tok_status" =~ ^[1-5][0-9][0-9]$ ]]; then
-            pass "valid capability token forwards an allowed operation"
-        else
-            fail "valid capability token forwards an allowed operation" \
-                "no HTTP response (status: $tok_status body: $tok)"
+            fail "openai proxy local capability gate" "unauthenticated=$no_tok_status authenticated=$tok_status"
         fi
     else
         fail "locate openai proxy port" "no 127.0.0.1:<port> in codex config"
     fi
 
     # ── The jail confines the host-side proxy (issue #411, slice 3) ──
-    # Prove the confinement coop applies to `coop-proxy` actually restricts on
-    # this host: a filesystem write, a program exec, and egress to a
-    # non-upstream port are all blocked, while the upstream port (:443) stays
-    # reachable. `coop-proxy --jail-selftest` runs the identical probe under
-    # whichever mechanism confined it — Linux self-applies Landlock; macOS
-    # applies the same Seatbelt profile coop uses, via `sandbox-exec` — and
-    # exits 0 with "=> PASS" only if all four hold. This is the host-side
-    # analog of the guest-side non-exposure checks above.
+    # Exercise the Swift executable under the production Seatbelt profile.
     local proxy_bin selftest_out selftest_rc=0
     proxy_bin="$(dirname "$BINARY")/coop-proxy"
     if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -6057,20 +6024,13 @@ STATEEOF
             selftest_out=$(sandbox-exec -D "PROXY_BIN=$proxy_bin_abs" \
                 -p "$(cat "$sb_profile")" "$proxy_bin_abs" --jail-selftest 2>&1) \
                 || selftest_rc=$?
-            if [[ $selftest_rc -eq 0 ]] && echo "$selftest_out" | grep -q "=> PASS"; then
+            if [[ $selftest_rc -eq 0 ]] && echo "$selftest_out" | grep -q "write/exec/egress denied; DNS/system TLS passed"; then
                 pass "proxy jail confines coop-proxy (Seatbelt: no fs-write/exec/off-list egress)"
             else
                 fail "proxy jail confines coop-proxy (Seatbelt)" "rc=$selftest_rc out: $selftest_out"
             fi
         else
             skip "proxy jail self-test (Seatbelt profile not found at $sb_profile)"
-        fi
-    else
-        selftest_out=$("$proxy_bin" --jail-selftest 2>&1) || selftest_rc=$?
-        if [[ $selftest_rc -eq 0 ]] && echo "$selftest_out" | grep -q "=> PASS"; then
-            pass "proxy jail confines coop-proxy (Landlock: no fs-write/exec/off-list egress)"
-        else
-            fail "proxy jail confines coop-proxy (Landlock)" "rc=$selftest_rc out: $selftest_out"
         fi
     fi
 

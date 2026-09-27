@@ -25,12 +25,13 @@ class PreflightTests(unittest.TestCase):
         self.lock()
         (self.root / 'CHANGELOG.md').write_text('## v9.8.7\n\nRelease notes.\n')
         self.log = self.root / 'calls'
-        for name in ('cargo', 'cargo-deny', 'taplo', 'zizmor', 'cargo-kani'):
+        for name in ('cargo', 'cargo-deny', 'taplo', 'zizmor', 'cargo-kani', 'swift'):
             self.executable('bin/' + name, '''#!/bin/bash
 printf '%s %s\n' "${0##*/}" "$*" >> "$PREFLIGHT_CALLS"
 if [[ "${0##*/} $*" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
 ''')
         self.executable('bin/rustup', '#!/bin/bash\necho aarch64-unknown-linux-gnu\necho aarch64-unknown-linux-musl\n')
+        self.executable('bin/sw_vers', '#!/bin/bash\necho 26.0\n')
         self.executable('bin/uname', '#!/bin/bash\necho Linux\n')
         self.executable('bin/git', '''#!/bin/bash
 if [[ "$1" == rev-parse ]]; then exit 1; fi
@@ -52,10 +53,9 @@ if [[ "${0##*/}" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
         path.write_text(contents)
         path.chmod(0o755)
 
-    def lock(self, proxy='9.8.7'):
+    def lock(self, host='9.8.7'):
         (self.root / 'Cargo.lock').write_text(
-            '[[package]]\nname = "coop"\nversion = "9.8.7"\n'
-            f'[[package]]\nname = "coop-proxy"\nversion = "{proxy}"\n')
+            f'[[package]]\nname = "coop"\nversion = "{host}"\n')
 
     def run_preflight(self, fail=''):
         return subprocess.run(
@@ -89,11 +89,24 @@ if [[ "${0##*/}" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
         self.assertNotIn('integration-network.sh', self.log.read_text().splitlines())
         self.assertNotIn('Next: tag', result.stdout)
 
-    def test_proxy_lock_mismatch_fails(self):
-        self.lock(proxy='9.8.6')
+    def test_host_lock_mismatch_fails(self):
+        self.lock(host='9.8.6')
         result = self.run_preflight()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Cargo.lock coop-proxy version (9.8.6)', result.stdout)
+        self.assertIn('Cargo.lock coop version (9.8.6)', result.stdout)
+
+    def test_macos_27_runs_swift_proxy_gates(self):
+        self.executable('bin/uname', '#!/bin/bash\necho Darwin\n')
+        self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
+        # Record the process gate independently of the Swift compiler stub.
+        (self.root / 'scripts/test-swift-proxy-process.py').write_text(
+            'import os\nwith open(os.environ["PREFLIGHT_CALLS"], "a") as f:\n'
+            '    f.write("swift-process-gate\\n")\n')
+        result = self.run_preflight()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.log.read_text().splitlines()
+        self.assertIn('swift test --package-path macos/coop-proxy --force-resolved-versions', calls)
+        self.assertIn('swift-process-gate', calls)
 
     def test_proxy_forward_failure_is_fatal(self):
         result = self.run_preflight(fail='integration-proxy-forward.sh')
@@ -115,7 +128,7 @@ class ReleaseBinaryTests(unittest.TestCase):
         script = "\n".join(line[10:] for line in block.splitlines())
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            binary_dir = root / 'target/test-target/release'
+            binary_dir = root / 'target/aarch64-apple-darwin/release'
             binary_dir.mkdir(parents=True)
             (root / 'bin').mkdir()
             git = root / 'bin/git'
@@ -137,7 +150,7 @@ class ReleaseBinaryTests(unittest.TestCase):
                     result = subprocess.run(
                         ['bash', '-euc', script], cwd=root,
                         env={**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'],
-                             'TAG': 'v9.8.7', 'TARGET': 'test-target'},
+                             'TAG': 'v9.8.7', 'TARGET': 'aarch64-apple-darwin'},
                         capture_output=True, text=True, timeout=10)
                     self.assertEqual(result.returncode, expected, result.stderr)
 

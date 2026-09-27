@@ -337,37 +337,35 @@ repack_transition_fixture() {
     (cd "$FIXTURE" && sha256sums_line "${FAKE_TARBALL}" > SHA256SUMS)
 }
 
-echo "==> Test 7: verified transition update installs both named siblings"
+echo "==> Test 7: verified Swift-only update installs its proxy"
 cp "$RELEASE_BIN" "$COOP_BIN"
-for name in coop-proxy-rs coop-proxy-swift; do
-    printf '#!/bin/sh\necho %s\n' "$name" >"$TMPDIR/build/${FAKE_DIR}/$name"
-done
+printf '#!/bin/sh\necho coop-proxy\n' >"$TMPDIR/build/${FAKE_DIR}/coop-proxy"
 repack_transition_fixture
 if "$COOP_BIN" update --yes >"$TMPDIR/t7.log" 2>&1 \
     && [[ "$("$COOP_BIN")" == "MARKER: fake-replacement-binary" \
-       && "$("$TMPDIR/bin/coop-proxy-rs")" == coop-proxy-rs \
-       && "$("$TMPDIR/bin/coop-proxy-swift")" == coop-proxy-swift ]]; then
-    pass "transition update installs both executable proxy siblings"
+       && "$("$TMPDIR/bin/coop-proxy")" == coop-proxy ]]; then
+    pass "transition update installs the Swift proxy"
 else
-    fail "transition update installs both executable proxy siblings" "$(tail -5 "$TMPDIR/t7.log")"
+    fail "transition update installs the Swift proxy" "$(tail -5 "$TMPDIR/t7.log")"
 fi
 
-echo "==> Test 8: incomplete transition archive preserves the installed generation"
+echo "==> Test 8: obsolete Rust archive preserves the installed generation"
 cp "$RELEASE_BIN" "$COOP_BIN"
 ORIG_SHA="$(sha_of "$COOP_BIN")"
 printf '%s\n' keep-rust >"$TMPDIR/bin/coop-proxy-rs"
 printf '%s\n' keep-swift >"$TMPDIR/bin/coop-proxy-swift"
-rm "$TMPDIR/build/${FAKE_DIR}/coop-proxy-swift"
+rm "$TMPDIR/build/${FAKE_DIR}/coop-proxy"
+printf old-rust >"$TMPDIR/build/${FAKE_DIR}/coop-proxy-rs"
 repack_transition_fixture
 if "$COOP_BIN" update --yes >"$TMPDIR/t8.log" 2>&1; then
-    fail "incomplete transition update must fail"
-elif grep -q 'incomplete proxy transition pair' "$TMPDIR/t8.log" \
+    fail "obsolete Rust update must fail"
+elif grep -q 'obsolete proxy transition artifact' "$TMPDIR/t8.log" \
     && [[ "$(sha_of "$COOP_BIN")" == "$ORIG_SHA" \
        && "$(cat "$TMPDIR/bin/coop-proxy-rs")" == keep-rust \
        && "$(cat "$TMPDIR/bin/coop-proxy-swift")" == keep-swift ]]; then
-    pass "incomplete transition update preserves host and both proxy siblings"
+    pass "obsolete Rust update preserves host and both proxy siblings"
 else
-    fail "incomplete transition update preserves host and both proxy siblings" "$(tail -5 "$TMPDIR/t8.log")"
+    fail "obsolete Rust update preserves host and both proxy siblings" "$(tail -5 "$TMPDIR/t8.log")"
 fi
 
 echo "==> Test 9: legacy update removes stale transition names"

@@ -1,3 +1,9 @@
+> **2026-09-27 cutover:** The user waived observation and authorized immediate
+> Rust proxy deletion. Swift is now the sole implementation; the selector and
+> rollback binary are removed. Earlier Rust/differential evidence below is
+> historical. Live/VM/review/release gates remain open; deletion is not proof
+> that those gates passed.
+
 # Swift proxy acceptance map
 
 Audit date: 2026-09-27. Contract: [approved specification](../../coop-proxy-swift-port-spec.md).
@@ -10,12 +16,12 @@ whole-branch review and required platform gates.
 
 | Requirement | Current evidence | What remains |
 |---|---|---|
-| §10.3: over-limit requests never reach the provider with the credential | User selected known-length admission: both implementations reject chunked bodies with 411 before upstream forwarding; declared lengths over 64 MiB receive 413. Neither framing header means an empty body. | Shared TLS boundary gate covers exact cap, cap + 1, and unknown length for both providers. See progress ledger for execution evidence and client compatibility limits. |
+| §10.3: over-limit requests never reach the provider with the credential | User selected known-length admission: the Swift implementation rejects chunked bodies with 411 before upstream forwarding; declared lengths over 64 MiB receive 413. Neither framing header means an empty body. | Shared TLS boundary gate covers exact cap, cap + 1, and unknown length for both providers. See progress ledger for execution evidence and client compatibility limits. |
 | §19.5: admitted traffic through real VM → SSH tunnel → confined Swift → controlled TLS upstream | Synthetic-credential VM gate passes isolation, failure, lifecycle, and rollback. Controlled TLS fixture is implemented but has not completed an admitted VM exchange. | Bind loopback port 443 with the prepared minimal helper, then run `tests/integration-proxy-transition.py --controlled-upstream`. Direct bind still returns EACCES. |
 | §19.6: successful live provider and agent operations | Host API and guest tool-use runners exist; offline checks pass. Actual agents have only been verified on terminated-proxy errors. | Dedicated credential command references and approved models; successful Anthropic streaming/counting/Claude tool use and OpenAI Responses/Codex tool use, plus disconnect/recovery. |
 | §20: same-revision signed/attested transition artifact | Local archive builder and manual workflow exist; local archive/signature checks passed. | Execute hosted CI and attestation from the actual source revision; inspect its resulting artifact and provenance. Local ad-hoc signatures and a workflow file do not prove this. |
-| §16 phase 6: Swift default after acceptance | `ProxyImplementation::parse(None)` still selects Rust. Swift selection is explicit and has no automatic fallback. | Complete acceptance gates, then change the default and validate installation/update behavior for the intended Apple product channel. |
-| §16 phase 7 / §20: observation and Rust removal | No observation duration has been agreed; Rust crate, dependencies, selector, and rollback remain. | Agree and complete the observation period and security review, then remove Rust and its proxy dependencies/selector while preserving language-neutral tests. |
+| §16 phase 6: Swift default | Host resolves only `coop-proxy`; no selector or fallback remains. | User authorized immediate cutover. Validate Swift-only packaging/lifecycle; hosted distribution remains pending. |
+| §16 phase 7 / §20: observation and Rust removal | User waived observation and authorized deletion. Rust proxy crate, dependencies, and selector removed; Swift retains language-neutral fixtures. | Other acceptance gates remain open independently of deletion. |
 | §21 validation: final review | Prior independent reviews found and drove fixes; newer fixture changes have targeted tests/fault checks. | Review the full final branch and ensure no unresolved high/critical findings. Earlier review scope is not final sign-off. |
 | Repository platform gates | Standard Lima passed historically. Standard Firecracker had four lifecycle failures; Apple transition gate now passes. | Resolve or explicitly disposition the Firecracker failures and run required final gates. Apple results do not prove Linux/Lima behavior. |
 
@@ -26,7 +32,7 @@ that every earlier result was rerun during this audit.
 
 | Spec sections / deliverables | Implementation and evidence | Acceptance limit |
 |---|---|---|
-| §1 purpose; §2 D-001 process separation | Separate `CoopProxy` executable; host launches one child per provider/instance. VM gate checked selected executable identities. | Final Swift default and Rust removal remain open. The proxy port does not itself translate the Rust orchestrator. |
+| §1 purpose; §2 D-001 process separation | Separate Swift executable, one process per VM/provider; Rust host CLI retained. | Production VM/live acceptance remains open. |
 | §2 D-002; §12.1–12.3 system trust and identity | `UpstreamClient.tlsConfiguration`: full verification, `.default` roots, empty additional roots, HTTP/1.1 ALPN. Pinned NIOSSL Darwin trust path and confined native TLS probes recorded. Certificate tests include wrong host, expired, future, untrusted, and explicitly trusted self-signed fixtures. | Fixture-added roots are not evidence of administrator trust-store installation. Production system-trust evidence is the separate confined provider probe. |
 | §2 D-003; §13 confinement | Checked-in deny-default Seatbelt profile; exact initial exec, denied writes/exec, loopback listener, port-scoped 443/53 egress, exact `com.apple.trustd.agent` addition documented. Process gate covers listener and denial probes; removing trustd permission broke TLS. | Port-scoped egress is not hostname-scoped egress. No sandbox technology migration is claimed. |
 | §2 D-004; §8; §12.1 fixed providers/operations | Closed `Provider`, `RequestTarget`, `OperationPolicy`; provider-derived HTTPS host/443, raw origin-form policy before URL construction. Pure tests, mutation tests, refusal/forwarding corpora recorded. | Known-length admission does not alter permitted operations. |
@@ -41,15 +47,15 @@ that every earlier result was rerun during this audit.
 | §13.1/13.2 self-test and fail closed | `Jail`, CLI `--jail-selftest`, process gate, and native DNS/system TLS. Missing/exiting Swift selection aborts real VM startup without Rust fallback; cleanup verified. | Full controlled admitted VM path is still pending. |
 | §14 logs | Fixed error categories and redacted `Secret`/capability; no request/response logging in production path. Synthetic startup/process audit recorded. | Test observations must not be mistaken for production logging authorization. |
 | §15 package structure | Pure `CoopProxyCore`, separate transport and executable targets. Core policy tests require no live network. | Recommended filenames/layout are organized into an additional transport target. |
-| §16 phases 0–4 | Hardened Rust oracle, Swift policy/server/TLS/confinement implemented with tests. | Body-framing contract still requires a decision; not all phase-0 acceptance can be marked complete. |
-| §16 phase 5 | Both executables built; host-only selector; Rust default; differential suites and explicit rollback recorded. | Hosted transition artifact still pending. |
-| §16 phases 6–7 | Deliberately not performed before their prerequisites. | Default cutover, observation, and deletion are mandatory remaining work. |
+| §16 phases 0–4 | Swift policy/server/TLS/confinement and known-length admission implemented with tests. Historical Rust oracle evidence is in the ledger. | Final whole-goal validation remains open. |
+| §16 phase 5 | Historical differential suites and explicit rollback passed before Rust deletion. | Dual-binary distribution superseded by user decision. |
+| §16 phases 6–7 | Swift-only cutover and Rust source/dependency removal applied at user request. | Validate the updated build/install/test paths; no observation period required. |
 | §17–18 differential corpus/comparison | Shared refusal, forwarding, body-boundary, body-idle, disconnect, and capacity runners compare meaningful outcomes and forwarded properties. Raw adversarial fuzzing retained. | Earlier green subsets cannot waive later review or unexecuted VM/live gates. |
 | §19.1–19.4 unit/embedded/mutation/fuzz | Swift Testing/XCTest, NIOEmbedded, Swift policy mutation tooling and targeted production faults; Rust mutation runs; language-neutral raw HTTP fuzz runner. Ledger records counts and timeouts. | Preserve timeout/unviable distinctions; final source changes need scoped revalidation. |
-| §19.5 real VM | Latest summary `/tmp/coop-agent-failure-vm-final-result.json`: exit 0, four real agent error observations, scans, startup refusals, Rust rollback, verified cleanup. | `controlled_upstream: false`, `live_provider: false`; admitted forwarding/streaming remains open. |
+| §19.5 real VM | Swift-only summary `/tmp/coop-swift-only-vm-result.json`: exit 0, two real agent error observations, 19,501-file scan, startup refusals, and verified cleanup. Historical Rust rollback evidence predates deletion. | `controlled_upstream: false`, `live_provider: false`; admitted forwarding/streaming remains open. |
 | §19.6 live tests | `scripts/test-proxy-live.py` and guest `agent-tool-smoke.py`; offline regressions/faults pass. | No successful live operation is claimed. |
-| §20 release/rollback | Builder validates revision/cleanliness before and after build; archive includes host/runtime and both proxies; installer/updater handle complete pairs; rollback gate passed. | Workflow execution, official channel, observation, and deletion remain open. |
-| §21 architecture/secrets/HTTP/TLS/resource/sandbox/validation checklist | Sources and targeted evidence above cover individual assertions. | The checklist as a whole is **not achieved**: VM admitted/live tests, final review, release and observation prevent completion. |
+| §20 release/rollback | Builder packages host/runtime plus Swift; installer/updater handle Swift-only companion and remove stale Rust files. Rollback implementation removed. | Hosted workflow execution and official Apple-backend channel remain open. |
+| §21 architecture/secrets/HTTP/TLS/resource/sandbox/validation checklist | Sources and targeted evidence above cover individual assertions. | The checklist as a whole is **not achieved**: VM admitted/live tests, final review and release prevent completion. |
 | §22 non-goals | No App Sandbox, Unix proxy listener, HTTP/2, arbitrary upstreams, certificate pinning, GitHub proxy, or shared provider process introduced. | Test-only loopback routing/CA seams are not production configuration. |
 | §23 post-parity candidates | Deferred as specified. | These are not prerequisites to inflate the initial parity scope. |
 | §24 invariants | Fixed identity, capability gate, stdin-only credential, confinement and streaming have implementation and scoped evidence. | Full completion remains unproven until all mandatory open items above are resolved. |
@@ -63,7 +69,8 @@ that every earlier result was rerun during this audit.
 4. Complete final scope-controlled security/correctness review and required gates.
 5. Produce and verify the same-revision transition artifact; establish the intended
    install/update channel; switch default only after acceptance.
-6. Complete the agreed observation period, then perform and validate Rust removal.
+6. User waived observation and requested immediate Rust proxy removal; validate
+   Swift-only packaging and lifecycle.
 
 Independent work can proceed while inputs are pending; none of the above may be
 silently replaced by a narrower passing test or a prepared but unexecuted runner.

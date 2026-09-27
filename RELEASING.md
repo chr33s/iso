@@ -7,14 +7,14 @@ How a `coop` release is cut, and what to check before cutting one.
 - **`ci.yml`** runs on pushes to `main` and on every PR: `fmt --check`, `clippy -D warnings`,
   `cargo test --workspace`, the preflight/probe regression tests, Linux bridge
   isolation, `integration-proxy-forward.sh`, `integration-install.sh`, `integration-update.sh`,
-  `integration-uninstall.sh`,
+  `integration-uninstall.sh`, the macOS 27 Swift proxy package/process gates,
   `cargo deny --workspace check`, `taplo format --check`, and `zizmor`.
 - **`release.yml`** runs when a `v*` tag is pushed. It **re-runs all of CI as a
-  gate**, then builds both `coop` and `coop-proxy` on native runners for three
+  gate**, then builds the Rust host CLI on native runners for three
   targets
   (`aarch64-apple-darwin`, `x86_64-unknown-linux-musl`,
   `aarch64-unknown-linux-musl`), checks the built CLI reports the tagged release
-  version, packages both binaries per target, generates `SHA256SUMS`, attests
+  version, builds and packages Swift `coop-proxy` for macOS only, generates `SHA256SUMS`, attests
   build provenance, extracts the `## vX.Y.Z` section from `CHANGELOG.md` as the
   release notes, and publishes the GitHub release. **It fails if there is no
   matching CHANGELOG section.**
@@ -48,8 +48,8 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    `CHANGELOG.md` to judge.
 
 3. **Bump the version.**
-   - Edit `[workspace.package].version` in `Cargo.toml`; both packages inherit it.
-   - Run `cargo build --workspace` so `Cargo.lock` picks up both package versions.
+   - Edit `[workspace.package].version` in `Cargo.toml`; the host package inherits it.
+   - Run `cargo build --workspace` so `Cargo.lock` picks up the host package version.
 
 4. **Promote the changelog.** Rename `## Unreleased` to `## vX.Y.Z` in
    `CHANGELOG.md`. The text under it becomes the GitHub release notes verbatim,
@@ -99,8 +99,9 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    This triggers `release.yml`.
 
 9. **Verify the published release.** On the GitHub release page confirm:
-   - three `coop-vX.Y.Z-<target>.tar.gz` artifacts, each containing both `coop`
-     and `coop-proxy`, plus `SHA256SUMS` and `attestations.jsonl`,
+   - three `coop-vX.Y.Z-<target>.tar.gz` artifacts, each containing `coop`; the macOS
+     archive also contains Swift `coop-proxy`, plus release-level `SHA256SUMS`
+     and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the notes match the `## vX.Y.Z` CHANGELOG section.
 
@@ -130,13 +131,13 @@ version and cut a fresh release** — go back to step 2 with `vX.Y.(Z+1)`.
 This is why the preflight matters: `release.yml` re-runs CI and then builds the
 workspace for three targets, and a failure in *either* burns the version. Run
 `./scripts/preflight-release.sh` before every tag — it mirrors the CI checks
-**and** builds both workspace binaries for release targets locally (for each
+**and** builds the host CLI for release targets locally (for each
 rustup target you have installed; pass `--install-targets` to `rustup target add` any that are
 missing — the cross-linker tools must already be installed), so build failures
 can be caught before the tag. The release workflow uses
 native macOS ARM64, Linux x86_64, and Linux ARM64 runners; Linux needs
-`musl-tools` and `cmake` for the proxy's `aws-lc-sys` dependency, with `musl-gcc`
-as its C compiler and Rust linker (see `release.yml`). Cross-building locally
+`musl-tools`, with `musl-gcc` as the Rust linker; macOS needs Xcode 27
+for the Swift proxy (see `release.yml`). Cross-building locally
 also needs a C toolchain and linker configured for each target; installing the
 Rust target alone is insufficient. Check any targets skipped by the preflight
 on matching hosts before tagging.

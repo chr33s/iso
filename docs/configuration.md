@@ -345,6 +345,9 @@ materialized into guest config.
 
 ## `proxy` section
 
+Credential-proxy mode requires macOS 27+ (Lima or Apple Container). The Swift
+proxy is unavailable on Linux; other Firecracker features remain supported.
+
 `[proxy.anthropic]` and `[proxy.openai]` declare host-side
 credential-injecting upstreams for Claude Code and Codex. When an upstream is
 configured, coop runs a `coop-proxy` process on the host for the lifetime of

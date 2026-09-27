@@ -2332,3 +2332,83 @@ review/platform gates, hosted transition distribution, and agreed observation
 before Rust removal. Lima/Firecracker integration was not rerun for this change;
 the previously recorded Firecracker failures remain unresolved. The client
 probe's limitations (initial macOS text requests only) still apply.
+
+## 2026-09-27 — user-authorized Rust proxy removal and Swift-only cutover
+
+The user waived the observation prerequisite and explicitly requested immediate
+Rust proxy removal. Scope is the proxy, not the Rust host CLI or VM backends.
+This supersedes the prior deletion sequence; it does not establish unexecuted
+live/controlled-VM/release gates. The Rust proxy crate, tests, TLS fixtures,
+Cargo member and Tokio/Hyper/Rustls/Landlock/aws-lc dependency closure are gone.
+The host has no implementation selector or fallback and requires macOS for
+credential-proxy mode. Linux host/Firecracker functionality remains; Linux
+credential-proxy mode is unavailable. Active docs/config examples, Cargo license
+exceptions, mutation exclusions, CI, release/preflight/build, installers,
+updaters, and integration paths are synchronized.
+
+SwiftPM's product remains `coop-proxy-swift`; the installed artifact is named
+`coop-proxy`. This stable name is required because released v0.6.0 updaters only
+replace that companion. The tagged installer behavior was reproduced against
+the new layout, including replacing an old Rust companion with Swift bytes.
+Both debug and release builders replace the canonical binary and remove stale
+`coop-proxy-rs`/`coop-proxy-swift` siblings. Installer/update keep checksum and
+provenance verification unchanged, reject obsolete transition artifacts before
+replacement, and clean stale suffix companions. The neutral refusal/forwarding
+fixtures and Swift boundary/cleanup validators remain; retired Rust commands
+and comparisons have been removed.
+
+Review target: base b13c0e0 (committed port), staged plus unstaged removal diff.
+Independent correctness/tests and security/API reviews, plus root design,
+conventions, docs, and comments review covered all eight lenses. Fixed findings:
+old-updater canonical-name compatibility; builder mock reintroducing retired
+artifacts; macOS <27 integration skip; remote macOS Swift delivery; stale release
+preflight package/version assumptions. Final scoped review has no surviving
+code finding. This is not the final whole-goal security/acceptance signoff.
+Review packet: `/tmp/coop-swift-only-review.json`. No clean-commit marker was
+written: the worktree is uncommitted and broader platform/live gates remain.
+
+Validation:
+
+- Default host suite: 1,215 passed. Apple-backend suite: 1,329 passed.
+- Swift package: 48 transport and 8 policy tests passed; opt-in RSS/live/TLS-audit
+  cases and standalone VM fixture serving remained skipped by that invocation.
+- Default and Apple all-target clippy with warnings denied, Cargo format,
+  cargo-deny, actionlint, shellcheck for changed runners/installers/preflight,
+  Python compilation, and diff whitespace checks passed. Taplo was unavailable.
+- Installer: 13 passed; real updater: 11 passed; release preflight: 7 passed;
+  candidate-source/archive builder test passed. The builder asserts the actual
+  canonical file is Swift bytes, exact archive membership and suffix cleanup.
+- Deliberately removing builder cleanup fails its regression. Removing obsolete
+  updater-archive rejection fails its regression; source restored, all 40 update
+  and 30 host proxy tests passed afterward. Independently injected Swift-test
+  and process-gate failures fail release preflight. No fault remains.
+- Confined Swift process gate (offline) passed. Refusal corpus: 46 cases × two
+  providers, plus connection-capacity recovery. Retained Swift runners passed:
+  18 forwarding/TLS cases, 16 disconnect exchanges, six declared/unknown-length
+  admission cases, two idle-upload cases, and six 256-stream capacity rounds.
+- Actual debug and release archives were built and inspected. Release archive
+  `/tmp/coop-swift-only-release.tar.gz` has host CLI, Swift proxy, runtime,
+  LICENSE, SHA256SUMS and BUILD.json; all checksums and three Mach-O signatures
+  verified. `/tmp/coop-swift-only-release-result.json` records hashes/manifest.
+  It is a dirty local build, not a hosted attested release or publication.
+
+Final canonical-name Apple VM gate exited zero. Complete 774-line transcript
+was reviewed. Two VMs booted with both providers; capability and cross-VM
+rejection passed; 19,501 regular guest files contained no fake provider secret,
+with a successful canary and both configuration files witnessed. After proxy
+termination curl returned transport error 56, Codex emitted 10 failure events,
+and Claude 13; neither completed a tool/result answer. Missing canonical proxy
+and pre-readiness substitute termination failed startup closed. The substitute
+was killed by SIGKILL; this does not prove `/usr/bin/false` returned its normal
+exit status. Listener teardown and both VM destroys passed. Owner cc300fc3's
+containers/images and task processes were checked absent, and the private work
+directory was removed. Structured evidence: `/tmp/coop-swift-only-vm-result.json`;
+raw integration transcripts were removed after review. An earlier successful
+pre-canonical run was superseded by this final run.
+
+Observation and Rust-retention/removal are no longer blockers. Remaining full-
+goal work includes admitted controlled-upstream VM forwarding, dedicated live
+provider/agent success, final whole-goal review/platform gates, hosted artifact
+verification and the intended Apple-backend install/update channel. Neither
+Lima nor Firecracker was rerun here; prior Firecracker lifecycle failures are
+not resolved by this removal. No commit, merge, push, or publication was done.

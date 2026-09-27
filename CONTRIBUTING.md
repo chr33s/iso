@@ -43,10 +43,10 @@ cd coop
 cargo build --release
 ```
 
-The binary lands at `target/release/coop`. This default build excludes the
-credential proxy. To build both release binaries, install CMake and run
-`cargo build --workspace --release`; keep `coop-proxy` next to `coop` when
-installing them.
+The host CLI lands at `target/release/coop`. On macOS 27+, also build the
+credential proxy with `swift build --package-path macos/coop-proxy -c release`.
+Install the SwiftPM `coop-proxy-swift` product as `coop-proxy` beside the host
+CLI; see [the source build instructions](docs/getting-started.md#build-from-source).
 
 ## Pre-commit hooks
 
@@ -67,7 +67,7 @@ prek run --all-files
 
 The local clippy and test hooks cover only `coop`. Before submitting, also
 run `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
-`cargo test --workspace` to cover `coop-proxy`, as CI does.
+`swift test --package-path macos/coop-proxy` on macOS 27+ to cover the proxy.
 
 Fix every warning before committing. coop has a zero-warnings policy — clippy
 runs with `-D warnings`, so a warning fails the build.
@@ -80,7 +80,7 @@ runs with `-D warnings`, so a warning fails the build.
 cargo test --workspace
 ```
 
-The workspace command also runs `coop-proxy` tests and requires CMake.
+Cargo tests cover the host CLI; SwiftPM tests cover the macOS 27+ proxy.
 The main CLI library tests cover the pure logic: config parsing
 and validation, workspace sync argument construction, env merging, secret
 routing, and the helpers the command handlers are built from. Test behavior,

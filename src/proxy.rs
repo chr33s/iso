@@ -1,6 +1,6 @@
 //! Host-side lifecycle for the credential-injecting proxy (issue #411).
 //!
-//! `coop-proxy` is a separate binary (its own workspace crate) that runs on
+//! `coop-proxy` is a separate Swift binary that runs on
 //! the host for the lifetime of a remote-mode VM. This module resolves the
 //! real credential, mints a per-instance capability token, spawns the proxy
 //! process (bound on host loopback), and exposes it into the guest with a
@@ -14,7 +14,7 @@
 //! configuration. See [`docs/design/issue-411-injecting-proxy.md`].
 //!
 //! Binding host loopback + reverse-tunnelling works identically on both
-//! backends (Firecracker and Lima), keeps the listener off every non-loopback
+//! macOS backends (Lima and Apple Container), keeps the listener off every non-loopback
 //! interface, and gives each guest its own tunnel (no shared-bridge exposure).
 //! The guest is pointed at `http://127.0.0.1:<port>` and holds only the
 //! capability token, which the proxy verifies before injecting the real
@@ -35,42 +35,14 @@ use serde::Serialize;
 use crate::backend::SshTarget;
 use crate::config::{Instance, ProxyAuthScheme, ProxyUpstream, Secret, resolve_cmd_value};
 
-/// Host-only transition selector. Never read from guest state or proxy JSON.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ProxyImplementation {
-    Rust,
-    Swift,
-}
-
-impl ProxyImplementation {
-    fn select(value: Option<&std::ffi::OsStr>, swift_supported: bool) -> Result<Self> {
-        match value.and_then(std::ffi::OsStr::to_str) {
-            None if value.is_none() => Ok(Self::Rust),
-            Some("rust") => Ok(Self::Rust),
-            Some("swift") if swift_supported => Ok(Self::Swift),
-            Some("swift") => bail!("Swift proxy selection requires a macOS apple-container build"),
-            _ => bail!("COOP_PROXY_IMPLEMENTATION must be rust or swift"),
-        }
-    }
-
-    fn binary_names(self) -> &'static [&'static str] {
-        match self {
-            // Compatibility with existing releases during the dual-build period.
-            Self::Rust => &["coop-proxy-rs", "coop-proxy"],
-            Self::Swift => &["coop-proxy-swift"],
-        }
-    }
-}
-
 /// Maximum time for SSH authentication and the guest's forwarding acknowledgment.
 const TUNNEL_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long to wait for the freshly spawned proxy to answer HTTP on its
 /// host-loopback listener before treating the launch as failed. This
 /// enforces fail-closed startup: when confinement *fails to establish* the
-/// proxy exits before binding (an unsupported kernel makes Landlock's
-/// `apply` bail on Linux; a missing `sandbox-exec` or a malformed Seatbelt
-/// profile makes the wrapper exit non-zero on macOS), so this probe never
+/// proxy exits before binding (a missing `sandbox-exec` or a malformed Seatbelt
+/// profile makes the wrapper exit non-zero), so this probe never
 /// connects and the VM start aborts rather than proceeding with a dead
 /// credential proxy. It confirms a real unauthenticated HTTP response. The
 /// strength of the confinement is asserted separately by `coop-proxy --jail-selftest` in the
@@ -522,10 +494,7 @@ fn proxy_http_ready(listen: SocketAddr) -> bool {
 /// Build the `Command` that launches `coop-proxy` under the platform's process
 /// confinement (issue #411, slice 3).
 ///
-/// On Linux the proxy self-confines with Landlock unconditionally (it never
-/// receives a `--no-jail` opt-out from `coop`), so the command is the binary
-/// itself. On macOS — which has no first-class in-process sandbox — the
-/// launcher wraps it in `sandbox-exec` with a Seatbelt profile
+/// The macOS launcher wraps it in `sandbox-exec` with a Seatbelt profile
 /// ([`SEATBELT_PROFILE`]) that denies filesystem writes and program execution
 /// and limits egress to the two upstream ports. `sandbox-exec`
 /// `execve`-replaces itself with the proxy, so the spawned pid is the proxy's
@@ -550,7 +519,7 @@ fn confined_command(bin: &Path) -> Command {
     };
     #[cfg(not(target_os = "macos"))]
     let mut command = Command::new(bin);
-    // Neither runtime requires caller environment entries. In particular,
+    // The proxy requires no caller environment entries. In particular,
     // credentials, loader injection, and HTTP proxy settings must not cross
     // into the confined child. Add variables only with runtime evidence.
     command.env_clear();
@@ -769,25 +738,26 @@ fn token_path(inst: &Instance, name: &str) -> PathBuf {
 }
 
 fn locate_proxy_binary() -> Result<PathBuf> {
-    let value = std::env::var_os("COOP_PROXY_IMPLEMENTATION");
-    let implementation = ProxyImplementation::select(
-        value.as_deref(),
-        cfg!(all(target_os = "macos", feature = "apple-container")),
-    )?;
+    if !cfg!(target_os = "macos") {
+        bail!(
+            "Credential proxy mode requires macOS 27 or newer; the Swift proxy is unavailable on this platform"
+        );
+    }
     let exe = std::env::current_exe().context("Failed to locate the coop executable")?;
+    proxy_binary_next_to(&exe)
+}
+
+fn proxy_binary_next_to(exe: &Path) -> Result<PathBuf> {
     let dir = exe
         .parent()
         .context("coop executable has no parent directory")?;
-    for name in implementation.binary_names() {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
+    let candidate = dir.join("coop-proxy");
+    if candidate.is_file() {
+        return Ok(candidate);
     }
     bail!(
-        "selected proxy {} not found next to coop at {} — build the transition binaries \
-         with scripts/build-proxy-transition.py or reinstall coop",
-        implementation.binary_names()[0],
+        "Swift proxy coop-proxy not found next to coop at {} — build with \
+         scripts/build-proxy-transition.py or reinstall coop",
         dir.display()
     );
 }
@@ -845,30 +815,29 @@ fn wire_config_json(
 mod tests {
 
     #[test]
-    fn transition_selection_is_host_only_and_has_no_swift_fallback() {
-        use std::ffi::OsStr;
-        assert_eq!(
-            ProxyImplementation::select(None, true).unwrap(),
-            ProxyImplementation::Rust
-        );
-        assert_eq!(
-            ProxyImplementation::select(Some(OsStr::new("rust")), false).unwrap(),
-            ProxyImplementation::Rust
-        );
-        let swift = ProxyImplementation::select(Some(OsStr::new("swift")), true).unwrap();
-        assert_eq!(swift.binary_names(), &["coop-proxy-swift"]);
-        let unsupported =
-            ProxyImplementation::select(Some(OsStr::new("swift")), false).unwrap_err();
-        assert!(
-            unsupported
-                .to_string()
-                .contains("requires a macOS apple-container build")
-        );
-        let non_utf8 = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"\xff");
-        assert!(ProxyImplementation::select(Some(non_utf8), true).is_err());
-        for invalid in ["", "Swift", "/tmp/proxy", "rust,swift"] {
-            assert!(ProxyImplementation::select(Some(OsStr::new(invalid)), true).is_err());
+    fn only_swift_proxy_is_resolved_next_to_host() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = directory.path().join("coop");
+        for legacy in ["coop-proxy-swift", "coop-proxy-rs"] {
+            fs::write(directory.path().join(legacy), b"retired").unwrap();
         }
+        assert!(proxy_binary_next_to(&host).is_err());
+        let swift = directory.path().join("coop-proxy");
+        fs::write(&swift, b"swift").unwrap();
+        assert_eq!(proxy_binary_next_to(&host).unwrap(), swift);
+        fs::remove_file(swift).unwrap();
+        assert!(proxy_binary_next_to(&host).is_err());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn proxy_mode_is_unavailable_off_macos() {
+        assert!(
+            locate_proxy_binary()
+                .unwrap_err()
+                .to_string()
+                .contains("requires macOS 27")
+        );
     }
 
     #[test]

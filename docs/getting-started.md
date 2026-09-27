@@ -61,15 +61,23 @@ updater.
 
 ## Build from source
 
-Install [Rust](https://rustup.rs/) and CMake, then:
+Install [Rust](https://rustup.rs/), then:
 
 ```
 cargo build --workspace --release
 ```
 
-The binaries land at `target/release/coop` and `target/release/coop-proxy`.
-Keep them in the same directory when installing: proxy mode looks for its
-companion next to `coop`.
+The host CLI lands at `target/release/coop`. For credential-proxy mode on
+macOS 27+, also build the Swift companion with Xcode 27:
+
+```sh
+swift build --package-path macos/coop-proxy -c release --force-resolved-versions
+proxy_dir="$(swift build --package-path macos/coop-proxy -c release --show-bin-path)"
+cp "$proxy_dir/coop-proxy-swift" target/release/coop-proxy
+```
+
+Install `coop` and `coop-proxy` in the same directory. Linux supports the host
+CLI and Firecracker backend but no longer supports credential-proxy mode.
 
 ## Configuration
 

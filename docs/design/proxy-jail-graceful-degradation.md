@@ -1,3 +1,7 @@
+> Historical design: the Rust proxy and Landlock implementation were removed
+> on 2026-09-27 at user request. Current proxy behavior is documented in
+> [credential-proxy.md](../credential-proxy.md); Swift requires macOS 27+.
+
 # Proxy jail: graceful degradation on older Linux kernels
 
 Implementation spec for a follow-up to **PR #417** (`issue-411-proxy-jail`,

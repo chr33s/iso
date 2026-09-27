@@ -113,13 +113,12 @@ check_versions() {
   tag="v$v"
   printf 'Cargo.toml version: %s  (release tag: %s)\n' "$v" "$tag"
 
-  for package in coop coop-proxy; do
-    lockv="$(awk -v package="$package" '$0 == "name = \"" package "\"" {getline; gsub(/version = \"|\"/, ""); print; exit}' Cargo.lock)"
-    if [[ "$lockv" != "$v" ]]; then
-      printf 'Cargo.lock %s version (%s) != workspace version (%s) — run cargo build --workspace to refresh the lockfile\n' "$package" "$lockv" "$v"
-      return 1
-    fi
-  done
+  package=coop
+  lockv="$(awk -v package="$package" '$0 == "name = \"" package "\"" {getline; gsub(/version = \"|\"/, ""); print; exit}' Cargo.lock)"
+  if [[ "$lockv" != "$v" ]]; then
+    printf 'Cargo.lock %s version (%s) != workspace version (%s) — run cargo build --workspace to refresh the lockfile\n' "$package" "$lockv" "$v"
+    return 1
+  fi
 
   # release.yml extracts notes with an exact whole-line match ($0 == "## vX.Y.Z"),
   # so the header must match exactly — a trailing date would pass a looser check
@@ -151,6 +150,15 @@ run_bridge_isolation() {
     return 0
   fi
   ./tests/integration-network.sh
+}
+
+run_swift_proxy() {
+  if [[ "$(uname -s)" != Darwin ]] || [[ "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]]; then
+    warn "Swift proxy validation requires macOS 27+ — run its package/process gates before tagging"
+    return 0
+  fi
+  swift test --package-path macos/coop-proxy --force-resolved-versions || return
+  python3 scripts/test-swift-proxy-process.py --skip-tls
 }
 
 run_proxy_forward() {
@@ -234,7 +242,7 @@ handle_missing_targets() {
   printf '\nMissing rustup targets for the release build: %s\n' "${targets[*]}"
   printf 'Install the standard libraries with:\n'
   printf '  rustup target add %s\n' "${targets[*]}"
-  printf 'Building coop-proxy also needs cmake and a target C compiler/linker.\n'
+  printf 'The Swift proxy requires Xcode 27 on macOS 27+.\n'
   printf 'Release CI uses native runners with musl-gcc on Linux; see RELEASING.md.\n'
   if [[ "$RUN_INSTALL_TARGETS" == 1 ]]; then
     rustup target add "${targets[@]}" || warn "rustup target add failed for: ${targets[*]}"
@@ -297,6 +305,7 @@ step "Version consistency" check_versions
 step "Format (cargo fmt --check)" cargo fmt -- --check
 step "Clippy" cargo clippy --workspace --all-targets -- -D warnings
 step "Unit tests" cargo test --workspace
+step "Swift proxy tests" run_swift_proxy
 step "Release target builds" build_release_targets
 step "Supply chain (cargo deny)" run_deny
 step "Workflow audit (zizmor)" run_zizmor

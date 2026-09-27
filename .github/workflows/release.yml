@@ -25,11 +25,9 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: xcode-27
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-          # Native ARM64 Linux runner — no cross-compilation, so coop-proxy's
-          # aws-lc-sys builds with the native musl toolchain (issue #411).
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
 
@@ -40,29 +38,30 @@ jobs:
         with:
           persist-credentials: false
 
-      # Each target builds on a matching-arch runner (no cross-compilation).
-      # The Linux musl legs need musl-gcc + cmake to build coop-proxy's
-      # aws-lc-sys crypto backend natively; macOS ships cmake preinstalled.
-      - name: Install musl tools and cmake (Linux)
+      - name: Install musl tools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools cmake
+          sudo apt-get install -y musl-tools
 
       - name: Add target
         run: rustup target add ${{ matrix.target }}
 
       - name: Build
-        # `--workspace` builds both `coop` and `coop-proxy` from one source
-        # tree, so they ship in lockstep (issue #411). Native builds: musl-gcc
-        # is the C compiler (for aws-lc-sys) and the linker on each Linux
-        # runner. The macOS leg ignores these vars.
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CC_aarch64_unknown_linux_musl: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Build Swift proxy (macOS 27+)
+        if: runner.os == 'macOS'
+        run: |
+          swift build --package-path macos/coop-proxy -c release --force-resolved-versions
+          proxy_dir="$(swift build --package-path macos/coop-proxy -c release --show-bin-path)"
+          cp "$proxy_dir/coop-proxy-swift" "target/${{ matrix.target }}/release/coop-proxy"
+          codesign --verify --strict "target/${{ matrix.target }}/release/coop-proxy"
 
       - name: Verify release binaries
         env:
@@ -76,7 +75,9 @@ jobs:
             printf 'Expected release version %s, got %s\n' "$expected" "$actual" >&2
             exit 1
           fi
-          test -x "target/${TARGET}/release/coop-proxy"
+          if [[ "$TARGET" == *apple-darwin ]]; then
+            test -x "target/${TARGET}/release/coop-proxy"
+          fi
 
       - name: Package
         shell: bash
@@ -85,9 +86,9 @@ jobs:
           name="${BINARY}-${tag}-${{ matrix.target }}"
           mkdir -p "staging/${name}"
           cp "target/${{ matrix.target }}/release/${BINARY}" "staging/${name}/"
-          # coop-proxy rides in the same tarball, inheriting the identical
-          # SLSA build-provenance attestation with no new machinery.
-          cp "target/${{ matrix.target }}/release/${BINARY}-proxy" "staging/${name}/"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            cp "target/${{ matrix.target }}/release/coop-proxy" "staging/${name}/"
+          fi
           cp LICENSE* "staging/${name}/" 2>/dev/null || true
           tar -czf "${name}.tar.gz" -C staging "${name}"
           echo "TARBALL=${name}.tar.gz" >> "$GITHUB_ENV"

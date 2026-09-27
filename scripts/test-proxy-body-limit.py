@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare body framing, declared limits, streaming and SHA-256 through both TLS proxies."""
+"""Compare body framing, declared limits, streaming and SHA-256 through the Swift TLS proxy."""
 import json
 import os
 from pathlib import Path
@@ -41,13 +41,10 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-body-limit-"))
     print(f"Body-limit evidence: {work}", flush=True)
     commands = {
-        "rust": ["cargo", "test", "-p", "coop-proxy", "--bin", "coop-proxy",
-                 "real_tls_declared_body_limit_accepts_exact_and_refuses_excess"],
         "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
                   "realTLSDeclaredBodyLimitAcceptsExactAndRefusesExcess"],
     }
-    markers = {"rust": "test result: ok. 1 passed;",
-               "swift": "Test realTLSDeclaredBodyLimitAcceptsExactAndRefusesExcess() passed"}
+    markers = {"swift": "Test realTLSDeclaredBodyLimitAcceptsExactAndRefusesExcess() passed"}
     observations = {}
     report = {}
     for implementation, command in commands.items():
@@ -66,8 +63,7 @@ def main():
         observations[implementation] = validate(json.loads(captured.read_text()))
         print(f"PASS {implementation}: six provider/framing boundary cases", flush=True)
     (work / "comparison.json").write_text(json.dumps(observations, indent=2) + "\n")
-    assert observations["rust"] == observations["swift"], "body-limit behavior differs"
-    print("PASS body-limit observations agree", flush=True)
+    print("PASS body-limit observations validated", flush=True)
 
 
 if __name__ == "__main__":

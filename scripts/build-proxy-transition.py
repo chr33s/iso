@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Build local macOS transition artifacts beside an apple-container coop binary.
+"""Build local macOS Swift proxy artifacts beside an apple-container coop binary.
 
-Rust remains the default. Select Swift only in the host launch environment with
-COOP_PROXY_IMPLEMENTATION=swift. This does not install or publish release files.
+Swift is the only proxy implementation. This does not install or publish releases.
 """
 import argparse
 import hashlib
@@ -48,7 +47,6 @@ def main():
     configuration = "release" if args.release else "debug"
     cargo_flags = ["--release"] if args.release else []
     run("cargo", "build", "--locked", "-p", "coop", "--features", "apple-container", *cargo_flags)
-    run("cargo", "build", "--locked", "-p", "coop-proxy", *cargo_flags)
     package = ROOT / "macos/coop-proxy"
     run("swift", "build", "--package-path", str(package), "-c", configuration,
         "--force-resolved-versions")
@@ -61,12 +59,13 @@ def main():
     destination = Path(metadata["target_directory"]) / configuration
     # Publish each complete artifact with a rename; never expose a partial copy.
     with tempfile.TemporaryDirectory(prefix="proxy-transition-", dir=destination) as staging:
-        for source, name in [(destination / "coop-proxy", "coop-proxy-rs"),
-                             (swift_bin / "coop-proxy-swift", "coop-proxy-swift")]:
+        for source, name in [(swift_bin / "coop-proxy-swift", "coop-proxy")]:
             staged = Path(staging) / name
             shutil.copy2(source, staged)
             os.replace(staged, destination / name)
-    print(f"Built {destination}/coop with coop-proxy-rs and coop-proxy-swift")
+    for retired in ["coop-proxy-swift", "coop-proxy-rs"]:
+        (destination / retired).unlink(missing_ok=True)
+    print(f"Built {destination}/coop with Swift coop-proxy")
     if args.include_runtime:
         with tempfile.TemporaryDirectory(prefix="proxy-runtime-") as prefix:
             run(str(ROOT / "scripts/build-coop-sandbox.sh"), prefix)
@@ -75,7 +74,7 @@ def main():
     if args.archive:
         archive = args.archive.resolve()
         archive.parent.mkdir(parents=True, exist_ok=True)
-        names = ["coop", "coop-proxy-rs", "coop-proxy-swift"]
+        names = ["coop", "coop-proxy"]
         if args.include_runtime:
             names.append("coop-sandbox")
         checksums = []
@@ -87,7 +86,7 @@ def main():
             checksums.append(f"{digest.hexdigest()}  {name}\n")
         manifest = {
             "format": 1, "backend": "apple-container", "architecture": "arm64",
-            "minimum_macos": "27.0", "default_proxy": "rust",
+            "minimum_macos": "27.0", "default_proxy": "swift",
             "configuration": configuration,
             "source_revision": revision, "source_dirty": dirty,
             "local_build": args.expected_revision is None,

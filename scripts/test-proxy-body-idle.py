@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare partial-upload idle timeout and TLS cleanup for both proxies."""
+"""Validate Swift partial-upload idle timeout and TLS cleanup."""
 import json
 import os
 from pathlib import Path
@@ -32,13 +32,10 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="coop-body-idle-"))
     print(f"Body-idle evidence: {work}", flush=True)
     commands = {
-        "rust": ["cargo", "test", "-p", "coop-proxy", "--bin", "coop-proxy",
-                 "real_tls_upload_idle_deadline_resets_and_cancels_upstream"],
         "swift": ["swift", "test", "--package-path", "macos/coop-proxy", "--filter",
                   "realTLSUploadIdleDeadlineResetsAndCancelsUpstream"],
     }
-    markers = {"rust": "test result: ok. 1 passed;",
-               "swift": "Test realTLSUploadIdleDeadlineResetsAndCancelsUpstream() passed"}
+    markers = {"swift": "Test realTLSUploadIdleDeadlineResetsAndCancelsUpstream() passed"}
     observations = {}
     report = {}
     for implementation, command in commands.items():
@@ -57,8 +54,7 @@ def main():
         observations[implementation] = validate(json.loads(captured.read_text()))
         print(f"PASS {implementation}: both provider body-idle cases", flush=True)
     (work / "comparison.json").write_text(json.dumps(observations, indent=2) + "\n")
-    assert observations["rust"] == observations["swift"], "body-idle behavior differs"
-    print("PASS body-idle observations agree", flush=True)
+    print("PASS body-idle observations validated", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,7 @@
+> Historical design: the Rust proxy and Landlock implementation were removed
+> on 2026-09-27 at user request. Current proxy behavior is documented in
+> [credential-proxy.md](../credential-proxy.md); Swift requires macOS 27+.
+
 # Design: Issue #411 — credential non-exposure via a host-side injecting proxy
 
 **Status:** proposal · **Scope:** the credential-injection mechanism and its Claude↔Codex parity; egress filtering (#2) and subscription-token injection are adjacent, treated only where they touch this seam

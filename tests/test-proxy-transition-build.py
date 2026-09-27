@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -72,8 +73,9 @@ class CandidateSourceTests(unittest.TestCase):
                 calls.append(args)
                 if mutate_during_build:
                     (root / "source").write_text("source changed during build\n")
-                for name in ["coop", "coop-proxy"]:
-                    (binaries / name).write_bytes(b"fixture binary")
+                if args[0] == "cargo":
+                    for name in ["coop", "coop-proxy", "coop-proxy-rs", "coop-proxy-swift"]:
+                        (binaries / name).write_bytes(b"fixture binary")
                 (swift / "coop-proxy-swift").write_bytes(b"fixture Swift binary")
                 if args[0].endswith("build-coop-sandbox.sh"):
                     runtime = Path(args[1]) / "bin"
@@ -101,6 +103,16 @@ class CandidateSourceTests(unittest.TestCase):
                 arguments[-1] = original_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
                 transition.main()
                 self.assertTrue(archive.is_file(), "clean exact revision must package")
+                with tarfile.open(archive) as bundle:
+                    self.assertEqual(set(bundle.getnames()), {
+                        "coop-proxy-transition/" + name for name in
+                        ["coop", "coop-proxy", "coop-sandbox", "LICENSE", "SHA256SUMS", "BUILD.json"]})
+                    manifest = json.load(bundle.extractfile("coop-proxy-transition/BUILD.json"))
+                    self.assertEqual(manifest["default_proxy"], "swift")
+                self.assertEqual((binaries / "coop-proxy").read_bytes(), b"fixture Swift binary")
+                self.assertFalse((binaries / "coop-proxy-swift").exists())
+                self.assertFalse((binaries / "coop-proxy-rs").exists())
+                self.assertFalse(any("coop-proxy" in call and call[0] == "cargo" for call in calls))
                 archive.unlink()
                 calls.clear()
                 mutate_during_build = True

@@ -43,7 +43,7 @@ boot session through `post_start` for fresh `up`, `start`, and a stopped-project
 `up`, checks that model credentials still arrive, and witnesses normal GitHub
 forwarding on an intervening invocation without the flag.
 
-For the macOS 27+ Swift proxy transition, build the local dual artifacts and
+For the macOS 27+ Swift proxy transition, build the local Swift artifacts and
 run the dedicated Apple sandbox gate:
 
 ```bash
@@ -58,8 +58,7 @@ This gate builds a private runtime and VM image, boots two VMs with Swift, and
 checks OpenAI guest 401/403 responses and rejection of the other VM's capability.
 It scans regular guest files for synthetic provider credentials, excluding
 `/proc`, `/sys`, and `/dev`; a temporary canary verifies the scanner before the
-full scan. Search values enter the scanner over stdin. It stops the main VM and
-starts it with Rust to exercise explicit rollback while the peer stays on Swift.
+full scan. Search values enter the scanner over stdin. It stops the main VM and tests missing/exiting Swift artifacts.
 It checks both providers' selected proxy processes, listener teardown, and a
 guest curl transport failure after terminating the OpenAI proxy. The curl check
 does not prove how a real agent reports the failure. Credentials are synthetic
@@ -69,7 +68,7 @@ container service running and removes its VMs and images on completion.
 Failed runs retain diagnostic artifacts at the printed temporary path.
 The gate also removes the selected Swift artifact and substitutes an executable
 that exits immediately, checking that both starts fail with the expected reason
-and create no proxy PID records while the Rust binary remains available.
+and create no proxy PID records without a fallback implementation.
 
 The additional controlled-upstream phase is under development and has not yet
 passed its real-VM gate:
@@ -112,7 +111,7 @@ your-dedicated-anthropic-credential-command | python3 scripts/test-proxy-live.py
 The default token ceiling is 256 per generation request; an approved test may
 select 16–1024 with `--max-output-tokens`. No model is selected implicitly.
 Use `--scheme bearer` for a dedicated Anthropic bearer credential when supported
-by the account. The default binary is `target/debug/coop-proxy-swift`; `--binary`
+by the account. The default binary is `target/debug/coop-proxy`; `--binary`
 selects a specific built artifact. It runs under the production Seatbelt profile
 with an empty child environment and startup JSON over stdin. Core dumps are
 disabled before reading the credential. Output contains phase counts, model,
@@ -175,10 +174,9 @@ tool-use probe retains its 180-second limit.
 
 ### Shared proxy contract gates
 
-The shared malformed HTTP harness runs both real proxies under Seatbelt:
+The shared malformed HTTP harness runs the real Swift proxy under Seatbelt:
 
 ```bash
-cargo build -p coop-proxy
 swift build --package-path macos/coop-proxy
 python3 scripts/test-proxy-contract.py --fuzz-cases 10000 --seed 20260927
 python3 scripts/test-proxy-contract.py --replay /path/to/request.bin
@@ -189,7 +187,7 @@ bytes, whitespace, and oversized fields. Fuzz inputs never contain a valid
 capability and cannot authorize provider operations. The harness half-closes
 each fuzz input, bounds response reads, checks process survival and secret-free
 output, and periodically checks readiness. Fixed corpus cases separately assert
-exact Rust/Swift status parity, including incomplete inputs without EOF. Fuzz
+exact expected Swift statuses, including incomplete inputs without EOF. Fuzz
 input-exchange failures save the wire bytes and seed/index metadata for replay. Only local
 ephemeral-port exhaustion is retried, for at most 45 seconds; other failures
 remain errors. This does not replace authenticated streaming/TLS differential
@@ -559,13 +557,13 @@ For each line in `missed.txt`:
 
 ### Shared confined proxy refusal corpus
 
-On macOS, build both proxy executables, then run
-`python3 scripts/test-proxy-contract.py`. It runs 37 shared refusal cases for
-both providers against each executable under the production Seatbelt profile.
+On macOS 27+, build the Swift proxy, then run
+`python3 scripts/test-proxy-contract.py`. It runs 46 refusal cases for
+both providers against the executable under the production Seatbelt profile.
 The two slow-header cases retain an incomplete header, with one sending more
 bytes after six seconds. Both require HTTP 408 and peer closure within 9–13
 seconds, proving that partial progress does not reset the initial ten-second
-deadline. The suite takes about 80 seconds plus startup time. These requests
+deadline. The suite takes about 40 seconds plus startup time. These requests
 use denied methods and cannot issue a model operation.
 
 The same harness also holds 256 idle guest sockets and requires eight excess
@@ -586,13 +584,13 @@ output are checked for disclosure.
 The `swift-proxy` job in `.github/workflows/ci.yml` uses GitHub's `xcode-27`
 macOS 27 preview runner. It checks strict Swift formatting, the full pinned
 package test suite, the confined-process gate without live provider TLS, and the
-shared Rust/Swift forwarding and early-disconnect corpora. The job raises its
+Swift forwarding and early-disconnect corpora. The job raises its
 file-descriptor limit for the 256-stream workloads. Release builds depend on
 the reusable CI workflow, including this job.
 
 The hosted runner label is documented in [GitHub's announcement](https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/).
 `.github/actionlint.yaml` adds that exact label because actionlint 1.7.12 predates
-it. Opt-in RSS, live provider TLS/credentials, VM integration and observation
+it. Opt-in RSS, live provider TLS/credentials, VM integration and live-validation
 requirements remain separate gates; this CI job does not replace them.
 
 ### Historical AsyncHTTPClient TLS cancellation audit
@@ -686,13 +684,12 @@ and cleanup tests, not aggregate process RSS measurements.
 ### Shared upstream disconnects and Swift response completion
 
 Run `python3 scripts/test-proxy-upstream-disconnect.py` on macOS for the shared
-Rust/Swift matrix. Each implementation runs 16 exchanges: both providers, closure
+Swift matrix. It runs 16 exchanges: both providers, closure
 before headers or during the response body, abrupt TCP closure or clean TLS
 shutdown, and two rounds. Raw observations and comparison results are saved in
-the printed temporary directory. The runner checks the exact matrix and compares
+the printed temporary directory. The runner checks the exact matrix and validates
 status, partial provider body, guest EOF, and one-slot capacity recovery. Local
-502 bodies are checked separately: Rust emits `upstream request failed`, while
-Swift emits an empty body. No live credentials or provider network are used.
+502 responses must have empty bodies. No live credentials or provider network are used.
 
 For the Swift matrix and complete-response regression alone, run:
 
@@ -810,15 +807,14 @@ reach the fixture before the guest sends the remainder; the receiver hashes
 incrementally and its SHA-256 must match the expected patterned body. A separate
 request declaring 64 MiB plus one byte must receive 413 with zero upstream TCP
 connections or HTTP requests. Both paths require guest EOF and upstream socket
-closure; Rust additionally checks permit recovery. The runner validates and
+closure; The Rust reference evidence is historical. The runner validates and
 compares six complete records, retaining logs and raw observations in a printed
 temporary directory. Test-only `COOP_BODY_LIMIT_OBSERVATIONS` captures counts
-and digest. Individual gates are `cargo test -p coop-proxy real_tls_declared_body_limit`
-and `swift test --package-path macos/coop-proxy --filter realTLSDeclaredBodyLimit`.
+and digest. The individual gate is `swift test --package-path macos/coop-proxy --filter realTLSDeclaredBodyLimit`.
 A chunked request with
 `Expect: 100-continue` must receive 411 as its first response, with zero upstream
 connections, requests, body bytes, or injected credentials. The shared runner
-compares six provider/framing cases across both implementations.
+compares six provider/framing cases for the Swift implementation.
 
 Run `python3 scripts/test-proxy-body-idle.py` on macOS for the compared body-idle
 gate. Both provider cases run concurrently within each implementation through
@@ -831,8 +827,7 @@ compares both providers' status, partial body and closure observations, retainin
 raw elapsed times while excluding scheduler timing from equality comparison.
 Logs, raw observations and comparison evidence are retained in a printed
 temporary directory. `COOP_IDLE_OBSERVATIONS` is consumed only by test code.
-Individual gates are `cargo test -p coop-proxy real_tls_upload_idle_deadline`
-and `swift test --package-path macos/coop-proxy --filter realTLSUploadIdleDeadline`.
+The individual gate is `swift test --package-path macos/coop-proxy --filter realTLSUploadIdleDeadline`.
 
 Run the compared TLS stream-capacity gate on macOS:
 
@@ -848,7 +843,6 @@ incorrect field types fail validation. Record order is ignored. The optional
 `COOP_STREAM_OBSERVATIONS` path is read only by test code. Individual gates are:
 
 ```bash
-cargo test -p coop-proxy real_tls_streams_hold_256_slots
 swift test --package-path macos/coop-proxy --filter realTLSStreamsHold256Slots
 ```
 

@@ -1,11 +1,6 @@
 [workspace]
-members = ["coop-proxy"]
-# No `default-members`: with a root package present, plain `cargo build` /
-# `cargo test` build only `coop`, so the integration scripts and everyday dev
-# builds don't pull in coop-proxy's aws-lc-sys (and its cmake requirement).
-# coop-proxy is reached explicitly via `--workspace` — CI clippy/test, the
-# release build, and `cargo deny --workspace` all pass it.
-# `fuzz/` is its own detached workspace (cargo-fuzz), kept out of this one.
+# The credential proxy is a separate Swift package under macos/coop-proxy.
+# Keep cargo-fuzz in its own workspace.
 exclude = ["fuzz"]
 
 [workspace.package]
@@ -58,8 +53,7 @@ apple-container = []
 [lints]
 workspace = true
 
-# Shared across every workspace member (coop + coop-proxy) so the strict
-# clippy/rustc policy is declared once.
+# Rust host CLI lint policy.
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
