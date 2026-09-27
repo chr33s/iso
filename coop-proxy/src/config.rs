@@ -33,7 +33,7 @@ impl fmt::Debug for Secret {
 /// requests. The guest's credential slot is always stripped first (see
 /// [`crate::proxy`]); this decides the header that replaces it.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "scheme", rename_all = "snake_case")]
+#[serde(tag = "scheme", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Injection {
     /// Anthropic API key → `x-api-key: <credential>`.
     XApiKey { credential: Secret },
@@ -42,124 +42,189 @@ pub enum Injection {
     Bearer { credential: Secret },
 }
 
-/// The full startup blob. One `coop-proxy` process serves exactly one
-/// upstream (per-integration proxy) — Codex spawns a second process with its
-/// own upstream and token rather than a route table inside one process.
-#[derive(Debug, Clone, Deserialize)]
+/// Compiled provider policy; startup cannot introduce arbitrary destinations.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    Anthropic,
+    Openai,
+}
+
+impl Provider {
+    pub fn host(self) -> &'static str {
+        match self {
+            Self::Anthropic => "api.anthropic.com",
+            Self::Openai => "api.openai.com",
+        }
+    }
+}
+
+/// Validated startup state. Deserialization is private so callers cannot skip
+/// version, listener, capability, and credential checks.
+#[derive(Debug, Clone)]
 pub struct ProxyConfig {
-    /// Guest-visible listen address. Must be a concrete host interface bound
-    /// to the private host-guest link, never an unspecified address
-    /// (`0.0.0.0` / `[::]`) — enforced at bind time in [`crate::proxy::serve`].
     pub listen: SocketAddr,
-
-    /// Per-instance capability token the guest must present on every request.
-    /// Worthless off the host (it only authorizes the local proxy, which
-    /// injects the real credential itself), so exfiltrating it gains a
-    /// compromised guest nothing.
     pub capability_token: Secret,
-
-    /// The fixed upstream host, e.g. `api.anthropic.com`. The guest controls
-    /// only the request path — never this host or the `https` scheme — which
-    /// is what closes SSRF: a rogue guest cannot retarget the injected key at
-    /// an attacker-controlled host.
-    pub upstream_host: String,
-
-    /// The real credential and the header it is injected as.
+    pub provider: Provider,
     pub injection: Injection,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireConfig {
+    version: u32,
+    listen: SocketAddr,
+    capability_token: Secret,
+    provider: Provider,
+    injection: Injection,
+}
+
 impl ProxyConfig {
-    /// Parse the startup blob from a JSON string.
     pub fn from_json(s: &str) -> anyhow::Result<Self> {
-        let cfg: Self = serde_json::from_str(s)
-            .map_err(|e| anyhow::anyhow!("Failed to parse proxy config: {e}"))?;
-        // Defense in depth: an empty token would fail open, since
-        // `constant_time_eq(b"", b"")` is true and a bare `Authorization:
-        // Bearer ` presents an empty token. coop always mints a 64-hex token,
-        // so this is unreachable in production, but reject it at parse anyway.
-        if cfg.capability_token.expose().is_empty() {
-            anyhow::bail!("capability_token must not be empty");
-        }
-        Ok(cfg)
+        // Decoder errors can quote input values (including secrets). Never
+        // attach the underlying error to a startup diagnostic.
+        let wire: WireConfig =
+            serde_json::from_str(s).map_err(|_| anyhow::anyhow!("invalid proxy startup schema"))?;
+        anyhow::ensure!(wire.version == 1, "unsupported proxy startup version");
+        anyhow::ensure!(
+            wire.listen.ip().is_loopback(),
+            "proxy listener must be loopback"
+        );
+        let token = wire.capability_token.expose().as_bytes();
+        anyhow::ensure!(
+            token.len() == 64
+                && token
+                    .iter()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b)),
+            "capability must be 64 lowercase hexadecimal characters"
+        );
+        anyhow::ensure!(
+            !(wire.provider == Provider::Openai
+                && matches!(wire.injection, Injection::XApiKey { .. })),
+            "incompatible provider credential scheme"
+        );
+        let credential = match &wire.injection {
+            Injection::XApiKey { credential } | Injection::Bearer { credential } => {
+                credential.expose()
+            }
+        };
+        anyhow::ensure!(
+            !credential.is_empty() && credential.bytes().all(|b| (0x21..=0x7e).contains(&b)),
+            "invalid provider credential"
+        );
+        Ok(Self {
+            listen: wire.listen,
+            capability_token: wire.capability_token,
+            provider: wire.provider,
+            injection: wire.injection,
+        })
     }
 }
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests")]
-#[expect(clippy::panic, reason = "tests use panic! for unreachable arms")]
 mod tests {
-    use super::*;
+    use crate::config::{Provider, ProxyConfig};
+    use serde_json::{Value, json};
 
-    fn sample_json() -> &'static str {
-        r#"{
-            "listen": "172.16.0.1:8788",
-            "capability_token": "cap-token-abc",
-            "upstream_host": "api.anthropic.com",
-            "injection": { "scheme": "x_api_key", "credential": "sk-secret" }
-        }"#
+    fn sample() -> Value {
+        json!({ "version": 1, "listen": "127.0.0.1:8788",
+            "provider": "anthropic", "capability_token": "a".repeat(64),
+            "injection": { "scheme": "x_api_key", "credential": "sk-secret" } })
     }
 
     #[test]
-    fn parses_api_key_injection() {
-        let cfg = ProxyConfig::from_json(sample_json()).unwrap();
-        assert_eq!(cfg.listen.port(), 8788);
-        assert_eq!(cfg.upstream_host, "api.anthropic.com");
-        assert_eq!(cfg.capability_token.expose(), "cap-token-abc");
-        match &cfg.injection {
-            Injection::XApiKey { credential } => assert_eq!(credential.expose(), "sk-secret"),
-            Injection::Bearer { .. } => panic!("expected x_api_key"),
+    fn valid_provider_scheme_combinations() {
+        for (provider, scheme, host) in [
+            ("anthropic", "x_api_key", "api.anthropic.com"),
+            ("anthropic", "bearer", "api.anthropic.com"),
+            ("openai", "bearer", "api.openai.com"),
+        ] {
+            let mut value = sample();
+            value["provider"] = json!(provider);
+            value["injection"]["scheme"] = json!(scheme);
+            let cfg = ProxyConfig::from_json(&value.to_string()).unwrap();
+            assert_eq!(cfg.provider.host(), host);
+            assert_eq!(cfg.listen.port(), 8788);
+            assert_eq!(cfg.capability_token.expose(), "a".repeat(64));
+        }
+        assert_eq!(Provider::Openai.host(), "api.openai.com");
+    }
+
+    #[test]
+    fn rejects_invalid_startup_fields() {
+        for (field, bad) in [
+            ("version", json!(0)),
+            ("version", json!(2)),
+            ("provider", json!("evil.example")),
+            ("upstream_host", json!("api.anthropic.com")),
+            ("extra", json!(true)),
+        ] {
+            let mut value = sample();
+            value[field] = bad;
+            assert!(
+                ProxyConfig::from_json(&value.to_string()).is_err(),
+                "{field}"
+            );
+        }
+        for field in [
+            "version",
+            "listen",
+            "provider",
+            "capability_token",
+            "injection",
+        ] {
+            let mut value = sample();
+            value.as_object_mut().unwrap().remove(field);
+            assert!(
+                ProxyConfig::from_json(&value.to_string()).is_err(),
+                "{field}"
+            );
+        }
+        for listen in ["0.0.0.0:1", "[::]:1", "172.16.0.1:1", "[2001:db8::1]:1"] {
+            let mut value = sample();
+            value["listen"] = json!(listen);
+            assert!(ProxyConfig::from_json(&value.to_string()).is_err());
+        }
+        for listen in ["127.0.0.1:1", "[::1]:1"] {
+            let mut value = sample();
+            value["listen"] = json!(listen);
+            assert!(ProxyConfig::from_json(&value.to_string()).is_ok());
+        }
+        for token in [
+            String::new(),
+            "a".repeat(63),
+            "a".repeat(65),
+            "A".repeat(64),
+            "g".repeat(64),
+        ] {
+            let mut value = sample();
+            value["capability_token"] = json!(token);
+            assert!(ProxyConfig::from_json(&value.to_string()).is_err());
         }
     }
 
     #[test]
-    fn parses_bearer_injection() {
-        let json = r#"{
-            "listen": "127.0.0.1:1",
-            "capability_token": "t",
-            "upstream_host": "api.anthropic.com",
-            "injection": { "scheme": "bearer", "credential": "setup-tok" }
-        }"#;
-        let cfg = ProxyConfig::from_json(json).unwrap();
-        match &cfg.injection {
-            Injection::Bearer { credential } => assert_eq!(credential.expose(), "setup-tok"),
-            Injection::XApiKey { .. } => panic!("expected bearer"),
+    fn rejects_invalid_injection_without_echoing_secrets() {
+        for injection in [
+            json!({"scheme": "basic", "credential": "sk-secret"}),
+            json!({"scheme": "bearer", "credential": ""}),
+            json!({"scheme": "bearer", "credential": "sk-secret\r\n"}),
+            json!({"scheme": "bearer", "credential": "sk-secret", "extra": true}),
+        ] {
+            let mut value = sample();
+            value["injection"] = injection;
+            let err = ProxyConfig::from_json(&value.to_string()).unwrap_err();
+            assert!(!format!("{err:#}").contains("sk-secret"));
         }
-    }
-
-    #[test]
-    fn rejects_unknown_scheme() {
-        let json = r#"{
-            "listen": "127.0.0.1:1",
-            "capability_token": "t",
-            "upstream_host": "h",
-            "injection": { "scheme": "basic", "credential": "x" }
-        }"#;
-        assert!(ProxyConfig::from_json(json).is_err());
-    }
-
-    #[test]
-    fn rejects_empty_capability_token() {
-        let json = r#"{
-            "listen": "127.0.0.1:1",
-            "capability_token": "",
-            "upstream_host": "api.anthropic.com",
-            "injection": { "scheme": "bearer", "credential": "x" }
-        }"#;
-        assert!(ProxyConfig::from_json(json).is_err());
-    }
-
-    #[test]
-    fn secret_debug_is_redacted() {
-        let cfg = ProxyConfig::from_json(sample_json()).unwrap();
-        let rendered = format!("{cfg:?}");
-        assert!(
-            !rendered.contains("sk-secret"),
-            "credential leaked: {rendered}"
+        let mut value = sample();
+        value["provider"] = json!("openai");
+        assert!(ProxyConfig::from_json(&value.to_string()).is_err());
+        let rendered = format!(
+            "{:?}",
+            ProxyConfig::from_json(&sample().to_string()).unwrap()
         );
-        assert!(
-            !rendered.contains("cap-token-abc"),
-            "token leaked: {rendered}"
-        );
-        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("sk-secret"));
+        assert!(!rendered.contains(&"a".repeat(64)));
     }
 }

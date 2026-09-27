@@ -389,7 +389,7 @@ exclude_re = [
   # Process spawn/teardown, binary discovery, PID-file IO, and the token-file
   # writer — a `--lib` test cannot observe their effects (coop-proxy's own tests
   # + tests/integration.sh cover the behavior). The pure `Provider` helpers
-  # (`port`/`base_port`/`upstream_host`/`name`, pinned by the port/range/host
+  # (`port`/`base_port`/`name`, pinned by the port/range/name
   # tests), `wire_config_json`, `mint_capability_token` (whose randomness/length
   # a unit test asserts), and `read_capability_token` (trim/empty logic covered
   # by `read_capability_token_ignores_empty_and_whitespace_files`) stay IN scope
@@ -401,10 +401,11 @@ exclude_re = [
   "src/proxy\\.rs:.*\\bstop_provider\\b",
   "src/proxy\\.rs:.*\\bkill_pid_file\\b",
   "src/proxy\\.rs:.*\\bspawn_proxy\\b",
+  "src/proxy\\.rs:.*\\binitialize_proxy_child\\b",
   "src/proxy\\.rs:.*\\bspawn_reverse_forward\\b",
   "src/proxy\\.rs:.*\\bawait_forwarding_ack\\b",
   "src/proxy\\.rs:.*\\bcreate_tunnel_control_dir\\b",
-  # slice-3 jail: liveness poll of a spawned process + TCP probe (fail-closed)
+  # slice-3 jail: liveness poll of a spawned process + bounded HTTP probe (fail-closed)
   # and the platform spawn-command builder (macOS `sandbox-exec` wrap / Linux
   # bare binary) — IO/spawn wrappers, not `--lib`-observable. `await_proxy_ready`
   # has a unit test for its fail-closed early-exit branch; the poll/timeout loop
@@ -414,12 +415,28 @@ exclude_re = [
   # separate, non-default workspace member — so it is asserted by
   # `coop-proxy --jail-selftest` in tests/integration.sh instead.
   "src/proxy\\.rs:.*\\bawait_proxy_ready\\b",
+  "src/proxy\\.rs:.*\\bproxy_http_ready\\b",
   "src/proxy\\.rs:.*\\bconfined_command\\b",
   "src/proxy\\.rs:.*\\bwrite_token_file\\b",
   "src/proxy\\.rs:.*\\blocate_proxy_binary\\b",
   "src/proxy\\.rs:.*\\bpid_path\\b",
   "src/proxy\\.rs:.*\\bfwd_pid_path\\b",
   "src/proxy\\.rs:.*\\btoken_path\\b",
+
+  # Rust reference proxy: stdin ownership is outside the binary unit-test
+  # sweep; coop-proxy/tests/gate.rs exercises the executable startup pipe.
+  # `decode` and the subprocess-tested `disable_core_dumps` stay in scope.
+  "coop-proxy/src/startup\\.rs:.*\\bread_config\\b",
+  # Equivalent for the secrecy contract: omitting Debug text still discloses
+  # no credential. Keep other Secret operations and format mutations in scope.
+  "coop-proxy/src/config\\.rs:.*replace <impl fmt::Debug for Secret>::fmt -> fmt::Result with Ok\\(Default::default\\(\\)\\)",
+  # Equivalent: this static body-error label carries no status or secret;
+  # typed Failure/status assertions cover the observable rejection contract.
+  "coop-proxy/src/request_body\\.rs:.*replace <impl std::fmt::Display for Failure>::fmt -> std::fmt::Result with Ok\\(Default::default\\(\\)\\)",
+  # Equivalent under http 1.4.2 Uri invariants: scheme requires authority;
+  # authority without scheme has no allowed path. Only the final URI-component
+  # connector at column 57 is skipped; method/policy mutants stay in scope.
+  "coop-proxy/src/proxy\\.rs:[0-9]+:57: replace \\|\\| with && in operation_allowed$",
 
   # NOTE on `delete field … from struct …` mutants: cargo-mutants (27.x) does
   # not honour exclude_re for these — the regex never matches their name (not

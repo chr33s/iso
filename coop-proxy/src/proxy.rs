@@ -27,18 +27,20 @@ use anyhow::{Context, Result};
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
 use hyper::header::{AUTHORIZATION, HOST, HeaderMap, HeaderName, HeaderValue};
+use hyper::server::conn::http1::Builder as ServerBuilder;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, Uri};
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as ServerBuilder;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use rustls::pki_types::ServerName;
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
 use tokio_rustls::TlsConnector;
 
 use crate::config::{Injection, ProxyConfig};
-use crate::tls;
+use crate::request_body::{self, FailureState, Upload};
+use crate::{inbound, tls};
 
 /// Fixed upstream port. The guest cannot influence host or port — only the
 /// request path is forwarded.
@@ -96,6 +98,13 @@ fn x_api_key() -> HeaderName {
     HeaderName::from_static("x-api-key")
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum TestDestination {
+    Socket(std::net::SocketAddr),
+    DnsFailure,
+}
+
 /// Shared, cheaply-cloneable per-connection state.
 #[derive(Clone)]
 struct Ctx {
@@ -103,6 +112,10 @@ struct Ctx {
     connector: TlsConnector,
     permits: Arc<Semaphore>,
     connections: Arc<Semaphore>,
+    // Unit-test socket destination only; absent from production binaries and
+    // startup JSON. TLS still verifies the compiled provider hostname.
+    #[cfg(test)]
+    upstream_destination: Option<TestDestination>,
 }
 
 impl Ctx {
@@ -113,15 +126,16 @@ impl Ctx {
             connector,
             permits: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
             connections: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
+            #[cfg(test)]
+            upstream_destination: None,
         })
     }
 }
 
 /// Bind the listener and serve until `shutdown` resolves.
 ///
-/// Refuses to bind an unspecified address (`0.0.0.0` / `[::]`): the proxy
-/// must be reachable only over the private host-guest link, never every host
-/// interface.
+/// Refuses non-loopback listeners. The guest reaches host loopback through
+/// its per-instance reverse SSH tunnel.
 ///
 /// `Ctx::new` runs before the bind so that a bound listener means the proxy can
 /// serve — nothing fallible may sit between the bind and `accept_loop`.
@@ -130,11 +144,8 @@ pub async fn serve(
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     let listen = cfg.listen;
-    if listen.ip().is_unspecified() {
-        anyhow::bail!(
-            "refusing to bind unspecified address {listen} — the proxy must bind only the \
-             private host-guest interface"
-        );
+    if !listen.ip().is_loopback() {
+        anyhow::bail!("refusing non-loopback proxy listener");
     }
     let ctx = Ctx::new(cfg)?;
     let listener = TcpListener::bind(listen)
@@ -142,7 +153,7 @@ pub async fn serve(
         .with_context(|| format!("failed to bind proxy listener on {listen}"))?;
     tracing::info!(
         "coop-proxy listening on {listen} → https://{}",
-        ctx.cfg.upstream_host
+        ctx.cfg.provider.host()
     );
     accept_loop(ctx, listener, shutdown).await;
     Ok(())
@@ -178,12 +189,27 @@ async fn accept_loop(
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let io = TokioIo::new(stream);
+                    let mut stream = stream;
+                    let prefix = match inbound::read_preface(&mut stream).await {
+                        Ok(prefix) => prefix,
+                        Err(status) => {
+                            inbound::refuse(&mut stream, status).await;
+                            return;
+                        }
+                    };
+                    let (reader, writer) = stream.into_split();
+                    let reader = std::io::Cursor::new(prefix).chain(reader);
+                    let io = TokioIo::new(tokio::io::join(reader, writer));
                     let service = service_fn(move |req| {
                         let ctx = ctx.clone();
                         async move { handle(req, ctx).await }
                     });
-                    if let Err(e) = ServerBuilder::new(TokioExecutor::new())
+                    if let Err(e) = ServerBuilder::new()
+                        .keep_alive(false)
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(Duration::from_secs(10))
+                        .max_headers(128)
+                        .max_buf_size(64 * 1024)
                         .serve_connection(io, service)
                         .await
                     {
@@ -209,6 +235,16 @@ async fn handle(req: Request<Incoming>, ctx: Ctx) -> Result<Response<ProxyBody>,
 }
 
 async fn proxy(req: Request<Incoming>, ctx: &Ctx) -> Result<Response<ProxyBody>, Refusal> {
+    if req
+        .headers()
+        .iter()
+        .any(|(name, value)| name.as_str().len() + value.as_bytes().len() > 16 * 1024)
+    {
+        return Err(Refusal {
+            status: StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            msg: "request header field exceeds limit",
+        });
+    }
     if !authorized(req.headers(), ctx.cfg.capability_token.expose()) {
         return Err(Refusal {
             status: StatusCode::UNAUTHORIZED,
@@ -216,12 +252,17 @@ async fn proxy(req: Request<Incoming>, ctx: &Ctx) -> Result<Response<ProxyBody>,
         });
     }
 
-    if !operation_allowed(req.method(), req.uri(), &ctx.cfg.upstream_host) {
+    if !operation_allowed(req.method(), req.uri(), ctx.cfg.provider.host()) {
         return Err(Refusal {
             status: StatusCode::FORBIDDEN,
             msg: "operation is not allowed by coop-proxy",
         });
     }
+
+    request_body::validate_headers(req.headers()).map_err(|failure| Refusal {
+        status: failure.status(),
+        msg: "request body rejected",
+    })?;
 
     // Held until the response body finishes streaming (see `GuardedBody`), so
     // the concurrency cap bounds a request for its whole lifetime.
@@ -236,7 +277,7 @@ async fn proxy(req: Request<Incoming>, ctx: &Ctx) -> Result<Response<ProxyBody>,
 
     let (mut parts, body) = req.into_parts();
     parts.headers =
-        build_upstream_headers(&parts.headers, &ctx.cfg.upstream_host, &ctx.cfg.injection)
+        build_upstream_headers(&parts.headers, ctx.cfg.provider.host(), &ctx.cfg.injection)
             .map_err(|_| Refusal {
                 status: StatusCode::BAD_REQUEST,
                 msg: "request headers could not be rewritten",
@@ -245,9 +286,10 @@ async fn proxy(req: Request<Incoming>, ctx: &Ctx) -> Result<Response<ProxyBody>,
         status: StatusCode::BAD_REQUEST,
         msg: "invalid request target",
     })?;
-    let upstream_req = Request::from_parts(parts, body);
+    let failure = FailureState::default();
+    let upstream_req = Request::from_parts(parts, Upload::new(body, failure.clone()));
 
-    forward(upstream_req, ctx, permit).await
+    forward(upstream_req, ctx, permit, failure).await
 }
 
 /// Whether coop-proxy allows this method/path pair for the fixed upstream.
@@ -261,7 +303,7 @@ async fn proxy(req: Request<Incoming>, ctx: &Ctx) -> Result<Response<ProxyBody>,
 /// `coop credential proxy`, not `OpenAI`, so its OpenAI-specific
 /// `POST /v1/responses/compact` behavior does not apply.
 fn operation_allowed(method: &Method, uri: &Uri, upstream_host: &str) -> bool {
-    if method != Method::POST {
+    if method != Method::POST || uri.scheme().is_some() || uri.authority().is_some() {
         return false;
     }
 
@@ -276,18 +318,28 @@ fn operation_allowed(method: &Method, uri: &Uri, upstream_host: &str) -> bool {
 }
 
 async fn forward(
-    req: Request<Incoming>,
+    req: Request<Upload<Incoming>>,
     ctx: &Ctx,
     permit: OwnedSemaphorePermit,
+    failure: FailureState,
 ) -> Result<Response<ProxyBody>, Refusal> {
-    let host = ctx.cfg.upstream_host.as_str();
+    let host = ctx.cfg.provider.host();
     let server_name = ServerName::try_from(host.to_owned()).map_err(|_| Refusal {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         msg: "configured upstream host is not a valid TLS server name",
     })?;
 
     let connect = async {
+        #[cfg(not(test))]
         let tcp = TcpStream::connect((host, UPSTREAM_PORT)).await?;
+        #[cfg(test)]
+        let tcp = match ctx.upstream_destination {
+            Some(TestDestination::Socket(address)) => TcpStream::connect(address).await?,
+            Some(TestDestination::DnsFailure) => {
+                TcpStream::connect(("coop-proxy-test.invalid", UPSTREAM_PORT)).await?
+            }
+            None => TcpStream::connect((host, UPSTREAM_PORT)).await?,
+        };
         let _ = tcp.set_nodelay(true);
         ctx.connector.connect(server_name, tcp).await
     };
@@ -317,13 +369,46 @@ async fn forward(
 
     let resp = sender.send_request(req).await.map_err(|e| {
         tracing::warn!("upstream request failed: {e}");
-        bad_gateway()
+        failure.get().map_or_else(bad_gateway, |failure| Refusal {
+            status: failure.status(),
+            msg: "request body rejected",
+        })
     })?;
-    // Wrap the streaming body so the permit is released only when the body is
-    // fully drained, not when these headers arrive.
-    Ok(resp.map(|body| {
+    downstream_response(resp.map(BodyExt::boxed), permit)
+}
+
+#[cfg(test)]
+#[path = "forward_tests.rs"]
+mod forward_tests;
+
+#[cfg(test)]
+#[path = "stream_capacity_tests.rs"]
+mod stream_capacity_tests;
+
+#[cfg(test)]
+#[path = "upstream_disconnect_tests.rs"]
+mod upstream_disconnect_tests;
+
+#[cfg(test)]
+#[path = "body_idle_tests.rs"]
+mod body_idle_tests;
+
+#[cfg(test)]
+#[path = "body_limit_tests.rs"]
+mod body_limit_tests;
+
+/// Filter upstream connection metadata while preserving status and streaming
+/// body ownership. Invalid nominations produce a local 502 before any upstream
+/// response metadata reaches the guest.
+fn downstream_response(
+    mut response: Response<ProxyBody>,
+    permit: OwnedSemaphorePermit,
+) -> Result<Response<ProxyBody>, Refusal> {
+    *response.headers_mut() =
+        filtered_hop_headers(response.headers()).map_err(|_| bad_gateway())?;
+    Ok(response.map(|body| {
         GuardedBody {
-            inner: body.boxed(),
+            inner: body,
             _permit: permit,
         }
         .boxed()
@@ -340,36 +425,37 @@ fn bad_gateway() -> Refusal {
 /// Whether the request presents the exact capability token. Constant-time on
 /// the token bytes so a timing side-channel cannot recover it.
 fn authorized(headers: &HeaderMap, expected: &str) -> bool {
-    match presented_token(headers) {
-        Some(token) => constant_time_eq(&token, expected.as_bytes()),
-        None => false,
+    let mut presented = false;
+    for name in [AUTHORIZATION, x_api_key()] {
+        let mut values = headers.get_all(&name).iter();
+        let Some(value) = values.next() else { continue };
+        if values.next().is_some() {
+            return false;
+        }
+        let token = if name == AUTHORIZATION {
+            let Ok(value) = value.to_str() else {
+                return false;
+            };
+            let Some(token) = value.strip_prefix("Bearer ") else {
+                return false;
+            };
+            token.as_bytes()
+        } else {
+            value.as_bytes()
+        };
+        if !constant_time_eq(token, expected.as_bytes()) {
+            return false;
+        }
+        presented = true;
     }
-}
-
-/// Extract the capability token the guest presented, from either
-/// `Authorization: Bearer <t>` (Claude Code with `ANTHROPIC_AUTH_TOKEN`) or
-/// `x-api-key: <t>`. Both slots are stripped before forwarding.
-fn presented_token(headers: &HeaderMap) -> Option<Vec<u8>> {
-    if let Some(value) = headers.get(AUTHORIZATION)
-        && let Ok(s) = value.to_str()
-        && let Some(rest) = s.strip_prefix("Bearer ")
-    {
-        return Some(rest.as_bytes().to_vec());
-    }
-    headers.get(x_api_key()).map(|v| v.as_bytes().to_vec())
+    presented
 }
 
 /// Constant-time byte equality. The early length check leaks only length,
 /// which for a fixed-width random token reveals nothing useful.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    bool::from(a.ct_eq(b))
 }
 
 /// Build the header set sent upstream: drop hop-by-hop headers, drop the
@@ -380,13 +466,10 @@ fn build_upstream_headers(
     upstream_host: &str,
     injection: &Injection,
 ) -> Result<HeaderMap> {
-    let mut out = HeaderMap::with_capacity(incoming.len() + 1);
-    for (name, value) in incoming {
-        if is_hop_by_hop(name) || name == HOST || is_credential_header(name) {
-            continue;
-        }
-        out.append(name.clone(), value.clone());
-    }
+    let mut out = filtered_hop_headers(incoming)?;
+    out.remove(HOST);
+    out.remove(AUTHORIZATION);
+    out.remove(x_api_key());
 
     out.insert(
         HOST,
@@ -412,10 +495,26 @@ fn build_upstream_headers(
     Ok(out)
 }
 
-/// Whether a header carries a client credential we must strip before
-/// forwarding (the guest's capability token arrives in one of these).
-fn is_credential_header(name: &HeaderName) -> bool {
-    name == AUTHORIZATION || name.as_str() == "x-api-key"
+/// Remove hop headers and every Connection nomination on either proxy hop.
+fn filtered_hop_headers(incoming: &HeaderMap) -> Result<HeaderMap> {
+    let nominated: Vec<HeaderName> = incoming
+        .get_all("connection")
+        .iter()
+        .map(|value| value.to_str())
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(|name| HeaderName::from_bytes(name.trim().as_bytes()))
+        .collect::<Result<_, _>>()?;
+    let mut out = HeaderMap::with_capacity(incoming.len() + 1);
+    for (name, value) in incoming {
+        if is_hop_by_hop(name) || nominated.contains(name) {
+            continue;
+        }
+        out.append(name.clone(), value.clone());
+    }
+
+    Ok(out)
 }
 
 /// Connection-scoped headers that must not be forwarded across the proxy hop.
@@ -475,6 +574,132 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn response_filters_connection_metadata_and_preserves_payload() {
+        let slots = Arc::new(Semaphore::new(1));
+        let permit = slots.clone().try_acquire_owned().unwrap();
+        let body = Full::new(Bytes::from_static(b"data: first\n\ndata: second\n\n"))
+            .map_err(|never: Infallible| match never {})
+            .boxed();
+        let mut response = Response::new(body);
+        *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+        for name in [
+            "connection",
+            "proxy-connection",
+            "keep-alive",
+            "transfer-encoding",
+            "te",
+            "trailer",
+            "upgrade",
+            "proxy-authenticate",
+            "proxy-authorization",
+        ] {
+            response.headers_mut().insert(name, hv("x-private"));
+        }
+        response.headers_mut().append("connection", hv("X-Second"));
+        response.headers_mut().insert("x-private", hv("discard"));
+        response.headers_mut().insert("x-second", hv("discard"));
+        response
+            .headers_mut()
+            .insert("location", hv("https://elsewhere.invalid/path"));
+        response.headers_mut().append("set-cookie", hv("a=1"));
+        response.headers_mut().append("set-cookie", hv("b=2"));
+        let response = downstream_response(response, permit).ok().unwrap();
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.headers().len(), 3);
+        assert_eq!(
+            response.headers()["location"],
+            "https://elsewhere.invalid/path"
+        );
+        assert_eq!(response.headers().get_all("set-cookie").iter().count(), 2);
+        assert_eq!(
+            slots.available_permits(),
+            0,
+            "headers must retain the permit"
+        );
+        let mut body = response.into_body();
+        assert!(!body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), Some(27));
+        let frame = body.frame().await.unwrap().unwrap();
+        assert_eq!(frame.data_ref().unwrap(), "data: first\n\ndata: second\n\n");
+        assert!(body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), Some(0));
+        assert!(body.frame().await.is_none());
+        drop(body);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[test]
+    fn malformed_response_nomination_fails_without_leaking_metadata() {
+        for nomination in ["", "x-private,", "x-private,,x-other", "bad header"] {
+            let slots = Arc::new(Semaphore::new(1));
+            let permit = slots.clone().try_acquire_owned().unwrap();
+            let mut response = error_response(StatusCode::OK, "upstream-private-content");
+            response.headers_mut().insert("connection", hv(nomination));
+            let refusal = downstream_response(response, permit).err().unwrap();
+            assert_eq!(refusal.status, StatusCode::BAD_GATEWAY);
+            assert_eq!(refusal.msg, "upstream request failed");
+            assert_eq!(slots.available_permits(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_checks_the_listener_before_binding() {
+        let mut cfg = ProxyConfig::from_json(
+            r#"{"listen":"127.0.0.1:0","version":1,"provider":"anthropic",
+                "capability_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "injection":{"scheme":"x_api_key","credential":"fake"}}"#,
+        ).unwrap();
+        // Exercise the serving boundary independently of startup decoding.
+        cfg.listen = "192.0.2.1:0".parse().unwrap();
+        let error = serve(cfg, std::future::ready(())).await.unwrap_err();
+        assert_eq!(error.to_string(), "refusing non-loopback proxy listener");
+    }
+
+    #[tokio::test]
+    async fn admission_rejects_before_upstream_capacity_or_network() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let cfg = ProxyConfig::from_json(
+            r#"{"listen":"127.0.0.1:0","version":1,"provider":"anthropic",
+                "capability_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "injection":{"scheme":"x_api_key","credential":"fake"}}"#,
+        ).unwrap();
+        let mut ctx = Ctx::new(cfg).unwrap();
+        // Even a mutated gate cannot reach a provider in this test.
+        ctx.permits = Arc::new(Semaphore::new(0));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(accept_loop(ctx, listener, async {
+            let _ = stopped.await;
+        }));
+        let auth = format!("X-Api-Key: {}\r\n", "a".repeat(64));
+        for (method, headers, status) in [
+            ("GET", auth.clone(), 403),
+            ("POST", auth.clone(), 503),
+            ("POST", format!("{auth}Content-Length: 67108865\r\n"), 413),
+            ("POST", format!("{auth}Trailer: x-extra\r\n"), 400),
+            ("GET", format!("X-F: {}\r\n", "x".repeat(16_381)), 401),
+            ("GET", format!("X-F: {}\r\n", "x".repeat(16_382)), 431),
+        ] {
+            let mut client = TcpStream::connect(addr).await.unwrap();
+            let request = format!("{method} /v1/messages HTTP/1.1\r\nHost: guest\r\n{headers}\r\n");
+            client.write_all(request.as_bytes()).await.unwrap();
+            let mut response = String::new();
+            timeout(Duration::from_secs(5), client.read_to_string(&mut response))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status} ")),
+                "{response}"
+            );
+        }
+        let _ = stop.send(());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     #[expect(
         clippy::expect_used,
         reason = "test deadlines describe the missing behavior"
@@ -485,14 +710,16 @@ mod tests {
         let cfg = ProxyConfig::from_json(
             r#"{
                 "listen": "127.0.0.1:0",
-                "capability_token": "test-token",
-                "upstream_host": "proxy-test.invalid",
+                "version": 1,
+                "capability_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "provider": "anthropic",
                 "injection": { "scheme": "x_api_key", "credential": "fake" }
             }"#,
         )
         .unwrap();
         let mut ctx = Ctx::new(cfg).unwrap();
         ctx.connections = Arc::new(Semaphore::new(2));
+        let connections = Arc::clone(&ctx.connections);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel();
@@ -501,25 +728,19 @@ mod tests {
         }));
         let budget = Duration::from_secs(5);
         let mut held = Vec::new();
-        // A response proves each socket was accepted and entered HTTP serving.
-        // Keep it open afterward: these idle sockets hold no request permits.
+        // Partial headers hold connection permits without starting requests.
         for _ in 0..2 {
             let mut stream = TcpStream::connect(addr).await.unwrap();
-            stream
-                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-                .await
-                .unwrap();
-            let mut response = Vec::new();
-            timeout(budget, async {
-                while !response.windows(2).any(|pair| pair == b"\r\n") {
-                    assert_ne!(stream.read_buf(&mut response).await.unwrap(), 0);
-                }
-            })
-            .await
-            .unwrap();
-            assert!(response.starts_with(b"HTTP/1.1 401 "));
+            stream.write_all(b"GET / HTTP/1.1\r\nHost:").await.unwrap();
             held.push(stream);
         }
+        timeout(budget, async {
+            while connections.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both partial requests must occupy connection slots");
 
         let mut excess = TcpStream::connect(addr).await.unwrap();
         let mut byte = [0];
@@ -568,33 +789,63 @@ mod tests {
     }
 
     #[test]
-    fn presented_token_reads_bearer() {
-        let mut h = HeaderMap::new();
-        h.insert(AUTHORIZATION, hv("Bearer tok-123"));
-        assert_eq!(presented_token(&h), Some(b"tok-123".to_vec()));
+    fn credentials_must_be_unique_and_agree() {
+        for name in ["authorization", "x-api-key"] {
+            let value = if name == "authorization" {
+                "Bearer right"
+            } else {
+                "right"
+            };
+            let mut headers = HeaderMap::new();
+            headers.append(name, hv(value));
+            assert!(authorized(&headers, "right"));
+            headers.append(name, hv(value));
+            assert!(!authorized(&headers, "right"));
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, hv("Bearer right"));
+        headers.insert("x-api-key", hv("right"));
+        assert!(authorized(&headers, "right"));
+        for value in ["Bearer wrong", "Basic right", "Bearer ", ""] {
+            headers.insert(AUTHORIZATION, hv(value));
+            assert!(!authorized(&headers, "right"));
+        }
+        headers.insert(AUTHORIZATION, hv("Bearer right"));
+        headers.insert("x-api-key", hv("wrong"));
+        assert!(!authorized(&headers, "right"));
     }
 
     #[test]
-    fn presented_token_reads_x_api_key() {
-        let mut h = HeaderMap::new();
-        h.insert(x_api_key(), hv("tok-456"));
-        assert_eq!(presented_token(&h), Some(b"tok-456".to_vec()));
+    fn connection_nominated_headers_are_removed() {
+        let mut headers = HeaderMap::new();
+        headers.append("connection", hv("keep-alive, X-Internal"));
+        headers.append("connection", hv("x-second"));
+        headers.insert("x-internal", hv("private"));
+        headers.insert("x-second", hv("private"));
+        headers.insert("content-type", hv("application/json"));
+        let out =
+            build_upstream_headers(&headers, "api.anthropic.com", &bearer_injection("secret"))
+                .unwrap();
+        assert!(!out.contains_key("x-internal"));
+        assert!(!out.contains_key("x-second"));
+        assert_eq!(out["content-type"], "application/json");
+        assert_eq!(out[AUTHORIZATION], "Bearer secret");
     }
 
     #[test]
-    fn presented_token_bearer_wins_over_x_api_key() {
-        let mut h = HeaderMap::new();
-        h.insert(AUTHORIZATION, hv("Bearer from-auth"));
-        h.insert(x_api_key(), hv("from-xapi"));
-        assert_eq!(presented_token(&h), Some(b"from-auth".to_vec()));
-    }
-
-    #[test]
-    fn presented_token_none_when_absent_or_wrong_scheme() {
-        let mut h = HeaderMap::new();
-        assert_eq!(presented_token(&h), None);
-        h.insert(AUTHORIZATION, hv("Basic abc"));
-        assert_eq!(presented_token(&h), None);
+    fn absolute_targets_cannot_authorize() {
+        for target in [
+            "https://api.anthropic.com/v1/messages",
+            "https://evil.example/v1/messages",
+            "evil.example:443",
+            "*",
+        ] {
+            assert!(!operation_allowed(
+                &Method::POST,
+                &target.parse().unwrap(),
+                "api.anthropic.com"
+            ));
+        }
     }
 
     #[test]

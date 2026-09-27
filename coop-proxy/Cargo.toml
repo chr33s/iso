@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+libc = "0.2.186"
+subtle = "2.6.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -27,7 +29,6 @@ tokio = { version = "1", default-features = false, features = [
 ] }
 hyper = { version = "1", default-features = false, features = [
   "http1",
-  "http2",
   "server",
   "client",
 ] }
@@ -35,8 +36,8 @@ hyper-util = { version = "0.1", default-features = false, features = [
   "tokio",
   "server",
   "http1",
-  "http2",
 ] }
+httparse = "1.10.1"
 http-body-util = { version = "0.1", default-features = false }
 tokio-rustls = { version = "0.26", default-features = false, features = [
   "tls12",
@@ -66,6 +67,8 @@ webpki-roots = "1"
 landlock = "0.4.5"
 
 [dev-dependencies]
+sha2 = "0.11"
+tempfile = "3"
 tokio = { version = "1", default-features = false, features = [
   "rt-multi-thread",
   "net",
@@ -73,6 +76,7 @@ tokio = { version = "1", default-features = false, features = [
   "macros",
   "time",
   "process",
+  "test-util",
 ] }
 
 [lints]

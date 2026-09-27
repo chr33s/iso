@@ -22,6 +22,10 @@ short navigational entrypoint; durable detail lives here.
   - [`apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
     its mutation invariants, disk-update recovery, per-sandbox locking, and
     maintenance image.
+  - [`swift-proxy-acceptance.md`](design/swift-proxy-acceptance.md): Swift proxy
+    requirement/evidence map, remaining decisions, and cutover gates;
+    [`swift-proxy-progress.md`](design/swift-proxy-progress.md) records the
+    implementation and validation history.
 
 ## For users
 

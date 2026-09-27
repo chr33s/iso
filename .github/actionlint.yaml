@@ -1,0 +1,7 @@
+# actionlint 1.7.12 predates GitHub's hosted macOS 27 preview label.
+# Its extra-label configuration also accepts hosted labels missing from its
+# built-in table; this does not select or provision a self-hosted runner.
+# https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/
+self-hosted-runner:
+  labels:
+    - xcode-27

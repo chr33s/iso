@@ -223,21 +223,34 @@ info "Extracting..."
 tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}"
 
 info "Installing to ${INSTALL_DIR}..."
-mkdir -p "$INSTALL_DIR"
 EXTRACTED_DIR="${TMPDIR}/${BINARY}-${VERSION}-${TRIPLE}"
 EXTRACTED="${EXTRACTED_DIR}/${BINARY}"
 [ -f "$EXTRACTED" ] || die "Binary not found in tarball"
+RUST_PROXY="${EXTRACTED_DIR}/${BINARY}-proxy-rs"
+SWIFT_PROXY="${EXTRACTED_DIR}/${BINARY}-proxy-swift"
+if [ -f "$RUST_PROXY" ] && [ -f "$SWIFT_PROXY" ]; then
+    PROXY_NAMES="${BINARY}-proxy-rs ${BINARY}-proxy-swift"
+elif [ -e "$RUST_PROXY" ] || [ -e "$SWIFT_PROXY" ]; then
+    die "Release contains an incomplete proxy transition pair"
+else
+    PROXY_NAMES="${BINARY}-proxy"
+fi
+LEGACY_PROXY_PRESENT=no
+[ ! -f "${EXTRACTED_DIR}/${BINARY}-proxy" ] || LEGACY_PROXY_PRESENT=yes
+mkdir -p "$INSTALL_DIR"
+for proxy_name in $PROXY_NAMES; do
+    if [ -f "${EXTRACTED_DIR}/${proxy_name}" ]; then
+        mv "${EXTRACTED_DIR}/${proxy_name}" "${INSTALL_DIR}/${proxy_name}"
+        chmod +x "${INSTALL_DIR}/${proxy_name}"
+    fi
+done
+if [ "$PROXY_NAMES" = "${BINARY}-proxy" ] && [ "$LEGACY_PROXY_PRESENT" = yes ]; then
+    # The host prefers the explicit Rust transition name. Remove stale names
+    # when returning to a legacy release so it cannot select an older proxy.
+    rm -f "${INSTALL_DIR}/${BINARY}-proxy-rs" "${INSTALL_DIR}/${BINARY}-proxy-swift"
+fi
 mv "$EXTRACTED" "${INSTALL_DIR}/${BINARY}"
 chmod +x "${INSTALL_DIR}/${BINARY}"
-
-# coop-proxy (issue #411) ships in the same tarball and must land next to
-# coop — the CLI locates it via its own directory. Present from the version
-# that introduced it; tolerate its absence when installing older releases.
-PROXY_EXTRACTED="${EXTRACTED_DIR}/${BINARY}-proxy"
-if [ -f "$PROXY_EXTRACTED" ]; then
-    mv "$PROXY_EXTRACTED" "${INSTALL_DIR}/${BINARY}-proxy"
-    chmod +x "${INSTALL_DIR}/${BINARY}-proxy"
-fi
 
 printf '\n  %s %s installed to %s/%s\n' "$BINARY" "$VERSION" "$INSTALL_DIR" "$BINARY"
 

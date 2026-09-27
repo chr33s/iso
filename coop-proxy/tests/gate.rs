@@ -5,11 +5,12 @@
 //! These assert the security-critical refusal path without a live upstream: a
 //! request that fails the capability check is rejected with 401 and the
 //! upstream is never contacted; a request with a valid token reaches the
-//! operation policy and is denied with 403 for the test-only unknown upstream,
+//! operation policy and is denied with 403 for a denied operation,
 //! proving the authentication gate opened without any credential reaching a
 //! real service. The authorized header-rewrite/injection logic is covered by
-//! the unit tests in `src/proxy.rs`, and end-to-end against a mock upstream by
-//! coop's VM integration suite. Because the unknown-upstream policy denies
+//! the unit tests in `src/proxy.rs`. The VM integration suite checks guest
+//! wiring and refusal paths; admitted upstream forwarding is a separate gate.
+//! Because the operation policy denies
 //! before forwarding, this harness does not exercise `forward`, `bad_gateway`,
 //! or the `GuardedBody` permit wiring.
 //!
@@ -61,14 +62,14 @@ const PORT_ATTEMPTS: usize = 10;
 /// once its socket already holds it, never before.
 static HANDED_OUT: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
 
-/// A config with an unknown upstream profile, so valid requests reach the
-/// operation policy but never reach a real service.
+/// Fixed provider config. Tests use GET, which cannot reach the upstream.
 fn config_json(listen: &str) -> String {
     format!(
         r#"{{
+            "version": 1,
             "listen": "{listen}",
-            "capability_token": "the-right-token",
-            "upstream_host": "proxy-test.invalid",
+            "capability_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "provider": "anthropic",
             "injection": {{ "scheme": "x_api_key", "credential": "sk-should-never-leave" }}
         }}"#
     )
@@ -235,8 +236,7 @@ async fn probe_reply(stream: TcpStream) -> bool {
 
 async fn request_status(addr: SocketAddr, auth_header: Option<&str>) -> String {
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let mut req =
-        String::from("POST /v1/messages HTTP/1.1\r\nHost: proxy\r\nContent-Length: 0\r\n");
+    let mut req = String::from("GET /v1/messages HTTP/1.1\r\nHost: proxy\r\nContent-Length: 0\r\n");
     if let Some(h) = auth_header {
         req.push_str(h);
         req.push_str("\r\n");
@@ -380,8 +380,42 @@ async fn rejects_wrong_token_with_401() {
 #[tokio::test]
 async fn valid_token_passes_auth_gate_and_reaches_operation_policy() {
     let (addr, _child) = spawn_serving().await;
-    let status = request_status(addr, Some("Authorization: Bearer the-right-token")).await;
+    let status = request_status(addr, Some("Authorization: Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).await;
     assert!(status.contains("403"), "expected 403, got: {status:?}");
+}
+
+#[tokio::test]
+async fn oversized_startup_exits_without_waiting_for_pipe_eof() {
+    let mut child = Command::new(BIN)
+        .arg("--no-jail")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let marker = b"startup-secret-must-not-be-logged";
+    let mut bytes = marker.to_vec();
+    bytes.resize(64 * 1024 + 1, b'x');
+    tokio::time::timeout(EXIT_TIMEOUT, stdin.write_all(&bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    // Keep the writer open. An unbounded read_to_end hangs here.
+    let output = tokio::time::timeout(EXIT_TIMEOUT, child.wait_with_output())
+        .await
+        .expect("oversized config must fail before EOF")
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("exceeds 64 KiB"));
+    assert!(
+        !output
+            .stderr
+            .windows(marker.len())
+            .any(|part| part == marker)
+    );
+    drop(stdin);
 }
 
 #[tokio::test]
@@ -410,7 +444,26 @@ async fn refuses_to_bind_unspecified_address() {
     assert!(!output.status.success(), "proxy should exit non-zero");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("unspecified"),
-        "expected unspecified-bind refusal, got: {stderr}"
+        stderr.contains("must be loopback"),
+        "expected loopback-bind refusal, got: {stderr}"
     );
+}
+
+#[tokio::test]
+async fn refuses_oversized_header_fields_and_header_count() {
+    for fields in [
+        format!("X-Large: {}\r\n", "a".repeat(16 * 1024)),
+        "X-Field: a\r\n".repeat(129),
+    ] {
+        let (addr, _child) = spawn_serving().await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!("GET / HTTP/1.1\r\nHost: proxy\r\n{fields}Connection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(RESPONSE_TIMEOUT, stream.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 431"), "{response:?}");
+    }
 }

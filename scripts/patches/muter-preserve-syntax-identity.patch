@@ -1,0 +1,46 @@
+diff --git a/Sources/muterCore/MutationSteps/DiscoverMutationPoints.swift b/Sources/muterCore/MutationSteps/DiscoverMutationPoints.swift
+index 3ee6b67..1261513 100644
+--- a/Sources/muterCore/MutationSteps/DiscoverMutationPoints.swift
++++ b/Sources/muterCore/MutationSteps/DiscoverMutationPoints.swift
+@@ -35,9 +35,8 @@ struct DiscoverMutationPoints: MutationStep {
+
+         return [
+             .mutationMappingsDiscovered(mappings),
+-            // Pass empty dictionary - ApplySchemata will re-parse files on demand
+-            // This prevents memory exhaustion on large codebases (2000+ files)
+-            .sourceCodeParsed([:]),
++            // Preserve node identity for SchemataMutationMapping dictionary keys.
++            .sourceCodeParsed(discovered.sources),
+         ]
+     }
+ }
+@@ -95,6 +94,7 @@ private extension DiscoverMutationPoints {
+                         if !schemataMappings.isEmpty {
+                             lock.lock()
+                             discoveredFiles.mappings.append(contentsOf: schemataMappings)
++                            discoveredFiles.sources[path] = sourceCode.source.code
+                             lock.unlock()
+                         }
+                     }
+@@ -144,4 +144,5 @@ private extension DiscoverMutationPoints {
+
+ private class DiscoveredFiles {
+     var mappings: [SchemataMutationMapping] = []
++    var sources: [FilePath: SourceFileSyntax] = [:]
+ }
+diff --git a/Sources/muterCore/Rewriters/MuterRewriter.swift b/Sources/muterCore/Rewriters/MuterRewriter.swift
+index f4b4d50..bdaf772 100644
+--- a/Sources/muterCore/Rewriters/MuterRewriter.swift
++++ b/Sources/muterCore/Rewriters/MuterRewriter.swift
+@@ -14,9 +14,9 @@ final class MuterRewriter: SyntaxRewriter {
+
+         let newNode = MutationSwitch.apply(
+             mutationSchemata: mutationSchemata,
+-            with: node
++            with: super.visit(node)
+         )
+
+-        return super.visit(newNode)
++        return newNode
+     }
+ }

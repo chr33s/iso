@@ -640,8 +640,7 @@ fn atomic_replace_self(new_binary: &Path) -> Result<()> {
     atomic_replace(new_binary, &current)
 }
 
-/// Replace the sibling `coop-proxy` (issue #411) from the same verified
-/// tarball so it never drifts from `coop`. Fails closed: if the tarball
+/// Replace proxy siblings from the same verified tarball. If the tarball
 /// carries a proxy but the sibling cannot be written, the update aborts
 /// before `coop` itself is swapped. A no-op for older releases that predate
 /// the bundled proxy.
@@ -653,14 +652,40 @@ fn replace_sibling_proxy(extract_dir: &Path) -> Result<()> {
 /// Core of [`replace_sibling_proxy`] with the running-binary path injected so
 /// the swap destination is testable without touching the real `coop` binary.
 fn replace_sibling_proxy_at(extract_dir: &Path, current_exe: &Path) -> Result<()> {
-    let new_proxy = extract_dir.join("coop-proxy");
-    if !new_proxy.exists() {
+    let transition = ["coop-proxy-rs", "coop-proxy-swift"];
+    let present = transition.map(|name| extract_dir.join(name).is_file());
+    ensure!(
+        present[0] == present[1]
+            && transition
+                .iter()
+                .all(|name| !extract_dir.join(name).exists() || extract_dir.join(name).is_file()),
+        "Release contains an incomplete proxy transition pair"
+    );
+    let names: &[&str] = if present[0] {
+        &transition
+    } else if extract_dir.join("coop-proxy").is_file() {
+        &["coop-proxy"]
+    } else {
         return Ok(());
-    }
+    };
     let dir = current_exe
         .parent()
         .context("Current executable has no parent directory")?;
-    atomic_replace(&new_proxy, &dir.join("coop-proxy"))
+    for name in names {
+        atomic_replace(&extract_dir.join(name), &dir.join(name))?;
+    }
+    // A legacy release must not keep selecting a stale transition Rust binary.
+    if !present[0] {
+        for name in transition {
+            let path = dir.join(name);
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("Failed to remove stale transition proxy"),
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Main update flow ─────────────────────────────────────────────────────────
@@ -1468,5 +1493,59 @@ mod tests {
         // A running-binary path whose parent directory does not exist.
         let missing = extract.path().join("no-such-dir").join("coop");
         replace_sibling_proxy_at(extract.path(), &missing).unwrap_err();
+    }
+
+    #[test]
+    fn transition_proxies_install_together_and_legacy_removes_stale_names() {
+        let extract = tempfile::tempdir().unwrap();
+        let install = tempfile::tempdir().unwrap();
+        let coop = install.path().join("coop");
+        fs::write(&coop, b"host").unwrap();
+        for name in ["coop-proxy-rs", "coop-proxy-swift"] {
+            fs::write(extract.path().join(name), name.as_bytes()).unwrap();
+        }
+        replace_sibling_proxy_at(extract.path(), &coop).unwrap();
+        for name in ["coop-proxy-rs", "coop-proxy-swift"] {
+            let path = install.path().join(name);
+            assert_eq!(fs::read(&path).unwrap(), name.as_bytes());
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+        }
+        let legacy = tempfile::tempdir().unwrap();
+        fs::write(legacy.path().join("coop-proxy"), b"legacy").unwrap();
+        replace_sibling_proxy_at(legacy.path(), &coop).unwrap();
+        assert_eq!(
+            fs::read(install.path().join("coop-proxy")).unwrap(),
+            b"legacy"
+        );
+        assert!(!install.path().join("coop-proxy-rs").exists());
+        assert!(!install.path().join("coop-proxy-swift").exists());
+        assert_eq!(fs::read(coop).unwrap(), b"host");
+    }
+
+    #[test]
+    fn incomplete_transition_pair_does_not_replace_any_sibling() {
+        for missing in ["coop-proxy-rs", "coop-proxy-swift"] {
+            let extract = tempfile::tempdir().unwrap();
+            let install = tempfile::tempdir().unwrap();
+            for name in ["coop-proxy", "coop-proxy-rs", "coop-proxy-swift"] {
+                fs::write(install.path().join(name), b"old").unwrap();
+                if name != missing {
+                    fs::write(extract.path().join(name), b"new").unwrap();
+                }
+            }
+            let error =
+                replace_sibling_proxy_at(extract.path(), &install.path().join("coop")).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("incomplete proxy transition pair")
+            );
+            for name in ["coop-proxy", "coop-proxy-rs", "coop-proxy-swift"] {
+                assert_eq!(fs::read(install.path().join(name)).unwrap(), b"old");
+            }
+        }
     }
 }

@@ -62,10 +62,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y iproute2 iptables iputils-ping util-linux openssh-client openssh-server
 
       - name: Release preflight regression tests
-        run: python3 tests/test-preflight-release.py
+        run: |
+          python3 tests/test-preflight-release.py
+          python3 tests/test-proxy-transition-build.py
 
       - name: Integration probe regression tests
-        run: python3 tests/test-integration-probes.py
+        run: |
+          python3 tests/test-integration-probes.py
+          python3 tests/test-proxy-vm-fixture.py
+          python3 tests/test-proxy-live.py
+          python3 tests/test-proxy-agent-smoke.py
 
       - name: Codex account wrapper regression tests
         run: python3 tests/test-codex-account.py
@@ -115,6 +121,32 @@ jobs:
         run: |
           swift --version
           swift test --package-path macos/coop-sandbox --force-resolved-versions --no-parallel
+
+  # The proxy intentionally targets macOS 27 system trust. macos-latest does
+  # not guarantee that SDK/runtime; xcode-27 is GitHub's macOS 27 preview image.
+  # Release calls this workflow, so this job also gates release builds.
+  swift-proxy:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Swift proxy format, unit, and confined-process gates
+        shell: bash
+        run: |
+          ulimit -n 8192
+          swift format lint --recursive --strict macos/coop-proxy/Sources macos/coop-proxy/Tests
+          swift test --package-path macos/coop-proxy --force-resolved-versions
+          python3 scripts/test-swift-proxy-process.py --skip-tls
+
+      - name: Shared forwarding and disconnect corpus
+        shell: bash
+        run: |
+          ulimit -n 8192
+          python3 scripts/test-proxy-forwarding-corpus.py
+          python3 scripts/test-proxy-upstream-disconnect.py
 
   deny:
     runs-on: ubuntu-latest

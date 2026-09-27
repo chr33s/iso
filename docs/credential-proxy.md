@@ -57,7 +57,8 @@ before connecting upstream. The only allowed method/path pairs are:
 | Anthropic | `POST /v1/messages` |
 | Anthropic | `POST /v1/messages/count_tokens` |
 
-All other methods, paths, and unknown upstream profiles receive a local `403`.
+All other methods and paths receive a local `403`. Unknown providers are
+rejected at startup.
 This limits a compromised guest to the model calls its configured coding agent
 needs, and prevents it from using the injected key for account, model, admin,
 or arbitrary retrieval APIs. Widening this list requires security review and
@@ -78,6 +79,16 @@ proxy provider is named `coop credential proxy`, not `OpenAI`, so Codex does
 not currently enable its OpenAI-specific `POST /v1/responses/compact` behavior.
 If either client changes this behavior, add the route only with an explicit
 policy, test, and documentation update.
+
+## Request body framing
+
+Both proxy implementations admit bodies with a declared `Content-Length` of at
+most 64 MiB and stream them with backpressure. Larger declared bodies receive
+`413 Payload Too Large`. Chunked requests receive `411 Length Required` before
+any upstream connection or `100 Continue`; clients must send a known length.
+Ambiguous framing receives `400 Bad Request`. With neither Content-Length nor
+Transfer-Encoding, HTTP/1.1 defines an empty request body. Response streaming
+and SSE have no corresponding total-size cap.
 
 ## Enabling it
 
@@ -177,3 +188,92 @@ so it works identically on both backends (each already keeps an SSH channel to
 its guest). The host-side proxy process is jailed on both — Landlock on Linux
 (enabled on the host; kernel ≥5.13, with TCP scoping from ≥6.7), Seatbelt via
 `sandbox-exec` on macOS. GitHub credentials are not supported.
+
+
+## Swift port development
+
+The macOS 27+ Swift implementation is under development in
+`macos/coop-proxy`; coop defaults to the Rust implementation. The approved
+Swift trust policy uses macOS system trust through Security.framework, including
+administrator/MDM-installed roots. This intentionally replaces the Rust proxy's
+bundled Mozilla roots. Hostname and full-chain verification remain mandatory;
+there is no guest or startup option to disable them or supply trust roots.
+
+Both implementations bound the request target to 16 KiB and count its bytes
+with header names and values toward a 64 KiB aggregate metadata limit. Each
+header's name and value together may occupy at most 16 KiB, with at most 128
+headers. Separators are excluded from these byte counts. This matches
+SwiftNIO's aggregate accounting and is stricter than counting headers alone.
+The complete wire request head is additionally capped at 82,496 bytes, including
+optional whitespace and separators. Body bytes do not consume that allowance.
+
+The Swift executable refuses startup unless file writes, shell execution, and
+a randomly selected disallowed TCP port are denied. Seatbelt permits outbound
+TCP on ports 443 and 53; application policy fixes the provider hostname and TLS
+verifies its identity. The production Seatbelt profile adds only
+`com.apple.trustd.agent` lookup for system trust evaluation; it adds no keychain
+service or filesystem write allowance. The credential-free process gate proves
+TLS to both providers under that profile and fails when this permission is
+removed:
+
+```sh
+swift build --package-path macos/coop-proxy
+python3 scripts/test-swift-proxy-process.py
+```
+
+The gate also exercises stdin configuration, actual HTTP bind/accept, secret-free
+argv/diagnostics, and shutdown with an open guest socket. `--skip-tls` runs only
+the offline portions and cannot establish TLS readiness. Controlled certificate rejection tests are also available in the Swift test
+suite. Full differential/VM/live-agent validation, cutover, and the observation period
+remain required; see [implementation evidence](design/swift-proxy-progress.md).
+
+### Local transition builds
+
+On Apple Silicon macOS 27+, build the host with the Apple sandbox backend and
+both proxy implementations:
+
+```sh
+python3 scripts/build-proxy-transition.py
+```
+
+The script places `coop`, `coop-proxy-rs`, and `coop-proxy-swift` in Cargo's debug
+output directory. Pass `--release` for release builds. This is a development
+build workflow; release packaging and installation have not switched.
+
+To create a local bundle of those three executables:
+
+```sh
+python3 scripts/build-proxy-transition.py --archive /tmp/coop-proxy-transition.tar.gz
+```
+
+The archive includes `LICENSE`, per-binary `SHA256SUMS`, and `BUILD.json` with
+the backend, minimum macOS version, Rust default, source revision, and dirty-tree
+status. These checksums detect corruption; this local bundle has no release
+attestation. Add `--include-runtime` to bundle the ad-hoc signed `coop-sandbox`
+runtime too; otherwise that runtime must be installed/configured separately.
+The manual **Proxy transition candidate** workflow prepares a release-mode
+four-executable archive, requiring a clean checkout of the triggering revision
+before and after building. It verifies each Mach-O signature and adds a GitHub
+provenance attestation and archive checksum. It uploads a candidate artifact;
+it does not publish a release or change the default. The workflow has not yet
+been run on GitHub. Ad-hoc binary signatures are not Developer ID signing or
+notarization; the separate attestation supplies build provenance when verified.
+Published releases still use the Lima build. The installer and self-updater can
+consume a verified release archive containing both `coop-proxy-rs` and
+`coop-proxy-swift`; a partial pair is rejected before replacement. Installing a
+legacy archive containing `coop-proxy` removes stale transition names so the host
+cannot select an older Rust sibling. Older archives without any proxy preserve
+existing companions. Artifact checksum and attestation verification still happen
+before these installation steps. The local transition archive above is not an
+official installer/update artifact, and self-update still refuses Apple-backend
+builds until a matching release channel exists.
+
+Set `COOP_PROXY_IMPLEMENTATION=swift` in the **host** environment when launching
+that `coop` build to test Swift. Set it to `rust`, or leave it unset, to use Rust.
+The selector accepts only these two values and is unavailable for Swift on other
+backend/platform builds. It is not a guest configuration field and the proxy
+child receives an empty environment. A missing Swift binary or failed Swift
+startup fails the launch; there is no automatic fallback. Rust resolves
+`coop-proxy-rs` first and accepts the legacy `coop-proxy` name for compatibility
+with existing installations. Binary paths are always relative to the host
+`coop` executable, never supplied by the selector.

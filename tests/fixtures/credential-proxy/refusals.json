@@ -1,0 +1,408 @@
+[
+  {
+    "name": "stalled-initial-headers",
+    "status": 408,
+    "wire": "GET / HTTP/1.1\r\nHost: guest\r\nX: ",
+    "timing": {
+      "minimum_elapsed_ms": 9000,
+      "maximum_elapsed_ms": 13000
+    }
+  },
+  {
+    "name": "dripped-headers-do-not-reset-deadline",
+    "status": 408,
+    "wire": "GET / HTTP/1.1\r\nHost: guest\r\nX: ",
+    "timing": {
+      "resume_after_ms": 6000,
+      "suffix": "still-incomplete",
+      "minimum_elapsed_ms": 9000,
+      "maximum_elapsed_ms": 13000
+    }
+  },
+  {
+    "name": "missing",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "wrong",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer wrong\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "malformed-bearer",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Basic $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "empty-bearer",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer \r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "long-bearer",
+    "status": 431,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $REPEAT_0$\r\nConnection: close\r\n\r\n",
+    "repeat": {
+      "$REPEAT_0$": {
+        "text": "a",
+        "count": 17000
+      }
+    }
+  },
+  {
+    "name": "valid-bearer-denied-method",
+    "status": 403,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "valid-api-key-denied-method",
+    "status": 403,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nx-api-key: $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "both-agree",
+    "status": 403,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nx-api-key: $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "both-conflict",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nx-api-key: wrong\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "duplicate-authorization",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "duplicate-api-key",
+    "status": 401,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nx-api-key: $TOKEN\r\nx-api-key: $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "query",
+    "status": 403,
+    "wire": "GET /v1/messages?beta=true HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "trailing-slash",
+    "status": 403,
+    "wire": "GET /v1/messages/ HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "parent-segments",
+    "status": 403,
+    "wire": "GET /v1/../v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "encoded-path",
+    "status": 403,
+    "wire": "GET /v1/%6dessages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "absolute-form",
+    "status": 400,
+    "wire": "GET https://api.anthropic.com/v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "authority-form",
+    "status": 400,
+    "wire": "CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "asterisk",
+    "status": 400,
+    "wire": "GET * HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "bad-percent",
+    "status": 400,
+    "wire": "GET /v1/messages?x=%zz HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "delete",
+    "status": 403,
+    "wire": "DELETE /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "trace",
+    "status": 403,
+    "wire": "TRACE /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "cross-provider-route",
+    "status": 403,
+    "wire": "GET /v1/responses HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "guest-host",
+    "status": 403,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nx-unrelated: value\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "ambiguous-framing",
+    "status": 400,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "duplicate-length",
+    "status": 400,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nContent-Length: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "oversized-field",
+    "status": 431,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nX-Long: $REPEAT_0$\r\nConnection: close\r\n\r\n",
+    "repeat": {
+      "$REPEAT_0$": {
+        "text": "x",
+        "count": 17000
+      }
+    }
+  },
+  {
+    "name": "oversized-block",
+    "status": 431,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nX-Mid: $REPEAT_0$\r\nX-Mid: $REPEAT_1$\r\nX-Mid: $REPEAT_2$\r\nX-Mid: $REPEAT_3$\r\nX-Mid: $REPEAT_4$\r\nX-Mid: $REPEAT_5$\r\nX-Mid: $REPEAT_6$\r\nX-Mid: $REPEAT_7$\r\nX-Mid: $REPEAT_8$\r\nConnection: close\r\n\r\n",
+    "repeat": {
+      "$REPEAT_0$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_1$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_2$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_3$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_4$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_5$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_6$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_7$": {
+        "text": "x",
+        "count": 8192
+      },
+      "$REPEAT_8$": {
+        "text": "x",
+        "count": 8192
+      }
+    }
+  },
+  {
+    "name": "too-many-headers",
+    "status": 431,
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nX-H: 1\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "http-1-0",
+    "status": 505,
+    "wire": "GET /v1/messages HTTP/1.0\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\nConnection: close\r\n\r\n"
+  },
+  {
+    "name": "fragment",
+    "wire": "GET /v1/messages#fragment HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\n\r\n",
+    "status": 400
+  },
+  {
+    "name": "backslash",
+    "wire": "GET /v1/messages\\x HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\n\r\n",
+    "status": 400
+  },
+  {
+    "name": "network-path",
+    "wire": "GET //evil/v1/messages HTTP/1.1\r\nHost: guest\r\nAuthorization: Bearer $TOKEN\r\n\r\n",
+    "status": 400
+  },
+  {
+    "name": "incomplete-oversized-field",
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\nX-Large: $LONG$",
+    "repeat": {
+      "$LONG$": {
+        "text": "x",
+        "count": 16385
+      }
+    },
+    "status": 431
+  },
+  {
+    "name": "incomplete-oversized-name",
+    "wire": "GET /v1/messages HTTP/1.1\r\nHost: guest\r\n$LONG$",
+    "repeat": {
+      "$LONG$": {
+        "text": "x",
+        "count": 16385
+      }
+    },
+    "status": 431
+  },
+  {
+    "name": "incomplete-oversized-header-block",
+    "wire": "GET / HTTP/1.1\r\nX: $VALUE$\r\nX: $VALUE$\r\nX: $VALUE$\r\nX: $VALUE$\r\nX: $VALUE$\r\nX: $VALUE$\r\nX: $VALUE$\r\nX: $VALUE$\r\nY",
+    "repeat": {
+      "$VALUE$": {
+        "text": "x",
+        "count": 8191
+      }
+    },
+    "status": 431
+  },
+  {
+    "name": "aggregate-target-budget-exact",
+    "status": 401,
+    "wire": "GET / HTTP/1.1\r\n$FIELDS$X: $LAST$\r\n\r\n",
+    "repeat": {
+      "$FIELDS$": {
+        "text": "X: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n",
+        "count": 127
+      },
+      "$LAST$": {
+        "text": "x",
+        "count": 510
+      }
+    }
+  },
+  {
+    "name": "maximum-target-and-header-budget-exact",
+    "status": 401,
+    "wire": "GET /$TARGET$ HTTP/1.1\r\n$FIELDS$X: $LAST$\r\n\r\n",
+    "repeat": {
+      "$TARGET$": {
+        "text": "x",
+        "count": 16383
+      },
+      "$FIELDS$": {
+        "text": "X: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n",
+        "count": 127
+      },
+      "$LAST$": {
+        "text": "x",
+        "count": 383
+      }
+    }
+  },
+  {
+    "name": "combined-name-value-field-exact",
+    "status": 401,
+    "wire": "GET / HTTP/1.1\r\nX-F: $VALUE$\r\n\r\n",
+    "repeat": {
+      "$VALUE$": {
+        "text": "x",
+        "count": 16381
+      }
+    }
+  },
+  {
+    "name": "aggregate-target-budget-over",
+    "status": 431,
+    "wire": "GET / HTTP/1.1\r\n$FIELDS$X: $LAST$\r\n\r\n",
+    "repeat": {
+      "$FIELDS$": {
+        "text": "X: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n",
+        "count": 127
+      },
+      "$LAST$": {
+        "text": "x",
+        "count": 511
+      }
+    }
+  },
+  {
+    "name": "maximum-target-and-header-budget-over",
+    "status": 431,
+    "wire": "GET /$TARGET$ HTTP/1.1\r\n$FIELDS$X: $LAST$\r\n\r\n",
+    "repeat": {
+      "$TARGET$": {
+        "text": "x",
+        "count": 16383
+      },
+      "$FIELDS$": {
+        "text": "X: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n",
+        "count": 127
+      },
+      "$LAST$": {
+        "text": "x",
+        "count": 384
+      }
+    }
+  },
+  {
+    "name": "combined-name-value-field-over",
+    "status": 431,
+    "wire": "GET / HTTP/1.1\r\nX-F: $VALUE$\r\n\r\n",
+    "repeat": {
+      "$VALUE$": {
+        "text": "x",
+        "count": 16382
+      }
+    }
+  },
+  {
+    "name": "wire-whitespace-budget-exact",
+    "status": 401,
+    "wire": "GET / HTTP/1.1\r\nX: $PAD1$$PAD2$x\r\n\r\n",
+    "repeat": {
+      "$PAD1$": {
+        "text": " ",
+        "count": 65536
+      },
+      "$PAD2$": {
+        "text": " ",
+        "count": 16936
+      }
+    }
+  },
+  {
+    "name": "wire-whitespace-budget-over",
+    "status": 431,
+    "wire": "GET / HTTP/1.1\r\nX: $PAD1$$PAD2$x\r\n\r\n",
+    "repeat": {
+      "$PAD1$": {
+        "text": " ",
+        "count": 65536
+      },
+      "$PAD2$": {
+        "text": " ",
+        "count": 16937
+      }
+    }
+  },
+  {
+    "name": "metadata-budget-with-optional-whitespace",
+    "status": 401,
+    "wire": "GET / HTTP/1.1\r\nX: $SPACES$$VALUE$\r\n$FIELDS$X: $LAST$\r\n\r\n",
+    "repeat": {
+      "$SPACES$": {
+        "text": " ",
+        "count": 1024
+      },
+      "$VALUE$": {
+        "text": "x",
+        "count": 511
+      },
+      "$FIELDS$": {
+        "text": "X: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n",
+        "count": 126
+      },
+      "$LAST$": {
+        "text": "x",
+        "count": 510
+      }
+    }
+  }
+]

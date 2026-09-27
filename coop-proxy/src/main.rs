@@ -8,17 +8,17 @@
 //! outbound requests the guest never sees.
 
 mod config;
+mod inbound;
 mod jail;
 mod proxy;
+mod request_body;
+mod startup;
 mod tls;
-
-use std::io::Read;
 
 use anyhow::{Context, Result};
 
-use crate::config::ProxyConfig;
-
 fn main() -> Result<()> {
+    startup::disable_core_dumps().context("failed to disable core dumps")?;
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -36,7 +36,7 @@ fn main() -> Result<()> {
         return jail::selftest();
     }
 
-    let cfg = read_config().context("failed to read startup config from stdin")?;
+    let cfg = startup::read_config().context("failed to read startup config from stdin")?;
 
     // Self-confine before building the runtime: Landlock's domain is inherited
     // by threads created afterwards, and the multi-thread runtime spawns its
@@ -73,16 +73,6 @@ fn main() -> Result<()> {
         .context("failed to build tokio runtime")?;
 
     runtime.block_on(async move { proxy::serve(cfg, shutdown_signal()).await })
-}
-
-/// Read the JSON startup blob from stdin to EOF, then let stdin close. The
-/// secret lands in process memory only — never argv, never a file.
-fn read_config() -> Result<ProxyConfig> {
-    let mut buf = String::new();
-    std::io::stdin()
-        .read_to_string(&mut buf)
-        .context("reading stdin")?;
-    ProxyConfig::from_json(&buf)
 }
 
 /// Resolve on SIGTERM (coop's teardown signal) or Ctrl-C, so the proxy stops

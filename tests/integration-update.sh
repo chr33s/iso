@@ -332,6 +332,58 @@ else
     fail "legacy update replaces coop and preserves the existing companion" "$(tail -5 "$TMPDIR/t6.log")"
 fi
 
+repack_transition_fixture() {
+    (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
+    (cd "$FIXTURE" && sha256sums_line "${FAKE_TARBALL}" > SHA256SUMS)
+}
+
+echo "==> Test 7: verified transition update installs both named siblings"
+cp "$RELEASE_BIN" "$COOP_BIN"
+for name in coop-proxy-rs coop-proxy-swift; do
+    printf '#!/bin/sh\necho %s\n' "$name" >"$TMPDIR/build/${FAKE_DIR}/$name"
+done
+repack_transition_fixture
+if "$COOP_BIN" update --yes >"$TMPDIR/t7.log" 2>&1 \
+    && [[ "$("$COOP_BIN")" == "MARKER: fake-replacement-binary" \
+       && "$("$TMPDIR/bin/coop-proxy-rs")" == coop-proxy-rs \
+       && "$("$TMPDIR/bin/coop-proxy-swift")" == coop-proxy-swift ]]; then
+    pass "transition update installs both executable proxy siblings"
+else
+    fail "transition update installs both executable proxy siblings" "$(tail -5 "$TMPDIR/t7.log")"
+fi
+
+echo "==> Test 8: incomplete transition archive preserves the installed generation"
+cp "$RELEASE_BIN" "$COOP_BIN"
+ORIG_SHA="$(sha_of "$COOP_BIN")"
+printf '%s\n' keep-rust >"$TMPDIR/bin/coop-proxy-rs"
+printf '%s\n' keep-swift >"$TMPDIR/bin/coop-proxy-swift"
+rm "$TMPDIR/build/${FAKE_DIR}/coop-proxy-swift"
+repack_transition_fixture
+if "$COOP_BIN" update --yes >"$TMPDIR/t8.log" 2>&1; then
+    fail "incomplete transition update must fail"
+elif grep -q 'incomplete proxy transition pair' "$TMPDIR/t8.log" \
+    && [[ "$(sha_of "$COOP_BIN")" == "$ORIG_SHA" \
+       && "$(cat "$TMPDIR/bin/coop-proxy-rs")" == keep-rust \
+       && "$(cat "$TMPDIR/bin/coop-proxy-swift")" == keep-swift ]]; then
+    pass "incomplete transition update preserves host and both proxy siblings"
+else
+    fail "incomplete transition update preserves host and both proxy siblings" "$(tail -5 "$TMPDIR/t8.log")"
+fi
+
+echo "==> Test 9: legacy update removes stale transition names"
+cp "$RELEASE_BIN" "$COOP_BIN"
+rm "$TMPDIR/build/${FAKE_DIR}/coop-proxy-rs"
+printf '#!/bin/sh\necho legacy-proxy\n' >"$TMPDIR/build/${FAKE_DIR}/coop-proxy"
+repack_transition_fixture
+if "$COOP_BIN" update --yes >"$TMPDIR/t9.log" 2>&1 \
+    && [[ "$("$COOP_BIN")" == "MARKER: fake-replacement-binary" \
+       && "$("$TMPDIR/bin/coop-proxy")" == legacy-proxy \
+       && ! -e "$TMPDIR/bin/coop-proxy-rs" && ! -e "$TMPDIR/bin/coop-proxy-swift" ]]; then
+    pass "legacy update removes stale transition siblings"
+else
+    fail "legacy update removes stale transition siblings" "$(tail -5 "$TMPDIR/t9.log")"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 echo

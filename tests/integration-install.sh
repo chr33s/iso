@@ -256,6 +256,57 @@ else
         "$(tail -10 "$TEST_ROOT/t6.log")"
 fi
 
+repack_fixture() {
+    (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$FIXTURE" && sha256sum "$TARBALL" > SHA256SUMS)
+    else
+        (cd "$FIXTURE" && shasum -a 256 "$TARBALL" > SHA256SUMS)
+    fi
+}
+
+echo "==> Test 7: transition package installs both named proxies"
+for name in coop-proxy-rs coop-proxy-swift; do
+    printf '#!/bin/sh\necho %s\n' "$name" >"$FIXTURE/$ARCHIVE_DIR/$name"
+done
+repack_fixture
+if run_installer >"$TEST_ROOT/t7.log" 2>&1 \
+    && [[ "$("$INSTALL_DIR/coop-proxy-rs")" == coop-proxy-rs \
+       && "$("$INSTALL_DIR/coop-proxy-swift")" == coop-proxy-swift ]]; then
+    pass "verified transition package installs both executable siblings"
+else
+    fail "verified transition package installs both executable siblings" "$(tail -10 "$TEST_ROOT/t7.log")"
+fi
+
+echo "==> Test 8: incomplete transition package is rejected before replacement"
+rm "$FIXTURE/$ARCHIVE_DIR/coop-proxy-swift"
+printf '%s\n' keep-host >"$INSTALL_DIR/coop"
+printf '%s\n' keep-rust >"$INSTALL_DIR/coop-proxy-rs"
+printf '%s\n' keep-swift >"$INSTALL_DIR/coop-proxy-swift"
+repack_fixture
+if run_installer >"$TEST_ROOT/t8.log" 2>&1; then
+    fail "incomplete transition pair aborts installation"
+elif grep -q 'incomplete proxy transition pair' "$TEST_ROOT/t8.log" \
+    && [[ "$(cat "$INSTALL_DIR/coop")" == keep-host \
+       && "$(cat "$INSTALL_DIR/coop-proxy-rs")" == keep-rust \
+       && "$(cat "$INSTALL_DIR/coop-proxy-swift")" == keep-swift ]]; then
+    pass "incomplete transition pair leaves all installed files unchanged"
+else
+    fail "incomplete transition pair leaves all installed files unchanged" "$(tail -10 "$TEST_ROOT/t8.log")"
+fi
+
+echo "==> Test 9: legacy package removes stale transition selection"
+rm "$FIXTURE/$ARCHIVE_DIR/coop-proxy-rs"
+printf '#!/bin/sh\necho legacy-proxy\n' >"$FIXTURE/$ARCHIVE_DIR/coop-proxy"
+repack_fixture
+if run_installer >"$TEST_ROOT/t9.log" 2>&1 \
+    && [[ "$("$INSTALL_DIR/coop-proxy")" == legacy-proxy \
+       && ! -e "$INSTALL_DIR/coop-proxy-rs" && ! -e "$INSTALL_DIR/coop-proxy-swift" ]]; then
+    pass "legacy package removes stale transition siblings"
+else
+    fail "legacy package removes stale transition siblings" "$(tail -10 "$TEST_ROOT/t9.log")"
+fi
+
 echo
 echo "  $pass_count passed, $fail_count failed"
 [[ $fail_count -eq 0 ]]

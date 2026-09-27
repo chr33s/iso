@@ -41,6 +41,13 @@
   (global-name "com.apple.system.opendirectoryd.libinfo")
   (global-name "com.apple.system.logger"))
 
+;; NIOSSL .default trust on macOS uses Security.framework/SecTrust. Its
+;; per-user trust evaluation service is required to verify provider identities.
+;; Verified with credential-free TLS to both providers on macOS 27: removing
+;; this exact permission fails TLS; com.apple.trustd alone does not suffice.
+;; No keychain API service or filesystem write permission is added.
+(allow mach-lookup (global-name "com.apple.trustd.agent"))
+
 ;; Bind only the loopback listener and accept the host's reverse-tunnel
 ;; connection to it.
 (allow network-bind (local ip "localhost:*"))

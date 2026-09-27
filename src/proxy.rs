@@ -21,7 +21,7 @@
 //! credential upstream.
 
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -35,21 +35,45 @@ use serde::Serialize;
 use crate::backend::SshTarget;
 use crate::config::{Instance, ProxyAuthScheme, ProxyUpstream, Secret, resolve_cmd_value};
 
-/// The proxy binary name, expected next to the `coop` binary.
-const PROXY_BIN_NAME: &str = "coop-proxy";
+/// Host-only transition selector. Never read from guest state or proxy JSON.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProxyImplementation {
+    Rust,
+    Swift,
+}
+
+impl ProxyImplementation {
+    fn select(value: Option<&std::ffi::OsStr>, swift_supported: bool) -> Result<Self> {
+        match value.and_then(std::ffi::OsStr::to_str) {
+            None if value.is_none() => Ok(Self::Rust),
+            Some("rust") => Ok(Self::Rust),
+            Some("swift") if swift_supported => Ok(Self::Swift),
+            Some("swift") => bail!("Swift proxy selection requires a macOS apple-container build"),
+            _ => bail!("COOP_PROXY_IMPLEMENTATION must be rust or swift"),
+        }
+    }
+
+    fn binary_names(self) -> &'static [&'static str] {
+        match self {
+            // Compatibility with existing releases during the dual-build period.
+            Self::Rust => &["coop-proxy-rs", "coop-proxy"],
+            Self::Swift => &["coop-proxy-swift"],
+        }
+    }
+}
 
 /// Maximum time for SSH authentication and the guest's forwarding acknowledgment.
 const TUNNEL_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long to wait for the freshly spawned proxy to accept a connection on
-/// its host-loopback listener before treating the launch as failed. This
+/// How long to wait for the freshly spawned proxy to answer HTTP on its
+/// host-loopback listener before treating the launch as failed. This
 /// enforces fail-closed startup: when confinement *fails to establish* the
 /// proxy exits before binding (an unsupported kernel makes Landlock's
 /// `apply` bail on Linux; a missing `sandbox-exec` or a malformed Seatbelt
 /// profile makes the wrapper exit non-zero on macOS), so this probe never
 /// connects and the VM start aborts rather than proceeding with a dead
-/// credential proxy. It confirms the proxy *bound* — the *strength* of the
-/// confinement is asserted separately by `coop-proxy --jail-selftest` in the
+/// credential proxy. It confirms a real unauthenticated HTTP response. The
+/// strength of the confinement is asserted separately by `coop-proxy --jail-selftest` in the
 /// integration suite, not by liveness here.
 const PROXY_READY_GRACE: Duration = Duration::from_secs(5);
 
@@ -73,15 +97,6 @@ impl Provider {
         match self {
             Provider::Anthropic => "anthropic",
             Provider::Openai => "openai",
-        }
-    }
-
-    /// The fixed upstream host. The guest cannot influence this — only the
-    /// request path is forwarded (closes SSRF).
-    fn upstream_host(self) -> &'static str {
-        match self {
-            Provider::Anthropic => "api.anthropic.com",
-            Provider::Openai => "api.openai.com",
         }
     }
 
@@ -150,13 +165,7 @@ pub fn start_provider(
     let token = mint_capability_token()?;
     let port = provider.port(inst);
     let listen = SocketAddr::from(([127, 0, 0, 1], port));
-    let json = wire_config_json(
-        &listen,
-        &token,
-        provider.upstream_host(),
-        upstream.auth,
-        &credential,
-    )?;
+    let json = wire_config_json(&listen, &token, provider, upstream.auth, &credential)?;
 
     spawn_proxy(inst, provider.name(), listen, &json)?;
     // Persist the capability token for providers that forward it via env on
@@ -394,26 +403,7 @@ fn spawn_proxy(inst: &Instance, name: &str, listen: SocketAddr, json: &str) -> R
         .spawn()
         .with_context(|| format!("Failed to spawn {}", bin.display()))?;
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .context("proxy child stdin unexpectedly missing")?;
-    stdin
-        .write_all(json.as_bytes())
-        .context("Failed to write proxy startup config to stdin")?;
-    // Drop closes stdin (EOF) so the proxy finishes reading its config.
-    drop(stdin);
-
-    // Fail closed: confirm the proxy bound its listener before recording it.
-    // When confinement (Landlock on Linux, Seatbelt on macOS) cannot be
-    // established the proxy exits before binding, so this probe never connects
-    // and the launch aborts — a credential proxy that could not be jailed never
-    // reaches a serving state. Kill the child on failure so it is not orphaned.
-    if let Err(e) = await_proxy_ready(&mut child, listen, &log_path) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(e);
-    }
+    initialize_proxy_child(&mut child, listen, json, &log_path)?;
 
     let pid = child.id();
     let pid_path = pid_path(inst, name);
@@ -431,7 +421,33 @@ fn spawn_proxy(inst: &Instance, name: &str, listen: SocketAddr, json: &str) -> R
     Ok(())
 }
 
-/// Poll until the proxy accepts a connection on its host-loopback listener, or
+/// Treat startup as one transaction: every failure reaps the credential-holding
+/// child, including a failed stdin write before readiness polling begins.
+fn initialize_proxy_child(
+    child: &mut std::process::Child,
+    listen: SocketAddr,
+    json: &str,
+    log_path: &Path,
+) -> Result<()> {
+    let result = (|| {
+        let mut stdin = child
+            .stdin
+            .take()
+            .context("proxy child stdin unexpectedly missing")?;
+        stdin
+            .write_all(json.as_bytes())
+            .context("Failed to write proxy startup config to stdin")?;
+        drop(stdin);
+        await_proxy_ready(child, listen, log_path)
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
+}
+
+/// Poll until the proxy returns HTTP 401 on its host-loopback listener, or
 /// fail closed. Returns an error (carrying the proxy log) if the proxy exits
 /// early or never begins serving within [`PROXY_READY_GRACE`].
 fn await_proxy_ready(
@@ -453,7 +469,7 @@ fn await_proxy_ready(
             Ok(None) => {}
             Err(e) => return Err(e).context("Failed to poll the credential proxy process"),
         }
-        if std::net::TcpStream::connect_timeout(&listen, Duration::from_millis(200)).is_ok() {
+        if proxy_http_ready(listen) {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -466,6 +482,41 @@ fn await_proxy_ready(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// A bounded, credential-free HTTP probe. TCP acceptance alone is insufficient:
+/// the process must have reached its HTTP authentication gate.
+fn proxy_http_ready(listen: SocketAddr) -> bool {
+    let budget = Duration::from_millis(200);
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&listen, budget) else {
+        return false;
+    };
+    if stream.set_read_timeout(Some(budget)).is_err()
+        || stream.set_write_timeout(Some(budget)).is_err()
+        || stream
+            .write_all(b"GET /v1/messages HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .is_err()
+    {
+        return false;
+    }
+    let deadline = Instant::now() + budget;
+    let mut status = Vec::with_capacity(128);
+    let mut byte = [0];
+    while status.len() < 128 && Instant::now() < deadline {
+        // The per-read timeout alone would permit an indefinitely slow drip.
+        if stream
+            .set_read_timeout(Some(deadline.saturating_duration_since(Instant::now())))
+            .is_err()
+            || stream.read_exact(&mut byte).is_err()
+        {
+            return false;
+        }
+        status.push(byte[0]);
+        if status.ends_with(b"\r\n") {
+            return status.starts_with(b"HTTP/1.1 401 ");
+        }
+    }
+    false
 }
 
 /// Build the `Command` that launches `coop-proxy` under the platform's process
@@ -481,7 +532,7 @@ fn await_proxy_ready(
 /// and teardown is unchanged.
 fn confined_command(bin: &Path) -> Command {
     #[cfg(target_os = "macos")]
-    {
+    let mut command = {
         // sandbox-exec applies the profile to itself, then execve-replaces
         // itself with the proxy — an exec the profile must permit. The profile
         // scopes that allowance to this exact binary via the PROXY_BIN
@@ -489,18 +540,21 @@ fn confined_command(bin: &Path) -> Command {
         // matches what the kernel resolves at exec time (e.g. /var →
         // /private/var); fall back to the given path if canonicalization fails.
         let resolved = fs::canonicalize(bin).unwrap_or_else(|_| bin.to_path_buf());
-        let mut cmd = Command::new("sandbox-exec");
+        let mut cmd = Command::new("/usr/bin/sandbox-exec");
         cmd.arg("-D")
             .arg(format!("PROXY_BIN={}", resolved.display()))
             .arg("-p")
             .arg(SEATBELT_PROFILE)
             .arg(&resolved);
         cmd
-    }
+    };
     #[cfg(not(target_os = "macos"))]
-    {
-        Command::new(bin)
-    }
+    let mut command = Command::new(bin);
+    // Neither runtime requires caller environment entries. In particular,
+    // credentials, loader injection, and HTTP proxy settings must not cross
+    // into the confined child. Add variables only with runtime evidence.
+    command.env_clear();
+    command
 }
 
 /// Seatbelt profile confining `coop-proxy` on macOS. Kept as a checked-in
@@ -715,18 +769,26 @@ fn token_path(inst: &Instance, name: &str) -> PathBuf {
 }
 
 fn locate_proxy_binary() -> Result<PathBuf> {
+    let value = std::env::var_os("COOP_PROXY_IMPLEMENTATION");
+    let implementation = ProxyImplementation::select(
+        value.as_deref(),
+        cfg!(all(target_os = "macos", feature = "apple-container")),
+    )?;
     let exe = std::env::current_exe().context("Failed to locate the coop executable")?;
     let dir = exe
         .parent()
         .context("coop executable has no parent directory")?;
-    let candidate = dir.join(PROXY_BIN_NAME);
-    if candidate.exists() {
-        return Ok(candidate);
+    for name in implementation.binary_names() {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
     }
     bail!(
-        "{PROXY_BIN_NAME} not found next to coop at {} — reinstall coop; \
-         the proxy ships in the same tarball as coop",
-        candidate.display()
+        "selected proxy {} not found next to coop at {} — build the transition binaries \
+         with scripts/build-proxy-transition.py or reinstall coop",
+        implementation.binary_names()[0],
+        dir.display()
     );
 }
 
@@ -745,7 +807,8 @@ fn mint_capability_token() -> Result<String> {
 struct WireConfig<'a> {
     listen: String,
     capability_token: &'a str,
-    upstream_host: &'a str,
+    version: u32,
+    provider: &'static str,
     injection: WireInjection<'a>,
 }
 
@@ -759,7 +822,7 @@ enum WireInjection<'a> {
 fn wire_config_json(
     listen: &SocketAddr,
     capability_token: &str,
-    upstream_host: &str,
+    provider: Provider,
     auth: ProxyAuthScheme,
     credential: &str,
 ) -> Result<String> {
@@ -770,7 +833,8 @@ fn wire_config_json(
     let wire = WireConfig {
         listen: listen.to_string(),
         capability_token,
-        upstream_host,
+        version: 1,
+        provider: provider.name(),
         injection,
     };
     serde_json::to_string(&wire).context("Failed to serialize proxy startup config")
@@ -779,6 +843,42 @@ fn wire_config_json(
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
+
+    #[test]
+    fn transition_selection_is_host_only_and_has_no_swift_fallback() {
+        use std::ffi::OsStr;
+        assert_eq!(
+            ProxyImplementation::select(None, true).unwrap(),
+            ProxyImplementation::Rust
+        );
+        assert_eq!(
+            ProxyImplementation::select(Some(OsStr::new("rust")), false).unwrap(),
+            ProxyImplementation::Rust
+        );
+        let swift = ProxyImplementation::select(Some(OsStr::new("swift")), true).unwrap();
+        assert_eq!(swift.binary_names(), &["coop-proxy-swift"]);
+        let unsupported =
+            ProxyImplementation::select(Some(OsStr::new("swift")), false).unwrap_err();
+        assert!(
+            unsupported
+                .to_string()
+                .contains("requires a macOS apple-container build")
+        );
+        let non_utf8 = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"\xff");
+        assert!(ProxyImplementation::select(Some(non_utf8), true).is_err());
+        for invalid in ["", "Swift", "/tmp/proxy", "rust,swift"] {
+            assert!(ProxyImplementation::select(Some(OsStr::new(invalid)), true).is_err());
+        }
+    }
+
+    #[test]
+    fn proxy_child_has_an_explicit_empty_environment() {
+        let command = confined_command(Path::new("/test/coop-proxy"));
+        assert_eq!(command.get_envs().count(), 0);
+        // Command's Debug representation exposes env_clear even when the
+        // parent environment happens to be empty.
+        assert!(format!("{command:?}").contains("env -i"));
+    }
     use super::*;
     use crate::config::{ImageName, InstanceIndex, InstanceName};
 
@@ -903,12 +1003,6 @@ mod tests {
     }
 
     #[test]
-    fn upstream_hosts_are_pinned() {
-        assert_eq!(Provider::Anthropic.upstream_host(), "api.anthropic.com");
-        assert_eq!(Provider::Openai.upstream_host(), "api.openai.com");
-    }
-
-    #[test]
     fn only_openai_persists_its_token() {
         // Codex forwards the token via env on later sessions, so it must be
         // persisted; Claude reads its token from settings.json and keeps it in
@@ -928,30 +1022,32 @@ mod tests {
 
     #[test]
     fn wire_json_api_key_shape() {
-        let listen: SocketAddr = "172.16.0.1:8788".parse().unwrap();
+        let listen: SocketAddr = "127.0.0.1:8788".parse().unwrap();
         let json = wire_config_json(
             &listen,
             "cap-tok",
-            "api.anthropic.com",
+            Provider::Anthropic,
             ProxyAuthScheme::ApiKey,
             "sk-real",
         )
         .unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["listen"], "172.16.0.1:8788");
+        assert_eq!(v["listen"], "127.0.0.1:8788");
         assert_eq!(v["capability_token"], "cap-tok");
-        assert_eq!(v["upstream_host"], "api.anthropic.com");
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["provider"], "anthropic");
+        assert!(v.get("upstream_host").is_none());
         assert_eq!(v["injection"]["scheme"], "x_api_key");
         assert_eq!(v["injection"]["credential"], "sk-real");
     }
 
     #[test]
     fn wire_json_bearer_shape() {
-        let listen: SocketAddr = "172.16.0.1:8900".parse().unwrap();
+        let listen: SocketAddr = "127.0.0.1:8900".parse().unwrap();
         let json = wire_config_json(
             &listen,
             "t",
-            "api.openai.com",
+            Provider::Openai,
             ProxyAuthScheme::Bearer,
             "sk-openai",
         )
@@ -980,6 +1076,72 @@ mod tests {
             "unexpected error: {msg}"
         );
         let _ = child.wait();
+    }
+
+    #[test]
+    fn failed_startup_pipe_reaps_child() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let error = initialize_proxy_child(
+            &mut child,
+            "127.0.0.1:1".parse().unwrap(),
+            "{}",
+            Path::new("unused.log"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("stdin unexpectedly missing"));
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn broken_startup_pipe_reaps_child() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exec 0<&-; printf ready; exec sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = [0; 5];
+        child.stdout.take().unwrap().read_exact(&mut ready).unwrap();
+        assert_eq!(&ready, b"ready");
+        let error = initialize_proxy_child(
+            &mut child,
+            "127.0.0.1:1".parse().unwrap(),
+            "{}",
+            Path::new("unused.log"),
+        )
+        .unwrap_err();
+        let reaped = child.try_wait().unwrap().is_some();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(error.to_string().contains("write proxy startup config"));
+        assert!(reaped);
+    }
+
+    #[test]
+    fn readiness_requires_an_unauthorized_http_response() {
+        for (reply, ready) in [
+            ("HTTP/1.1 401 Unauthorized\r\n", true),
+            ("HTTP/1.1 200 OK\r\n", false),
+            ("GET /v1/messages HTTP/1.1\r\n", false),
+            ("HTTP/1.1 401 Unauthorized", false),
+            ("", false),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let peer = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 256];
+                let size = socket.read(&mut request).unwrap();
+                assert!(request[..size].starts_with(b"GET /v1/messages HTTP/1.1"));
+                socket.write_all(reply.as_bytes()).unwrap();
+            });
+            assert_eq!(proxy_http_ready(address), ready, "{reply:?}");
+            peer.join().unwrap();
+        }
     }
 
     #[test]
