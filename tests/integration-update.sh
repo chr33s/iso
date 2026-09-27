@@ -62,7 +62,7 @@ cleanup() {
 trap cleanup EXIT
 
 FIXTURE="$TMPDIR/fixture"
-mkdir -p "$FIXTURE/repos/trailofbits/coop/releases/tags"
+mkdir -p "$FIXTURE/repos/chr33s/coop/releases/tags"
 mkdir -p "$TMPDIR/bin" "$TMPDIR/build/${FAKE_DIR}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -122,10 +122,15 @@ JSON
 # Both `cargo build` invocations must run before HOME is redirected — cargo
 # uses $HOME for its registry and toolchain caches.
 
+BUILD_FEATURES=()
+if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
+    BUILD_FEATURES=(--features apple-container)
+fi
+
 echo "==> Building release binary..."
 (
     cd "$PROJECT_DIR"
-    COOP_FORCE_BUILD_KIND=release cargo build --release --quiet
+    COOP_FORCE_BUILD_KIND=release cargo build --release --quiet "${BUILD_FEATURES[@]}"
 )
 # Stash the release binary at a stable path. The dev build below shares
 # `target/release/coop`, so we can't keep referring to that path after
@@ -141,7 +146,7 @@ echo "==> Building dev binary..."
 # build.rs correctly bakes kind=release, which would defeat test 4.
 (
     cd "$PROJECT_DIR"
-    COOP_FORCE_BUILD_KIND=dev cargo build --release --quiet
+    COOP_FORCE_BUILD_KIND=dev cargo build --release --quiet "${BUILD_FEATURES[@]}"
 )
 cp "$PROJECT_DIR/target/release/coop" "$TMPDIR/bin/coop-dev"
 
@@ -172,6 +177,8 @@ cat > "$TMPDIR/build/${FAKE_DIR}/coop-proxy" << 'EOF'
 #!/bin/sh
 echo "MARKER: fake-proxy-binary"
 EOF
+printf '#!/bin/sh\necho installed-coop-sandbox\n' >"$TMPDIR/build/${FAKE_DIR}/coop-sandbox"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/coop-sandbox"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/coop" "$TMPDIR/build/${FAKE_DIR}/coop-proxy"
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
 (cd "$FIXTURE" && sha256sums_line "${FAKE_TARBALL}" > SHA256SUMS)
@@ -201,7 +208,7 @@ export COOP_UPDATE_API_BASE_URL="$BASE_URL"
 # ── Test 1: success flow ─────────────────────────────────────────────────────
 
 write_release_json \
-    "$FIXTURE/repos/trailofbits/coop/releases/latest" \
+    "$FIXTURE/repos/chr33s/coop/releases/latest" \
     "$FAKE_TAG" \
     "$(full_assets_block)"
 
@@ -217,6 +224,13 @@ else
     fail "update --yes returned non-zero" "$(tail -5 "$TMPDIR/t1.log")"
 fi
 
+if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
+    if [[ "$("$TMPDIR/bin/coop-sandbox")" == installed-coop-sandbox ]]; then
+        pass "update installs the Apple runtime"
+    else
+        fail "update installs the Apple runtime"
+    fi
+fi
 if [[ -x "$TMPDIR/bin/coop-proxy" ]] \
     && [[ "$("$TMPDIR/bin/coop-proxy")" == "MARKER: fake-proxy-binary" ]]; then
     pass "update installs the missing proxy companion"
@@ -244,7 +258,7 @@ fi
 cp "$RELEASE_BIN" "$COOP_BIN"
 CURRENT_VERSION="$("$COOP_BIN" --version | awk '{print $2}')"
 write_release_json \
-    "$FIXTURE/repos/trailofbits/coop/releases/latest" \
+    "$FIXTURE/repos/chr33s/coop/releases/latest" \
     "v${CURRENT_VERSION}" \
     "[]"
 
@@ -268,7 +282,7 @@ ORIG_PROXY_SHA="$(sha_of "$TMPDIR/bin/coop-proxy")"
 
 # Restore the newer-release fixture but corrupt SHA256SUMS.
 write_release_json \
-    "$FIXTURE/repos/trailofbits/coop/releases/latest" \
+    "$FIXTURE/repos/chr33s/coop/releases/latest" \
     "$FAKE_TAG" \
     "$(full_assets_block)"
 echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  ${FAKE_TARBALL}" \
@@ -324,12 +338,23 @@ rm "$TMPDIR/build/${FAKE_DIR}/coop-proxy"
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
 (cd "$FIXTURE" && sha256sums_line "${FAKE_TARBALL}" > SHA256SUMS)
 ORIG_PROXY_SHA="$(sha_of "$TMPDIR/bin/coop-proxy")"
+if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
+    original_host="$(sha_of "$COOP_BIN")"
+    if ! "$COOP_BIN" update --yes >"$TMPDIR/t6.log" 2>&1 \
+        && [[ "$(sha_of "$COOP_BIN")" == "$original_host" \
+           && "$(sha_of "$TMPDIR/bin/coop-proxy")" == "$ORIG_PROXY_SHA" ]]; then
+        pass "Apple update rejects missing companion before replacement"
+    else
+        fail "Apple update rejects missing companion before replacement"
+    fi
+else
 if "$COOP_BIN" update --yes > "$TMPDIR/t6.log" 2>&1 \
     && [[ "$("$COOP_BIN")" == "MARKER: fake-replacement-binary" \
        && "$(sha_of "$TMPDIR/bin/coop-proxy")" == "$ORIG_PROXY_SHA" ]]; then
     pass "legacy update replaces coop and preserves the existing companion"
 else
     fail "legacy update replaces coop and preserves the existing companion" "$(tail -5 "$TMPDIR/t6.log")"
+fi
 fi
 
 repack_transition_fixture() {
@@ -340,6 +365,22 @@ repack_transition_fixture() {
 echo "==> Test 7: verified Swift-only update installs its proxy"
 cp "$RELEASE_BIN" "$COOP_BIN"
 printf '#!/bin/sh\necho coop-proxy\n' >"$TMPDIR/build/${FAKE_DIR}/coop-proxy"
+if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
+    mv "$TMPDIR/build/${FAKE_DIR}/coop-sandbox" "$TMPDIR/runtime-backup"
+    repack_transition_fixture
+    original_host="$(sha_of "$COOP_BIN")"
+    printf '%s\n' keep-runtime >"$TMPDIR/bin/coop-sandbox"
+    printf '%s\n' keep-proxy >"$TMPDIR/bin/coop-proxy"
+    if ! "$COOP_BIN" update --yes >"$TMPDIR/missing-runtime.log" 2>&1 \
+        && [[ "$(sha_of "$COOP_BIN")" == "$original_host" \
+           && "$(cat "$TMPDIR/bin/coop-sandbox")" == keep-runtime \
+           && "$(cat "$TMPDIR/bin/coop-proxy")" == keep-proxy ]]; then
+        pass "missing Apple runtime preserves all installed binaries"
+    else
+        fail "missing Apple runtime preserves all installed binaries"
+    fi
+    mv "$TMPDIR/runtime-backup" "$TMPDIR/build/${FAKE_DIR}/coop-sandbox"
+fi
 repack_transition_fixture
 if "$COOP_BIN" update --yes >"$TMPDIR/t7.log" 2>&1 \
     && [[ "$("$COOP_BIN")" == "MARKER: fake-replacement-binary" \

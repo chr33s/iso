@@ -2997,3 +2997,12 @@ fn canonical_path_resolves_through_the_existing_ancestor() {
     let real = tmp.path().canonicalize().unwrap();
     assert_eq!(canonical_path(&tmp.path().join("a/b")), real.join("a/b"));
 }
+
+#[test]
+fn bundled_runtime_is_the_first_default_candidate() {
+    let exe = std::env::current_exe().unwrap();
+    assert_eq!(
+        default_runtimes()[0],
+        exe.parent().unwrap().join("coop-sandbox")
+    );
+}

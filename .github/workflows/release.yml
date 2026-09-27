@@ -12,7 +12,21 @@ env:
   BINARY: coop
 
 jobs:
+  source:
+    if: github.repository == 'chr33s/coop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require a release commit from swift
+        run: git merge-base --is-ancestor HEAD origin/swift
+
   ci:
+    needs: source
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
@@ -53,7 +67,13 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CC_aarch64_unknown_linux_musl: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-        run: cargo build --release --workspace --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          features=()
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            features=(--features apple-container)
+          fi
+          cargo build --release --workspace --target "${{ matrix.target }}" "${features[@]}"
 
       - name: Build Swift proxy (macOS 27+)
         if: runner.os == 'macOS'
@@ -62,6 +82,13 @@ jobs:
           proxy_dir="$(swift build --package-path coop-proxy -c release --show-bin-path)"
           cp "$proxy_dir/coop-proxy-swift" "target/${{ matrix.target }}/release/coop-proxy"
           codesign --verify --strict "target/${{ matrix.target }}/release/coop-proxy"
+
+      - name: Build and sign Apple runtime
+        if: runner.os == 'macOS'
+        run: |
+          scripts/build-coop-sandbox.sh "$RUNNER_TEMP/coop-runtime"
+          cp "$RUNNER_TEMP/coop-runtime/bin/coop-sandbox" "target/${{ matrix.target }}/release/coop-sandbox"
+          codesign --verify --strict "target/${{ matrix.target }}/release/coop-sandbox"
 
       - name: Verify release binaries
         env:
@@ -77,6 +104,7 @@ jobs:
           fi
           if [[ "$TARGET" == *apple-darwin ]]; then
             test -x "target/${TARGET}/release/coop-proxy"
+            "target/${TARGET}/release/coop-sandbox" version
           fi
 
       - name: Package
@@ -88,6 +116,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/${BINARY}" "staging/${name}/"
           if [[ "$RUNNER_OS" == macOS ]]; then
             cp "target/${{ matrix.target }}/release/coop-proxy" "staging/${name}/"
+            cp "target/${{ matrix.target }}/release/coop-sandbox" "staging/${name}/"
           fi
           cp LICENSE* "staging/${name}/" 2>/dev/null || true
           tar -czf "${name}.tar.gz" -C staging "${name}"

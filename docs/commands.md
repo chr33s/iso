@@ -893,11 +893,16 @@ coop profiles show rust
 
 ### `update`
 
-**Fork note:** this command retains the upstream release channel and can replace
-a default-backend fork build with upstream code. Update this fork from source;
-Apple-backend builds disable self-update.
-
-Replace the running coop binary with a release from `github.com/trailofbits/coop`. Downloads the tarball matching the current host triple, verifies its SHA-256 against the release's `SHA256SUMS`, and (when `gh` is installed) verifies the GitHub build-provenance attestation before swapping the binary atomically.
+Replace the running coop binary with a release from `github.com/chr33s/coop`.
+Release tags come from `swift`. The updater verifies the platform tarball's
+SHA-256 and, when `gh` is installed, its repository build-provenance attestation.
+Apple builds install the bundled `coop-sandbox` and `coop-proxy` before replacing
+the host. Each file replacement is atomic; the set of files is not a single
+transaction. If a later replacement fails, rerun the installer for the same
+release to restore a matching set. Missing Apple companions are rejected before replacement.
+Lima source builds refuse self-update (`LIMA_UPDATE_VARIANT_UNSUPPORTED`) because
+fork macOS releases use the Apple backend. Until a fork release is published and
+verified, rebuild from source.
 
 No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `coop update` uses it, which helps avoid GitHub API rate limits.
 

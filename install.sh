@@ -8,7 +8,7 @@ set -euo pipefail
 #   VERSION=v0.2.1 ./install.sh           # specific version
 #   INSTALL_DIR=/usr/local/bin ./install.sh
 
-REPO="trailofbits/coop"
+REPO="chr33s/coop"
 BINARY="coop"
 BUNDLE="attestations.jsonl"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
@@ -233,7 +233,15 @@ PROXY_NAME="${BINARY}-proxy"
 if [ -e "${EXTRACTED_DIR}/${PROXY_NAME}" ] && [ ! -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
     die "Proxy artifact is not a regular file"
 fi
+if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
+    [ -f "${EXTRACTED_DIR}/coop-sandbox" ] || die "Release is missing the coop-sandbox runtime"
+    [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ] || die "Release is missing the coop-proxy companion"
+fi
 mkdir -p "$INSTALL_DIR"
+if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
+    mv "${EXTRACTED_DIR}/coop-sandbox" "${INSTALL_DIR}/coop-sandbox"
+    chmod +x "${INSTALL_DIR}/coop-sandbox"
+fi
 if [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
     mv "${EXTRACTED_DIR}/${PROXY_NAME}" "${INSTALL_DIR}/${PROXY_NAME}"
     chmod +x "${INSTALL_DIR}/${PROXY_NAME}"

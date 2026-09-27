@@ -259,7 +259,7 @@ build_release_targets() {
     warn "rustup not found — release targets not built locally; release.yml builds them on the tag (a failure there burns the version)."
     return 0
   fi
-  local installed target built=0 missing=()
+  local installed target built=0 missing=() features=()
   installed="$(rustup target list --installed 2>/dev/null || true)"
   for target in "${RELEASE_TARGETS[@]}"; do
     grep -qx "$target" <<<"$installed" || missing+=("$target")
@@ -271,7 +271,11 @@ build_release_targets() {
   for target in "${RELEASE_TARGETS[@]}"; do
     if grep -qx "$target" <<<"$installed"; then
       printf 'Building %s...\n' "$target"
-      cargo build --release --workspace --target "$target" || return 1
+      features=()
+      if [[ "$target" == aarch64-apple-darwin ]]; then
+        features=(--features apple-container)
+      fi
+      cargo build --release --workspace --target "$target" "${features[@]}" || return 1
       built=$((built + 1))
     else
       warn "release target $target not built locally (toolchain absent) — release.yml builds it on the tag, uncaught here."

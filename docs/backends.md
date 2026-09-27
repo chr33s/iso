@@ -114,7 +114,11 @@ Control files are `0600`, directories `0700`. `uninstall --purge` destroys every
 
 Instances created by the retired `container machine` backend (schema 1) are refused, including by `coop destroy`, `destroy --all`, and `uninstall --purge`. Remove such an instance's directory under `backends/apple-container-v1/instances/` by hand, and delete its machine and network in Apple `container` (`container machine delete`, `container network delete`).
 
-`coop update` is disabled in this build (`APPLE_UPDATE_VARIANT_UNSUPPORTED`): release artifacts carry only the Lima backend. Rebuild from source instead.
+Fork macOS releases use this backend and include `coop-sandbox` beside `coop`.
+The host prefers that adjacent runtime, then the manual install locations; an
+explicit `apple_container.binary` still takes precedence. `coop update` targets
+`chr33s/coop`. Lima source builds refuse self-update
+(`LIMA_UPDATE_VARIANT_UNSUPPORTED`) to prevent a backend switch.
 
 ### Setup process
 

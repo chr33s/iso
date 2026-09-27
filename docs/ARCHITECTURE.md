@@ -197,7 +197,7 @@ the Firecracker `.pid`/`.socket`/`.log`/vsock files.
 ## `coop update`
 
 `update.rs` self-updates the CLI and its proxy companion: fetch release metadata
-from the pinned `trailofbits/coop` repo, download the platform tarball + `SHA256SUMS` +
+from the pinned `chr33s/coop` repo, download the platform tarball + `SHA256SUMS` +
 `attestations.jsonl`, verify the checksum (mandatory), verify the Sigstore
 attestation via `gh` against that bundle, falling back to the attestations API
 when the release publishes no usable one (best-effort),

@@ -21,13 +21,14 @@ coop runs Claude Code and Codex inside isolated virtual machines. On Linux, it s
 
 ## Install
 
-For this fork, follow [Build from source](#build-from-source). Its Swift-only
-proxy rewrite is not distributed by the inherited upstream installer/updater.
+Until a verified fork release is published, follow [Build from source](#build-from-source).
+The configured release channel is `chr33s/coop`, built from tagged commits on
+`swift`. Its macOS archives use the Apple backend (macOS 27+) and install
+`coop`, `coop-proxy`, and `coop-sandbox` together; see [Apple prerequisites](backends.md).
+Linux archives use Firecracker. Once the channel has a verified release:
 
-The following installs **upstream Trail of Bits coop**, not this fork:
-
-```
-curl -fsSL https://raw.githubusercontent.com/trailofbits/coop/main/install.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/chr33s/coop/swift/install.sh | bash
 ```
 
 `install.sh` verifies the downloaded tarball's SHA-256 against the release's
@@ -40,7 +41,7 @@ GitHub credential — releases up to v0.5.4 predate the bundle asset and do
 not publish it):
 
 ```sh
-gh attestation verify coop-<version>-<triple>.tar.gz --repo trailofbits/coop \
+gh attestation verify coop-<version>-<triple>.tar.gz --repo chr33s/coop \
   --bundle attestations.jsonl
 ```
 
@@ -49,18 +50,12 @@ instead, which it will only do when `gh` is logged in. `install.sh` and `coop
 update` use that API path themselves for releases published without a usable
 bundle.
 
-## Upgrading upstream from v0.5.4
+## Switching from upstream
 
-Rerun the installer above when upgrading from v0.5.4 to a release that includes
-credential proxy support. The v0.5.4 updater replaces only `coop`; it does not
-install the new `coop-proxy` companion. Proxy mode requires both binaries in
-the same directory. If you installed into a custom directory, pass the same
-`INSTALL_DIR` to the installer.
-
-The published v0.5.4 Linux ARM64 binary reports
-`coop 0.5.4-dev (8e24729+dirty)` and refuses `coop update` because it identifies
-itself as a development build. Rerunning the installer also bypasses that old
-updater.
+Run the fork installer to install all matching components. An upstream updater
+continues to target its own repository. macOS fork releases use the Apple backend;
+existing Lima instances remain managed by a Lima source build. Do not switch the
+binary used to manage them without planning that backend change.
 
 ## Build from source
 
@@ -87,8 +82,8 @@ CLI and Firecracker backend but no longer supports credential-proxy mode.
 For the opt-in Apple backend, build with `--features apple-container` and
 install the runtime using `./scripts/build-coop-sandbox.sh`; see
 [Apple backend setup](backends.md#macos--apple-sandbox-opt-in) for prerequisites.
-Update this fork by pulling and rebuilding. The inherited `coop update`
-targets upstream releases; Apple-backend builds disable it.
+Until a verified fork release exists, update by pulling and rebuilding.
+The configured `coop update` channel is `chr33s/coop`; Lima builds disable it.
 
 ## Configuration
 

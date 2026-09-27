@@ -36,6 +36,8 @@ cat >"$FIXTURE/$ARCHIVE_DIR/coop-proxy" <<'EOF'
 #!/bin/sh
 echo installed-coop-proxy
 EOF
+printf '#!/bin/sh\necho installed-coop-sandbox\n' >"$FIXTURE/$ARCHIVE_DIR/coop-sandbox"
+chmod +x "$FIXTURE/$ARCHIVE_DIR/coop-sandbox"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/coop" "$FIXTURE/$ARCHIVE_DIR/coop-proxy"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
 
@@ -155,11 +157,18 @@ unset COOP_TEST_GH_REQUIRE_BUNDLE
 if "$INSTALL_DIR/coop" | grep -q '^installed-coop$' \
     && "$INSTALL_DIR/coop-proxy" | grep -q '^installed-coop-proxy$'; then
     pass "installer extracts coop and coop-proxy"
+    if [[ "$TRIPLE" == aarch64-apple-darwin ]]; then
+        if [[ "$("$INSTALL_DIR/coop-sandbox")" == installed-coop-sandbox ]]; then
+            pass "installer installs the Apple runtime"
+        else
+            fail "installer installs the Apple runtime"
+        fi
+    fi
 else
     fail "installer extracts coop and coop-proxy"
 fi
 
-if grep -q 'attestation verify .* --repo trailofbits/coop --bundle ' "$GH_LOG"; then
+if grep -q 'attestation verify .* --repo chr33s/coop --bundle ' "$GH_LOG"; then
     pass "gh verifies the tarball with the downloaded bundle"
 else
     fail "gh verifies the tarball with the downloaded bundle" "gh calls: $(cat "$GH_LOG")"
@@ -200,7 +209,7 @@ else
 fi
 unset COOP_TEST_BUNDLE_FAIL
 
-if grep -q 'attestation verify .* --repo trailofbits/coop$' "$GH_LOG" \
+if grep -q 'attestation verify .* --repo chr33s/coop$' "$GH_LOG" \
     && ! grep -q -- '--bundle' "$GH_LOG"; then
     pass "legacy fallback verifies through the attestations API"
 else
@@ -238,7 +247,7 @@ else
         "$(tail -10 "$TEST_ROOT/t5.log")"
 fi
 
-echo "==> Test 6: legacy package without companion remains installable"
+echo "==> Test 6: missing companion policy"
 rm "$FIXTURE/$ARCHIVE_DIR/coop-proxy"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
 if command -v sha256sum >/dev/null 2>&1; then
@@ -247,6 +256,14 @@ else
     (cd "$FIXTURE" && shasum -a 256 "$TARBALL" > SHA256SUMS)
 fi
 printf '%s\n' 'old-coop' >"$INSTALL_DIR/coop"
+if [[ "$TRIPLE" == aarch64-apple-darwin ]]; then
+    if ! run_installer >"$TEST_ROOT/t6.log" 2>&1 \
+        && [[ "$(cat "$INSTALL_DIR/coop")" == old-coop ]]; then
+        pass "Apple install rejects missing companion before host replacement"
+    else
+        fail "Apple install rejects missing companion before host replacement"
+    fi
+else
 if run_installer >"$TEST_ROOT/t6.log" 2>&1 \
     && [[ "$("$INSTALL_DIR/coop")" == "installed-coop" \
        && "$("$INSTALL_DIR/coop-proxy")" == "installed-coop-proxy" ]]; then
@@ -254,6 +271,7 @@ if run_installer >"$TEST_ROOT/t6.log" 2>&1 \
 else
     fail "legacy install replaces coop and preserves the existing companion" \
         "$(tail -10 "$TEST_ROOT/t6.log")"
+fi
 fi
 
 repack_fixture() {
@@ -267,6 +285,22 @@ repack_fixture() {
 
 echo "==> Test 7: Swift-only package installs its proxy"
 printf '#!/bin/sh\necho coop-proxy\n' >"$FIXTURE/$ARCHIVE_DIR/coop-proxy"
+if [[ "$TRIPLE" == aarch64-apple-darwin ]]; then
+    mv "$FIXTURE/$ARCHIVE_DIR/coop-sandbox" "$FIXTURE/runtime-backup"
+    repack_fixture
+    printf '%s\n' keep-host >"$INSTALL_DIR/coop"
+    printf '%s\n' keep-runtime >"$INSTALL_DIR/coop-sandbox"
+    printf '%s\n' keep-proxy >"$INSTALL_DIR/coop-proxy"
+    if ! run_installer >"$TEST_ROOT/missing-runtime.log" 2>&1 \
+        && [[ "$(cat "$INSTALL_DIR/coop")" == keep-host \
+           && "$(cat "$INSTALL_DIR/coop-sandbox")" == keep-runtime \
+           && "$(cat "$INSTALL_DIR/coop-proxy")" == keep-proxy ]]; then
+        pass "missing Apple runtime preserves all installed binaries"
+    else
+        fail "missing Apple runtime preserves all installed binaries"
+    fi
+    mv "$FIXTURE/runtime-backup" "$FIXTURE/$ARCHIVE_DIR/coop-sandbox"
+fi
 repack_fixture
 if run_installer >"$TEST_ROOT/t7.log" 2>&1 \
     && [[ "$("$INSTALL_DIR/coop-proxy")" == coop-proxy ]]; then

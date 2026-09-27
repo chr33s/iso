@@ -68,9 +68,14 @@ pub enum AppleError {
 }
 
 /// Install locations searched for `coop-sandbox` when `[apple_container]
-/// binary` is unset; the first is `scripts/build-coop-sandbox.sh`'s default.
+/// binary` is unset. Prefer the runtime bundled beside the running host.
 fn default_runtimes() -> Vec<PathBuf> {
     let mut v = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        v.push(dir.join("coop-sandbox"));
+    }
     if let Some(home) = std::env::var_os("HOME") {
         v.push(PathBuf::from(home).join(".local/opt/coop-sandbox/bin/coop-sandbox"));
     }

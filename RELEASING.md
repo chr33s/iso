@@ -4,18 +4,20 @@ How a `coop` release is cut, and what to check before cutting one.
 
 ## Fork distribution status
 
-This is `chr33s/coop`, a fork of `trailofbits/coop`. The inherited installer,
-updater, and provenance verification still target `trailofbits/coop`; publishing
-a fork artifact does not make those clients install it. This document describes
-the inherited automation, not a completed fork distribution channel. Build this
-fork from source until its channel and provenance policy are established.
-The Apple-backend build disables self-update. Hosted Swift candidate attestation
-and remaining acceptance gates are tracked in
+The installer, updater, and repository provenance checks target `chr33s/coop`.
+Release tags must point to commits reachable from the `swift` branch. macOS
+artifacts use `apple-container` and bundle the signed `coop-sandbox` runtime
+and Swift `coop-proxy`; Linux artifacts retain Firecracker. Lima source builds
+refuse self-update because the macOS release uses a different backend.
+
+This configures the channel; no hosted candidate or fork release has been
+published or verified as part of this change. Build from source until those
+gates pass. Hosted attestation and remaining acceptance gates are tracked in
 [the acceptance map](docs/design/swift-proxy-acceptance.md).
 
 ## How the automation works
 
-- **`ci.yml`** runs on pushes to `main` and on every PR: `fmt --check`, `clippy -D warnings`,
+- **`ci.yml`** runs on pushes to `swift` and `swift` and on every PR: `fmt --check`, `clippy -D warnings`,
   `cargo test --workspace`, the preflight/probe regression tests, Linux bridge
   isolation, `integration-proxy-forward.sh`, `integration-install.sh`, `integration-update.sh`,
   `integration-uninstall.sh`, the macOS 27 Swift proxy package/process gates,
@@ -25,7 +27,7 @@ and remaining acceptance gates are tracked in
   targets
   (`aarch64-apple-darwin`, `x86_64-unknown-linux-musl`,
   `aarch64-unknown-linux-musl`), checks the built CLI reports the tagged release
-  version, builds and packages Swift `coop-proxy` for macOS only, generates `SHA256SUMS`, attests
+  version, builds and packages Swift `coop-proxy` and signed `coop-sandbox` for macOS only, generates `SHA256SUMS`, attests
   build provenance, extracts the `## vX.Y.Z` section from `CHANGELOG.md` as the
   release notes, and publishes the GitHub release. **It fails if there is no
   matching CHANGELOG section.**
@@ -52,7 +54,7 @@ CI can't run the full VM integration suite or the extra-toolchain checks
 
 ## Release checklist
 
-1. **Land all release content on `main`.** Open PRs merged, `main` green in CI.
+1. **Land all release content on `swift`.** Open PRs merged, `swift` green in CI.
 
 2. **Pick the version** (`X.Y.Z`, semver). Breaking changes → major; new
    features → minor; fixes only → patch. Look at the `## Unreleased` section of
@@ -97,12 +99,12 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    ```
 
 7. **Open the bump PR** (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`), get it
-   reviewed, and merge to `main`. Never push the bump straight to `main`.
+   reviewed, and merge to `swift`. Never push the bump straight to `swift`.
 
 8. **Tag the merge commit and push.**
 
    ```bash
-   git checkout main && git pull
+   git checkout swift && git pull
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
@@ -111,7 +113,7 @@ CI can't run the full VM integration suite or the extra-toolchain checks
 
 9. **Verify the published release.** On the GitHub release page confirm:
    - three `coop-vX.Y.Z-<target>.tar.gz` artifacts, each containing `coop`; the macOS
-     archive also contains Swift `coop-proxy`, plus release-level `SHA256SUMS`
+     archive also contains Swift `coop-proxy` and signed `coop-sandbox`, plus release-level `SHA256SUMS`
      and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the notes match the `## vX.Y.Z` CHANGELOG section.

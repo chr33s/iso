@@ -1866,7 +1866,7 @@ environment; the credential was not copied into source or fixture files.
 
 ## Transition candidate packaging (2026-09-27)
 
-Prepared `.github/workflows/proxy-transition.yml`, a manually triggered candidate
+Prepared `.github/workflows/swift-candidate.yml`, a manually triggered candidate
 build gated by the existing reusable CI workflow. It builds the Apple-backend
 host, both proxy implementations, and the VM runtime from the triggering commit,
 checks the archive's per-binary hashes and Mach-O signatures, and prepares a
@@ -2451,3 +2451,54 @@ the complete user-supplied transcript reports PASS. The initial unconfigured
 Swift fixture skip is expected; both configured fixture executions ran and passed.
 The full VM run borrowed the diagnostic helper's retained socket; the separate
 canonical preflight validates the final privileged helper path.
+
+
+## 2026-09-27: final review, Lima gate, and fork release channel
+
+The user selected `chr33s/coop` and `swift` for the release channel. Installer,
+updater, and repository provenance checks now use that fork. Release CI rejects
+tagged commits outside `swift` ancestry; macOS builds use `apple-container` and
+bundle `coop`, Swift `coop-proxy`, and signed `coop-sandbox`. Linux retains
+Firecracker. The host prefers an adjacent runtime with the existing path trust
+and runtime qualification checks. Lima source builds refuse self-update to avoid
+a backend switch. Missing Apple companions are rejected before replacement.
+File replacements are atomic individually, not as a set; a later filesystem
+failure may require reinstalling the same release to restore matching files.
+
+The manual workflow is now `.github/workflows/swift-candidate.yml`, displayed as
+**Swift release candidate**, and is restricted to this fork's `swift` branch.
+This is channel preparation, not hosted execution or publication.
+
+Independent correctness/tests and security/API reviews covered the full goal
+branch (`2e1bf205` through `daca9ffd`), then the release-channel working delta.
+No findings remained. The security audit additionally passed 46 refusal cases,
+100 malformed cases, and 256-connection saturation/recovery per provider, plus
+certificate-matrix and capability tests. Release-delta validation passed 15
+installer checks, 13 real updater checks, eight preflight regressions, 1,216
+Lima/default unit tests, and 1,329 Apple unit tests followed by both newly added
+backend/runtime-selection tests. Default and Apple clippy with warnings denied,
+format, actionlint, and diff checks passed. Deliberately omitting runtime
+installation in an isolated copy made the new installer witness fail.
+
+The standard Lima suite at `daca9ffd` exited zero: **250 passed, zero failed,
+eight skipped across 52 phases**. All lifecycle phases passed, including settings
+persistence, commit/restore, and reprovision. Skips: Firecracker PID, full-only
+Codex update, two Lima hostname checks, two disk-size status assertions, and two
+guest-IP assertions. The full-only workspace/multi-instance suite was not run.
+The Swift build emitted stale-cache path warnings after package relocation,
+then completed successfully. The complete transcript was inspected and its
+per-phase counts and SHA-256 retained in `/tmp/coop-final-lima-result.json`.
+Owned test instances were removed; the pre-existing `coop-fc` host was restored
+to Stopped. The raw Lima transcript was removed after review.
+
+The previous Firecracker result remains 253 passed, four failed, three skipped.
+Shutdown durability and `e2fsck -fy` exit handling are separate lifecycle
+follow-ups: `src/vm.rs`, `src/setup.rs`, and `src/backend.rs` are unchanged from
+the approved proxy baseline. The earlier sync-before-stop reproduction remains
+evidence of the durability symptom, not proof of its exact cause. No fresh
+Firecracker suite was run and the Linux platform gate is not claimed green.
+
+Remaining external gates: dedicated live-provider credential references and
+approved models; hosted same-revision candidate/attestation execution and
+artifact verification; and a published, verified fork release. No push, tag,
+workflow dispatch, or publication was performed in this work.

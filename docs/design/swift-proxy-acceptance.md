@@ -1,7 +1,7 @@
 > **2026-09-27 cutover:** The user waived observation and authorized immediate
 > Rust proxy deletion. Swift is now the sole implementation; the selector and
 > rollback binary are removed. Earlier Rust/differential evidence below is
-> historical. Live/VM/review/release gates remain open; deletion is not proof
+> historical. Live/platform/release gates remain open; deletion is not proof
 > that those gates passed.
 
 # Swift proxy acceptance map
@@ -22,8 +22,8 @@ whole-branch review and required platform gates.
 | §20: same-revision signed/attested transition artifact | Local archive builder and manual workflow exist; local archive/signature checks passed. | Execute hosted CI and attestation from the actual source revision; inspect its resulting artifact and provenance. Local ad-hoc signatures and a workflow file do not prove this. |
 | §16 phase 6: Swift default | Host resolves only `coop-proxy`; no selector or fallback remains. | User authorized immediate cutover. Validate Swift-only packaging/lifecycle; hosted distribution remains pending. |
 | §16 phase 7 / §20: observation and Rust removal | User waived observation and authorized deletion. Rust proxy crate, dependencies, and selector removed; Swift retains language-neutral fixtures. | Other acceptance gates remain open independently of deletion. |
-| §21 validation: final review | Prior independent reviews found and drove fixes; newer fixture changes have targeted tests/fault checks. | Review the full final branch and ensure no unresolved high/critical findings. Earlier review scope is not final sign-off. |
-| Repository platform gates | Standard Lima passed historically. Standard Firecracker had four lifecycle failures; Apple transition gate now passes. | Resolve or explicitly disposition the Firecracker failures and run required final gates. Apple results do not prove Linux/Lima behavior. |
+| §21 validation: final review | Independent whole-branch correctness/tests and security/API reviews of `2e1bf205` → `daca9ffd`, followed by release-channel delta reviews, found no surviving findings. | Review remains tied to that snapshot and the reviewed working delta; later changes require another review. External acceptance gates remain open. |
+| Repository platform gates | Final standard Lima run at `daca9ffd`: 250 passed, 0 failed, 8 skipped across 52 phases. Controlled Apple gate passed. Prior Firecracker run had four lifecycle failures. | Firecracker shutdown durability and repaired-filesystem exit handling remain separate lifecycle follow-ups; affected source is unchanged from the approved baseline. Linux gate is not green. Full-only Lima tests were not run. |
 
 ## Specification coverage
 
@@ -54,8 +54,8 @@ that every earlier result was rerun during this audit.
 | §19.1–19.4 unit/embedded/mutation/fuzz | Swift Testing/XCTest, NIOEmbedded, Swift policy mutation tooling and targeted production faults; Rust mutation runs; language-neutral raw HTTP fuzz runner. Ledger records counts and timeouts. | Preserve timeout/unviable distinctions; final source changes need scoped revalidation. |
 | §19.5 real VM | `/tmp/coop-listener-lifetime-result.json`: exit 0, both providers admitted through real guest tunnels, 19,501-file scan, two agent error observations, startup refusals, and verified cleanup. | `controlled_upstream: true`, `live_provider: false`; production profile unchanged, fixture CA and loopback upstream used. |
 | §19.6 live tests | `scripts/test-proxy-live.py` and guest `agent-tool-smoke.py`; offline regressions/faults pass. | No successful live operation is claimed. |
-| §20 release/rollback | Builder packages host/runtime plus Swift; installer/updater handle Swift-only companion and remove stale Rust files. Rollback implementation removed. | Hosted workflow execution and official Apple-backend channel remain open. |
-| §21 architecture/secrets/HTTP/TLS/resource/sandbox/validation checklist | Sources and targeted evidence above cover individual assertions. | The checklist as a whole is **not achieved**: Live-provider tests, final review/platform gates and release prevent completion. |
+| §20 release/rollback | Builder packages host/runtime plus Swift; installer/updater handle Swift-only companion and remove stale Rust files. Rollback implementation removed. | Channel configured for `chr33s/coop` with release commits from `swift`, Apple macOS artifacts, and matching installer/updater provenance. Hosted workflow execution and published-artifact verification remain open. |
+| §21 architecture/secrets/HTTP/TLS/resource/sandbox/validation checklist | Sources and targeted evidence above cover individual assertions. | The checklist as a whole is **not achieved**: Live-provider tests, remaining platform gates and hosted release verification prevent completion. |
 | §22 non-goals | No App Sandbox, Unix proxy listener, HTTP/2, arbitrary upstreams, certificate pinning, GitHub proxy, or shared provider process introduced. | Test-only loopback routing/CA seams are not production configuration. |
 | §23 post-parity candidates | Deferred as specified. | These are not prerequisites to inflate the initial parity scope. |
 | §24 invariants | Fixed identity, capability gate, stdin-only credential, confinement and streaming have implementation and scoped evidence. | Full completion remains unproven until all mandatory open items above are resolved. |

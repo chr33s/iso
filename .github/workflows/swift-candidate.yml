@@ -1,4 +1,4 @@
-name: Swift proxy candidate
+name: Swift release candidate
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ permissions: {}
 
 jobs:
   ci:
+    if: github.repository == 'chr33s/coop' && github.ref == 'refs/heads/swift'
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml

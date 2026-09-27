@@ -120,6 +120,28 @@ if [[ "${0##*/}" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
 
 
 class ReleaseBinaryTests(unittest.TestCase):
+    def test_release_source_gate_rejects_commit_outside_swift(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        script = re.search(
+            r"- name: Require a release commit from swift\n        run: (.*)",
+            workflow)[1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=root, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+            git('init', '-b', 'swift')
+            git('config', 'user.name', 'Fixture')
+            git('config', 'user.email', 'fixture@example.invalid')
+            git('commit', '--allow-empty', '-m', 'release source')
+            git('update-ref', 'refs/remotes/origin/swift', 'HEAD')
+            accepted = subprocess.run(['bash', '-euc', script], cwd=root)
+            self.assertEqual(accepted.returncode, 0)
+            git('checkout', '-b', 'unpublished')
+            git('commit', '--allow-empty', '-m', 'not on swift')
+            rejected = subprocess.run(['bash', '-euc', script], cwd=root)
+            self.assertNotEqual(rejected.returncode, 0)
+
     def test_packaging_requires_release_identity_and_companion(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
         block = re.search(
@@ -137,14 +159,23 @@ class ReleaseBinaryTests(unittest.TestCase):
             proxy = binary_dir / 'coop-proxy'
             proxy.write_text('#!/bin/sh\nexit 0\n')
             proxy.chmod(0o755)
+            runtime = binary_dir / 'coop-sandbox'
+            runtime.write_text('#!/bin/sh\nexit 0\n')
+            runtime.chmod(0o755)
             coop = binary_dir / 'coop'
-            for version, companion, expected in [('coop 9.8.7 (abc1234)', True, 0),
-                                                 ('coop 9.8.7-dev (abc1234+dirty)', True, 1),
-                                                 ('coop 9.8.6 (abc1234)', True, 1),
-                                                 ('coop 9.8.7 (abc1234)', False, 1)]:
+            for version, companion, has_runtime, expected in [
+                    ('coop 9.8.7 (abc1234)', True, True, 0),
+                    ('coop 9.8.7-dev (abc1234+dirty)', True, True, 1),
+                    ('coop 9.8.6 (abc1234)', True, True, 1),
+                    ('coop 9.8.7 (abc1234)', False, True, 1),
+                    ('coop 9.8.7 (abc1234)', True, False, 127)]:
                 with self.subTest(version=version, companion=companion):
+                    proxy.write_text('#!/bin/sh\nexit 0\n')
+                    proxy.chmod(0o755)
                     if not companion:
                         proxy.unlink()
+                    if not has_runtime:
+                        runtime.unlink()
                     coop.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
                     coop.chmod(0o755)
                     result = subprocess.run(

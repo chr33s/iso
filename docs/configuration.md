@@ -463,10 +463,9 @@ Each timeout must be between 1 and 86400 seconds.
 
 ## `updates` section
 
-Background update-check behavior for `coop update`. The inherited channel targets
-upstream Trail of Bits releases, not this fork. Use source rebuilds to retain
-this fork; set `mode = "off"` to suppress upstream notices. Development builds
-and Apple-backend builds suppress these checks.
+Background update-check behavior for `coop update`. The fork channel targets
+`chr33s/coop` releases from `swift`. macOS releases use the Apple backend;
+Lima source builds suppress notices and refuse self-update. Development builds also suppress these checks.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

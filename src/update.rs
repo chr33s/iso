@@ -24,7 +24,7 @@ use crate::fs_util::atomic_write_json;
 use crate::prompt::confirm;
 use crate::sha256_hash::Sha256Hash;
 
-const REPO: &str = "trailofbits/coop";
+const REPO: &str = "chr33s/coop";
 const DEFAULT_API_BASE: &str = "https://api.github.com";
 /// Release asset holding the Sigstore provenance bundle, published since #421.
 const BUNDLE_ASSET: &str = "attestations.jsonl";
@@ -684,22 +684,47 @@ fn replace_sibling_proxy_at(extract_dir: &Path, current_exe: &Path) -> Result<()
     Ok(())
 }
 
+/// Apple releases require their qualified runtime beside the host. Reject a
+/// missing companion before replacing any installed binary.
+#[cfg(feature = "apple-container")]
+fn replace_sibling_runtime(extract_dir: &Path) -> Result<()> {
+    for obsolete in ["coop-proxy-rs", "coop-proxy-swift"] {
+        ensure!(
+            !extract_dir.join(obsolete).exists(),
+            "Release contains an obsolete proxy transition artifact"
+        );
+    }
+    let runtime = extract_dir.join("coop-sandbox");
+    ensure!(
+        runtime.is_file(),
+        "Release is missing the coop-sandbox runtime"
+    );
+    ensure!(
+        extract_dir.join("coop-proxy").is_file(),
+        "Release is missing the coop-proxy companion"
+    );
+    let current = env::current_exe().context("Failed to resolve current executable path")?;
+    let dir = current
+        .parent()
+        .context("Current executable has no parent directory")?;
+    atomic_replace(&runtime, &dir.join("coop-sandbox"))
+}
+
 // ── Main update flow ─────────────────────────────────────────────────────────
 
 /// Whether this binary is a variant the release artifacts cannot replace.
-/// Published releases carry only the default backend, so updating an
-/// `apple-container` build would silently swap it for a Lima build.
+/// Fork macOS releases carry the Apple backend; a Lima build must not
+/// silently switch backends through self-update.
 const fn is_unreleased_variant() -> bool {
-    cfg!(feature = "apple-container")
+    cfg!(all(target_os = "macos", not(feature = "apple-container")))
 }
 
 pub fn run(opts: &UpdateOpts) -> Result<()> {
     if is_unreleased_variant() {
         bail!(
-            "APPLE_UPDATE_VARIANT_UNSUPPORTED: this is an apple-container build, and \
-             release artifacts contain only the default (Lima) backend. Updating would \
-             replace this backend, so `coop update` is disabled; rebuild from source \
-             with `--features apple-container` instead. Nothing was changed."
+            "LIMA_UPDATE_VARIANT_UNSUPPORTED: fork macOS releases use the Apple backend. \
+             This Lima build cannot self-update without changing backends; rebuild \
+             from source instead. Nothing was changed."
         );
     }
     if is_dev_build() {
@@ -809,6 +834,8 @@ fn perform_update(release: &Release, triple: &str) -> Result<()> {
     // Swap the sibling proxy first (from the same verified tarball) so a
     // proxy-write failure aborts before coop itself is replaced, keeping the
     // two in lockstep.
+    #[cfg(feature = "apple-container")]
+    replace_sibling_runtime(&extract_dir)?;
     replace_sibling_proxy(&extract_dir)?;
     atomic_replace_self(&extracted)
 }
@@ -832,8 +859,8 @@ fn state_path() -> Option<PathBuf> {
 ///
 /// Best-effort — used by `coop uninstall`. Returns `Ok` even if nothing exists.
 pub fn remove_state() -> Result<()> {
-    // The state file belongs to the default build (this variant never writes
-    // it), so an apple-container uninstall leaves it alone.
+    // Builds outside the release channel never write this state; leave
+    // a release-compatible installation's shared state alone.
     if is_unreleased_variant() {
         return Ok(());
     }
@@ -975,6 +1002,14 @@ fn interval_elapsed(now: u64, last_checked_at: u64, interval_hours: u64) -> bool
 #[expect(clippy::panic, reason = "tests use panic! for unreachable arms")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_channel_preserves_backend() {
+        #[cfg(all(target_os = "macos", not(feature = "apple-container")))]
+        assert!(is_unreleased_variant());
+        #[cfg(any(not(target_os = "macos"), feature = "apple-container"))]
+        assert!(!is_unreleased_variant());
+    }
 
     #[test]
     fn strip_v_removes_leading_v() {

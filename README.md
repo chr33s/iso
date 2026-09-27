@@ -48,11 +48,12 @@ coop setup
 
 On Linux, `coop setup` also installs Firecracker and fetches a guest kernel. On macOS, install Lima first (`brew install lima`) — setup fails without it. coop is tested on macOS arm64 (Apple Silicon) and Linux x86_64; Linux arm64 builds are available but untested. Each backend has its own host requirements — see [Prerequisites](docs/getting-started.md#prerequisites).
 
-Update this fork by pulling its source and rebuilding the installed components.
-The inherited installer and `coop update` still target upstream releases, so
-they do not distribute this fork. Apple-backend builds disable self-update.
-See [`coop update`](docs/commands.md#update) and the
-[`updates` config section](docs/configuration.md#updates-section).
+The release channel targets `chr33s/coop`, with tagged commits from `swift`.
+macOS release archives use the Apple backend and include `coop-proxy` and
+`coop-sandbox`; Linux archives use Firecracker. Lima builds remain available
+from source and refuse self-update to avoid changing backends. Until the first
+verified fork release is published, install this fork from source.
+See [release status](RELEASING.md) and [`coop update`](docs/commands.md#update).
 
 ## Usage
 

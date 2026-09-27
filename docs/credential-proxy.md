@@ -231,18 +231,19 @@ and `coop-proxy` beside one another in Cargo's
 output directory. `--include-runtime` adds the ad-hoc signed `coop-sandbox`.
 The archive includes LICENSE, per-binary SHA256SUMS, and BUILD.json with source
 revision, dirty state, backend, and minimum OS. Local checksums do not establish
-release provenance. The manual **Swift proxy candidate** workflow requires a
+release provenance. The manual **Swift release candidate** workflow requires a
 clean exact revision, verifies binary signatures, and attests its candidate
 archive. It has not yet been executed on GitHub.
 
-The release workflow packages Swift with the macOS host CLI; Linux archives
-contain only the host CLI. The installer/updater install a Swift-only companion
-and remove stale Rust siblings. Obsolete transition archives containing
-`coop-proxy-rs` or `coop-proxy-swift` are rejected before replacement. Explicitly requested older
-releases with the legacy `coop-proxy` name remain installable; releases predating
-any companion preserve existing files. Artifact checksum and provenance
-verification still precede installation. Apple-backend self-update remains
-disabled until that backend has its own matching release channel.
+The `chr33s/coop` release workflow requires tagged commits from `swift` and
+packages the Apple host, Swift proxy, and signed runtime together on macOS.
+Linux archives contain only the host CLI. Installer and updater provenance
+checks pin `chr33s/coop`. Apple archives must include both companions; missing
+companions or obsolete `coop-proxy-rs`/`coop-proxy-swift` transition artifacts
+are rejected before replacement. Linux archives without companions preserve
+existing files. Verification precedes installation; companion replacements
+precede the host replacement. Lima source builds refuse self-update to avoid
+switching backends. Hosted candidate and release verification remain pending.
 
 The host resolves only the adjacent `coop-proxy` executable. There is no
 implementation selector or fallback. Missing binaries, confinement failures,
