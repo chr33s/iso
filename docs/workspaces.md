@@ -122,6 +122,52 @@ Before overwriting the local destination, `pull` runs `git status --porcelain` a
 
 The destination directory is created if absent. Transport selection follows the same rsync-then-tar-pipe order. The tar-pipe fallback verifies SHA-256 checksums end-to-end.
 
+## Staged pulls
+
+`coop diff` (or `coop pull --review`, or any `coop pull` with
+`workspace.pull.mode = "stage"`) pulls into a stage under the instance
+directory instead of the local directory:
+
+```bash
+coop diff my-instance                         # stage + review
+coop pull my-instance --apply --stage-id 1a2b3c4d
+coop pull my-instance --discard
+```
+
+The stage is walked without following links and checked before anything is
+applied:
+
+- Only regular files, directories and symlinks are accepted. FIFOs, sockets,
+  devices and hard links make the stage inapplicable.
+- A symlink must be relative, stay inside the workspace, and not pass
+  through another symlink.
+- File names must be UTF-8 without control characters.
+- `workspace.pull.max_files`, `max_bytes` and `max_file_bytes` are hard
+  budgets; exceeding one discards the stage. While the transfer runs it is
+  also sampled about twice a second against `max_files` and `max_bytes`
+  (allocated bytes) and stopped once it exceeds either, so a guest cannot fill
+  the host disk before the final check.
+- Directories nested deeper than 64 levels make the stage inapplicable.
+- Symlink names are compared case- and normalization-insensitively, as APFS
+  resolves them.
+- One stage operation runs at a time per instance; a second `coop pull` or
+  `coop diff` waits for the first.
+- A guest file where the host has a directory is reported for you to resolve.
+
+The review lists every added (`A`), modified (`M`) and type-changed (`T`) path,
+flags changes that can run commands on the host (anything under a `.git`
+path, including a `.git` file that redirects the git directory; `.husky/`;
+`.envrc`; `.vscode/tasks.json`), and prints text diffs for small UTF-8 files. `--apply` then:
+
+- refuses if any reviewed destination path changed since the review, or a
+  staged file no longer matches the hash in the manifest;
+- writes each file through a temporary file and a rename, replacing a
+  destination symlink rather than following it;
+- on failure, lists what was already applied and keeps the stage.
+
+Like a direct pull, a staged pull never deletes local files. `--force` skips
+only the local uncommitted-changes check.
+
 ## Default exclusions
 
 All transfers (rsync and tar-pipe) exclude these reproducible build and cache directories:

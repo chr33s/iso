@@ -59,6 +59,10 @@ user launched it.
   (`Sources/CoopHost/Workspace.swift`) brings guest-authored file contents,
   filenames, and symlinks onto the host filesystem. This is the **widest guest→host
   channel** and the primary place a path-traversal or symlink escape could land.
+  A staged pull (`WorkspaceStage*.swift`) lands it in `<instance>/stage/`,
+  walks it without following links, rejects special files, hard links,
+  escaping symlinks and control-character names, enforces budgets, and applies
+  descriptor-relative with a destination-drift and content-hash check.
 - **Committed disks.** `coop commit` turns a guest-mutated disk into an image,
   so the guest authors every file on it. Host-key and machine-id removal runs
   in a maintenance VM, never on the host (see

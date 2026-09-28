@@ -73,6 +73,7 @@ public struct CoopConfig: Sendable, Equatable {
   public let forwardPorts: [PortForward]
   public let updates: UpdateConfig
   public let appleContainer: AppleContainerConfig
+  public let workspacePull: WorkspacePullConfig
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
   public static let backendRoot = "backends/apple-container-v1"
@@ -249,6 +250,46 @@ public struct AppleContainerConfig: Sendable, Equatable {
   public let buildTimeout: TimeoutSecs
 }
 
+/// How `coop pull` returns guest files: straight into the destination
+/// (`direct`, the historical behavior) or through a reviewed stage.
+public enum WorkspacePullMode: String, Sendable, Equatable {
+  case direct
+  case stage
+}
+
+/// Hard budgets a stage must fit before it can be applied.
+public struct StageLimits: Sendable, Equatable {
+  /// Staged entries of any type.
+  public let maxFiles: UInt64
+  /// Total regular-file bytes.
+  public let maxBytes: ByteCount
+  /// Largest single regular file.
+  public let maxFileBytes: ByteCount
+
+  public init(maxFiles: UInt64, maxBytes: ByteCount, maxFileBytes: ByteCount) {
+    self.maxFiles = maxFiles
+    self.maxBytes = maxBytes
+    self.maxFileBytes = maxFileBytes
+  }
+
+  public static let defaults = StageLimits(
+    maxFiles: 50_000, maxBytes: ByteCount(bytes: 1 << 30)!,
+    maxFileBytes: ByteCount(bytes: 256 << 20)!)
+}
+
+/// `workspace.pull`.
+public struct WorkspacePullConfig: Sendable, Equatable {
+  public let mode: WorkspacePullMode
+  public let limits: StageLimits
+
+  public init(mode: WorkspacePullMode, limits: StageLimits) {
+    self.mode = mode
+    self.limits = limits
+  }
+
+  public static let defaults = WorkspacePullConfig(mode: .direct, limits: .defaults)
+}
+
 extension CoopConfig {
   /// One command's CLI overrides of `vm`; the file is never rewritten.
   public func overridingVM(vcpus: UInt8?, memory: VmMemory?, templateSize: GiB?) -> CoopConfig {
@@ -262,6 +303,6 @@ extension CoopConfig {
       proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
-      updates: updates, appleContainer: appleContainer)
+      updates: updates, appleContainer: appleContainer, workspacePull: workspacePull)
   }
 }

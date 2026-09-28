@@ -611,10 +611,31 @@ coop pull [NAME] [FLAGS]
 | `--dir <dir>` | Local directory to pull into (defaults to the workspace host path) |
 | `--force` | Overwrite local changes without confirmation |
 | `--exclude-git` | Skip the `.git/` directory in this transfer |
+| `--review` | Pull into a host-side stage and print it for review instead of writing the local directory |
+| `--stat` | With `--review`, print only the summary, not text diffs |
+| `--apply` | Apply the current stage to the directory it was created for, then remove it |
+| `--stage-id <id>` | With `--apply`, the id printed at review; any other stage is refused |
+| `--discard` | Delete the current stage |
+
+With `workspace.pull.mode = "stage"` ([configuration](configuration.md#workspace-section)),
+a plain `coop pull` behaves like `--review`. See
+[staged pulls](workspaces.md#staged-pulls).
 
 ```
 coop pull
 coop pull my-project --dir ./local-copy --force
+coop pull my-project --review
+coop pull my-project --apply --stage-id 1a2b3c4d
+```
+
+### `diff`
+
+Stage the guest workspace and print what `coop pull --apply` would change:
+added, modified and type-changed paths, then text diffs. Equivalent to
+`coop pull --review`.
+
+```
+coop diff [NAME] [--dir <dir>] [--exclude-git] [--stat]
 ```
 
 ### `editor`

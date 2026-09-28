@@ -171,6 +171,17 @@ enum Parse {
     return try domain(path) { () throws(ValidationError) in try TimeoutSecs(seconds) }
   }
 
+  /// An integer byte count, or a string with a binary suffix (`"256MiB"`).
+  static func byteCount(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> ByteCount
+  {
+    if case .string(let text) = value {
+      return try domain(path) { () throws(ValidationError) in try ByteCount(parsing: text) }
+    }
+    let bytes = try nonZero(value, path, as: UInt64.self)
+    return ByteCount(bytes: bytes)!
+  }
+
   static func stringEnum<T: RawRepresentable<String>>(
     _ value: JSONValue, _ path: [JSONPathComponent], _ allowed: [T]
   ) throws(FieldError) -> T {
@@ -271,7 +282,30 @@ enum ConfigDecoder {
       },
       appleContainer: try r.defaulted("apple_container", AppleContainerConfig.defaults) {
         v, p throws(FieldError) in try appleContainer(v, p, env: env)
+      },
+      workspacePull: try r.defaulted("workspace", .defaults) { v, p throws(FieldError) in
+        let w = try ObjectReader(v, at: p)
+        try w.rejectUnknown(allowing: ["pull"])
+        return try w.defaulted("pull", .defaults, workspacePull)
       })
+  }
+
+  static func workspacePull(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> WorkspacePullConfig
+  {
+    let r = try ObjectReader(value, at: path)
+    try r.rejectUnknown(allowing: ["mode", "max_files", "max_bytes", "max_file_bytes"])
+    let d = StageLimits.defaults
+    return WorkspacePullConfig(
+      mode: try r.defaulted("mode", .direct) { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, [WorkspacePullMode.direct, .stage])
+      },
+      limits: StageLimits(
+        maxFiles: try r.defaulted("max_files", d.maxFiles) { v, p throws(FieldError) in
+          try Parse.nonZero(v, p, as: UInt64.self)
+        },
+        maxBytes: try r.defaulted("max_bytes", d.maxBytes, Parse.byteCount),
+        maxFileBytes: try r.defaulted("max_file_bytes", d.maxFileBytes, Parse.byteCount)))
   }
 
   static func vm(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError) -> VMConfig {

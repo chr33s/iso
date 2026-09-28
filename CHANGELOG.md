@@ -8,6 +8,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Boundary hardening and local secrets
+
+- **Staged pulls**: `coop diff` and `coop pull --review` pull the guest
+  workspace into a host-side stage and print it for review; `coop pull --apply
+  [--stage-id ID]` applies it and `--discard` drops it. Special files, hard
+  links, escaping or chained symlinks and control-character names make a stage
+  inapplicable, and `workspace.pull` budgets bound it.
+  `workspace.pull.mode = "stage"` makes a plain `coop pull` stage too; the
+  default `direct` mode is unchanged.
+
 ### Swift host
 
 - **The host CLI is Swift.** The Rust `coop` host, its Cargo manifests,

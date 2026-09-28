@@ -170,3 +170,15 @@ func rejectsOtherURLs(_ url: String) {
       """)
   #expect(OutputJSON.array([]).rendered() == "[]\n")
 }
+
+@Test func byteCountsParseBinarySuffixes() throws {
+  #expect(try ByteCount(parsing: "1048576").bytes == 1 << 20)
+  #expect(try ByteCount(parsing: "512KiB").bytes == 512 << 10)
+  #expect(try ByteCount(parsing: "256MiB").bytes == 256 << 20)
+  #expect(try ByteCount(parsing: "1GiB").description == "1GiB")
+  #expect(ByteCount(bytes: 1536)!.description == "1536")
+  #expect(ByteCount(bytes: 3 << 10)!.description == "3KiB")
+  for bad in ["", "0", "0MiB", "1 MiB", "1MB", "-1", "1.5GiB", "99999999999GiB"] {
+    #expect(throws: ValidationError.self) { try ByteCount(parsing: bad) }
+  }
+}

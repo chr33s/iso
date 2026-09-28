@@ -160,3 +160,20 @@ func rustLinesForTest(_ text: String) -> [String] {
   #expect(message.contains("creation options belong to `coop up`"))
   #expect(message.contains("coop up /p"))
 }
+
+@Test func plainPullStagesOnlyInStageModeOrWithReview() {
+  #expect(!Pull.stages(review: false, mode: .direct))
+  #expect(Pull.stages(review: false, mode: .stage))
+  #expect(Pull.stages(review: true, mode: .direct))
+}
+
+@Test func pullFlagsAreMutuallyExclusive() throws {
+  for bad in [
+    ["pull", "--review", "--apply"], ["pull", "--apply", "--discard"],
+    ["pull", "--stage-id", "x"], ["pull", "--apply", "--dir", "d"], ["pull", "--apply", "--stat"],
+  ] {
+    #expect(throws: (any Error).self, "\(bad)") { try CoopCommand.parseAsRoot(bad) }
+  }
+  #expect(try CoopCommand.parseAsRoot(["pull", "--apply", "--stage-id", "x"]) is Pull)
+  #expect(try CoopCommand.parseAsRoot(["pull", "--stat"]) is Pull)
+}
