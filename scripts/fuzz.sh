@@ -39,7 +39,7 @@ RSS_LIMIT_MB=2048
 MALLOC_LIMIT_MB=1024
 
 SWIFT_FLAGS=(
-  -O -g -parse-as-library -swift-version 6
+  -O -g -parse-as-library -swift-version 6 -package-name coop
   -target arm64-apple-macosx27.0
   -sanitize=address
   -sanitize-coverage=edge,trace-cmp
