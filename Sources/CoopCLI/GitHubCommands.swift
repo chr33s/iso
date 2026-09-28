@@ -121,7 +121,7 @@ struct GitHubStatus: ParsableCommand {
     transform: parseInstanceName) var vm: InstanceName?
   @Flag(
     help:
-      "Resolve each entry's `cmd:` invocation (may trigger Keychain / 1Password prompts) to confirm the secret store still serves it"
+      "Resolve each entry's `cmd:` invocation or `vault:` secret (may trigger Keychain / 1Password prompts, or one passphrase and Touch ID unlock for `vault:` entries) to confirm the secret store still serves it"
   ) var probe = false
   @Flag(help: "Emit machine-readable JSON instead of the text report") var json = false
 

@@ -6,6 +6,7 @@ import ArgumentParser
 import CoopConfiguration
 import CoopCore
 import CoopHost
+import CoopSecrets
 import Foundation
 
 /// What a command runs with: one validated configuration (S-02), the
@@ -28,6 +29,10 @@ struct CommandContext {
       ConfigLoader.load(global.selection(environment: environment), environment: environment))
     let diagnostics = Diagnostics(verbosity: global.verbose)
     AdminSupport.updateNotice(config, environment: environment, diagnostics: diagnostics)
+    // Every credential resolver in this process reads `vault:` references
+    // through the one store.
+    CredentialResolver.processSecrets = StoreSecretResolver.shared(
+      EnclaveStore(directory: config.dataDirectory.appending("secrets").path))
     return CommandContext(
       environment: environment, config: config,
       backend: AppleBackend(
@@ -373,6 +378,13 @@ struct ProxyStatus: ParsableCommand {
       }
       let instance = try InstanceStore.resolve(context.config, name: name)
       writeVM(out, instance.name.rawValue, try ProxyState.load(instance), context.config.proxy)
+      let routed = try GuestEnvState.tryLoad(instance)?.providerSecrets() ?? [:]
+      for provider in ProxyProvider.allCases {
+        guard let secret = routed[provider] else { continue }
+        out.out(
+          "  \(padded(provider.rawValue, 10)) provider secret from --env: \(secret.variable)={vault:\(secret.name)} (takes precedence)"
+        )
+      }
     } else {
       out.out("Credential proxy — defaults (proxy in the configuration file):")
       for provider in ProxyProvider.allCases {

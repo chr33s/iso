@@ -22,6 +22,63 @@ public struct GuestEnvState: Sendable, Equatable {
 
   public init(entries: [EnvVarName: EnvValue] = [:]) { self.entries = entries }
 
+  /// A `{vault:}` reference on a recognized provider variable: routed to
+  /// that provider's `coop-proxy`, never into the guest environment
+  /// (embedded-secrets spec §31.1).
+  public struct ProviderSecret: Sendable, Equatable {
+    public let provider: ProxyProvider
+    public let auth: ProxyAuthScheme
+    public let variable: EnvVarName
+    public let name: SecretName
+  }
+
+  static func providerRoute(_ variable: String) -> (ProxyProvider, ProxyAuthScheme)? {
+    ProxyProvider.route(forVariable: variable)
+  }
+
+  /// A stored secret is either a provider credential (routed to coop-proxy)
+  /// or a guest-visible value, never both: a generic reference naming a
+  /// secret that a proxy credential or provider secret also reads would put
+  /// that credential in the guest.
+  public static func checkCredentialSeparation(
+    _ entries: [EnvVarName: EnvValue], proxyCredentialNames: Set<SecretName>
+  ) throws {
+    let routed = try providerSecrets(entries)
+    let routedVariables = Set(routed.values.map(\.variable))
+    let credentials = proxyCredentialNames.union(routed.values.map(\.name))
+    for (variable, value) in entries.sorted(by: { $0.key < $1.key }) {
+      guard let name = value.reference, !routedVariables.contains(variable),
+        credentials.contains(name)
+      else { continue }
+      throw HostError(
+        "\(variable)={vault:\(name)} would put a provider credential in the guest: '\(name)' is also a credential-proxy secret"
+      )
+    }
+  }
+
+  /// Provider secrets by provider; two declarations for one provider are
+  /// an error.
+  public static func providerSecrets(_ entries: [EnvVarName: EnvValue]) throws
+    -> [ProxyProvider: ProviderSecret]
+  {
+    var out: [ProxyProvider: ProviderSecret] = [:]
+    for (variable, value) in entries.sorted(by: { $0.key < $1.key }) {
+      guard let name = value.reference, let (provider, auth) = providerRoute(variable.rawValue)
+      else { continue }
+      if let existing = out[provider] {
+        throw HostError(
+          "\(existing.variable) and \(variable) both name a stored \(provider.rawValue) credential; keep one"
+        )
+      }
+      out[provider] = ProviderSecret(provider: provider, auth: auth, variable: variable, name: name)
+    }
+    return out
+  }
+
+  public func providerSecrets() throws -> [ProxyProvider: ProviderSecret] {
+    try Self.providerSecrets(entries)
+  }
+
   public init(literals: [EnvVarName: String]) {
     entries = literals.mapValues { .literal($0) }
   }
@@ -79,6 +136,12 @@ public struct GuestEnvState: Sendable, Equatable {
     switch (fields["kind"], fields["value"], fields["name"]) {
     case (.string("literal")?, .string(let text)?, nil): return .literal(text)
     case (.string("secret")?, nil, .string(let secret)?): return .secret(try SecretName(secret))
+    case (.string("provider_secret")?, nil, .string(let secret)?):
+      guard let (provider, auth) = providerRoute(name),
+        fields["provider"] == .string(provider.rawValue),
+        fields["injection"] == .string(auth.wireName)
+      else { throw HostError("invalid provider_secret entry '\(name)'") }
+      return .secret(try SecretName(secret))
     default: throw HostError("invalid guest_env entry '\(name)'")
     }
   }
@@ -109,10 +172,22 @@ public struct GuestEnvState: Sendable, Equatable {
               case .literal(let text):
                 (name.rawValue, .object([("kind", .string("literal")), ("value", .string(text))]))
               case .secret(let secret):
-                (
-                  name.rawValue,
-                  .object([("kind", .string("secret")), ("name", .string(secret.rawValue))])
-                )
+                if let (provider, auth) = Self.providerRoute(name.rawValue) {
+                  (
+                    name.rawValue,
+                    .object([
+                      ("kind", .string("provider_secret")),
+                      ("provider", .string(provider.rawValue)),
+                      ("injection", .string(auth.wireName)),
+                      ("name", .string(secret.rawValue)),
+                    ])
+                  )
+                } else {
+                  (
+                    name.rawValue,
+                    .object([("kind", .string("secret")), ("name", .string(secret.rawValue))])
+                  )
+                }
               }
             })
         ),
@@ -187,18 +262,6 @@ public struct GuestEnvState: Sendable, Equatable {
       return Dictionary(try EnvFile.parse(text), uniquingKeysWith: { $1 })
     } catch {
       throw HostError("--env-file \(path): \(error.message)")
-    }
-  }
-
-  /// Provider credentials are never guest environment values; a reference
-  /// on a recognized provider variable is refused.
-  public static func rejectProviderReferences(_ entries: [EnvVarName: EnvValue]) throws {
-    let recognized = Set(ProxyProvider.allCases.flatMap(\.recognizedVariables))
-    for (name, value) in entries where value.reference != nil && recognized.contains(name.rawValue)
-    {
-      throw HostError(
-        "\(name)={vault:…} is a provider credential; it cannot be placed in the guest environment. Use `coop proxy setup` so it stays on the host."
-      )
     }
   }
 }

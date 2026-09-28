@@ -43,12 +43,6 @@ extension GuestUser {
   public var claudeBinary: GuestPath { GuestPath("/home/\(rawValue)/.local/bin/claude") }
 }
 
-/// Resolves `{vault:}` references for a session. The CLI's implementation
-/// unlocks the secret store at most once per command.
-public protocol GuestSecretResolver: Sendable {
-  func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>]
-}
-
 /// Agent bootstrap, guest sessions and post-start hooks for one command.
 public struct AgentBootstrap: Sendable {
   public let config: CoopConfig
@@ -62,12 +56,12 @@ public struct AgentBootstrap: Sendable {
   let github: any GitHubTokenSource
   let diagnostics: Diagnostics
   /// For `{vault:}` entries in `guest_env.json`; nil refuses them.
-  let secrets: (any GuestSecretResolver)?
+  let secrets: (any SecretReferenceResolver)?
 
   public init(
     config: CoopConfig, client: SSHClient, environment: [String: String], home: String?,
     resolver: CredentialResolver, proxies: ProxyLauncher, github: any GitHubTokenSource,
-    diagnostics: Diagnostics, secrets: (any GuestSecretResolver)? = nil
+    diagnostics: Diagnostics, secrets: (any SecretReferenceResolver)? = nil
   ) {
     self.secrets = secrets
     self.config = config
@@ -195,9 +189,28 @@ public struct AgentBootstrap: Sendable {
   /// override counts: its key must still be suppressed). Never under
   /// `proxy.mode = "off"`.
   func proxyConfigured(_ instance: Instance, _ provider: ProxyProvider) throws -> Bool {
-    guard config.proxy.mode != .off else { return false }
-    return try ProxyState.load(instance).override(for: provider) != nil
+    let routed = try GuestEnvState.tryLoad(instance)?.providerSecrets()[provider]
+    guard config.proxy.mode != .off else {
+      if let routed { throw ProxyState.unavailable(routed) }
+      return false
+    }
+    return try routed != nil || ProxyState.load(instance).override(for: provider) != nil
       || config.proxy.upstream(for: provider) != nil
+  }
+
+  /// Every stored secret this session reads (the persisted `--env`
+  /// references and the GitHub PAT for `repo`), resolved in one unlock so the
+  /// resolutions that follow are cache hits and the user is asked once.
+  func prefetchSessionSecrets(_ instance: Instance?, repo: RepoSlug?) throws {
+    var names = Set<SecretName>()
+    if let instance, let state = try GuestEnvState.tryLoad(instance) {
+      let routed = Set(try state.providerSecrets().values.map(\.variable))
+      names.formUnion(
+        state.entries.filter { !routed.contains($0.key) }.values.compactMap(\.reference))
+    }
+    if let name = GitHubAssignment.vaultName(config, slug: repo) { names.insert(name) }
+    guard !names.isEmpty, let secrets else { return }
+    _ = try secrets.resolve(names)
   }
 
   /// A session for `target`. With an instance, proxy-mode key suppression,
@@ -216,15 +229,20 @@ public struct AgentBootstrap: Sendable {
     if codexAccount && proxyOpenAI { diagnostics.warn(CodexChecks.chatgptProxyConflictMessage) }
 
     let assigned = try instance.flatMap { try github.activeAssignment($0) }
+    try prefetchSessionSecrets(instance, repo: assigned ?? repo)
     var env = try prepareEnvForwarding(
       repo: assigned ?? repo, suppressAnthropicKey: proxyAnthropic,
       suppressOpenAIKey: proxyOpenAI)
     if let instance {
       if let state = try GuestEnvState.tryLoad(instance) {
-        try GuestEnvState.rejectProviderReferences(state.entries)
+        let proxyNames = try ProxyState.storedCredentialNames(config.proxy, instance: instance)
+        try GuestEnvState.checkCredentialSeparation(state.entries, proxyCredentialNames: proxyNames)
+        let routed = Set(try state.providerSecrets().values.map(\.variable))
         let withheld = withheldVariables(proxyAnthropic: proxyAnthropic, proxyOpenAI: proxyOpenAI)
-        let resolved = try resolveReferences(state)
+        let resolved = try resolveReferences(state, excluding: routed)
         for (name, value) in state.sortedEntries {
+          // A provider secret feeds that provider's proxy, never the guest.
+          if routed.contains(name) { continue }
           if let reason = withheld[name.rawValue] {
             try refuse(name.rawValue, from: "runtime --env", reason: reason)
             continue
@@ -251,8 +269,11 @@ public struct AgentBootstrap: Sendable {
   /// One batch resolution for every reference in `state`, each checked to
   /// be a usable environment value (UTF-8, no NUL). Values are guest-visible
   /// by design; they are never persisted or logged on the host.
-  func resolveReferences(_ state: GuestEnvState) throws -> [SecretName: Secret<String>] {
-    let names = Set(state.entries.values.compactMap(\.reference))
+  func resolveReferences(_ state: GuestEnvState, excluding routed: Set<EnvVarName> = [])
+    throws -> [SecretName: Secret<String>]
+  {
+    let names = Set(
+      state.entries.filter { !routed.contains($0.key) }.values.compactMap(\.reference))
     guard !names.isEmpty else { return [:] }
     guard let secrets else {
       throw HostError(

@@ -1300,8 +1300,19 @@ If references exist:
 **As implemented (step 8):** `--env-file` and `--env` accept whole-value
 `{vault:}` references; `guest_env.json` is written as version 2 only when a
 reference is present; the CLI resolves every reference a command needs in one
-batch (one passphrase + one Secure Enclave check per command). A reference on
-a recognized provider variable is refused until provider routing (§31) lands.
+batch (one passphrase + one Secure Enclave check per command).
+
+**As implemented (step 9):** a `{vault:}` reference on a recognized provider
+variable is persisted as `kind: "provider_secret"` and selects that
+provider's proxy credential (`vault:<name>`) ahead of the per-VM override and
+config default. `CredentialResolver` resolves `vault:<name>` for proxy
+credentials and `github.pat` tokens through one process-wide store resolver
+(one unlock per batch of names; the passphrase is read once per process). It
+refuses `vault:` for fields placed in the guest (`claude.api_key` /
+`codex.api_key`, MCP headers), narrowing D-003 item 3 so that §31.1 holds. A
+generic reference may not name a secret a proxy credential also reads. `SecretName` moved to `CoopCore` so
+configuration decoding can validate `vault:` names without depending on
+`CoopSecrets`.
 
 ## D-004 — Per-session unlock for generic secrets
 

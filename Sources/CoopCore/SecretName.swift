@@ -1,5 +1,3 @@
-import CoopCore
-
 /// A secret identifier: `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. Names are
 /// identifiers, never filenames (embedded-secrets spec §11).
 public struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
@@ -19,6 +17,14 @@ public struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertibl
       throw ValidationError("secret name may contain only letters, digits, '.', '_' and '-'")
     }
     rawValue = text
+  }
+
+  /// The name a `vault:<name>` reference points at; nil for any other text
+  /// and for an invalid name.
+  public static func vaultReference(_ text: String) -> SecretName? {
+    let prefix = "vault:"
+    guard text.hasPrefix(prefix) else { return nil }
+    return try? SecretName(String(text.dropFirst(prefix.count)))
   }
 
   static func alphanumeric(_ byte: UInt8) -> Bool {

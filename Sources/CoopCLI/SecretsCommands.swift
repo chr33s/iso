@@ -27,7 +27,7 @@ extension CommandContext {
 /// Resolves `{vault:}` references through the secret store: one passphrase
 /// prompt and one Secure Enclave check per batch of new names. Resolved
 /// values live only in this process's memory.
-final class StoreSecretResolver: GuestSecretResolver, @unchecked Sendable {
+final class StoreSecretResolver: SecretReferenceResolver, @unchecked Sendable {
   let store: EnclaveStore
   private let lock = NSLock()
   private var cache: [SecretName: Secret<[UInt8]>] = [:]

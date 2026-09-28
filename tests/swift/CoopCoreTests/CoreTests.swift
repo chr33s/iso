@@ -182,3 +182,12 @@ func rejectsOtherURLs(_ url: String) {
     #expect(throws: ValidationError.self) { try ByteCount(parsing: bad) }
   }
 }
+
+@Test func vaultReferencesNameOnlyValidStoredSecrets() throws {
+  #expect(SecretName.vaultReference("vault:api-key") == (try SecretName("api-key")))
+  #expect(SecretName.vaultReference("cmd:printf x") == nil)
+  #expect(SecretName.vaultReference("github_pat_x") == nil)
+  #expect(SecretName.vaultReference("vault:") == nil)
+  #expect(SecretName.vaultReference("vault:bad name") == nil)
+  #expect(SecretName.vaultReference("VAULT:name") == nil)
+}

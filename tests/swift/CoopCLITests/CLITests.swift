@@ -1,5 +1,6 @@
 import ArgumentParser
 import CoopConfiguration
+import CoopCore
 import CoopHost
 import Foundation
 import Testing
@@ -98,6 +99,53 @@ private struct Directories: ConfigFileSystem {
     })
   #expect(streams.stdout.last == "Config OK")
   #expect(!streams.stdout.joined().contains("SYNTHETIC"))
+}
+
+private struct FixedLogin: GitHubUserProbe {
+  func userLogin(token: Secret<String>) throws -> String { "octocat" }
+}
+
+private func vaultPATConfig() throws -> CoopConfig {
+  let value = try ConfigLoader.parse(
+    Array(
+      #"{"github": {"pat": {"a/one": {"token": "vault:one"}, "b/two": {"token": "vault:two"}}}}"#
+        .utf8), format: .jsonc, path: "c", limits: .configuration)
+  return try ConfigLoader.decode(
+    value, path: "c", environment: ConfigEnvironment(home: "/nohome", variables: [:]))
+}
+
+@Test func validateLeavesStoredPATsAloneWithoutProbe() throws {
+  let secrets = CountingSecrets(["one": "github_pat_1", "two": "github_pat_2"])
+  let streams = RecordingStreams()
+  try ValidateReport.run(
+    config: try vaultPATConfig(),
+    resolver: CredentialResolver(environment: [:], secrets: secrets),
+    fileSystem: Directories(existing: []), output: streams)
+  #expect(secrets.calls.isEmpty)
+  #expect(streams.stdout.filter { $0.contains("not resolved") }.count == 2)
+  #expect(streams.stdout.last == "Config OK")
+}
+
+@Test func validateResolvesStoredPATsInOneUnlockWhenAsked() throws {
+  let secrets = CountingSecrets(["one": "github_pat_1", "two": "classic"])
+  let streams = RecordingStreams()
+  try ValidateReport.run(
+    config: try vaultPATConfig(),
+    resolver: CredentialResolver(environment: [:], secrets: secrets),
+    fileSystem: Directories(existing: []), output: streams, probe: FixedLogin())
+  #expect(secrets.calls.count == 1)
+  #expect(
+    streams.stdout.contains("  github.pat.\"a/one\": ok (resolves, fine-grained PAT format)"))
+  #expect(streams.stdout.contains { $0.hasPrefix("  github.pat.\"b/two\": warning") })
+
+  let missing = CountingSecrets(["one": "github_pat_1"])
+  let failed = RecordingStreams()
+  try ValidateReport.run(
+    config: try vaultPATConfig(),
+    resolver: CredentialResolver(environment: [:], secrets: missing),
+    fileSystem: Directories(existing: []), output: failed, probe: FixedLogin())
+  #expect(missing.calls.count == 1)
+  #expect(failed.stdout.filter { $0.contains("FAILED to resolve token") }.count == 2)
 }
 
 @Test func validateFailsOnEnvironmentalErrors() throws {

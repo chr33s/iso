@@ -127,8 +127,15 @@ Or configure it by hand:
 }
 ```
 
-The `credential` must be a `cmd:` reference; a literal value is rejected, and
-the error names the field without printing its contents. The command runs on
+The `credential` must be a `cmd:` reference or a `vault:<name>` reference to a
+[`coop secrets`](commands.md#secrets) entry; a literal value is rejected, and
+the error names the field without printing its contents.
+
+An instance can also take its provider credential from the secret store at
+`up`/`start`: `--env ANTHROPIC_API_KEY={vault:anthropic}` (or the same line in
+an `--env-file`) routes that secret to this VM's proxy and never into the
+guest. Resolution per provider is then **provider secret → per-VM override →
+default → off**. The command runs on
 the **host** at VM start, just in time, and coop never creates or deletes what
 a hand-written reference points at. For Claude subscription billing without
 exposure, run `claude setup-token` on the host, stash the printed one-year

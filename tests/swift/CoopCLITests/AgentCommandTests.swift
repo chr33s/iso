@@ -2,6 +2,7 @@ import ArgumentParser
 import CoopConfiguration
 import CoopCore
 import CoopHost
+import CoopSecrets
 import Foundation
 import Testing
 
@@ -194,4 +195,49 @@ private struct CLIFixture {
   }
   #expect("\(error)".contains("Failed to store the anthropic credential in the macOS Keychain"))
   #expect(FileManager.default.contents(atPath: configPath) == before)
+}
+
+// MARK: - Start and restart lifecycle
+
+private func lifecycleFixture(_ extra: String, secrets: CountingSecrets = CountingSecrets([:]))
+  throws
+  -> (CLIFixture, ProjectLifecycle, Instance)
+{
+  let fixture = try CLIFixture(extra)
+  let instance = try InstanceStore.resolve(fixture.context.config, name: nil)
+  return (fixture, ProjectLifecycle(fixture.context, noGitHub: false, secrets: secrets), instance)
+}
+
+@Test func preflightResolvesEveryStoredSecretInOneUnlock() throws {
+  let secrets = CountingSecrets([
+    "db": "d", "proxy-key": "k", "per-vm": "v", "pat": "github_pat_x",
+  ])
+  let (fixture, lifecycle, instance) = try lifecycleFixture(
+    #", "proxy": {"anthropic": {"credential": "vault:proxy-key"}}, "github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#,
+    secrets: secrets)
+  defer { fixture.remove() }
+  try Data(#"{"openai": {"credential": "vault:per-vm", "auth": "bearer"}}"#.utf8)
+    .write(to: URL(fileURLWithPath: instance.proxyStatePath))
+  let entries: [EnvVarName: EnvValue] = [try EnvVarName("DB"): .secret(try SecretName("db"))]
+  try lifecycle.preflightReferences(entries, instance: instance, repo: try RepoSlug("org/repo"))
+  #expect(
+    secrets.calls == [
+      [
+        try SecretName("db"), try SecretName("proxy-key"), try SecretName("per-vm"),
+        try SecretName("pat"),
+      ]
+    ])
+
+  // A missing PAT secret fails up front, before any VM work.
+  let missing = CountingSecrets(["db": "d", "proxy-key": "k", "per-vm": "v"])
+  let (other, strict, otherInstance) = try lifecycleFixture(
+    #", "proxy": {"anthropic": {"credential": "vault:proxy-key"}}, "github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#,
+    secrets: missing)
+  defer { other.remove() }
+  try Data(#"{"openai": {"credential": "vault:per-vm", "auth": "bearer"}}"#.utf8)
+    .write(to: URL(fileURLWithPath: otherInstance.proxyStatePath))
+  #expect(throws: HostError.self) {
+    try strict.preflightReferences(
+      entries, instance: otherInstance, repo: try RepoSlug("org/repo"))
+  }
 }

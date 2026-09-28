@@ -1,3 +1,5 @@
+import CoopCore
+
 /// The closed set of secret-store failures callers branch on. No case ever
 /// carries a secret value or passphrase.
 public enum EnclaveStoreError: Error, Equatable, CustomStringConvertible {

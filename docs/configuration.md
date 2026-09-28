@@ -149,7 +149,7 @@ Other subcommands:
 | `coop github status` | List configured entries and where they are stored; add `--probe` to test retrieval. Never prints token material. |
 | `coop github rotate-pat --repo X/Y` | Re-run the wizard against an existing entry (PATs expire — max 1 year). |
 | `coop github forget-pat --repo X/Y` | Remove the `github.pat["X/Y"]` entry and, for a coop-created Keychain item, the stored secret. Does **not** add a skip marker; the token may still be live on GitHub. |
-| `coop validate --probe` | Resolves each entry and probes `GET /user` against api.github.com. May trigger a Keychain authorization prompt (or your own `cmd:` tool's prompt) the first time per session. |
+| `coop validate --probe` | Resolves each entry and probes `GET /user` against api.github.com. May trigger a Keychain authorization prompt (or your own `cmd:` tool's prompt) the first time per session; `vault:` entries need one secret-store unlock. |
 
 #### Assign an existing PAT to a VM
 
@@ -443,7 +443,13 @@ the instance's `proxy.json`, not in the config file).
 |-------|----------|
 | `"auto"` (default) | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one keeps the legacy raw forwarding, with a warning at `up`/`start`. |
 | `"required"` | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) reaches the guest by any path. Values coop would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
-| `"off"` | No proxy starts; configured upstreams and per-VM overrides are ignored, and credentials are forwarded as without a proxy. |
+| `"off"` | No proxy starts; configured upstreams and per-VM overrides are ignored, and credentials are forwarded as without a proxy. A `{vault:}` provider secret from `--env`/`--env-file` is an error rather than being forwarded. |
+
+`proxy.<provider>.credential` and `github.pat` tokens also accept
+`vault:<name>`, read from [`coop secrets`](commands.md#secrets) when the value
+is needed. Fields whose value is placed in the guest (`claude.api_key`,
+`codex.api_key`, MCP headers) refuse `vault:`, so a stored provider credential
+never lands in the guest.
 
 Both objects take the same fields:
 

@@ -21,14 +21,15 @@ public enum CodexChecks {
   public static let accountGuestSupportMessage =
     "Codex ChatGPT account auth requires guest Secret Service support, but this VM image does not have it.\nRebuild the image with `coop setup --rebuild` (or `coop setup --image <name> --rebuild` for a named image).\nA rebuild does not touch this VM's existing guest disk, and a restart reuses it. To pick up the rebuilt image, either `coop restore <vm> --image <image> --reprovision` (in place, keeping the instance), or destroy and recreate the VM. Alternatively, install `dbus-user-session`, `gnome-keyring`, and `libsecret-tools` in the running guest by hand."
 
-  /// A per-VM OpenAI proxy override cannot pair with ChatGPT account auth
-  /// (the configuration check cannot see overrides).
+  /// A per-VM OpenAI proxy override or an OpenAI provider secret cannot pair
+  /// with ChatGPT account auth (the configuration check sees neither).
   public static func ensureRemoteAuthConsistent(
     _ config: CoopConfig, instance: Instance, modelState: ModelState
   ) throws {
     guard config.codexAuth == .chatgpt, modelState.mode == .remote else { return }
     let state = try ProxyState.load(instance)
-    if state.override(for: .openai) != nil || config.proxy.openai != nil {
+    let routed = try GuestEnvState.tryLoad(instance)?.providerSecrets()[.openai]
+    if state.override(for: .openai) != nil || config.proxy.openai != nil || routed != nil {
       throw HostError(chatgptProxyConflictMessage)
     }
   }

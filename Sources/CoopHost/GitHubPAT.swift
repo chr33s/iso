@@ -123,12 +123,15 @@ public struct GitHubHost: Sendable {
   public let diagnostics: Diagnostics
   /// Where `setup-pat` without `--repo` looks for an `origin`.
   let workingDirectory: String?
+  /// Where `vault:` entries resolve; the command's own store by default.
+  let secrets: (any SecretReferenceResolver)?
 
   public init(
     environment: ConfigEnvironment, diagnostics: Diagnostics,
     runner: ProcessRunner = ProcessRunner(), security: String = Keychain.defaultSecurity,
     console: WizardConsole? = nil,
-    workingDirectory: String? = FileManager.default.currentDirectoryPath
+    workingDirectory: String? = FileManager.default.currentDirectoryPath,
+    secrets: (any SecretReferenceResolver)? = CredentialResolver.processSecrets
   ) {
     self.environment = environment
     tools = HostTools(environment: environment.variables, runner: runner)
@@ -136,11 +139,12 @@ public struct GitHubHost: Sendable {
     self.console = console ?? .standard(tools: tools)
     self.diagnostics = diagnostics
     self.workingDirectory = workingDirectory
+    self.secrets = secrets
   }
 
   var api: GitHubAPI { GitHubAPI(tools: tools, diagnostics: diagnostics) }
   var resolver: CredentialResolver {
-    CredentialResolver(runner: tools.runner, environment: environment.variables)
+    CredentialResolver(runner: tools.runner, environment: environment.variables, secrets: secrets)
   }
 
   // MARK: setup-pat / rotate-pat
@@ -380,12 +384,21 @@ public struct GitHubHost: Sendable {
     var entries: [GitHubStatusView.Entry] = []
     var skip: [RepoSlug] = []
     if case .pat(let pat)? = config.github {
+      // One unlock for every `vault:` entry; a failure here surfaces per
+      // entry below.
+      if probe {
+        do { try resolver.prefetchStored(Array(pat.entries.values)) } catch {
+          diagnostics.debug("stored-secret prefetch failed; resolving entries one by one: \(error)")
+        }
+      }
       for repo in pat.entries.keys.sorted() {
         let token = pat.entries[repo]!
         let status: GitHubStatusView.ProbeStatus? =
           probe
           ? {
-            guard let resolved = try? resolver.resolve(token) else { return .resolveFailed }
+            guard let resolved = try? resolver.resolveAllowingStored(token) else {
+              return .resolveFailed
+            }
             return resolved.expose().hasPrefix(githubPATPrefix) ? .ok : .unexpectedFormat
           }() : nil
         entries.append(

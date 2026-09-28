@@ -183,6 +183,9 @@ public enum CodexAuthMode: String, Sendable, Equatable {
 public enum ProxyAuthScheme: String, Sendable, Equatable {
   case apiKey = "api_key"
   case bearer
+
+  /// The injection name in coop-proxy's startup document and guest_env.json.
+  public var wireName: String { self == .apiKey ? "x_api_key" : "bearer" }
 }
 
 public enum ProxyProvider: String, Sendable, CaseIterable {
@@ -205,6 +208,16 @@ public enum ProxyProvider: String, Sendable, CaseIterable {
   }
 
   public var recognizedVariables: [String] { credentialVariables.map(\.name) }
+
+  /// The provider and scheme a credential variable routes to, if any.
+  public static func route(forVariable name: String) -> (ProxyProvider, ProxyAuthScheme)? {
+    for provider in allCases {
+      if let entry = provider.credentialVariables.first(where: { $0.name == name }) {
+        return (provider, entry.auth)
+      }
+    }
+    return nil
+  }
 }
 
 /// `proxy.mode` (selective-hardening spec §7.5).
@@ -220,16 +233,20 @@ public enum ProxyMode: String, Sendable, Equatable {
 }
 
 /// A provider credential reference. Literal credentials are not
-/// representable: construction requires a `cmd:` reference (C-04).
+/// representable: construction requires a `cmd:` command or a `vault:<name>`
+/// reference to the local secret store (C-04, embedded-secrets D-003).
 public struct CredentialReference: Sendable, Equatable, CustomStringConvertible {
+  /// The reference text (`cmd:…` or `vault:…`), never a secret itself.
   public let command: Secret<String>
 
   public init?(_ value: String) {
-    guard value.hasPrefix("cmd:") else { return nil }
+    guard value.hasPrefix("cmd:") || value.hasPrefix("vault:") else { return nil }
     command = Secret(value)
   }
 
-  public var description: String { "cmd:<redacted>" }
+  public var description: String {
+    command.expose().hasPrefix("vault:") ? command.expose() : "cmd:<redacted>"
+  }
 }
 
 public struct ProxyUpstream: Sendable, Equatable {
@@ -246,6 +263,14 @@ public struct ProxyConfig: Sendable, Equatable {
     self.anthropic = anthropic
     self.openai = openai
     self.mode = mode
+  }
+
+  /// Secret-store names the configured upstreams read (`vault:NAME`).
+  public var storedCredentialNames: Set<SecretName> {
+    Set(
+      [anthropic, openai].compactMap {
+        SecretName.vaultReference($0?.credential.command.expose() ?? "")
+      })
   }
 
   public func upstream(for provider: ProxyProvider) -> ProxyUpstream? {

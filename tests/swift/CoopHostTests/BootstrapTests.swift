@@ -787,13 +787,19 @@ private func stageCodex(
 
 // MARK: - Stored-secret references
 
-private final class FakeSecrets: GuestSecretResolver, @unchecked Sendable {
+private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
   var calls: [Set<SecretName>] = []
   let values: [SecretName: [UInt8]]
+  private var cache: [SecretName: Secret<[UInt8]>] = [:]
   init(_ values: [SecretName: [UInt8]]) { self.values = values }
+  /// Like the CLI's resolver: only names not yet cached cost an unlock.
   func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>] {
-    calls.append(names)
-    return values.filter { names.contains($0.key) }.mapValues(Secret.init)
+    let missing = names.subtracting(cache.keys)
+    if !missing.isEmpty {
+      calls.append(missing)
+      cache.merge(values.filter { missing.contains($0.key) }.mapValues(Secret.init)) { $1 }
+    }
+    return cache.filter { names.contains($0.key) }
   }
 }
 
@@ -831,7 +837,7 @@ private final class FakeSecrets: GuestSecretResolver, @unchecked Sendable {
   let instance = try testInstance(guest.root + "/instance")
   try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
   let resolver = CredentialResolver(environment: guest.environment)
-  func agents(_ secrets: (any GuestSecretResolver)?) throws -> AgentBootstrap {
+  func agents(_ secrets: (any SecretReferenceResolver)?) throws -> AgentBootstrap {
     AgentBootstrap(
       config: try testConfig(""), client: guest.client, environment: [:], home: nil,
       resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
@@ -848,11 +854,132 @@ private final class FakeSecrets: GuestSecretResolver, @unchecked Sendable {
     try agents(FakeSecrets([try SecretName("db"): [0x61, 0x00]])).prepareSession(
       instance, target: guest.target, repo: nil)
   }
-  try GuestEnvState(entries: [
-    try EnvVarName("OPENAI_API_KEY"): .secret(try SecretName("db"))
-  ]).save(instance)
-  #expect(throws: HostError.self) {
-    try agents(FakeSecrets([try SecretName("db"): Array("x".utf8)])).prepareSession(
-      instance, target: guest.target, repo: nil)
+}
+
+@Test func sessionUnlocksOnceForEnvReferencesAndTheGitHubPAT() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
+  let secrets = FakeSecrets([
+    try SecretName("db"): Array("d".utf8), try SecretName("pat"): Array("github_pat_x".utf8),
+  ])
+  let resolver = CredentialResolver(environment: guest.environment, secrets: secrets)
+  let config = try testConfig(
+    #""github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}, "org/other": {"token": "vault:unused"}}}"#
+  )
+  let agents = AgentBootstrap(
+    config: config, client: guest.client, environment: [:], home: nil, resolver: resolver,
+    proxies: guest.proxies(resolver), github: NoGitHub(), diagnostics: guest.sink.diagnostics,
+    secrets: secrets)
+  _ = try agents.prepareSession(
+    instance, target: guest.target, repo: try RepoSlug("org/repo"))
+  // One unlock, and only for what this session uses.
+  #expect(secrets.calls == [[try SecretName("db"), try SecretName("pat")]])
+}
+
+@Test func sessionPrefetchLeavesAMissingStoreToTheLaterError() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let resolver = CredentialResolver(environment: guest.environment)
+  let config = try testConfig(
+    #""github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#)
+  let agents = AgentBootstrap(
+    config: config, client: guest.client, environment: [:], home: nil, resolver: resolver,
+    proxies: guest.proxies(resolver), github: NoGitHub(), diagnostics: guest.sink.diagnostics,
+    secrets: nil)
+  // No store and nothing that reads the PAT: the prefetch is a no-op.
+  _ = try agents.prepareSession(instance, target: guest.target, repo: try RepoSlug("org/repo"))
+  // With `--env` references the existing, clearer error still names the cause.
+  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
+  let error = try #require(throws: HostError.self) {
+    try agents.prepareSession(instance, target: guest.target, repo: try RepoSlug("org/repo"))
   }
+  #expect(error.message.contains("cannot unlock the secret store"))
+}
+
+@Test func providerSecretsNeverReachTheGuestAndSelectTheProxy() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try GuestEnvState(entries: [
+    try EnvVarName("OPENAI_API_KEY"): .secret(try SecretName("openai")),
+    try EnvVarName("GUEST_VAR"): .secret(try SecretName("db")),
+  ]).save(instance)
+  let secrets = FakeSecrets([
+    try SecretName("openai"): Array("canary-openai".utf8), try SecretName("db"): Array("x".utf8),
+  ])
+  let resolver = CredentialResolver(environment: guest.environment, secrets: secrets)
+  let config = try testConfig(#""proxy": {"openai": {"credential": "cmd:printf default"}}"#)
+  let agents = AgentBootstrap(
+    config: config, client: guest.client, environment: ["OPENAI_API_KEY": "sk-host"], home: nil,
+    resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
+    diagnostics: guest.sink.diagnostics, secrets: secrets)
+  let session = try agents.prepareSession(instance, target: guest.target, repo: nil)
+  #expect(!session.env.contains("OPENAI_API_KEY"))
+  #expect(session.env.contains("GUEST_VAR"))
+  // Only the generic reference was resolved for the session.
+  #expect(secrets.calls == [[try SecretName("db")]])
+  #expect(try agents.proxyConfigured(instance, .openai))
+  // The provider secret outranks the configured default and resolves via vault:.
+  let upstream = try #require(
+    try ProxyState.effectiveUpstream(instance, .openai, config: config.proxy))
+  #expect(upstream.credential.command.expose() == "vault:openai" && upstream.auth == .bearer)
+  #expect(try resolver.resolve(upstream.credential).expose() == "canary-openai")
+
+  // Under proxy.mode = "required" the routed declaration is legitimate.
+  let required = try testConfig(#""proxy": {"mode": "required"}"#)
+  let strict = AgentBootstrap(
+    config: required, client: guest.client, environment: [:], home: nil, resolver: resolver,
+    proxies: guest.proxies(resolver), github: NoGitHub(), diagnostics: guest.sink.diagnostics,
+    secrets: secrets)
+  #expect(
+    !(try strict.prepareSession(instance, target: guest.target, repo: nil)).env.contains(
+      "OPENAI_API_KEY"))
+  #expect(!guest.sink.text.contains("ignoring runtime --env entry 'OPENAI_API_KEY'"))
+
+  // proxy.mode = "off" makes it unavailable rather than guest-visible.
+  let off = try testConfig(#""proxy": {"mode": "off"}"#)
+  #expect(throws: HostError.self) {
+    try ProxyState.effectiveUpstream(instance, .openai, config: off.proxy)
+  }
+  #expect(throws: HostError.self) {
+    try guest.bootstrap(off).prepareSession(instance, target: guest.target, repo: nil)
+  }
+}
+
+@Test func vaultCredentialReferencesResolveThroughTheStore() throws {
+  let secrets = FakeSecrets([
+    try SecretName("ok"): Array("value".utf8), try SecretName("nul"): [0x61, 0x00],
+  ])
+  let resolver = CredentialResolver(environment: [:], secrets: secrets)
+  #expect(try resolver.resolveAllowingStored(Secret("vault:ok")).expose() == "value")
+  #expect(throws: HostError.self) { try resolver.resolveAllowingStored(Secret("vault:nul")) }
+  #expect(throws: HostError.self) { try resolver.resolveAllowingStored(Secret("vault:missing")) }
+  #expect(throws: HostError.self) { try resolver.resolveAllowingStored(Secret("vault:../x")) }
+  #expect(throws: HostError.self) {
+    try CredentialResolver(environment: [:], secrets: nil).resolveAllowingStored(Secret("vault:ok"))
+  }
+  #expect(try resolver.resolve(Secret("plain")).expose() == "plain")
+}
+
+@Test func vaultIsRefusedForValuesPlacedInTheGuest() throws {
+  let secrets = FakeSecrets([try SecretName("anthropic"): Array("canary".utf8)])
+  let resolver = CredentialResolver(environment: [:], secrets: secrets)
+  let error = try #require(throws: HostError.self) {
+    try resolver.resolve(Secret("vault:anthropic"))
+  }
+  #expect(error.message.contains("would be placed in the guest"))
+  #expect(try resolver.resolveAllowingStored(Secret("vault:anthropic")).expose() == "canary")
+  #expect(secrets.calls == [[try SecretName("anthropic")]])
+  // Errors never echo the reference text, which may be a pasted key.
+  let invalid = try #require(throws: HostError.self) {
+    try resolver.resolveAllowingStored(Secret("vault:sk ant pasted"))
+  }
+  #expect(!invalid.message.contains("pasted"))
+  let missing = try #require(throws: HostError.self) {
+    try resolver.resolveAllowingStored(Secret("vault:sk-ant-api03-xyz"))
+  }
+  #expect(!missing.message.contains("sk-ant"))
 }

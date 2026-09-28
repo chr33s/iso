@@ -92,7 +92,7 @@ by a test).
 ### `CoopSecrets`
 
 The local secret store ([design](design/embedded-secrets-spec.md)), with no
-dependency on `CoopHost`: `SecretName`, `KDF` (bounded scrypt parameters via
+dependency on `CoopHost` (its `SecretName` identifier type lives in `CoopCore`): `KDF` (bounded scrypt parameters via
 swift-crypto's `CryptoExtras`, HKDF store key), `DeviceFactor` (the Secure
 Enclave key, the digest-checked `device.sekey` file, the sealed device unlock
 key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
@@ -107,7 +107,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Processes and signals | `ProcessRunner` (the one subprocess launcher: argv, environment, bounded capture, deadlines, process groups), `ChildGroups` (forward termination signals to child groups), `Shutdown` (sticky SIGINT/SIGTERM flag for interruptible operations) |
 | SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (`SendEnv` forwarding, minimal guest-bound environment), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
 | Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
-| GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` resolution) |
+| GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `CoopCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
