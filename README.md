@@ -78,6 +78,42 @@ coop claude
 coop codex
 ```
 
+## Hardening
+
+Beyond the upstream feature set, this fork can narrow what crosses the VM
+boundary. All of it is opt-in; with no configuration coop behaves like
+`networked` below.
+
+- **Security presets.** `"security": {"preset": "provider-only"}` sets
+  `egress: "none"`, `proxy.mode: "required"` and staged pulls in one line;
+  `offline` is for local models or fully pre-provisioned images.
+  See [Security presets](docs/configuration.md#security-presets).
+- **Credential proxy by default.** Under `proxy.mode` `"auto"`, a provider
+  with a configured upstream is reached through the host-side
+  [credential proxy](docs/credential-proxy.md) and its API key never enters the
+  guest; `"required"` withholds every provider credential variable.
+  See [`proxy.mode`](docs/configuration.md#proxymode).
+- **No-egress sandboxes.** `"egress": "none"` gives the guest no route beyond
+  the Mac; SSH and the tunnels coop runs over it keep working. It does not
+  block services listening on the Mac itself.
+  See [`egress`](docs/configuration.md#egress).
+- **Local secret store.** `coop secrets` keeps secrets encrypted under a
+  passphrase and this Mac's Secure Enclave key, with no recovery path.
+  `--env NAME={vault:name}` or `--env-file` references resolve them per
+  session. A reference on a provider key becomes the proxy credential
+  and is never sent into the guest.
+  See [`secrets`](docs/commands.md#secrets).
+- **Staged pulls.** `coop diff` or `coop pull --review` copies guest files into
+  a checked stage (file types, symlink targets, size budgets) that you apply or
+  discard. See [Staged pulls](docs/workspaces.md#staged-pulls).
+- **Session TTL.** `"limits": {"session_ttl": "8h"}` has the host halt each
+  boot at a deadline on the host clock. See
+  [`limits`](docs/configuration.md#limits).
+- **Audit log.** `coop audit` shows each instance's recorded boundary events
+  (egress, proxy mode, forwarded variable names, workspace returns), never
+  values. `--suggest-config` proposes a narrower configuration.
+  See [`audit`](docs/commands.md#audit).
+
 ## Documentation
 
 - [Documentation index](docs/index.md)
@@ -88,7 +124,8 @@ coop codex
 - [Workspace sync](docs/workspaces.md)
 - [Claude Code integration](docs/claude-integration.md)
 - [Codex integration](docs/codex-integration.md)
-- [Editor integration](docs/editor.md)
+- [Credential proxy](docs/credential-proxy.md)
+- [Editor integration](docs/editor.md) and [devcontainers](docs/devcontainer.md)
 - [Multi-instance](docs/multi-instance.md)
 - [Platform backends](docs/backends.md)
 - [Shell completion](docs/shell-completion.md)
