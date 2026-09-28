@@ -43,7 +43,12 @@ preserve historical experiments; the acceptance map identifies outstanding gates
   - [`swift-proxy-acceptance.md`](design/swift-proxy-acceptance.md): Swift proxy
     requirement/evidence map, remaining decisions, and cutover gates;
     [`swift-proxy-progress.md`](design/swift-proxy-progress.md) records the
-    implementation and validation history.
+    implementation and validation history;
+  - [`embedded-secrets-spec.md`](design/embedded-secrets-spec.md): the
+    Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
+    references;
+  - [`selective-hardening-spec.md`](design/selective-hardening-spec.md):
+    staged workspace return, `proxy.mode`, egress modes, budgets, and audit.
 
 ## For users
 
