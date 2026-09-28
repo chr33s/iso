@@ -381,6 +381,12 @@ extension AppleBackend {
     guard lstat(instance.directory, &status) == 0 else { return }
     let lock = try InstanceStore.lock(instance)
     defer { lock.release() }
+    // Guest-authored modes in a stage can deny removal; fail before the
+    // machine is deleted, not after.
+    let stage = StageLocation(instance)
+    let stageLock = try stage.lock()
+    defer { stageLock.release() }
+    try stage.remove()
     let sidecar = try MachineSidecar.loadIfPresent(instance)
     var journal = try Journal.loadIfPresent(instance)
     let ids =

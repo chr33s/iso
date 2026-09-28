@@ -266,16 +266,22 @@ public struct WorkspaceTransfer: Sendable {
     diagnostics.log(.info, "Workspace transferred to guest")
   }
 
-  func tarPull(_ target: SSHTarget, guest: GuestPath, to destination: String, excludeGit: Bool)
-    throws
-  {
+  /// `sparse` (staged pulls) archives holes as holes, so a sparse guest
+  /// file cannot expand on the host before the stage budgets run.
+  func tarPull(
+    _ target: SSHTarget, guest: GuestPath, to destination: String, excludeGit: Bool,
+    sparse: Bool = false, cancel: (@Sendable () -> Bool)? = nil
+  ) throws {
     var excludes = defaultExcludes.map { "--exclude=\($0)" }
     if excludeGit { excludes.append("--exclude=\(gitExclude)") }
+    if sparse { excludes.append("--sparse") }
     let command = RemoteCommand().literal("tar cf - -C ").arg(guest.rawValue)
       .literal(" \(excludes.joined(separator: " ")) .")
+    var producer = request(
+      try client.ssh(), target.sshOptions + [target.address, command.rendered])
+    producer.isCancelled = cancel
     let output = try runner.pipeline(
-      request(try client.ssh(), target.sshOptions + [target.address, command.rendered]),
-      request(try tool("tar"), ["xf", "-", "-C", destination]))
+      producer, request(try tool("tar"), ["xf", "-", "-C", destination]))
     if output.producer == .signaled(SIGPIPE) {
       throw ContextError(
         Self.pullFailure(output.producerStderr, output.consumerStderr),
@@ -350,14 +356,19 @@ public struct WorkspaceTransfer: Sendable {
     else { throw HostError("rsync push failed") }
   }
 
-  func rsyncPull(_ target: SSHTarget, guest: GuestPath, to destination: String, excludeGit: Bool)
-    throws
-  {
+  /// `preserveLinks` (staged pulls) keeps hard links and holes, so a file
+  /// linked many times or a sparse file cannot expand on the host before the
+  /// stage budgets run; the stage walk then rejects the hard links.
+  func rsyncPull(
+    _ target: SSHTarget, guest: GuestPath, to destination: String, excludeGit: Bool,
+    preserveLinks: Bool = false, cancel: (@Sendable () -> Bool)? = nil
+  ) throws {
     let arguments =
-      Self.rsyncBaseArguments(target, excludeGit: excludeGit) + [
-        "\(target.address):\(guest)/", "\(destination)/",
-      ]
-    guard try runner.attached(request(try tool("rsync"), arguments), inheritStdin: true).succeeded
+      Self.rsyncBaseArguments(target, excludeGit: excludeGit) + (preserveLinks ? ["-H", "-S"] : [])
+      + ["\(target.address):\(guest)/", "\(destination)/"]
+    var rsync = request(try tool("rsync"), arguments)
+    rsync.isCancelled = cancel
+    guard try runner.attached(rsync, inheritStdin: true).succeeded
     else { throw HostError("rsync pull failed") }
   }
 
@@ -437,6 +448,101 @@ public struct WorkspaceTransfer: Sendable {
       try tarPull(running.target, guest: state.guestPath, to: destination, excludeGit: excludeGit)
     }
     diagnostics.log(.info, "Pull complete")
+  }
+
+  /// `coop diff`, `coop pull --review`, and `coop pull` in stage mode: pull
+  /// into a fresh stage (never the destination) and describe it. A budget
+  /// overrun or transfer failure discards the stage.
+  public func stage(
+    _ running: AppleBackend.Running, directory: String?, excludeGit: Bool, limits: StageLimits
+  ) throws -> StageManifest {
+    try stage(
+      instance: running.instance, target: running.target, directory: directory,
+      excludeGit: excludeGit, limits: limits)
+  }
+
+  func stage(
+    instance: Instance, target: SSHTarget, directory: String?, excludeGit: Bool,
+    limits: StageLimits
+  ) throws -> StageManifest {
+    let state = try Self.stateOrDefault(instance, directory: directory, command: "pull")
+    let requested = try Self.hostDirectory(directory, state, command: "pull")
+    // Absolute before it is stored: `--apply` may run from another directory.
+    let absolute =
+      requested.hasPrefix("/")
+      ? requested : FileManager.default.currentDirectoryPath + "/" + requested
+    let destination = canonicalPath(absolute) ?? (absolute as NSString).standardizingPath
+    let location = StageLocation(instance)
+    let lock = try location.lock()
+    defer { lock.release() }
+    try location.prepare()
+    let growth = StageGrowthGuard(tree: location.tree, limits: limits)
+    do {
+      diagnostics.log(.info, "Staging guest:\(state.guestPath) for \(destination)")
+      do {
+        if guestHasRsync(target) {
+          try rsyncPull(
+            target, guest: state.guestPath, to: location.tree, excludeGit: excludeGit,
+            preserveLinks: true, cancel: growth.shouldCancel)
+        } else {
+          diagnostics.log(.info, "rsync not available on guest, using tar-pipe")
+          try tarPull(
+            target, guest: state.guestPath, to: location.tree, excludeGit: excludeGit,
+            sparse: true, cancel: growth.shouldCancel)
+        }
+      } catch {
+        if let breach = growth.breachDescription { throw StageBudgetExceeded(description: breach) }
+        throw error
+      }
+      // rsync/tar carry the guest's root mode, which may deny us the tree.
+      // A failure surfaces as a clear error when `StageBuilder` opens the tree.
+      _ = chmod(location.tree, 0o700)
+      var builder = StageBuilder(tree: location.tree, destination: destination, limits: limits)
+      let manifest = try builder.build(
+        id: randomHex(4), instance: instance.name.rawValue, excludeGit: excludeGit)
+      try location.saveManifest(manifest)
+      return manifest
+    } catch {
+      try? location.remove()
+      throw error
+    }
+  }
+
+  /// `coop pull --apply`: applies the reviewed stage, then removes it.
+  public func applyStage(_ instance: Instance, stageID: String?, force: Bool) throws
+    -> (manifest: StageManifest, applied: [String])
+  {
+    let location = StageLocation(instance)
+    let lock = try location.lock()
+    defer { lock.release() }
+    let manifest = try location.loadManifest()
+    if let stageID, stageID != manifest.id {
+      throw HostError(
+        "The current stage is \(manifest.id), not \(stageID); review it with `coop diff` before applying"
+      )
+    }
+    if !force && FileManager.default.fileExists(atPath: manifest.destination) {
+      try checkLocalClean(manifest.destination)
+    }
+    do {
+      try FileManager.default.createDirectory(
+        atPath: manifest.destination, withIntermediateDirectories: true)
+    } catch {
+      throw ContextError("Failed to create \(manifest.destination)", cause: error)
+    }
+    let applied = try StageApplier(manifest: manifest, tree: location.tree).apply()
+    try location.remove()
+    return (manifest, applied)
+  }
+
+  /// `coop pull --discard`. Returns whether a stage existed.
+  public func discardStage(_ instance: Instance) throws -> Bool {
+    let location = StageLocation(instance)
+    let lock = try location.lock()
+    defer { lock.release() }
+    guard location.exists else { return false }
+    try location.remove()
+    return true
   }
 
   /// One-time copy of each mount into the guest.

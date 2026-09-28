@@ -859,6 +859,24 @@ if want coop; then
     check "coop start boots it again" coop start e2e --no-agents --no-github
     check "guest data survives stop/start" test "$(coop exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
 
+    # Staged pull: guest changes reach the project only on --apply, and an
+    # escaping symlink makes the stage inapplicable.
+    coop exec e2e -- sh -c 'echo guest > /workspace/marker && mkdir -p /workspace/new && echo n > /workspace/new/f' >/dev/null
+    review="$(coop diff e2e 2>/dev/null)"
+    check "coop diff lists the guest's changes" grep -q '^  M marker' <<<"$review"
+    check "coop diff leaves the project untouched" test "$(cat "$WORK/project/marker")" = "$RUN"
+    stage_id="$(sed -n 's/^Stage \([0-9a-f]*\) .*/\1/p' <<<"$review")"
+    check "coop pull --apply applies the reviewed stage" coop pull e2e --apply --stage-id "$stage_id"
+    check "the applied change reached the project" test "$(cat "$WORK/project/marker")" = guest
+    check "the applied stage is removed" test ! -e "$CSTATE/instances/e2e/stage"
+    coop exec e2e -- ln -s /etc/passwd /workspace/escape >/dev/null
+    check "a stage with an escaping symlink is inapplicable" \
+        grep -q 'cannot be applied' <<<"$(coop diff e2e --stat 2>/dev/null)"
+    check "coop pull --apply refuses it" refuses coop pull e2e --apply
+    check "coop pull --discard removes the stage" coop pull e2e --discard
+    check "the escape did not reach the project" test ! -e "$WORK/project/escape"
+    coop exec e2e -- rm /workspace/escape >/dev/null
+
     # What coop's own sandbox exposes, with a live agent and the canary in
     # coop's environment.
     mid="$(machine_id e2e)"

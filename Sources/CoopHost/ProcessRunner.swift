@@ -251,7 +251,34 @@ public struct ProcessRunner: Sendable {
       stderr: .descriptor(2), ownGroup: false)
     var child = ChildProcess(pid: pid, ownsGroup: false)
     defer { child.killGroupAndReap() }
-    return child.waitIndefinitely()
+    guard let isCancelled = request.isCancelled else { return child.waitIndefinitely() }
+    while true {
+      if let termination = child.wait(until: .milliseconds(50)) { return termination }
+      if isCancelled() {
+        // The child shares our process group (job control), so its own
+        // children (rsync's receiver, ssh) are reaped by pid, before their
+        // parent's death reparents them out of reach.
+        for pid in Self.descendants(of: child.pid).reversed() { kill(pid, SIGKILL) }
+        throw .cancelled
+      }
+    }
+  }
+
+  /// Every live descendant of `pid`, parents before their children.
+  static func descendants(of pid: pid_t) -> [pid_t] {
+    var found: [pid_t] = []
+    var pending = [pid]
+    while let parent = pending.popLast() {
+      var buffer = [pid_t](repeating: 0, count: 256)
+      // Returns the number of pids written, not bytes.
+      let count = proc_listchildpids(
+        parent, &buffer, Int32(buffer.count * MemoryLayout<pid_t>.size))
+      guard count > 0 else { continue }
+      let children = buffer.prefix(Int(count)).filter { $0 > 0 }
+      found += children
+      pending += children
+    }
+    return found
   }
 
   /// Both ends of a two-process pipeline (`tar cf - | ssh …`).
@@ -309,9 +336,11 @@ public struct ProcessRunner: Sendable {
     var ends = [producerErr[0], consumerErr[0]]
     var buffers: [[UInt8]] = [[], []]
     var chunk = [UInt8](repeating: 0, count: 16 << 10)
+    let isCancelled = producer.isCancelled ?? consumer.isCancelled
     while ends.contains(where: { $0 >= 0 }) {
+      if isCancelled?() == true { throw .cancelled }
       var fds = ends.map { pollfd(fd: $0, events: Int16(POLLIN), revents: 0) }
-      if poll(&fds, nfds_t(fds.count), -1) < 0 {
+      if poll(&fds, nfds_t(fds.count), isCancelled == nil ? -1 : 50) < 0 {
         if errno == EINTR { continue }
         throw .io(errno: errno)
       }

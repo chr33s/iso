@@ -259,3 +259,154 @@ private func transfer() -> WorkspaceTransfer {
   #expect(child["ANTHROPIC_API_KEY"] == nil && child["GITHUB_TOKEN"] == nil)
   #expect(child["OPENAI_API_KEY"] == "capability")
 }
+
+// MARK: - Staged pulls: transfer cap and stage lock
+
+private final class Flag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored = false
+  var value: Bool {
+    get { lock.withLock { stored } }
+    set { lock.withLock { stored = newValue } }
+  }
+}
+
+/// Runs `body` on another thread while this one holds the stage lock, and
+/// reports whether it finished, and whether the stage directory existed,
+/// before the lock was released.
+private func runWhileStageIsLocked(
+  _ location: StageLocation, _ body: @escaping @Sendable () -> Void
+) throws -> (finished: Bool, stageExisted: Bool) {
+  let held = try location.lock()
+  let finished = Flag()
+  let done = DispatchSemaphore(value: 0)
+  DispatchQueue.global().async {
+    body()
+    finished.value = true
+    done.signal()
+  }
+  Thread.sleep(forTimeInterval: 0.4)
+  let early = (finished.value, location.exists)
+  held.release()
+  _ = done.wait(timeout: .now() + 20)
+  return early
+}
+
+private func finishesWhileStageIsLocked(
+  _ location: StageLocation, _ body: @escaping @Sendable () -> Void
+) throws -> Bool {
+  try runWhileStageIsLocked(location, body).finished
+}
+
+@Test func applyAndDiscardWaitForTheStageLock() throws {
+  let directory = try scratch()
+  defer { StageLocation.grantOwnerAccess(directory) }
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let inst = try instance(directory)
+  let location = StageLocation(inst)
+  try location.prepare()
+  let transfer = transfer()
+  let discarded = try finishesWhileStageIsLocked(location) {
+    _ = try? transfer.discardStage(inst)
+  }
+  #expect(!discarded)
+  #expect(!location.exists)
+
+  try location.prepare()
+  let destination = directory + "/dest"
+  try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: true)
+  var builder = StageBuilder(tree: location.tree, destination: destination, limits: .defaults)
+  try location.saveManifest(try builder.build(id: "00c0ffee", instance: "test", excludeGit: false))
+  let applied = try finishesWhileStageIsLocked(location) {
+    _ = try? transfer.applyStage(inst, stageID: nil, force: true)
+  }
+  #expect(!applied)
+  #expect(!location.exists)
+}
+
+/// A guest workspace of ten 20 KiB files, a PATH of only the fake ssh and a
+/// shim directory, and the transfer tool named by `viaRsync` lingering for
+/// 6 s after it has sent everything, so only the growth watch can end the
+/// pull early.
+private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error: (any Error)?) {
+  let directory = try scratch()
+  defer { StageLocation.grantOwnerAccess(directory) }
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let bin = directory + "/bin"
+  try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(
+    atPath: bin + "/which", withDestinationPath: "/usr/bin/which")
+  func shim(_ name: String, _ script: String) throws {
+    try Data(("#!/bin/sh\n" + script + "\n").utf8).write(to: URL(fileURLWithPath: bin + "/" + name))
+    chmod(bin + "/" + name, 0o755)
+  }
+  try shim(
+    "tar",
+    """
+    # The guest's GNU tar takes --sparse; the host's bsdtar does not.
+    count=$#
+    while [ "$count" -gt 0 ]; do
+      arg=$1; shift; count=$((count - 1))
+      [ "$arg" = --sparse ] || set -- "$@" "$arg"
+    done
+    if [ "$1" = cf ]; then /usr/bin/tar "$@"; status=$?; /bin/sleep 6; exit $status; fi
+    exec /usr/bin/tar "$@"
+    """)
+  if viaRsync {
+    // `rsync … <address>:<guest>/ <destination>/`: copy, then linger.
+    try shim(
+      "rsync",
+      """
+      for last; do source=$dest; dest=$last; done
+      guest=${source#*:}
+      /bin/cp -R "$guest". "$dest" && /bin/sleep 6
+      """)
+  }
+  let guest = directory + "/guest"
+  try FileManager.default.createDirectory(atPath: guest, withIntermediateDirectories: true)
+  for index in 0..<10 {
+    try Data(repeating: 0x61, count: 20 << 10).write(to: URL(fileURLWithPath: "\(guest)/f\(index)"))
+  }
+  let inst = try instance(directory + "/instance")
+  try FileManager.default.createDirectory(atPath: inst.directory, withIntermediateDirectories: true)
+  try WorkspaceState(guestPath: GuestPath(guest), source: .workspace(hostPath: directory + "/dest"))
+    .save(inst)
+  let transfer = WorkspaceTransfer(
+    client: SSHClient(environment: ["PATH": "\(fakeSSH):\(bin)"]),
+    diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
+  let limits = StageLimits(
+    maxFiles: 100, maxBytes: ByteCount(bytes: 64 << 10)!, maxFileBytes: ByteCount(bytes: 1 << 30)!)
+  let location = StageLocation(inst)
+
+  let outcome = Box<(any Error)?>(nil)
+  let started = ContinuousClock.now
+  let held = try runWhileStageIsLocked(location) {
+    do {
+      _ = try transfer.stage(
+        instance: inst, target: try! target(), directory: nil, excludeGit: false, limits: limits)
+    } catch { outcome.value = error }
+  }
+  // Held lock: the pull had not started (no stage directory yet).
+  #expect(!held.finished && !held.stageExisted)
+  #expect(!location.exists)
+  return (ContinuousClock.now - started, outcome.value)
+}
+
+@Test(arguments: [false, true])
+func stagedTransferWaitsForTheLockAndStopsWhenItOutgrowsTheBudget(viaRsync: Bool) throws {
+  let (elapsed, error) = try stagedPullTakes(viaRsync: viaRsync)
+  // The growth watch, not the lingering 6 s tool, ended the pull.
+  #expect(elapsed < .seconds(5))
+  let breach = try #require(error as? StageBudgetExceeded, "got \(String(describing: error))")
+  #expect(breach.description.contains("max_bytes"))
+}
+
+private final class Box<Value>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Value
+  init(_ value: Value) { stored = value }
+  var value: Value {
+    get { lock.withLock { stored } }
+    set { lock.withLock { stored = newValue } }
+  }
+}

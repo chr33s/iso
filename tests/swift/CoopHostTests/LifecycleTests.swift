@@ -210,6 +210,23 @@ private struct FakeInstallation {
   #expect(try backend.runtime().list().isEmpty)
 }
 
+@Test func destroyRemovesStagesWithGuestChosenModes() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let directory = install.config.instancesDirectory.appending("staged").path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let instance = Instance(
+    name: try InstanceName("staged"), index: InstanceIndex(1)!, directory: directory,
+    image: .default)
+  try instance.save()
+  let locked = directory + "/stage/tree/locked"
+  try FileManager.default.createDirectory(
+    atPath: locked + "/inner", withIntermediateDirectories: true)
+  chmod(locked, 0o000)
+  try install.backend.destroyInstance(instance)
+  #expect(!FileManager.default.fileExists(atPath: directory))
+}
+
 @Test func cancellableRequestsStopWhenAsked() throws {
   var request = ProcessRunner.Request(
     executable: "/bin/sh", arguments: ["-c", "sleep 30"], environment: [:], deadline: .seconds(60))
@@ -217,6 +234,43 @@ private struct FakeInstallation {
   let start = ContinuousClock.now
   #expect(throws: ProcessRunner.Failure.cancelled) { try ProcessRunner().capture(request) }
   #expect(ContinuousClock.now - start < .seconds(5))
+}
+
+@Test func attachedAndPipelineRequestsStopWhenCancelled() throws {
+  var attached = ProcessRunner.Request(
+    executable: "/bin/sh", arguments: ["-c", "sleep 30"], environment: [:], deadline: .seconds(60))
+  attached.isCancelled = { true }
+  let start = ContinuousClock.now
+  #expect(throws: ProcessRunner.Failure.cancelled) {
+    try ProcessRunner().attached(attached, inheritStdin: false)
+  }
+  var producer = ProcessRunner.Request(
+    executable: "/bin/sh", arguments: ["-c", "sleep 30"], environment: [:], deadline: .seconds(60))
+  producer.isCancelled = { true }
+  let consumer = ProcessRunner.Request(
+    executable: "/bin/cat", arguments: [], environment: [:], deadline: .seconds(60))
+  #expect(throws: ProcessRunner.Failure.cancelled) {
+    try ProcessRunner().pipeline(producer, consumer)
+  }
+  #expect(ContinuousClock.now - start < .seconds(5))
+}
+
+@Test func cancellingAnAttachedRequestKillsItsDescendants() throws {
+  let marker = FileManager.default.temporaryDirectory
+    .appending(path: "coop-orphan-\(UUID().uuidString)").path
+  defer { try? FileManager.default.removeItem(atPath: marker) }
+  // The shell forks a grandchild that would write the marker if it survived.
+  var request = ProcessRunner.Request(
+    executable: "/bin/sh",
+    arguments: ["-c", "(sleep 2; touch '\(marker)') & wait"], environment: [:],
+    deadline: .seconds(60))
+  let started = ContinuousClock.now
+  request.isCancelled = { ContinuousClock.now - started > .milliseconds(400) }
+  #expect(throws: ProcessRunner.Failure.cancelled) {
+    try ProcessRunner().attached(request, inheritStdin: false)
+  }
+  Thread.sleep(forTimeInterval: 2.5)
+  #expect(!FileManager.default.fileExists(atPath: marker))
 }
 
 @Test func destroyLeavesForeignSandboxesUntouched() throws {

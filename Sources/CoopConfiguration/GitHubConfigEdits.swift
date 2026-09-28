@@ -16,7 +16,8 @@ extension CoopConfig {
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
       claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
-      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer)
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull)
   }
 
   /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
@@ -27,7 +28,8 @@ extension CoopConfig {
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: .off,
       setup: SetupConfig(promptForPAT: false), claude: claude, codex: codex, codexAuth: codexAuth,
       proxy: proxy, guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
-      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer)
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull)
   }
 }
 

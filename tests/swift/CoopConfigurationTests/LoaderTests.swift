@@ -381,3 +381,35 @@ struct FakeFileSystem: ConfigFileSystem {
   let ok = try load("{}").validate(fileSystem: FakeFileSystem(directories: ["/home/fixture"]))
   #expect(ok == ConfigValidationReport(warnings: [], errors: []))
 }
+
+// MARK: - workspace.pull
+
+@Test func workspacePullDefaultsToDirectWithStageBudgets() throws {
+  let c = try load("{}")
+  #expect(c.workspacePull == .defaults)
+  #expect(c.workspacePull.mode == .direct)
+  #expect(c.workspacePull.limits.maxBytes.description == "1GiB")
+}
+
+@Test func workspacePullParsesModeAndBudgets() throws {
+  let c = try load(
+    #"{"workspace": {"pull": {"mode": "stage", "max_files": 10, "max_bytes": "200MiB", "max_file_bytes": 4096}}}"#
+  )
+  #expect(c.workspacePull.mode == .stage)
+  #expect(c.workspacePull.limits.maxFiles == 10)
+  #expect(c.workspacePull.limits.maxBytes.bytes == 200 << 20)
+  #expect(c.workspacePull.limits.maxFileBytes.bytes == 4096)
+}
+
+@Test func workspacePullRejectsUnknownKeysAndBadValues() {
+  #expect(fieldError(#"{"workspace": {"push": {}}}"#)?.field == "workspace.push")
+  #expect(
+    fieldError(#"{"workspace": {"pull": {"max_delets": 1}}}"#)?.field == "workspace.pull.max_delets"
+  )
+  #expect(fieldError(#"{"workspace": {"pull": {"mode": "yolo"}}}"#)?.field == "workspace.pull.mode")
+  #expect(fieldError(#"{"workspace": {"pull": {"max_files": 0}}}"#) != nil)
+  #expect(
+    fieldError(#"{"workspace": {"pull": {"max_bytes": "1TB"}}}"#)?.field
+      == "workspace.pull.max_bytes")
+  #expect(fieldError(#"{"workspace": {"pull": {"max_bytes": 0}}}"#) != nil)
+}

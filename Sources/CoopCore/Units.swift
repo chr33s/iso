@@ -53,6 +53,48 @@ public struct GiB: Hashable, Comparable, Sendable, CustomStringConvertible {
   public static func < (a: Self, b: Self) -> Bool { a.value < b.value }
 }
 
+/// Non-zero byte budget: plain bytes, or an integer with a `KiB`, `MiB` or
+/// `GiB` suffix (`"256MiB"`).
+public struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertible {
+  public let bytes: UInt64
+
+  public init?(bytes: UInt64) {
+    guard bytes > 0 else { return nil }
+    self.bytes = bytes
+  }
+
+  static let suffixes: [(String, UInt64)] = [("KiB", 1 << 10), ("MiB", 1 << 20), ("GiB", 1 << 30)]
+
+  public init(parsing text: String) throws(ValidationError) {
+    var digits = text
+    var scale: UInt64 = 1
+    if let (suffix, factor) = Self.suffixes.first(where: { text.hasSuffix($0.0) }) {
+      digits = String(text.dropLast(suffix.count))
+      scale = factor
+    }
+    guard let n = parseUnsigned(digits, as: UInt64.self) else {
+      throw ValidationError(
+        "expected a byte count such as 1048576, \"512KiB\", \"256MiB\" or \"1GiB\", got '\(text)'")
+    }
+    let (value, overflow) = n.multipliedReportingOverflow(by: scale)
+    guard !overflow else { throw ValidationError("byte count '\(text)' is too large") }
+    guard let count = ByteCount(bytes: value) else {
+      throw ValidationError("byte count must be > 0, got '\(text)'")
+    }
+    self = count
+  }
+
+  /// The largest exact binary unit: `1GiB`, `1536KiB`, `100`.
+  public var description: String {
+    for (suffix, factor) in Self.suffixes.reversed() where bytes % factor == 0 {
+      return "\(bytes / factor)\(suffix)"
+    }
+    return String(bytes)
+  }
+
+  public static func < (a: Self, b: Self) -> Bool { a.bytes < b.bytes }
+}
+
 /// Guest RAM at or above the bootable floor, enforced on every entry point.
 public struct VmMemory: Hashable, Comparable, Sendable, CustomStringConvertible {
   public static let minimum = MiB(128)!

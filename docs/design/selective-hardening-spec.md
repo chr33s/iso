@@ -363,7 +363,7 @@ Before apply, coop MUST enforce configurable limits:
 ```jsonc
 {
   "workspace": {
-    "return": {
+    "pull": {
       "max_files": 50000,
       "max_bytes": "1GiB",
       "max_file_bytes": "256MiB",
@@ -427,7 +427,7 @@ Config:
 ```jsonc
 {
   "workspace": {
-    "return": {
+    "pull": {
       "mode": "direct" // compatibility; or "stage"
     }
   }
@@ -437,6 +437,31 @@ Config:
 `direct` is today's `coop pull` behavior, unchanged.
 
 A later release SHOULD consider making `stage` the default for interactive use after sufficient compatibility data.
+
+## 5.11.1 v1 implementation decisions
+
+- Config lives at `workspace.pull` (`mode`, `max_files`, `max_bytes`,
+  `max_file_bytes`); `review_deletes_over` / `review_type_changes` are not
+  implemented.
+- **No deletions.** A direct `coop pull` has never deleted host files (rsync
+  pull runs without `--delete`), so a staged apply applies only add, modify
+  and type-change. Deletion review is deferred.
+- One stage per instance at `<instance>/stage/`; a new stage replaces the old.
+  `--apply --stage-id <id>` pins the reviewed stage.
+- Budgets are enforced while walking the completed stage, not during the
+  transfer. The staged transfer asks the guest's rsync or tar to keep hard
+  links and holes (`-H -S`, `--sparse`), which stops an honest guest's
+  hard-linked or sparse files from expanding on the host; the walk then
+  rejects hard links and oversize files. It does **not** bound a hostile
+  guest: with root it can replace its own `tar` or rsync and stream an
+  arbitrarily large archive into the stage before the walk runs. Stopping
+  the transfer at `max_bytes` (§5.8 SHOULD) remains open; direct pull has the
+  same exposure.
+- A symlink whose target passes through another symlink (staged, or already
+  in the destination) is rejected: lexical containment alone does not hold
+  once the kernel resolves intermediate links.
+- Any structural issue marks the whole stage inapplicable (no partial apply
+  of a stage with issues).
 
 ## 5.12 Security acceptance criteria
 
@@ -924,7 +949,7 @@ Config MAY support:
 }
 ```
 
-Workspace-export budgets are configured only under `workspace.return` (§5.8).
+Workspace-export budgets are configured only under `workspace.pull` (§5.8).
 
 Existing VM CPU/memory settings remain the primary compute budget. Guest disk
 size is already fixed at creation (`--disk`, `vm.template_size_gib`); see §8.6.
@@ -1083,7 +1108,7 @@ The Embedded Coop Secrets design intentionally has no secret-store auth log. Bou
   "network": { "egress": "none" },
   "proxy": { "mode": "required" },
   "workspace": {
-    "return": { "mode": "stage", "max_files": 10000, "max_bytes": "200MiB" }
+    "pull": { "mode": "stage", "max_files": 10000, "max_bytes": "200MiB" }
   },
   "limits": { "session_ttl": "4h" }
 }
@@ -1186,7 +1211,7 @@ This is illustrative, not a frozen schema.
     "anthropic": { "credential": "cmd:…", "auth": "api_key" }
   },
   "workspace": {
-    "return": {
+    "pull": {
       "mode": "stage",
       "max_files": 50000,
       "max_bytes": "1GiB",
@@ -1356,7 +1381,7 @@ The summary MUST NOT print secrets or capability tokens.
 
 ## 14.4 Compatibility
 
-Where possible, existing config should continue to mean current behavior. Concretely: a config with no `proxy.mode`, `network`, `workspace.return` or `limits` fields behaves exactly as today (`proxy.mode = "auto"` with legacy raw forwarding when no proxy is configured, `egress = "open"`, `workspace.return.mode = "direct"`, no TTL).
+Where possible, existing config should continue to mean current behavior. Concretely: a config with no `proxy.mode`, `network`, `workspace.pull` or `limits` fields behaves exactly as today (`proxy.mode = "auto"` with legacy raw forwarding when no proxy is configured, `egress = "open"`, `workspace.pull.mode = "direct"`, no TTL).
 
 Security-tightening defaults may be introduced only with clear release notes and migration behavior.
 

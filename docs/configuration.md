@@ -527,6 +527,33 @@ See [Apple sandbox configuration](backends.md#configuration) for how each value 
 
 Each timeout must be between 1 and 86400 seconds.
 
+## `workspace` section
+
+How `coop pull` returns guest files. See [staged pulls](workspaces.md#staged-pulls).
+
+```jsonc
+{
+  "workspace": {
+    "pull": {
+      "mode": "stage",          // "direct" (default) or "stage"
+      "max_files": 50000,
+      "max_bytes": "1GiB",
+      "max_file_bytes": "256MiB"
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `pull.mode` | string | `"direct"` | `direct` pulls straight into the local directory; `stage` stages and reviews first |
+| `pull.max_files` | integer | `50000` | Most staged entries of any type |
+| `pull.max_bytes` | bytes | `"1GiB"` | Most regular-file bytes in one stage |
+| `pull.max_file_bytes` | bytes | `"256MiB"` | Largest single staged file |
+
+Byte fields take an integer or a string with a `KiB`, `MiB` or `GiB` suffix.
+Unknown members of `workspace` and `workspace.pull` are rejected.
+
 ## `updates` section
 
 Background update-check behavior for `coop update`. The fork channel targets

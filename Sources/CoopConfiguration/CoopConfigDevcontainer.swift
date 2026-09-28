@@ -26,6 +26,6 @@ extension CoopConfig {
       proxy: proxy,
       guestEnvironment: variables, profiles: profiles, postStart: postStart ?? self.postStart,
       forwardPorts: forwardPorts,
-      updates: updates, appleContainer: appleContainer)
+      updates: updates, appleContainer: appleContainer, workspacePull: workspacePull)
   }
 }

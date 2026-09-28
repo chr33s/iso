@@ -98,6 +98,17 @@
   // "post_start": "make dev-setup",          // runs in the guest after each boot
   // "forward_ports": [3000, "8080:18080", { "guest": 5432, "label": "db" }],
 
+  // `coop pull` return path. "stage" pulls into a host-side stage for review;
+  // nothing reaches the local directory until `coop pull --apply`.
+  // "workspace": {
+  //   "pull": {
+  //     "mode": "direct",           // or "stage"
+  //     "max_files": 50000,
+  //     "max_bytes": "1GiB",
+  //     "max_file_bytes": "256MiB"
+  //   }
+  // },
+
   // "updates": {
   //   "mode": "notify",           // "off" or "notify"
   //   "check_interval_hours": 24

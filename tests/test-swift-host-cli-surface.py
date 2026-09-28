@@ -27,6 +27,11 @@ ALLOWED_EXTRA = {
     ("*", "--config"): "global option accepted after the subcommand (baseline: global=true)",
     ("*", "-v --verbose"): "global option accepted after the subcommand (baseline: global=true)",
     ("setup", "--config-only"): "C-03: config creation moved from `init` into setup",
+    ("pull", "--review"): "selective-hardening spec §5: staged workspace return",
+    ("pull", "--apply"): "selective-hardening spec §5: staged workspace return",
+    ("pull", "--discard"): "selective-hardening spec §5: staged workspace return",
+    ("pull", "--stage-id"): "selective-hardening spec §5: staged workspace return",
+    ("pull", "--stat"): "selective-hardening spec §5: staged workspace return",
 }
 ALLOWED_MISSING_COMMANDS = {
     "quickstart": "C-03: hidden; fails with the setup/up/claude-or-codex replacement",
