@@ -418,12 +418,16 @@ struct StageBuilder {
     let staged = Set(links.map { Self.folded($0.path) })
     for (path, target) in links {
       var stack = path.split(separator: "/").map(String.init)
-      stack.removeLast()
+      _ = stack.popLast()
       let components = target.split(separator: "/").map(String.init)
       for component in components.dropLast() {
         if component == "." { continue }
         if component == ".." {
-          stack.removeLast()
+          // Unreachable after `staysInside`, but never trap on guest input.
+          guard stack.popLast() != nil else {
+            issue("\(path): symlink points outside the workspace")
+            break
+          }
           continue
         }
         stack.append(component)
