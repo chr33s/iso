@@ -1,0 +1,11 @@
+Launch Claude Code inside the VM (skips permissions by default)
+
+Usage: coop claude [OPTIONS] [NAME] [ARGS]...
+
+Arguments:
+  [NAME]     Instance name (required if multiple instances exist)
+  [ARGS]...  Extra arguments passed to `claude`
+
+Options:
+      --ask   Prompt for permissions instead of skipping them
+  -h, --help  Print help

@@ -1,0 +1,6 @@
+Route this VM's agents at a host-side local model server
+
+Usage: coop model local
+
+Options:
+  -h, --help  Print help

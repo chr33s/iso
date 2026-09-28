@@ -1,0 +1,9 @@
+Print configured PAT entries and their validation state
+
+Usage: coop github status [OPTIONS]
+
+Options:
+      --vm <NAME>  Also show this VM's assigned entry and effective selection source
+      --probe      Resolve each entry's `cmd:` invocation (may trigger Keychain / 1Password prompts) to confirm the secret store still serves it
+      --json       Emit machine-readable JSON instead of the text report
+  -h, --help       Print help

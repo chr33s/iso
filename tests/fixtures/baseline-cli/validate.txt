@@ -1,0 +1,7 @@
+Validate configuration and check prerequisites
+
+Usage: coop validate [OPTIONS]
+
+Options:
+      --probe  Probe live state for each `[github.pat]` entry (talks to api.github.com)
+  -h, --help   Print help

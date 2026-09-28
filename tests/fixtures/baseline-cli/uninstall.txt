@@ -1,0 +1,9 @@
+Remove the coop binary and (optionally) its data directories
+
+Usage: coop uninstall [OPTIONS]
+
+Options:
+  -y, --yes        Skip interactive confirmation prompts (removes data unless --keep-data)
+      --keep-data  Remove only the binary, keep ~/.coop and update-check state
+      --purge      Also remove data without prompting (pairs with --yes for CI)
+  -h, --help       Print help

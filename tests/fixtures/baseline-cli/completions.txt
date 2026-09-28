@@ -1,0 +1,29 @@
+Print a shell completion script (run `coop completions --help` for setup)
+
+Usage: coop completions <SHELL>
+
+Arguments:
+  <SHELL>  Shell to generate completions for [possible values: bash, elvish, fish, powershell, zsh]
+
+Options:
+  -h, --help  Print help
+
+Examples:
+  # bash — system-wide
+  coop completions bash | sudo tee /etc/bash_completion.d/coop > /dev/null
+
+  # bash — user
+  coop completions bash > ~/.local/share/bash-completion/completions/coop
+
+  # zsh — user (ensure dir is on $fpath; restart shell)
+  coop completions zsh > ~/.zfunc/_coop
+
+  # fish — user
+  coop completions fish > ~/.config/fish/completions/coop.fish
+
+Dynamic completion (live instance / image / profile names) requires one
+extra line in your shell rc:
+
+  bash:  source <(COMPLETE=bash coop)
+  zsh:   source <(COMPLETE=zsh coop)
+  fish:  source (COMPLETE=fish coop | psub)

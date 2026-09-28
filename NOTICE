@@ -1,0 +1,14 @@
+isolate is a Swift-based derivative of coop, originally developed by
+Trail of Bits and contributors:
+https://github.com/trailofbits/coop
+
+Modified by chr33s: ported/adapted for the Swift implementation on
+macOS 27+ Apple Silicon hosts.
+
+Git history has been pruned to focus on the Swift implementation.
+This history rewrite does not alter the licensing or attribution of
+upstream-derived material. See PROVENANCE.md for the recorded revisions.
+
+LLVM libFuzzer retains its Apache-2.0 WITH LLVM-exception license in
+fuzz/libfuzzer/LICENSE.TXT. Other dependency licenses and attribution
+are described in THIRD_PARTY_LICENSES.md.

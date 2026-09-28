@@ -1,0 +1,13 @@
+Resize a stopped instance's disk, memory, or vCPU count
+
+Usage: coop resize [OPTIONS] <--size <SIZE>|--mem <MEM>|--vcpus <VCPUS>> [NAME]
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+      --size <SIZE>    New disk size: absolute GiB (e.g. 150, 150G) or relative (e.g. +20, +20G)
+      --mem <MEM>      New memory in MiB (minimum 128)
+      --vcpus <VCPUS>  New vCPU count
+      --start          Start the instance after applying the change instead of leaving it stopped
+  -h, --help           Print help

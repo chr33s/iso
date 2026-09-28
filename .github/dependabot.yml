@@ -1,0 +1,29 @@
+# Derived from trailofbits/coop.
+# Modified by chr33s: ported/adapted for the Swift implementation.
+# SPDX-License-Identifier: Apache-2.0
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+
+  # SwiftPM pins (Package.resolved) for the host, proxy and runtime packages.
+  - package-ecosystem: swift
+    directories: ["/", "/coop-proxy", "/coop-sandbox"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      swift:
+        patterns: ["*"]
+    open-pull-requests-limit: 5

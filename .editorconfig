@@ -1,0 +1,40 @@
+# Derived from trailofbits/coop.
+# Modified by chr33s: ported/adapted for the Swift implementation.
+# SPDX-License-Identifier: Apache-2.0
+
+# EditorConfig: https://editorconfig.org
+root = true
+
+# Defaults for every file. Mirrors scripts/hygiene.py (final newline, no
+# trailing whitespace) so the editor and the pre-commit hook never disagree.
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Swift: 2-space indent, the swift-format default.
+[*.swift]
+indent_size = 2
+
+# YAML: 2-space indent, matching .github/workflows.
+[*.{yml,yaml}]
+indent_size = 2
+
+# TOML (mise.toml, parity fixtures): 2-space indent.
+[*.toml]
+indent_size = 2
+
+# Markdown: 2-space indent for nested lists.
+[*.md]
+indent_size = 2
+
+# JSON: 2-space indent.
+[*.json]
+indent_size = 2
+
+# Shell: 4-space indent, matching most of the repo's scripts.
+[*.sh]
+indent_size = 4

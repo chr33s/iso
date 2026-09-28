@@ -1,0 +1,9 @@
+# Derived from trailofbits/coop.
+# Modified by chr33s: ported/adapted for the Swift implementation.
+# SPDX-License-Identifier: Apache-2.0
+
+# Work corpora, crash artifacts and instrumented builds from scripts/fuzz.sh;
+# the seed corpus in corpus/<Target>/ is checked in and replayed by `swift test`.
+/.build/
+artifacts
+coverage

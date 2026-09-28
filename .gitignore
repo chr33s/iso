@@ -1,0 +1,22 @@
+# Derived from trailofbits/coop.
+# Modified by chr33s: ported/adapted for the Swift implementation.
+# SPDX-License-Identifier: Apache-2.0
+
+*.ext4
+*.img
+vmlinux
+firecracker
+.env
+*.swp
+*.swo
+.claude/settings.local.json
+__pycache__/
+
+# Swift host package
+/.build/
+/.build-*/
+/.swiftpm/
+/fuzz/.build/
+/fuzz/.swiftpm/
+/fuzz/artifacts/
+/tests/baseline/config-normalize/

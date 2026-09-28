@@ -1,0 +1,294 @@
+// Derived from trailofbits/coop.
+// Modified by chr33s: ported/adapted for the Swift implementation.
+// SPDX-License-Identifier: Apache-2.0
+
+import CoopConfiguration
+import CoopCore
+import Foundation
+
+/// SSH connection to a guest whose host key was pinned at enrollment,
+/// looked up under a stable alias rather than the (reassignable) address.
+public struct SSHTarget: Sendable, Equatable {
+  public let host: String
+  public let port: UInt16
+  public let user: GuestUser
+  public let keyPath: String
+  public let knownHosts: String
+  public let alias: String
+
+  /// Build the pinned target for `machine` at `ip`. Refuses a data path that
+  /// ssh could not carry safely and an instance with no enrolled key.
+  public static func pinned(
+    config: CoopConfig, instance: Instance, machine: MachineName, ip: IPv4Address, user: GuestUser
+  ) throws -> SSHTarget {
+    let knownHosts = instance.knownHostsPath
+    // The path is passed as a (possibly quoted) option value and written
+    // into ~/.ssh/config; a quote or control character could change parsing.
+    if knownHosts.unicodeScalars.contains(where: {
+      $0 == "\"" || $0 == "'" || $0.properties.generalCategory == .control
+    }) {
+      throw HostError(
+        "data directory path \(knownHosts) contains a quote or control character; SSH options cannot carry it safely"
+      )
+    }
+    guard FileManager.default.fileExists(atPath: knownHosts) else {
+      throw RuntimeError.hostKeyChanged(
+        "instance '\(instance.name)' has no pinned host key at \(knownHosts); recreate the instance"
+      )
+    }
+    return SSHTarget(
+      host: ip.description, port: 22, user: user, keyPath: config.sshKeyPath.path,
+      knownHosts: knownHosts,
+      alias: "\(machine).coop")
+  }
+
+  /// OpenSSH splits some option values on whitespace; quoting keeps a path
+  /// with a space whole in `-o`, rsync `-e` and `~/.ssh/config` alike.
+  public static func quoteValue(_ value: String) -> String {
+    value.unicodeScalars.contains(where: { $0.properties.isWhitespace }) ? "\"\(value)\"" : value
+  }
+
+  /// `-o` values for the pinned host-key policy, in order.
+  public var hostKeyOptions: [String] {
+    [
+      "StrictHostKeyChecking=yes", "UserKnownHostsFile=\(Self.quoteValue(knownHosts))",
+      "GlobalKnownHostsFile=/dev/null", "HostKeyAlias=\(alias)", "UpdateHostKeys=no",
+      "ForwardAgent=no",
+      // Authentication uses coop's key file only, never the host agent.
+      "IdentityAgent=none",
+    ]
+  }
+
+  /// Options every transport shares, up to the port flag. `BatchMode`
+  /// refuses prompts; `ServerAlive*` bounds a dead established session.
+  public var transportOptions: [String] {
+    var options = [
+      "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=30", "-o",
+      "ServerAliveCountMax=3",
+    ]
+    for option in hostKeyOptions { options += ["-o", option] }
+    return options + ["-o", "IdentitiesOnly=yes", "-o", "LogLevel=ERROR", "-i", keyPath]
+  }
+
+  public var sshOptions: [String] { transportOptions + ["-p", String(port)] }
+  public var address: String { "\(user)@\(host)" }
+}
+
+/// Runs `ssh` for captured, non-interactive guest commands.
+public struct SSHClient: Sendable {
+  let environment: [String: String]
+  let runner: ProcessRunner
+  /// ssh bounds connection and liveness itself; this caps the whole call.
+  public static let captureDeadline: Duration = .seconds(300)
+
+  /// Guest-bound `ssh`, `scp` and `rsync` inherit only this much of the
+  /// host environment. A user's own `SendEnv` (with the guest's
+  /// `AcceptEnv *`) would otherwise carry any host variable — a raw
+  /// provider key in proxy mode — into the guest; values coop forwards on
+  /// purpose are added back by `EnvForward`.
+  public static func transportEnvironment(_ environment: [String: String]) -> [String: String] {
+    let names: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "TERM", "LANG"]
+    return environment.filter { names.contains($0.key) || $0.key.hasPrefix("LC_") }
+  }
+
+  public init(environment: [String: String], runner: ProcessRunner = ProcessRunner()) {
+    self.environment = Self.transportEnvironment(environment)
+    self.runner = runner
+  }
+
+  /// `ssh` from the caller's `PATH`, as the Rust host resolved it.
+  public func sshExecutable() -> String? {
+    for directory in (environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
+    where !directory.isEmpty {
+      let candidate = "\(directory)/ssh"
+      if access(candidate, X_OK) == 0 { return candidate }
+    }
+    return nil
+  }
+
+  /// stdout of `command` on the guest; stderr is discarded. Nil when ssh
+  /// fails, times out, or prints non-UTF-8 output.
+  public func capture(_ target: SSHTarget, _ command: String) -> String? {
+    guard let ssh = sshExecutable() else { return nil }
+    guard
+      let output = try? runner.capture(
+        .init(
+          executable: ssh, arguments: target.sshOptions + [target.address, command],
+          environment: environment,
+          deadline: Self.captureDeadline)),
+      output.termination == .exited(0)
+    else { return nil }
+    return String(validating: output.stdout, as: UTF8.self)
+  }
+}
+
+/// Resource usage gathered from a running guest.
+public struct ResourceUsage: Sendable, Equatable {
+  public let load1m: Double
+  public let memUsedMiB: UInt64
+  public let memTotalMiB: UInt64
+  public let diskUsedMiB: UInt64
+  public let diskTotalMiB: UInt64
+
+  public static let command = "cat /proc/loadavg; cat /proc/meminfo; df -m /"
+
+  var memPercent: UInt64 { memTotalMiB > 0 ? memUsedMiB * 100 / memTotalMiB : 0 }
+  var diskPercent: UInt64 { diskTotalMiB > 0 ? diskUsedMiB * 100 / diskTotalMiB : 0 }
+
+  /// `status NAME` line.
+  public var display: String {
+    "Load: \(formatFixed(load1m, 2))  Mem: \(memUsedMiB)/\(memTotalMiB) MiB (\(memPercent)%)  Disk: \(diskUsedMiB)/\(diskTotalMiB) MiB (\(diskPercent)%)"
+  }
+
+  /// Compact form for multi-instance listing.
+  public var summary: String {
+    "load=\(formatFixed(load1m, 2)) mem=\(memPercent)% disk=\(diskPercent)%"
+  }
+
+  /// Parses `/proc/loadavg`, `/proc/meminfo` and `df -m /` output. Values
+  /// that are absent stay zero (baseline behavior, including its quirk of
+  /// trying later lines for the load while it is still `0.0`).
+  public static func parse(_ output: String) -> ResourceUsage {
+    var load = 0.0
+    var memTotalKiB: UInt64 = 0
+    var memAvailableKiB: UInt64 = 0
+    var diskUsed: UInt64 = 0
+    var diskTotal: UInt64 = 0
+    for line in rustLines(output) {
+      let fields = line.split(whereSeparator: {
+        $0.unicodeScalars.allSatisfy(\.properties.isWhitespace)
+      })
+      .map(String.init)
+      if load == 0.0, let first = fields.first, let value = parseRustFloat(first) {
+        load = value
+        continue
+      }
+      if line.hasPrefix("MemTotal:") {
+        if let value = firstUnsigned(line.dropFirst("MemTotal:".count)) { memTotalKiB = value }
+      } else if line.hasPrefix("MemAvailable:"),
+        let value = firstUnsigned(line.dropFirst("MemAvailable:".count))
+      {
+        memAvailableKiB = value
+      }
+      if fields.count >= 4, let total = parseUnsigned(fields[1], as: UInt64.self),
+        let used = parseUnsigned(fields[2], as: UInt64.self), fields.last!.hasPrefix("/")
+      {
+        diskTotal = total
+        diskUsed = used
+      }
+    }
+    let used = memTotalKiB >= memAvailableKiB ? memTotalKiB - memAvailableKiB : 0
+    return ResourceUsage(
+      load1m: load, memUsedMiB: used / 1024, memTotalMiB: memTotalKiB / 1024, diskUsedMiB: diskUsed,
+      diskTotalMiB: diskTotal)
+  }
+
+  /// First whitespace-separated token parsed as an unsigned integer.
+  static func firstUnsigned(_ rest: Substring) -> UInt64? {
+    rest.split(whereSeparator: \.isWhitespace).first.flatMap {
+      parseUnsigned(String($0), as: UInt64.self)
+    }
+  }
+
+  public static func query(_ ssh: SSHClient, _ target: SSHTarget) -> ResourceUsage? {
+    ssh.capture(target, command).map(parse)
+  }
+}
+
+/// Rust `str::lines`: split on `\n`, strip one trailing `\r`, no final empty line.
+/// Works on bytes: Swift treats `\r\n` as one `Character`, so splitting a
+/// `String` on `"\n"` would miss CRLF line ends.
+func rustLines(_ text: String) -> [String] {
+  var lines = text.utf8.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+  if lines.last?.isEmpty == true { lines.removeLast() }
+  return lines.map { line in
+    String(decoding: line.last == UInt8(ascii: "\r") ? line.dropLast() : line, as: UTF8.self)
+  }
+}
+
+/// Rust `f64::from_str`: decimal or exponent forms, `inf`/`nan` spellings,
+/// optional sign; no surrounding whitespace or hex.
+func parseRustFloat(_ text: String) -> Double? {
+  let lower = text.lowercased()
+  let unsigned = lower.hasPrefix("+") || lower.hasPrefix("-") ? String(lower.dropFirst()) : lower
+  if ["inf", "infinity", "nan"].contains(unsigned) {
+    return Double(lower.replacingOccurrences(of: "infinity", with: "inf"))
+  }
+  guard !unsigned.isEmpty,
+    unsigned.unicodeScalars.allSatisfy({
+      ("0"..."9").contains($0) || $0 == "." || $0 == "e" || $0 == "+" || $0 == "-"
+    }),
+    !unsigned.hasPrefix("e")
+  else { return nil }
+  return Double(text)
+}
+
+/// Rust `{:.N}` fixed-point formatting (round half to even on the binary value).
+public func formatFixed(_ value: Double, _ digits: Int) -> String {
+  if value.isNaN { return "NaN" }
+  if value.isInfinite { return value < 0 ? "-inf" : "inf" }
+  return String(format: "%.\(digits)f", value)
+}
+
+extension SSHClient {
+  /// Short control-socket path (macOS caps Unix socket paths at 104 bytes),
+  /// distinct per host, port and pinned alias.
+  public func controlPath(_ target: SSHTarget) -> String {
+    let directory = environment["XDG_RUNTIME_DIR"] ?? NSTemporaryDirectory()
+    var hash: UInt32 = 2_166_136_261
+    for byte in "\(target.host):\(target.port):\(target.alias)".utf8 {
+      hash = (hash ^ UInt32(byte)) &* 16_777_619
+    }
+    let name = "coop-" + String(format: "%08x", hash) + ".sock"
+    return directory.hasSuffix("/") ? directory + name : directory + "/" + name
+  }
+
+  /// Probe `true` over SSH until it succeeds, backing off 250 ms → 4 s, then
+  /// close the multiplexing master so later sessions start clean.
+  public func waitUntilReady(_ target: SSHTarget, timeout: Duration, diagnostics: Diagnostics)
+    throws
+  {
+    guard let ssh = sshExecutable() else {
+      throw HostError("Failed to run SSH command: ssh not found on PATH")
+    }
+    diagnostics.log(.info, "Probing SSH readiness (timeout: \(rustDuration(timeout)))")
+    let control = controlPath(target)
+    let options =
+      target.sshOptions + [
+        "-o", "ControlMaster=auto", "-o", "ControlPath=\(control)", "-o", "ControlPersist=60",
+      ]
+    let start = ContinuousClock.now
+    var delay: Duration = .milliseconds(250)
+    while true {
+      let remaining = timeout - (ContinuousClock.now - start)
+      let probe = try? runner.capture(
+        .init(
+          executable: ssh, arguments: options + [target.address, "true"], environment: environment,
+          deadline: max(remaining, .seconds(15)), outputLimit: 64 << 10, overflow: .drain))
+      // Both outcomes close the master so a later session negotiates its own
+      // SendEnv (and a timed-out probe leaves nothing persisting).
+      let closeMaster = {
+        _ = try? runner.capture(
+          .init(
+            executable: ssh,
+            arguments: ["-O", "exit", "-o", "ControlPath=\(control)", target.address],
+            environment: environment, deadline: .seconds(10), outputLimit: 64 << 10,
+            overflow: .drain))
+      }
+      if probe?.termination == .exited(0) {
+        diagnostics.log(.info, "SSH is ready")
+        closeMaster()
+        return
+      }
+      guard ContinuousClock.now - start < timeout else {
+        closeMaster()
+        throw HostError(
+          "SSH not ready after \(rustDuration(timeout)) — sshd may not be running in the guest")
+      }
+      Thread.sleep(
+        forTimeInterval: Double(delay.components.seconds) + Double(delay.components.attoseconds)
+          / 1e18)
+      delay = min(delay * 2, .seconds(4))
+    }
+  }
+}

@@ -1,0 +1,6 @@
+Generate a starter config file at ~/.coop/config.toml
+
+Usage: coop init
+
+Options:
+  -h, --help  Print help

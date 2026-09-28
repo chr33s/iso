@@ -1,0 +1,15 @@
+{
+  // comment
+  "name": "demo",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "zeta": {"b": [1, 2.5, "x\ty"], "a": null},
+  "hostRequirements": { "cpus": 4, "memory": "8gb", "storage": "32GiB", "gpu": true },
+  "containerEnv": { "FOO": "bar", "1BAD": "x", "BAZ": "q" },
+  "forwardPorts": [3000, "8080:9090", 0, "abc", 70000, -1, 1.5, true],
+  "postStartCommand": ["echo a", "echo b"],
+  "features": { "ghcr.io/devcontainers/features/rust:1": {}, "node": {}, "ghcr.io/other/x:1": {}, "ghcr.io/devcontainers/features/go@sha256:nope": {}, "ghcr.io/devcontainers/features/bad:1": {"v": {"n": 1}} },
+  "mounts": ["source=/tmp,target=/b,type=bind", {"type":"volume","source":"v","target":"/c"}, "/nonexistent:/x"],
+  "remoteUser": "vscode",
+  "customizations": {"vscode": {}},
+  "alpha": 1,
+}

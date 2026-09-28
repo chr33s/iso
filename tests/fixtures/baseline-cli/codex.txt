@@ -1,0 +1,11 @@
+Launch Codex inside the VM (bypasses the sandbox and approvals by default)
+
+Usage: coop codex [OPTIONS] [NAME] [ARGS]...
+
+Arguments:
+  [NAME]     Instance name (required if multiple instances exist)
+  [ARGS]...  Extra arguments passed to `codex`
+
+Options:
+      --ask   Keep Codex's sandbox and approval prompts instead of bypassing them
+  -h, --help  Print help

@@ -1,0 +1,26 @@
+Open an editor (VS Code or Zed) connected to the guest VM
+
+Usage: coop editor [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]
+          Instance name (required if multiple instances exist)
+
+Options:
+      --project <PROJECT>
+          Remote path to open in the editor
+          
+          [default: /workspace]
+
+      --editor <EDITOR>
+          Editor to launch. Omitted: try VS Code first, then Zed
+
+          Possible values:
+          - code: VS Code, via the Remote-SSH extension
+          - zed:  Zed, via `ssh://` remoting
+
+      --clean
+          Remove the SSH config entry for this instance and exit
+
+  -h, --help
+          Print help (see a summary with '-h')

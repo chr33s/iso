@@ -1,0 +1,10 @@
+Stream VM serial console logs
+
+Usage: coop logs [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+  -f, --follow  Follow log output
+  -h, --help    Print help

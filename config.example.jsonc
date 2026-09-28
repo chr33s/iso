@@ -1,0 +1,122 @@
+// Derived from trailofbits/coop.
+// Modified by chr33s: ported/adapted for the Swift implementation.
+// SPDX-License-Identifier: Apache-2.0
+
+// coop configuration (JSONC: JSON plus // and /* */ comments).
+// `coop setup --config-only` writes this template to ~/.coop/config.jsonc.
+// Uncomment members to override defaults; an empty object gives the defaults.
+// Trailing commas are not accepted. Run `coop validate` to check the file.
+{
+  // "data_dir": "~/.coop",        // VM artifacts: images, instances, keys
+  // "ssh_port": 22,               // Guest SSH port
+
+  // GitHub auth strategy: a string ("auto", "env", "off", "pat") or an object
+  // with per-repo PAT entries. `coop github setup-pat --repo owner/name`
+  // populates it; `coop github assign-pat --vm NAME --repo owner/name` selects
+  // an entry for one VM.
+  // "github": "auto",
+  // "github": {
+  //   "mode": "pat",
+  //   "skip": ["owner/big-repo"],   // repos to skip the auto-prompt for
+  //   "pat": {
+  //     "owner/repo": {
+  //       "token": "cmd:security find-generic-password -s coop-github-pat -a owner-repo -w"
+  //     }
+  //   }
+  // },
+
+  // "setup": { "prompt_for_pat": true },   // auto-prompt for a PAT at `coop start`
+
+  // "vm": {
+  //   "vcpu_count": 2,            // vCPUs per VM (override: --vcpus)
+  //   "mem_size_mib": 4096,       // memory in MiB, at least 128 (override: --mem)
+  //   "template_size_gib": 8      // template disk in GiB (override: --template-size)
+  // },
+
+  // Literal environment variables for the guest. They override forwarded
+  // values with the same name. Do not put secrets here; use env_forward.
+  // "guest_env": { "RUST_LOG": "info" },
+
+  // "claude": {
+  //   // Copies CLAUDE.md, keybindings.json, rules/, commands/, skills/,
+  //   // agents/, output-styles/, themes/ and workflows/ from this directory;
+  //   // false stops copying.
+  //   "config_dir": "~/.claude",
+  //   "env_forward": ["CUSTOM_TOKEN"],
+  //   "marketplaces": ["https://github.com/anthropics/claude-plugins-official"],
+  //   "plugins": ["rust-analyzer-lsp@claude-plugins-official"],
+  //   // Secret-bearing values accept "cmd:<command>": the command runs on the
+  //   // host via `sh -c` when needed and its trimmed stdout is used.
+  //   "api_key": "cmd:security find-generic-password -s anthropic -w",
+  //   "mcp_servers": {
+  //     "my-server": {
+  //       "command": "/usr/bin/my-mcp-server",
+  //       "args": ["--verbose"],
+  //       "env": { "API_KEY": "MY_HOST_ENV_VAR" }
+  //     }
+  //   },
+  //   // Route Claude Code at a host-side model; enable per VM with
+  //   // `coop model <vm> local`. A localhost host is rewritten to the
+  //   // guest's view of the host.
+  //   "local_model": {
+  //     "host_url": "http://localhost:11434",
+  //     "model": "qwen2.5-coder:32b"
+  //   }
+  // },
+
+  // "codex": {
+  //   "auth": "api_key",          // or "chatgpt" for account/workspace auth
+  //   "config_dir": "~/.codex",
+  //   "env_forward": ["CUSTOM_TOKEN"],
+  //   "marketplaces": ["trailofbits/codex-plugins"],
+  //   "plugins": ["my-lsp@codex-plugins"],
+  //   "local_model": {
+  //     "host_url": "http://localhost:11434/v1/",
+  //     "model": "gpt-oss:120b"
+  //   }
+  // },
+
+  // Host-side credential-injecting proxy. `coop proxy setup [--openai]`
+  // stores the credential in the macOS Keychain and writes the `cmd:`
+  // reference here. Credentials must be `cmd:` references; literal values are
+  // rejected. Cannot be combined with codex auth "chatgpt".
+  // "proxy": {
+  //   "anthropic": {
+  //     "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+  //     "auth": "api_key"         // "api_key" (x-api-key) or "bearer" (setup-token)
+  //   },
+  //   "openai": {
+  //     "credential": "cmd:security find-generic-password -s coop-openai -a openai -w",
+  //     "auth": "bearer"
+  //   }
+  // },
+
+  // "profiles": {
+  //   "my-tools": {
+  //     "apt_packages": ["ripgrep", "fd-find", "jq"],
+  //     "pre_install": "curl -fsSL https://example.com/setup.sh | bash",
+  //     "post_install": "echo done"
+  //   }
+  // },
+
+  // "post_start": "make dev-setup",          // runs in the guest after each boot
+  // "forward_ports": [3000, "8080:18080", { "guest": 5432, "label": "db" }],
+
+  // "updates": {
+  //   "mode": "notify",           // "off" or "notify"
+  //   "check_interval_hours": 24
+  // },
+
+  // Apple sandbox backend. Unknown members are rejected.
+  // "apple_container": {
+  //   "binary": "/absolute/path/to/coop-sandbox",
+  //   "builder": "/absolute/path/to/container",
+  //   "kernel": "/absolute/path/to/vmlinux",
+  //   "probe_timeout_seconds": 10,
+  //   "operation_timeout_seconds": 60,
+  //   "create_timeout_seconds": 600,
+  //   "boot_timeout_seconds": 120,
+  //   "stop_timeout_seconds": 90,
+  //   "build_timeout_seconds": 3600
+  // }
+}

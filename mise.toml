@@ -1,0 +1,55 @@
+# Pinned development toolchain and git hooks for coop (https://mise.jdx.dev).
+#
+#   mise install                                   # install the pinned tools
+#   mise generate git-pre-commit --write           # enable the pre-commit hook
+#   mise run check                                 # everything the hook runs
+#
+# Xcode 27 is still required: it supplies the macOS 27 SDK, `codesign`, and
+# the Virtualization framework the runtime links against. The pinned Swift
+# toolchain matches the Swift 6.4 that Xcode 27 ships.
+
+min_version = "2026.8.0"
+
+[tools]
+# Swift toolchain (swift build/test, swift format).
+swift = "6.4.0"
+# Python for the repository scripts and checks (tomllib needs 3.11+; macOS
+# ships 3.9).
+python = "3.14.7"
+# Integration scripts and release tooling.
+jq = "1.8.2"
+yq = "4.53.6"
+# Script and workflow linters.
+shellcheck = "0.11.0"
+"github:kjanat/actionlint" = "1.17.0"
+zizmor = "1.30.1"
+# Apple `container` CLI: builds the guest images (`coop setup`) and serves the
+# integration suites. Its service still has to be started once
+# (`container system start`).
+container = "1.4.1"
+
+[tasks.hygiene]
+description = "Whitespace, final newlines, YAML, large files and merge markers in staged files"
+run = "python3 scripts/hygiene.py"
+
+[tasks.lint]
+description = "swift format lint --strict over the host package"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints"
+
+[tasks.build]
+description = "Build the Swift host"
+run = "swift build --force-resolved-versions"
+
+[tasks.test]
+description = "Swift host tests"
+run = "swift test --force-resolved-versions"
+
+[tasks.check]
+description = "The pre-commit gates, in order"
+depends = ["hygiene", "lint", "build"]
+run = "swift test --force-resolved-versions"
+
+# Run by the git hook from `mise generate git-pre-commit --write`.
+[tasks.pre-commit]
+description = "Git pre-commit hook: hygiene, lint, build, test"
+depends = ["check"]

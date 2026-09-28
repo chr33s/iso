@@ -1,0 +1,229 @@
+# Derived from trailofbits/coop.
+# Modified by chr33s: ported/adapted for the Swift implementation.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+env:
+  BINARY: coop
+
+jobs:
+  source:
+    if: github.repository == 'chr33s/coop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require a release commit from swift
+        run: git merge-base --is-ancestor HEAD origin/swift
+
+  ci:
+    needs: source
+    permissions:
+      contents: read
+    uses: $/.github/workflows/ci.yml
+
+  build:
+    needs: ci
+    permissions:
+      contents: read
+    runs-on: xcode-27
+    env:
+      TARGET: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned mise.toml tools (Swift, Python). No cache: a cache written by
+      # another workflow run must not feed a release build.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.8.3
+          cache: false
+
+      # One release entrypoint (spec S-05): builds coop, coop-proxy and
+      # coop-sandbox from this exact clean revision with -D COOP_RELEASE_BUILD
+      # and archives them unsigned. Tests already ran in the `ci` job.
+      - name: Build release archive
+        env:
+          TAG: ${{ github.ref_name }}
+          REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/build-release.py --release --tag "$TAG" \
+            --expected-revision "$REVISION" --out "$RUNNER_TEMP/dist"
+
+      - name: Verify release binaries
+        env:
+          TAG: ${{ github.ref_name }}
+          REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          name="${BINARY}-${TAG}-${TARGET}"
+          mkdir -p "$RUNNER_TEMP/verify"
+          tar -xzf "$RUNNER_TEMP/dist/${name}.tar.gz" -C "$RUNNER_TEMP/verify"
+          dir="$RUNNER_TEMP/verify/${name}"
+          expected="coop ${TAG#v} (${REVISION::7})"
+          actual="$("$dir/coop" --version)"
+          if [[ "$actual" != "$expected" ]]; then
+            printf 'Expected release version %s, got %s\n' "$expected" "$actual" >&2
+            exit 1
+          fi
+          test -x "$dir/coop-proxy"
+          test -x "$dir/coop-sandbox"
+          "$dir/coop-sandbox" version
+          echo "TARBALL=$RUNNER_TEMP/dist/${name}.tar.gz" >> "$GITHUB_ENV"
+
+      # The unsigned archive goes to `sign-macos`; only `dist-*` is published.
+      - name: Upload unsigned archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-${{ env.TARGET }}
+          path: ${{ env.TARBALL }}
+
+  # Developer ID signing and notarization, so Gatekeeper runs a downloaded copy
+  # without `xattr -d com.apple.quarantine`. A separate job that never builds
+  # or runs repository code other than the signing script, so the signing
+  # secrets are not exposed to build scripts or dependencies.
+  sign-macos:
+    needs: build
+    runs-on: xcode-27
+    environment: release
+    permissions:
+      contents: read
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/macos-sign-notarize.sh
+            coop-sandbox/coop-sandbox.entitlements
+          sparse-checkout-cone-mode: false
+
+      - name: Download unsigned archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-${{ env.TARGET }}
+
+      - name: Sign and notarize
+        env:
+          TAG: ${{ github.ref_name }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          name="${BINARY}-${TAG}-${TARGET}"
+          mkdir staging
+          tar -xzf "${name}.tar.gz" -C staging
+          rm "${name}.tar.gz"
+          scripts/macos-sign-notarize.sh "staging/${name}"
+          # BUILD.json records the unsigned binaries; describe the signed ones.
+          manifest="staging/${name}/BUILD.json"
+          for binary in coop coop-proxy coop-sandbox; do
+            sha="$(shasum -a 256 "staging/${name}/${binary}" | cut -d' ' -f1)"
+            jq --arg b "$binary" --arg s "$sha" '.binaries[$b] = $s' "$manifest" > "$manifest.new"
+            mv "$manifest.new" "$manifest"
+          done
+          jq '.developer_id_signed = true' "$manifest" > "$manifest.new"
+          mv "$manifest.new" "$manifest"
+          "staging/${name}/coop" --version
+          "staging/${name}/coop-sandbox" version
+          COPYFILE_DISABLE=1 tar -czf "${name}.tar.gz" -C staging "${name}"
+          echo "TARBALL=${name}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload signed archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ env.TARGET }}
+          path: ${{ env.TARBALL }}
+
+  release:
+    needs: [build, sign-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum coop-*.tar.gz > SHA256SUMS
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "coop-*.tar.gz"
+
+      # The asset name is load-bearing: `gh attestation verify --bundle`
+      # dispatches on the file extension and rejects anything that is not
+      # `.json`/`.jsonl`, so renaming this output breaks verification for every
+      # client. `bundle-path` is a single JSON line covering all three tarball
+      # subjects, so `jq -c` reshapes nothing — it is here to reject a malformed
+      # bundle, and the `-s` test to reject an empty one, which `jq` itself
+      # exits 0 on.
+      #
+      # An empty asset is caught client-side too (`install.sh` gates on `[ -s ]`
+      # and `coop update` returns `.api(.emptyBundle)` in `Update.swift`, both
+      # falling back to the API). What no client catches is a *non-empty* degenerate
+      # bundle: a whitespace-only file passes `[ -s ]` and `len() > 0` alike,
+      # and `gh`'s JSON-Lines loader then yields zero attestations — which `gh`
+      # before 2.56.0 (cli/cli#9541) reports as success, having verified
+      # nothing. `jq -c .` is what makes that unreachable, so it has to stay
+      # upstream of publication; the tag is immutable once cut.
+      - name: Normalize attestation bundle
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          jq -c . "$BUNDLE_PATH" > attestations.jsonl
+          if [ ! -s attestations.jsonl ]; then
+            echo "Attestation bundle at $BUNDLE_PATH produced no output" >&2
+            exit 1
+          fi
+
+      - name: Extract release notes from CHANGELOG
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v tag="## $TAG" '
+            $0 == tag { found=1; next }
+            found && /^## / { exit }
+            found
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "No CHANGELOG entry found for $TAG" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md coop-*.tar.gz SHA256SUMS attestations.jsonl

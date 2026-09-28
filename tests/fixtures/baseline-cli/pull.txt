@@ -1,0 +1,12 @@
+Pull guest workspace to local directory
+
+Usage: coop pull [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+      --dir <DIR>    Local directory to pull into (defaults to `workspace.json` `host_path`)
+      --force        Overwrite local changes without confirmation
+      --exclude-git  Skip the `.git` directory in this transfer
+  -h, --help         Print help

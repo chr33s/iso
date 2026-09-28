@@ -1,0 +1,16 @@
+Run a command in the VM and return its output (non-interactive)
+
+The command and its arguments must follow `--` to avoid conflicting with the optional instance name positional, e.g. `coop exec my-vm -- ls -la` or `coop exec -- ls -la`.
+
+Usage: coop exec [NAME] -- <COMMAND>...
+
+Arguments:
+  [NAME]
+          Instance name (required if multiple instances exist)
+
+  <COMMAND>...
+          Command and arguments to run (after `--`)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')

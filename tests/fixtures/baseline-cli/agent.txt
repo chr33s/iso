@@ -1,0 +1,10 @@
+Manage the coding agents installed inside a VM
+
+Usage: coop agent <COMMAND>
+
+Commands:
+  update  Update coding agent(s) to the latest version inside the VM
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

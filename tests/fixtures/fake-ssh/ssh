@@ -1,0 +1,12 @@
+#!/bin/sh
+# Test stand-in for ssh: skips options, then runs the remote command
+# locally with /bin/sh (as sshd hands it to the login shell).
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|-i|-p|-e|-F|-l|-L|-R|-S) shift 2 ;;
+    -*) shift ;;
+    *) shift; break ;;
+  esac
+done
+[ -n "$FAKE_SSH_LOG" ] && printf '%s\n' "$*" >> "$FAKE_SSH_LOG"
+exec /bin/sh -c "$*"

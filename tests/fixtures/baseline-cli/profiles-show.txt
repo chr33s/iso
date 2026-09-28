@@ -1,0 +1,9 @@
+Show the full definition of a profile
+
+Usage: coop profiles show <NAME>
+
+Arguments:
+  <NAME>  Profile name to inspect
+
+Options:
+  -h, --help  Print help

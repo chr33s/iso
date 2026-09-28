@@ -1,0 +1,425 @@
+// Derived from trailofbits/coop.
+// Modified by chr33s: ported/adapted for the Swift implementation.
+// SPDX-License-Identifier: Apache-2.0
+
+import CoopConfiguration
+import CoopCore
+import Foundation
+
+/// GitHub token handling, ported separately. Bootstrap consults it for the
+/// repository an instance works on, the VM's PAT assignment, the token to
+/// forward as `GITHUB_TOKEN`, and the guest `gh` credential helper.
+public protocol GitHubTokenSource: Sendable {
+  /// `detect_instance_repo`: the slug recorded for the instance's workspace.
+  func instanceRepo(_ instance: Instance) -> RepoSlug?
+  /// `github_assignment::active`: the repo of the VM's active PAT
+  /// assignment, if any; fails closed on a broken assignment.
+  func activeAssignment(_ instance: Instance) throws -> RepoSlug?
+  /// `resolve_github_token`: the token to forward for `repo`, or nil.
+  func token(repo: RepoSlug?) throws -> Secret<String>?
+  /// `resolve_pat_token`: resolve the `github.pat` entry for `repo`.
+  func resolvePAT(_ repo: RepoSlug) throws -> Secret<String>
+  /// `setup_github_auth`: run once per bootstrap when a token is forwarded.
+  func configureGuest(_ client: SSHClient, _ session: SSHSession) throws
+}
+
+/// Whether plugins, MCP servers and `/workspace` still need installing.
+public enum BootMode: Sendable, Equatable {
+  case firstBoot
+  case restart
+}
+
+/// Guest locations of the agent launchers.
+public enum GuestBinaries {
+  /// Stable system link to the guest user's native Codex launcher.
+  public static let codex = GuestPath("/usr/local/bin/codex")
+  /// Codex under a guest Secret Service session (ChatGPT account auth).
+  public static let codexAccount = GuestPath("/usr/local/bin/codex-account")
+}
+
+extension GuestUser {
+  /// Where the Claude Code installer puts the per-user binary.
+  public var claudeBinary: GuestPath { GuestPath("/home/\(rawValue)/.local/bin/claude") }
+}
+
+/// Agent bootstrap, guest sessions and post-start hooks for one command.
+public struct AgentBootstrap: Sendable {
+  public let config: CoopConfig
+  let client: SSHClient
+  /// The host process environment (`env_forward`, provider key fallbacks).
+  let environment: [String: String]
+  /// For the default `~/.claude` / `~/.codex` sources.
+  let home: String?
+  let resolver: CredentialResolver
+  public let proxies: ProxyLauncher
+  let github: any GitHubTokenSource
+  let diagnostics: Diagnostics
+
+  public init(
+    config: CoopConfig, client: SSHClient, environment: [String: String], home: String?,
+    resolver: CredentialResolver, proxies: ProxyLauncher, github: any GitHubTokenSource,
+    diagnostics: Diagnostics
+  ) {
+    self.config = config
+    self.client = client
+    self.environment = environment
+    self.home = home
+    self.resolver = resolver
+    self.proxies = proxies
+    self.github = github
+    self.diagnostics = diagnostics
+  }
+
+  // MARK: - Environment forwarding
+
+  static let chatgptReason = "codex.auth = \"chatgpt\""
+
+  /// Values forwarded with `SendEnv`. In proxy mode (or, for OpenAI, under
+  /// ChatGPT account auth) the raw provider key is dropped from every
+  /// source; `cmd:` keys are resolved here, when a session needs them.
+  public func prepareEnvForwarding(
+    repo: RepoSlug?, suppressAnthropicKey: Bool, suppressOpenAIKey requestedOpenAI: Bool
+  ) throws -> EnvForward {
+    let codexAccount = config.codexAuth == .chatgpt
+    let suppressOpenAIKey = requestedOpenAI || codexAccount
+    let openAIReason = codexAccount ? Self.chatgptReason : "proxy mode"
+    var env = EnvForward()
+
+    if suppressAnthropicKey {
+      diagnostics.debug("proxy mode: not forwarding ANTHROPIC_API_KEY into the guest")
+    } else if let key = config.claude.apiKey {
+      do { env.set("ANTHROPIC_API_KEY", try resolver.resolve(key)) } catch {
+        throw ContextError("Failed to resolve claude.api_key", cause: error)
+      }
+    } else if let key = environment["ANTHROPIC_API_KEY"] {
+      env.set("ANTHROPIC_API_KEY", Secret(key))
+    }
+
+    if suppressOpenAIKey {
+      diagnostics.debug("\(openAIReason): not forwarding OPENAI_API_KEY into the guest")
+    } else if let key = config.codex.apiKey {
+      do { env.set("OPENAI_API_KEY", try resolver.resolve(key)) } catch {
+        throw ContextError("Failed to resolve codex.api_key", cause: error)
+      }
+    } else if let key = environment["OPENAI_API_KEY"] {
+      env.set("OPENAI_API_KEY", Secret(key))
+    }
+
+    if let token = try github.token(repo: repo) {
+      env.set("GITHUB_TOKEN", token)
+    } else {
+      diagnostics.debug("no GITHUB_TOKEN forwarded to guest")
+    }
+
+    var suppressed: Set<String> = []
+    if suppressAnthropicKey { suppressed.insert("ANTHROPIC_API_KEY") }
+    if suppressOpenAIKey { suppressed.insert("OPENAI_API_KEY") }
+    let reason = { (name: String) in name == "OPENAI_API_KEY" ? openAIReason : "proxy mode" }
+
+    for name in config.claude.envForward + config.codex.envForward {
+      if suppressed.contains(name.rawValue) {
+        diagnostics.warn("\(reason(name.rawValue)): ignoring env_forward entry '\(name)'")
+        continue
+      }
+      if !env.contains(name.rawValue), let value = environment[name.rawValue] {
+        env.set(name.rawValue, Secret(value))
+      }
+    }
+    for variable in config.guestEnvironment {
+      let name = variable.name.rawValue
+      if suppressed.contains(name) {
+        diagnostics.warn("\(reason(name)): ignoring guest_env entry '\(name)'")
+        continue
+      }
+      if env.contains(name) {
+        diagnostics.warn("guest_env entry '\(name)' overrides a previously resolved value")
+      }
+      env.set(name, Secret(variable.value))
+    }
+    return env
+  }
+
+  /// Whether a provider has a proxy upstream for this VM (a stored literal
+  /// override counts: its key must still be suppressed).
+  func proxyConfigured(_ instance: Instance, _ provider: ProxyProvider) throws -> Bool {
+    try ProxyState.load(instance).override(for: provider) != nil
+      || config.proxy.upstream(for: provider) != nil
+  }
+
+  /// A session for `target`. With an instance, proxy-mode key suppression,
+  /// the persisted `--env` snapshot and the Codex provider key apply.
+  public func prepareSession(_ instance: Instance?, target: SSHTarget, repo: RepoSlug?) throws
+    -> SSHSession
+  {
+    let model = try instance.map(ModelState.loadOrDefault)
+    var proxyAnthropic = false
+    var proxyOpenAI = false
+    if let instance, model?.mode == .remote {
+      proxyAnthropic = try proxyConfigured(instance, .anthropic)
+      proxyOpenAI = try proxyConfigured(instance, .openai)
+    }
+    let codexAccount = config.codexAuth == .chatgpt
+    let suppressOpenAIKey = proxyOpenAI || codexAccount
+    if codexAccount && proxyOpenAI { diagnostics.warn(CodexChecks.chatgptProxyConflictMessage) }
+
+    let assigned = try instance.flatMap { try github.activeAssignment($0) }
+    var env = try prepareEnvForwarding(
+      repo: assigned ?? repo, suppressAnthropicKey: proxyAnthropic,
+      suppressOpenAIKey: suppressOpenAIKey)
+    if let instance {
+      if let state = try GuestEnvState.tryLoad(instance) {
+        for (name, value) in state.sortedEntries {
+          if (proxyAnthropic && name.rawValue == "ANTHROPIC_API_KEY")
+            || (suppressOpenAIKey && name.rawValue == "OPENAI_API_KEY")
+          {
+            let reason =
+              name.rawValue == "OPENAI_API_KEY" && codexAccount ? Self.chatgptReason : "proxy mode"
+            diagnostics.warn("\(reason): ignoring runtime --env entry '\(name)'")
+            continue
+          }
+          env.set(name.rawValue, Secret(value))
+        }
+      }
+      if let model {
+        if model.mode == .local, let endpoint = model.resolvedCodex(config.codex) {
+          env.set(ModelRouting.codexLocalEnvKey, Secret(endpoint.authTokenOrDefault))
+        } else if proxyOpenAI,
+          let token = ProxyLauncher.capabilityToken(instance, provider: .openai)
+        {
+          env.set(ModelRouting.codexLocalEnvKey, token)
+        }
+      }
+    }
+    return SSHSession(target: target, env: env)
+  }
+
+  /// `open_ssh_session`: the running instance (named, or the only one
+  /// running) and a session with forwarding and the `--env` overlay.
+  public func openSession(
+    _ backend: AppleBackend, name: InstanceName?, instances: [Instance]
+  ) throws -> (AppleBackend.Running, SSHSession) {
+    let running = try backend.resolveRunning(name, instances: instances)
+    return (running, try session(for: running))
+  }
+
+  /// A session for an already-resolved running instance.
+  public func session(for running: AppleBackend.Running) throws -> SSHSession {
+    try prepareSession(
+      running.instance, target: running.target, repo: github.instanceRepo(running.instance))
+  }
+
+  // MARK: - Post-boot sequence
+
+  public static let noAgentsChatGPTWarning =
+    "codex.auth = \"chatgpt\" is configured but --no-agents skips agent bootstrap; the guest keyring credential store will not be set up, so `coop codex -- login` would store credentials in a plaintext ~/.codex/auth.json in the guest"
+
+  /// Whether `--no-agents` leaves this VM's Codex writing plaintext
+  /// credentials. `keyringMaterialized` is read only when needed.
+  public static func noAgentsSkipsCodexKeyring(
+    noAgents: Bool, auth: CodexAuthMode, keyringMaterialized: () -> Bool
+  ) -> Bool {
+    noAgents && auth == .chatgpt && !keyringMaterialized()
+  }
+
+  /// After a fresh or restarted boot: close the previous boot's model
+  /// tunnels, bootstrap the agents (unless `noAgents`), then run the
+  /// post-start hook. `up`/`start` call this once SSH is ready.
+  public func bootstrapAndPostStart(
+    _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
+    postStartOverride: String?, mode: BootMode
+  ) throws {
+    proxies.stopModelTunnels(instance)
+    let postStart = postStartOverride ?? config.postStart
+    let proxyConfigured =
+      try proxyConfigured(instance, .anthropic) || proxyConfigured(instance, .openai)
+    if noAgents && proxyConfigured {
+      diagnostics.warn(
+        "proxy mode is configured but --no-agents skips agent bootstrap; agents will not be able to authenticate in this VM"
+      )
+    }
+    if Self.noAgentsSkipsCodexKeyring(
+      noAgents: noAgents, auth: config.codexAuth,
+      keyringMaterialized: {
+        ((try? ModelState.tryLoad(instance)) ?? nil)?.codexKeyringMaterialized ?? false
+      })
+    {
+      diagnostics.warn(Self.noAgentsChatGPTWarning)
+    }
+    if noAgents && postStart == nil {
+      if let assigned = try github.activeAssignment(instance) {
+        _ = try github.resolvePAT(assigned)
+      }
+      diagnostics.log(.info, "Skipping guest agent bootstrap (--no-agents)")
+      return
+    }
+    let session = try prepareSession(instance, target: target, repo: repo)
+    if noAgents {
+      diagnostics.log(.info, "Skipping guest agent bootstrap (--no-agents)")
+    } else {
+      try bootstrapAgents(session, instance: instance, mode: mode)
+    }
+    if let postStart {
+      // Bootstrap may have just minted the Codex capability token.
+      let hookSession =
+        noAgents ? session : try prepareSession(instance, target: target, repo: repo)
+      runPostStart(hookSession, command: postStart)
+    }
+  }
+
+  /// The user's hook, evaluated by the guest shell; a failure only warns.
+  public func runPostStart(_ session: SSHSession, command: String) {
+    diagnostics.log(.info, "Running post_start hook in guest")
+    diagnostics.debug("post_start: \(command)")
+    do {
+      try client.exec(session, RemoteCommand().literal(command))
+      diagnostics.debug("post_start hook completed")
+    } catch {
+      diagnostics.warn("post_start hook failed (continuing): \(error)")
+    }
+  }
+
+  /// GitHub auth, local-model tunnels, then Claude and Codex.
+  public func bootstrapAgents(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
+    if session.env.contains("GITHUB_TOKEN") {
+      diagnostics.log(.info, "Configuring GitHub auth in guest")
+      try github.configureGuest(client, session)
+    }
+    let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
+    try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
+    try bootstrapClaude(session, instance: instance, mode: mode)
+    try bootstrapCodex(session, instance: instance, mode: mode)
+  }
+
+  // MARK: - Shared helpers
+
+  /// The guest user baked into the image, `ubuntu` when unrecorded.
+  public func persistedGuestUser(_ image: ImageName) -> GuestUser {
+    (try? TemplateStore.load(config, image))?.guestUser ?? .default
+  }
+
+  /// Wanted minus what the image already has baked in.
+  static func pluginDelta(
+    wantedMarketplaces: [String], wantedPlugins: [String], bakedMarketplaces: [String],
+    bakedPlugins: [String]
+  ) -> ([String], [String]) {
+    (
+      wantedMarketplaces.filter { !bakedMarketplaces.contains($0) },
+      wantedPlugins.filter { !bakedPlugins.contains($0) }
+    )
+  }
+
+  func claudePluginDelta(_ image: ImageName) -> ([String], [String]) {
+    let template = try? TemplateStore.load(config, image)
+    return Self.pluginDelta(
+      wantedMarketplaces: config.claude.marketplaces, wantedPlugins: config.claude.plugins,
+      bakedMarketplaces: template?.marketplaces ?? [], bakedPlugins: template?.plugins ?? [])
+  }
+
+  func codexPluginDelta(_ image: ImageName) -> ([String], [String]) {
+    let template = try? TemplateStore.load(config, image)
+    return Self.pluginDelta(
+      wantedMarketplaces: config.codex.marketplaces, wantedPlugins: config.codex.plugins,
+      bakedMarketplaces: template?.codexMarketplaces ?? [],
+      bakedPlugins: template?.codexPlugins ?? [])
+  }
+
+  /// The host directory a `config_dir` names, if it exists.
+  func configSourceDirectory(_ directory: ConfigDirectory, defaultName: String, label: String)
+    -> String?
+  {
+    let path: String
+    switch directory {
+    case .disabled:
+      diagnostics.debug("\(label) is disabled, skipping")
+      return nil
+    case .default:
+      guard let home else {
+        diagnostics.debug("Could not determine home directory, skipping config copy")
+        return nil
+      }
+      path = HostPath(absolute: home).appending(defaultName).path
+    case .custom(let custom): path = custom.path
+    }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      if case .custom = directory {
+        diagnostics.warn("\(label) '\(path)' does not exist, skipping")
+      } else {
+        diagnostics.debug("Default config dir \(path) does not exist, skipping")
+      }
+      return nil
+    }
+    return path
+  }
+
+  /// Start (or, when proxy mode does not apply, stop) one provider's
+  /// proxy. Proxy mode is remote model mode plus an effective upstream.
+  public func startAgentProxy(
+    _ instance: Instance, provider: ProxyProvider, modelState: ModelState, target: SSHTarget
+  ) throws -> ProxyHandle? {
+    let upstream =
+      modelState.mode == .remote
+      ? try ProxyState.effectiveUpstream(instance, provider, config: config.proxy) : nil
+    guard let upstream else {
+      proxies.stop(instance, provider: provider)
+      return nil
+    }
+    return try proxies.start(instance, provider: provider, upstream: upstream, target: target)
+  }
+
+  /// Copy a local marketplace directory into the guest; other sources pass
+  /// through unchanged.
+  func stageMarketplaceSource(
+    _ session: SSHSession, tool: String, source: String, madeDirectory: inout Bool
+  ) throws -> String {
+    var isDirectory: ObjCBool = false
+    guard source.hasPrefix("/"),
+      FileManager.default.fileExists(atPath: source, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else { return source }
+    let toolDirectory = "~/.coop/marketplaces/\(tool)"
+    if !madeDirectory {
+      try client.exec(session.target, RemoteCommand().literal("mkdir -p \(toolDirectory)"))
+      madeDirectory = true
+    }
+    let name = (source as NSString).lastPathComponent
+    guard !name.isEmpty, name != "/" else {
+      throw HostError("marketplace path has no directory name")
+    }
+    let remote = GuestPath("\(toolDirectory)/\(name)")
+    diagnostics.log(.info, "Copying local marketplace to guest: \(source) -> \(remote)")
+    do {
+      try client.copy(session.target, local: source, remote: remote, recursive: true)
+    } catch {
+      throw ContextError("Failed to copy marketplace '\(source)' to guest", cause: error)
+    }
+    return remote.rawValue
+  }
+
+  /// Every entry of a staging directory into `~/<subdirectory>`.
+  func copyStaged(
+    _ staging: StagingDirectory, target: SSHTarget, to subdirectory: String, label: String
+  ) throws {
+    let entries = try staging.entries()
+    guard !entries.isEmpty else {
+      diagnostics.debug("No \(label) config content to copy")
+      return
+    }
+    try client.exec(target, RemoteCommand().literal("mkdir -p ~/\(subdirectory)"))
+    let guestDirectory = GuestPath("./\(subdirectory)")
+    for entry in entries {
+      let path = staging.path + "/" + entry
+      var isDirectory: ObjCBool = false
+      _ = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+      do {
+        try client.copy(
+          target, local: path, remote: guestDirectory, recursive: isDirectory.boolValue)
+      } catch {
+        throw ContextError("Failed to copy \(path) to guest", cause: error)
+      }
+    }
+    diagnostics.log(.info, "Copied \(label) config into guest")
+  }
+}

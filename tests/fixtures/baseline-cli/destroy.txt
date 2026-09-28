@@ -1,0 +1,10 @@
+Stop and clean up instance resources (keeps template)
+
+Usage: coop destroy [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+      --all   Also remove template, kernel, and Firecracker binary
+  -h, --help  Print help
