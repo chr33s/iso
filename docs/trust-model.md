@@ -90,7 +90,10 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   (`ProcessRunner` stdin, the git-clone credential helper, `curl -H @-` in
   `GitHubAPI.swift` / `Update.swift` / `DevcontainerGitRepo.swift`). Never
   build a command line with the secret as an argument — it is visible in
-  `ps`/`/proc`. The one known exception is the macOS Keychain store step
+  `ps`/`/proc`. The secret-store passphrase is read from `/dev/tty` or from
+  the descriptor named by `COOP_SECRETS_PASSPHRASE_FD`, never argv or a
+  plaintext variable, and `coop secrets set` takes values from a prompt or
+  stdin. The one known exception is the macOS Keychain store step
   (`security add-generic-password -w`, `SecretStore.swift`), whose CLI offers
   no stdin path; it is documented at the call site and never appears in coop's
   messages. MCP server definitions (with resolved header secrets) reach

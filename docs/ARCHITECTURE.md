@@ -33,10 +33,11 @@ startup protocol; it never links either package. `coop` resolves
 
 ```
 coop/
-├── Package.swift            # host package: CoopCore, CoopConfiguration, CoopHost, CoopCLI
+├── Package.swift            # host package: CoopCore, CoopConfiguration, CoopSecrets, CoopHost, CoopCLI
 ├── Sources/
 │   ├── CoopCore/            # validated values, AtomicFile/FileLock; no subprocess or network side effects
 │   ├── CoopConfiguration/   # JSONC scanning, preflight, decoding, config edits
+│   ├── CoopSecrets/         # Secure Enclave-bound local secret store
 │   ├── CoopHost/            # filesystem, locks, subprocesses, SSH, lifecycle, agents, updater
 │   └── CoopCLI/             # Argument Parser commands (executable `coop`)
 ├── tests/swift/             # Swift test targets (one per module + fuzz corpus replay)
@@ -48,10 +49,11 @@ coop/
 └── docs/                    # this tree
 ```
 
-Target dependencies: `CoopConfiguration` and `CoopHost` depend on `CoopCore`;
-`CoopHost` also depends on `CoopConfiguration`; `CoopCLI` assembles all three
-with Swift Argument Parser (the only external dependency, pinned in
-`Package.resolved`).
+Target dependencies: `CoopConfiguration`, `CoopSecrets` and `CoopHost` depend
+on `CoopCore`; `CoopSecrets` also uses swift-crypto's `CryptoExtras`;
+`CoopHost` also depends on `CoopConfiguration`; `CoopCLI` assembles them with
+Swift Argument Parser. Both external dependencies are pinned in
+`Package.resolved`.
 
 ### `CoopCore`
 
@@ -80,6 +82,16 @@ lifecycle boundaries; `ConfigEditor` and `GitHubConfigEdits` make structural
 edits that keep unmodeled keys; `ConfigTemplate` is the template written by
 `setup --config-only` (kept equal to [`config.example.jsonc`](../config.example.jsonc)
 by a test).
+
+### `CoopSecrets`
+
+The local secret store ([design](design/embedded-secrets-spec.md)), with no
+dependency on `CoopHost`: `SecretName`, `KDF` (bounded scrypt parameters via
+swift-crypto's `CryptoExtras`, HKDF store key), `DeviceFactor` (the Secure
+Enclave key, the digest-checked `device.sekey` file, the sealed device unlock
+key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
+(init/set/rm/list/resolve, one unlock per call, owner-only files under a
+`FileLock`).
 
 ### `CoopHost`
 

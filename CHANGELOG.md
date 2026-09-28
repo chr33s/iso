@@ -11,6 +11,10 @@
   inapplicable, and `workspace.pull` budgets bound it.
   `workspace.pull.mode = "stage"` makes a plain `coop pull` stage too; the
   default `direct` mode is unchanged.
+- **Local secret store**: `coop secrets init|set|rm|list|status` keeps
+  secrets under `<data_dir>/secrets/`, encrypted with a key that needs both a
+  passphrase (scrypt) and this Mac's Secure Enclave (Touch ID). There is no
+  recovery path. Adds the swift-crypto 5.0.0 dependency (scrypt).
 
 ### Swift host
 

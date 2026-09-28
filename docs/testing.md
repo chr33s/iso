@@ -1,7 +1,8 @@
 # Testing
 
 coop's host is the Swift package at the repository root (`Package.swift`:
-`CoopCore`, `CoopConfiguration`, `CoopHost`, `CoopCLI`). Its test layers are:
+`CoopCore`, `CoopConfiguration`, `CoopSecrets`, `CoopHost`, `CoopCLI`). Its test
+layers are:
 
 - **Swift package tests** (`tests/swift/`) — unit and contract tests for every
   host target, plus replay of the fuzz corpus. CI gate.
