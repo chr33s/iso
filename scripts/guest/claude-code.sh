@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-# GUEST_USER is exported by the orchestrator (setup.rs / lima.rs).
+# GUEST_USER is exported by the image build (ImageBuild.swift).
 : "${GUEST_USER:?GUEST_USER must be set by the orchestrator}"
 
 # Skip if a profile already provided a claude binary (e.g. stub-claude

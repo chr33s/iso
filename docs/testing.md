@@ -62,7 +62,11 @@ does the same for `setup`, `resize`, `commit`, `restore`, `stop`, `destroy`,
 `images --delete` and interrupted-journal recovery against the stateful fake
 runtime in `tests/fixtures/fake-runtime/` (also a fake `container` builder),
 and also compares the runtime call sequence, the resulting state files, and
-the captured image build contexts byte for byte. The data-root check covers
+the captured image build contexts byte for byte. An intended change to the
+guest image changes those contexts and every hash derived from them; record it
+in the golden's `revisions` list as the old→new hash substitutions (applied to
+the golden), and confirm that reversing them reproduces the previous golden
+exactly, so nothing else changed. The data-root check covers
 the refusal of upstream coop state in the default `~/.coop`. The CLI-surface
 check compares every baseline command path and option in
 `tests/fixtures/baseline-cli/commands.json` with the Swift host's `--help`;

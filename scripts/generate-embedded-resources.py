@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate Sources/CoopHost/EmbeddedResources.swift from scripts/guest/.
 
-The Swift host embeds guest scripts in the binary, as the Rust host did with
-`include_str!`. `EmbeddedResourcesTests` fails when this file is stale.
+The Swift host embeds guest scripts in the binary so it needs no resource
+files at run time. `EmbeddedResourcesTests` fails when this file is stale.
 
     python3 scripts/generate-embedded-resources.py
 """
@@ -21,8 +21,11 @@ def literal(text):
     while f'"{hashes}' in text or f"\\{hashes}" in text:
         hashes += "#"
     # A multi-line literal drops the newline before its closing delimiter,
-    # so add one to keep the file's final newline.
-    return f'{hashes}"""\n{text}\n"""{hashes}'
+    # so add one to keep the file's final newline. Swift strips the closing
+    # delimiter's indentation from every line, so indent the body to match
+    # `swift format` (blank lines stay empty).
+    body = "\n".join(f"    {line}" if line else "" for line in text.split("\n"))
+    return f'{hashes}"""\n{body}\n    """{hashes}'
 
 
 def main():

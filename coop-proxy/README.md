@@ -3,7 +3,7 @@
 The Swift-only credential proxy for the [coop fork](../README.md), requiring
 macOS 27+ and Xcode 27. It holds provider credentials on the host, authenticates
 guest requests with per-VM capabilities, and admits only fixed provider operations.
-The Rust host CLI launches it as a separate process under Seatbelt confinement.
+The coop host CLI launches it as a separate process under Seatbelt confinement.
 
 Run from the repository root:
 

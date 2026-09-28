@@ -29,8 +29,8 @@ Report them privately through either channel:
 
 Include as much of the following as you can:
 
-- The coop version (`coop --version`) and host platform (Linux/Firecracker or
-  macOS/Lima).
+- The coop version (`coop --version`), your macOS version, and the
+  `coop-sandbox version` output.
 - A description of the issue and the impact you expect it to have.
 - Steps to reproduce, a proof of concept, or the affected code path.
 - Any suggested remediation.
@@ -50,8 +50,9 @@ attestation.
 
 ## Scope
 
-coop provisions isolated virtual machines — Firecracker microVMs on Linux, Lima
-VMs or the opt-in Apple Containerization runtime on macOS — to run coding agents such as Claude Code and Codex. **The
+coop provisions isolated Linux virtual machines on macOS 27+ Apple Silicon,
+through the `coop-sandbox` runtime built on Apple's Containerization framework,
+to run coding agents such as Claude Code and Codex. **The
 security boundary is the VM.** coop's job is to stand that boundary up and hand
 work to it without weakening it.
 
@@ -71,15 +72,8 @@ In scope:
 
 Out of scope:
 
-- The relaxed in-guest Docker networking (`DOCKER_INSECURE_NO_IPTABLES_RAW=1`).
-  This is a documented, intentional trade-off for the minimal CI kernel: without
-  the raw iptables table, another host on the guest's network could reach a
-  published container port, even one bound to loopback. The guest's only network
-  neighbor is its own Firecracker host, and the VM is the isolation boundary, so
-  this crosses no trust boundary. See
-  [`docs/platform-notes.md`](docs/platform-notes.md) and
-  [`docs/trust-model.md`](docs/trust-model.md) for details.
 - Vulnerabilities in the software coop runs or orchestrates rather than ships —
-  the guest agents (Claude Code, Codex), Docker, the guest OS, Firecracker, and
-  Lima. Report those to their respective projects.
+  the guest agents (Claude Code, Codex), Docker, the guest OS, Apple's
+  `container` CLI, and the Containerization and Virtualization frameworks.
+  Report those to their respective projects.
 - Behavior that requires an attacker who already controls the host coop runs on.

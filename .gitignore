@@ -4,8 +4,6 @@
 
 *.ext4
 *.img
-vmlinux
-firecracker
 .env
 *.swp
 *.swo
@@ -19,4 +17,3 @@ __pycache__/
 /fuzz/.build/
 /fuzz/.swiftpm/
 /fuzz/artifacts/
-/tests/baseline/config-normalize/
