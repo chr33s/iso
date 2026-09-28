@@ -100,7 +100,7 @@ public enum AtomicFile {
     }
   }
 
-  static func temporaryPath(for path: String) -> String {
+  package static func temporaryPath(for path: String) -> String {
     let parent = (path as NSString).deletingLastPathComponent
     let name = (path as NSString).lastPathComponent
     var random = UInt64(0)

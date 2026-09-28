@@ -2,6 +2,7 @@
 // Modified by chr33s: ported/adapted for the Swift implementation.
 // SPDX-License-Identifier: Apache-2.0
 
+import CoopCore
 import Foundation
 
 /// Guard against sharing the default data directory `~/.coop` with an

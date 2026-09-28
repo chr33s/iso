@@ -34,8 +34,9 @@ a bug through.
   ```
 
 - Tests use Swift Testing (`import Testing`, `@Test`, `#expect`/`#require`).
-- Keep module boundaries: `CoopCore` has no subprocess, filesystem-mutation or
-  network side effects; `CoopConfiguration` has no subprocesses and no TOML or
+- Keep module boundaries: `CoopCore` has no subprocess or network side
+  effects, and its only filesystem mutation is the shared state-write
+  primitives (`AtomicFile`, `FileLock`); `CoopConfiguration` has no subprocesses and no TOML or
   configuration-provider dependency; side effects live in `CoopHost`;
   `CoopCLI` stays a thin layer of parsing, dispatch and presentation.
 
@@ -169,7 +170,8 @@ Before reviewing, sync to latest remote (`git fetch origin`).
    spawned process, lock, PID file, temporary directory and credential is
    released on success, failure, timeout and cancellation.
 6. **API surface.** New `public` items: do they need to be public across
-   modules? Does the module boundary still hold (no side effects in `CoopCore`)?
+   modules? Does the module boundary still hold (no side effects in `CoopCore`
+   beyond `AtomicFile` / `FileLock`)?
    `Sendable` conformances honest?
 7. **Tests cover behavior, not shape.** Edge cases — empty input, boundaries,
    each error case — have a test. Security-relevant behavior has a fault in

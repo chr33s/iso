@@ -1,3 +1,4 @@
+import CoopCore
 import Foundation
 import Synchronization
 

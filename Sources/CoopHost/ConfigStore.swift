@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import CoopConfiguration
+import CoopCore
 import Foundation
 
 /// Writes to the configuration file. Every edit rereads the file under the

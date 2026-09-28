@@ -5,7 +5,7 @@ public struct HostError: Error, Equatable, Sendable, CustomStringConvertible {
   public init(_ message: String) { self.message = message }
   public var description: String { message }
 
-  static func posix(_ action: String, _ path: String, _ code: Int32 = errno) -> HostError {
+  package static func posix(_ action: String, _ path: String, _ code: Int32 = errno) -> HostError {
     HostError("\(action) \(path): \(String(cString: strerror(code)))")
   }
 }

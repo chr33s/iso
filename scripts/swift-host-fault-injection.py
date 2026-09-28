@@ -58,7 +58,7 @@ FAULTS = [
     ("spawn-process-group", "Sources/CoopHost/ProcessRunner.swift",
      "    if ownsGroup { kill(-pid, SIGKILL) }\n", "",
      "deadlineKillsTheWholeProcessGroup"),
-    ("mode-widening", "Sources/CoopHost/AtomicFile.swift",
+    ("mode-widening", "Sources/CoopCore/AtomicFile.swift",
      "existing.st_mode & 0o777 & mode : mode", "mode : mode",
      "atomicWriteNeverWidensAnExistingMode"),
     ("gate-agent-forwarding", "Sources/CoopHost/IsolationGate.swift",
