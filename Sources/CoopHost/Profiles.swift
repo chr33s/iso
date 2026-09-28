@@ -1,4 +1,5 @@
 import CoopConfiguration
+import CoopCore
 import Foundation
 
 /// A profile's effective contents, built-in or from configuration.

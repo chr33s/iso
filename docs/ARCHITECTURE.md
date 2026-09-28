@@ -35,7 +35,7 @@ startup protocol; it never links either package. `coop` resolves
 coop/
 ├── Package.swift            # host package: CoopCore, CoopConfiguration, CoopHost, CoopCLI
 ├── Sources/
-│   ├── CoopCore/            # validated values; no subprocess or network side effects
+│   ├── CoopCore/            # validated values, AtomicFile/FileLock; no subprocess or network side effects
 │   ├── CoopConfiguration/   # JSONC scanning, preflight, decoding, config edits
 │   ├── CoopHost/            # filesystem, locks, subprocesses, SSH, lifecycle, agents, updater
 │   └── CoopCLI/             # Argument Parser commands (executable `coop`)
@@ -61,8 +61,10 @@ the safe-name character class), `RuntimeNames.swift` (runtime object names and
 identifiers persisted in host state), `Units.swift` (memory/disk quantities,
 vCPU counts, the bootable RAM floor), `GitRepoURL.swift` (clone URL plus its
 `owner/repo` slug), `RemoteCommand.swift` (injection-safe guest shell commands
-and `GuestPath`), and `OutputJSON*.swift` (`--json` output with the baseline's
-exact member order and number formatting).
+and `GuestPath`), `OutputJSON*.swift` (`--json` output with the baseline's
+exact member order and number formatting), and the state-write primitives
+`AtomicFile.swift` and `FileLock.swift` (with `HostError`), shared with
+modules that must not depend on `CoopHost`.
 
 ### `CoopConfiguration`
 
@@ -90,7 +92,7 @@ by a test).
 | GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
-| Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`), `AtomicFile`, `FileLock`, `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
+| Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `CoopCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
 | Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `HostKeys` (ed25519 pins read over the runtime channel) |
 | Support | `Diagnostics` (stderr), `Prompt`, `OrderedJSON`, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 

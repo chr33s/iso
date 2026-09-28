@@ -1,3 +1,4 @@
+import CoopCore
 import Foundation
 
 /// Guard against sharing the default data directory `~/.coop` with an

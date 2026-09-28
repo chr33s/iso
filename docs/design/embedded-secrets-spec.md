@@ -61,8 +61,8 @@ Relevant existing pieces:
 | Existing piece | Where | Role today |
 |---|---|---|
 | `Secret<Value>` redacted wrapper | `Sources/CoopCore/Units.swift` | Redacted description/debug rendering for secret values |
-| `AtomicFile` | `Sources/CoopHost/AtomicFile.swift` | Temp-file + rename writes with bounded mode |
-| `FileLock` | `Sources/CoopHost/FileLock.swift` | Advisory state locks |
+| `AtomicFile` | `Sources/CoopCore/AtomicFile.swift` | Temp-file + rename writes with bounded mode |
+| `FileLock` | `Sources/CoopCore/FileLock.swift` | Advisory state locks |
 | `SecretStore` (enum) | `Sources/CoopHost/SecretStore.swift` | macOS Keychain service names for `coop proxy setup` and `coop github setup-pat` |
 | `cmd:` references | `CredentialResolver.swift` | Structured credential fields (`proxy.<provider>.credential`, per-VM `proxy.json` overrides, `github.pat`, `claude.api_key`) run a host command on use |
 | `coop-proxy` stdin startup document (protocol v1) | `ProxyLifecycle.swift` | Provider credential reaches the proxy on stdin; the proxy child has an empty environment |
