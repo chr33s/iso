@@ -1179,6 +1179,14 @@ Presets SHOULD compose the primitives above rather than add new enforcement logi
 
 Suggested presets:
 
+**As implemented (step 12):** `security.preset` (config only; no `--security`
+flag) supplies defaults for `egress`, `proxy.mode` and `workspace.pull.mode`,
+and explicit fields win; `up`/`start --dry-run --json` prints the expansion
+under `security`. `coop audit [NAME] [--suggest-config]` reads
+`<instance>/audit.jsonl` (host-recorded boot policy, raw provider forwards,
+stops and workspace returns; owner-only, 1 MiB cap). Per-request proxy
+metadata (§7.7) is not recorded yet: it needs `coop-proxy` changes.
+
 ## 10.1 `networked`
 
 Compatibility-oriented.

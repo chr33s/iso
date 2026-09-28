@@ -204,6 +204,7 @@ struct Stop: ParsableCommand {
   /// every path.
   static func stop(_ context: CommandContext, _ instance: Instance) throws {
     context.diagnostics.log(.info, "Stopping instance '\(instance.name)'")
+    BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
     let running: AppleBackend.Running?
     do {
       running = try context.backend.asRunning(instance)

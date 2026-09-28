@@ -100,6 +100,10 @@
   // "post_start": "make dev-setup",          // runs in the guest after each boot
   // "forward_ports": [3000, "8080:18080", { "guest": 5432, "label": "db" }],
 
+  // Defaults for egress, proxy.mode and workspace.pull.mode: "networked",
+  // "provider-only" or "offline". Explicit fields still win.
+  // "security": { "preset": "provider-only" },
+
   // Host-enforced session length per boot ("30m", "8h", or seconds).
   // "limits": { "session_ttl": "8h" },
 

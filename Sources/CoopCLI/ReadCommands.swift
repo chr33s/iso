@@ -446,3 +446,36 @@ struct Logs: ParsableCommand {
       running, follow: follow, line: context.output.out, stderr: context.output.error)
   }
 }
+
+// MARK: - audit
+
+struct Audit: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    abstract: "Show the boundary events recorded for an instance (metadata only, never values)")
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(
+    help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
+  var name: InstanceName?
+  @Flag(help: "Print an advisory JSONC fragment that narrows what was observed")
+  var suggestConfig = false
+
+  func run() throws {
+    try CoopCLI.run {
+      let context = try CommandContext.load(global)
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      let lines = try BoundaryAudit.lines(instance)
+      let events = BoundaryAudit.events(from: lines)
+      if suggestConfig {
+        BoundaryAudit.suggestConfig(events).forEach(context.output.out)
+        return
+      }
+      if events.isEmpty {
+        context.output.error("No boundary events recorded for '\(instance.name)' yet.")
+      }
+      for line in lines {
+        context.output.out(neutralizeControls(line))
+      }
+    }
+  }
+}

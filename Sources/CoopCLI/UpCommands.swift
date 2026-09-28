@@ -641,10 +641,11 @@ struct UpFlow {
     let translation = try resolver.collect(options, inputs: translatorInputs(), stage: .start)
     // Profile-mapped features are baked at setup; a start-stage translation
     // contributes none, so the effective set is the CLI list.
-    let plan = DevcontainerDryRunPlan(
+    var plan = DevcontainerDryRunPlan(
       report: translation?.report, profiles: target?.profiles ?? [],
       guestUser: Devcontainer.persistedGuestUser(lifecycle.config, image: effectiveImage),
       vcpus: command.vcpus, memory: command.mem?.mib, disk: command.disk)
+    plan.security = lifecycle.config.securitySummary
     context.output.out(String(plan.json.rendered().dropLast()))
   }
 
@@ -887,9 +888,10 @@ struct Start: ParsableCommand {
       return
     }
     let translation = try resolver.collect(options, inputs: inputs, stage: .start)
-    let plan = DevcontainerDryRunPlan(
+    var plan = DevcontainerDryRunPlan(
       report: translation?.report, profiles: [], guestUser: guestUser, vcpus: nil, memory: nil,
       disk: nil)
+    plan.security = lifecycle.config.securitySummary
     lifecycle.context.output.out(String(plan.json.rendered().dropLast()))
   }
 

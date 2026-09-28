@@ -789,6 +789,8 @@ private func stageCodex(
       mode: .firstBoot)
   }
   #expect(error.message.contains("no provider proxy is configured"))
+  // The boot's policy was recorded before the refusal.
+  #expect(try BoundaryAudit.lines(instance).last?.contains(#""proxy_mode":"required""#) == true)
 }
 
 @Test func providerProxyRequirementCanBeCheckedBeforeAnyVmWork() throws {

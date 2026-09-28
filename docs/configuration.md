@@ -39,6 +39,7 @@ Comments are not carried over. Once `config.jsonc` exists, a remaining `config.t
 | `data_dir` | string (path) | `~/.coop` | Directory for VM artifacts: images, instances, keys. |
 | `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
+| `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline"}`: defaults for the hardening settings. See [security presets](#security-presets). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `egress` | string | `"open"` | Guest network reach beyond the host: `"open"` (NAT to the host's uplinks) or `"none"`. See [egress](#egress). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `coop up --post-start <cmd>` or `coop start --post-start <cmd>`. |
@@ -565,6 +566,23 @@ inside a `"none"` guest fail; bake them
 into the image (`coop setup --profile …`) instead. Combine with
 `"proxy": {"mode": "required"}` for a guest whose only way out is the
 credential proxy.
+
+## Security presets
+
+```jsonc
+{ "security": { "preset": "provider-only" } }
+```
+
+| Preset | `egress` | `proxy.mode` | `workspace.pull.mode` |
+|--------|----------|--------------|-----------------------|
+| `networked` (same as no preset) | `open` | `auto` | `direct` |
+| `provider-only` | `none` | `required` | `stage` |
+| `offline` | `none` | `off` | `stage` |
+
+A preset only supplies defaults: any of those fields written explicitly wins.
+`coop up --dry-run --json` (and `start`) prints the result under `security`.
+`offline` is meant for local models or fully pre-provisioned images; leave
+`github` unset (off) with it.
 
 ## `limits`
 

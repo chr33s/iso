@@ -1093,6 +1093,25 @@ config `guest_env` is passed as literal text (with a warning for
 uses a newer format that older coop releases refuse to read; downgrading such
 an instance is unsupported.
 
+### `audit`
+
+Show the boundary events coop recorded for an instance: each boot's egress,
+`proxy.mode`, proxied providers, provider-secret variable names and the
+number of stored-secret references; raw provider variables forwarded into the
+guest (names only); stops; and workspace returns (counts). Values, tokens,
+file contents and request bodies are never recorded. The log is
+`<instance>/audit.jsonl`, owner-only, capped at 1 MiB (older entries are
+dropped first).
+
+```
+coop audit [NAME] [--suggest-config]
+```
+
+`--suggest-config` prints an advisory JSONC fragment that only narrows what
+was observed (for example `proxy.mode` `required` when every boot was proxied
+and no raw key was forwarded). Guest network use is not observed, so `egress`
+is suggested only when every boot already ran without it.
+
 ### `validate`
 
 Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. A `github.pat` entry stored with `vault:` is reported as `stored secret, not resolved` and never unlocks the secret store. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live; `vault:` entries are resolved in one unlock.

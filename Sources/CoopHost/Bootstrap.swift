@@ -370,6 +370,7 @@ public struct AgentBootstrap: Sendable {
     postStartOverride: String?, mode: BootMode
   ) throws {
     proxies.stopModelTunnels(instance)
+    recordBoot(instance)
     let postStart = postStartOverride ?? config.postStart
     let proxyConfigured =
       try proxyConfigured(instance, .anthropic) || proxyConfigured(instance, .openai)
@@ -399,6 +400,7 @@ public struct AgentBootstrap: Sendable {
     let session = try prepareSession(instance, target: target, repo: repo)
     let raw = ProxyProvider.allCases.flatMap(\.recognizedVariables).filter(session.env.contains)
     if !raw.isEmpty {
+      BoundaryAudit.record(instance, .rawProviderForward(raw), diagnostics: diagnostics)
       diagnostics.warn(
         "forwarding \(raw.joined(separator: ", ")) into the guest in plain text; `coop proxy setup` keeps provider credentials on the host"
       )
@@ -414,6 +416,23 @@ public struct AgentBootstrap: Sendable {
         noAgents ? session : try prepareSession(instance, target: target, repo: repo)
       runPostStart(hookSession, command: postStart)
     }
+  }
+
+  /// The boot's boundary policy, for `coop audit` (names and modes only).
+  func recordBoot(_ instance: Instance) {
+    let state = try? GuestEnvState.tryLoad(instance)
+    let routed = (try? state?.providerSecrets()) ?? [:]
+    let routedNames = Set(routed.values.map(\.variable))
+    let references =
+      state?.entries.filter { !routedNames.contains($0.key) && $0.value.reference != nil }.count
+      ?? 0
+    let proxied = ProxyProvider.allCases.filter { (try? proxyConfigured(instance, $0)) == true }
+    BoundaryAudit.record(
+      instance,
+      .boot(
+        egress: config.egress, proxyMode: config.proxy.mode, proxied: proxied,
+        providerSecrets: routedNames.map(\.rawValue), guestReferences: references,
+        sessionTTL: config.limits.sessionTTL), diagnostics: diagnostics)
   }
 
   /// The user's hook, evaluated by the guest shell; a failure only warns.

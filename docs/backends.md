@@ -83,7 +83,7 @@ Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 
 - `owner.json` (installation owner ID) and `vm_key`
 - `images/<name>/`: `template-config.json`, `apple-image.json`, and `build.log`
-- `instances/<name>/`: `apple-machine.json`, `known_hosts`, `operation.json` while a mutation is pending, and the shared sidecars
+- `instances/<name>/`: `apple-machine.json`, `known_hosts`, `operation.json` while a mutation is pending, `audit.jsonl` (boundary audit), and the shared sidecars
 - `runtime/`, the coop-sandbox state root: kernel, init filesystem, private OCI store, cached base disks, committed disks, the maintenance boot disk (`maintenance/`), lock files (`locks/`), and one directory per sandbox (disk, record, console and owner logs, launchd plist)
 
 Control files are `0600`, directories `0700`. `uninstall --purge` destroys

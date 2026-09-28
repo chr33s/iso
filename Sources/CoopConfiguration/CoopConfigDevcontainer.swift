@@ -27,7 +27,7 @@ extension CoopConfig {
       guestEnvironment: variables, profiles: profiles, postStart: postStart ?? self.postStart,
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
-      egress: egress, limits: limits
+      egress: egress, limits: limits, securityPreset: securityPreset
     )
   }
 }

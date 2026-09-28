@@ -72,6 +72,8 @@ public struct CoopConfig: Sendable, Equatable {
   public let workspacePull: WorkspacePullConfig
   public let egress: EgressMode
   public let limits: LimitsConfig
+  /// The preset whose defaults this configuration was decoded with.
+  public let securityPreset: SecurityPreset?
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
   public static let backendRoot = "backends/apple-container-v1"
@@ -320,6 +322,27 @@ public enum EgressMode: String, Sendable, Equatable {
   case none
 }
 
+/// `security.preset` (selective-hardening spec §10): defaults for the
+/// hardening settings. A field written explicitly always wins.
+public enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
+  /// Today's defaults: open egress, `proxy.mode` auto, direct pulls.
+  case networked
+  /// No egress, provider credentials only through the proxy, staged pulls.
+  case providerOnly = "provider-only"
+  /// No egress, no provider proxy, staged pulls.
+  case offline
+
+  var egress: EgressMode { self == .networked ? .open : .none }
+  var proxyMode: ProxyMode {
+    switch self {
+    case .networked: .auto
+    case .providerOnly: .required
+    case .offline: .off
+    }
+  }
+  var pullMode: WorkspacePullMode { self == .networked ? .direct : .stage }
+}
+
 /// `limits` (selective-hardening spec §8).
 public struct LimitsConfig: Sendable, Equatable {
   /// Each boot ends this long after it starts, enforced by the sandbox owner
@@ -385,7 +408,7 @@ extension CoopConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
-      egress: egress, limits: limits
+      egress: egress, limits: limits, securityPreset: securityPreset
     )
   }
 }
