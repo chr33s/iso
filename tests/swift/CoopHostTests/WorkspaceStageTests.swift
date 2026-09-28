@@ -327,18 +327,20 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   let first = try location.lock()
   let acquired = LockedBox(false)
   let done = DispatchSemaphore(value: 0)
-  DispatchQueue.global().async {
+  // A dedicated thread: a starved global queue under parallel tests can
+  // delay the block past any fixed deadline.
+  Thread {
     let second = try? location.lock()
     acquired.value = true
     second?.release()
     done.signal()
-  }
+  }.start()
   Thread.sleep(forTimeInterval: 0.2)
   #expect(!acquired.value)
   try location.remove()
   #expect(FileManager.default.fileExists(atPath: f.root + "/.stage.lock"))
   first.release()
-  #expect(done.wait(timeout: .now() + 5) == .success)
+  #expect(done.wait(timeout: .now() + 60) == .success)
   #expect(acquired.value)
 }
 

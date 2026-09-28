@@ -280,11 +280,14 @@ private func runWhileStageIsLocked(
   let held = try location.lock()
   let finished = Flag()
   let done = DispatchSemaphore(value: 0)
-  DispatchQueue.global().async {
+  // A dedicated thread: the shared global pool can be starved by sibling
+  // tests that block on subprocesses, delaying the body past the timeout.
+  let worker = Thread {
     body()
     finished.value = true
     done.signal()
   }
+  worker.start()
   Thread.sleep(forTimeInterval: 0.4)
   let early = (finished.value, location.exists)
   held.release()

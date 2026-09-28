@@ -45,11 +45,12 @@ def isolated_env(root):
 
 def stop(process):
     # dbus-run-session may exit before Codex; waiting only for the launcher
-    # races children still writing into the temporary home.
+    # races children still writing into the temporary home. macOS reports
+    # EPERM, not ESRCH, for a group whose members are all unreaped zombies.
     for sig in [signal.SIGTERM, signal.SIGKILL]:
         try:
             os.killpg(process.pid, sig)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             process.wait(timeout=5)
             return
         deadline = time.monotonic() + 5
@@ -57,7 +58,7 @@ def stop(process):
             process.poll()
             try:
                 os.killpg(process.pid, 0)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 process.wait(timeout=5)
                 return
             time.sleep(0.05)
