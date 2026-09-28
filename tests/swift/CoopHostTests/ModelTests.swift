@@ -257,16 +257,43 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
 }
 
-@Test func providerVariablesCannotReferenceStoredSecrets() throws {
-  #expect(throws: HostError.self) {
-    try GuestEnvState.rejectProviderReferences([
-      try EnvVarName("ANTHROPIC_API_KEY"): .secret(try SecretName("anthropic"))
-    ])
-  }
-  try GuestEnvState.rejectProviderReferences([
-    try EnvVarName("ANTHROPIC_API_KEY"): .literal("x"),
+@Test func providerVariableReferencesAreRoutedToTheProxy() throws {
+  let routed = try GuestEnvState.providerSecrets([
+    try EnvVarName("CLAUDE_CODE_OAUTH_TOKEN"): .secret(try SecretName("setup")),
+    try EnvVarName("OPENAI_API_KEY"): .secret(try SecretName("openai")),
+    try EnvVarName("ANTHROPIC_API_KEY"): .literal("legacy"),
     try EnvVarName("DB"): .secret(try SecretName("db")),
   ])
+  #expect(routed.count == 2)
+  #expect(routed[.anthropic]?.auth == .bearer && routed[.anthropic]?.name.rawValue == "setup")
+  #expect(routed[.openai]?.auth == .bearer)
+  // Two stored credentials for one provider are ambiguous.
+  #expect(throws: HostError.self) {
+    try GuestEnvState.providerSecrets([
+      try EnvVarName("ANTHROPIC_API_KEY"): .secret(try SecretName("a")),
+      try EnvVarName("ANTHROPIC_AUTH_TOKEN"): .secret(try SecretName("b")),
+    ])
+  }
+}
+
+@Test func providerSecretsPersistAsTypedDeclarations() throws {
+  let root = try scratchDirectory("genv3")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let instance = try testInstance(root)
+  let state = GuestEnvState(entries: [
+    try EnvVarName("ANTHROPIC_API_KEY"): .secret(try SecretName("anthropic"))
+  ])
+  try state.save(instance)
+  let text = try #require(readFile(instance.guestEnvironmentStatePath))
+  #expect(text.contains("\"kind\": \"provider_secret\""))
+  #expect(
+    text.contains("\"provider\": \"anthropic\"") && text.contains("\"injection\": \"x_api_key\""))
+  #expect(try GuestEnvState.tryLoad(instance) == state)
+  try writeFile(
+    instance.guestEnvironmentStatePath,
+    #"{"version": 2, "entries": {"OPENAI_API_KEY": {"kind": "provider_secret", "provider": "anthropic", "injection": "bearer", "name": "x"}}}"#
+  )
+  #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
 }
 
 @Test func envFilesAreReadStrictlyFromRegularFiles() throws {
@@ -528,4 +555,28 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
     guest.client, session, .codex, latestCodexTag: { throw HostError("offline") },
     diagnostics: guest.sink.diagnostics)
   #expect(offline[0].contains("could not determine latest version"))
+}
+
+@Test func aStoredSecretIsEitherAProxyCredentialOrGuestVisible() throws {
+  let db = try SecretName("db")
+  let anthropic = try SecretName("anthropic")
+  // Distinct names: fine.
+  try GuestEnvState.checkCredentialSeparation(
+    [
+      try EnvVarName("ANTHROPIC_API_KEY"): .secret(anthropic), try EnvVarName("DB"): .secret(db),
+    ], proxyCredentialNames: [])
+  // A generic reference to a configured proxy credential is refused.
+  let configured = try #require(throws: HostError.self) {
+    try GuestEnvState.checkCredentialSeparation(
+      [try EnvVarName("FOO"): .secret(anthropic)], proxyCredentialNames: [anthropic])
+  }
+  #expect(configured.message.contains("FOO={vault:anthropic}"))
+  // ...and so is one naming a routed provider secret's store entry.
+  #expect(throws: HostError.self) {
+    try GuestEnvState.checkCredentialSeparation(
+      [
+        try EnvVarName("ANTHROPIC_API_KEY"): .secret(anthropic),
+        try EnvVarName("FOO"): .secret(anthropic),
+      ], proxyCredentialNames: [])
+  }
 }

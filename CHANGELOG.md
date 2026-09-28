@@ -23,6 +23,10 @@
 - **`--env-file`** on `up`/`start`, and whole-value `{vault:NAME}` references
   in `--env`/`--env-file` values, resolved from `coop secrets` per session and
   persisted only as references.
+- **Stored provider credentials**: `ANTHROPIC_API_KEY={vault:NAME}` (and the
+  other provider variables) goes only to that VM's credential proxy, never the
+  guest. `proxy.<provider>.credential` and `github.pat` tokens accept
+  `vault:NAME`.
 
 ### Swift host
 

@@ -484,10 +484,15 @@ enum ConfigDecoder {
     {
       let u = try ObjectReader(value, at: path)
       let raw = try u.required("credential", Parse.secret)
+      if raw.expose().hasPrefix("vault:") {
+        _ = try Parse.domain(u.child("credential")) { () throws(ValidationError) in
+          try SecretName(String(raw.expose().dropFirst(6)))
+        }
+      }
       guard let credential = CredentialReference(raw.expose()) else {
         throw FieldError(
           u.child("credential"),
-          "literal credentials are not accepted; run `coop proxy setup` to store the credential in the macOS Keychain, or write a `cmd:` reference to a command that prints it"
+          "literal credentials are not accepted; run `coop proxy setup` to store the credential in the macOS Keychain, reference a `coop secrets` entry as `vault:<name>`, or write a `cmd:` reference to a command that prints it"
         )
       }
       return ProxyUpstream(

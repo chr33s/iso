@@ -175,6 +175,31 @@ private func config(_ text: String) throws -> CoopConfig {
   #expect(throws: HostError("Failed to parse proxy.json")) { try ProxyState.load(instance) }
 }
 
+@Test func storedCredentialNamesIncludePerVMOverridesAndFailOnCorruption() throws {
+  let directory = FileManager.default.temporaryDirectory.appending(
+    path: "coop-proxy-names-\(UUID().uuidString)"
+  ).path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let instance = Instance(
+    name: try InstanceName("vm"), index: InstanceIndex(0)!, directory: directory, image: .default)
+  let c = try config(#"{"proxy": {"anthropic": {"credential": "vault:shared"}}}"#)
+  try Data(#"{"openai": {"credential": "vault:per-vm", "auth": "bearer"}}"#.utf8)
+    .write(to: URL(fileURLWithPath: instance.proxyStatePath))
+  #expect(
+    try ProxyState.storedCredentialNames(c.proxy, instance: instance)
+      == [try SecretName("shared"), try SecretName("per-vm")])
+  #expect(
+    try ProxyState.storedCredentialNames(c.proxy, instance: nil) == [try SecretName("shared")])
+  try Data("{".utf8).write(to: URL(fileURLWithPath: instance.proxyStatePath))
+  #expect(throws: HostError.self) {
+    try ProxyState.storedCredentialNames(c.proxy, instance: instance)
+  }
+  let off = try config(
+    #"{"proxy": {"mode": "off", "anthropic": {"credential": "vault:shared"}}}"#)
+  #expect(try ProxyState.storedCredentialNames(off.proxy, instance: instance).isEmpty)
+}
+
 // MARK: - Images
 
 @Test func imageListingSkipsInvalidNamesAndTolerantConfigs() throws {

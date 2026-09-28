@@ -78,8 +78,8 @@ public enum ConfigTemplate {
 
       // Host-side credential-injecting proxy. `coop proxy setup [--openai]`
       // stores the credential in the macOS Keychain and writes the `cmd:`
-      // reference here. Credentials must be `cmd:` references; literal values are
-      // rejected. Cannot be combined with codex auth "chatgpt".
+      // reference here. Credentials must be `cmd:` or `vault:NAME` (coop secrets)
+      // references; literal values are rejected. Cannot be combined with codex auth "chatgpt".
       // "proxy": {
       //   "mode": "auto",             // "required": never forward a raw provider key;
       //                               // "off": start no proxy

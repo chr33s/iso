@@ -982,7 +982,7 @@ coop github <subcommand>
 | `unassign-pat --vm NAME` | Remove only the VM association; leave the shared credential intact. |
 | `setup-pat [--repo owner/name]` | Run the wizard end-to-end: open the GitHub PAT-creation form, validate the pasted token against `api.github.com`, store it in the macOS Keychain (no fallback store), and write a `github.pat["owner/repo"]` entry that references it with `cmd:`. The repo is auto-detected from `git remote get-url origin` when `--repo` is omitted. |
 | `rotate-pat --repo owner/name` | Re-run the wizard for an existing entry (FGPATs expire — max 1 year). |
-| `status [--vm NAME] [--probe] [--json]` | List configured entries and whether they are stored in the macOS Keychain. By default the `cmd:` reference is *not* resolved (so no Keychain or other prompt fires). Pass `--probe` to also resolve each entry and report whether the secret store still serves it. Pass `--json` for machine-readable output. |
+| `status [--vm NAME] [--probe] [--json]` | List configured entries and whether they are stored in the macOS Keychain. By default the `cmd:` reference is *not* resolved (so no Keychain or other prompt fires). Pass `--probe` to also resolve each entry (one secret-store unlock covers every `vault:` entry) and report whether the secret store still serves it. Pass `--json` for machine-readable output. |
 | `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references coop's Keychain item, delete that item. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want coop to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
 
 ```
@@ -1076,9 +1076,15 @@ every `coop shell`, `exec` and agent launch of that instance asks for the
 passphrase and Touch ID once. **The value is visible to everything in the
 guest** — the Secure Enclave protects it at rest on the host only. The
 reference must be the whole value (`URL=postgres://u:{vault:pw}@h` is
-rejected). Provider credentials (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-`CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) cannot be referenced this way;
-they belong to [the credential proxy](credential-proxy.md). `up`, `start` and
+rejected).
+
+A reference on a provider credential variable (`ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) is
+different: it never enters the guest. It becomes that instance's
+[credential proxy](credential-proxy.md) credential, ahead of any per-VM
+override or config default, and the guest gets only the proxy's capability
+token. At most one per provider; under `proxy.mode = "off"` it is an error.
+A generic reference may not name a secret that a proxy credential also reads. `up`, `start` and
 `restore --reprovision` resolve every reference before doing VM work, so a
 wrong passphrase or a missing secret stops them early. References work only
 in `--env` and `--env-file`; a `{vault:` in devcontainer `containerEnv` or
@@ -1089,7 +1095,7 @@ an instance is unsupported.
 
 ### `validate`
 
-Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live.
+Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. A `github.pat` entry stored with `vault:` is reported as `stored secret, not resolved` and never unlocks the secret store. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live; `vault:` entries are resolved in one unlock.
 
 ```
 coop validate
@@ -1098,4 +1104,4 @@ coop validate --probe
 
 | Flag | Description |
 |------|-------------|
-| `--probe` | For each `github.pat` entry, resolve the token and call `GET /user` on `api.github.com` to confirm it authenticates. Network-dependent; may trigger a Keychain (or your own `cmd:` tool's) prompt. |
+| `--probe` | For each `github.pat` entry, resolve the token and call `GET /user` on `api.github.com` to confirm it authenticates. Network-dependent; may trigger a Keychain (or your own `cmd:` tool's) prompt, and asks for the secret-store passphrase and Touch ID once when an entry is a `vault:` reference. |

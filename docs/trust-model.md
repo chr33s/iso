@@ -90,13 +90,7 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   (`ProcessRunner` stdin, the git-clone credential helper, `curl -H @-` in
   `GitHubAPI.swift` / `Update.swift` / `DevcontainerGitRepo.swift`). Never
   build a command line with the secret as an argument — it is visible in
-  `ps`/`/proc`. The secret-store passphrase is read from `/dev/tty` or from
-  the descriptor named by `COOP_SECRETS_PASSPHRASE_FD`, never argv or a
-  plaintext variable, and `coop secrets set` takes values from a prompt or
-  stdin. A `{vault:}` guest-environment reference is persisted in
-  `guest_env.json` as a reference only; its value is resolved per session
-  and is guest-visible by design, like any `--env` value. A reference on a
-  provider credential variable is refused. The one known exception is the macOS Keychain store step
+  `ps`/`/proc`. The one known exception is the macOS Keychain store step
   (`security add-generic-password -w`, `SecretStore.swift`), whose CLI offers
   no stdin path; it is documented at the call site and never appears in coop's
   messages. MCP server definitions (with resolved header secrets) reach
@@ -135,9 +129,22 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   secret.
 - **The stored token is indirected, never inlined.** The configuration holds a
   `cmd:...` retrieval command (`KeychainReference` in `SecretStore.swift` for
-  coop-created items), not the plaintext token; coop runs it when it needs the
-  value. Provider proxy credentials must be `cmd:` references; literal values
-  are rejected.
+  coop-created items) or a `vault:NAME` reference to the local secret store,
+  not the plaintext token; coop resolves it when it needs the value. Provider
+  proxy credentials must be `cmd:` or `vault:` references; literal values are
+  rejected.
+- **The local secret store.** Its passphrase is read from `/dev/tty` or from
+  the descriptor named by `COOP_SECRETS_PASSPHRASE_FD` (once per process),
+  never argv or a plaintext variable, and `coop secrets set` takes values from
+  a prompt or stdin. A `{vault:}` guest-environment reference is persisted in
+  `guest_env.json` as a reference only; its value is resolved per session and
+  is guest-visible by design, like any `--env` value. A reference on a
+  provider credential variable is persisted as a `provider_secret`, resolved
+  only into that VM's `coop-proxy` startup document, and never set in the
+  guest environment; under `proxy.mode = "off"` it is an error. A generic
+  reference may not name a secret a proxy credential also reads. `vault:` is
+  refused for values placed in the guest (`claude.api_key`, `codex.api_key`,
+  MCP headers).
 - **Proxy mode keeps the model API keys out of the guest entirely** (issue #411,
   opt-in `proxy`). When enabled in remote model mode, `ANTHROPIC_API_KEY`
   (Claude) and/or `OPENAI_API_KEY` (Codex) are **not** forwarded

@@ -66,7 +66,7 @@ public struct GitHubTokens: Sendable {
   public func patToken(_ github: GitHubAuth?, repo: RepoSlug) throws -> Secret<String> {
     guard let entry = github?.patEntry(repo) else { throw HostError(missingPATEntryError(repo)) }
     let token: Secret<String>
-    do { token = try resolver.resolve(entry) } catch {
+    do { token = try resolver.resolveAllowingStored(entry) } catch {
       throw ContextError("Failed to resolve token for [github.pat.\"\(repo)\"]", cause: error)
     }
     if !token.expose().hasPrefix(githubPATPrefix) {
@@ -347,6 +347,23 @@ public struct GitHubAssignment: Equatable, Sendable {
     try rejectOverrides((config.claude.envForward + config.codex.envForward).map(\.rawValue))
     if let names = try persistedGuestEnvironmentNames(instance) { try rejectOverrides(names) }
     return assignment
+  }
+
+  /// The `vault:` secret name of the PAT entry a VM will use: its
+  /// assignment when it has one (which never falls back), else `repo`'s.
+  public static func vaultName(
+    _ config: CoopConfig, instance: Instance?, repo: RepoSlug?, githubDisabled: Bool
+  ) throws -> SecretName? {
+    let assigned = try instance.flatMap {
+      try active(config, $0, githubDisabled: githubDisabled)?.repo
+    }
+    return vaultName(config, slug: assigned ?? repo)
+  }
+
+  /// The `vault:` secret name of `slug`'s PAT entry, if it is one.
+  public static func vaultName(_ config: CoopConfig, slug: RepoSlug?) -> SecretName? {
+    guard let slug, let entry = config.github?.patEntry(slug) else { return nil }
+    return SecretName.vaultReference(entry.expose())
   }
 
   public static func rejectOverrides(_ names: some Sequence<String>) throws {

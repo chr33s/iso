@@ -2,6 +2,7 @@ import ArgumentParser
 import CoopConfiguration
 import CoopCore
 import CoopHost
+import CoopSecrets
 import Foundation
 
 /// Swift host CLI. Development build during the port: commands not listed
@@ -133,7 +134,10 @@ struct Validate: ParsableCommand {
     abstract: "Validate configuration and check prerequisites")
 
   @OptionGroup var global: GlobalOptions
-  @Flag(help: "Probe live state for each `[github.pat]` entry (talks to api.github.com)")
+  @Flag(
+    help:
+      "Probe live state for each `[github.pat]` entry (talks to api.github.com); also unlocks the secret store to resolve `vault:` entries"
+  )
   var probe = false
 
   func run() throws {
@@ -143,8 +147,15 @@ struct Validate: ParsableCommand {
         global.selection(environment: environment), environment: environment)
       AdminSupport.updateNotice(
         config, environment: environment, diagnostics: Diagnostics(verbosity: global.verbose))
+      // The secret store is unlocked only for `--probe`, which already
+      // reaches out; a plain validate never prompts for the passphrase.
+      let store =
+        probe
+        ? StoreSecretResolver.shared(
+          EnclaveStore(directory: config.dataDirectory.appending("secrets").path)) : nil
       try ValidateReport.run(
-        config: config, resolver: CredentialResolver(environment: environment.variables),
+        config: config,
+        resolver: CredentialResolver(environment: environment.variables, secrets: store),
         fileSystem: LocalConfigFileSystem(), output: StandardStreams(),
         probe: probe
           ? GitHubAPI(
@@ -154,22 +165,49 @@ struct Validate: ParsableCommand {
   }
 }
 
+/// The one GitHub call `validate --probe` makes per resolved token.
+protocol GitHubUserProbe {
+  func userLogin(token: Secret<String>) throws -> String
+}
+
+extension GitHubAPI: GitHubUserProbe {}
+
 enum ValidateReport {
   /// Environmental checks, then each PAT entry resolved explicitly (the one
-  /// place `validate` runs `cmd:` references, as the baseline did). With
-  /// `probe`, each resolved token is also checked against `GET /user`.
+  /// place `validate` runs `cmd:` references, as the baseline did). A
+  /// `vault:` entry is left unresolved unless `probe` is set, which unlocks
+  /// the secret store once for all of them and checks each resolved token
+  /// against `GET /user`.
   static func run(
     config: CoopConfig, resolver: CredentialResolver, fileSystem: some ConfigFileSystem,
-    output: some OutputStreams, probe: GitHubAPI? = nil
+    output: some OutputStreams, probe: (any GitHubUserProbe)? = nil
   ) throws {
     output.out("Validating config (backend: apple-container)...")
     for warning in try config.validated(fileSystem: fileSystem) {
       output.out("  warning: \(warning)")
     }
     if case .pat(let pat)? = config.github {
+      var batchFailure: (any Error)?
+      let resolveStored = probe != nil
+      if resolveStored {
+        do { try resolver.prefetchStored(Array(pat.entries.values)) } catch { batchFailure = error }
+      }
       for repo in pat.entries.keys.sorted() {
+        let entry = pat.entries[repo]!
+        if entry.expose().hasPrefix("vault:") {
+          if !resolveStored {
+            output.out(
+              "  github.pat.\"\(repo)\": stored secret, not resolved (run with --probe to check it)"
+            )
+            continue
+          }
+          if let batchFailure {
+            output.out("  github.pat.\"\(repo)\": FAILED to resolve token (\(batchFailure))")
+            continue
+          }
+        }
         do {
-          let token = try resolver.resolve(pat.entries[repo]!)
+          let token = try resolver.resolveAllowingStored(entry)
           if token.expose().hasPrefix("github_pat_") {
             output.out("  github.pat.\"\(repo)\": ok (resolves, fine-grained PAT format)")
           } else {

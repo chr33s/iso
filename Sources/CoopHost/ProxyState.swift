@@ -29,6 +29,26 @@ public struct ProxyState: Sendable, Equatable {
 
   public var isEmpty: Bool { anthropic == nil && openai == nil }
 
+  /// Secret-store names the credential proxy reads: the configured upstreams
+  /// plus this VM's overrides. Empty under `proxy.mode = "off"`. A corrupt
+  /// `proxy.json` throws, so the separation check never runs on a partial set.
+  public static func storedCredentialNames(
+    _ proxy: ProxyConfig, instance: Instance?
+  ) throws -> Set<SecretName> {
+    guard proxy.mode != .off else { return [] }
+    var names = proxy.storedCredentialNames
+    guard let instance else { return names }
+    let state = try load(instance)
+    for provider in ProxyProvider.allCases {
+      if case .reference(let reference)? = state.override(for: provider)?.credential,
+        let name = SecretName.vaultReference(reference.command.expose())
+      {
+        names.insert(name)
+      }
+    }
+    return names
+  }
+
   /// Missing file → empty. Unknown members are ignored, as in the baseline.
   public static func load(_ instance: Instance) throws -> ProxyState {
     let path = instance.proxyStatePath

@@ -62,7 +62,8 @@ public struct GitRepoDevcontainerDiscovery: Sendable {
     if case .pat(let pat)? = auth, let entry = pat.entries[slug] {
       let token: Secret<String>
       do {
-        token = try CredentialResolver(runner: runner, environment: environment).resolve(entry)
+        token = try CredentialResolver(runner: runner, environment: environment)
+          .resolveAllowingStored(entry)
       } catch {
         throw ContextError("Failed to resolve token for [github.pat.\"\(slug)\"]", cause: error)
       }

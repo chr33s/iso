@@ -27,6 +27,27 @@ private final class Lines: Sendable {
 /// Stub `curl`, `security`, `gh`, `git` and `open` in a private bin
 /// directory. Every call appends its argv to `<tool>.argv`; `curl` also
 /// records stdin and answers from `responses/<url>` (or `<url>@<token>`).
+private final class OneUnlockSecrets: SecretReferenceResolver, @unchecked Sendable {
+  var calls: [Set<SecretName>] = []
+  let values: [String: String]
+  private var cache: [SecretName: Secret<[UInt8]>] = [:]
+  init(_ values: [String: String]) { self.values = values }
+
+  func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>] {
+    let missing = names.subtracting(cache.keys)
+    if !missing.isEmpty {
+      calls.append(missing)
+      var found: [SecretName: Secret<[UInt8]>] = [:]
+      for name in missing {
+        guard let value = values[name.rawValue] else { throw HostError("not found: \(name)") }
+        found[name] = Secret(Array(value.utf8))
+      }
+      cache.merge(found) { $1 }
+    }
+    return cache.filter { names.contains($0.key) }
+  }
+}
+
 private struct Stubs {
   let root: String
   var bin: String { root + "/bin" }
@@ -122,14 +143,15 @@ private final class ScriptedConsole: Sendable {
 
 private func host(
   _ stubs: Stubs, console: ScriptedConsole = ScriptedConsole([]), logs: Lines = Lines(),
-  tty: Bool = true, extra: [String: String] = [:], cwd: String? = nil
+  tty: Bool = true, extra: [String: String] = [:], cwd: String? = nil,
+  secrets: (any SecretReferenceResolver)? = nil
 ) -> GitHubHost {
   GitHubHost(
     environment: ConfigEnvironment(
       home: stubs.root, variables: stubs.environment.merging(extra) { $1 }),
     diagnostics: Diagnostics(verbosity: 2, sink: { logs.append($0) }),
     security: stubs.bin + "/security", console: console.console(tty: tty),
-    workingDirectory: cwd)
+    workingDirectory: cwd, secrets: secrets)
 }
 
 private func instance(_ config: CoopConfig, _ name: String = "projects") throws -> Instance {
@@ -159,6 +181,27 @@ private let assignmentConfig = #"""
 @Suite(.serialized) struct GitHubHostTests {
 
   // MARK: - Secret store (C-04)
+
+  @Test func vaultPATNameIsTheEntryTheVMWillUse() throws {
+    let directory = try scratchDirectory("vault-pat")
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    let instance = try testInstance(directory + "/instance")
+    let config = try testConfig(
+      #""github": {"mode": "pat", "pat": {"org/a": {"token": "vault:tok-a"}, "org/b": {"token": "cmd:echo x"}, "org/c": {"token": "vault:tok-c"}}}"#
+    )
+    func name(_ repo: String?, disabled: Bool = false) throws -> String? {
+      try GitHubAssignment.vaultName(
+        config, instance: instance, repo: repo.map { try RepoSlug($0) }, githubDisabled: disabled
+      )?.rawValue
+    }
+    #expect(try name("org/a") == "tok-a")
+    #expect(try name("org/b") == nil)
+    #expect(try name("org/none") == nil)
+    #expect(try name(nil) == nil)
+    // An assignment wins and never falls back to the workspace repo.
+    try GitHubAssignment(repo: RepoSlug("org/c")).save(config, instance)
+    #expect(try name("org/a") == "tok-c")
+  }
 
   @Test func keychainReferencesRoundTripThroughTheirCommand() throws {
     let reference = KeychainReference(service: "coop-github-pat", account: "trailofbits-coop")
@@ -639,6 +682,28 @@ private let assignmentConfig = #"""
   }
 
   // MARK: - Status
+
+  @Test func statusProbeUnlocksTheSecretStoreOnceForVaultEntries() throws {
+    let stubs = try Stubs()
+    defer { stubs.remove() }
+    let cfg = try config(
+      #"{"data_dir": "\#(stubs.root)/data", "github": {"mode": "pat", "pat": {"org/a": {"token": "vault:one"}, "org/b": {"token": "vault:two"}}}}"#
+    )
+    let secrets = OneUnlockSecrets(["one": "github_pat_1", "two": "classic"])
+    var view = try host(stubs, secrets: secrets).status(cfg, probe: true, instance: nil)
+    #expect(secrets.calls.count == 1)
+    #expect(view.entries.map(\.probe) == [.ok, .unexpectedFormat])
+
+    // Without --probe nothing is resolved.
+    let quiet = OneUnlockSecrets(["one": "github_pat_1", "two": "classic"])
+    view = try host(stubs, secrets: quiet).status(cfg, probe: false, instance: nil)
+    #expect(quiet.calls.isEmpty)
+
+    // A failed batch (one name missing) still reports each entry.
+    let partial = OneUnlockSecrets(["one": "github_pat_1"])
+    view = try host(stubs, secrets: partial).status(cfg, probe: true, instance: nil)
+    #expect(view.entries.map(\.probe) == [.ok, .resolveFailed])
+  }
 
   @Test func statusReportsEntriesWithoutTokens() throws {
     let stubs = try Stubs()

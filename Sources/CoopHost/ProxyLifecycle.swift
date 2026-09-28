@@ -71,10 +71,25 @@ extension ProxyState {
     }
   }
 
+  /// A `--env`/`--env-file` provider secret for this instance first, then
+  /// the per-VM override and the configuration default (D-003).
   public static func effectiveUpstream(
     _ instance: Instance, _ provider: ProxyProvider, config: ProxyConfig
   ) throws -> EffectiveUpstream? {
-    try load(instance).effective(provider, config: config, instance: instance.name)
+    if let routed = try GuestEnvState.tryLoad(instance)?.providerSecrets()[provider] {
+      guard config.mode != .off else { throw unavailable(routed) }
+      return EffectiveUpstream(
+        credential: CredentialReference("vault:\(routed.name)")!, auth: routed.auth)
+    }
+    return try load(instance).effective(provider, config: config, instance: instance.name)
+  }
+
+  /// A provider secret under `proxy.mode = "off"`: unavailable, never
+  /// forwarded into the guest instead.
+  public static func unavailable(_ routed: GuestEnvState.ProviderSecret) -> HostError {
+    HostError(
+      "\(routed.variable)={vault:\(routed.name)} is a provider credential for coop-proxy, but proxy.mode is \"off\"; it is not forwarded into the guest. Set proxy.mode to \"auto\" or remove it."
+    )
   }
 
   /// Record a per-VM override. The other provider's member is carried over
@@ -265,7 +280,7 @@ public struct ProxyLauncher: Sendable {
     listen: String, capabilityToken: Secret<String>, provider: ProxyProvider,
     auth: ProxyAuthScheme, credential: Secret<String>
   ) -> Secret<[UInt8]> {
-    let scheme = auth == .apiKey ? "x_api_key" : "bearer"
+    let scheme = auth.wireName
     let json = OrderedJSON.object(
       .init([
         ("listen", .string(listen)), ("capability_token", .string(capabilityToken.expose())),

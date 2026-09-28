@@ -864,6 +864,43 @@ if want coop; then
     check "coop start boots it again" coop start e2e --no-agents --no-github
     check "guest data survives stop/start" test "$(coop exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
 
+    # Secure Enclave secret store end to end (needs Touch ID, so opt-in):
+    # generic references reach the guest, provider references never do, and
+    # no host state holds a resolved value.
+    if [[ "${COOP_TEST_SECRETS:-0}" == 1 ]]; then
+        printf 'integration passphrase\n' >"$WORK/pass"
+        chmod 600 "$WORK/pass"
+        GENERIC="generic-$(openssl rand -hex 8)"
+        PROVIDER="sk-provider-$(openssl rand -hex 8)"
+        withpass() { COOP_SECRETS_PASSPHRASE_FD=3 coop "$@" 3<"$WORK/pass"; }
+        check "coop secrets init creates the store" withpass secrets init --accept-no-recovery
+        printf '%s' "$GENERIC" | COOP_SECRETS_PASSPHRASE_FD=3 "$COOP" --config "$CCFG" \
+            secrets set generic --stdin 3<"$WORK/pass" >/dev/null 2>&1
+        printf '%s' "$PROVIDER" | COOP_SECRETS_PASSPHRASE_FD=3 "$COOP" --config "$CCFG" \
+            secrets set anthropic --stdin 3<"$WORK/pass" >/dev/null 2>&1
+        check "coop secrets list shows names only" \
+            test "$(withpass secrets list 2>/dev/null | cut -f1 | tr '\n' ' ')" = "anthropic generic "
+        printf 'GENERIC={vault:generic}\nANTHROPIC_API_KEY={vault:anthropic}\n' >"$WORK/vault.env"
+        coop stop e2e >/dev/null 2>&1
+        check "coop start resolves --env-file references" \
+            withpass start e2e --no-agents --no-github --env-file "$WORK/vault.env"
+        # shellcheck disable=SC2016 # Expand in the guest.
+        check "a generic reference reaches guest sessions" \
+            test "$(withpass exec e2e -- sh -c 'echo "$GENERIC"' 2>/dev/null)" = "$GENERIC"
+        # shellcheck disable=SC2016 # Expand in the guest.
+        check "a provider reference never reaches the guest" \
+            test "$(withpass exec e2e -- sh -c 'echo "${ANTHROPIC_API_KEY:-unset}"' 2>/dev/null)" = unset
+        # Instance JSON and the store only: disk images are large and sparse.
+        check "guest_env.json holds references, not values" \
+            refuses grep -qsE "$GENERIC|$PROVIDER" "$CSTATE"/instances/*/*.json "$CDATA"/secrets/*
+        check "no host log holds a resolved value" \
+            refuses grep -rqsE "$GENERIC|$PROVIDER" "$WORK"/*.log
+        # Later checks run without a passphrase: drop the saved references.
+        rm -f "$CSTATE/instances/e2e/guest_env.json"
+    else
+        skip "secret store end to end (set COOP_TEST_SECRETS=1; needs Touch ID)"
+    fi
+
     # Staged pull: guest changes reach the project only on --apply, and an
     # escaping symlink makes the stage inapplicable.
     coop exec e2e -- sh -c 'echo guest > /workspace/marker && mkdir -p /workspace/new && echo n > /workspace/new/f' >/dev/null

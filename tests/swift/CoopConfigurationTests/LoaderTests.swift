@@ -420,3 +420,24 @@ struct FakeFileSystem: ConfigFileSystem {
   #expect(try load(#"{"proxy": {"mode": "off"}}"#).proxy.mode == .off)
   #expect(fieldError(#"{"proxy": {"mode": "strict"}}"#)?.field == "proxy.mode")
 }
+
+@Test func proxyCredentialsAcceptVaultReferences() throws {
+  let c = try load(#"{"proxy": {"anthropic": {"credential": "vault:anthropic"}}}"#)
+  #expect(c.proxy.anthropic?.credential.command.expose() == "vault:anthropic")
+  #expect(c.proxy.anthropic?.credential.description == "vault:anthropic")
+  #expect(
+    fieldError(#"{"proxy": {"anthropic": {"credential": "vault:../x"}}}"#)?.field
+      == "proxy.anthropic.credential")
+  #expect(fieldError(#"{"proxy": {"anthropic": {"credential": "sk-literal"}}}"#) != nil)
+}
+
+@Test func storedProxyCredentialNamesAreCollected() throws {
+  let c = try load(
+    #"{"proxy": {"anthropic": {"credential": "vault:anthropic"}, "openai": {"credential": "cmd:printf x"}}}"#
+  )
+  #expect(c.proxy.storedCredentialNames == [try SecretName("anthropic")])
+  #expect(ProxyProvider.route(forVariable: "CLAUDE_CODE_OAUTH_TOKEN")! == (.anthropic, .bearer))
+  #expect(ProxyProvider.route(forVariable: "PATH") == nil)
+  #expect(
+    ProxyAuthScheme.apiKey.wireName == "x_api_key" && ProxyAuthScheme.bearer.wireName == "bearer")
+}

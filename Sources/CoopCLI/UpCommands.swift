@@ -34,9 +34,15 @@ final class ProjectLifecycle {
   let context: CommandContext
   private(set) var config: CoopConfig
   let githubDisabled: Bool
+  /// The store `vault:` references resolve through; the command's own unless
+  /// a test supplies one.
+  let secrets: any SecretReferenceResolver
 
-  init(_ context: CommandContext, noGitHub: Bool) {
+  init(
+    _ context: CommandContext, noGitHub: Bool, secrets: (any SecretReferenceResolver)? = nil
+  ) {
     self.context = context
+    self.secrets = secrets ?? context.secretResolver
     githubDisabled = noGitHub
     config = noGitHub ? context.config.disablingGitHub() : context.config
   }
@@ -60,7 +66,7 @@ final class ProjectLifecycle {
       proxies: ProxyLauncher(
         environment: context.environment.variables, resolver: resolver, diagnostics: diagnostics,
         coopExecutable: CommandLine.executablePath),
-      github: tokens, diagnostics: diagnostics, secrets: context.secretResolver)
+      github: tokens, diagnostics: diagnostics, secrets: secrets)
   }
 
   func listInstances() throws -> [Instance] { try context.listInstances() }
@@ -88,24 +94,40 @@ final class ProjectLifecycle {
         uniquingKeysWith: { $1 }),
       envFile: try envFile.map(GuestEnvState.readEnvFile) ?? [:],
       cli: Dictionary(cli, uniquingKeysWith: { $1 }))
-    try GuestEnvState.rejectProviderReferences(merged)
+    _ = try GuestEnvState.providerSecrets(merged)
     for (name, value) in devcontainer ?? [] where value.contains("{vault:") {
       diagnostics.warn(
         "devcontainer containerEnv '\(name)' contains `{vault:`; it is passed to the guest as literal text. Stored-secret references work only in --env and --env-file."
       )
     }
-    try preflightReferences(merged)
     foldGuestEnvironment(merged)
     return merged
   }
 
   /// Resolves every `{vault:}` reference before any VM work, so a wrong
-  /// passphrase or a missing secret fails the command up front. The values
-  /// stay in the process's resolver cache for this command's sessions.
-  func preflightReferences(_ entries: [EnvVarName: EnvValue]) throws {
-    let names = Set(entries.values.compactMap(\.reference))
+  /// passphrase or a missing secret fails the command up front, and in one
+  /// unlock: `--env`, proxy credentials (configured and per-VM) and the
+  /// GitHub PAT for `repo`. The values stay in the process's resolver cache
+  /// for this command's sessions, so nothing later prompts again.
+  func preflightReferences(
+    _ entries: [EnvVarName: EnvValue], instance: Instance? = nil, repo: RepoSlug? = nil
+  ) throws {
+    let routed = try GuestEnvState.providerSecrets(entries)
+    if config.proxy.mode == .off,
+      let first = routed.values.sorted(by: { $0.variable < $1.variable }).first
+    {
+      throw ProxyState.unavailable(first)
+    }
+    let proxyNames = try ProxyState.storedCredentialNames(config.proxy, instance: instance)
+    try GuestEnvState.checkCredentialSeparation(entries, proxyCredentialNames: proxyNames)
+    // Configured `vault:` proxy credentials join the same unlock.
+    let names = Set(entries.values.compactMap(\.reference)).union(proxyNames)
+      .union(
+        try GitHubAssignment.vaultName(
+          config, instance: instance, repo: repo, githubDisabled: githubDisabled
+        ).map { [$0] } ?? [])
     guard !names.isEmpty else { return }
-    let resolved = try context.secretResolver.resolve(names)
+    let resolved = try secrets.resolve(names)
     if let missing = names.subtracting(resolved.keys).sorted().first {
       throw HostError("unable to resolve required secret '\(missing)'")
     }
@@ -178,6 +200,7 @@ final class ProjectLifecycle {
 
   func startInstance(_ instance: Instance, _ options: StartOptions) throws {
     let repo = try resolveStartRepo(options)
+    try preflightReferences(options.persistedGuestEnvironment, instance: instance, repo: repo)
     try maybePromptForPAT(instance, repo: repo, options)
     // Busy host ports fail before any VM cost.
     let forwardSet = PortForward.merge(config: config.forwardPorts, cli: options.forwardPorts)
@@ -278,8 +301,8 @@ final class ProjectLifecycle {
     try PortForwards.checkCollisions(forwardSet)
     var guestEnvironment = try GuestEnvState.tryLoad(instance)?.entries ?? [:]
     for (key, value) in options.persistedGuestEnvironment { guestEnvironment[key] = value }
-    try GuestEnvState.rejectProviderReferences(guestEnvironment)
-    try preflightReferences(guestEnvironment)
+    _ = try GuestEnvState.providerSecrets(guestEnvironment)
+    try preflightReferences(guestEnvironment, instance: instance, repo: repo)
     foldGuestEnvironment(guestEnvironment)
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
     try backend.startExisting(instance)
@@ -1051,9 +1074,9 @@ struct Reprovision {
       )
     }
     // Saved references must resolve before the disk is replaced.
-    try GuestEnvState.rejectProviderReferences(savedEnvironment)
-    try lifecycle.preflightReferences(savedEnvironment)
+    _ = try GuestEnvState.providerSecrets(savedEnvironment)
     let repo = lifecycle.tokens.instanceRepo(instance)
+    try lifecycle.preflightReferences(savedEnvironment, instance: instance, repo: repo)
     try lifecycle.maybePromptForPAT(instance, repo: repo, options)
     let shutdown = Shutdown.install()
     defer { shutdown.restore() }
