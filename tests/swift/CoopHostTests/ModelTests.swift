@@ -1,5 +1,6 @@
 import CoopConfiguration
 import CoopCore
+import CoopSecrets
 import Foundation
 import Testing
 
@@ -193,7 +194,7 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   defer { try? FileManager.default.removeItem(atPath: root) }
   let instance = try testInstance(root)
   #expect(try GuestEnvState.tryLoad(instance) == nil)
-  let state = GuestEnvState(entries: [
+  let state = GuestEnvState(literals: [
     try EnvVarName("FOO"): "1", try EnvVarName("BAR"): "2", try EnvVarName("_E"): "",
   ])
   try state.save(instance)
@@ -214,17 +215,73 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
 
 @Test func guestEnvMergeAndCLIArguments() throws {
   let k = try EnvVarName("K")
+  let d = try EnvVarName("D")
+  let f = try EnvVarName("F")
   #expect(
-    GuestEnvState.merge(devcontainer: [k: "dc", try EnvVarName("D"): "1"], cli: [k: "cli"])
-      == [k: "cli", try EnvVarName("D"): "1"])
-  #expect(try GuestEnvState.parseCLIArgument("FOO=1") == (try EnvVarName("FOO"), "1"))
-  #expect(try GuestEnvState.parseCLIArgument("EMPTY=").1 == "")
-  #expect(try GuestEnvState.parseCLIArgument("URL=https://x?a=b&c=d").1 == "https://x?a=b&c=d")
+    GuestEnvState.merge(
+      devcontainer: [k: .literal("dc"), d: .literal("1"), f: .literal("dc")],
+      envFile: [k: .literal("file"), f: .literal("file")], cli: [k: .literal("cli")])
+      == [k: .literal("cli"), d: .literal("1"), f: .literal("file")])
+  #expect(try GuestEnvState.parseCLIArgument("FOO=1") == (try EnvVarName("FOO"), .literal("1")))
+  #expect(try GuestEnvState.parseCLIArgument("EMPTY=").1 == .literal(""))
+  #expect(
+    try GuestEnvState.parseCLIArgument("URL=https://x?a=b&c=d").1 == .literal("https://x?a=b&c=d"))
+  #expect(
+    try GuestEnvState.parseCLIArgument("DB={vault:db-pass}").1 == .secret(try SecretName("db-pass"))
+  )
+  #expect(throws: (any Error).self) { try GuestEnvState.parseCLIArgument("DB=x{vault:db}") }
   let missing = try #require(throws: (any Error).self) {
     try GuestEnvState.parseCLIArgument("BAD")
   }
   #expect("\(missing)".contains("missing '='"))
   #expect(throws: (any Error).self) { try GuestEnvState.parseCLIArgument("1X=v") }
+}
+
+@Test func guestEnvStateWritesVersionTwoOnlyForReferences() throws {
+  let root = try scratchDirectory("genv2")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let instance = try testInstance(root)
+  let state = GuestEnvState(entries: [
+    try EnvVarName("DB"): .secret(try SecretName("db")), try EnvVarName("MODE"): .literal("dev"),
+  ])
+  try state.save(instance)
+  let text = try #require(readFile(instance.guestEnvironmentStatePath))
+  #expect(text.contains("\"version\": 2"))
+  #expect(text.contains("\"kind\": \"secret\"") && text.contains("\"name\": \"db\""))
+  #expect(try GuestEnvState.tryLoad(instance) == state)
+  // A version this binary does not know is refused, not misread.
+  try writeFile(instance.guestEnvironmentStatePath, #"{"version": 3, "entries": {}}"#)
+  #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
+  // The version-1 shape inside version 2 is refused.
+  try writeFile(instance.guestEnvironmentStatePath, #"{"version": 2, "entries": {"A": "x"}}"#)
+  #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
+}
+
+@Test func providerVariablesCannotReferenceStoredSecrets() throws {
+  #expect(throws: HostError.self) {
+    try GuestEnvState.rejectProviderReferences([
+      try EnvVarName("ANTHROPIC_API_KEY"): .secret(try SecretName("anthropic"))
+    ])
+  }
+  try GuestEnvState.rejectProviderReferences([
+    try EnvVarName("ANTHROPIC_API_KEY"): .literal("x"),
+    try EnvVarName("DB"): .secret(try SecretName("db")),
+  ])
+}
+
+@Test func envFilesAreReadStrictlyFromRegularFiles() throws {
+  let root = try scratchDirectory("envfile")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let path = root + "/.env"
+  try writeFile(path, "# c\nexport A=1\nB=\"x y\" # note\nC={vault:c}\nA=2\n")
+  let entries = try GuestEnvState.readEnvFile(path)
+  #expect(entries[try EnvVarName("A")] == .literal("2"))
+  #expect(entries[try EnvVarName("B")] == .literal("x y"))
+  #expect(entries[try EnvVarName("C")] == .secret(try SecretName("c")))
+  #expect(throws: (any Error).self) { try GuestEnvState.readEnvFile(root) }
+  try writeFile(path, "A=$(touch /tmp/x)\nB\n")
+  let error = try #require(throws: (any Error).self) { try GuestEnvState.readEnvFile(path) }
+  #expect("\(error)".contains("line 2"))
 }
 
 // MARK: - Codex TOML

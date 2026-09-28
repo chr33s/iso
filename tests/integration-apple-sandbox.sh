@@ -844,7 +844,9 @@ if want coop; then
         fail "coop setup builds, verifies, and publishes the image" "see $WORK/coop-build.log, $WORK/coop-setup.log"
         summary
     fi
-    if coop up "$WORK/project" --name e2e --no-agents --no-github >"$WORK/coop-up.log" 2>&1; then
+    printf 'export FROM_ENV_FILE="from file"\nOVERRIDDEN=file\n' >"$WORK/e2e.env"
+    if coop up "$WORK/project" --name e2e --no-agents --no-github --env-file "$WORK/e2e.env" \
+        --env OVERRIDDEN=cli >"$WORK/coop-up.log" 2>&1; then
         pass "coop up creates and boots an instance"
     else
         fail "coop up creates and boots an instance" "see $WORK/coop-up.log"
@@ -853,6 +855,9 @@ if want coop; then
     check "status reports running on the apple-container backend" \
         test "$(coop status e2e --json | jq -r '"\(.state) \(.backend)"')" = "running apple-container"
     check "the workspace is copied in" test "$(coop exec e2e -- cat /workspace/marker)" = "$RUN"
+    # shellcheck disable=SC2016 # Expand in the guest.
+    check "--env-file values reach guest sessions, --env wins" \
+        test "$(coop exec e2e -- sh -c 'echo "$FROM_ENV_FILE/$OVERRIDDEN"')" = "from file/cli"
     coop exec e2e -- sh -c 'echo before > ~/snap-before' >/dev/null
     check "coop stop stops the sandbox" coop stop e2e
     check "status reports stopped" test "$(cstate e2e)" = stopped

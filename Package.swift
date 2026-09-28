@@ -27,7 +27,7 @@ let package = Package(
     // seatbelt-proxy.sb is the canonical copy of the embedded profile
     // (SeatbeltProfile.swift); the proxy test scripts pass it to sandbox-exec.
     .target(
-      name: "CoopHost", dependencies: ["CoopCore", "CoopConfiguration"],
+      name: "CoopHost", dependencies: ["CoopCore", "CoopConfiguration", "CoopSecrets"],
       exclude: ["seatbelt-proxy.sb"]),
     .executableTarget(
       name: "CoopCLI",

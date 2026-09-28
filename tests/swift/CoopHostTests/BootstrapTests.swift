@@ -1,5 +1,6 @@
 import CoopConfiguration
 import CoopCore
+import CoopSecrets
 import Foundation
 import Testing
 
@@ -80,7 +81,7 @@ private func envNames(_ env: EnvForward) -> [String] { env.names }
   let guest = try FakeGuest()
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
-  try GuestEnvState(entries: [
+  try GuestEnvState(literals: [
     try EnvVarName("OPENAI_API_KEY"): "raw", try EnvVarName("GUEST_VAR"): "runtime",
   ]).save(instance)
   let config = try testConfig(
@@ -728,7 +729,7 @@ private func stageCodex(
   let guest = try FakeGuest()
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
-  try GuestEnvState(entries: [try EnvVarName("ANTHROPIC_API_KEY"): "raw"]).save(instance)
+  try GuestEnvState(literals: [try EnvVarName("ANTHROPIC_API_KEY"): "raw"]).save(instance)
   let agents = guest.bootstrap(try testConfig(#""proxy": {"mode": "required"}"#))
   #expect(throws: HostError.self) {
     try agents.prepareSession(instance, target: guest.target, repo: nil)
@@ -782,4 +783,76 @@ private func stageCodex(
       mode: .firstBoot)
   }
   #expect(error.message.contains("no provider proxy is configured"))
+}
+
+// MARK: - Stored-secret references
+
+private final class FakeSecrets: GuestSecretResolver, @unchecked Sendable {
+  var calls: [Set<SecretName>] = []
+  let values: [SecretName: [UInt8]]
+  init(_ values: [SecretName: [UInt8]]) { self.values = values }
+  func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>] {
+    calls.append(names)
+    return values.filter { names.contains($0.key) }.mapValues(Secret.init)
+  }
+}
+
+@Test func sessionsResolveReferencesInOneBatchAndNeverPersistValues() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try GuestEnvState(entries: [
+    try EnvVarName("GUEST_VAR"): .secret(try SecretName("db")),
+    try EnvVarName("TOKEN"): .secret(try SecretName("tok")),
+    try EnvVarName("MODE"): .literal("dev"),
+  ]).save(instance)
+  let secrets = FakeSecrets([
+    try SecretName("db"): Array("canary-db".utf8), try SecretName("tok"): Array("canary-tok".utf8),
+  ])
+  let resolver = CredentialResolver(environment: guest.environment)
+  let agents = AgentBootstrap(
+    config: try testConfig(""), client: guest.client, environment: [:], home: nil,
+    resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
+    diagnostics: guest.sink.diagnostics, secrets: secrets)
+  let session = try agents.prepareSession(instance, target: guest.target, repo: nil)
+  #expect(secrets.calls == [[try SecretName("db"), try SecretName("tok")]])
+  try guest.client.exec(session, RemoteCommand().literal("true"))
+  let seen = guest.log("env.log")
+  #expect(seen.contains("GUEST_VAR=canary-db") && session.env.contains("TOKEN"))
+  #expect(!guest.log("argv.log").joined().contains("canary"))
+  #expect(!guest.sink.text.contains("canary"))
+  let persisted = try String(contentsOfFile: instance.guestEnvironmentStatePath, encoding: .utf8)
+  #expect(!persisted.contains("canary"))
+}
+
+@Test func unresolvableOrInvalidReferencesFailTheSession() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
+  let resolver = CredentialResolver(environment: guest.environment)
+  func agents(_ secrets: (any GuestSecretResolver)?) throws -> AgentBootstrap {
+    AgentBootstrap(
+      config: try testConfig(""), client: guest.client, environment: [:], home: nil,
+      resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
+      diagnostics: guest.sink.diagnostics, secrets: secrets)
+  }
+  #expect(throws: HostError.self) {
+    try agents(nil).prepareSession(instance, target: guest.target, repo: nil)
+  }
+  let missing = try #require(throws: HostError.self) {
+    try agents(FakeSecrets([:])).prepareSession(instance, target: guest.target, repo: nil)
+  }
+  #expect(missing.message.contains("unable to resolve required secret 'db'"))
+  #expect(throws: HostError.self) {
+    try agents(FakeSecrets([try SecretName("db"): [0x61, 0x00]])).prepareSession(
+      instance, target: guest.target, repo: nil)
+  }
+  try GuestEnvState(entries: [
+    try EnvVarName("OPENAI_API_KEY"): .secret(try SecretName("db"))
+  ]).save(instance)
+  #expect(throws: HostError.self) {
+    try agents(FakeSecrets([try SecretName("db"): Array("x".utf8)])).prepareSession(
+      instance, target: guest.target, repo: nil)
+  }
 }
