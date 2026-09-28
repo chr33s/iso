@@ -28,7 +28,7 @@ signed ad hoc. This fork requires macOS 27+ on Apple Silicon and Xcode 27. The p
 underlying API/deployment floor remains macOS 26; that is not a supported-host
 claim for the complete fork.
 
-## CLI (protocol 2)
+## CLI (protocol 3)
 
 Every command except `version` takes `--root <absolute path>`, the state root.
 It is canonicalized with realpath(3), and every path the runtime reports lies
@@ -40,6 +40,7 @@ version                                   {name, version, protocol, containeriza
 init --kernel K                           pinned kernel (sha256 allowlist) + vminit 0.45.0 initfs
 image import --oci-tar T | image list | image delete REF
 create ID (--image REF | --from-disk NAME) --cpus N --memory-mib M --disk-gib G --owner O
+       [--network shared|host-only]      host-only: vmnet host mode, no route beyond the host
 start ID [--wait-seconds S]               launchd job; returns once the owner answers
 stop ID [--timeout-seconds S]             systemd halt (SIGRTMIN+3), then unload the job
 exec [-i] [--timeout S] ID -- ARGV        root, over vsock; exit code is passed through

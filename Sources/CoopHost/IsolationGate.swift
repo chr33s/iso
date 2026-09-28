@@ -1,3 +1,4 @@
+import CoopConfiguration
 import CoopCore
 import Foundation
 
@@ -20,12 +21,18 @@ public enum IsolationGate {
     public let owner: OwnerID
     public let runtimeRoot: String
     public let resources: Resources
+    /// The configured egress policy the sandbox must have been created with.
+    public let egress: EgressMode
 
-    public init(sandbox: MachineName, owner: OwnerID, runtimeRoot: String, resources: Resources) {
+    public init(
+      sandbox: MachineName, owner: OwnerID, runtimeRoot: String, resources: Resources,
+      egress: EgressMode
+    ) {
       self.sandbox = sandbox
       self.owner = owner
       self.runtimeRoot = runtimeRoot
       self.resources = resources
+      self.egress = egress
     }
   }
 
@@ -57,6 +64,20 @@ public enum IsolationGate {
     guard record.id == expected.sandbox.rawValue, record.owner == expected.owner.rawValue else {
       throw .identityConflict(
         "sandbox \(expected.sandbox) is recorded for owner \(debugQuoted(sanitizeForDisplay(record.owner))), not this installation"
+      )
+    }
+    let hostOnly: Bool
+    switch record.network {
+    case nil: hostOnly = false
+    case "host_only"?: hostOnly = true
+    case let other?:
+      throw .unqualified(
+        "sandbox \(expected.sandbox) records unknown network mode \(debugQuoted(sanitizeForDisplay(other)))"
+      )
+    }
+    guard hostOnly == (expected.egress == .none) else {
+      throw .networkIsolation(
+        "sandbox \(expected.sandbox) was created with egress \(hostOnly ? "none" : "open") but the configuration says \(expected.egress.rawValue); egress is fixed when an instance is created — recreate it (coop destroy, then coop up) or change `egress` back"
       )
     }
     let recorded = Resources(cpus: record.cpus, memoryBytes: record.memoryBytes)
@@ -91,7 +112,7 @@ public enum IsolationGate {
       )
     }
     try verifyHostExposure(name, effective, runtimeRoot: expected.runtimeRoot)
-    try verifyNetwork(name, effective, ip)
+    try verifyNetwork(name, effective, ip, egress: expected.egress)
     guard effective.initArgv == ["/sbin/init"], !effective.virtualization else {
       let argv = "[" + effective.initArgv.map(debugQuoted).joined(separator: ", ") + "]"
       throw .hostExposure(
@@ -126,9 +147,12 @@ public enum IsolationGate {
     }
   }
 
-  /// Exactly one interface, on a per-sandbox vmnet network
-  /// (`vmnet-shared:10.231.N.0/24`), carrying the address the owner reports.
-  static func verifyNetwork(_ name: MachineName, _ effective: Effective, _ ip: IPv4Address)
+  /// Exactly one interface, on a per-sandbox vmnet network of the expected
+  /// mode (`vmnet-shared:10.231.N.0/24`, or `vmnet-host:` for egress none),
+  /// carrying the address the owner reports.
+  static func verifyNetwork(
+    _ name: MachineName, _ effective: Effective, _ ip: IPv4Address, egress: EgressMode
+  )
     throws(RuntimeError)
   {
     guard effective.interfaces.count == 1, let interface = effective.interfaces.first else {
@@ -141,7 +165,7 @@ public enum IsolationGate {
     ).first
       .flatMap { try? IPv4Address(String($0)) }
     var subnetOK = false
-    let prefix = "vmnet-shared:10.231."
+    let prefix = egress == .none ? "vmnet-host:10.231." : "vmnet-shared:10.231."
     let suffix = ".0/24"
     if let address, interface.network.hasPrefix(prefix), interface.network.hasSuffix(suffix),
       interface.network.utf8.count > prefix.utf8.count + suffix.utf8.count

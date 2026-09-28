@@ -39,6 +39,7 @@ Comments are not carried over. Once `config.jsonc` exists, a remaining `config.t
 | `data_dir` | string (path) | `~/.coop` | Directory for VM artifacts: images, instances, keys. |
 | `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
+| `egress` | string | `"open"` | Guest network reach beyond the host: `"open"` (NAT to the host's uplinks) or `"none"`. See [egress](#egress). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `coop up --post-start <cmd>` or `coop start --post-start <cmd>`. |
 
 ## GitHub auth
@@ -540,6 +541,29 @@ See [Apple sandbox configuration](backends.md#configuration) for how each value 
 | `build_timeout_seconds` | integer | `3600` | Image build; `setup --builder-timeout` overrides. |
 
 Each timeout must be between 1 and 86400 seconds.
+
+## `egress`
+
+`"none"` creates each new instance's sandbox in vmnet host mode with NAT
+(IPv4 and IPv6), the vmnet DNS proxy, router advertisements and DHCP all
+disabled, so the guest has no route beyond the Mac and no resolver. Host→guest
+SSH still works, and so does everything coop tunnels over it: the credential
+proxy, local-model tunnels and `--forward-port`. It does **not** isolate the
+guest from services on the Mac itself: like `"open"`, a guest can connect to
+anything listening on the host's addresses (see the
+[trust model](trust-model.md#apple-sandbox-backend)).
+
+The mode is fixed when an instance is created; `up`/`start` of an instance
+created under the other mode is refused rather than silently widened or
+narrowed. Recreate the instance (`coop destroy`, then `coop up`) to change it.
+No raw provider credential enters a `"none"` guest, whatever `proxy.mode`
+says: provider variables are withheld (declaring one is an error) and the host
+`~/.codex/auth.json` is not staged; a remote-model VM therefore needs a
+provider proxy, or `up`/`start` fails. Package installs and other downloads
+inside a `"none"` guest fail; bake them
+into the image (`coop setup --profile …`) instead. Combine with
+`"proxy": {"mode": "required"}` for a guest whose only way out is the
+credential proxy.
 
 ## `workspace` section
 

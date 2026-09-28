@@ -1,7 +1,7 @@
 import CoopCore
 import Foundation
 
-/// Typed parsers for `coop-sandbox` JSON output (protocol 2). Runtime output
+/// Typed parsers for `coop-sandbox` JSON output (protocol 3). Runtime output
 /// is untrusted input: every record is decoded into a closed type, reported
 /// identifiers are checked against the one requested, and the effective VM
 /// configuration the isolation gate reads rejects unknown fields, so a
@@ -65,6 +65,8 @@ public struct SandboxRecord: Sendable, Equatable, Codable {
   public let diskGeneration: UInt64
   /// The last `set`, `grow`, or `restore` the runtime committed.
   public let lastOperation: OperationID?
+  /// `host_only`, or absent for a shared-mode (NAT) sandbox.
+  public let network: String?
 }
 
 public struct LiveState: Sendable, Equatable, Codable {
@@ -189,7 +191,7 @@ public struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 }
 
 public enum RuntimeProtocol {
-  public static let version: UInt32 = 2
+  public static let version: UInt32 = 3
 
   static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], _ what: String)
     throws(RuntimeError)

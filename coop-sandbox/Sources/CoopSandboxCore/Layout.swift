@@ -3,8 +3,8 @@ import Foundation
 
 /// Version of the JSON contract between coop and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
-public let protocolVersion = 2
-public let runtimeVersion = "0.2.0"
+public let protocolVersion = 3
+public let runtimeVersion = "0.3.0"
 public let containerizationVersion = "0.45.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns
@@ -252,6 +252,15 @@ public struct OperationID: RawRepresentable, Codable, Hashable, Sendable, Custom
 /// Durable description of a persistent sandbox. Deliberately has no field
 /// for host mounts, socket relays, published ports, or agent forwarding:
 /// those states are not expressible.
+/// How a sandbox's vmnet network reaches beyond the host. Fixed at create.
+public enum NetworkMode: String, Codable, Sendable {
+    /// NAT to the host's uplinks (vmnet shared mode).
+    case shared
+    /// No route beyond the host: vmnet host mode with NAT44, NAT66, the DNS
+    /// proxy, router advertisements and DHCP disabled.
+    case hostOnly = "host_only"
+}
+
 public struct SandboxRecord: Codable, Sendable {
     public var id: SandboxID
     /// Caller-chosen ownership tag; `delete` refuses a mismatch.
@@ -275,7 +284,11 @@ public struct SandboxRecord: Codable, Sendable {
     /// caller can tell whether its own operation applied and whether another
     /// has happened since. Absent until the first such operation.
     public var lastOperation: OperationID?
+    /// Absent (nil) for shared-mode sandboxes, so records stay readable by
+    /// callers that predate the field.
+    public var network: NetworkMode?
 
+    public var networkMode: NetworkMode { network ?? .shared }
     public var subnet: String { Self.subnet(subnetIndex) }
     public static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
 

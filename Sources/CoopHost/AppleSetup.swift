@@ -244,7 +244,9 @@ extension AppleBackend {
     diagnostics.log(.info, "Verifying image in disposable sandbox \(machine)")
     let expected = IsolationGate.Expected(
       sandbox: machine, owner: owner.id, runtimeRoot: runtime.root,
-      resources: Resources(cpus: 2, memoryBytes: 2048 << 20))
+      // Verification needs no instance policy: the sandbox is deleted after
+      // the image checks and never handed to a user or agent.
+      resources: Resources(cpus: 2, memoryBytes: 2048 << 20), egress: .open)
     let result = Result { () throws in
       try runtime.create(
         machine, source: .image(reference), cpus: 2, memoryMiB: 2048,

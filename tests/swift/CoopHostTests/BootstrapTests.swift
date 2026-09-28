@@ -370,11 +370,12 @@ private func prefs(_ json: String) throws -> ClaudeImport.Preferences {
 private func stageCodex(
   source: String? = nil, mcp: [String: TOMLValue] = [:], local: TOMLTable? = nil,
   managesLocal: Bool = false, preserved: TOMLTable? = nil, proxy: Bool = false,
-  proxyMode: ProxyMode = .auto, auth: CodexAuthMode = .apiKey, keyring: Bool = false
+  proxyMode: ProxyMode = .auto, egress: EgressMode = .open, auth: CodexAuthMode = .apiKey,
+  keyring: Bool = false
 ) throws -> StagingDirectory {
   try CodexConfigFiles.stage(
     source: source, mcpServers: mcp, local: local, managesLocal: managesLocal,
-    preserved: preserved, proxyActive: proxy, proxyMode: proxyMode, auth: auth,
+    preserved: preserved, proxyActive: proxy, proxyMode: proxyMode, egress: egress, auth: auth,
     keyringMaterialized: keyring,
     hasMCPServers: !mcp.isEmpty, diagnostics: LogSink().diagnostics)
 }
@@ -426,6 +427,11 @@ private func stageCodex(
   // proxy.mode = "required" withholds it even when OpenAI has no proxy:
   // `codex login --with-api-key` stores a raw key there.
   staged = try stageCodex(source: source, proxyMode: .required)
+  #expect(!FileManager.default.fileExists(atPath: staged.path + "/auth.json"))
+  #expect(FileManager.default.fileExists(atPath: staged.path + "/AGENTS.md"))
+  staged.remove()
+  // So does egress "none", whatever proxy.mode says (the offline preset).
+  staged = try stageCodex(source: source, proxyMode: .off, egress: .none)
   #expect(!FileManager.default.fileExists(atPath: staged.path + "/auth.json"))
   #expect(FileManager.default.fileExists(atPath: staged.path + "/AGENTS.md"))
   staged.remove()
@@ -785,6 +791,35 @@ private func stageCodex(
   #expect(error.message.contains("no provider proxy is configured"))
 }
 
+@Test func providerProxyRequirementCanBeCheckedBeforeAnyVmWork() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let required = guest.bootstrap(try testConfig(#""proxy": {"mode": "required"}"#))
+  let error = try #require(throws: HostError.self) {
+    try required.requireProviderProxy(instance, noAgents: false, guestEnvironment: [:])
+  }
+  #expect(error.message.contains("no provider proxy is configured"))
+  try required.requireProviderProxy(instance, noAgents: true, guestEnvironment: [:])
+
+  // A provider secret about to be persisted counts as a proxy.
+  let pending: [EnvVarName: EnvValue] = [
+    try EnvVarName("ANTHROPIC_API_KEY"): .secret(try SecretName("anthropic"))
+  ]
+  try required.requireProviderProxy(instance, noAgents: false, guestEnvironment: pending)
+
+  // The offline preset can never satisfy this with a remote model; the
+  // advice must not point at `coop proxy setup`.
+  let offline = guest.bootstrap(
+    try testConfig(#""proxy": {"mode": "off"}, "egress": "none""#))
+  let offlineError = try #require(throws: HostError.self) {
+    try offline.requireProviderProxy(instance, noAgents: false, guestEnvironment: [:])
+  }
+  #expect(offlineError.message.contains("--no-agents"))
+  #expect(!offlineError.message.contains("proxy setup"))
+  try offline.requireProviderProxy(instance, noAgents: true, guestEnvironment: [:])
+}
+
 // MARK: - Stored-secret references
 
 private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
@@ -982,4 +1017,37 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
     try resolver.resolveAllowingStored(Secret("vault:sk-ant-api03-xyz"))
   }
   #expect(!missing.message.contains("sk-ant"))
+}
+
+@Test func egressNoneNeverForwardsARawProviderKey() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let config = try testConfig(
+    #""egress": "none", "proxy": {"mode": "off"}, "guest_env": {"OK": "1"}"#)
+  let resolver = CredentialResolver(environment: guest.environment)
+  let agents = AgentBootstrap(
+    config: config, client: guest.client,
+    environment: ["ANTHROPIC_API_KEY": "sk-host", "OPENAI_API_KEY": "sk-host2"], home: nil,
+    resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
+    diagnostics: guest.sink.diagnostics)
+  let env = try agents.prepareEnvForwarding(
+    repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+  #expect(env.names == ["OK"])
+  let declared = try testConfig(
+    #""egress": "none", "proxy": {"mode": "off"}, "claude": {"env_forward": ["ANTHROPIC_API_KEY"]}"#
+  )
+  let error = try #require(throws: HostError.self) {
+    try guest.bootstrap(declared).prepareEnvForwarding(
+      repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+  }
+  #expect(error.message.contains("egress = \"none\""))
+
+  // A remote-model VM with no proxy cannot reach its provider: refused early.
+  let instance = try testInstance(guest.root + "/instance")
+  let startError = try #require(throws: HostError.self) {
+    try guest.bootstrap(config).bootstrapAndPostStart(
+      instance, target: guest.target, repo: nil, noAgents: false, postStartOverride: nil,
+      mode: .firstBoot)
+  }
+  #expect(startError.message.contains("leaves a remote model unreachable"))
 }

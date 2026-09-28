@@ -15,7 +15,7 @@ extension AppleBackend {
   func expected(_ sidecar: MachineSidecar, _ runtime: SandboxRuntime) -> IsolationGate.Expected {
     .init(
       sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-      resources: sidecar.resources)
+      resources: sidecar.resources, egress: config.egress)
   }
 
   // MARK: Boot
@@ -230,7 +230,8 @@ extension AppleBackend {
       manifest.disk.map { .disk($0.name) } ?? .image(manifest.imageRef)
     try journal.advance(instance, .create(stage: .creatingMachine))
     try runtime.create(
-      machine, source: source, cpus: cpus, memoryMiB: memoryMiB, diskGiB: diskGiB, owner: owner.id)
+      machine, source: source, cpus: cpus, memoryMiB: memoryMiB, diskGiB: diskGiB, owner: owner.id,
+      egress: config.egress)
     try journal.advance(instance, .create(stage: .machineCreated))
     var sidecar = MachineSidecar(
       schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: owner.id,

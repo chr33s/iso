@@ -1,3 +1,4 @@
+import CoopConfiguration
 import CoopCore
 import Foundation
 import Testing
@@ -14,7 +15,7 @@ private let gateRoot = "/Users/me/.coop/backends/apple-container-v1/runtime"
 private func expected() -> IsolationGate.Expected {
   .init(
     sandbox: gateSandbox, owner: gateOwner, runtimeRoot: gateRoot,
-    resources: Resources(cpus: 2, memoryBytes: 2048 * 1024 * 1024))
+    resources: Resources(cpus: 2, memoryBytes: 2048 * 1024 * 1024), egress: .open)
 }
 
 private func gate(_ bytes: [UInt8]) throws(RuntimeError) -> IsolationGate.Ready {
@@ -177,4 +178,65 @@ func gateRejectsEachExposureNetworkAndIdentityChange(_ label: String) throws {
     package.contains(
       "\"https://github.com/apple/containerization.git\", exact: \"\(SandboxRuntime.containerization)\")"
     ))
+}
+
+// MARK: - egress
+
+private func hostOnly(_ object: [String: Any]) -> [String: Any] {
+  var copy = object
+  setPath(&copy, ["record", "network"], "host_only")
+  setPath(&copy, ["effective", "interfaces", 0, "network"], "vmnet-host:10.231.2.0/24")
+  return copy
+}
+
+private func gate(_ bytes: [UInt8], egress: EgressMode) throws(RuntimeError) -> IsolationGate.Ready
+{
+  let base = expected()
+  return try IsolationGate.verifyEffective(
+    RuntimeProtocol.parseInspect(bytes, expected: gateSandbox),
+    .init(
+      sandbox: base.sandbox, owner: base.owner, runtimeRoot: base.runtimeRoot,
+      resources: base.resources, egress: egress))
+}
+
+private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -> ErrorClass? {
+  let data = try bytes(object)
+  do {
+    _ = try gate(data, egress: egress)
+    return nil
+  } catch {
+    return classify(error)
+  }
+}
+
+@Test func egressNoneRequiresAHostOnlySandbox() throws {
+  let shared = try running()
+  // A host-only record and interface pass only when egress is none.
+  #expect(try gate(try bytes(hostOnly(shared)), egress: .none).sandbox == gateSandbox)
+  #expect(try egressClass(hostOnly(shared), .open) == .network)
+  // A shared (NAT) sandbox never satisfies egress none.
+  #expect(try egressClass(shared, .none) == .network)
+  // A host-only record whose VM reports a shared interface is refused.
+  var mixed = hostOnly(shared)
+  setPath(&mixed, ["effective", "interfaces", 0, "network"], "vmnet-shared:10.231.2.0/24")
+  #expect(try egressClass(mixed, .none) == .network)
+  // An unknown record mode is not guessed at.
+  var unknown = shared
+  setPath(&unknown, ["record", "network"], "bridged")
+  #expect(try egressClass(unknown, .open) == .unqualified)
+}
+
+@Test func egressIsCheckedOnTheRecordBeforeBoot() throws {
+  let data = try Data(contentsOf: gateFixture.appending(path: "inspect-stopped.json"))
+  var stopped = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+  setPath(&stopped, ["record", "network"], "host_only")
+  let inspection = try RuntimeProtocol.parseInspect(try bytes(stopped), expected: gateSandbox)
+  let base = expected()
+  func expect(_ egress: EgressMode) -> IsolationGate.Expected {
+    .init(
+      sandbox: base.sandbox, owner: base.owner, runtimeRoot: base.runtimeRoot,
+      resources: base.resources, egress: egress)
+  }
+  try IsolationGate.verifyRecord(inspection, expect(.none))
+  #expect(throws: RuntimeError.self) { try IsolationGate.verifyRecord(inspection, expect(.open)) }
 }

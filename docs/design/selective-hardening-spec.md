@@ -582,6 +582,18 @@ Config naming: `network` is a retired Firecracker top-level key that
 `ConfigDecoder` rejects by name, so the setting is `egress: "open" | "none"`
 at top level rather than a `network` object.
 
+**As implemented (step 10):** runtime 0.3.0 / protocol 3 adds
+`SandboxRecord.network` (absent = shared, `host_only`) and `create --network
+host-only`; the owner builds host-only networks itself and gives the guest no
+resolver. The host passes it at create for `egress: "none"` and the isolation
+gate checks the record against `egress` (before boot) and the interface label
+against the record (after boot). Changing `egress` for an existing instance is
+refused until it is recreated. Under `egress: "none"` no raw provider
+credential enters the guest regardless of `proxy.mode` (variables withheld,
+explicit declarations refused, `~/.codex/auth.json` not staged), and a
+remote-model VM without a provider proxy fails at start; this is what makes
+the `offline` preset safe.
+
 ## 6.2 Config surface
 
 Initial config:

@@ -127,7 +127,7 @@ public final class AppleBackend: Sendable {
         inspection,
         .init(
           sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-          resources: sidecar.resources))
+          resources: sidecar.resources, egress: config.egress))
       let target = try SSHTarget.pinned(
         config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
         user: sidecar.guestUser)
@@ -151,7 +151,7 @@ public final class AppleBackend: Sendable {
       inspection,
       .init(
         sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-        resources: sidecar.resources))
+        resources: sidecar.resources, egress: config.egress))
     return try SSHTarget.pinned(
       config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
       user: sidecar.guestUser)

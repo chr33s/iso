@@ -266,12 +266,18 @@ exposure, and coop verifies the effective configuration anyway
 
 - **Runtime shape.** Each instance is its own VM on its own vmnet network
   (`10.231.N.0/24`). The runtime's `SandboxRecord` has no field for a host
-  mount, socket relay, published port, network choice, or agent forwarding, and
-  its VM configuration is built in one function (`Owner.machineConfiguration`)
-  with kernel pseudo-filesystems only. Adding any such field or `create` flag is
-  a finding.
+  mount, socket relay, published port, or agent forwarding, and its VM
+  configuration is built in one function (`Owner.machineConfiguration`) with
+  kernel pseudo-filesystems only. Its one network field, `network`, can only
+  narrow reach: absent means vmnet shared (NAT) mode, `host_only` (from
+  `egress: "none"`) means vmnet host mode with NAT44/NAT66, the DNS proxy,
+  router advertisements and DHCP disabled. The gate checks the record against
+  the configured `egress` and the interface label (`vmnet-shared:` /
+  `vmnet-host:`) against the record. Adding any other such field, a widening
+  network mode (bridged, shared-network, a published port), or a `create` flag
+  for one is a finding.
 - **Runtime qualification.** `SandboxRuntime` qualification accepts only `coop-sandbox`
-  with protocol 2 and `containerization` 0.45.0. The runtime itself accepts
+  with protocol 3 and `containerization` 0.45.0. The runtime itself accepts
   only a kernel whose sha256 is in `KernelPin.allowed`. On first `coop setup`,
   `coop-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
   (the runtime's only outbound fetch) and refuses it unless it resolves to the

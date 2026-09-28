@@ -17,7 +17,7 @@ extension CoopConfig {
       claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
-      workspacePull: workspacePull)
+      workspacePull: workspacePull, egress: egress)
   }
 
   /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
@@ -29,7 +29,7 @@ extension CoopConfig {
       setup: SetupConfig(promptForPAT: false), claude: claude, codex: codex, codexAuth: codexAuth,
       proxy: proxy, guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
-      workspacePull: workspacePull)
+      workspacePull: workspacePull, egress: egress)
   }
 }
 

@@ -37,7 +37,7 @@ extension SandboxRuntime {
 
   public func create(
     _ name: MachineName, source: Source, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
-    owner: OwnerID
+    owner: OwnerID, egress: EgressMode = .open
   ) throws(RuntimeError) {
     let from: [String] =
       switch source {
@@ -50,7 +50,8 @@ extension SandboxRuntime {
         "--cpus", String(cpus), "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
         "--owner",
         owner.rawValue,
-      ], deadline: createDeadline, limit: Self.jsonLimit, cancellable: true)
+      ] + (egress == .none ? ["--network", "host-only"] : []), deadline: createDeadline,
+      limit: Self.jsonLimit, cancellable: true)
   }
 
   public func start(_ name: MachineName) throws(RuntimeError) {

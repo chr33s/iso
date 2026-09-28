@@ -106,7 +106,8 @@ public enum Sandboxes {
     // MARK: create
 
     public static func create(
-        root: SandboxRoot, id: SandboxID, owner: String, source: SandboxSource, cpus: Int, memoryBytes: UInt64, diskBytes: UInt64
+        root: SandboxRoot, id: SandboxID, owner: String, source: SandboxSource, cpus: Int, memoryBytes: UInt64, diskBytes: UInt64,
+        network: NetworkMode = .shared
     ) async throws -> SandboxRecord {
         let operation = try OperationLock.shared(root)
         defer { withExtendedLifetime(operation) {} }
@@ -120,7 +121,8 @@ public enum Sandboxes {
             try FileManager.default.createDirectory(at: paths.dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             do {
                 return try await populate(
-                    root: root, paths: paths, id: id, owner: owner, source: source, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes)
+                    root: root, paths: paths, id: id, owner: owner, source: source, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes,
+                    network: network)
             } catch {
                 try? FileManager.default.removeItem(at: paths.dir)
                 throw error
@@ -130,7 +132,7 @@ public enum Sandboxes {
 
     static func populate(
         root: SandboxRoot, paths: SandboxPaths, id: SandboxID, owner: String, source: SandboxSource, cpus: Int, memoryBytes: UInt64,
-        diskBytes: UInt64
+        diskBytes: UInt64, network: NetworkMode
     ) async throws -> SandboxRecord {
 
         let imageReference: String
@@ -164,10 +166,11 @@ public enum Sandboxes {
 
         var record: SandboxRecord?
         try SubnetAllocator(root: root).allocate(for: id) { index in
-            let r = SandboxRecord(
+            var r = SandboxRecord(
                 id: id, owner: owner, imageReference: imageReference, imageDigest: imageDigest, baseDisk: baseDisk,
                 environment: environment, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes, subnetIndex: index,
                 createdAt: Date())
+            r.network = network == .shared ? nil : network
             // Writing the record commits the create.
             try paths.save(r)
             record = r

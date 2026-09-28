@@ -112,7 +112,7 @@ private struct FakeInstallation {
   let config: CoopConfig
   let backend: AppleBackend
 
-  init() throws {
+  init(extra: String = "") throws {
     root = BinaryResolver.canonicalPath(
       FileManager.default.temporaryDirectory.appending(path: "coop-e2e-\(UUID().uuidString)").path)
     let bin = root + "/bin"
@@ -127,7 +127,7 @@ private struct FakeInstallation {
     try Data("kernel".utf8).write(to: URL(fileURLWithPath: root + "/kernel"))
     config = try emptyConfig(
       #""data_dir": "\#(root)/data", "apple_container": {"binary": "\#(bin)/coop-sandbox", "builder": "\#(bin)/container", "kernel": "\#(root)/kernel", "boot_timeout_seconds": 5}"#
-    )
+        + extra)
     backend = AppleBackend(
       config: config,
       environment: [
@@ -306,4 +306,34 @@ private struct FakeInstallation {
   #expect(rustDuration(.milliseconds(119_558)) == "119.558s")
   #expect(rustDuration(.milliseconds(250)) == "250ms")
   #expect(rustDuration(.microseconds(1500)) == "1.5ms")
+}
+
+@Test func egressNoneCreatesAHostOnlySandboxAndPinsIt() throws {
+  let install = try FakeInstallation(extra: #", "egress": "none""#)
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  _ = install.calls()
+  let directory = install.config.instancesDirectory.appending("iso").path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let instance = Instance(
+    name: try InstanceName("iso"), index: InstanceIndex(0)!, directory: directory, image: .default)
+  try instance.save()
+  try backend.createAndStart(instance, diskGiB: nil)
+  let create = try #require(install.calls().first { $0.first == "create" })
+  #expect(create.suffix(2) == ["--network", "host-only"])
+  let running = try #require(try backend.asRunning(instance))
+  try backend.stop(running)
+
+  // The configuration flipping back to open is refused, not silently widened.
+  let open = try emptyConfig(
+    #""data_dir": "\#(install.root)/data", "apple_container": {"binary": "\#(install.root)/bin/coop-sandbox", "builder": "\#(install.root)/bin/container", "kernel": "\#(install.root)/kernel", "boot_timeout_seconds": 5}"#
+  )
+  let error = try #require(throws: RuntimeError.self) {
+    try backend.reconfigured(open).startExisting(instance)
+  }
+  #expect("\(error)".contains("APPLE_NETWORK_ISOLATION"))
+  try backend.destroyInstance(instance)
 }

@@ -2,6 +2,7 @@ import Containerization
 import ContainerizationExtras
 import ContainerizationOCI
 import Foundation
+import vmnet
 
 /// The process that owns one running sandbox VM. Virtualization.framework
 /// runs the VM in-process, so the owner's lifetime bounds the VM's.
@@ -131,11 +132,15 @@ public enum Owner {
     /// subnet and move on (the address changes; the identity does not).
     static let maxNetworkAttempts = 32
 
-    static func makeNetwork(root: SandboxRoot, paths: SandboxPaths, record: inout SandboxRecord) throws -> VmnetNetwork {
+    static func makeNetwork(root: SandboxRoot, paths: SandboxPaths, record: inout SandboxRecord) throws -> any Network {
         var attempts = 0
         while true {
             do {
-                return try VmnetNetwork(subnet: try CIDRv4(record.subnet))
+                let subnet = try CIDRv4(record.subnet)
+                switch record.networkMode {
+                case .shared: return try VmnetNetwork(subnet: subnet)
+                case .hostOnly: return try HostOnlyNetwork(subnet: subnet)
+                }
             } catch {
                 attempts += 1
                 guard attempts < maxNetworkAttempts else { throw error }
@@ -165,7 +170,8 @@ public enum Owner {
         config.memoryInBytes = record.memoryBytes
         config.hostname = record.id.rawValue
         config.interfaces = [interface]
-        if let gateway = interface.ipv4Gateway {
+        // Host-only sandboxes get no resolver: the vmnet DNS proxy is off.
+        if record.networkMode == .shared, let gateway = interface.ipv4Gateway {
             config.dns = DNS(nameservers: [gateway.description])
         }
         var hosts = Hosts.default
@@ -199,7 +205,7 @@ public enum Owner {
             interfaces: config.interfaces.map {
                 .init(
                     ipv4: $0.ipv4Address.description, ipv4Gateway: $0.ipv4Gateway?.description,
-                    ipv6: $0.ipv6Address?.description, network: "vmnet-shared:\(record.subnet)")
+                    ipv6: $0.ipv6Address?.description, network: "\(record.networkMode == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet)")
             },
             socketRelays: config.sockets.count,
             publishedPorts: 0,
@@ -360,4 +366,44 @@ final class ConsoleLog: Sendable {
             }
         }
     }
+}
+
+/// vmnet host mode with no route beyond the host: NAT44, NAT66, the DNS
+/// proxy, router advertisements and DHCP are all disabled on the
+/// configuration the network is created from. The host is the `.1` peer, so
+/// host-initiated SSH (and its tunnels) still reach the guest.
+struct HostOnlyNetwork: Network {
+    nonisolated(unsafe) let reference: vmnet_network_ref
+    let subnet: CIDRv4
+
+    init(subnet: CIDRv4) throws {
+        var status: vmnet_return_t = .VMNET_FAILURE
+        guard let config = vmnet_network_configuration_create(.VMNET_HOST_MODE, &status) else {
+            throw SandboxError("vmnet host-mode configuration failed: \(status)")
+        }
+        vmnet_network_configuration_disable_dhcp(config)
+        vmnet_network_configuration_disable_nat44(config)
+        vmnet_network_configuration_disable_nat66(config)
+        vmnet_network_configuration_disable_dns_proxy(config)
+        vmnet_network_configuration_disable_router_advertisement(config)
+        var gateway = in_addr()
+        var mask = in_addr()
+        guard inet_pton(AF_INET, subnet.gateway.description, &gateway) == 1,
+            inet_pton(AF_INET, IPv4Address(subnet.prefix.prefixMask32).description, &mask) == 1,
+            vmnet_network_configuration_set_ipv4_subnet(config, &gateway, &mask) == .VMNET_SUCCESS
+        else { throw SandboxError("vmnet host-mode subnet \(subnet) rejected") }
+        guard let network = vmnet_network_create(config, &status), status == .VMNET_SUCCESS else {
+            throw SandboxError("vmnet host-mode network creation failed: \(status)")
+        }
+        reference = network
+        self.subnet = subnet
+    }
+
+    mutating func createInterface(_ id: String) throws -> (any Interface)? {
+        VmnetNetwork.Interface(
+            reference: reference, ipv4Address: try CIDRv4(IPv4Address(subnet.lower.value + 2), prefix: subnet.prefix),
+            ipv4Gateway: subnet.gateway)
+    }
+
+    mutating func releaseInterface(_ id: String) throws {}
 }

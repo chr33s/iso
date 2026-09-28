@@ -71,13 +71,13 @@ enum CodexConfigFiles {
   static let preservedGuestTables = ["marketplaces", "plugins", "projects"]
 
   /// `auth.json` is dropped in proxy mode (the capability token replaces
-  /// it), under `proxy.mode = "required"` (it can hold a raw OpenAI key even
-  /// when OpenAI has no proxy), and in ChatGPT account mode (the guest keyring
-  /// holds credentials).
-  static func allowedFiles(proxyActive: Bool, proxyMode: ProxyMode, auth: CodexAuthMode)
-    -> [String]
-  {
-    proxyActive || proxyMode == .required || auth == .chatgpt
+  /// it), under `proxy.mode = "required"` or `egress = "none"` (it can hold a
+  /// raw OpenAI key even when OpenAI has no proxy), and in ChatGPT account
+  /// mode (the guest keyring holds credentials).
+  static func allowedFiles(
+    proxyActive: Bool, proxyMode: ProxyMode, egress: EgressMode, auth: CodexAuthMode
+  ) -> [String] {
+    proxyActive || proxyMode == .required || egress == .none || auth == .chatgpt
       ? allowedFiles.filter { $0 != "auth.json" } : allowedFiles
   }
 
@@ -124,7 +124,8 @@ enum CodexConfigFiles {
   /// plugin tables (host copies of those are dropped).
   static func stage(
     source: String?, mcpServers: [String: TOMLValue], local: TOMLTable?, managesLocal: Bool,
-    preserved: TOMLTable?, proxyActive: Bool, proxyMode: ProxyMode, auth: CodexAuthMode,
+    preserved: TOMLTable?, proxyActive: Bool, proxyMode: ProxyMode, egress: EgressMode,
+    auth: CodexAuthMode,
     keyringMaterialized: Bool,
     hasMCPServers: Bool, diagnostics: Diagnostics
   ) throws -> StagingDirectory {
@@ -135,7 +136,8 @@ enum CodexConfigFiles {
         do {
           try staging.stage(
             from: source,
-            files: allowedFiles(proxyActive: proxyActive, proxyMode: proxyMode, auth: auth),
+            files: allowedFiles(
+              proxyActive: proxyActive, proxyMode: proxyMode, egress: egress, auth: auth),
             directories: allowedDirectories)
         } catch {
           throw ContextError("Failed to stage Codex allowlisted files", cause: error)
@@ -323,6 +325,7 @@ extension AgentBootstrap {
       staging = try CodexConfigFiles.stage(
         source: source, mcpServers: try codexMCPTables(), local: local, managesLocal: managesLocal,
         preserved: preserved, proxyActive: proxyActive, proxyMode: config.proxy.mode,
+        egress: config.egress,
         auth: config.codexAuth,
         keyringMaterialized: keyringMaterialized, hasMCPServers: !codex.mcpServers.isEmpty,
         diagnostics: diagnostics)

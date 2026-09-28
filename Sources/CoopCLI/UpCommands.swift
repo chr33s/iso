@@ -205,6 +205,8 @@ final class ProjectLifecycle {
     // Busy host ports fail before any VM cost.
     let forwardSet = PortForward.merge(config: config.forwardPorts, cli: options.forwardPorts)
     try PortForwards.checkCollisions(forwardSet)
+    try agents.requireProviderProxy(
+      instance, noAgents: options.noAgents, guestEnvironment: options.persistedGuestEnvironment)
     try backend.createAndStart(instance, diskGiB: options.disk.map { UInt64($0.value) })
     try provisionFirstBoot(instance, options, repo: repo, forwardSet: forwardSet)
   }
@@ -305,6 +307,8 @@ final class ProjectLifecycle {
     try preflightReferences(guestEnvironment, instance: instance, repo: repo)
     foldGuestEnvironment(guestEnvironment)
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
+    try agents.requireProviderProxy(
+      instance, noAgents: options.noAgents, guestEnvironment: guestEnvironment)
     try backend.startExisting(instance)
     try Shutdown.check()
     let target = try readyTarget(instance)
