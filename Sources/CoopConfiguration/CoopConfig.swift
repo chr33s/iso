@@ -188,6 +188,35 @@ public enum ProxyAuthScheme: String, Sendable, Equatable {
 public enum ProxyProvider: String, Sendable, CaseIterable {
   case anthropic
   case openai
+
+  /// Guest variables that carry this provider's credential, with the
+  /// injection scheme each one's value uses. The one table for both
+  /// withholding (none reaches the guest raw with a proxy or under
+  /// `proxy.mode = "required"`) and routing stored secrets to the proxy.
+  public var credentialVariables: [(name: String, auth: ProxyAuthScheme)] {
+    switch self {
+    case .anthropic:
+      [
+        ("ANTHROPIC_API_KEY", .apiKey), ("ANTHROPIC_AUTH_TOKEN", .bearer),
+        ("CLAUDE_CODE_OAUTH_TOKEN", .bearer),
+      ]
+    case .openai: [("OPENAI_API_KEY", .bearer)]
+    }
+  }
+
+  public var recognizedVariables: [String] { credentialVariables.map(\.name) }
+}
+
+/// `proxy.mode` (selective-hardening spec §7.5).
+public enum ProxyMode: String, Sendable, Equatable {
+  /// A configured provider runs through its proxy; others keep the legacy
+  /// raw forwarding.
+  case auto
+  /// No recognized provider variable reaches the guest by any path, and a
+  /// remote-model VM must have at least one provider proxy.
+  case required
+  /// No proxy starts; configured upstreams are ignored.
+  case off
 }
 
 /// A provider credential reference. Literal credentials are not
@@ -211,6 +240,13 @@ public struct ProxyUpstream: Sendable, Equatable {
 public struct ProxyConfig: Sendable, Equatable {
   public let anthropic: ProxyUpstream?
   public let openai: ProxyUpstream?
+  public let mode: ProxyMode
+
+  public init(anthropic: ProxyUpstream?, openai: ProxyUpstream?, mode: ProxyMode = .auto) {
+    self.anthropic = anthropic
+    self.openai = openai
+    self.mode = mode
+  }
 
   public func upstream(for provider: ProxyProvider) -> ProxyUpstream? {
     switch provider {

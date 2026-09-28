@@ -89,6 +89,8 @@ public enum ConfigTemplate {
       // reference here. Credentials must be `cmd:` references; literal values are
       // rejected. Cannot be combined with codex auth "chatgpt".
       // "proxy": {
+      //   "mode": "auto",             // "required": never forward a raw provider key;
+      //                               // "off": start no proxy
       //   "anthropic": {
       //     "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
       //     "auth": "api_key"         // "api_key" (x-api-key) or "bearer" (setup-token)

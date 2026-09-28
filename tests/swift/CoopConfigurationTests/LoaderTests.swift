@@ -413,3 +413,10 @@ struct FakeFileSystem: ConfigFileSystem {
       == "workspace.pull.max_bytes")
   #expect(fieldError(#"{"workspace": {"pull": {"max_bytes": 0}}}"#) != nil)
 }
+
+@Test func proxyModeDefaultsToAutoAndRejectsUnknownModes() throws {
+  #expect(try load("{}").proxy.mode == .auto)
+  #expect(try load(#"{"proxy": {"mode": "required"}}"#).proxy.mode == .required)
+  #expect(try load(#"{"proxy": {"mode": "off"}}"#).proxy.mode == .off)
+  #expect(fieldError(#"{"proxy": {"mode": "strict"}}"#)?.field == "proxy.mode")
+}

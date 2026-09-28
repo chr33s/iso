@@ -21,6 +21,11 @@ SPDX-License-Identifier: Apache-2.0
   secrets under `<data_dir>/secrets/`, encrypted with a key that needs both a
   passphrase (scrypt) and this Mac's Secure Enclave (Touch ID). There is no
   recovery path. Adds the swift-crypto 5.0.0 dependency (scrypt).
+- **`proxy.mode`** (`auto`, `required`, `off`). Under `auto` a proxied
+  provider now withholds all of its credential variables
+  (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `OPENAI_API_KEY`); `required` never forwards any of them and fails
+  `up`/`start` without a provider proxy.
 
 ### Swift host
 

@@ -837,6 +837,15 @@ Normative semantics (terms from §2.2):
 - If the proxy cannot be initialized, confined, or connected safely, startup
   fails closed.
 
+**As implemented (step 7):** an explicit declaration (`env_forward`,
+`guest_env`, runtime `--env`) of a recognized variable is an error under
+`required`; values coop forwards automatically (the host environment, an
+agent's `api_key`, which defaults from the host environment) are withheld
+with a debug note instead, since the user did not ask for them. The startup
+check requires at least one provider proxy for a remote-mode VM with agents.
+Under `auto`, a proxied provider now withholds all of its recognized
+variables, not only `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
+
 ### `off`
 
 - No provider proxy is started.

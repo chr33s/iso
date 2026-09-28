@@ -134,6 +134,17 @@ a hand-written reference points at. For Claude subscription billing without
 exposure, run `claude setup-token` on the host, stash the printed one-year
 token, reference it via `cmd:`, and set `"auth": "bearer"`.
 
+## `proxy.mode`
+
+`"auto"` (the default) keeps the behavior above: a provider with an upstream
+is proxied and none of its credential variables (`ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, or `OPENAI_API_KEY`) is
+forwarded; a provider without one is forwarded raw, with a warning.
+`"required"` withholds every provider's variables, refuses explicit
+`env_forward`/`guest_env`/`--env` declarations of them, and fails `up`/`start`
+for a remote-mode VM without any provider proxy. `"off"` starts no proxy. See
+[configuration](configuration.md#proxymode).
+
 ## Per-VM credential overrides
 
 The `proxy.<provider>` objects are the **defaults** for every VM. A single VM

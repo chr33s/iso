@@ -53,11 +53,13 @@ public struct EffectiveUpstream: Sendable, Equatable {
 }
 
 extension ProxyState {
-  /// Override → configuration default → off. A stored literal override is
+  /// `proxy.mode = "off"` → none; otherwise override → configuration
+  /// default → off. A stored literal override is
   /// never used (C-04): it fails closed until replaced.
   public func effective(_ provider: ProxyProvider, config: ProxyConfig, instance: InstanceName)
     throws -> EffectiveUpstream?
   {
+    guard config.mode != .off else { return nil }
     if let stored = override(for: provider) {
       switch stored.credential {
       case .reference(let reference):
