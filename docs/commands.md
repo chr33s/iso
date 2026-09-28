@@ -75,7 +75,8 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable) |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot |
-| `--env KEY=VALUE` | Literal env var to set in the guest (repeatable) |
+| `--env KEY=VALUE` | Env var to set in the guest (repeatable). A whole value `{vault:NAME}` is resolved from [`coop secrets`](#secrets) for each session |
+| `--env-file <path>` | A `.env` file of guest env vars (`KEY=value`, quoted values, `export`, comments; `{vault:NAME}` references). Parsed strictly, never by a shell. `--env` wins over it |
 | `--devcontainer <path>` | Explicit path to a `devcontainer.json` to use (skips discovery and prompt) |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any VM work |
@@ -235,7 +236,8 @@ instances, pass the instance name.
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable). Lives for the lifetime of the VM; torn down on `coop stop`. |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo (see [`coop github setup-pat`](#github)). |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot. Overrides the `post_start` configuration field. Failure is logged but does not fail the start. |
-| `--env KEY=VALUE` | Literal env var to set in the guest (repeatable). Overrides `guest_env` config entries and any forwarded values with the same name. |
+| `--env KEY=VALUE` | Env var to set in the guest (repeatable); a whole value `{vault:NAME}` is resolved from [`coop secrets`](#secrets). Overrides `--env-file`, `guest_env` config entries and any forwarded values with the same name. |
+| `--env-file <path>` | A `.env` file of guest env vars, as for `up`. |
 | `--devcontainer <path>` | Dry-run translation aid; normal restarts reject devcontainer creation options. |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation (escape hatch for CI). |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any VM work. |
@@ -1070,6 +1072,26 @@ Names match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. The passphrase is read from the
 terminal (`/dev/tty`) with echo off; for automation, pass it on an inherited
 descriptor named by `COOP_SECRETS_PASSPHRASE_FD` (a regular file must not be
 group- or world-readable). There is no passphrase flag or plaintext variable.
+
+#### Secrets in the guest environment
+
+`--env NAME={vault:secret}` or a `NAME={vault:secret}` line in an `--env-file`
+puts a stored secret into the guest environment. Only the reference is saved
+with the instance; the value is resolved each time coop opens a session, so
+every `coop shell`, `exec` and agent launch of that instance asks for the
+passphrase and Touch ID once. **The value is visible to everything in the
+guest** — the Secure Enclave protects it at rest on the host only. The
+reference must be the whole value (`URL=postgres://u:{vault:pw}@h` is
+rejected). Provider credentials (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) cannot be referenced this way;
+they belong to [the credential proxy](credential-proxy.md). `up`, `start` and
+`restore --reprovision` resolve every reference before doing VM work, so a
+wrong passphrase or a missing secret stops them early. References work only
+in `--env` and `--env-file`; a `{vault:` in devcontainer `containerEnv` or
+config `guest_env` is passed as literal text (with a warning for
+`containerEnv`). Once an instance stores a reference, its `guest_env.json`
+uses a newer format that older coop releases refuse to read; downgrading such
+an instance is unsupported.
 
 ### `validate`
 

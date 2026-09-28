@@ -27,6 +27,8 @@ ALLOWED_EXTRA = {
     ("*", "--config"): "global option accepted after the subcommand (baseline: global=true)",
     ("*", "-v --verbose"): "global option accepted after the subcommand (baseline: global=true)",
     ("setup", "--config-only"): "C-03: config creation moved from `init` into setup",
+    ("up", "--env-file"): "embedded-secrets spec §25: --env-file",
+    ("start", "--env-file"): "embedded-secrets spec §25: --env-file",
     ("pull", "--review"): "selective-hardening spec §5: staged workspace return",
     ("pull", "--apply"): "selective-hardening spec §5: staged workspace return",
     ("pull", "--discard"): "selective-hardening spec §5: staged workspace return",

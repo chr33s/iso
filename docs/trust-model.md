@@ -99,7 +99,10 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   `ps`/`/proc`. The secret-store passphrase is read from `/dev/tty` or from
   the descriptor named by `COOP_SECRETS_PASSPHRASE_FD`, never argv or a
   plaintext variable, and `coop secrets set` takes values from a prompt or
-  stdin. The one known exception is the macOS Keychain store step
+  stdin. A `{vault:}` guest-environment reference is persisted in
+  `guest_env.json` as a reference only; its value is resolved per session
+  and is guest-visible by design, like any `--env` value. A reference on a
+  provider credential variable is refused. The one known exception is the macOS Keychain store step
   (`security add-generic-password -w`, `SecretStore.swift`), whose CLI offers
   no stdin path; it is documented at the call site and never appears in coop's
   messages. MCP server definitions (with resolved header secrets) reach

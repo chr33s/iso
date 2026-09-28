@@ -6,6 +6,7 @@ import ArgumentParser
 import CoopConfiguration
 import CoopCore
 import CoopHost
+import CoopSecrets
 import Foundation
 
 // MARK: - Shared start/restart machinery
@@ -25,7 +26,7 @@ struct StartOptions {
   var forwardPorts: [PortForward] = []
   var configTarget: ConfigTarget
   var postStartOverride: String?
-  var persistedGuestEnvironment: [EnvVarName: String] = [:]
+  var persistedGuestEnvironment: [EnvVarName: EnvValue] = [:]
   var devcontainerPath: String?
   var appliedDevcontainer: AppliedDevcontainer?
 }
@@ -63,7 +64,7 @@ final class ProjectLifecycle {
       proxies: ProxyLauncher(
         environment: context.environment.variables, resolver: resolver, diagnostics: diagnostics,
         coopExecutable: CommandLine.executablePath),
-      github: tokens, diagnostics: diagnostics)
+      github: tokens, diagnostics: diagnostics, secrets: context.secretResolver)
   }
 
   func listInstances() throws -> [Instance] { try context.listInstances() }
@@ -77,23 +78,51 @@ final class ProjectLifecycle {
     config = try Devcontainer.applyToConfig(config, translation)
   }
 
-  /// CLI `--env` over devcontainer `containerEnv`, folded into the guest
-  /// variables of this command; the merged set is what gets persisted.
+  /// CLI `--env` over `--env-file` over devcontainer `containerEnv`, folded
+  /// into the guest variables of this command; the merged set is what gets
+  /// persisted. `{vault:}` references are persisted as references and
+  /// resolved per session, never folded in as values.
   func mergeRuntimeGuestEnvironment(
-    cli: [(EnvVarName, String)], devcontainer: [(name: EnvVarName, value: String)]?
-  ) -> [EnvVarName: String] {
+    cli: [(EnvVarName, EnvValue)], envFile: String?,
+    devcontainer: [(name: EnvVarName, value: String)]?
+  ) throws -> [EnvVarName: EnvValue] {
     let merged = GuestEnvState.merge(
       devcontainer: Dictionary(
-        (devcontainer ?? []).map { ($0.name, $0.value) }, uniquingKeysWith: { $1 }),
+        (devcontainer ?? []).map { ($0.name, EnvValue.literal($0.value)) },
+        uniquingKeysWith: { $1 }),
+      envFile: try envFile.map(GuestEnvState.readEnvFile) ?? [:],
       cli: Dictionary(cli, uniquingKeysWith: { $1 }))
+    try GuestEnvState.rejectProviderReferences(merged)
+    for (name, value) in devcontainer ?? [] where value.contains("{vault:") {
+      diagnostics.warn(
+        "devcontainer containerEnv '\(name)' contains `{vault:`; it is passed to the guest as literal text. Stored-secret references work only in --env and --env-file."
+      )
+    }
+    try preflightReferences(merged)
     foldGuestEnvironment(merged)
     return merged
   }
 
-  func foldGuestEnvironment(_ entries: [EnvVarName: String]) {
+  /// Resolves every `{vault:}` reference before any VM work, so a wrong
+  /// passphrase or a missing secret fails the command up front. The values
+  /// stay in the process's resolver cache for this command's sessions.
+  func preflightReferences(_ entries: [EnvVarName: EnvValue]) throws {
+    let names = Set(entries.values.compactMap(\.reference))
+    guard !names.isEmpty else { return }
+    let resolved = try context.secretResolver.resolve(names)
+    if let missing = names.subtracting(resolved.keys).sorted().first {
+      throw HostError("unable to resolve required secret '\(missing)'")
+    }
+  }
+
+  /// Literal entries become this command's guest variables; references are
+  /// left to the session overlay.
+  func foldGuestEnvironment(_ entries: [EnvVarName: EnvValue]) {
     config = config.applyingDevcontainer(
       vcpus: nil, memory: nil, postStart: nil,
-      guestEnvironment: entries.map { (name: $0.key, value: $0.value) })
+      guestEnvironment: entries.compactMap { name, value in
+        if case .literal(let text) = value { (name: name, value: text) } else { nil }
+      })
   }
 
   /// The PAT wizard runs before any VM cost, and only without an assignment.
@@ -253,6 +282,8 @@ final class ProjectLifecycle {
     try PortForwards.checkCollisions(forwardSet)
     var guestEnvironment = try GuestEnvState.tryLoad(instance)?.entries ?? [:]
     for (key, value) in options.persistedGuestEnvironment { guestEnvironment[key] = value }
+    try GuestEnvState.rejectProviderReferences(guestEnvironment)
+    try preflightReferences(guestEnvironment)
     foldGuestEnvironment(guestEnvironment)
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
     try backend.startExisting(instance)
@@ -326,7 +357,7 @@ func parsePortForward(_ text: String) throws -> PortForward {
   do { return try PortForward.parse(text) } catch { throw UsageError(oneLine(error)) }
 }
 
-func parseGuestEnvironment(_ text: String) throws -> (EnvVarName, String) {
+func parseGuestEnvironment(_ text: String) throws -> (EnvVarName, EnvValue) {
   do { return try GuestEnvState.parseCLIArgument(text) } catch { throw UsageError(oneLine(error)) }
 }
 
@@ -399,10 +430,15 @@ struct Up: ParsableCommand {
   @Option(
     name: .customLong("env"),
     help: ArgumentHelp(
-      "Literal env var to set in the guest (`KEY=VALUE`, repeatable). Overrides `guest_env` entries from config and any forwarded values with the same name",
+      "Env var to set in the guest (`KEY=VALUE`, repeatable). A whole value `{vault:NAME}` is resolved from `coop secrets` for each session. Overrides `--env-file`, `guest_env` entries from config and any forwarded values with the same name",
       valueName: "KEY=VALUE"),
     transform: parseGuestEnvironment)
-  var guestEnvironment: [(EnvVarName, String)] = []
+  var guestEnvironment: [(EnvVarName, EnvValue)] = []
+  @Option(
+    help: ArgumentHelp(
+      "A `.env` file of guest env vars (`KEY=value`, `{vault:NAME}` references). Parsed strictly; never run by a shell",
+      valueName: "PATH"))
+  var envFile: String?
   @Option(
     help: ArgumentHelp(
       "Explicit path to a `devcontainer.json` to use (skips discovery)", valueName: "PATH"))
@@ -636,10 +672,10 @@ struct UpFlow {
 
   func rejectRestartOnlyInputs(_ instance: Instance) throws {
     if command.noAgents || command.noGithub || !command.forwardPort.isEmpty
-      || command.postStart != nil || !command.guestEnvironment.isEmpty
+      || command.postStart != nil || !command.guestEnvironment.isEmpty || command.envFile != nil
     {
       throw HostError(
-        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, and --env only take effect during start or restart.\nRun `coop stop \(instance.name)` first, then repeat `coop up` with those options."
+        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, and --env-file only take effect during start or restart.\nRun `coop stop \(instance.name)` first, then repeat `coop up` with those options."
       )
     }
   }
@@ -653,8 +689,8 @@ struct UpFlow {
 
   func restart(_ instance: Instance) throws {
     var options = try baseStartOptions()
-    options.persistedGuestEnvironment = lifecycle.mergeRuntimeGuestEnvironment(
-      cli: command.guestEnvironment, devcontainer: nil)
+    options.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
+      cli: command.guestEnvironment, envFile: command.envFile, devcontainer: nil)
     try lifecycle.restart(instance, options)
   }
 
@@ -682,8 +718,9 @@ struct UpFlow {
       options.forwardPorts = Devcontainer.mergeIntoForwardPorts(
         config: translation.forwardPorts, translation: command.forwardPort)
     }
-    options.persistedGuestEnvironment = lifecycle.mergeRuntimeGuestEnvironment(
-      cli: command.guestEnvironment, devcontainer: translation?.guestEnvironment)
+    options.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
+      cli: command.guestEnvironment, envFile: command.envFile,
+      devcontainer: translation?.guestEnvironment)
     options.disk = Devcontainer.effectiveDisk(
       cli: command.disk, translation ?? DevcontainerTranslation())
     options.postStartOverride = command.postStart ?? translation?.postStart
@@ -759,10 +796,15 @@ struct Start: ParsableCommand {
   @Option(
     name: .customLong("env"),
     help: ArgumentHelp(
-      "Literal env var to set in the guest (`KEY=VALUE`, repeatable). Overrides `guest_env` entries from config and any forwarded values with the same name",
+      "Env var to set in the guest (`KEY=VALUE`, repeatable). A whole value `{vault:NAME}` is resolved from `coop secrets` for each session. Overrides `--env-file`, `guest_env` entries from config and any forwarded values with the same name",
       valueName: "KEY=VALUE"),
     transform: parseGuestEnvironment)
-  var guestEnvironment: [(EnvVarName, String)] = []
+  var guestEnvironment: [(EnvVarName, EnvValue)] = []
+  @Option(
+    help: ArgumentHelp(
+      "A `.env` file of guest env vars (`KEY=value`, `{vault:NAME}` references). Parsed strictly; never run by a shell",
+      valueName: "PATH"))
+  var envFile: String?
   @Option(
     help: ArgumentHelp(
       "Explicit path to a `devcontainer.json` to use (skips discovery)", valueName: "PATH"))
@@ -799,8 +841,8 @@ struct Start: ParsableCommand {
         forwardPorts: forwardPort, configTarget: try global.configTarget(context.environment),
         postStartOverride: postStart, devcontainerPath: devcontainer)
       let instance = try Self.stoppedTarget(lifecycle, options)
-      options.persistedGuestEnvironment = lifecycle.mergeRuntimeGuestEnvironment(
-        cli: guestEnvironment, devcontainer: nil)
+      options.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
+        cli: guestEnvironment, envFile: envFile, devcontainer: nil)
       try lifecycle.restart(instance, options)
     }
   }
@@ -1012,6 +1054,9 @@ struct Reprovision {
         "Aborted — instance '\(instance.name)' left untouched.\nPass -y to reprovision without the prompt (required when stdin is not a TTY)."
       )
     }
+    // Saved references must resolve before the disk is replaced.
+    try GuestEnvState.rejectProviderReferences(savedEnvironment)
+    try lifecycle.preflightReferences(savedEnvironment)
     let repo = lifecycle.tokens.instanceRepo(instance)
     try lifecycle.maybePromptForPAT(instance, repo: repo, options)
     let shutdown = Shutdown.install()

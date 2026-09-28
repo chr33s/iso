@@ -4,6 +4,7 @@
 
 import CoopConfiguration
 import CoopCore
+import CoopSecrets
 import Foundation
 
 /// GitHub token handling, ported separately. Bootstrap consults it for the
@@ -42,6 +43,12 @@ extension GuestUser {
   public var claudeBinary: GuestPath { GuestPath("/home/\(rawValue)/.local/bin/claude") }
 }
 
+/// Resolves `{vault:}` references for a session. The CLI's implementation
+/// unlocks the secret store at most once per command.
+public protocol GuestSecretResolver: Sendable {
+  func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>]
+}
+
 /// Agent bootstrap, guest sessions and post-start hooks for one command.
 public struct AgentBootstrap: Sendable {
   public let config: CoopConfig
@@ -54,12 +61,15 @@ public struct AgentBootstrap: Sendable {
   public let proxies: ProxyLauncher
   let github: any GitHubTokenSource
   let diagnostics: Diagnostics
+  /// For `{vault:}` entries in `guest_env.json`; nil refuses them.
+  let secrets: (any GuestSecretResolver)?
 
   public init(
     config: CoopConfig, client: SSHClient, environment: [String: String], home: String?,
     resolver: CredentialResolver, proxies: ProxyLauncher, github: any GitHubTokenSource,
-    diagnostics: Diagnostics
+    diagnostics: Diagnostics, secrets: (any GuestSecretResolver)? = nil
   ) {
+    self.secrets = secrets
     self.config = config
     self.client = client
     self.environment = environment
@@ -211,13 +221,18 @@ public struct AgentBootstrap: Sendable {
       suppressOpenAIKey: proxyOpenAI)
     if let instance {
       if let state = try GuestEnvState.tryLoad(instance) {
+        try GuestEnvState.rejectProviderReferences(state.entries)
         let withheld = withheldVariables(proxyAnthropic: proxyAnthropic, proxyOpenAI: proxyOpenAI)
+        let resolved = try resolveReferences(state)
         for (name, value) in state.sortedEntries {
           if let reason = withheld[name.rawValue] {
             try refuse(name.rawValue, from: "runtime --env", reason: reason)
             continue
           }
-          env.set(name.rawValue, Secret(value))
+          switch value {
+          case .literal(let text): env.set(name.rawValue, Secret(text))
+          case .secret(let secret): env.set(name.rawValue, resolved[secret]!)
+          }
         }
       }
       if let model {
@@ -231,6 +246,31 @@ public struct AgentBootstrap: Sendable {
       }
     }
     return SSHSession(target: target, env: env)
+  }
+
+  /// One batch resolution for every reference in `state`, each checked to
+  /// be a usable environment value (UTF-8, no NUL). Values are guest-visible
+  /// by design; they are never persisted or logged on the host.
+  func resolveReferences(_ state: GuestEnvState) throws -> [SecretName: Secret<String>] {
+    let names = Set(state.entries.values.compactMap(\.reference))
+    guard !names.isEmpty else { return [:] }
+    guard let secrets else {
+      throw HostError(
+        "guest_env.json references stored secrets, but this command cannot unlock the secret store")
+    }
+    let values = try secrets.resolve(names)
+    var out: [SecretName: Secret<String>] = [:]
+    for name in names {
+      guard let bytes = values[name]?.expose() else {
+        throw HostError("unable to resolve required secret '\(name)'")
+      }
+      guard !bytes.contains(0), let text = String(validating: bytes, as: UTF8.self) else {
+        throw HostError("secret '\(name)' is not a valid environment value (UTF-8 without NUL)")
+      }
+      diagnostics.debug("resolved secret reference '\(name)' for the guest environment")
+      out[name] = Secret(text)
+    }
+    return out
   }
 
   /// `open_ssh_session`: the running instance (named, or the only one

@@ -18,6 +18,45 @@ extension CommandContext {
   var secretStore: EnclaveStore {
     EnclaveStore(directory: config.dataDirectory.appending("secrets").path)
   }
+
+  /// Shared by every session this command opens, so the store is unlocked
+  /// at most once per command for a given set of names.
+  var secretResolver: StoreSecretResolver { StoreSecretResolver.shared(secretStore) }
+}
+
+/// Resolves `{vault:}` references through the secret store: one passphrase
+/// prompt and one Secure Enclave check per batch of new names. Resolved
+/// values live only in this process's memory.
+final class StoreSecretResolver: GuestSecretResolver, @unchecked Sendable {
+  let store: EnclaveStore
+  private let lock = NSLock()
+  private var cache: [SecretName: Secret<[UInt8]>] = [:]
+
+  init(store: EnclaveStore) { self.store = store }
+
+  nonisolated(unsafe) private static var instances: [String: StoreSecretResolver] = [:]
+  private static let instancesLock = NSLock()
+
+  static func shared(_ store: EnclaveStore) -> StoreSecretResolver {
+    instancesLock.withLock {
+      if let existing = instances[store.directory] { return existing }
+      let created = StoreSecretResolver(store: store)
+      instances[store.directory] = created
+      return created
+    }
+  }
+
+  func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>] {
+    try lock.withLock {
+      let missing = names.subtracting(cache.keys)
+      if !missing.isEmpty {
+        disableCoreDumps()
+        let passphrase = try PassphraseInput.read(prompt: "Passphrase for coop secrets")
+        cache.merge(try store.resolve(missing, passphrase: passphrase)) { $1 }
+      }
+      return cache.filter { names.contains($0.key) }
+    }
+  }
 }
 
 /// Secret-bearing commands never write core dumps (spec §37).

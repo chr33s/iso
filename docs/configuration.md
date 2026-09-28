@@ -597,7 +597,8 @@ Several config values accept per-invocation overrides via flags:
 | `--mem <MiB>` | `setup`, `up` | `vm.mem_size_mib` |
 | `--template-size <GiB>` | `setup` | `vm.template_size_gib` |
 | `--disk <GiB>` | `up` | Per-instance disk size (grows from template if larger) |
-| `--env KEY=VALUE` | `up`, `start` | Adds or overrides a `guest_env` entry (repeatable) |
+| `--env KEY=VALUE` | `up`, `start` | Adds or overrides a `guest_env` entry (repeatable); `{vault:NAME}` values are stored-secret references |
+| `--env-file <path>` | `up`, `start` | Adds or overrides `guest_env` entries from a `.env` file; `--env` wins over it |
 | `--config <path>` | all commands | Config file path, `.jsonc` or `.json` (default: `~/.coop/config.jsonc`) |
 
 ## Examples

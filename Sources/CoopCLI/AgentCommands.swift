@@ -22,7 +22,7 @@ extension CommandContext {
         coopExecutable: CommandLine.executablePath),
       github: HostGitHubTokens(
         config: config, environment: environment.variables, diagnostics: diagnostics),
-      diagnostics: diagnostics)
+      diagnostics: diagnostics, secrets: secretResolver)
   }
 }
 

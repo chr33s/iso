@@ -1297,6 +1297,12 @@ If references exist:
 
 ## Later `exec` / shell / agent commands
 
+**As implemented (step 8):** `--env-file` and `--env` accept whole-value
+`{vault:}` references; `guest_env.json` is written as version 2 only when a
+reference is present; the CLI resolves every reference a command needs in one
+batch (one passphrase + one Secure Enclave check per command). A reference on
+a recognized provider variable is refused until provider routing (§31) lands.
+
 ## D-004 — Per-session unlock for generic secrets
 
 **Decision: APPROVED 2026-09-28 (deliberate UX cost)**

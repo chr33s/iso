@@ -26,6 +26,9 @@ SPDX-License-Identifier: Apache-2.0
   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
   `OPENAI_API_KEY`); `required` never forwards any of them and fails
   `up`/`start` without a provider proxy.
+- **`--env-file`** on `up`/`start`, and whole-value `{vault:NAME}` references
+  in `--env`/`--env-file` values, resolved from `coop secrets` per session and
+  persisted only as references.
 
 ### Swift host
 
