@@ -1086,6 +1086,10 @@ if want coop; then
         fail "session ttl: coop up boots the instance" "see $WORK/coop-up-ttl.log"
     fi
 
+    check "coop audit shows the recorded boots" grep -q '"event":"boot"' <<<"$(coop audit e2e 2>/dev/null)"
+    check "coop audit --suggest-config is advisory JSONC" \
+        grep -q "Advisory only" <<<"$(coop audit e2e --suggest-config 2>/dev/null)"
+
     check "coop destroy removes the instance" coop destroy e2e
     check "the runtime has no sandbox left" test "$(csbx list | jq length)" = 0
     check "the instance state is gone" test ! -e "$CSTATE/instances/e2e"

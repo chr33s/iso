@@ -233,6 +233,14 @@ enum ConfigDecoder {
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
       HostPath(expanding: try Parse.string(v, p), home: env.home)
     }
+    let preset = try r.optional("security") { v, p throws(FieldError) in
+      let s = try ObjectReader(v, at: p)
+      try s.rejectUnknown(allowing: ["preset"])
+      return try s.required("preset") { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, SecurityPreset.allCases)
+      }
+    }
+    let presetDefaults = preset ?? .networked
     return CoopConfig(
       dataDirectory: dataDir,
       vm: try r.defaulted("vm", .defaults, vm),
@@ -251,7 +259,9 @@ enum ConfigDecoder {
           try Parse.stringEnum(v, p, [CodexAuthMode.apiKey, .chatgpt])
         }
       },
-      proxy: try r.defaulted("proxy", ProxyConfig(anthropic: nil, openai: nil), proxy),
+      proxy: try r.defaulted(
+        "proxy", ProxyConfig(anthropic: nil, openai: nil, mode: presetDefaults.proxyMode)
+      ) { v, p throws(FieldError) in try proxy(v, p, defaultMode: presetDefaults.proxyMode) },
       guestEnvironment: try r.defaulted("guest_env", []) { v, p throws(FieldError) in
         let values = try Parse.map(v, p, Parse.string)
         var out: [GuestVariable] = []
@@ -283,12 +293,17 @@ enum ConfigDecoder {
       appleContainer: try r.defaulted("apple_container", AppleContainerConfig.defaults) {
         v, p throws(FieldError) in try appleContainer(v, p, env: env)
       },
-      workspacePull: try r.defaulted("workspace", .defaults) { v, p throws(FieldError) in
+      workspacePull: try r.defaulted(
+        "workspace", WorkspacePullConfig(mode: presetDefaults.pullMode, limits: .defaults)
+      ) { v, p throws(FieldError) in
         let w = try ObjectReader(v, at: p)
         try w.rejectUnknown(allowing: ["pull"])
-        return try w.defaulted("pull", .defaults, workspacePull)
+        return try w.defaulted(
+          "pull", WorkspacePullConfig(mode: presetDefaults.pullMode, limits: .defaults)
+        ) { v, p throws(FieldError) in try workspacePull(v, p, defaultMode: presetDefaults.pullMode)
+        }
       },
-      egress: try r.defaulted("egress", .open) { v, p throws(FieldError) in
+      egress: try r.defaulted("egress", presetDefaults.egress) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, [EgressMode.open, .none])
       },
       limits: try r.defaulted("limits", .none) { v, p throws(FieldError) in
@@ -306,17 +321,18 @@ enum ConfigDecoder {
               try SessionTTL(seconds: seconds)
             }
           })
-      })
+      },
+      securityPreset: preset)
   }
 
-  static func workspacePull(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
-    -> WorkspacePullConfig
-  {
+  static func workspacePull(
+    _ value: JSONValue, _ path: [JSONPathComponent], defaultMode: WorkspacePullMode = .direct
+  ) throws(FieldError) -> WorkspacePullConfig {
     let r = try ObjectReader(value, at: path)
     try r.rejectUnknown(allowing: ["mode", "max_files", "max_bytes", "max_file_bytes"])
     let d = StageLimits.defaults
     return WorkspacePullConfig(
-      mode: try r.defaulted("mode", .direct) { v, p throws(FieldError) in
+      mode: try r.defaulted("mode", defaultMode) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, [WorkspacePullMode.direct, .stage])
       },
       limits: StageLimits(
@@ -498,9 +514,9 @@ enum ConfigDecoder {
     }
   }
 
-  static func proxy(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
-    -> ProxyConfig
-  {
+  static func proxy(
+    _ value: JSONValue, _ path: [JSONPathComponent], defaultMode: ProxyMode = .auto
+  ) throws(FieldError) -> ProxyConfig {
     let r = try ObjectReader(value, at: path)
     func upstream(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
       -> ProxyUpstream
@@ -526,7 +542,7 @@ enum ConfigDecoder {
     }
     return ProxyConfig(
       anthropic: try r.optional("anthropic", upstream), openai: try r.optional("openai", upstream),
-      mode: try r.defaulted("mode", .auto) { v, p throws(FieldError) in
+      mode: try r.defaulted("mode", defaultMode) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, [ProxyMode.auto, .required, .off])
       })
   }

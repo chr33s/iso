@@ -457,3 +457,31 @@ struct FakeFileSystem: ConfigFileSystem {
   #expect(fieldError(#"{"limits": {"session_ttl": "10s"}}"#)?.field == "limits.session_ttl")
   #expect(fieldError(#"{"limits": {"max_log_bytes": 1}}"#)?.field == "limits.max_log_bytes")
 }
+
+@Test func securityPresetsSupplyDefaultsThatExplicitFieldsOverride() throws {
+  let plain = try load("{}")
+  #expect(plain.securityPreset == nil && plain.egress == .open && plain.proxy.mode == .auto)
+  let providerOnly = try load(#"{"security": {"preset": "provider-only"}}"#)
+  #expect(providerOnly.egress == .none)
+  #expect(providerOnly.proxy.mode == .required)
+  #expect(providerOnly.workspacePull.mode == .stage)
+  let offline = try load(#"{"security": {"preset": "offline"}}"#)
+  #expect(
+    offline.egress == .none && offline.proxy.mode == .off && offline.workspacePull.mode == .stage)
+  // Explicit fields win over the preset.
+  let overridden = try load(
+    #"{"security": {"preset": "provider-only"}, "egress": "open", "proxy": {"mode": "auto"}, "workspace": {"pull": {"max_files": 5}}}"#
+  )
+  #expect(overridden.egress == .open && overridden.proxy.mode == .auto)
+  #expect(overridden.workspacePull.mode == .stage && overridden.workspacePull.limits.maxFiles == 5)
+  #expect(fieldError(#"{"security": {"preset": "paranoid"}}"#)?.field == "security.preset")
+  #expect(fieldError(#"{"security": {"level": 1}}"#)?.field == "security.level")
+}
+
+@Test func presetsApplyInsideAPartialProxyObject() throws {
+  let c = try load(
+    #"{"security": {"preset": "provider-only"}, "proxy": {"anthropic": {"credential": "cmd:x"}}, "workspace": {"pull": {"max_files": 3}}}"#
+  )
+  #expect(c.proxy.mode == .required)
+  #expect(c.workspacePull.mode == .stage)
+}

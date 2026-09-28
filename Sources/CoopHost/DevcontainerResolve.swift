@@ -252,6 +252,18 @@ public struct DevcontainerResolver: Sendable {
 
 // MARK: - Dry-run plan
 
+extension CoopConfig {
+  /// What the hardening settings resolve to after `security.preset`.
+  public var securitySummary: OutputJSON {
+    .object([
+      ("preset", securityPreset.map { .string($0.rawValue) } ?? .null),
+      ("egress", .string(egress.rawValue)), ("proxy_mode", .string(proxy.mode.rawValue)),
+      ("workspace_pull", .string(workspacePull.mode.rawValue)),
+      ("session_ttl", limits.sessionTTL.map { .string($0.description) } ?? .null),
+    ])
+  }
+}
+
 /// `up --dry-run --json` / `start --dry-run --json` (Rust
 /// `json::DryRunPlan`). `report` is nil when no devcontainer applied.
 public struct DevcontainerDryRunPlan: Sendable {
@@ -261,6 +273,8 @@ public struct DevcontainerDryRunPlan: Sendable {
   public var vcpus: UInt8?
   public var memory: MiB?
   public var disk: GiB?
+  /// The effective hardening settings (preset expansion), when known.
+  public var security: OutputJSON?
 
   public init(
     report: DevcontainerReport?, profiles: [String], guestUser: GuestUser, vcpus: UInt8?,
@@ -275,18 +289,19 @@ public struct DevcontainerDryRunPlan: Sendable {
   }
 
   public var json: OutputJSON {
-    .object([
-      ("report", report?.json ?? .null),
-      ("profiles", .array(profiles.map(OutputJSON.string))),
-      ("guest_user", .string(guestUser.rawValue)),
-      (
-        "vm",
-        .object([
-          ("vcpus", vcpus.map { .uint(UInt64($0)) } ?? .null),
-          ("mem_mib", memory.map { .uint(UInt64($0.value)) } ?? .null),
-          ("disk_gib", disk.map { .uint(UInt64($0.value)) } ?? .null),
-        ])
-      ),
-    ])
+    .object(
+      [
+        ("report", report?.json ?? .null),
+        ("profiles", .array(profiles.map(OutputJSON.string))),
+        ("guest_user", .string(guestUser.rawValue)),
+        (
+          "vm",
+          .object([
+            ("vcpus", vcpus.map { .uint(UInt64($0)) } ?? .null),
+            ("mem_mib", memory.map { .uint(UInt64($0.value)) } ?? .null),
+            ("disk_gib", disk.map { .uint(UInt64($0.value)) } ?? .null),
+          ])
+        ),
+      ] + (security.map { [("security", $0)] } ?? []))
   }
 }

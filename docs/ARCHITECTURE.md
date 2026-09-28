@@ -110,6 +110,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
+| Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `coop audit`) |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `CoopCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
 | Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `HostKeys` (ed25519 pins read over the runtime channel) |
 | Support | `Diagnostics` (stderr), `Prompt`, `OrderedJSON`, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |

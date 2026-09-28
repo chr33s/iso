@@ -271,6 +271,10 @@ def snapshot(home, normalizer):
         relative = normalizer.text(str(path.relative_to(state)))
         if path.is_dir() or path.name.endswith(".log") or path.name.startswith("."):
             continue
+        # The boundary audit log (selective-hardening spec §9) is a Swift-only
+        # append-only record with timestamps; it has no baseline counterpart.
+        if path.name == "audit.jsonl":
+            continue
         if path.suffix == ".json":
             text = path.read_text()
             if path.name == "fake-state.json":

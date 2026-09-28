@@ -41,6 +41,10 @@ SPDX-License-Identifier: Apache-2.0
 - **`limits.session_ttl`**: each boot ends at a host-clock deadline enforced
   by the sandbox owner (`APPLE_SESSION_EXPIRED` after it). coop-sandbox 0.4.0
   (protocol 4) is now required; 0.3.0 and older are refused.
+- **`security.preset`** (`networked`, `provider-only`, `offline`) supplies
+  defaults for `egress`, `proxy.mode` and `workspace.pull.mode`, and
+  **`coop audit [--suggest-config]`** shows the boundary metadata coop records
+  per instance (never values).
 
 ### Swift host
 

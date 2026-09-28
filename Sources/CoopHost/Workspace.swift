@@ -451,6 +451,7 @@ public struct WorkspaceTransfer: Sendable {
       diagnostics.log(.info, "rsync not available on guest, using tar-pipe")
       try tarPull(running.target, guest: state.guestPath, to: destination, excludeGit: excludeGit)
     }
+    BoundaryAudit.record(running.instance, .pullDirect, diagnostics: diagnostics)
     diagnostics.log(.info, "Pull complete")
   }
 
@@ -505,6 +506,11 @@ public struct WorkspaceTransfer: Sendable {
       let manifest = try builder.build(
         id: randomHex(4), instance: instance.name.rawValue, excludeGit: excludeGit)
       try location.saveManifest(manifest)
+      BoundaryAudit.record(
+        instance,
+        .pullStage(
+          changes: manifest.changes.count, bytes: manifest.stagedBytes,
+          applicable: manifest.applicable), diagnostics: diagnostics)
       return manifest
     } catch {
       try? location.remove()
@@ -535,6 +541,7 @@ public struct WorkspaceTransfer: Sendable {
       throw ContextError("Failed to create \(manifest.destination)", cause: error)
     }
     let applied = try StageApplier(manifest: manifest, tree: location.tree).apply()
+    BoundaryAudit.record(instance, .pullApply(applied: applied.count), diagnostics: diagnostics)
     try location.remove()
     return (manifest, applied)
   }

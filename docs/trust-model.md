@@ -282,6 +282,10 @@ exposure, and coop verifies the effective configuration anyway
   `vmnet-host:`) against the record. Adding any other such field, a widening
   network mode (bridged, shared-network, a published port), or a `create` flag
   for one is a finding.
+- **Boundary audit.** `coop audit` reads `<instance>/audit.jsonl`, written
+  by the host from host-side state only (configuration modes, proxied
+  providers, variable names, counts); nothing guest-authored or secret is
+  recorded, and the file is owner-only and bounded.
 - **Session TTL.** `limits.session_ttl` is enforced outside the guest: the
   runtime records the deadline (`record.expiresAt`, host wall clock) at
   `start`, the owner halts the VM when it passes and exits cleanly (so launchd
