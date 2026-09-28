@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Stateful stand-in for `coop-sandbox` (protocol 3) used by the lifecycle
+"""Stateful stand-in for `coop-sandbox` (protocol 4) used by the lifecycle
 differential test. State lives in `<root>/fake-state.json`; every call's argv
 is appended to `calls.log` beside this script. Answers only what coop asks.
 """
@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 NULL = object()
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +39,7 @@ def main():
     argv = sys.argv[1:]
     log(argv)
     if argv[:1] == ["version"]:
-        return out({"name": "coop-sandbox", "version": "0.3.0", "protocol": 3, "containerization": "0.45.0"})
+        return out({"name": "coop-sandbox", "version": "0.4.0", "protocol": 4, "containerization": "0.45.0"})
     words = []
     rest = list(argv)
     while rest and rest[0] != "--root":
@@ -66,6 +67,8 @@ def inspect(root, sandbox):
                                        "diskBytes", "diskGeneration"]}
     if sandbox.get("network"):
         record["network"] = sandbox["network"]
+    if sandbox.get("expiresAt"):
+        record["expiresAt"] = sandbox["expiresAt"]
     if sandbox.get("lastOperation"):
         record["lastOperation"] = sandbox["lastOperation"]
     result = {"record": record, "status": sandbox["status"],
@@ -160,6 +163,9 @@ def handle(words, args, root, state):
     if key == "inspect":
         return inspect(root, sandbox)
     if key == "start":
+        expires = option(args, "--expires-at")
+        sandbox["expiresAt"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expires))) if expires else None)
         sandbox["status"] = "running"
         return inspect(root, sandbox)
     if key == "stop":

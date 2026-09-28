@@ -86,6 +86,18 @@ import Testing
         #expect(Set([NetworkMode.shared, .hostOnly].map(\.rawValue)) == ["shared", "host_only"])
     }
 
+    @Test func sessionExpiryRoundTripsAndIsAbsentByDefault() throws {
+        var r = SandboxRecord(
+            id: try SandboxID("a"), owner: "o", imageReference: "i", imageDigest: "d", baseDisk: nil, environment: [],
+            cpus: 1, memoryBytes: 1, diskBytes: 1, subnetIndex: 1, createdAt: Date(timeIntervalSince1970: 0))
+        let plain = try JSONSerialization.jsonObject(with: JSONEncoder.pretty.encode(r)) as? [String: Any] ?? [:]
+        #expect(plain["expiresAt"] == nil)
+        r.expiresAt = Date(timeIntervalSince1970: 1_900_000_000)
+        let text = String(decoding: try JSONEncoder.pretty.encode(r), as: UTF8.self)
+        #expect(text.contains("\"expiresAt\" : \"2030-03-17T17:46:40Z\""))
+        #expect(try JSONDecoder.iso.decode(SandboxRecord.self, from: Data(text.utf8)).expiresAt == r.expiresAt)
+    }
+
     @Test func recordHasNoHostExposureFields() throws {
         let r = SandboxRecord(
             id: try SandboxID("a"), owner: "o", imageReference: "i", imageDigest: "d", baseDisk: nil, environment: [],

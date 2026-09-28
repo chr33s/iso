@@ -38,6 +38,9 @@ SPDX-License-Identifier: Apache-2.0
   No raw provider credential is forwarded into such a guest, whatever
   `proxy.mode` says.
   Requires coop-sandbox 0.3.0 or later (protocol 3).
+- **`limits.session_ttl`**: each boot ends at a host-clock deadline enforced
+  by the sandbox owner (`APPLE_SESSION_EXPIRED` after it). coop-sandbox 0.4.0
+  (protocol 4) is now required; 0.3.0 and older are refused.
 
 ### Swift host
 

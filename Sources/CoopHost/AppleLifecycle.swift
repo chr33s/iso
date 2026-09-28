@@ -27,8 +27,8 @@ extension AppleBackend {
     return "\n(Console log unavailable; try `coop logs`.) [\(name)]"
   }
 
-  func boot(_ runtime: SandboxRuntime, _ name: MachineName) throws {
-    do { try runtime.start(name) } catch {
+  func boot(_ runtime: SandboxRuntime, _ name: MachineName, expiresAt: Date?) throws {
+    do { try runtime.start(name, expiresAt: expiresAt) } catch {
       throw RuntimeError.bootTimeout(
         "sandbox \(name) failed to boot: \(error)\(bootLogTail(runtime, name))")
     }
@@ -105,13 +105,16 @@ extension AppleBackend {
     }
   }
 
+  /// `sessionTTL` starts a new session window for this boot.
   func bootValidated(
     _ runtime: SandboxRuntime, _ expected: IsolationGate.Expected,
-    until deadline: ContinuousClock.Instant
+    until deadline: ContinuousClock.Instant, sessionTTL: SessionTTL? = nil
   )
     throws -> (IsolationGate.Ready, HostPublicKey)
   {
-    try boot(runtime, expected.sandbox)
+    try boot(
+      runtime, expected.sandbox,
+      expiresAt: sessionTTL.map { Date().addingTimeInterval(TimeInterval($0.seconds)) })
     let ready = try waitReady(runtime, expected, until: deadline)
     return (ready, try readHostKey(runtime, ready, until: deadline))
   }
@@ -245,7 +248,8 @@ extension AppleBackend {
       createdAt: utcTimestamp(), runtimeIdentity: try runtime.requireQualified())
     try IsolationGate.verifyRecord(try runtime.inspect(machine), expected(sidecar, runtime))
     let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
-    let (ready, key) = try bootValidated(runtime, expected(sidecar, runtime), until: deadline)
+    let (ready, key) = try bootValidated(
+      runtime, expected(sidecar, runtime), until: deadline, sessionTTL: config.limits.sessionTTL)
     try HostKeyPin.apply(.enroll, instance: instance, machine: machine, key: key)
     try waitForSSH(instance, ready, user: manifest.guestUser, until: deadline)
     sidecar.hostKeyFingerprint = key.fingerprint
@@ -280,7 +284,8 @@ extension AppleBackend {
     let trust: HostKeyTrust = sidecar.reenrollHostKey ? .reenrollAfterRestore : .requirePin
     let ready: IsolationGate.Ready
     do {
-      let (booted, key) = try bootValidated(runtime, expected(sidecar, runtime), until: deadline)
+      let (booted, key) = try bootValidated(
+        runtime, expected(sidecar, runtime), until: deadline, sessionTTL: config.limits.sessionTTL)
       ready = booted
       try HostKeyPin.apply(trust, instance: instance, machine: sidecar.machineID, key: key)
       if case .reenrollAfterRestore = trust {

@@ -138,10 +138,13 @@ struct Start: AsyncParsableCommand {
     @OptionGroup var root: RootOptions
     @Argument var id: String
     @Option var waitSeconds = 120
+    @Option(help: "End the session at this host time (Unix seconds); the owner halts the VM then") var expiresAt: Int64?
 
     func run() async throws {
         let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        let live = try await Sandboxes.start(root: try root.resolve(), id: try SandboxID(id), executable: exe, wait: TimeInterval(waitSeconds))
+        let live = try await Sandboxes.start(
+            root: try root.resolve(), id: try SandboxID(id), executable: exe, wait: TimeInterval(waitSeconds),
+            expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
         try printJSON(live)
     }
 }

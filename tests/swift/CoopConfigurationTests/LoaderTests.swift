@@ -449,3 +449,11 @@ struct FakeFileSystem: ConfigFileSystem {
   // `network` stays a retired Firecracker key.
   #expect(throws: (any Error).self) { try load(#"{"network": {"egress": "none"}}"#) }
 }
+
+@Test func limitsParseASessionTTL() throws {
+  #expect(try load("{}").limits.sessionTTL == nil)
+  #expect(try load(#"{"limits": {"session_ttl": "8h"}}"#).limits.sessionTTL?.seconds == 28800)
+  #expect(try load(#"{"limits": {"session_ttl": 600}}"#).limits.sessionTTL?.seconds == 600)
+  #expect(fieldError(#"{"limits": {"session_ttl": "10s"}}"#)?.field == "limits.session_ttl")
+  #expect(fieldError(#"{"limits": {"max_log_bytes": 1}}"#)?.field == "limits.max_log_bytes")
+}

@@ -6,7 +6,9 @@ records were captured from 0.1.0 (protocol 1); in inspect output, protocol 2
 only adds the optional `record.lastOperation`, absent until a sandbox's first `set`, `grow`,
 or `restore`, and protocol 3 only adds the optional `record.network` (absent
 for shared-mode sandboxes) and the `vmnet-host:` interface label for
-host-only ones, so they are unchanged, and `version.json` was updated to 0.3.0:
+host-only ones, and protocol 4 only adds the optional `record.expiresAt`
+(absent without a session TTL), so they are unchanged, and `version.json` was
+updated to 0.4.0:
 
 - `version.json` — `coop-sandbox version`
 - `inspect-stopped.json` — `coop-sandbox inspect` of a created, stopped sandbox

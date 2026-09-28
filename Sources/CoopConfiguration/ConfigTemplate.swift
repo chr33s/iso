@@ -112,6 +112,9 @@ public enum ConfigTemplate {
       // "post_start": "make dev-setup",          // runs in the guest after each boot
       // "forward_ports": [3000, "8080:18080", { "guest": 5432, "label": "db" }],
 
+      // Host-enforced session length per boot ("30m", "8h", or seconds).
+      // "limits": { "session_ttl": "8h" },
+
       // "open" (default) or "none": no route beyond the host, fixed per instance
       // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
       // "egress": "open",

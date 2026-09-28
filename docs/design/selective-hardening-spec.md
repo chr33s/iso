@@ -1007,6 +1007,14 @@ the runtime:
   and refuses an expired instance, so enforcement does not depend solely on the
   owner being alive at the deadline.
 
+**As implemented (step 11):** runtime 0.4.0 / protocol 4 records
+`expiresAt` on `start --expires-at`; the owner re-reads the host clock at least
+every 30 s and halts at the deadline, and refuses to boot past it after a
+crash relaunch; the host passes `now + limits.session_ttl` on every boot and
+the gate refuses an expired record (`APPLE_SESSION_EXPIRED`). `max_log_bytes`
+is not implemented: the guest-controlled console log is already capped at
+8 MiB by the runtime and the owner log holds only runtime-authored lines.
+
 Host sleep counts toward the TTL (wall-clock, not monotonic). `coop start` of
 an expired instance starts a new TTL window only if the user explicitly
 restarts it; document this.

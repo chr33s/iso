@@ -282,8 +282,17 @@ exposure, and coop verifies the effective configuration anyway
   `vmnet-host:`) against the record. Adding any other such field, a widening
   network mode (bridged, shared-network, a published port), or a `create` flag
   for one is a finding.
+- **Session TTL.** `limits.session_ttl` is enforced outside the guest: the
+  runtime records the deadline (`record.expiresAt`, host wall clock) at
+  `start`, the owner halts the VM when it passes and exits cleanly (so launchd
+  does not restart it), a relaunched owner refuses to boot past it, and the
+  isolation gate refuses to hand out an expired sandbox. Nothing the guest
+  controls, including its clock, moves the deadline. Every halt (the TTL, a
+  stop request or a signal) reaches the guest through guest-agent calls a root
+  guest can wedge, so if the guest is still running ten seconds after the
+  forced kill the owner exits, which ends the in-process VM.
 - **Runtime qualification.** `SandboxRuntime` qualification accepts only `coop-sandbox`
-  with protocol 3 and `containerization` 0.45.0. The runtime itself accepts
+  with protocol 4 and `containerization` 0.45.0. The runtime itself accepts
   only a kernel whose sha256 is in `KernelPin.allowed`. On first `coop setup`,
   `coop-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
   (the runtime's only outbound fetch) and refuses it unless it resolves to the

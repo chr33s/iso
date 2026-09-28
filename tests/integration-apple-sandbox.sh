@@ -285,8 +285,8 @@ else
     fail "coop-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 3 on containerization 0.45.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "3 0.45.0"
+check "version reports protocol 4 on containerization 0.45.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "4 0.45.0"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&
     "$CONTAINER" image save --platform linux/arm64 -o "$WORK/image.tar" "$IMAGE" >/dev/null 2>&1; then
     pass "test image builds"
@@ -1065,6 +1065,25 @@ if want coop; then
         none destroy e2e-none >/dev/null 2>&1
     else
         fail "egress none: coop up creates and boots a host-only instance" "see $WORK/coop-up-none.log"
+    fi
+
+    # Session TTL: the owner halts the VM at the deadline on its own.
+    jq '. + {limits: {session_ttl: 60}}' "$CCFG" >"$WORK/coop-ttl.jsonc"
+    ttl() { "$COOP" --config "$WORK/coop-ttl.jsonc" "$@" </dev/null; }
+    mkdir -p "$WORK/project-ttl"
+    if ttl up "$WORK/project-ttl" --name e2e-ttl --no-agents --no-github >"$WORK/coop-up-ttl.log" 2>&1; then
+        check "session ttl: the runtime records the deadline" \
+            test "$(csbx inspect "$(machine_id e2e-ttl)" | jq -r '.record.expiresAt != null')" = true
+        for _ in $(seq 60); do
+            [[ "$(csbx inspect "$(machine_id e2e-ttl)" | jq -r .status)" == stopped ]] && break
+            sleep 2
+        done
+        check "session ttl: the VM stops itself at the deadline" \
+            test "$(csbx inspect "$(machine_id e2e-ttl)" | jq -r .status)" = stopped
+        check "session ttl: coop start begins a new session" ttl start e2e-ttl --no-agents --no-github
+        ttl destroy e2e-ttl >/dev/null 2>&1
+    else
+        fail "session ttl: coop up boots the instance" "see $WORK/coop-up-ttl.log"
     fi
 
     check "coop destroy removes the instance" coop destroy e2e

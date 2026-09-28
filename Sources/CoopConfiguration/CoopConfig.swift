@@ -75,6 +75,7 @@ public struct CoopConfig: Sendable, Equatable {
   public let appleContainer: AppleContainerConfig
   public let workspacePull: WorkspacePullConfig
   public let egress: EgressMode
+  public let limits: LimitsConfig
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
   public static let backendRoot = "backends/apple-container-v1"
@@ -323,6 +324,17 @@ public enum EgressMode: String, Sendable, Equatable {
   case none
 }
 
+/// `limits` (selective-hardening spec §8).
+public struct LimitsConfig: Sendable, Equatable {
+  /// Each boot ends this long after it starts, enforced by the sandbox owner
+  /// on the host clock. nil: no limit.
+  public let sessionTTL: SessionTTL?
+
+  public init(sessionTTL: SessionTTL?) { self.sessionTTL = sessionTTL }
+
+  public static let none = LimitsConfig(sessionTTL: nil)
+}
+
 /// How `coop pull` returns guest files: straight into the destination
 /// (`direct`, the historical behavior) or through a reviewed stage.
 public enum WorkspacePullMode: String, Sendable, Equatable {
@@ -376,7 +388,8 @@ extension CoopConfig {
       proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
-      updates: updates, appleContainer: appleContainer, workspacePull: workspacePull, egress: egress
+      updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
+      egress: egress, limits: limits
     )
   }
 }

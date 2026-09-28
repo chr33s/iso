@@ -191,3 +191,13 @@ func rejectsOtherURLs(_ url: String) {
   #expect(SecretName.vaultReference("vault:bad name") == nil)
   #expect(SecretName.vaultReference("VAULT:name") == nil)
 }
+
+@Test func sessionTTLParsesAndBounds() throws {
+  #expect(try SessionTTL(parsing: "8h").seconds == 8 * 3600)
+  #expect(try SessionTTL(parsing: "90m").description == "90m")
+  #expect(try SessionTTL(parsing: "3600").description == "1h")
+  #expect(try SessionTTL(seconds: 61).description == "61s")
+  for bad in ["", "30s", "59", "721h", "1d", "-1h", "h"] {
+    #expect(throws: ValidationError.self, "\(bad)") { try SessionTTL(parsing: bad) }
+  }
+}

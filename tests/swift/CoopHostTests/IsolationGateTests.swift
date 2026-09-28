@@ -240,3 +240,16 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
   try IsolationGate.verifyRecord(inspection, expect(.none))
   #expect(throws: RuntimeError.self) { try IsolationGate.verifyRecord(inspection, expect(.open)) }
 }
+
+@Test func anExpiredSessionIsNotHandedOut() throws {
+  var object = try running()
+  setPath(&object, ["record", "expiresAt"], "2000-01-01T00:00:00Z")
+  do {
+    _ = try gate(try bytes(object))
+    Issue.record("an expired session was handed out")
+  } catch {
+    #expect("\(error)".hasPrefix("APPLE_SESSION_EXPIRED"))
+  }
+  setPath(&object, ["record", "expiresAt"], "2999-01-01T00:00:00Z")
+  #expect(try gate(try bytes(object)).sandbox == gateSandbox)
+}
