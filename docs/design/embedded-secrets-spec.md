@@ -1583,6 +1583,13 @@ public actor EnclaveStore {
 }
 ```
 
+**As implemented (step 6):** `EnclaveStore` is a synchronous `Sendable`
+struct rather than an actor, because every caller is a synchronous
+`ParsableCommand`; each call takes the store's `FileLock`, unlocks once, and
+keeps nothing afterwards. The device factor is a `DeviceFactor` protocol
+(`SecureEnclaveFactor` in production, a software P-256 key in tests). The
+store directory is `<data_dir>/secrets`, `~/.coop/secrets` by default.
+
 `EnclaveStoreError` is a closed enum (typed throws, per `docs/code-style.md`)
 with a distinct `enclaveKeyUnavailable` case for the permanent-loss error
 (§35). The no-recovery acknowledgement is a type, not a `Bool`.

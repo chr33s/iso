@@ -38,7 +38,7 @@ navigational; durable detail lives in [`docs/`](docs/).
 ## Architecture (one paragraph)
 
 A Swift CLI (`CoopCLI` on Swift Argument Parser, over `CoopHost`,
-`CoopConfiguration` and `CoopCore`) that orchestrates VM lifecycle (setup →
+`CoopSecrets`, `CoopConfiguration` and `CoopCore`) that orchestrates VM lifecycle (setup →
 up/start → shell → stop → destroy → status/logs) on one concrete Apple backend:
 `coop-sandbox` VMs on `apple/containerization`, driven over the runtime's JSON
 CLI. Each command loads one validated JSONC configuration snapshot

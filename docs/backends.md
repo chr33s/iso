@@ -82,6 +82,7 @@ then recreate or re-enroll (`coop restore <name> --reprovision`) its
 instances: host-key pins now use the `<machine>.coop` alias, and pins written
 under the old `.coop-apple` alias are refused.
 
+The local secret store (`coop secrets`) lives in `<data_dir>/secrets/`.
 Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 
 - `owner.json` (installation owner ID) and `vm_key`
@@ -91,7 +92,7 @@ Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 
 Control files are `0600`, directories `0700`. `uninstall --purge` destroys
 owned instances and removes only `backends/apple-container-v1/`; config files,
-and unrelated files remain. Workspace copies skip `.coop/`. The
+the secret store (`<data_dir>/secrets/`) and unrelated files remain. Workspace copies skip `.coop/`. The
 `coop-apple-<name>` SSH aliases and markers keep their names, so they do not
 collide with upstream coop's `coop-<name>` entries. Paths may contain spaces but not quote or control characters.
 

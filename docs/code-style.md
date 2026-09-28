@@ -25,7 +25,7 @@ a bug through.
 - Commit every `Package.resolved`; build and test with
   `--force-resolved-versions` so an unexpected resolution change fails.
   Add a dependency only with a reviewed reason; the host depends only on
-  Swift Argument Parser.
+  Swift Argument Parser and swift-crypto (`CryptoExtras`, for scrypt).
 - `swift format lint --strict` must be clean for every package:
 
   ```sh

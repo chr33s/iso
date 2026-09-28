@@ -1038,6 +1038,39 @@ coop proxy status
 coop proxy status --vm my-project
 ```
 
+### `secrets`
+
+Manage the local secret store under `<data_dir>/secrets/`. Unlocking it
+needs both your passphrase (scrypt) and this Mac's Secure Enclave key (Touch ID
+or password), every time; nothing stays unlocked between commands.
+**There is no recovery path**: if this Mac or its Secure Enclave key is lost,
+the stored secrets are gone, even with the passphrase and a copy of the files.
+See [the design](design/embedded-secrets-spec.md).
+
+```
+coop secrets init [--accept-no-recovery]
+coop secrets set <name> [--stdin]
+coop secrets rm <name>
+coop secrets list
+coop secrets status
+```
+
+| Subcommand | Description |
+|------|-------------|
+| `init` | Create the store after the no-recovery warning. `--accept-no-recovery` skips the confirmation prompt (automation). |
+| `set <name>` | Add or replace a secret. The value is prompted without echo, or read byte for byte from stdin with `--stdin`; it never appears on the command line. |
+| `rm <name>` | Remove a secret. It cannot un-send a value already given to a running VM or proxy. |
+| `list` | Print secret names and update times; never values. |
+| `status` | Report whether the store exists and the Secure Enclave is usable, without unlocking. |
+
+`coop uninstall --purge` does not remove the store; delete `<data_dir>/secrets/`
+yourself if you want it gone.
+
+Names match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. The passphrase is read from the
+terminal (`/dev/tty`) with echo off; for automation, pass it on an inherited
+descriptor named by `COOP_SECRETS_PASSPHRASE_FD` (a regular file must not be
+group- or world-readable). There is no passphrase flag or plaintext variable.
+
 ### `validate`
 
 Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live.
