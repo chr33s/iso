@@ -539,6 +539,32 @@ that changes between releases). If any case fails, record the constraint and
 the supported build types here before continuing; a store that becomes
 unreadable on `coop update` is a release blocker, not an accepted loss event.
 
+**Spike result (2026-09-28, macOS 27, Apple Silicon):** a
+`SecureEnclave.P256.KeyAgreement` key (`.privateKeyUsage`, optionally
+`.userPresence`, `WhenUnlockedThisDeviceOnly`) created by an ad-hoc-signed
+`swiftc` binary was reloaded from `dataRepresentation` and used for ECDH by a
+second ad-hoc binary with a different cdhash and by a Developer ID-signed,
+hardened-runtime binary. No keychain entitlement was needed. With
+`.userPresence`, every use showed a Touch ID prompt. The key is not bound to
+the signing identity, so `coop update` does not strand it. The cancel path is
+still unverified and stays in the §48 hardware tests.
+
+## 9.7 Corrupted key representation
+
+The same spike found that `SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation:)`
+**traps the process** (a `try!` inside CryptoKit, `CryptoKitError.invalidParameter`)
+when `device.sekey` is corrupted, instead of throwing. coop MUST therefore not
+hand unverified bytes to that initializer:
+
+- `device.sekey` is stored in a small versioned envelope containing the
+  representation and its SHA-256;
+- the envelope, length bounds, and digest are checked before calling CryptoKit;
+- a mismatch fails with the permanent `enclaveKeyUnavailable` error (§35).
+
+This guards against accidental corruption (disk, partial restore). A same-user
+attacker who can rewrite the file can also recompute the digest; that attacker
+is out of scope (§2.3).
+
 ---
 
 # 10. Store format

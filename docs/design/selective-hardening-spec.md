@@ -503,6 +503,49 @@ Spike output, recorded before Phase 3 (`egress = "none"`) starts:
 If no mechanism can be enforced and verified without guest cooperation, this
 feature is dropped rather than shipped in a weaker form (NG4).
 
+### 6.0.1 Spike result (2026-09-28, desk study + vmnet probe)
+
+**Chosen mechanism: vmnet host mode, per sandbox, selected by the runtime.**
+
+- Today `Owner.makeNetwork` calls containerization 0.45.0's
+  `VmnetNetwork(subnet:)`, whose default is `VMNET_SHARED_MODE` (NAT). coop never
+  chooses the mode, and the owner reports a hard-coded `vmnet-shared:` label.
+- `VMNET_HOST_MODE` is reachable through the same macOS 26+
+  `vmnet_network_configuration_*` API. The configuration also exposes
+  `disable_nat44`, `disable_nat66`, `disable_dns_proxy`, and
+  `disable_router_advertisement`. `VmnetNetwork` does not surface the last two,
+  but its public `Interface(reference:…)` lets `coop-sandbox` build the network
+  itself without forking containerization.
+- A probe created host-mode networks as a normal user from a binary carrying
+  only the existing `com.apple.security.virtualization` entitlement. No root
+  and no `com.apple.vm.networking` are needed.
+- Host mode has no NAT and no external interface: no Internet route for TCP,
+  UDP, or ICMP over IPv4, and none over IPv6 with NAT66 and router
+  advertisements off. The vmnet **DNS proxy is on by default in every mode**
+  and MUST be disabled for `none`; the guest gets no resolver.
+- Host→guest SSH and the `ssh -R` / `ssh -L` tunnels are expected to keep
+  working (the host is the `.1` peer). This must be confirmed live.
+- **Guest→host reachability is unchanged**: host mode reaches "the native
+  host" by definition. §6.4's trust-model entry stays the documentation of
+  record under `none`. A `pf` anchor remains the only way to close it and is
+  deferred.
+- Caveat to test: a Mac with IP forwarding or its own NAT (Internet Sharing).
+
+Verification (§6.6): add a `network` mode (`shared` | `host_only`) to the
+sandbox record, set at create time. The owner reports the mode and the
+NAT44/NAT66/DNS-proxy/RA flags from the configuration it passed to
+`vmnet_network_create`, with the label `vmnet-host:10.231.N.0/24`. The
+isolation gate (`IsolationGate.verifyNetwork`) compares these with the policy
+coop expects and fails closed. This proves the configuration the VM was
+created from, not guest behavior; guest-side probes are test evidence only.
+
+The mode is fixed per sandbox at create time. Changing `network.egress` for an
+existing instance requires a stop, a record update, and a start.
+
+Open before Phase 3: run the live experiment (host-mode sandbox; external
+TCP/UDP/ICMP/IPv6/DNS must fail; SSH and `ssh -R` / `ssh -L` must work; a
+shared-mode control).
+
 ## 6.2 Config surface
 
 Initial config:
