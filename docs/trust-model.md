@@ -473,15 +473,6 @@ understanding the rationale; do flag a change that *widens* them:
   configured guest user. Provisioning runs inside the `container build`
   builder VM, and live agent updates inside the instance VM. This build-time trust is distinct from the
   untrusted guest boundary described above.
-- **`DOCKER_INSECURE_NO_IPTABLES_RAW=1`** in the guest, inherited from the
-  minimal Firecracker CI kernel, which lacks `iptable_raw`, so Docker 28+ can't
-  install its raw-table "direct access filtering" rule. Without it, other hosts on the guest's LAN
-  could route to published container ports bound to loopback — irrelevant here
-  because the guest's only network neighbor is the host and the VM *is* the
-  isolation boundary.
-- **iptables-legacy** and a **static `/etc/resolv.conf`** in the guest — both
-  inherited workarounds for a minimal kernel (no nftables, no systemd-resolved). Guest
-  config only; no host-side trust impact.
 
 ## Stop-and-confirm checklist
 

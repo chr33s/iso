@@ -53,7 +53,7 @@ extension CommandLine {
     var size = UInt32(PATH_MAX)
     var buffer = [CChar](repeating: 0, count: Int(size))
     guard _NSGetExecutablePath(&buffer, &size) == 0 else { return nil }
-    return String(cString: buffer)
+    return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 }
 

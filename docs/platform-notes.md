@@ -7,41 +7,15 @@ Durable, non-obvious environment facts that repeatedly bite contributors. These
 are engineering notes, not user documentation — for user-facing backend setup
 see [`backends.md`](backends.md).
 
-## Inherited guest image workarounds
-
-`scripts/guest/guest-config.sh` (baked into the golden image) still applies
-three workarounds that originated with the minimal Firecracker CI kernel and
-base image. They are retained so one image script serves every guest kernel:
-
-1. **iptables-legacy.** A kernel without nftables support makes Docker's
-   default `iptables-nft` backend fail with "Protocol not supported". Fix:
-   `update-alternatives --set iptables /usr/sbin/iptables-legacy`.
-2. **Static `resolv.conf`.** A rootfs whose `/etc/resolv.conf` links to
-   systemd-resolved's stub (`127.0.0.53`) without `systemd-resolved` installed
-   fails DNS silently. Fix: replace the symlink with a static file.
-3. **`fcnet.service` masked.** An inherited base image may enable
-   `fcnet.service`, which assigns a MAC-derived `/30` address alongside coop's
-   systemd-networkd configuration. Provisioning disables and masks it.
-
 ## Docker networking in the guest
 
-A kernel without the `iptable_raw` module (`CONFIG_IP_NF_RAW` not set, as in
-the inherited Firecracker CI kernel) breaks Docker 28+, which uses the raw
-table for "direct access filtering" — a PREROUTING DROP rule that prevents direct routing to published container ports,
-ensuring traffic goes through Docker's port-mapping rules.
-
-Without the raw table, Docker refuses to start bridge networking. The fix uses
-Docker 28.0.2's `DOCKER_INSECURE_NO_IPTABLES_RAW=1` env var (moby/moby#49621),
-set via a systemd drop-in at `/etc/systemd/system/docker.service.d/no-raw.conf`.
-This tells Docker to skip raw-table rules while keeping full bridge networking:
-NAT, port mapping (`-p`), container-to-container communication, and embedded DNS
-all work normally.
-
-The "insecure" label refers to the fact that without raw-table rules, other
-hosts on the local network could route directly to published container ports
-even if they're bound to loopback. This is irrelevant here — the guest's only
-network neighbor is the host, and the VM itself is the isolation
-boundary. See [`trust-model.md`](trust-model.md#documented-accepted-trade-offs).
+The Apple runtime boots a full Linux kernel with nftables and `iptable_raw`, so
+the image (`ImageBuild.guestConfig` in `Sources/CoopHost/ImageBuild.swift`)
+applies no kernel workarounds: Docker runs with its default `iptables-nft`
+backend and its raw-table "direct access filtering" rule, and
+`/etc/resolv.conf` is left as the base image provides it. The Firecracker-era
+workarounds (iptables-legacy, a static `resolv.conf`, masking `fcnet.service`,
+and `DOCKER_INSECURE_NO_IPTABLES_RAW=1`) are not part of this fork's image.
 
 ## scp tilde expansion (OpenSSH 9+)
 

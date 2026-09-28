@@ -45,7 +45,6 @@ coop/
 ├── coop-sandbox/            # Swift Apple Containerization VM runtime
 ├── coop-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)
-├── guest/init.sh            # guest first-boot init
 └── docs/                    # this tree
 ```
 

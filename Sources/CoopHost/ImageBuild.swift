@@ -278,7 +278,7 @@ public final class TemporaryDirectory: @unchecked Sendable {
     let template = (NSTemporaryDirectory() as NSString).appendingPathComponent(prefix + "XXXXXX")
     var bytes = Array(template.utf8CString)
     guard mkdtemp(&bytes) != nil else { throw .posix("Failed to create", template) }
-    path = String(cString: bytes)
+    path = String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     chmod(path, 0o700)
   }
 
@@ -413,8 +413,7 @@ public enum Provisioning {
       chown "\(user):\(user)" /workspace
 
       # No iptables-legacy or NO_IPTABLES_RAW needed — the Apple runtime uses a full kernel with
-      # nftables and iptable_raw support. These workarounds are Firecracker-only
-      # (see scripts/guest/guest-config.sh and docs/platform-notes.md).
+      # nftables and iptable_raw support (see docs/platform-notes.md).
 
       echo '  [guest] Enabling services...'
       systemctl enable docker ssh
