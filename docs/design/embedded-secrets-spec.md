@@ -347,12 +347,18 @@ document already carries the credential (§34).
 # 7. Dependencies
 
 The host package's only third-party dependency today is
-`swift-argument-parser`. This specification adds **one** new dependency, and
-only for scrypt:
+`swift-argument-parser`. This specification adds **one** package, only for
+scrypt:
 
 ```text
-apple/swift-crypto  →  product _CryptoExtras  (KDF.Scrypt)
+apple/swift-crypto 5.0.0 (exact)  →  product CryptoExtras  (KDF.Scrypt)
 ```
+
+**Decision (2026-09-28):** use swift-crypto's scrypt rather than an in-house
+implementation. On Darwin, `CryptoExtras` builds BoringSSL and depends on
+`swift-asn1`; that supply-chain cost is accepted in exchange for a vetted,
+optimized KDF (a slower hand-written scrypt would force a lower work factor
+than attackers' tuned implementations).
 
 Everything else comes from system frameworks already imported by `CoopHost`:
 
@@ -369,12 +375,11 @@ Foundation
 
 Requirements:
 
-- Depend on `_CryptoExtras` only; do not use swift-crypto's `Crypto` product
-  in place of CryptoKit.
-- Pin with `exact:` in `Package.swift` (matching the existing
-  `swift-argument-parser` pin) and commit `Package.resolved`.
-- Verify the `KDF.Scrypt` API and parameter names against the pinned release,
-  and record the pin in the closeout review as a supply-chain change.
+- Depend only on `CryptoExtras`; do not use swift-crypto's `Crypto` product in
+  place of CryptoKit.
+- Pin with `exact:` in `Package.swift` and commit `Package.resolved`
+  (including the transitive `swift-asn1` pin).
+- Record the pin in the closeout review as a supply-chain change.
 
 No Argon2, SQLite, or third-party dotenv package is included.
 

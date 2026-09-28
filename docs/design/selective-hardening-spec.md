@@ -564,12 +564,23 @@ isolation gate (`IsolationGate.verifyNetwork`) compares these with the policy
 coop expects and fails closed. This proves the configuration the VM was
 created from, not guest behavior; guest-side probes are test evidence only.
 
-The mode is fixed per sandbox at create time. Changing `network.egress` for an
+The mode is fixed per sandbox at create time. Changing `egress` for an
 existing instance requires a stop, a record update, and a start.
 
-Open before Phase 3: run the live experiment (host-mode sandbox; external
-TCP/UDP/ICMP/IPv6/DNS must fail; SSH and `ssh -R` / `ssh -L` must work; a
-shared-mode control).
+**Live result (2026-09-28, patched owner, isolated runtime root):** with host
+mode and NAT44/NAT66/DNS proxy/RA/DHCP disabled, every guest probe failed:
+HTTPS and ICMP to 1.1.1.1, IPv6 to 2606:4700:4700::1111, DNS via the gateway
+and 1.1.1.1 (UDP and TCP), raw UDP, and the LAN router. Host→guest SSH,
+`ssh -R` and `ssh -L` worked. The shared-mode control reached the Internet.
+This held with host `net.inet.ip.forwarding=1`. Guest→host reachability was
+unchanged and covers **every host address**, including the LAN IP and Remote
+Login's sshd. Not tested: Internet Sharing enabled, IPv6 egress in the control
+(the host has no IPv6 uplink). Wrapping a coop-built `vmnet_network_ref` in
+`VmnetNetwork.Interface(reference:)` works without forking containerization.
+
+Config naming: `network` is a retired Firecracker top-level key that
+`ConfigDecoder` rejects by name, so the setting is `egress: "open" | "none"`
+at top level rather than a `network` object.
 
 ## 6.2 Config surface
 
@@ -577,9 +588,7 @@ Initial config:
 
 ```jsonc
 {
-  "network": {
-    "egress": "open" // or "none"
-  }
+  "egress": "open" // or "none"
 }
 ```
 
@@ -607,7 +616,7 @@ difference is whether a provider proxy is required, which is `proxy.mode`'s
 job (§7.5).
 
 "Provider-only" is consequently a **preset** (§10.2):
-`network.egress = "none"` + `proxy.mode = "required"`. If the selected
+`egress = "none"` + `proxy.mode = "required"`. If the selected
 agent/provider cannot operate through the proxy under that preset, startup MUST
 fail with an actionable error rather than switching to `open`.
 
@@ -669,10 +678,8 @@ A future mode MAY be added:
 
 ```jsonc
 {
-  "network": {
-    "egress": "allowlist",
-    "allow": [{ "host": "github.com", "port": 443 }]
-  }
+  "egress": "allowlist",
+  "egress_allow": [{ "host": "github.com", "port": 443 }]
 }
 ```
 
@@ -853,7 +860,7 @@ continues to take precedence and tear the proxy down, as today.
 
 ## 7.6 Interaction with network modes
 
-`network.egress` and `proxy.mode` are orthogonal: the proxy path does not use
+`egress` and `proxy.mode` are orthogonal: the proxy path does not use
 guest egress (§6.2).
 
 - `egress = "none"` + `proxy.mode = "required"` is the provider-only preset.
@@ -1105,7 +1112,7 @@ The Embedded Coop Secrets design intentionally has no secret-store auth log. Bou
 
 ```jsonc
 {
-  "network": { "egress": "none" },
+  "egress": "none",
   "proxy": { "mode": "required" },
   "workspace": {
     "pull": { "mode": "stage", "max_files": 10000, "max_bytes": "200MiB" }
@@ -1158,7 +1165,7 @@ workspace return: direct or stage according to global default
 Recommended for remote-model coding tasks that do not need package/network access after bootstrapping.
 
 ```text
-network.egress: none
+egress: none
 proxy.mode: required
 workspace return: stage
 ```
@@ -1168,7 +1175,7 @@ workspace return: stage
 For local models / fully pre-provisioned environments.
 
 ```text
-network.egress: none
+egress: none
 proxy.mode: off
 github: off
 workspace return: stage
@@ -1188,7 +1195,7 @@ reuse `coop up --dry-run --json`, which already prints the resolved plan, by
 including the expanded security settings in it. Prefer the latter (no new
 command).
 
-Presets that need `network.egress = "none"` are available only once Feature 2
+Presets that need `egress = "none"` are available only once Feature 2
 ships.
 
 Explicit config values MAY override a preset if the precedence rules are simple and visible.
@@ -1205,7 +1212,7 @@ This is illustrative, not a frozen schema.
 // ~/.coop/config.jsonc (excerpt)
 {
   "security": { "preset": "provider-only" },
-  "network": { "egress": "none" },
+  "egress": "none",
   "proxy": {
     "mode": "required",
     "anthropic": { "credential": "cmd:…", "auth": "api_key" }
@@ -1243,7 +1250,7 @@ The trust model should be updated with these explicit invariants.
 
 ## 12.2 Egress invariant
 
-> When `network.egress != "open"`, enforcement is host/runtime-owned. No guest-controlled configuration is sufficient to establish or widen the effective policy.
+> When `egress != "open"`, enforcement is host/runtime-owned. No guest-controlled configuration is sufficient to establish or widen the effective policy.
 
 The existing "Guests can reach host services — accepted by design" entry is
 updated to say whether `none` changes it (§6.4).
