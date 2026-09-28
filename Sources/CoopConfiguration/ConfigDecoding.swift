@@ -286,6 +286,22 @@ enum ConfigDecoder {
       },
       egress: try r.defaulted("egress", .open) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, [EgressMode.open, .none])
+      },
+      limits: try r.defaulted("limits", .none) { v, p throws(FieldError) in
+        let l = try ObjectReader(v, at: p)
+        try l.rejectUnknown(allowing: ["session_ttl"])
+        return LimitsConfig(
+          sessionTTL: try l.optional("session_ttl") { v, p throws(FieldError) in
+            if case .string(let text) = v {
+              return try Parse.domain(p) { () throws(ValidationError) in
+                try SessionTTL(parsing: text)
+              }
+            }
+            let seconds = try Parse.unsigned(v, p, as: UInt32.self)
+            return try Parse.domain(p) { () throws(ValidationError) in
+              try SessionTTL(seconds: seconds)
+            }
+          })
       })
   }
 

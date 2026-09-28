@@ -337,3 +337,53 @@ private struct FakeInstallation {
   #expect("\(error)".contains("APPLE_NETWORK_ISOLATION"))
   try backend.destroyInstance(instance)
 }
+
+@Test func sessionTTLPassesAnExpiryToEveryBoot() throws {
+  let install = try FakeInstallation(extra: #", "limits": {"session_ttl": "2h"}"#)
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  _ = install.calls()
+  let directory = install.config.instancesDirectory.appending("ttl").path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let instance = Instance(
+    name: try InstanceName("ttl"), index: InstanceIndex(0)!, directory: directory, image: .default)
+  try instance.save()
+  let before = Int64(Date().timeIntervalSince1970)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let start = try #require(install.calls().first { $0.first == "start" })
+  let index = try #require(start.firstIndex(of: "--expires-at"))
+  let expires = try #require(Int64(start[index + 1]))
+  #expect(expires >= before + 7200 && expires <= before + 7200 + 60)
+
+  // A restart begins a new window too.
+  let running = try #require(try backend.asRunning(instance))
+  try backend.stop(running)
+  _ = install.calls()
+  try backend.startExisting(instance)
+  let restart = try #require(install.calls().first { $0.first == "start" })
+  #expect(restart.contains("--expires-at"))
+  try backend.destroyInstance(instance)
+}
+
+@Test func withoutASessionTTLNoExpiryIsPassed() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let directory = install.config.instancesDirectory.appending("plain").path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let instance = Instance(
+    name: try InstanceName("plain"), index: InstanceIndex(0)!, directory: directory,
+    image: .default)
+  try instance.save()
+  _ = install.calls()
+  try backend.createAndStart(instance, diskGiB: nil)
+  let start = try #require(install.calls().first { $0.first == "start" })
+  #expect(start.first == "start" && !start.contains("--expires-at"))
+  try backend.destroyInstance(instance)
+}

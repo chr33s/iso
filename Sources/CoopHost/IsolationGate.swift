@@ -101,6 +101,13 @@ public enum IsolationGate {
       throw .unqualified("running sandbox \(name) reports no live state or effective configuration")
     }
     guard let ip = live.ipv4 else { throw .networkIsolation("sandbox \(name) reports no address") }
+    // Independent of the owner's own timer: a hung owner past its deadline
+    // is not handed out.
+    if let deadline = inspection.record.sessionDeadline, deadline <= Date() {
+      throw .sessionExpired(
+        "sandbox \(name)'s session ended at \(ISO8601DateFormatter().string(from: deadline)); `coop stop` then `coop start` begins a new one"
+      )
+    }
     let running = Resources(cpus: effective.cpus, memoryBytes: effective.memoryBytes)
     guard running == expected.resources else {
       throw .identityConflict(

@@ -191,19 +191,26 @@ public enum Sandboxes {
 
     // MARK: start / stop
 
-    public static func start(root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval) async throws -> LiveState {
+    public static func start(
+        root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval, expiresAt: Date? = nil
+    ) async throws -> LiveState {
+        if let expiresAt, expiresAt <= Date() { throw SandboxError("--expires-at is in the past") }
         try root.requireInitialized()
         let paths = root.sandbox(id)
         // Guarded up to the bootstrap only: the owner takes the guard to
         // claim the sandbox, so waiting for it here would deadlock.
         try await mutating(paths) {
-            _ = try paths.loadRecord()
+            var record = try paths.loadRecord()
             if status(paths) == .crashed {
                 // Take the job back from launchd before starting it fresh.
                 Launchd.bootout(paths.launchdLabel)
                 try? FileManager.default.removeItem(at: paths.live)
             }
             try requireStopped(paths, id)
+            if record.expiresAt != expiresAt {
+                record.expiresAt = expiresAt
+                try paths.save(record)
+            }
             Launchd.bootout(paths.launchdLabel)
             let domain = Launchd.domain()
             let plist = Launchd.plist(

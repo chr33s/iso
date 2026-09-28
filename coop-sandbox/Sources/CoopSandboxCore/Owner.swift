@@ -10,6 +10,8 @@ public enum Owner {
     /// systemd's "halt" request: SIGRTMIN+3 on Linux (SIGRTMIN = 34).
     static let systemdHalt = Signal(rawValue: 37)
     static let haltGraceSeconds: UInt64 = 60
+    /// After the forced kill, before the owner gives up on the guest agent.
+    static let killGraceSeconds: UInt64 = 10
 
     public static func run(root: SandboxRoot, id: SandboxID) async throws {
         try root.requireInitialized()
@@ -21,6 +23,13 @@ public enum Owner {
         try? FileManager.default.removeItem(at: paths.live)
 
         var record = try paths.loadRecord()
+        // A relaunch (launchd restarts a crashed owner) never outlives the
+        // session: past the deadline the owner exits cleanly without booting,
+        // and launchd does not restart a clean exit.
+        if let expiresAt = record.expiresAt, expiresAt <= Date() {
+            log("session expired at \(expiresAt); not booting")
+            return
+        }
         let vmm = VZVirtualMachineManager(
             kernel: Kernel(path: root.kernel, platform: .linuxArm),
             initialFilesystem: .block(format: "ext4", source: root.initfs.path, destination: "/", options: ["ro"])
@@ -45,7 +54,30 @@ public enum Owner {
         try JSONEncoder.pretty.encode(live).write(to: paths.live, options: .atomic)
         log("started pid=\(live.pid) ipv4=\(live.ipv4 ?? "-") ipv6=\(live.ipv6 ?? "-")")
 
-        let lifecycle = Lifecycle(container: container)
+        // The last resort: both kills below are guest-agent RPCs, which a root
+        // guest can wedge. The VM runs inside this process, so exiting ends it;
+        // a clean exit is not restarted by launchd.
+        let liveFile = paths.live
+        let controlSocket = paths.control
+        let lifecycle = Lifecycle(container: container) {
+            log("guest did not stop: exiting the owner to end the VM")
+            try? FileManager.default.removeItem(at: liveFile)
+            unlink(controlSocket.path)
+            // No atexit handlers: a crash in one would exit non-zero and
+            // launchd would relaunch the owner.
+            _exit(0)
+        }
+        if let expiresAt = record.expiresAt {
+            // Host wall clock, re-read at least every 30 s so host sleep and
+            // clock changes count; the guest clock plays no part.
+            Task {
+                while Date() < expiresAt {
+                    try? await Task.sleep(for: .seconds(min(30, max(1, expiresAt.timeIntervalSinceNow))))
+                }
+                log("session expired at \(expiresAt): halting")
+                await lifecycle.requestHalt()
+            }
+        }
         let effective = effectiveConfig(record: record, config: config, rootfs: rootfs, interface: interface)
         try ControlSocket.serve(at: paths.control) { request in
             switch request.op {
@@ -251,27 +283,55 @@ public enum Owner {
     }
 }
 
+/// What `Lifecycle` needs of the machine: a signal to its init, delivered
+/// over the guest agent.
+protocol HaltableContainer: Sendable {
+    func kill(_ signal: Signal) async throws
+}
+
+extension LinuxContainer: HaltableContainer {}
+
 actor Lifecycle {
-    private let container: LinuxContainer
+    private let container: any HaltableContainer
     private var halting = false
     private var stopped = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private let forceExit: @Sendable () -> Void
+    private let haltGrace: Duration
+    private let killGrace: Duration
 
-    init(container: LinuxContainer) { self.container = container }
+    init(
+        container: any HaltableContainer,
+        haltGrace: Duration = .seconds(Owner.haltGraceSeconds),
+        killGrace: Duration = .seconds(Owner.killGraceSeconds),
+        forceExit: @escaping @Sendable () -> Void
+    ) {
+        self.container = container
+        self.haltGrace = haltGrace
+        self.killGrace = killGrace
+        self.forceExit = forceExit
+    }
 
     /// Ask systemd to shut down cleanly; force the VM down if it has not
-    /// halted within the grace period.
+    /// halted within the grace period, and end the owner (and so the VM) if
+    /// the guest agent cannot deliver even that. The guest-agent calls run in
+    /// their own tasks: a wedged agent must not stall the timers. `kill` holds
+    /// the container's state lock across its RPC, so a wedged halt also stalls
+    /// the forced kill; ending the owner is the only step that cannot be
+    /// blocked by the guest.
     func requestHalt() {
         guard !halting else { return }
         halting = true
         Owner.log("halt requested")
         let container = self.container
+        let forceExit = self.forceExit
         Task {
-            try? await container.kill(Owner.systemdHalt)
-            try? await Task.sleep(for: .seconds(Owner.haltGraceSeconds))
-            if !self.isStopped {
-                try? await container.kill(.kill)
-            }
+            Task { try? await container.kill(Owner.systemdHalt) }
+            try? await Task.sleep(for: self.haltGrace)
+            guard !self.isStopped else { return }
+            Task { try? await container.kill(.kill) }
+            try? await Task.sleep(for: self.killGrace)
+            if !self.isStopped { forceExit() }
         }
     }
 

@@ -39,6 +39,7 @@ Comments are not carried over. Once `config.jsonc` exists, a remaining `config.t
 | `data_dir` | string (path) | `~/.coop` | Directory for VM artifacts: images, instances, keys. |
 | `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
+| `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `egress` | string | `"open"` | Guest network reach beyond the host: `"open"` (NAT to the host's uplinks) or `"none"`. See [egress](#egress). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `coop up --post-start <cmd>` or `coop start --post-start <cmd>`. |
 
@@ -564,6 +565,23 @@ inside a `"none"` guest fail; bake them
 into the image (`coop setup --profile …`) instead. Combine with
 `"proxy": {"mode": "required"}` for a guest whose only way out is the
 credential proxy.
+
+## `limits`
+
+```jsonc
+{ "limits": { "session_ttl": "8h" } }
+```
+
+`session_ttl` (seconds, or a number with an `s`/`m`/`h` suffix, from 1 minute
+to 720 hours) ends each boot of an instance that long after `up`/`start`
+began it. The sandbox's owner process halts the VM at the deadline using the
+host's clock (the guest clock plays no part, and host sleep counts), a
+relaunch after a crash refuses to boot past it, and coop refuses to hand out
+an instance whose deadline has passed (`APPLE_SESSION_EXPIRED`). `coop start`
+begins a new session. Unknown `limits` members are rejected.
+
+Host-side logs are already bounded without a setting: the guest console log
+restarts after 8 MiB, and the owner log holds only the runtime's own lines.
 
 ## `workspace` section
 

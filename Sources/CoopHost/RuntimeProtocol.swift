@@ -1,7 +1,7 @@
 import CoopCore
 import Foundation
 
-/// Typed parsers for `coop-sandbox` JSON output (protocol 3). Runtime output
+/// Typed parsers for `coop-sandbox` JSON output (protocol 4). Runtime output
 /// is untrusted input: every record is decoded into a closed type, reported
 /// identifiers are checked against the one requested, and the effective VM
 /// configuration the isolation gate reads rejects unknown fields, so a
@@ -18,6 +18,8 @@ public enum RuntimeError: Error, Equatable, Sendable, CustomStringConvertible {
   case identityConflict(String)
   case hostKeyChanged(String)
   case bootTimeout(String)
+  /// The instance's session TTL has passed.
+  case sessionExpired(String)
   /// A call timed out, was cancelled, or overflowed: its effect is unknown.
   case operationUncertain(String)
   /// The runtime ran and reported failure (no diagnostic class, as in Rust).
@@ -32,6 +34,7 @@ public enum RuntimeError: Error, Equatable, Sendable, CustomStringConvertible {
     case .identityConflict(let m): "APPLE_IDENTITY_CONFLICT: \(m)"
     case .hostKeyChanged(let m): "APPLE_HOST_KEY_CHANGED: \(m)"
     case .bootTimeout(let m): "APPLE_BOOT_TIMEOUT: \(m)"
+    case .sessionExpired(let m): "APPLE_SESSION_EXPIRED: \(m)"
     case .operationUncertain(let m): "APPLE_OPERATION_UNCERTAIN: \(m)"
     case .failed(let m): m
     }
@@ -67,6 +70,13 @@ public struct SandboxRecord: Sendable, Equatable, Codable {
   public let lastOperation: OperationID?
   /// `host_only`, or absent for a shared-mode (NAT) sandbox.
   public let network: String?
+  /// ISO 8601 end of the current session, absent without a session TTL.
+  public let expiresAt: String?
+
+  /// The session deadline, if one is recorded and parses.
+  public var sessionDeadline: Date? {
+    expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+  }
 }
 
 public struct LiveState: Sendable, Equatable, Codable {
@@ -191,7 +201,7 @@ public struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 }
 
 public enum RuntimeProtocol {
-  public static let version: UInt32 = 3
+  public static let version: UInt32 = 4
 
   static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], _ what: String)
     throws(RuntimeError)

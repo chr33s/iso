@@ -3,8 +3,8 @@ import Foundation
 
 /// Version of the JSON contract between coop and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
-public let protocolVersion = 3
-public let runtimeVersion = "0.3.0"
+public let protocolVersion = 4
+public let runtimeVersion = "0.4.0"
 public let containerizationVersion = "0.45.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns
@@ -287,6 +287,10 @@ public struct SandboxRecord: Codable, Sendable {
     /// Absent (nil) for shared-mode sandboxes, so records stay readable by
     /// callers that predate the field.
     public var network: NetworkMode?
+    /// Host wall-clock end of the current boot's session, set by `start
+    /// --expires-at` and cleared by a `start` without it. The owner halts
+    /// the VM at this time and refuses to boot past it.
+    public var expiresAt: Date?
 
     public var networkMode: NetworkMode { network ?? .shared }
     public var subnet: String { Self.subnet(subnetIndex) }

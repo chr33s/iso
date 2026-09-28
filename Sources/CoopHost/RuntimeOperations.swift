@@ -54,9 +54,12 @@ extension SandboxRuntime {
       limit: Self.jsonLimit, cancellable: true)
   }
 
-  public func start(_ name: MachineName) throws(RuntimeError) {
+  /// `expiresAt` bounds this boot's session (the owner halts the VM then).
+  public func start(_ name: MachineName, expiresAt: Date? = nil) throws(RuntimeError) {
     _ = try checked(
-      ["start"], [name.rawValue, "--wait-seconds", String(settings.bootTimeout.seconds)],
+      ["start"],
+      [name.rawValue, "--wait-seconds", String(settings.bootTimeout.seconds)]
+        + (expiresAt.map { ["--expires-at", String(Int64($0.timeIntervalSince1970))] } ?? []),
       deadline: bootDeadline + .seconds(10), limit: Self.jsonLimit, cancellable: true)
   }
 

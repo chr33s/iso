@@ -95,6 +95,46 @@ public struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertible
   public static func < (a: Self, b: Self) -> Bool { a.bytes < b.bytes }
 }
 
+/// A session length: plain seconds or an `s`/`m`/`h` suffix, from one
+/// minute to 30 days.
+public struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
+  public static let range: ClosedRange<UInt32> = 60...(30 * 24 * 3600)
+  public let seconds: UInt32
+
+  public init(seconds: UInt32) throws(ValidationError) {
+    guard Self.range.contains(seconds) else {
+      throw ValidationError("session_ttl must be between 1m and 720h")
+    }
+    self.seconds = seconds
+  }
+
+  public init(parsing text: String) throws(ValidationError) {
+    var digits = Substring(text)
+    var scale: UInt32 = 1
+    switch digits.last {
+    case "s": digits = digits.dropLast()
+    case "m":
+      digits = digits.dropLast()
+      scale = 60
+    case "h":
+      digits = digits.dropLast()
+      scale = 3600
+    default: break
+    }
+    guard let n = parseUnsigned(String(digits), as: UInt32.self) else {
+      throw ValidationError("expected a duration such as 3600, \"30m\" or \"8h\", got '\(text)'")
+    }
+    let (value, overflow) = n.multipliedReportingOverflow(by: scale)
+    guard !overflow else { throw ValidationError("session_ttl must be between 1m and 720h") }
+    try self.init(seconds: value)
+  }
+
+  public var description: String {
+    seconds % 3600 == 0
+      ? "\(seconds / 3600)h" : seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds)s"
+  }
+}
+
 /// Guest RAM at or above the bootable floor, enforced on every entry point.
 public struct VmMemory: Hashable, Comparable, Sendable, CustomStringConvertible {
   public static let minimum = MiB(128)!
