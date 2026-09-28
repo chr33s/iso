@@ -1,8 +1,8 @@
 # Trust model
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported. Source references below are to the Swift host
+> (`Sources/`), the runtime (`coop-sandbox/`) and the proxy (`coop-proxy/`).
 
 This is the engineering-facing trust model for `coop` — the authoritative list
 of trust boundaries, taint sources, and the invariants that hold the isolation
@@ -18,7 +18,7 @@ they don't introduce one.
 ## The core boundary: the VM
 
 **coop's isolation boundary is the Linux guest VM itself** — an Apple
-Containerization or Lima VM on a macOS 27+ Apple Silicon host. The point of the
+Containerization VM on a macOS 27+ Apple Silicon host. The point of the
 tool is to run AI coding agents (Claude Code, Codex) with broad autonomy
 *inside* that boundary, so the guest is deliberately permissive:
 
@@ -42,41 +42,38 @@ user launched it.
 
 | Zone | Trust | Notes |
 |------|-------|-------|
-| Host user + `config.toml` | Trusted | `config.toml` `cmd:` values run arbitrary `sh -c` on the host (`config.rs:resolve_cmd_value`). The config file is a host code-execution surface; only the owner should write it. |
-| coop process (host) | Trusted | Holds/relays secrets, constructs guest commands, runs `iptables`/`firecracker` via `sudo`. |
+| Host user + `config.jsonc` | Trusted | `cmd:` values run arbitrary `/bin/sh -c` on the host (`CredentialResolver` in `Sources/CoopHost/CredentialResolver.swift`), only when an operation needs the value — never merely by loading the configuration. The config file is a host code-execution surface; only the owner should write it. |
+| coop process (host) | Trusted | Holds/relays secrets, constructs guest commands, drives `coop-sandbox`, `container build`, `ssh`, and `coop-proxy`. Every subprocess goes through `ProcessRunner` with an argv, never a shell string. |
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint, `8.8.8.8`. Reached over the network; authenticated where applicable. |
 
 ## Taint sources (treat as untrusted)
 
-- **Guest filesystem content pulled to the host.** `workspace.rs` `pull` /
-  `tar_pipe_pull` / `rsync_pull` bring guest-authored file contents, filenames,
-  and symlinks onto the host filesystem. This is the **widest guest→host
+- **Guest filesystem content pulled to the host.** `Workspace.pull`
+  (`Sources/CoopHost/Workspace.swift`) brings guest-authored file contents,
+  filenames, and symlinks onto the host filesystem. This is the **widest guest→host
   channel** and the primary place a path-traversal or symlink escape could land.
-- **Rootfs files touched while loop-mounted during setup.** `setup.rs`
-  `patch_guest_network` reads and rewrites the guest's `/etc/hosts`, and `coop
-  commit` turns a guest-mutated rootfs into an image template — so the guest
-  authors both the contents and the directory entry at that path on every later
-  create/restore. Contents are read bounded and best-effort
-  (`bound_guest_hosts` degrades to a default rather than aborting the
-  lifecycle). Hosts-file operations use pinned directory descriptors, reject
-  symlinked `/etc`, and read only regular files checked through an `O_PATH`
-  descriptor. Replacement is atomic; permissions are set on the new file's
-  descriptor. Other paths remain **host** paths: `MountGuard::simple` is a
-  loop mount, not a chroot, so the traversal rule below still applies to the
-  hostname and network-config writes. Those paths are not currently validated.
-- **Guest command output read by the host.** e.g. `check_guest_dirty` reads
-  `git status --porcelain` from the guest. Today this only gates control flow /
+- **Committed disks.** `coop commit` turns a guest-mutated disk into an image,
+  so the guest authors every file on it. Host-key and machine-id removal runs
+  in a maintenance VM, never on the host (see
+  [Apple sandbox backend](#apple-sandbox-backend)).
+- **Guest command output read by the host.** e.g. the workspace dirty check in
+  `Workspace.swift` reads `git status --porcelain` from the guest. Today this only gates control flow /
   is printed to the user — it is never fed into `sh -c` on the host. Keep it
   that way.
-- **A fetched `devcontainer.json`.** `git_repo_devcontainer.rs` /
-  `devcontainer.rs` parse devcontainer JSON that may originate from a remote
-  repo. Its values configure the guest; they must never reach a host `cmd:`
-  evaluation or host shell.
-- **Downloaded update artifacts.** `update.rs` tarball + `SHA256SUMS` from the
+- **A fetched `devcontainer.json`.** `DevcontainerGitRepo.swift` /
+  `DevcontainerJSON.swift` / `DevcontainerModel.swift` parse devcontainer JSON
+  that may originate from a remote repo. Its values configure the guest; they
+  must never reach a host `cmd:` evaluation or host shell. Recursive parsers of
+  untrusted input (devcontainer JSON, guest JSON, Codex TOML) run on a fixed
+  8 MiB stack (`withParserStack`) below their depth caps.
+- **Downloaded update artifacts.** `Update.swift` tarball + `SHA256SUMS` from the
   release host — gated by checksum and (best-effort) Sigstore attestation.
-- **OCI feature blobs.** `devcontainer_oci.rs` pulls devcontainer *Features*
-  from GHCR; the install snippet runs **in the guest**, not the host.
+- **OCI feature blobs.** `DevcontainerOCI.swift` pulls devcontainer *Features*
+  from GHCR; the install snippet runs **in the guest**, not the host. coop
+  verifies the manifest against its own bytes (and any `@sha256:` pin and
+  registry-claimed digest) and each layer against its descriptor digest, and
+  reads `install.sh` only as a bounded regular file (never through a symlink).
 
 ## Secrets and how they cross into the guest
 
@@ -85,53 +82,69 @@ coop relays several secrets from the host into the guest: `ANTHROPIC_API_KEY`,
 user `env_forward` entries, and the VM SSH key. The invariants:
 
 - **Never on argv.** Secrets ride SSH `SendEnv` (env channel) or process env
-  (`backend.rs:prepare_env_forwarding`, `EnvForward`), or are piped via **stdin**
-  (`SshTarget::exec_with_stdin`, the git-clone credential helper
-  `build_clone_with_token_script`, `curl -H @-` in `github_pat.rs`/`update.rs`).
-  Never build a command line with the secret as an argument — it is visible in
-  `ps`/`/proc`. Known exceptions are the macOS `security` and 1Password `op`
-  backends, which take the secret on argv because their CLIs offer no stdin
-  path; this is documented at the call sites and limited to the store step.
+  (`EnvForward` in `GuestSession.swift`), or are piped via **stdin**
+  (`ProcessRunner` stdin, the git-clone credential helper, `curl -H @-` in
+  `GitHubAPI.swift` / `Update.swift` / `DevcontainerGitRepo.swift`). Never
+  build a command line with the secret as an argument — it is visible in
+  `ps`/`/proc`. The one known exception is the macOS Keychain store step
+  (`security add-generic-password -w`, `SecretStore.swift`), whose CLI offers
+  no stdin path; it is documented at the call site and never appears in coop's
+  messages. MCP server definitions (with resolved header secrets) reach
+  `claude mcp add-json` on stdin, not the ssh command line.
+- **Nothing else rides the SSH environment.** Guest-bound `ssh`/`scp`/`rsync`
+  inherit only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SHELL`, `TERM`,
+  `LANG` and `LC_*` from the host, plus the variables coop forwards on purpose.
+  A user's own `SendEnv` (the guest accepts any) therefore cannot carry a raw
+  provider key into the guest in proxy mode. `guest_env.json` (start-time
+  `--env` values) is owner-only, in an owner-only instance directory.
+- **Proxy processes are identified, not assumed.** A proxy starts only on a
+  free port and must be the sole listener afterwards (`lsof`), or startup fails
+  closed before the credential is sent; a recorded proxy or tunnel PID is
+  signalled only while it still names `coop-proxy` / `ssh`.
 - **`GITHUB_TOKEN` defaults to Off.** A saved VM PAT assignment is also explicit
   opt-in; it stores only a validated existing entry key. Invocation-level
   `--no-github` suppresses the assignment before loading it. Active assignments
   reject both managed `GITHUB_TOKEN` and `GH_TOKEN` overrides and fail closed
   on missing references or failed retrieval. It is only forwarded with an explicit
-  `github = auto|env|pat` opt-in (`backend.rs:resolve_github_token`). When
-  forwarded, `bootstrap_agents` runs `gh auth setup-git`, which makes the token
+  `github` `auto|env|pat` opt-in (`GitHubTokens.guestToken`). When
+  forwarded, agent bootstrap runs `gh auth setup-git`, which makes the token
   **persistent guest state** (a git credential helper any guest process can
   read). A change that forwards it by default, or makes it persistent where it
   wasn't, is a finding. `up --no-github` / `start --no-github` override the
   strategy to Off and disable the PAT wizard for that invocation. This does
   not scrub existing guest credentials or block explicit environment entries
   or one-shot clone authentication; see [GitHub auth](configuration.md#github-auth).
-- **Secret files stay `0600`, dirs `0700`.** File-backend PATs live at
-  `<state_dir>/github-pat/<account>.txt` (`secret_store.rs:store_file`); all
-  managed writes go through `fs_util::atomic_write_with_mode` / `atomic_write_ssh`,
-  which never relax permissions.
-- **Secrets stay out of logs.** `Cmd::redacted_arg` redacts argv in traces;
-  `EnvForward`/`Secret<T>` custom `Debug` impls keep values out of debug output.
-  Do not log a resolved secret.
-- **The stored token is indirected, never inlined.** `config.toml` holds a
-  `cmd:...` retrieval command (`secret_store.rs:CmdToken`), not the plaintext
-  token; coop runs it at VM-start to fetch the value.
+- **Secret files stay `0600`, dirs `0700`.** coop stores secrets only in the
+  macOS Keychain; there is no plaintext-file or other fallback store. All
+  managed writes go through `AtomicFile` / `StateStore`, which never relax
+  permissions.
+- **Secrets stay out of logs.** `Secret<T>` (`Sources/CoopCore/Units.swift`)
+  and `EnvForward` render as `<redacted>` in descriptions, debug output, and
+  reflection; subprocess descriptions redact secret arguments. Configuration
+  and decoding errors name field paths, never values. Do not log a resolved
+  secret.
+- **The stored token is indirected, never inlined.** The configuration holds a
+  `cmd:...` retrieval command (`KeychainReference` in `SecretStore.swift` for
+  coop-created items), not the plaintext token; coop runs it when it needs the
+  value. Provider proxy credentials must be `cmd:` references; literal values
+  are rejected.
 - **Proxy mode keeps the model API keys out of the guest entirely** (issue #411,
-  opt-in `[proxy]`). When enabled in remote model mode, `ANTHROPIC_API_KEY`
+  opt-in `proxy`). When enabled in remote model mode, `ANTHROPIC_API_KEY`
   (Claude) and/or `OPENAI_API_KEY` (Codex) are **not** forwarded
-  (`prepare_env_forwarding`'s `suppress_anthropic_key`/`suppress_openai_key`, one
-  per provider); the host-side `coop-proxy` holds the real credential and the
+  (`suppressAnthropicKey` / `suppressOpenAIKey` in `Bootstrap.swift`, one per
+  provider); the host-side `coop-proxy` holds the real credential and the
   guest gets only a per-instance capability token (Claude via `settings.json`,
   Codex via the `coop_local` provider's bearer `env_key`). In proxy mode Codex's
   `~/.codex/auth.json` is also **not** staged onto the guest disk (it holds a
   refreshable subscription token). Each credential is resolved on the host and
   handed to `coop-proxy` over **stdin**, never argv or disk; a resolution failure
   fails the boot closed. A per-VM override
-  (`proxy_state.rs`, `<inst.dir>/proxy.json`) selects a different host-side
+  (`ProxyState.swift`, `<inst.dir>/proxy.json`) selects a different host-side
   credential for one VM — resolution is override → default → off — without
   changing the proxy binary or the capability token. See
   [`credential-proxy.md`](credential-proxy.md).
 - **Codex ChatGPT account auth is persistent guest state.** With
-  `[codex] auth = "chatgpt"`, coop suppresses `OPENAI_API_KEY` across config,
+  `codex.auth` `"chatgpt"`, coop suppresses `OPENAI_API_KEY` across config,
   process env, `env_forward`, and persisted `--env` overlays, writes
   `cli_auth_credentials_store = "keyring"` to guest `~/.codex/config.toml`, and
   excludes host `auth.json` from the guest copy. Codex stores its cached account
@@ -156,105 +169,48 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 
 ## SSH boundary
 
-- coop connects to the guest with `StrictHostKeyChecking=no`,
-  `UserKnownHostsFile=/dev/null`, `IdentitiesOnly=yes`
-  (`backend.rs:SshTarget::transport_opts` — the one list `ssh`, `scp`, and
-  rsync's `-e` all derive from — and `workspace.rs:ssh_config_block`). coop's
-  own transports add `BatchMode=yes`, so a rejected key fails instead of
-  falling back to a password prompt; the `~/.ssh/config` block written for the
-  user's own `ssh coop-<name>` deliberately does not. This is
-  deliberate: guest keys are ephemeral and regenerated per VM, so there is no
-  stable host key to pin. The trade-off is that a MITM on the path to the guest
-  is not detected — acceptable because that path is loopback / a local TAP link
-  to a VM the host itself owns.
-- The guest SSH key (`<data_dir>/vm_key`, ed25519, **passphrase-less by
-  design**) is a VM-access credential. Do not "harden" it with a passphrase
-  (it must be used non-interactively), but do flag any change that exposes it
-  or copies it off the host.
-- Flag any change that extends the no-host-key-checking options to a
-  **non-guest** host.
-- The host-key policy is one field, `SshTarget::host_keys`
-  (`backend.rs:HostKeyPolicy`), so every transport and the editor block derive
-  from the same choice. Firecracker and Lima use `Unverified` (above). The
-  opt-in Apple sandbox backend uses `Pinned`: its guest address is on a
-  runtime-managed network and can be reassigned, so the Ed25519 host key is
-  read once over the runtime's native control channel (`coop-sandbox exec`
-  over vsock to the owned sandbox, never `ssh-keyscan`), written to a
-  per-instance `known_hosts`, and enforced with `StrictHostKeyChecking=yes`,
-  `HostKeyAlias=<machine>.coop-apple`, `UpdateHostKeys=no`, `ForwardAgent=no`,
-  and `IdentityAgent=none`, so coop's guest-facing SSH authenticates with its
-  own key file and never consults the host agent.
-  A missing or changed key is a hard error. Flag any path that re-enrolls
-  automatically or builds a pinned target with the unverified options.
+- Every guest SSH connection pins the guest's host key. The options come from
+  one place, `SSHTarget` (`Sources/CoopHost/SSH.swift`: `hostKeyOptions` and
+  `transportOptions` — the one list `ssh`, `scp`, and rsync's `-e` all derive
+  from — and the `~/.ssh/config` block in `SSHConfig.swift`):
+  `StrictHostKeyChecking=yes` against a per-instance `known_hosts`,
+  `GlobalKnownHostsFile=/dev/null`, `HostKeyAlias=<machine>.coop`,
+  `UpdateHostKeys=no`, `ForwardAgent=no`, `IdentityAgent=none`, and
+  `IdentitiesOnly=yes`, so coop's guest-facing SSH authenticates with its own
+  key file and never consults the host agent. coop's own transports add
+  `BatchMode=yes`, so a rejected key fails instead of falling back to a
+  password prompt; the block written for the user's own `ssh coop-apple-<name>`
+  deliberately does not.
+- The Ed25519 host key is read once over the runtime's native control channel
+  (`coop-sandbox exec` over vsock to the owned sandbox, never `ssh-keyscan`)
+  and written by `HostKeyPin` (`HostKeys.swift`). A missing or changed key is a
+  hard error. Pins written by older builds under the `.coop-apple` alias no
+  longer match and must be re-enrolled. Flag any path that re-enrolls
+  automatically or builds a target without the pinned options.
+- The guest SSH key (`<data_dir>/backends/apple-container-v1/vm_key`, ed25519,
+  **passphrase-less by design**) is a VM-access credential. Do not "harden" it
+  with a passphrase (it must be used non-interactively), but do flag any change
+  that exposes it or copies it off the host.
 
 ## Network
 
-- **Port-forwards bind to `127.0.0.1` only** (`port_forward.rs`): both the
+- **Port-forwards bind to `127.0.0.1` only** (`PortForwards.swift`): both the
   collision probe and the `ssh -L 127.0.0.1:<host>:127.0.0.1:<guest>` spec.
   There are **no `0.0.0.0` binds** anywhere in the tree. A new listener must
   bind loopback explicitly.
-- Firecracker networking (`network.rs`) sets up a `br0` bridge + per-instance
-  TAP, enables `ip_forward`, and adds a `MASQUERADE` + `FORWARD` ruleset so the
-  guest reaches the internet through the host's default interface. A change
-  that widens guest egress or adds inbound reachability is a finding.
-- **Guest VMs cannot reach each other by IP.** All Firecracker guests share
-  `br0` and a single subnet, so this is enforced, not structural, and it takes
-  **two** complementary controls — removing either one re-opens the path:
-  1. Every TAP is an isolated bridge port (`bridge link set … isolated on`),
-     which stops the bridge forwarding frames between two guest ports. This is
-     the only control that covers the L2 path, because bridged frames reach the
-     `FORWARD` chain only when `br_netfilter` is loaded.
-  2. An `iptables -I FORWARD 1 -i br0 -o br0 -j DROP` rule, which stops a
-     routed guest→guest packet. Port isolation cannot cover this path: a frame
-     addressed to the bridge is *local delivery*, not port-to-port forwarding,
-     so the isolated flag never applies, and `ip_forward` would otherwise send
-     it back out `br0` from the bridge device — which has no isolated source
-     port either. Without the rule this falls through to the host's `FORWARD`
-     policy, `ACCEPT` on a stock host.
-
-  Both are asserted on every `setup_tap` and fail closed. The rule is
-  idempotent because `ensure_guest_isolation_rule` probes with `iptables -C`
-  first, then checks that it is the first FORWARD rule. Startup fails if another
-  rule precedes it; move the DROP first in the host firewall configuration before
-  retrying. It is asserted per call rather than in `ensure_bridge` because that
-  returns early on a pre-existing bridge. The bridge flag is read back after
-  being set — a kernel older than 4.18 caps the bridge-port attribute policy
-  below `IFLA_BRPORT_ISOLATED` and silently drops it, so `bridge` exits 0 on a
-  port that is not isolated. Requires Linux ≥ 4.18 and iproute2 ≥ 4.19.
-
-  **Known residuals**, in scope for a follow-up, not closed here:
-  - *Isolation is pairwise.* The kernel drops a frame only when both ports are
-    isolated, so one non-isolated member of `br0` re-opens L2 for every guest.
-    A VM still running from before the upgrade therefore leaves the whole
-    bridge unisolated, not just itself, until it is restarted.
-  - *A guest can still impersonate a peer.* Neither control governs ARP or the
-    guest's own addressing, and coop reaches guests by IP with host-key
-    checking deliberately disabled — so a connection meant for a peer could
-    land on an impostor along with its `SendEnv` payload.
-  - *IPv6 and firewall reloads.* Only `iptables` is touched, and any
-    `iptables-restore` (`firewall-cmd --reload`, `ufw reload`) discards the
-    rule until the next `coop up` re-asserts it.
-  - *A pre-existing `br0`.* `ensure_bridge` adopts a bridge it did not create
-    without inspecting its members or installing its other rules; on such a
-    host the DROP also applies to that bridge's traffic.
-
-  **Accepted by design:** guests *can* reach the host — that path carries the
-  local-model gateway and the credential proxy's `ssh -R` tunnel. A change that
-  drops either control, or that stops asserting them per start, is a finding.
-
-  On Lima this holds structurally instead: the generated templates declare no
-  `networks:` stanza, so each guest gets its own per-instance gvisor usernet
-  stack (not Apple's shared-segment `VZNATNetworkDeviceAttachment`) and has no
-  L2 neighbor to reach. Adding a `networks:` stanza would put guests on a
-  shared segment and void this.
-- `rewrite_host_url` rewrites a loopback local-model endpoint to the
-  guest-visible gateway address so the guest can reach a model server running
-  on the host; non-loopback URLs pass through unchanged.
+- **Guest VMs cannot reach each other by IP.** Each sandbox has its own vmnet
+  network; see [Apple sandbox backend](#apple-sandbox-backend) for how that is
+  demonstrated. **Accepted by design:** guests *can* reach the host — that path
+  carries the local-model tunnels and the credential proxy's `ssh -R` tunnel. A
+  change that widens guest egress or adds inbound reachability is a finding.
+- A loopback local-model endpoint reaches the guest over a per-instance
+  `ssh -R` reverse tunnel onto the guest's own loopback (`LocalEndpoints` in
+  `ModelState.swift`); non-loopback URLs pass through unchanged.
 - **The credential proxy (issue #411) binds host loopback** (`127.0.0.1`, it
   refuses an unspecified address at bind) and is exposed into the guest with a
-  per-instance `ssh -R` reverse tunnel (`proxy.rs:spawn_reverse_forward`), so —
-  like the port-forwards above — it never binds a non-loopback interface and is
-  reachable by exactly one guest, identically on both backends. It is guarded
+  per-instance `ssh -R` reverse tunnel (`ProxyLifecycle.swift`), so — like the
+  port-forwards above — it never binds a non-loopback interface and is
+  reachable by exactly one guest. It is guarded
   by a per-instance capability token and forwards only its documented
   provider-specific operations to a fixed per-provider upstream
   (`api.anthropic.com` / `api.openai.com`), never a guest-supplied host — one
@@ -267,12 +223,12 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in
-  `sandbox-exec` with [`src/seatbelt-proxy.sb`](../src/seatbelt-proxy.sb).
+  `sandbox-exec -p` with the Seatbelt profile embedded in
+  `Sources/CoopHost/SeatbeltProfile.swift`.
   File writes and program execution are denied; outbound connections are
   restricted to ports 443 and 53. Startup probes the denials before binding.
-  If confinement or HTTP readiness fails, VM startup aborts. The Rust/Landlock
-  implementation has been removed; Linux credential-proxy mode fails locally.
-  The guest cannot select another implementation or supply a binary path.
+  If confinement or HTTP readiness fails, VM startup aborts. The guest cannot
+  select another implementation or supply a binary path.
 
   **Accepted limitations:**
   - Egress is port-scoped, not host-scoped. A compromised proxy could connect
@@ -283,13 +239,13 @@ user `env_forward` entries, and the VM SSH key. The invariants:
     stderr descriptors remain writable; no request/credential content is logged.
   - `sandbox-exec` is deprecated but remains the confinement primitive.
 
-## Apple sandbox backend (opt-in `apple-container` feature)
+## Apple sandbox backend
 
 The same VM boundary applies. The backend drives coop-sandbox
 (`coop-sandbox`), a runtime coop builds on `apple/containerization`. The
 isolation contract lives in two layers: the runtime cannot express host
 exposure, and coop verifies the effective configuration anyway
-(`src/apple_container/`).
+(`AppleBackend`, `SandboxRuntime`, `IsolationGate` in `Sources/CoopHost/`).
 
 - **Runtime shape.** Each instance is its own VM on its own vmnet network
   (`10.231.N.0/24`). The runtime's `SandboxRecord` has no field for a host
@@ -297,7 +253,7 @@ exposure, and coop verifies the effective configuration anyway
   its VM configuration is built in one function (`Owner.machineConfiguration`)
   with kernel pseudo-filesystems only. Adding any such field or `create` flag is
   a finding.
-- **Runtime qualification.** `security::qualify` accepts only `coop-sandbox`
+- **Runtime qualification.** `SandboxRuntime` qualification accepts only `coop-sandbox`
   with protocol 2 and `containerization` 0.45.0. The runtime itself accepts
   only a kernel whose sha256 is in `KernelPin.allowed`. On first `coop setup`,
   `coop-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
@@ -305,7 +261,7 @@ exposure, and coop verifies the effective configuration anyway
   pinned digest. No config key or flag relaxes these checks; adding one is a
   finding.
 - **Isolation gate.** Before first boot, on every restart, and before every SSH
-  target is handed out, `security::verify_effective` checks the configuration
+  target is handed out, `IsolationGate.verifyEffective` checks the configuration
   the running VM's owner reports. The effective config is parsed with
   unknown-field rejection, so a new host-facing knob fails closed. It requires:
   - `/sbin/init`, without nested virtualization;
@@ -322,7 +278,7 @@ exposure, and coop verifies the effective configuration anyway
   rather than values read back from the VM. Checking them catches a runtime
   that changes them, not a VM that differs from its configuration. The mount,
   root-disk, relay, and interface checks read the configuration the VM was
-  created from. The proof (`SecurityReady`) is process-local and never persisted. The runtime
+  created from. The proof (`IsolationGate.Ready`) is process-local and never persisted. The runtime
   root is canonicalized (realpath) on both sides, so the path comparison is
   exact.
 - **Separate networks are not proof of isolation.** Guest-to-guest
@@ -333,12 +289,11 @@ exposure, and coop verifies the effective configuration anyway
   from both sides and after restarts, with the host as the positive control.
   Guest firewall rules do not count, because the guest has root. Rerun it before
   changing the `containerization` pin or the VM configuration.
-- **Guests can reach host services.** Like every coop backend (see
-  [Network](#network)), a guest reaches the host through its NAT gateway and
+- **Guests can reach host services.** As noted under [Network](#network), a
+  guest reaches the host through its NAT gateway and
   the host's LAN address. On a Mac that includes anything listening on all
   interfaces, such as sshd when Remote Login is on, AirPlay Receiver, and
-  rapportd. **Accepted by design**, consistent with Lima and Firecracker: those
-  services authenticate their clients, and coop's own host listeners bind
+  rapportd. **Accepted by design**: those services authenticate their clients, and coop's own host listeners bind
   loopback and reach a guest only through its SSH tunnel. vmnet has no
   per-network filter, so closing this would need a root-owned `pf` anchor on
   every Mac. The Apple default network (other workloads' containers) and host
@@ -357,7 +312,8 @@ exposure, and coop verifies the effective configuration anyway
   operation as its last committed one before the flag is set. Flag any other
   path that re-enrolls.
 - **Runtime subprocesses** get a cleared environment. Only `HOME`, `USER`,
-  `LOGNAME`, `TMPDIR`, locale, and a fixed `PATH` are passed (`cli.rs`), so
+  `LOGNAME`, `TMPDIR`, locale, and a fixed `PATH` are passed
+  (`SandboxRuntime.swift`), so
   `SSH_AUTH_SOCK`, provider and GitHub tokens, `DYLD_*`, and `CONTAINER_*`
   never reach the runtime or the builder. The launchd job that runs each owner
   gets a fixed `PATH`/`HOME` of its own. `EnvForward` is for SSH sessions only.
@@ -380,7 +336,7 @@ exposure, and coop verifies the effective configuration anyway
 - **Guest-controlled text** that coop displays (host-key comments,
   runtime/guest error text, console-log excerpts, and `coop logs` in both
   snapshot and `--follow` mode) has its control characters replaced first.
-- **Local-model tunnels** (`proxy::sync_model_tunnels`) are reconciled on
+- **Local-model tunnels** (`ProxyLifecycle.swift`) are reconciled on
   every bootstrap, and every boot first closes those recorded for the
   previous boot. A tunnel the current model config no longer needs is
   closed, so switching local mode off really removes the guest's path to the
@@ -431,14 +387,14 @@ exposure, and coop verifies the effective configuration anyway
 
 ## `coop update` trust chain
 
-Self-update (`update.rs`) must preserve, in order:
+Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
 
 1. Metadata from the pinned `chr33s/coop` GitHub repo (compile-time const).
-2. `normalize_tag` — the version tag is validated as semver **before** it enters
+2. `normalizeTag` — the version tag is validated as semver **before** it enters
    the API URL path (path-traversal guard).
 3. **Mandatory checksum.** The `SHA256SUMS` asset must be present (install is
    refused otherwise) and every downloaded tarball is verified against it
-   (`verify_sha256`, constant-size `Sha256Hash` compare).
+   (`verifySHA256`, fixed-size digest compare).
 4. **Best-effort attestation.** `gh attestation verify --repo chr33s/coop
    --bundle attestations.jsonl` (Sigstore provenance), against the bundle asset
    downloaded from the same release.
@@ -446,7 +402,7 @@ Self-update (`update.rs`) must preserve, in order:
    `--bundle` means **no attestations-API call and no credential** — `gh` marks
    the flag `DisableAuthCheckFlag`, so no token or `gh auth login` is needed.
    The bundle asset is fetched with a deliberately unauthenticated request
-   (`curl_download(url, dest, None)` in `update.rs`, `download_bundle` in
+   (a bare `curl` in `Update.swift`, `download_bundle` in
    `install.sh`) rather than through `download_asset` / `gh release download`,
    which would re-attach the very credential this transport exists to avoid — a
    SAML-restricted token would then 403 on the fetch and drop the chain back to
@@ -483,7 +439,7 @@ Self-update (`update.rs`) must preserve, in order:
    A release that publishes no bundle asset — or one whose download fails, or
    whose bundle is empty — falls back to the API path, where `gh` requires a
    credential authorized for the org even though the store itself is
-   anonymously readable. `update.rs` and `install.sh` treat all three
+   anonymously readable. `Update.swift` and `install.sh` treat all three
    identically, because for a client they are one situation: no bundle to read.
    An empty bundle is
    rejected rather than passed through because `gh` before 2.56.0
@@ -514,18 +470,17 @@ understanding the rationale; do flag a change that *widens* them:
 - **Native agent installers are trusted build inputs.** Provisioning fetches
   Claude's installer from `claude.ai` and Codex's from
   `https://chatgpt.com/codex/install.sh` over HTTPS, then runs them as the
-  configured guest user. On Firecracker this happens in the host-side chroot;
-  a chroot does not provide VM isolation. Lima provisioning and live agent
-  updates execute inside a VM. This build-time trust is distinct from the
+  configured guest user. Provisioning runs inside the `container build`
+  builder VM, and live agent updates inside the instance VM. This build-time trust is distinct from the
   untrusted guest boundary described above.
-- **`DOCKER_INSECURE_NO_IPTABLES_RAW=1`** in the guest. The Firecracker CI
-  kernel lacks `iptable_raw`, so Docker 28+ can't install its raw-table
-  "direct access filtering" rule. Without it, other hosts on the guest's LAN
+- **`DOCKER_INSECURE_NO_IPTABLES_RAW=1`** in the guest, inherited from the
+  minimal Firecracker CI kernel, which lacks `iptable_raw`, so Docker 28+ can't
+  install its raw-table "direct access filtering" rule. Without it, other hosts on the guest's LAN
   could route to published container ports bound to loopback — irrelevant here
   because the guest's only network neighbor is the host and the VM *is* the
   isolation boundary.
 - **iptables-legacy** and a **static `/etc/resolv.conf`** in the guest — both
-  work around the minimal CI kernel (no nftables, no systemd-resolved). Guest
+  inherited workarounds for a minimal kernel (no nftables, no systemd-resolved). Guest
   config only; no host-side trust impact.
 
 ## Stop-and-confirm checklist
@@ -537,7 +492,7 @@ Stop and get explicit human confirmation before merging a change that:
 - forwards a new secret into the guest, or makes an existing one persistent
   inside the guest;
 - runs a host subprocess on tainted (guest- or fetch-derived) bytes — no shell
-  strings; use `Cmd::arg`/`RemoteCommand::arg`;
+  strings; use a `ProcessRunner` argv / `RemoteCommand.arg`;
 - writes a **host** filesystem path derived from tainted data — validate against
   traversal first;
 - logs or traces tainted or secret content — that channel becomes an

@@ -33,7 +33,7 @@ for candidate in /usr/local/bin/container /opt/homebrew/bin/container; do
     [[ -x "$candidate" ]] && { CONTAINER="$candidate"; break; }
 done
 [[ -n "$CONTAINER" ]] || { echo "SKIP: no Apple container CLI installed"; exit 0; }
-for tool in swift cargo jq ssh ssh-keygen nc openssl python3; do
+for tool in swift jq ssh ssh-keygen nc openssl python3; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done
 
@@ -220,14 +220,14 @@ trap cleanup EXIT
 
 # ── coop end to end ──────────────────────────────────────────
 
-COOP="$WORK/target/debug/coop"
+COOP="$WORK/swift-build/debug/coop"
 CDATA="$WORK/coop-data"
 CSTATE="$CDATA/backends/apple-container-v1"
 CROOT="$CSTATE/runtime"
-CCFG="$WORK/coop.toml"
+CCFG="$WORK/coop.jsonc"
 # Same config with a short boot deadline, for a restart whose guest never
 # starts sshd.
-CCFG_FAIL="$WORK/coop-fail.toml"
+CCFG_FAIL="$WORK/coop-fail.jsonc"
 
 coop() { "$COOP" --config "$CCFG" "$@" </dev/null; }
 csbx() { "$SANDBOX" "$1" --root "$CROOT" "${@:2}"; }
@@ -302,7 +302,8 @@ imported="$("$SANDBOX" image import --root "$ROOT" --oci-tar "$WORK/image.tar")"
 check "image imports into the private store" jq -e --arg r "$IMAGE" 'any(.reference == $r)' <<<"$imported"
 rm -f "$WORK/image.tar"
 # A maintenance image equivalent to the one coop builds
-# (image.rs maintenance_dockerfile): Ubuntu with e2fsprogs.
+# (BuildContext.maintenanceDockerfile in Sources/CoopHost/ImageBuild.swift):
+# Ubuntu with e2fsprogs.
 mkdir -p "$WORK/maintenance"
 printf '%s\n' 'FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3' \
     'RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends e2fsprogs && rm -rf /var/lib/apt/lists/*' \
@@ -823,16 +824,20 @@ if want coop; then
     sbx stop "$A" >/dev/null 2>&1
     sbx stop "$B" >/dev/null 2>&1
     kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
+    # $1: extra apple_container settings as a JSON object.
     write_cfg() {
-        printf '%s\n' "data_dir = \"$CDATA\"" 'github = "off"' '' '[vm]' 'vcpu_count = 2' \
-            'mem_size_mib = 2048' 'template_size_gib = 8' '' '[apple_container]' \
-            "binary = \"$SANDBOX\"" "builder = \"$CONTAINER\"" "kernel = \"$kernel\"" "$@"
+        jq -n --arg data "$CDATA" --arg binary "$SANDBOX" --arg builder "$CONTAINER" \
+            --arg kernel "$kernel" --argjson extra "${1:-"{}"}" \
+            '{data_dir: $data, github: "off",
+              vm: {vcpu_count: 2, mem_size_mib: 2048, template_size_gib: 8},
+              apple_container: ({binary: $binary, builder: $builder, kernel: $kernel} + $extra)}'
     }
     write_cfg >"$CCFG"
-    write_cfg 'boot_timeout_seconds = 15' >"$CCFG_FAIL"
+    write_cfg '{"boot_timeout_seconds": 15}' >"$CCFG_FAIL"
     mkdir -p "$WORK/project"
     echo "$RUN" >"$WORK/project/marker"
-    if cargo build --quiet --target-dir "$WORK/target" >"$WORK/coop-build.log" 2>&1 &&
+    if swift build --product coop --force-resolved-versions --scratch-path "$WORK/swift-build" \
+        >"$WORK/coop-build.log" 2>&1 &&
         coop setup -y >"$WORK/coop-setup.log" 2>&1; then
         pass "coop setup builds, verifies, and publishes the image"
     else

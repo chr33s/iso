@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Real Apple sandbox gate for the Swift proxy, using fake credentials.
 
-Requires scripts/build-proxy-transition.py first. Builds a private runtime and
-VM image, checks guest refusal paths, checks Swift startup failures, and tears down.
+Builds the Swift host, coop-proxy and a private runtime and VM image (or uses
+`--coop PATH` for a prebuilt host), checks guest refusal paths, checks Swift
+proxy startup failures, and tears down.
 The optional controlled-upstream phase sends allowed operations only to local
-TLS fixtures. Live agent/provider smoke is separate.
+TLS fixtures.
+
+`--live-agents` instead runs the H-07 in-guest agent tool-use check with real,
+dedicated credentials: it boots one throwaway VM whose proxies read the
+credentials through `cmd:` references (Keychain items by default), checks the
+guest's loopback proxy endpoints and the running proxy binary, then runs
+`agent-tool-smoke.py` once per model named with `--claude-model`/`--codex-model`.
+No model is selected implicitly. Credential values never pass through this
+script.
 """
+import hashlib
 import argparse
 import contextlib
 import json
@@ -23,6 +33,11 @@ import time
 from proxy_vm_forwarding import exercise as exercise_controlled_upstream, https_listener
 
 ROOT = Path(__file__).resolve().parents[1]
+AGENT_PROBE = "/tmp/coop-agent-tool-smoke.py"
+LIVE_CREDENTIALS = {
+    provider_name: f"cmd:security find-generic-password -s coop-live-{provider_name} -a coop-live -w"
+    for provider_name in ["anthropic", "openai"]
+}
 FAKES = ["proxy-vm-test-openai", "proxy-vm-test-anthropic", "proxy-vm-host-openai", "proxy-vm-host-anthropic"]
 
 
@@ -32,7 +47,31 @@ def main():
                         help="also test admitted streaming through local TLS; reserves port 443 before setup (may prompt for sudo)")
     parser.add_argument("--controlled-upstream-preflight", action="store_true",
                         help="test both local confined TLS streams on port 443 without building or booting VMs")
+    parser.add_argument("--coop", "--swift-host", dest="coop", type=Path,
+                        help="use this prebuilt coop host instead of building it with swift build")
+    live = parser.add_argument_group("live agent tool use (H-07; real credentials, billed)")
+    live.add_argument("--live-agents", action="store_true",
+                      help="run only the in-guest agent tool-use check with dedicated credentials")
+    live.add_argument("--claude-model", action="append", default=[], metavar="MODEL",
+                      help="approved Anthropic model for `--agent claude` (repeatable)")
+    live.add_argument("--codex-model", action="append", default=[], metavar="MODEL",
+                      help="approved OpenAI model for `--agent codex` (repeatable)")
+    live.add_argument("--anthropic-credential", default=LIVE_CREDENTIALS["anthropic"], metavar="CMD_REF",
+                      help="`cmd:` reference for the dedicated Anthropic credential (default: coop-live-anthropic Keychain item)")
+    live.add_argument("--anthropic-auth", choices=["api_key", "bearer"], default="api_key")
+    live.add_argument("--openai-credential", default=LIVE_CREDENTIALS["openai"], metavar="CMD_REF",
+                      help="`cmd:` reference for the dedicated OpenAI credential (default: coop-live-openai Keychain item)")
     args = parser.parse_args()
+    if args.live_agents:
+        if args.controlled_upstream or args.controlled_upstream_preflight:
+            parser.error("--live-agents runs on its own; run --controlled-upstream separately")
+        if not (args.claude_model or args.codex_model):
+            parser.error("--live-agents needs at least one --claude-model or --codex-model")
+        for reference in [args.anthropic_credential, args.openai_credential]:
+            if not reference.startswith("cmd:"):
+                parser.error("live credentials must be `cmd:` references, never values")
+    elif args.claude_model or args.codex_model:
+        parser.error("--claude-model/--codex-model require --live-agents")
     if args.controlled_upstream_preflight:
         args.controlled_upstream = True
     work = Path(tempfile.mkdtemp(prefix="coop-proxy-vm-"))
@@ -40,7 +79,7 @@ def main():
     log = (work / "run.log").open("w")
     env = {key: os.environ[key] for key in ["HOME", "PATH", "USER", "LOGNAME", "TMPDIR"] if key in os.environ}
     env.update(OPENAI_API_KEY=FAKES[2], ANTHROPIC_API_KEY=FAKES[3])
-    config = work / "coop.toml"
+    config = work / "coop.jsonc"
     host = work / "bin/coop"
     data = work / "data"
     state = data / "backends/apple-container-v1"
@@ -88,6 +127,61 @@ def main():
                       "--output", "/dev/null", "--write-out", "%{http_code}", *headers,
                       endpoint + "/v1/responses", capture=True)
         assert status.strip() == str(expected), f"{name}: guest refusal status expected {expected}"
+    def install_agent_probe(name):
+        # Copy the probe in once over stdin so coop's command log stays one line.
+        probe = (ROOT / "tests/fixtures/credential-proxy/agent-tool-smoke.py").read_text()
+        coop("shell", name, "--", "sh", "-c", f"cat > {AGENT_PROBE}", input=probe)
+
+    def live_agents(args):
+        name = "proxy-live"
+        phase("Live: boot a throwaway VM with dedicated credentials")
+        coop("up", work / "project", "--name", name, "--no-github", "--no-devcontainer")
+        coop("exec", name, "--", "sudo", "apt-get", "update")
+        coop("exec", name, "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
+        phase("Live: guest endpoints and proxy identity")
+        instance = state / "instances" / name
+        expected = hashlib.sha256((work / "bin/coop-proxy").read_bytes()).hexdigest()
+        endpoints = {}
+        if args.claude_model:
+            claude = json.loads(coop("exec", name, "--", "cat", "./.claude/settings.json", capture=True))["env"]
+            endpoints["anthropic"] = claude["ANTHROPIC_BASE_URL"]
+            assert re.fullmatch(r"[0-9a-f]{64}", claude["ANTHROPIC_AUTH_TOKEN"]), "Claude lacks a capability"
+        if args.codex_model:
+            settings = coop("exec", name, "--", "cat", "./.codex/config.toml", capture=True)
+            endpoint = re.search(r"http://127\.0\.0\.1:[0-9]+", settings)
+            assert endpoint, "Codex configuration lacks the proxy endpoint"
+            endpoints["openai"] = endpoint[0]
+        for provider_name, endpoint in endpoints.items():
+            assert re.fullmatch(r"http://127\.0\.0\.1:[0-9]+", endpoint), f"{provider_name}: endpoint is not guest loopback"
+            pid = int((instance / f"proxy-{provider_name}.pid").read_text().strip())
+            command = Path(run(["ps", "-p", str(pid), "-o", "comm="], capture=True, timeout=10).strip())
+            assert command.resolve(strict=True) == (work / "bin/coop-proxy").resolve(strict=True), \
+                f"{provider_name}: unexpected proxy executable {command}"
+            actual = hashlib.sha256(command.read_bytes()).hexdigest()
+            assert actual == expected, f"{provider_name}: proxy binary changed"
+            record = {"provider": provider_name, "guest_endpoint": endpoint, "proxy_sha256": actual}
+            print(json.dumps(record), flush=True)
+            log.write(json.dumps(record) + "\n")
+        install_agent_probe(name)
+        failures = []
+        for agent, models in [("claude", args.claude_model), ("codex", args.codex_model)]:
+            for model in models:
+                phase(f"Live: {agent} tool use with {model}")
+                output = coop("shell", name, "--", "python3", AGENT_PROBE,
+                              "--agent", agent, "--model", model, capture=True, timeout=240, check=False)
+                try:
+                    observation = json.loads(output.strip().splitlines()[-1])
+                    assert observation["tool_result_and_final_answer"] is True
+                except (IndexError, ValueError, KeyError, AssertionError):
+                    failures.append(f"{agent} {model}")
+                    print(f"FAIL {agent} {model}; inspect {work / 'run.log'}", flush=True)
+                    continue
+                print(json.dumps(observation), flush=True)
+                log.write(json.dumps(observation) + "\n")
+        assert not failures, "live agent tool use failed: " + ", ".join(failures)
+        coop("stop", name)
+        phase("PASS live agent tool use through the guest proxy")
+
     succeeded = False
     listener_scope = contextlib.ExitStack()
     try:
@@ -113,31 +207,45 @@ def main():
                 return
         phase("Build private runtime")
         run([ROOT / "scripts/build-coop-sandbox.sh", work])
-        for name in ["coop", "coop-proxy"]:
-            shutil.copy2(ROOT / "target/debug" / name, work / "bin" / name)
+        phase("Build coop and coop-proxy")
+        if args.coop:
+            coop_binary = args.coop
+        else:
+            run(["swift", "build", "--product", "coop", "--force-resolved-versions"])
+            coop_binary = Path(run(["swift", "build", "--show-bin-path"], capture=True).strip()) / "coop"
+        proxy_package = ROOT / "coop-proxy"
+        run(["swift", "build", "--package-path", proxy_package, "--force-resolved-versions"])
+        proxy_bin = Path(run(["swift", "build", "--package-path", proxy_package, "--show-bin-path"],
+                             capture=True).strip())
+        shutil.copy2(coop_binary, work / "bin/coop")
+        shutil.copy2(proxy_bin / "coop-proxy-swift", work / "bin/coop-proxy")
         kernel = (Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve(strict=True)
-        # JSON string quoting is compatible with TOML basic strings for these host paths.
-        config.write_text(f'''data_dir = {json.dumps(str(data))}
-github = "off"
-[vm]
-vcpu_count = 2
-mem_size_mib = 4096
-template_size_gib = 16
-[apple_container]
-binary = {json.dumps(str(work / "bin/coop-sandbox"))}
-builder = {json.dumps(str(provider))}
-kernel = {json.dumps(str(kernel))}
-[proxy.openai]
-credential = "{FAKES[0]}"
-auth = "bearer"
-[proxy.anthropic]
-credential = "{FAKES[1]}"
-auth = "bearer"
-''')
+        # Proxy credentials are `cmd:` references; outside --live-agents the
+        # values stay synthetic.
+        if args.live_agents:
+            proxies = {}
+            if args.claude_model:
+                proxies["anthropic"] = {"credential": args.anthropic_credential, "auth": args.anthropic_auth}
+            if args.codex_model:
+                proxies["openai"] = {"credential": args.openai_credential, "auth": "bearer"}
+        else:
+            proxies = {provider_name: {"credential": f"cmd:printf %s {fake}", "auth": "bearer"}
+                       for provider_name, fake in [("openai", FAKES[0]), ("anthropic", FAKES[1])]}
+        config.write_text(json.dumps({
+            "data_dir": str(data), "github": "off",
+            "vm": {"vcpu_count": 2, "mem_size_mib": 4096, "template_size_gib": 16},
+            "apple_container": {"binary": str(work / "bin/coop-sandbox"), "builder": str(provider),
+                                "kernel": str(kernel)},
+            "proxy": proxies,
+        }, indent=2) + "\n")
         (work / "project").mkdir()
         (work / "peer-project").mkdir()
         phase("Build VM images")
         coop("setup", "-y")
+        if args.live_agents:
+            live_agents(args)
+            succeeded = True
+            return
         phase(f"Boot and bootstrap with Swift")
         coop("up", work / "project", "--name", "proxy-gate", "--no-github", "--no-devcontainer")
         coop("up", work / "peer-project", "--name", "proxy-peer", "--no-github", "--no-devcontainer")
@@ -208,10 +316,10 @@ auth = "bearer"
                     break
             assert time.monotonic() < deadline, "terminated Anthropic listener remains open"
             time.sleep(0.02)
-        agent_probe = (ROOT / "tests/fixtures/credential-proxy/agent-tool-smoke.py").read_text()
+        install_agent_probe("proxy-gate")
         for agent in ["codex", "claude"]:
             observation = json.loads(coop(
-                "shell", "proxy-gate", "--", "python3", "-c", agent_probe,
+                "shell", "proxy-gate", "--", "python3", AGENT_PROBE,
                 "--agent", agent, "--model", "coop-transport-failure-probe",
                 "--expect-transport-failure", capture=True, timeout=330))
             assert observation["terminal_transport_failure"] is True
@@ -293,7 +401,7 @@ auth = "bearer"
             cleanup_errors.append(error)
         if host.exists() and config.exists():
             phase("Cleanup private VMs")
-            for name in ["proxy-peer", "proxy-gate"]:
+            for name in ["proxy-live", "proxy-peer", "proxy-gate"]:
                 if (state / "instances" / name).exists():
                     try:
                         coop("destroy", name, timeout=120)

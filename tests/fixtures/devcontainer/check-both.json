@@ -1,0 +1,343 @@
+{
+  "setup": {
+    "entries": [
+      {
+        "key": "hostRequirements.cpus",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "4",
+        "note": ""
+      },
+      {
+        "key": "hostRequirements.memory",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "7630 MiB",
+        "note": ""
+      },
+      {
+        "key": "hostRequirements.storage",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "32 GiB",
+        "note": "instance disk size is applied at `coop start` time, not during setup"
+      },
+      {
+        "key": "hostRequirements.gpu",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "true",
+        "note": "unrecognised hostRequirements key"
+      },
+      {
+        "key": "postStartCommand",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "[\"echo a\",\"echo b\"]",
+        "note": "applied at start time"
+      },
+      {
+        "key": "containerEnv",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "3 entries",
+        "note": "applied at start time"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "8 entries",
+        "note": "applied at start time"
+      },
+      {
+        "key": "features.ghcr.io/devcontainers/features/bad:1",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "{\"v\":{\"n\":1}}",
+        "note": "feature option \"v\" must be a string, number, boolean, or null"
+      },
+      {
+        "key": "features.ghcr.io/devcontainers/features/go@sha256:nope",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "{}",
+        "note": "invalid feature digest in \"ghcr.io/devcontainers/features/go@sha256:nope\""
+      },
+      {
+        "key": "features.ghcr.io/devcontainers/features/rust:1",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "rust",
+        "note": "mapped to built-in profile 'rust'"
+      },
+      {
+        "key": "features.ghcr.io/other/x:1",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "ghcr.io/other/x:1",
+        "note": "no built-in profile match and only ghcr.io/devcontainers/features/* OCI features are supported"
+      },
+      {
+        "key": "features.node",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "node",
+        "note": "mapped to built-in profile 'node'"
+      },
+      {
+        "key": "mounts",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "3 entries",
+        "note": "applied at start time"
+      },
+      {
+        "key": "remoteUser",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "vscode",
+        "note": "baked into the image at setup time"
+      },
+      {
+        "key": "image",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "mcr.microsoft.com/devcontainers/base:ubuntu",
+        "note": "coop builds its own rootfs; base images are ignored"
+      },
+      {
+        "key": "customizations",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "<...>",
+        "note": "editor-specific; not relevant to coop"
+      },
+      {
+        "key": "name",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "demo",
+        "note": "informational only; coop names instances via --name or auto-generates"
+      },
+      {
+        "key": "zeta",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "{\"b\":[1,2.5,\"x\\ty\"],\"a\":null}",
+        "note": "unrecognised devcontainer.json key"
+      },
+      {
+        "key": "alpha",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "1",
+        "note": "unrecognised devcontainer.json key"
+      }
+    ],
+    "source_path": "{PATH}",
+    "ignored_paths": []
+  },
+  "start": {
+    "entries": [
+      {
+        "key": "hostRequirements.cpus",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "4",
+        "note": ""
+      },
+      {
+        "key": "hostRequirements.memory",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "7630 MiB",
+        "note": ""
+      },
+      {
+        "key": "hostRequirements.storage",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "32 GiB",
+        "note": ""
+      },
+      {
+        "key": "hostRequirements.gpu",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "true",
+        "note": "unrecognised hostRequirements key"
+      },
+      {
+        "key": "postStartCommand",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "echo a && echo b",
+        "note": ""
+      },
+      {
+        "key": "containerEnv",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "2 entries",
+        "note": "BAZ,FOO"
+      },
+      {
+        "key": "containerEnv",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "1 entries",
+        "note": "invalid env var names (must match [a-zA-Z_][a-zA-Z0-9_]*): 1BAD"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "0",
+        "note": "Invalid forward-port spec '0': guest port must be > 0"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "abc",
+        "note": "Invalid forward-port spec 'abc': guest port must be a number 1..=65535"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "70000",
+        "note": "port 70000 out of range 1..=65535"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "-1",
+        "note": "port must be a positive integer"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "1.5",
+        "note": "port must be a positive integer"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "true",
+        "note": "expected port number or 'GUEST[:HOST]' string"
+      },
+      {
+        "key": "forwardPorts",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "3000,8080:9090",
+        "note": ""
+      },
+      {
+        "key": "features.ghcr.io/devcontainers/features/bad:1",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "ghcr.io/devcontainers/features/bad:1",
+        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+      },
+      {
+        "key": "features.ghcr.io/devcontainers/features/go@sha256:nope",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "ghcr.io/devcontainers/features/go@sha256:nope",
+        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+      },
+      {
+        "key": "features.ghcr.io/devcontainers/features/rust:1",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "rust",
+        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+      },
+      {
+        "key": "features.ghcr.io/other/x:1",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "ghcr.io/other/x:1",
+        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+      },
+      {
+        "key": "features.node",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "node",
+        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+      },
+      {
+        "key": "mounts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "{\"type\":\"volume\",\"source\":\"v\",\"target\":\"/c\"}",
+        "note": "unsupported mount type 'volume' (coop supports 'bind' only in v1)"
+      },
+      {
+        "key": "mounts",
+        "status": "invalid",
+        "source": "devcontainer",
+        "value": "/nonexistent:/x",
+        "note": "Mount host path does not exist: /nonexistent"
+      },
+      {
+        "key": "mounts",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "/private/tmp->/b",
+        "note": ""
+      },
+      {
+        "key": "remoteUser",
+        "status": "applied",
+        "source": "devcontainer",
+        "value": "vscode",
+        "note": "matches the image's persisted guest user"
+      },
+      {
+        "key": "image",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "mcr.microsoft.com/devcontainers/base:ubuntu",
+        "note": "coop builds its own rootfs; base images are ignored"
+      },
+      {
+        "key": "customizations",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "<...>",
+        "note": "editor-specific; not relevant to coop"
+      },
+      {
+        "key": "name",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "demo",
+        "note": "informational only; coop names instances via --name or auto-generates"
+      },
+      {
+        "key": "zeta",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "{\"b\":[1,2.5,\"x\\ty\"],\"a\":null}",
+        "note": "unrecognised devcontainer.json key"
+      },
+      {
+        "key": "alpha",
+        "status": "unsupported",
+        "source": "devcontainer",
+        "value": "1",
+        "note": "unrecognised devcontainer.json key"
+      }
+    ],
+    "source_path": "{PATH}",
+    "ignored_paths": []
+  }
+}

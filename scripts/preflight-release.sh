@@ -4,13 +4,15 @@ set -euo pipefail
 # Release preflight for coop.
 #
 # Runs every check that gates a release from one machine, mirroring the CI
-# jobs (fmt, clippy, test, deny, the lightweight integration scripts) so a
-# doomed tag is never pushed, and adds the checks CI does not perform:
-#   - Cargo.toml / Cargo.lock / CHANGELOG / git-tag version agreement
-#   - release builds for the supported macOS ARM64 target (CI builds the native
-#     target; a cross-compile break otherwise first surfaces on the tag, which
-#     burns the version under immutable releases)
-#   - formal verification (kani), and opt-in mutation testing and fuzzing
+# jobs (swift format, build, test, the recorded-baseline parity checks, the
+# lightweight integration scripts) so a doomed tag is never pushed, and adds
+# the checks CI does not perform:
+#   - Swift package version (Sources/CoopHost/UpdateVersion.swift) / CHANGELOG
+#     / git-tag agreement
+#   - the release archive, built through scripts/build-release.py exactly as
+#     release.yml builds it (a break otherwise first surfaces on the tag,
+#     which burns the version under immutable releases)
+#   - opt-in fuzzing of the Swift host parsers
 #   - the Apple VM integration suite, driven through the native runtime as
 #     tests/run-integration.sh does (these need Apple virtualization hardware and
 #     cannot run in GitHub-hosted CI)
@@ -21,11 +23,8 @@ set -euo pipefail
 #   ./scripts/preflight-release.sh [options]
 #
 # Options:
-#   --mutants            Run mutation testing on lines changed since the last tag.
-#   --fuzz               Build and briefly run every fuzz target (needs nightly).
-#   --install-targets    rustup target add any missing release targets (the
-#                        cross-linker tools must already be installed).
-#   --quick              Skip the slow gates: full integration, mutants, fuzz.
+#   --fuzz               Replay the corpora and briefly fuzz every target.
+#   --quick              Skip the slow gates: release archive, full integration, fuzz.
 #   -h, --help           Show this help.
 #
 # Environment:
@@ -35,9 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-RUN_MUTANTS=0
 RUN_FUZZ=0
-RUN_INSTALL_TARGETS=0
 QUICK=0
 
 usage() {
@@ -47,9 +44,7 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mutants) RUN_MUTANTS=1; shift ;;
     --fuzz) RUN_FUZZ=1; shift ;;
-    --install-targets) RUN_INSTALL_TARGETS=1; shift ;;
     --quick) QUICK=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -80,8 +75,15 @@ step() {
   fi
 }
 
-cargo_toml_version() {
-  awk -F'"' '/^\[workspace\.package\]$/{p=1; next} /^\[/{p=0} p && /^version *=/{print $2; exit}' Cargo.toml
+# The version `coop --version` reports and scripts/build-release.py checks
+# the tag against.
+package_version() {
+  sed -n 's/.*public static let packageVersion = "\([^"]*\)".*/\1/p' \
+    Sources/CoopHost/UpdateVersion.swift | head -n 1
+}
+
+macos_27() {
+  [[ "$(uname -s)" == Darwin ]] && [[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 27 ]]
 }
 
 check_worktree() {
@@ -98,21 +100,14 @@ check_worktree() {
 }
 
 check_versions() {
-  local v tag lockv package
-  v="$(cargo_toml_version)"
+  local v tag
+  v="$(package_version)"
   if [[ -z "$v" ]]; then
-    echo "Could not read version from Cargo.toml" >&2
+    echo "Could not read packageVersion from Sources/CoopHost/UpdateVersion.swift" >&2
     return 1
   fi
   tag="v$v"
-  printf 'Cargo.toml version: %s  (release tag: %s)\n' "$v" "$tag"
-
-  package=coop
-  lockv="$(awk -v package="$package" '$0 == "name = \"" package "\"" {getline; gsub(/version = \"|\"/, ""); print; exit}' Cargo.lock)"
-  if [[ "$lockv" != "$v" ]]; then
-    printf 'Cargo.lock %s version (%s) != workspace version (%s) — run cargo build --workspace to refresh the lockfile\n' "$package" "$lockv" "$v"
-    return 1
-  fi
+  printf 'Package version: %s  (release tag: %s)\n' "$v" "$tag"
 
   # release.yml extracts notes with an exact whole-line match ($0 == "## vX.Y.Z"),
   # so the header must match exactly — a trailing date would pass a looser check
@@ -123,23 +118,36 @@ check_versions() {
   fi
 
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    printf 'Tag %s already exists — bump the version in Cargo.toml first\n' "$tag"
+    printf 'Tag %s already exists — bump packageVersion in Sources/CoopHost/UpdateVersion.swift first\n' "$tag"
     return 1
   fi
 
   printf 'Version sources agree; tag %s is free.\n' "$tag"
 }
 
-run_deny() {
-  if ! have cargo-deny; then
-    warn "cargo-deny not installed — supply-chain check skipped (CI still runs it; cargo install cargo-deny --locked)"
-    return 0
-  fi
-  cargo deny --workspace check
+run_format() {
+  swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints \
+    coop-proxy/Sources coop-proxy/Tests
+}
+
+run_host_tests() {
+  swift build --force-resolved-versions || return
+  swift test --force-resolved-versions || return
+  git diff --exit-code -- Package.resolved
+}
+
+# The recorded-baseline replays CI runs against the debug build.
+run_baselines() {
+  local coop=.build/debug/coop failed=0
+  python3 tests/test-swift-host-read-parity.py --swift "$coop" || failed=1
+  python3 tests/test-swift-host-lifecycle-parity.py --swift "$coop" || failed=1
+  python3 tests/test-swift-host-data-root-parity.py --swift "$coop" || failed=1
+  python3 tests/test-swift-host-cli-surface.py --swift "$coop" || failed=1
+  return "$failed"
 }
 
 run_swift_proxy() {
-  if [[ "$(uname -s)" != Darwin ]] || [[ "$(sw_vers -productVersion | cut -d. -f1)" -lt 27 ]]; then
+  if ! macos_27; then
     warn "Swift proxy validation requires macOS 27+ — run its package/process gates before tagging"
     return 0
   fi
@@ -147,12 +155,19 @@ run_swift_proxy() {
   python3 scripts/test-swift-proxy-process.py --skip-tls
 }
 
-run_taplo() {
-  if ! have taplo; then
-    warn "taplo not installed — TOML formatting skipped (CI still runs it; use scripts/install-dev-tools.sh)"
+run_sandbox_tests() {
+  swift test --package-path coop-sandbox --force-resolved-versions --no-parallel
+}
+
+# The unsigned release archive, built as release.yml builds it (signing and
+# publication stay in the workflow).
+run_release_archive() {
+  if ! macos_27; then
+    warn "release archive not built locally (needs macOS 27+ on Apple Silicon) — release.yml builds it on the tag (a failure there burns the version)."
     return 0
   fi
-  taplo format --check
+  python3 scripts/build-release.py --release --tag "v$(package_version)" \
+    --out .build/preflight-release
 }
 
 run_zizmor() {
@@ -163,128 +178,25 @@ run_zizmor() {
   zizmor .github/workflows/
 }
 
-run_kani() {
-  if ! have cargo-kani; then
-    warn "kani not installed — formal-verification proofs skipped (cargo install --locked kani-verifier && cargo kani setup)"
-    return 0
-  fi
-  cargo kani
-}
-
-run_mutants() {
-  if ! have cargo-mutants; then
-    warn "cargo-mutants not installed — mutation testing skipped (cargo install cargo-mutants --locked)"
-    return 0
-  fi
-  local lasttag
-  lasttag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-  if [[ -n "$lasttag" ]]; then
-    printf 'Mutating src/*.rs lines changed since %s\n' "$lasttag"
-    cargo mutants --in-diff <(git diff "$lasttag" -- 'src/*.rs') -- --lib
-  else
-    printf 'No prior tag found; mutating the logic-dense modules\n'
-    cargo mutants \
-      -f src/config.rs \
-      -f src/workspace.rs \
-      -f src/devcontainer.rs \
-      -f src/guest_env_state.rs \
-      -f src/github_repo.rs \
-      -f src/github_pat.rs \
-      -f src/secret_store.rs \
-      -f src/fs_util.rs \
-      -- --lib
-  fi
-}
-
 run_fuzz() {
-  if ! have cargo-fuzz; then
-    warn "cargo-fuzz not installed — fuzzing skipped (cargo install cargo-fuzz --locked)"
-    return 0
-  fi
-  cargo +nightly fuzz build
-  local target
-  for target in parse_repo_slug jsonc_to_json config_load; do
-    cargo +nightly fuzz run "$target" -- -max_total_time="${FUZZ_SECONDS:-30}"
-  done
-}
-
-# Release-build targets, matching the matrix in .github/workflows/release.yml.
-RELEASE_TARGETS=(aarch64-apple-darwin)
-
-# Report missing rustup targets and always explain how to install them.
-# `rustup target add` installs only the std library — cross-LINKING also needs
-# platform tools, so spell that out too. With --install-targets, run the
-# install non-interactively; otherwise warn and continue (never block on stdin).
-handle_missing_targets() {
-  local targets=("$@")
-  printf '\nMissing rustup targets for the release build: %s\n' "${targets[*]}"
-  printf 'Install the standard libraries with:\n'
-  printf '  rustup target add %s\n' "${targets[*]}"
-  printf 'The Swift proxy requires Xcode 27 on macOS 27+.\n'
-  printf 'Release CI uses a native macOS 27 runner; see RELEASING.md.\n'
-  if [[ "$RUN_INSTALL_TARGETS" == 1 ]]; then
-    rustup target add "${targets[@]}" || warn "rustup target add failed for: ${targets[*]}"
-  else
-    warn "missing release targets won't be built locally: ${targets[*]} — re-run with --install-targets (plus the cross-linker tools above) to cover them."
-  fi
-}
-
-# Build each release target whose toolchain is installed. CI only builds the
-# native target, so a cross-compile break otherwise first surfaces on the tag —
-# which, with immutable releases, burns the version.
-build_release_targets() {
-  if ! have rustup; then
-    warn "rustup not found — release targets not built locally; release.yml builds them on the tag (a failure there burns the version)."
-    return 0
-  fi
-  local installed target built=0 missing=()
-  installed="$(rustup target list --installed 2>/dev/null || true)"
-  for target in "${RELEASE_TARGETS[@]}"; do
-    grep -qx "$target" <<<"$installed" || missing+=("$target")
-  done
-  if ((${#missing[@]})); then
-    handle_missing_targets "${missing[@]}"
-    installed="$(rustup target list --installed 2>/dev/null || true)"
-  fi
-  for target in "${RELEASE_TARGETS[@]}"; do
-    if grep -qx "$target" <<<"$installed"; then
-      printf 'Building %s...\n' "$target"
-      cargo build --release --workspace --target "$target" || return 1
-      built=$((built + 1))
-    else
-      warn "release target $target not built locally (toolchain absent) — release.yml builds it on the tag, uncaught here."
-    fi
-  done
-  if [[ "$built" -eq 0 ]]; then
-    warn "no release targets built locally — cross-compile breakage won't surface until the tag is pushed. Build each target on a matching host or configure its C compiler and linker (see RELEASING.md)."
-  fi
-  return 0
+  scripts/fuzz.sh smoke "${FUZZ_SECONDS:-30}"
 }
 
 # ── Run ──────────────────────────────────────────────────────────
 
 step "Working tree clean" check_worktree
 step "Version consistency" check_versions
-step "Format (cargo fmt --check)" cargo fmt -- --check
-step "Clippy" cargo clippy --workspace --all-targets -- -D warnings
-step "Unit tests" cargo test --workspace
+step "Format (swift format lint --strict)" run_format
+step "Swift host build and tests" run_host_tests
+step "Recorded-baseline parity" run_baselines
 step "Swift proxy tests" run_swift_proxy
-step "Release target builds" build_release_targets
-step "Supply chain (cargo deny)" run_deny
+step "coop-sandbox tests" run_sandbox_tests
 step "Workflow audit (zizmor)" run_zizmor
-step "TOML formatting" run_taplo
-step "Integration probe regression tests" python3 tests/test-integration-probes.py
+step "Configuration migration tests" python3 tests/test-migrate-config.py
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
 step "Integration — installer provenance" ./tests/integration-install.sh
 step "Integration — coop update" ./tests/integration-update.sh
 step "Integration — coop uninstall" ./tests/integration-uninstall.sh
-step "Formal verification (kani)" run_kani
-
-if [[ "$RUN_MUTANTS" == 1 ]]; then
-  step "Mutation testing" run_mutants
-elif [[ "$QUICK" != 1 ]]; then
-  warn "Mutation testing not run — pass --mutants if this release touches logic/parsing modules"
-fi
 
 if [[ "$RUN_FUZZ" == 1 ]]; then
   step "Fuzzing" run_fuzz
@@ -293,10 +205,10 @@ elif [[ "$QUICK" != 1 ]]; then
 fi
 
 if [[ "$QUICK" == 1 ]]; then
-  warn "--quick: Apple VM integration suite skipped"
+  warn "--quick: release archive build and Apple VM integration suite skipped"
 else
+  step "Release archive (scripts/build-release.py)" run_release_archive
   step "Apple VM integration" ./tests/run-integration.sh
-
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
@@ -312,7 +224,7 @@ if [[ ${#FAILURES[@]} -gt 0 ]]; then
   printf '\nPreflight FAILED — do not tag the release.\n'
   exit 1
 fi
-version="$(cargo_toml_version)"
+version="$(package_version)"
 if [[ ${#WARNINGS[@]} -gt 0 ]]; then
   printf 'Completed checks passed for v%s; resolve the warnings and unrun gates before tagging.\n' "$version"
   exit 0

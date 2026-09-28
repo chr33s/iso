@@ -1,0 +1,10 @@
+Install a `coop-<name>` SSH alias for ad-hoc ssh/scp/rsync
+
+Usage: coop ssh-config [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+      --clean  Remove the SSH config entry for this instance and exit
+  -h, --help   Print help

@@ -1,8 +1,7 @@
 # Running Multiple Instances
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported.
 
 coop runs multiple VM instances simultaneously. Each instance gets its own name, disk, network identity, and lifecycle.
 
@@ -81,11 +80,11 @@ my-project       running
 
 ```
 $ coop status
-my-project       running    default    lima       load=0.42 mem=50% disk=25%
-another-project  stopped    default    lima
+my-project       running    default    apple-container   load=0.42 mem=50% disk=25%
+another-project  stopped    default    apple-container
 ```
 
-Each row shows the instance name, state (`running` or `stopped`), the image it was created from, the backend (`firecracker` or `lima`), and a resource usage summary for running instances: 1-minute load average, memory percentage, and disk percentage.
+Each row shows the instance name, state (`running` or `stopped`), the image it was created from, the backend (always `apple-container`), and a resource usage summary for running instances: 1-minute load average, memory percentage, and disk percentage.
 
 ### Single instance
 
@@ -95,7 +94,7 @@ Pass a name to get detailed information for one instance:
 $ coop status my-project
 ```
 
-The output format depends on the backend. It includes the full resource breakdown: load average, memory used/total in MiB, disk used/total in MiB.
+It includes the full resource breakdown: load average, memory used/total in MiB, disk used/total in MiB.
 
 ## Per-instance image selection
 
@@ -142,7 +141,7 @@ coop resize my-project --mem 8192 --vcpus 4
 coop resize my-project --mem 4096 --start
 ```
 
-The instance must be stopped first. coop rejects the resize and tells you to stop the instance if it is running. Memory and vCPU changes persist in the instance's backend config (authoritative over the global `[vm]` defaults, which only apply to new instances) and take effect on the next `coop start`, or immediately with `--start`.
+The instance must be stopped first. coop rejects the resize and tells you to stop the instance if it is running. Memory and vCPU changes persist in the runtime's record for the instance (authoritative over the global `vm` defaults, which only apply to new instances) and take effect on the next `coop start`, or immediately with `--start`.
 
 ## Independent lifecycle
 
@@ -155,7 +154,7 @@ coop stop frontend        # backend keeps running
 coop destroy frontend     # backend unaffected
 ```
 
-To destroy all instances and shared resources (images, kernel, SSH keys) at once:
+To destroy all instances and shared resources (images and the VM access key) at once:
 
 ```
 coop destroy --all
@@ -163,20 +162,22 @@ coop destroy --all
 
 ## Instance directory structure
 
-All instance data lives under `~/.coop/instances/<name>/`. Each instance directory contains:
+Instance data lives under
+`<data_dir>/backends/apple-container-v1/instances/<name>/` (by default
+`~/.coop/backends/apple-container-v1/instances/<name>/`). Directories are
+`0700` and control files `0600`. Each instance directory contains:
 
 | File | Purpose |
 |------|---------|
 | `instance.json` | Instance metadata (name, index, image) |
-| `rootfs.ext4` | Instance root filesystem (Firecracker) |
-| `firecracker.pid` | PID of the running Firecracker process |
-| `firecracker.socket` | Firecracker API socket |
-| `firecracker.log` | Serial console log |
-| `vm_config.json` | Firecracker VM configuration |
+| `apple-machine.json` | The runtime sandbox this instance owns |
+| `known_hosts` | The pinned guest SSH host key |
+| `operation.json` | Journal of a pending runtime mutation (present only while one is unfinished) |
 | `workspace.json` | Workspace sync state (host path, guest path, source) |
-| `vsock.sock` | Vsock socket for host-guest communication |
+| `forwards.json`, `guest_env.json`, `model.json`, `proxy.json`, `github_pat.json` | Per-instance port forwards, guest environment, model mode, proxy overrides and PAT assignment, when set |
 
-On Lima, the directory structure differs because Lima manages its own VM state. `instance.json` and `workspace.json` are always present regardless of backend.
+The VM disk itself lives in the runtime's state root, not in this directory;
+see [backend state](backends.md#state).
 
 ## Concurrent access and file locking
 
@@ -184,4 +185,4 @@ When allocating a new instance, coop acquires an exclusive file lock (`flock`) o
 
 ## Index allocation
 
-Each instance is assigned a numeric index (0 through 252) that derives its network identity: guest IP address, TAP device name, MAC address, and vsock CID. Allocation starts from the highest existing index plus one. When the ceiling is reached, it wraps around to fill gaps at the low end. The 253-instance limit comes from the available IP range in the `172.16.0.0/24` subnet (addresses 2 through 254, excluding network, host, and broadcast).
+Each instance is assigned a numeric index (0 through 252), which coop uses for per-instance port ranges such as the credential proxy's. Allocation starts from the highest existing index plus one. When the ceiling is reached, it wraps around to fill gaps at the low end, so at most 253 instances can exist. Network addresses come from the runtime, which gives each sandbox its own vmnet subnet.

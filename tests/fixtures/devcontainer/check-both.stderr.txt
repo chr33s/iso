@@ -1,0 +1,58 @@
+setup-stage translation:$
+devcontainer.json: {PATH}$
+Key                                                     Status       Source             Value                                        Note                                                                                          $
+------------------------------------------------------  -----------  -----------------  -------------------------------------------  ----------------------------------------------------------------------------------------------$
+hostRequirements.cpus                                   applied      devcontainer.json  4                                                                                                                                          $
+hostRequirements.memory                                 applied      devcontainer.json  7630 MiB                                                                                                                                   $
+hostRequirements.storage                                unsupported  devcontainer.json  32 GiB                                       instance disk size is applied at `coop start` time, not during setup                          $
+hostRequirements.gpu                                    unsupported  devcontainer.json  true                                         unrecognised hostRequirements key                                                             $
+postStartCommand                                        applied      devcontainer.json  ["echo a","echo b"]                          applied at start time                                                                         $
+containerEnv                                            applied      devcontainer.json  3 entries                                    applied at start time                                                                         $
+forwardPorts                                            applied      devcontainer.json  8 entries                                    applied at start time                                                                         $
+features.ghcr.io/devcontainers/features/bad:1           invalid      devcontainer.json  {"v":{"n":1}}                                feature option "v" must be a string, number, boolean, or null                                 $
+features.ghcr.io/devcontainers/features/go@sha256:nope  invalid      devcontainer.json  {}                                           invalid feature digest in "ghcr.io/devcontainers/features/go@sha256:nope"                     $
+features.ghcr.io/devcontainers/features/rust:1          applied      devcontainer.json  rust                                         mapped to built-in profile 'rust'                                                             $
+features.ghcr.io/other/x:1                              unsupported  devcontainer.json  ghcr.io/other/x:1                            no built-in profile match and only ghcr.io/devcontainers/features/* OCI features are supported$
+features.node                                           applied      devcontainer.json  node                                         mapped to built-in profile 'node'                                                             $
+mounts                                                  applied      devcontainer.json  3 entries                                    applied at start time                                                                         $
+remoteUser                                              applied      devcontainer.json  vscode                                       baked into the image at setup time                                                            $
+image                                                   unsupported  devcontainer.json  mcr.microsoft.com/devcontainers/base:ubuntu  coop builds its own rootfs; base images are ignored                                           $
+customizations                                          unsupported  devcontainer.json  <...>                                        editor-specific; not relevant to coop                                                         $
+name                                                    unsupported  devcontainer.json  demo                                         informational only; coop names instances via --name or auto-generates                         $
+zeta                                                    unsupported  devcontainer.json  {"b":[1,2.5,"x\ty"],"a":null}                unrecognised devcontainer.json key                                                            $
+alpha                                                   unsupported  devcontainer.json  1                                            unrecognised devcontainer.json key                                                            $
+$
+$
+start-stage translation:$
+devcontainer.json: {PATH}$
+Key                                                     Status       Source             Value                                          Note                                                                             $
+------------------------------------------------------  -----------  -----------------  ---------------------------------------------  ---------------------------------------------------------------------------------$
+hostRequirements.cpus                                   applied      devcontainer.json  4                                                                                                                               $
+hostRequirements.memory                                 applied      devcontainer.json  7630 MiB                                                                                                                        $
+hostRequirements.storage                                applied      devcontainer.json  32 GiB                                                                                                                          $
+hostRequirements.gpu                                    unsupported  devcontainer.json  true                                           unrecognised hostRequirements key                                                $
+postStartCommand                                        applied      devcontainer.json  echo a && echo b                                                                                                                $
+containerEnv                                            applied      devcontainer.json  2 entries                                      BAZ,FOO                                                                          $
+containerEnv                                            invalid      devcontainer.json  1 entries                                      invalid env var names (must match [a-zA-Z_][a-zA-Z0-9_]*): 1BAD                  $
+forwardPorts                                            invalid      devcontainer.json  0                                              Invalid forward-port spec '0': guest port must be > 0                            $
+forwardPorts                                            invalid      devcontainer.json  abc                                            Invalid forward-port spec 'abc': guest port must be a number 1..=65535           $
+forwardPorts                                            invalid      devcontainer.json  70000                                          port 70000 out of range 1..=65535                                                $
+forwardPorts                                            invalid      devcontainer.json  -1                                             port must be a positive integer                                                  $
+forwardPorts                                            invalid      devcontainer.json  1.5                                            port must be a positive integer                                                  $
+forwardPorts                                            invalid      devcontainer.json  true                                           expected port number or 'GUEST[:HOST]' string                                    $
+forwardPorts                                            applied      devcontainer.json  3000,8080:9090                                                                                                                  $
+features.ghcr.io/devcontainers/features/bad:1           unsupported  devcontainer.json  ghcr.io/devcontainers/features/bad:1           features are baked into the template at `coop setup` time, not selected per-start$
+features.ghcr.io/devcontainers/features/go@sha256:nope  unsupported  devcontainer.json  ghcr.io/devcontainers/features/go@sha256:nope  features are baked into the template at `coop setup` time, not selected per-start$
+features.ghcr.io/devcontainers/features/rust:1          unsupported  devcontainer.json  rust                                           features are baked into the template at `coop setup` time, not selected per-start$
+features.ghcr.io/other/x:1                              unsupported  devcontainer.json  ghcr.io/other/x:1                              features are baked into the template at `coop setup` time, not selected per-start$
+features.node                                           unsupported  devcontainer.json  node                                           features are baked into the template at `coop setup` time, not selected per-start$
+mounts                                                  invalid      devcontainer.json  {"type":"volume","source":"v","target":"/c"}   unsupported mount type 'volume' (coop supports 'bind' only in v1)                $
+mounts                                                  invalid      devcontainer.json  /nonexistent:/x                                Mount host path does not exist: /nonexistent                                     $
+mounts                                                  applied      devcontainer.json  /private/tmp->/b                                                                                                                $
+remoteUser                                              applied      devcontainer.json  vscode                                         matches the image's persisted guest user                                         $
+image                                                   unsupported  devcontainer.json  mcr.microsoft.com/devcontainers/base:ubuntu    coop builds its own rootfs; base images are ignored                              $
+customizations                                          unsupported  devcontainer.json  <...>                                          editor-specific; not relevant to coop                                            $
+name                                                    unsupported  devcontainer.json  demo                                           informational only; coop names instances via --name or auto-generates            $
+zeta                                                    unsupported  devcontainer.json  {"b":[1,2.5,"x\ty"],"a":null}                  unrecognised devcontainer.json key                                               $
+alpha                                                   unsupported  devcontainer.json  1                                              unrecognised devcontainer.json key                                               $
+$

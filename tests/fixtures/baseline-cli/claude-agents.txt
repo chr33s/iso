@@ -1,0 +1,12 @@
+Open the Claude Code agent view inside the VM (`claude agents`)
+
+Usage: coop claude-agents [NAME] [ARGS]...
+
+Arguments:
+  [NAME]     Instance name (required if multiple instances exist)
+  [ARGS]...  Extra arguments passed to `claude agents`
+
+Options:
+  -h, --help  Print help
+
+If the remote TUI stops responding, type Enter, then ~. to disconnect. If your terminal remains broken afterward, run `stty sane`.

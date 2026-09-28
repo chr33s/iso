@@ -1,6 +1,11 @@
 > **Current fork support:** macOS 27+ Apple Silicon hosts only. Any lower
 > macOS API/deployment floor in this design record is historical or component
 > detail; Linux guests remain in scope.
+>
+> The Rust host paths (`src/apple_container/`, `cargo` commands) in this
+> record are historical: the Swift host (`Sources/CoopHost/`) replaced the Rust
+> host in 2026-09. See [ARCHITECTURE.md](../ARCHITECTURE.md) for the current
+> module map and [testing.md](../testing.md) for current commands.
 
 # Design: Apple sandbox mutations — transactions, serialization, and maintenance
 

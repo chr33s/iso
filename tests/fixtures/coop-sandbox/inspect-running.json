@@ -107,7 +107,7 @@
       "options" : [
 
       ],
-      "source" : "/Users/me/.coop-apple/backends/apple-container-v1/runtime/sandboxes/coop-0a1b2c3d-00112233445566ff/rootfs.ext4",
+      "source" : "/Users/me/.coop/backends/apple-container-v1/runtime/sandboxes/coop-0a1b2c3d-00112233445566ff/rootfs.ext4",
       "type" : "ext4"
     },
     "socketRelays" : 0,

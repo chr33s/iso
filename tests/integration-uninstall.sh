@@ -10,8 +10,8 @@ set -euo pipefail
 #   2. --yes --purge removes binary, data dir, update-check state, and
 #      any coop SSH config blocks.
 #   3. Non-interactive (non-TTY) without --yes exits non-zero with a hint.
-#   4. The dev-build guard refuses to remove a binary that lives under
-#      `target/release` or `target/debug`.
+#   4. The dev-build guard refuses to remove a binary that lives in a SwiftPM
+#      build tree (`.build/{debug,release}` or `.build/<triple>/{debug,release}`).
 #
 # Run manually:   ./tests/integration-uninstall.sh
 # Run in CI:      same (fast — no VM, no network)
@@ -58,19 +58,23 @@ fail() {
     return 0
 }
 
-# ── Build a release binary outside the project's target/ tree ────────────────
+# ── Build a binary and copy it out of the build tree ────────────────────────
 #
-# The uninstall command refuses to delete binaries whose path contains
-# `target/{debug,release}` (the dev-build guard). For the success-path tests we
-# need a binary that *isn't* under that pattern, so we stash a copy in
-# $TMPDIR/bin. Test 4 deliberately runs the in-target binary to exercise the
-# guard.
+# The uninstall command refuses to delete binaries under a SwiftPM build tree
+# (`.build/{debug,release}` or `.build/<triple>/{debug,release}` — the
+# dev-build guard). For the success-path tests we need a binary that *isn't*
+# under that pattern, so we stash a copy in $TMPDIR/bin. Test 4 copies it into
+# build-tree-shaped paths to exercise the guard without touching the real one.
+# COOP_SWIFT_SCRATCH_PATH overrides the default `.build` scratch path.
 
-echo "==> Building release binary..."
-(cd "$PROJECT_DIR" && cargo build --release --quiet)
-TARGET_BIN="$PROJECT_DIR/target/release/coop"
+echo "==> Building coop..."
+SWIFT_SCRATCH="${COOP_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
+swift build --package-path "$PROJECT_DIR" --scratch-path "$SWIFT_SCRATCH" \
+    --product coop --force-resolved-versions --quiet
+BUILT_BIN="$(swift build --package-path "$PROJECT_DIR" --scratch-path "$SWIFT_SCRATCH" \
+    --show-bin-path)/coop"
 STABLE_BIN="$TMPDIR/bin/coop-stable"
-cp "$TARGET_BIN" "$STABLE_BIN"
+cp "$BUILT_BIN" "$STABLE_BIN"
 
 # ── Isolate $HOME / XDG dirs ─────────────────────────────────────────────────
 
@@ -80,9 +84,8 @@ export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$HOME/.ssh"
 
 # Where coop writes the background update-check state. Must mirror
-# `state_path()` in src/update.rs, which uses `dirs::state_dir()` on Linux and
-# falls back to `dirs::data_local_dir()` (~/Library/Application Support) on
-# macOS, where `state_dir()` returns None.
+# `UpdateCheckState` in Sources/CoopHost/UpdateCheck.swift
+# (~/Library/Application Support/coop/update-check.json on macOS).
 case "$(uname -s)" in
     Darwin) STATE_FILE="$HOME/Library/Application Support/coop/update-check.json" ;;
     *)      STATE_FILE="$XDG_STATE_HOME/coop/update-check.json" ;;
@@ -111,14 +114,14 @@ fi
 seed_data_dir() {
     local data_dir="$DATA_DIR"
     mkdir -p "$data_dir/images" "$data_dir/instances"
-    # Touch a config so config_path_is_under_data_dir has something to look at.
+    # Write a config so configPathIsUnderDataDirectory has something to look at.
     mkdir -p "$CONFIG_DIR"
-    : > "$CONFIG_DIR/config.toml"
+    printf '{}\n' > "$CONFIG_DIR/config.jsonc"
 }
 
 # Pre-populate ~/.ssh/config with a coop marker block; uninstall should strip
-# it. Markers must match the literal MARKER_PREFIX / MARKER_END strings used by
-# src/workspace.rs (`# coop START <host>` and `# coop END`).
+# it. Markers must match the `SSHConfigBlocks` markers in
+# Sources/CoopHost/Uninstall.swift (`# <prefix> START <host>` and `# <prefix> END`).
 SSH_MARKER_BEGIN="# $SSH_PREFIX START $SSH_PREFIX-uninstall-test"
 SSH_MARKER_END="# $SSH_PREFIX END"
 seed_ssh_config() {
@@ -216,7 +219,7 @@ else
 fi
 
 if [[ "$(uname -s)" == Darwin ]]; then
-    if [[ -f "$CONFIG_DIR/config.toml" && "$(cat "$HOME/.coop/unrelated/sentinel")" == unrelated ]]; then
+    if [[ -f "$CONFIG_DIR/config.jsonc" && "$(cat "$HOME/.coop/unrelated/sentinel")" == unrelated ]]; then
         pass "purge preserves config outside the owned backend root"
     else
         fail "purge removed config outside the owned backend root"
@@ -246,28 +249,32 @@ else
     fail "binary removed despite refusal"
 fi
 
-# ── Test 4: dev-build guard refuses to remove target/release/coop ────────────
+# ── Test 4: dev-build guard refuses to remove SwiftPM build outputs ─────────
 
-echo "==> Test 4: dev-build guard refuses target/release binary"
+echo "==> Test 4: dev-build guard refuses .build binaries"
 seed_data_dir
 
-# Run the in-target binary directly. It's under PROJECT_DIR/target/release/,
-# which matches the consecutive `target/release` guard.
-if "$TARGET_BIN" uninstall --yes --keep-data > "$TMPDIR/t4.log" 2>&1; then
-    if [[ -e "$TARGET_BIN" ]]; then
-        if grep -qi "cargo build artifact" "$TMPDIR/t4.log"; then
-            pass "dev-build guard refused to remove $TARGET_BIN"
+for guarded in "$TMPDIR/project/.build/debug/coop" \
+    "$TMPDIR/project/.build/arm64-apple-macosx/release/coop"; do
+    mkdir -p "$(dirname "$guarded")"
+    cp "$STABLE_BIN" "$guarded"
+    label="${guarded#"$TMPDIR/project/"}"
+    if "$guarded" uninstall --yes --keep-data > "$TMPDIR/t4.log" 2>&1; then
+        if [[ -e "$guarded" ]]; then
+            if grep -qi "build artifact" "$TMPDIR/t4.log"; then
+                pass "dev-build guard refused to remove $label"
+            else
+                fail "binary preserved but guard message missing" \
+                    "$(tail -5 "$TMPDIR/t4.log")"
+            fi
         else
-            fail "binary preserved but guard message missing" \
-                "$(tail -5 "$TMPDIR/t4.log")"
+            fail "guard failed — $label was deleted"
         fi
     else
-        fail "guard failed — target/release/coop was deleted"
+        fail "uninstall returned non-zero on dev-build guard path ($label)" \
+            "$(tail -5 "$TMPDIR/t4.log")"
     fi
-else
-    fail "uninstall returned non-zero on dev-build guard path" \
-        "$(tail -5 "$TMPDIR/t4.log")"
-fi
+done
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 

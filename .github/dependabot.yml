@@ -11,13 +11,15 @@ updates:
         patterns: ["*"]
     open-pull-requests-limit: 5
 
-  - package-ecosystem: cargo
-    directory: /
+
+  # SwiftPM pins (Package.resolved) for the host, proxy and runtime packages.
+  - package-ecosystem: swift
+    directories: ["/", "/coop-proxy", "/coop-sandbox"]
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
     groups:
-      cargo:
+      swift:
         patterns: ["*"]
     open-pull-requests-limit: 5

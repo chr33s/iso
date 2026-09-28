@@ -1,0 +1,14 @@
+{
+  "claude": {
+    "local_model": {
+      "host_url": "http://localhost:11434",
+      "model": "m"
+    },
+    "mcp_servers": {
+      "remote": {
+        "type": "http",
+        "url": "https://mcp.example.com"
+      }
+    }
+  }
+}

@@ -12,8 +12,6 @@ TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 case "$(uname -s)-$(uname -m)" in
-    Linux-x86_64) TRIPLE="x86_64-unknown-linux-musl" ;;
-    Linux-aarch64) TRIPLE="aarch64-unknown-linux-musl" ;;
     Darwin-arm64|Darwin-aarch64) TRIPLE="aarch64-apple-darwin" ;;
     *) echo "Unsupported test platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac

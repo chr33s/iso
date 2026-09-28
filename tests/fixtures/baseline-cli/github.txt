@@ -1,0 +1,15 @@
+Manage GitHub PAT entries and VM assignments
+
+Usage: coop github <COMMAND>
+
+Commands:
+  assign-pat    Select an existing stored PAT entry for subsequent VM sessions
+  unassign-pat  Remove only the VM association; keep the shared stored credential
+  setup-pat     Run the fine-grained PAT wizard for a repo
+  rotate-pat    Re-run the wizard against an existing entry
+  status        Print configured PAT entries and their validation state
+  forget-pat    Remove a configured PAT entry and its stored secret
+  help          Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

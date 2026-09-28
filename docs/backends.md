@@ -1,15 +1,15 @@
 # Platform Backends
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported.
 
-coop uses the Apple Containerization backend on macOS 27+ Apple Silicon.
-Source and release builds select it by default, without Cargo feature flags.
+coop has one backend: Apple Containerization on macOS 27+ Apple Silicon. There
+is no backend selection; unsupported operations fail explicitly.
 
 ## macOS / Apple sandbox
 
-Build with `cargo build --release`. **coop-sandbox** is coop's runtime on Apple's
+The host CLI is built from the root Swift package (`swift build`, or
+`python3 scripts/build-release.py` for the full archive). **coop-sandbox** is coop's runtime on Apple's
 [`containerization`](https://github.com/apple/containerization) package
 ([`coop-sandbox`](../coop-sandbox)).
 
@@ -22,9 +22,9 @@ Each instance is one Linux VM running systemd from its own ext4 disk, on its own
 - `coop-sandbox`, built with `scripts/build-coop-sandbox.sh` (Xcode with Swift 6.2+ required).
 - Stock Apple `container` 1.4.1 or later, with its service running (`container system start`). coop uses it only to **build** images (`container build`) and to supply the guest kernel it installs; instances never run on it. coop never starts, stops, or restarts that service.
 
-Binaries come from `[apple_container]` `binary` (coop-sandbox) and `builder` (`container`), or else fixed install locations: `~/.local/opt/coop-sandbox/bin/coop-sandbox`, `/usr/local/bin/coop-sandbox`, `/opt/homebrew/bin/coop-sandbox`, and `/usr/local/bin/container`, `/opt/homebrew/bin/container`. `PATH` and project files are never consulted, and a binary that is group/world-writable or owned by neither you nor root is rejected, as is one under a directory that is owned by neither you nor root, world-writable without the sticky bit, or group-writable without the sticky bit unless its group is `wheel` or `admin` (Homebrew's prefix is `admin`-writable).
+Binaries come from `apple_container.binary` (coop-sandbox) and `apple_container.builder` (`container`), or else fixed install locations: `~/.local/opt/coop-sandbox/bin/coop-sandbox`, `/usr/local/bin/coop-sandbox`, `/opt/homebrew/bin/coop-sandbox`, and `/usr/local/bin/container`, `/opt/homebrew/bin/container`. `PATH` and project files are never consulted, and a binary that is group/world-writable or owned by neither you nor root is rejected, as is one under a directory that is owned by neither you nor root, world-writable without the sticky bit, or group-writable without the sticky bit unless its group is `wheel` or `admin` (Homebrew's prefix is `admin`-writable).
 
-Neither Lima nor host Docker is needed. Docker runs *inside* the guest.
+Host Docker is not needed. Docker runs *inside* the guest.
 
 ### Installing the runtime
 
@@ -32,7 +32,7 @@ Neither Lima nor host Docker is needed. Docker runs *inside* the guest.
 scripts/build-coop-sandbox.sh            # installs ~/.local/opt/coop-sandbox/bin/coop-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `[apple_container] binary` to match. Rebuild after pulling changes to `coop-sandbox`; coop refuses a runtime whose protocol or `containerization` version differs from the one it was built for.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `coop-sandbox`; coop refuses a runtime whose protocol or `containerization` version differs from the one it was built for.
 
 ### Supported combinations
 
@@ -45,35 +45,36 @@ The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.15-186`, the ker
 
 ### Configuration
 
-```toml
-[apple_container]
-# binary = "/absolute/path/to/coop-sandbox"
-# builder = "/absolute/path/to/container"
-# kernel = "/absolute/path/to/vmlinux"   # must be a kernel the runtime pins
-probe_timeout_seconds = 10     # version, inspect, list
-operation_timeout_seconds = 60 # resource changes, deletes, guest commands
-create_timeout_seconds = 600   # create (first unpack of an image), grow, commit, restore, init, maintenance install
-boot_timeout_seconds = 120     # boot to SSH-ready
-stop_timeout_seconds = 90      # clean systemd shutdown
-build_timeout_seconds = 3600   # image build; `setup --builder-timeout` overrides
+```jsonc
+{
+  "apple_container": {
+    // "binary": "/absolute/path/to/coop-sandbox",
+    // "builder": "/absolute/path/to/container",
+    // "kernel": "/absolute/path/to/vmlinux",  // must be a kernel the runtime pins
+    "probe_timeout_seconds": 10,       // version, inspect, list
+    "operation_timeout_seconds": 60,   // resource changes, deletes, guest commands
+    "create_timeout_seconds": 600,     // create (first unpack of an image), grow, commit, restore, init, maintenance install
+    "boot_timeout_seconds": 120,       // boot to SSH-ready
+    "stop_timeout_seconds": 90,        // clean systemd shutdown
+    "build_timeout_seconds": 3600      // image build; `setup --builder-timeout` overrides
+  }
+}
 ```
 
-Each timeout must be between 1 and 86400 seconds. Unknown keys are rejected, and there is no key to mount the home directory, forward the SSH agent, share a network, or skip qualification. The existing `[vm]` CPU/memory, image, guest-user, profile, and workspace settings apply unchanged; `[vm] template_size_gib` is the default disk size.
+Each timeout must be between 1 and 86400 seconds. Unknown keys are rejected, and there is no key to mount the home directory, forward the SSH agent, share a network, or skip qualification. The `vm` CPU/memory, image, guest-user, profile, and workspace settings apply; `vm.template_size_gib` is the default disk size.
 
 ### State
 
-The config file defaults to `~/.coop/config.toml`, and `data_dir` defaults to
-`~/.coop`. On the first command using the default config, an existing
-`~/.coop-apple` directory is moved only if `~/.coop` is absent. Stop all VMs
-and finish other coop commands before migration, including older CLI versions
-and direct `coop-sandbox` commands. Registered launchd owners also prevent migration. If refused because VMs are
-active, use `coop --config ~/.coop-apple/config.toml stop <name>` first.
-The old name becomes a compatibility symlink so existing SSH entries and
-explicit paths continue to resolve. Config contents, including custom
-`data_dir`, are preserved. Interrupted link creation is repaired on retry.
-If both directories exist, migration refuses to merge them: use `--config`
-to select an installation explicitly. Legacy upstream VM artifacts are refused
-in the default root. Custom config paths bypass automatic migration.
+The config file defaults to `~/.coop/config.jsonc` (see
+[Migrating from TOML](configuration.md#migrating-from-toml) for an older
+`config.toml`), and `data_dir` defaults to `~/.coop`. A default `~/.coop` that holds upstream coop VM artifacts
+(`images/`, `instances/`, `vm_key`, …) or is not a real directory is refused;
+select a separate `data_dir` with `--config`. Custom config paths are not
+checked. A directory left at `~/.coop-apple` by earlier fork releases is
+neither read nor moved: move it to `~/.coop` by hand while no VM is running,
+then recreate or re-enroll (`coop restore <name> --reprovision`) its
+instances: host-key pins now use the `<machine>.coop` alias, and pins written
+under the old `.coop-apple` alias are refused.
 
 Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 
@@ -84,9 +85,9 @@ Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 
 Control files are `0600`, directories `0700`. `uninstall --purge` destroys
 owned instances and removes only `backends/apple-container-v1/`; config files,
-the compatibility symlink, and unrelated files remain. Workspace copies skip
-both `.coop/` and `.coop-apple/`. Existing `coop-apple-<name>` SSH aliases and
-markers remain stable. Paths may contain spaces but not quote or control characters.
+and unrelated files remain. Workspace copies skip `.coop/`. The
+`coop-apple-<name>` SSH aliases and markers keep their names, so they do not
+collide with upstream coop's `coop-<name>` entries. Paths may contain spaces but not quote or control characters.
 
 Instances created by the retired `container machine` backend (schema 1) are refused, including by `coop destroy`, `destroy --all`, and `uninstall --purge`. Remove such an instance's directory under `backends/apple-container-v1/instances/` by hand, and delete its machine and network in Apple `container` (`container machine delete`, `container network delete`).
 
@@ -116,7 +117,7 @@ Marketplaces and plugins are not baked into the image. The first boot installs t
 `coop up` creates one sandbox per instance, named `coop-<owner8>-<random16>`. The steps:
 
 1. Write `operation.json`.
-2. `coop-sandbox create` with explicit CPUs, memory (MiB), and disk (`--disk`, or the committed image's size, or `[vm] template_size_gib`). The disk is an APFS clone of the image's cached base, so this takes milliseconds after an image's first use.
+2. `coop-sandbox create` with explicit CPUs, memory (MiB), and disk (`--disk`, or the committed image's size, or `vm.template_size_gib`). The disk is an APFS clone of the image's cached base, so this takes milliseconds after an image's first use.
 3. Check the runtime's record: owner tag, CPUs, and memory.
 4. `coop-sandbox start` loads the sandbox's owner as a launchd job and returns once it answers. The owner process holds the VM and a dedicated `10.231.N.0/24` vmnet network.
 5. The isolation gate reads the effective VM configuration from the owner and checks all of the following:
@@ -131,7 +132,7 @@ Marketplaces and plugins are not baked into the image. The first boot installs t
 
 Every later `ssh_target` (shell, exec, agent launch, push/pull, editor) re-inspects the sandbox and re-runs the gate before it returns a target. A sandbox keeps its address across restarts, unless its subnet had to be quarantined (see [Recovery](#stop-destroy-recovery)). Every start compares the host key with the pin. A changed or missing key fails with `APPLE_HOST_KEY_CHANGED`, and coop never re-enrolls on its own. The one exception is `coop restore`: coop replaced the disk itself (which removes the host keys), so the next start pins the key the guest generates.
 
-Workspaces are always copied. `--mount` directories are synced once, as on Firecracker; use `coop push`/`coop pull`.
+Workspaces are always copied. `--mount` directories are synced once; use `coop push`/`coop pull`.
 
 Local model servers on host loopback reach the guest over a per-instance `ssh -R 127.0.0.1:<guest-port>:<host-addr>:<host-port>` tunnel. The forward goes to the exact loopback address the URL names. The guest port is the same as the host port, except that a privileged port (below 1024) moves to port + 40000, so `https://localhost` becomes `https://localhost:40443` in the guest. `localhost` and `127.0.0.1` URLs keep their host, so TLS names still verify. Other `127.x` addresses are rewritten to `127.0.0.1` for plain HTTP only. IPv6-loopback endpoints are rejected. Every boot first closes the tunnels recorded for the previous boot. Each bootstrap then reconciles the tunnels for both agents: live tunnels are kept, tunnels the config no longer needs are closed, and two endpoints that need the same guest port with different destinations are an error.
 
@@ -169,7 +170,7 @@ All three need the instance stopped.
 
 `coop logs` (snapshot and `--follow`) replaces control characters in the guest's console output before printing it.
 
-Runtime and builder commands run with a cleared environment: only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, locale, and a fixed `PATH` pass through. `SSH_AUTH_SOCK`, API and GitHub tokens, `DYLD_*`, and `CONTAINER_*` overrides are dropped. The launchd job that runs each owner gets a fixed environment of its own.
+Runtime and builder commands run with a cleared environment: only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, locale, and a fixed `PATH` pass through. `SSH_AUTH_SOCK`, API and GitHub tokens, `DYLD_*`, and `CONTAINER_*` overrides are dropped. The launchd job that runs each owner gets a fixed environment of its own. Guest-bound `ssh`, `scp` and `rsync` likewise inherit only a minimal host environment plus the values coop forwards, so a user's `SendEnv` patterns cannot leak an unrelated host variable.
 
 ### Validation status
 

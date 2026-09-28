@@ -1,0 +1,14 @@
+Show or switch a VM's model backend (cloud vs. local)
+
+Usage: coop model [NAME] [COMMAND]
+
+Commands:
+  local   Route this VM's agents at a host-side local model server
+  remote  Restore cloud defaults (Anthropic / `OpenAI`)
+  help    Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+  -h, --help  Print help

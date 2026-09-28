@@ -2,51 +2,72 @@ name: CI
 
 on:
   push:
-    branches: [main, swift]
+    branches: [swift]
   pull_request:
   workflow_call:
 
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
+# A new push to a PR cancels its superseded run. Branch pushes and release or
+# candidate calls (a distinct caller workflow) always run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The Swift host (root package, product `coop`) and the Apple runtime.
+  # Release calls this workflow, so these jobs also gate release builds.
   check:
+    name: Host and runtime
     runs-on: xcode-27
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Cache cargo registry and build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Tools pinned in mise.toml (Swift, Python, yq, actionlint, ...), the same
+      # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          version: 2026.8.3
 
-      - name: Format check
-        run: cargo fmt -- --check
+      # The pre-commit gates (mise.toml `check`) over every tracked file.
+      - name: Hygiene, format, build, and tests
+        shell: bash
+        run: |
+          python3 scripts/hygiene.py --all
+          mise run lint
+          mise run build
+          mise run test
+          git diff --exit-code -- Package.resolved
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Workflow lint
+        run: actionlint
 
-      - name: Unit tests
-        run: cargo test --workspace
+      # The inventory checks references to the removed Rust host at its recorded
+      # baseline commit, which the shallow checkout does not include.
+      - name: Configuration migration and compatibility inventory tests
+        run: |
+          baseline=$(python3 -c 'import json; print(json.load(open("docs/design/swift-host-inventory.json"))["baseline_revision"])')
+          git fetch --no-tags --depth=1 origin "$baseline"
+          python3 tests/test-migrate-config.py
+          python3 tests/test-swift-host-inventory.py
+
+      # Replays the results recorded from the baseline host before its removal.
+      - name: Command, lifecycle, data-root and CLI-surface baselines
+        run: |
+          python3 tests/test-swift-host-read-parity.py --golden tests/baseline/parity/read.json --swift .build/debug/coop
+          python3 tests/test-swift-host-lifecycle-parity.py --golden tests/baseline/parity/lifecycle.json --swift .build/debug/coop
+          python3 tests/test-swift-host-data-root-parity.py --golden tests/baseline/parity/data-root.json --swift .build/debug/coop
+          python3 tests/test-swift-host-cli-surface.py --swift .build/debug/coop
 
       - name: Release preflight regression tests
-        run: |
-          python3 tests/test-preflight-release.py
-          python3 tests/test-proxy-transition-build.py
+        run: python3 tests/test-preflight-release.py
 
-      - name: Integration probe regression tests
+      - name: Proxy runner and fixture regression tests
         run: |
-          python3 tests/test-integration-probes.py
           python3 tests/test-proxy-vm-fixture.py
           python3 tests/test-proxy-live.py
           python3 tests/test-proxy-agent-smoke.py
@@ -66,16 +87,27 @@ jobs:
       - name: coop-sandbox build and unit tests
         run: swift test --package-path coop-sandbox --force-resolved-versions --no-parallel
 
+      # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
+      - name: Fuzz corpus replay and bounded smoke
+        shell: bash
+        run: scripts/fuzz.sh smoke 30
+
   # The proxy intentionally targets macOS 27 system trust. macos-latest does
   # not guarantee that SDK/runtime; xcode-27 is GitHub's macOS 27 preview image.
-  # Release calls this workflow, so this job also gates release builds.
-  swift-proxy:
+  proxy:
+    name: Credential proxy
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Tools pinned in mise.toml (Swift, Python, yq, actionlint, ...), the same
+      # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.8.3
 
       - name: Swift proxy format, unit, and confined-process gates
         shell: bash
@@ -92,55 +124,8 @@ jobs:
           python3 scripts/test-proxy-forwarding-corpus.py
           python3 scripts/test-proxy-upstream-disconnect.py
 
-  deny:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
-
-      # Pin to match CARGO_DENY_VERSION in scripts/install-dev-tools.sh so CI and
-      # local installs run the same version.
-      - name: Install cargo-deny
-        run: cargo binstall --no-confirm cargo-deny@0.19.9
-
-      - name: Check advisories, licenses, bans, sources
-        run: cargo deny --workspace check
-
-  taplo:
-    runs-on: ubuntu-latest
-    # Single version knob for this job; keep in sync with TAPLO_VERSION in
-    # scripts/install-dev-tools.sh. Used for both the cache key and the install,
-    # so the two can never drift (a bumped install with a stale key would
-    # silently keep checking with the cached old binary).
-    env:
-      TAPLO_VERSION: 0.10.0
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # taplo has no cargo-binstall prebuilts, so compile from crates.io
-      # (checksum-verified source) and cache the binary keyed on the pinned
-      # version — only the first run or a version bump pays the compile cost.
-      - name: Cache taplo
-        id: cache-taplo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/taplo
-          key: ${{ runner.os }}-taplo-cli-${{ env.TAPLO_VERSION }}
-
-      - name: Install taplo
-        if: steps.cache-taplo.outputs.cache-hit != 'true'
-        run: cargo install taplo-cli --version "=${TAPLO_VERSION}" --locked
-
-      - name: Check TOML formatting
-        run: taplo format --check
-
   zizmor:
+    name: Workflow security audit
     runs-on: ubuntu-latest
     permissions:
       contents: read

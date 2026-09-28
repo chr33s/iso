@@ -2,6 +2,7 @@
 """Wrapper regressions; set COOP_TEST_CODEX to also test a real Linux Codex CLI."""
 import json
 import os
+import re
 from pathlib import Path
 import pty
 import select
@@ -117,8 +118,11 @@ time.sleep(60)
                         self.assertEqual(result.returncode, 23, result.stderr)
                         self.assertEqual(json.loads(result.stdout), (OVERRIDE if keyring else []) + args)
             # Exercise the actual provisioned yolo command, including its bypass flag.
-            provision = (ROOT / 'src/apple_container/provision.rs').read_text()
-            yolo = provision.split("cat > /usr/local/bin/codex-yolo <<'YOLOEOF'\n", 1)[1].split('\nYOLOEOF', 1)[0]
+            # The heredoc sits in a Swift multi-line literal indented like its `cat` line.
+            provision = (ROOT / 'Sources/CoopHost/ImageBuild.swift').read_text()
+            block = re.search(r"^( *)cat > /usr/local/bin/codex-yolo <<'YOLOEOF'\n(.*?)\n\1YOLOEOF$",
+                              provision, re.M | re.S)
+            yolo = "\n".join(line[len(block[1]):] for line in block[2].splitlines())
             shortcut = root / 'codex-yolo'
             executable(shortcut, yolo.replace('/usr/local/bin/codex-account', str(wrapper)))
             result = subprocess.run([str(shortcut), 'hello world'], env=env,

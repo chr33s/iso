@@ -107,3 +107,16 @@ Approved 2026-09-26:
   code (`coop stop`, `list`/`status` probe errors, ssh/rsync quoting and
   `HostKeyPolicy`, capability gates, proxy tunnels, the Lima disk resize), so
   the waiver accepts that those paths are unverified on Firecracker.
+
+Approved 2026-09-28 (previously open merge items, carried into the Swift
+host):
+
+- The local-model `ssh -R` reverse tunnel that exposes a host-loopback model
+  server to the guest (`Sources/CoopHost/ProxyLifecycle.swift`, model
+  tunnels).
+- The digest-pinned Ubuntu base image and apt egress during guest image
+  builds (`coop setup`, the maintenance image).
+- The SwiftPM dependencies resolved from github.com, pinned by the committed
+  `Package.resolved` files.
+- The runtime's per-sandbox control socket and the wheel/admin
+  group-writable ancestor exception in the runtime binary check.

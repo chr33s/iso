@@ -1,16 +1,15 @@
 # Command Reference
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported.
 
-coop creates isolated VM environments for running Claude Code and Codex. Supported hosts are macOS 27+ Apple Silicon. Release builds use the Apple backend; default source builds use Lima.
+coop creates isolated VM environments for running Claude Code and Codex. Supported hosts are macOS 27+ Apple Silicon, using the Apple sandbox backend.
 
 ## Global Flags
 
 | Flag | Description |
 |------|-------------|
-| `--config <path>` | Path to config file (default: `~/.coop/config.toml`) |
+| `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.coop/config.jsonc`). A `.toml` path stops with a [migration hint](configuration.md#migrating-from-toml). |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
 | `--version` | Print version and exit. |
 
@@ -44,9 +43,9 @@ runs report the ambiguity instead of choosing one — address the instances by
 name (`coop start <name>`, `coop shell <name>`) from then on.
 
 By default, `up` copies/syncs the project into `/workspace`. Pass `--mount`
-to use the mount transport for the project at `/workspace` instead. On
-macOS/Lima this is a live virtiofs mount; on Linux/Firecracker it is a
-one-time sync. `--copy` is accepted as an explicit spelling of the default.
+to use the mount transport for the project at `/workspace` instead. The Apple
+backend has no host mounts, so this is a one-time sync at creation; use
+`coop push` / `coop pull` afterwards. `--copy` is accepted as an explicit spelling of the default.
 Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 `/workspace` inside the guest.
 
@@ -105,50 +104,16 @@ file changed, but the existing VM is not mutated automatically. Destroy and
 recreate the instance to apply creation-time devcontainer changes such as
 `features`, `hostRequirements`, `mounts`, `image`/`build`, or `remoteUser`.
 
-### `quickstart`
+### `quickstart` (removed)
 
-One-shot entry point: ensure the default image exists, bring up an instance for
-the current directory, and launch Claude Code inside it. Runs `setup`, `up`, and
-`claude` in sequence, short-circuiting any step that is already done.
-
-```
-coop quickstart [FLAGS]
-```
-
-`quickstart` resolves the workspace to the current directory (unless
-`--no-workspace`) and uses it as the project identity, the same way `coop up`
-does. It then takes one of three branches based on the instance for that
-workspace:
-
-- **A running instance exists.** coop reconnects to it and launches Claude Code —
-  no setup, restart, or recreation.
-- **A stopped instance exists.** coop restarts it (reusing the instance's own
-  image, not necessarily `default`) and launches Claude Code.
-- **No instance exists.** coop creates one for the workspace, folding in any
-  discovered `devcontainer.json`, then launches Claude Code.
-
-Image setup runs only when the `default` template image is missing; otherwise it
-is skipped. Setup runs non-interactively (no confirmation prompts).
-
-| Flag | Description |
-|------|-------------|
-| `--no-workspace` | Skip mounting the current directory as the workspace. Without a workspace there is no instance to match, so quickstart always creates a fresh instance rather than reusing an existing one. |
-| `--no-devcontainer` | Ignore any discovered `devcontainer.json` (escape hatch for CI). |
-
-```
-coop quickstart
-coop quickstart --no-devcontainer
-coop quickstart --no-workspace
-```
-
-`quickstart` takes no instance name or per-instance tuning flags. For control
-over profiles, mounts, image, resources, or named instances, use `coop setup`
-and `coop up` directly. When run from your `$HOME` or `/`, coop prompts before
-mounting (or bails in a non-TTY); pass `--no-workspace` to skip the mount.
+`coop quickstart` has been removed. It now exits with an error that names the
+replacement sequence: `coop setup` (create the config and build the image),
+`coop up [DIR]`, then `coop claude` or `coop codex`.
 
 ### `init`
 
-Generate a starter config file at `~/.coop/config.toml`.
+Deprecated alias for [`coop setup --config-only`](#setup). Prints a
+deprecation note on stderr, then runs the same implementation.
 
 ```
 coop init
@@ -158,7 +123,15 @@ No additional flags.
 
 ### `setup`
 
-Run this once after installing coop. It checks prerequisites, installs the backend runtime, fetches a kernel, and builds a template root filesystem.
+Run this once after installing coop. It creates `~/.coop/config.jsonc` from
+the commented template when no configuration exists, checks prerequisites, and
+builds a template root filesystem with the Apple runtime. It never boots an
+instance or launches an agent; follow it with `coop up`.
+
+With `--config-only`, setup only writes the JSONC template and exits: it
+installs nothing, provisions no credentials, and builds no image. An existing
+configuration file is reported and left unchanged. Image options (such as
+`--profile`, `--image`, `--rebuild`) are rejected with `--config-only`.
 
 ```
 coop setup [FLAGS]
@@ -166,13 +139,14 @@ coop setup [FLAGS]
 
 | Flag | Description |
 |------|-------------|
+| `--config-only` | Only create the JSONC configuration template, then exit |
 | `-y`, `--yes` | Skip confirmation prompts (accept all) |
 | `--vcpus <N>` | Number of vCPUs (overrides config) |
 | `--mem <MiB>` | Memory in MiB (overrides config) |
 | `--rebuild` | Force rebuild of template rootfs |
 | `--profile <list>` | Comma-separated install profiles: `python`, `node`, `c`, `fuzz`, `rust`, `go` |
-| `--extra-packages <list>` | Comma-separated extra apt packages to install |
-| `--post-install <path>` | Path to a post-install script to run in the chroot |
+| `--extra-packages <list>` | Accepted for compatibility; the Apple backend ignores it with a warning (use a [custom profile](configuration.md#profiles-section)) |
+| `--post-install <path>` | Accepted for compatibility; the Apple backend ignores it with a warning (use a custom profile's `post_install`) |
 | `--template-size <GiB>` | Template rootfs size in GiB (default: 8) |
 | `--image <name>` | Named image to build (default: `default`) |
 | `--guest-user <name>` | Guest username to bake into the image (default: `ubuntu`). Use this for devcontainers that declare another `remoteUser`, such as `vscode`. |
@@ -184,7 +158,8 @@ coop setup [FLAGS]
 
 ```
 coop setup -y --profile python,node --template-size 12
-coop setup --image ml-dev --profile python --extra-packages libopenblas-dev
+coop setup --config-only
+coop setup --image ml-dev --profile python
 coop setup -y --workspace . --devcontainer .devcontainer/devcontainer.json
 ```
 
@@ -253,7 +228,7 @@ instances, pass the instance name.
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable). Lives for the lifetime of the VM; torn down on `coop stop`. |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo (see [`coop github setup-pat`](#github)). |
-| `--post-start <cmd>` | Shell command to run inside the guest after boot. Overrides the `post_start` field in `config.toml`. Failure is logged but does not fail the start. |
+| `--post-start <cmd>` | Shell command to run inside the guest after boot. Overrides the `post_start` configuration field. Failure is logged but does not fail the start. |
 | `--env KEY=VALUE` | Literal env var to set in the guest (repeatable). Overrides `guest_env` config entries and any forwarded values with the same name. |
 | `--devcontainer <path>` | Dry-run translation aid; normal restarts reject devcontainer creation options. |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation (escape hatch for CI). |
@@ -344,7 +319,7 @@ coop ca my-project -- --cwd /workspace
 
 ### `codex`
 
-Launch Codex inside the VM. By default coop passes `--dangerously-bypass-approvals-and-sandbox`, so Codex runs without its sandbox or approval prompts — parity with `coop claude`. The VM is the isolation boundary, and Codex's own Linux sandbox does not work in the guest (no functioning bubblewrap), so leaving it enabled makes every shell command Codex runs fail. Use `--ask` to keep Codex's sandbox and approval prompts for that session. With `[codex] auth = "chatgpt"`, `coop codex` launches through the guest keyring wrapper. The `login` and `logout` subcommands are always launched without the bypass flag: they never start an agent session, so there is nothing to sandbox.
+Launch Codex inside the VM. By default coop passes `--dangerously-bypass-approvals-and-sandbox`, so Codex runs without its sandbox or approval prompts — parity with `coop claude`. The VM is the isolation boundary, and Codex's own Linux sandbox does not work in the guest (no functioning bubblewrap), so leaving it enabled makes every shell command Codex runs fail. Use `--ask` to keep Codex's sandbox and approval prompts for that session. With `"codex": { "auth": "chatgpt" }`, `coop codex` launches through the guest keyring wrapper. The `login` and `logout` subcommands are always launched without the bypass flag: they never start an agent session, so there is nothing to sandbox.
 
 ```
 coop codex [NAME] [FLAGS] [ARGS...]
@@ -402,7 +377,7 @@ coop stop my-project
 
 ### `destroy`
 
-Stop the VM and remove its resources: disk, config, and SSH entries. Templates and the kernel are preserved unless you pass `--all`.
+Stop the VM and remove its resources: disk, config, and SSH entries. Images are preserved unless you pass `--all`.
 
 ```
 coop destroy [NAME] [FLAGS]
@@ -411,7 +386,7 @@ coop destroy [NAME] [FLAGS]
 | Flag | Description |
 |------|-------------|
 | `NAME` | Instance name (required if multiple instances exist) |
-| `--all` | Remove all instances, templates, kernel, Firecracker binary, and SSH keys |
+| `--all` | Also remove every image and the VM access key |
 
 ```
 coop destroy my-project
@@ -420,7 +395,7 @@ coop destroy --all
 
 ### `list`
 
-Print every instance with its state: `running`, `stopped`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; Lima and Firecracker read local state, and the Apple sandbox backend asks the runtime (`coop-sandbox inspect`). Use `status` instead when you need resource usage or per-instance detail.
+Print every instance with its state: `running`, `stopped`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`coop-sandbox inspect`). Use `status` instead when you need resource usage or per-instance detail.
 
 ```
 coop list
@@ -454,7 +429,7 @@ coop status my-project
 With `--json`, a bare `coop status` emits a JSON array and `coop status NAME`
 emits a single object. Each carries the common fields — `name`, `state`
 (`running`/`stopped`, or `unknown` in the bare-`status` array), `image`, `backend`
-(`firecracker`/`lima`/`apple-container`), and `usage`
+(always `apple-container`), and `usage`
 (raw MiB / load, or `null` when stopped or the query fails). The rich
 single-instance text report (guest IP, PID, SSH port, …) is text-only. JSON goes
 to stdout; tracing stays on stderr, so `coop status --json | jq` stays clean.
@@ -465,7 +440,7 @@ $ coop status my-project --json
   "name": "my-project",
   "state": "running",
   "image": "default",
-  "backend": "firecracker",
+  "backend": "apple-container",
   "usage": { "load_1m": 0.12, "mem_used_mib": 512, "mem_total_mib": 2048,
              "disk_used_mib": 8192, "disk_total_mib": 20480 }
 }
@@ -542,13 +517,13 @@ With no subcommand, `model` prints the current mode and the endpoint each tool
 $ coop model my-project
 Instance: my-project
 Mode:     local
-Claude   local — qwen2.5-coder:32b @ http://172.16.0.1:11434
+Claude   local — qwen2.5-coder:32b @ http://localhost:11434
 Codex    cloud (no local endpoint configured)
 ```
 
 `coop model NAME local` switches the VM to local mode. Each tool routes locally
-only if it resolves an endpoint — from `[claude.local_model]` /
-`[codex.local_model]` in `config.toml`, or from one saved earlier. For any tool
+only if it resolves an endpoint — from `claude.local_model` /
+`codex.local_model` in the configuration, or from one saved earlier. For any tool
 that has neither, and only in an interactive terminal, coop prompts for a host
 URL, model name, and optional auth token, then saves that endpoint for the
 instance. (A non-interactive run declines the prompt.) If no tool ends up with
@@ -661,7 +636,7 @@ coop editor my-project --clean
 
 ### `ssh-config`
 
-Install a `coop-<name>` alias into `~/.ssh/config` so plain `ssh`, `scp`, and
+Install a `coop-apple-<name>` alias into `~/.ssh/config` so plain `ssh`, `scp`, and
 `rsync` reach the guest without remembering its host, port, user, or key. This
 is the same SSH config block `coop editor` writes, but without launching an
 editor.
@@ -678,26 +653,23 @@ coop ssh-config [NAME] [--clean]
 ```
 coop ssh-config
 coop ssh-config my-project
-ssh coop-my-project
-scp ./file coop-my-project:/workspace/
-rsync -az ./dir/ coop-my-project:/workspace/dir/
+ssh coop-apple-my-project
+scp ./file coop-apple-my-project:/workspace/
+rsync -az ./dir/ coop-apple-my-project:/workspace/dir/
 coop ssh-config my-project --clean
 ```
 
 The alias is created only when you run `coop ssh-config` (or `coop editor`).
 The lifecycle keeps it tidy: `coop stop` and `coop destroy` remove the block,
 and `coop start` refreshes an already-installed block so it stays valid across
-a restart. On macOS/Lima the forwarded SSH port changes on each start; the
-refresh keeps the alias current without you re-running the command. On
-Linux/Firecracker the host and port are stable, so the refresh is a no-op.
+a restart, since the guest address can change.
 
-On Lima and Firecracker the block sets `StrictHostKeyChecking no` and
-`UserKnownHostsFile /dev/null`, so `ssh coop-*` connections skip host-key
-verification. This is intentional — these VMs regenerate their host keys, so
-pinning them would only produce spurious mismatch warnings. The Apple sandbox
-backend instead pins each guest's host key: its `coop-apple-*` block sets
-`StrictHostKeyChecking yes` with the instance's own `known_hosts`, plus
-`ForwardAgent no` and `IdentityAgent none`, and a changed key is refused.
+The block pins each guest's host key: it sets `StrictHostKeyChecking yes` with
+the instance's own `known_hosts` and `HostKeyAlias <machine>.coop`, plus
+`ForwardAgent no` and `IdentityAgent none`, and a changed key is refused. Pins
+recorded by older builds under the `.coop-apple` alias no longer match and the
+instance is refused until you re-enroll it (`coop restore <name> --reprovision`)
+or recreate it.
 
 Use `ssh-config` for ad-hoc copies of arbitrary paths. To sync the tracked
 workspace directory in bulk, use [`push`](#push) / [`pull`](#pull) instead.
@@ -747,16 +719,14 @@ coop resize [NAME] [--size <SIZE>] [--mem <MIB>] [--vcpus <N>] [--start]
 
 Absolute disk values set the disk to that exact size; a `+` prefix adds to the
 current size. Memory and vCPU changes are written to the instance's backend
-config (the Firecracker per-instance JSON or the Lima `lima.yaml`), which is
-authoritative — the value survives restarts and is reported by `coop status`.
-The global `[vm]` settings in `config.toml` only seed these values for *new*
-instances.
+record in the runtime, which is authoritative — the value survives restarts
+and is reported by `coop status`. The global `vm` settings in the
+configuration only seed these values for *new* instances.
 
 By default the instance is left stopped and the change takes effect on the next
-`coop start`. Pass `--start` to boot it immediately. On Firecracker, if a
-`--start` boot fails (e.g. more memory than the host has), the previous mem/vcpu
-is restored so a plain `coop start` still works; on Lima the `lima.yaml` is
-likewise restored.
+`coop start`. Pass `--start` to boot it immediately. The resource change is
+journaled, so an interrupted change is recovered by the next command that
+touches the instance.
 
 Combining `--size` with `--mem`/`--vcpus` applies the disk change first, then the
 machine-resource change; the two are separate artifacts and are not applied
@@ -853,7 +823,7 @@ Kept across the wipe, because coop persists them host-side:
 
 **Not replayed**, because coop does not persist them:
 
-- Extra `--extra-mount` directories. Only the *primary* workspace source is recorded in `workspace.json`, so coop replays none of them. What that costs depends on the backend: on Firecracker, where a mount is a one-time sync into the rootfs, the data goes with the disk and the guest path comes back empty; on Lima the mount is declared in the backend's own `lima.yaml`, which the disk swap does not touch, so it may be served again after the reboot — coop does not guarantee it either way. There is no way to re-add a mount to an existing instance — `--extra-mount` is creation-only, and `coop push` writes to the recorded workspace path — so recovering one means `coop destroy` and a fresh `coop up`.
+- Extra `--extra-mount` directories. Only the *primary* workspace source is recorded in `workspace.json`, so coop replays none of them. coop does not guarantee that such a mount is served again after the reboot. There is no way to re-add a mount to an existing instance — `--extra-mount` is creation-only, and `coop push` writes to the recorded workspace path — so recovering one means `coop destroy` and a fresh `coop up`.
 - `--exclude-git`. A workspace originally pushed without `.git/` is re-synced with it.
 - A devcontainer's `postStartCommand`, which reaches the guest only during `coop up`. Its `features` are baked into the image and so do survive. (`postCreateCommand` is unaffected because coop does not implement it — it is reported as an unrecognised `devcontainer.json` key.)
 
@@ -900,13 +870,11 @@ coop profiles show rust
 Replace the running coop binary with a release from `github.com/chr33s/coop`.
 Release tags come from `swift`. The updater verifies the platform tarball's
 SHA-256 and, when `gh` is installed, its repository build-provenance attestation.
-Apple builds install the bundled `coop-sandbox` and `coop-proxy` before replacing
+The updater installs the bundled `coop-sandbox` and `coop-proxy` before replacing
 the host. Each file replacement is atomic; the set of files is not a single
 transaction. If a later replacement fails, rerun the installer for the same
-release to restore a matching set. Missing Apple companions are rejected before replacement.
-Lima source builds refuse self-update (`LIMA_UPDATE_VARIANT_UNSUPPORTED`) because
-fork macOS releases use the Apple backend. Until a fork release is published and
-verified, rebuild from source.
+release to restore a matching set. Missing companions are rejected before replacement.
+Until a fork release is published and verified, rebuild from source.
 
 No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `coop update` uses it, which helps avoid GitHub API rate limits.
 
@@ -935,7 +903,7 @@ See also the [`updates` section](configuration.md#updates-section) of the config
 
 ### `uninstall`
 
-Remove the coop binary and, optionally, its data directories (`~/.coop` and the update-check state). Refuses to remove the binary when it lives under `target/debug/` or `target/release/` so `cargo run -- uninstall` does not delete your build artifact.
+Remove the coop binary and, optionally, its data directories (`~/.coop` and the update-check state). Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run coop uninstall` does not delete your build artifact.
 
 ```
 coop uninstall [FLAGS]
@@ -960,7 +928,7 @@ coop uninstall --yes --purge         # CI: remove binary and data, explicit
 
 ### `completions`
 
-Print a static shell completion script. Pair with `source <(COMPLETE=<shell> coop)` in your shell rc for dynamic completion of live instance, image, and profile names. See [docs/shell-completion.md](shell-completion.md) for full setup recipes per shell.
+Print a static shell completion script for bash, zsh, or fish. Completion covers commands, options, and fixed values only; instance, image, and profile names are not completed (use `coop list`, `coop images`, `coop profiles`). See [docs/shell-completion.md](shell-completion.md) for full setup recipes per shell.
 
 ```
 coop completions <SHELL>
@@ -968,7 +936,7 @@ coop completions <SHELL>
 
 | Argument | Description |
 |----------|-------------|
-| `SHELL` | Target shell: `bash`, `zsh`, `fish`, `powershell`, or `elvish` |
+| `SHELL` | Target shell: `bash`, `zsh`, or `fish`. `powershell` and `elvish` are no longer provided and fail with an error. |
 
 ```
 coop completions bash | sudo tee /etc/bash_completion.d/coop > /dev/null
@@ -979,7 +947,7 @@ coop completions fish > ~/.config/fish/completions/coop.fish
 
 ### `github`
 
-Manage GitHub authentication. Specifically, the scoped fine-grained PAT (FGPAT) workflow that pairs `github = "pat"` mode with per-repo `[github.pat."owner/repo"]` entries in `config.toml`. See the [GitHub auth section](configuration.md#github-auth) of the configuration reference for the full data model.
+Manage GitHub authentication. Specifically, the scoped fine-grained PAT (FGPAT) workflow that pairs `"pat"` mode with per-repo `github.pat["owner/repo"]` entries in the configuration. See the [GitHub auth section](configuration.md#github-auth) of the configuration reference for the full data model.
 
 ```
 coop github <subcommand>
@@ -989,10 +957,10 @@ coop github <subcommand>
 |------------|--------|
 | `assign-pat --vm NAME --repo owner/name` | Persist selection of an existing stored entry for this VM; `--repo` is the entry key, not its full permission scope. Works while stopped. |
 | `unassign-pat --vm NAME` | Remove only the VM association; leave the shared credential intact. |
-| `setup-pat [--repo owner/name]` | Run the wizard end-to-end: open the GitHub PAT-creation form, validate the pasted token against `api.github.com`, store it in a chosen secret manager (Keychain / Secret Service / 1Password / file), and write a `[github.pat."owner/repo"]` entry. The repo is auto-detected from `git remote get-url origin` when `--repo` is omitted. |
+| `setup-pat [--repo owner/name]` | Run the wizard end-to-end: open the GitHub PAT-creation form, validate the pasted token against `api.github.com`, store it in the macOS Keychain (no fallback store), and write a `github.pat["owner/repo"]` entry that references it with `cmd:`. The repo is auto-detected from `git remote get-url origin` when `--repo` is omitted. |
 | `rotate-pat --repo owner/name` | Re-run the wizard for an existing entry (FGPATs expire — max 1 year). |
-| `status [--vm NAME] [--probe] [--json]` | List configured entries and their storage backend. By default the cmd-invocation is *not* resolved (so Keychain / 1Password prompts don't fire). Pass `--probe` to also resolve each entry and report whether the secret store still serves it. Pass `--json` for machine-readable output. |
-| `forget-pat --repo owner/name` | Delete the stored secret from its backend and drop the `[github.pat."owner/repo"]` entry. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want coop to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
+| `status [--vm NAME] [--probe] [--json]` | List configured entries and whether they are stored in the macOS Keychain. By default the `cmd:` reference is *not* resolved (so no Keychain or other prompt fires). Pass `--probe` to also resolve each entry and report whether the secret store still serves it. Pass `--json` for machine-readable output. |
+| `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references coop's Keychain item, delete that item. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want coop to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
 
 ```
 coop github setup-pat --repo trailofbits/coop
@@ -1005,8 +973,8 @@ coop github forget-pat --repo trailofbits/coop
 
 `coop github status --json` emits `{ "mode", "entries", "skip" }`. `mode` is
 `off`/`auto`/`env`/`pat`; each entry is `{ "repo", "storage", "probe" }` with
-`storage` a stable token (`macos_keychain`/`linux_secret_service`/`one_password`/
-`file`, or `null` when unparseable) and `probe` (`ok`/`unexpected_format`/
+`storage` either `macos_keychain` (coop's Keychain reference) or `null` (any
+other `cmd:` reference) and `probe` (`ok`/`unexpected_format`/
 `resolve_failed`, or `null` unless `--probe`). The token value is never emitted.
 
 With `--vm NAME`, status also includes `vm: { "name", "assigned_entry", "source" }`.
@@ -1019,7 +987,7 @@ for precedence, opt-out, conflicts, rotation, and bootstrap timing.
 
 ### `proxy`
 
-Manage the host-side credential-injecting proxy. When a `[proxy.<provider>]`
+Manage the host-side credential-injecting proxy. When a `proxy.<provider>`
 upstream is configured, coop runs a `coop-proxy` process on the host for the
 lifetime of each remote-mode VM: the guest is pointed at the proxy and holds
 only a per-instance capability token, while the real API key stays on the host
@@ -1031,7 +999,7 @@ model.
 
 | Subcommand | Effect |
 |------------|--------|
-| `setup [--anthropic] [--openai] [--vm <name>] [--api-key]` | Store a provider credential in a secret backend and wire it into `[proxy.<provider>]` (the default) or a per-VM override. Anthropic (Claude) is the default provider; pass `--openai` for Codex. `--vm <name>` stores the credential as a per-VM override in that instance's state instead of the global default. Anthropic only: `--api-key` stores an API key (`x-api-key`) instead of a Claude `setup-token`; ignored for `--openai`, whose keys are always injected as `Authorization: Bearer`. |
+| `setup [--anthropic] [--openai] [--vm <name>] [--api-key]` | Store a provider credential in the macOS Keychain and wire its `cmd:` reference into `proxy.<provider>` (the default) or a per-VM override. There is no fallback store; if the Keychain is unavailable, setup fails. Anthropic (Claude) is the default provider; pass `--openai` for Codex. `--vm <name>` stores the credential as a per-VM override in that instance's state instead of the global default. Anthropic only: `--api-key` stores an API key (`x-api-key`) instead of a Claude `setup-token`; ignored for `--openai`, whose keys are always injected as `Authorization: Bearer`. |
 | `status [--vm <name>]` | Show what each VM's agents resolve to (per-VM override → default → off), with credentials redacted. Pass `--vm <name>` for the effective resolution of a single VM instead of all. |
 
 ```
@@ -1045,7 +1013,7 @@ coop proxy status --vm my-project
 
 ### `validate`
 
-Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. With `--probe`, also exercises each `[github.pat]` entry against `api.github.com` to confirm the token is still live.
+Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live.
 
 ```
 coop validate
@@ -1054,4 +1022,4 @@ coop validate --probe
 
 | Flag | Description |
 |------|-------------|
-| `--probe` | For each `[github.pat]` entry, resolve the token and call `GET /user` on `api.github.com` to confirm it authenticates. Network-dependent; may trigger Keychain / 1Password prompts on macOS. |
+| `--probe` | For each `github.pat` entry, resolve the token and call `GET /user` on `api.github.com` to confirm it authenticates. Network-dependent; may trigger a Keychain (or your own `cmd:` tool's) prompt. |

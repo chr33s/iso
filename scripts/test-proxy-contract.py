@@ -175,7 +175,7 @@ def main():
             config = {"version": 1, "listen": f"127.0.0.1:{port}", "provider": provider,
                       "capability_token": TOKEN, "injection": {"scheme": "bearer", "credential": SECRET}}
             command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(binary),
-                       "-f", str(ROOT / "src/seatbelt-proxy.sb"), str(binary)]
+                       "-f", str(ROOT / "Sources/CoopHost/seatbelt-proxy.sb"), str(binary)]
             child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, env={})
             try:

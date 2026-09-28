@@ -1,0 +1,6 @@
+Restore cloud defaults (Anthropic / `OpenAI`)
+
+Usage: coop model remote
+
+Options:
+  -h, --help  Print help

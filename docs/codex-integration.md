@@ -1,8 +1,7 @@
 # Codex Integration
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported.
 
 coop installs Codex into every guest image and gives you a dedicated `coop codex` launcher. This guide covers the `coop codex` command, the configuration that controls what gets injected into the guest, and the bootstrap sequence that runs when a VM starts.
 
@@ -14,7 +13,7 @@ coop codex [instance-name] [-- extra-args...]
 
 This SSHes into the guest and runs the `codex` CLI. By default coop passes `--dangerously-bypass-approvals-and-sandbox`, so Codex runs without its sandbox or approval prompts — parity with how `coop claude` runs unrestricted. The VM is the isolation boundary, so Codex's own sandbox is redundant; it also does not work in the guest, which lacks a functioning bubblewrap, so leaving it enabled makes every shell command Codex runs fail.
 
-When `[codex] auth = "chatgpt"` is enabled, `coop codex` launches a small
+When `"codex": { "auth": "chatgpt" }` is set, `coop codex` launches a small
 guest wrapper (`/usr/local/bin/codex-account`) that starts a D-Bus session,
 unlocks GNOME Keyring, and then runs the real Codex binary. In keyring mode
 each launch gets a fresh private D-Bus session, so the wrapper asks for the
@@ -56,46 +55,46 @@ coop codex -- --model gpt-5
 
 ## Configuration
 
-Codex-related settings live under the `[codex]` section in `config.toml`, except `github` which is a top-level field:
+Codex-related settings live under the `codex` object in `~/.coop/config.jsonc`, except `github` which is a top-level field:
 
-```toml
-github = "auto"
-
-[codex]
-auth = "api_key"
-api_key = "sk-proj-..."
-env_forward = ["MYORG_KEY"]
-config_dir = "~/.codex"
-
-[codex.mcp_servers.playwright]
-command = "npx"
-args = ["-y", "@playwright/mcp@latest"]
+```jsonc
+{
+  "github": "auto",
+  "codex": {
+    "auth": "api_key",
+    "api_key": "cmd:security find-generic-password -s openai -w",
+    "env_forward": ["MYORG_KEY"],
+    "config_dir": "~/.codex",
+    "mcp_servers": {
+      "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest"] }
+    }
+  }
+}
 ```
 
-Every field is optional. An empty `[codex]` section (or omitting it entirely) keeps the historical API-key mode and skips all Codex-specific bootstrap steps unless host config, MCP servers, plugins, or local-model routing need to be applied.
+Every field is optional. An empty `codex` object (or omitting it entirely) keeps the historical API-key mode and skips all Codex-specific bootstrap steps unless host config, MCP servers, plugins, or local-model routing need to be applied.
 
 ### API key forwarding
 
-The default auth mode is `auth = "api_key"`. In this mode, coop forwards
+The default auth mode is `"auth": "api_key"`. In this mode, coop forwards
 `OPENAI_API_KEY` to the guest via SSH `SendEnv` on every session: `coop codex`,
 `coop shell`, and `coop exec` alike. The key is never written to disk inside
 the guest.
 
 Resolution order:
 
-1. `codex.api_key` in `config.toml`
+1. `codex.api_key` in the configuration (a literal or a `cmd:` reference run on the host)
 2. `OPENAI_API_KEY` environment variable on the host
 
 If neither is set, the guest starts without an API key. You can authenticate interactively the first time you run `codex` inside the VM.
 
 ### ChatGPT account auth
 
-Set `auth = "chatgpt"` to use a ChatGPT account or ChatGPT Business workspace
+Set `"auth": "chatgpt"` to use a ChatGPT account or ChatGPT Business workspace
 with Codex instead of an OpenAI API key:
 
-```toml
-[codex]
-auth = "chatgpt"
+```jsonc
+{ "codex": { "auth": "chatgpt" } }
 ```
 
 This mode follows Codex's ChatGPT sign-in path, so usage is tied to the
@@ -145,7 +144,7 @@ Security and billing guardrails in this mode:
   explicitly set `CODEX_HOME`, preventing Codex from writing account
   credentials to an unmanaged `auth.json`; unset `CODEX_HOME` when using
   ChatGPT account auth.
-- `[proxy.openai]` is rejected with `auth = "chatgpt"`, because the proxy path
+- `proxy.openai` is rejected with `"auth": "chatgpt"`, because the proxy path
   uses an OpenAI API key and would switch Codex back to API billing.
 
 Because coop must keep `cli_auth_credentials_store` in the guest
@@ -193,13 +192,12 @@ When a token is available, coop runs `gh auth setup-git` in the guest during boo
 
 `config_dir` specifies a host directory from which coop copies an allowlist of entries (`AGENTS.md`, `prompts/`, `config.toml`, `auth.json`) into `~/.codex/` in the guest. This provides Codex's global instructions, prompt files, baseline user configuration, and local Codex authentication state.
 
-When `auth = "chatgpt"` or `[proxy.openai]` is active, `auth.json` is excluded
+When `auth` is `"chatgpt"` or `proxy.openai` is active, `auth.json` is excluded
 from the copy. In ChatGPT account mode, coop stores cached account credentials
 through the guest keyring instead.
 
-```toml
-[codex]
-config_dir = "~/.codex"
+```jsonc
+{ "codex": { "config_dir": "~/.codex" } }
 ```
 
 The default is `~/.codex`. Set to `false` to disable config file copying entirely.
@@ -216,16 +214,15 @@ The default is `~/.codex`. Set to `false` to disable config file copying entirel
 
 Definitions use the same schema as Claude integration:
 
-```toml
-[codex.mcp_servers.my-tool]
-command = "npx"
-args = ["-y", "@example/mcp-server"]
-```
-
-```toml
-[codex.mcp_servers.sentry]
-type = "http"
-url = "https://mcp.sentry.dev/mcp"
+```jsonc
+{
+  "codex": {
+    "mcp_servers": {
+      "my-tool": { "command": "npx", "args": ["-y", "@example/mcp-server"] },
+      "sentry": { "type": "http", "url": "https://mcp.sentry.dev/mcp" }
+    }
+  }
+}
 ```
 
 **NOTE**: MCP server commands must be installed in the guest. For example, to make `npx` available when creating a new instance, use `coop up --profile node`. If your image already includes the required tools, no additional profile flag is needed. Profiles do not add tools to an existing instance; see [Images and Profiles](images-and-profiles.md) for image setup options.
@@ -234,17 +231,20 @@ If `config_dir` also provides a `config.toml`, coop preserves its other settings
 
 ### Plugin marketplaces
 
-`marketplaces` and `plugins` declare Codex [plugin marketplaces](https://learn.chatgpt.com/docs/plugins) and the plugins to install from them, mirroring the same fields under `[claude]`:
+`marketplaces` and `plugins` declare Codex [plugin marketplaces](https://learn.chatgpt.com/docs/plugins) and the plugins to install from them, mirroring the same fields under `claude`:
 
-```toml
-[codex]
-marketplaces = ["trailofbits/codex-plugins"]  # owner/repo, owner/repo@ref, git URL, or local path
-plugins = ["my-lsp@codex-plugins"]             # plugin@marketplace
+```jsonc
+{
+  "codex": {
+    "marketplaces": ["trailofbits/codex-plugins"], // owner/repo, owner/repo@ref, git URL, or local path
+    "plugins": ["my-lsp@codex-plugins"]            // plugin@marketplace
+  }
+}
 ```
 
 Each marketplace source is registered with `codex plugin marketplace add` and each plugin installed with `codex plugin add`. A source that is an absolute local directory is copied into the guest first; a `owner/repo`, `owner/repo@ref`, or git URL is passed through unchanged.
 
-These are **baked into the golden image** during `coop setup` (on the Lima/macOS backend) and recorded in the image's template config. On a VM's first boot coop installs only the delta not already baked in; on the Firecracker/Linux backend, where nothing is baked, the full set installs on first boot. Like Claude plugins, they are installed on **first boot only** — they persist on the guest disk across stop/start.
+The Apple backend does not bake them into the golden image; the full set installs on a VM's first boot. Like Claude plugins, they are installed on **first boot only** — they persist on the guest disk across stop/start.
 
 Codex stores marketplace registrations under `[marketplaces.*]` and per-plugin enabled/disabled state under `[plugins.*]` in `~/.codex/config.toml`. Because coop rewrites that file on every boot, it reads the guest's current tables back first and preserves them across the rewrite (dropping any that came from the host's own `config.toml`), so installed plugins — and any manual enable/disable toggles you make with `/plugins` — survive a restart.
 
@@ -308,12 +308,12 @@ vLLM / llama.cpp) instead of OpenAI's cloud. The endpoint must serve the
 Responses API — the only wire API Codex currently supports. Switch a VM with
 [`coop model <vm> local`](commands.md#model) and back with
 `coop model <vm> remote`; configure the endpoint under
-[`[codex.local_model]`](configuration.md#local-model-routing) or interactively
+[`codex.local_model`](configuration.md#local-model-routing) or interactively
 at the `coop model … local` prompt.
 
 The selection is per VM and independent of Claude — Codex can run on a local
 model while Claude stays on cloud, or the reverse. The endpoint Codex resolves
-is the `[codex.local_model]` config block if present, otherwise an endpoint
+is the `codex.local_model` config object if present, otherwise an endpoint
 saved interactively for the instance, otherwise none (it stays on cloud).
 Config takes precedence over the saved endpoint.
 

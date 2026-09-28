@@ -1,0 +1,1 @@
+{"profiles": {"a.b": {"plugins": ["p"]}, "a": {"apt_packages": []}}, "claude": {"mcp_servers": {"x.y": {"command": "c"}}}}

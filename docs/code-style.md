@@ -1,161 +1,193 @@
 # Code style
 
-These notes are coop's project-specific Rust conventions. They complement the
-global Rust guidance (clippy lint policy, `thiserror`/`anyhow`, `tracing`,
-newtypes, enums over bools) rather than restating it. The focus here is on
-**using the type system to eliminate error states** — not on style. The
-conventions and design lenses in the shared
+These are coop's project-specific Swift conventions for the host package
+(`Package.swift`, `Sources/`, `tests/swift/`, `fuzz/`) and the companion
+packages (`coop-proxy/`, `coop-sandbox/`). The focus is on **using the type
+system to eliminate error states**, not on formatting, which `swift format`
+owns. The conventions and design lenses in the shared
 [`review`](../.agents/skills/review/SKILL.md) workflow enforce these; the
-[architecture doc](ARCHITECTURE.md) shows where the patterns already live in the
-codebase.
+[architecture doc](ARCHITECTURE.md) shows where the patterns already live.
 
 Apply these patterns when they pay for themselves; skip them when a primitive is
 genuinely fine. A type system that fights the reader is worse than one that lets
 a bug through.
 
-## Swift packages
+## Toolchain and formatting
 
-The root `coop-proxy/` and `coop-sandbox/` packages use SwiftPM. Keep package
-versions pinned in `Package.resolved`; build and test each package independently
-of Cargo. The proxy CI formatting gate is:
+- Swift 6 language mode (`swiftLanguageModes: [.v6]`), strict concurrency, the
+  pinned Xcode toolchain, macOS 27 deployment target.
+- Commit every `Package.resolved`; build and test with
+  `--force-resolved-versions` so an unexpected resolution change fails.
+  Add a dependency only with a reviewed reason; the host depends only on
+  Swift Argument Parser.
+- `swift format lint --strict` must be clean for every package:
 
-```sh
-swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
-```
+  ```sh
+  swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+  swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
+  ```
 
-Preserve the proxy’s bounded resource ownership, cancellation, and fail-closed
-confinement invariants. For runtime changes, preserve transaction recovery and
-per-sandbox locking. See [testing](testing.md) and the [trust model](trust-model.md).
+- Tests use Swift Testing (`import Testing`, `@Test`, `#expect`/`#require`).
+- Keep module boundaries: `CoopCore` has no subprocess, filesystem-mutation or
+  network side effects; `CoopConfiguration` has no subprocesses and no TOML or
+  configuration-provider dependency; side effects live in `CoopHost`;
+  `CoopCLI` stays a thin layer of parsing, dispatch and presentation.
 
 ## Lean on the type system before lean on validation
 
 The default move when you see a bug is to add a runtime check. The better move
 is usually to change a type so the bug cannot be expressed. Before writing a
-check or returning an error, ask: *can the function signature make this case
+check or throwing an error, ask: *can the function signature make this case
 unreachable?*
 
-- **Parse, don't validate.** A function that takes a `&str` and returns
-  `Result<Url, _>` is better than one that takes a validated `&str` by
-  convention. Downstream code should not re-check what an earlier layer proved.
-  Convert untrusted inputs to strong types at the boundary; pass the strong type
-  inward. coop does this pervasively in `config.rs` — value bounds live in
-  newtype constructors, so `validate()` only checks environmental facts.
+- **Parse, don't validate.** A function that takes a `String` and returns an
+  `InstanceName` (or throws) is better than one that takes a validated
+  `String` by convention. Convert untrusted input — CLI arguments, configuration,
+  runtime and guest output, registry responses — into strong types at the
+  boundary and pass the strong type inward. `ConfigDecoding` does this for the
+  whole configuration, so `ConfigValidation` only checks environmental facts;
+  `RuntimeProtocol` does it for `coop-sandbox` output.
 - **Smart constructors.** When an invariant can't be expressed structurally,
-  wrap the type in a module-private struct and expose `fn new(...) -> Result<Self, Error>`.
-  The invariant then holds by construction everywhere the type appears
-  (`Hostname`, `SshUser`, `RepoSlug`, `EnvVarName`, `InstanceIndex`).
-- **Make illegal states unrepresentable.** Two `Option<T>` fields that are
-  always both-`Some`/both-`None` should be one `Option<(T, T)>`. A `bool` plus a
-  payload meaningful only when the bool is true should be an `Option`. A
-  `String` holding one of three values should be an enum.
+  keep the stored property `let` and expose only a validating initializer or
+  static factory that throws `ValidationError`. The invariant then holds
+  everywhere the type appears (`InstanceName`, `ImageName`, `EnvVarName`,
+  `RepoSlug`, `GitRepoURL`, `VmMemory`, `InstanceIndex`, `GuestPath.absolute`).
+- **Make illegal states unrepresentable.** Two optionals that are always both
+  set or both nil should be one optional tuple or struct. A `Bool` plus a
+  payload meaningful only when it is true should be an optional or an enum case
+  with an associated value. A `String` holding one of three values should be an
+  enum. `DevcontainerInput` (explicit path, disabled, or discover) is one enum, not two
+  flags.
 
-## Type-state for lifecycles
+## Enums over booleans
 
-coop orchestrates VMs through a sequence — `setup → start → shell → stop →
-destroy`. Operations are only legal on certain states (you can't `shell` into a
-stopped VM). When you find yourself writing `if self.state == State::Running
-{ ... } else { return Err(...) }`, consider whether the state belongs in the
-type rather than in a field. Two flavors, pick the lightest that works:
+A `Bool` parameter reads as `true`/`false` at the call site and invites
+transposition. Prefer an enum (`BootMode.firstBoot`, `OverflowPolicy.drain`,
+`ConfigFormat.jsonc`) or an argument label that names the choice. A boolean
+flag on an options struct that mirrors a CLI flag is fine.
 
-- **State enum with method gating.** An enum for the state, methods that
-  pattern-match the variant and return an error for illegal transitions. Use
-  when call sites are few and an explicit error is reasonable.
-- **Type-state with phantom markers.** `Vm<Stopped>`, `Vm<Running>`, where
-  `start(self) -> Vm<Running>` consumes the stopped value. Illegal transitions
-  become compile errors. Use when the lifecycle is the *primary* abstraction a
-  type exposes. coop uses this for `FirecrackerVm<Configured|Running>` (`vm.rs`)
-  and for the `RunningInstance`/`StoppedInstance` liveness proofs (`backend.rs`)
-  — don't reach for it on a type that mostly does something else.
+## Lifecycles and liveness
+
+coop orchestrates VMs through `setup → up/start → shell → stop → destroy`.
+Operations are legal only in certain states. When you find yourself writing
+`guard isRunning else { throw … }` far from where the state was established,
+consider whether the state belongs in a type:
+
+- **State enum with method gating.** An enum for the state and methods that
+  switch over it and throw for illegal transitions. Use when call sites are
+  few and an explicit error is reasonable (journal states, proxy phases).
+- **Proof values.** `AppleBackend.Running` / `AppleBackend.Stopped` have
+  initializers that are internal to `CoopHost`; commands get them only from
+  `asRunning` / `resolveRunning` / `asStopped`, and operations that need the
+  precondition take the proof. Don't reach for this on a type that mostly does
+  something else.
+
+Multi-step operations use explicit scoped cleanup (`defer`, journals,
+`Shutdown` scopes). Never rely on `deinit` to stop a VM, terminate a process,
+release a credential or roll back a step; actors do not replace interprocess
+`FileLock`s.
 
 ## Newtypes that earn their keep
 
-The global guidance says "newtypes over primitives." In practice the win comes
-when:
+The win from a wrapper type comes when:
 
-- Two primitives of the same underlying type are easy to swap at a call site
-  (`fn copy(src: PathBuf, dst: PathBuf)` — newtype the destination, or use a
-  struct).
-- A primitive carries an invariant (non-empty, valid UTF-8, an absolute path, a
-  hostname). The newtype's constructor is the one place that invariant is
-  checked.
-- A primitive is a domain concept that shows up in many signatures (a VM name, a
-  guest path, an SSH user). The newtype reads as documentation and resists drift
-  — see `GuestPath`/`HostPath`, `ImageName`/`InstanceName`, `Sha256Hash`.
+- Two values of the same underlying type are easy to swap at a call site —
+  use distinct types or argument labels.
+- A primitive carries an invariant (non-empty, a character class, an absolute
+  guest path, a non-zero quantity). The initializer is the one place that
+  invariant is checked.
+- A primitive is a domain concept that shows up in many signatures (instance
+  and image names, guest paths, digests, runtime identifiers). The type reads
+  as documentation and resists drift.
 
 If a primitive appears in one place and crosses no boundary, leave it alone.
-Wrapping `u8` because "newtypes are good" is noise.
 
 ## Error design
 
-- Distinct failure modes → distinct enum variants. A function that can fail
-  because the VM is missing *or* because SSH timed out should return an error
-  type whose variants reflect that, so callers can branch without string
-  matching.
-- Attach context at boundaries, not at every `?`. Use `anyhow::Context` at the
-  layer where an error becomes user-facing; let library code propagate clean
-  variants. Re-wrapping at every level produces verbose, low-signal errors.
-- `unwrap`/`expect`/`panic` are forbidden by the global lints in production
-  paths. If you genuinely need one, the comment must explain *why the invariant
-  holds*, not just what is unwrapped. "Safe because `parse` was called above" is
-  a smell — restructure to carry the parsed value through.
+- Distinct failure modes → distinct error types or enum cases, so callers can
+  branch without string matching (`ProcessRunner.Failure`, `ConfigError`,
+  `RuntimeError`). Use **typed throws** (`throws(ValidationError)`,
+  `throws(ProcessRunner.Failure)`) where a function has one closed error type
+  and callers switch on it; plain `throws` is fine where errors are composed.
+- Attach context where an error becomes user-facing (`ContextError`), not at
+  every `try`. Generic `HostError` messages are for failures nobody branches on.
+- Never use `try?` plus a default to hide a malformed, unreadable or
+  wrong-typed value: missing, `null`, and invalid remain distinct.
+- No traps on untrusted input: no force unwraps, `try!`, `as!`, unchecked
+  integer arithmetic or unchecked indexing on values derived from configuration,
+  guest, runtime, registry or network data. Use checked arithmetic
+  (`multipliedReportingOverflow`) and bounded parsing. Where a trap is
+  genuinely unreachable, a comment must say *why the invariant holds*.
+- Error text must not embed secrets, the configuration document, or raw
+  Foundation decoding errors. Guest/runtime text reaching the terminal has
+  control characters neutralized.
 
-## Other small idioms worth checking
+## Processes, files and output
 
-- `&str` over `&String`, `&[T]` over `&Vec<T>`, `&Path`/`impl AsRef<Path>` over
-  `PathBuf` in parameters — accepts more callers, costs nothing.
-- `Cow<'_, str>` when a function sometimes returns a borrowed slice and sometimes
-  an owned modification.
-- `NonZeroU32` / `NonZeroUsize` when zero is a real invariant.
-- `#[non_exhaustive]` on public enums/structs that may grow.
-- `From`/`Into` for infallible conversions, `TryFrom`/`TryInto` for fallible.
-  Don't write `fn from_x(...) -> Result<Self, _>` — that's `TryFrom`.
-- Sealed traits when you publish a trait but want to control implementations.
-- Absolute imports only — no relative (`..`) paths.
+- **One subprocess launcher.** Every child process starts through
+  `ProcessRunner` (`capture`, `stream`, `attached`, `pipeline`) with an explicit
+  argv and environment, its own process group, deadlines and bounded output.
+  Don't use `Process`, `posix_spawn` or `system` elsewhere. Secrets go on stdin
+  or into the child's environment, never argv.
+- **No shell interpolation.** Guest shell commands are built with
+  `RemoteCommand`: `.arg` for every dynamic value, `.literal` only for
+  coop-authored fragments. The only intentional host shell is a user-authored
+  `cmd:` credential reference in `CredentialResolver`.
+- **State writes** go through `StateStore` / `AtomicFile` under the resource's
+  `FileLock`: write a temporary sibling, fsync, rename, never widen the mode.
+  Control files are read without following symlinks and with a size bound.
+- **Output streams.** stdout carries command output and `--json` only;
+  diagnostics, prompts and progress go to stderr through `Diagnostics` /
+  `OutputStreams`. No `print` in `CoopHost`.
+- **Recursive parsers** for untrusted documents cap nesting and run on
+  `ParserStack`'s fixed stack.
 
 ## Review checklist (in priority order)
 
 Before reviewing, sync to latest remote (`git fetch origin`).
 
-1. **Correctness against the spec.** Does the change do what was asked, including
-   edge cases the author may not have surfaced? Run the relevant tests and
-   re-read the diff against the request.
-2. **Invariants in types vs. checks.** Scan for `bool` parameters, primitive
+1. **Correctness against the spec.** Does the change do what was asked,
+   including edge cases the author may not have surfaced? Run the relevant tests
+   and re-read the diff against the request.
+2. **Invariants in types vs. checks.** Scan for `Bool` parameters, primitive
    types representing domain concepts, sentinel values (`-1`, `""`, `0` meaning
-   "missing"), and `Option<Option<T>>`. Each is a candidate for a stronger type.
-   Flag the ones with real payoff; don't demand a refactor for every primitive.
-3. **Error paths.** Every `?` produces an error that bubbles somewhere. Is the
-   eventual user-facing message specific enough to act on? Are distinct failures
-   distinguishable without string matching?
-4. **`unwrap`/`expect`/`panic`.** Forbidden by global lints, but easy to slip in.
-   If one exists, the justification must be in a comment and must be load-bearing.
-5. **API surface.** New public items: do they need to be public? Public types:
-   `#[non_exhaustive]` where appropriate? Public functions: most general
-   parameter types (`&str`, `&[T]`, `impl AsRef<Path>`) without overreaching?
-6. **Tests cover behavior, not shape.** Refactoring the implementation shouldn't
-   break tests if behavior is unchanged. Edge cases — empty inputs, boundaries,
-   the error variants the code returns — should each have a test.
-7. **Tracing.** New operations that can take time, fail, or alter state should
-   log at an appropriate level (INFO for user-visible lifecycle, DEBUG for
-   internals, WARN/ERROR for problems). No `println!`/`eprintln!` outside the
-   CLI's intentional output. Tracing goes to **stderr**.
-8. **Supported backends.** Touching backend-shared code? Confirm the abstraction
-   holds for Apple and Lima on macOS 27+ Apple Silicon. Run applicable macOS
-   integration gates (see [`AGENTS.md`](../AGENTS.md) "Before committing").
-   Linux/Firecracker hosts are outside this fork’s acceptance scope.
+   "missing"), and nested optionals. Each is a candidate for a stronger type.
+   Flag the ones with real payoff.
+3. **Error paths.** Every `try` produces an error that surfaces somewhere. Is
+   the eventual message specific enough to act on, and free of secrets and raw
+   guest text? Are distinct failures distinguishable without string matching?
+   Any `try?` that turns a failure into a default?
+4. **Traps.** Force unwraps, `try!`, `as!`, `fatalError`, `precondition`,
+   overflowing arithmetic, or unchecked subscripts reachable from input.
+5. **Processes and cleanup.** New subprocesses go through `ProcessRunner`; every
+   spawned process, lock, PID file, temporary directory and credential is
+   released on success, failure, timeout and cancellation.
+6. **API surface.** New `public` items: do they need to be public across
+   modules? Does the module boundary still hold (no side effects in `CoopCore`)?
+   `Sendable` conformances honest?
+7. **Tests cover behavior, not shape.** Edge cases — empty input, boundaries,
+   each error case — have a test. Security-relevant behavior has a fault in
+   `scripts/swift-host-fault-injection.py` that a test detects.
+8. **Diagnostics.** Operations that take time, fail, or alter state log at an
+   appropriate level (info for user-visible lifecycle, debug for internals,
+   warn/error for problems), on **stderr**.
+9. **Integration gates.** Guest-visible or lifecycle changes: run the macOS
+   Apple sandbox integration suite (see [`AGENTS.md`](../AGENTS.md) "Before
+   committing").
 
 ## Authoring checklist
 
 1. **Sketch the types first.** Write the signatures before the body. If they
-   don't make the legal call sequences obvious, the types are wrong — fix them
-   before the implementation locks them in.
-2. **Take the smallest input you need.** `&str` not `String`, `&Path` not
-   `PathBuf`, `&[T]` not `Vec<T>`. Owning is the caller's choice.
-3. **Return owned values; let callers borrow.** The reverse forces lifetimes
-   through the call graph.
-4. **One `?` per error category.** Five `?`s that all produce different
-   user-meaningful errors want an error enum with five variants, not one
-   `anyhow::Error` with five contexts.
-5. **Resist the "configuration knob" reflex.** A new flag, env var, or option is
-   a long-lived commitment. Add it only when a real caller needs it.
+   don't make the legal call sequences obvious, the types are wrong.
+2. **Take the smallest input you need.** Pass the validated value or the
+   specific fields, not the whole configuration, when a function needs one field.
+3. **Value types by default.** Prefer `struct`/`enum` with `let` properties;
+   use a class or actor only for identity or shared mutable state.
+4. **One error case per user-meaningful failure.** Five `try`s that produce
+   different actionable errors want an enum with five cases.
+5. **Resist the "configuration knob" reflex.** A new flag, environment
+   variable, or config field is a long-lived commitment. Add it only when a real
+   caller needs it, and update `config.example.jsonc`, `ConfigTemplate` and the
+   docs in the same change.
 6. **Re-read your diff.** Read your own change as the reviewer would before
-   pushing. Most cleanup happens here, not in review.
+   pushing, and run `swift format lint --strict`.

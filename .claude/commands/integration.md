@@ -1,6 +1,6 @@
 ---
-description: Run coop's integration suite locally on Lima or remotely on Firecracker.
-argument-hint: [--remote user@host] [--full] [--profile LIST] [--name NAME]
+description: Run coop's Apple runtime VM integration suite on macOS 27+ Apple Silicon.
+argument-hint: [--only PHASE[,PHASE...]] [--keep]
 allowed-tools: Bash(./tests/run-integration.sh:*), Bash(git rev-parse:*), Bash(uname:*)
 ---
 

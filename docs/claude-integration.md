@@ -52,27 +52,28 @@ Closing the TUI does not stop background sessions; reopening `coop ca` reattache
 
 ## Configuration
 
-Claude-related settings live under the `[claude]` section in `config.toml`, except `github` which is a top-level field:
+Claude-related settings live under the `claude` object in `~/.coop/config.jsonc`, except `github` which is a top-level field:
 
-```toml
-github = "auto"
-
-[claude]
-api_key = "sk-ant-..."
-env_forward = ["MYORG_KEY"]
-config_dir = "~/.claude"
-marketplaces = [
-  "https://github.com/anthropics/claude-plugins-official",
-  "/path/to/local/marketplace",
-]
-plugins = ["rust-analyzer-lsp@claude-plugins-official"]
-
-[claude.mcp_servers.sentry]
-type = "http"
-url = "https://mcp.sentry.dev/mcp"
+```jsonc
+{
+  "github": "auto",
+  "claude": {
+    "api_key": "cmd:security find-generic-password -s anthropic -w",
+    "env_forward": ["MYORG_KEY"],
+    "config_dir": "~/.claude",
+    "marketplaces": [
+      "https://github.com/anthropics/claude-plugins-official",
+      "/path/to/local/marketplace"
+    ],
+    "plugins": ["rust-analyzer-lsp@claude-plugins-official"],
+    "mcp_servers": {
+      "sentry": { "type": "http", "url": "https://mcp.sentry.dev/mcp" }
+    }
+  }
+}
 ```
 
-Every field is optional. An empty `[claude]` section (or omitting it entirely) skips all bootstrap steps.
+Every field is optional. An empty `claude` object (or omitting it entirely) skips all bootstrap steps.
 
 ### API key forwarding
 
@@ -80,7 +81,7 @@ coop forwards `ANTHROPIC_API_KEY` to the guest via SSH `SendEnv` on every sessio
 
 Resolution order:
 
-1. `claude.api_key` in `config.toml`
+1. `claude.api_key` in the configuration (a literal or a `cmd:` reference run on the host)
 2. `ANTHROPIC_API_KEY` environment variable on the host
 
 If neither is set, the guest starts without an API key. You can authenticate interactively the first time you run `claude` inside the VM.
@@ -94,7 +95,7 @@ The `github` field controls how coop obtains a `GITHUB_TOKEN` for the guest. Thi
 | `"auto"` | Check the `GITHUB_TOKEN` env var first. If unset, run `gh auth token` on the host to extract a token from the GitHub CLI. |
 | `"env"`  | Require `GITHUB_TOKEN` in the host environment. Warns if missing. |
 | `"off"`  | Skip GitHub token forwarding entirely. This is the default when `github` is unset. |
-| `"pat"`  | Use a per-repo fine-grained PAT from `[github.pat]`. GitHub enforces the permissions and repositories selected for that token. Run `coop github setup-pat --repo owner/name` to add an entry; see [configuration.md](configuration.md#fine-grained-pat-github--pat) for the full reference. |
+| `"pat"`  | Use a per-repo fine-grained PAT from `github.pat`. GitHub enforces the permissions and repositories selected for that token. Run `coop github setup-pat --repo owner/name` to add an entry; see [configuration.md](configuration.md#fine-grained-pat-github-pat) for the full reference. |
 
 A [VM PAT assignment](configuration.md#assign-an-existing-pat-to-a-vm) selects an existing entry independently of workspace detection.
 
@@ -106,9 +107,8 @@ When a token is available, coop runs `gh auth setup-git` in the guest during boo
 on every agent bootstrap (`coop up` or `coop start`, without `--no-agents`).
 The default is `~/.claude`; a custom path supports `~` expansion:
 
-```toml
-[claude]
-config_dir = "~/claude-customizations"
+```jsonc
+{ "claude": { "config_dir": "~/claude-customizations" } }
 ```
 
 The copied entries are `CLAUDE.md`, `keybindings.json`, `rules/`, `commands/`, `skills/`, `agents/`, `output-styles/`, `themes/`, and `workflows/`.
@@ -194,9 +194,8 @@ hardening are outside this import contract.
 
 `ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are handled through their own mechanisms (described above) and do not need to appear here.
 
-```toml
-[claude]
-env_forward = ["MYORG_KEY", "OPENAI_API_KEY"]
+```jsonc
+{ "claude": { "env_forward": ["MYORG_KEY", "OPENAI_API_KEY"] } }
 ```
 
 Each variable must be set in the host environment at the time of the SSH session. Unset variables are silently skipped.
@@ -205,12 +204,15 @@ Each variable must be set in the host environment at the time of the SSH session
 
 `marketplaces` lists plugin marketplace sources. Each entry is either a remote URL (typically a GitHub repository) or an absolute path to a local directory.
 
-```toml
-[claude]
-marketplaces = [
-  "https://github.com/anthropics/claude-plugins-official",
-  "/Users/me/dev/my-marketplace",
-]
+```jsonc
+{
+  "claude": {
+    "marketplaces": [
+      "https://github.com/anthropics/claude-plugins-official",
+      "/Users/me/dev/my-marketplace"
+    ]
+  }
+}
 ```
 
 Remote URLs are passed directly to `claude plugin marketplace add --scope user` inside the guest.
@@ -221,36 +223,47 @@ Local directories are first copied into the guest at `~/.coop/marketplaces/<dirn
 
 `plugins` lists plugins to install from the registered marketplaces. Each entry is passed to `claude plugin install <name> -s user` inside the guest.
 
-```toml
-[claude]
-plugins = [
-  "rust-analyzer-lsp@claude-plugins-official",
-  "devcontainer-setup@trailofbits",
-]
+```jsonc
+{
+  "claude": {
+    "plugins": [
+      "rust-analyzer-lsp@claude-plugins-official",
+      "devcontainer-setup@trailofbits"
+    ]
+  }
+}
 ```
 
 Plugins are installed after marketplaces are registered. If a plugin references a marketplace that hasn't been added, installation fails.
 
 ### MCP server registration
 
-`mcp_servers` maps server names to their definitions. Each server is registered via `claude mcp add-json <name> <json> -s user` inside the guest.
+`mcp_servers` maps server names to their definitions. Each server is registered via `claude mcp add-json -s user <name>` inside the guest, with the JSON definition passed on stdin so resolved header values never appear in a process argument list.
 
 Two server types are supported:
 
 **stdio**: a local command that communicates over stdin/stdout:
 
-```toml
-[claude.mcp_servers.my-tool]
-command = "/usr/local/bin/my-tool"
-args = ["--verbose"]
+```jsonc
+{
+  "claude": {
+    "mcp_servers": {
+      "my-tool": { "command": "/usr/local/bin/my-tool", "args": ["--verbose"] }
+    }
+  }
+}
 ```
 
 **HTTP**: a remote server accessed by URL:
 
-```toml
-[claude.mcp_servers.sentry]
-type = "http"
-url = "https://mcp.sentry.dev/mcp"
+```jsonc
+{
+  "claude": {
+    "mcp_servers": {
+      "sentry": { "type": "http", "url": "https://mcp.sentry.dev/mcp" }
+    }
+  }
+}
 ```
 
 Server definitions can include an `env` map for environment variable name mappings passed through to the MCP server configuration.
@@ -298,12 +311,12 @@ A VM can route Claude Code at a host-side local model server (Ollama / LM Studio
 / vLLM / llama.cpp) instead of Anthropic's cloud. The endpoint must serve the
 Anthropic Messages API. Switch a VM with [`coop model <vm> local`](commands.md#model)
 and back with `coop model <vm> remote`; configure the endpoint under
-[`[claude.local_model]`](configuration.md#local-model-routing) or interactively
+[`claude.local_model`](configuration.md#local-model-routing) or interactively
 at the `coop model … local` prompt.
 
 The selection is per VM and independent of Codex — Claude can run on a local
 model while Codex stays on cloud, or the reverse. The endpoint Claude resolves
-is the `[claude.local_model]` config block if present, otherwise an endpoint
+is the `claude.local_model` config object if present, otherwise an endpoint
 saved interactively for the instance, otherwise none (it stays on cloud).
 Config takes precedence over the saved endpoint.
 

@@ -8,14 +8,14 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
-# Expensive commands: the cargo quality gates, mutation/fuzz/kani sweeps, and
-# the integration-test scripts. Anchored to a command position (start of line
-# or after a `;`/`&`/`|` separator) so a cargo/tests string quoted inside a
-# `grep`/`echo` argument is not mistaken for the command being run. Flexible
-# whitespace and an optional `+toolchain` prefix catch `cargo   test` and
-# `cargo +nightly test`. POSIX classes only (`[[:space:]]`, no `\s`/`\b`) so it
-# behaves the same under GNU and BSD/macOS grep.
-EXPENSIVE='(^|[;&|][[:space:]]*)(cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?(test|clippy|mutants|build|fuzz|kani)|(\./)?tests/(run-)?integration[a-z-]*\.sh)'
+# Expensive commands: the Swift build and test gates, the fuzz runner, the
+# fault-injection sweep, the release build, and the integration-test
+# scripts. Anchored to a command position (start of line or after a
+# `;`/`&`/`|` separator, optionally behind `python3`) so a string quoted
+# inside a `grep`/`echo` argument is not mistaken for the command being run.
+# POSIX classes only (`[[:space:]]`, no `\s`/`\b`) so it behaves the same under
+# GNU and BSD/macOS grep.
+EXPENSIVE='(^|[;&|][[:space:]]*)((swift[[:space:]]+(build|test))|((python3[[:space:]]+)?(\./)?(scripts/(fuzz\.sh|swift-host-fault-injection\.py|build-release\.py)|tests/(run-)?integration[a-z-]*\.(sh|py))))'
 
 # A pipe (optionally `|&`) into a tool that inspects part of the output —
 # i.e. the output is being searched, not viewed whole.
@@ -31,8 +31,9 @@ if printf '%s' "$COMMAND" | grep -qE "$EXPENSIVE" \
   cat >&2 <<EOF
 Do not pipe this output through grep/rg/head/tail/awk/sed — it forces the
 command to run again every time you want to examine different parts of the
-output. This applies to cargo test/clippy/build, cargo mutants, cargo fuzz,
-cargo kani, and the tests/*integration*.sh scripts.
+output. This applies to swift build/test, scripts/fuzz.sh,
+scripts/swift-host-fault-injection.py, scripts/build-release.py, and the
+tests/*integration* scripts.
 
 Instead:
 Redirect output to a file:  <command> > ${OUTFILE} 2>&1

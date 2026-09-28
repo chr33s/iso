@@ -4,10 +4,35 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Stand-in for every Python gate: records its path and arguments.
+PYTHON_STUB = '''import os, sys
+with open(os.environ["PREFLIGHT_CALLS"], "a") as f:
+    f.write(" ".join([os.path.basename(sys.argv[0]), *sys.argv[1:]]) + "\\n")
+sys.exit(1 if os.path.basename(sys.argv[0]) == os.environ.get("PREFLIGHT_FAIL") else 0)
+'''
+
+# Stand-in for tools and shell gates: records its name and arguments.
+TOOL_STUB = '''#!/bin/bash
+printf '%s %s\\n' "${0##*/}" "$*" >> "$PREFLIGHT_CALLS"
+if [[ "${0##*/} $*" == "${PREFLIGHT_FAIL:-}" || "${0##*/}" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
+'''
+
+PYTHON_GATES = [
+    'tests/test-swift-host-read-parity.py', 'tests/test-swift-host-lifecycle-parity.py',
+    'tests/test-swift-host-data-root-parity.py', 'tests/test-swift-host-cli-surface.py',
+    'tests/test-migrate-config.py', 'tests/test-preflight-release.py',
+    'scripts/test-swift-proxy-process.py', 'scripts/build-release.py',
+]
+SHELL_GATES = [
+    'tests/integration-install.sh', 'tests/integration-update.sh',
+    'tests/integration-uninstall.sh', 'tests/run-integration.sh', 'scripts/fuzz.sh',
+]
 
 
 class PreflightTests(unittest.TestCase):
@@ -15,102 +40,113 @@ class PreflightTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for directory in ('scripts', 'tests', 'bin'):
-            (self.root / directory).mkdir()
+        for directory in ('scripts', 'tests', 'bin', 'Sources/CoopHost'):
+            (self.root / directory).mkdir(parents=True)
         (self.root / 'scripts/preflight-release.sh').write_text(
             (ROOT / 'scripts/preflight-release.sh').read_text())
-        (self.root / 'Cargo.toml').write_text(
-            '[workspace.package]\nversion = "9.8.7"\n'
-            '[package]\nname = "coop"\nversion.workspace = true\n')
-        self.lock()
+        self.version('9.8.7')
         (self.root / 'CHANGELOG.md').write_text('## v9.8.7\n\nRelease notes.\n')
         self.log = self.root / 'calls'
-        for name in ('cargo', 'cargo-deny', 'taplo', 'zizmor', 'cargo-kani', 'swift'):
-            self.executable('bin/' + name, '''#!/bin/bash
-printf '%s %s\n' "${0##*/}" "$*" >> "$PREFLIGHT_CALLS"
-if [[ "${0##*/} $*" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
-''')
-        self.executable('bin/rustup', '#!/bin/bash\necho aarch64-apple-darwin\n')
+        # cargo and rustup must never be reached; they record if they are.
+        for name in ('swift', 'zizmor', 'cargo', 'rustup'):
+            self.executable('bin/' + name, TOOL_STUB)
         self.executable('bin/sw_vers', '#!/bin/bash\necho 26.0\n')
         self.executable('bin/uname', '#!/bin/bash\necho Darwin\n')
         self.executable('bin/git', '''#!/bin/bash
 if [[ "$1" == rev-parse ]]; then exit 1; fi
 ''')
-        for name in ('integration-install.sh', 'integration-update.sh',
-                     'integration-uninstall.sh', 'integration-network.sh',
-                     'integration-proxy-forward.sh'):
-            self.executable('tests/' + name, '''#!/bin/bash
-printf '%s\n' "${0##*/}" >> "$PREFLIGHT_CALLS"
-if [[ "${0##*/}" == "${PREFLIGHT_FAIL:-}" ]]; then exit 1; fi
-''')
-        for name in ('test-integration-probes.py', 'test-preflight-release.py'):
-            (self.root / 'tests' / name).write_text(
-                'import os\nwith open(os.environ["PREFLIGHT_CALLS"], "a") as f:\n'
-                f'    f.write("{name}\\n")\n')
+        for name in PYTHON_GATES:
+            (self.root / name).write_text(PYTHON_STUB)
+        for name in SHELL_GATES:
+            self.executable(name, TOOL_STUB)
 
     def executable(self, name, contents):
         path = self.root / name
         path.write_text(contents)
         path.chmod(0o755)
 
-    def lock(self, host='9.8.7'):
-        (self.root / 'Cargo.lock').write_text(
-            f'[[package]]\nname = "coop"\nversion = "{host}"\n')
+    def version(self, version):
+        (self.root / 'Sources/CoopHost/UpdateVersion.swift').write_text(
+            'public enum BuildInfo {\n'
+            f'  public static let packageVersion = "{version}"\n'
+            '}\n')
 
-    def run_preflight(self, fail=''):
+    def run_preflight(self, *args, fail=''):
         return subprocess.run(
-            ['bash', str(self.root / 'scripts/preflight-release.sh'), '--quick'],
+            ['bash', str(self.root / 'scripts/preflight-release.sh'), *args],
             env={**os.environ, 'PATH': str(self.root / 'bin') + ':' + os.environ['PATH'],
                  'PREFLIGHT_CALLS': str(self.log), 'PREFLIGHT_FAIL': fail},
             capture_output=True, text=True, timeout=20)
 
-    def test_workspace_version_and_gates(self):
-        result = self.run_preflight()
+    def calls(self):
+        return self.log.read_text().splitlines()
+
+    def test_package_version_and_gates(self):
+        result = self.run_preflight('--quick')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Version sources agree; tag v9.8.7 is free.', result.stdout)
-        calls = self.log.read_text().splitlines()
-        for call in ('cargo clippy --workspace --all-targets -- -D warnings',
-                     'cargo test --workspace', 'cargo deny --workspace check',
-                     'cargo build --release --workspace --target aarch64-apple-darwin',
-                     'taplo format --check', 'test-integration-probes.py',
-                     'test-preflight-release.py'):
+        calls = self.calls()
+        for call in ('swift format lint --recursive --strict Package.swift Sources tests/swift '
+                     'fuzz/Targets fuzz/Entrypoints coop-proxy/Sources coop-proxy/Tests',
+                     'swift build --force-resolved-versions',
+                     'swift test --force-resolved-versions',
+                     'swift test --package-path coop-sandbox --force-resolved-versions --no-parallel',
+                     'test-swift-host-read-parity.py --swift .build/debug/coop',
+                     'test-swift-host-lifecycle-parity.py --swift .build/debug/coop',
+                     'test-swift-host-data-root-parity.py --swift .build/debug/coop',
+                     'test-swift-host-cli-surface.py --swift .build/debug/coop',
+                     'test-migrate-config.py', 'test-preflight-release.py',
+                     'zizmor .github/workflows/', 'integration-install.sh ',
+                     'integration-update.sh ', 'integration-uninstall.sh '):
             self.assertIn(call, calls)
+        # --quick skips the archive build, the VM suite and fuzzing.
+        self.assertFalse([c for c in calls if c.startswith(('build-release.py', 'run-integration.sh', 'fuzz.sh'))])
+        self.assertFalse([c for c in calls if c.startswith(('cargo', 'rustup'))])
         self.assertNotIn('Next: tag', result.stdout)
         self.assertIn('unrun gates before tagging', result.stdout)
 
-    def test_linux_namespace_gates_are_outside_release_scope(self):
-        self.executable('bin/uname', '#!/bin/bash\necho Darwin\n')
+    def test_full_run_builds_the_release_archive_on_macos_27(self):
+        self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
+        result = self.run_preflight('--fuzz')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertIn('build-release.py --release --tag v9.8.7 --out .build/preflight-release', calls)
+        self.assertIn('run-integration.sh ', calls)
+        self.assertIn('fuzz.sh smoke 30', calls)
+        self.assertIn('swift test --package-path coop-proxy --force-resolved-versions', calls)
+        self.assertIn('test-swift-proxy-process.py --skip-tls', calls)
+        self.assertIn('All required checks passed for v9.8.7.', result.stdout)
+
+    def test_older_macos_warns_instead_of_building_the_archive(self):
         result = self.run_preflight()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn('Bridge isolation', result.stdout)
-        self.assertNotIn('Proxy reverse forwarding', result.stdout)
-        self.assertNotIn('integration-proxy-forward.sh', self.log.read_text().splitlines())
-        self.assertNotIn('integration-network.sh', self.log.read_text().splitlines())
+        self.assertFalse([c for c in self.calls() if c.startswith('build-release.py')])
+        self.assertIn('release archive not built locally', result.stdout)
         self.assertNotIn('Next: tag', result.stdout)
 
-    def test_host_lock_mismatch_fails(self):
-        self.lock(host='9.8.6')
-        result = self.run_preflight()
+    def test_changelog_mismatch_fails(self):
+        self.version('9.8.8')
+        result = self.run_preflight('--quick')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Cargo.lock coop version (9.8.6)', result.stdout)
+        self.assertIn('CHANGELOG.md has no exact "## v9.8.8" header', result.stdout)
+        self.assertIn('FAIL: Version consistency', result.stdout)
 
-    def test_macos_27_runs_swift_proxy_gates(self):
-        self.executable('bin/uname', '#!/bin/bash\necho Darwin\n')
-        self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
-        # Record the process gate independently of the Swift compiler stub.
-        (self.root / 'scripts/test-swift-proxy-process.py').write_text(
-            'import os\nwith open(os.environ["PREFLIGHT_CALLS"], "a") as f:\n'
-            '    f.write("swift-process-gate\\n")\n')
-        result = self.run_preflight()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        calls = self.log.read_text().splitlines()
-        self.assertIn('swift test --package-path coop-proxy --force-resolved-versions', calls)
-        self.assertIn('swift-process-gate', calls)
-
-    def test_workspace_test_failure_is_fatal(self):
-        result = self.run_preflight(fail='cargo test --workspace')
+    def test_unreadable_version_fails(self):
+        (self.root / 'Sources/CoopHost/UpdateVersion.swift').write_text('// no version\n')
+        result = self.run_preflight('--quick')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAIL: Unit tests', result.stdout)
+        self.assertIn('Could not read packageVersion', result.stderr)
+
+    def test_host_test_failure_is_fatal(self):
+        result = self.run_preflight('--quick', fail='swift test --force-resolved-versions')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL: Swift host build and tests', result.stdout)
+        self.assertIn('Preflight FAILED', result.stdout)
+
+    def test_baseline_failure_is_fatal(self):
+        result = self.run_preflight('--quick', fail='test-swift-host-lifecycle-parity.py')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL: Recorded-baseline parity', result.stdout)
 
 
 class ReleaseBinaryTests(unittest.TestCase):
@@ -136,48 +172,47 @@ class ReleaseBinaryTests(unittest.TestCase):
             rejected = subprocess.run(['bash', '-euc', script], cwd=root)
             self.assertNotEqual(rejected.returncode, 0)
 
-    def test_packaging_requires_release_identity_and_companion(self):
+    def test_packaging_requires_release_identity_and_companions(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
         block = re.search(
-            r"      - name: Verify release binaries\n.*?        run: \|\n(.*?)\n      - name:",
+            r"      - name: Verify release binaries\n.*?        run: \|\n(.*?)\n\n",
             workflow, re.S)[1]
         script = "\n".join(line[10:] for line in block.splitlines())
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            binary_dir = root / 'target/aarch64-apple-darwin/release'
-            binary_dir.mkdir(parents=True)
-            (root / 'bin').mkdir()
-            git = root / 'bin/git'
-            git.write_text('#!/bin/sh\necho abc1234\n')
-            git.chmod(0o755)
-            proxy = binary_dir / 'coop-proxy'
-            proxy.write_text('#!/bin/sh\nexit 0\n')
-            proxy.chmod(0o755)
-            runtime = binary_dir / 'coop-sandbox'
-            runtime.write_text('#!/bin/sh\nexit 0\n')
-            runtime.chmod(0o755)
-            coop = binary_dir / 'coop'
-            for version, companion, has_runtime, expected in [
-                    ('coop 9.8.7 (abc1234)', True, True, 0),
-                    ('coop 9.8.7-dev (abc1234+dirty)', True, True, 1),
-                    ('coop 9.8.6 (abc1234)', True, True, 1),
-                    ('coop 9.8.7 (abc1234)', False, True, 1),
-                    ('coop 9.8.7 (abc1234)', True, False, 1)]:
-                with self.subTest(version=version, companion=companion):
-                    proxy.write_text('#!/bin/sh\nexit 0\n')
-                    proxy.chmod(0o755)
-                    if not companion:
-                        proxy.unlink()
-                    if not has_runtime:
-                        runtime.unlink()
-                    coop.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
-                    coop.chmod(0o755)
-                    result = subprocess.run(
-                        ['bash', '-euc', script], cwd=root,
-                        env={**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'],
-                             'TAG': 'v9.8.7', 'TARGET': 'aarch64-apple-darwin'},
-                        capture_output=True, text=True, timeout=10)
-                    self.assertEqual(result.returncode, expected, result.stderr)
+        name = 'coop-v9.8.7-aarch64-apple-darwin'
+        for version, has_proxy, has_runtime, expected in [
+                ('coop 9.8.7 (abc1234)', True, True, 0),
+                ('coop 9.8.7-dev (abc1234+dirty)', True, True, 1),
+                ('coop 9.8.6 (abc1234)', True, True, 1),
+                ('coop 9.8.7 (abc1235)', True, True, 1),
+                ('coop 9.8.7 (abc1234)', False, True, 1),
+                ('coop 9.8.7 (abc1234)', True, False, 1)]:
+            with self.subTest(version=version, proxy=has_proxy, runtime=has_runtime), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                bundle = root / 'bundle' / name
+                bundle.mkdir(parents=True)
+                binaries = {'coop': f"#!/bin/sh\nprintf '%s\\n' '{version}'\n"}
+                if has_proxy:
+                    binaries['coop-proxy'] = '#!/bin/sh\nexit 0\n'
+                if has_runtime:
+                    binaries['coop-sandbox'] = '#!/bin/sh\nexit 0\n'
+                for binary, text in binaries.items():
+                    (bundle / binary).write_text(text)
+                    (bundle / binary).chmod(0o755)
+                (root / 'dist').mkdir()
+                with tarfile.open(root / 'dist' / f'{name}.tar.gz', 'w:gz') as tar:
+                    tar.add(bundle, arcname=name)
+                github_env = root / 'github-env'
+                result = subprocess.run(
+                    ['bash', '-euc', script], cwd=root,
+                    env={**os.environ, 'RUNNER_TEMP': str(root), 'GITHUB_ENV': str(github_env),
+                         'BINARY': 'coop', 'TAG': 'v9.8.7', 'TARGET': 'aarch64-apple-darwin',
+                         'REVISION': 'abc1234' + '0' * 33},
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if expected == 0:
+                    self.assertEqual(github_env.read_text(),
+                                     f"TARBALL={root}/dist/{name}.tar.gz\n")
 
 
 if __name__ == '__main__':

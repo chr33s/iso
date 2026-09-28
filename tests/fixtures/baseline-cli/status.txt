@@ -1,0 +1,10 @@
+Show VM status
+
+Usage: coop status [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Instance name (shows all if omitted)
+
+Options:
+      --json  Emit machine-readable JSON instead of the text output
+  -h, --help  Print help

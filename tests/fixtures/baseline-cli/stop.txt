@@ -1,0 +1,9 @@
+Gracefully stop the VM
+
+Usage: coop stop [NAME]
+
+Arguments:
+  [NAME]  Instance name (required if multiple instances exist)
+
+Options:
+  -h, --help  Print help

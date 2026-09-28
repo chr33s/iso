@@ -1,0 +1,8 @@
+List or manage golden images
+
+Usage: coop images [OPTIONS]
+
+Options:
+      --delete <DELETE>  Delete a named image
+      --json             Emit machine-readable JSON instead of the text table
+  -h, --help             Print help

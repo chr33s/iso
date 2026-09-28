@@ -3,50 +3,69 @@
 How a `coop` release is cut, and what to check before cutting one.
 
 **Supported host and release target: macOS 27+ on Apple Silicon
-(`aarch64-apple-darwin`) only.** Linux guests remain supported. Linux/Firecracker
-host failures are outside acceptance scope.
+(`aarch64-apple-darwin`) only.** Linux guests remain supported; Linux hosts
+are outside this fork's scope.
 
 ## Fork distribution status
 
 The installer, updater, and repository provenance checks target `chr33s/coop`.
-Release tags must point to commits reachable from the `swift` branch. macOS
-artifacts use `apple-container` and bundle the signed `coop-sandbox` runtime
-and Swift `coop-proxy`. Linux artifacts are outside the intended release
-channel. Source and release builds use the same Apple backend.
+Release tags must point to commits reachable from the `swift` branch. A
+release is one archive, `coop-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
+the Swift host `coop`, the Swift credential proxy `coop-proxy`, and the
+signed `coop-sandbox` runtime, plus `LICENSE` and `BUILD.json`.
 
-This configures the channel; no hosted candidate or fork release has been
-published or verified as part of this change. Build from source until those
-gates pass. Hosted attestation and remaining acceptance gates are tracked in
-[the acceptance map](docs/design/swift-proxy-acceptance.md).
+No hosted candidate or fork release of the Swift host has been published or
+verified yet. Build from source until those gates pass. Hosted attestation and
+remaining acceptance gates are tracked in the
+[host acceptance ledger](docs/design/swift-host-acceptance.md) (H-09) and the
+[proxy acceptance map](docs/design/swift-proxy-acceptance.md).
 
-## Automation alignment still required
+## Building a release archive
 
-The checked-in release matrix and preflight still include Linux targets, and
-CI retains Linux jobs. These are inherited implementation details, not the
-fork’s supported-host policy. Align the release matrix, installer platform
-selection, CI gates, and preflight with macOS 27+ before the next release.
-A Linux runner may still be useful for platform-neutral checks; it does not
-create a Linux host support obligation. Do not treat a failed required GitHub
-job as passing: update the configured gates to match this policy.
+[`scripts/build-release.py`](scripts/build-release.py) is the one release
+build entrypoint. Its stages are explicit and run in order:
 
-## Current automation (includes inherited Linux jobs)
+1. **source** — copies the tracked (and untracked, unignored) files of this
+   checkout into a private staging directory and stamps the revision into
+   `Sources/CoopHost/BuildRevision.swift` there; the working tree is never
+   modified. `--expected-revision SHA` requires a clean checkout of exactly
+   that commit, before and after the build.
+2. **build** — `coop` (release: optimized, `-D COOP_RELEASE_BUILD`, which makes
+   `coop update` treat the binary as a release), `coop-proxy`, and
+   `coop-sandbox` (ad-hoc signed with its virtualization entitlement by
+   `scripts/build-coop-sandbox.sh`), all with `--force-resolved-versions`.
+3. **test** (`--test`) — every package's tests in the staging copy.
+4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
+   signing and notarization; see [macOS signing](#macos-signing).
+5. **archive** — verifies `coop --version` and `coop-sandbox version`, writes
+   `BUILD.json` (version, tag, revision, dirty flag, per-binary SHA-256,
+   `tested`, `developer_id_signed`), then `coop-<tag|revision>-aarch64-apple-darwin.tar.gz`
+   and `SHA256SUMS` in `--out` (default `.build/release-archive`).
 
-- **`ci.yml`** runs on pushes to the configured branches and on every PR: `fmt --check`, `clippy -D warnings`,
-  `cargo test --workspace`, the preflight/probe regression tests, Linux bridge
-  isolation, `integration-proxy-forward.sh`, `integration-install.sh`, `integration-update.sh`,
-  `integration-uninstall.sh`, the macOS 27 Swift proxy package/process gates,
-  `cargo deny --workspace check`, `taplo format --check`, and `zizmor`.
-- **`release.yml`** runs when a `v*` tag is pushed. It **re-runs all of CI as a
-  gate**, then builds the Rust host CLI on native runners for three
-  targets
-  (`aarch64-apple-darwin`, `x86_64-unknown-linux-musl`,
-  `aarch64-unknown-linux-musl`), checks the built CLI reports the tagged release
-  version, builds and packages Swift `coop-proxy` and signed `coop-sandbox` for macOS only,
-  re-signs the macOS binaries with Developer ID and notarizes them (the
-  `sign-macos` job, see [macOS signing](#macos-signing)), generates `SHA256SUMS`, attests
-  build provenance, extracts the `## vX.Y.Z` section from `CHANGELOG.md` as the
-  release notes, and publishes the GitHub release. **It fails if there is no
-  matching CHANGELOG section.**
+```bash
+python3 scripts/build-release.py                             # unsigned dev archive
+python3 scripts/build-release.py --release --test --tag vX.Y.Z
+```
+
+`--tag` must equal `v` plus the package version. Nothing is published or
+uploaded by the script; publication and attestation belong to the workflow
+that runs it. It requires Apple Silicon macOS 27+.
+
+## Automation
+
+- **`ci.yml`** runs on pushes and pull requests: the Swift host
+  format/build/test gates and Python host checks, fuzz corpus replay and a
+  bounded smoke, the `coop-proxy` and `coop-sandbox` package tests, the
+  host-only install/update/uninstall suites and regression scripts, and
+  `zizmor`.
+- **`candidate.yml`** builds a signed same-revision candidate with
+  `scripts/build-release.py --release --test --sign` in the `release`
+  environment and attests it.
+- **`release.yml`** runs when a `v*` tag is pushed. It gates on CI, builds
+  the macOS ARM64 archive, signs and notarizes it, generates `SHA256SUMS`,
+  attests build provenance, extracts the `## vX.Y.Z` section from
+  `CHANGELOG.md` as the release notes, and publishes the GitHub release.
+  **A missing CHANGELOG section fails it.**
 
 So pushing the tag is the release. Everything below is about making sure that
 push succeeds and ships something correct.
@@ -57,7 +76,7 @@ Run the **Release candidate** workflow (`.github/workflows/candidate.yml`)
 against `swift`. Its downloadable artifact is
 `coop-candidate-<commit>-aarch64-apple-darwin`, containing:
 
-- `coop-<commit>-aarch64-apple-darwin.tar.gz`
+- `coop-<first 12 hex digits of the commit>-aarch64-apple-darwin.tar.gz`
 - `SHA256SUMS`
 - `attestations.jsonl`
 
@@ -66,7 +85,7 @@ full commit SHA from the workflow run, then verify before extracting:
 
 ```bash
 REVISION="FULL_COMMIT_SHA_FROM_WORKFLOW_RUN"
-ARCHIVE="coop-${REVISION}-aarch64-apple-darwin.tar.gz"
+ARCHIVE="coop-${REVISION:0:12}-aarch64-apple-darwin.tar.gz"
 shasum -a 256 -c SHA256SUMS
 gh attestation verify "$ARCHIVE" \
   --repo chr33s/coop \
@@ -83,8 +102,7 @@ After both checks succeed, extract into a fresh directory and check the bundle:
 set -e
 mkdir candidate
 tar -xzf "$ARCHIVE" -C candidate
-cd candidate/coop
-shasum -a 256 -c SHA256SUMS
+cd "candidate/coop-${REVISION:0:12}-aarch64-apple-darwin"
 for binary in coop coop-proxy coop-sandbox; do
   codesign --verify --strict "$binary"
 done
@@ -94,29 +112,29 @@ cat BUILD.json
 )
 ```
 
-The manifest must match the expected commit, with `source_dirty: false`,
-`local_build: false`, and `includes_runtime: true`. All three binaries stay
+`BUILD.json` must name the expected commit in `source_revision`, with
+`source_dirty: false`, `release_build: true`, `tested: true`, and
+`developer_id_signed: true`, and its `binaries` digests must match the
+extracted files. All three binaries stay
 together. Earlier downloads retain their original archive layout and signer
 workflow identity; use those original identities when verifying old artifacts.
 
 ## macOS signing
 
-The `sign-macos` job in `release.yml` runs
+`scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
-unsigned macOS archive. It signs `coop`, `coop-proxy`, and `coop-sandbox`
-with a Developer ID Application certificate (hardened runtime, secure
-timestamp; `coop-sandbox` keeps its virtualization entitlement), submits them
-to Apple's notary service, and fails the release unless notarization is
-`Accepted`. A browser-downloaded archive then runs without
-`xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled ticket,
-so Gatekeeper checks notarization online on first launch.
+staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
+`coop`, `coop-proxy`, and `coop-sandbox` with a Developer ID Application
+certificate (hardened runtime, secure timestamp; `coop-sandbox` keeps its
+virtualization entitlement), submits them to Apple's notary service, and fails
+unless notarization is `Accepted`. A browser-downloaded archive then runs
+without `xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled
+ticket, so Gatekeeper checks notarization online on first launch.
 
-`candidate.yml` signs the same way through
-`scripts/build-proxy-transition.py --sign`, which signs before writing the
-archive's `SHA256SUMS`. The builder strips the signing secrets from every
-cargo and swift subprocess, so only the signing script sees them.
+Only the sign stage sees the signing secrets; the builder removes them from
+every other `swift` and helper subprocess.
 
-Both jobs use the `release` GitHub environment, which must define these
+The signing workflows use the `release` GitHub environment, which must define these
 secrets:
 
 | Secret | Value |
@@ -133,20 +151,21 @@ environment before tagging.
 
 ## What runs where
 
-| Check | CI (on PR + on tag) | `preflight-release.sh` | Manual judgement |
+| Check | CI (on PR + on tag) | Local before tagging | Manual judgement |
 |-------|:---:|:---:|:---:|
-| fmt / clippy / unit tests | ✓ | ✓ | |
-| `cargo deny --workspace`, `zizmor`, `taplo` | ✓ | ✓ (if installed) | |
-| Host-only integration and preflight/probe regression suites | ✓ | ✓ | |
-| Version ↔ lock ↔ CHANGELOG ↔ tag agreement | | ✓ | |
-| Release builds (3 targets) | native only | ✓ (per installed toolchain) | |
-| Formal verification (`cargo kani`) | | ✓ (if installed) | |
-| Supported macOS VM integration | | inherited runner needs alignment | Apple runtime/proxy and shared host behavior |
-| Mutation testing (`--mutants`) | | opt-in | when logic changed |
-| Fuzzing (`--fuzz`) | | opt-in | when a parser changed |
+| `swift format lint --strict`, build, package tests | ✓ | ✓ | |
+| Python host checks (migration, inventory, parity, CLI surface) | ✓ | ✓ | |
+| Fuzz corpus replay + bounded smoke | ✓ | ✓ | |
+| Host-only install/update/uninstall and regression suites | ✓ | ✓ | |
+| Version ↔ CHANGELOG ↔ tag agreement | | ✓ (`build-release.py --tag`, preflight) | |
+| Release archive (`build-release.py --release --test`) | | ✓ | |
+| Sanitizer runs (`--sanitize=address/thread/undefined`) | | ✓ | when host code changed |
+| Fault injection (`scripts/swift-host-fault-injection.py`) | | ✓ | when security-relevant behavior changed |
+| Fuzz campaigns (`scripts/fuzz.sh run`) | | opt-in | when a parser changed |
+| Apple VM integration and proxy VM gates | | ✓ | Apple runtime/proxy and lifecycle behavior |
 
-CI can't run the full VM integration suite or the extra-toolchain checks
-(kani/mutants/fuzz); those are the preflight's job.
+CI cannot boot VMs; the VM suites and longer campaigns run on a macOS 27+
+Apple Silicon machine.
 
 ## Release checklist
 
@@ -156,48 +175,47 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    features → minor; fixes only → patch. Look at the `## Unreleased` section of
    `CHANGELOG.md` to judge.
 
-3. **Bump the version.**
-   - Edit `[workspace.package].version` in `Cargo.toml`; the host package inherits it.
-   - Run `cargo build --workspace` so `Cargo.lock` picks up the host package version.
+3. **Bump the version.** Edit `packageVersion` in
+   `Sources/CoopHost/UpdateVersion.swift`.
 
 4. **Promote the changelog.** Rename `## Unreleased` to `## vX.Y.Z` in
    `CHANGELOG.md`. The text under it becomes the GitHub release notes verbatim,
    so read it as release notes. Start a fresh empty `## Unreleased` above it.
 
-5. **Run the preflight.** It refuses to pass until the version sources agree and
-   the tag is free, then runs the full gate:
+5. **Run the preflight and release build.** The preflight refuses to pass
+   until the version sources agree and the tag is free:
 
    ```bash
    ./scripts/preflight-release.sh
+   python3 scripts/build-release.py --release --test --tag vX.Y.Z
    ```
 
    A successful exit with warnings is incomplete validation: resolve skipped
-   tools and supported macOS gates before tagging. Linux-only requirements
-   in this inherited script need removal as described above.
+   tools and gates before tagging.
 
    Run the Apple runtime and proxy VM gates on macOS 27+ Apple Silicon:
 
    ```bash
-   ./tests/integration-apple-sandbox.sh
+   ./tests/run-integration.sh
    python3 tests/integration-proxy-transition.py --controlled-upstream
    ```
 
-   `./tests/run-integration.sh` invokes the Apple runtime suite. Live-provider and guest-agent
-   tests remain required for proxy acceptance; see [testing](docs/testing.md).
-   No Linux/Firecracker VM gate or remote Linux host is required.
+   Live-provider and guest-agent tests remain required for proxy acceptance:
+   `scripts/test-proxy-live.py` per approved model, then
+   `python3 tests/integration-proxy-transition.py --live-agents` with
+   `--claude-model`/`--codex-model` for each approved model. Both use the
+   dedicated `coop-live-*` Keychain credentials; see [testing](docs/testing.md).
 
-6. **Run the deep checks when the diff warrants it** (these are slow and not CI
-   gates — see `AGENTS.md`):
-   - `--mutants` when this release changed logic-dense modules (config,
-     workspace, devcontainer, parsing, secret routing).
-   - `--fuzz` when it changed a parser of user-editable input
-     (`parse_repo_slug`, `jsonc_to_json`, `config_load`).
+6. **Run the deep checks when the diff warrants it** (slow, not CI gates):
+   - `python3 scripts/swift-host-fault-injection.py` when this release changed
+     security-relevant host behavior (config, credentials, workspace,
+     devcontainer, subprocess/SSH, state, update).
+   - `swift test --sanitize=address --scratch-path .build-asan` (and
+     `thread`, `undefined`) when host code changed.
+   - `scripts/fuzz.sh run <target> 600` when it changed a parser of
+     user-editable input (`ParseRepoSlug`, `JSONCToJSON`, `ConfigLoad`).
 
-   ```bash
-   ./scripts/preflight-release.sh --mutants --fuzz
-   ```
-
-7. **Open the bump PR** (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`), get it
+7. **Open the bump PR** (`Sources/CoopHost/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `swift`. Never push the bump straight to `swift`.
 
 8. **Tag the merge commit and push.**
@@ -211,11 +229,11 @@ CI can't run the full VM integration suite or the extra-toolchain checks
    This triggers `release.yml`.
 
 9. **Verify the published release.** On the GitHub release page confirm:
-   - three `coop-vX.Y.Z-<target>.tar.gz` artifacts, each containing `coop`; the macOS
-     archive also contains Swift `coop-proxy` and signed `coop-sandbox`, plus release-level `SHA256SUMS`
-     and `attestations.jsonl`,
+   - `coop-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `coop`, `coop-proxy`,
+     `coop-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
+     `SHA256SUMS` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
-   - the macOS binaries are notarized: after extracting the macOS archive,
+   - the binaries are notarized: after extracting the archive,
      `spctl --assess --type open --context context:primary-signature -v coop`
      reports `source=Notarized Developer ID`,
    - the notes match the `## vX.Y.Z` CHANGELOG section.
@@ -244,10 +262,9 @@ re-run the release. A red `release.yml` run means you **bump to the next patch
 version and cut a fresh release** — go back to step 2 with `vX.Y.(Z+1)`.
 
 The release must pass the configured checks and build/sign/notarize the
-macOS ARM64 bundle with Xcode 27. Align the inherited three-target preflight
-and workflow first; Linux cross-compilation is not a release requirement for
-this fork. Then verify the hosted artifact’s checksum, source revision,
-provenance, signatures, and execution on a supported macOS host.
+macOS ARM64 bundle with Xcode 27. Then verify the hosted artifact's checksum,
+source revision, provenance, signatures, and execution on a supported macOS
+host.
 
 Do **not** attempt `git push origin :refs/tags/vX.Y.Z` to delete and reuse a
 tag — immutable releases reject it, and reusing a spent version is not allowed.

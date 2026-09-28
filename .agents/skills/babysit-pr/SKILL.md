@@ -32,15 +32,16 @@ is complete: compare the visible checks with the repository's required CI jobs.
 1. Integrate a behind/conflicting base with `git merge --no-ff
    origin/<base>`. Never rebase. Resolve semantically; stop if the conflict
    crosses scope.
-2. Reproduce settled CI failures. Fix the underlying fmt, clippy, test, taplo,
-   deny, or workflow issue. Surface flaky/environmental and real-VM integration
+2. Reproduce settled CI failures. Fix the underlying `swift format`, build,
+   test, Python host check, fuzz smoke, or workflow issue. Surface flaky/environmental and real-VM integration
    failures rather than fabricating a code fix.
 3. Address unresolved review feedback only when the ask is concrete and
    mechanical. Verify the claim first. Escalate design, product, security, and
    scope decisions.
 
-Make one logical change per commit. Run the narrow test plus format and clippy;
-run taplo for TOML. Never use `--no-verify`. Push normally and stop on rejection
+Make one logical change per commit. Run the narrow test (`swift test --filter
+<name>`) plus `swift format lint --strict` and a warning-free `swift build`.
+Never use `--no-verify`. Push normally and stop on rejection
 rather than force-pushing.
 
 After a pushed commit fixes an inline thread, reply exactly `Fixed in <sha>.` or

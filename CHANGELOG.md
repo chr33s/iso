@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Swift host
+
+- **The host CLI is Swift.** The Rust `coop` host, its Cargo manifests,
+  toolchain pin and cargo-fuzz workspace are removed; building coop no longer
+  needs Rust. The root `Package.swift` builds `coop` (modules `CoopCore`,
+  `CoopConfiguration`, `CoopHost`, `CoopCLI`), with one concrete Apple backend.
+  `coop-proxy` and `coop-sandbox` remain separate packages and processes.
+  `python3 scripts/build-release.py` builds and archives all three; parser
+  fuzzing uses Swift libFuzzer harnesses (`scripts/fuzz.sh`).
+- **Configuration is JSONC** at `~/.coop/config.jsonc` (strict JSON through
+  an explicit `--config *.json`). TOML is no longer read: a `.toml` path or a
+  lone legacy `config.toml` stops with instructions to convert it with
+  `scripts/migrate-config-to-jsonc.py --input PATH --output PATH
+  [--drop-retired-fields]` (Python 3.11+). `config.example.jsonc` replaces
+  `config.example.toml`.
+- **Removed Firecracker configuration**: `firecracker_bin`, `vm.kernel_path`,
+  `vm.boot_args` and the `network` object are rejected by name; the converter
+  refuses them unless `--drop-retired-fields` is given.
+- **Static shell completions only**: `coop completions bash|zsh|fish`. Runtime
+  `COMPLETE=<shell>` hooks, instance/image name completion, and PowerShell and
+  Elvish output are removed.
+- **Setup consolidation**: `coop setup --config-only` writes the JSONC template
+  and does nothing else; `coop init` is a deprecated alias for it.
+  `coop quickstart` is removed and explains its replacement (`setup`, then `up`,
+  then `claude`/`codex`).
+- **Credential provisioning**: `coop proxy setup` stores provider credentials
+  only in the macOS Keychain and writes a `cmd:` reference; the 1Password,
+  plaintext-file and Secret Service adapters are removed. Literal credentials in
+  `proxy.anthropic.credential`, `proxy.openai.credential` and per-VM overrides
+  are rejected; use a `cmd:` reference.
+- **`~/.coop-apple` is no longer read or migrated.** Host-key pins use the
+  `HostKeyAlias` `<machine>.coop`; instances pinned under the former
+  `.coop-apple` alias must be re-enrolled (recreate or restore the instance).
+- **Security changes** (accepted 2026-09-28): MCP server definitions are passed
+  to `claude mcp add-json` on stdin instead of argv; guest-bound `ssh`/`scp`/`rsync`
+  inherit only a minimal host environment plus the forwarded values; proxy and
+  tunnel PIDs are signalled only while they still name `coop-proxy`/`ssh`; the
+  proxy starts only on a free port and must be its sole listener before the
+  credential is sent; devcontainer Feature manifests and layers are
+  digest-verified and `install.sh` is read as a bounded regular file without
+  following links; `guest_env.json` is written `0600` and instance directories
+  `0700`; guest and runtime text in errors and diagnostics has control
+  characters neutralized.
+
 ### Fork rewrite
 
 - Replace the Rust credential proxy with the Swift-only macOS 27+ implementation;

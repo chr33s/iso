@@ -1,0 +1,24 @@
+Parse devcontainer.json and print coop's translation report
+
+Usage: coop devcontainer check [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>
+          Path to the devcontainer.json file to inspect
+
+Options:
+      --stage <STAGE>
+          Which lifecycle translation to report
+
+          Possible values:
+          - setup: Report setup-time keys such as features, hostRequirements, and remoteUser
+          - start: Report start-time keys such as postStartCommand, containerEnv, ports, and mounts
+          - both:  Report both setup and start translations
+          
+          [default: both]
+
+      --json
+          Emit machine-readable JSON on stdout instead of the text report on stderr
+
+  -h, --help
+          Print help (see a summary with '-h')

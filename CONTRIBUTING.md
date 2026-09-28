@@ -3,36 +3,26 @@
 Thanks for your interest in contributing to coop. This document covers how to
 build the project, run its tests, and submit changes.
 
-coop is a Rust CLI that orchestrates disposable VMs for running agent CLIs —
-Linux guests through the Swift `coop-sandbox` runtime
-on macOS 27+ Apple Silicon hosts only. The Swift-only credential proxy lives in `coop-proxy/`; the runtime
-lives in `coop-sandbox/`. Because it drives real
-virtualization backends, some tests only run on a host with the matching
-backend. The sections below note where that applies.
+coop is a Swift CLI that orchestrates disposable VMs for running agent CLIs —
+Linux guests through the Swift `coop-sandbox` runtime on macOS 27+ Apple
+Silicon hosts only. The host is the root Swift package (`Package.swift`,
+`Sources/`, `tests/swift/`); the credential proxy lives in `coop-proxy/` and
+the runtime in `coop-sandbox/`, each a separate Swift package and a separate
+executable. Because coop drives real virtualization, some tests only run on a
+host with the Apple runtime available. The sections below note where that
+applies.
 
 ## Prerequisites
 
-- **Rust** via [rustup](https://rustup.rs/). The toolchain version is pinned in
-  `rust-toolchain.toml` and installed automatically when you build.
-- **Dev tools** at pinned versions — [prek](https://github.com/j178/prek) (git
-  hooks), [taplo](https://taplo.tamasfe.dev/) (TOML formatting), and cargo-deny
-  (supply-chain checks). Install them with:
-
-  ```bash
-  ./scripts/install-dev-tools.sh          # baseline
-  ./scripts/install-dev-tools.sh --all    # also cargo-mutants, cargo-fuzz, kani
-  ```
-
-  The script pins the local dev-tool versions; bump a version there rather than
-  installing a floating `latest`. CI pins its own copies of taplo and cargo-deny
-  in `.github/workflows/ci.yml`, so keep those in sync when bumping.
-- To run the full integration suite you need a working backend:
-  - **macOS 27+ Apple Silicon**: stock Apple `container` service and guest kernel; see
-    [backend setup](docs/backends.md#macos--apple-sandbox).
-  Linux/Firecracker hosts are outside this fork’s support and acceptance scope.
-
-  See [docs/getting-started.md](docs/getting-started.md#prerequisites) for the
-  full backend requirements.
+- **Xcode 27** on macOS 27+ Apple Silicon (macOS SDK, code signing).
+- **[mise](https://mise.jdx.dev)**, which installs the pinned toolchain from
+  [`mise.toml`](mise.toml) — Swift 6.4.0 (with `swift format`), Python, jq,
+  yq, shellcheck, actionlint, zizmor and Apple's `container` CLI — and the git
+  hook: run `./scripts/install-dev-tools.sh` once.
+- To run the integration suite: the stock Apple `container` service and guest
+  kernel; see [backend setup](docs/backends.md#macos--apple-sandbox) and
+  [docs/getting-started.md](docs/getting-started.md#prerequisites).
+  Linux hosts are outside this fork's support and acceptance scope.
 
 ## Building
 
@@ -41,105 +31,113 @@ Clone the repository and build:
 ```bash
 git clone https://github.com/chr33s/coop
 cd coop
-cargo build --release
+swift build --force-resolved-versions
 ```
 
-The host CLI lands at `target/release/coop`. On macOS 27+, also build the
-credential proxy with `swift build --package-path coop-proxy -c release`.
-Install the SwiftPM `coop-proxy-swift` product as `coop-proxy` beside the host
-CLI; see [the source build instructions](docs/getting-started.md#build-from-source).
+The host CLI lands at `.build/debug/coop` (`-c release` for
+`.build/release/coop`). A usable installation also needs `coop-proxy` and
+`coop-sandbox` beside it; `python3 scripts/build-release.py` builds all three
+and assembles the same archive layout the installer and `coop update` use (see
+[RELEASING.md](RELEASING.md)).
 
-## Pre-commit hooks
+## Pre-commit hook
 
-Install the hooks once, then let them run on every commit:
+`./scripts/install-dev-tools.sh` installs the hook (`mise generate
+git-pre-commit --write`); it runs `mise run pre-commit` on every commit. Run
+the same gates by hand at any time:
 
 ```bash
-prek install
+mise run check                    # hygiene, lint, build, test
+python3 scripts/hygiene.py --all  # hygiene over every tracked file
 ```
 
-The hooks run `cargo fmt -- --check`, `cargo clippy --all-targets
--- -D warnings`, `cargo test`, `taplo format --check` (TOML formatting, also
-enforced by CI), and a set of file checks (trailing whitespace, end-of-file,
-YAML, large files, merge conflicts). Run them by hand at any time with:
+The tasks are defined in `mise.toml`. Whatever they cover, run these gates
+before submitting a host change:
 
 ```bash
-prek run --all-files
+swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+swift build --force-resolved-versions
+swift test --force-resolved-versions
 ```
 
-The local clippy and test hooks cover only `coop`. Before submitting, also
-run `cargo clippy --workspace --all-targets -- -D warnings` and
-`swift test --package-path coop-proxy` on macOS 27+ to cover the proxy.
+On macOS 27+, also run `swift test --package-path coop-proxy
+--force-resolved-versions` when touching the proxy and `swift test
+--package-path coop-sandbox --no-parallel` when touching the runtime.
 
-Also run `swift test --package-path coop-sandbox --no-parallel` for the runtime.
-Default Cargo builds include the Apple backend; no feature flag is required.
-
-Fix every warning before committing. coop has a zero-warnings policy — clippy
-runs with `-D warnings`, so a warning fails the build.
+Fix every warning before committing, and keep `swift format lint --strict`
+clean; CI enforces both.
 
 ## Testing
 
 ### Unit tests
 
 ```bash
-cargo test --workspace
+swift test --force-resolved-versions
 ```
 
-Cargo tests cover the host CLI; SwiftPM tests cover the macOS 27+ proxy.
-The main CLI library tests cover the pure logic: config parsing
-and validation, workspace sync argument construction, env merging, secret
-routing, and the helpers the command handlers are built from. Test behavior,
+The package tests (`tests/swift/`) cover the host targets: JSONC scanning and
+configuration decoding, validated names and units, remote-command quoting,
+state records and locks, subprocess ownership, lifecycle against a scripted
+runtime, and the CLI surface. They also replay the fuzz corpus. Test behavior,
 not implementation — a test that breaks under a refactor but not a behavior
 change is testing the wrong thing.
 
+The Python host checks (configuration migration, compatibility inventory,
+golden parity with the former Rust host, CLI surface) are listed in
+[docs/testing.md](docs/testing.md#swift-host-checks).
+
 ### Integration tests
 
-The integration suite exercises the full VM lifecycle (setup → start → status
-→ shell → guest environment → Docker → stop → destroy). It is too slow for the
-pre-commit hooks, so run it before submitting a change.
-
-Run the applicable suites on **macOS 27+ Apple Silicon**. Apple runtime and
-proxy changes require their dedicated VM gates:
+The integration suite exercises the full VM lifecycle on real Apple
+Containerization VMs. It is too slow for the pre-commit hooks, so run it
+before submitting a guest-visible or lifecycle change:
 
 ```bash
-# Local (whichever backend this host provides) — builds and runs
-./tests/run-integration.sh
+./tests/run-integration.sh                  # Apple runtime suite (all phases)
+./tests/run-integration.sh --only coop      # coop end to end only
 
-# Apple runtime and controlled proxy VM gates
-./tests/integration-apple-sandbox.sh
+# Credential proxy VM gates
+python3 tests/integration-proxy-transition.py
 python3 tests/integration-proxy-transition.py --controlled-upstream
+# Live agent tool use (dedicated credentials, approved models; billed)
+python3 tests/integration-proxy-transition.py --live-agents \
+  --claude-model APPROVED_MODEL --codex-model APPROVED_MODEL
 ```
 
 When you add a command or a guest-visible change, consider whether it needs a
 new integration test phase.
 
-### Optional deeper checks
+### Deeper checks
 
-coop also carries mutation tests (`cargo-mutants`), fuzz targets
-(`cargo-fuzz`), and formal proofs (`kani`). These are manual quality checks,
-not required for every change. If you touch a logic-dense module — config
-parsing, the JSONC reader, the arithmetic kernels — see
-[docs/testing.md](docs/testing.md) for when and how to run them.
+- **Fault injection** — `python3 scripts/swift-host-fault-injection.py` shows
+  that critical tests fail when their protected behavior is removed. A new
+  security-relevant host behavior needs a fault entry there.
+- **Sanitizers** — `swift test --sanitize=address --scratch-path .build-asan`
+  (also `thread`, `undefined`).
+- **Fuzzing** — `scripts/fuzz.sh smoke` for all parser targets; longer
+  campaigns with `scripts/fuzz.sh run`.
+
+See [docs/testing.md](docs/testing.md) for when and how to run them.
 
 ## Code style
 
-- Format with `cargo fmt`; lint with `cargo clippy --workspace --all-targets
-  -- -D warnings`. Both are enforced in CI.
+- Keep `swift format lint --strict` clean and the build warning-free.
 - Lean on the type system to make illegal states unrepresentable rather than
   validating at runtime: parse untrusted input into strong types at the
-  boundary, use newtypes over bare primitives that carry an invariant, and use
-  enums for state rather than boolean flags.
-- Use `thiserror` for library error types and `anyhow` for application-level
-  errors. Attach context at boundaries, not at every `?`.
-- Log with `tracing` (`error!`/`warn!`/`info!`/`debug!`), not `println!`.
-  Tracing output goes to stderr.
+  boundary, use smart-constructor value types over bare strings and integers
+  that carry an invariant, and use enums for state rather than boolean flags.
+- Build subprocess argv without shell interpolation (`RemoteCommand` for guest
+  commands) and spawn through `ProcessRunner`.
+- Write diagnostics to stderr through `Diagnostics`, never `print` for logs;
+  stdout carries command output and `--json`.
 
 [docs/code-style.md](docs/code-style.md) documents the project's conventions in
-detail, including the Rust patterns reviewers look for.
+detail, including what reviewers look for.
 
 ## Commits
 
 - Write commit subjects in the imperative mood, no more than 72 characters
-  ("Add license field to Cargo.toml", not "Added..." or "Adds...").
+  ("Add license field to Package.swift", not "Added..." or "Adds...").
 - Keep each commit to one logical change.
 - Work on a feature branch and open a pull request. Never push directly to
   `main`.
@@ -155,32 +153,19 @@ detail, including the Rust patterns reviewers look for.
 5. A maintainer will review. Address feedback with follow-up commits.
 
 CI must pass before a pull request can merge. The
-[CI workflow](.github/workflows/ci.yml) runs:
+[CI workflow](.github/workflows/ci.yml) runs, on macOS 27 runners, the Swift
+host format/build/test gates and Python host checks, the fuzz corpus replay
+and bounded smoke, the `coop-proxy` and `coop-sandbox` package tests, the
+host-only install/update/uninstall suites and regression scripts, and a
+GitHub Actions security audit ([zizmor](https://github.com/zizmorcore/zizmor)).
 
-- **`cargo fmt -- --check`** — formatting.
-- **`cargo clippy --workspace --all-targets -- -D warnings`** — lints.
-- **`cargo test --workspace`** — tests for the Rust host CLI.
-- **`./tests/integration-install.sh`**, **`./tests/integration-update.sh`**,
-  and **`./tests/integration-uninstall.sh`** — installer provenance, update,
-  and uninstall flows.
-- **`./tests/integration-network.sh`** — Linux bridge isolation.
-- **`./tests/integration-proxy-forward.sh`** — authenticated SSH reverse
-  forwarding and rejected-bind cleanup on Linux.
-- **`python3 tests/test-preflight-release.py`** — release gate regression checks.
-- **`python3 tests/test-integration-probes.py`** — regression checks for
-  integration probes.
-- **`cargo deny --workspace check`** — advisories, licenses, bans, and sources.
-- **[zizmor](https://github.com/zizmorcore/zizmor)** — GitHub Actions security
-  audit.
-
-The full two-platform lifecycle suite is not run in CI — run it locally, as
-described above.
+The VM lifecycle suite is not run in CI — run it locally, as described above.
 
 ## Reporting issues
 
 Open an issue on the [issue tracker](https://github.com/chr33s/coop/issues).
 For bug reports, include the platform and backend, the command you ran, and the
-output (coop's tracing output goes to stderr — `RUST_LOG=debug` adds detail).
+output (coop's diagnostics go to stderr — `-v` adds debug detail, `-vv` trace).
 
 If you believe you have found a security vulnerability, do not open a public
 issue. Follow the private reporting process in [SECURITY.md](SECURITY.md).

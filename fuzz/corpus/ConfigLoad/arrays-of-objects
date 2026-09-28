@@ -1,0 +1,1 @@
+{"forward_ports": [1, "2:3", {"guest": 4, "label": "db"}], "vm": {"vcpu_count": 2.0}}

@@ -1,0 +1,11 @@
+List or inspect available profiles
+
+Usage: coop profiles [COMMAND]
+
+Commands:
+  list  List all available profiles (builtin and custom)
+  show  Show the full definition of a profile
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

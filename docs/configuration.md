@@ -1,25 +1,44 @@
 # Configuration Reference
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported.
 
-coop reads configuration from `~/.coop/config.toml` by default. Pass `--config <path>` to use a different file. Files with a `.json` extension are parsed as JSON for backward compatibility.
+coop reads configuration from `~/.coop/config.jsonc` by default. Pass `--config <path>` to use a different file: a `.jsonc` path is read as JSONC, a `.json` path as strict JSON, and any other extension is rejected. There is no automatic `config.json` search.
 
-If the file does not exist, coop falls back to built-in defaults. A valid minimal config is an empty file.
+**JSONC** here means RFC 8259 JSON plus `//` line comments and `/* ... */` block comments outside strings. Block comments do not nest. Trailing commas, single-quoted strings, unquoted keys, and other JSON5 extensions are rejected, as are duplicate object keys. Keys use snake_case; former TOML sections are nested objects. The document is limited to 1 MiB, nesting depth 32, 16,384 keys, 4,096 array elements, and 64 KiB strings.
 
-A leading `~` is expanded to the home directory in every path-valued field (`data_dir`, `firecracker_bin`, `vm.kernel_path`, `claude.config_dir`, `codex.config_dir`, and the `claude.marketplaces` / `codex.marketplaces` / `profiles.<name>.marketplaces` lists). The shell does not expand `~` inside config-file values, so coop does it when loading the file.
+If no configuration file exists, coop uses built-in defaults. A valid minimal config is an empty object, `{}`. `coop setup --config-only` writes a commented template (the same content as [`config.example.jsonc`](../config.example.jsonc)); `coop init` is a deprecated alias for it.
 
-Run `coop validate` to surface errors and warnings before anything touches a VM.
+Commands that edit the configuration (`coop proxy setup`, `coop github setup-pat` and related PAT commands) rewrite the file as formatted strict JSON: comments and formatting are not preserved, but unrelated keys are.
+
+A leading `~` is expanded to the home directory in path-valued fields (`data_dir`, `claude.config_dir`, `codex.config_dir`, the `apple_container` paths, and the `claude.marketplaces` / `codex.marketplaces` / `profiles.<name>.marketplaces` lists). The shell does not expand `~` inside config-file values, so coop does it when loading the file.
+
+Run `coop validate` to surface errors and warnings before anything touches a VM. Errors name the field path and error category; they never print the file's contents or secret values.
+
+## Migrating from TOML
+
+coop no longer reads TOML. If `--config` names a `.toml` file, or `~/.coop/config.toml` exists without a `~/.coop/config.jsonc`, coop stops with instructions instead of starting with defaults. Convert the file once with the offline converter (Python 3.11+, standard library only):
+
+```sh
+python3 scripts/migrate-config-to-jsonc.py \
+  --input ~/.coop/config.toml --output ~/.coop/config.jsonc
+```
+
+The converter leaves the source untouched, refuses an existing destination, writes the output with mode `0600`, and never executes `cmd:` values. It refuses:
+
+- **Retired fields** — `firecracker_bin`, `vm.kernel_path`, `vm.boot_args`, and the `network` section (`host_ip`, `subnet_mask`, `host_iface`). These Firecracker settings have no effect on the Apple backend. Pass `--drop-retired-fields` to remove exactly those fields; the converter reports their paths, never their values.
+- **Literal proxy credentials** — `proxy.anthropic.credential` and `proxy.openai.credential` must be `cmd:` references. Store the credential with [`coop proxy setup`](commands.md#proxy) (macOS Keychain) or write your own `cmd:` reference.
+- Values without a lossless JSON form, such as TOML dates.
+
+Comments are not carried over. Once `config.jsonc` exists, a remaining `config.toml` is ignored.
 
 ## Top-level fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `data_dir` | string (path) | `~/.coop` | Directory for VM artifacts: images, instances, keys, kernel, Firecracker binary. |
+| `data_dir` | string (path) | `~/.coop` | Directory for VM artifacts: images, instances, keys. |
 | `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
-| `firecracker_bin` | string (path) | `~/.coop/firecracker` | Path to the Firecracker binary. Linux only; ignored on macOS (Lima backend). |
-| `github` | string or table | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
+| `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `coop up --post-start <cmd>` or `coop start --post-start <cmd>`. |
 
 ## GitHub auth
@@ -31,26 +50,26 @@ The `github` field determines how coop obtains a `GITHUB_TOKEN` for the guest:
 | `"auto"` | Checks `$GITHUB_TOKEN` first. Falls back to `gh auth token` if unset. |
 | `"env"` | Reads `$GITHUB_TOKEN` from the environment only. Warns if unset. |
 | `"off"` | No GitHub token forwarding. |
-| `"pat"` | Uses a per-repo fine-grained PAT recorded under `[github.pat]`. GitHub enforces the permissions and repositories selected for that token. |
+| `"pat"` | Uses a per-repo fine-grained PAT recorded under `github.pat`. GitHub enforces the permissions and repositories selected for that token. |
 
 When a token is present, coop runs `gh auth setup-git` inside the guest to wire up git credential helpers.
 
-`coop up --no-github` and `coop start --no-github` force `github = "off"`
+`coop up --no-github` and `coop start --no-github` force `"github": "off"`
 for that invocation, regardless of the configured strategy, and suppress the
 PAT setup prompt. Configured PAT retrieval commands are not evaluated. Model
 credentials and other configuration remain in effect, and the config file is
 not changed. `coop up` rejects this flag for an already-running instance;
 stop it first, then repeat `up` with the flag.
 
-This has the same scope as `github = "off"`: it disables strategy-based token
+This has the same scope as `"github": "off"`: it disables strategy-based token
 forwarding, but does not block explicit `env_forward`, `guest_env`, or `--env`
 entries, or the one-shot host-token fallback used for `--git-repo` clones.
 It does not erase credentials already stored in the guest. Later invocations
 (including `shell` and `exec`) use the configured strategy again.
 
-### Fine-grained PAT (`github = "pat"`)
+### Fine-grained PAT (`"github": "pat"`)
 
-In pat mode coop forwards a *per-repo* fine-grained personal access token: the resolved `owner/repo` at VM startup selects the matching entry in `[github.pat]`. Compared with `"auto"` / `"env"`, the effective reach of a leaked token is bounded by the repos and permissions GitHub recorded when it was created — GitHub rejects out-of-scope operations (REST and GraphQL) server-side, not in coop.
+In pat mode coop forwards a *per-repo* fine-grained personal access token: the resolved `owner/repo` at VM startup selects the matching entry in `github.pat`. Compared with `"auto"` / `"env"`, the effective reach of a leaked token is bounded by the repos and permissions GitHub recorded when it was created — GitHub rejects out-of-scope operations (REST and GraphQL) server-side, not in coop.
 
 Configure via the wizard:
 
@@ -58,7 +77,7 @@ Configure via the wizard:
 coop github setup-pat --repo trailofbits/coop
 ```
 
-The wizard opens the PAT-creation form in your browser, validates the token via `/user` and `/repos/<repo>`, stores the token in a secret manager you choose (macOS Keychain, Linux Secret Service, 1Password, or a `0600` file under `~/.coop/state/github-pat/`), and writes a `[github.pat."owner/repo"]` entry. The token itself is stored only in the chosen secret manager — the config file holds a `cmd:` invocation that retrieves it.
+The wizard opens the PAT-creation form in your browser, validates the token via `/user` and `/repos/<repo>`, stores the token in the macOS Keychain (service `coop-github-pat`, account `owner-repo`), and writes a `github.pat["owner/repo"]` entry. The token itself is stored only in the Keychain — the config file holds a `cmd:` invocation that retrieves it. If the Keychain is unavailable the wizard fails; there is no fallback store.
 
 #### Submodule discovery
 
@@ -79,40 +98,52 @@ Only depth-1 submodules are inspected. Submodules of submodules are not expanded
 
 Multi-repo example:
 
-```toml
-[github]
-mode = "pat"
-
-[github.pat."trailofbits/coop"]
-token = "cmd:security find-generic-password -s coop-github-pat -a trailofbits-coop -w"
-
-[github.pat."trailofbits/coop-plugins"]
-token = "cmd:security find-generic-password -s coop-github-pat -a trailofbits-coop-plugins -w"
+```jsonc
+{
+  "github": {
+    "mode": "pat",
+    "pat": {
+      "trailofbits/coop": {
+        "token": "cmd:security find-generic-password -s coop-github-pat -a trailofbits-coop -w"
+      },
+      "trailofbits/coop-plugins": {
+        "token": "cmd:security find-generic-password -s coop-github-pat -a trailofbits-coop-plugins -w"
+      }
+    }
+  }
+}
 ```
 
 Bring-your-own-token (no wizard, useful for CI/Terraform). Any `cmd:` invocation that prints the token on stdout works. Examples:
 
-```toml
-[github]
-mode = "pat"
-
-# Vault
-[github.pat."trailofbits/coop"]
-token = "cmd:vault read -field=token secret/coop/github/trailofbits-coop"
-
-# 1Password (matches what the wizard emits)
-[github.pat."trailofbits/coop-plugins"]
-token = "cmd:op item get 'coop-github-pat (trailofbits-coop-plugins)' --fields password --reveal"
+```jsonc
+{
+  "github": {
+    "mode": "pat",
+    "pat": {
+      // Vault
+      "trailofbits/coop": {
+        "token": "cmd:vault read -field=token secret/coop/github/trailofbits-coop"
+      },
+      // 1Password CLI
+      "trailofbits/coop-plugins": {
+        "token": "cmd:op read op://Private/coop-github-pat/password"
+      }
+    }
+  }
+}
 ```
+
+coop runs such a reference only when it needs the token and never creates, changes, or deletes what it points at.
 
 Other subcommands:
 
 | Command | Effect |
 |---------|--------|
-| `coop github status` | List configured entries and storage backend; add `--probe` to test retrieval. Never prints token material. |
+| `coop github status` | List configured entries and where they are stored; add `--probe` to test retrieval. Never prints token material. |
 | `coop github rotate-pat --repo X/Y` | Re-run the wizard against an existing entry (PATs expire — max 1 year). |
-| `coop github forget-pat --repo X/Y` | Remove the stored secret and the `[github.pat."X/Y"]` entry. Does **not** add a skip marker; the token may still be live on GitHub. |
-| `coop validate --probe` | Resolves each entry and probes `GET /user` against api.github.com. May trigger Keychain authorization or a 1Password Touch-ID prompt the first time per session. |
+| `coop github forget-pat --repo X/Y` | Remove the `github.pat["X/Y"]` entry and, for a coop-created Keychain item, the stored secret. Does **not** add a skip marker; the token may still be live on GitHub. |
+| `coop validate --probe` | Resolves each entry and probes `GET /user` against api.github.com. May trigger a Keychain authorization prompt (or your own `cmd:` tool's prompt) the first time per session. |
 
 #### Assign an existing PAT to a VM
 
@@ -151,7 +182,7 @@ deletes the shared secret nor revokes it on GitHub. Destroying the VM removes
 its association with the VM state, leaving the shared PAT intact.
 
 An active assignment rejects managed `GITHUB_TOKEN` **and** `GH_TOKEN` entries
-in `[guest_env]`, either agent's `env_forward`, or persisted `--env` /
+in `guest_env`, either agent's `env_forward`, or persisted `--env` /
 `containerEnv` overrides. Remove these conflicting entries, including saved
 keys in `<instance>/guest_env.json`, or unassign the PAT. This controls coop's
 delivery; the guest can still change its own environment. The VM receives the
@@ -163,41 +194,34 @@ When `coop up` or `coop start` runs with a resolvable repo (usually the synced w
 
 - `y` — run the wizard, then continue the start.
 - `N` (default) — start unauthenticated, ask again next time.
-- `never` — record a skip marker under `[github.skip]` so coop won't ask again for this repo.
+- `never` — record a skip marker under `github.skip` so coop won't ask again for this repo.
 
-Non-interactive contexts (`CI` is set, stdin is not a TTY) skip the prompt and log a one-line tip pointing at `coop github setup-pat`. The `--no-prompt` flag skips the prompt silently. Set `[setup] prompt_for_pat = false` in `config.toml` to disable the prompt globally.
+Non-interactive contexts (`CI` is set, stdin is not a TTY) skip the prompt and log a one-line tip pointing at `coop github setup-pat`. The `--no-prompt` flag skips the prompt silently. Set `"setup": { "prompt_for_pat": false }` in the configuration to disable the prompt globally.
 
 #### Skip markers
 
-```toml
-[github]
-mode = "pat"
-skip = ["trailofbits/big-repo"]
+```jsonc
+{
+  "github": {
+    "mode": "pat",
+    "skip": ["trailofbits/big-repo"]
+  }
+}
 ```
 
 `coop github setup-pat --repo X/Y` removes any skip marker for `X/Y` when it adds a new entry.
 
 ## `vm` section
 
-VM resource allocation and boot configuration.
+VM resource allocation.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `vcpu_count` | integer | `2` | Number of vCPUs for **new** instances. Must be > 0. Overridable with `--vcpus` on `setup` and `up`. Change an existing instance with `coop resize --vcpus`. |
 | `mem_size_mib` | integer | `4096` | Memory in MiB for **new** instances. Must be >= 128. Overridable with `--mem` on `setup` and `up`. Change an existing instance with `coop resize --mem`. |
 | `template_size_gib` | integer | `8` | Template rootfs disk size in GiB. Must be > 0. Overridable with `--template-size` on `setup`. |
-| `kernel_path` | string (path) | `~/.coop/vmlinux` | Path to the vmlinux kernel image. Linux/Firecracker only. |
-| `boot_args` | string | `console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw` | Kernel boot arguments. Linux/Firecracker only. |
 
-## `network` section
-
-Firecracker TAP networking. These fields apply to Linux only. The Lima backend on macOS manages networking independently.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `host_ip` | string (IPv4) | `172.16.0.1` | Host-side IP address on TAP interfaces. |
-| `subnet_mask` | string (CIDR) | `/24` | Subnet mask in CIDR notation. Must be `/0` through `/32`. |
-| `host_iface` | string | `auto` | Host network interface for NAT (e.g., `eth0`, `ens5`). `auto` detects it at runtime. |
+The guest kernel is selected with [`apple_container.kernel`](#apple_container-section).
 
 ## Guest user
 
@@ -228,10 +252,13 @@ Every guest SSH session — login, non-login, and `exec` — has the guest user'
 
 Literal environment variables to set inside the guest, independent of the host process environment. Use this when you want a value that isn't (or shouldn't be) on the host — `env_forward` covers the inherit-from-host case.
 
-```toml
-[guest_env]
-RUST_LOG = "info"
-MY_FLAG = "1"
+```jsonc
+{
+  "guest_env": {
+    "RUST_LOG": "info",
+    "MY_FLAG": "1"
+  }
+}
 ```
 
 Keys are env var names; values are the literals to inject. Entries here **override** any value resolved through other mechanisms for the same name (forwarded host env, `claude.api_key`, etc.), and the override is logged at `WARN`.
@@ -246,13 +273,13 @@ Claude Code configuration injected into the guest VM at start time. Every field 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `api_key` | string | unset (reads `$ANTHROPIC_API_KEY` from environment) | Anthropic API key. Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
+| `api_key` | string | unset (reads `$ANTHROPIC_API_KEY` from environment) | Anthropic API key, literal or `cmd:` reference (run on the host with `sh -c` when needed). Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
 | `config_dir` | string (path) or `false` | `~/.claude` | Source for `CLAUDE.md`, `keybindings.json`, `rules/`, `commands/`, `skills/`, `agents/`, `output-styles/`, `themes/`, and `workflows/`, copied into guest `~/.claude/` on each start. Complete bundles and narrow companion preferences are imported. Supports `~` expansion; `false` stops copying while retaining prior files/preferences. Host deletions do not delete guest files. See [import semantics and limitations](claude-integration.md#config-directory). |
 | `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are forwarded automatically when set; list additional variables here. |
 | `marketplaces` | array of strings | `[]` | Plugin marketplace sources. Each entry is a GitHub repo URL or an absolute local directory path. Local directories are copied into the guest before registration. |
 | `plugins` | array of strings | `[]` | Plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
-| `mcp_servers` | table | `{}` | MCP servers to register in the guest. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
-| `local_model` | table | unset | Host-side model endpoint to route Claude Code at when the VM is in local mode (`coop model <vm> local`). See [Local-model routing](#local-model-routing). |
+| `mcp_servers` | object | `{}` | MCP servers to register in the guest. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
+| `local_model` | object | unset | Host-side model endpoint to route Claude Code at when the VM is in local mode (`coop model <vm> local`). See [Local-model routing](#local-model-routing). |
 
 ### MCP servers
 
@@ -260,29 +287,50 @@ Each key in `mcp_servers` maps a server name to its definition. Three transport 
 
 **Stdio server** (spawns a process):
 
-```toml
-[claude.mcp_servers.my-server]
-command = "/usr/bin/my-mcp-server"
-args = ["--flag", "value"]
-env = { SERVER_API_KEY = "MY_HOST_ENV_VAR" }
+```jsonc
+{
+  "claude": {
+    "mcp_servers": {
+      "my-server": {
+        "command": "/usr/bin/my-mcp-server",
+        "args": ["--flag", "value"],
+        "env": { "SERVER_API_KEY": "MY_HOST_ENV_VAR" }
+      }
+    }
+  }
+}
 ```
 
 **HTTP server** (connects to a remote endpoint):
 
-```toml
-[claude.mcp_servers.remote-server]
-type = "http"
-url = "https://mcp.example.com/v1"
-headers = { Authorization = "Bearer token" }
+```jsonc
+{
+  "claude": {
+    "mcp_servers": {
+      "remote-server": {
+        "type": "http",
+        "url": "https://mcp.example.com/v1",
+        "headers": { "Authorization": "Bearer token" }
+      }
+    }
+  }
+}
 ```
 
 **SSE server** (connects to a remote endpoint over Server-Sent Events):
 
-```toml
-[claude.mcp_servers.events-server]
-type = "sse"
-url = "https://mcp.example.com/sse"
-headers = { Authorization = "Bearer token" }
+```jsonc
+{
+  "claude": {
+    "mcp_servers": {
+      "events-server": {
+        "type": "sse",
+        "url": "https://mcp.example.com/sse",
+        "headers": { "Authorization": "Bearer token" }
+      }
+    }
+  }
+}
 ```
 
 Definition fields:
@@ -293,10 +341,10 @@ Definition fields:
 | `args` | array of strings | Arguments for the command (stdio servers). Default: `[]`. |
 | `type` | string | Server type: `"http"` or `"sse"` (HTTP servers). Omit for stdio. |
 | `url` | string | Server URL (HTTP servers). |
-| `env` | table | Environment variable mappings. Keys are the names the server expects; values are the host env var names to read. Default: `{}`. |
-| `headers` | table | HTTP headers to send (HTTP servers). Default: `{}`. |
+| `env` | object | Environment variable mappings. Keys are the names the server expects; values are the host env var names to read. Default: `{}`. |
+| `headers` | object | HTTP headers to send (HTTP servers). Default: `{}`. |
 
-Servers are registered with `claude mcp add-json` at user scope.
+Servers are registered with `claude mcp add-json` at user scope; each definition is passed to it on stdin, not in its arguments.
 
 ## `codex` section
 
@@ -305,40 +353,47 @@ Codex configuration injected into the guest VM at start time. Every field is opt
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `auth` | string | `"api_key"` | Codex auth mode: `"api_key"` forwards an OpenAI API key; `"chatgpt"` uses ChatGPT account or workspace login through the guest Linux keyring. |
-| `api_key` | string | unset (reads `$OPENAI_API_KEY` from environment) | OpenAI API key. Used only with `auth = "api_key"`. Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
-| `config_dir` | string (path) or `false` | `~/.codex` | Source directory for Codex config files. Copies an allowlist of entries (`AGENTS.md`, `prompts/`, `config.toml`, `auth.json`) from this directory to `~/.codex/` in the guest on start. `auth.json` is omitted when `auth = "chatgpt"` or `[proxy.openai]` is active. Set to `false` to disable. Supports `~` expansion. |
+| `api_key` | string | unset (reads `$OPENAI_API_KEY` from environment) | OpenAI API key, literal or `cmd:` reference. Used only with `auth` `"api_key"`. Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
+| `config_dir` | string (path) or `false` | `~/.codex` | Source directory for Codex config files. Copies an allowlist of entries (`AGENTS.md`, `prompts/`, `config.toml`, `auth.json`) from this directory to `~/.codex/` in the guest on start. `auth.json` is omitted when `auth` is `"chatgpt"` or `proxy.openai` is active. Set to `false` to disable. Supports `~` expansion. |
 | `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `OPENAI_API_KEY` and `GITHUB_TOKEN` are forwarded automatically when set; list additional variables here. |
 | `marketplaces` | array of strings | `[]` | Codex plugin marketplace sources. Each entry is a `owner/repo`[`@ref`] shorthand, a git URL, or an absolute local directory path. Local directories are copied into the guest before registration. Baked into the golden image and delta-installed on first boot. |
 | `plugins` | array of strings | `[]` | Codex plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
-| `mcp_servers` | table | `{}` | MCP servers to merge into the guest `~/.codex/config.toml`. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
-| `local_model` | table | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`coop model <vm> local`). See [Local-model routing](#local-model-routing). |
+| `mcp_servers` | object | `{}` | MCP servers to merge into the guest `~/.codex/config.toml`. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
+| `local_model` | object | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`coop model <vm> local`). See [Local-model routing](#local-model-routing). |
 
-coop preserves any other settings already present in the staged `config.toml`, but the `mcp_servers` table is owned by coop when `codex.mcp_servers` is configured. With `auth = "chatgpt"`, coop also writes `cli_auth_credentials_store = "keyring"` so Codex caches account credentials in the guest OS credential store instead of `auth.json`.
+coop preserves any other settings already present in the staged `config.toml`, but the `mcp_servers` table is owned by coop when `codex.mcp_servers` is configured. With `auth` `"chatgpt"`, coop also writes `cli_auth_credentials_store = "keyring"` so Codex caches account credentials in the guest OS credential store instead of `auth.json`.
 
 ## Local-model routing
 
-`[claude.local_model]` and `[codex.local_model]` declare a host-side model
+`claude.local_model` and `codex.local_model` declare a host-side model
 endpoint to route an agent at instead of the cloud. They are inert until the VM
 is switched to local mode with [`coop model <vm> local`](commands.md#model);
 `coop model <vm> remote` restores the cloud defaults. The two tools are
 independent — configure one, both, or neither.
 
-Each block takes the same fields:
+Each object takes the same fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `host_url` | string (URL) | required | Endpoint as seen **on the host**, where the model server runs (Ollama / LM Studio / vLLM / llama.cpp). Must be an `http`/`https` URL with a host. A `localhost`/`127.0.0.1` host is rewritten to the guest's view of the host (Firecracker: the TAP gateway; Lima: `host.lima.internal`); any other host passes through verbatim, so a LAN endpoint also works. |
+| `host_url` | string (URL) | required | Endpoint as seen **on the host**, where the model server runs (Ollama / LM Studio / vLLM / llama.cpp). Must be an `http`/`https` URL with a host. A loopback endpoint (`localhost`, `127.0.0.1`) is carried into the guest over a per-instance SSH reverse tunnel to the guest's own loopback (a privileged port moves up by 40000; IPv6 loopback is refused); any other host passes through verbatim, so a LAN endpoint also works. |
 | `model` | string | required | Model name to request. Must not be empty. For Claude, coop pins every model tier (opus/sonnet/haiku and the small-fast model) to this name so any tier routes locally. |
 | `auth_token` | string | unset | Auth token for the endpoint. Optional — permissive local servers (Ollama, LM Studio, vLLM) ignore it, and coop sends a dummy value when it is omitted. The value is used verbatim; unlike `api_key` it does not resolve a `cmd:` prefix. |
 
-```toml
-[claude.local_model]
-host_url = "http://localhost:11434"   # Anthropic Messages API
-model = "qwen2.5-coder:32b"
-
-[codex.local_model]
-host_url = "http://localhost:11434/v1/"   # Responses API
-model = "gpt-oss:120b"
+```jsonc
+{
+  "claude": {
+    "local_model": {
+      "host_url": "http://localhost:11434",       // Anthropic Messages API
+      "model": "qwen2.5-coder:32b"
+    }
+  },
+  "codex": {
+    "local_model": {
+      "host_url": "http://localhost:11434/v1/",   // Responses API
+      "model": "gpt-oss:120b"
+    }
+  }
+}
 ```
 
 An endpoint set here takes precedence over one entered interactively and saved
@@ -349,10 +404,9 @@ materialized into guest config.
 
 ## `proxy` section
 
-Credential-proxy mode requires macOS 27+ (Lima or Apple Container).
-Linux hosts, including retained Firecracker features, are outside support scope.
+Credential-proxy mode requires macOS 27+ and the `coop-proxy` companion.
 
-`[proxy.anthropic]` and `[proxy.openai]` declare host-side
+`proxy.anthropic` and `proxy.openai` declare host-side
 credential-injecting upstreams for Claude Code and Codex. When an upstream is
 configured, coop runs a `coop-proxy` process on the host for the lifetime of
 each remote-mode VM: the guest is pointed at the proxy (a base-URL override) and
@@ -364,11 +418,11 @@ before.
 Every golden image installs the Secret Service packages this mode needs
 (`dbus-user-session`, `gnome-keyring`, `libsecret-tools`) regardless of the
 `auth` setting, because the image is built once and reused across configs —
-gating them would let a later `auth = "chatgpt"` edit meet an image that cannot
+gating them would let a later `"auth": "chatgpt"` edit meet an image that cannot
 serve it.
 
-`[proxy.openai]` is API-key based and cannot be combined with
-`[codex] auth = "chatgpt"`. Use one Codex remote auth path per VM: the proxy
+`proxy.openai` is API-key based and cannot be combined with
+`codex.auth` `"chatgpt"`. Use one Codex remote auth path per VM: the proxy
 for an OpenAI API key, or ChatGPT auth for account/workspace access.
 
 Proxy mode applies only in remote model mode
@@ -377,26 +431,33 @@ Each provider is an optional default, and a VM can override its own credential
 per provider with [`coop proxy setup --vm <name>`](commands.md#proxy) (stored in
 the instance's `proxy.json`, not in the config file).
 
-Both blocks take the same fields:
+Both objects take the same fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `credential` | string | required | The real credential — an API key or a Claude `setup-token`. A plain value or a `cmd:` invocation resolved at proxy start. Never written to disk and never forwarded into the guest. |
+| `credential` | string | required | A `cmd:` reference that prints the real credential (an API key or a Claude `setup-token`), resolved at proxy start. Literal values are rejected; the error names the field without printing it. The resolved value is never written to disk and never forwarded into the guest. |
 | `auth` | `api_key` \| `bearer` | `api_key` | How the proxy injects the credential upstream. `api_key` sends `x-api-key: <credential>` (the Anthropic API-key form); `bearer` sends `Authorization: Bearer <credential>`, used for a Claude `setup-token`. OpenAI keys are always Bearer. |
 
-```toml
-[proxy.anthropic]
-credential = "cmd:op read op://Private/Anthropic/credential"
-auth = "api_key"
-
-[proxy.openai]
-credential = "cmd:op read op://Private/OpenAI/credential"
-auth = "bearer"
+```jsonc
+{
+  "proxy": {
+    "anthropic": {
+      "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+      "auth": "api_key"
+    },
+    "openai": {
+      "credential": "cmd:op read op://Private/OpenAI/credential",
+      "auth": "bearer"
+    }
+  }
+}
 ```
 
 `coop proxy setup` writes these entries for you: it takes a pasted credential,
-stores it in a secret manager (Keychain / Secret Service / 1Password / a `0600`
-file) and fills in the `cmd:` reference. See the
+stores it in the macOS Keychain and fills in the `cmd:` reference. There is no
+other built-in store and no fallback; if the Keychain is unavailable, setup
+fails. Any other `cmd:` reference (1Password, Vault, a file you manage) is
+yours to write; coop runs it but never creates or deletes what it points at. See the
 [credential proxy guide](credential-proxy.md) and
 [`coop proxy`](commands.md#proxy) for the workflow.
 
@@ -404,13 +465,18 @@ file) and fills in the `cmd:` reference. See the
 
 Custom installation profiles for `coop setup --profile <name>`. Each profile declares packages and scripts that run during rootfs template creation.
 
-```toml
-[profiles.my-tools]
-apt_packages = ["ripgrep", "fd-find", "jq"]
-pre_install = "curl -fsSL https://example.com/setup.sh | bash"
-post_install = "echo 'done'"
-marketplaces = ["https://github.com/anthropics/claude-plugins-official"]
-plugins = ["rust-analyzer-lsp@claude-plugins-official"]
+```jsonc
+{
+  "profiles": {
+    "my-tools": {
+      "apt_packages": ["ripgrep", "fd-find", "jq"],
+      "pre_install": "curl -fsSL https://example.com/setup.sh | bash",
+      "post_install": "echo 'done'",
+      "marketplaces": ["https://github.com/anthropics/claude-plugins-official"],
+      "plugins": ["rust-analyzer-lsp@claude-plugins-official"]
+    }
+  }
+}
 ```
 
 | Field | Type | Default | Description |
@@ -427,20 +493,16 @@ Custom profiles compose with built-in ones (`python`, `node`, `c`, `fuzz`, `rust
 
 Default host-to-guest TCP port forwards applied to every VM startup. Forwards are established as SSH `-L` tunnels after the VM is ready and torn down on `coop stop`.
 
-Each entry accepts a bare port (host and guest match), a `"GUEST:HOST"` string, or a table.
+Each entry accepts a bare port (host and guest match), a `"GUEST:HOST"` string, or an object.
 
-```toml
-# Bare port: host 3000 ⇒ guest 3000
-forward_ports = [3000]
-
-# String form: host 18080 ⇒ guest 8080
-forward_ports = ["8080:18080"]
-
-# Table form (also supports an optional `label` for the user's own bookkeeping)
-[[forward_ports]]
-guest = 5432
-host = 15432
-label = "postgres"
+```jsonc
+{
+  "forward_ports": [
+    3000,                                            // host 3000 ⇒ guest 3000
+    "8080:18080",                                    // host 18080 ⇒ guest 8080
+    { "guest": 5432, "host": 15432, "label": "postgres" } // label is for your own bookkeeping
+  ]
+}
 ```
 
 `--forward-port` on `coop up` or `coop start` appends to (or overrides on guest-port collision) the entries from config; later entries win. Each instance remembers its forward set across `coop stop` / `coop start`, so a restart without `--forward-port` re-establishes the same tunnels.
@@ -449,7 +511,7 @@ Collision with an in-use host port fails fast before the VM is created. The erro
 
 ## `apple_container` section
 
-Read only by a build with the `apple-container` feature; see [Apple sandbox configuration](backends.md#configuration) for how each value is used. Unknown keys are rejected.
+See [Apple sandbox configuration](backends.md#configuration) for how each value is used. Unknown keys are rejected.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -468,8 +530,8 @@ Each timeout must be between 1 and 86400 seconds.
 ## `updates` section
 
 Background update-check behavior for `coop update`. The fork channel targets
-`chr33s/coop` releases from `swift`. macOS releases use the Apple backend;
-Lima source builds suppress notices and refuse self-update. Development builds also suppress these checks.
+`chr33s/coop` releases from `swift`. Development builds suppress these checks
+and refuse self-update.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -478,9 +540,10 @@ Lima source builds suppress notices and refuse self-update. Development builds a
 
 The background check is also silent when `COOP_NO_UPDATE_CHECK=1`, when `CI=true`, or when stdin is not a TTY. Dev builds (untagged or dirty trees) never run the check or notice.
 
-```toml
-[updates]
-mode = "off"
+```jsonc
+{
+  "updates": { "mode": "off" }
+}
 ```
 
 ## CLI overrides
@@ -494,67 +557,60 @@ Several config values accept per-invocation overrides via flags:
 | `--template-size <GiB>` | `setup` | `vm.template_size_gib` |
 | `--disk <GiB>` | `up` | Per-instance disk size (grows from template if larger) |
 | `--env KEY=VALUE` | `up`, `start` | Adds or overrides a `guest_env` entry (repeatable) |
-| `--config <path>` | all commands | Config file path (default: `~/.coop/config.toml`) |
+| `--config <path>` | all commands | Config file path, `.jsonc` or `.json` (default: `~/.coop/config.jsonc`) |
 
 ## Examples
 
 ### Minimal config
 
-An empty file gives you all defaults (2 vCPUs, 4 GiB RAM, 8 GiB disk).
+An empty object, `{}`, gives you all defaults (2 vCPUs, 4 GiB RAM, 8 GiB disk).
 
 ### Full config
 
-```toml
-data_dir = "~/.coop"
-ssh_port = 22
-firecracker_bin = "~/.coop/firecracker"
-github = "auto"  # must be set explicitly; default is off
-
-[vm]
-vcpu_count = 4
-mem_size_mib = 8192
-template_size_gib = 20
-kernel_path = "~/.coop/vmlinux"
-boot_args = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw"
-
-[network]
-host_ip = "172.16.0.1"
-subnet_mask = "/24"
-host_iface = "auto"
-
-[guest_env]
-RUST_LOG = "info"
-
-[claude]
-config_dir = "~/.claude"
-env_forward = ["CUSTOM_TOKEN"]
-marketplaces = [
-  "https://github.com/anthropics/claude-plugins-official",
-  "/home/user/local-marketplace",
-]
-plugins = ["rust-analyzer-lsp@claude-plugins-official"]
-
-[claude.mcp_servers.my-server]
-command = "/usr/bin/my-mcp-server"
-args = ["--verbose"]
-env = { API_KEY = "MY_API_KEY" }
-
-[codex]
-auth = "api_key"
-config_dir = "~/.codex"
-env_forward = ["CUSTOM_TOKEN"]
-
-[codex.mcp_servers.playwright]
-command = "npx"
-args = ["-y", "@playwright/mcp@latest"]
-
-[profiles.my-tools]
-apt_packages = ["ripgrep", "fd-find"]
-post_install = "cargo install ast-grep"
-
-forward_ports = [3000, "8080:18080"]
+```jsonc
+{
+  "data_dir": "~/.coop",
+  "ssh_port": 22,
+  "github": "auto",  // must be set explicitly; default is off
+  "vm": {
+    "vcpu_count": 4,
+    "mem_size_mib": 8192,
+    "template_size_gib": 20
+  },
+  "guest_env": { "RUST_LOG": "info" },
+  "claude": {
+    "config_dir": "~/.claude",
+    "env_forward": ["CUSTOM_TOKEN"],
+    "marketplaces": [
+      "https://github.com/anthropics/claude-plugins-official",
+      "/Users/me/local-marketplace"
+    ],
+    "plugins": ["rust-analyzer-lsp@claude-plugins-official"],
+    "mcp_servers": {
+      "my-server": {
+        "command": "/usr/bin/my-mcp-server",
+        "args": ["--verbose"],
+        "env": { "API_KEY": "MY_API_KEY" }
+      }
+    }
+  },
+  "codex": {
+    "auth": "api_key",
+    "config_dir": "~/.codex",
+    "env_forward": ["CUSTOM_TOKEN"],
+    "mcp_servers": {
+      "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest"] }
+    }
+  },
+  "profiles": {
+    "my-tools": {
+      "apt_packages": ["ripgrep", "fd-find"],
+      "post_install": "npm install -g @ast-grep/cli"
+    }
+  },
+  "forward_ports": [3000, "8080:18080"]
+}
 ```
 
-The default directory migration and purge ownership rules are documented in
-[backend state](backends.md#state). Custom `--config` paths bypass migration;
-explicit `data_dir` values are preserved.
+Data-root ownership and purge rules are documented in
+[backend state](backends.md#state). Explicit `data_dir` values are preserved.

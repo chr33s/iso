@@ -1,36 +1,33 @@
 # Platform notes and gotchas
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
-> guests remain supported. Retained Linux/Firecracker host details describe
-> inherited implementation, not a supported host or a release acceptance gate.
+> guests remain supported.
 
 Durable, non-obvious environment facts that repeatedly bite contributors. These
 are engineering notes, not user documentation — for user-facing backend setup
 see [`backends.md`](backends.md).
 
-## Firecracker CI-kernel workarounds
+## Inherited guest image workarounds
 
-The Firecracker CI kernel (`vmlinux-6.1.155`) is minimal and missing several
-modules. Two workarounds are applied when provisioning the guest image
-(`scripts/guest/guest-config.sh`, baked into the golden image):
+`scripts/guest/guest-config.sh` (baked into the golden image) still applies
+three workarounds that originated with the minimal Firecracker CI kernel and
+base image. They are retained so one image script serves every guest kernel:
 
-1. **iptables-legacy.** The kernel lacks nftables support (`CONFIG_NF_TABLES`
-   not set). Docker's default `iptables-nft` backend fails with "Protocol not
-   supported". Fix: `update-alternatives --set iptables /usr/sbin/iptables-legacy`.
-2. **Static `resolv.conf`.** The CI rootfs ships `/etc/resolv.conf` as a symlink
-   to systemd-resolved's stub (`127.0.0.53`), but `systemd-resolved` is not
-   installed, so DNS fails silently. Fix: replace the symlink with a static file
-   pointing to `8.8.8.8` / `8.8.4.4`.
-
-Both would be resolved by building a custom Firecracker kernel with the needed
-netfilter modules enabled, rather than using the minimal CI kernel. The Lima
-backend uses a full kernel and needs neither.
+1. **iptables-legacy.** A kernel without nftables support makes Docker's
+   default `iptables-nft` backend fail with "Protocol not supported". Fix:
+   `update-alternatives --set iptables /usr/sbin/iptables-legacy`.
+2. **Static `resolv.conf`.** A rootfs whose `/etc/resolv.conf` links to
+   systemd-resolved's stub (`127.0.0.53`) without `systemd-resolved` installed
+   fails DNS silently. Fix: replace the symlink with a static file.
+3. **`fcnet.service` masked.** An inherited base image may enable
+   `fcnet.service`, which assigns a MAC-derived `/30` address alongside coop's
+   systemd-networkd configuration. Provisioning disables and masks it.
 
 ## Docker networking in the guest
 
-The Firecracker CI kernel also lacks the `iptable_raw` module (`CONFIG_IP_NF_RAW`
-not set). Docker 28+ uses the raw table for "direct access filtering" — a
-PREROUTING DROP rule that prevents direct routing to published container ports,
+A kernel without the `iptable_raw` module (`CONFIG_IP_NF_RAW` not set, as in
+the inherited Firecracker CI kernel) breaks Docker 28+, which uses the raw
+table for "direct access filtering" — a PREROUTING DROP rule that prevents direct routing to published container ports,
 ensuring traffic goes through Docker's port-mapping rules.
 
 Without the raw table, Docker refuses to start bridge networking. The fix uses
@@ -43,7 +40,7 @@ all work normally.
 The "insecure" label refers to the fact that without raw-table rules, other
 hosts on the local network could route directly to published container ports
 even if they're bound to loopback. This is irrelevant here — the guest's only
-network neighbor is the Firecracker host, and the VM itself is the isolation
+network neighbor is the host, and the VM itself is the isolation
 boundary. See [`trust-model.md`](trust-model.md#documented-accepted-trade-offs).
 
 ## scp tilde expansion (OpenSSH 9+)
@@ -53,23 +50,15 @@ remote paths. `scp file user@host:~/.claude/CLAUDE.md` silently creates a litera
 `~` directory instead of writing to the home directory.
 
 Fix: `GuestPath` values use `./` instead of `~/` in remote paths (e.g.
-`GuestPath::new("./.claude")`). SFTP defaults to the user's home directory, so
-`./path` is equivalent to `~/path`. This convention is used in `scp_to` and
-`scp_to_recursive`.
+`GuestPath("./.claude")`). SFTP defaults to the user's home directory, so
+`./path` is equivalent to `~/path`. This convention is used by
+`SSHSession.copy` (`Sources/CoopHost/GuestSession.swift`).
 
 SSH commands (`exec`) are unaffected — the remote shell expands `~` normally.
 Only scp's SFTP mode has this issue.
 
-## Tracing output goes to stderr
+## Diagnostics go to stderr
 
-The coop binary's tracing output (INFO/DEBUG/WARN logs) goes to **stderr**, so
-stdout stays clean for machine-readable (`--json`) output and piped consumers.
-
-## Firecracker base-image networking
-
-The upstream Firecracker image may enable `fcnet.service`, which assigns an
-address derived from the guest MAC with a `/30` prefix. Coop uses a `/24`
-network managed by systemd-networkd. Provisioning disables and masks the
-inherited service so it cannot install a second prefix and make another
-instance's IP a broadcast destination. Rebuild older images with `coop setup`
-to apply this guest-only fix; it does not change host networking or Lima.
+The coop binary's diagnostics (`Diagnostics` in `Sources/CoopHost/`:
+ERROR/WARN/INFO, plus DEBUG/TRACE with `-v`/`-vv`) go to **stderr**, so stdout
+stays clean for machine-readable (`--json`) output and piped consumers.

@@ -1,63 +1,107 @@
 # Testing
 
-coop has four test layers: integration tests (the primary gate), unit tests,
-and three manual quality checks — mutation testing, fuzzing, and formal
-verification (kani). Only the integration and unit tests run in CI; the other
-three are manual, run when a change warrants them.
+coop's host is the Swift package at the repository root (`Package.swift`:
+`CoopCore`, `CoopConfiguration`, `CoopHost`, `CoopCLI`). Its test layers are:
+
+- **Swift package tests** (`tests/swift/`) — unit and contract tests for every
+  host target, plus replay of the fuzz corpus. CI gate.
+- **Host checks in Python** — configuration migration, compatibility
+  inventory, golden parity against recorded baseline results, and the CLI
+  surface. CI gate.
+- **Fault injection** (`scripts/swift-host-fault-injection.py`) — shows that
+  critical tests fail when their protected behavior is removed. Replaces
+  mutation testing for the host.
+- **Fuzzing** (`scripts/fuzz.sh`) — coverage-guided libFuzzer campaigns for the
+  host parsers. CI runs a bounded smoke; longer campaigns are manual.
+- **Integration tests** — real Apple Containerization VMs. Manual; run for
+  guest-visible and lifecycle changes.
+
+The credential proxy (`coop-proxy/`) and the Apple runtime (`coop-sandbox/`)
+are separate Swift packages with their own tests (below).
+
+Supported host: **macOS 27+ Apple Silicon only**. Linux guests are in scope;
+Linux hosts are not.
+
+## Swift host checks
+
+```bash
+swift build --force-resolved-versions
+swift test --force-resolved-versions          # CoopCore/Configuration/Host/CLI + corpus replay
+swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+swift test --sanitize=address --scratch-path .build-asan     # also:
+swift test --sanitize=thread --scratch-path .build-tsan
+swift test --sanitize=undefined --scratch-path .build-ubsan
+
+python3 tests/test-migrate-config.py          # TOML -> JSONC converter (Python 3.11+)
+python3 tests/test-swift-host-inventory.py    # compatibility inventory completeness
+python3 tests/test-swift-host-read-parity.py --swift .build/debug/coop
+python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/coop
+python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/coop
+python3 tests/test-swift-host-cli-surface.py --swift .build/debug/coop
+python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
+python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
+```
+
+Use a separate `--scratch-path` per sanitizer so instrumented builds do not
+invalidate `.build`. The package tests use synthetic credentials and isolated
+temporary state; they never touch `~/.coop`.
+
+The parity checks replay results recorded from the former Rust host (baseline
+`e3ba69e`) in `tests/baseline/parity/`; no Rust toolchain is needed. The
+read-parity check runs the Swift host against a synthetic state tree, with a
+stand-in `coop-sandbox` (answering from `tests/fixtures/coop-sandbox`) and a
+stand-in `ssh` on `PATH`, and compares stdout and exit status command by
+command; recorded differences are listed in the script. The lifecycle check
+does the same for `setup`, `resize`, `commit`, `restore`, `stop`, `destroy`,
+`images --delete` and interrupted-journal recovery against the stateful fake
+runtime in `tests/fixtures/fake-runtime/` (also a fake `container` builder),
+and also compares the runtime call sequence, the resulting state files, and
+the captured image build contexts byte for byte. The data-root check covers
+the refusal of upstream coop state in the default `~/.coop`. The CLI-surface
+check compares every baseline command path and option in
+`tests/fixtures/baseline-cli/commands.json` with the Swift host's `--help`;
+allowed differences are listed with their decision in the script.
+
+Configuration parity fixtures live in
+`tests/swift/CoopConfigurationTests/Fixtures/parity/`: each `.toml` has the
+baseline loader's normalized result (`.baseline.json`) and its conversion to
+`.jsonc` by `scripts/migrate-config-to-jsonc.py`; the Swift loader must produce
+the same values, except for enumerated differences (C-01 retired fields and
+the recorded URL spelling difference).
+
+`python3 scripts/build-release.py --release --test` builds and tests all three
+packages from a staged copy and assembles the release archive; see
+[RELEASING.md](../RELEASING.md).
 
 ## Integration tests
 
-VM integration uses two scripts:
-
-- `tests/integration.sh` — the test suite. Runs locally, requires `--binary`.
-- `tests/run-integration.sh` — the runner. Builds, deploys (if remote), and
-  invokes the test suite.
-
-Supported host: **macOS 27+ Apple Silicon only**. Run the applicable macOS
-integration suites for guest-visible/lifecycle changes. Linux guests are in
-scope; Linux/Firecracker host failures are not acceptance blockers. Retained
-Linux CI checks and remote-runner options are inherited automation.
-
-For shared changes and the Lima source-build option:
+`tests/run-integration.sh` runs the Apple Containerization VM suite,
+`tests/integration-apple-sandbox.sh` (see [below](#apple-runtime-real-hardware-checks)):
 
 ```bash
-# Local (macOS/Lima) — builds and runs automatically
-./tests/run-integration.sh
-
-# With options (forwarded to integration.sh)
-./tests/run-integration.sh --full
-./tests/run-integration.sh --profile python,node --name my-test
+./tests/run-integration.sh                        # every phase, ~20 min
+./tests/run-integration.sh --only coop            # coop end to end
+./tests/run-integration.sh --only isolation,snapshots --keep
 ```
 
-You can also run the suite directly if you already have a binary:
+CI additionally runs the fast, host-only `tests/integration-install.sh`,
+`tests/integration-update.sh`, and `tests/integration-uninstall.sh` suites.
+
+For the credential proxy, build the local Swift artifacts and run the Apple
+sandbox proxy gate against the Swift host:
 
 ```bash
-./tests/integration.sh --binary /path/to/coop --full
-```
-
-The test exercises the full VM lifecycle (setup → start → status → shell →
-guest environment → docker → stop → destroy). CI additionally runs the fast,
-host-only `tests/integration-install.sh`, `tests/integration-update.sh`, and
-`tests/integration-uninstall.sh` suites.
-
-The `--full` suite includes a dedicated `--no-github` phase. It captures the
-boot session through `post_start` for fresh `up`, `start`, and a stopped-project
-`up`, checks that model credentials still arrive, and witnesses normal GitHub
-forwarding on an intervening invocation without the flag.
-
-For Apple runtime changes, run `./tests/integration-apple-sandbox.sh`.
-For the macOS 27+ Swift proxy transition, build the local Swift artifacts and
-run the dedicated Apple sandbox gate:
-
-```bash
+swift build --force-resolved-versions
 python3 scripts/build-proxy-transition.py
 python3 tests/integration-proxy-transition.py
 ```
 
 The transition builder enforces the checked-in Swift dependency resolutions;
-it fails instead of updating transitive pins during an artifact build.
+it fails instead of updating transitive pins during an artifact build. The
+gate writes a JSONC config and supplies its synthetic credentials as `cmd:`
+references (C-04 rejects literal proxy credentials).
 
-This gate builds a private runtime and VM image, boots two VMs with Swift, and
+This gate builds a private runtime and VM image, boots two VMs, and
 checks OpenAI guest 401/403 responses and rejection of the other VM's capability.
 It scans regular guest files for synthetic provider credentials, excluding
 `/proc`, `/sys`, and `/dev`; a temporary canary verifies the scanner before the
@@ -105,10 +149,69 @@ initial step; unattended runs require noninteractive sudo authorization. No
 later phase needs a refreshed sudo timestamp. This fixture is not linked into
 the production executable.
 
+### Dedicated live-test credentials
+
+The live gates below use their own provider credentials, never everyday ones.
+Create an Anthropic workspace and an OpenAI project for them, each with a low
+spend limit and access to the approved models. Keep them in Keychain items of
+their own. Do not use `coop proxy setup` for this, because it writes the
+`coop-anthropic`/`coop-openai` items your normal install reads.
+
+Do not type or paste a key at the `security add-generic-password ... -w`
+prompt. The prompt keeps only the first 128 characters, so a longer key (OpenAI
+`sk-proj-` keys are about 164) is stored truncated. The provider then answers
+401 `invalid_api_key` and shows a different last four characters than the
+console. Instead, copy the key to the clipboard and send the whole command to
+`security` on stdin. This keeps the key out of argv and shell history:
+
+```bash
+{ printf 'add-generic-password -U -s coop-live-anthropic -a coop-live -w '; pbpaste; echo; } | security -i
+{ printf 'add-generic-password -U -s coop-live-openai -a coop-live -w '; pbpaste; echo; } | security -i
+pbcopy </dev/null   # clear the clipboard
+```
+
+(Run one line per key, copying that key first.) Check each item's length and
+last four characters against the provider console, without printing the key:
+
+```bash
+security find-generic-password -s coop-live-openai -a coop-live -w |
+  awk '{print length($0), substr($0, length($0)-3)}'
+```
+
+If the provider rejects a key, this shows its error message. The key goes into
+curl's header on stdin (`-H @-`):
+
+```bash
+security find-generic-password -s coop-live-openai -a coop-live -w |
+  sed 's/^/Authorization: Bearer /' |
+  curl -sS -H @- -H 'Content-Type: application/json' \
+    -d '{"model":"APPROVED_MODEL","input":"ping","max_output_tokens":16}' \
+    https://api.openai.com/v1/responses
+```
+
+The Keychain Access app (File → New Password Item: name `coop-live-openai`,
+account `coop-live`) also stores the full value. When finished, delete both
+items with `security delete-generic-password -s coop-live-<provider> -a coop-live`
+and revoke the keys.
+
+For the guest gate, point a private config at these items. Give it its own
+`data_dir` so it never touches `~/.coop`:
+
+```jsonc
+{
+  "data_dir": "~/coop-live/data",
+  "github": "off",
+  "proxy": {
+    "anthropic": { "credential": "cmd:security find-generic-password -s coop-live-anthropic -a coop-live -w", "auth": "api_key" },
+    "openai": { "credential": "cmd:security find-generic-password -s coop-live-openai -a coop-live -w", "auth": "bearer" }
+  }
+}
+```
+
 ### Live proxy API smoke
 
 After the controlled-upstream VM gate passes, use dedicated provider credentials
-and explicitly approved model names. The opt-in runner reads a credential from
+(above) and explicitly approved model names. The opt-in runner reads a credential from
 stdin and sends three bounded generation requests: normal streaming, disconnect
 after the first text delta, and recovery. Anthropic also exercises token counting.
 Replace the credential-command and model placeholders below with the approved
@@ -124,8 +227,8 @@ your-dedicated-anthropic-credential-command | python3 scripts/test-proxy-live.py
 The default token ceiling is 256 per generation request; an approved test may
 select 16–1024 with `--max-output-tokens`. No model is selected implicitly.
 Use `--scheme bearer` for a dedicated Anthropic bearer credential when supported
-by the account. The default binary is `target/debug/coop-proxy`; `--binary`
-selects a specific built artifact. It runs under the production Seatbelt profile
+by the account. Pass `--binary` to select the built artifact (for example
+`coop-proxy/.build/debug/coop-proxy-swift`, the default, after `swift build --package-path coop-proxy`). It runs under the production Seatbelt profile
 with an empty child environment and startup JSON over stdin. Core dumps are
 disabled before reading the credential. Output contains phase counts, model,
 binary hash, and secret-audit status, without response bodies or proxy logs.
@@ -137,22 +240,48 @@ It checks [Anthropic token counting](https://platform.claude.com/docs/en/api/typ
 for a positive `input_tokens` result. A disconnect result proves client-side
 closure followed by a successful request; it does not prove when provider-side
 generation or billing stopped. This is a host API smoke gate, not the real-VM
-or Claude/Codex tool-use gate. Live executions remain pending dedicated inputs.
+or Claude/Codex tool-use gate. Recorded results are in the H-07 row of
+[`design/swift-host-acceptance.md`](design/swift-host-acceptance.md).
 `python3 tests/test-proxy-live.py` exercises the runner offline in CI and makes
 no provider calls.
 
 ### Live guest agent tool use
 
-After the controlled-upstream gate passes, prepare a disposable guest with the
-Swift proxy selected, dedicated test credentials configured on the host, and
-normal agent bootstrap enabled. Run the following from the repository root,
-substituting its private coop config, VM name, and approved model:
+After the controlled-upstream gate passes, the proxy gate script can run this
+check unattended:
 
 ```bash
-target/debug/coop --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
+python3 tests/integration-proxy-transition.py --live-agents \
+  --claude-model APPROVED_MODEL [--claude-model ...] \
+  --codex-model APPROVED_MODEL [--codex-model ...]
+```
+
+It builds a private runtime and one throwaway VM, `proxy-live`, whose proxies
+read the dedicated credentials through `cmd:` references. By default these are
+the `coop-live-anthropic`/`coop-live-openai` Keychain items above. Use
+`--anthropic-credential`/`--openai-credential` to pass other `cmd:` references;
+the script rejects anything that is not a `cmd:` reference. It configures only
+the providers that have models. The script then:
+
+- checks that each agent's guest endpoint is a loopback address;
+- checks that each running proxy is the built `coop-proxy` and prints its
+  sha256;
+- runs the agent check below once per model and prints each summary.
+
+It fails if any model fails, and destroys the VM and its images either way.
+Credential values never pass through the script. It does not repeat the
+synthetic-credential guest scan; that is covered by the base gate.
+
+To run it by hand instead, prepare a disposable guest with the Swift proxy
+selected, dedicated test credentials configured on the host, and normal agent
+bootstrap enabled. Run the following from the repository root, substituting its
+private coop config, VM name, and approved model:
+
+```bash
+coop --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
   "$(cat tests/fixtures/credential-proxy/agent-tool-smoke.py)" \
   --agent codex --model APPROVED_MODEL
-target/debug/coop --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
+coop --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
   "$(cat tests/fixtures/credential-proxy/agent-tool-smoke.py)" \
   --agent claude --model APPROVED_MODEL
 ```
@@ -213,13 +342,14 @@ Run `python3 tests/test-integration-probes.py` for host-only regression tests
 of Codex installer failure propagation, update/config assertions, address
 discovery, ping result handling, and bounded HTTP retries. These use a
 temporary loopback HTTP server and require Python 3, Bash, and curl;
-Linux CI runs them. The full VM suite additionally checks these probes against
+CI runs them. The full VM suite additionally checks these probes against
 real guests. A host FORWARD policy other than ACCEPT still causes an explicit
 skip of the routed guest-isolation probe, since it would mask the coop rule.
 
 Run `python3 tests/test-codex-account.py` for the account wrapper's argument,
-login/logout, API-key passthrough, and `codex-yolo` regressions (also in Linux
-CI). To additionally test implicit daemon reuse with a real Linux Codex binary:
+login/logout, API-key passthrough, and `codex-yolo` regressions (also in
+CI). To additionally test implicit daemon reuse with a real Linux Codex binary
+(on a Linux machine, since the wrapper runs in the Linux guest):
 
 ```bash
 COOP_TEST_CODEX="$(command -v codex)" python3 tests/test-codex-account.py
@@ -239,68 +369,21 @@ They compare the actual `config.toml` contents across host updates, self-updates
 and migration from a profile-provided system command. Package layout and
 completeness remain the native installer's responsibility.
 
-## Host-only bridge isolation test
 
-`./tests/run-integration.sh --full` runs the bridge isolation gate before
-the VM suite, on the selected local or remote host. A failure stops the full
-run; macOS explicitly skips this Linux-only gate. `TEST_FULL=1` also enables
-both gates. Remote full runs copy the tracked working-tree source and require
-the build and namespace prerequisites below on the remote host.
+## Apple runtime (`coop-sandbox`)
 
-Run `./tests/integration-network.sh` directly on Linux to test bridge-port
-isolation without KVM or VM images. It builds a library test as the current
-user, then uses passwordless sudo to run it in disposable network, mount, UTS, and PID
-namespaces. Prerequisites are Rust/Cargo, Python 3, sudo, iproute2, iptables,
-iputils-ping, util-linux, hostname, and coreutils. Missing prerequisites fail
-the gate; macOS reports an explicit skip. Linux CI runs this gate.
-
-Two veth-backed endpoints first communicate through a bridge with no firewall
-rules. The test calls the production isolation helper on each bridge port:
-one isolated port still permits communication, while two block peer traffic
-in both directions and preserve gateway access. Removing isolation restores
-communication. Ping execution errors fail the test rather than counting as
-isolation. The runner bounds execution and destroys the namespace resources
-on success, failure, or timeout.
-
-This exercises the bridge mechanism shared by veths and TAPs. The existing
-Firecracker `--full` phase checks actual VM TAP flags and both direct and routed
-traffic; it also detects removal of the helper call from `setup_tap`. This
-host-only gate does not replace Firecracker or Lima VM integration.
-
-## Host-only proxy reverse-forward test
-
-Run `./tests/integration-proxy-forward.sh` on Linux to exercise the production
-reverse-tunnel startup against real OpenSSH. It authenticates with throwaway
-keys, witnesses traffic through an accepted forward, then occupies the guest
-loopback port and requires startup to return an error without publishing a PID
-or leaving the SSH master alive. Separate host and guest network namespaces
-allow the destination and reverse listener to use the same port.
-
-The runner requires Rust/Cargo, Python 3, passwordless sudo, iproute2,
-util-linux, coreutils, hostname, and OpenSSH client/server tools. It builds
-unprivileged, then confines the fixture to disposable mount, network, UTS, and
-PID namespaces. No user SSH configuration or keys are used. Namespace teardown
-removes all children and temporary files on success, failure, or timeout.
-Linux CI and release preflight run this gate explicitly; ordinary unit tests
-mark it ignored, and macOS preflight reports it as unrun. This host test does
-not replace the applicable Apple and Lima VM integration gates on macOS 27+.
-
-## Apple sandbox backend (macOS, opt-in)
-
-The `apple-container` feature builds only on macOS. Its unit tests replace the
-`coop-sandbox` runtime (and the stock `container` builder) with a scripted
-executor, so they run without either installed. The runtime itself is a Swift
-package with its own unit tests (IDs, records, subnet allocation, the control
-protocol, reconcile, and in `TransactionTests.swift` disk-update failure
-injection and same-sandbox locking); none of them boots a VM:
+The host's own tests (`CoopHostTests`) replace the `coop-sandbox` runtime (and
+the stock `container` builder) with scripted fakes, so they run without either
+installed. The runtime itself is a Swift package with its own unit tests (IDs,
+records, subnet allocation, the control protocol, reconcile, and in
+`TransactionTests.swift` disk-update failure injection and same-sandbox
+locking); none of them boots a VM:
 
 ```bash
-cargo clippy --all-targets -- -D warnings
-cargo test
 swift test --package-path coop-sandbox --no-parallel
 ```
 
-The Swift tests run serially: several take, release, and re-probe `flock`
+The runtime tests run serially: several take, release, and re-probe `flock`
 locks, and in a parallel run about one in five runs sees a released lock as
 still held. Serial runs have not shown it. The cause is not yet identified
 (subprocesses started by other tests are the main suspect; switching them to
@@ -309,7 +392,7 @@ still held. Serial runs have not shown it. The cause is not yet identified
 Parser fixtures in `tests/fixtures/coop-sandbox/` are real `coop-sandbox`
 output; the directory's README says how they were captured.
 
-### Real-hardware checks
+### Apple runtime real-hardware checks
 
 `tests/integration-apple-sandbox.sh` boots real `coop-sandbox` VMs and checks
 what unit tests cannot:
@@ -342,13 +425,18 @@ what unit tests cannot:
   (`COOP_KILL_FRACTIONS`), and the next `start` must recover.
 
 It builds the runtime, a small test image (`tests/fixtures/apple-sandbox/`),
-and an `apple-container` build of coop, all under a temporary work directory,
-and removes its state root, sandboxes, and images on exit:
+and `coop`, all under a temporary work directory, and removes its state root,
+sandboxes, and images on exit (`--keep` retains the work directory):
 
 ```bash
 ./tests/integration-apple-sandbox.sh                   # ~20 min
 ./tests/integration-apple-sandbox.sh --only isolation,snapshots
 ```
+
+Phases: `setup disks machine isolation exposure identity persistence
+resources growth snapshots recovery concurrency coop`. It needs Apple Silicon,
+macOS 27+, Xcode 27, `jq`, and stock Apple `container` with its service
+running.
 
 Run it before changing the `containerization` pin, the runtime's VM
 configuration, or the isolation gate, and whenever the macOS major version
@@ -357,216 +445,51 @@ records why this runtime was chosen;
 [`design/apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md)
 lists the mutation invariants these tests defend and what is still untested.
 
-## Mutation testing
+## Fault injection
 
-Mutation testing finds unit tests that pass even when the code is broken — real
-behavioral gaps. We use [`cargo-mutants`](https://mutants.rs/). It's a manual
-quality check, not a CI gate.
-
-**Install once** — via `./scripts/install-dev-tools.sh --all`, or directly:
+Fault injection replaces mutation testing for the host. It shows that a
+critical test fails when the behavior it protects is removed — an assertion
+that still passes without that behavior is not coverage.
 
 ```bash
-cargo install cargo-mutants --locked
+python3 scripts/swift-host-fault-injection.py                 # every fault
+python3 scripts/swift-host-fault-injection.py --only scanner-strings --verbose
 ```
 
-**When to run.** After significant edits to a logic-dense module, or before
-refactoring one (capture surviving mutants first to know what behavior isn't
-pinned down). Don't run it routinely — runs take minutes per module.
+Each entry in the script's `FAULTS` list names an id, a production source
+file, the exact original text, its faulty replacement, and the `swift test`
+filter expected to catch it. The script copies the package into a scratch
+directory (the working tree is never modified), first runs every covered test
+unmodified there as a control, then applies each fault in turn. A fault counts
+as detected only when a test runs and fails; a fault that stops the package
+compiling proves nothing and fails the run. Exit status is non-zero if any
+fault survives or its original text no longer matches.
 
-**Where it pays off in this crate.** Only on code with branches, arithmetic,
-parsing, or state composition:
+**When to add a fault.** When a change adds or alters security-relevant host
+behavior — parsing of untrusted or user-edited input, credential handling,
+argv/environment construction, path or symlink checks, host-key pinning,
+ownership/lock/atomic-write checks, process cleanup, update verification — add
+an entry that removes that behavior and names the test that must catch it. Add
+it in the same change as the behavior. When refactoring code a fault targets,
+update the fault's original text so it still applies (a stale entry fails the
+run). The [`mutation-check`](../.agents/skills/mutation-check/SKILL.md) skill
+walks this workflow.
 
-- `src/config.rs` — parsing, validation, defaults, env composition
-- `src/workspace.rs` — rsync arg construction, mount-state record/remove
-- `src/devcontainer.rs`, `src/guest_env_state.rs` — env merging and persistence
-- `src/github_repo.rs`, `src/github_pat.rs`, `src/secret_store.rs` — slug
-  parsing, secret routing
-- `src/fs_util.rs` — path manipulation helpers
-- `src/commands/` (`lifecycle.rs`, `profiles.rs`, `commands/devcontainer.rs`,
-  `quickstart.rs`, `admin.rs`) — the pure helpers the command handlers were
-  carved into: input-compatibility guards, summary/message builders, the
-  `TranslatorInputs` builder, byte→GiB arithmetic kernels, and predicates like
-  `discovered_local_devcontainer` / `is_sensitive_workspace`
+The credential proxy has its own policy mutation sweep (Muter) and targeted
+mutation script; see [Swift proxy policy mutation
+sweep](#swift-proxy-policy-mutation-sweep).
 
-- `src/apple_container/` — the sandbox backend's parsers, isolation gate,
-  records, journal reconciliation, and lifecycle against a scripted runtime.
-  The module compiles only with its feature on macOS, so sweep it separately:
+## Credential proxy (`coop-proxy`)
 
-  ```bash
-  cargo mutants -f 'src/apple_container/*.rs'
-  ```
-
-**Don't bother with:** `backend.rs`, `lima.rs`, `setup.rs`, `update.rs`,
-`shell.rs`, `port_forward.rs`, `cmd.rs`, `ssh.rs`, `vm.rs`, `prompt.rs` (TTY
-prompts), `main.rs`, and — inside `src/commands/` — the `cmd_*` dispatch
-entrypoints and the handlers that take a `&PlatformBackend`, write stdout, or
-open a TTY prompt (e.g. `create_up_instance`, `restart_instance`,
-`find_stopped_instance`, `resolve_running`, `resolve_devcontainer`,
-`purge_all_data`, and `model.rs`'s `render_status`/`set_local`/`set_remote`/
-`report_switch`/`apply_to_running`/`prompt_endpoint`), plus the `lib.rs`
-`run`/`init_tracing` shims. These mostly shell out, run SSH, or talk to external
-services — unit tests can't catch behavioral changes there. `tests/integration.sh`
-does that job. This list is enforced (not just advised) by `.cargo/mutants.toml`
-— see **Scoping** below.
-
-### Scoping (`.cargo/mutants.toml`)
-
-The mutation surface is curated in `.cargo/mutants.toml` so the `missed` list
-means "real unit-test gap," not "code a `--lib` test structurally cannot reach."
-cargo-mutants reads this file automatically on every run (`--list` included). It
-scopes out three things:
-
-- **The whole-module "Don't bother with" files above** (`main.rs`, and
-  `prompt.rs` — every function short-circuits off a TTY and otherwise reads
-  stdin, with no pure logic a `--lib` test can reach), via `exclude_globs`.
-- **`cfg(kani)` proofs** (`config.rs mod proofs`), via `exclude_re = ["proofs::"]`
-  — never compiled in a normal build, so every mutation is a silent no-op that
-  always reports `missed`. They are exercised by `cargo kani`.
-- **Individual shell-out / IO / terminal functions inside otherwise-logic-bearing
-  modules** (`github_pat.rs`, `workspace.rs`, `devcontainer.rs`,
-  `secret_store.rs`, `fs_util.rs`, `commands/model.rs`'s stdout/backend/TTY
-  functions), via `exclude_re`. Each pattern is `\b`-anchored to a function name
-  (or qualified `Type::method`) so it scopes the whole function without catching
-  longer names that share a prefix. The module-agnostic `replace gh_auth_token ->`
-  pattern also covers the identical `gh_auth_token` shell-out in
-  `git_repo_devcontainer.rs`.
-- **The `src/commands/` dispatch entrypoints and backend-driving / TTY handlers**,
-  via `exclude_re`: a single `\bcmd_[a-z_]+\b` covers every `coop <subcommand>`
-  entrypoint, plus `\b`-anchored names for the `&PlatformBackend` handlers
-  (`create_*`, `restart_instance`, `start_instance`, `find_stopped_instance`,
-  `resolve_running`, `preflight_start_target`, `current_disk_gib`, …), the IO
-  handlers in `admin.rs`/`profiles.rs`/`commands/devcontainer.rs`/`quickstart.rs`,
-  and the `lib.rs` `run`/`init_tracing` shims.
-
-A cargo-mutants quirk to know about: `exclude_re` does **not** match `delete
-field … from struct …` mutants — emitted for every struct literal that uses
-`..Default::default()`, and no pattern filters them. In this crate they all
-target `devcontainer::TranslatorInputs`, assembled in four places. The one pure
-builder (`up_translator_inputs`) stays in scope and is unit-tested, which kills
-its field-deletion mutants; the three shell-out handlers that build it inline
-(`run`, `cmd_devcontainer_check`, `quickstart_fresh_start`) carry an in-source
-`#[mutants::skip]` with a back-reference to `.cargo/mutants.toml`.
-
-What is deliberately *kept* (a survivor here is a genuine coverage regression):
-the pure-logic helpers the #321–#327 fixes carved the shell-out/IO functions
-down to — `parse_curl_status_body`, `parse_user_login`, `github_pat.rs`'s
-`render_status` (note `commands/model.rs` has a *different*, excluded
-`render_status`, so its exclude is file-anchored), `parse_gh_token` /
-`normalize_token`, `pick_backend`, `doc_contains_literal_token`, the SSH-config
-marker-block helpers (`remove_marker_blocks` / `remove_named_marker_block` /
-`remove_all_ssh_config_at` / `remove_ssh_config_at`), `CmdToken::from_words`'s
-Linux/`op`/`cat` arms (only the macOS keychain arm is scoped, pinned on macOS by
-`parse_recognises_macos_keychain`), `Report::push`, `atomic_write_with_mode`,
-and the editor strategy helpers (`vscode_strategies` / `zed_strategies` /
-`editor_strategies` / `install_hints` / `may_try_after_nonzero_exit`). The thin
-wrappers those were split out of
-(`probe_user_login`, `run_status`, `remove_*_ssh_config`, `gh_auth_token`) are
-excluded — a `--lib` test can't reach them without a real `$HOME` or network.
-When adding a new shell-out or IO function to one of these modules, add a
-matching `exclude_re` line; when adding logic, leave it in scope.
-
-The same split applies in `src/commands/`. Kept in scope: the
-input-compatibility guards (`ensure_up_existing_inputs_are_compatible[_for_git_repo]`,
-`up_has_restart_only_inputs`, `restart_has_ignored_creation_flags`,
-`validate_copy_workspace_mounts`), the config-IO lookups
-(`find_workspace_instance`, `find_git_repo_instance`), the message/summary
-builders (`no_stopped_instance_message`, `creation_options_rejected_message`,
-`builtin_summary`, `format_custom_summary`, `script_summary`), the
-`up_translator_inputs` builder, the arithmetic kernels `bytes_to_gib` and
-`format_dir_size`, `project_dir_to_str`, and the predicates
-`discovered_local_devcontainer` / `is_sensitive_workspace`. The backend-driving
-wrappers those kernels were carved out of (`current_disk_gib`,
-`dir_size_display`) are excluded.
-
-The `coop model` feature (#352) follows the same split. Kept in scope (and
-unit-tested): `tools_needing_prompt`, `switch_report_lines`,
-`ModelState::resolved_claude` / `resolved_codex` / `is_default` /
-`load_or_default`, and `ModelMode::as_str`; plus `From<ModelAction> for
-ModelMode` in `lib.rs`. Excluded as IO/backend/TTY: `model.rs`'s `render_status`
-/ `write_tool_line` / `set_local` / `set_remote` / `report_switch` /
-`apply_to_running` / `prompt_endpoint`, and `lifecycle.rs`'s
-`bootstrap_and_post_start` / `prepare_session_from_target`.
-
-**Keep `.cargo/mutants.toml` in sync in the same PR that adds the code** — this
-is not a follow-up chore. #352 was merged without scoping its new IO/backend/TTY
-functions, which silently broke the documented baseline and surfaced 22
-survivors only at the next release preflight (#373). When a change adds a
-function that shells out, drives a `&PlatformBackend`, reads a TTY, or writes
-stdout, add its `exclude_re`/`exclude_globs` entry (and extract any pure logic
-into a kept, tested helper) before merging. Verify with `cargo mutants -f
-<touched files> -- --lib` — not just the `--in-diff` sweep, which only mutates
-changed lines and so misses pre-existing same-class survivors in a touched file.
-The [`mutation-check`](../.agents/skills/mutation-check/SKILL.md) skill walks
-this workflow.
-
-### Running it
-
-Always scope with `-f`; all logic lives in the library crate, and every unit
-test runs in the lib target, so pass `-- --lib`. (`-- --bins` runs zero tests
-and reports every mutant as missed.)
+The proxy is a separate Swift package. When changing it, run at least:
 
 ```bash
-# One file
-cargo mutants -f src/config.rs -- --lib
-
-# Several logic modules at once
-cargo mutants -f src/config.rs -f src/workspace.rs -f src/devcontainer.rs -- --lib
-
-# PR-scoped: mutate only lines changed vs main
-cargo mutants --in-diff <(git diff origin/main -- 'src/*.rs') -- --lib
-
-# Estimate cost without running
-cargo mutants --list -f src/config.rs
+swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
+swift test --package-path coop-proxy --force-resolved-versions
+python3 scripts/test-swift-proxy-process.py --skip-tls
 ```
 
-A baseline run on `config.rs` (197 mutants) takes ~8 minutes on a workstation.
-
-### Reading the output
-
-Results land in `mutants.out/` (gitignored): `caught.txt` (killed — good),
-`missed.txt` (not caught — the interesting ones), `unviable.txt` (broke the
-build; ignore), `timeout.txt` (hung; rare). A kill rate around 70–80% on viable
-mutants is healthy. Aim to drop the *number* of survivors, not chase 100% —
-many remaining mutants are equivalent.
-
-### Handling survivors
-
-For each line in `missed.txt`:
-
-1. **Real test gap.** The mutation alters observable behavior and nothing fails.
-   Add a test that distinguishes the mutant from the original (assert on the
-   actual value, not "it didn't panic"). Re-run to confirm.
-2. **Equivalent mutant.** The mutation doesn't change behavior any caller can
-   observe (`fmt::Display` returning `Ok(Default::default())`, getters returning
-   a default that matches the real value, constant accessors). Skip with an
-   attribute and a one-line reason:
-   ```rust
-   #[mutants::skip] // equivalent: Display output isn't asserted by callers
-   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { ... }
-   ```
-3. **Dead code.** If genuinely unused, delete it (per "replace, don't
-   deprecate"). Surviving mutants on dead code are a useful smell.
-
-### Baselines
-
-- **2026-06-17 (after #329 scoping, #321–#330 fixes).** A sweep of the eight
-  logic modules (`config.rs`, `workspace.rs`, `devcontainer.rs`,
-  `guest_env_state.rs`, `github_repo.rs`, `github_pat.rs`, `secret_store.rs`,
-  `fs_util.rs`) reports **0 missed**. Treat any *new* survivor as a coverage
-  regression — first confirm it isn't a shell-out/IO function that belongs in
-  `.cargo/mutants.toml`, then add a test.
-- **2026-06-24 (issue #344).** A sweep of `lifecycle.rs`, `profiles.rs`,
-  `commands/devcontainer.rs`, `quickstart.rs`, `admin.rs`, `commands/mod.rs`,
-  `lib.rs`, and `jsonc.rs` reports **0 missed** out of 229 mutants. The
-  non-caught results are `unviable` (~18) and `timeout` (~16–17, all `jsonc.rs`
-  scanner-index increment mutants where mutating the step makes the loop never
-  terminate).
-- **2026-06-26 (issue #373).** After scoping the #352 local-model IO/backend/TTY
-  functions and adding the `mode_as_str_round_trips`, `model_action_maps_to_mode`,
-  and `load_or_default_returns_saved_state` tests, a sweep of
-  `src/commands/model.rs`, `src/model_state.rs`, and `src/prompt.rs` reports
-  **0 missed** (32 caught, 3 unviable), and a full `src/lib.rs` sweep reports
-  **0 missed** (11 caught).
+The sections below describe its additional gates.
 
 ### Shared confined proxy refusal corpus
 
@@ -602,8 +525,8 @@ file-descriptor limit for the 256-stream workloads. Release builds depend on
 the reusable CI workflow, including this job.
 
 The hosted runner label is documented in [GitHub's announcement](https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/).
-`.github/actionlint.yaml` adds that exact label because actionlint 1.7.12 predates
-it. Opt-in RSS, live provider TLS/credentials, VM integration and live-validation
+actionlint is pinned in `mise.toml` to the [kjanat/actionlint](https://github.com/kjanat/actionlint)
+fork, which recognizes that label. Opt-in RSS, live provider TLS/credentials, VM integration and live-validation
 requirements remain separate gates; this CI job does not replace them.
 
 ### Historical AsyncHTTPClient TLS cancellation audit
@@ -820,8 +743,7 @@ reach the fixture before the guest sends the remainder; the receiver hashes
 incrementally and its SHA-256 must match the expected patterned body. A separate
 request declaring 64 MiB plus one byte must receive 413 with zero upstream TCP
 connections or HTTP requests. Both paths require guest EOF and upstream socket
-closure; The Rust reference evidence is historical. The runner validates and
-compares six complete records, retaining logs and raw observations in a printed
+closure. The runner validates six complete records, retaining logs and raw observations in a printed
 temporary directory. Test-only `COOP_BODY_LIMIT_OBSERVATIONS` captures counts
 and digest. The individual gate is `swift test --package-path coop-proxy --filter realTLSDeclaredBodyLimit`.
 A chunked request with
@@ -834,9 +756,8 @@ gate. Both provider cases run concurrently within each implementation through
 verified TLS. Each advertises three body bytes, sends one, waits 15 seconds,
 and sends a second. Both bytes must reach the fixture before request completion,
 then the guest must receive local 408 and EOF 44–51 seconds after its initial
-write. The upload must remain incomplete and the upstream socket must close;
-Rust additionally checks recovery of all permits. The runner validates and
-compares both providers' status, partial body and closure observations, retaining
+write. The upload must remain incomplete and the upstream socket must close.
+The runner validates both providers' status, partial body and closure observations, retaining
 raw elapsed times while excluding scheduler timing from equality comparison.
 Logs, raw observations and comparison evidence are retained in a printed
 temporary directory. `COOP_IDLE_OBSERVATIONS` is consumed only by test code.
@@ -863,8 +784,7 @@ For each provider they hold 256 responses after their first SSE chunk and
 require closure of a 257th authenticated request. Three rounds exercise
 disconnect, normal completion, then disconnect again. Refilling the complete
 allowance proves capacity recovery after both paths, and each round requires
-all upstream sockets to close. Rust additionally inspects its live permit
-counts; Swift's separate embedded tests check request-lease lifetime because
+all upstream sockets to close. Separate embedded tests check request-lease lifetime because
 the production connection limit prevents a 257th socket reaching admission.
 Synthetic credentials and the same disposable certificate generator are used.
 The fixture server disables HTTP pipelining assistance so it continues reading
@@ -882,16 +802,15 @@ Disconnect rounds record zero hold time. The combined gate takes about two
 minutes plus build time.
 
 On macOS, run `python3 scripts/test-proxy-forwarding-corpus.py`. This runs the
-same `tests/fixtures/credential-proxy/forwarding.json` cases through Rust and
-Swift loopback TLS fixtures. It retains per-language logs, raw observations,
+`tests/fixtures/credential-proxy/forwarding.json` cases through Swift loopback
+TLS fixtures. It retains logs, raw observations,
 normalized comparison, command outcomes and the corpus SHA-256 in a printed
 temporary directory, and rejects an empty test selection. Python 3 and OpenSSL
-are required in addition to Rust and Swift.
+are required in addition to Swift.
 
 Both tests generate disposable short-lived certificates with the shared
-`generate-forwarding-certificates.py` fixture generator. Rust uses an explicit
-test root; Swift keeps system trust evaluation with a per-evaluation extra
-root. Neither test disables hostname/chain verification or changes host trust.
+`generate-forwarding-certificates.py` fixture generator. Swift keeps system
+trust evaluation with a per-evaluation extra root. Neither test disables hostname/chain verification or changes host trust.
 Destination substitutions exist only in tests; all credentials are synthetic.
 
 For admitted requests, this gate checks shared expectations and compares
@@ -910,16 +829,15 @@ This gate complements the raw refusal/fuzz harness. The eight certificate-
 failure cases cover untrusted issuer, self-signed, wrong hostname and expired
 certificates for each provider. They compare local 502, zero upstream HTTP
 requests and physical peer closure; local error prose and its content headers
-are implementation-specific and are not compared. Both implementations assert
+are not compared. The fixtures assert
 that local diagnostics contain neither synthetic secret. The runner validates
 the exact observation schema for each case type. Shared streaming/resource and
 connect-timeout cases remain separate work before migration
 cutover. The admitted fixtures leave the guest write side open and require one
-complete response followed by peer EOF within five seconds. Rust uses a raw TCP
-read through EOF; Swift observes channel inactivity without closing on the
-response header/end. Removing Swift's successful-response close or enabling
-Rust keep-alive in isolated source copies fails this deadline, confirming the
-probes detect it.
+complete response followed by peer EOF within five seconds. Swift observes
+channel inactivity without closing on the response header/end. Removing
+Swift's successful-response close in an isolated source copy fails this
+deadline, confirming the probe detects it.
 
 The corpus also contains two stalled TLS-handshake cases, one per provider.
 They use the real 30-second establishment deadline and require local 502,
@@ -929,8 +847,7 @@ need not be identical across implementations. Two additional cases route the
 fixed provider endpoint to the reserved name `coop-proxy-test.invalid` in test
 code only. They require a DNS failure, local 502, zero upstream HTTP requests
 and physical guest closure. Swift checks the typed A/AAAA resolver errors and
-the absence of TCP connection attempts; Rust first verifies that its resolver
-rejects the fixture name, then exercises the normal forwarding failure path.
+the absence of TCP connection attempts.
 The complete 18-case run takes about two minutes plus build time. An unanswered
 TCP connect remains a separate case.
 
@@ -967,78 +884,52 @@ three explicit HTTP parser limits.
 ## Fuzzing
 
 Fuzzing is reserved for parsers of **untrusted or user-editable input** — it
-finds panics/hangs/OOM, not correctness (there's no oracle), so a standing
-harness only earns its keep where input crosses a trust boundary. A manual
-check, not a CI gate. We use [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz)
-(libFuzzer), which needs a nightly toolchain.
+finds traps, hangs and unbounded resource use, and harness properties catch
+some correctness failures, so a standing harness only earns its keep where
+input crosses a trust boundary. CI replays the corpus and runs a bounded smoke
+of every target; longer campaigns are manual.
 
-Targets live in `fuzz/fuzz_targets/`. `coop` exposes a library target, so a
-target depends on the crate directly and imports the parser under test with
-`use coop::…` — no `#[path]` includes. `fuzz/Cargo.toml` is its own workspace,
-so the main `cargo build`/`test`/`fmt`/`clippy`/`deny` never touch it.
-
-**Install once** (or `./scripts/install-dev-tools.sh --all`): `cargo install
-cargo-fuzz --locked`
+Harness bodies live in `fuzz/Targets/` (the `CoopFuzzHarnesses` package
+target) and libFuzzer entrypoints in `fuzz/Entrypoints/`. `scripts/fuzz.sh`
+compiles LLVM libFuzzer from the sources vendored in `fuzz/libfuzzer/` (see its
+README; the file manifest must match the SHA-256 pinned in the script, or
+`COOP_LIBFUZZER_SRC` supplies another checkout) with Xcode `clang++`, and the
+production Swift sources from this revision with Xcode `swiftc`,
+AddressSanitizer and SanitizerCoverage (inline 8-bit counters, PC tables,
+comparison tracing). Campaigns use libFuzzer value profiling.
 
 ```bash
-cargo +nightly fuzz build                                       # compile all targets
-cargo +nightly fuzz run parse_repo_slug                         # fuzz until a crash
-cargo +nightly fuzz run parse_repo_slug -- -max_total_time=60   # bounded run
+scripts/fuzz.sh build                        # instrumented targets in fuzz/.build
+scripts/fuzz.sh replay ConfigLoad            # committed corpus, no mutation
+scripts/fuzz.sh run ConfigLoad 600 20260927  # bounded campaign (seconds, seed)
+scripts/fuzz.sh smoke 30                     # replay + bounded run, all targets (CI)
+scripts/fuzz.sh minimize ConfigLoad fuzz/artifacts/ConfigLoad/crash-…
+scripts/fuzz.sh merge ConfigLoad             # fold new inputs into fuzz/corpus
+scripts/fuzz.sh qualify                      # toolchain qualification checks
 ```
 
-A crash is written to `fuzz/artifacts/<target>/`; reproduce with `cargo +nightly
-fuzz run <target> <artifact-path>`.
+Per-input limits: `-max_len=65536 -timeout=10 -rss_limit_mb=2048
+-malloc_limit_mb=1024`. A crash is written to `fuzz/artifacts/<target>/`;
+reproduce it with `scripts/fuzz.sh replay <target> <artifact>`.
 
 **Current targets:**
 
-- `parse_repo_slug` — `coop::github_repo::parse_repo_slug_from_url`, fed `git
-  remote get-url` output and `--git-repo` CLI args. Property: never panics.
-- `jsonc_to_json` — `coop::jsonc::jsonc_to_json`, fed hand-authored
-  `devcontainer.json` text. Property: never panics.
-- `config_load` — `toml::from_str` into `coop::config::CoopConfig` then
-  `validate`, fed `config.toml` text. Exercises the custom `Deserialize`/
-  `visit_map` impls (`SubnetMask`, `HostInterface`, `PortForward`). Property:
-  never panics, only returns `Err`.
+- `ParseRepoSlug` — the production repository URL/slug parser (`--git-repo`
+  arguments, `git remote get-url` output). Property: round trips.
+- `JSONCToJSON` — the shared JSONC scanner under both the configuration and
+  devcontainer policies. Properties: output length and newline preservation,
+  idempotence.
+- `ConfigLoad` — JSONC scanning, duplicate/limit preflight, Foundation
+  decoding, domain validation and structural/domain round trips of accepted
+  configurations; text placed in a secret-bearing field never appears in an
+  error.
 
-## Formal verification (kani)
+The ordinary `swift test` suite replays `fuzz/corpus/` through the same
+harness bodies (`CoopFuzzReplayTests`); that is regression coverage, not
+fuzzing. Promote a minimized, synthetic reproducer into
+`fuzz/corpus/<target>/` so it runs in both. Qualification results and
+campaign records are in the
+[acceptance ledger](design/swift-host-acceptance.md#fuzz-toolchain-qualification-section-71).
 
-[Kani](https://model-checking.github.io/kani/) is a bounded model checker that
-proves the *absence* of a property (here: arithmetic overflow / panics) over all
-inputs in a range, rather than sampling like proptest. It is a **narrow fit** —
-the type system already makes most illegal states unrepresentable, so kani earns
-its keep only on bounded integer/float arithmetic. A manual check, not a CI gate;
-it needs its own toolchain.
-
-Proofs live in a `#[cfg(kani)]` module so the normal build never compiles them.
-They run as one module in `src/config.rs`.
-
-**Install once** (or `./scripts/install-dev-tools.sh --all`): `cargo install
---locked kani-verifier && cargo kani setup`
-
-```bash
-cargo kani                                            # run every proof harness (~5s)
-cargo kani --harness disk_relative_add_never_wraps    # one harness
-```
-
-**Current proofs (`src/config.rs`, `mod proofs`):**
-
-- `disk_relative_add_never_wraps` — the arithmetic kernel of `DiskSize::resolve`'s
-  relative branch (`current.checked_add(delta)`): for any two non-zero `u32`
-  sizes it yields `Some(current + delta)` exactly when the sum fits, and `None`
-  otherwise — never wraps, never panics.
-- `mib_as_gib_f64_is_finite_and_positive` — `MiB::as_gib_f64` is finite and
-  strictly positive across the whole non-zero range.
-- `instance_index_octet_stays_in_range` — the guest IP/MAC last octet
-  (`index + 2`) stays in `2..=254` for every valid `InstanceIndex` (`0..=252`).
-
-A note on the disk proof: the harness verifies the `checked_add` kernel directly
-rather than calling `DiskSize::resolve`, because `resolve` wraps the overflow
-case with `anyhow`'s heap-allocating error construction, which CBMC cannot model
-tractably. `resolve` adds only that infallible `.context()` on top of the
-kernel; its end-to-end behavior is pinned by the deterministic unit tests
-`disk_size_resolve_relative` / `disk_size_resolve_relative_overflows`. This is
-the general rule for kani here: prove the arithmetic kernel, not code paths that
-route through `anyhow`/allocation. The `InstanceIndex` range is also pinned the
-cheaper way by the exhaustive `0..=252` unit test
-`instance_network_derivations_over_full_range`, which the kani harness
-demonstrates rather than replaces.
+The untrusted-input parsers added later (devcontainer JSON, guest JSON, Codex
+TOML) have unit and sanitizer coverage but no fuzz target yet.

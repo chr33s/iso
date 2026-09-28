@@ -1,0 +1,147 @@
+{
+  "data_dir": "~/state/coop",
+  "ssh_port": 2222,
+  "post_start": "make dev-setup",
+  "forward_ports": [
+    3000,
+    "8080:18080",
+    " 9000 ",
+    {
+      "guest": 5432,
+      "label": "db"
+    },
+    {
+      "guest": 6000,
+      "host": 6001
+    }
+  ],
+  "unknown_top_level": {
+    "nested": [
+      1,
+      2.5,
+      "x"
+    ]
+  },
+  "github": {
+    "mode": "pat",
+    "skip": [
+      "owner/big-repo"
+    ],
+    "pat": {
+      "owner/repo": {
+        "token": "cmd:security find-generic-password -s coop-github-pat -a owner-repo -w"
+      },
+      "other/re.po": {
+        "token": "github_pat_SYNTHETIC_NOT_A_TOKEN"
+      }
+    }
+  },
+  "setup": {
+    "prompt_for_pat": false
+  },
+  "vm": {
+    "vcpu_count": 8,
+    "mem_size_mib": 8192,
+    "template_size_gib": 32
+  },
+  "guest_env": {
+    "RUST_LOG": "info",
+    "_UNDERSCORE": "",
+    "Z9": "last"
+  },
+  "claude": {
+    "api_key": "cmd:security find-generic-password -s anthropic -w",
+    "env_forward": [
+      "CUSTOM_TOKEN",
+      "_OTHER"
+    ],
+    "marketplaces": [
+      "https://github.com/anthropics/claude-plugins-official",
+      "~/local/market"
+    ],
+    "plugins": [
+      "rust-analyzer-lsp@claude-plugins-official"
+    ],
+    "config_dir": false,
+    "mcp_servers": {
+      "stdio-server": {
+        "command": "/usr/bin/my-mcp-server",
+        "args": [
+          "--verbose"
+        ],
+        "env": {
+          "API_KEY": "MY_HOST_ENV_VAR"
+        }
+      },
+      "dotted.name": {
+        "type": "http",
+        "url": "https://mcp.example.com/v1/",
+        "headers": {
+          "Authorization": "cmd:echo synthetic-header"
+        }
+      },
+      "events": {
+        "type": "sse",
+        "url": "https://sse.example.com/stream"
+      }
+    },
+    "local_model": {
+      "host_url": "http://localhost:11434/",
+      "model": "qwen2.5-coder:32b",
+      "auth_token": "synthetic-local-token"
+    }
+  },
+  "codex": {
+    "auth": "chatgpt",
+    "config_dir": "~/codex-config",
+    "marketplaces": [
+      "trailofbits/codex-plugins"
+    ],
+    "local_model": {
+      "host_url": "http://localhost:11434/v1/",
+      "model": "gpt-oss:120b"
+    }
+  },
+  "proxy": {
+    "anthropic": {
+      "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+      "auth": "bearer"
+    }
+  },
+  "profiles": {
+    "my-tools": {
+      "apt_packages": [
+        "ripgrep",
+        "fd-find",
+        "jq"
+      ],
+      "pre_install": "curl -fsSL https://example.com/setup.sh | bash",
+      "post_install": "echo done"
+    },
+    "a.b": {
+      "plugins": [
+        "dotted@profile"
+      ]
+    },
+    "a": {
+      "marketplaces": [
+        "~/nested"
+      ]
+    }
+  },
+  "updates": {
+    "mode": "off",
+    "check_interval_hours": 168
+  },
+  "apple_container": {
+    "binary": "/opt/coop/bin/coop-sandbox",
+    "builder": "~/bin/container",
+    "kernel": "/opt/coop/vmlinux",
+    "probe_timeout_seconds": 5,
+    "operation_timeout_seconds": 30,
+    "create_timeout_seconds": 900,
+    "boot_timeout_seconds": 240,
+    "stop_timeout_seconds": 45,
+    "build_timeout_seconds": 86400
+  }
+}

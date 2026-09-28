@@ -1,0 +1,6 @@
+[codex]
+api_key = "cmd:pass show openai"
+plugins = []
+
+[proxy.openai]
+credential = "cmd:security find-generic-password -s coop-openai -a openai -w"

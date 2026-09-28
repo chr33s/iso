@@ -24,15 +24,13 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # never reads stdin.
 exec </dev/null
 
-# ── Platform detection (matches install.sh / update::target_triple) ──────────
+# ── Platform detection (matches install.sh) ─────────────────────────────────
 
 detect_triple() {
     local os arch
     os="$(uname -s)"
     arch="$(uname -m)"
     case "${os}-${arch}" in
-        Linux-x86_64)   echo "x86_64-unknown-linux-musl" ;;
-        Linux-aarch64)  echo "aarch64-unknown-linux-musl" ;;
         Darwin-arm64)   echo "aarch64-apple-darwin" ;;
         Darwin-aarch64) echo "aarch64-apple-darwin" ;;
         *)
@@ -119,44 +117,46 @@ JSON
 
 # ── Build both coop binaries (real HOME, before isolation) ───────────────────
 #
-# Both `cargo build` invocations must run before HOME is redirected — cargo
-# uses $HOME for its registry and toolchain caches.
+# Both `swift build` invocations must run before HOME is redirected — SwiftPM
+# uses $HOME for its caches. A build is a release build only when compiled with
+# `-D COOP_RELEASE_BUILD` (as scripts/build-release.py --release does); every
+# other build is a dev build regardless of git state. The release-kind build
+# gets its own scratch path so the flag never invalidates the ordinary one.
+# COOP_SWIFT_SCRATCH_PATH overrides the default `.build` scratch path.
+
+SWIFT_SCRATCH="${COOP_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
+
+# Prints the built binary's path; build output goes to stderr.
+build_coop() {
+    local scratch="$1"
+    shift
+    swift build --package-path "$PROJECT_DIR" --scratch-path "$scratch" \
+        --product coop --force-resolved-versions --quiet "$@" >&2
+    printf '%s/coop\n' "$(swift build --package-path "$PROJECT_DIR" --scratch-path "$scratch" \
+        --show-bin-path "$@")"
+}
 
 echo "==> Building release binary..."
-(
-    cd "$PROJECT_DIR"
-    COOP_FORCE_BUILD_KIND=release cargo build --release --quiet
-)
-# Stash the release binary at a stable path. The dev build below shares
-# `target/release/coop`, so we can't keep referring to that path after
-# `cargo build` runs again.
+# Copy both binaries out of the build tree: tests replace $COOP_BIN in place.
 RELEASE_BIN="$TMPDIR/bin/coop-release"
-cp "$PROJECT_DIR/target/release/coop" "$RELEASE_BIN"
+cp "$(build_coop "${SWIFT_SCRATCH}-release-kind" -Xswiftc -DCOOP_RELEASE_BUILD)" "$RELEASE_BIN"
 cp "$RELEASE_BIN" "$TMPDIR/bin/coop"
 export COOP_BIN="$TMPDIR/bin/coop"
 
 echo "==> Building dev binary..."
-# Force kind=dev rather than relying on git state. When CI runs on a tag
-# matching the Cargo version (the release workflow's normal trigger),
-# build.rs correctly bakes kind=release, which would defeat test 4.
-(
-    cd "$PROJECT_DIR"
-    COOP_FORCE_BUILD_KIND=dev cargo build --release --quiet
-)
-cp "$PROJECT_DIR/target/release/coop" "$TMPDIR/bin/coop-dev"
+cp "$(build_coop "$SWIFT_SCRATCH")" "$TMPDIR/bin/coop-dev"
 
 # ── Isolate test invocations from the real user environment ──────────────────
 #
 # `coop update --yes` writes an "update-check" bookkeeping file recording the
 # latest release it learned about. Pointed at our local fixture, that file
-# would record the synthetic v9.9.9 tag — and `dirs::state_dir()` /
-# `dirs::data_local_dir()` resolve under $HOME on every supported platform
-# (`$HOME/.local/state` on Linux, `$HOME/Library/Application Support` on
-# macOS), so without redirection the file lands in the user's real home and
-# triggers a bogus "newer version available" warning on every later run.
+# would record the synthetic v9.9.9 tag — and it lives under
+# `$HOME/Library/Application Support/coop`, so without redirection the file
+# lands in the user's real home and triggers a bogus "newer version available"
+# warning on every later run.
 #
-# Redirecting $HOME (and the XDG vars, for completeness on Linux) is enough:
-# the update path doesn't read from anywhere else under the user's home.
+# Redirecting $HOME (the XDG vars are kept for completeness) is enough: the
+# update path doesn't read from anywhere else under the user's home.
 export HOME="$TMPDIR/home"
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_DATA_HOME="$HOME/.local/share"
@@ -244,7 +244,7 @@ if [[ -n "$state_under_tmpdir" ]]; then
     pass "update-check state file confined to tempdir"
 else
     fail "no update-check state file written under tempdir" \
-        "either HOME redirection broke or persist_state did not run"
+        "either HOME redirection broke or the update-check state was not persisted"
 fi
 
 # ── Test 2: --check when already up to date ──────────────────────────────────

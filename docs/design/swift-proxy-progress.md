@@ -3,6 +3,10 @@
 > Firecracker host gates are superseded. Historical failures remain recorded
 > as evidence, not current acceptance blockers. Applicable macOS VM, live
 > provider/agent, review, and release-provenance gates remain required.
+>
+> Rust host references and `cargo` commands below are historical: the Swift
+> host (`Sources/`) replaced the Rust host in 2026-09, and Cargo is no longer
+> part of the build. Current commands are in [testing.md](../testing.md).
 
 # Swift proxy implementation progress
 

@@ -11,7 +11,7 @@ coop editor my-instance
 This command:
 
 1. Writes an SSH config block for the instance into `~/.ssh/config`.
-2. Launches VS Code with `code --remote ssh-remote+coop-{name} /workspace`. When it cannot spawn a VS Code strategy, coop tries the VS Code app (`open -a 'Visual Studio Code'`, macOS only), then Zed with `zed ssh://coop-{name}/workspace`.
+2. Launches VS Code with `code --remote ssh-remote+coop-apple-{name} /workspace`. When it cannot spawn a VS Code strategy, coop tries the VS Code app (`open -a 'Visual Studio Code'`, macOS only), then Zed with `zed ssh://coop-apple-{name}/workspace`.
 3. Prints the SSH config entry to stderr for manual use with other editors.
 
 ## The `coop editor` command
@@ -43,18 +43,18 @@ coop includes this instruction when `--editor code` cannot launch VS Code, or wh
 
 ### Zed
 
-Zed connects with `zed ssh://coop-{name}/workspace` (macOS fallback: an `open zed://ssh/...` URL when the `zed` CLI is not on PATH). Zed shells out to the system `ssh`, so it picks up the `coop-{name}` alias — host, port, user, key, and disabled host-key checking — from `~/.ssh/config` with no extra setup. To install the `zed` CLI, open Zed and run:
+Zed connects with `zed ssh://coop-apple-{name}/workspace` (macOS fallback: an `open zed://ssh/...` URL when the `zed` CLI is not on PATH). Zed shells out to the system `ssh`, so it picks up the `coop-apple-{name}` alias — host, port, user, key, and pinned host key — from `~/.ssh/config` with no extra setup. To install the `zed` CLI, open Zed and run:
 
 > Cmd+Shift+P, then "cli: install"
 
 Two Zed-specific caveats:
 
-- On first connect, Zed downloads a `zed-remote-server` binary inside the guest from zed.dev. If your guest has restricted egress, enable `upload_binary_over_ssh` on the `coop-{name}` entry in Zed's `ssh_connections` setting so the binary is uploaded over SSH instead:
+- On first connect, Zed downloads a `zed-remote-server` binary inside the guest from zed.dev. If your guest has restricted egress, enable `upload_binary_over_ssh` on the `coop-apple-{name}` entry in Zed's `ssh_connections` setting so the binary is uploaded over SSH instead:
 
   ```json
   {
     "ssh_connections": [
-      { "host": "coop-my-instance", "upload_binary_over_ssh": true }
+      { "host": "coop-apple-my-instance", "upload_binary_over_ssh": true }
     ]
   }
   ```
@@ -65,17 +65,27 @@ Two Zed-specific caveats:
 coop writes SSH config entries to `~/.ssh/config`, delimited by marker comments:
 
 ```
-# coop START coop-my-instance
-Host coop-my-instance
-    HostName 127.0.0.1
-    Port 22222
+# coop-apple START coop-apple-my-instance
+Host coop-apple-my-instance
+    HostName 10.231.3.2
+    Port 22
     User ubuntu
-    IdentityFile /path/to/.coop/ssh_key
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
+    IdentityFile /Users/me/.coop/backends/apple-container-v1/vm_key
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile /Users/me/.coop/backends/apple-container-v1/instances/my-instance/known_hosts
+    GlobalKnownHostsFile /dev/null
+    HostKeyAlias <machine>.coop
+    UpdateHostKeys no
+    ForwardAgent no
+    IdentityAgent none
     LogLevel ERROR
-# coop END
+# coop-apple END
 ```
+
+The block pins the guest's host key: a changed key is refused rather than
+accepted. The `coop-apple-` prefix and markers keep these entries separate from
+an upstream coop build's `coop-<name>` blocks.
 
 Each run of `coop editor` replaces the existing block for that instance, or creates one if none exists. To install the same block without launching an editor — for plain `ssh`/`scp`/`rsync` — use [`coop ssh-config`](commands.md#ssh-config).
 
@@ -84,7 +94,7 @@ Each run of `coop editor` replaces the existing block for that instance, or crea
 - **`coop editor NAME --clean`** (or **`coop ssh-config NAME --clean`**) removes the SSH config entry for the specified instance and exits. This cleans up the config without destroying the instance.
 - **`coop destroy`** removes the SSH config block for the destroyed instance.
 - **`coop destroy --all`** removes all coop SSH config blocks.
-- **`coop stop`** leaves the SSH config block in place. A stale entry has no effect when the VM is not running, and `coop start` refreshes it on the next boot (the Lima SSH port changes per start).
+- **`coop stop`** leaves the SSH config block in place. A stale entry has no effect when the VM is not running, and `coop start` refreshes it on the next boot (the guest address can change across starts).
 
 ## Other editors
 
@@ -94,7 +104,7 @@ Each run of `coop editor` replaces the existing block for that instance, or crea
 
 1. Run `coop editor my-instance` to generate the SSH config.
 2. In your JetBrains IDE, open **File > Remote Development > SSH Connection**.
-3. Select the `coop-{name}` host.
+3. Select the `coop-apple-{name}` host.
 4. Set the project directory to `/workspace`.
 
 ### Cursor
@@ -102,7 +112,7 @@ Each run of `coop editor` replaces the existing block for that instance, or crea
 Cursor uses the same Remote SSH extension as VS Code. Run `coop editor` and the host appears in Cursor's SSH targets. You can also launch it directly:
 
 ```bash
-cursor --remote ssh-remote+coop-my-instance /workspace
+cursor --remote ssh-remote+coop-apple-my-instance /workspace
 ```
 
 ### Manual SSH
@@ -110,7 +120,7 @@ cursor --remote ssh-remote+coop-my-instance /workspace
 The host alias works from any terminal:
 
 ```bash
-ssh coop-my-instance
+ssh coop-apple-my-instance
 ```
 
 The SSH config block supplies the hostname, port, user, key, and host-key verification settings.
@@ -122,13 +132,13 @@ Use `--forward-port` with [`coop up`](commands.md#up) or
 For a temporary forward while an editor is connected, use SSH directly:
 
 ```bash
-ssh -L 3000:localhost:3000 coop-my-instance
+ssh -L 3000:localhost:3000 coop-apple-my-instance
 ```
 
 This binds local port 3000 to port 3000 inside the guest. Stack multiple `-L` flags for additional ports:
 
 ```bash
-ssh -L 3000:localhost:3000 -L 5432:localhost:5432 coop-my-instance
+ssh -L 3000:localhost:3000 -L 5432:localhost:5432 coop-apple-my-instance
 ```
 
 VS Code's Remote SSH extension exposes a Ports panel that handles forwarding once connected.

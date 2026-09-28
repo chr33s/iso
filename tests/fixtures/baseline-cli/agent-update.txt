@@ -1,0 +1,25 @@
+Update coding agent(s) to the latest version inside the VM.
+
+With no agent flag, both Claude Code and Codex are updated. The VM must be running.
+
+Usage: coop agent update [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]
+          Instance name (required if multiple instances exist)
+
+Options:
+      --claude
+          Update Claude Code (default: update both agents)
+
+      --codex
+          Update Codex (default: update both agents)
+
+      --check
+          Only report installed vs. latest versions — change nothing
+
+  -y, --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help (see a summary with '-h')

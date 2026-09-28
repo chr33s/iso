@@ -249,7 +249,7 @@ def exercise(work, provider, port, token, credential, guest_command, log, *, lis
         xctest = subprocess.check_output(["xcrun", "--find", "xctest"], text=True).strip()
         bundle = Path(directory) / "CoopProxyTransportTests.xctest"
         command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(Path(xctest).resolve()),
-                   "-f", str(ROOT / "src/seatbelt-proxy.sb"), xctest,
+                   "-f", str(ROOT / "Sources/CoopHost/seatbelt-proxy.sb"), xctest,
                    "-XCTest", "CoopProxyTransportTests.VMProxyFixture/testServe", str(bundle)]
         fixture = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log,
                                    env={"COOP_VM_FIXTURE_CA": str(work / "forward_ca.der")}, start_new_session=True)

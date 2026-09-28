@@ -8,7 +8,6 @@ on:
 permissions: {}
 
 env:
-  CARGO_TERM_COLOR: always
   BINARY: coop
 
 jobs:
@@ -35,78 +34,59 @@ jobs:
     needs: ci
     permissions:
       contents: read
-    strategy:
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            os: xcode-27
-
-    runs-on: ${{ matrix.os }}
+    runs-on: xcode-27
+    env:
+      TARGET: aarch64-apple-darwin
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Add target
-        run: rustup target add ${{ matrix.target }}
+      # Pinned mise.toml tools (Swift, Python). No cache: a cache written by
+      # another workflow run must not feed a release build.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.8.3
+          cache: false
 
-      - name: Build
-        run: cargo build --release --workspace --target "${{ matrix.target }}"
-
-      - name: Build Swift proxy (macOS 27+)
-        if: runner.os == 'macOS'
+      # One release entrypoint (spec S-05): builds coop, coop-proxy and
+      # coop-sandbox from this exact clean revision with -D COOP_RELEASE_BUILD
+      # and archives them unsigned. Tests already ran in the `ci` job.
+      - name: Build release archive
+        env:
+          TAG: ${{ github.ref_name }}
+          REVISION: ${{ github.sha }}
         run: |
-          swift build --package-path coop-proxy -c release --force-resolved-versions
-          proxy_dir="$(swift build --package-path coop-proxy -c release --show-bin-path)"
-          cp "$proxy_dir/coop-proxy-swift" "target/${{ matrix.target }}/release/coop-proxy"
-          codesign --verify --strict "target/${{ matrix.target }}/release/coop-proxy"
-
-      - name: Build and sign Apple runtime
-        if: runner.os == 'macOS'
-        run: |
-          scripts/build-coop-sandbox.sh "$RUNNER_TEMP/coop-runtime"
-          cp "$RUNNER_TEMP/coop-runtime/bin/coop-sandbox" "target/${{ matrix.target }}/release/coop-sandbox"
-          codesign --verify --strict "target/${{ matrix.target }}/release/coop-sandbox"
+          python3 scripts/build-release.py --release --tag "$TAG" \
+            --expected-revision "$REVISION" --out "$RUNNER_TEMP/dist"
 
       - name: Verify release binaries
         env:
           TAG: ${{ github.ref_name }}
-          TARGET: ${{ matrix.target }}
+          REVISION: ${{ github.sha }}
         shell: bash
         run: |
-          expected="coop ${TAG#v} ($(git rev-parse --short HEAD))"
-          actual="$("target/${TARGET}/release/coop" --version)"
+          name="${BINARY}-${TAG}-${TARGET}"
+          mkdir -p "$RUNNER_TEMP/verify"
+          tar -xzf "$RUNNER_TEMP/dist/${name}.tar.gz" -C "$RUNNER_TEMP/verify"
+          dir="$RUNNER_TEMP/verify/${name}"
+          expected="coop ${TAG#v} (${REVISION::7})"
+          actual="$("$dir/coop" --version)"
           if [[ "$actual" != "$expected" ]]; then
             printf 'Expected release version %s, got %s\n' "$expected" "$actual" >&2
             exit 1
           fi
-          if [[ "$TARGET" == *apple-darwin ]]; then
-            test -x "target/${TARGET}/release/coop-proxy"
-            test -x "target/${TARGET}/release/coop-sandbox"
-            "target/${TARGET}/release/coop-sandbox" version
-          fi
+          test -x "$dir/coop-proxy"
+          test -x "$dir/coop-sandbox"
+          "$dir/coop-sandbox" version
+          echo "TARBALL=$RUNNER_TEMP/dist/${name}.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Package
-        shell: bash
-        run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          name="${BINARY}-${tag}-${{ matrix.target }}"
-          mkdir -p "staging/${name}"
-          cp "target/${{ matrix.target }}/release/${BINARY}" "staging/${name}/"
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            cp "target/${{ matrix.target }}/release/coop-proxy" "staging/${name}/"
-            cp "target/${{ matrix.target }}/release/coop-sandbox" "staging/${name}/"
-          fi
-          cp LICENSE* "staging/${name}/" 2>/dev/null || true
-          tar -czf "${name}.tar.gz" -C staging "${name}"
-          echo "TARBALL=${name}.tar.gz" >> "$GITHUB_ENV"
-
-      # macOS archives go to `sign-macos` first; only `dist-*` is published.
-      - name: Upload artifact
+      # The unsigned archive goes to `sign-macos`; only `dist-*` is published.
+      - name: Upload unsigned archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ runner.os == 'macOS' && 'unsigned' || 'dist' }}-${{ matrix.target }}
+          name: unsigned-${{ env.TARGET }}
           path: ${{ env.TARBALL }}
 
   # Developer ID signing and notarization, so Gatekeeper runs a downloaded copy
@@ -150,6 +130,15 @@ jobs:
           tar -xzf "${name}.tar.gz" -C staging
           rm "${name}.tar.gz"
           scripts/macos-sign-notarize.sh "staging/${name}"
+          # BUILD.json records the unsigned binaries; describe the signed ones.
+          manifest="staging/${name}/BUILD.json"
+          for binary in coop coop-proxy coop-sandbox; do
+            sha="$(shasum -a 256 "staging/${name}/${binary}" | cut -d' ' -f1)"
+            jq --arg b "$binary" --arg s "$sha" '.binaries[$b] = $s' "$manifest" > "$manifest.new"
+            mv "$manifest.new" "$manifest"
+          done
+          jq '.developer_id_signed = true' "$manifest" > "$manifest.new"
+          mv "$manifest.new" "$manifest"
           "staging/${name}/coop" --version
           "staging/${name}/coop-sandbox" version
           COPYFILE_DISABLE=1 tar -czf "${name}.tar.gz" -C staging "${name}"
@@ -198,8 +187,8 @@ jobs:
       # exits 0 on.
       #
       # An empty asset is caught client-side too (`install.sh` gates on `[ -s ]`
-      # and `resolve_provenance` returns `ApiReason::EmptyBundle`, both falling
-      # back to the API). What no client catches is a *non-empty* degenerate
+      # and `coop update` returns `.api(.emptyBundle)` in `Update.swift`, both
+      # falling back to the API). What no client catches is a *non-empty* degenerate
       # bundle: a whitespace-only file passes `[ -s ]` and `len() > 0` alike,
       # and `gh`'s JSON-Lines loader then yields zero attestations — which `gh`
       # before 2.56.0 (cli/cli#9541) reports as success, having verified

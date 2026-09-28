@@ -26,12 +26,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Test candidate builder
-        run: python3 tests/test-proxy-transition-build.py
+      # Pinned mise.toml tools (Swift, Python). No cache: a cache written by
+      # another workflow run must not feed a release build.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.8.3
+          cache: false
 
-      # The builder strips the signing secrets from every cargo/swift
-      # subprocess; only scripts/macos-sign-notarize.sh receives them.
-      - name: Build, sign, and notarize same-revision Apple candidate
+      - name: Build, test, sign, and notarize same-revision Swift candidate
         env:
           REVISION: ${{ github.sha }}
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -41,22 +43,22 @@ jobs:
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
         run: |
-          python3 scripts/build-proxy-transition.py --release --include-runtime --sign \
-            --expected-revision "$REVISION" \
-            --archive "$RUNNER_TEMP/coop-${REVISION}-aarch64-apple-darwin.tar.gz"
-          echo "TARBALL=$RUNNER_TEMP/coop-${REVISION}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
+          python3 scripts/build-release.py --release --test --sign \
+            --expected-revision "$REVISION" --out "$RUNNER_TEMP/candidate"
+          echo "TARBALL=$(ls "$RUNNER_TEMP"/candidate/coop-*-aarch64-apple-darwin.tar.gz)" >> "$GITHUB_ENV"
 
       - name: Check archive contents and signatures
         run: |
           mkdir "$RUNNER_TEMP/coop-candidate"
           tar -xzf "$TARBALL" -C "$RUNNER_TEMP/coop-candidate"
-          cd "$RUNNER_TEMP/coop-candidate/coop"
-          shasum -a 256 -c SHA256SUMS
+          cd "$RUNNER_TEMP"/coop-candidate/coop-*-aarch64-apple-darwin
           for binary in coop coop-proxy coop-sandbox; do
             test -x "$binary"
+            test "$(shasum -a 256 "$binary" | cut -d' ' -f1)" = "$(jq -r ".binaries[\"$binary\"]" BUILD.json)"
             codesign --verify --strict "$binary"
             spctl --assess --type open --context context:primary-signature --verbose=2 "$binary"
           done
+          jq -e '.release_build and .developer_id_signed and .tested and (.source_dirty | not)' BUILD.json
           ./coop --version
           ./coop-sandbox version
 
@@ -70,10 +72,10 @@ jobs:
         env:
           BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          cd "$RUNNER_TEMP"
-          shasum -a 256 "$(basename "$TARBALL")" > SHA256SUMS
-          jq -c . "$BUNDLE_PATH" > attestations.jsonl
-          test -s attestations.jsonl
+          cd "$RUNNER_TEMP/candidate"
+          shasum -a 256 -c SHA256SUMS
+          jq -c . "$BUNDLE_PATH" > "$RUNNER_TEMP/attestations.jsonl"
+          test -s "$RUNNER_TEMP/attestations.jsonl"
 
       # This is an opt-in candidate artifact. It does not publish a release,
       # or change the stable install/update channel.
@@ -82,5 +84,5 @@ jobs:
           name: coop-candidate-${{ github.sha }}-aarch64-apple-darwin
           path: |
             ${{ env.TARBALL }}
-            ${{ runner.temp }}/SHA256SUMS
+            ${{ runner.temp }}/candidate/SHA256SUMS
             ${{ runner.temp }}/attestations.jsonl

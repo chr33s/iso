@@ -4,7 +4,7 @@ coop reads a **subset** of [devcontainer.json](https://containers.dev/) and maps
 
 ## How discovery and apply work
 
-When you run `coop up <dir>`, `coop up --git-repo <url>`, `coop setup --workspace <dir>`, or a fresh `coop quickstart` for the current directory, coop looks for `.devcontainer/devcontainer.json` in that workspace source (and in each mount host root, with the project directory winning ties). For `--git-repo` creation flows, coop can discover `.devcontainer/devcontainer.json` from common GitHub repository URLs before creating the VM. `coop start --dry-run --workspace <dir>` also uses discovery as a translation preview; normal `coop start` only restarts stopped instances and does not create a VM or re-apply devcontainer changes.
+When you run `coop up <dir>`, `coop up --git-repo <url>`, or `coop setup --workspace <dir>`, coop looks for `.devcontainer/devcontainer.json` in that workspace source (and in each mount host root, with the project directory winning ties). For `--git-repo` creation flows, coop can discover `.devcontainer/devcontainer.json` from common GitHub repository URLs before creating the VM. `coop start --dry-run --workspace <dir>` also uses discovery as a translation preview; normal `coop start` only restarts stopped instances and does not create a VM or re-apply devcontainer changes.
 
 If a file is found, coop prompts:
 
@@ -73,11 +73,11 @@ CLI flags > `devcontainer.json` > defaults. The reporting table marks overrides 
 
 ## OCI Feature installs
 
-For public `ghcr.io/devcontainers/features/<name>[:tag|@digest]` entries that do not map to a built-in profile, `coop setup --workspace ... --devcontainer ...` fetches the Feature metadata and layer from GHCR, validates that the layer contains `devcontainer-feature.json` and `install.sh`, and bakes the Feature payload into the image setup recipe. Features run in deterministic `features` key order after profile post-install scripts and guest-user setup, before coop's agent setup.
+For public `ghcr.io/devcontainers/features/<name>[:tag|@digest]` entries that do not map to a built-in profile, `coop setup --workspace ... --devcontainer ...` fetches the Feature manifest and layer from GHCR, verifies each against its content digest, validates that the layer contains `devcontainer-feature.json` and `install.sh`, and bakes the Feature payload into the image setup recipe. Features run in deterministic `features` key order after profile post-install scripts and guest-user setup, before coop's agent setup.
 
 Feature option values must be strings, numbers, booleans, or `null`. They are exposed to the Feature script as uppercased environment variables, along with `_REMOTE_USER` and `_REMOTE_USER_HOME`.
 
-Treat Feature install scripts as untrusted project-provided code. The report prints the resolved digest and `install.sh` SHA-256 before setup continues; use `--dry-run` or `coop devcontainer check <path> --stage setup` to inspect this without building an image.
+Treat Feature install scripts as untrusted project-provided code. coop reads `install.sh` as a bounded regular file without following symlinks. The report prints the resolved digest and `install.sh` SHA-256 before setup continues; use `--dry-run` or `coop devcontainer check <path> --stage setup` to inspect this without building an image.
 
 ## Out of scope in v1
 

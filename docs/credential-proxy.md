@@ -1,4 +1,4 @@
-# Credential-injecting proxy (`[proxy]`)
+# Credential-injecting proxy (`proxy`)
 
 Status: **Anthropic (Claude Code) and OpenAI (Codex); macOS 27+ only.** Opt-in; off by default. Design:
 [`design/issue-411-injecting-proxy.md`](design/issue-411-injecting-proxy.md).
@@ -37,7 +37,7 @@ proxy bootstrap aborts and tears down the proxy. `--no-agents` skips this
 cleanup along with the rest of agent bootstrap.
 
 For Codex account or workspace access without API billing, use
-`[codex] auth = "chatgpt"` instead of `[proxy.openai]`. That mode stores Codex
+`"codex": { "auth": "chatgpt" }` instead of `proxy.openai`. That mode stores Codex
 credentials in the guest Linux keyring and is rejected when an OpenAI proxy is
 also active.
 
@@ -92,9 +92,10 @@ and SSE have no corresponding total-size cap.
 ## Enabling it
 
 The easiest path is `coop proxy setup`: it takes a pasted credential, stores it
-in a secret backend of your choice (macOS Keychain / Linux secret-service /
-1Password / a 0600 file), and writes the `[proxy.<provider>]` block for you with
-a `cmd:` reference — so the credential is never plaintext in the config.
+in the macOS Keychain (service `coop-anthropic` or `coop-openai`), and writes
+the `proxy.<provider>` object for you with a `cmd:` reference — so the
+credential is never plaintext in the config. The Keychain is the only built-in
+store; if it is unavailable, setup fails rather than falling back.
 
 - **Anthropic (default):** `coop proxy setup` takes a Claude `setup-token`
   (subscription) or an API key with `--api-key`. To generate a token first, run
@@ -105,28 +106,37 @@ a `cmd:` reference — so the credential is never plaintext in the config.
 
 Or configure it by hand:
 
-```toml
-[proxy.anthropic]
-credential = "cmd:op read op://Private/Anthropic/credential"  # or a plain key
-auth = "api_key"   # api_key → x-api-key (default); bearer → a Claude setup-token
-
-[proxy.openai]
-credential = "cmd:op read op://Private/OpenAI/credential"
-auth = "bearer"    # OpenAI keys inject as Authorization: Bearer
+```jsonc
+{
+  "proxy": {
+    "anthropic": {
+      "credential": "cmd:op read op://Private/Anthropic/credential",
+      "auth": "api_key"  // api_key → x-api-key (default); bearer → a Claude setup-token
+    },
+    "openai": {
+      "credential": "cmd:op read op://Private/OpenAI/credential",
+      "auth": "bearer"   // OpenAI keys inject as Authorization: Bearer
+    }
+  }
+}
 ```
 
-The `credential` uses the same `cmd:` resolution as every other coop secret and
-is resolved on the **host** at VM start. For Claude subscription billing without
+The `credential` must be a `cmd:` reference; a literal value is rejected, and
+the error names the field without printing its contents. The command runs on
+the **host** at VM start, just in time, and coop never creates or deletes what
+a hand-written reference points at. For Claude subscription billing without
 exposure, run `claude setup-token` on the host, stash the printed one-year
-token, reference it via `cmd:`, and set `auth = "bearer"`.
+token, reference it via `cmd:`, and set `"auth": "bearer"`.
 
 ## Per-VM credential overrides
 
-The `[proxy.<provider>]` blocks are the **defaults** for every VM. A single VM
+The `proxy.<provider>` objects are the **defaults** for every VM. A single VM
 can use a different credential — for per-project billing, scope, or revocation —
 with `coop proxy setup --openai --vm <name>` (or `--anthropic --vm <name>`). The
 override is stored in that instance's state (`<inst.dir>/proxy.json`), not in a
-growing config table, and its secret is namespaced separately (`coop-openai-<vm>`).
+growing config object, and its Keychain item is namespaced separately
+(`coop-openai-<vm>`). A per-VM override must also be a `cmd:` reference; an
+older literal override is rejected until you re-run `coop proxy setup --vm`.
 
 Resolution per provider is **override → default → off**: the per-VM override
 wins, else the config default, else the proxy is off for that provider. This is
@@ -135,8 +145,7 @@ capability token are unchanged, so there is no new attack surface.
 
 `coop proxy status` shows the defaults and every VM's overrides; `coop proxy
 status --vm <name>` shows one VM's effective resolution. Credentials are shown
-as their `cmd:` reference (a command, not the secret); a hand-written literal is
-redacted.
+as their `cmd:` reference (a command, not the secret).
 
 Proxy mode applies only in **remote** model mode. `coop model <vm> local` takes
 precedence (the VM routes at your local model server and the proxy is torn
@@ -164,7 +173,10 @@ resource limits. Each proxy allows at most 256 accepted guest TCP connections
 and 256 concurrent requests; excess connections are closed immediately, so
 idle sockets cannot bypass the request limit. The listener binds only host
 loopback and is reverse-tunnelled
-to exactly one guest — never a non-loopback interface, never the LAN.
+to exactly one guest — never a non-loopback interface, never the LAN. The host
+starts the proxy only on a free port and sends the credential only after
+confirming that the proxy is the port's sole listener; proxy and tunnel PIDs
+are signalled only while they still name `coop-proxy` or `ssh`.
 
 It is **jailed** by `sandbox-exec` using the checked-in Seatbelt profile, which
 denies filesystem writes and program execution and limits outbound connections
@@ -174,9 +186,8 @@ See [trust model](trust-model.md) for the accepted limitations.
 
 ## Platform support
 
-The Swift proxy requires **macOS 27+**, using either Lima or Apple Container for
-the guest. Linux credential-proxy mode is unavailable after removal of the Rust
-proxy; Linux hosts are outside this fork’s support scope. GitHub
+The Swift proxy requires **macOS 27+** and the Apple sandbox backend. Linux
+hosts are outside this fork’s support scope. GitHub
 credentials are not supported by this proxy.
 
 ## Swift implementation
@@ -212,38 +223,37 @@ The gate also exercises stdin configuration, actual HTTP bind/accept, secret-fre
 argv/diagnostics, and shutdown with an open guest socket. `--skip-tls` runs only
 the offline portions and cannot establish TLS readiness. Controlled certificate rejection tests are also available in the Swift test
 suite. Remaining VM/live-agent and release validation is tracked in
-[implementation evidence](design/swift-proxy-progress.md). The user waived the
-observation period and authorized Rust removal; that does not turn unexecuted
-gates into passing evidence.
+[implementation evidence](design/swift-proxy-progress.md). Unexecuted gates
+there remain open.
 
 ### Local builds and distribution
 
-On Apple Silicon macOS 27+, build the Apple-backend host and Swift proxy:
+On Apple Silicon macOS 27+, the one release build entrypoint builds the host,
+the Swift proxy, and the runtime together:
 
 ```sh
-python3 scripts/build-proxy-transition.py
-python3 scripts/build-proxy-transition.py --release --include-runtime --archive /tmp/coop-candidate.tar.gz
+python3 scripts/build-release.py                  # unsigned development archive
+python3 scripts/build-release.py --release --test # optimized, with every package's tests
 ```
 
-The SwiftPM product is named `coop-proxy-swift`; installation uses the stable
-`coop-proxy` name understood by existing updaters. The builder places `coop`
-and `coop-proxy` beside one another in Cargo's
-output directory. `--include-runtime` adds the ad-hoc signed `coop-sandbox`.
-The archive includes LICENSE, per-binary SHA256SUMS, and BUILD.json with source
-revision, dirty state, backend, and minimum OS. Local checksums do not establish
-release provenance. The manual **Release candidate** workflow requires a
-clean exact revision, verifies binary signatures, and attests its candidate
-archive. It has not yet been executed on GitHub.
+The SwiftPM product is named `coop-proxy-swift`; the archive installs it under
+the stable `coop-proxy` name understood by existing updaters. The archive
+`coop-<tag|revision>-aarch64-apple-darwin.tar.gz` holds `coop`, `coop-proxy`,
+the ad-hoc signed `coop-sandbox`, LICENSE and BUILD.json (source revision and
+binary digests), with a `SHA256SUMS` beside it. Local checksums do not
+establish release provenance. Signing and notarization are a separate,
+explicit `--sign` stage used by the **Release candidate** workflow, which
+requires a clean exact revision, verifies binary signatures, and attests its
+candidate archive.
 
 The `chr33s/coop` release workflow requires tagged commits from `swift` and
-packages the Apple host, Swift proxy, and signed runtime together on macOS.
-Only macOS 27+ Apple Silicon hosts are supported. Inherited Linux release
-automation is outside the intended channel and still needs alignment. Installer and updater provenance
-checks pin `chr33s/coop`. Apple archives must include both companions; missing
+packages the host, Swift proxy, and signed runtime together on macOS. Only
+macOS 27+ Apple Silicon hosts are supported. Installer and updater provenance
+checks pin `chr33s/coop`. Archives must include both companions; missing
 companions or obsolete `coop-proxy-rs`/`coop-proxy-swift` transition artifacts
-are rejected before replacement. Retained Linux installer behavior is historical and not an acceptance requirement. Verification precedes installation; companion replacements
-precede the host replacement. Lima source builds refuse self-update to avoid
-switching backends. Hosted candidate and release verification remain pending.
+are rejected before replacement. Verification precedes installation; companion
+replacements precede the host replacement. Hosted candidate and release
+verification remain pending.
 
 The host resolves only the adjacent `coop-proxy` executable. There is no
 implementation selector or fallback. Missing binaries, confinement failures,

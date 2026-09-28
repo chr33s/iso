@@ -1,4 +1,5 @@
-target
-corpus
+# Work corpora, crash artifacts and instrumented builds from scripts/fuzz.sh;
+# the seed corpus in corpus/<Target>/ is checked in and replayed by `swift test`.
+/.build/
 artifacts
 coverage

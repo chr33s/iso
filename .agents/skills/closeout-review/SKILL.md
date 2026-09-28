@@ -29,9 +29,11 @@ hypotheses: independently verify them before changing code.
 
 ## Converge
 
-Apply only in-scope blockers. Run the narrow test for each fix, then format,
-clippy with `-D warnings`, and the applicable broader tests. Use the
-[`mutation-check`](../mutation-check/SKILL.md) skill for scoped logic and the
+Apply only in-scope blockers. Run the narrow test for each fix (`swift test
+--filter <name>`), then `swift format lint --strict`, a warning-free `swift
+build`, and the applicable broader tests ([`docs/testing.md`](../../../docs/testing.md)).
+Use the [`mutation-check`](../mutation-check/SKILL.md) (fault-injection) skill
+for security-relevant host behavior and the
 [`integration`](../integration/SKILL.md) skill for guest-visible/lifecycle
 changes. Re-run the review skill against the complete updated diff, not only the
 last fix commit.

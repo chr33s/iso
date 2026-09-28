@@ -9,18 +9,16 @@ Containerization backend for both source and release builds.
 - macOS 27 or later on Apple Silicon (arm64).
 - Apple backend: stock Apple `container` service and guest kernel. See
   [Apple backend setup](backends.md#macos--apple-sandbox).
-- Lima source builds: [Lima](https://github.com/lima-vm/lima), with `limactl`
-  on `PATH` (`brew install lima`). Rosetta 2 is needed for x86_64 guests.
-- Source builds: pinned Rust toolchain and Xcode 27 for the Swift packages.
+- Source builds: Xcode 27 (Swift 6). No Rust toolchain is needed.
 
-Linux/Firecracker hosts and macOS 26 are outside this fork’s support scope.
+Linux hosts and macOS 26 are outside this fork’s support scope.
 
 ## Install
 
 Until a verified fork release is published, follow [Build from source](#build-from-source).
 The configured release channel is `chr33s/coop`, built from tagged commits on
-`swift`. Its macOS archives use the Apple backend (macOS 27+) and install
-`coop`, `coop-proxy`, and `coop-sandbox` together; see [Apple prerequisites](backends.md).
+`swift`. Its macOS archives install `coop`, `coop-proxy`, and `coop-sandbox`
+together; see [Apple prerequisites](backends.md).
 Once the macOS channel has a verified release:
 
 ```sh
@@ -49,56 +47,68 @@ bundle.
 ## Switching from upstream
 
 Run the fork installer to install all matching components. An upstream updater
-continues to target its own repository. macOS fork releases use the Apple backend;
-existing Lima instances remain managed by a Lima source build. Do not switch the
-binary used to manage them without planning that backend change.
+continues to target its own repository. Fork releases use the Apple backend
+only; instances created by another backend are not managed by this build.
+Upstream TOML configuration must be converted to JSONC first; see
+[Migrating from TOML](configuration.md#migrating-from-toml).
 
 ## Build from source
 
-Install [Rust](https://rustup.rs/), then:
-
-```
-git clone https://github.com/chr33s/coop.git
-cd coop
-cargo build --workspace --release
-```
-
-The host CLI lands at `target/release/coop`. For credential-proxy mode on
-macOS 27+, also build the Swift companion with Xcode 27:
+With Xcode 27 installed:
 
 ```sh
-swift build --package-path coop-proxy -c release --force-resolved-versions
-proxy_dir="$(swift build --package-path coop-proxy -c release --show-bin-path)"
-cp "$proxy_dir/coop-proxy-swift" target/release/coop-proxy
+git clone https://github.com/chr33s/coop.git
+cd coop
+python3 scripts/build-release.py --release
 ```
 
-Install `coop` and `coop-proxy` in the same directory. Linux host builds are outside this fork’s support scope.
+This is the one release build entrypoint. It builds `coop` (this package),
+`coop-proxy`, and `coop-sandbox` (ad-hoc signed with its entitlement) from a
+staged copy of the checkout and writes
+`coop-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
+`.build/release-archive/`. Add `--test` to run all three packages' tests
+first. Extract the archive and install its three executables in the same
+directory on `PATH`.
 
-For the default Apple backend, build with `cargo build --release` and
-install the runtime using `./scripts/build-coop-sandbox.sh`; see
+For a development build of the host CLI alone:
+
+```sh
+swift build --force-resolved-versions   # .build/debug/coop
+```
+
+`coop-sandbox` must still be built and installed with
+`./scripts/build-coop-sandbox.sh`; see
 [Apple backend setup](backends.md#macos--apple-sandbox) for prerequisites.
 Until a verified fork release exists, update by pulling and rebuilding.
 The configured `coop update` channel is `chr33s/coop`.
 
 ## Configuration
 
-coop reads `~/.coop/config.toml` by default. Override the path with `--config`. If the file doesn't exist, coop falls back to built-in defaults. Run `coop init` to generate a starter config file.
+coop reads `~/.coop/config.jsonc` by default: JSON plus `//` and `/* */`
+comments (no trailing commas). Override the path with `--config`; a `.json`
+path is read as strict JSON. If no configuration file exists, coop uses
+built-in defaults. Run `coop setup --config-only` to write a commented
+starter template (`coop init` remains as a deprecated alias).
 
-A minimal config (an empty file is valid; all fields have defaults):
+A minimal config (an empty object is valid; all fields have defaults):
 
-```toml
+```jsonc
+{}
 ```
 
 Defaults: 2 vCPUs, 4 GiB RAM, 8 GiB template disk. Override any of them:
 
-```toml
-[vm]
-vcpu_count = 4
-mem_size_mib = 8192
-template_size_gib = 20
+```jsonc
+{
+  "vm": {
+    "vcpu_count": 4,
+    "mem_size_mib": 8192,
+    "template_size_gib": 20
+  }
+}
 ```
 
-All VM artifacts (kernel, rootfs images, instance disks) live under `~/.coop/`.
+All VM artifacts (rootfs images, instance disks, keys) live under `~/.coop/`.
 
 The guest runs as an unprivileged user (`ubuntu`, uid 1000, by default) with `~/.local/bin` on `PATH` for every session. Override the username at setup with `coop setup --guest-user <name>`; see [Guest user](configuration.md#guest-user) for details.
 
@@ -106,19 +116,13 @@ The guest runs as an unprivileged user (`ubuntu`, uid 1000, by default) with `~/
 
 Forward your API keys and GitHub credentials into the guest:
 
-```toml
-github = "auto"
-
-[vm]
-vcpu_count = 4
-mem_size_mib = 8192
-
-[claude]
-config_dir = "~/.claude"
-
-[codex]
-auth = "api_key"
-config_dir = "~/.codex"
+```jsonc
+{
+  "github": "auto",
+  "vm": { "vcpu_count": 4, "mem_size_mib": 8192 },
+  "claude": { "config_dir": "~/.claude" },
+  "codex": { "auth": "api_key", "config_dir": "~/.codex" }
+}
 ```
 
 The `github` field controls how coop resolves a GitHub token for the guest:
@@ -126,17 +130,17 @@ The `github` field controls how coop resolves a GitHub token for the guest:
 - `"off"` (default): disables GitHub auth forwarding
 - `"auto"`: checks `$GITHUB_TOKEN` env var first, falls back to `gh auth token` if unset
 - `"env"`: requires `GITHUB_TOKEN` in your environment
-- `"pat"`: forwards a per-repo fine-grained PAT recorded under `[github.pat."owner/repo"]`. GitHub enforces the token's scope server-side — see [GitHub auth](configuration.md#fine-grained-pat-github--pat) for the full reference.
+- `"pat"`: forwards a per-repo fine-grained PAT recorded under `github.pat["owner/repo"]`. GitHub enforces the token's scope server-side — see [GitHub auth](configuration.md#fine-grained-pat-github-pat) for the full reference.
 
-GitHub auth is off by default. Set `github = "auto"` (or run `coop github setup-pat --repo owner/name` for a scoped PAT) to enable it. `coop up` offers to run the PAT wizard inline the first time you bring up a project backed by a GitHub repo without auth configured.
+GitHub auth is off by default. Set `"github": "auto"` (or run `coop github setup-pat --repo owner/name` for a scoped PAT) to enable it. `coop up` offers to run the PAT wizard inline the first time you bring up a project backed by a GitHub repo without auth configured.
 
 coop picks up `ANTHROPIC_API_KEY` and, in the default Codex API-key mode,
 `OPENAI_API_KEY` from your environment automatically. Setting them explicitly
-under `claude.api_key` or `codex.api_key` also works, but environment variables
-are preferred.
+under `claude.api_key` or `codex.api_key` (preferably as a `cmd:` reference)
+also works, but environment variables are preferred.
 
 For Codex account or workspace access without OpenAI API billing, set
-`[codex] auth = "chatgpt"` and rebuild any old image with `coop setup
+`"codex": { "auth": "chatgpt" }` and rebuild any old image with `coop setup
 --rebuild`. An existing VM keeps its own guest disk across a restart, so also
 run `coop restore <vm> --image <image> --reprovision` (see
 [Codex integration](codex-integration.md)) to pick up the rebuilt image.
@@ -145,16 +149,13 @@ run `coop codex -- login --device-auth` once.
 
 ## First run
 
-In a hurry? From your project directory, `coop quickstart` runs setup, brings up
-an instance, and launches Claude Code in one command — building the default
-image only if it is missing and reconnecting to an existing instance when one is
-already running. The steps below walk through the same flow one command at a
-time and give you per-instance control. See the [`quickstart`
-reference](commands.md#quickstart) for details.
+The steps below are explicit: `coop setup` prepares the image, `coop up`
+brings up an instance, and `coop claude` or `coop codex` launches an agent.
+(The former `coop quickstart` shortcut is removed.)
 
 ### 1. Setup
 
-`coop setup` downloads the Firecracker binary and kernel (Linux) or configures Lima (macOS), then builds a template rootfs image. The template ships with base packages (git, curl, build-essential, Docker, and others), the GitHub CLI, Claude Code, and Codex.
+`coop setup` creates a missing default configuration template, then builds a template rootfs image with the Apple runtime. The template ships with base packages (git, curl, build-essential, Docker, and others), the GitHub CLI, Claude Code, and Codex.
 
 ```
 coop setup
@@ -204,8 +205,8 @@ Choose mount transport explicitly:
 coop up . --mount
 ```
 
-On macOS/Lima this is live filesystem sharing. On Linux/Firecracker it is a
-one-time sync.
+The Apple backend has no host mounts, so `--mount` is a one-time sync; use
+`coop push` / `coop pull` to sync changes afterward.
 
 Mount additional data directories when creating the project instance:
 
@@ -298,7 +299,7 @@ coop claude -- --model opus
 coop codex
 ```
 
-With `[codex] auth = "chatgpt"`, first sign in from the guest:
+With `"codex": { "auth": "chatgpt" }`, first sign in from the guest:
 
 ```
 coop codex -- login --device-auth
@@ -372,7 +373,7 @@ Destroy an instance (deletes its disk and resources):
 coop destroy my-project
 ```
 
-Remove everything, including all instances, images, kernel, and Firecracker binary:
+Also remove every image and the VM access key:
 
 ```
 coop destroy --all
@@ -412,7 +413,7 @@ coop images --delete python-dev
 | `coop validate` | Check config and prerequisites without changing anything |
 | `coop logs` | Stream VM serial console logs (`-f` to follow) |
 | `coop editor` | Open VS Code or Zed connected to the guest via SSH |
-| `coop ssh-config` | Install a `coop-<name>` SSH alias for ad-hoc `ssh`/`scp`/`rsync` |
+| `coop ssh-config` | Install a `coop-apple-<name>` SSH alias for ad-hoc `ssh`/`scp`/`rsync` |
 | `coop resize --size +20` | Grow a stopped instance's disk by 20 GiB |
 | `coop resize --size 100` | Set a stopped instance's disk to 100 GiB |
 | `coop resize --mem 8192 --vcpus 4` | Change a stopped instance's memory and vCPUs |

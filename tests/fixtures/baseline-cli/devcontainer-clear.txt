@@ -1,0 +1,9 @@
+Clear a persistent devcontainer opt-out for a project
+
+Usage: coop devcontainer clear <PROJECT>
+
+Arguments:
+  <PROJECT>  Project directory whose opt-out should be cleared
+
+Options:
+  -h, --help  Print help

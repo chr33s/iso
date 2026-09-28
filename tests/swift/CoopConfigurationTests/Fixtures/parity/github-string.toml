@@ -1,0 +1,4 @@
+github = "env"
+
+[claude]
+config_dir = "/opt/claude-config"

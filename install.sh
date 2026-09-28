@@ -52,8 +52,6 @@ detect_platform() {
 
 target_triple() {
     case "${OS}-${ARCH}" in
-        linux-x86_64)   echo "x86_64-unknown-linux-musl" ;;
-        linux-aarch64)  echo "aarch64-unknown-linux-musl" ;;
         darwin-aarch64) echo "aarch64-apple-darwin" ;;
         *)              die "No prebuilt binary for ${OS}-${ARCH}" ;;
     esac

@@ -1,0 +1,7 @@
+List all available profiles (builtin and custom)
+
+Usage: coop profiles list [OPTIONS]
+
+Options:
+      --json  Emit machine-readable JSON instead of the text listing
+  -h, --help  Print help

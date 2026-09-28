@@ -63,17 +63,11 @@
       "Bash(gh workflow list:*)",
       "Bash(gh repo view:*)",
       "Bash(gh api user:*)",
-      "Bash(cargo fmt -- --check)",
-      "Bash(cargo fmt --check)",
-      "Bash(cargo clippy:*)",
-      "Bash(cargo check:*)",
-      "Bash(cargo test:*)",
-      "Bash(cargo tree:*)",
-      "Bash(cargo metadata:*)",
-      "Bash(cargo deny check:*)",
-      "Bash(cargo mutants --list:*)",
-      "Bash(taplo format --check)",
-      "Bash(taplo format --check:*)",
+      "Bash(swift format lint:*)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(swift package describe:*)",
+      "Bash(swift package show-dependencies:*)",
       "Bash(shellcheck:*)",
       "Bash(shfmt:*)",
       "Bash(actionlint:*)"
@@ -102,9 +96,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/cargo-fmt.sh",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/swift-format.sh",
             "timeout": 60,
-            "statusMessage": "cargo fmt"
+            "statusMessage": "swift format"
           }
         ]
       }

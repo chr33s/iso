@@ -1,4 +1,3 @@
-/target
 *.ext4
 *.img
 vmlinux
@@ -6,7 +5,14 @@ firecracker
 .env
 *.swp
 *.swo
-/mutants.out
-/mutants.out.old
 .claude/settings.local.json
 __pycache__/
+
+# Swift host package
+/.build/
+/.build-*/
+/.swiftpm/
+/fuzz/.build/
+/fuzz/.swiftpm/
+/fuzz/artifacts/
+/tests/baseline/config-normalize/
