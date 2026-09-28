@@ -74,6 +74,7 @@ public struct CoopConfig: Sendable, Equatable {
   public let updates: UpdateConfig
   public let appleContainer: AppleContainerConfig
   public let workspacePull: WorkspacePullConfig
+  public let egress: EgressMode
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
   public static let backendRoot = "backends/apple-container-v1"
@@ -311,6 +312,17 @@ public struct AppleContainerConfig: Sendable, Equatable {
   public let buildTimeout: TimeoutSecs
 }
 
+/// Guest network reach beyond the host (selective-hardening spec §6). Fixed
+/// per instance when its sandbox is created.
+public enum EgressMode: String, Sendable, Equatable {
+  /// NAT to the host's uplinks, as before.
+  case open
+  /// vmnet host mode: no route beyond the host and no DNS. Host→guest SSH
+  /// and coop's SSH tunnels (credential proxy, local models, port forwards)
+  /// still work; the guest can still reach services on the host itself.
+  case none
+}
+
 /// How `coop pull` returns guest files: straight into the destination
 /// (`direct`, the historical behavior) or through a reviewed stage.
 public enum WorkspacePullMode: String, Sendable, Equatable {
@@ -364,6 +376,7 @@ extension CoopConfig {
       proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
-      updates: updates, appleContainer: appleContainer, workspacePull: workspacePull)
+      updates: updates, appleContainer: appleContainer, workspacePull: workspacePull, egress: egress
+    )
   }
 }

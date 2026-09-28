@@ -441,3 +441,11 @@ struct FakeFileSystem: ConfigFileSystem {
   #expect(
     ProxyAuthScheme.apiKey.wireName == "x_api_key" && ProxyAuthScheme.bearer.wireName == "bearer")
 }
+
+@Test func egressDefaultsToOpenAndAcceptsNone() throws {
+  #expect(try load("{}").egress == .open)
+  #expect(try load(#"{"egress": "none"}"#).egress == .none)
+  #expect(fieldError(#"{"egress": "provider-only"}"#)?.field == "egress")
+  // `network` stays a retired Firecracker key.
+  #expect(throws: (any Error).self) { try load(#"{"network": {"egress": "none"}}"#) }
+}

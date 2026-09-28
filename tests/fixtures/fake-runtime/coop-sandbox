@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Stateful stand-in for `coop-sandbox` (protocol 2) used by the lifecycle
+"""Stateful stand-in for `coop-sandbox` (protocol 3) used by the lifecycle
 differential test. State lives in `<root>/fake-state.json`; every call's argv
 is appended to `calls.log` beside this script. Answers only what coop asks.
 """
@@ -38,7 +38,7 @@ def main():
     argv = sys.argv[1:]
     log(argv)
     if argv[:1] == ["version"]:
-        return out({"name": "coop-sandbox", "version": "0.2.0", "protocol": 2, "containerization": "0.45.0"})
+        return out({"name": "coop-sandbox", "version": "0.3.0", "protocol": 3, "containerization": "0.45.0"})
     words = []
     rest = list(argv)
     while rest and rest[0] != "--root":
@@ -64,6 +64,8 @@ def rootfs(root, sandbox_id):
 def inspect(root, sandbox):
     record = {k: sandbox[k] for k in ["id", "owner", "imageReference", "imageDigest", "cpus", "memoryBytes",
                                        "diskBytes", "diskGeneration"]}
+    if sandbox.get("network"):
+        record["network"] = sandbox["network"]
     if sandbox.get("lastOperation"):
         record["lastOperation"] = sandbox["lastOperation"]
     result = {"record": record, "status": sandbox["status"],
@@ -77,7 +79,8 @@ def inspect(root, sandbox):
             "rootfs": {"type": "ext4", "source": rootfs(root, sandbox["id"]), "destination": "/", "options": []},
             "mounts": [{"type": t, "source": s, "destination": d, "options": []} for t, s, d in MOUNTS],
             "interfaces": [{"ipv4": address + "/24", "ipv4Gateway": f"10.231.{sandbox['subnet']}.1",
-                            "network": f"vmnet-shared:10.231.{sandbox['subnet']}.0/24"}],
+                            "network": ("vmnet-host" if sandbox.get("network") else "vmnet-shared")
+                            + f":10.231.{sandbox['subnet']}.0/24"}],
             "socketRelays": 0, "publishedPorts": 0, "sshAgentForwarding": False, "maskedPaths": [],
             "readonlyPaths": [], "initArgv": ["/sbin/init"], "virtualization": False}
     return result
@@ -147,6 +150,8 @@ def handle(words, args, root, state):
             "id": sandbox_id, "owner": option(args, "--owner"), "imageReference": reference, "imageDigest": digest,
             "cpus": int(option(args, "--cpus")), "memoryBytes": int(option(args, "--memory-mib")) << 20,
             "diskBytes": size, "diskGeneration": 0, "status": "stopped", "subnet": state["subnet"]}
+        if option(args, "--network") == "host-only":
+            sandboxes[sandbox_id]["network"] = "host_only"
         write_disk(root, sandbox_id, size)
         return sandboxes[sandbox_id]
     sandbox = sandboxes.get(sandbox_id)

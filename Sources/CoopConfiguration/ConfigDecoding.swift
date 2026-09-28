@@ -287,6 +287,9 @@ enum ConfigDecoder {
         let w = try ObjectReader(v, at: p)
         try w.rejectUnknown(allowing: ["pull"])
         return try w.defaulted("pull", .defaults, workspacePull)
+      },
+      egress: try r.defaulted("egress", .open) { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, [EgressMode.open, .none])
       })
   }
 

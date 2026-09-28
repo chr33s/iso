@@ -44,7 +44,8 @@ It builds the Swift package in release mode, signs it ad hoc with the hardened r
 
 | coop-sandbox | containerization | macOS | Hardware | Evidence |
 |---|---|---|---|---|
-| 0.2.0 (protocol 2) | 0.45.0 | 27.0 | Apple Silicon | [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) (all phases, including maintenance install, same-sandbox races, and the `coop` end-to-end phase): 103 passed, 1 skipped by design ([run record](design/apple-sandbox-transactions.md#4-validation)) |
+| 0.3.0 (protocol 3) | 0.45.0 | 27.0 | Apple Silicon | Adds the per-sandbox `network` mode (`shared` / `host_only`, `create --network`) behind `egress`. Evidence: [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) setup, machine, isolation, exposure and `coop` phases including the egress-none checks (2026-09-28): 108 passed, 2 skipped by design |
+| 0.2.0 (protocol 2), refused since protocol 3 | 0.45.0 | 27.0 | Apple Silicon | [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) (all phases, including maintenance install, same-sandbox races, and the `coop` end-to-end phase): 103 passed, 1 skipped by design ([run record](design/apple-sandbox-transactions.md#4-validation)) |
 | 0.1.0 (protocol 1), refused since protocol 2 | 0.45.0 | 27.0 | Apple Silicon | [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) (isolation, host exposure, canary, pinning, persistence, resources, growth, commit/restore, crash recovery, concurrency), coop `setup`/`up`/`exec`/`stop`/`resize`/`commit`/`restore`/`destroy` end to end |
 
 The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.15-186`, the kernel `container` 1.4.1 installs) and its init image (`vminit:0.45.0` by digest). `coop setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
@@ -107,7 +108,7 @@ explicit `apple_container.binary` still takes precedence. `coop update` targets
 
 `coop setup`:
 
-1. Checks the platform, resolves and qualifies coop-sandbox (`coop-sandbox version`: protocol 2, containerization 0.45.0), and creates `owner.json` and the VM-access key pair.
+1. Checks the platform, resolves and qualifies coop-sandbox (`coop-sandbox version`: protocol 3, containerization 0.45.0), and creates `owner.json` and the VM-access key pair.
 2. Initializes the runtime root: copies the kernel after checking its pinned sha256, and pulls the pinned init image. Unless the runtime already has the current maintenance image, builds it (Ubuntu with e2fsprogs; log in `maintenance-build.log`), installs it with `coop-sandbox maintenance install`, and deletes the store copy.
 3. Renders a minimal build context in a private temporary directory: a Dockerfile `FROM ubuntu:24.04` pinned by digest, the Apple provisioning script (packages, profiles, OCI features, guest user, Claude Code, Codex, Docker), and a machine-setup script. The context contains the coop **public** key only. There are no build arguments and no secrets.
 4. Checks that the builder's service is running, then runs `container build --platform linux/arm64 -t local/coop-<owner>:<hash>-<nonce>`, with output in `images/<name>/build.log`. Every build gets a fresh tag, so a rebuild never retags an image in use.
@@ -181,7 +182,7 @@ Runtime and builder commands run with a cleared environment: only `HOME`, `USER`
 
 ### Validation status
 
-Validated on macOS 27.0 (Apple M5 Max) with coop-sandbox 0.1.0 and containerization 0.45.0. Runtime 0.2.0 has re-run the runtime suite and the `coop` phase; see the table above.
+Validated on macOS 27.0 (Apple M5 Max) with coop-sandbox 0.1.0 and containerization 0.45.0. Runtime 0.3.0 has re-run the setup, machine, isolation, exposure and `coop` phases; see the table above.
 
 - **Runtime ([`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh); the selection experiment is in [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md)):**
   - Peer isolation: a root guest cannot reach another sandbox by TCP, UDP, or ICMP over IPv4 or IPv6. That holds with forged on-link routes, static neighbour entries, spoofed source addresses, and broadcast/multicast, and after restarts; the host reaches each listener as the positive control.

@@ -84,6 +84,9 @@ public struct AgentBootstrap: Sendable {
     case proxied
     /// `proxy.mode = "required"`: an explicit declaration is an error.
     case required(ProxyProvider)
+    /// `egress = "none"`: a raw key has no use in the guest and is only a
+    /// liability; an explicit declaration is an error.
+    case noEgress(ProxyProvider)
     /// ChatGPT account auth keeps Codex credentials in the guest keyring.
     case chatgptAuth
 
@@ -91,22 +94,25 @@ public struct AgentBootstrap: Sendable {
       switch self {
       case .proxied: "proxy mode"
       case .required: "proxy.mode = \"required\""
+      case .noEgress: "egress = \"none\""
       case .chatgptAuth: AgentBootstrap.chatgptReason
       }
     }
   }
 
   /// Recognized provider variables withheld from the guest. A proxied
-  /// provider withholds all of its variables; `proxy.mode = "required"`
-  /// withholds every provider's; ChatGPT account auth withholds
-  /// `OPENAI_API_KEY`.
+  /// provider withholds all of its variables; `proxy.mode = "required"` and
+  /// `egress = "none"` withhold every provider's; ChatGPT account auth
+  /// withholds `OPENAI_API_KEY`.
   func withheldVariables(proxyAnthropic: Bool, proxyOpenAI: Bool) -> [String: WithholdReason] {
     let required = config.proxy.mode == .required
+    let noEgress = config.egress == .none
     var out: [String: WithholdReason] = [:]
     for (provider, proxied) in [(ProxyProvider.anthropic, proxyAnthropic), (.openai, proxyOpenAI)] {
-      guard proxied || required else { continue }
+      guard proxied || required || noEgress else { continue }
       for name in provider.recognizedVariables {
-        out[name] = required ? .required(provider) : .proxied
+        out[name] =
+          required ? .required(provider) : noEgress ? .noEgress(provider) : .proxied
       }
     }
     if config.codexAuth == .chatgpt && out["OPENAI_API_KEY"] == nil {
@@ -115,13 +121,16 @@ public struct AgentBootstrap: Sendable {
     return out
   }
 
-  /// An explicit declaration of a withheld variable: under `required` an
-  /// error, otherwise a warning (the historical proxy-mode behavior).
+  /// An explicit declaration of a withheld variable: under `required` or
+  /// `egress = "none"` an error, otherwise a warning (the historical
+  /// proxy-mode behavior).
   func refuse(_ name: String, from source: String, reason: WithholdReason) throws {
-    if case .required(let provider) = reason {
+    switch reason {
+    case .required(let provider), .noEgress(let provider):
       throw HostError(
         "\(reason): \(source) entry '\(name)' would put a provider credential in the guest; remove it or configure `proxy.\(provider.rawValue)`"
       )
+    case .proxied, .chatgptAuth: break
     }
     diagnostics.warn("\(reason): ignoring \(source) entry '\(name)'")
   }
@@ -189,13 +198,48 @@ public struct AgentBootstrap: Sendable {
   /// override counts: its key must still be suppressed). Never under
   /// `proxy.mode = "off"`.
   func proxyConfigured(_ instance: Instance, _ provider: ProxyProvider) throws -> Bool {
-    let routed = try GuestEnvState.tryLoad(instance)?.providerSecrets()[provider]
+    try proxyConfigured(
+      instance, provider, entries: GuestEnvState.tryLoad(instance)?.entries ?? [:])
+  }
+
+  /// `proxyConfigured` for guest variables that may not be persisted yet.
+  func proxyConfigured(
+    _ instance: Instance, _ provider: ProxyProvider, entries: [EnvVarName: EnvValue]
+  ) throws -> Bool {
+    let routed = try GuestEnvState.providerSecrets(entries)[provider]
     guard config.proxy.mode != .off else {
       if let routed { throw ProxyState.unavailable(routed) }
       return false
     }
     return try routed != nil || ProxyState.load(instance).override(for: provider) != nil
       || config.proxy.upstream(for: provider) != nil
+  }
+
+  /// Refuses a remote-model VM that `proxy.mode = "required"` or
+  /// `egress = "none"` would leave without a provider proxy. `guestEnvironment`
+  /// is the variable set the VM will run with, which is not persisted yet
+  /// before any VM work. Under `proxy.mode = "off"` no proxy can exist, so
+  /// only a local model (or `--no-agents`) passes with `egress = "none"`.
+  public func requireProviderProxy(
+    _ instance: Instance, noAgents: Bool, guestEnvironment: [EnvVarName: EnvValue]
+  ) throws {
+    guard !noAgents, config.proxy.mode == .required || config.egress == .none,
+      try ModelState.loadOrDefault(instance).mode == .remote
+    else { return }
+    let configured =
+      try proxyConfigured(instance, .anthropic, entries: guestEnvironment)
+      || proxyConfigured(instance, .openai, entries: guestEnvironment)
+    guard !configured else { return }
+    if config.proxy.mode == .off {
+      throw HostError(
+        "egress = \"none\" with proxy.mode = \"off\" leaves a remote model unreachable in '\(instance.name)'; use a local model (`coop model \(instance.name) local`) or pass --no-agents"
+      )
+    }
+    throw HostError(
+      config.proxy.mode == .required
+        ? "proxy.mode = \"required\" but no provider proxy is configured for '\(instance.name)'; run `coop proxy setup` (or set proxy.mode to \"auto\")"
+        : "egress = \"none\" leaves a remote model reachable only through the credential proxy, and none is configured for '\(instance.name)'; run `coop proxy setup`, or `coop model \(instance.name) local`"
+    )
   }
 
   /// Every stored secret this session reads (the persisted `--env`
@@ -338,14 +382,9 @@ public struct AgentBootstrap: Sendable {
         "proxy mode is configured but --no-agents skips agent bootstrap; agents will not be able to authenticate in this VM"
       )
     }
-    if !noAgents, config.proxy.mode == .required,
-      try ModelState.loadOrDefault(instance).mode == .remote,
-      !proxyConfigured
-    {
-      throw HostError(
-        "proxy.mode = \"required\" but no provider proxy is configured for '\(instance.name)'; run `coop proxy setup` (or set proxy.mode to \"auto\")"
-      )
-    }
+    try requireProviderProxy(
+      instance, noAgents: noAgents,
+      guestEnvironment: GuestEnvState.tryLoad(instance)?.entries ?? [:])
     if Self.noAgentsSkipsCodexKeyring(
       noAgents: noAgents, auth: config.codexAuth,
       keyringMaterialized: {

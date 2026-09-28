@@ -33,6 +33,11 @@ SPDX-License-Identifier: Apache-2.0
   other provider variables) goes only to that VM's credential proxy, never the
   guest. `proxy.<provider>.credential` and `github.pat` tokens accept
   `vault:NAME`.
+- **`egress: "none"`**: new instances get a vmnet host-only network with no
+  route beyond the Mac and no resolver; SSH and coop's tunnels keep working.
+  No raw provider credential is forwarded into such a guest, whatever
+  `proxy.mode` says.
+  Requires coop-sandbox 0.3.0 or later (protocol 3).
 
 ### Swift host
 

@@ -4,7 +4,9 @@ Output of `coop-sandbox` (containerization 0.45.0), captured from one
 sandbox on macOS 27 and used by the `apple_container` unit tests. The inspect
 records were captured from 0.1.0 (protocol 1); in inspect output, protocol 2
 only adds the optional `record.lastOperation`, absent until a sandbox's first `set`, `grow`,
-or `restore`, so they are unchanged, and `version.json` was updated to 0.2.0:
+or `restore`, and protocol 3 only adds the optional `record.network` (absent
+for shared-mode sandboxes) and the `vmnet-host:` interface label for
+host-only ones, so they are unchanged, and `version.json` was updated to 0.3.0:
 
 - `version.json` — `coop-sandbox version`
 - `inspect-stopped.json` — `coop-sandbox inspect` of a created, stopped sandbox

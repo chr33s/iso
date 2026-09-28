@@ -285,8 +285,8 @@ else
     fail "coop-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 2 on containerization 0.45.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "2 0.45.0"
+check "version reports protocol 3 on containerization 0.45.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "3 0.45.0"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&
     "$CONTAINER" image save --platform linux/arm64 -o "$WORK/image.tar" "$IMAGE" >/dev/null 2>&1; then
     pass "test image builds"
@@ -855,6 +855,10 @@ if want coop; then
     check "status reports running on the apple-container backend" \
         test "$(coop status e2e --json | jq -r '"\(.state) \(.backend)"')" = "running apple-container"
     check "the workspace is copied in" test "$(coop exec e2e -- cat /workspace/marker)" = "$RUN"
+    # Positive control for the egress-none probes below: the same probe
+    # succeeds from this open instance.
+    check "egress open: the TCP probe reaches the Internet" \
+        coop exec e2e -- timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
     # shellcheck disable=SC2016 # Expand in the guest.
     check "--env-file values reach guest sessions, --env wins" \
         test "$(coop exec e2e -- sh -c 'echo "$FROM_ENV_FILE/$OVERRIDDEN"')" = "from file/cli"
@@ -1042,6 +1046,26 @@ if want coop; then
     check "coop start refuses a restore it did not make" refuses coop start e2e --no-agents --no-github
     check "that refused start leaves the sandbox stopped" test "$(csbx inspect "$mid" | jq -r .status)" = stopped
     "$SANDBOX" disk delete --root "$CROOT" oob >/dev/null 2>&1
+
+    # egress none: a host-only sandbox keeps SSH but has no route beyond the
+    # host and no resolver; an `open` configuration refuses to hand it out.
+    jq '. + {egress: "none"}' "$CCFG" >"$WORK/coop-none.jsonc"
+    none() { "$COOP" --config "$WORK/coop-none.jsonc" "$@" </dev/null; }
+    mkdir -p "$WORK/project-none"
+    if none up "$WORK/project-none" --name e2e-none --no-agents --no-github >"$WORK/coop-up-none.log" 2>&1; then
+        pass "egress none: coop up creates and boots a host-only instance"
+        check "egress none: the runtime records host_only" \
+            test "$(csbx inspect "$(machine_id e2e-none)" | jq -r .record.network)" = host_only
+        check "egress none: guest SSH works" test "$(none exec e2e-none -- echo ok 2>/dev/null)" = ok
+        check "egress none: no TCP to the Internet" \
+            refuses none exec e2e-none -- timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
+        check "egress none: no DNS resolution" \
+            refuses none exec e2e-none -- timeout 5 getent hosts example.com
+        check "egress none: an open configuration refuses the instance" refuses coop exec e2e-none -- true
+        none destroy e2e-none >/dev/null 2>&1
+    else
+        fail "egress none: coop up creates and boots a host-only instance" "see $WORK/coop-up-none.log"
+    fi
 
     check "coop destroy removes the instance" coop destroy e2e
     check "the runtime has no sandbox left" test "$(csbx list | jq length)" = 0

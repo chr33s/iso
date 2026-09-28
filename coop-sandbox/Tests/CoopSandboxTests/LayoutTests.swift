@@ -70,6 +70,22 @@ import Testing
         #expect(back.environment == ["A=1"])
     }
 
+    @Test func networkModeIsAbsentForSharedAndOnlyNarrows() throws {
+        var r = SandboxRecord(
+            id: try SandboxID("a"), owner: "o", imageReference: "i", imageDigest: "d", baseDisk: nil, environment: [],
+            cpus: 1, memoryBytes: 1, diskBytes: 1, subnetIndex: 1, createdAt: Date(timeIntervalSince1970: 0))
+        // Shared records keep their pre-protocol-3 shape.
+        let shared = try JSONSerialization.jsonObject(with: JSONEncoder.pretty.encode(r)) as? [String: Any] ?? [:]
+        #expect(shared["network"] == nil)
+        #expect(try JSONDecoder.iso.decode(SandboxRecord.self, from: JSONEncoder.pretty.encode(r)).networkMode == .shared)
+        r.network = .hostOnly
+        let back = try JSONDecoder.iso.decode(SandboxRecord.self, from: JSONEncoder.pretty.encode(r))
+        #expect(back.networkMode == .hostOnly)
+        #expect(String(decoding: try JSONEncoder.pretty.encode(r), as: UTF8.self).contains("\"host_only\""))
+        // Only these two modes exist; nothing wider is representable.
+        #expect(Set([NetworkMode.shared, .hostOnly].map(\.rawValue)) == ["shared", "host_only"])
+    }
+
     @Test func recordHasNoHostExposureFields() throws {
         let r = SandboxRecord(
             id: try SandboxID("a"), owner: "o", imageReference: "i", imageDigest: "d", baseDisk: nil, environment: [],

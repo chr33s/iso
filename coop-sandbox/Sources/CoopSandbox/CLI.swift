@@ -117,16 +117,18 @@ struct Create: AsyncParsableCommand {
     @Option var memoryMib: UInt64
     @Option var diskGib: UInt64
     @Option(help: "Ownership tag; `delete` requires it to match") var owner: String
+    @Option(help: "shared (NAT to the host's uplinks) or host-only (no route beyond the host)") var network = "shared"
 
     func validate() throws {
         guard (image == nil) != (fromDisk == nil) else { throw ValidationError("pass exactly one of --image or --from-disk") }
+        guard ["shared", "host-only"].contains(network) else { throw ValidationError("--network must be shared or host-only") }
     }
 
     func run() async throws {
         let source: SandboxSource = if let image { .image(image) } else { .disk(try SandboxID(fromDisk ?? "")) }
         let record = try await Sandboxes.create(
             root: try root.resolve(), id: try SandboxID(id), owner: owner, source: source, cpus: cpus,
-            memoryBytes: memoryMib * mib, diskBytes: diskGib * gib)
+            memoryBytes: memoryMib * mib, diskBytes: diskGib * gib, network: network == "host-only" ? .hostOnly : .shared)
         try printJSON(record)
     }
 }

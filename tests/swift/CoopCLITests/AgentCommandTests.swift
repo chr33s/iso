@@ -208,6 +208,13 @@ private func lifecycleFixture(_ extra: String, secrets: CountingSecrets = Counti
   return (fixture, ProjectLifecycle(fixture.context, noGitHub: false, secrets: secrets), instance)
 }
 
+private func startOptions(_ context: CommandContext) throws -> StartOptions {
+  StartOptions(
+    noPrompt: true,
+    configTarget: ConfigTarget(
+      path: (context.environment.home ?? "/tmp") + "/config.jsonc", format: .jsonc))
+}
+
 @Test func preflightResolvesEveryStoredSecretInOneUnlock() throws {
   let secrets = CountingSecrets([
     "db": "d", "proxy-key": "k", "per-vm": "v", "pat": "github_pat_x",
@@ -240,4 +247,26 @@ private func lifecycleFixture(_ extra: String, secrets: CountingSecrets = Counti
     try strict.preflightReferences(
       entries, instance: otherInstance, repo: try RepoSlug("org/repo"))
   }
+}
+
+@Test func providerProxyRequirementFailsStartAndRestartBeforeAnyVmWork() throws {
+  let (fixture, lifecycle, instance) = try lifecycleFixture(#", "proxy": {"mode": "required"}"#)
+  defer { fixture.remove() }
+  let options = try startOptions(fixture.context)
+  // The backend has no runtime here: reaching it would fail differently.
+  let fresh = try #require(throws: HostError.self) {
+    try lifecycle.startInstance(instance, options)
+  }
+  #expect(fresh.message.contains("no provider proxy is configured"))
+  let restarted = try #require(throws: HostError.self) {
+    try lifecycle.restart(instance, options)
+  }
+  #expect(restarted.message.contains("no provider proxy is configured"))
+  // Skipping agents skips the requirement, so the backend is reached.
+  var noAgents = options
+  noAgents.noAgents = true
+  let reached = try #require(throws: (any Error).self) {
+    try lifecycle.startInstance(instance, noAgents)
+  }
+  #expect(!"\(reached)".contains("no provider proxy is configured"))
 }
