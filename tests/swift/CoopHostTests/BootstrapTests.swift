@@ -369,11 +369,12 @@ private func prefs(_ json: String) throws -> ClaudeImport.Preferences {
 private func stageCodex(
   source: String? = nil, mcp: [String: TOMLValue] = [:], local: TOMLTable? = nil,
   managesLocal: Bool = false, preserved: TOMLTable? = nil, proxy: Bool = false,
-  auth: CodexAuthMode = .apiKey, keyring: Bool = false
+  proxyMode: ProxyMode = .auto, auth: CodexAuthMode = .apiKey, keyring: Bool = false
 ) throws -> StagingDirectory {
   try CodexConfigFiles.stage(
     source: source, mcpServers: mcp, local: local, managesLocal: managesLocal,
-    preserved: preserved, proxyActive: proxy, auth: auth, keyringMaterialized: keyring,
+    preserved: preserved, proxyActive: proxy, proxyMode: proxyMode, auth: auth,
+    keyringMaterialized: keyring,
     hasMCPServers: !mcp.isEmpty, diagnostics: LogSink().diagnostics)
 }
 
@@ -418,6 +419,12 @@ private func stageCodex(
   #expect(!FileManager.default.fileExists(atPath: staged.path + "/config.toml"))
   staged.remove()
   staged = try stageCodex(source: source, proxy: true)
+  #expect(!FileManager.default.fileExists(atPath: staged.path + "/auth.json"))
+  #expect(FileManager.default.fileExists(atPath: staged.path + "/AGENTS.md"))
+  staged.remove()
+  // proxy.mode = "required" withholds it even when OpenAI has no proxy:
+  // `codex login --with-api-key` stores a raw key there.
+  staged = try stageCodex(source: source, proxyMode: .required)
   #expect(!FileManager.default.fileExists(atPath: staged.path + "/auth.json"))
   #expect(FileManager.default.fileExists(atPath: staged.path + "/AGENTS.md"))
   staged.remove()
@@ -683,4 +690,96 @@ private func stageCodex(
   #expect(throws: Never.self) {
     try TOMLTable.parse("[a" + String(repeating: ".b", count: 100) + "]\nx = 1\n")
   }
+}
+
+// MARK: - proxy.mode
+
+@Test func requiredModeWithholdsEveryProviderVariableAndRefusesDeclarations() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let quiet = try testConfig(#""proxy": {"mode": "required"}, "guest_env": {"OK": "1"}"#)
+  let resolver = CredentialResolver(environment: guest.environment)
+  let agents = AgentBootstrap(
+    config: quiet, client: guest.client,
+    environment: ["ANTHROPIC_API_KEY": "sk-host", "OPENAI_API_KEY": "sk-host2"], home: nil,
+    resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
+    diagnostics: guest.sink.diagnostics)
+  // Automatic host forwards are withheld without an error.
+  let env = try agents.prepareEnvForwarding(
+    repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+  #expect(env.names == ["OK"])
+
+  for declaration in [
+    #""claude": {"env_forward": ["CLAUDE_CODE_OAUTH_TOKEN"]}"#,
+    #""guest_env": {"ANTHROPIC_AUTH_TOKEN": "x"}"#,
+    #""codex": {"env_forward": ["OPENAI_API_KEY"]}"#,
+  ] {
+    let config = try testConfig(#""proxy": {"mode": "required"}, "# + declaration)
+    let error = try #require(throws: HostError.self) {
+      try guest.bootstrap(config).prepareEnvForwarding(
+        repo: nil, suppressAnthropicKey: false, suppressOpenAIKey: false)
+    }
+    #expect(error.message.contains("proxy.mode = \"required\""))
+    #expect(!error.message.contains("\"x\""))
+  }
+}
+
+@Test func requiredModeRefusesRuntimeEnvProviderVariables() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try GuestEnvState(entries: [try EnvVarName("ANTHROPIC_API_KEY"): "raw"]).save(instance)
+  let agents = guest.bootstrap(try testConfig(#""proxy": {"mode": "required"}"#))
+  #expect(throws: HostError.self) {
+    try agents.prepareSession(instance, target: guest.target, repo: nil)
+  }
+}
+
+@Test func proxiedProviderWithholdsAllOfItsVariablesInAutoMode() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let config = try testConfig(
+    #""claude": {"env_forward": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"]}, "codex": {"env_forward": ["OPENAI_API_KEY"]}"#
+  )
+  let resolver = CredentialResolver(environment: guest.environment)
+  let agents = AgentBootstrap(
+    config: config, client: guest.client,
+    environment: [
+      "CLAUDE_CODE_OAUTH_TOKEN": "t", "ANTHROPIC_AUTH_TOKEN": "a", "OPENAI_API_KEY": "o",
+    ], home: nil, resolver: resolver, proxies: guest.proxies(resolver), github: NoGitHub(),
+    diagnostics: guest.sink.diagnostics)
+  let env = try agents.prepareEnvForwarding(
+    repo: nil, suppressAnthropicKey: true, suppressOpenAIKey: false)
+  #expect(!env.contains("CLAUDE_CODE_OAUTH_TOKEN") && !env.contains("ANTHROPIC_AUTH_TOKEN"))
+  // Unproxied OpenAI still forwards the raw key.
+  #expect(env.contains("OPENAI_API_KEY"))
+  #expect(
+    guest.sink.text.contains("proxy mode: ignoring env_forward entry 'CLAUDE_CODE_OAUTH_TOKEN'"))
+}
+
+@Test func offModeIgnoresConfiguredUpstreams() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let config = try testConfig(
+    #""proxy": {"mode": "off", "anthropic": {"credential": "cmd:printf x"}}"#)
+  #expect(config.proxy.mode == .off)
+  #expect(try ProxyState.effectiveUpstream(instance, .anthropic, config: config.proxy) == nil)
+  #expect(try !guest.bootstrap(config).proxyConfigured(instance, .anthropic))
+  let auto = try testConfig(#""proxy": {"anthropic": {"credential": "cmd:printf x"}}"#)
+  #expect(auto.proxy.mode == .auto)
+  #expect(try ProxyState.effectiveUpstream(instance, .anthropic, config: auto.proxy) != nil)
+}
+
+@Test func requiredModeFailsStartWithoutAnyProviderProxy() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let agents = guest.bootstrap(try testConfig(#""proxy": {"mode": "required"}"#))
+  let error = try #require(throws: HostError.self) {
+    try agents.bootstrapAndPostStart(
+      instance, target: guest.target, repo: nil, noAgents: false, postStartOverride: nil,
+      mode: .firstBoot)
+  }
+  #expect(error.message.contains("no provider proxy is configured"))
 }

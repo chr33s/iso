@@ -413,7 +413,7 @@ each remote-mode VM: the guest is pointed at the proxy (a base-URL override) and
 holds only a per-instance capability token, while the real credential stays on
 the host and is injected onto outbound requests the guest never sees. Absent
 config means no proxy — credentials are forwarded into the guest exactly as
-before.
+before, unless `proxy.mode` is `"required"` (below).
 
 Every golden image installs the Secret Service packages this mode needs
 (`dbus-user-session`, `gnome-keyring`, `libsecret-tools`) regardless of the
@@ -430,6 +430,14 @@ Proxy mode applies only in remote model mode
 Each provider is an optional default, and a VM can override its own credential
 per provider with [`coop proxy setup --vm <name>`](commands.md#proxy) (stored in
 the instance's `proxy.json`, not in the config file).
+
+### `proxy.mode`
+
+| Value | Behavior |
+|-------|----------|
+| `"auto"` (default) | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one keeps the legacy raw forwarding, with a warning at `up`/`start`. |
+| `"required"` | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) reaches the guest by any path. Values coop would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
+| `"off"` | No proxy starts; configured upstreams and per-VM overrides are ignored, and credentials are forwarded as without a proxy. |
 
 Both objects take the same fields:
 

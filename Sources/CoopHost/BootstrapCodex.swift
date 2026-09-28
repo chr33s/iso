@@ -70,9 +70,14 @@ enum CodexConfigFiles {
   static let preservedGuestTables = ["marketplaces", "plugins", "projects"]
 
   /// `auth.json` is dropped in proxy mode (the capability token replaces
-  /// it) and in ChatGPT account mode (the guest keyring holds credentials).
-  static func allowedFiles(proxyActive: Bool, auth: CodexAuthMode) -> [String] {
-    proxyActive || auth == .chatgpt ? allowedFiles.filter { $0 != "auth.json" } : allowedFiles
+  /// it), under `proxy.mode = "required"` (it can hold a raw OpenAI key even
+  /// when OpenAI has no proxy), and in ChatGPT account mode (the guest keyring
+  /// holds credentials).
+  static func allowedFiles(proxyActive: Bool, proxyMode: ProxyMode, auth: CodexAuthMode)
+    -> [String]
+  {
+    proxyActive || proxyMode == .required || auth == .chatgpt
+      ? allowedFiles.filter { $0 != "auth.json" } : allowedFiles
   }
 
   static func sourceHasBootstrapContent(_ source: String?) -> Bool {
@@ -118,7 +123,8 @@ enum CodexConfigFiles {
   /// plugin tables (host copies of those are dropped).
   static func stage(
     source: String?, mcpServers: [String: TOMLValue], local: TOMLTable?, managesLocal: Bool,
-    preserved: TOMLTable?, proxyActive: Bool, auth: CodexAuthMode, keyringMaterialized: Bool,
+    preserved: TOMLTable?, proxyActive: Bool, proxyMode: ProxyMode, auth: CodexAuthMode,
+    keyringMaterialized: Bool,
     hasMCPServers: Bool, diagnostics: Diagnostics
   ) throws -> StagingDirectory {
     let staging = try StagingDirectory()
@@ -127,7 +133,8 @@ enum CodexConfigFiles {
       if let source {
         do {
           try staging.stage(
-            from: source, files: allowedFiles(proxyActive: proxyActive, auth: auth),
+            from: source,
+            files: allowedFiles(proxyActive: proxyActive, proxyMode: proxyMode, auth: auth),
             directories: allowedDirectories)
         } catch {
           throw ContextError("Failed to stage Codex allowlisted files", cause: error)
@@ -314,7 +321,8 @@ extension AgentBootstrap {
     do {
       staging = try CodexConfigFiles.stage(
         source: source, mcpServers: try codexMCPTables(), local: local, managesLocal: managesLocal,
-        preserved: preserved, proxyActive: proxyActive, auth: config.codexAuth,
+        preserved: preserved, proxyActive: proxyActive, proxyMode: config.proxy.mode,
+        auth: config.codexAuth,
         keyringMaterialized: keyringMaterialized, hasMCPServers: !codex.mcpServers.isEmpty,
         diagnostics: diagnostics)
     } catch {

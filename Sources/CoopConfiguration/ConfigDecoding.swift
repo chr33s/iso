@@ -497,7 +497,10 @@ enum ConfigDecoder {
         })
     }
     return ProxyConfig(
-      anthropic: try r.optional("anthropic", upstream), openai: try r.optional("openai", upstream))
+      anthropic: try r.optional("anthropic", upstream), openai: try r.optional("openai", upstream),
+      mode: try r.defaulted("mode", .auto) { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, [ProxyMode.auto, .required, .off])
+      })
   }
 
   static func profile(_ value: JSONValue, _ path: [JSONPathComponent], env: ConfigEnvironment)
