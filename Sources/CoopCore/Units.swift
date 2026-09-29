@@ -97,6 +97,35 @@ public struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertible
 
 /// A session length: plain seconds or an `s`/`m`/`h` suffix, from one
 /// minute to 30 days.
+/// A duration written as plain seconds or with an `s`/`m`/`h` suffix. Range
+/// checks stay with the caller.
+public enum DurationText: Equatable, Sendable {
+  case seconds(UInt64)
+  case invalid
+  case overflow
+
+  public init(parsing text: String) {
+    var digits = Substring(text)
+    var scale: UInt64 = 1
+    switch digits.last {
+    case "s": digits = digits.dropLast()
+    case "m":
+      digits = digits.dropLast()
+      scale = 60
+    case "h":
+      digits = digits.dropLast()
+      scale = 3600
+    default: break
+    }
+    guard let number = parseUnsigned(String(digits), as: UInt64.self) else {
+      self = .invalid
+      return
+    }
+    let (seconds, overflow) = number.multipliedReportingOverflow(by: scale)
+    self = overflow ? .overflow : .seconds(seconds)
+  }
+}
+
 public struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
   public static let range: ClosedRange<UInt32> = 60...(30 * 24 * 3600)
   public let seconds: UInt32
@@ -109,24 +138,17 @@ public struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
   }
 
   public init(parsing text: String) throws(ValidationError) {
-    var digits = Substring(text)
-    var scale: UInt32 = 1
-    switch digits.last {
-    case "s": digits = digits.dropLast()
-    case "m":
-      digits = digits.dropLast()
-      scale = 60
-    case "h":
-      digits = digits.dropLast()
-      scale = 3600
-    default: break
-    }
-    guard let n = parseUnsigned(String(digits), as: UInt32.self) else {
+    switch DurationText(parsing: text) {
+    case .invalid:
       throw ValidationError("expected a duration such as 3600, \"30m\" or \"8h\", got '\(text)'")
+    case .overflow:
+      throw ValidationError("session_ttl must be between 1m and 720h")
+    case .seconds(let value):
+      guard let seconds = UInt32(exactly: value) else {
+        throw ValidationError("session_ttl must be between 1m and 720h")
+      }
+      try self.init(seconds: seconds)
     }
-    let (value, overflow) = n.multipliedReportingOverflow(by: scale)
-    guard !overflow else { throw ValidationError("session_ttl must be between 1m and 720h") }
-    try self.init(seconds: value)
   }
 
   public var description: String {

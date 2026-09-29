@@ -126,3 +126,18 @@ private func auditInstance() throws -> Instance {
       == #"{"preset":"offline","egress":"none","proxy_mode":"off","workspace_pull":"stage","session_ttl":"2h"}"#
   )
 }
+
+@Test func suggestedConfigNeverEndsWithATrailingComma() {
+  // A real member followed only by commented-out ones must not carry a comma.
+  let proxiedOpenEgress: [[String: Any]] = [
+    ["event": "boot", "egress": "open", "proxied": ["anthropic"]]
+  ]
+  let lines = BoundaryAudit.suggestConfig(proxiedOpenEgress)
+  #expect(lines.last == "}")
+  let body = lines.dropLast().filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+  #expect(body.last?.hasSuffix(",") == false)
+  let both: [[String: Any]] = [
+    ["event": "boot", "egress": "none", "proxied": ["anthropic"]]
+  ]
+  #expect(BoundaryAudit.suggestConfig(both).joined(separator: "\n").contains("},\n"))
+}

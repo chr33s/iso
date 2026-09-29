@@ -192,6 +192,15 @@ func rejectsOtherURLs(_ url: String) {
   #expect(SecretName.vaultReference("VAULT:name") == nil)
 }
 
+@Test func durationTextParsesSuffixesAndReportsOverflow() {
+  #expect(DurationText(parsing: "90") == .seconds(90))
+  #expect(DurationText(parsing: "2m") == .seconds(120))
+  #expect(DurationText(parsing: "1h") == .seconds(3600))
+  #expect(DurationText(parsing: "1d") == .invalid)
+  #expect(DurationText(parsing: "") == .invalid)
+  #expect(DurationText(parsing: "18446744073709551615h") == .overflow)
+}
+
 @Test func sessionTTLParsesAndBounds() throws {
   #expect(try SessionTTL(parsing: "8h").seconds == 8 * 3600)
   #expect(try SessionTTL(parsing: "90m").description == "90m")

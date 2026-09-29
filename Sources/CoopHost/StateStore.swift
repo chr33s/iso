@@ -26,6 +26,15 @@ public enum StateStore {
     guard fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
       throw HostError("Failed to read \(path): not a regular file")
     }
+    return try readBounded(
+      fd, path: path, limit: maxControlFile, tooLarge: "\(path) is larger than 1 MiB")
+  }
+
+  /// Reads `fd` to end of file, retrying on `EINTR`, and fails once more
+  /// than `limit` bytes have arrived.
+  static func readBounded(_ fd: Int32, path: String, limit: Int, tooLarge: String) throws(HostError)
+    -> [UInt8]
+  {
     var bytes: [UInt8] = []
     var chunk = [UInt8](repeating: 0, count: 64 << 10)
     while true {
@@ -36,7 +45,7 @@ public enum StateStore {
       }
       if count == 0 { return bytes }
       bytes.append(contentsOf: chunk[0..<count])
-      guard bytes.count <= maxControlFile else { throw HostError("\(path) is larger than 1 MiB") }
+      guard bytes.count <= limit else { throw HostError(tooLarge) }
     }
   }
 
