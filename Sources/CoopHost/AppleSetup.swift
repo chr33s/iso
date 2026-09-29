@@ -251,7 +251,7 @@ extension AppleBackend {
       try runtime.create(
         machine, source: .image(reference), cpus: 2, memoryMiB: 2048,
         diskGiB: UInt64(config.vm.templateSize.value),
-        owner: owner.id)
+        owner: owner.id, egress: .open)
       try IsolationGate.verifyRecord(try runtime.inspect(machine), expected)
       let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
       _ = try bootValidated(runtime, expected, until: deadline)

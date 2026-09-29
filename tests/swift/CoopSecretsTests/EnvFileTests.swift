@@ -40,6 +40,14 @@ private func parse(_ text: String) throws -> [String: EnvValue] {
   #expect(entries.count == 11)
 }
 
+@Test func envFileIgnoresWhitespaceAfterEquals() throws {
+  let entries = try parse("A= \"x y\"\nB=\t{vault:name}\nC= # comment\nD= x")
+  #expect(entries["A"] == .literal("x y"))
+  #expect(entries["B"] == .secret(try SecretName("name")))
+  #expect(entries["C"] == .literal(""))
+  #expect(entries["D"] == .literal(" x"))
+}
+
 @Test func envFileNeverExpandsOrExecutes() throws {
   let entries = try parse("A=$(id)\nB=`id`\nC=$HOME\nD=\"$HOME\"")
   #expect(entries["A"] == .literal("$(id)"))

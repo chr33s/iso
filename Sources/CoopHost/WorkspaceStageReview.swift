@@ -110,16 +110,10 @@ public struct StageReview {
     let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { return nil }
     defer { close(fd) }
-    var bytes: [UInt8] = []
-    var chunk = [UInt8](repeating: 0, count: 64 << 10)
-    while true {
-      let count = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-      if count < 0 && errno == EINTR { continue }
-      guard count >= 0 else { return nil }
-      if count == 0 { break }
-      bytes.append(contentsOf: chunk[0..<count])
-      guard bytes.count <= textLimit else { return nil }
-    }
+    guard
+      let bytes = try? StateStore.readBounded(
+        fd, path: path, limit: Int(textLimit), tooLarge: "too large")
+    else { return nil }
     guard !bytes.contains(0), let text = String(validating: bytes, as: UTF8.self) else {
       return nil
     }

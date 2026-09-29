@@ -93,16 +93,8 @@ public enum BoundaryAudit {
     let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { throw HostError.posix("Failed to open", path) }
     defer { close(fd) }
-    var bytes: [UInt8] = []
-    var chunk = [UInt8](repeating: 0, count: 64 << 10)
-    while true {
-      let count = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-      if count < 0 && errno == EINTR { continue }
-      guard count >= 0 else { throw HostError.posix("Failed to read", path) }
-      if count == 0 { return bytes }
-      bytes += chunk[0..<count]
-      guard bytes.count <= maxBytes * 2 else { throw HostError("\(path) is too large") }
-    }
+    return try StateStore.readBounded(
+      fd, path: path, limit: maxBytes * 2, tooLarge: "\(path) is too large")
   }
 
   /// The recorded lines, oldest first.
@@ -141,29 +133,42 @@ public enum BoundaryAudit {
       "// Advisory only: an observed run does not prove what future runs need.",
       "{",
     ]
-    var members: [String] = []
+    var members: [(text: String, isReal: Bool)] = []
     if everyBootProxied && !rawForwards {
       members.append(
-        "  // Every boot used the credential proxy (\(proxied.sorted().joined(separator: ", "))) and none forwarded a raw provider key.\n  \"proxy\": { \"mode\": \"required\" }"
-      )
+        (
+          "  // Every boot used the credential proxy (\(proxied.sorted().joined(separator: ", "))) and none forwarded a raw provider key.\n  \"proxy\": { \"mode\": \"required\" }",
+          true
+        ))
     } else if rawForwards || !proxied.isEmpty {
       members.append(
-        "  // Not every boot kept provider keys on the host; store them with `coop proxy setup` or `coop secrets`, then consider \"required\".\n  // \"proxy\": { \"mode\": \"required\" }"
-      )
+        (
+          "  // Not every boot kept provider keys on the host; store them with `coop proxy setup` or `coop secrets`, then consider \"required\".\n  // \"proxy\": { \"mode\": \"required\" }",
+          false
+        ))
     }
     if boots.allSatisfy({ $0["egress"] as? String == "none" }) && !boots.isEmpty {
-      members.append("  // Every boot ran without egress.\n  \"egress\": \"none\"")
+      members.append(("  // Every boot ran without egress.\n  \"egress\": \"none\"", true))
     } else {
       members.append(
-        "  // Guest network use is not observed; try \"none\" and watch for failures.\n  // \"egress\": \"none\""
-      )
+        (
+          "  // Guest network use is not observed; try \"none\" and watch for failures.\n  // \"egress\": \"none\"",
+          false
+        ))
     }
     if staged || direct {
       members.append(
-        "  // Workspace returns happened; review them before they reach the host.\n  \"workspace\": { \"pull\": { \"mode\": \"stage\" } }"
-      )
+        (
+          "  // Workspace returns happened; review them before they reach the host.\n  \"workspace\": { \"pull\": { \"mode\": \"stage\" } }",
+          true
+        ))
     }
-    lines.append(members.joined(separator: ",\n"))
+    // A comma follows a real member only when another real member comes
+    // after it; commented-out members never carry one.
+    for (index, member) in members.enumerated() {
+      let moreReal = members[(index + 1)...].contains { $0.isReal }
+      lines.append(member.isReal && moreReal ? member.text + "," : member.text)
+    }
     lines.append("}")
     return lines
   }

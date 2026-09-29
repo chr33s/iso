@@ -210,18 +210,8 @@ public struct StageLocation: Sendable {
       throw .posix("Failed to open", manifestPath)
     }
     defer { close(fd) }
-    var bytes: [UInt8] = []
-    var chunk = [UInt8](repeating: 0, count: 64 << 10)
-    while true {
-      let count = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-      if count < 0 {
-        if errno == EINTR { continue }
-        throw .posix("Failed to read", manifestPath)
-      }
-      if count == 0 { break }
-      bytes.append(contentsOf: chunk[0..<count])
-      guard bytes.count <= Self.maxManifest else { throw HostError("\(manifestPath) is too large") }
-    }
+    let bytes = try StateStore.readBounded(
+      fd, path: manifestPath, limit: Self.maxManifest, tooLarge: "\(manifestPath) is too large")
     let manifest = try StateStore.decode(StageManifest.self, bytes, path: manifestPath)
     guard manifest.version == StageManifest.currentVersion else {
       throw HostError(

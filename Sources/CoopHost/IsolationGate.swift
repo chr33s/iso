@@ -107,10 +107,16 @@ public enum IsolationGate {
     guard let ip = live.ipv4 else { throw .networkIsolation("sandbox \(name) reports no address") }
     // Independent of the owner's own timer: a hung owner past its deadline
     // is not handed out.
-    if let deadline = inspection.record.sessionDeadline, deadline <= Date() {
-      throw .sessionExpired(
-        "sandbox \(name)'s session ended at \(ISO8601DateFormatter().string(from: deadline)); `coop stop` then `coop start` begins a new one"
-      )
+    if let recorded = inspection.record.expiresAt {
+      guard let deadline = inspection.record.sessionDeadline else {
+        throw .unqualified(
+          "sandbox \(name) records an unreadable session deadline \(debugQuoted(recorded))")
+      }
+      if deadline <= Date() {
+        throw .sessionExpired(
+          "sandbox \(name)'s session ended at \(ISO8601DateFormatter().string(from: deadline)); `coop stop` then `coop start` begins a new one"
+        )
+      }
     }
     let running = Resources(cpus: effective.cpus, memoryBytes: effective.memoryBytes)
     guard running == expected.resources else {

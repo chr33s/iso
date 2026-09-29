@@ -37,7 +37,7 @@ extension SandboxRuntime {
 
   public func create(
     _ name: MachineName, source: Source, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
-    owner: OwnerID, egress: EgressMode = .open
+    owner: OwnerID, egress: EgressMode
   ) throws(RuntimeError) {
     let from: [String] =
       switch source {

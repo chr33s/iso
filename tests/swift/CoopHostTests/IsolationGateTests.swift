@@ -253,3 +253,9 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
   setPath(&object, ["record", "expiresAt"], "2999-01-01T00:00:00Z")
   #expect(try gate(try bytes(object)).sandbox == gateSandbox)
 }
+
+@Test func anUnreadableSessionDeadlineIsNotTreatedAsNoLimit() throws {
+  var object = try running()
+  setPath(&object, ["record", "expiresAt"], "soon")
+  #expect(throws: RuntimeError.self) { try gate(try bytes(object)) }
+}

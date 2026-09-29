@@ -87,13 +87,17 @@ public enum EnvFile {
   }
 
   /// The value after `=`: single- or double-quoted (no escapes, no
-  /// expansion), or unquoted up to a `#` that follows whitespace.
-  static func value(_ text: Substring) throws(ValidationError) -> String {
+  /// expansion), or unquoted up to a `#` that follows whitespace. A quote or
+  /// a `{vault:NAME}` reference may follow whitespace after `=`; other
+  /// unquoted values keep their leading whitespace.
+  static func value(_ raw: Substring) throws(ValidationError) -> String {
+    let text = raw.drop(while: { $0 == " " || $0 == "\t" })
     guard let quote = text.first, quote == "\"" || quote == "'" else {
-      var value = text
-      if let hash = commentStart(text) { value = text[..<hash] }
-      let trimmed = value.reversed().drop(while: { $0 == " " || $0 == "\t" })
-      return String(trimmed.reversed())
+      var value = raw
+      if let hash = commentStart(raw) { value = raw[..<hash] }
+      let trimmed = String(value.reversed().drop(while: { $0 == " " || $0 == "\t" }).reversed())
+      let reference = trimmed.drop(while: { $0 == " " || $0 == "\t" })
+      return reference.hasPrefix(EnvValue.prefix) ? String(reference) : trimmed
     }
     let body = text.dropFirst()
     guard let close = body.firstIndex(of: quote) else {

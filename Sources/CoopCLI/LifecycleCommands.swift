@@ -163,23 +163,15 @@ func parseDiskSize(_ text: String) throws -> DiskSize {
 func parseDurationArgument(_ text: String) throws -> Duration {
   let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
   guard !value.isEmpty else { throw UsageError("duration cannot be empty") }
-  var digits = Substring(value)
-  var multiplier: UInt64 = 1
-  switch digits.last {
-  case "s": digits = digits.dropLast()
-  case "m":
-    digits = digits.dropLast()
-    multiplier = 60
-  case "h":
-    digits = digits.dropLast()
-    multiplier = 3600
-  default: break
-  }
-  guard let number = parseUnsigned(String(digits), as: UInt64.self) else {
+  let seconds: UInt64
+  switch DurationText(parsing: value) {
+  case .invalid:
     throw UsageError("invalid duration \(debugQuoted(value)); use seconds, or suffix s/m/h")
+  case .overflow:
+    throw UsageError("duration \(debugQuoted(value)) is too large")
+  case .seconds(let parsed): seconds = parsed
   }
-  let (seconds, overflow) = number.multipliedReportingOverflow(by: multiplier)
-  guard !overflow, seconds <= UInt64(Int64.max) else {
+  guard seconds <= UInt64(Int64.max) else {
     throw UsageError("duration \(debugQuoted(value)) is too large")
   }
   guard seconds > 0 else { throw UsageError("duration must be greater than zero") }
@@ -208,7 +200,6 @@ struct Stop: ParsableCommand {
   /// every path.
   static func stop(_ context: CommandContext, _ instance: Instance) throws {
     context.diagnostics.log(.info, "Stopping instance '\(instance.name)'")
-    BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
     let running: AppleBackend.Running?
     do {
       running = try context.backend.asRunning(instance)
@@ -219,11 +210,13 @@ struct Stop: ParsableCommand {
           "Could not determine whether instance '\(instance.name)' is running, and it could not be stopped without that (\(oneLine(error)))",
           cause: probeError)
       }
+      BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
       return
     }
     if let running {
       context.forwards.teardown(running.instance, running.target)
       try context.backend.stop(running)
+      BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
     } else {
       context.diagnostics.debug("Instance '\(instance.name)' is not running — nothing to stop")
       context.teardownForwards(instance)
