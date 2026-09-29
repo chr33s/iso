@@ -72,7 +72,8 @@ user launched it.
   untrusted input (devcontainer JSON, guest JSON, Codex TOML) run on a fixed
   8 MiB stack (`withParserStack`) below their depth caps.
 - **Downloaded update artifacts.** `Update.swift` tarball + `SHA256SUMS` from the
-  release host — gated by checksum and (best-effort) Sigstore attestation.
+  release host — gated by a maintainer signature over `SHA256SUMS`, the
+  checksum and (best-effort) Sigstore attestation.
 - **OCI feature blobs.** `DevcontainerOCI.swift` pulls devcontainer *Features*
   from GHCR; the install snippet runs **in the guest**, not the host. coop
   verifies the manifest against its own bytes (and any `@sha256:` pin and
@@ -428,10 +429,30 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
 1. Metadata from the pinned `chr33s/coop` GitHub repo (compile-time const).
 2. `normalizeTag` — the version tag is validated as semver **before** it enters
    the API URL path (path-traversal guard).
-3. **Mandatory checksum.** The `SHA256SUMS` asset must be present (install is
+3. **Mandatory signature.** `SHA256SUMS.sig` must be present and must be an
+   OpenSSH `SSHSIG` (`ssh-keygen -Y sign`) over the exact `SHA256SUMS` bytes,
+   in namespace `release-sums@chr33s`, by a key in the compiled-in
+   `ReleaseSigners.keys` (`ReleaseSignature.swift`); nothing in `SHA256SUMS`
+   is read before it verifies. `install.sh` checks the same list with
+   `ssh-keygen -Y verify`. This is the provenance floor that does not depend
+   on `gh`, and it holds in test mode too.
+
+   The key is a maintainer's SSH key held in their ssh-agent and never in CI:
+   `release.yml` publishes a **draft**, and `scripts/sign-release.py` checks
+   the draft's digests and pinned attestation before signing and publishing
+   it. The key list is compiled in rather than fetched from
+   `github.com/<user>.keys`, so a GitHub account compromise alone cannot
+   re-key updates. It lives in three places — `ReleaseSigners.keys`,
+   `.github/release-signers` and `ALLOWED_SIGNERS` in `install.sh` — which
+   `signerListAgreesAcrossBinaryInstallerAndSigningScript` keeps equal.
+   Rotation: a release signed by a listed key ships a binary that also lists
+   the next key; the old key is dropped in a later release. Losing every
+   listed private key strands installed binaries on their current version
+   (reinstall through `install.sh`), so keep a second, offline key listed.
+4. **Mandatory checksum.** The `SHA256SUMS` asset must be present (install is
    refused otherwise) and every downloaded tarball is verified against it
    (`verifySHA256`, fixed-size digest compare).
-4. **Best-effort attestation.** `gh attestation verify --repo chr33s/coop
+5. **Best-effort attestation.** `gh attestation verify --repo chr33s/coop
    --bundle attestations.jsonl` (Sigstore provenance), against the bundle asset
    downloaded from the same release.
 
@@ -487,15 +508,15 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
    download and an unusable `gh` all surface here, and switching transports
    would mask them. Skipped with a logged note if `gh` is absent, and skipped
    entirely when `COOP_UPDATE_API_BASE_URL` is overridden (test mode). So
-   provenance is *not* guaranteed on hosts without `gh` — checksum is the
-   floor.
-5. Extraction with `tar -xzf --no-same-owner --no-same-permissions` (path-escape
+   Sigstore provenance is *not* guaranteed on hosts without `gh` — the
+   signature is the floor there.
+6. Extraction with `tar -xzf --no-same-owner --no-same-permissions` (path-escape
    safe), then an atomic `rename`-over-self.
 
 `COOP_UPDATE_API_BASE_URL` redirects the update origin **and** disables
-attestation; the checksum then only proves integrity against *that* server's own
-`SHA256SUMS`, giving no provenance. Only the pinned `github.com` default +
-attestation provide provenance. Flag any change that widens where that override
+attestation; the release signature is still required, so that server must serve
+`SHA256SUMS` signed by a listed key. Only the pinned `github.com` default +
+attestation provide Sigstore provenance. Flag any change that widens where that override
 is honored, or that softens any step above.
 
 ## Documented, accepted trade-offs
