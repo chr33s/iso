@@ -11,6 +11,8 @@ set -euo pipefail
 REPO="chr33s/coop"
 BINARY="coop"
 BUNDLE="attestations.jsonl"
+# The only workflow whose attestations count; candidate.yml also attests.
+SIGNER_WORKFLOW=".github/workflows/release.yml"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 
 # --- helpers ----------------------------------------------------------------
@@ -141,6 +143,13 @@ verify_attestation() {
     fi
 
     info "Verifying attestation..."
+    # Pin the signer to the release workflow run for this exact tag, not just
+    # the repository: see the `coop update` trust chain in docs/trust-model.md.
+    local signer_pin=(
+        --cert-identity "https://github.com/${REPO}/${SIGNER_WORKFLOW}@refs/tags/${VERSION}"
+        --source-ref "refs/tags/${VERSION}"
+        --deny-self-hosted-runners
+    )
     # Prefer the bundle published with the release: without --bundle, `gh`
     # refuses to run unauthenticated and then attaches its stored token to the
     # attestations API call, so a token with no SSO session for the org 403s on
@@ -159,7 +168,7 @@ verify_attestation() {
         # else in this script, and a bundle that downloaded but will not verify
         # is equally a broken download or a `gh` that cannot read it. Switching
         # transports would mask all three.
-        gh attestation verify "$file" --repo "$REPO" --bundle "${TMPDIR}/${BUNDLE}" \
+        gh attestation verify "$file" --repo "$REPO" "${signer_pin[@]}" --bundle "${TMPDIR}/${BUNDLE}" \
             || die "Attestation verification failed for $(basename "$file") — refusing to install"
         info "Attestation verified against ${BUNDLE} — no attestations-API call, no credential."
         return 0
@@ -172,7 +181,7 @@ verify_attestation() {
     info "Could not use ${BUNDLE} for ${VERSION} (not published, download failed, or empty) —"
     info "verifying through the GitHub API instead."
     local out
-    if out="$(gh attestation verify "$file" --repo "$REPO" 2>&1)"; then
+    if out="$(gh attestation verify "$file" --repo "$REPO" "${signer_pin[@]}" 2>&1)"; then
         info "Attestation verified through the GitHub API."
         return 0
     fi

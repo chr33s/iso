@@ -463,14 +463,15 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
      indefinitely after the attestation is deleted.
 
    What still defeats a substituted bundle is the **subject-digest binding** —
-   `gh` digests the artifact and requires a matching subject. `--repo
-   chr33s/coop` pins the source repository and constrains the signer SAN
-   to that repo, but not to a specific workflow file or ref: any workflow on
-   any ref in `chr33s/coop` holding `id-token: write` +
-   `attestations: write` mints a bundle that satisfies it. `--signer-workflow`
-   / `--cert-identity` are the tighter pin and neither client passes one — the
-   API path is keyed by digest against the same repo-scoped store and is
-   equally unpinned there.
+   `gh` digests the artifact and requires a matching subject — plus the
+   **signer pin**. Both clients pass `--cert-identity
+   https://github.com/chr33s/coop/.github/workflows/release.yml@refs/tags/<tag>`,
+   `--source-ref refs/tags/<tag>` and `--deny-self-hosted-runners`
+   (`Provenance.verifyArguments`, `signer_pin` in `install.sh`), on the bundle
+   and the API path alike. A bundle minted by any other workflow in
+   `chr33s/coop` — `candidate.yml` also holds `attestations: write` — or by
+   `release.yml` for a different tag, or on a self-hosted runner, is refused.
+   `--repo` alone would accept all of those.
 
    A release that publishes no bundle asset — or one whose download fails, or
    whose bundle is empty — falls back to the API path, where `gh` requires a

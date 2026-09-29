@@ -147,15 +147,29 @@ private let releaseBuild = CoopBuild(version: "0.6.0", kind: .release, versionSt
 // MARK: - Provenance and auth selection
 
 @Test func attestationArgumentsPinTheRepository() {
+  let pinned = [
+    "attestation", "verify", "/tmp/coop.tar.gz", "--repo", "chr33s/coop", "--cert-identity",
+    "https://github.com/chr33s/coop/.github/workflows/release.yml@refs/tags/v1.2.3",
+    "--source-ref", "refs/tags/v1.2.3", "--deny-self-hosted-runners",
+  ]
   #expect(
-    Provenance.verifyArguments(tarball: "/tmp/coop.tar.gz", bundle: nil)
-      == ["attestation", "verify", "/tmp/coop.tar.gz", "--repo", "chr33s/coop"])
+    Provenance.verifyArguments(tarball: "/tmp/coop.tar.gz", bundle: nil, tag: "v1.2.3") == pinned)
   #expect(
-    Provenance.verifyArguments(tarball: "/tmp/coop.tar.gz", bundle: "/tmp/attestations.jsonl")
-      == [
-        "attestation", "verify", "/tmp/coop.tar.gz", "--repo", "chr33s/coop", "--bundle",
-        "/tmp/attestations.jsonl",
-      ])
+    Provenance.verifyArguments(
+      tarball: "/tmp/coop.tar.gz", bundle: "/tmp/attestations.jsonl", tag: "v1.2.3")
+      == pinned + ["--bundle", "/tmp/attestations.jsonl"])
+}
+
+/// `candidate.yml` also holds `attestations: write`; the pin must name the
+/// release workflow, and the release workflow must be the one that attests.
+@Test func signerWorkflowIsTheReleaseWorkflow() throws {
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appending(path: "../../..").standardized.path
+  let workflow = try String(
+    contentsOfFile: root + "/" + UpdateChannel.signerWorkflow, encoding: .utf8)
+  #expect(workflow.contains("actions/attest-build-provenance@"))
+  #expect(workflow.contains("\n      - \"v*\"\n"))
+  #expect(UpdateChannel.signerWorkflow != ".github/workflows/candidate.yml")
 }
 
 private let bundleAsset = Release.Asset(name: "attestations.jsonl", url: "https://example.com/B")
@@ -248,6 +262,13 @@ private let withoutBundle = Release(
     fetch.contains("curl -fsSL") && !fetch.contains("-H") && !fetch.contains("--header")
       && !fetch.contains("$(") && !fetch.contains("GITHUB_TOKEN") && !fetch.contains("gh release"))
   #expect(installer.contains(#"--bundle "${TMPDIR}/${BUNDLE}""#))
+  // Both installer verify paths carry the same signer pin as `coop update`.
+  #expect(installer.contains("SIGNER_WORKFLOW=\"\(UpdateChannel.signerWorkflow)\""))
+  #expect(
+    installer.contains(
+      #"--cert-identity "https://github.com/${REPO}/${SIGNER_WORKFLOW}@refs/tags/${VERSION}""#))
+  let verifies = installer.split(separator: "\n").filter { $0.contains("gh attestation verify \"") }
+  #expect(verifies.count == 2 && verifies.allSatisfy { $0.contains(#""${signer_pin[@]}""#) })
 }
 
 // MARK: - Sibling replacement
@@ -809,7 +830,10 @@ private let untouched = [
     }
     #expect(fixture.installed == untouched)
     let verify = try #require(fixture.calls.first { $0.hasPrefix("gh attestation verify") })
-    #expect(verify.contains(" --repo chr33s/coop --bundle "))
+    #expect(
+      verify.contains(
+        " --repo chr33s/coop --cert-identity https://github.com/chr33s/coop/.github/workflows/release.yml@refs/tags/v9.9.9 --source-ref refs/tags/v9.9.9 --deny-self-hosted-runners --bundle "
+      ))
     #expect(verify.hasSuffix("/attestations.jsonl"))
     // The bundle is fetched with a bare curl: no header, no token on stdin.
     let bundleFetch = try #require(fixture.calls.first { $0.contains("attestations.jsonl -o") })
