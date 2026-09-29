@@ -1,6 +1,6 @@
 ---
 name: mutation-check
-description: Run the Swift host fault-injection check (scripts/swift-host-fault-injection.py) for changed security-relevant coop behavior and keep its fault list synchronized. Use when security-relevant host logic changes, before refactors of it, or when asked to verify that tests bite.
+description: Run the Swift host fault-injection check (scripts/swift-host-fault-injection.py) for changed security-relevant isolate behavior and keep its fault list synchronized. Use when security-relevant host logic changes, before refactors of it, or when asked to verify that tests bite.
 ---
 
 <!--
@@ -41,5 +41,5 @@ first.
 Code that only shells out, runs SSH, or talks to external services is not a
 fault-injection target by itself; identify the unit/integration blind spot
 explicitly and test extracted pure decision logic directly. For
-`coop-proxy/` policy code use its Muter sweep and
+`iso-proxy/` policy code use its Muter sweep and
 `scripts/test-swift-proxy-mutations.py` instead.

@@ -1,6 +1,6 @@
 Show or switch a VM's model backend (cloud vs. local)
 
-Usage: coop model [NAME] [COMMAND]
+Usage: iso model [NAME] [COMMAND]
 
 Commands:
   local   Route this VM's agents at a host-side local model server

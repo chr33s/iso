@@ -1,6 +1,6 @@
-Print a shell completion script (run `coop completions --help` for setup)
+Print a shell completion script (run `iso completions --help` for setup)
 
-Usage: coop completions <SHELL>
+Usage: iso completions <SHELL>
 
 Arguments:
   <SHELL>  Shell to generate completions for [possible values: bash, elvish, fish, powershell, zsh]
@@ -10,20 +10,20 @@ Options:
 
 Examples:
   # bash — system-wide
-  coop completions bash | sudo tee /etc/bash_completion.d/coop > /dev/null
+  iso completions bash | sudo tee /etc/bash_completion.d/iso > /dev/null
 
   # bash — user
-  coop completions bash > ~/.local/share/bash-completion/completions/coop
+  iso completions bash > ~/.local/share/bash-completion/completions/iso
 
   # zsh — user (ensure dir is on $fpath; restart shell)
-  coop completions zsh > ~/.zfunc/_coop
+  iso completions zsh > ~/.zfunc/_iso
 
   # fish — user
-  coop completions fish > ~/.config/fish/completions/coop.fish
+  iso completions fish > ~/.config/fish/completions/iso.fish
 
 Dynamic completion (live instance / image / profile names) requires one
 extra line in your shell rc:
 
-  bash:  source <(COMPLETE=bash coop)
-  zsh:   source <(COMPLETE=zsh coop)
-  fish:  source (COMPLETE=fish coop | psub)
+  bash:  source <(COMPLETE=bash iso)
+  zsh:   source <(COMPLETE=zsh iso)
+  fish:  source (COMPLETE=fish iso | psub)

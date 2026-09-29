@@ -12,7 +12,7 @@
 
 The governing specification is [the Swift proxy specification](swift-proxy-spec.md). This record tracks implementation evidence; it does not replace or narrow
 the specification. Swift is now the sole credential-proxy implementation in
-`coop-proxy/`; the Rust host CLI remains. Entries below are chronological
+`iso-proxy/`; the Rust host CLI remains. Entries below are chronological
 historical evidence, including the removed Rust implementation and the former
 `macos/` package layout. See [current acceptance status](swift-proxy-acceptance.md)
 for completed and outstanding gates.
@@ -43,7 +43,7 @@ Additional reference hardening:
 
 Verification on 2026-09-26:
 
-- `cargo test -p coop-proxy`: 27 unit and 9 process/socket tests passed.
+- `cargo test -p iso-proxy`: 27 unit and 9 process/socket tests passed.
 - `cargo test --lib proxy::tests`: 26 tests passed.
 - Earlier deliberate mutations disabling duplicate rejection, absolute-target
   rejection, and nominated-header stripping individually failed their tests.
@@ -55,12 +55,12 @@ bound in the specification.
 
 ## Phase 1: Swift pure policy
 
-`coop-proxy` now contains CoopProxyCore with fixed provider policy,
+`iso-proxy` now contains IsoProxyCore with fixed provider policy,
 strict startup configuration, redacted secrets, CryptoKit HMAC verification of
 capabilities, raw-target validation, exact operations, request/response header
 filtering, and resource constants. It has no socket or process dependencies.
 
-- `swift test --package-path coop-proxy`: 8 table-driven tests passed.
+- `swift test --package-path iso-proxy`: 8 table-driven tests passed.
 - `python3 scripts/test-swift-proxy-mutations.py`: all five required policy
   mutations were killed and the restored baseline passed. This targeted gate
   supplements a future full Swift mutation sweep.
@@ -68,7 +68,7 @@ filtering, and resource constants. It has no socket or process dependencies.
 
 ## Phase 2: inbound NIO transport
 
-`CoopProxyTransport` now has a loopback socket listener and HTTP/1 inbound gate.
+`IsoProxyTransport` now has a loopback socket listener and HTTP/1 inbound gate.
 SwiftNIO 2.100.0 is pinned by exact version and revision in Package.resolved,
 including all transitive dependencies. The decoder explicitly enforces 16 KiB
 fields, 64 KiB aggregate headers, and 128 fields. Authentication, raw targets,
@@ -76,7 +76,7 @@ operation policy, declared and streamed body caps, trailer rejection, header/bod
 timeouts, connection capacity, and response-lifetime request leases are enforced
 by the gate. Request buffers pass through incrementally without aggregation.
 
-Evidence: `swift test --package-path coop-proxy` passes 8 pure policy and
+Evidence: `swift test --package-path iso-proxy` passes 8 pure policy and
 11 transport tests. These include real socket rejection, malformed/incomplete
 header limits, ambiguous framing, 64 MiB in chunks followed by a rejected excess
 byte, 256 held responses with rejection of the 257th, long response survival,
@@ -132,7 +132,7 @@ not yet switched.
 
 ## Phase 4: executable and production confinement
 
-`coop-proxy-swift` now disables core dumps, verifies file/exec/TCP restrictions
+`iso-proxy-swift` now disables core dumps, verifies file/exec/TCP restrictions
 before reading secrets, bounds startup JSON to 64 KiB, decodes to EOF, closes
 stdin, and only then binds. Only the normal stdin startup and `--jail-selftest`
 are accepted; no unconfined switch exists. SIGTERM/SIGINT close the listener and
@@ -150,7 +150,7 @@ Verification on 2026-09-27:
 
 - Swift build passes; unit suite has 22 passing tests and one opt-in live test
   skipped during ordinary offline execution.
-- `COOP_PROXY_LIVE_TLS_TEST=1 swift test --package-path coop-proxy --filter
+- `ISO_PROXY_LIVE_TLS_TEST=1 swift test --package-path iso-proxy --filter
   liveProviderSystemTrust` passes for both fixed providers without credentials.
 - `python3 scripts/test-swift-proxy-process.py` passes: refusal while unconfined
   before stdin is supplied; invalid/oversized input rejection with redacted
@@ -320,16 +320,16 @@ Diff whitespace checks pass.
 
 ## Local dual-build transition
 
-The host now reads `COOP_PROXY_IMPLEMENTATION` as a strict Rust/Swift enum.
+The host now reads `ISO_PROXY_IMPLEMENTATION` as a strict Rust/Swift enum.
 Unset means Rust. Swift is permitted only in a macOS apple-container build,
-resolves only the sibling `coop-proxy-swift` executable, and never falls back
-to Rust. Rust first resolves `coop-proxy-rs`, then the legacy name for existing
+resolves only the sibling `iso-proxy-swift` executable, and never falls back
+to Rust. Rust first resolves `iso-proxy-rs`, then the legacy name for existing
 installations. The guest/startup schema has no selector and proxy child
 environment clearing remains in effect. Unit tests cover defaults, unsupported
 platform/backend rejection, invalid values, and the Swift-only candidate list.
 
 `scripts/build-proxy-transition.py` builds the Apple-backend host plus both proxy
-implementations and stages `coop-proxy-rs` and `coop-proxy-swift` beside `coop`,
+implementations and stages `iso-proxy-rs` and `iso-proxy-swift` beside `iso`,
 using atomic replacement for each completed artifact. It supports debug and
 release builds on macOS 27+ Apple Silicon. This enables local differential/VM
 work; release archives, installers, and the production default are not switched.
@@ -346,7 +346,7 @@ selector test to fail; the original candidate list was restored and retested.
 
 `tests/integration-proxy-transition.py` now provides a dedicated Apple sandbox
 gate for the staged transition artifacts. It builds a private signed runtime,
-uses an isolated coop data directory and synthetic provider/host credentials,
+uses an isolated isolate data directory and synthetic provider/host credentials,
 then checks Swift launch, guest 401/403 responses, environment/config credential
 suppression, selected process identity, stop teardown, and explicit Rust restart.
 Only denied GET operations are issued. It cleans up its VM and owner-scoped
@@ -454,8 +454,8 @@ listener remaining alive. The production source was restored and rebuilt; the
 ## Local transition archive
 
 The dual-build script accepts `--archive PATH`, producing an atomically replaced
-local tarball containing the Apple-backend `coop`, `coop-proxy-rs`,
-`coop-proxy-swift`, project license, binary checksums, and build metadata.
+local tarball containing the Apple-backend `iso`, `iso-proxy-rs`,
+`iso-proxy-swift`, project license, binary checksums, and build metadata.
 Metadata records macOS 27/arm64, the Rust default, source revision, dirty-tree
 status and local-build status. The runtime remains a separate installation.
 This prepares a concrete dual-implementation artifact without changing the
@@ -492,7 +492,7 @@ This is a reviewed mutant-induced trap, not an assertion kill. The runner
 continues to exit nonzero for this outcome so future runtime failures require
 inspection. No build errors or timeouts occurred, and all four recorded input
 hashes match production source. Artifacts are retained locally under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-proxy-muter-tti5n8zi`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-proxy-muter-tti5n8zi`.
 The separate mandatory targeted-regression mutation checks remain applicable.
 
 ## Rust mutation sweeps and survivor triage
@@ -522,49 +522,49 @@ proposed `disable_core_dumps` exclusion was removed after inspection showed
 that existing gates did not check its limits: a new subprocess unit test now
 checks both soft and hard limits are zero, starting with a nonzero soft limit
 when the inherited hard limit permits it. Its targeted mutation run caught both mutants
-under `/tmp/coop-core-limit-mutation`. Listing mutants verified the exclusions.
+under `/tmp/iso-core-limit-mutation`. Listing mutants verified the exclusions.
 The original sweeps retain their original configuration and source snapshot,
 so their reports still include these newly triaged cases.
 
 Logs/artifacts:
 
-- `/tmp/coop-host-proxy-mutation.log` and `/tmp/coop-host-proxy-mutation/mutants.out`
-- `/tmp/coop-reference-proxy-mutation.log` and `/tmp/coop-reference-proxy-mutation/mutants.out`
-- `/tmp/coop-selector-mutation-recheck/mutants.out` (2 caught)
-- `/tmp/coop-preface-mutation-recheck/mutants.out` (12 caught)
+- `/tmp/iso-host-proxy-mutation.log` and `/tmp/iso-host-proxy-mutation/mutants.out`
+- `/tmp/iso-reference-proxy-mutation.log` and `/tmp/iso-reference-proxy-mutation/mutants.out`
+- `/tmp/iso-selector-mutation-recheck/mutants.out` (2 caught)
+- `/tmp/iso-preface-mutation-recheck/mutants.out` (12 caught)
 
 Further survivors in `validate_head` prompted a direct table of exact/over-limit
 field, aggregate and target sizes, HTTP version, absolute targets and conflicting
 framing headers. All six inbound unit tests pass. The full `validate_head` mutation rerun
 caught all 25 mutants (zero missed, unviable or timeout) under
-`/tmp/coop-head-mutation-recheck`, with console log
-`/tmp/coop-head-mutation-recheck.log`. Reference-proxy all-target
+`/tmp/iso-head-mutation-recheck`, with console log
+`/tmp/iso-head-mutation-recheck.log`. Reference-proxy all-target
 clippy passes with warnings denied. Host proxy unit tests passed. `taplo` is unavailable
 on the current PATH, so its formatting check has not run for these exclusions.
 
 The raw-target sweep exposed missing cases with one invalid percent-escape
 nibble and invalid bytes after a valid escape. These cases are now in the
-request-target test. The full `valid_target` rerun under `/tmp/coop-target-mutation-recheck`
+request-target test. The full `valid_target` rerun under `/tmp/iso-target-mutation-recheck`
 finished with 26 caught and two timeouts, zero survivors. The timeouts replace
 forward scanner increments with subtraction or multiplication, causing loops
 on valid inputs; they are mutant-induced hangs, not assertion kills.
 
 A new socket assertion checks the exact complete empty refusal response;
 removing `refuse` is now caught (one-mutant rerun under
-`/tmp/coop-refusal-mutation-recheck`). The response-body test now checks
+`/tmp/iso-refusal-mutation-recheck`). The response-body test now checks
 `GuardedBody` end-of-stream and size hints before and after consuming its
 payload; its targeted sweep finished with four caught, 15 unviable and zero
-survivors under `/tmp/coop-guarded-body-mutation`. Corrected the executable-test header to avoid
+survivors under `/tmp/iso-guarded-body-mutation`. Corrected the executable-test header to avoid
 claiming that the VM suite covers admitted forwarding.
 
 The serving/admission rerun caught all 11 generated mutants (zero survivors,
-unviable or timeout) under `/tmp/coop-admission-mutation-recheck`. New tests
+unviable or timeout) under `/tmp/iso-admission-mutation-recheck`. New tests
 check rejection of a non-loopback configuration at `serve`, exact field limits,
 method denial, body-size/trailer rejection and capacity ordering over real
 loopback HTTP. The test context has zero upstream permits, preventing provider
 contact even if a gate mutation permits a denied request. Reference clippy
 passes with warnings denied. The full reference package unit/executable test
-suite passed after these changes (`/tmp/coop-reference-mutation-suite.log`).
+suite passed after these changes (`/tmp/iso-reference-mutation-suite.log`).
 
 One `operation_allowed` survivor changes the final `||` to `&&`. Inspection of
 pinned `http` 1.4.2 `Uri::from_parts` confirms scheme requires authority, and
@@ -593,19 +593,19 @@ typed failure, and dropping its static text changes no secrecy/status contract.
 | Secret Debug, Failure Display, URI connector | 3 | Reviewed equivalents, narrow exclusions |
 
 All 46 original survivors are accounted for: 43 now caught and three reviewed
-equivalents. The last targeted run (`/tmp/coop-forward-mutation-recheck`)
+equivalents. The last targeted run (`/tmp/iso-forward-mutation-recheck`)
 reported five caught, two unviable and zero missed. The host has zero unresolved
 survivors as recorded above. `.cargo/mutants.toml` changed; listings confirm the
 policy's method and other operators remain in scope.
 
-The new Rust forwarding fixture in `coop-proxy/src/forward_tests.rs` exercises
+The new Rust forwarding fixture in `iso-proxy/src/forward_tests.rs` exercises
 both providers through the actual raw preface, authorization, rewrite, TLS,
 Hyper forwarding and response-filter path. It verifies payload/query fidelity,
 credential replacement, nominated-header removal, duplicate response headers,
 redirect passthrough and no decompression. Only unit-test builds contain its
 loopback destination override; TLS still validates the fixed provider hostname
 against an explicit test CA. Public fixture keys/certificates are documented in
-`coop-proxy/src/testdata/README.md`. The first fixture attempt revealed Hyper
+`iso-proxy/src/testdata/README.md`. The first fixture attempt revealed Hyper
 was overwriting its Connection header when keep-alive was disabled; explicitly
 sending `x-private, close` preserved the intended wire nomination and the test
 then passed. This was a fixture issue, not evidence of a proxy filtering bug.
@@ -634,7 +634,7 @@ were removed. The pre-existing untrusted-certificate rejection fixture remains.
 `python3 scripts/test-proxy-forwarding-corpus.py` orchestrates both tests and
 retains logs, selected commands and corpus hash. The combined run passed all
 six cases in each implementation; evidence is retained under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-nnu1coku`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-nnu1coku`.
 Rust all-target clippy passed after the fixture changes. That initial run
 checked shared expected values; observation comparison was added as described
 below. Broader shared TLS-failure and streaming/resource cases remain open.
@@ -656,9 +656,9 @@ so the proxies receive equivalent inputs. All six normalized observations then
 matched. Altering captured request bytes, response bytes, path, status, duplicate
 header cardinality or upstream count caused the comparison to fail; changing
 only header case/order still passed. Evidence from the initial passing run is
-under `/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-2pmix2n5`.
+under `/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-2pmix2n5`.
 The final orchestrated rerun also passed under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-zxs8c40v`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-zxs8c40v`.
 Rust all-target clippy and format checks passed. These observations close the
 admitted-case comparison gap. Physical-close coverage was added next; shared
 resource/timeout/TLS-failure cases remain open.
@@ -673,12 +673,12 @@ one head/body/end, then requires channel inactivity without a client-initiated
 close. Both add `connection_closed` to the compared observations.
 
 The combined run passed all cases with matching observations; evidence is in
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-6j0a4u1u`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-6j0a4u1u`.
 In isolated source copies, removing the successful-response close in Swift
 failed the explicit peer-close assertion after five seconds; enabling Rust
 keep-alive failed its socket EOF deadline. Both mutations compiled and failed
-in tests. Artifacts are under `coop-peer-close-mutation-yafb0i9z` and
-`coop-rust-close-mutation-l4row6nh` in the same temporary parent. The working
+in tests. Artifacts are under `iso-peer-close-mutation-yafb0i9z` and
+`iso-rust-close-mutation-l4row6nh` in the same temporary parent. The working
 sources were not mutated. Rust clippy passed with warnings denied.
 
 These checks cover ordinary admitted responses in the six current corpus
@@ -702,14 +702,14 @@ complete schema for each case type, preventing omitted fields from silently
 passing comparison.
 
 The 14-case combined run passed with matching observations under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-n1ut_16h`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-n1ut_16h`.
 Disabling Swift TLS verification in an isolated package copy caused all eight
 negative cases to detect upstream HTTP delivery and fail (artifact:
-`coop-corpus-tls-mutation-o_ptza0t` in the same temporary parent). This confirms
+`iso-corpus-tls-mutation-o_ptza0t` in the same temporary parent). This confirms
 that a provider-style 502 cannot hide credential delivery from the assertions.
 Working production sources were unchanged. Rust all-target clippy passes.
 A final rerun including diagnostic-redaction assertions also passed under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-d4o6gp88`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-d4o6gp88`.
 Shared DNS/connect-timeout and streaming/resource failures remain open.
 
 ## Shared establishment-deadline cases
@@ -722,7 +722,7 @@ milliseconds are retained; comparison validates the same 29–35 second bounds
 rather than requiring identical scheduler timing.
 
 The combined run passed under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-5cpzwh67`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-5cpzwh67`.
 Rust returned after 30,004 ms for each provider; Swift after 30,011 ms for each.
 Upstream sockets were released in both implementations. Rust clippy passes.
 These cases cover a stalled TLS handshake within the establishment budget;
@@ -732,15 +732,15 @@ An isolated Swift mutation shortening the bridge establishment deadline to one
 second was rejected. Its first run hit the upstream-release assertion because
 the client retained its original 30-second connection deadline. Checking elapsed
 time first made the focused rerun fail directly at 1,009 ms versus the 29,000 ms
-lower bound (`/tmp/coop-short-deadline-recheck.log`). The mutation exists only in
-`coop-deadline-mutation-9srg0j8s` in the temporary directory, not working sources.
+lower bound (`/tmp/iso-short-deadline-recheck.log`). The mutation exists only in
+`iso-deadline-mutation-9srg0j8s` in the temporary directory, not working sources.
 The ordinary matching 30-second settings passed the release check; prompt
 cancellation during an in-flight handshake remains a distinct case to audit.
 
 ## Shared DNS failures
 
 The forwarding corpus now has 18 cases, including DNS failure for both
-providers. Test-only destination routing uses `coop-proxy-test.invalid`; the
+providers. Test-only destination routing uses `iso-proxy-test.invalid`; the
 compiled provider hostname remains the TLS identity. Rust verifies resolver
 rejection before exercising forwarding. Swift checks the A/AAAA errors inside
 NIOConnectionError are typed UnknownHost failures for the reserved name, with
@@ -748,7 +748,7 @@ no TCP connection attempts. Both require local 502, zero upstream HTTP requests,
 physical guest closure and no synthetic secrets in the response.
 
 The complete 18-case run passed with matching observations under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-b2r2bw68`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-b2r2bw68`.
 The first Swift assertion incorrectly expected an unwrapped resolver error;
 inspection of pinned NIO's HappyEyeballs implementation identified its wrapper,
 and the corrected typed assertion passed. Rust all-target clippy passed.
@@ -756,7 +756,7 @@ The negative-case manifest field is now `establishment_failure`, covering DNS
 and TLS without implying that DNS failure reached a TLS handshake.
 Swift fixture properties use camel case with explicit shared JSON key mappings;
 strict Swift formatting lint and the final focused 18-case Swift rerun passed
-(`/tmp/coop-dns-swift-naming-recheck.log`).
+(`/tmp/iso-dns-swift-naming-recheck.log`).
 
 ## Shared slow-header deadlines
 
@@ -767,11 +767,11 @@ initial write. The harness enforces an absolute receive deadline, including
 the deliberate delay, so resetting the proxy timer on progress cannot pass.
 
 All 37 cases passed for both providers and both real executables under the
-production Seatbelt profile (148 exchanges; `/tmp/coop-slow-headers-contract.log`).
+production Seatbelt profile (148 exchanges; `/tmp/iso-slow-headers-contract.log`).
 An isolated copy of the current Rust proxy with its initial-header timeout
 extended from ten to sixty seconds compiled successfully and was rejected by
 the receive deadline in the first shared case. Evidence is under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-header-deadline-mutation-ksviejpp`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-header-deadline-mutation-ksviejpp`.
 No working production timeout was changed. This adds shared slow-header
 coverage; body-idle, held-stream capacity and whole-process memory cases remain.
 
@@ -787,17 +787,17 @@ HTTP recovery probes verify admission rather than relying on successful TCP
 connect alone. All sockets are closed on test failure.
 
 The focused run passed all four implementation/provider combinations
-(`/tmp/coop-idle-capacity.log`). Isolated copies of the current Rust proxy with
+(`/tmp/iso-idle-capacity.log`). Isolated copies of the current Rust proxy with
 limits of 255 and 257 compiled and were rejected by the shared harness: 255 lost
 a held socket and 257 left the excess socket open. Mutation logs and the report
 are under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-idle-capacity-mutation-dnxf95av`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-idle-capacity-mutation-dnxf95av`.
 `--capacity-only` runs this gate alone; the default refusal run also includes it.
 This establishes idle connection capacity and reuse, not the distinct in-flight
 upstream response limit or slow-reader memory bound.
 The full run also passed all 148 refusal exchanges, including both slow-header
 cases, after the shared response-reader extraction
-(`/tmp/coop-capacity-full-contract.log`). Python parsing and whitespace checks
+(`/tmp/iso-capacity-full-contract.log`). Python parsing and whitespace checks
 passed. Production proxy code was not changed for this gate.
 
 ## Rust real TLS stream capacity
@@ -813,11 +813,11 @@ while normal completion waits for the proxy's EOF.
 
 The focused test passed for both providers (1,024 admitted TLS streams across
 the four rounds), and all-target Rust clippy passed with warnings denied.
-Logs: `/tmp/coop-rust-stream-capacity.log` and
-`/tmp/coop-rust-stream-clippy.log`. An isolated mutation dropping the request
+Logs: `/tmp/iso-rust-stream-capacity.log` and
+`/tmp/iso-rust-stream-clippy.log`. An isolated mutation dropping the request
 permit as soon as response headers arrive compiled and failed the explicit
 held-permit assertion. Its evidence is under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-stream-permit-mutation-bwwm07fe`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-stream-permit-mutation-bwwm07fe`.
 That mutation preceded the additional authenticated bytes on the excess socket;
 the final working test including those bytes also passed. Production behavior
 is unchanged; only test-fixture helpers gained sibling-module visibility.
@@ -843,24 +843,24 @@ for response completion. The labeled failure was upstream closure after the
 first disconnect round, and live socket inspection showed fixture sockets in
 CLOSE_WAIT. Disabling test-server pipelining assistance, as in the existing
 lifecycle fixture, allowed it to observe peer EOF. The corrected two-round run
-passed in 4.983 seconds (`/tmp/coop-swift-stream-capacity-fixed.log`).
+passed in 4.983 seconds (`/tmp/iso-swift-stream-capacity-fixed.log`).
 
 An isolated Swift mutation lowering the connection cap to 255 was rerun with
 the corrected fixture and failed at the first chunk of guest 256. Evidence:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-swift-stream-capacity-mutation-jbppk0iv/mutation-fixed.log`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-swift-stream-capacity-mutation-jbppk0iv/mutation-fixed.log`.
 Its earlier failure with the faulty EOF fixture is not relied upon. Production
 proxy behavior was not changed. Automatic comparison of the stream-capacity
 observations remains open.
 The final three-round runs passed for both languages and providers (1,536
 admitted TLS streams per implementation). Logs are
-`/tmp/coop-stream-capacity-rust-final.log` and
-`/tmp/coop-stream-capacity-swift-final.log`; Swift completed in 7.278 seconds.
+`/tmp/iso-stream-capacity-rust-final.log` and
+`/tmp/iso-stream-capacity-swift-final.log`; Swift completed in 7.278 seconds.
 Strict Swift formatting lint and whitespace checks passed.
 
 ## Compared TLS stream-capacity observations
 
 Both real TLS tests now emit optional structured observations through the
-test-only `COOP_STREAM_OBSERVATIONS` path. Rust counts actual fixture HTTP
+test-only `ISO_STREAM_OBSERVATIONS` path. Rust counts actual fixture HTTP
 requests and socket closes atomically; Swift records admitted provider channels
 and their close callbacks. Per-round observations include held responses,
 upstream request/closure counts, bytes returned to the excess request and
@@ -871,7 +871,7 @@ assertions, not substituted for them.
 empty test selection, validates all six provider/round records against the
 contract and compares them. It preserves raw observations, logs, commands and
 outcomes. The combined run passed under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-stream-capacity-ncm5he39`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-stream-capacity-ncm5he39`.
 All 1,536 streams per implementation were exercised. A later field-type check
 was validated against these same captures without rerunning network work.
 
@@ -899,12 +899,12 @@ An isolated Swift mutation removing the establishment-timer cancellation on
 successful request-head transmission compiled and failed at the explicit
 "stream closed before final SSE chunk" assertion. It finished in 35.500 seconds;
 evidence is under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-long-sse-mutation-vhiblw7n`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-long-sse-mutation-vhiblw7n`.
 Six invalid duration variants were rejected by the validator, while two valid
 durations normalized identically. Rust clippy and strict Swift formatting lint
 passed. No production timeout was changed.
 The combined run passed all six rounds with matching observations under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-stream-capacity-hfz497j6`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-stream-capacity-hfz497j6`.
 The Rust wait was subsequently extracted into a test helper to satisfy clippy's
 function-length limit; its operations are unchanged, and clippy checked the
 extracted version. Body-idle timeout and whole-process memory gates remain open.
@@ -921,12 +921,12 @@ close, and both request/connection permit counts must recover to 256. Local
 diagnostics are checked for synthetic credential disclosure.
 
 The two provider cases run concurrently and passed in 45.44 seconds
-(`/tmp/coop-rust-body-idle.log`). All-target clippy passed with warnings denied
-(`/tmp/coop-rust-body-idle-clippy.log`). An isolated mutation removing the reset
+(`/tmp/iso-rust-body-idle.log`). All-target clippy passed with warnings denied
+(`/tmp/iso-rust-body-idle-clippy.log`). An isolated mutation removing the reset
 in `Upload::poll_frame` compiled and failed the elapsed-time assertion at about
 30 seconds. Evidence is under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-body-idle-mutation-w2ea2weu`.
-Optional observations are available through test-only `COOP_IDLE_OBSERVATIONS`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-body-idle-mutation-w2ea2weu`.
+Optional observations are available through test-only `ISO_IDLE_OBSERVATIONS`.
 Production behavior is unchanged. A matching Swift socket-level body-idle case
 and differential comparison remain open.
 
@@ -938,11 +938,11 @@ providers and use production gate/bridge/client configuration with test-only
 DNS/port routing and temporary trust anchors. The test observes both partial
 bytes at the provider before timeout, local 408 and physical guest closure,
 incomplete upload and upstream socket closure. A first focused run passed in
-45.561 seconds (`/tmp/coop-swift-body-idle.log`).
+45.561 seconds (`/tmp/iso-swift-body-idle.log`).
 
 The combined runner passed both implementations and both providers with
 matching observations under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-body-idle-m5wms_qs`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-body-idle-m5wms_qs`.
 It validates the exact observation schema, status, body bytes, completion and
 closure states, plus the 44–51 second bounds, before comparing. Twelve altered
 captures were rejected, including missing/duplicate providers, wrong body/status,
@@ -952,7 +952,7 @@ variation normalize equally; `tripwire-check.json` records this check.
 Removing only Swift's body-progress timer reset in an isolated copy compiled
 and failed at about 30 seconds (one recorded duration was 30,011 ms), confirming
 the new test distinguishes idle from total request timeout. Evidence:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-swift-body-idle-mutation-bo0p5xtf/mutation.log`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-swift-body-idle-mutation-bo0p5xtf/mutation.log`.
 Strict Swift formatting lint and whitespace checks pass. Production behavior
 is unchanged. The body-idle differential gate is complete; memory, additional
 streaming failure/boundary cases, integrations and release gates remain.
@@ -968,9 +968,9 @@ physical guest closure and zero upstream TCP connections/HTTP requests. Both
 paths require complete permit recovery and any upstream socket closure.
 
 The final focused run passed in 3.11 seconds
-(`/tmp/coop-rust-body-limit-final.log`), and all-target clippy passed
-(`/tmp/coop-rust-body-limit-clippy.log`). Captures are in
-`/tmp/coop-rust-body-limit-observations.json`; an independent Python calculation
+(`/tmp/iso-rust-body-limit-final.log`), and all-target clippy passed
+(`/tmp/iso-rust-body-limit-clippy.log`). Captures are in
+`/tmp/iso-rust-body-limit-observations.json`; an independent Python calculation
 matched the 64 MiB patterned body's SHA-256:
 `98dc891b284e4d84ac25b0c0a24fdbe39a7f0dbd643ad5e8aa06e02fc6258254`.
 The proxy crate adds `sha2` only as a test dependency, using the version already
@@ -980,7 +980,7 @@ Isolated mutations changing the cap by minus/plus one byte both compiled and
 failed: the smaller cap prevented initial upstream progress on the exact-limit
 case; the larger cap prevented the oversized header-only request from receiving
 its timely refusal. Reports and logs are under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-body-limit-mutation-wbpgp8r1`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-body-limit-mutation-wbpgp8r1`.
 No production limit changed. Swift's matching socket gate and automatic
 comparison remain open. Unknown-length streaming policy remains the previously
 requested decision; this known-length gate makes no claim to resolve it.
@@ -993,11 +993,11 @@ with temporary test trust anchors and fixed-provider DNS/port routing. It
 requires the first 64 KiB to arrive before sending the rest, hashes incrementally
 with CryptoKit, checks the complete expected SHA-256, and verifies zero upstream
 TCP connections for a declared length one byte over the cap. The focused Swift
-run passed in 7.571 seconds (`/tmp/coop-swift-body-limit.log`).
+run passed in 7.571 seconds (`/tmp/iso-swift-body-limit.log`).
 
 The combined run passed four provider/length records in both implementations,
 with matching counts, digests, status and closure under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-body-limit-w6pwffxv`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-body-limit-w6pwffxv`.
 Fifteen corrupted captures were rejected, including wrong digests, body lengths,
 closure states, unexpected upstream activity, missing/duplicate cases and
 invalid field types. The verifier preserves raw observations and command logs;
@@ -1008,7 +1008,7 @@ The smaller cap caused an I/O-on-closed-channel failure during the exact-limit
 upload; the first mutation driver expected the later progress assertion, so its
 result check was corrected to reflect that observed failure. The larger cap
 failed the prompt-refusal/closure assertion. Logs and the final report are under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-swift-body-limit-mutation-qfo6oe0j`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-swift-body-limit-mutation-qfo6oe0j`.
 Strict Swift formatting lint and whitespace checks pass. Production behavior
 is unchanged. The known-length differential boundary gate is complete; the
 unknown-length policy decision and memory/integration/release gates remain.
@@ -1030,12 +1030,12 @@ for an observed three-second plateau and preserves raw samples, including on
 failure. It does not increase the memory or total-progress budgets.
 
 Separate processes offering 256 MiB and 1 GiB passed under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-4tijl30g`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-4tijl30g`.
 Both plateaued after 1,048,576 upstream bytes. RSS growth was 704,512 and 688,128
 bytes respectively. An isolated mutation ignoring ResponseRelay's guest-write
 future sent all 268,435,456 offered bytes and grew RSS by 1,063,944,192 bytes,
 failing the memory assertion. Evidence is under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-mutation-gwpu6vxr`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-mutation-gwpu6vxr`.
 Seven corrupted memory reports were rejected by the runner's validator.
 Strict Swift formatting lint and whitespace checks pass.
 
@@ -1051,8 +1051,8 @@ The full `cargo test --workspace` run passed: 1,213 host tests, 51 proxy
 unit tests and ten proxy integration gate tests; one doctest was ignored.
 The full Swift package run passed its 26 transport and eight policy tests.
 The opt-in live TLS and memory cases were skipped in that full run; their
-separate evidence is recorded above. Logs are `/tmp/coop-full-workspace-tests.log`
-and `/tmp/coop-full-swift-proxy-tests.log`.
+separate evidence is recorded above. Logs are `/tmp/iso-full-workspace-tests.log`
+and `/tmp/iso-full-swift-proxy-tests.log`.
 
 Both workspace clippy configurations passed with warnings denied (default and
 `apple-container`). Rust formatting, strict Swift formatting lint, pinned
@@ -1068,7 +1068,7 @@ checked successfully against the patched, exact pinned Muter revision
 A subsequent hook run failed the existing
 `port_forward::tests::collision_check_passes_when_ports_free` test. That test
 passed immediately in isolation, and the final full hook rerun passed all hooks
-(`/tmp/coop-prek-final.log`). The test releases selected ephemeral ports before
+(`/tmp/iso-prek-final.log`). The test releases selected ephemeral ports before
 checking them, so concurrent reuse is a possible explanation, not an established
 cause. No port-forward source changes were made. `git diff --check` also passed.
 
@@ -1085,7 +1085,7 @@ in `docs/testing.md`. It uses the production client configuration against a loca
 TCP fixture that receives ClientHello but never answers; no credential, trust
 exception, or production endpoint is involved.
 
-The final run (`/tmp/coop-handshake-cancellation-audit-final.log`) failed exactly
+The final run (`/tmp/iso-handshake-cancellation-audit-final.log`) failed exactly
 the prompt socket closure assertion. The request returned
 `HTTPClientError.cancelled`, the upstream socket remained open two seconds later,
 and client shutdown completed 30.0008 seconds after cancellation. After allowing
@@ -1129,9 +1129,9 @@ cancellation, late DNS candidates after cancellation, a short fixture handshake
 deadline, removal of that deadline after success, untrusted CA and wrong-host
 rejection. The restored-source run also included the existing upstream policy
 configuration test: five tests passed in 2.552 seconds
-(`/tmp/coop-owned-tls-restored.log`). Strict Swift lint and whitespace checks pass.
+(`/tmp/iso-owned-tls-restored.log`). Strict Swift lint and whitespace checks pass.
 The production-profile process gate also passed with `--skip-tls`
-(`/tmp/coop-owned-tls-process.log`), checking confined startup, bounded/redacted
+(`/tmp/iso-owned-tls-process.log`), checking confined startup, bounded/redacted
 startup handling, HTTP readiness, secret handling and shutdown.
 
 Five deliberate mutations compiled and failed the relevant assertions: omitted
@@ -1139,7 +1139,7 @@ socket closure, disabled certificate verification, admitted late DNS candidate,
 disabled hostname verification, and a timer left running after TLS succeeded.
 The late-DNS mutation opened one unwanted TCP connection. The timer mutation
 closed both successfully established provider sockets. Results and command logs
-are `/tmp/coop-owned-tls-mutations.json` and the referenced log paths. Every
+are `/tmp/iso-owned-tls-mutations.json` and the referenced log paths. Every
 mutation was restored before the final passing run.
 
 This component is deliberately staged and does not yet repair the forwarding
@@ -1174,20 +1174,20 @@ real thirty-second stalled-handshake cases.
 Both provider cases of bridgeCancellationClosesStalledTLSHandshake passed in
 0.029 seconds total. The migrated lifecycle tests cover partial/complete uploads,
 guest disconnect, proxy shutdown and early responses; the exact guest-write
-acknowledgment test passed too (`/tmp/coop-owned-http-lifecycle.log`). Mutating away
+acknowledgment test passed too (`/tmp/iso-owned-http-lifecycle.log`). Mutating away
 bridge cancellation failed both provider cases at the two-second assertion.
 Ignoring the guest acknowledgment future also compiled and failed its dedicated
-test. Logs and results are `/tmp/coop-owned-http-mutations.json`. Both mutations
+test. Logs and results are `/tmp/iso-owned-http-mutations.json`. Both mutations
 were restored before the final full suite.
 
 The final suite reported 32 transport and eight policy tests passed, with the
 historical AHC audit, live TLS probe and opt-in memory test skipped. It includes
 the migrated 64 MiB body boundary, forty-five-second body-idle reset, 256-stream
 capacity and thirty-one-second silent-stream cases. Transport time was 71.323
-seconds (`/tmp/coop-owned-http-final-suite.log`).
+seconds (`/tmp/iso-owned-http-final-suite.log`).
 
 The native slow-reader memory gate passed for both offered sizes under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-wuxjdg3u`:
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-wuxjdg3u`:
 RSS growth was 311,296 bytes for 256 MiB and 344,064 bytes for 1 GiB, with upstream
 progress plateauing at 1,048,576 bytes in both. This run preceded the final
 upstream-header alignment below; it exercised the new asynchronous response pump.
@@ -1195,12 +1195,12 @@ upstream-header alignment below; it exercised the new asynchronous response pump
 The first differential comparison found only an extra upstream Connection: close
 header in the six admitted cases. Removed that header; ownership already prevents
 reuse. The failing comparison remains under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-a6ybyji1`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-a6ybyji1`.
 The final rerun passed all eighteen cases in both implementations and exact
 normalized observation comparison under
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-forwarding-corpus-3ejdzb3d`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-forwarding-corpus-3ejdzb3d`.
 The production-profile process gate passed with `--skip-tls`
-(`/tmp/coop-owned-http-process.log`); it waited for the live SwiftPM corpus process
+(`/tmp/iso-owned-http-process.log`); it waited for the live SwiftPM corpus process
 before inspecting the built executable. Strict Swift lint and whitespace checks
 also passed. This process gate covers startup, readiness, secrets and shutdown,
 not a credentialed outbound request under confinement.
@@ -1235,27 +1235,27 @@ original lookup errors, and repeated access without another submission. Socket
 fixtures cover both a one-socket budget (distinguishing it from guest admission)
 and the actual default 256-socket budget, using two event loops. An initial
 socket test caught that the new budget had not been passed into the request
-constructor (`/tmp/coop-upstream-admission-tests.log`); correcting that wiring
+constructor (`/tmp/iso-upstream-admission-tests.log`); correcting that wiring
 made it pass. Internal resolver/capacity test seams add no startup options.
 
 Four compiled mutations failed their relevant tests: releasing a DNS lease on
 cancellation, releasing it after only one family, releasing socket admission
 before close, and reducing the default socket budget to 255. Results/logs are
-`/tmp/coop-admission-mutations.json`. The restored full Swift suite reported
+`/tmp/iso-admission-mutations.json`. The restored full Swift suite reported
 37 transport and eight policy tests passed in 71.199 seconds
-(`/tmp/coop-admission-full-suite.log`); the live TLS, memory and historical AHC
+(`/tmp/iso-admission-full-suite.log`); the live TLS, memory and historical AHC
 audit cases remained explicitly skipped.
 
 A subsequent fixture deliberately delayed the transport close after cancellation.
 It verified that the socket stayed active and its slot remained occupied until
 close completed, then recovered that slot. The focused run passed in 0.030 seconds
-(`/tmp/coop-delayed-close-admission.log`). Releasing admission early compiled and
+(`/tmp/iso-delayed-close-admission.log`). Releasing admission early compiled and
 failed exactly the still-open-slot assertion
-(`/tmp/coop-delayed-close-mutation.log`). That mutation was restored before final
+(`/tmp/iso-delayed-close-mutation.log`). That mutation was restored before final
 verification. All six focused admission tests then passed together in 0.629 seconds
-(`/tmp/coop-admission-restored.log`). The rebuilt executable passed the confined
+(`/tmp/iso-admission-restored.log`). The rebuilt executable passed the confined
 startup/readiness/secret/shutdown process checks with `--skip-tls`
-(`/tmp/coop-admission-process.log`). Strict Swift lint and whitespace checks pass.
+(`/tmp/iso-admission-process.log`). Strict Swift lint and whitespace checks pass.
 
 These tests establish admission and cleanup bounds, not aggregate RSS limits.
 The production confinement probe still uses the dedicated AHC client; direct
@@ -1274,7 +1274,7 @@ object remains for its event-loop reference/lifecycle API; its connection pool
 is no longer used by this probe or forwarding.
 
 The rebuilt executable passed the complete production-profile process gate
-(`/tmp/coop-native-probe-confined.log`): unconfined refusal, strict startup and
+(`/tmp/iso-native-probe-confined.log`): unconfined refusal, strict startup and
 redacted errors, HTTP readiness and shutdown, file/exec/egress denials, and live
 DNS/system TLS for both Anthropic and OpenAI. Removing the exact trustd permission
 from a temporary copy of the profile caused the required NIOSSLError failure.
@@ -1282,14 +1282,14 @@ No profile permission was added or changed.
 
 A local stalled-TLS fixture checks cancellation and subsequent reuse of a shared
 one-socket budget for both provider identities. It passed in 0.010 seconds
-(`/tmp/coop-native-probe-cancel.log`). A compiled mutation removing the task's
+(`/tmp/iso-native-probe-cancel.log`). A compiled mutation removing the task's
 cancellation handler failed both cases: each waited for the actual thirty-second
 establishment deadline and returned establishmentTimeout instead of cancelled.
 The run took 60.014 seconds; evidence is
-`/tmp/coop-native-probe-cancel-mutation.json` and its referenced log. The mutation
+`/tmp/iso-native-probe-cancel-mutation.json` and its referenced log. The mutation
 was restored before final checks. The final focused run passed probe cancellation,
 production socket admission (one and 256 slots), and the 256-cancelled-DNS workload
-in 0.621 seconds (`/tmp/coop-native-probe-restored.log`). Strict Swift lint and
+in 0.621 seconds (`/tmp/iso-native-probe-restored.log`). Strict Swift lint and
 whitespace checks pass.
 
 This closes the native DNS/TLS confinement probe gap. It does not establish
@@ -1305,17 +1305,17 @@ two rounds of each combination (16 exchanges). Guests keep their write side
 open. Each exchange must produce prompt EOF: a single local 502 before headers,
 or the original 200 and partial body without an appended error after headers.
 One-slot connection/request budgets must recover after every exchange. The
-matrix passed in 1.530 seconds (`/tmp/coop-upstream-disconnect-matrix.log`).
+matrix passed in 1.530 seconds (`/tmp/iso-upstream-disconnect-matrix.log`).
 
 Three compiled deliberate faults were detected: omitting upstream-inactive
 failure, leaving a started guest response open on failure, and losing capacity
 return. None survived or failed to compile; all were restored. Evidence is
-`/tmp/coop-disconnect-mutations.json` and its referenced logs.
+`/tmp/iso-disconnect-mutations.json` and its referenced logs.
 
 A deterministic regression exposed a separate bug: a complete HTTP response
 queued behind a pending guest body acknowledgment was discarded when the upstream
 closed. The original handler prematurely finished and omitted the response end
-(`/tmp/coop-completed-response-close-baseline.log`). OwnedResponseHandler now
+(`/tmp/iso-completed-response-close-baseline.log`). OwnedResponseHandler now
 records decoded HTTP completion and preserves that bounded queue on upstream
 closure. Incomplete responses still fail, with an explicit incompleteResponse
 error instead of a misleading pre-handshake error. The regression exercises the
@@ -1323,7 +1323,7 @@ actual handler and relay, requiring head/body/end to survive and completion to
 wait for the guest acknowledgment.
 
 The final full Swift suite passed 41 transport tests in 70.952 seconds and eight
-policy tests (`/tmp/coop-upstream-close-full-suite.log`); the historical AHC audit,
+policy tests (`/tmp/iso-upstream-close-full-suite.log`); the historical AHC audit,
 live-provider test, and opt-in RSS test were skipped. Strict Swift lint and
 whitespace checks passed. Shared Rust/Swift early-disconnect comparison remains
 open; this evidence covers the native Swift transport.
@@ -1347,15 +1347,15 @@ local message is excluded from the cross-implementation comparison. Provider bod
 bytes remain compared exactly. No production behavior changed in this step.
 
 The final paired run passed all 32 exchanges:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-upstream-disconnect-tkqefebp`
-and `/tmp/coop-shared-upstream-disconnect-final.log`. Rust proxy clippy with all
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-upstream-disconnect-tkqefebp`
+and `/tmp/iso-shared-upstream-disconnect-final.log`. Rust proxy clippy with all
 targets and warnings denied passed, as did Rust formatting, strict Swift lint
 and whitespace checks.
 
 A deliberate Rust fault corrupting the forwarded partial body compiled and
-failed the test's bounded exchange (`/tmp/coop-rust-disconnect-corruption-mutation.json`).
+failed the test's bounded exchange (`/tmp/iso-rust-disconnect-corruption-mutation.json`).
 An earlier fault suppressing one body-error poll notification survived
-(`/tmp/coop-rust-disconnect-mutation.json`); this test does not establish coverage
+(`/tmp/iso-rust-disconnect-mutation.json`); this test does not establish coverage
 of that individual notification path. Both faults were restored before the final
 paired run. The preceding Swift three-fault evidence remains recorded above.
 
@@ -1394,12 +1394,12 @@ selected-test success, and retains observations. The final combined run passed:
 | Upload | 67108864 | 163840 | 1835008 |
 
 Evidence:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-kv24phii`
-and `/tmp/coop-bidirectional-memory-final.log`. Strict Swift lint and whitespace
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-kv24phii`
+and `/tmp/iso-bidirectional-memory-final.log`. Strict Swift lint and whitespace
 checks passed. A deliberate fault ignoring the upstream upload write acknowledgment
 compiled and failed the new progress assertion: all 16 MiB were accepted while
 the provider was stalled, with 32,686,080 bytes of RSS growth. Evidence is
-`/tmp/coop-upload-memory-mutation.json` and its referenced log/observation file.
+`/tmp/iso-upload-memory-mutation.json` and its referenced log/observation file.
 The fault was restored before the final combined run.
 
 These measurements cover one stream per process through local verified TLS.
@@ -1428,19 +1428,19 @@ requests during stalled TLS, require completion within two seconds, observe both
 provider and guest closure, and reject a subsequent request without another
 upstream socket. The probe fixture also checks shutdown during a stalled handshake,
 post-shutdown refusal and repeated shutdown. The expanded focused run passed in
-0.650 seconds (`/tmp/coop-native-shutdown-expanded.log`).
+0.650 seconds (`/tmp/iso-native-shutdown-expanded.log`).
 
 A deliberate fault omitting native cancellation compiled and failed: the probe
 waited 30.009 seconds for establishmentTimeout, violating both the two-second
 shutdown bound and the required cancelled result. Evidence is
-`/tmp/coop-shutdown-mutation.json` and its referenced log. The fault was restored
+`/tmp/iso-shutdown-mutation.json` and its referenced log. The fault was restored
 before final checks. Strict Swift lint and whitespace checks passed.
 
 The final full Swift suite passed 42 transport tests in 70.951 seconds and eight
-policy tests (`/tmp/coop-native-shutdown-full-suite.log`); the historical AHC
+policy tests (`/tmp/iso-native-shutdown-full-suite.log`); the historical AHC
 audit, live-provider unit test and two opt-in RSS workloads were skipped. The
 complete production-profile process gate also passed
-(`/tmp/coop-native-shutdown-process.log`): unconfined refusal, strict startup,
+(`/tmp/iso-native-shutdown-process.log`): unconfined refusal, strict startup,
 redacted diagnostics, readiness and shutdown, file/exec/egress denials, live
 DNS/system TLS for both providers, and failure when the exact trustd permission
 is removed. Lima/Firecracker integration and live credentialed HTTP remain open.
@@ -1470,12 +1470,12 @@ The final restored runs passed:
 | 8 | 2048 | 28459008 | 409600 |
 
 Evidence:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-aggregate-memory-y4y2wqh2`
-and `/tmp/coop-aggregate-memory-final.log`. Strict Swift lint and whitespace checks
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-aggregate-memory-y4y2wqh2`
+and `/tmp/iso-aggregate-memory-final.log`. Strict Swift lint and whitespace checks
 passed. A deliberate fault in the input-observation handler retained every raw
 input buffer across closed connections. It compiled and failed the RSS assertion:
 193,527,808 bytes of total growth and 148,586,496 bytes after the first round.
-Evidence is `/tmp/coop-aggregate-retention-fault.json` and the corresponding
+Evidence is `/tmp/iso-aggregate-retention-fault.json` and the corresponding
 log/observation files. This was a simulated buffer-retention fault in the fixture,
 not a production mutation; it establishes that the RSS tripwire detects retained
 input. The fault was restored before final validation.
@@ -1501,13 +1501,13 @@ growth budget per provider and 64 MiB growth after the first round. These budget
 include provider, guest and proxy within one test process; they are not production
 RSS guarantees. Initial validation passed all six rounds in 69.443 seconds, with
 45,416,448 bytes maximum growth and 524,288 bytes maximum growth beyond a
-provider's first round (`/tmp/coop-stream-memory-first.log` and its observation
+provider's first round (`/tmp/iso-stream-memory-first.log` and its observation
 file).
 
 A deliberate fixture fault retained a separate 1 MiB buffer for every provider
 stream. It compiled and failed the RSS assertion during the first round:
 314,523,648 bytes of growth. Evidence is
-`/tmp/coop-stream-memory-retention-fault.json` and its referenced log. This is a
+`/tmp/iso-stream-memory-retention-fault.json` and its referenced log. This is a
 simulated excessive per-stream allocation in the fixture, not a production
 mutation. It was restored before final validation. Strict Swift lint and
 whitespace checks passed.
@@ -1521,16 +1521,16 @@ fixture fault. Anthropic peak growth across its three rounds was 44,711,936,
 45,154,304 and 45,236,224 bytes; OpenAI growth was 81,920, 147,456 and 180,224
 bytes relative to its later baseline in the same process. Maximum additional
 growth beyond a provider's first round was 524,288 bytes. Evidence is
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-stream-memory-63s27qqg`
-and `/tmp/coop-stream-memory-final.log`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-stream-memory-63s27qqg`
+and `/tmp/iso-stream-memory-final.log`.
 
 ## Installer and updater transition-pair handling
 
 Delivery inspection found that install.sh and the self-updater only copied the
-legacy `coop-proxy` name. A release containing the specified transition pair
-would omit both named siblings. Both paths now recognize `coop-proxy-rs` plus
-`coop-proxy-swift`, reject incomplete pairs before replacing files, and install
-both beside the host. A legacy archive containing `coop-proxy` removes stale
+legacy `iso-proxy` name. A release containing the specified transition pair
+would omit both named siblings. Both paths now recognize `iso-proxy-rs` plus
+`iso-proxy-swift`, reject incomplete pairs before replacing files, and install
+both beside the host. A legacy archive containing `iso-proxy` removes stale
 transition names so the host's Rust-name preference cannot select an older
 sibling. Archives predating any proxy retain the existing no-companion behavior.
 Checksum and attestation verification still precede extraction/installation.
@@ -1540,16 +1540,16 @@ a published Lima release.
 The installer integration fixture covers the transition pair through the real
 checksum/extraction/install path with stubbed GitHub transport/provenance calls,
 incomplete-pair preservation of all installed files, and legacy cleanup. Its
-final run passed 13 checks (`/tmp/coop-transition-installer-final.log`). The
+final run passed 13 checks (`/tmp/iso-transition-installer-final.log`). The
 updater's 40 unit tests passed, including both missing-member cases and executable
-permissions for both siblings (`/tmp/coop-transition-update-final.log`). Host
+permissions for both siblings (`/tmp/iso-transition-update-final.log`). Host
 all-target clippy with warnings denied, Rust formatting and whitespace checks
-passed (`/tmp/coop-transition-clippy-final.log`).
+passed (`/tmp/iso-transition-clippy-final.log`).
 
 Three deliberate faults were detected and restored: skipping Rust pair validation,
 retaining stale transition names, and omitting Swift from shell installation.
-Evidence is `/tmp/coop-transition-update-mutations.json` and
-`/tmp/coop-installer-transition-mutation.json` with their referenced logs.
+Evidence is `/tmp/iso-transition-update-mutations.json` and
+`/tmp/iso-installer-transition-mutation.json` with their referenced logs.
 No whole-module mutation sweep was run for update.rs, which is an IO orchestration
 exclusion; the new behavior was directly fault-checked instead.
 
@@ -1565,7 +1565,7 @@ Extended the real updater integration fixture with verified transition archives:
 install both named executable siblings, reject a missing Swift member without
 changing the host or either installed sibling, then install a legacy proxy and
 remove stale transition names. The full integration script passed 11 checks
-(`/tmp/coop-transition-update-integration.log`). It builds release/dev host
+(`/tmp/iso-transition-update-integration.log`). It builds release/dev host
 binaries, serves synthetic artifacts over loopback, verifies checksums and runs
 the real update path. Its existing API override intentionally bypasses provenance;
 this is not evidence of published-artifact attestation.
@@ -1591,8 +1591,8 @@ The new CI job's first command group passed locally: strict Swift lint, 44
 transport tests in 71.142 seconds and eight policy tests with forced resolved
 dependencies, then the confined process gate with live TLS skipped. Six opt-in
 tests were skipped by the ordinary suite (historical AHC audit, live TLS and four
-RSS workloads). Evidence is `/tmp/coop-swift-ci-local-tests.log` and
-`/tmp/coop-swift-ci-local-process.log`. The shared corpus scripts in the second
+RSS workloads). Evidence is `/tmp/iso-swift-ci-local-tests.log` and
+`/tmp/iso-swift-ci-local-process.log`. The shared corpus scripts in the second
 CI command group retain their previously recorded local evidence; they were not
 rerun in this step. Hosted execution remains unverified.
 
@@ -1603,7 +1603,7 @@ channelInactive. The new regression reproduced a second truncation path:
 NIOSSLError.uncleanShutdown after decoded HTTP completion failed the request
 while a guest body-write acknowledgment was pending. The response end was lost
 (two outbound parts instead of three), despite the complete message already
-being queued (`/tmp/coop-complete-response-tls-error-baseline.log`).
+being queued (`/tmp/iso-complete-response-tls-error-baseline.log`).
 
 OwnedResponseHandler now preserves the bounded queue when an upstream transport
 error follows decoded HTTP completion. Errors before completion still fail the
@@ -1611,18 +1611,18 @@ request. Guest-write failures still fail directly through the write future and
 must not emit a response end. The deterministic regression covers plain closure
 and TLS error, each with successful or failed guest acknowledgment. These four
 cases and the verified-TLS early-disconnect matrix passed in 1.686 seconds
-(`/tmp/coop-complete-response-final.log`).
+(`/tmp/iso-complete-response-final.log`).
 
 A deliberate fault continuing the response pump after failed guest writes
 compiled and failed the new negative cases. Evidence is
-`/tmp/coop-complete-response-guest-write-mutation.json` and its referenced log.
+`/tmp/iso-complete-response-guest-write-mutation.json` and its referenced log.
 The fault was restored before final checks. Strict Swift lint and whitespace
 checks passed. The pinned NIO decoder's default informational-response strategy
 was also inspected: it drops interim responses, so those do not set the final
 HTTP-completion flag used here.
 
 Final verification passed the full pinned Swift suite: 44 transport tests in
-70.986 seconds and eight policy tests (`/tmp/coop-response-error-full-suite.log`).
+70.986 seconds and eight policy tests (`/tmp/iso-response-error-full-suite.log`).
 The six opt-in audit/live-TLS/RSS tests were skipped. This run includes the
 controlled forwarding/TLS corpus, body deadlines/limits, stream capacity,
 shutdown, and the new four-case response-drain regression. No production-profile
@@ -1642,7 +1642,7 @@ Setup, VM creation, SSH/editor/exec, Claude settings and onboarding, Codex paths
 and account configuration, environment handling, network/Docker, stop/restart,
 resize, commit/restore, reprovision, destroy and idempotency all passed their
 applicable assertions. Cleanup removed the test instances and builder VM; the
-pre-existing `coop-fc` VM remained stopped at that checkpoint.
+pre-existing `iso-fc` VM remained stopped at that checkpoint.
 
 The eight skips were the Firecracker PID check; the full-only Codex update;
 Lima-owned hostname resolution and sudo-warning checks; reported disk size after
@@ -1653,18 +1653,18 @@ not Swift execution (which remains selected only for the Apple sandbox backend).
 
 The complete output was inspected. Following the integration skill's output
 cleanup instruction, the raw log was removed after recording all phase counts,
-skip reasons and its SHA-256 in `/tmp/coop-swift-port-lima-result.json`.
+skip reasons and its SHA-256 in `/tmp/iso-swift-port-lima-result.json`.
 Firecracker verification used the pre-existing local nested-virtualization test
-host `coop-fc`; its result is recorded below.
+host `iso-fc`; its result is recorded below.
 
-Firecracker prerequisites were checked in `coop-fc`: Linux aarch64, accessible
+Firecracker prerequisites were checked in `iso-fc`: Linux aarch64, accessible
 KVM API version 12, passwordless sudo, CMake/GCC and the pinned Rust 1.94.0
 toolchain. The macOS host has no Linux Rust target installed, so the same
 `tests/run-integration.sh` entrypoint is running natively inside the Linux VM
 instead of the cross-compiling remote wrapper. A source snapshot includes tracked
 working-tree files plus untracked source/test/script files needed by this branch;
-its SHA-256 is recorded in `/tmp/coop-firecracker-source.sha256`. The snapshot is
-at `/tmp/coop-swift-port-fc-20260927` inside the guest. The instance prefix is
+its SHA-256 is recorded in `/tmp/iso-firecracker-source.sha256`. The snapshot is
+at `/tmp/iso-swift-port-fc-20260927` inside the guest. The instance prefix is
 `swift-port-fc-20260927`, ambient provider-token variables are removed and
 destroy-all remained disabled. The runner exited 1: 253 passed, four failed,
 three skipped across 52 phases. Failed assertions were Claude
@@ -1682,13 +1682,13 @@ problem during Firecracker shutdown; it does not establish the exact failure
 inside the guest/VMM. `src/vm.rs`, `src/setup.rs`, and `src/backend.rs` are
 unchanged from the review base. The failing platform gate remains unresolved;
 it is not evidence of Swift forwarding behavior. Diagnostic output is
-`/tmp/coop-fc-durability.log`.
+`/tmp/iso-fc-durability.log`.
 
 The complete suite output was inspected, summarized with per-phase counts,
-failures, skips and hashes in `/tmp/coop-swift-port-firecracker-result.json`, then
+failures, skips and hashes in `/tmp/iso-swift-port-firecracker-result.json`, then
 removed per the integration skill. Both suite and diagnostic VMs were removed;
-`coop list --json` returned `[]` and no Firecracker process remained. The owned
-source snapshot was removed and `coop-fc` was restored to `Stopped`.
+`iso list --json` returned `[]` and no Firecracker process remained. The owned
+source snapshot was removed and `iso-fc` was restored to `Stopped`.
 
 ## Enforce dependency pins in transition builds
 
@@ -1696,8 +1696,8 @@ The local dual-artifact builder now passes `--force-resolved-versions` to Swift
 build and its binary-path query, matching CI's dependency-resolution policy.
 This prevents an artifact build from silently changing transitive dependency
 pins. A debug Apple-backend host/Rust/Swift build and archive completed with
-exit zero (`/tmp/coop-swift-port-pinned-transition.log`). Inspection of
-`/tmp/coop-swift-port-pinned-transition.tar.gz` verified all three binary hashes
+exit zero (`/tmp/iso-swift-port-pinned-transition.log`). Inspection of
+`/tmp/iso-swift-port-pinned-transition.tar.gz` verified all three binary hashes
 against its internal SHA256SUMS and confirmed the manifest identifies a dirty,
 local build with Rust as default. The pinned binary-path query and whitespace
 check also passed. This is local packaging evidence, not signed publication.
@@ -1706,7 +1706,7 @@ check also passed. This is local packaging evidence, not signed publication.
 
 The review skill ran correctness/tests, security/API, and
 design/conventions/docs/comments lenses through three independent reviewers.
-The shared packet `/tmp/coop-swift-review-packet.json` identifies base
+The shared packet `/tmp/iso-swift-review-packet.json` identifies base
 `f16382089a017516a7ec886865db8f59a50a42e7` and hashes of 99 changed/untracked files.
 No high/critical security finding was validated in this pass; this does not
 complete the outstanding acceptance requirements or final post-fix review.
@@ -1717,20 +1717,20 @@ Seatbelt egress as provider-scoped. The documentation now describes the actual
 port-scoped confinement and separate application/TLS provider checks.
 
 The Continue regression failed against the original code for both fixed-length
-and chunked uploads (`/tmp/coop-continue-baseline.log`). InboundGate now emits an
+and chunked uploads (`/tmp/iso-continue-baseline.log`). InboundGate now emits an
 interim head only after all admission checks and a request permit are acquired.
 The test waits for this response before sending body bytes, verifies exact body
 delivery and final response, and verifies that the permit remains held. It also
 checks authentication/policy/size/capacity refusals never emit Continue and that
 bodyless requests are admitted without it. The focused test and strict Swift
-format lint passed (`/tmp/coop-continue-final.log`). The full pinned Swift suite
-also exited zero (`/tmp/coop-continue-full-suite.log`); opt-in audit/live-TLS/RSS
+format lint passed (`/tmp/iso-continue-final.log`). The full pinned Swift suite
+also exited zero (`/tmp/iso-continue-full-suite.log`); opt-in audit/live-TLS/RSS
 workloads remain separate gates.
 
 The aggregate-budget finding identified that NIO counts request-target bytes in
 its 64 KiB aggregate limit while Rust counts only header names/values. The
 reviewer reproduced Rust 401 versus Swift 431 for 128 fields totaling exactly
-64 KiB plus a `/` target (`/tmp/coop-review-header-bound.json`). Hyper's separate
+64 KiB plus a `/` target (`/tmp/iso-review-header-bound.json`). Hyper's separate
 buffer-size hypothesis was not reproduced. Foundation query re-encoding was
 observed but not established as a semantic difference, so it was not reported
 as a validated finding.
@@ -1757,7 +1757,7 @@ The published contract now describes both parsed metadata and raw wire limits.
 
 All 46 shared refusal cases passed for both providers and both real confined
 executables, including the reviewer's exact-metadata case with 1,024 extra
-spaces (`/tmp/coop-header-wire-contract.log`). Each run also exercised 256 idle
+spaces (`/tmp/iso-header-wire-contract.log`). Each run also exercised 256 idle
 connections, excess rejection and full refill. This is 184 case exchanges;
 credentialed forwarding is covered separately.
 
@@ -1767,21 +1767,21 @@ sweep reported zero missed: 86 assertion/test failures, one unviable constant
 division, and two 20-second timeouts from mutations that prevent target-parser
 index progress. Both timeouts are detected nontermination, not surviving
 behavior. The tool exited 3 because it reports timeouts separately. Evidence:
-`/tmp/coop-header-wire-mutants.log` and
-`/tmp/coop-header-wire-mutants/mutants.out`. No exclusions were added or changed
+`/tmp/iso-header-wire-mutants.log` and
+`/tmp/iso-header-wire-mutants/mutants.out`. No exclusions were added or changed
 for this sweep. The earlier 87-mutant sweep also had zero missed before adding
 the raw-whitespace regression.
 
 Removing Swift's combined-field check compiled and failed its assertion
-(`/tmp/coop-header-field-swift-mutation.json`). Four additional compiled faults
+(`/tmp/iso-header-field-swift-mutation.json`). Four additional compiled faults
 were caught: disable the raw cap, count body bytes as headers, omit the next-
 request reset, and allow input during a held response
-(`/tmp/coop-header-wire-mutations.json`). All faults were restored. Focused
+(`/tmp/iso-header-wire-mutations.json`). All faults were restored. Focused
 tests, strict Swift format lint, Rust formatting, proxy clippy and whitespace
 checks passed. Final full proxy suites exited zero: Rust ran 53 unit tests and
-10 process tests (`/tmp/coop-header-wire-rust-final.log`); Swift reported 48
+10 process tests (`/tmp/iso-header-wire-rust-final.log`); Swift reported 48
 transport tests in 71.068 seconds and eight policy tests
-(`/tmp/coop-header-wire-swift-final.log`). Six opt-in Swift audit/live-TLS/RSS
+(`/tmp/iso-header-wire-swift-final.log`). Six opt-in Swift audit/live-TLS/RSS
 workloads were skipped. No VM or live-provider smoke was repeated for this
 header-budget change.
 
@@ -1828,11 +1828,11 @@ Two preceding attempts exposed harness assumptions: the guest lacks Python by
 default, and the launcher canonicalizes `/var` to `/private/var`. The gate now
 installs its scanner dependency inside the test guest and compares resolved
 executable paths before signaling. Scanner needles travel over stdin through
-non-interactive `coop shell`; `coop exec` closes stdin. Guest curl failures are
-checked by their diagnostic because coop wraps the remote exit status.
+non-interactive `iso shell`; `iso exec` closes stdin. Guest curl failures are
+checked by their diagnostic because isolate wraps the remote exit status.
 
 The complete successful transcript was inspected, summarized with binary and
-transcript hashes in `/tmp/coop-vm-isolation-result.json`, then removed. Its
+transcript hashes in `/tmp/iso-vm-isolation-result.json`, then removed. Its
 SHA-256 was `1014f59d1f67e907cbd1601af170d39fa84887e27a1fb2d2a13609253253ebe7`.
 Failed/interrupted private runtime artifacts were also removed. The harness now
 prints its complete transcript before deleting successful run artifacts.
@@ -1861,7 +1861,7 @@ that aggregates the response cannot complete the exchange.
 
 Evidence so far: the fixture compiled; the normal test invocation skipped it as
 intended; a separately confined XCTest invocation served a real HTTP 401 and
-passed its file-write denial probe (`/tmp/coop-vm-fixture-confinement.log`). Swift
+passed its file-write denial probe (`/tmp/iso-vm-fixture-confinement.log`). Swift
 format lint and Python syntax checks passed. **Admitted forwarding and the VM
 phase are not yet verified.** The first local TLS attempt failed binding
 `127.0.0.1:443` with EPERM, and `sudo -n true` required authentication. A request
@@ -1894,7 +1894,7 @@ attestation verification, not from trusting a manifest field.
 
 Local evidence:
 
-- `/tmp/coop-proxy-transition-runtime.tar.gz` built successfully in release mode
+- `/tmp/iso-proxy-transition-runtime.tar.gz` built successfully in release mode
   with all four executables, `LICENSE`, `SHA256SUMS`, and `BUILD.json`.
 - Exact archive members, regular-file types, all four hashes, and all four
   `codesign --verify --strict` checks passed after extraction. Host and runtime
@@ -1918,7 +1918,7 @@ evidence of a published or attested release.
 
 Reviewed the new controlled-upstream fixture and candidate packaging against
 working-tree base `f16382089a017516a7ec886865db8f59a50a42e7`; the snapshot packet
-with source hashes is `/tmp/coop-transition-review-packet.json`. Independent
+with source hashes is `/tmp/iso-transition-review-packet.json`. Independent
 reviewers covered correctness/tests and security/API usage; the coordinating
 review covered design/conventions/docs/comments. This was a scoped follow-up,
 not the final whole-branch security review.
@@ -1930,7 +1930,7 @@ Validated and fixed:
   `ControlledTLSServer` now accepts without handshaking, applies a five-second
   socket timeout, performs TLS in workers, and closes accepted sockets before
   joining workers during cleanup.
-- Killing only the coop child left its SSH descendant holding stdout, so the
+- Killing only the isolate child left its SSH descendant holding stdout, so the
   reader executor could block indefinitely before VM cleanup. Fixture and guest
   subprocesses now own private sessions, and cleanup kills their process groups
   even if the direct child has already exited.
@@ -1949,7 +1949,7 @@ closes stdout held by a descendant. The candidate source test passed. Five
 in-memory faults were detected: omit all revision enforcement, omit only the
 post-build check, kill only the direct child, omit accepted-socket cleanup, and
 perform the TLS handshake in accept. Evidence is in
-`/tmp/coop-transition-review-mutations.log`; no source mutations remain. The new
+`/tmp/iso-transition-review-mutations.log`; no source mutations remain. The new
 cleanup tests run in regular CI. Actionlint, Swift format lint, and diff
 whitespace checks passed.
 
@@ -1990,7 +1990,7 @@ server replacing the proxy process boundary. These tests do not claim TLS or
 Seatbelt coverage. Four in-memory faults were caught: accept missing completion,
 ignore provider error events, wait for completion on the disconnect phase, and
 disable secret-output detection. Evidence:
-`/tmp/coop-live-smoke-mutations.log`. No source mutations remain. The offline
+`/tmp/iso-live-smoke-mutations.log`. No source mutations remain. The offline
 tests are in regular CI; actionlint and diff whitespace checks pass.
 
 **No live provider calls were made.** Run this only after the controlled-upstream
@@ -2027,7 +2027,7 @@ output is bounded to 2 MiB, runtime to 180 seconds, and a private process group
 is killed on all exits (including a direct parent exiting with live descendants).
 The challenge directory is removed afterward. Claude uses four turns and a
 USD 1 client budget; Codex needs a provider-side dedicated budget. The runner
-preserves coop's guest agent routing/configuration and accepts no real provider
+preserves isolate's guest agent routing/configuration and accepts no real provider
 credential. It must not be run on the host. Documentation gives guest-only
 invocations and requires separate proxy identity/routing evidence and guest
 teardown; this script does not itself provision or prove confinement.
@@ -2056,8 +2056,8 @@ successful live tool-use round trip.
 The offline suite now passes seven tests. In-memory faults accepting generic
 failures and successful process exits were caught. `git diff --check` passed.
 The real Apple VM transition suite was started with output redirected to
-`/tmp/coop-agent-failure-vm.log`, exec session 44891. Its private directory is
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-proxy-vm-fmyviy4u`.
+`/tmp/iso-agent-failure-vm.log`, exec session 44891. Its private directory is
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-proxy-vm-fmyviy4u`.
 The last verified state was a running process after private runtime compilation
 completed; no VM/agent result is claimed yet. Resume this same handle and inspect
 the complete transcript, then clean up the raw log per the integration skill.
@@ -2069,10 +2069,10 @@ ten events and passed the terminal transport-failure check. Claude exited
 unsuccessfully after approximately 177 seconds but failed with `missing terminal
 agent transport failure`; its raw output was intentionally discarded, so the
 cause is not yet established. Rust rollback phases were not reached in this run.
-Both private VMs were destroyed, owned `local/coop-1407c6aa*` images were absent,
+Both private VMs were destroyed, owned `local/iso-1407c6aa*` images were absent,
 and the private artifact directory was removed after inspecting the transcript.
 The summary and executable/transcript hashes are in
-`/tmp/coop-agent-failure-vm-result.json`; raw logs were removed.
+`/tmp/iso-agent-failure-vm-result.json`; raw logs were removed.
 
 A minimal-environment host Claude reproduction against closed loopback port 1
 was started in exec session 17696, using only a synthetic credential and a
@@ -2102,7 +2102,7 @@ the regression test. `git diff --check` passed.
 
 The complete Apple VM transition gate was restarted only after the prior run
 was confirmed terminal and cleaned up. The new exec handle is 79434 and output
-is `/tmp/coop-agent-failure-vm-retry.log`. It remains in progress; do not claim
+is `/tmp/iso-agent-failure-vm-retry.log`. It remains in progress; do not claim
 Claude guest failure or Rust rollback passed until this run completes.
 
 The rerun (79434) was terminal with exit 1: Codex again passed, while Claude
@@ -2115,10 +2115,10 @@ remain bounded to 180. The event/error and unsuccessful-exit checks are unchange
 Seven offline tests and whitespace checks pass.
 
 The rerun's entire transcript was inspected, both VM removals verified, and
-owned `local/coop-62fe4fba*` images checked absent. Its summary, versions, and
-binary/log hashes are `/tmp/coop-agent-failure-vm-retry-result.json`. The raw
+owned `local/iso-62fe4fba*` images checked absent. Its summary, versions, and
+binary/log hashes are `/tmp/iso-agent-failure-vm-retry-result.json`. The raw
 logs and private directory were removed. A new full VM run is active, output
-`/tmp/coop-agent-failure-vm-final.log`; resume the exec handle in the conversation.
+`/tmp/iso-agent-failure-vm-final.log`; resume the exec handle in the conversation.
 No acceptance result is claimed for the new run yet.
 
 ### Agent-visible VM termination and rollback PASS (2026-09-27)
@@ -2136,9 +2136,9 @@ credential scans (19,501 files on Swift, 25,006 after Rust restart; zero matches
 and canary coverage), listener teardown, and both missing/exiting Swift
 fail-closed startup checks. Rust was selected explicitly while the peer VM
 remained on Swift. Both owned VMs were destroyed. The temporary runtime tree,
-owned `local/coop-69e6cae2*` images, and task executable processes were verified
+owned `local/iso-69e6cae2*` images, and task executable processes were verified
 absent. The complete transcript was inspected and removed. Summary, observations,
-and executable/transcript hashes are `/tmp/coop-agent-failure-vm-final-result.json`.
+and executable/transcript hashes are `/tmp/iso-agent-failure-vm-final-result.json`.
 
 This run did not enable `--controlled-upstream`, did not exercise admitted
 provider traffic or successful agent tool use, and did not rerun Lima or
@@ -2162,17 +2162,17 @@ samples, and cleanup. Use `--direction response --connections 256`.
 The final restored-source aggregate run exited zero for both offered sizes:
 48,644,096 and 48,676,864 bytes RSS growth; 273,743,872 and 274,923,520 bytes total
 producer progress. Evidence directory:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-9d5i7573`,
-runner log `/tmp/coop-saturated-response-memory-final.log`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-9d5i7573`,
+runner log `/tmp/iso-saturated-response-memory-final.log`.
 A bounded fixture fault retaining 2 MiB per active producer failed the real RSS
 assertion at 587,743,232 bytes growth. It was restored before final runs; this is
 assertion sensitivity evidence, not a mutation of production backpressure.
-Fault artifacts: `/tmp/coop-saturated-memory-fault.{json,log}`. The runner also
+Fault artifacts: `/tmp/iso-saturated-memory-fault.{json,log}`. The runner also
 rejected missing-peer, wrong-concurrency, and unfinished-cleanup observations.
 
 All four original single-client response/upload workloads passed after the
-fixture change (runner `/tmp/coop-memory-original-final.log` and evidence
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-4wluucd6`).
+fixture change (runner `/tmp/iso-memory-original-final.log` and evidence
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-4wluucd6`).
 Strict Swift formatting and `git diff --check` passed. No fault remains in source.
 This closes the previously unmeasured simultaneous response pressure scope; it
 still does not measure simultaneous saturated uploads or the Seatbelt-confined
@@ -2195,11 +2195,11 @@ individual counts, totals, peer count, samples, and cleanup in either direction;
 
 Final aggregate uploads passed with 32,800,768/32,555,008 bytes RSS growth and
 358,678,528/358,744,064 bytes total guest progress. Evidence:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-zjza5p4i`
-and `/tmp/coop-saturated-upload-memory-final.log`. All four original single-client
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-zjza5p4i`
+and `/tmp/iso-saturated-upload-memory-final.log`. All four original single-client
 workloads passed after restoration, with evidence in
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-memory-backpressure-c3yae9qt`
-and `/tmp/coop-memory-both-single-final.log`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-memory-backpressure-c3yae9qt`
+and `/tmp/iso-memory-both-single-final.log`.
 
 A bounded fault retaining an extra 2 MiB per producer triggered the RSS assertion.
 Its first attempt exposed slow error cleanup: fixture TLS peers remained paused
@@ -2207,7 +2207,7 @@ while sequential closes waited for shutdown. The owned helper was terminated,
 and the source restored. Error cleanup now resumes those fixture peers after
 closing guests, matching the normal cleanup path. Repeating the fault then
 failed the RSS assertion and exited normally in 7.761 seconds, at 571,998,208 bytes
-RSS growth (`/tmp/coop-saturated-upload-fault-final.{json,log}`). The fault was
+RSS growth (`/tmp/iso-saturated-upload-fault-final.{json,log}`). The fault was
 restored before final validation. This is fixture assertion sensitivity, not a
 production mutation. Corrupted observations for missing senders/receivers,
 excess receive progress, and inconsistent totals were also rejected. Strict
@@ -2238,7 +2238,7 @@ No code cutover or Rust removal occurred. Whitespace checks passed.
 
 Reviewed the ten-file agent-probe, integration-addition, aggregate-memory, and
 associated documentation/CI scope captured in
-`/tmp/coop-agent-memory-review-packet.json` (base
+`/tmp/iso-agent-memory-review-packet.json` (base
 `f16382089a017516a7ec886865db8f59a50a42e7`, uncommitted content hashes).
 Independent reviewers covered agent correctness/security/tests and memory
 correctness/tests/pinned API behavior; root covered design, conventions, docs,
@@ -2268,7 +2268,7 @@ acceptance, body decision, release, observation, and platform gaps remain open.
 Captured initial HTTP/1.1 model requests from installed macOS Codex CLI
 0.157.1 (app-bundled executable) and Claude Code 2.1.283. Each used a
 private temporary home/work directory, a cleared environment with fake capability
-authentication, and coop-equivalent provider routing. Seatbelt denied network
+authentication, and iso-equivalent provider routing. Seatbelt denied network
 access except the loopback capture port. Claude exposed Read/Bash tools; no
 model response or tool execution occurred. The listener returned HTTP 400 after
 reading the request, and each client process group was stopped and reaped.
@@ -2289,8 +2289,8 @@ It does not establish guest/Linux parity, retries, tool-result follow-up request
 image/attachment requests, future client versions, or successful live operations.
 The production body policy is unchanged.
 
-Local probe and controlled metadata: `/tmp/coop-framing-probe.py` and
-`/tmp/coop-framing-results.json`. Executable SHA-256:
+Local probe and controlled metadata: `/tmp/iso-framing-probe.py` and
+`/tmp/iso-framing-results.json`. Executable SHA-256:
 
 - codex: `27ceb5f9b957b43a519efe4eaa3816a0bffb0a531a2c89af18840c0a3c016a7d`
 - claude: `d8cb1e5c79684cc12a8bfc813e3a2073406921b6245744b3009be3ab5651d21e`
@@ -2319,7 +2319,7 @@ implementations passed with identical observations. Exact-limit uploads reached
 the fixture incrementally and matched SHA-256; both refusal cases had zero
 upstream TCP connections, requests, body bytes, or credential-bearing requests.
 Guest closure and upstream cleanup passed. Evidence:
-`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/coop-body-limit-6c6pxxzy`.
+`/var/folders/nd/0ftffstd2dz0bj7v78hwpf700000gn/T/iso-body-limit-6c6pxxzy`.
 These are controlled TLS fixtures, not production provider or VM calls.
 
 Validation for this change:
@@ -2328,10 +2328,10 @@ Validation for this change:
 - Swift wire tests cover header-only, empty, and nonempty chunked bodies,
   no forwarding/request-permit acquisition, no interim 100, bodyless admission,
   and incremental delivery of an accepted declared body.
-- Full-file cargo-mutants sweep of `coop-proxy/src/request_body.rs`: 56 mutants,
+- Full-file cargo-mutants sweep of `iso-proxy/src/request_body.rs`: 56 mutants,
   24 caught, 32 unviable, zero survivors/timeouts. This binary-only crate uses
-  `--bin coop-proxy request_body::tests`, not the host library test target.
-  No mutation exclusions changed. Evidence: `/tmp/coop-known-length-mutants`.
+  `--bin iso-proxy request_body::tests`, not the host library test target.
+  No mutation exclusions changed. Evidence: `/tmp/iso-known-length-mutants`.
 - Deliberately removing each implementation's unknown-length guard made its
   new regression fail. Both files were restored in finally blocks. Restored
   Rust body tests (7) and targeted Swift framing tests (3) passed.
@@ -2359,12 +2359,12 @@ credential-proxy mode is unavailable. Active docs/config examples, Cargo license
 exceptions, mutation exclusions, CI, release/preflight/build, installers,
 updaters, and integration paths are synchronized.
 
-SwiftPM's product remains `coop-proxy-swift`; the installed artifact is named
-`coop-proxy`. This stable name is required because released v0.6.0 updaters only
+SwiftPM's product remains `iso-proxy-swift`; the installed artifact is named
+`iso-proxy`. This stable name is required because released v0.6.0 updaters only
 replace that companion. The tagged installer behavior was reproduced against
 the new layout, including replacing an old Rust companion with Swift bytes.
 Both debug and release builders replace the canonical binary and remove stale
-`coop-proxy-rs`/`coop-proxy-swift` siblings. Installer/update keep checksum and
+`iso-proxy-rs`/`iso-proxy-swift` siblings. Installer/update keep checksum and
 provenance verification unchanged, reject obsolete transition artifacts before
 replacement, and clean stale suffix companions. The neutral refusal/forwarding
 fixtures and Swift boundary/cleanup validators remain; retired Rust commands
@@ -2377,7 +2377,7 @@ old-updater canonical-name compatibility; builder mock reintroducing retired
 artifacts; macOS <27 integration skip; remote macOS Swift delivery; stale release
 preflight package/version assumptions. Final scoped review has no surviving
 code finding. This is not the final whole-goal security/acceptance signoff.
-Review packet: `/tmp/coop-swift-only-review.json`. No clean-commit marker was
+Review packet: `/tmp/iso-swift-only-review.json`. No clean-commit marker was
 written: the worktree is uncommitted and broader platform/live gates remain.
 
 Validation:
@@ -2400,9 +2400,9 @@ Validation:
   18 forwarding/TLS cases, 16 disconnect exchanges, six declared/unknown-length
   admission cases, two idle-upload cases, and six 256-stream capacity rounds.
 - Actual debug and release archives were built and inspected. Release archive
-  `/tmp/coop-swift-only-release.tar.gz` has host CLI, Swift proxy, runtime,
+  `/tmp/iso-swift-only-release.tar.gz` has host CLI, Swift proxy, runtime,
   LICENSE, SHA256SUMS and BUILD.json; all checksums and three Mach-O signatures
-  verified. `/tmp/coop-swift-only-release-result.json` records hashes/manifest.
+  verified. `/tmp/iso-swift-only-release-result.json` records hashes/manifest.
   It is a dirty local build, not a hosted attested release or publication.
 
 Final canonical-name Apple VM gate exited zero. Complete 774-line transcript
@@ -2415,7 +2415,7 @@ and pre-readiness substitute termination failed startup closed. The substitute
 was killed by SIGKILL; this does not prove `/usr/bin/false` returned its normal
 exit status. Listener teardown and both VM destroys passed. Owner cc300fc3's
 containers/images and task processes were checked absent, and the private work
-directory was removed. Structured evidence: `/tmp/coop-swift-only-vm-result.json`;
+directory was removed. Structured evidence: `/tmp/iso-swift-only-vm-result.json`;
 raw integration transcripts were removed after review. An earlier successful
 pre-canonical run was superseded by this final run.
 
@@ -2451,11 +2451,11 @@ exit status is inferred. All 940 transcript lines were independently reviewed.
 The private work directory and owner `8cfd51c0` containers/images were removed;
 the retained listener and diagnostic helper were closed.
 
-Evidence summary: `/tmp/coop-listener-lifetime-result.json`. This run validates
+Evidence summary: `/tmp/iso-listener-lifetime-result.json`. This run validates
 controlled admitted Apple VM traffic, not real provider calls, Lima, Firecracker,
 production system-trust behavior against the fixture CA, or release provenance.
 The canonical sudo/privilege-drop helper subsequently passed both confined TLS
-preflights in the user's Terminal (12:56 local, artifact `coop-proxy-vm-hlr5h4gp`).
+preflights in the user's Terminal (12:56 local, artifact `iso-proxy-vm-hlr5h4gp`).
 Both request/response hashes matched and the first SSE event preceded completion;
 the complete user-supplied transcript reports PASS. The initial unconfigured
 Swift fixture skip is expected; both configured fixture executions ran and passed.
@@ -2465,10 +2465,10 @@ canonical preflight validates the final privileged helper path.
 
 ## 2026-09-27: final review, Lima gate, and fork release channel
 
-The user selected `chr33s/coop` and `swift` for the release channel. Installer,
+The user selected `chr33s/iso` and `swift` for the release channel. Installer,
 updater, and repository provenance checks now use that fork. Release CI rejects
 tagged commits outside `swift` ancestry; macOS builds use `apple-container` and
-bundle `coop`, Swift `coop-proxy`, and signed `coop-sandbox`. Linux retains
+bundle `iso`, Swift `iso-proxy`, and signed `iso-sandbox`. Linux retains
 Firecracker. The host prefers an adjacent runtime with the existing path trust
 and runtime qualification checks. Lima source builds refuse self-update to avoid
 a backend switch. Missing Apple companions are rejected before replacement.
@@ -2497,8 +2497,8 @@ Codex update, two Lima hostname checks, two disk-size status assertions, and two
 guest-IP assertions. The full-only workspace/multi-instance suite was not run.
 The Swift build emitted stale-cache path warnings after package relocation,
 then completed successfully. The complete transcript was inspected and its
-per-phase counts and SHA-256 retained in `/tmp/coop-final-lima-result.json`.
-Owned test instances were removed; the pre-existing `coop-fc` host was restored
+per-phase counts and SHA-256 retained in `/tmp/iso-final-lima-result.json`.
+Owned test instances were removed; the pre-existing `iso-fc` host was restored
 to Stopped. The raw Lima transcript was removed after review.
 
 The previous Firecracker result remains 253 passed, four failed, three skipped.
@@ -2535,9 +2535,9 @@ independent acceptance requirements.
 
 The candidate workflow is now `.github/workflows/candidate.yml`, displayed as
 **Release candidate**. New archives are named
-`coop-<commit>-aarch64-apple-darwin.tar.gz` and contain a `coop/` directory.
+`iso-<commit>-aarch64-apple-darwin.tar.gz` and contain a `iso/` directory.
 The downloadable GitHub artifact is
-`coop-candidate-<commit>-aarch64-apple-darwin`. The existing builder command
+`iso-candidate-<commit>-aarch64-apple-darwin`. The existing builder command
 `scripts/build-proxy-transition.py` now writes this layout. Historical archive
 names and workflow identities above describe the artifacts produced then;
 previous downloads and attestations are unchanged. New attestation verification

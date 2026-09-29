@@ -19,7 +19,7 @@
       "status": "unsupported",
       "source": "devcontainer",
       "value": "32 GiB",
-      "note": "instance disk size is applied at `coop start` time, not during setup"
+      "note": "instance disk size is applied at `iso start` time, not during setup"
     },
     {
       "key": "hostRequirements.gpu",
@@ -103,21 +103,21 @@
       "status": "unsupported",
       "source": "devcontainer",
       "value": "mcr.microsoft.com/devcontainers/base:ubuntu",
-      "note": "coop builds its own rootfs; base images are ignored"
+      "note": "iso builds its own rootfs; base images are ignored"
     },
     {
       "key": "customizations",
       "status": "unsupported",
       "source": "devcontainer",
       "value": "<...>",
-      "note": "editor-specific; not relevant to coop"
+      "note": "editor-specific; not relevant to iso"
     },
     {
       "key": "name",
       "status": "unsupported",
       "source": "devcontainer",
       "value": "demo",
-      "note": "informational only; coop names instances via --name or auto-generates"
+      "note": "informational only; iso names instances via --name or auto-generates"
     },
     {
       "key": "zeta",

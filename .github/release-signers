@@ -1,4 +1,4 @@
 # OpenSSH allowed_signers for release SHA256SUMS signatures.
-# Keep in sync with ReleaseSigners.keys (Sources/CoopHost/ReleaseSignature.swift)
+# Keep in sync with ReleaseSigners.keys (Sources/IsoHost/ReleaseSignature.swift)
 # and ALLOWED_SIGNERS in install.sh; UpdateTests checks all three agree.
 release namespaces="release-sums@chr33s" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGpguyE19BveEWHxNaowpmslcC3WE4BKZlXl4dgSmOmx

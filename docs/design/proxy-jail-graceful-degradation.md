@@ -16,7 +16,7 @@ issue #411). Self-contained: everything needed to implement is here.
 ## Branch / preconditions
 
 - This work builds on the **`issue-411-proxy-jail`** branch, **not `main`**.
-  The files below (`coop-proxy/src/jail.rs`, the proxy launcher, the trust-model
+  The files below (`iso-proxy/src/jail.rs`, the proxy launcher, the trust-model
   additions) exist only on that branch. Start from it (branch off it or push a
   follow-up commit onto it, per whatever the PR state is when you pick this up).
 - No new dependency. Uses the already-pinned `landlock = "0.4.5"`.
@@ -26,7 +26,7 @@ issue #411). Self-contained: everything needed to implement is here.
 
 ## Problem
 
-`coop-proxy` self-confines with Landlock. Today `coop-proxy/src/jail.rs`
+`iso-proxy` self-confines with Landlock. Today `iso-proxy/src/jail.rs`
 (`linux::apply`) builds **one** ruleset at `ABI::V4` with
 `CompatLevel::HardRequirement`, handles filesystem-write + `Execute` + TCP
 `ConnectTcp | BindTcp`, and **bails unless the result is `FullyEnforced`**.
@@ -60,7 +60,7 @@ degradation covers every non-EOL kernel; keeping "the credential-holding proxy
 never runs fully unconfined" intact is worth more than rescuing pre-2021
 kernels. The open-egress rung is acceptable because the network tier is already
 the weak, port-scoped (not host-scoped) layer the docs concede — upstream
-identity is still enforced at the TLS layer in `coop-proxy`'s `proxy.rs`, and
+identity is still enforced at the TLS layer in `iso-proxy`'s `proxy.rs`, and
 the guest still cannot retarget it.
 
 ## Landlock 0.4.5 facts this design relies on
@@ -199,7 +199,7 @@ Keep it factual and plain. No "robust"/"comprehensive" language.
 - **Unit:** keep `probe_fails_when_unconfined`. Consider a small unit test
   around any pure helper you extract (e.g. a function mapping `effective_abi` →
   "net enforced" expectation).
-- **Integration:** `coop-proxy --jail-selftest` already runs in
+- **Integration:** `iso-proxy --jail-selftest` already runs in
   `tests/integration.sh::test_proxy` on both backends. On CI Linux kernels ≥6.7
   it must still report full enforcement; the self-test must not regress there.
   There is no easy way to exercise a 5.13–6.6 kernel in CI, so the degraded path
@@ -224,7 +224,7 @@ Keep it factual and plain. No "robust"/"comprehensive" language.
 
 ## Current code being modified (for reference)
 
-`coop-proxy/src/jail.rs` → `mod linux` → `apply` on `issue-411-proxy-jail`:
+`iso-proxy/src/jail.rs` → `mod linux` → `apply` on `issue-411-proxy-jail`:
 
 ```rust
 pub fn apply(listen_port: u16) -> Result<()> {

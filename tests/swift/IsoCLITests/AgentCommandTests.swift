@@ -1,0 +1,272 @@
+import ArgumentParser
+import Foundation
+import IsoConfiguration
+import IsoCore
+import IsoHost
+import IsoSecrets
+import Testing
+
+@testable import IsoCLI
+
+@Test func agentCommandsParseLikeTheBaseline() throws {
+  let claude = try #require(
+    try IsoCommand.parseAsRoot(["claude", "myvm", "--", "--model", "opus"]) as? ClaudeCommand)
+  #expect(claude.name?.rawValue == "myvm")
+  #expect(passthrough(claude.args) == ["--model", "opus"])
+  #expect(!claude.ask)
+  let bare = try #require(
+    try IsoCommand.parseAsRoot(["claude", "myvm", "--model", "opus"]) as? ClaudeCommand)
+  #expect(passthrough(bare.args) == ["--model", "opus"])
+  let ask = try #require(
+    try IsoCommand.parseAsRoot(["claude", "--ask", "myvm"]) as? ClaudeCommand)
+  #expect(ask.ask)
+  #expect(try IsoCommand.parseAsRoot(["ca"]) is ClaudeAgentsCommand)
+  let agents = try #require(
+    try IsoCommand.parseAsRoot(["ca", "myvm", "--", "--cwd", "/workspace"])
+      as? ClaudeAgentsCommand)
+  #expect(passthrough(agents.args) == ["--cwd", "/workspace"])
+  let codex = try #require(
+    try IsoCommand.parseAsRoot(["codex", "myvm", "--ask", "--", "--model", "gpt-5"])
+      as? CodexCommand)
+  #expect(splitAsk(codex.ask, codex.args) == (true, ["--model", "gpt-5"]))
+  #expect(splitAsk(false, ["x", "--ask"]) == (false, ["x", "--ask"]))
+  #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["claude", "Bad!"]) }
+  let update = try #require(
+    try IsoCommand.parseAsRoot(["agent", "update", "dev", "--codex", "-y"]) as? AgentUpdateCommand)
+  #expect(update.codex && !update.claude && update.yes)
+  #expect(throws: (any Error).self) {
+    try IsoCommand.parseAsRoot(["proxy", "setup", "--openai", "--anthropic"])
+  }
+  #expect(
+    try IsoCommand.parseAsRoot(["proxy", "setup", "--vm", "dev", "--api-key"]) is ProxySetup)
+}
+
+@Test func modelWordsAreNameThenCommand() throws {
+  #expect(try ModelCommand.parse([]) == (nil, nil))
+  #expect(try ModelCommand.parse(["local"]) == (nil, .local))
+  #expect(try ModelCommand.parse(["dev"]) == (try InstanceName("dev"), nil))
+  #expect(try ModelCommand.parse(["dev", "remote"]) == (try InstanceName("dev"), .remote))
+  for bad in [["local", "dev"], ["dev", "remote", "extra"], ["Bad!"], ["dev", "sideways"]] {
+    #expect(throws: (any Error).self, "\(bad)") { try ModelCommand.parse(bad) }
+  }
+}
+
+@Test func modelStatusAndSwitchReports() throws {
+  let endpoint = try LocalModel(hostURL: "http://localhost:11434", model: "qwen", authToken: nil)
+  #expect(
+    try ModelCommand.toolLine("Claude", mode: .local, endpoint: endpoint)
+      == "Claude    local — qwen @ http://localhost:11434/ (via SSH reverse tunnel)")
+  #expect(
+    try ModelCommand.toolLine("Codex", mode: .local, endpoint: nil)
+      == "Codex     cloud (no local endpoint configured)")
+  #expect(
+    try ModelCommand.toolLine("Codex", mode: .remote, endpoint: endpoint) == "Codex     cloud")
+
+  var lines = ModelCommand.reportLines(
+    "dev", mode: .local, claudeLocal: true, codexLocal: true, applied: true)
+  #expect(lines[0] == "'dev' now uses a local model for Claude and Codex.")
+  #expect(!lines.contains { $0.contains("stays on cloud") })
+  #expect(lines.last!.contains("relaunch"))
+  lines = ModelCommand.reportLines(
+    "dev", mode: .local, claudeLocal: true, codexLocal: false, applied: true)
+  #expect(lines[0] == "'dev' now uses a local model for Claude.")
+  let warning = try #require(lines.first { $0.contains("stays on cloud") })
+  #expect(warning.contains("Codex") && warning.contains("codex.local_model"))
+  #expect(!warning.contains("Claude"))
+  lines = ModelCommand.reportLines(
+    "dev", mode: .remote, claudeLocal: false, codexLocal: false, applied: false)
+  #expect(
+    lines == [
+      "'dev' now uses cloud models for Claude and Codex.", "Saved — applies on next start.",
+    ])
+}
+
+/// A private data directory with one stopped instance, loaded as a command.
+private struct CLIFixture {
+  let root: String
+  let context: CommandContext
+  let streams = RecordingStreams()
+
+  init(_ extra: String = "") throws {
+    root =
+      FileManager.default.temporaryDirectory.appending(path: "iso-agent-\(UUID().uuidString)")
+      .path
+    let instanceDirectory = root + "/data/backends/apple-container-v1/instances/dev"
+    try FileManager.default.createDirectory(
+      atPath: instanceDirectory, withIntermediateDirectories: true)
+    try Data(#"{"name":"dev","index":0,"image":"default"}"#.utf8).write(
+      to: URL(fileURLWithPath: instanceDirectory + "/instance.json"))
+    let environment = ConfigEnvironment(
+      home: root, variables: ["HOME": root, "PATH": "/usr/bin:/bin"])
+    let config = try ConfigLoader.decode(
+      ConfigLoader.parse(
+        Array(#"{"data_dir": "\#(root)/data"\#(extra)}"#.utf8), format: .jsonc, path: "c",
+        limits: .configuration), path: "c", environment: environment)
+    let diagnostics = Diagnostics(verbosity: 0) { _ in }
+    context = CommandContext(
+      environment: environment, config: config,
+      backend: AppleBackend(
+        config: config, environment: environment.variables, executable: nil,
+        diagnostics: diagnostics), output: streams, diagnostics: diagnostics,
+      ssh: SSHClient(environment: environment.variables))
+  }
+
+  func remove() { try? FileManager.default.removeItem(atPath: root) }
+}
+
+@Test func stoppedModelSwitchesPersistAndReport() throws {
+  let fixture = try CLIFixture(
+    #", "claude": {"local_model": {"host_url": "http://localhost:11434", "model": "qwen"}}"#)
+  defer { fixture.remove() }
+  let instance = try InstanceStore.resolve(fixture.context.config, name: nil)
+  // The runtime is unavailable here, so applying live fails: a stopped
+  // instance must not be probed without a sidecar.
+  #expect(throws: (any Error).self) { try ModelCommand.setLocal(fixture.context, instance) }
+  #expect(try ModelState.loadOrDefault(instance).mode == .local)
+  try ModelCommand.status(fixture.context, instance)
+  #expect(
+    fixture.streams.stdout == [
+      "Instance: dev", "Mode:     local",
+      "Claude    local — qwen @ http://localhost:11434/ (via SSH reverse tunnel)",
+      "Codex     cloud (no local endpoint configured)",
+    ])
+  // Non-interactive with nothing configured: refused before saving.
+  let bare = try CLIFixture()
+  defer { bare.remove() }
+  let bareInstance = try InstanceStore.resolve(bare.context.config, name: nil)
+  let error = try #require(throws: (any Error).self) {
+    try ModelCommand.setLocal(bare.context, bareInstance)
+  }
+  #expect("\(error)".contains("No local model endpoint configured for 'dev'"))
+  #expect(try ModelState.tryLoad(bareInstance) == nil)
+}
+
+@Test func proxySetupStoresOnlyInTheKeychainAndWritesTheReference() throws {
+  let fixture = try CLIFixture()
+  defer { fixture.remove() }
+  let tool = fixture.root + "/security"
+  try Data("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(fixture.root)/argv\"\n".utf8).write(
+    to: URL(fileURLWithPath: tool))
+  chmod(tool, 0o755)
+  let configPath = fixture.root + "/config.jsonc"
+  try ProxySetup.run(
+    fixture.context, provider: .openai, vm: nil, apiKey: true,
+    target: (configPath, .jsonc), token: { Secret("sk-synthetic") }, keychainTool: tool)
+  let written = try ConfigLoader.load(
+    .file(path: configPath, format: .jsonc), environment: fixture.context.environment)
+  #expect(
+    written.proxy.openai?.credential.command.expose()
+      == "cmd:security find-generic-password -s coop-openai -a openai -w")
+  #expect(written.proxy.openai?.auth == .bearer)
+  #expect(
+    !(String(data: FileManager.default.contents(atPath: configPath)!, encoding: .utf8)!).contains(
+      "sk-synthetic"))
+  #expect(fixture.streams.stderr.joined().contains("proxy.openai.credential"))
+  #expect(!fixture.streams.stderr.joined().contains("sk-synthetic"))
+
+  // Per-VM override: service suffixed with the VM, stored in proxy.json.
+  try ProxySetup.run(
+    fixture.context, provider: .anthropic, vm: "dev", apiKey: true, target: (configPath, .jsonc),
+    token: { Secret("sk-ant-synthetic") }, keychainTool: tool)
+  let instance = try InstanceStore.resolve(fixture.context.config, name: nil)
+  let state = try ProxyState.load(instance)
+  #expect(state.anthropic?.auth == .apiKey)
+  #expect(
+    state.anthropic?.credential
+      == .reference(
+        CredentialReference(
+          "cmd:security find-generic-password -s coop-anthropic-dev -a anthropic -w")!))
+
+  // Unknown VM or a failed Keychain write: nothing is written anywhere.
+  #expect(throws: (any Error).self) {
+    try ProxySetup.run(
+      fixture.context, provider: .openai, vm: "ghost", apiKey: false, target: (configPath, .jsonc),
+      token: {
+        Issue.record("prompted for an unknown VM")
+        return Secret("x")
+      }, keychainTool: tool)
+  }
+  try Data("#!/bin/sh\nexit 1\n".utf8).write(to: URL(fileURLWithPath: tool))
+  let before = FileManager.default.contents(atPath: configPath)
+  let error = try #require(throws: (any Error).self) {
+    try ProxySetup.run(
+      fixture.context, provider: .anthropic, vm: nil, apiKey: false, target: (configPath, .jsonc),
+      token: { Secret("sk-2") }, keychainTool: tool)
+  }
+  #expect("\(error)".contains("Failed to store the anthropic credential in the macOS Keychain"))
+  #expect(FileManager.default.contents(atPath: configPath) == before)
+}
+
+// MARK: - Start and restart lifecycle
+
+private func lifecycleFixture(_ extra: String, secrets: CountingSecrets = CountingSecrets([:]))
+  throws
+  -> (CLIFixture, ProjectLifecycle, Instance)
+{
+  let fixture = try CLIFixture(extra)
+  let instance = try InstanceStore.resolve(fixture.context.config, name: nil)
+  return (fixture, ProjectLifecycle(fixture.context, noGitHub: false, secrets: secrets), instance)
+}
+
+private func startOptions(_ context: CommandContext) throws -> StartOptions {
+  StartOptions(
+    noPrompt: true,
+    configTarget: ConfigTarget(
+      path: (context.environment.home ?? "/tmp") + "/config.jsonc", format: .jsonc))
+}
+
+@Test func preflightResolvesEveryStoredSecretInOneUnlock() throws {
+  let secrets = CountingSecrets([
+    "db": "d", "proxy-key": "k", "per-vm": "v", "pat": "github_pat_x",
+  ])
+  let (fixture, lifecycle, instance) = try lifecycleFixture(
+    #", "proxy": {"anthropic": {"credential": "vault:proxy-key"}}, "github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#,
+    secrets: secrets)
+  defer { fixture.remove() }
+  try Data(#"{"openai": {"credential": "vault:per-vm", "auth": "bearer"}}"#.utf8)
+    .write(to: URL(fileURLWithPath: instance.proxyStatePath))
+  let entries: [EnvVarName: EnvValue] = [try EnvVarName("DB"): .secret(try SecretName("db"))]
+  try lifecycle.preflightReferences(entries, instance: instance, repo: try RepoSlug("org/repo"))
+  #expect(
+    secrets.calls == [
+      [
+        try SecretName("db"), try SecretName("proxy-key"), try SecretName("per-vm"),
+        try SecretName("pat"),
+      ]
+    ])
+
+  // A missing PAT secret fails up front, before any VM work.
+  let missing = CountingSecrets(["db": "d", "proxy-key": "k", "per-vm": "v"])
+  let (other, strict, otherInstance) = try lifecycleFixture(
+    #", "proxy": {"anthropic": {"credential": "vault:proxy-key"}}, "github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#,
+    secrets: missing)
+  defer { other.remove() }
+  try Data(#"{"openai": {"credential": "vault:per-vm", "auth": "bearer"}}"#.utf8)
+    .write(to: URL(fileURLWithPath: otherInstance.proxyStatePath))
+  #expect(throws: HostError.self) {
+    try strict.preflightReferences(
+      entries, instance: otherInstance, repo: try RepoSlug("org/repo"))
+  }
+}
+
+@Test func providerProxyRequirementFailsStartAndRestartBeforeAnyVmWork() throws {
+  let (fixture, lifecycle, instance) = try lifecycleFixture(#", "proxy": {"mode": "required"}"#)
+  defer { fixture.remove() }
+  let options = try startOptions(fixture.context)
+  // The backend has no runtime here: reaching it would fail differently.
+  let fresh = try #require(throws: HostError.self) {
+    try lifecycle.startInstance(instance, options)
+  }
+  #expect(fresh.message.contains("no provider proxy is configured"))
+  let restarted = try #require(throws: HostError.self) {
+    try lifecycle.restart(instance, options)
+  }
+  #expect(restarted.message.contains("no provider proxy is configured"))
+  // Skipping agents skips the requirement, so the backend is reached.
+  var noAgents = options
+  noAgents.noAgents = true
+  let reached = try #require(throws: (any Error).self) {
+    try lifecycle.startInstance(instance, noAgents)
+  }
+  #expect(!"\(reached)".contains("no provider proxy is configured"))
+}

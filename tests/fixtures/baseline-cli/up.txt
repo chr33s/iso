@@ -2,7 +2,7 @@ Ensure an environment for a project directory exists and is running.
 
 Re-runnable: if an instance already exists for DIR it is reused (running) or restarted (stopped) instead of being recreated.
 
-Usage: coop up [OPTIONS] [DIR]
+Usage: iso up [OPTIONS] [DIR]
 
 Arguments:
   [DIR]

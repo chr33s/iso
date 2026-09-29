@@ -1,6 +1,6 @@
 Launch Claude Code inside the VM (skips permissions by default)
 
-Usage: coop claude [OPTIONS] [NAME] [ARGS]...
+Usage: iso claude [OPTIONS] [NAME] [ARGS]...
 
 Arguments:
   [NAME]     Instance name (required if multiple instances exist)

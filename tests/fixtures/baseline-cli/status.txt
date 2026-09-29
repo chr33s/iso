@@ -1,6 +1,6 @@
 Show VM status
 
-Usage: coop status [OPTIONS] [NAME]
+Usage: iso status [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Instance name (shows all if omitted)

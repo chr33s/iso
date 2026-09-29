@@ -10,7 +10,7 @@ release signing key. This script, run by a maintainer:
 2. downloads its tarballs, SHA256SUMS and attestations.jsonl, and checks that
    SHA256SUMS lists exactly the published tarballs with matching digests and
    that each tarball's attestation verifies with the same signer pin
-   `coop update` uses — so the key only ever signs what release.yml built;
+   `iso update` uses — so the key only ever signs what release.yml built;
 3. signs SHA256SUMS with `ssh-keygen -Y sign` (the private key stays in the
    ssh-agent, e.g. 1Password or the Secure Enclave), then verifies the result
    against .github/release-signers;
@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = "chr33s/coop"
+REPO = "chr33s/iso"
 NAMESPACE = "release-sums@chr33s"
 SIGNERS = ROOT / ".github" / "release-signers"
 TAG = re.compile(r"^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$")

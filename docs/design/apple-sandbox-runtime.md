@@ -4,15 +4,15 @@
 
 # Design: Apple sandbox runtime — stock containers vs `containerization` vs a machine fork
 
-**Status:** decided and implemented (`USE_DIRECT_CONTAINERIZATION`) · **Scope:** the VM runtime behind the `apple-container` build; the coop-side backend contract is in [`backends.md`](../backends.md) and [`trust-model.md`](../trust-model.md)
+**Status:** decided and implemented (`USE_DIRECT_CONTAINERIZATION`) · **Scope:** the VM runtime behind the `apple-container` build; the iso-side backend contract is in [`backends.md`](../backends.md) and [`trust-model.md`](../trust-model.md)
 **Date:** 2026-09-26 · **Method:** the experiment in [`apple-sandbox-experiment.md`](apple-sandbox-experiment.md), run on macOS 27.0 (26A428), Apple M5 Max, `container` 1.4.1, `containerization` 0.45.0
 
 ---
 
 ## 0. TL;DR
 
-- **Build coop's own runtime on `apple/containerization`.** That runtime is
-  [`coop-sandbox`](../../coop-sandbox), and it replaces the
+- **Build isolate's own runtime on `apple/containerization`.** That runtime is
+  [`iso-sandbox`](../../iso-sandbox), and it replaces the
   `container machine` fork previously vendored at `vendor/container`.
 - **Stock Apple containers are secure but incomplete.** With systemd as
   PID 1, one network per container, and no host integration, they pass every
@@ -27,7 +27,7 @@
 
 ## 1. Question
 
-Can coop run each instance as an ordinary stock Apple container, keeping its
+Can isolate run each instance as an ordinary stock Apple container, keeping its
 security model? If not, can a small runtime on `apple/containerization` do it
 without forking `container machine`? Security dominated the decision. Stock was
 preferred when complete, and a fork was the fallback only if the direct route
@@ -65,7 +65,7 @@ direct runtime Track B.
   journaled ext4 recovers.
 - **`containerization`'s ext4 formatter uses `sparse_super2`.** The guest
   kernel cannot resize that online, so growth runs `e2fsck`/`resize2fs` in a
-  short maintenance VM. That VM boots a small maintenance image coop builds for
+  short maintenance VM. That VM boots a small maintenance image isolate builds for
   the purpose (installed apart from the image store), never the guest's own
   disk or an application image, so a root guest cannot subvert it and an
   image's size or deletion cannot break it. The same VM strips host keys and
@@ -83,7 +83,7 @@ direct runtime Track B.
 
 ## 4. Consequences
 
-- The `apple-container` build drives `coop-sandbox` over a versioned JSON CLI
+- The `apple-container` build drives `iso-sandbox` over a versioned JSON CLI
   (protocol 1, now 2), with the isolation gate, journal, and host-key pinning of the
   earlier backend carried over. It gains `resize --size`, `commit`, and
   `restore`.
@@ -96,7 +96,7 @@ direct runtime Track B.
 
 Approved 2026-09-26:
 
-- `coop-sandbox init` fetches the digest-pinned init image (`vminit`) from
+- `iso-sandbox init` fetches the digest-pinned init image (`vminit`) from
   ghcr.io on first use, a new outbound fetch recorded in
   [`trust-model.md`](../trust-model.md).
 - The `vendor/container` fork, its build script, and its contract test are
@@ -104,7 +104,7 @@ Approved 2026-09-26:
 - The x86_64 Firecracker integration run is waived for this change because
   the host was unavailable. The change is not confined to the
   `apple-container` build: it also modifies shared lifecycle, SSH, and proxy
-  code (`coop stop`, `list`/`status` probe errors, ssh/rsync quoting and
+  code (`iso stop`, `list`/`status` probe errors, ssh/rsync quoting and
   `HostKeyPolicy`, capability gates, proxy tunnels, the Lima disk resize), so
   the waiver accepts that those paths are unverified on Firecracker.
 
@@ -112,10 +112,10 @@ Approved 2026-09-28 (previously open merge items, carried into the Swift
 host):
 
 - The local-model `ssh -R` reverse tunnel that exposes a host-loopback model
-  server to the guest (`Sources/CoopHost/ProxyLifecycle.swift`, model
+  server to the guest (`Sources/IsoHost/ProxyLifecycle.swift`, model
   tunnels).
 - The digest-pinned Ubuntu base image and apt egress during guest image
-  builds (`coop setup`, the maintenance image).
+  builds (`iso setup`, the maintenance image).
 - The SwiftPM dependencies resolved from github.com, pinned by the committed
   `Package.resolved` files.
 - The runtime's per-sandbox control socket and the wheel/admin

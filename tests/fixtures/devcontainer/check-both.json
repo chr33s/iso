@@ -20,7 +20,7 @@
         "status": "unsupported",
         "source": "devcontainer",
         "value": "32 GiB",
-        "note": "instance disk size is applied at `coop start` time, not during setup"
+        "note": "instance disk size is applied at `iso start` time, not during setup"
       },
       {
         "key": "hostRequirements.gpu",
@@ -104,21 +104,21 @@
         "status": "unsupported",
         "source": "devcontainer",
         "value": "mcr.microsoft.com/devcontainers/base:ubuntu",
-        "note": "coop builds its own rootfs; base images are ignored"
+        "note": "iso builds its own rootfs; base images are ignored"
       },
       {
         "key": "customizations",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "<...>",
-        "note": "editor-specific; not relevant to coop"
+        "note": "editor-specific; not relevant to iso"
       },
       {
         "key": "name",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "demo",
-        "note": "informational only; coop names instances via --name or auto-generates"
+        "note": "informational only; iso names instances via --name or auto-generates"
       },
       {
         "key": "zeta",
@@ -243,42 +243,42 @@
         "status": "unsupported",
         "source": "devcontainer",
         "value": "ghcr.io/devcontainers/features/bad:1",
-        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+        "note": "features are baked into the template at `iso setup` time, not selected per-start"
       },
       {
         "key": "features.ghcr.io/devcontainers/features/go@sha256:nope",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "ghcr.io/devcontainers/features/go@sha256:nope",
-        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+        "note": "features are baked into the template at `iso setup` time, not selected per-start"
       },
       {
         "key": "features.ghcr.io/devcontainers/features/rust:1",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "rust",
-        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+        "note": "features are baked into the template at `iso setup` time, not selected per-start"
       },
       {
         "key": "features.ghcr.io/other/x:1",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "ghcr.io/other/x:1",
-        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+        "note": "features are baked into the template at `iso setup` time, not selected per-start"
       },
       {
         "key": "features.node",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "node",
-        "note": "features are baked into the template at `coop setup` time, not selected per-start"
+        "note": "features are baked into the template at `iso setup` time, not selected per-start"
       },
       {
         "key": "mounts",
         "status": "invalid",
         "source": "devcontainer",
         "value": "{\"type\":\"volume\",\"source\":\"v\",\"target\":\"/c\"}",
-        "note": "unsupported mount type 'volume' (coop supports 'bind' only in v1)"
+        "note": "unsupported mount type 'volume' (iso supports 'bind' only in v1)"
       },
       {
         "key": "mounts",
@@ -306,21 +306,21 @@
         "status": "unsupported",
         "source": "devcontainer",
         "value": "mcr.microsoft.com/devcontainers/base:ubuntu",
-        "note": "coop builds its own rootfs; base images are ignored"
+        "note": "iso builds its own rootfs; base images are ignored"
       },
       {
         "key": "customizations",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "<...>",
-        "note": "editor-specific; not relevant to coop"
+        "note": "editor-specific; not relevant to iso"
       },
       {
         "key": "name",
         "status": "unsupported",
         "source": "devcontainer",
         "value": "demo",
-        "note": "informational only; coop names instances via --name or auto-generates"
+        "note": "informational only; iso names instances via --name or auto-generates"
       },
       {
         "key": "zeta",

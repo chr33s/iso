@@ -30,7 +30,7 @@ SPDX-License-Identifier: Apache-2.0
   a per-integration one (§6). This is the single biggest reason to start
   per-integration.
 - **Claude↔Codex parity is clean for the API-key path and reuses config surfaces
-  coop already writes** (`claude_env_block`, `codex_local_config`). Both agents
+  isolate already writes** (`claude_env_block`, `codex_local_config`). Both agents
   support a base-URL override plus a "guest holds no real credential" disposition;
   the proxy injects the real key upstream. See §5.
 - **Subscription auth splits by vendor, and it collapses to "inject a static
@@ -44,7 +44,7 @@ SPDX-License-Identifier: Apache-2.0
   `~/.codex/auth.json` onto the guest disk** (`backend.rs:2326`) when proxy mode is
   on, closing an existing at-rest exposure.
 - **Ship order:** Anthropic first (the `ANTHROPIC_BASE_URL` rewrite seam already
-  exists), Codex second (the `[model_providers.coop_local]` seam already exists),
+  exists), Codex second (the `[model_providers.iso_local]` seam already exists),
   GitHub later and separately (it carries the #73 GraphQL-bypass caveat and has no
   base-URL override — §8).
 
@@ -81,7 +81,7 @@ The exploration behind this doc established the following (file:line verified):
 
 1. **There is no host-side proxy process today.** Local-model mode rewrites the
    base URL to point the guest *directly* at a user-run server on the host
-   (`network::rewrite_host_url`, `network.rs:22-43`). coop is not in the data
+   (`network::rewrite_host_url`, `network.rs:22-43`). isolate is not in the data
    path. So #411 is net-new plumbing, not "flip on the existing relay."
 
 2. **The bind point is free.** The guest already reaches the host at a
@@ -91,18 +91,18 @@ The exploration behind this doc established the following (file:line verified):
    `VmBackend::guest_host_address` (`backend.rs:869`). Any host listener on that
    address is reachable from the guest with zero new networking.
 
-3. **Both agents already accept a base-URL override that coop writes.**
+3. **Both agents already accept a base-URL override that isolate writes.**
    - Claude: `claude_env_block` (`model_state.rs:175-197`) writes
      `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` into the managed
      `settings.json`.
    - Codex: `codex_local_config` (`model_state.rs:205-238`) writes a
-     `[model_providers.coop_local]` block with `base_url`, `wire_api =
-     "responses"`, `env_key = "COOP_LOCAL_API_KEY"`, merged into
+     `[model_providers.iso_local]` block with `base_url`, `wire_api =
+     "responses"`, `env_key = "ISO_LOCAL_API_KEY"`, merged into
      `~/.codex/config.toml` by a read-merge-write that preserves user/guest config
      (`stage_codex_files`, `backend.rs:2351-2453`).
 
 4. **A "dummy token" convention already exists.** `LOCAL_MODEL_AUTH_FALLBACK =
-   "coop-local"` (`config.rs:1598`) is the placeholder token used when a local
+   "iso-local"` (`config.rs:1598`) is the placeholder token used when a local
    endpoint needs no real credential. The proxy design generalizes exactly this:
    the guest gets a dummy (or nothing), the proxy holds the real key.
 
@@ -126,7 +126,7 @@ new component that terminates a connection and parses HTTP originated by the gue
 
 | | Host-side process | Helper VM |
 |---|---|---|
-| Blast radius of a proxy exploit | **The whole host** — arbitrary code-exec on the user's machine: every other secret, SSH keys, ability to tamper with coop | **A disposable VM** — the guest gains the injected credentials + egress (which it was spending anyway) but still has no path to the host |
+| Blast radius of a proxy exploit | **The whole host** — arbitrary code-exec on the user's machine: every other secret, SSH keys, ability to tamper with isolate | **A disposable VM** — the guest gains the injected credentials + egress (which it was spending anyway) but still has no path to the host |
 | Secret location vs. today | unchanged (host) | moved into a new VM |
 | New machinery | one host process + lifecycle | a second VM image, boot, inter-VM networking, resource cost |
 | Firecracker fit | good (can additionally jail: uid/netns, jailer already present) | natural and cheap (microVMs are the point) |
@@ -134,18 +134,18 @@ new component that terminates a connection and parses HTTP originated by the gue
 | Composes with #2 "no route out" | via a single host-local pinhole | as the sole egress terminus |
 
 The helper VM genuinely downgrades the worst case from **host compromise** to
-**credential + egress compromise** — a real, principled win, and coop's founding
+**credential + egress compromise** — a real, principled win, and isolate's founding
 move ("the VM is the boundary") applied a second time. But it is justified only
 when the proxy's attack surface is large, and it splits the backends: clean on
 Firecracker, fighting-the-platform on Lima, which violates the `backend.rs`
-shared-abstraction contract coop leans on.
+shared-abstraction contract isolate leans on.
 
 **Recommendation: host-side.** For the per-integration proxy the attack surface is
 small — a reverse proxy to *known* HTTPS upstreams on a mature stack
 (hyper/rustls), fed a request the guest composed. On Firecracker, jail it
 (separate uid + network namespace) to claw back most of the host-exposure con
 without a whole VM; the jailer machinery already exists. Reach for the helper VM
-**only** if coop commits to the general MITM proxy (§4), where terminating TLS for
+**only** if isolate commits to the general MITM proxy (§4), where terminating TLS for
 arbitrary upstreams behind a guest-trusted CA is a large enough surface to deserve
 its own boundary — and accept at that point that it is a Firecracker-first feature.
 
@@ -165,7 +165,7 @@ The two axes correlate, so decide them together:
 
 The decisive asymmetry is the **MITM CA**. A general transparent proxy has to
 impersonate `api.anthropic.com`, `github.com`, `registry.npmjs.org`, … to the
-guest, which means a coop CA the guest trusts — a new long-lived root credential
+guest, which means an isolate CA the guest trusts — a new long-lived root credential
 to manage and a new thing that, if mis-scoped, breaks TLS trust in the guest. The
 per-integration proxy sidesteps this entirely: the guest connects to a *declared*
 proxy endpoint, not to an intercepted hostname, so there is nothing to
@@ -183,14 +183,14 @@ its CA-management cost.
 
 ## 5. Feature parity: Claude ↔ Codex
 
-Parity is a first-class requirement: Codex is a co-equal agent in coop. The
-API-key path maps symmetrically onto both, reusing config surfaces coop already
+Parity is a first-class requirement: Codex is a co-equal agent in isolate. The
+API-key path maps symmetrically onto both, reusing config surfaces isolate already
 generates.
 
 | | Claude Code | Codex |
 |---|---|---|
-| Point at proxy | `ANTHROPIC_BASE_URL` in managed `settings.json` (`claude_env_block`) | `[model_providers.coop].base_url` in `~/.codex/config.toml` (`codex_local_config`) |
-| Guest-held credential | per-instance capability token in `ANTHROPIC_AUTH_TOKEN` | per-instance capability token via `env_key = "COOP_LOCAL_API_KEY"`, sent as `Authorization: Bearer` |
+| Point at proxy | `ANTHROPIC_BASE_URL` in managed `settings.json` (`claude_env_block`) | `[model_providers.iso].base_url` in `~/.codex/config.toml` (`codex_local_config`) |
+| Guest-held credential | per-instance capability token in `ANTHROPIC_AUTH_TOKEN` | per-instance capability token via `env_key = "ISO_LOCAL_API_KEY"`, sent as `Authorization: Bearer` |
 | Wire protocol | Messages API + SSE + tool-use round-trips | Responses API (`wire_api = "responses"`) + SSE |
 | Proxy injects upstream | real key → `Authorization`/`x-api-key` → `api.anthropic.com` | real key → `Authorization: Bearer` → `api.openai.com` |
 
@@ -200,7 +200,7 @@ Two facts from the Codex docs make this work and are worth pinning:
   supports three dispositions: `requires_openai_auth = true` (use the ChatGPT/API
   OpenAI token, `env_key` ignored), `env_key = "VAR"` (send that var as Bearer),
   or **neither → no auth sent**. Proxy mode as shipped uses the `env_key`
-  disposition: `env_key = "COOP_LOCAL_API_KEY"` carries the per-instance
+  disposition: `env_key = "ISO_LOCAL_API_KEY"` carries the per-instance
   capability token as `Authorization: Bearer`, which the proxy verifies and
   strips before injecting the real upstream credential. (Codex also supports
   `http_headers` / `env_http_headers` and a command-backed
@@ -263,19 +263,19 @@ exists). The proxy is the only shared new component.
 
 ## 6a. Implementation: reuse vs. build
 
-**Grounding fact:** coop today has *no* HTTP client, *no* async runtime, and *no*
+**Grounding fact:** isolate today has *no* HTTP client, *no* async runtime, and *no*
 TLS stack — `Cargo.toml` pulls only `url` among the relevant crates; the codebase
 is synchronous and subprocess-oriented (`Cmd`, ssh, scp). Any proxy therefore
 introduces a new async/HTTP/TLS dependency footprint into a deliberately lean,
-security-critical tool. That, plus coop's single-binary distribution (it cross-
+security-critical tool. That, plus isolate's single-binary distribution (it cross-
 compiles and ships one artifact; it does not ask users to install and manage
 daemons), drives the decision.
 
 **Recommendation: build a minimal, purpose-built reverse proxy in Rust as its own
-workspace binary** (e.g. `coop-proxy`), which coop spawns and supervises like it
+workspace binary** (e.g. `iso-proxy`), which isolate spawns and supervises like it
 already spawns ssh. Build it on the *audited primitives* — `hyper` (HTTP/1.1 +
 HTTP/2 + streaming bodies) and `rustls` (pure-Rust TLS, no C/boringssl build) on
-`tokio` — and own only the thin coop-specific policy glue: route → fixed upstream,
+`tokio` — and own only the thin iso-specific policy glue: route → fixed upstream,
 inject one header, verify the capability token, stream bytes. Isolating it in a
 separate binary keeps the main CLI's dependency surface unchanged, makes the
 security-critical component independently auditable, and gives the Firecracker jail
@@ -289,7 +289,7 @@ reachable by the untrusted guest and holding the raw credential:
 | **LiteLLM proxy** (Python) | Ships a Python runtime + a multi-tenant gateway (DB, virtual keys, admin API) — enormous attack + supply-chain surface for a two-route header injector; breaks single-binary distribution |
 | **oauth2-proxy** (Go) | Wrong direction — it authenticates *inbound* users to a protected app and injects *identity* headers, not *outbound* upstream API credentials; recent header-smuggling CVEs in exactly the injection path we'd rely on |
 | **Envoy / nginx** | External daemon to install, configure, and keep patched on every user's host; C/C++ + a config language as attack surface; breaks single-binary distribution |
-| **Pingora** (Rust framework) | Closest reasonable option, but a full load-balancer framework (routing, health checks, LB) with a large tree incl. boringssl (C build) — more surface than a fixed 2-route injector needs. Revisit *only* if coop builds the general MITM proxy (§4), where its TLS-termination/routing machinery would earn its keep |
+| **Pingora** (Rust framework) | Closest reasonable option, but a full load-balancer framework (routing, health checks, LB) with a large tree incl. boringssl (C build) — more surface than a fixed 2-route injector needs. Revisit *only* if isolate builds the general MITM proxy (§4), where its TLS-termination/routing machinery would earn its keep |
 
 Non-negotiable either way: **do not hand-roll TLS, HTTP, or SSE framing.** Those
 are the dangerous primitives; reuse the audited crates for them. What we write is
@@ -307,9 +307,9 @@ from vendor-official mechanisms, not reverse engineering.
 
 | Mode | User setup (login flow) | Re-auth cadence | Auto-renews? | Officially supported? |
 |---|---|---|---|---|
-| **API key** (both agents) | none — supply the key via `cmd:` (Keychain / 1Password / 0600 file), exactly as coop resolves secrets today | never (until the user rotates the key) | n/a — no expiry | **Yes, fully.** Anthropic documents proxy routing via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` ("routing through an LLM gateway or proxy"); Codex documents custom `[model_providers.*]` with a Bearer `env_key` |
+| **API key** (both agents) | none — supply the key via `cmd:` (Keychain / 1Password / 0600 file), exactly as isolate resolves secrets today | never (until the user rotates the key) | n/a — no expiry | **Yes, fully.** Anthropic documents proxy routing via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` ("routing through an LLM gateway or proxy"); Codex documents custom `[model_providers.*]` with a Bearer `env_key` |
 | **Claude subscription** | run `claude setup-token` **once** on the host → stash the printed 1-year token → reference via `cmd:` | once a year (re-run `setup-token`) | no, but the token lives one year | **Yes** — `setup-token` is the documented headless path; the token is "scoped to inference only" |
-| **Codex subscription** | `codex login` on the host, then coop must hold the refreshable `~/.codex/auth.json` | session goes stale after **~8 days** without a refresh | yes, but **client-side only** (Codex refreshes on use / on 401 and writes back to `auth.json`) | **Discouraged** — OpenAI: "API keys are still the recommended option for most CI/CD jobs"; there is **no long-lived headless token**, and the refresh endpoints are internal |
+| **Codex subscription** | `codex login` on the host, then isolate must hold the refreshable `~/.codex/auth.json` | session goes stale after **~8 days** without a refresh | yes, but **client-side only** (Codex refreshes on use / on 401 and writes back to `auth.json`) | **Discouraged** — OpenAI: "API keys are still the recommended option for most CI/CD jobs"; there is **no long-lived headless token**, and the refresh endpoints are internal |
 
 **Consequences for the proxy:**
 
@@ -322,18 +322,18 @@ from vendor-official mechanisms, not reverse engineering.
   This also finally gives #62 a non-exposure answer (the token never enters the
   guest).
 - **Codex subscription is the one path the proxy should *not* try to serve**, and
-  the blocker is OpenAI's design, not coop's: there is no long-lived token, and the
+  the blocker is OpenAI's design, not isolate's: there is no long-lived token, and the
   only credential is a refreshable `auth.json` whose refresh is a *client-side*
   loop against internal endpoints that writes state back to the file. To keep the
   guest from holding it, the proxy would have to reimplement that undocumented
   refresh and own the rotating token — exactly the fragile, security-critical
   machinery a security product should not build against an unstable contract.
   OpenAI itself steers automation to API keys. **So: Codex subscription → use
-  API-key mode.** This is not a parity regression coop introduces; both agents get
+  API-key mode.** This is not a parity regression isolate introduces; both agents get
   full non-exposure via API keys, and Claude can *additionally* offer subscription
   non-exposure only because Anthropic ships the token for it.
 
-**The `auth.json` exposure, closed in v1.** coop copies `~/.codex/auth.json` onto
+**The `auth.json` exposure, closed in v1.** isolate copies `~/.codex/auth.json` onto
 the guest disk today (`backend.rs:2326`) — a refreshable token at rest, the worst
 case #411 names. When proxy mode is on, **stop staging `auth.json`** (drop it from
 the effective `CODEX_ALLOWED_FILES` for that instance). A user who wants Codex
@@ -365,7 +365,7 @@ concentration risk:
 
 1. **Stay on the *explicit* token path.** "One login for everything" must mean the
    user deliberately runs `setup-token` (or supplies an API key) via `cmd:` — never
-   coop silently harvesting the host's live interactive `/login` session
+   isolate silently harvesting the host's live interactive `/login` session
    (`~/.claude/.credentials.json` / Keychain). #62 already rejected implicit
    credential reads as supply-chain magic; that judgment holds here.
 2. **Keep per-VM control at the capability-token layer, not the upstream
@@ -397,7 +397,7 @@ let the upstream credential be as long-lived as the vendor allows.
 Ordered, independently shippable:
 
 1. **Proxy core + Anthropic.** The host-side streaming reverse proxy as its own
-   workspace binary (`coop-proxy`, hyper + rustls + tokio — §6a), its per-instance
+   workspace binary (`iso-proxy`, hyper + rustls + tokio — §6a), its per-instance
    lifecycle (model the control-socket pattern from `port_forward.rs`), binding on
    `guest_host_address`, secret resolution via `resolve_cmd_value`, and
    capability-token verification (§6). Guest config: `claude_env_block` with
@@ -407,12 +407,12 @@ Ordered, independently shippable:
    Smallest end-to-end slice because the base-URL seam already exists.
 2. **Codex (API key).** Add the injection route for `api.openai.com`. Guest config:
    `codex_proxy_config` block with `base_url` = proxy and `env_key =
-   "COOP_LOCAL_API_KEY"` carrying the capability token. Stop staging `auth.json`
+   "ISO_LOCAL_API_KEY"` carrying the capability token. Stop staging `auth.json`
    when proxy mode is on (§7).
    Delivers Claude↔Codex parity at the API-key tier. Codex subscription is out of
    scope by vendor design (§7).
 3. **Jailing (shipped).** Bound a proxy-exploit blast radius by confining
-   `coop-proxy`. **Implemented with tiered Landlock, not the uid+netns jailer
+   `iso-proxy`. **Implemented with tiered Landlock, not the uid+netns jailer
    sketched in §3/§11.3.** The settled architecture binds the listener on host
    `127.0.0.1` reached via `ssh -R`, and an isolated network namespace gets its
    own loopback the host-side tunnel could not reach — so instead of moving the
@@ -434,7 +434,7 @@ Ordered, independently shippable:
    `url.insteadOf` rewriting) and must not be labeled "scoped." Treat it as its own
    design under #73's constraints.
 
-Each slice is gated behind explicit config (proxy mode is opt-in), per coop's
+Each slice is gated behind explicit config (proxy mode is opt-in), per isolate's
 "no speculative features / additive and opt-in" stance.
 
 ---
@@ -502,7 +502,7 @@ Each slice is gated behind explicit config (proxy mode is opt-in), per coop's
    with the lightest lifecycle (no sudo, no per-instance netns/route teardown).
    See [`../trust-model.md`](../trust-model.md).
 4. **Config surface.** What the opt-in looks like (`[network]`/`[proxy]` block),
-   and how it interacts with `coop model local` (proxy mode and local mode both
+   and how it interacts with `iso model local` (proxy mode and local mode both
    rewrite `base_url` — they must not collide).
 
 ---
@@ -511,22 +511,22 @@ Each slice is gated behind explicit config (proxy mode is opt-in), per coop's
 
 **The attestation is over the tarball, so bundle the proxy inside it.** The release
 workflow attests each per-target artifact — `actions/attest-build-provenance` with
-`subject-path: "coop-*.tar.gz"` (`release.yml`) — and `install.sh` verifies it with
+`subject-path: "iso-*.tar.gz"` (`release.yml`) — and `install.sh` verifies it with
 `gh attestation verify <tarball> --repo trailofbits/coop`, falling back to the
 published `SHA256SUMS`. Anything shipped *inside* that already-attested tarball
 inherits the identical SLSA build-provenance guarantee with **no new attestation
-machinery**. So `coop-proxy` ships in the same tarball as `coop`.
+machinery**. So `iso-proxy` ships in the same tarball as `iso`.
 
-`coop-proxy` runs on the **host** (it holds the secret and forwards upstream), so
+`iso-proxy` runs on the **host** (it holds the secret and forwards upstream), so
 it builds for the exact three host triples already in the matrix
 (`aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`)
 — no new build targets.
 
-**Crate layout.** The root `Cargo.toml` today is a single `coop` package (the
+**Crate layout.** The root `Cargo.toml` today is a single `iso` package (the
 `fuzz/` dir is its own separate workspace). Promote the root to a workspace that
-keeps `coop` as the root package and adds a `coop-proxy/` member with its *own*
+keeps `iso` as the root package and adds a `iso-proxy/` member with its *own*
 `Cargo.toml` carrying the async/HTTP/TLS deps (`hyper`, `rustls`, `tokio`). Because
-`coop` does **not** depend on `coop-proxy`, the `coop` binary's dependency closure
+`iso` does **not** depend on `iso-proxy`, the `iso` binary's dependency closure
 is unchanged — the heavy, security-critical deps are isolated to and independently
 auditable in the proxy crate (§6a). `cargo build --release --workspace` produces
 both binaries under `target/<triple>/release/`.
@@ -534,26 +534,26 @@ both binaries under `target/<triple>/release/`.
 **Release diff (small):**
 - Build: `cargo build --release --workspace --target <triple>` (was: default
   package only).
-- Package: `cp` **both** `coop` and `coop-proxy` into `staging/<name>/` before
+- Package: `cp` **both** `iso` and `iso-proxy` into `staging/<name>/` before
   `tar`. Everything downstream — `SHA256SUMS`, the provenance attestation, the
   `gh release create` — is untouched, because it all operates on the tarball.
 
 **Install diff (small):** after extraction, move **both** binaries into
 `INSTALL_DIR`. Checksum + attestation verification are unchanged (still one tarball,
-one subject). `coop` locates its proxy via `std::env::current_exe()`'s parent
+one subject). `iso` locates its proxy via `std::env::current_exe()`'s parent
 directory, so they must land side by side — which the single-tarball install
 guarantees.
 
-**Why not a separate artifact per binary.** A standalone `coop-proxy-*.tar.gz` with
+**Why not a separate artifact per binary.** A standalone `iso-proxy-*.tar.gz` with
 its own attestation doubles the release outputs, adds a second `gh attestation
 verify` to install, and introduces version-skew risk (proxy and CLI from different
 builds). Bundling gives **lockstep versions by construction** (both from one build)
 and one thing to verify — strictly simpler at equal cryptographic strength.
 
-**Why not a single binary with a hidden `coop proxy` subcommand (re-exec).** It is
+**Why not a single binary with a hidden `iso proxy` subcommand (re-exec).** It is
 the simplest packaging (nothing changes, one binary, trivially the same
 attestation), and it keeps runtime isolation via re-exec + jail. But it links
-`hyper`/`rustls`/`tokio` into the one `coop` binary, enlarging the main tool's
+`hyper`/`rustls`/`tokio` into the one `iso` binary, enlarging the main tool's
 attack and supply-chain surface — the opposite of §6a's goal for a security-
 critical tool. Rejected for that reason; the two-binaries-one-tarball approach
 keeps the dependency surfaces separate at near-zero packaging cost.
@@ -567,7 +567,7 @@ the largest new supply-chain surface in this design. The rule is **every new dep
 enters with `default-features = false` and an explicit, minimal feature list**, and
 that minimality is *enforced in CI* by the `cargo deny check` that already runs
 (`ci.yml`, `cargo-deny@0.19.9`) — no new CI step, just new rules in `deny.toml`.
-Because `coop-proxy` is a workspace member, its graph is already in scope of that
+Because `iso-proxy` is a workspace member, its graph is already in scope of that
 check.
 
 **Enforcement: pin the exact feature set per direct dep.** cargo-deny's
@@ -593,7 +593,7 @@ exact = true
 allow = ["tokio", "server", "http1", "http2"]
 ```
 
-with the matching `coop-proxy/Cargo.toml`:
+with the matching `iso-proxy/Cargo.toml`:
 
 ```toml
 tokio            = { version = "1",  default-features = false, features = ["rt-multi-thread", "net", "io-util", "macros", "signal"] }
@@ -610,7 +610,7 @@ deliberately: two fixed upstreams need no OS trust-store variance, and a pinned
 root set is both smaller surface and more deterministic for a security tool.
 
 > **As shipped (v1).** Feature minimality is carried by each crate's
-> `default-features = false` + explicit feature list in `coop-proxy/Cargo.toml`;
+> `default-features = false` + explicit feature list in `iso-proxy/Cargo.toml`;
 > the license exceptions and the `openssl`/`native-tls` bans below are enforced
 > by the `cargo deny check` already in CI. The `[[bans.features]] exact = true`
 > pins in this section were **not** shipped in `deny.toml` — they remain a
@@ -629,7 +629,7 @@ is `Apache-2.0`/`MIT`/`ISC`; its crypto backend is the snag. The pinned
 `aws-lc-rs` (rustls default) stack carries `BSD-3-Clause` through its `aws-lc-sys`
 C/`-sys` layer and through `subtle`, the pinned `webpki-roots` set is
 `CDLA-Permissive-2.0`, plus `ISC` recurs across the stack — none of which was in
-coop's `[licenses] allow` at design time. Handle the crate-specific terms with
+isolate's `[licenses] allow` at design time. Handle the crate-specific terms with
 **crate-scoped exceptions** and add the recurring `ISC` globally, so the
 allowlist stays tight:
 
@@ -721,13 +721,13 @@ If any of these fails, the mechanism changes before anything else is built.
 ### Tier 2 — robustness and operability
 
 - **Lifecycle tied to the VM** (start/stop/destroy) via the `forwards.sock`
-  supervision pattern; orphan/zombie cleanup if coop itself dies; port-collision
+  supervision pattern; orphan/zombie cleanup if isolate itself dies; port-collision
   pre-check.
 - **Crash handling.** Proxy death mid-session surfaces a clear error (and/or
   restarts), not a silent hang.
 - **Multi-instance isolation.** Per-instance proxy + per-instance token so
   instance A's guest can never reach instance B's credentials. (Resolves §11.2.)
-- **`coop model local` interaction.** Proxy mode and local mode both rewrite
+- **`iso model local` interaction.** Proxy mode and local mode both rewrite
   `base_url`; define precedence/mutual-exclusion. (Resolves §11.4.)
 
 ### Tier 3 — validation gates (per CLAUDE.md)
@@ -751,10 +751,10 @@ If any of these fails, the mechanism changes before anything else is built.
 
 ### Tier 4 — UX, docs, and surface
 
-- **Opt-in config shape** decided (default off, per coop's conservatism) and
+- **Opt-in config shape** decided (default off, per isolate's conservatism) and
   fuzzed like the other config parsers if it adds fields. (Resolves §11.4 config
   half.)
-- **`coop status` shows proxy state** (on/off, which creds injected — redacted,
+- **`iso status` shows proxy state** (on/off, which creds injected — redacted,
   health).
 - **Docs page** stating the threat model honestly (§9): what non-exposure does and
   does not guarantee, and the weaker macOS story (host-local processes reach the
@@ -772,7 +772,7 @@ real caveat, and all VZ-driver-specific and needing a spike shared with #2's mac
 networking work:
 
 - **Jail the proxy with Seatbelt (`sandbox-exec`).** A profile confining
-  `coop-proxy` to: no filesystem writes, `connect` only to the two upstream
+  `iso-proxy` to: no filesystem writes, `connect` only to the two upstream
   hosts:443, `bind` only its one listener, no `exec`. The sandbox inherits to
   children and cannot be removed from inside — the macOS analog of the Linux
   netns/uid jail, and close to it in strength. **Caveat:** `sandbox-exec` is

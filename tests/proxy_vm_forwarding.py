@@ -142,7 +142,7 @@ def https_listener(work, log, *, interactive=False):
             listener.listen(8)
             yield listener
             return
-    with tempfile.TemporaryDirectory(prefix="coop-bind-", dir="/tmp") as directory, socket.socket(socket.AF_UNIX) as control:
+    with tempfile.TemporaryDirectory(prefix="iso-bind-", dir="/tmp") as directory, socket.socket(socket.AF_UNIX) as control:
         path = Path(directory) / "bind.sock"
         control.bind(str(path))
         control.listen(1)
@@ -245,14 +245,14 @@ def exercise(work, provider, port, token, credential, guest_command, log, *, lis
     guest = None
     try:
         directory = subprocess.check_output(
-            ["swift", "build", "--package-path", str(ROOT / "coop-proxy"), "--show-bin-path"], text=True).strip()
+            ["swift", "build", "--package-path", str(ROOT / "iso-proxy"), "--show-bin-path"], text=True).strip()
         xctest = subprocess.check_output(["xcrun", "--find", "xctest"], text=True).strip()
-        bundle = Path(directory) / "CoopProxyTransportTests.xctest"
+        bundle = Path(directory) / "IsoProxyTransportTests.xctest"
         command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(Path(xctest).resolve()),
-                   "-f", str(ROOT / "Sources/CoopHost/seatbelt-proxy.sb"), xctest,
-                   "-XCTest", "CoopProxyTransportTests.VMProxyFixture/testServe", str(bundle)]
+                   "-f", str(ROOT / "Sources/IsoHost/seatbelt-proxy.sb"), xctest,
+                   "-XCTest", "IsoProxyTransportTests.VMProxyFixture/testServe", str(bundle)]
         fixture = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log,
-                                   env={"COOP_VM_FIXTURE_CA": str(work / "forward_ca.der")}, start_new_session=True)
+                                   env={"ISO_VM_FIXTURE_CA": str(work / "forward_ca.der")}, start_new_session=True)
         startup = {"version": 1, "listen": "127.0.0.1:" + str(port), "provider": provider,
                    "capability_token": token, "injection": {"scheme": "bearer", "credential": credential}}
         fixture.stdin.write(json.dumps(startup).encode())

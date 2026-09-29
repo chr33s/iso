@@ -1,6 +1,6 @@
-Parse devcontainer.json and print coop's translation report
+Parse devcontainer.json and print iso's translation report
 
-Usage: coop devcontainer check [OPTIONS] <PATH>
+Usage: iso devcontainer check [OPTIONS] <PATH>
 
 Arguments:
   <PATH>

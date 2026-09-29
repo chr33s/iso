@@ -1,6 +1,6 @@
 Push local workspace into the running VM
 
-Usage: coop push [OPTIONS] [NAME]
+Usage: iso push [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

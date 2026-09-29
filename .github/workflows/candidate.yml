@@ -7,7 +7,7 @@ permissions: {}
 
 jobs:
   ci:
-    if: github.repository == 'chr33s/coop' && github.ref == 'refs/heads/swift'
+    if: github.repository == 'chr33s/iso' && github.ref == 'refs/heads/swift'
     permissions:
       contents: read
     uses: $/.github/workflows/ci.yml
@@ -45,22 +45,22 @@ jobs:
         run: |
           python3 scripts/build-release.py --release --test --sign \
             --expected-revision "$REVISION" --out "$RUNNER_TEMP/candidate"
-          echo "TARBALL=$(ls "$RUNNER_TEMP"/candidate/coop-*-aarch64-apple-darwin.tar.gz)" >> "$GITHUB_ENV"
+          echo "TARBALL=$(ls "$RUNNER_TEMP"/candidate/iso-*-aarch64-apple-darwin.tar.gz)" >> "$GITHUB_ENV"
 
       - name: Check archive contents and signatures
         run: |
-          mkdir "$RUNNER_TEMP/coop-candidate"
-          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/coop-candidate"
-          cd "$RUNNER_TEMP"/coop-candidate/coop-*-aarch64-apple-darwin
-          for binary in coop coop-proxy coop-sandbox; do
+          mkdir "$RUNNER_TEMP/iso-candidate"
+          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/iso-candidate"
+          cd "$RUNNER_TEMP"/iso-candidate/iso-*-aarch64-apple-darwin
+          for binary in iso iso-proxy iso-sandbox; do
             test -x "$binary"
             test "$(shasum -a 256 "$binary" | cut -d' ' -f1)" = "$(jq -r ".binaries[\"$binary\"]" BUILD.json)"
             codesign --verify --strict "$binary"
             spctl --assess --type open --context context:primary-signature --verbose=2 "$binary"
           done
           jq -e '.release_build and .developer_id_signed and .tested and (.source_dirty | not)' BUILD.json
-          ./coop --version
-          ./coop-sandbox version
+          ./iso --version
+          ./iso-sandbox version
 
       - name: Attest candidate archive
         id: attest
@@ -81,7 +81,7 @@ jobs:
       # or change the stable install/update channel.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coop-candidate-${{ github.sha }}-aarch64-apple-darwin
+          name: iso-candidate-${{ github.sha }}-aarch64-apple-darwin
           path: |
             ${{ env.TARBALL }}
             ${{ runner.temp }}/candidate/SHA256SUMS

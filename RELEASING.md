@@ -4,9 +4,9 @@ Modified by chr33s: ported/adapted for the Swift implementation.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Releasing coop
+# Releasing isolate
 
-How a `coop` release is cut, and what to check before cutting one.
+How a `iso` release is cut, and what to check before cutting one.
 
 **Supported host and release target: macOS 27+ on Apple Silicon
 (`aarch64-apple-darwin`) only.** Linux guests remain supported; Linux hosts
@@ -14,11 +14,11 @@ are outside this fork's scope.
 
 ## Fork distribution status
 
-The installer, updater, and repository provenance checks target `chr33s/coop`.
+The installer, updater, and repository provenance checks target `chr33s/iso`.
 Release tags must point to commits reachable from the `swift` branch. A
-release is one archive, `coop-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
-the Swift host `coop`, the Swift credential proxy `coop-proxy`, and the
-signed `coop-sandbox` runtime, plus `LICENSE` and `BUILD.json`.
+release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
+the Swift host `iso`, the Swift credential proxy `iso-proxy`, and the
+signed `iso-sandbox` runtime, plus `LICENSE` and `BUILD.json`.
 
 No hosted candidate or fork release of the Swift host has been published or
 verified yet. Build from source until those gates pass. Hosted attestation and
@@ -33,19 +33,19 @@ build entrypoint. Its stages are explicit and run in order:
 
 1. **source** — copies the tracked (and untracked, unignored) files of this
    checkout into a private staging directory and stamps the revision into
-   `Sources/CoopHost/BuildRevision.swift` there; the working tree is never
+   `Sources/IsoHost/BuildRevision.swift` there; the working tree is never
    modified. `--expected-revision SHA` requires a clean checkout of exactly
    that commit, before and after the build.
-2. **build** — `coop` (release: optimized, `-D COOP_RELEASE_BUILD`, which makes
-   `coop update` treat the binary as a release), `coop-proxy`, and
-   `coop-sandbox` (ad-hoc signed with its virtualization entitlement by
-   `scripts/build-coop-sandbox.sh`), all with `--force-resolved-versions`.
+2. **build** — `iso` (release: optimized, `-D ISO_RELEASE_BUILD`, which makes
+   `iso update` treat the binary as a release), `iso-proxy`, and
+   `iso-sandbox` (ad-hoc signed with its virtualization entitlement by
+   `scripts/build-iso-sandbox.sh`), all with `--force-resolved-versions`.
 3. **test** (`--test`) — every package's tests in the staging copy.
 4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
    signing and notarization; see [macOS signing](#macos-signing).
-5. **archive** — verifies `coop --version` and `coop-sandbox version`, writes
+5. **archive** — verifies `iso --version` and `iso-sandbox version`, writes
    `BUILD.json` (version, tag, revision, dirty flag, per-binary SHA-256,
-   `tested`, `developer_id_signed`), then `coop-<tag|revision>-aarch64-apple-darwin.tar.gz`
+   `tested`, `developer_id_signed`), then `iso-<tag|revision>-aarch64-apple-darwin.tar.gz`
    and `SHA256SUMS` in `--out` (default `.build/release-archive`).
 
 ```bash
@@ -61,7 +61,7 @@ that runs it. It requires Apple Silicon macOS 27+.
 
 - **`ci.yml`** runs on pushes and pull requests: the Swift host
   format/build/test gates and Python host checks, fuzz corpus replay and a
-  bounded smoke, the `coop-proxy` and `coop-sandbox` package tests, the
+  bounded smoke, the `iso-proxy` and `iso-sandbox` package tests, the
   host-only install/update/uninstall suites and regression scripts, and
   `zizmor`.
 - **`candidate.yml`** builds a signed same-revision candidate with
@@ -81,9 +81,9 @@ below is about making sure both succeed and ship something correct.
 
 Run the **Release candidate** workflow (`.github/workflows/candidate.yml`)
 against `swift`. Its downloadable artifact is
-`coop-candidate-<commit>-aarch64-apple-darwin`, containing:
+`iso-candidate-<commit>-aarch64-apple-darwin`, containing:
 
-- `coop-<first 12 hex digits of the commit>-aarch64-apple-darwin.tar.gz`
+- `iso-<first 12 hex digits of the commit>-aarch64-apple-darwin.tar.gz`
 - `SHA256SUMS`
 - `attestations.jsonl`
 
@@ -92,12 +92,12 @@ full commit SHA from the workflow run, then verify before extracting:
 
 ```bash
 REVISION="FULL_COMMIT_SHA_FROM_WORKFLOW_RUN"
-ARCHIVE="coop-${REVISION:0:12}-aarch64-apple-darwin.tar.gz"
+ARCHIVE="iso-${REVISION:0:12}-aarch64-apple-darwin.tar.gz"
 shasum -a 256 -c SHA256SUMS
 gh attestation verify "$ARCHIVE" \
-  --repo chr33s/coop \
+  --repo chr33s/iso \
   --bundle attestations.jsonl \
-  --signer-workflow chr33s/coop/.github/workflows/candidate.yml \
+  --signer-workflow chr33s/iso/.github/workflows/candidate.yml \
   --source-ref refs/heads/swift \
   --source-digest "$REVISION"
 ```
@@ -109,13 +109,13 @@ After both checks succeed, extract into a fresh directory and check the bundle:
 set -e
 mkdir candidate
 tar -xzf "$ARCHIVE" -C candidate
-cd "candidate/coop-${REVISION:0:12}-aarch64-apple-darwin"
-for binary in coop coop-proxy coop-sandbox; do
+cd "candidate/iso-${REVISION:0:12}-aarch64-apple-darwin"
+for binary in iso iso-proxy iso-sandbox; do
   codesign --verify --strict "$binary"
 done
 cat BUILD.json
-./coop --version
-./coop-sandbox version
+./iso --version
+./iso-sandbox version
 )
 ```
 
@@ -131,8 +131,8 @@ workflow identity; use those original identities when verifying old artifacts.
 `scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
 staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
-`coop`, `coop-proxy`, and `coop-sandbox` with a Developer ID Application
-certificate (hardened runtime, secure timestamp; `coop-sandbox` keeps its
+`iso`, `iso-proxy`, and `iso-sandbox` with a Developer ID Application
+certificate (hardened runtime, secure timestamp; `iso-sandbox` keeps its
 virtualization entitlement), submits them to Apple's notary service, and fails
 unless notarization is `Accepted`. A browser-downloaded archive then runs
 without `xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled
@@ -158,10 +158,10 @@ environment before tagging.
 
 ## Release signing
 
-`coop update` and `install.sh` refuse a release unless `SHA256SUMS.sig` is an
+`iso update` and `install.sh` refuse a release unless `SHA256SUMS.sig` is an
 `ssh-keygen -Y sign` signature over its `SHA256SUMS`, in namespace
 `release-sums@chr33s`, by a key compiled into the running binary
-(`ReleaseSigners.keys` in `Sources/CoopHost/ReleaseSignature.swift`). The
+(`ReleaseSigners.keys` in `Sources/IsoHost/ReleaseSignature.swift`). The
 private key is a maintainer's SSH key in their ssh-agent; it never reaches CI,
 which is why `release.yml` stops at a draft.
 
@@ -174,7 +174,7 @@ python3 scripts/sign-release.py vX.Y.Z      # --key PUB to pick a signer, --no-p
 It requires the release to still be a draft, downloads its tarballs,
 `SHA256SUMS` and `attestations.jsonl`, checks that `SHA256SUMS` lists exactly
 those tarballs with matching digests and that each attestation verifies with
-the same signer pin `coop update` uses, signs with the agent, verifies the
+the same signer pin `iso update` uses, signs with the agent, verifies the
 signature against [`.github/release-signers`](.github/release-signers), uploads
 `SHA256SUMS.sig` and publishes the release.
 
@@ -197,7 +197,7 @@ so rotating the key on GitHub changes nothing for clients.
 
 Neither signatures nor Sigstore bundles can be revoked once published. To
 withdraw a bad release, add its archive digest (from its `SHA256SUMS`) to
-`ReleaseRevocations.digests` in `Sources/CoopHost/ReleaseSignature.swift` and
+`ReleaseRevocations.digests` in `Sources/IsoHost/ReleaseSignature.swift` and
 cut the next release. Updated binaries refuse the revoked archive, and
 anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 
@@ -228,7 +228,7 @@ Apple Silicon machine.
    `CHANGELOG.md` to judge.
 
 3. **Bump the version.** Edit `packageVersion` in
-   `Sources/CoopHost/UpdateVersion.swift`.
+   `Sources/IsoHost/UpdateVersion.swift`.
 
 4. **Promote the changelog.** Rename `## Unreleased` to `## vX.Y.Z` in
    `CHANGELOG.md`. The text under it becomes the GitHub release notes verbatim,
@@ -256,7 +256,7 @@ Apple Silicon machine.
    `scripts/test-proxy-live.py` per approved model, then
    `python3 tests/integration-proxy-transition.py --live-agents` with
    `--claude-model`/`--codex-model` for each approved model. Both use the
-   dedicated `coop-live-*` Keychain credentials; see [testing](docs/testing.md).
+   dedicated `iso-live-*` Keychain credentials; see [testing](docs/testing.md).
 
 6. **Run the deep checks when the diff warrants it** (slow, not CI gates):
    - `python3 scripts/swift-host-fault-injection.py` when this release changed
@@ -267,7 +267,7 @@ Apple Silicon machine.
    - `scripts/fuzz.sh run <target> 600` when it changed a parser of
      user-editable input (`ParseRepoSlug`, `JSONCToJSON`, `ConfigLoad`).
 
-7. **Open the bump PR** (`Sources/CoopHost/UpdateVersion.swift`, `CHANGELOG.md`), get it
+7. **Open the bump PR** (`Sources/IsoHost/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `swift`. Never push the bump straight to `swift`.
 
 8. **Tag the merge commit and push.**
@@ -290,12 +290,12 @@ Apple Silicon machine.
    Clients do not see the draft, and would refuse it unsigned, until this runs.
 
 10. **Verify the published release.** On the GitHub release page confirm:
-   - `coop-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `coop`, `coop-proxy`,
-     `coop-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
+   - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
+     `iso-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,
-     `spctl --assess --type open --context context:primary-signature -v coop`
+     `spctl --assess --type open --context context:primary-signature -v iso`
      reports `source=Notarized Developer ID`,
    - the notes match the `## vX.Y.Z` CHANGELOG section.
 

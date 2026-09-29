@@ -20,7 +20,7 @@ SECRET = "SYNTHETIC-LITERAL-CREDENTIAL"
 
 class MigrateConfigTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="coop-migrate-")
+        self.directory = tempfile.TemporaryDirectory(prefix="iso-migrate-")
         self.root = Path(self.directory.name)
         self.home = self.root / "home"
         self.home.mkdir()
@@ -131,7 +131,7 @@ class MigrateConfigTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(f"proxy.{provider}.credential", result.stderr)
-                self.assertIn("coop proxy setup", result.stderr)
+                self.assertIn("iso proxy setup", result.stderr)
                 self.assertNotIn(SECRET, result.stderr + result.stdout)
                 self.assertFalse(destination.exists())
 

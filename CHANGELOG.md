@@ -10,14 +10,14 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Boundary hardening and local secrets
 
-- **Staged pulls**: `coop diff` and `coop pull --review` pull the guest
-  workspace into a host-side stage and print it for review; `coop pull --apply
+- **Staged pulls**: `iso diff` and `iso pull --review` pull the guest
+  workspace into a host-side stage and print it for review; `iso pull --apply
   [--stage-id ID]` applies it and `--discard` drops it. Special files, hard
   links, escaping or chained symlinks and control-character names make a stage
   inapplicable, and `workspace.pull` budgets bound it.
-  `workspace.pull.mode = "stage"` makes a plain `coop pull` stage too; the
+  `workspace.pull.mode = "stage"` makes a plain `iso pull` stage too; the
   default `direct` mode is unchanged.
-- **Local secret store**: `coop secrets init|set|rm|list|status` keeps
+- **Local secret store**: `iso secrets init|set|rm|list|status` keeps
   secrets under `<data_dir>/secrets/`, encrypted with a key that needs both a
   passphrase (scrypt) and this Mac's Secure Enclave (Touch ID). There is no
   recovery path. Adds the swift-crypto 5.0.0 dependency (scrypt).
@@ -27,35 +27,35 @@ SPDX-License-Identifier: Apache-2.0
   `OPENAI_API_KEY`); `required` never forwards any of them and fails
   `up`/`start` without a provider proxy.
 - **`--env-file`** on `up`/`start`, and whole-value `{vault:NAME}` references
-  in `--env`/`--env-file` values, resolved from `coop secrets` per session and
+  in `--env`/`--env-file` values, resolved from `iso secrets` per session and
   persisted only as references.
 - **Stored provider credentials**: `ANTHROPIC_API_KEY={vault:NAME}` (and the
   other provider variables) goes only to that VM's credential proxy, never the
   guest. `proxy.<provider>.credential` and `github.pat` tokens accept
   `vault:NAME`.
 - **`egress: "none"`**: new instances get a vmnet host-only network with no
-  route beyond the Mac and no resolver; SSH and coop's tunnels keep working.
+  route beyond the Mac and no resolver; SSH and isolate's tunnels keep working.
   No raw provider credential is forwarded into such a guest, whatever
   `proxy.mode` says.
-  Requires coop-sandbox 0.3.0 or later (protocol 3).
+  Requires iso-sandbox 0.3.0 or later (protocol 3).
 - **`limits.session_ttl`**: each boot ends at a host-clock deadline enforced
-  by the sandbox owner (`APPLE_SESSION_EXPIRED` after it). coop-sandbox 0.4.0
+  by the sandbox owner (`APPLE_SESSION_EXPIRED` after it). iso-sandbox 0.4.0
   (protocol 4) is now required; 0.3.0 and older are refused.
 - **`security.preset`** (`networked`, `provider-only`, `offline`) supplies
   defaults for `egress`, `proxy.mode` and `workspace.pull.mode`, and
-  **`coop audit [--suggest-config]`** shows the boundary metadata coop records
+  **`iso audit [--suggest-config]`** shows the boundary metadata isolate records
   per instance (never values).
 
 ### Swift host
 
-- **The host CLI is Swift.** The Rust `coop` host, its Cargo manifests,
-  toolchain pin and cargo-fuzz workspace are removed; building coop no longer
-  needs Rust. The root `Package.swift` builds `coop` (modules `CoopCore`,
-  `CoopConfiguration`, `CoopHost`, `CoopCLI`), with one concrete Apple backend.
-  `coop-proxy` and `coop-sandbox` remain separate packages and processes.
+- **The host CLI is Swift.** The Rust `iso` host, its Cargo manifests,
+  toolchain pin and cargo-fuzz workspace are removed; building isolate no longer
+  needs Rust. The root `Package.swift` builds `iso` (modules `IsoCore`,
+  `IsoConfiguration`, `IsoHost`, `IsoCLI`), with one concrete Apple backend.
+  `iso-proxy` and `iso-sandbox` remain separate packages and processes.
   `python3 scripts/build-release.py` builds and archives all three; parser
   fuzzing uses Swift libFuzzer harnesses (`scripts/fuzz.sh`).
-- **Configuration is JSONC** at `~/.coop/config.jsonc` (strict JSON through
+- **Configuration is JSONC** at `~/.iso/config.jsonc` (strict JSON through
   an explicit `--config *.json`). TOML is no longer read: a `.toml` path or a
   lone legacy `config.toml` stops with instructions to convert it with
   `scripts/migrate-config-to-jsonc.py --input PATH --output PATH
@@ -64,25 +64,25 @@ SPDX-License-Identifier: Apache-2.0
 - **Removed Firecracker configuration**: `firecracker_bin`, `vm.kernel_path`,
   `vm.boot_args` and the `network` object are rejected by name; the converter
   refuses them unless `--drop-retired-fields` is given.
-- **Static shell completions only**: `coop completions bash|zsh|fish`. Runtime
+- **Static shell completions only**: `iso completions bash|zsh|fish`. Runtime
   `COMPLETE=<shell>` hooks, instance/image name completion, and PowerShell and
   Elvish output are removed.
-- **Setup consolidation**: `coop setup --config-only` writes the JSONC template
-  and does nothing else; `coop init` is a deprecated alias for it.
-  `coop quickstart` is removed and explains its replacement (`setup`, then `up`,
+- **Setup consolidation**: `iso setup --config-only` writes the JSONC template
+  and does nothing else; `iso init` is a deprecated alias for it.
+  `iso quickstart` is removed and explains its replacement (`setup`, then `up`,
   then `claude`/`codex`).
-- **Credential provisioning**: `coop proxy setup` stores provider credentials
+- **Credential provisioning**: `iso proxy setup` stores provider credentials
   only in the macOS Keychain and writes a `cmd:` reference; the 1Password,
   plaintext-file and Secret Service adapters are removed. Literal credentials in
   `proxy.anthropic.credential`, `proxy.openai.credential` and per-VM overrides
   are rejected; use a `cmd:` reference.
 - **`~/.coop-apple` is no longer read or migrated.** Host-key pins use the
-  `HostKeyAlias` `<machine>.coop`; instances pinned under the former
+  `HostKeyAlias` `<machine>.iso`; instances pinned under the former
   `.coop-apple` alias must be re-enrolled (recreate or restore the instance).
 - **Security changes** (accepted 2026-09-28): MCP server definitions are passed
   to `claude mcp add-json` on stdin instead of argv; guest-bound `ssh`/`scp`/`rsync`
   inherit only a minimal host environment plus the forwarded values; proxy and
-  tunnel PIDs are signalled only while they still name `coop-proxy`/`ssh`; the
+  tunnel PIDs are signalled only while they still name `iso-proxy`/`ssh`; the
   proxy starts only on a free port and must be its sole listener before the
   credential is sent; devcontainer Feature manifests and layers are
   digest-verified and `install.sh` is read as a bounded regular file without
@@ -94,7 +94,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - Replace the Rust credential proxy with the Swift-only macOS 27+ implementation;
   retain the Rust host CLI and Linux/Firecracker support without proxy mode.
-- Move the Swift packages to root-level `coop-proxy/` and `coop-sandbox/` and
+- Move the Swift packages to root-level `iso-proxy/` and `iso-sandbox/` and
   update build, test, workflow, and documentation paths.
 - Document the fork’s reduced proxy implementation/dependency surface, source
   installation, and outstanding acceptance and distribution gates.
@@ -102,19 +102,19 @@ SPDX-License-Identifier: Apache-2.0
 ### New features
 
 - **Opt-in Apple sandbox backend (macOS)** — building with
-  `--features apple-container` replaces Lima with coop-sandbox
-  ([`coop-sandbox`](coop-sandbox)), a Swift runtime on Apple's
-  `containerization` 0.45.0 built with `scripts/build-coop-sandbox.sh`. Each
+  `--features apple-container` replaces Lima with iso-sandbox
+  ([`iso-sandbox`](iso-sandbox)), a Swift runtime on Apple's
+  `containerization` 0.45.0 built with `scripts/build-iso-sandbox.sh`. Each
   instance is its own VM on its own vmnet network with no host mounts, socket
-  relays, published ports, or host SSH-agent forwarding. coop verifies the
+  relays, published ports, or host SSH-agent forwarding. isolate verifies the
   running VM's effective configuration and pins its SSH host key before every
   hand-out; workspaces are copied. It supports explicit disk sizes, offline
-  disk growth (`coop resize --size`), CPU/memory changes, and
-  `coop commit`/`coop restore`. Committed disks have their guest identity
+  disk growth (`iso resize --size`), CPU/memory changes, and
+  `iso commit`/`iso restore`. Committed disks have their guest identity
   removed, and a restore re-pins the new host key. Sandbox owners run as
   launchd jobs, and a crash restarts them on the same disk. Stock Apple
   `container` 1.4.1 is used only to build images and supply the guest kernel.
-  State lives in `~/.coop-apple`, and `coop update` is disabled for this
+  State lives in `~/.coop-apple`, and `iso update` is disabled for this
   build. See [`docs/backends.md`](docs/backends.md). The choice over stock
   Apple containers and a `container machine` fork is recorded in
   [`docs/design/apple-sandbox-runtime.md`](docs/design/apple-sandbox-runtime.md);
@@ -123,19 +123,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Fixes
 
-- **`coop stop` no longer reports an instance stopped when its liveness probe
-  fails** — a failed probe used to be treated as "not running", so `coop stop`
+- **`iso stop` no longer reports an instance stopped when its liveness probe
+  fails** — a failed probe used to be treated as "not running", so `iso stop`
   printed "stopped" while the VM kept running. It now tears down the
   credential proxy and stops the instance through the backend's control plane
   (PID file, `limactl`, or the runtime), or returns an error if that fails.
-- **`coop status` lists every instance even when one cannot be probed** — that
+- **`iso status` lists every instance even when one cannot be probed** — that
   instance is shown as `unknown` (JSON `"state": "unknown"`) with a warning,
   instead of the whole listing failing.
 - **rsync transfers work when the VM key path contains a space** — SSH options
   containing whitespace are now quoted in rsync's `-e` command.
 - **Editor SSH aliases work when the VM key path contains a space** — the
-  `IdentityFile` in the `coop-<name>` block of `~/.ssh/config` is now quoted.
-- **Lima: an instance starts again after `coop resize --size`** — Lima 2.x
+  `IdentityFile` in the `iso-<name>` block of `~/.ssh/config` is now quoted.
+- **Lima: an instance starts again after `iso resize --size`** — Lima 2.x
   refuses to boot ("disk shrinking is not supported") when `lima.yaml` records
   a smaller disk than the file on disk. Growing the disk now updates `disk:`
   in `lima.yaml` too.
@@ -150,13 +150,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Upgrading from v0.5.4
 
-- Rerun the [installer](docs/getting-started.md#install) to install both `coop`
-  and the new `coop-proxy` companion in the same directory. The v0.5.4 updater
-  replaces only `coop`, so its first upgrade does not install the companion
+- Rerun the [installer](docs/getting-started.md#install) to install both `iso`
+  and the new `iso-proxy` companion in the same directory. The v0.5.4 updater
+  replaces only `iso`, so its first upgrade does not install the companion
   required for proxy mode. Preserve your `INSTALL_DIR` if you used a custom
   installation directory.
 - The published v0.5.4 Linux ARM64 binary reports
-  `coop 0.5.4-dev (8e24729+dirty)` and refuses self-update as a development
+  `iso 0.5.4-dev (8e24729+dirty)` and refuses self-update as a development
   build. Use the installer to upgrade it.
 - Restart all running Linux VMs after upgrading to apply guest-to-guest
   network isolation. Every VM on the shared bridge needs the restart; a
@@ -168,35 +168,35 @@ SPDX-License-Identifier: Apache-2.0
 ### New features
 
 - **Codex ChatGPT account auth** — New `[codex] auth = "chatgpt"` mode for
-  account/workspace access without OpenAI API billing. coop installs Linux
+  account/workspace access without OpenAI API billing. isolate installs Linux
   Secret Service support in the guest image, writes Codex's
   `cli_auth_credentials_store = "keyring"` setting, launches Codex through a
   D-Bus/GNOME Keyring wrapper (`/usr/local/bin/codex-account`, which the
   in-guest `codex-yolo` shortcut also uses and which execs Codex unchanged when
   the mode is off), suppresses every `OPENAI_API_KEY` forwarding path, and stops
-  copying host `auth.json` into the guest. Sign in with `coop codex -- login
+  copying host `auth.json` into the guest. Sign in with `iso codex -- login
   --device-auth`; `login` and `logout` now run without the sandbox-bypass flag,
   which is meaningless on subcommands that never start an agent session.
-  Existing images must be rebuilt with `coop setup --rebuild` before using this
+  Existing images must be rebuilt with `iso setup --rebuild` before using this
   mode. A restart reuses the old guest disk, so an existing VM also needs
-  `coop restore <vm> --image <image> --reprovision` (or a destroy and
+  `iso restore <vm> --image <image> --reprovision` (or a destroy and
   recreate) to pick up the new guest packages.
-- **`coop restore --reprovision` — start over without re-typing anything**
+- **`iso restore --reprovision` — start over without re-typing anything**
   (#432) — Replaces a clobbered or bloated guest filesystem with a fresh copy of
   the instance's image, then provisions it as a first boot: `/workspace` is
   restored from the source the instance recorded — re-synced, re-cloned or
   re-mounted — agents are re-bootstrapped, and plugins, marketplaces and MCP
   servers are reinstalled. The instance is left running, so no follow-up
-  `coop start` is needed. It keeps its name, index, IP, image, disk size, port
+  `iso start` is needed. It keeps its name, index, IP, image, disk size, port
   forwards and guest env — including a devcontainer's `containerEnv` and
   `forwardPorts` — so those flags do not have to be remembered. GitHub PATs and
   provider credentials live in the host-side secret store and are untouched.
   Extra `--extra-mount` directories, `--exclude-git` and a devcontainer's
-  `postStartCommand` are not replayed, because coop does not persist them.
+  `postStartCommand` are not replayed, because isolate does not persist them.
 
-  This is what `coop restore` + `coop start` could not do: a restart skips the
+  This is what `iso restore` + `iso start` could not do: a restart skips the
   workspace sync and the plugin install on the assumption that both survived on
-  the guest disk — which holds for a `coop commit` checkpoint, but not after the
+  the guest disk — which holds for a `iso commit` checkpoint, but not after the
   disk is replaced with a base image. Plain `restore` + `start` remains the
   checkpoint rollback; `--reprovision` is the base-image case.
 
@@ -205,12 +205,12 @@ SPDX-License-Identifier: Apache-2.0
   confirmation and is required off a TTY. `-y`, `--no-agents` and `--no-prompt`
   are rejected without `--reprovision`, since none of them mean anything to a
   plain disk swap. Unlike a plain `restore`, which requires a stopped instance,
-  `--reprovision` also accepts a running one and stops it itself. `coop restore`
+  `--reprovision` also accepts a running one and stops it itself. `iso restore`
   without `--reprovision` is unchanged.
 
 - **Credential-injecting proxy — keep the model API keys out of the guest**
-  (#411) — New opt-in `[proxy]` config. When set, coop runs a small host-side
-  reverse proxy (`coop-proxy`, a new binary shipped in the same tarball) — one
+  (#411) — New opt-in `[proxy]` config. When set, isolate runs a small host-side
+  reverse proxy (`iso-proxy`, a new binary shipped in the same tarball) — one
   process per (VM, provider) — for the lifetime of a remote-mode VM: the guest
   is pointed at it and holds only a per-instance capability token, while the
   real credential stays on the host and is injected onto requests upstream.
@@ -218,7 +218,7 @@ SPDX-License-Identifier: Apache-2.0
     `ANTHROPIC_BASE_URL`; supports an API key (`x-api-key`) or a Claude
     `setup-token` (`Authorization: Bearer`).
   - **Codex** (`[proxy.openai]`) is pointed at the proxy via a
-    `[model_providers.coop_local]` block (Responses API) with the capability
+    `[model_providers.iso_local]` block (Responses API) with the capability
     token as the provider bearer; OpenAI API keys inject as
     `Authorization: Bearer`. In proxy mode Codex's `~/.codex/auth.json` is no
     longer staged onto the guest disk; Codex subscription is out of scope — use
@@ -227,13 +227,13 @@ SPDX-License-Identifier: Apache-2.0
   The raw `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is no longer forwarded into the
   guest, so a prompt-injected or rogue agent cannot read a usable key.
   Resolution fails closed — a bad credential aborts the boot rather than booting
-  without injection. `coop model <vm> local` takes precedence and tears the
+  without injection. `iso model <vm> local` takes precedence and tears the
   proxy down. The proxy binds host loopback and is reverse-tunnelled (`ssh -R`)
   into the guest, so it works on both backends (Firecracker and Lima). GitHub
-  is a tracked follow-up. `coop update` keeps `coop` and `coop-proxy` in
+  is a tracked follow-up. `iso update` keeps `iso` and `iso-proxy` in
   lockstep.
 
-- **The credential proxy is jailed** (#411) — the host-side `coop-proxy`
+- **The credential proxy is jailed** (#411) — the host-side `iso-proxy`
   process runs confined so a proxy exploit cannot write files or execute
   programs, and — on a new enough kernel — cannot reach any host beyond the
   upstream `:443` and DNS `:53`. On Linux it self-applies Landlock before
@@ -247,42 +247,42 @@ SPDX-License-Identifier: Apache-2.0
   and does not restrict UDP on Linux; see
   [`docs/trust-model.md`](docs/trust-model.md).
 
-- **Per-VM credential overrides + `coop proxy status`** (#411) — A single VM can
+- **Per-VM credential overrides + `iso proxy status`** (#411) — A single VM can
   use a different credential than the `[proxy.<provider>]` default — for
-  per-project billing, scope, or revocation — via `coop proxy setup [--openai]
+  per-project billing, scope, or revocation — via `iso proxy setup [--openai]
   --vm <name>`. The override is stored in that instance's state
   (`<inst.dir>/proxy.json`), not a growing config table, and its secret is
-  namespaced separately. Resolution is override → default → off. `coop proxy
+  namespaced separately. Resolution is override → default → off. `iso proxy
   status [--vm <name>]` shows what each VM resolves to, with credentials
   redacted.
 
-- **`coop proxy setup` — store a provider credential like a GitHub PAT** (#411)
-  — Mirrors the `coop github` PAT wizard: paste a credential, pick a secret
+- **`iso proxy setup` — store a provider credential like a GitHub PAT** (#411)
+  — Mirrors the `iso github` PAT wizard: paste a credential, pick a secret
   backend (macOS Keychain / Linux secret-service / 1Password / 0600 file), and
-  coop stores it and writes the `cmd:` reference into `[proxy.<provider>]` — the
+  isolate stores it and writes the `cmd:` reference into `[proxy.<provider>]` — the
   credential is never plaintext in the config. Anthropic is the default;
   `--openai` configures Codex. The secret store is namespaced per service, so
   proxy secrets live under their own directory rather than among the GitHub PATs.
 
-- **`coop editor` — VS Code or Zed** — `coop vscode` is now `coop editor`
+- **`iso editor` — VS Code or Zed** — `iso vscode` is now `iso editor`
   (the old name remains as an alias). `--editor` takes `code` or `zed`;
-  when omitted, coop tries VS Code first, then Zed. Zed connects with
-  `zed ssh://coop-<name>/<path>`, reusing the same `~/.ssh/config` alias
+  when omitted, isolate tries VS Code first, then Zed. Zed connects with
+  `zed ssh://iso-<name>/<path>`, reusing the same `~/.ssh/config` alias
   block that VS Code's Remote-SSH uses.
 
-- **`coop up --new-instance` — a second instance for the same project** — `up`
+- **`iso up --new-instance` — a second instance for the same project** — `up`
   normally reuses the instance recorded for a project directory or `--git-repo`
   URL. `--new-instance` skips that lookup and creates a sibling instance
   instead, so two agents can work from one source tree. It requires `--name`,
   since the project-derived name is already taken. Once a project has siblings,
-  `coop up` reports the ambiguity rather than picking one, so address them by
-  name (`coop start <name>`, `coop shell <name>`).
+  `iso up` reports the ambiguity rather than picking one, so address them by
+  name (`iso start <name>`, `iso shell <name>`).
 
 ### Fixes
 
 - **Firecracker guests can no longer reach each other by IP** — Instances on the
   same host share the `br0` bridge and a single subnet, so any guest could reach
-  any other guest's SSH and forwarded ports. coop now marks every TAP as an
+  any other guest's SSH and forwarded ports. isolate now marks every TAP as an
   isolated bridge port and inserts a `FORWARD -i br0 -o br0 -j DROP` rule; both are
   needed, since the bridge flag alone leaves a guest able to route around it via
   the host's bridge address. Guest→host and guest→internet are unaffected. A
@@ -297,7 +297,7 @@ SPDX-License-Identifier: Apache-2.0
 - **Guest transports fail instead of hanging when a VM stops responding** — A
   paused VM, a wedged sshd, or a lost TAP device left `ssh`, `scp`, and `rsync`
   calls blocked on a dead socket with no deadline, so lifecycle commands,
-  `coop exec`, and `coop push`/`pull` hung until interrupted. Every transport
+  `iso exec`, and `iso push`/`pull` hung until interrupted. Every transport
   now derives from one option list that sets `BatchMode`, a connect timeout,
   and a liveness probe, so a guest whose sshd stops answering fails after ~90s
   — the bound interactive sessions already had.
@@ -311,22 +311,22 @@ SPDX-License-Identifier: Apache-2.0
   instance names still get a resolvable name. No image rebuild is needed — the patch is
   per-instance, and the image's own entry is what gets overwritten — but
   `patch_guest_network` runs only on create and restore, so an existing VM
-  keeps the stale entry until `coop restore <vm> --image <image>` or a destroy
+  keeps the stale entry until `iso restore <vm> --image <image>` or a destroy
   and recreate.
 
 - **Fail closed on an unmanaged `CODEX_HOME` in ChatGPT auth mode** (#441) —
-  The guest wrapper now refuses an explicitly set `CODEX_HOME` when coop's
+  The guest wrapper now refuses an explicitly set `CODEX_HOME` when isolate's
   managed `~/.codex/config.toml` selects keyring storage. This prevents `codex
   login` from silently writing a plaintext refresh token to the alternate
   directory, including a workspace path that syncs back to the host.
 
 - **Install the full native Codex package** (#442) — Image provisioning and
-  `coop agent update --codex` use OpenAI's native installer, preserving bundled
+  `iso agent update --codex` use OpenAI's native installer, preserving bundled
   tools and upstream setup. The guest user owns the installation and can run
   `codex update` directly. `/usr/local/bin/codex` remains a compatibility link,
   and host-driven updates migrate older direct-binary installations.
 
-- **`install.sh` and `coop update` verify provenance without a GitHub
+- **`install.sh` and `iso update` verify provenance without a GitHub
   credential** (#421) — Verification ran `gh attestation verify --repo
   trailofbits/coop`, which reads the Sigstore bundle from the attestations
   API. `gh` refuses to run that command unless it is logged in, and then
@@ -343,15 +343,15 @@ SPDX-License-Identifier: Apache-2.0
 
 ### New features
 
-- **`coop agent update` — refresh in-guest Claude Code and Codex** (#403) —
-  Agents are installed "latest at build time" during `coop setup` and are not
-  part of the image-staleness hash, so a plain `coop setup` never refreshes
+- **`iso agent update` — refresh in-guest Claude Code and Codex** (#403) —
+  Agents are installed "latest at build time" during `iso setup` and are not
+  part of the image-staleness hash, so a plain `iso setup` never refreshes
   them; they go stale in long-running VMs and in new VMs built from an old
-  image. `coop agent update [NAME] [--claude] [--codex] [--check] [-y]` updates
+  image. `iso agent update [NAME] [--claude] [--codex] [--check] [-y]` updates
   the agent binaries inside a *running* instance without rebuilding the golden
   image. No agent flag updates both; `--check` reports installed vs. latest and
   changes nothing. Codex (root-owned `/usr/local/bin/codex`, no background
-  updater) is reinstalled from the current release via coop's own installer
+  updater) is reinstalled from the current release via isolate's own installer
   over SSH; Claude Code (`~/.local/bin`, already self-updating) runs
   `claude update` synchronously. Versions are parsed to semver so "update
   available" is a comparison, not a string diff; an unparseable version
@@ -361,25 +361,25 @@ SPDX-License-Identifier: Apache-2.0
   `[codex] plugins` config fields (with `~` expansion and local-path
   validation), mirroring the existing Claude Code mechanism. On Lima the set is
   baked into the golden image and staleness-checked; on Firecracker it installs
-  on first boot. coop preserves the guest's own `[marketplaces.*]`/`[plugins.*]`
+  on first boot. isolate preserves the guest's own `[marketplaces.*]`/`[plugins.*]`
   tables across the per-boot `~/.codex/config.toml` rewrite — so plugins
   installed in-guest and manual `/plugins` toggles survive stop/start — while
   dropping any that came from the host config. Local marketplace directories
   are copied into a per-tool guest subdir so same-basename marketplaces from
   the two agents don't collide. Behavior change: marketplaces/plugins set
-  directly in the host `~/.codex/config.toml` (rather than in coop's `[codex]`)
+  directly in the host `~/.codex/config.toml` (rather than in isolate's `[codex]`)
   are now stripped from the guest; declarative `[codex]` is the source of
   truth.
 
 ### Fixes
 
-- **Guest-memory floor enforced by construction** (#404) — `coop up --mem 16`,
-  `coop setup --mem 16`, a `config.toml` with `mem_size_mib = 16`, and a
+- **Guest-memory floor enforced by construction** (#404) — `iso up --mem 16`,
+  `iso setup --mem 16`, a `config.toml` with `mem_size_mib = 16`, and a
   cloned repo whose `devcontainer.json` sets `hostRequirements.memory` below
   the 128 MiB minimum are now all rejected up front, instead of booting an
   unbootable VM that never comes up on SSH. The floor lives in a new
   `VmMemory` type whose constructor every entry point routes through (CLI,
-  `config.toml`, `coop resize`, the devcontainer translator), so no lifecycle
+  `config.toml`, `iso resize`, the devcontainer translator), so no lifecycle
   path can hold a sub-floor value. The stale `Validated` witness — which
   vouched for a config that lifecycle commands mutated afterward, and which
   the actual VM boot (`create_and_start`) never even consumed — is removed;
@@ -387,7 +387,7 @@ SPDX-License-Identifier: Apache-2.0
   backend boot choke point on the freshest filesystem state, so a new
   lifecycle path cannot skip them. The start-time mount set gains a
   `ValidatedMounts` constructor that enforces guest-path uniqueness on every
-  path, closing a gap where `coop quickstart` skipped the check.
+  path, closing a gap where `iso quickstart` skipped the check.
 
 - **Firecracker CI artifact listing fetched over HTTPS** (#401) — the S3
   `ListObjectsV2` request that discovers kernel/rootfs versions during
@@ -400,7 +400,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - **Docs describe the public repository** (#401) — removed the
   transitional "while `trailofbits/coop` is private" wording from the
-  README and `docs/commands.md`. `coop update` and `install.sh` work
+  README and `docs/commands.md`. `iso update` and `install.sh` work
   anonymously and use `gh`/`GITHUB_TOKEN` opportunistically when present.
 
 ### Internal
@@ -411,8 +411,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ### New features
 
-- **`coop resize` changes memory and vCPUs in place** (#397) —
-  `coop resize` now accepts `--mem <MiB>` and `--vcpus <N>` alongside the
+- **`iso resize` changes memory and vCPUs in place** (#397) —
+  `iso resize` now accepts `--mem <MiB>` and `--vcpus <N>` alongside the
   existing `--size`, so a stopped instance's RAM and vCPU count can be
   changed without destroy-and-recreate. At least one of the three is
   required; `--start` boots the instance after applying the change
@@ -422,7 +422,7 @@ SPDX-License-Identifier: Apache-2.0
   fields are regenerated on restart, so a change to the global `[vm]`
   config no longer silently alters RAM for every existing instance; on
   Lima the `cpus`/`memory` keys in `lima.yaml` are rewritten atomically.
-  `coop status` reads mem/vcpu from the artifact. A failed `--start`
+  `iso status` reads mem/vcpu from the artifact. A failed `--start`
   boot rolls the values back so the instance stays bootable.
 
 - **`--json` output on read/query commands** (#386) — An opt-in `--json`
@@ -441,7 +441,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - **AppleDouble sidecars no longer copied on macOS hosts** (#376) —
   macOS creates `._`-prefixed AppleDouble sidecar files when archiving
-  through the system `tar`. coop now sets `COPYFILE_DISABLE=1` when
+  through the system `tar`. isolate now sets `COPYFILE_DISABLE=1` when
   creating workspace archives on macOS so these sidecars are not written
   into the guest transfer.
 
@@ -472,33 +472,33 @@ SPDX-License-Identifier: Apache-2.0
 
 ### New features
 
-- **`coop model` — route a VM at a host-side local model** (#352) —
+- **`iso model` — route a VM at a host-side local model** (#352) —
   Points Claude Code and Codex at a local model server (Ollama, LM
   Studio, vLLM, llama.cpp) running on the host instead of the cloud,
   configured per tool under `[claude.local_model]` /
-  `[codex.local_model]` in `config.toml`. `coop model <vm>` reports the
-  per-tool mode and resolved endpoint; `coop model <vm> local` routes
-  the VM at the local model(s) and `coop model <vm> remote` restores
+  `[codex.local_model]` in `config.toml`. `iso model <vm>` reports the
+  per-tool mode and resolved endpoint; `iso model <vm> local` routes
+  the VM at the local model(s) and `iso model <vm> remote` restores
   the cloud defaults. The selection is a persisted per-VM setting (not
-  a per-launch flag), so it applies to `coop shell`, `coop claude`,
-  `coop codex`, and VS Code alike; switching writes guest config over
+  a per-launch flag), so it applies to `iso shell`, `iso claude`,
+  `iso codex`, and VS Code alike; switching writes guest config over
   SSH with no rebuild and is re-applied on the next boot. A
   `localhost`/loopback `host_url` is rewritten to the backend's
   guest-visible host automatically.
 
-- **`coop codex` bypasses Codex's sandbox by default** (#353) — `coop codex`
+- **`iso codex` bypasses Codex's sandbox by default** (#353) — `iso codex`
   now launches Codex with `--dangerously-bypass-approvals-and-sandbox`, so it
-  runs unrestricted like `coop claude`. The VM is the isolation boundary, and
+  runs unrestricted like `iso claude`. The VM is the isolation boundary, and
   Codex's Linux sandbox does not work in the guest (no functioning bubblewrap),
   which previously made every shell command Codex ran fail on sandbox setup.
-  Pass `coop codex --ask` to keep Codex's sandbox and approval prompts.
+  Pass `iso codex --ask` to keep Codex's sandbox and approval prompts.
 
-- **`coop commit` + `coop restore` — checkpoint and roll back an instance** (#289) —
-  `coop commit <name> --image <image>` saves a stopped instance's
+- **`iso commit` + `iso restore` — checkpoint and roll back an instance** (#289) —
+  `iso commit <name> --image <image>` saves a stopped instance's
   filesystem as a reusable image, a `docker container commit`-style
   backup (files, not live memory). The committed image is an ordinary
-  coop image: `coop images` lists it and `coop up --image` launches new
-  instances from it. `coop restore <name> --image <image>` rolls a
+  isolate image: `iso images` lists it and `iso up --image` launches new
+  instances from it. `iso restore <name> --image <image>` rolls a
   stopped instance back to an image's filesystem in place, keeping the
   instance's name, index, IP, and workspace association. Both require a
   stopped instance; `commit --force` overwrites an existing image name.
@@ -506,11 +506,11 @@ SPDX-License-Identifier: Apache-2.0
 ### Fixes
 
 - **OAuth-token users no longer land in Claude Code's onboarding wizard**
-  (#87) — Running `coop claude` with subscription auth
+  (#87) — Running `iso claude` with subscription auth
   (`CLAUDE_CODE_OAUTH_TOKEN` forwarded into the guest) dropped the user
   into the first-run theme/login wizard, whose login step ignores the
   token. Claude Code gates the wizard on `hasCompletedOnboarding` in
-  `~/.claude.json`, which coop never staged. coop now seeds that flag on
+  `~/.claude.json`, which isolate never staged. isolate now seeds that flag on
   boot when an OAuth token is forwarded and the flag is not already set.
   Idempotent and a no-op for API-key and no-credential users. Reverts
   when anthropics/claude-code#8938 is fixed upstream.
@@ -520,7 +520,7 @@ SPDX-License-Identifier: Apache-2.0
   scratch on every boot with only a `permissions` block, deleting the
   `enabledPlugins` and `extraKnownMarketplaces` keys Claude Code uses to
   track installed plugins and marketplaces. Plugins installed on first
-  boot then showed as uninstalled in `/plugins` after a restart. coop now
+  boot then showed as uninstalled in `/plugins` after a restart. isolate now
   merges its managed `permissions` into the existing file, preserving
   those keys.
 
@@ -528,8 +528,8 @@ SPDX-License-Identifier: Apache-2.0
   leading `~` was only expanded for `claude.config_dir`,
   `codex.config_dir`, and `claude.marketplaces`; other host-path fields
   (`data_dir`, `firecracker_bin`, `vm.kernel_path`, per-profile
-  `marketplaces`) kept a literal `~`, so e.g. `data_dir = "~/coop-data"`
-  resolved to a literal `./~/coop-data` directory. Expansion now happens
+  `marketplaces`) kept a literal `~`, so e.g. `data_dir = "~/iso-data"`
+  resolved to a literal `./~/iso-data` directory. Expansion now happens
   at deserialization via a `ConfigPath` newtype, so every path field —
   including ones added later — is expanded on every load path.
 
@@ -537,15 +537,15 @@ SPDX-License-Identifier: Apache-2.0
 
 ### New features
 
-- **`coop ssh-config` — install a `coop-<name>` SSH alias** (#294) —
-  Writes the same `~/.ssh/config` block `coop vscode` produces, but
+- **`iso ssh-config` — install a `iso-<name>` SSH alias** (#294) —
+  Writes the same `~/.ssh/config` block `iso vscode` produces, but
   without launching an editor, so plain `ssh`, `scp`, and `rsync` reach
   the guest by alias. `--clean` removes the block. The alias now
-  survives `coop stop` and is refreshed on `coop start` (the Lima SSH
+  survives `iso stop` and is refreshed on `iso start` (the Lima SSH
   port changes per boot), so it stays valid across restarts;
-  `coop destroy` and `--clean` remove it.
+  `iso destroy` and `--clean` remove it.
 
-- **`coop setup --builder-timeout <duration>`** (#315) — bounds how long
+- **`iso setup --builder-timeout <duration>`** (#315) — bounds how long
   setup waits for image-build commands before timing out. Accepts bare
   seconds or an `s`/`m`/`h` suffix (e.g. `60m`, `2h`). Applies across
   both backends.
@@ -553,7 +553,7 @@ SPDX-License-Identifier: Apache-2.0
 ### Removed
 
 - **`scripts/build-rootfs.sh`** (#293) — the standalone `debootstrap`
-  rootfs builder is removed. Image creation runs through `coop setup`,
+  rootfs builder is removed. Image creation runs through `iso setup`,
   which downloads a Firecracker CI squashfs and provisions it with
   `scripts/guest/guest-config.sh`; the standalone script duplicated that
   provisioning, omitted the CI-kernel workarounds (iptables-legacy,
@@ -565,38 +565,38 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Breaking changes
 
-- **`coop build` removed; creation flags moved off `coop start`** (#269,
-  #281) — `coop start` no longer accepts `--profile`, `--git-repo`,
+- **`iso build` removed; creation flags moved off `iso start`** (#269,
+  #281) — `iso start` no longer accepts `--profile`, `--git-repo`,
   `--vcpus`, `--mem`, `--disk`, `--mount`, `--image`, or `--exclude-git`;
-  those flags now live on `coop up`. clap reports them as unexpected
+  those flags now live on `iso up`. clap reports them as unexpected
   arguments instead of accepting them and bailing at runtime. The
-  standalone `coop build` command and the `scripts/fetch-kernel.sh`
-  helper are removed — `coop setup` and `coop up --profile` cover image
+  standalone `iso build` command and the `scripts/fetch-kernel.sh`
+  helper are removed — `iso setup` and `iso up --profile` cover image
   creation end-to-end. `scripts/build-rootfs.sh` stays as a documented
   manual fallback. Restart still works against existing instances; the
-  flags above only take effect at create time (via `coop up`).
+  flags above only take effect at create time (via `iso up`).
 
-- **`--git-repo` moved from `coop start` to `coop up`** (#264) —
-  `coop up --git-repo <url>` clones a remote repository into
+- **`--git-repo` moved from `iso start` to `iso up`** (#264) —
+  `iso up --git-repo <url>` clones a remote repository into
   `/workspace` and is idempotent across re-runs, matching the rest of
   `up`: an instance already associated with the URL is reused if
   running, restarted if stopped, and created otherwise. The instance
   name is derived from the repo basename when `--name` is not given.
 
-- **tmux session wrapping removed** (#183, #184) — `coop shell`,
-  `coop claude`, and `coop codex` no longer wrap the remote session in
+- **tmux session wrapping removed** (#183, #184) — `iso shell`,
+  `iso claude`, and `iso codex` no longer wrap the remote session in
   tmux, and the `--session <name>` / `--no-tmux` flags are gone. The
   `tmux` package is also dropped from the guest base image. Claude
-  Code's `claude agents` daemon (`coop claude-agents`) already
+  Code's `claude agents` daemon (`iso claude-agents`) already
   provides session persistence without a terminal multiplexer; users
   who still want detachable terminals can install tmux themselves via
-  `coop setup --extra-packages tmux` and start it manually inside
-  `coop shell`.
+  `iso setup --extra-packages tmux` and start it manually inside
+  `iso shell`.
 
 - **Devcontainer auto-discovery prompts on `up` / `setup --workspace`**
   (#129, #130, #242) — When the workspace contains
   `.devcontainer/devcontainer.json` and no escape hatch flag is set,
-  coop prompts before applying it. Non-TTY callers must pass
+  isolate prompts before applying it. Non-TTY callers must pass
   `--devcontainer <path>`, `--no-devcontainer`, or `--dry-run`; the
   prompt never silently chooses. Precedence is
   `CLI > devcontainer.json > defaults`, and the report column makes
@@ -604,8 +604,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ### New features
 
-- **`coop up` — project-oriented environment command** (#230, #264) —
-  `coop up [DIR]` ensures an environment for a project directory
+- **`iso up` — project-oriented environment command** (#230, #264) —
+  `iso up [DIR]` ensures an environment for a project directory
   exists and is running, idempotently. `DIR` defaults to the current
   directory and is canonicalized for affinity; a matching instance is
   reconnected if running, restarted if stopped, or created otherwise.
@@ -614,11 +614,11 @@ SPDX-License-Identifier: Apache-2.0
   `--disk`, `--image`, `--profile`, `--extra-mount`,
   `--devcontainer`, `--exclude-git`) only take effect when the
   instance is created and are rejected against existing instances with
-  a `coop destroy` hint; runtime flags (`--forward-port`,
+  a `iso destroy` hint; runtime flags (`--forward-port`,
   `--post-start`, `--env`) take effect on create or restart but are
   ignored when reconnecting to a running VM.
 
-- **`coop quickstart` — one-shot setup + start + claude** (#74, #213)
+- **`iso quickstart` — one-shot setup + start + claude** (#74, #213)
   — Chains `ensure-image → ensure-instance → launch-claude`,
   short-circuiting any step that's already done. Setup runs only when
   the `default` template image is missing; workspace affinity
@@ -628,7 +628,7 @@ SPDX-License-Identifier: Apache-2.0
   prompt default-no on a TTY and bail non-interactively.
 
 - **`devcontainer.json` support** (#129, #130, #131, #134) — A new
-  translator maps recognised keys to coop's existing primitives:
+  translator maps recognised keys to isolate's existing primitives:
   `hostRequirements` → `--vcpus`/`--mem`/`--disk`, `containerEnv` →
   guest env, `forwardPorts` → `--forward-port`, `postStartCommand` →
   `post_start`, `features` → built-in profiles, `mounts` →
@@ -638,25 +638,25 @@ SPDX-License-Identifier: Apache-2.0
   per-key report and exit before any side effects). JSONC (`//`,
   `/* */` comments, trailing commas) parses cleanly. CLI `--env` and
   devcontainer `containerEnv` are persisted to `guest_env.json` so
-  `coop shell` / `coop exec` see the same values without re-parsing
+  `iso shell` / `iso exec` see the same values without re-parsing
   config.
 
 - **OCI devcontainer features** (#245) — Supported public
   `ghcr.io/devcontainers/features/*` entries declared in
-  `devcontainer.json` are resolved at `coop setup` and baked into the
-  image alongside the existing built-in profiles. `coop up --profile`
+  `devcontainer.json` are resolved at `iso setup` and baked into the
+  image alongside the existing built-in profiles. `iso up --profile`
   continues to compose the built-in profile set.
 
-- **`coop devcontainer` subcommands** (#234, #247, #287) —
-  `coop devcontainer check <path>` translates a `devcontainer.json`
+- **`iso devcontainer` subcommands** (#234, #247, #287) —
+  `iso devcontainer check <path>` translates a `devcontainer.json`
   and prints the report without running any setup or VM work
-  (`--stage setup|start|both`). `coop devcontainer ignore <project>`
+  (`--stage setup|start|both`). `iso devcontainer ignore <project>`
   persistently opts a project out of discovery; `... status` lists
   current opt-outs; `... clear` removes one. Symlinked project
   prefixes are resolved when clearing, so a directory that was moved
   or unlinked doesn't leave a stale opt-out behind.
 
-- **`coop setup --guest-user` and `remoteUser` handling** (#217, #218)
+- **`iso setup --guest-user` and `remoteUser` handling** (#217, #218)
   — Bake a configurable guest username (default `ubuntu`, validated
   against POSIX rules and not `root`) into the image at setup time.
   `start`/`shell`/`exec` read the value from the image's
@@ -668,15 +668,15 @@ SPDX-License-Identifier: Apache-2.0
 
 - **`--forward-port` / `forward_ports` config** (#125, #128) — Forward
   guest TCP ports to the host for the lifetime of the VM.
-  `coop up --forward-port 3000` exposes guest 3000 on host 3000;
+  `iso up --forward-port 3000` exposes guest 3000 on host 3000;
   `3000:18080` remaps to a different host port. The flag is
   repeatable, supported by a config-level `forward_ports = [...]`
   default, persisted across `stop`/`start`, and torn down cleanly on
-  `coop stop`. Collision with an already-bound host port fails fast
+  `iso stop`. Collision with an already-bound host port fails fast
   before the VM is created.
 
 - **`post_start` hook** (#123, #126) — `post_start` in `config.toml`
-  (or `--post-start <cmd>` on `coop up` / `coop start`) runs a shell
+  (or `--post-start <cmd>` on `iso up` / `iso start`) runs a shell
   command in the guest after SSH is ready and before any interactive
   shell or agent launch. Maps to `postStartCommand` in
   `devcontainer.json`. Failure is logged at WARN and does not fail
@@ -686,24 +686,24 @@ SPDX-License-Identifier: Apache-2.0
   #134) — Set literal env vars inside the guest without forwarding
   from the host. CLI overrides win over config and devcontainer
   values; `--env` is persisted to `guest_env.json` so
-  `coop shell` / `coop exec` see the same values without rerunning
-  `start`. `coop start --env` and `--devcontainer`-derived
+  `iso shell` / `iso exec` see the same values without rerunning
+  `start`. `iso start --env` and `--devcontainer`-derived
   `containerEnv` survive `stop`/`start` cycles.
 
-- **Build profile images on demand from `coop up`** (#235) —
-  `coop up --profile <list>` derives an image name from the sorted
-  profile list, runs the same stale-image check as `coop setup`, and
+- **Build profile images on demand from `iso up`** (#235) —
+  `iso up --profile <list>` derives an image name from the sorted
+  profile list, runs the same stale-image check as `iso setup`, and
   builds or rebuilds that image if needed. Explicit named images
   (`--image`) are unchanged.
 
-- **Submodule discovery in `coop github setup-pat`** (#219, #221,
+- **Submodule discovery in `iso github setup-pat`** (#219, #221,
   #223) — The wizard pre-discovers submodule repositories via the
   local `gh` install (no network round-trip per submodule) and offers
   to set up a PAT for each one.
 
 - **Guest PATH set via `/etc/environment`** (#248, #249) —
   `~/.local/bin` is now reliably on `PATH` for non-interactive SSH
-  sessions, including `coop claude` and Claude Code's Bash-tool
+  sessions, including `iso claude` and Claude Code's Bash-tool
   subshells. Previously these sessions skipped `~/.profile` and
   `~/.bashrc`'s PATH export, hiding `uv`/`pipx`/user tools and
   triggering `claude doctor` warnings. `pam_env` reads
@@ -712,7 +712,7 @@ SPDX-License-Identifier: Apache-2.0
   VS Code remote sessions.
 
 - **Docker buildx in guest images** (#288) — `docker buildx` is
-  installed in every coop image so multi-arch and `buildkit`-driven
+  installed in every isolate image so multi-arch and `buildkit`-driven
   builds work without manual setup.
 
 - **Secrets redacted from `Debug` output** (#79, #121, #262) — A new
@@ -723,20 +723,20 @@ SPDX-License-Identifier: Apache-2.0
   tracing events, `dbg!`, and panics.
 
 - **Hint at `--workspace`/`--mount` when `start` name looks like a
-  path** (#226) — Running `coop start ./my-project` now surfaces a
-  hint to use `coop up` (which interprets `DIR` correctly) instead of
+  path** (#226) — Running `iso start ./my-project` now surfaces a
+  hint to use `iso up` (which interprets `DIR` correctly) instead of
   failing with an opaque "instance not found".
 
 - **Warn when `--mount` source is a live git repo** (#102, #122) —
   Live mounts share filesystem state with the host, so in-guest
-  changes affect the host checkout immediately. coop now warns when
+  changes affect the host checkout immediately. isolate now warns when
   the mount source looks like a working tree.
 
 ### Fixes
 
 - **Survive mid-session SSH exit 255 in interactive sessions** (#224,
   #227) — A network blip that produced SSH exit 255 mid-session no
-  longer kills the wrapping coop process; the session reattaches.
+  longer kills the wrapping isolate process; the session reattaches.
 
 - **Interactive SSH escape path hardened** (#232) — Closes a regression
   in escape-sequence handling on the interactive path.
@@ -744,17 +744,17 @@ SPDX-License-Identifier: Apache-2.0
 - **`workspace.json` parse errors surfaced** (#225) — Three call sites
   previously swallowed parse errors; all now report them with context.
 
-- **Bare `coop start --mount` allocates a fresh instance** (#214,
+- **Bare `iso start --mount` allocates a fresh instance** (#214,
   #215) — Earlier this collided with the auto-resolve path and
   produced a confusing error.
 
-- **`coop up` workspace sync no longer drops `--extra-mount` on
+- **`iso up` workspace sync no longer drops `--extra-mount` on
   Firecracker** (#264) — The workspace-sync block now always syncs
   extra mounts; only mount-only instances record the workspace
   identity. Also fixes a tar-pipe fallback that extracted to
   `/workspace` regardless of the mount's guest path.
 
-- **`coop start` devcontainer lifecycle ordering** (#241) — Devcontainer
+- **`iso start` devcontainer lifecycle ordering** (#241) — Devcontainer
   translation now runs before the SSH-ready probe, so per-key
   reporting reflects what will actually be applied.
 
@@ -763,7 +763,7 @@ SPDX-License-Identifier: Apache-2.0
   SSH-readiness path; collapsed to a single probe.
 
 - **Direct-probe `resolve_instance` fast path for by-name lookups**
-  (#202, #203, #211, #212) — Defers `CoopConfig::validate` until
+  (#202, #203, #211, #212) — Defers `IsoConfig::validate` until
   commands that touch probed paths actually need it, and skips the
   generic search when an instance name is supplied.
 
@@ -782,7 +782,7 @@ SPDX-License-Identifier: Apache-2.0
   host (#133). `--forward-port` collision test reads `$HARNESS_ERR`
   instead of an outer redirect (#135). Devcontainer opt-out test
   assertions match the actual message text (#286). Stop idempotency
-  test reuses a stopped instance (#240). Bare `coop start --mount`
+  test reuses a stopped instance (#240). Bare `iso start --mount`
   `pipefail`+`grep -q` race fixed (#220).
 
 ### Internal
@@ -825,7 +825,7 @@ SPDX-License-Identifier: Apache-2.0
 - **Mutation-testing baseline on `config.rs`** (#136, #137, #138,
   #139, #140, #141, #143, #144, #145, #146) — Adds the
   mutation-testing guidance now in `CLAUDE.md`, pins
-  `CoopConfig::validate`, `Instance::is_running`,
+  `IsoConfig::validate`, `Instance::is_running`,
   `is_firecracker_process`, and `MiB::as_gib_f64` with tests, and
   annotates equivalent mutants (`fmt::Display` impls, default-value
   getters, serde `Visitor` methods) with `#[mutants::skip]` and a
@@ -840,7 +840,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Documentation
 
-- **`coop up`, `coop quickstart`, and the devcontainer workflow**
+- **`iso up`, `iso quickstart`, and the devcontainer workflow**
   documented in `docs/commands.md`, `docs/getting-started.md`, and
   `docs/devcontainer.md` (#213, #230, #234, #257).
 
@@ -859,54 +859,54 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Breaking changes
 
-- **`coop push` / `coop pull` / `coop exec` take the instance name as a
+- **`iso push` / `iso pull` / `iso exec` take the instance name as a
   positional argument** (#90) — these three commands previously accepted
   `--name <name>` while the other eleven subcommands took `name`
   positionally. The flag is removed; pass the name positionally instead.
   Because `push` and `pull` already had `[DIR]` as a positional, the
   directory is now a `--dir` flag. Because `exec` had `COMMAND...` as a
   positional, the command must follow `--`. Examples:
-  `coop push my-vm --dir ./src --force`,
-  `coop pull my-vm --dir ./out --force`,
-  `coop exec my-vm -- ls -la`.
+  `iso push my-vm --dir ./src --force`,
+  `iso pull my-vm --dir ./out --force`,
+  `iso exec my-vm -- ls -la`.
 
 ### New features
 
-- **`coop ca` / `coop claude-agents` shortcut** (#80, #82, #99, #100, #101) —
+- **`iso ca` / `iso claude-agents` shortcut** (#80, #82, #99, #100, #101) —
   Runs `claude agents` inside the VM in one command. Claude Code's daemon
   manages background-session lifetime itself, so closing the terminal
   does not interrupt running agents. The guest is now bootstrapped with
   a managed `~/.claude/settings.json` that pre-accepts
   `bypassPermissions`, so dispatched sessions no longer prompt for
-  tool permissions; `coop claude --ask` explicitly opts back into the
+  tool permissions; `iso claude --ask` explicitly opts back into the
   prompting default.
 
-- **`coop github setup-pat` wizard** (#85, #88) — Walks the user
+- **`iso github setup-pat` wizard** (#85, #88) — Walks the user
   through creating a fine-grained personal access token scoped to one
   repo, stores it in the user's preferred secret store (Keychain,
   Secret Service, 1Password, or file), and forwards it to the guest as
   `GITHUB_TOKEN` keyed off the resolved repo slug. Adds a new
   `github = "pat"` config mode.
 
-- **`coop list` / `coop ls`** (#89, #94) — Local-only enumeration of
+- **`iso list` / `iso ls`** (#89, #94) — Local-only enumeration of
   instance name + state. Reads on-disk metadata and `be.is_running`
   without SSH probes so it stays fast even when VMs are unreachable.
-  `coop status` keeps its richer per-instance and resource-usage
+  `iso status` keeps its richer per-instance and resource-usage
   output.
 
-- **`coop uninstall`** (#93, #96) — Reverses what `install.sh` does:
-  removes the running coop binary and, with confirmation, the data
-  directory (`~/.coop`) and XDG update-check state. Flags
+- **`iso uninstall`** (#93, #96) — Reverses what `install.sh` does:
+  removes the running isolate binary and, with confirmation, the data
+  directory (`~/.iso`) and XDG update-check state. Flags
   `--yes` / `--keep-data` / `--purge`. Refuses to delete
-  `target/{debug,release}/coop` and surfaces EPERM with a
-  `sudo coop uninstall` hint. Bails on non-TTY stdin without `--yes`
+  `target/{debug,release}/iso` and surfaces EPERM with a
+  `sudo iso uninstall` hint. Bails on non-TTY stdin without `--yes`
   so CI misuse fails loud.
 
-- **Shell completion** (#92, #98) — `coop completions <shell>` prints
+- **Shell completion** (#92, #98) — `iso completions <shell>` prints
   a static completion script for bash, zsh, fish, powershell, and
-  elvish. Adding `source <(COMPLETE=<shell> coop)` to a shell rc
+  elvish. Adding `source <(COMPLETE=<shell> iso)` to a shell rc
   additionally fills in live values via clap_complete's dynamic
-  engine — instance, image, and profile names are read from `~/.coop`
+  engine — instance, image, and profile names are read from `~/.iso`
   on each TAB.
 
 - **`--git-repo` clones authenticate against private GitHub repos**
@@ -921,7 +921,7 @@ SPDX-License-Identifier: Apache-2.0
   than silently substituting a broader identity.
 
 - **`.git/` included in workspace transfers by default** (#95) —
-  `coop start --workspace`, `coop push`, and `coop pull` previously
+  `iso start --workspace`, `iso push`, and `iso pull` previously
   hardcoded `.git/` into the default exclusion list, breaking
   in-guest git history and rendering `check_guest_dirty` a no-op.
   Now transferred by default, with an `--exclude-git` opt-out on
@@ -934,13 +934,13 @@ SPDX-License-Identifier: Apache-2.0
 
 - **`integration-uninstall.sh` state path on macOS** (#106) —
   `dirs::state_dir()` returns `None` on macOS, so `state_path()` in
-  `src/update.rs` falls back to `~/Library/Application Support/coop/`.
-  The test seeded `$XDG_STATE_HOME/coop/update-check.json` but the
+  `src/update.rs` falls back to `~/Library/Application Support/iso/`.
+  The test seeded `$XDG_STATE_HOME/iso/update-check.json` but the
   binary never wrote there, so the `--purge` assertion failed. The
   test now uses the same platform branching the binary does.
 
 - **SIGPIPE flake in bash completion integration check** (#105) —
-  `echo "$HARNESS_OUT" | grep -q "coop,$sub"` against the ~48 KB
+  `echo "$HARNESS_OUT" | grep -q "iso,$sub"` against the ~48 KB
   completion script flaked under `set -o pipefail`: when `grep -q`
   matched early it closed the pipe, bash's `echo` builtin exited 141
   (SIGPIPE), and the pipeline status masked `grep`'s success (~60%
@@ -948,8 +948,8 @@ SPDX-License-Identifier: Apache-2.0
   here-string.
 
 - **`destroy --all` integration phase gated behind
-  `COOP_TEST_DESTRUCTIVE=1`** (#104) — `coop destroy --all` removes
-  every coop-managed instance on the host, not just the ones the
+  `ISO_TEST_DESTRUCTIVE=1`** (#104) — `iso destroy --all` removes
+  every iso-managed instance on the host, not just the ones the
   test created. The phase is now skipped by default; remote mode
   forwards the opt-in env var explicitly.
 
@@ -981,7 +981,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Fixes
 
-- **`coop update` works on the private/internal `trailofbits/coop` repo**
+- **`iso update` works on the private/internal `trailofbits/coop` repo**
   (#70, #71) — Previously the in-binary update shelled out to bare
   `curl`, which the GitHub API answers with 404 for unauthenticated
   requests against private repos, surfacing as `curl exited with exit
@@ -994,11 +994,11 @@ SPDX-License-Identifier: Apache-2.0
   and `install.sh` now feed the `Authorization` header to curl on stdin
   (`curl -H @-`) instead of as a command-line argument, so
   `$GITHUB_TOKEN` is no longer visible in `/proc/<pid>/cmdline` or in
-  `coop -v update`'s tracing debug log.
+  `iso -v update`'s tracing debug log.
 
 ### Documentation
 
-- README and `docs/commands.md` note that `coop update` requires `gh` or
+- README and `docs/commands.md` note that `iso update` requires `gh` or
   `GITHUB_TOKEN` while the repository is private (#71).
 
 ## v0.4.2
@@ -1008,12 +1008,12 @@ SPDX-License-Identifier: Apache-2.0
 - **SSH connections respect `IdentitiesOnly`** (#68) — When `ssh-agent`
   holds many keys, ssh offered all of them before the explicit `-i` key,
   hitting sshd's default `MaxAuthTries=6` and producing "SSH not ready"
-  on `coop start`. SSH/SCP/rsync invocations and the generated
+  on `iso start`. SSH/SCP/rsync invocations and the generated
   `~/.ssh/config` block now set `IdentitiesOnly=yes`, matching Lima's
   own probes.
 
 - **Workspace tar-pipe transfer** (#66, #67) — Surface SSH stderr (with
-  a `coop start --disk` hint when the message mentions "no space left
+  a `iso start --disk` hint when the message mentions "no space left
   on device") instead of a generic "tar archive truncated" error. Peak
   guest disk usage during transfer is now the extracted tree, not 2× —
   the temp-file/SHA-256 dance was redundant since SSH already MACs the
@@ -1023,9 +1023,9 @@ SPDX-License-Identifier: Apache-2.0
 
 - **Integration test no longer pollutes user state** (#63, #64) —
   `tests/integration-update.sh` redirects `$HOME` and XDG vars to a
-  tempdir before invoking coop, so the synthetic `v9.9.9` release
+  tempdir before invoking isolate, so the synthetic `v9.9.9` release
   served by the test fixture no longer lands in
-  `~/.local/state/coop/update-check.json` and surfaces as a bogus
+  `~/.local/state/iso/update-check.json` and surfaces as a bogus
   update notification on later runs.
 
 ### Dependencies
@@ -1037,16 +1037,16 @@ SPDX-License-Identifier: Apache-2.0
 Re-release of v0.4.0. The v0.4.0 tag did not produce release artifacts
 because `tests/integration-update.sh` Test 4 ("dev build refusal") fails
 whenever CI runs on a commit tagged `v{cargo_version}` — `build.rs`
-correctly bakes `COOP_BUILD_KIND=release` for that commit, so the test's
+correctly bakes `ISO_BUILD_KIND=release` for that commit, so the test's
 unset-override path produced a release binary instead of a dev one. Test 4
-now sets `COOP_FORCE_BUILD_KIND=dev` explicitly, mirroring Test 1's
-`=release` override. No functional changes to `coop` itself since v0.4.0.
+now sets `ISO_FORCE_BUILD_KIND=dev` explicitly, mirroring Test 1's
+`=release` override. No functional changes to `iso` itself since v0.4.0.
 
 ## v0.4.0
 
 ### New features
 
-- **Codex CLI support** (#44, #49) — `coop codex` launches OpenAI's Codex
+- **Codex CLI support** (#44, #49) — `iso codex` launches OpenAI's Codex
   inside the guest, alongside Claude Code. `~/.codex` config and auth are
   staged into the VM, `OPENAI_API_KEY` is forwarded, and MCP servers
   configured under `[codex.mcp_servers]` are merged into the guest's
@@ -1054,7 +1054,7 @@ now sets `COOP_FORCE_BUILD_KIND=dev` explicitly, mirroring Test 1's
   `claude-yolo` shortcut. Thanks to Artem Dinaburg for contributing the
   initial Codex integration.
 
-- **`coop update`** (#34, #55) — Self-updates the coop binary from GitHub
+- **`iso update`** (#34, #55) — Self-updates the isolate binary from GitHub
   Releases. Downloads the tarball matching the host triple, verifies
   SHA-256 against the release's `SHA256SUMS`, and (when `gh` is installed)
   verifies the build-provenance attestation before atomically replacing
@@ -1064,22 +1064,22 @@ now sets `COOP_FORCE_BUILD_KIND=dev` explicitly, mirroring Test 1's
   to replace them.
 
 - **Background update-check notifications** (#55) — On every command,
-  coop reads the persisted state in `$XDG_STATE_HOME/coop/update-check.json`;
-  if a newer release is known, coop prints a one-line notice to stderr.
+  isolate reads the persisted state in `$XDG_STATE_HOME/iso/update-check.json`;
+  if a newer release is known, isolate prints a one-line notice to stderr.
   The refresh runs in a detached thread and never blocks the command.
   Disable globally with `updates.mode = "off"` in `config.toml`, or
-  per-invocation with `COOP_NO_UPDATE_CHECK=1`. The check stays silent
+  per-invocation with `ISO_NO_UPDATE_CHECK=1`. The check stays silent
   when `CI=true` or when stdin is not a TTY.
 
 - **`install.sh` verifies build-provenance attestations** (#56) — When
   `gh` is installed, the installer runs `gh attestation verify` after
-  the SHA-256 check, matching `coop update`. Without `gh`, both paths
+  the SHA-256 check, matching `iso update`. Without `gh`, both paths
   fall back to checksum verification and print a note describing what
   the checksum covers and what attestation verification would add.
   README documents the manual `gh attestation verify` one-liner.
 
-- **`coop --version` includes git metadata** (#55) — Release builds
-  display the short commit sha (e.g. `coop 0.3.1 (a1b2c3d)`); dev builds
+- **`iso --version` includes git metadata** (#55) — Release builds
+  display the short commit sha (e.g. `iso 0.3.1 (a1b2c3d)`); dev builds
   add `-dev` and a `+dirty` suffix when the working tree has
   uncommitted changes.
 
@@ -1109,14 +1109,14 @@ No functional changes since v0.3.0.
 
 ### Breaking changes
 
-- **`ssh` subcommand renamed to `shell`** (#25) — `coop ssh` is now `coop shell`.
+- **`ssh` subcommand renamed to `shell`** (#25) — `iso ssh` is now `iso shell`.
   A hidden `ssh` alias exists for backward compatibility, but scripts and docs
   should migrate to `shell`.
 
 - **`full` meta-profile removed** (#31) — `--profile full` no longer exists.
   Use `--profile python,node,c,fuzz,rust,go` explicitly.
 
-- **Instance names derived from workspace path** (#33) — `coop start --workspace
+- **Instance names derived from workspace path** (#33) — `iso start --workspace
   <path>` without `--name` now derives the instance name from the directory
   basename (e.g. `~/projects/myapp` → `myapp`). Existing stopped instances
   created under the old numeric naming scheme won't match by workspace affinity.
@@ -1129,14 +1129,14 @@ No functional changes since v0.3.0.
 
 ### New features
 
-- **`coop profiles list` / `coop profiles show`** (#31) — Discover builtin and
-  custom profiles without reading source or config. Bare `coop profiles`
+- **`iso profiles list` / `iso profiles show`** (#31) — Discover builtin and
+  custom profiles without reading source or config. Bare `iso profiles`
   defaults to `list`.
 
 - **`--session <name>` flag for `shell` and `claude`** (#25) — Named tmux
   sessions enable parallel interactive sessions against the same VM.
 
-- **Workspace affinity** (#33) — `coop start --workspace <path>` finds and
+- **Workspace affinity** (#33) — `iso start --workspace <path>` finds and
   restarts a stopped instance that previously used that workspace instead of
   creating a duplicate.
 
@@ -1145,8 +1145,8 @@ No functional changes since v0.3.0.
   command runs at VM start time (10s timeout) and stdout becomes the resolved
   value. Works with 1Password, `aws secretsmanager`, etc.
 
-- **`push`/`pull` without prior `--workspace`** (#26) — `coop push` and
-  `coop pull` now work even if the instance wasn't started with `--workspace`,
+- **`push`/`pull` without prior `--workspace`** (#26) — `iso push` and
+  `iso pull` now work even if the instance wasn't started with `--workspace`,
   syncing the current directory.
 
 ### Fixes

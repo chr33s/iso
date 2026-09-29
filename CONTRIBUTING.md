@@ -4,17 +4,17 @@ Modified by chr33s: ported/adapted for the Swift implementation.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Contributing to coop
+# Contributing to isolate
 
-Thanks for your interest in contributing to coop. This document covers how to
+Thanks for your interest in contributing to isolate. This document covers how to
 build the project, run its tests, and submit changes.
 
-coop is a Swift CLI that orchestrates disposable VMs for running agent CLIs —
-Linux guests through the Swift `coop-sandbox` runtime on macOS 27+ Apple
+isolate is a Swift CLI that orchestrates disposable VMs for running agent CLIs —
+Linux guests through the Swift `iso-sandbox` runtime on macOS 27+ Apple
 Silicon hosts only. The host is the root Swift package (`Package.swift`,
-`Sources/`, `tests/swift/`); the credential proxy lives in `coop-proxy/` and
-the runtime in `coop-sandbox/`, each a separate Swift package and a separate
-executable. Because coop drives real virtualization, some tests only run on a
+`Sources/`, `tests/swift/`); the credential proxy lives in `iso-proxy/` and
+the runtime in `iso-sandbox/`, each a separate Swift package and a separate
+executable. Because isolate drives real virtualization, some tests only run on a
 host with the Apple runtime available. The sections below note where that
 applies.
 
@@ -35,15 +35,15 @@ applies.
 Clone the repository and build:
 
 ```bash
-git clone https://github.com/chr33s/coop
-cd coop
+git clone https://github.com/chr33s/iso
+cd iso
 swift build --force-resolved-versions
 ```
 
-The host CLI lands at `.build/debug/coop` (`-c release` for
-`.build/release/coop`). A usable installation also needs `coop-proxy` and
-`coop-sandbox` beside it; `python3 scripts/build-release.py` builds all three
-and assembles the same archive layout the installer and `coop update` use (see
+The host CLI lands at `.build/debug/iso` (`-c release` for
+`.build/release/iso`). A usable installation also needs `iso-proxy` and
+`iso-sandbox` beside it; `python3 scripts/build-release.py` builds all three
+and assembles the same archive layout the installer and `iso update` use (see
 [RELEASING.md](RELEASING.md)).
 
 ## Pre-commit hook
@@ -66,9 +66,9 @@ swift build --force-resolved-versions
 swift test --force-resolved-versions
 ```
 
-On macOS 27+, also run `swift test --package-path coop-proxy
+On macOS 27+, also run `swift test --package-path iso-proxy
 --force-resolved-versions` when touching the proxy and `swift test
---package-path coop-sandbox --no-parallel` when touching the runtime.
+--package-path iso-sandbox --no-parallel` when touching the runtime.
 
 Fix every warning before committing, and keep `swift format lint --strict`
 clean; CI enforces both.
@@ -100,7 +100,7 @@ before submitting a guest-visible or lifecycle change:
 
 ```bash
 ./tests/run-integration.sh                  # Apple runtime suite (all phases)
-./tests/run-integration.sh --only coop      # coop end to end only
+./tests/run-integration.sh --only iso      # iso end to end only
 
 # Credential proxy VM gates
 python3 tests/integration-proxy-transition.py
@@ -161,7 +161,7 @@ detail, including what reviewers look for.
 CI must pass before a pull request can merge. The
 [CI workflow](.github/workflows/ci.yml) runs, on macOS 27 runners, the Swift
 host format/build/test gates and Python host checks, the fuzz corpus replay
-and bounded smoke, the `coop-proxy` and `coop-sandbox` package tests, the
+and bounded smoke, the `iso-proxy` and `iso-sandbox` package tests, the
 host-only install/update/uninstall suites and regression scripts, and a
 GitHub Actions security audit ([zizmor](https://github.com/zizmorcore/zizmor)).
 
@@ -169,14 +169,14 @@ The VM lifecycle suite is not run in CI — run it locally, as described above.
 
 ## Reporting issues
 
-Open an issue on the [issue tracker](https://github.com/chr33s/coop/issues).
+Open an issue on the [issue tracker](https://github.com/chr33s/iso/issues).
 For bug reports, include the platform and backend, the command you ran, and the
-output (coop's diagnostics go to stderr — `-v` adds debug detail, `-vv` trace).
+output (isolate's diagnostics go to stderr — `-v` adds debug detail, `-vv` trace).
 
 If you believe you have found a security vulnerability, do not open a public
 issue. Follow the private reporting process in [SECURITY.md](SECURITY.md).
 
 ## License
 
-coop is licensed under the [Apache License 2.0](LICENSE). By contributing, you
+isolate is licensed under the [Apache License 2.0](LICENSE). By contributing, you
 agree that your contributions will be licensed under the same terms.

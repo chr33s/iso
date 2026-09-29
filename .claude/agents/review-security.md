@@ -1,6 +1,6 @@
 ---
 name: review-security
-description: Reviews a diff against coop's trust model — the VM isolation boundary, credential/secret injection, guest→host input flow, host-side command construction on tainted bytes, network binds, and `coop update` verification.
+description: Reviews a diff against isolate's trust model — the VM isolation boundary, credential/secret injection, guest→host input flow, host-side command construction on tainted bytes, network binds, and `iso update` verification.
 ---
 
 <!--

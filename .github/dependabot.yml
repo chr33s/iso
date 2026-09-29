@@ -18,7 +18,7 @@ updates:
 
   # SwiftPM pins (Package.resolved) for the host, proxy and runtime packages.
   - package-ecosystem: swift
-    directories: ["/", "/coop-proxy", "/coop-sandbox"]
+    directories: ["/", "/iso-proxy", "/iso-sandbox"]
     schedule:
       interval: weekly
     cooldown:

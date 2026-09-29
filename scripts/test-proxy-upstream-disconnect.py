@@ -15,10 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    work = Path(tempfile.mkdtemp(prefix="coop-upstream-disconnect-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-upstream-disconnect-"))
     print(f"Disconnect evidence: {work}", flush=True)
     commands = {
-        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "iso-proxy", "--filter",
                   "upstreamDisconnectClosesGuestAndRestoresPermits"],
     }
     markers = {
@@ -36,7 +36,7 @@ def main():
         with (work / f"{implementation}.log").open("w") as log:
             result = subprocess.run(
                 command, cwd=ROOT,
-                env=dict(os.environ, COOP_DISCONNECT_OBSERVATIONS=str(artifact)),
+                env=dict(os.environ, ISO_DISCONNECT_OBSERVATIONS=str(artifact)),
                 stdout=log, stderr=subprocess.STDOUT, timeout=180)
         output = (work / f"{implementation}.log").read_text()
         report[implementation] = {"command": command, "exit_code": result.returncode}

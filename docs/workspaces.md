@@ -9,19 +9,19 @@ SPDX-License-Identifier: Apache-2.0
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
 > guests remain supported.
 
-coop moves code between the host and guest VM. The normal way to get code in is `coop up`, with `push` and `pull` for ongoing sync.
+isolate moves code between the host and guest VM. The normal way to get code in is `iso up`, with `push` and `pull` for ongoing sync.
 
 ## Getting Code into the VM
 
-### Project environment (`coop up`)
+### Project environment (`iso up`)
 
 ```bash
-coop up ./my-project
-coop up ./my-project --mount
-coop up --git-repo https://github.com/trailofbits/coop.git
+iso up ./my-project
+iso up ./my-project --mount
+iso up --git-repo https://github.com/trailofbits/coop.git
 ```
 
-`coop up` treats the directory as the project identity. Re-running the same
+`iso up` treats the directory as the project identity. Re-running the same
 command finds the existing instance for that directory instead of allocating
 another VM. The default transport is copy/sync into `/workspace`; `--mount`
 uses mount transport for the project directory, which on the Apple backend is
@@ -31,21 +31,21 @@ creating the project instance. If the instance already exists, destroy it
 first to change creation-time choices such as transport, image, disk size, or
 extra mounts.
 
-`coop up` in copy mode tar-pipes the project into `/workspace` inside the
+`iso up` in copy mode tar-pipes the project into `/workspace` inside the
 guest over SSH. Both sides independently SHA-256-hash the tar stream. If the
-checksums diverge, the transfer aborts. coop persists the host-to-guest path
+checksums diverge, the transfer aborts. isolate persists the host-to-guest path
 mapping in `workspace.json` so that later `push` and `pull` calls resolve paths
 automatically.
 
-`coop up --mount` syncs the project directory into the guest once. The Apple
+`iso up --mount` syncs the project directory into the guest once. The Apple
 backend gives the guest no host mounts, so this is not a live mount; use
-`coop push` / `coop pull` to sync changes afterward.
+`iso push` / `iso pull` to sync changes afterward.
 
 Additional host data can be mounted at creation time with
-`coop up --extra-mount HOST_PATH:GUEST_PATH`. In copy mode, extra mounts must
+`iso up --extra-mount HOST_PATH:GUEST_PATH`. In copy mode, extra mounts must
 not target `/workspace`, because the copied project owns that path.
 
-`coop up --git-repo <url>` clones the repository inside the guest at
+`iso up --git-repo <url>` clones the repository inside the guest at
 `/workspace` and records the original URL in `workspace.json`. Because there
 is no host workspace path for that source, later `push` and `pull` commands
 need an explicit `--dir` if you want to sync files back to the host.
@@ -59,16 +59,16 @@ workspace's `.git/config`. Common triggers:
 - `prek install` (and `git config core.hooksPath`) records `core.hooksPath = /workspace/.git/hooks`.
 
 The Apple backend has no live host mounts, so these entries stay in the guest
-until you `coop pull`. Copy and mount transports both include `.git/` by
+until you `iso pull`. Copy and mount transports both include `.git/` by
 default, so a pull brings them to the host, where every `git` invocation then
 fails with `fatal: Invalid path '/workspace': No such file or directory`. Remove
 the offending lines from `.git/config` (and `.git/worktrees/*/config`), avoid
-those commands in the guest, or pass `--exclude-git` on `coop pull`.
+those commands in the guest, or pass `--exclude-git` on `iso pull`.
 
 ### Manual via SSH
 
 ```bash
-coop shell
+iso shell
 # then use git clone, scp, or any other tool inside the guest
 ```
 
@@ -76,7 +76,7 @@ No workspace state is recorded. `push` and `pull` will not work without a `works
 
 ## State file: `workspace.json`
 
-Creating a project VM with `coop up` writes a `workspace.json` in the instance directory:
+Creating a project VM with `iso up` writes a `workspace.json` in the instance directory:
 
 | Field        | Description                                                    |
 |-------------|----------------------------------------------------------------|
@@ -89,11 +89,11 @@ Creating a project VM with `coop up` writes a `workspace.json` in the instance d
 ## Pushing: host to guest
 
 ```bash
-coop push                                    # uses host_path from workspace.json
-coop push --dir ./other-dir                  # push a specific directory
-coop push --force                            # skip guest dirty check
-coop push my-instance                        # target a specific instance
-coop push my-instance --dir ./src --force    # combined
+iso push                                    # uses host_path from workspace.json
+iso push --dir ./other-dir                  # push a specific directory
+iso push --force                            # skip guest dirty check
+iso push my-instance                        # target a specific instance
+iso push my-instance --dir ./src --force    # combined
 ```
 
 Before overwriting guest files, `push` checks for in-guest work the host doesn't yet know about. Two signals are inspected:
@@ -111,11 +111,11 @@ Transfer method selection is automatic:
 ## Pulling: guest to host
 
 ```bash
-coop pull                                       # uses host_path from workspace.json
-coop pull --dir ./local-copy                    # pull into a specific directory
-coop pull --force                               # skip local dirty check
-coop pull my-instance                           # target a specific instance
-coop pull my-instance --dir ./local-copy        # combined
+iso pull                                       # uses host_path from workspace.json
+iso pull --dir ./local-copy                    # pull into a specific directory
+iso pull --force                               # skip local dirty check
+iso pull my-instance                           # target a specific instance
+iso pull my-instance --dir ./local-copy        # combined
 ```
 
 Before overwriting the local destination, `pull` runs `git status --porcelain` against it. If the directory has a `.git` and any uncommitted changes (tracked or untracked), pull refuses unless you pass `--force`. Unlike push's guest-side check, the local check does not inspect unpushed commits — committing your local work first is enough to satisfy it.
@@ -124,14 +124,14 @@ The destination directory is created if absent. Transport selection follows the 
 
 ## Staged pulls
 
-`coop diff` (or `coop pull --review`, or any `coop pull` with
+`iso diff` (or `iso pull --review`, or any `iso pull` with
 `workspace.pull.mode = "stage"`) pulls into a stage under the instance
 directory instead of the local directory:
 
 ```bash
-coop diff my-instance                         # stage + review
-coop pull my-instance --apply --stage-id 1a2b3c4d
-coop pull my-instance --discard
+iso diff my-instance                         # stage + review
+iso pull my-instance --apply --stage-id 1a2b3c4d
+iso pull my-instance --discard
 ```
 
 The stage is walked without following links and checked before anything is
@@ -150,8 +150,8 @@ applied:
 - Directories nested deeper than 64 levels make the stage inapplicable.
 - Symlink names are compared case- and normalization-insensitively, as APFS
   resolves them.
-- One stage operation runs at a time per instance; a second `coop pull` or
-  `coop diff` waits for the first.
+- One stage operation runs at a time per instance; a second `iso pull` or
+  `iso diff` waits for the first.
 - A guest file where the host has a directory is reported for you to resolve.
 
 The review lists every added (`A`), modified (`M`) and type-changed (`T`) path,
@@ -176,16 +176,16 @@ All transfers (rsync and tar-pipe) exclude these reproducible build and cache di
 - `target/`
 - `__pycache__/`
 - `.venv/`
-- `.coop/`
+- `.iso/`
 
-When coop uses tar on a macOS host, host-side tar archive creation runs with
+When isolate uses tar on a macOS host, host-side tar archive creation runs with
 `COPYFILE_DISABLE=1`. This suppresses tar-generated AppleDouble (`._*`) entries
 for resource forks or extended attributes while packing (the setting has no
 effect on extraction). Without it, those metadata entries can land in a Linux
 guest as ordinary files, including inside `.git/`, where they can break Git's
 pack/ref discovery.
 
-`.git/` is **included** by default so agents in the guest get full history, branches, and the ability to make commits that survive a `coop pull`. Pass `--exclude-git` to `coop up`, `coop push`, or `coop pull` to skip it on a per-transfer basis (useful for very large repos where transfer time dominates).
+`.git/` is **included** by default so agents in the guest get full history, branches, and the ability to make commits that survive a `iso pull`. Pass `--exclude-git` to `iso up`, `iso push`, or `iso pull` to skip it on a per-transfer basis (useful for very large repos where transfer time dominates).
 
 ## .gitignore integration
 

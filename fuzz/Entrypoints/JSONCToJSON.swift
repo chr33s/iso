@@ -1,4 +1,4 @@
-import CoopFuzzHarnesses
+import IsoFuzzHarnesses
 
 @_cdecl("LLVMFuzzerTestOneInput")
 public func fuzzOne(_ data: UnsafePointer<UInt8>?, _ size: Int) -> CInt {

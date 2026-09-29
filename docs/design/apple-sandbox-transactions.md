@@ -3,13 +3,13 @@
 > detail; Linux guests remain in scope.
 >
 > The Rust host paths (`src/apple_container/`, `cargo` commands) in this
-> record are historical: the Swift host (`Sources/CoopHost/`) replaced the Rust
+> record are historical: the Swift host (`Sources/IsoHost/`) replaced the Rust
 > host in 2026-09. See [ARCHITECTURE.md](../ARCHITECTURE.md) for the current
 > module map and [testing.md](../testing.md) for current commands.
 
 # Design: Apple sandbox mutations — transactions, serialization, and maintenance
 
-**Status:** implemented (runtime 0.2.0, protocol 2) · **Scope:** `coop-sandbox` and `src/apple_container/`; the backend contract is in [`backends.md`](../backends.md), the security spec in [`trust-model.md`](../trust-model.md)
+**Status:** implemented (runtime 0.2.0, protocol 2) · **Scope:** `iso-sandbox` and `src/apple_container/`; the backend contract is in [`backends.md`](../backends.md), the security spec in [`trust-model.md`](../trust-model.md)
 **Date:** 2026-09-26
 
 ---
@@ -38,7 +38,7 @@ lifecycle, disks, resources, or recovery is reviewed against them.
 | INV-04 | An interrupted forward update or rollback stays recoverable; neither silently leaves Rust and Swift records inconsistent. |
 | INV-05 | A rollback never overwrites a newer successful operation. |
 | INV-06 | Mutations of one sandbox serialize at the runtime boundary; mutations of different sandboxes stay concurrent. |
-| INV-07 | A new SSH host key is enrolled only on first provisioning or after a correlated, coop-authorized restore. A disk-generation increase alone is not authorization. |
+| INV-07 | A new SSH host key is enrolled only on first provisioning or after a correlated, iso-authorized restore. A disk-generation increase alone is not authorization. |
 | INV-08 | Runtime qualification, effective-configuration verification, and SSH readiness stay separate checks. |
 | INV-09 | Maintenance runs trusted tools from a separate boot image, never programs from the guest-controlled target disk. |
 | INV-10 | Cleanup and stopping remain available when qualification or safe SSH hand-out fails, subject to ownership checks. |
@@ -51,12 +51,12 @@ lifecycle, disks, resources, or recovery is reviewed against them.
 | Same-sandbox serialization and interrupted runtime-operation recovery | Swift runtime |
 | Instance-to-sandbox mapping, requested policy, guest user, image aliases | Rust adapter |
 | SSH pin and the authority to replace it | Rust adapter |
-| Mutation identity and committed outcome | The runtime's `record.lastOperation`, correlated with the operation id in coop's journal |
+| Mutation identity and committed outcome | The runtime's `record.lastOperation`, correlated with the operation id in isolate's journal |
 | IP, PID, diagnostic strings | Observations only |
 
 Requested CPU/memory (the sidecar) and effective CPU/memory (the runtime) stay
-separate facts; the isolation gate compares them. coop keeps its own journal:
-it authorizes restores and reconciles coop's metadata. Operation ids let it
+separate facts; the isolation gate compares them. isolate keeps its own journal:
+it authorizes restores and reconciles isolate's metadata. Operation ids let it
 tell its own committed change from anyone else's.
 
 ## 3. What was built
@@ -144,13 +144,13 @@ One function carries both the forward change and the rollback:
 1. Takes the instance lock and reconciles any earlier journal.
 2. Confirms the sandbox is stopped.
 3. Journals a `SetResources` entry (operation id and prior values).
-4. Sends `coop-sandbox set --operation <id>`.
+4. Sends `iso-sandbox set --operation <id>`.
 5. Requires the read-back to show both the target values and
    `lastOperation == id`.
 
 **Rollback.** When a restart after a change fails, rollback uses the same
 function with a precondition: the runtime's last committed operation must
-still be the forward change, with its values. coop checks this, and the
+still be the forward change, with its values. isolate checks this, and the
 runtime checks it again under its guard (`--expect-operation`).
 
 **Outcomes that stay uncertain.** Each is reported as
@@ -159,23 +159,23 @@ runtime checks it again under its guard (`--expect-operation`).
 - a superseded change is left in place;
 - a sandbox not confirmed stopped gets no rollback;
 - a rollback that cannot be confirmed keeps its journal, which the next
-  `coop start` reconciles from the runtime's record.
+  `iso start` reconciles from the runtime's record.
 
 ### 3.4 Restore and grow correlation
 
-**Restore.** `restore` journals an operation id. coop re-pins the host key
+**Restore.** `restore` journals an operation id. isolate re-pins the host key
 after an interrupted restore only when the runtime's last operation is that
 id and the generation rose.
 
-**Grow.** `grow` also passes an id and checks it on read-back. coop keeps no
-grow journal: the runtime's disk update is self-recovering, and nothing coop
+**Grow.** `grow` also passes an id and checks it on read-back. isolate keeps no
+grow journal: the runtime's disk update is self-recovering, and nothing isolate
 records depends on disk size.
 
 ### 3.5 Maintenance image (`Maintenance.swift`, `image::maintenance_*`)
 
 **What maintenance runs from.** Maintenance VMs boot a disposable clone of a
 dedicated artifact: a small image (Ubuntu plus e2fsprogs) that
-`coop-sandbox maintenance install` unpacks into `maintenance/`. The runtime
+`iso-sandbox maintenance install` unpacks into `maintenance/`. The runtime
 records it with:
 
 - its recipe version (`image::MAINTENANCE_VERSION`) and content digest;
@@ -185,7 +185,7 @@ records it with:
 It lives apart from the image store, so application-image size or deletion
 cannot affect it.
 
-**Installation.** `coop setup` builds the image with the stock builder (the
+**Installation.** `iso setup` builds the image with the stock builder (the
 same base and apt sources as the instance image, so no new outbound URL). It
 installs it when the runtime reports a different version, then deletes the
 store copy.
@@ -256,7 +256,7 @@ mutation/recovery paths.
   - an interrupted rollback reconciled from its journal;
   - each rollback precondition term refusing on its own;
   - grow and restore accepted only with their own committed operation;
-  - restore re-pinning only for coop's own operation;
+  - restore re-pinning only for isolate's own operation;
   - destroy working when the runtime cannot inspect the sandbox;
   - maintenance install, reinstall, and failure cleanup in setup.
 - **Real hardware (`tests/integration-apple-sandbox.sh`):**
@@ -265,8 +265,8 @@ mutation/recovery paths.
   - a start racing a grow serializing to one valid outcome;
   - `grow`, `commit`, and `restore` clients killed at fractions of their uninterrupted duration,
     each reconciling to one committed state;
-  - `coop restore` and `coop resize --size` killed partway, with the next
-    `coop start` recovering;
+  - `iso restore` and `iso resize --size` killed partway, with the next
+    `iso start` recovering;
   - an out-of-band runtime restore refused as host-key authorization.
 
 **Not covered by automation:**
@@ -285,13 +285,13 @@ mutation/recovery paths.
 | Hardware | Apple M5 Max |
 | OS | macOS 27.0 (26A428) |
 | Toolchain | `container` 1.4.1, `containerization` 0.45.0, Swift 6.4 |
-| Command | `./tests/integration-apple-sandbox.sh` (all phases), then `--only recovery,coop` |
-| Result | All phases: 154 passed, 1 failed, 1 skipped. The failure was the coop-phase canary check matching its own command line in the guest's sudo journal; with that fixed, `recovery,coop` passed 89 of 89. The skip is host services on the NAT gateway, reachable by design. |
+| Command | `./tests/integration-apple-sandbox.sh` (all phases), then `--only recovery,iso` |
+| Result | All phases: 154 passed, 1 failed, 1 skipped. The failure was the iso-phase canary check matching its own command line in the guest's sudo journal; with that fixed, `recovery,iso` passed 89 of 89. The skip is host services on the NAT gateway, reachable by design. |
 
-Killed operations in the `recovery,coop` run: 3 of 7 grows, 5 of 7 commits,
+Killed operations in the `recovery,iso` run: 3 of 7 grows, 5 of 7 commits,
 and 2 of 7 restores had applied when killed; every one settled consistently.
 
-The coop-level `./tests/run-integration.sh` (Lima, and Firecracker remotely)
+The iso-level `./tests/run-integration.sh` (Lima, and Firecracker remotely)
 was not run for this change.
 
 Record results for each candidate revision (commit, hardware, OS,

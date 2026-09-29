@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Lifecycle commands: the Swift `coop` against the recorded baseline.
+"""Lifecycle commands: the Swift `iso` against the recorded baseline.
 
-    python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/coop \
+    python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/iso \
         [--golden tests/baseline/parity/lifecycle.json]
 
 The host runs in a HOME with a pre-seeded owner and VM key and its own copy of
@@ -31,13 +31,13 @@ ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "tests" / "baseline" / "parity" / "lifecycle.json"
 FAKES = ROOT / "tests" / "fixtures" / "fake-runtime"
 OWNER = "0a1b2c3d00112233445566778899aabb"
-STATE = ".coop/backends/apple-container-v1"
+STATE = ".iso/backends/apple-container-v1"
 
 FAKE_SSH = "#!/bin/sh\nexit 0\n"
 
 CONFIG_JSONC = """{
   "updates": {"mode": "off"},
-  "apple_container": {"binary": "__BIN__/coop-sandbox", "builder": "__BIN__/container", "kernel": "__HOME__/kernel"}
+  "apple_container": {"binary": "__BIN__/iso-sandbox", "builder": "__BIN__/container", "kernel": "__HOME__/kernel"}
 }
 """
 
@@ -86,7 +86,7 @@ def make_home(base, name, key_dir, config_text, config_name):
     home = Path(os.path.realpath(base)) / name
     bin_dir = home / "bin"
     bin_dir.mkdir(parents=True)
-    for tool in ["coop-sandbox", "container"]:
+    for tool in ["iso-sandbox", "container"]:
         shutil.copy(FAKES / tool, bin_dir / tool)
         (bin_dir / tool).chmod(0o755)
     (bin_dir / "ssh").write_text(FAKE_SSH)
@@ -99,7 +99,7 @@ def make_home(base, name, key_dir, config_text, config_name):
         json.dumps({"schema_version": 1, "backend": "apple-container", "owner_id": OWNER}, indent=2) + "\n")
     for key in ["vm_key", "vm_key.pub"]:
         shutil.copy(key_dir / key, state / key)
-    config = home / ".coop" / config_name
+    config = home / ".iso" / config_name
     config.write_text(config_text.replace("__BIN__", str(bin_dir)).replace("__HOME__", str(home)))
     return home, config
 
@@ -129,7 +129,7 @@ def seed_instance(home):
         "image_ref": image["image_ref"], "image_digest": image["digest"], "image_manifest_id": image["manifest_id"],
         "guest_user": "ubuntu", "requested_cpus": 2, "requested_memory_bytes": 4096 << 20,
         "host_key_fingerprint": "SHA256:x", "last_observed_owner_pid": None, "last_observed_ip": None,
-        "reenroll_host_key": False, "created_at": "2026-09-28T00:00:00Z", "runtime_identity": "coop-sandbox 0.2.0"},
+        "reenroll_host_key": False, "created_at": "2026-09-28T00:00:00Z", "runtime_identity": "iso-sandbox 0.2.0"},
         indent=2))
 
 
@@ -206,10 +206,10 @@ def seed_set_journal(home):
     sandbox = fake["sandboxes"][machine]
     prior = {"cpus": sandbox["cpus"], "memory_bytes": sandbox["memoryBytes"]}
     sandbox["cpus"] = 4
-    sandbox["lastOperation"] = "coop-00000000000000f1"
+    sandbox["lastOperation"] = "iso-00000000000000f1"
     path.write_text(json.dumps(fake, indent=2))
     write_journal(home / STATE / "instances" / "alpha", machine,
-                  {"kind": "set-resources", "operation": "coop-00000000000000f1", "prior": prior})
+                  {"kind": "set-resources", "operation": "iso-00000000000000f1", "prior": prior})
 
 
 def seed_restore_journal(home):
@@ -217,7 +217,7 @@ def seed_restore_journal(home):
     machine = "coop-0a1b2c3d-00000000000000aa"
     _, fake = fake_state(home)
     write_journal(home / STATE / "instances" / "alpha", machine,
-                  {"kind": "restore-disk", "operation": "coop-00000000000000f2",
+                  {"kind": "restore-disk", "operation": "iso-00000000000000f2",
                    "prior_generation": fake["sandboxes"][machine]["diskGeneration"]})
 
 
@@ -249,7 +249,7 @@ class Normalizer:
 
     def text(self, value):
         value = value.replace(self.home, "<HOME>")
-        value = re.sub(r"/(?:private/)?var/folders/[^\s\"']*/T/coop-apple-(build|image|maintenance)-[A-Za-z0-9_]+",
+        value = re.sub(r"/(?:private/)?var/folders/[^\s\"']*/T/iso-apple-(build|image|maintenance)-[A-Za-z0-9_]+",
                        lambda m: f"<TMP-{m.group(1)}>", value)
         value = re.sub(r"local/coop-0a1b2c3d:([0-9a-f]{16})-([0-9a-f]{8})",
                        lambda m: f"local/coop-0a1b2c3d:{m.group(1)}-" + self.placeholder("build", m.group(2)), value)
@@ -257,7 +257,7 @@ class Normalizer:
                        value)
         value = re.sub(r"coop-0a1b2c3d-(?!00000000000000(?:aa|bb))[0-9a-f]{16}",
                        lambda m: self.placeholder("machine", m.group(0)), value)
-        value = re.sub(r"(?<![0-9a-f-])coop-[0-9a-f]{16}(?![0-9a-f])", lambda m: self.placeholder("op", m.group(0)), value)
+        value = re.sub(r"(?<![0-9a-f-])iso-[0-9a-f]{16}(?![0-9a-f])", lambda m: self.placeholder("op", m.group(0)), value)
         value = re.sub(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", "<TIME>", value)
         value = re.sub(r"sha256:[0-9a-f]{64}", lambda m: self.placeholder("digest", m.group(0)), value)
         return value
@@ -309,7 +309,7 @@ def main():
     args = parser.parse_args()
     golden = json.loads(args.golden.read_text())
     failures = []
-    with tempfile.TemporaryDirectory(prefix="coop-lifecycle-") as base:
+    with tempfile.TemporaryDirectory(prefix="iso-lifecycle-") as base:
         # A fixed synthetic key: it feeds manifest ids and build contexts, so
         # the results stay comparable with the recorded baseline.
         key_dir = Path(base) / "key"

@@ -159,9 +159,9 @@ def main():
         parser.error("replay must be at most 96 KiB and contain no valid capability")
     fuzz_count = 1 if replay is not None else args.fuzz_cases
     if args.swift is None:
-        directory = subprocess.check_output(["swift", "build", "--package-path", str(ROOT / "coop-proxy"),
+        directory = subprocess.check_output(["swift", "build", "--package-path", str(ROOT / "iso-proxy"),
                                              "--show-bin-path"], text=True).strip()
-        args.swift = Path(directory) / "coop-proxy-swift"
+        args.swift = Path(directory) / "iso-proxy-swift"
     cases = json.loads((ROOT / "tests/fixtures/credential-proxy/refusals.json").read_text())
     if args.capacity_only:
         cases = []
@@ -175,7 +175,7 @@ def main():
             config = {"version": 1, "listen": f"127.0.0.1:{port}", "provider": provider,
                       "capability_token": TOKEN, "injection": {"scheme": "bearer", "credential": SECRET}}
             command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(binary),
-                       "-f", str(ROOT / "Sources/CoopHost/seatbelt-proxy.sb"), str(binary)]
+                       "-f", str(ROOT / "Sources/IsoHost/seatbelt-proxy.sb"), str(binary)]
             child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, env={})
             try:
@@ -215,7 +215,7 @@ def main():
                         if index % 25 == 0 or index == fuzz_count - 1:
                             assert exchange(port, b"GET / HTTP/1.1\r\nHost: guest\r\n\r\n")[0] == 401
                     except Exception as error:
-                        directory = Path(tempfile.mkdtemp(prefix="coop-proxy-fuzz-failure-"))
+                        directory = Path(tempfile.mkdtemp(prefix="iso-proxy-fuzz-failure-"))
                         (directory / "request.bin").write_bytes(wire)
                         (directory / "replay.json").write_text(json.dumps({
                             "implementation": label, "provider": provider,

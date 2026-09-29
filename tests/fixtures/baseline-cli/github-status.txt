@@ -1,6 +1,6 @@
 Print configured PAT entries and their validation state
 
-Usage: coop github status [OPTIONS]
+Usage: iso github status [OPTIONS]
 
 Options:
       --vm <NAME>  Also show this VM's assigned entry and effective selection source

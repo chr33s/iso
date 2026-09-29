@@ -29,8 +29,8 @@ Report them privately through either channel:
 
 Include as much of the following as you can:
 
-- The coop version (`coop --version`), your macOS version, and the
-  `coop-sandbox version` output.
+- The isolate version (`iso --version`), your macOS version, and the
+  `iso-sandbox version` output.
 - A description of the issue and the impact you expect it to have.
 - Steps to reproduce, a proof of concept, or the affected code path.
 - Any suggested remediation.
@@ -42,18 +42,18 @@ a release and credit you unless you ask us not to.
 
 ## Upstream supported versions
 
-coop ships as a rolling release. Only the latest release receives security
+isolate ships as a rolling release. Only the latest release receives security
 fixes. Fixes land on `main` and go out in the next tagged release; there are no
-long-term support branches. `coop update` installs the latest release, verifying
+long-term support branches. `iso update` installs the latest release, verifying
 its SHA-256 checksum and — when `gh` is present — the GitHub build-provenance
 attestation.
 
 ## Scope
 
-coop provisions isolated Linux virtual machines on macOS 27+ Apple Silicon,
-through the `coop-sandbox` runtime built on Apple's Containerization framework,
+isolate provisions isolated Linux virtual machines on macOS 27+ Apple Silicon,
+through the `iso-sandbox` runtime built on Apple's Containerization framework,
 to run coding agents such as Claude Code and Codex. **The
-security boundary is the VM.** coop's job is to stand that boundary up and hand
+security boundary is the VM.** isolate's job is to stand that boundary up and hand
 work to it without weakening it.
 
 This policy is the disclosure process. The engineering-facing trust boundaries,
@@ -62,18 +62,18 @@ live in [`docs/trust-model.md`](docs/trust-model.md).
 
 In scope:
 
-- Flaws in coop that weaken or escape the VM isolation boundary.
-- Mishandling of the secrets and credentials coop injects into a guest — for
+- Flaws in isolate that weaken or escape the VM isolation boundary.
+- Mishandling of the secrets and credentials isolate injects into a guest — for
   example GitHub tokens, SSH configuration, and stored secrets.
 - Guest configuration or workspace-sync handling that lets untrusted guest
   input reach the host.
-- Verification gaps in `coop update` (release download, checksum, or provenance
+- Verification gaps in `iso update` (release download, checksum, or provenance
   checks).
 
 Out of scope:
 
-- Vulnerabilities in the software coop runs or orchestrates rather than ships —
+- Vulnerabilities in the software isolate runs or orchestrates rather than ships —
   the guest agents (Claude Code, Codex), Docker, the guest OS, Apple's
   `container` CLI, and the Containerization and Virtualization frameworks.
   Report those to their respective projects.
-- Behavior that requires an attacker who already controls the host coop runs on.
+- Behavior that requires an attacker who already controls the host isolate runs on.

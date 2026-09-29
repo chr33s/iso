@@ -7,7 +7,7 @@ import tempfile
 
 out = Path(sys.argv[1])
 out.mkdir(parents=True, exist_ok=True)
-with tempfile.TemporaryDirectory(prefix="coop-forward-ca-") as temporary:
+with tempfile.TemporaryDirectory(prefix="iso-forward-ca-") as temporary:
     work = Path(temporary)
 
     def openssl(*args):
@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix="coop-forward-ca-") as temporary:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
-            "-out", "ca.pem", "-days", "2", "-subj", "/CN=coop test CA",
+            "-out", "ca.pem", "-days", "2", "-subj", "/CN=iso test CA",
             "-addext", "basicConstraints=critical,CA:TRUE",
             "-addext", "keyUsage=critical,keyCertSign,cRLSign",
             "-addext", "subjectKeyIdentifier=hash")

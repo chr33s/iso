@@ -14,7 +14,7 @@
 # bytes, tokens) otherwise give no guidance.
 #
 # Engine: LLVM libFuzzer built from the vendored sources in fuzz/libfuzzer
-# (or `COOP_LIBFUZZER_SRC`), verified against LIBFUZZER_MANIFEST_SHA256, with
+# (or `ISO_LIBFUZZER_SRC`), verified against LIBFUZZER_MANIFEST_SHA256, with
 # the pinned Xcode `clang++`. Targets:
 # the pinned Xcode `swiftc` with AddressSanitizer and SanitizerCoverage
 # inline 8-bit counters, PC tables and comparison tracing. Production sources
@@ -30,7 +30,7 @@ TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad)
 # listing of the top-level *.cpp, *.h and *.def files.
 LIBFUZZER_MANIFEST_SHA256="0b52df7b0808e66eb5efdd5c3fbcaf72335279ba90e1f26e04f4c2bab7e6fd32"
 DEFAULT_LIBFUZZER_SRC="$ROOT/fuzz/libfuzzer"
-LIBFUZZER_SRC="${COOP_LIBFUZZER_SRC:-$DEFAULT_LIBFUZZER_SRC}"
+LIBFUZZER_SRC="${ISO_LIBFUZZER_SRC:-$DEFAULT_LIBFUZZER_SRC}"
 
 # Per-input and campaign bounds (recorded in docs/design/swift-host-acceptance.md).
 MAX_LEN=65536
@@ -39,7 +39,7 @@ RSS_LIMIT_MB=2048
 MALLOC_LIMIT_MB=1024
 
 SWIFT_FLAGS=(
-  -O -g -parse-as-library -swift-version 6 -package-name coop
+  -O -g -parse-as-library -swift-version 6 -package-name iso
   -target arm64-apple-macosx27.0
   -sanitize=address
   -sanitize-coverage=edge,trace-cmp
@@ -62,7 +62,7 @@ libfuzzer_manifest() {
 
 build_libfuzzer() {
   [[ -d "$LIBFUZZER_SRC" ]] || die "libFuzzer sources not found at $LIBFUZZER_SRC
-Set COOP_LIBFUZZER_SRC to an LLVM compiler-rt/lib/fuzzer checkout matching
+Set ISO_LIBFUZZER_SRC to an LLVM compiler-rt/lib/fuzzer checkout matching
 LIBFUZZER_MANIFEST_SHA256."
   local actual
   actual="$(libfuzzer_manifest "$LIBFUZZER_SRC")"
@@ -93,16 +93,16 @@ swift_module() { # name, sources...
 
 link_target() { # target, entrypoint
   xcrun swiftc "${SWIFT_FLAGS[@]}" -I "$BUILD" "$2" \
-    "$BUILD/libCoopFuzzHarnesses.a" "$BUILD/libCoopConfiguration.a" "$BUILD/libCoopCore.a" \
+    "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoConfiguration.a" "$BUILD/libIsoCore.a" \
     "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
 }
 
 cmd_build() {
   mkdir -p "$BUILD"
   build_libfuzzer
-  swift_module CoopCore "$ROOT"/Sources/CoopCore/*.swift
-  swift_module CoopConfiguration "$ROOT"/Sources/CoopConfiguration/*.swift
-  swift_module CoopFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
+  swift_module IsoCore "$ROOT"/Sources/IsoCore/*.swift
+  swift_module IsoConfiguration "$ROOT"/Sources/IsoConfiguration/*.swift
+  swift_module IsoFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
   local t
   for t in "${TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
   echo "built: ${TARGETS[*]} in $BUILD" >&2
@@ -172,7 +172,7 @@ cmd_qualify() {
   rm -rf "$q"
   mkdir -p "$q/artifacts" "$q/corpus"
   cat > "$q/Qualify.swift" <<'SWIFT'
-import CoopConfiguration
+import IsoConfiguration
 
 @_cdecl("LLVMFuzzerTestOneInput")
 public func fuzzOne(_ data: UnsafePointer<UInt8>?, _ size: Int) -> CInt {

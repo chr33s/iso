@@ -1,6 +1,6 @@
 Show what each VM's agents resolve to (per-VM override → default → off), with credentials redacted
 
-Usage: coop proxy status [OPTIONS]
+Usage: iso proxy status [OPTIONS]
 
 Options:
       --vm <NAME>  Show the effective resolution for a single VM instead of all

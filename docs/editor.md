@@ -6,37 +6,37 @@ SPDX-License-Identifier: Apache-2.0
 
 # Editor Integration (VS Code, Zed)
 
-`coop editor` connects VS Code or Zed to a running guest VM over SSH. The same SSH config entry works with JetBrains IDEs, Cursor, and any editor that supports SSH remote development. `coop vscode` remains as an alias.
+`iso editor` connects VS Code or Zed to a running guest VM over SSH. The same SSH config entry works with JetBrains IDEs, Cursor, and any editor that supports SSH remote development. `iso vscode` remains as an alias.
 
 ## Quick start
 
 ```bash
-coop editor my-instance
+iso editor my-instance
 ```
 
 This command:
 
 1. Writes an SSH config block for the instance into `~/.ssh/config`.
-2. Launches VS Code with `code --remote ssh-remote+coop-apple-{name} /workspace`. When it cannot spawn a VS Code strategy, coop tries the VS Code app (`open -a 'Visual Studio Code'`, macOS only), then Zed with `zed ssh://coop-apple-{name}/workspace`.
+2. Launches VS Code with `code --remote ssh-remote+coop-apple-{name} /workspace`. When it cannot spawn a VS Code strategy, isolate tries the VS Code app (`open -a 'Visual Studio Code'`, macOS only), then Zed with `zed ssh://coop-apple-{name}/workspace`.
 3. Prints the SSH config entry to stderr for manual use with other editors.
 
-## The `coop editor` command
+## The `iso editor` command
 
 ```
-coop editor [NAME] [--project PATH] [--editor code|zed] [--clean]
+iso editor [NAME] [--project PATH] [--editor code|zed] [--clean]
 ```
 
 **NAME** is the instance name. Required when multiple instances exist.
 
 **--project** sets the remote directory the editor opens. Defaults to `/workspace`.
 
-**--editor** pins the editor (`code` or `zed`). When omitted, coop tries VS Code first, then Zed. A strategy that cannot be launched at all — binary missing, or present but not executable — counts as a miss, so the chain continues to the next editor. If an editor starts but exits unsuccessfully, coop tries only that editor's remaining strategies and reports the failure instead of opening a different editor.
+**--editor** pins the editor (`code` or `zed`). When omitted, isolate tries VS Code first, then Zed. A strategy that cannot be launched at all — binary missing, or present but not executable — counts as a miss, so the chain continues to the next editor. If an editor starts but exits unsuccessfully, isolate tries only that editor's remaining strategies and reports the failure instead of opening a different editor.
 
 **--clean** removes the SSH config entry for the specified instance and exits. Useful for manual cleanup without destroying the instance.
 
 ```bash
-coop editor my-instance --project /workspace/frontend
-coop editor my-instance --editor zed
+iso editor my-instance --project /workspace/frontend
+iso editor my-instance --editor zed
 ```
 
 ### Installing the `code` CLI
@@ -45,7 +45,7 @@ The `code` command must be on your PATH. If it is not installed, open VS Code an
 
 > Cmd+Shift+P, then "Shell Command: Install 'code' command in PATH"
 
-coop includes this instruction when `--editor code` cannot launch VS Code, or when no editor can be launched in auto-detect mode.
+isolate includes this instruction when `--editor code` cannot launch VS Code, or when no editor can be launched in auto-detect mode.
 
 ### Zed
 
@@ -68,7 +68,7 @@ Two Zed-specific caveats:
 
 ## SSH config management
 
-coop writes SSH config entries to `~/.ssh/config`, delimited by marker comments:
+isolate writes SSH config entries to `~/.ssh/config`, delimited by marker comments:
 
 ```
 # coop-apple START coop-apple-my-instance
@@ -76,12 +76,12 @@ Host coop-apple-my-instance
     HostName 10.231.3.2
     Port 22
     User ubuntu
-    IdentityFile /Users/me/.coop/backends/apple-container-v1/vm_key
+    IdentityFile /Users/me/.iso/backends/apple-container-v1/vm_key
     IdentitiesOnly yes
     StrictHostKeyChecking yes
-    UserKnownHostsFile /Users/me/.coop/backends/apple-container-v1/instances/my-instance/known_hosts
+    UserKnownHostsFile /Users/me/.iso/backends/apple-container-v1/instances/my-instance/known_hosts
     GlobalKnownHostsFile /dev/null
-    HostKeyAlias <machine>.coop
+    HostKeyAlias <machine>.iso
     UpdateHostKeys no
     ForwardAgent no
     IdentityAgent none
@@ -93,29 +93,29 @@ The block pins the guest's host key: a changed key is refused rather than
 accepted. The `coop-apple-` prefix and markers keep these entries separate from
 an upstream coop build's `coop-<name>` blocks.
 
-Each run of `coop editor` replaces the existing block for that instance, or creates one if none exists. To install the same block without launching an editor — for plain `ssh`/`scp`/`rsync` — use [`coop ssh-config`](commands.md#ssh-config).
+Each run of `iso editor` replaces the existing block for that instance, or creates one if none exists. To install the same block without launching an editor — for plain `ssh`/`scp`/`rsync` — use [`iso ssh-config`](commands.md#ssh-config).
 
 ### Cleanup
 
-- **`coop editor NAME --clean`** (or **`coop ssh-config NAME --clean`**) removes the SSH config entry for the specified instance and exits. This cleans up the config without destroying the instance.
-- **`coop destroy`** removes the SSH config block for the destroyed instance.
-- **`coop destroy --all`** removes all coop SSH config blocks.
-- **`coop stop`** leaves the SSH config block in place. A stale entry has no effect when the VM is not running, and `coop start` refreshes it on the next boot (the guest address can change across starts).
+- **`iso editor NAME --clean`** (or **`iso ssh-config NAME --clean`**) removes the SSH config entry for the specified instance and exits. This cleans up the config without destroying the instance.
+- **`iso destroy`** removes the SSH config block for the destroyed instance.
+- **`iso destroy --all`** removes all isolate SSH config blocks.
+- **`iso stop`** leaves the SSH config block in place. A stale entry has no effect when the VM is not running, and `iso start` refreshes it on the next boot (the guest address can change across starts).
 
 ## Other editors
 
-`coop editor` prints the SSH config entry to stderr. Any SSH-capable editor can use it.
+`iso editor` prints the SSH config entry to stderr. Any SSH-capable editor can use it.
 
 ### JetBrains (IntelliJ, GoLand, CLion, etc.)
 
-1. Run `coop editor my-instance` to generate the SSH config.
+1. Run `iso editor my-instance` to generate the SSH config.
 2. In your JetBrains IDE, open **File > Remote Development > SSH Connection**.
 3. Select the `coop-apple-{name}` host.
 4. Set the project directory to `/workspace`.
 
 ### Cursor
 
-Cursor uses the same Remote SSH extension as VS Code. Run `coop editor` and the host appears in Cursor's SSH targets. You can also launch it directly:
+Cursor uses the same Remote SSH extension as VS Code. Run `iso editor` and the host appears in Cursor's SSH targets. You can also launch it directly:
 
 ```bash
 cursor --remote ssh-remote+coop-apple-my-instance /workspace
@@ -133,8 +133,8 @@ The SSH config block supplies the hostname, port, user, key, and host-key verifi
 
 ## Port forwarding
 
-Use `--forward-port` with [`coop up`](commands.md#up) or
-[`coop start`](commands.md#start) for forwards managed for the VM lifetime.
+Use `--forward-port` with [`iso up`](commands.md#up) or
+[`iso start`](commands.md#start) for forwards managed for the VM lifetime.
 For a temporary forward while an editor is connected, use SSH directly:
 
 ```bash
@@ -151,6 +151,6 @@ VS Code's Remote SSH extension exposes a Ports panel that handles forwarding onc
 
 ## Interaction with push and pull
 
-`coop push` and `coop pull` sync files between host and guest. Both work while an editor is connected; there is no need to disconnect.
+`iso push` and `iso pull` sync files between host and guest. Both work while an editor is connected; there is no need to disconnect.
 
-Watch for conflicts. `coop push` overwrites guest files, and `coop pull` overwrites local files. Both commands check for uncommitted git changes and refuse to proceed unless you pass `--force`.
+Watch for conflicts. `iso push` overwrites guest files, and `iso pull` overwrites local files. Both commands check for uncommitted git changes and refuse to proceed unless you pass `--force`.

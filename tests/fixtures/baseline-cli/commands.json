@@ -1,8 +1,8 @@
 {
-  "baseline_version": "coop 0.6.0-dev (e3ba69e+dirty)",
+  "baseline_version": "iso 0.6.0-dev (e3ba69e+dirty)",
   "commands": {
-    "coop": {
-      "usage": "Usage: coop [OPTIONS] <COMMAND>",
+    "iso": {
+      "usage": "Usage: iso [OPTIONS] <COMMAND>",
       "arguments": [],
       "options": [
         "--config",
@@ -47,7 +47,7 @@
       ]
     },
     "up": {
-      "usage": "Usage: coop up [OPTIONS] [DIR]",
+      "usage": "Usage: iso up [OPTIONS] [DIR]",
       "arguments": [
         "[DIR]"
       ],
@@ -79,7 +79,7 @@
       "subcommands": []
     },
     "quickstart": {
-      "usage": "Usage: coop quickstart [OPTIONS]",
+      "usage": "Usage: iso quickstart [OPTIONS]",
       "arguments": [],
       "options": [
         "--no-workspace",
@@ -89,7 +89,7 @@
       "subcommands": []
     },
     "setup": {
-      "usage": "Usage: coop setup [OPTIONS]",
+      "usage": "Usage: iso setup [OPTIONS]",
       "arguments": [],
       "options": [
         "-y --yes",
@@ -112,7 +112,7 @@
       "subcommands": []
     },
     "devcontainer": {
-      "usage": "Usage: coop devcontainer <COMMAND>",
+      "usage": "Usage: iso devcontainer <COMMAND>",
       "arguments": [],
       "options": [
         "-h --help"
@@ -125,7 +125,7 @@
       ]
     },
     "start": {
-      "usage": "Usage: coop start [OPTIONS] [NAME]",
+      "usage": "Usage: iso start [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -146,7 +146,7 @@
       "subcommands": []
     },
     "shell": {
-      "usage": "Usage: coop shell [NAME] [-- <COMMAND>...]",
+      "usage": "Usage: iso shell [NAME] [-- <COMMAND>...]",
       "arguments": [
         "[NAME]",
         "[COMMAND]..."
@@ -157,7 +157,7 @@
       "subcommands": []
     },
     "claude": {
-      "usage": "Usage: coop claude [OPTIONS] [NAME] [ARGS]...",
+      "usage": "Usage: iso claude [OPTIONS] [NAME] [ARGS]...",
       "arguments": [
         "[NAME]",
         "[ARGS]..."
@@ -169,7 +169,7 @@
       "subcommands": []
     },
     "claude-agents": {
-      "usage": "Usage: coop claude-agents [NAME] [ARGS]...",
+      "usage": "Usage: iso claude-agents [NAME] [ARGS]...",
       "arguments": [
         "[NAME]",
         "[ARGS]..."
@@ -180,7 +180,7 @@
       "subcommands": []
     },
     "codex": {
-      "usage": "Usage: coop codex [OPTIONS] [NAME] [ARGS]...",
+      "usage": "Usage: iso codex [OPTIONS] [NAME] [ARGS]...",
       "arguments": [
         "[NAME]",
         "[ARGS]..."
@@ -192,7 +192,7 @@
       "subcommands": []
     },
     "stop": {
-      "usage": "Usage: coop stop [NAME]",
+      "usage": "Usage: iso stop [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -202,7 +202,7 @@
       "subcommands": []
     },
     "destroy": {
-      "usage": "Usage: coop destroy [OPTIONS] [NAME]",
+      "usage": "Usage: iso destroy [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -213,7 +213,7 @@
       "subcommands": []
     },
     "list": {
-      "usage": "Usage: coop list [OPTIONS]",
+      "usage": "Usage: iso list [OPTIONS]",
       "arguments": [],
       "options": [
         "--json",
@@ -222,7 +222,7 @@
       "subcommands": []
     },
     "status": {
-      "usage": "Usage: coop status [OPTIONS] [NAME]",
+      "usage": "Usage: iso status [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -233,7 +233,7 @@
       "subcommands": []
     },
     "agent": {
-      "usage": "Usage: coop agent <COMMAND>",
+      "usage": "Usage: iso agent <COMMAND>",
       "arguments": [],
       "options": [
         "-h --help"
@@ -243,7 +243,7 @@
       ]
     },
     "model": {
-      "usage": "Usage: coop model [NAME] [COMMAND]",
+      "usage": "Usage: iso model [NAME] [COMMAND]",
       "arguments": [
         "[NAME]"
       ],
@@ -256,7 +256,7 @@
       ]
     },
     "logs": {
-      "usage": "Usage: coop logs [OPTIONS] [NAME]",
+      "usage": "Usage: iso logs [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -267,7 +267,7 @@
       "subcommands": []
     },
     "push": {
-      "usage": "Usage: coop push [OPTIONS] [NAME]",
+      "usage": "Usage: iso push [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -280,7 +280,7 @@
       "subcommands": []
     },
     "pull": {
-      "usage": "Usage: coop pull [OPTIONS] [NAME]",
+      "usage": "Usage: iso pull [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -293,7 +293,7 @@
       "subcommands": []
     },
     "exec": {
-      "usage": "Usage: coop exec [NAME] -- <COMMAND>...",
+      "usage": "Usage: iso exec [NAME] -- <COMMAND>...",
       "arguments": [
         "[NAME]",
         "<COMMAND>..."
@@ -304,7 +304,7 @@
       "subcommands": []
     },
     "editor": {
-      "usage": "Usage: coop editor [OPTIONS] [NAME]",
+      "usage": "Usage: iso editor [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -317,7 +317,7 @@
       "subcommands": []
     },
     "ssh-config": {
-      "usage": "Usage: coop ssh-config [OPTIONS] [NAME]",
+      "usage": "Usage: iso ssh-config [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -328,7 +328,7 @@
       "subcommands": []
     },
     "images": {
-      "usage": "Usage: coop images [OPTIONS]",
+      "usage": "Usage: iso images [OPTIONS]",
       "arguments": [],
       "options": [
         "--delete",
@@ -338,7 +338,7 @@
       "subcommands": []
     },
     "resize": {
-      "usage": "Usage: coop resize [OPTIONS] <--size <SIZE>|--mem <MEM>|--vcpus <VCPUS>> [NAME]",
+      "usage": "Usage: iso resize [OPTIONS] <--size <SIZE>|--mem <MEM>|--vcpus <VCPUS>> [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -352,7 +352,7 @@
       "subcommands": []
     },
     "commit": {
-      "usage": "Usage: coop commit [OPTIONS] --image <IMAGE> [NAME]",
+      "usage": "Usage: iso commit [OPTIONS] --image <IMAGE> [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -364,7 +364,7 @@
       "subcommands": []
     },
     "restore": {
-      "usage": "Usage: coop restore [OPTIONS] [NAME]",
+      "usage": "Usage: iso restore [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -379,7 +379,7 @@
       "subcommands": []
     },
     "profiles": {
-      "usage": "Usage: coop profiles [COMMAND]",
+      "usage": "Usage: iso profiles [COMMAND]",
       "arguments": [],
       "options": [
         "-h --help"
@@ -390,7 +390,7 @@
       ]
     },
     "github": {
-      "usage": "Usage: coop github <COMMAND>",
+      "usage": "Usage: iso github <COMMAND>",
       "arguments": [],
       "options": [
         "-h --help"
@@ -405,7 +405,7 @@
       ]
     },
     "proxy": {
-      "usage": "Usage: coop proxy <COMMAND>",
+      "usage": "Usage: iso proxy <COMMAND>",
       "arguments": [],
       "options": [
         "-h --help"
@@ -416,7 +416,7 @@
       ]
     },
     "validate": {
-      "usage": "Usage: coop validate [OPTIONS]",
+      "usage": "Usage: iso validate [OPTIONS]",
       "arguments": [],
       "options": [
         "--probe",
@@ -425,7 +425,7 @@
       "subcommands": []
     },
     "init": {
-      "usage": "Usage: coop init",
+      "usage": "Usage: iso init",
       "arguments": [],
       "options": [
         "-h --help"
@@ -433,7 +433,7 @@
       "subcommands": []
     },
     "update": {
-      "usage": "Usage: coop update [OPTIONS]",
+      "usage": "Usage: iso update [OPTIONS]",
       "arguments": [],
       "options": [
         "--check",
@@ -445,7 +445,7 @@
       "subcommands": []
     },
     "uninstall": {
-      "usage": "Usage: coop uninstall [OPTIONS]",
+      "usage": "Usage: iso uninstall [OPTIONS]",
       "arguments": [],
       "options": [
         "-y --yes",
@@ -456,7 +456,7 @@
       "subcommands": []
     },
     "completions": {
-      "usage": "Usage: coop completions <SHELL>",
+      "usage": "Usage: iso completions <SHELL>",
       "arguments": [
         "<SHELL>"
       ],
@@ -466,7 +466,7 @@
       "subcommands": []
     },
     "devcontainer check": {
-      "usage": "Usage: coop devcontainer check [OPTIONS] <PATH>",
+      "usage": "Usage: iso devcontainer check [OPTIONS] <PATH>",
       "arguments": [
         "<PATH>"
       ],
@@ -478,7 +478,7 @@
       "subcommands": []
     },
     "devcontainer ignore": {
-      "usage": "Usage: coop devcontainer ignore <PROJECT>",
+      "usage": "Usage: iso devcontainer ignore <PROJECT>",
       "arguments": [
         "<PROJECT>"
       ],
@@ -488,7 +488,7 @@
       "subcommands": []
     },
     "devcontainer status": {
-      "usage": "Usage: coop devcontainer status [PROJECT]",
+      "usage": "Usage: iso devcontainer status [PROJECT]",
       "arguments": [
         "[PROJECT]"
       ],
@@ -498,7 +498,7 @@
       "subcommands": []
     },
     "devcontainer clear": {
-      "usage": "Usage: coop devcontainer clear <PROJECT>",
+      "usage": "Usage: iso devcontainer clear <PROJECT>",
       "arguments": [
         "<PROJECT>"
       ],
@@ -508,7 +508,7 @@
       "subcommands": []
     },
     "agent update": {
-      "usage": "Usage: coop agent update [OPTIONS] [NAME]",
+      "usage": "Usage: iso agent update [OPTIONS] [NAME]",
       "arguments": [
         "[NAME]"
       ],
@@ -522,7 +522,7 @@
       "subcommands": []
     },
     "model local": {
-      "usage": "Usage: coop model local",
+      "usage": "Usage: iso model local",
       "arguments": [],
       "options": [
         "-h --help"
@@ -530,7 +530,7 @@
       "subcommands": []
     },
     "model remote": {
-      "usage": "Usage: coop model remote",
+      "usage": "Usage: iso model remote",
       "arguments": [],
       "options": [
         "-h --help"
@@ -538,7 +538,7 @@
       "subcommands": []
     },
     "profiles list": {
-      "usage": "Usage: coop profiles list [OPTIONS]",
+      "usage": "Usage: iso profiles list [OPTIONS]",
       "arguments": [],
       "options": [
         "--json",
@@ -547,7 +547,7 @@
       "subcommands": []
     },
     "profiles show": {
-      "usage": "Usage: coop profiles show <NAME>",
+      "usage": "Usage: iso profiles show <NAME>",
       "arguments": [
         "<NAME>"
       ],
@@ -557,7 +557,7 @@
       "subcommands": []
     },
     "github assign-pat": {
-      "usage": "Usage: coop github assign-pat --vm <NAME> --repo <REPO>",
+      "usage": "Usage: iso github assign-pat --vm <NAME> --repo <REPO>",
       "arguments": [],
       "options": [
         "--vm",
@@ -567,7 +567,7 @@
       "subcommands": []
     },
     "github unassign-pat": {
-      "usage": "Usage: coop github unassign-pat --vm <NAME>",
+      "usage": "Usage: iso github unassign-pat --vm <NAME>",
       "arguments": [],
       "options": [
         "--vm",
@@ -576,7 +576,7 @@
       "subcommands": []
     },
     "github setup-pat": {
-      "usage": "Usage: coop github setup-pat [OPTIONS]",
+      "usage": "Usage: iso github setup-pat [OPTIONS]",
       "arguments": [],
       "options": [
         "--repo",
@@ -585,7 +585,7 @@
       "subcommands": []
     },
     "github rotate-pat": {
-      "usage": "Usage: coop github rotate-pat --repo <REPO>",
+      "usage": "Usage: iso github rotate-pat --repo <REPO>",
       "arguments": [],
       "options": [
         "--repo",
@@ -594,7 +594,7 @@
       "subcommands": []
     },
     "github status": {
-      "usage": "Usage: coop github status [OPTIONS]",
+      "usage": "Usage: iso github status [OPTIONS]",
       "arguments": [],
       "options": [
         "--vm",
@@ -605,7 +605,7 @@
       "subcommands": []
     },
     "github forget-pat": {
-      "usage": "Usage: coop github forget-pat --repo <REPO>",
+      "usage": "Usage: iso github forget-pat --repo <REPO>",
       "arguments": [],
       "options": [
         "--repo",
@@ -614,7 +614,7 @@
       "subcommands": []
     },
     "proxy setup": {
-      "usage": "Usage: coop proxy setup [OPTIONS]",
+      "usage": "Usage: iso proxy setup [OPTIONS]",
       "arguments": [],
       "options": [
         "--openai",
@@ -626,7 +626,7 @@
       "subcommands": []
     },
     "proxy status": {
-      "usage": "Usage: coop proxy status [OPTIONS]",
+      "usage": "Usage: iso proxy status [OPTIONS]",
       "arguments": [],
       "options": [
         "--vm",

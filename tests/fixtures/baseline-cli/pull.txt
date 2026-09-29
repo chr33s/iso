@@ -1,6 +1,6 @@
 Pull guest workspace to local directory
 
-Usage: coop pull [OPTIONS] [NAME]
+Usage: iso pull [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

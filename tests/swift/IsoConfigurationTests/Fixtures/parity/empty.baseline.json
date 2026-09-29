@@ -1,0 +1,63 @@
+{
+  "data_dir": "/home/fixture/.iso",
+  "vm": {
+    "vcpu_count": 2,
+    "mem_size_mib": 4096,
+    "kernel_path": "/home/fixture/.iso/vmlinux",
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
+    "template_size_gib": 8
+  },
+  "network": {
+    "host_ip": "172.16.0.1",
+    "subnet_mask": "/24",
+    "host_iface": "auto"
+  },
+  "ssh_port": 22,
+  "firecracker_bin": "/home/fixture/.iso/firecracker",
+  "github": null,
+  "setup": {
+    "prompt_for_pat": true
+  },
+  "claude": {
+    "api_key": null,
+    "env_forward": [],
+    "marketplaces": [],
+    "plugins": [],
+    "mcp_servers": {},
+    "config_dir": null,
+    "local_model": null
+  },
+  "codex": {
+    "auth": "api_key",
+    "api_key": null,
+    "env_forward": [],
+    "marketplaces": [],
+    "plugins": [],
+    "mcp_servers": {},
+    "config_dir": null,
+    "local_model": null
+  },
+  "proxy": {
+    "anthropic": null,
+    "openai": null
+  },
+  "guest_env": {},
+  "profiles": {},
+  "post_start": null,
+  "forward_ports": [],
+  "updates": {
+    "mode": "notify",
+    "check_interval_hours": 24
+  },
+  "apple_container": {
+    "binary": null,
+    "builder": null,
+    "kernel": null,
+    "probe_timeout_seconds": 10,
+    "operation_timeout_seconds": 60,
+    "create_timeout_seconds": 600,
+    "boot_timeout_seconds": 120,
+    "stop_timeout_seconds": 90,
+    "build_timeout_seconds": 3600
+  }
+}

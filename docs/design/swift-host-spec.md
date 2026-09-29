@@ -4,7 +4,7 @@
 see the [acceptance ledger](swift-host-acceptance.md). Every gate remains open.  
 **Requested:** 2026-09-27.  
 **Repository baseline:** `143fddaf23df43a15de5bf81320f6fbb97b23c1b`.  
-**Scope:** `chr33s/coop`, macOS 27+ on Apple Silicon; Linux guests.  
+**Scope:** `chr33s/iso`, macOS 27+ on Apple Silicon; Linux guests.  
 **Configuration decision:** JSONC, decoded with Foundation `JSONDecoder` after
 comment scanning. This supersedes the earlier TOML dependency selection.
 
@@ -15,7 +15,7 @@ separate from implementing it.
 
 ## 1. Objective and boundary
 
-Replace the Rust `coop` host CLI with Swift while preserving the supported
+Replace the Rust `iso` host CLI with Swift while preserving the supported
 Apple backend's behavior, persistent state, security boundaries, and release
 verification. The final supported build MUST require Swift/Xcode and no Rust,
 Cargo, rustup, or Rust compiler invoked through another build tool.
@@ -24,9 +24,9 @@ The final distribution MUST retain three executables:
 
 | Executable | Responsibility |
 |---|---|
-| `coop` | User interface, configuration, state, workspace and agent orchestration |
-| `coop-sandbox` | Apple Containerization VM ownership and runtime operations |
-| `coop-proxy` | Confined credential-bearing provider transport |
+| `iso` | User interface, configuration, state, workspace and agent orchestration |
+| `iso-sandbox` | Apple Containerization VM ownership and runtime operations |
+| `iso-proxy` | Confined credential-bearing provider transport |
 
 The host MUST continue using the runtime JSON CLI and proxy startup protocol.
 It MUST NOT link the runtime or credential proxy into the host process as a
@@ -47,19 +47,19 @@ dependencies remain part of the runtime and security inventory.
 ## 2. Build and package architecture
 
 Add a root `Package.swift` for the host executable. Retain the independent
-`coop-proxy/` and `coop-sandbox/` packages and their lockfiles.
+`iso-proxy/` and `iso-sandbox/` packages and their lockfiles.
 
 Proposed target boundaries:
 
 | Target | Owns | Constraints |
 |---|---|---|
-| `CoopCLI` | Argument parsing, command dispatch, human/JSON presentation | Thin executable; logs on stderr |
-| `CoopCore` | Validated names, units, config models, plans, state schemas | No subprocess or network side effects |
-| `CoopConfiguration` | JSONC scanning, Foundation decoding, schema checks, config edits | No TOML or configuration-provider dependency |
-| `CoopHost` | Filesystem, locks, subprocesses, SSH, lifecycle, agents, updater | Explicit ownership and cancellation |
+| `IsoCLI` | Argument parsing, command dispatch, human/JSON presentation | Thin executable; logs on stderr |
+| `IsoCore` | Validated names, units, config models, plans, state schemas | No subprocess or network side effects |
+| `IsoConfiguration` | JSONC scanning, Foundation decoding, schema checks, config edits | No TOML or configuration-provider dependency |
+| `IsoHost` | Filesystem, locks, subprocesses, SSH, lifecycle, agents, updater | Explicit ownership and cancellation |
 | Test targets | Contract fixtures, unit and host integration tests | Synthetic credentials; isolated state |
 
-`CoopConfiguration` and `CoopHost` depend on `CoopCore`; `CoopCLI` assembles
+`IsoConfiguration` and `IsoHost` depend on `IsoCore`; `IsoCLI` assembles
 these components. Do not introduce a new generic cross-platform backend
 framework. Split further only when a concrete ownership boundary warrants it.
 
@@ -119,7 +119,7 @@ migration safeguards and update verification.
 
 ### 3.1 Format and dependencies
 
-The default configuration file becomes **`~/.coop/config.jsonc`**. The Swift
+The default configuration file becomes **`~/.iso/config.jsonc`**. The Swift
 host MUST use a tested comment scanner followed by Foundation `JSONDecoder`.
 It MUST NOT depend on `swift-configuration-toml`, `swift-toml`, toml++, or
 `swift-configuration` for host configuration. This replaces the previous TOML
@@ -142,7 +142,7 @@ field must have an explicitly defined string representation.
 
 ### 3.2 Scanner and loading pipeline
 
-`CoopConfiguration` MUST implement this ordered pipeline:
+`IsoConfiguration` MUST implement this ordered pipeline:
 
 1. Resolve `--config`, default-path selection, directory migration, and
    command-specific missing-file behavior under section 3.4.
@@ -330,7 +330,7 @@ be ignored. Additional removals require a separately recorded scope decision.
 
 #### C-02 — Static completion only
 
-Retain `coop completions <shell>` for bash, zsh and fish, backed by Argument
+Retain `iso completions <shell>` for bash, zsh and fish, backed by Argument
 Parser-generated scripts. Remove `COMPLETE=<shell>` runtime hooks, filesystem
 scans for instance/image names, and custom completion providers. Static candidates
 for declared options and enums may remain. Profile/image/instance discovery is
@@ -347,9 +347,9 @@ The new command contract is:
 
 | Old operation | Swift host operation |
 |---|---|
-| `coop init` | `coop setup --config-only`; retain `init` as a thin compatibility alias with a stderr deprecation hint |
-| `coop setup` | `coop setup`, preserving supported image/profile/builder options |
-| `coop quickstart` | Removed; diagnostic directs users to `setup`, then `up`, then their chosen `claude` or `codex` command |
+| `iso init` | `iso setup --config-only`; retain `init` as a thin compatibility alias with a stderr deprecation hint |
+| `iso setup` | `iso setup`, preserving supported image/profile/builder options |
+| `iso quickstart` | Removed; diagnostic directs users to `setup`, then `up`, then their chosen `claude` or `codex` command |
 
 `setup --config-only` creates the JSONC template and exits. It MUST NOT install
 software, provision credentials, build an image, boot a VM or launch an agent.
@@ -375,7 +375,7 @@ to a plaintext file or another secret store.
 
 Keep explicit user-authored `cmd:` references as the single configurable lookup
 mechanism. These can call 1Password, Vault, Keychain, or another trusted host
-command without coop implementing a provider-specific provisioning adapter.
+command without isolate implementing a provider-specific provisioning adapter.
 Remove built-in 1Password creation/management, plaintext-file storage, and
 Linux Secret Service support from the host's secret-store layer, including any
 shared setup flows that offered those adapters. Existing references remain
@@ -415,13 +415,13 @@ VMs or changing ownership IDs merely because the host implementation changed.
 
 Preserve:
 
-- `~/.coop/config.jsonc`, legacy format conversion, and explicit
+- `~/.iso/config.jsonc`, legacy format conversion, and explicit
   `--config`/`data_dir` behavior under section 3.4;
 - `<data_dir>/backends/apple-container-v1/` and current record versions;
 - stopped-VM compatibility and rejection of foreign or unsupported schemas;
-- refusal of upstream coop state in the default `~/.coop`;
+- refusal of upstream coop state in the default `~/.iso`;
 - SSH config aliases and marker namespaces, pinned host keys, and absolute
-  paths. The pin's `HostKeyAlias` is `<machine>.coop`; the former
+  paths. The pin's `HostKeyAlias` is `<machine>.iso`; the former
   `~/.coop-apple` migration, its lock and the `.coop-apple` alias were dropped
   by user-approved change (2026-09-28), so pins written under the old alias
   must be re-enrolled;

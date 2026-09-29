@@ -1,6 +1,6 @@
 Save a stopped instance's filesystem as a reusable image
 
-Usage: coop commit [OPTIONS] --image <IMAGE> [NAME]
+Usage: iso commit [OPTIONS] --image <IMAGE> [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

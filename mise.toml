@@ -1,4 +1,4 @@
-# Pinned development toolchain and git hooks for coop (https://mise.jdx.dev).
+# Pinned development toolchain and git hooks for iso (https://mise.jdx.dev).
 #
 #   mise install                                   # install the pinned tools
 #   mise generate git-pre-commit --write           # enable the pre-commit hook
@@ -23,7 +23,7 @@ yq = "4.53.6"
 shellcheck = "0.11.0"
 "github:kjanat/actionlint" = "1.17.0"
 zizmor = "1.30.1"
-# Apple `container` CLI: builds the guest images (`coop setup`) and serves the
+# Apple `container` CLI: builds the guest images (`iso setup`) and serves the
 # integration suites. Its service still has to be started once
 # (`container system start`).
 container = "1.4.1"

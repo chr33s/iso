@@ -11,12 +11,12 @@ Status: **Anthropic (Claude Code) and OpenAI (Codex); macOS 27+ only.** Opt-in; 
 
 ## What it does
 
-Without proxy mode, coop forwards the raw `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
+Without proxy mode, isolate forwards the raw `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
 into the guest as SSH `SendEnv` variables — a prompt-injected or rogue agent can
 read them from its own environment and, with egress open, exfiltrate them.
 
-With proxy mode, the raw credential **never enters the guest**. coop runs a
-small host-side reverse proxy (`coop-proxy`) — one process per (VM, provider) —
+With proxy mode, the raw credential **never enters the guest**. isolate runs a
+small host-side reverse proxy (`iso-proxy`) — one process per (VM, provider) —
 for the lifetime of the VM:
 
 - The proxy binds host loopback and is exposed into the guest by a per-instance
@@ -24,7 +24,7 @@ for the lifetime of the VM:
   holds only a **per-instance capability token**.
   - **Claude Code:** `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` in the
     managed `~/.claude/settings.json`.
-  - **Codex:** a `[model_providers.coop_local]` block in `~/.codex/config.toml`
+  - **Codex:** a `[model_providers.iso_local]` block in `~/.codex/config.toml`
     (`base_url` at the proxy, `wire_api = "responses"`) with the capability
     token supplied as the provider's bearer `env_key`. Proxy mode pins no model
     — Codex keeps its own, only its egress is redirected.
@@ -37,7 +37,7 @@ for the lifetime of the VM:
   closes). Codex subscription is therefore out of scope in proxy mode; use an
   OpenAI API key.
 
-When agent bootstrap runs with an OpenAI proxy, coop also removes any existing
+When agent bootstrap runs with an OpenAI proxy, isolate also removes any existing
 `~/.codex/auth.json` left by a previous direct-auth boot. If removal fails,
 proxy bootstrap aborts and tears down the proxy. `--no-agents` skips this
 cleanup along with the rest of agent bootstrap.
@@ -76,11 +76,11 @@ authorized for them. The allowlist is defense in depth against broad API use,
 not object-level tenant isolation.
 
 The policy is intentionally closed: if a future agent version needs another
-endpoint, it fails locally with `403` until coop adds and reviews that route.
+endpoint, it fails locally with `403` until isolate adds and reviews that route.
 Claude Code may issue `HEAD /api/hello` and `GET /v1/models?limit=1000` for
 warmup or discovery; proxy mode intentionally refuses both because its normal
 message and token-count operations do not require gateway discovery. Codex's
-proxy provider is named `coop credential proxy`, not `OpenAI`, so Codex does
+proxy provider is named `iso credential proxy`, not `OpenAI`, so Codex does
 not currently enable its OpenAI-specific `POST /v1/responses/compact` behavior.
 If either client changes this behavior, add the route only with an explicit
 policy, test, and documentation update.
@@ -97,17 +97,17 @@ and SSE have no corresponding total-size cap.
 
 ## Enabling it
 
-The easiest path is `coop proxy setup`: it takes a pasted credential, stores it
+The easiest path is `iso proxy setup`: it takes a pasted credential, stores it
 in the macOS Keychain (service `coop-anthropic` or `coop-openai`), and writes
 the `proxy.<provider>` object for you with a `cmd:` reference — so the
 credential is never plaintext in the config. The Keychain is the only built-in
 store; if it is unavailable, setup fails rather than falling back.
 
-- **Anthropic (default):** `coop proxy setup` takes a Claude `setup-token`
+- **Anthropic (default):** `iso proxy setup` takes a Claude `setup-token`
   (subscription) or an API key with `--api-key`. To generate a token first, run
   `claude setup-token` on the host (needs a Claude subscription; the token is
   inference-scoped, ~1 year).
-- **OpenAI (Codex):** `coop proxy setup --openai` takes an OpenAI API key
+- **OpenAI (Codex):** `iso proxy setup --openai` takes an OpenAI API key
   (always injected as `Authorization: Bearer`).
 
 Or configure it by hand:
@@ -128,7 +128,7 @@ Or configure it by hand:
 ```
 
 The `credential` must be a `cmd:` reference or a `vault:<name>` reference to a
-[`coop secrets`](commands.md#secrets) entry; a literal value is rejected, and
+[`iso secrets`](commands.md#secrets) entry; a literal value is rejected, and
 the error names the field without printing its contents.
 
 An instance can also take its provider credential from the secret store at
@@ -136,7 +136,7 @@ An instance can also take its provider credential from the secret store at
 an `--env-file`) routes that secret to this VM's proxy and never into the
 guest. Resolution per provider is then **provider secret → per-VM override →
 default → off**. The command runs on
-the **host** at VM start, just in time, and coop never creates or deletes what
+the **host** at VM start, just in time, and isolate never creates or deletes what
 a hand-written reference points at. For Claude subscription billing without
 exposure, run `claude setup-token` on the host, stash the printed one-year
 token, reference it via `cmd:`, and set `"auth": "bearer"`.
@@ -156,22 +156,22 @@ for a remote-mode VM without any provider proxy. `"off"` starts no proxy. See
 
 The `proxy.<provider>` objects are the **defaults** for every VM. A single VM
 can use a different credential — for per-project billing, scope, or revocation —
-with `coop proxy setup --openai --vm <name>` (or `--anthropic --vm <name>`). The
+with `iso proxy setup --openai --vm <name>` (or `--anthropic --vm <name>`). The
 override is stored in that instance's state (`<inst.dir>/proxy.json`), not in a
 growing config object, and its Keychain item is namespaced separately
 (`coop-openai-<vm>`). A per-VM override must also be a `cmd:` reference; an
-older literal override is rejected until you re-run `coop proxy setup --vm`.
+older literal override is rejected until you re-run `iso proxy setup --vm`.
 
 Resolution per provider is **override → default → off**: the per-VM override
 wins, else the config default, else the proxy is off for that provider. This is
 purely host-side credential selection — the proxy binary and the per-VM
 capability token are unchanged, so there is no new attack surface.
 
-`coop proxy status` shows the defaults and every VM's overrides; `coop proxy
+`iso proxy status` shows the defaults and every VM's overrides; `iso proxy
 status --vm <name>` shows one VM's effective resolution. Credentials are shown
 as their `cmd:` reference (a command, not the secret).
 
-Proxy mode applies only in **remote** model mode. `coop model <vm> local` takes
+Proxy mode applies only in **remote** model mode. `iso model <vm> local` takes
 precedence (the VM routes at your local model server and the proxy is torn
 down). If credential resolution fails at start, the VM **fails closed** — it
 does not come up on a path where the agent silently has no or the wrong key.
@@ -200,7 +200,7 @@ loopback and is reverse-tunnelled
 to exactly one guest — never a non-loopback interface, never the LAN. The host
 starts the proxy only on a free port and sends the credential only after
 confirming that the proxy is the port's sole listener; proxy and tunnel PIDs
-are signalled only while they still name `coop-proxy` or `ssh`.
+are signalled only while they still name `iso-proxy` or `ssh`.
 
 It is **jailed** by `sandbox-exec` using the checked-in Seatbelt profile, which
 denies filesystem writes and program execution and limits outbound connections
@@ -216,7 +216,7 @@ credentials are not supported by this proxy.
 
 ## Swift implementation
 
-The sole implementation lives in `coop-proxy`. It uses macOS system trust
+The sole implementation lives in `iso-proxy`. It uses macOS system trust
 through Security.framework, including administrator/MDM-installed roots.
 Hostname and full-chain verification are mandatory; the guest cannot disable
 them or supply trust roots.
@@ -239,7 +239,7 @@ TLS to both providers under that profile and fails when this permission is
 removed:
 
 ```sh
-swift build --package-path coop-proxy
+swift build --package-path iso-proxy
 python3 scripts/test-swift-proxy-process.py
 ```
 
@@ -260,26 +260,26 @@ python3 scripts/build-release.py                  # unsigned development archive
 python3 scripts/build-release.py --release --test # optimized, with every package's tests
 ```
 
-The SwiftPM product is named `coop-proxy-swift`; the archive installs it under
-the stable `coop-proxy` name understood by existing updaters. The archive
-`coop-<tag|revision>-aarch64-apple-darwin.tar.gz` holds `coop`, `coop-proxy`,
-the ad-hoc signed `coop-sandbox`, LICENSE and BUILD.json (source revision and
+The SwiftPM product is named `iso-proxy-swift`; the archive installs it under
+the stable `iso-proxy` name understood by existing updaters. The archive
+`iso-<tag|revision>-aarch64-apple-darwin.tar.gz` holds `iso`, `iso-proxy`,
+the ad-hoc signed `iso-sandbox`, LICENSE and BUILD.json (source revision and
 binary digests), with a `SHA256SUMS` beside it. Local checksums do not
 establish release provenance. Signing and notarization are a separate,
 explicit `--sign` stage used by the **Release candidate** workflow, which
 requires a clean exact revision, verifies binary signatures, and attests its
 candidate archive.
 
-The `chr33s/coop` release workflow requires tagged commits from `swift` and
+The `chr33s/iso` release workflow requires tagged commits from `swift` and
 packages the host, Swift proxy, and signed runtime together on macOS. Only
 macOS 27+ Apple Silicon hosts are supported. Installer and updater provenance
-checks pin `chr33s/coop`. Archives must include both companions; missing
-companions or obsolete `coop-proxy-rs`/`coop-proxy-swift` transition artifacts
+checks pin `chr33s/iso`. Archives must include both companions; missing
+companions or obsolete `iso-proxy-rs`/`iso-proxy-swift` transition artifacts
 are rejected before replacement. Verification precedes installation; companion
 replacements precede the host replacement. Hosted candidate and release
 verification remain pending.
 
-The host resolves only the adjacent `coop-proxy` executable. There is no
+The host resolves only the adjacent `iso-proxy` executable. There is no
 implementation selector or fallback. Missing binaries, confinement failures,
 and failed readiness abort proxy startup. The child receives an empty
 environment; credentials enter over stdin.

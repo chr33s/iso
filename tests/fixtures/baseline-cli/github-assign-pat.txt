@@ -1,6 +1,6 @@
 Select an existing stored PAT entry for subsequent VM sessions
 
-Usage: coop github assign-pat --vm <NAME> --repo <REPO>
+Usage: iso github assign-pat --vm <NAME> --repo <REPO>
 
 Options:
       --vm <NAME>    

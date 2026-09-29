@@ -58,16 +58,16 @@ def main():
     parser.add_argument("--connections", type=int, choices=[1, 256], default=1,
                         help="number of simultaneous stalled clients")
     args = parser.parse_args()
-    work = Path(tempfile.mkdtemp(prefix="coop-memory-backpressure-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-memory-backpressure-"))
     print(f"Memory evidence: {work}", flush=True)
     report = []
     workloads = {
         "response": ([256 * 1024 * 1024, 1024 * 1024 * 1024],
                      "slowGuestBoundsResidentMemoryAndUpstreamProgress",
-                     "COOP_PROXY_MEMORY_GATE", "COOP_MEMORY_RESPONSE_BYTES", "upstream_sent"),
+                     "ISO_PROXY_MEMORY_GATE", "ISO_MEMORY_RESPONSE_BYTES", "upstream_sent"),
         "upload": ([16 * 1024 * 1024, 64 * 1024 * 1024],
                    "slowProviderBoundsResidentMemoryAndGuestUploadProgress",
-                   "COOP_PROXY_UPLOAD_MEMORY_GATE", "COOP_MEMORY_UPLOAD_BYTES", "guest_sent"),
+                   "ISO_PROXY_UPLOAD_MEMORY_GATE", "ISO_MEMORY_UPLOAD_BYTES", "guest_sent"),
     }
     for direction, (sizes, test, enabled, size_variable, progress) in workloads.items():
         if args.direction not in [direction, "both"]:
@@ -75,10 +75,10 @@ def main():
         for offered in sizes:
             captured = work / f"{direction}-{offered}.json"
             logfile = work / f"{direction}-{offered}.log"
-            command = ["swift", "test", "--package-path", "coop-proxy", "--filter", test]
-            environment = dict(os.environ, COOP_MEMORY_OBSERVATIONS=str(captured))
+            command = ["swift", "test", "--package-path", "iso-proxy", "--filter", test]
+            environment = dict(os.environ, ISO_MEMORY_OBSERVATIONS=str(captured))
             environment.update({enabled: "1", size_variable: str(offered)})
-            environment["COOP_MEMORY_CONNECTIONS"] = str(args.connections)
+            environment["ISO_MEMORY_CONNECTIONS"] = str(args.connections)
             with logfile.open("w") as log:
                 result = subprocess.run(command, cwd=ROOT, env=environment,
                                         stdout=log, stderr=subprocess.STDOUT, timeout=300)

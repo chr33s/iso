@@ -2,7 +2,7 @@ Update coding agent(s) to the latest version inside the VM.
 
 With no agent flag, both Claude Code and Codex are updated. The VM must be running.
 
-Usage: coop agent update [OPTIONS] [NAME]
+Usage: iso agent update [OPTIONS] [NAME]
 
 Arguments:
   [NAME]

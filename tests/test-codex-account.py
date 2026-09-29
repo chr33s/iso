@@ -3,7 +3,7 @@
 # Modified by chr33s: ported/adapted for the Swift implementation.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Wrapper regressions; set COOP_TEST_CODEX to also test a real Linux Codex CLI."""
+"""Wrapper regressions; set ISO_TEST_CODEX to also test a real Linux Codex CLI."""
 import json
 import os
 import re
@@ -35,7 +35,7 @@ def executable(path, source):
 def isolated_env(root):
     # Do not let host credentials or launch overrides affect the fixture.
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('CODEX_', 'COOP_CODEX_', 'OPENAI_', 'XDG_', 'DBUS_', 'GNOME_KEYRING'))}
+           if not k.startswith(('CODEX_', 'ISO_CODEX_', 'OPENAI_', 'XDG_', 'DBUS_', 'GNOME_KEYRING'))}
     env.update(HOME=str(root), XDG_DATA_HOME=str(root / 'data'),
                XDG_RUNTIME_DIR=str(root / 'run'), TERM='xterm-256color')
     (root / '.codex').mkdir()
@@ -108,7 +108,7 @@ time.sleep(60)
             # The guest has GNU timeout; macOS does not. Drop the duration and run.
             executable(root / 'timeout', '#!/bin/sh\nshift\nexec "$@"\n')
             env['PATH'] = str(root) + ':' + env['PATH']
-            env.update(COOP_CODEX_ACCOUNT_DBUS='1', COOP_CODEX_ACCOUNT_UNLOCKED='1')
+            env.update(ISO_CODEX_ACCOUNT_DBUS='1', ISO_CODEX_ACCOUNT_UNLOCKED='1')
             config = root / '.codex/config.toml'
             for keyring in [False, True]:
                 config.write_text('cli_auth_credentials_store = "keyring"\n' if keyring else '')
@@ -124,7 +124,7 @@ time.sleep(60)
                         self.assertEqual(json.loads(result.stdout), (OVERRIDE if keyring else []) + args)
             # Exercise the actual provisioned yolo command, including its bypass flag.
             # The heredoc sits in a Swift multi-line literal indented like its `cat` line.
-            provision = (ROOT / 'Sources/CoopHost/ImageBuild.swift').read_text()
+            provision = (ROOT / 'Sources/IsoHost/ImageBuild.swift').read_text()
             block = re.search(r"^( *)cat > /usr/local/bin/codex-yolo <<'YOLOEOF'\n(.*?)\n\1YOLOEOF$",
                               provision, re.M | re.S)
             yolo = "\n".join(line[len(block[1]):] for line in block[2].splitlines())
@@ -137,10 +137,10 @@ time.sleep(60)
                              ['--dangerously-bypass-approvals-and-sandbox', 'hello world'])
 
 
-@unittest.skipUnless(os.environ.get('COOP_TEST_CODEX'), 'set COOP_TEST_CODEX for real daemon regression')
+@unittest.skipUnless(os.environ.get('ISO_TEST_CODEX'), 'set ISO_TEST_CODEX for real daemon regression')
 class RealDaemonTests(unittest.TestCase):
     def test_terminal_avoids_daemon_with_unusable_keyring(self):
-        binary = str(Path(os.environ['COOP_TEST_CODEX']).resolve())
+        binary = str(Path(os.environ['ISO_TEST_CODEX']).resolve())
         for tool in ['dbus-run-session', 'gnome-keyring-daemon', 'secret-tool', 'strace']:
             self.assertIsNotNone(shutil.which(tool), f'missing prerequisite: {tool}')
         print(subprocess.check_output([binary, '--version'], text=True).strip(), flush=True)
@@ -168,7 +168,7 @@ class RealDaemonTests(unittest.TestCase):
                     self.assertTrue(socket.exists(), (root / 'daemon.log').read_text())
                     bad_env = {**daemon_env, 'DBUS_SESSION_BUS_ADDRESS': (root / 'desktop-bus').read_text()}
                     probe = subprocess.run(['timeout', '5', 'secret-tool', 'store', '--label=probe',
-                                            'service', 'coop-regression'], input='disposable', text=True,
+                                            'service', 'iso-regression'], input='disposable', text=True,
                                            capture_output=True, env=bad_env, timeout=10)
                     self.assertNotEqual(probe.returncode, 0, 'desktop keyring unexpectedly writable')
                     # Positive witness: removing only the fix must connect to that daemon.
@@ -206,7 +206,7 @@ class RealDaemonTests(unittest.TestCase):
                 if b'\x1b[6n' in chunk:
                     os.write(master, b'\x1b[1;1R')
                 if b'keyring password: ' in chunk:
-                    os.write(master, b'coop-test-password\n')
+                    os.write(master, b'iso-test-password\n')
                 if b'Sign in with ChatGPT' in output:
                     break
             self.assertIn(b'Sign in with ChatGPT', output, output.decode(errors='replace'))

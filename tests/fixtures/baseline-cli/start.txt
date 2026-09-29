@@ -1,6 +1,6 @@
 Restart a stopped VM
 
-Usage: coop start [OPTIONS] [NAME]
+Usage: iso start [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Stopped instance name (optional only when exactly one stopped instance exists)

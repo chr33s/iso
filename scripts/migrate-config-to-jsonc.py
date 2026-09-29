@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Convert a coop config.toml to config.jsonc, offline and once.
+"""Convert a iso config.toml to config.jsonc, offline and once.
 
-    python3 scripts/migrate-config-to-jsonc.py --input ~/.coop/config.toml \
-        --output ~/.coop/config.jsonc [--drop-retired-fields]
+    python3 scripts/migrate-config-to-jsonc.py --input ~/.iso/config.toml \
+        --output ~/.iso/config.jsonc [--drop-retired-fields]
 
 Requires Python 3.11+ (standard-library ``tomllib``). The script reads only
 the input file: it never executes ``cmd:`` values, contacts a provider, or
@@ -13,7 +13,7 @@ only after it has been re-read and compared with the converted value.
 Retired Firecracker host settings (``firecracker_bin``, ``vm.kernel_path``,
 ``vm.boot_args``, ``network.*``) are refused unless ``--drop-retired-fields``
 is given. Literal provider proxy credentials are always refused: store them
-with ``coop proxy setup`` (macOS Keychain) or write a ``cmd:`` reference.
+with ``iso proxy setup`` (macOS Keychain) or write a ``cmd:`` reference.
 Diagnostics name field paths only, never values.
 """
 
@@ -166,7 +166,7 @@ def convert(input_path, drop_retired_fields):
         raise ConversionError(
             "literal proxy credentials are no longer accepted: "
             + ", ".join(literals)
-            + "\nStore the credential with `coop proxy setup` (macOS Keychain), or replace "
+            + "\nStore the credential with `iso proxy setup` (macOS Keychain), or replace "
             "the value with a `cmd:` reference to a command that prints it, then re-run."
         )
     return doc, removed
@@ -201,7 +201,7 @@ def publish(output_path, text):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Convert a coop config.toml to config.jsonc (offline, one-time)."
+        description="Convert a iso config.toml to config.jsonc (offline, one-time)."
     )
     parser.add_argument("--input", required=True, help="existing TOML configuration")
     parser.add_argument("--output", required=True, help="new .jsonc (or .json) file")

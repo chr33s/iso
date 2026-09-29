@@ -1,6 +1,6 @@
 Stop and clean up instance resources (keeps template)
 
-Usage: coop destroy [OPTIONS] [NAME]
+Usage: iso destroy [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

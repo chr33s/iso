@@ -1,6 +1,6 @@
 Check prerequisites, install Firecracker, fetch kernel and build template rootfs
 
-Usage: coop setup [OPTIONS]
+Usage: iso setup [OPTIONS]
 
 Options:
   -y, --yes
@@ -26,7 +26,7 @@ Options:
       --builder-timeout <DURATION>
           Duration to wait for setup image build commands before timing out. Accepts seconds by default, or an `s`/`m`/`h` suffix (e.g. `90s`, `30m`, `2h`)
       --workspace <WORKSPACE>
-          Workspace directory to scan for `.devcontainer/devcontainer.json`. When present (and `--no-devcontainer` is not set), coop offers to apply the file's `features` and `hostRequirements` to this setup
+          Workspace directory to scan for `.devcontainer/devcontainer.json`. When present (and `--no-devcontainer` is not set), iso offers to apply the file's `features` and `hostRequirements` to this setup
       --devcontainer <PATH>
           Explicit path to a `devcontainer.json` to use (skips discovery)
       --no-devcontainer

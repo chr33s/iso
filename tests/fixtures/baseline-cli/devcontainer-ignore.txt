@@ -1,6 +1,6 @@
 Persistently ignore discovered devcontainer.json for a project
 
-Usage: coop devcontainer ignore <PROJECT>
+Usage: iso devcontainer ignore <PROJECT>
 
 Arguments:
   <PROJECT>  Project directory whose discovered devcontainer.json should be ignored

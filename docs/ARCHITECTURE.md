@@ -9,10 +9,10 @@ SPDX-License-Identifier: Apache-2.0
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
 > guests remain supported; Linux hosts are outside this fork's scope.
 
-`coop` is a Swift CLI that orchestrates isolated VM environments for running AI
+`iso` is a Swift CLI that orchestrates isolated VM environments for running AI
 coding agents (Claude Code, Codex). It manages the full VM lifecycle — setup,
-up/start, shell, stop, destroy, status, logs — on one backend: `coop-sandbox`
-VMs on `apple/containerization` ([`coop-sandbox`](../coop-sandbox)). See
+up/start, shell, stop, destroy, status, logs — on one backend: `iso-sandbox`
+VMs on `apple/containerization` ([`iso-sandbox`](../iso-sandbox)). See
 [`backends.md`](backends.md).
 
 This document maps the modules, the backend, the data flow from host to guest,
@@ -27,41 +27,41 @@ A distribution holds three executables, each its own process:
 
 | Executable | Package | Responsibility |
 |---|---|---|
-| `coop` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
-| `coop-sandbox` | [`coop-sandbox/`](../coop-sandbox) | Apple Containerization VM ownership and runtime operations |
-| `coop-proxy` | [`coop-proxy/`](../coop-proxy) | Confined, credential-bearing provider transport |
+| `iso` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
+| `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations |
+| `iso-proxy` | [`iso-proxy/`](../iso-proxy) | Confined, credential-bearing provider transport |
 
 The host drives the runtime over its JSON CLI and starts the proxy through its
-startup protocol; it never links either package. `coop` resolves
-`coop-sandbox` and `coop-proxy` beside its own executable.
+startup protocol; it never links either package. `iso` resolves
+`iso-sandbox` and `iso-proxy` beside its own executable.
 
 ## Layout
 
 ```
-coop/
-├── Package.swift            # host package: CoopCore, CoopConfiguration, CoopSecrets, CoopHost, CoopCLI
+iso/
+├── Package.swift            # host package: IsoCore, IsoConfiguration, IsoSecrets, IsoHost, IsoCLI
 ├── Sources/
-│   ├── CoopCore/            # validated values, AtomicFile/FileLock; no subprocess or network side effects
-│   ├── CoopConfiguration/   # JSONC scanning, preflight, decoding, config edits
-│   ├── CoopSecrets/         # Secure Enclave-bound local secret store
-│   ├── CoopHost/            # filesystem, locks, subprocesses, SSH, lifecycle, agents, updater
-│   └── CoopCLI/             # Argument Parser commands (executable `coop`)
+│   ├── IsoCore/            # validated values, AtomicFile/FileLock; no subprocess or network side effects
+│   ├── IsoConfiguration/   # JSONC scanning, preflight, decoding, config edits
+│   ├── IsoSecrets/         # Secure Enclave-bound local secret store
+│   ├── IsoHost/            # filesystem, locks, subprocesses, SSH, lifecycle, agents, updater
+│   └── IsoCLI/             # Argument Parser commands (executable `iso`)
 ├── tests/swift/             # Swift test targets (one per module + fuzz corpus replay)
 ├── tests/                   # integration, parity and migration scripts; baselines
 ├── fuzz/                    # libFuzzer harnesses (Targets/, Entrypoints/), corpus, vendored libFuzzer
-├── coop-sandbox/            # Swift Apple Containerization VM runtime
-├── coop-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
+├── iso-sandbox/            # Swift Apple Containerization VM runtime
+├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)
 └── docs/                    # this tree
 ```
 
-Target dependencies: `CoopConfiguration`, `CoopSecrets` and `CoopHost` depend
-on `CoopCore`; `CoopSecrets` also uses swift-crypto's `CryptoExtras`;
-`CoopHost` also depends on `CoopConfiguration`; `CoopCLI` assembles them with
+Target dependencies: `IsoConfiguration`, `IsoSecrets` and `IsoHost` depend
+on `IsoCore`; `IsoSecrets` also uses swift-crypto's `CryptoExtras`;
+`IsoHost` also depends on `IsoConfiguration`; `IsoCLI` assembles them with
 Swift Argument Parser. Both external dependencies are pinned in
 `Package.resolved`.
 
-### `CoopCore`
+### `IsoCore`
 
 Smart-constructor value types shared by configuration, state and commands:
 `Names.swift` (instance, image, profile, host and environment-variable names;
@@ -72,34 +72,34 @@ vCPU counts, the bootable RAM floor), `GitRepoURL.swift` (clone URL plus its
 and `GuestPath`), `OutputJSON*.swift` (`--json` output with the baseline's
 exact member order and number formatting), and the state-write primitives
 `AtomicFile.swift` and `FileLock.swift` (with `HostError`), shared with
-modules that must not depend on `CoopHost`.
+modules that must not depend on `IsoHost`.
 
-### `CoopConfiguration`
+### `IsoConfiguration`
 
 The JSONC pipeline (spec section 3): `JSONCScanner` (the one comment scanner,
 shared with devcontainer input under explicit policies) → `JSONPreflight`
 (UTF-8, duplicate keys by decoded name, trailing commas, resource limits,
 fraction/exponent literals) → Foundation `JSONDecoder` into `JSONValue` →
 `ConfigDecoding` (explicit absent/null/wrong-type handling, per-section
-unknown-key policy, retired-field rejection) → the immutable `CoopConfig`.
-`ConfigLoader` selects the file (`--config`, default `~/.coop/config.jsonc`,
+unknown-key policy, retired-field rejection) → the immutable `IsoConfig`.
+`ConfigLoader` selects the file (`--config`, default `~/.iso/config.jsonc`,
 legacy-TOML refusal); `ConfigValidation` checks environmental facts at
 lifecycle boundaries; `ConfigEditor` and `GitHubConfigEdits` make structural
 edits that keep unmodeled keys; `ConfigTemplate` is the template written by
 `setup --config-only` (kept equal to [`config.example.jsonc`](../config.example.jsonc)
 by a test).
 
-### `CoopSecrets`
+### `IsoSecrets`
 
 The local secret store ([design](design/embedded-secrets-spec.md)), with no
-dependency on `CoopHost` (its `SecretName` identifier type lives in `CoopCore`): `KDF` (bounded scrypt parameters via
+dependency on `IsoHost` (its `SecretName` identifier type lives in `IsoCore`): `KDF` (bounded scrypt parameters via
 swift-crypto's `CryptoExtras`, HKDF store key), `DeviceFactor` (the Secure
 Enclave key, the digest-checked `device.sekey` file, the sealed device unlock
 key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 (init/set/rm/list/resolve, one unlock per call, owner-only files under a
 `FileLock`).
 
-### `CoopHost`
+### `IsoHost`
 
 | Area | Files |
 |---|---|
@@ -110,14 +110,14 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
-| Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `coop audit`) |
-| Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `CoopCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
+| Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit`) |
+| Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
 | Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `HostKeys` (ed25519 pins read over the runtime channel) |
 | Support | `Diagnostics` (stderr), `Prompt`, `OrderedJSON`, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 
-### `CoopCLI`
+### `IsoCLI`
 
-One file per command domain: `CoopCommand.swift` (root command, global
+One file per command domain: `IsoCommand.swift` (root command, global
 options, `init` alias, removed `quickstart`, exit-status mapping),
 `ReadCommands.swift` (`CommandContext`, list/status/logs and other read-only
 commands), `LifecycleCommands.swift` (setup, stop, destroy, resize, commit,
@@ -131,7 +131,7 @@ machinery), `AgentCommands.swift` (claude/codex/agent/model), `WorkspaceCommands
 There is one concrete backend, `AppleBackend` (spec S-01). There is no backend
 trait, no compile-time or runtime backend selection, and no capability matrix.
 `SandboxRuntime` is the only seam: a narrow runtime-client interface so tests
-can script `coop-sandbox` responses. Disk and resource mutations follow the
+can script `iso-sandbox` responses. Disk and resource mutations follow the
 invariants in [`design/apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
 each takes the per-instance lock, journals runtime calls whose interruption
 could leave runtime and host records disagreeing, and verifies the runtime's
@@ -141,22 +141,22 @@ report instead of trusting an exit status.
 
 `AppleBackend.Running` and `AppleBackend.Stopped` carry the instance, its owned
 sidecar and (for `Running`) the isolation-gate result and SSH target. Their
-initializers are internal to `CoopHost`; commands obtain them only through
+initializers are internal to `IsoHost`; commands obtain them only through
 `asRunning` / `resolveRunning` / `asStopped`. Operations that need a live or
 stopped VM take the proof, so the precondition is checked once and then
 witnessed by the type.
 
 ## Command dispatch
 
-`CoopCommand.main()` installs `ChildGroups` termination handlers, parses the
+`IsoCommand.main()` installs `ChildGroups` termination handlers, parses the
 command line (usage errors exit 2, as before), and runs the subcommand.
 Commands that must work without a loaded configuration — `completions`,
 `setup --config-only`/`init`, `update`, `uninstall`, `devcontainer check` —
 handle that themselves. Others build a `CommandContext` (S-02): the data-root
-guard, one validated `CoopConfig` snapshot with explicit CLI overrides applied,
+guard, one validated `IsoConfig` snapshot with explicit CLI overrides applied,
 `Diagnostics`, the background update notice, the `AppleBackend`, and the SSH
 client. Handlers receive immutable values; credentials are resolved separately
-and only when an operation needs them. `CoopCLI.run` maps failures to a
+and only when an operation needs them. `IsoCLI.run` maps failures to a
 sanitized `Error: …` line on stderr and exit status 1.
 
 ## Data flow: host → guest
@@ -175,7 +175,7 @@ The lifecycle is **setup → up/start → shell → stop → destroy**. A first 
    and Codex configuration injection; provider proxies and local-model tunnels;
    `postStartCommand`.
 6. **Workspace** — `--workspace` copies via a tar pipe; `--git-repo` clones in
-   the guest; mounts are a one-time sync (use `coop push` / `coop pull`).
+   the guest; mounts are a one-time sync (use `iso push` / `iso pull`).
 
 A failed first boot tears down forwards, proxies, the sandbox and the SSH alias.
 Config, secrets, and workspace all cross the host→guest boundary here; the
@@ -183,40 +183,40 @@ security-relevant details of each crossing are in [`trust-model.md`](trust-model
 
 ### Configuration and state
 
-Configuration is JSONC at `~/.coop/config.jsonc`, or strict JSON through an
+Configuration is JSONC at `~/.iso/config.jsonc`, or strict JSON through an
 explicit `--config *.json`; a `.toml` path or a lone legacy `config.toml`
 stops with instructions for [`scripts/migrate-config-to-jsonc.py`](../scripts/migrate-config-to-jsonc.py).
-See [`configuration.md`](configuration.md). Value bounds live in `CoopCore`
+See [`configuration.md`](configuration.md). Value bounds live in `IsoCore`
 constructors, so validation only checks environmental facts. Proxy credentials
 are `cmd:` references resolved just in time; `proxy setup` provisions them in
 the macOS Keychain.
 
 Host-owned state lives under `<data_dir>/backends/apple-container-v1`
-(`data_dir` defaults to `~/.coop`) as versioned JSON records written through
+(`data_dir` defaults to `~/.iso`) as versioned JSON records written through
 `StateStore`/`AtomicFile`: owner and machine records, journals, per-instance
 records (`instance.json`, `workspace.json`, `forwards.json`, `guest_env.json`,
 `model.json`, `proxy.json`, devcontainer state), host-key pins and image
 records. Instance directories are `0700` and records owner-only. The pinned
-`HostKeyAlias` is `<machine>.coop`.
+`HostKeyAlias` is `<machine>.iso`.
 
-## `coop update`
+## `iso update`
 
-`Update.swift` installs only from the pinned `chr33s/coop` release channel:
+`Update.swift` installs only from the pinned `chr33s/iso` release channel:
 fetch release metadata, download the platform archive, `SHA256SUMS` and
 `SHA256SUMS.sig`, verify the maintainer signature against the compiled-in
 `ReleaseSigners` (mandatory), the checksum (mandatory) and the Sigstore
 attestation, extract into a private
-temporary directory with path validation, then replace `coop-sandbox`,
-`coop-proxy` and finally `coop`. Any failure before a replacement leaves every
+temporary directory with path validation, then replace `iso-sandbox`,
+`iso-proxy` and finally `iso`. Any failure before a replacement leaves every
 installed binary untouched; each replacement is atomic but the set is not a
-single transaction. Only release builds (`-D COOP_RELEASE_BUILD`, set by
+single transaction. Only release builds (`-D ISO_RELEASE_BUILD`, set by
 `scripts/build-release.py --release`) update themselves. A background notifier
 checks for new versions on a 24-hour interval (disabled in dev/CI/non-TTY). The
-full verification chain is in [`trust-model.md`](trust-model.md#coop-update-trust-chain).
+full verification chain is in [`trust-model.md`](trust-model.md#iso-update-trust-chain).
 
 ## Guest image
 
-`coop setup` builds a golden image in a disposable sandbox from the embedded
+`iso setup` builds a golden image in a disposable sandbox from the embedded
 provisioning scripts in `scripts/guest/` plus the profile/package installers,
 optionally with devcontainer Features, and publishes its record only after
 verification. Instances boot from that image. See
@@ -234,13 +234,13 @@ Hold these when changing the code; the review lenses check for their violation:
 3. **Liveness is a type, not a flag.** Route VM operations through
    `Running`/`Stopped` proofs and the isolation gate, not ad-hoc
    `isRunning` checks.
-4. **Value invariants live in constructors.** Parse into a `CoopCore` type at
+4. **Value invariants live in constructors.** Parse into a `IsoCore` type at
    the boundary; don't re-validate primitives downstream.
 5. **Secrets never touch argv or logs.** Environment/`SendEnv`/stdin only;
    diagnostics never print a resolved secret.
 6. **No shell interpolation.** Host processes start only through
    `ProcessRunner` with an explicit argv; guest commands are built with
-   `RemoteCommand.arg` (untrusted values) and `.literal` (coop-authored
+   `RemoteCommand.arg` (untrusted values) and `.literal` (iso-authored
    fragments only).
 7. **State is transparent JSON** written through `StateStore`/`AtomicFile`
    under the resource's `FileLock`, without widening permissions.
