@@ -222,8 +222,12 @@ jobs:
             exit 1
           fi
 
-      - name: Create GitHub release
+      # A draft: clients refuse a release without SHA256SUMS.sig, and the key
+      # that makes it never reaches CI. A maintainer checks this draft against
+      # its attestation, signs SHA256SUMS and publishes it with
+      # scripts/sign-release.py.
+      - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md coop-*.tar.gz SHA256SUMS attestations.jsonl
+        run: gh release create "$TAG" --draft --title "$TAG" --notes-file RELEASE_NOTES.md coop-*.tar.gz SHA256SUMS attestations.jsonl

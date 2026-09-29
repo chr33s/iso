@@ -6,7 +6,8 @@ import CoopCore
 import Foundation
 
 /// `coop update`: fetch release metadata from the one channel, download the
-/// platform archive and `SHA256SUMS`, verify the checksum and (with `gh`) the
+/// platform archive, `SHA256SUMS` and its signature, verify the signature
+/// against the compiled-in release signers, the checksum and (with `gh`) the
 /// Sigstore attestation, extract into a private temporary directory, then
 /// replace the runtime, the proxy and finally this binary. Any failure before
 /// a replacement leaves every installed binary untouched.
@@ -41,6 +42,8 @@ public struct Updater: Sendable {
   let runner: ProcessRunner
   let confirm: @Sendable (String) throws -> Bool
   let now: @Sendable () -> UInt64
+  /// Keys allowed to sign `SHA256SUMS`; replaced only by tests.
+  var signers = ReleaseSigners.trusted
 
   public init(
     environment: [String: String], home: String?, build: CoopBuild = .current,
@@ -122,19 +125,25 @@ public struct Updater: Sendable {
     guard let sumsAsset = release.asset(named: UpdateChannel.checksumAsset) else {
       throw HostError("Release has no SHA256SUMS asset; refusing to install unverified binary")
     }
+    guard let signatureAsset = release.asset(named: UpdateChannel.signatureAsset) else {
+      throw HostError(
+        "Release \(release.tag) publishes no \(UpdateChannel.signatureAsset); refusing to install a release not signed by a trusted release key"
+      )
+    }
     let tarball = work.path + "/" + tarballName
     let sums = work.path + "/" + UpdateChannel.checksumAsset
+    let signature = work.path + "/" + UpdateChannel.signatureAsset
 
     diagnostics.log(.info, "Downloading \(tarballName)")
     try downloadAsset(
       tag: release.tag, name: tarballName, url: tarballAsset.url, destination: tarball)
     try downloadAsset(
       tag: release.tag, name: UpdateChannel.checksumAsset, url: sumsAsset.url, destination: sums)
+    try downloadAsset(
+      tag: release.tag, name: UpdateChannel.signatureAsset, url: signatureAsset.url,
+      destination: signature)
 
-    let sumsText: String
-    do { sumsText = try readUTF8(sums) } catch {
-      throw ContextError("Failed to read \(sums)", cause: error)
-    }
+    let sumsText = try verifiedChecksums(sums, signature: signature)
     guard let expected = Checksums.parse(sumsText, file: tarballName) else {
       throw HostError("\(tarballName) not listed in SHA256SUMS")
     }
@@ -168,6 +177,25 @@ public struct Updater: Sendable {
       throw HostError("Failed to resolve current executable path")
     }
     try SelfReplace.atomicReplace(extracted, over: currentExecutable, diagnostics: diagnostics)
+  }
+
+  /// `SHA256SUMS` as text, only once its signature verifies against a
+  /// trusted release signer. Nothing in it is read before that.
+  func verifiedChecksums(_ sums: String, signature: String) throws -> String {
+    let bytes: [UInt8]
+    let armored: String
+    do {
+      bytes = try readBytes(sums)
+      armored = try readUTF8(signature)
+    } catch { throw ContextError("Failed to read \(sums) or its signature", cause: error) }
+    do { try SSHSignature.verify(armored: armored, message: bytes, trusted: signers) } catch {
+      throw HostError("\(error) — refusing to install")
+    }
+    guard let text = String(validating: bytes, as: UTF8.self) else {
+      throw ContextError(
+        "Failed to read \(sums)", cause: HostError("stream did not contain valid UTF-8"))
+    }
+    return text
   }
 
   static func verifySHA256(_ path: String, expected: SHA256Hex) throws {

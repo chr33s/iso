@@ -202,8 +202,10 @@ records. Instance directories are `0700` and records owner-only. The pinned
 ## `coop update`
 
 `Update.swift` installs only from the pinned `chr33s/coop` release channel:
-fetch release metadata, download the platform archive and `SHA256SUMS`, verify
-the checksum (mandatory) and the Sigstore attestation, extract into a private
+fetch release metadata, download the platform archive, `SHA256SUMS` and
+`SHA256SUMS.sig`, verify the maintainer signature against the compiled-in
+`ReleaseSigners` (mandatory), the checksum (mandatory) and the Sigstore
+attestation, extract into a private
 temporary directory with path validation, then replace `coop-sandbox`,
 `coop-proxy` and finally `coop`. Any failure before a replacement leaves every
 installed binary untouched; each replacement is atomic but the set is not a

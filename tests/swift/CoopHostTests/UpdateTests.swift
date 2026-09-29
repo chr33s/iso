@@ -1,5 +1,6 @@
 import CoopConfiguration
 import CoopCore
+import CryptoKit
 import Foundation
 import Synchronization
 import Testing
@@ -531,6 +532,7 @@ private struct UpdateFixture {
   var home: String { root + "/home" }
   var log: String { root + "/calls.log" }
   let tag = "v9.9.9"
+  let signingKey = Curve25519.Signing.PrivateKey()
   var directoryName: String { "coop-\(tag)-aarch64-apple-darwin" }
   var tarballName: String { directoryName + ".tar.gz" }
 
@@ -582,7 +584,7 @@ private struct UpdateFixture {
   /// Pack `members` into the release archive and publish matching sums.
   func publish(
     _ members: [String: String], corruptSums: Bool = false, bundle: String? = nil,
-    base: String = "http://fixture"
+    signature: FixtureSignature = .trusted, base: String = "http://fixture"
   ) throws {
     let stage = root + "/stage"
     try? FileManager.default.removeItem(atPath: stage)
@@ -601,11 +603,24 @@ private struct UpdateFixture {
       ? String(repeating: "a", count: 64)
       : Checksums.of(Array(try Data(contentsOf: URL(fileURLWithPath: served + "/" + tarballName))))
         .rawValue
-    try writeUpdateFile(served + "/SHA256SUMS", "\(digest)  \(tarballName)\n")
+    let sums = "\(digest)  \(tarballName)\n"
+    try writeUpdateFile(served + "/SHA256SUMS", sums)
     var assets = [
       #"{"name": "\#(tarballName)", "browser_download_url": "\#(base)/\#(tarballName)"}"#,
       #"{"name": "SHA256SUMS", "browser_download_url": "\#(base)/SHA256SUMS"}"#,
     ]
+    let signer: Curve25519.Signing.PrivateKey?
+    switch signature {
+    case .trusted: signer = signingKey
+    case .untrusted: signer = Curve25519.Signing.PrivateKey()
+    case .missing: signer = nil
+    }
+    if let signer {
+      try writeUpdateFile(
+        served + "/SHA256SUMS.sig", try sshSign(Array(sums.utf8), key: signer))
+      assets.append(
+        #"{"name": "SHA256SUMS.sig", "browser_download_url": "\#(base)/SHA256SUMS.sig"}"#)
+    }
     if let bundle {
       try writeUpdateFile(served + "/attestations.jsonl", bundle)
       assets.append(
@@ -616,16 +631,24 @@ private struct UpdateFixture {
     try writeUpdateFile(served + "/repos/chr33s/coop/releases/tags/\(tag)", json)
   }
 
+  /// Serve `text` as SHA256SUMS, signed by the trusted fixture key.
+  func serveSums(_ text: String) throws {
+    try writeUpdateFile(served + "/SHA256SUMS", text)
+    try writeUpdateFile(served + "/SHA256SUMS.sig", try sshSign(Array(text.utf8), key: signingKey))
+  }
+
   func updater(
     _ extra: [String: String] = ["COOP_UPDATE_API_BASE_URL": "http://fixture"], log: DiagnosticsLog,
     confirm: @escaping @Sendable (String) throws -> Bool = { _ in false }
   ) -> Updater {
     var environment = ["PATH": bin + ":/usr/bin:/bin", "FIXTURE": served, "STUB_LOG": self.log]
     environment.merge(extra) { $1 }
-    return Updater(
+    var updater = Updater(
       environment: environment, home: home, build: releaseBuild,
       currentExecutable: install + "/coop", diagnostics: log.diagnostics, confirm: confirm,
       now: { 1234 })
+    updater.signers = [signerKey(signingKey)]
+    return updater
   }
 
   var installed: [String: String] {
@@ -638,6 +661,8 @@ private struct UpdateFixture {
 
   var calls: [String] { (readText(log) ?? "").split(separator: "\n").map(String.init) }
 }
+
+enum FixtureSignature { case trusted, untrusted, missing }
 
 private let fullRelease = [
   "coop": "new-coop", "coop-proxy": "new-proxy", "coop-sandbox": "new-runtime",
@@ -672,6 +697,9 @@ private let untouched = [
         "curl -fsSL http://fixture/SHA256SUMS -o " + fixture.calls[2].components(
           separatedBy: " -o "
         ).last!,
+        "curl -fsSL http://fixture/SHA256SUMS.sig -o " + fixture.calls[3].components(
+          separatedBy: " -o "
+        ).last!,
       ])
     #expect(fixture.calls[1].hasSuffix("/" + fixture.tarballName))
   }
@@ -693,8 +721,7 @@ private let untouched = [
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
     try fixture.publish(fullRelease)
-    try writeUpdateFile(
-      fixture.served + "/SHA256SUMS", "\(String(repeating: "a", count: 64))  other.tar.gz\n")
+    try fixture.serveSums("\(String(repeating: "a", count: 64))  other.tar.gz\n")
     #expect(throws: HostError("\(fixture.tarballName) not listed in SHA256SUMS")) {
       try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
     }
@@ -810,7 +837,7 @@ private let untouched = [
     #expect(fixture.calls[0].hasSuffix(" https://api.github.com/repos/chr33s/coop/releases/latest"))
     #expect(
       readText(fixture.log + ".stdin")
-        == String(repeating: "Authorization: token ghp_secret\n", count: 3))
+        == String(repeating: "Authorization: token ghp_secret\n", count: 4))
     #expect(
       log.contains("Note: `gh` not installed — skipped cryptographic attestation verification."))
   }
@@ -840,7 +867,7 @@ private let untouched = [
     #expect(bundleFetch.hasPrefix("curl -fsSL https://github.com/dl/attestations.jsonl -o "))
     #expect(
       readText(fixture.log + ".stdin")?.components(separatedBy: "\n").filter { !$0.isEmpty }.count
-        == 3)
+        == 4)
 
     try fixture.updater(["GITHUB_TOKEN": "ghp_secret"], log: DiagnosticsLog()).run(
       .init(skipConfirm: true))
@@ -863,6 +890,36 @@ private let untouched = [
     #expect(log.contains("attestations.jsonl for release v9.9.9 is empty"))
     let verify = try #require(fixture.calls.first { $0.hasPrefix("gh attestation verify") })
     #expect(!verify.contains("--bundle"))
+    #expect(fixture.installed == untouched)
+  }
+
+  @Test func unsignedOrForeignSignedSumsAreRefusedBeforeUse() throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    for (signature, message) in [
+      (FixtureSignature.missing, "Release v9.9.9 publishes no SHA256SUMS.sig; refusing to install"),
+      (.untrusted, "which is not a trusted release signer — refusing to install"),
+    ] {
+      try fixture.publish(fullRelease, signature: signature)
+      do {
+        try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+        Issue.record("installed with a \(signature) signature")
+      } catch {
+        #expect("\(error)".contains(message))
+      }
+      #expect(fixture.installed == untouched)
+    }
+    // A trusted signature over different sums: the served SHA256SUMS is
+    // swapped after signing, digest and all.
+    try fixture.publish(fullRelease)
+    try writeUpdateFile(
+      fixture.served + "/SHA256SUMS",
+      "\(String(repeating: "a", count: 64))  \(fixture.tarballName)\n")
+    #expect(
+      throws: HostError("SHA256SUMS signature does not match its contents — refusing to install")
+    ) {
+      try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+    }
     #expect(fixture.installed == untouched)
   }
 }

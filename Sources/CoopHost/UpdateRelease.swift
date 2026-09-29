@@ -14,6 +14,8 @@ public enum UpdateChannel {
   /// Release asset holding the Sigstore provenance bundle.
   public static let bundleAsset = "attestations.jsonl"
   public static let checksumAsset = "SHA256SUMS"
+  /// `ssh-keygen -Y sign` output over `SHA256SUMS`; see `ReleaseSigners`.
+  public static let signatureAsset = "SHA256SUMS.sig"
   /// The one workflow allowed to sign release provenance. `candidate.yml`
   /// also mints attestations in this repository; they must not verify here.
   public static let signerWorkflow = ".github/workflows/release.yml"

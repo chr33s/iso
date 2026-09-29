@@ -17,6 +17,10 @@ BINARY="coop"
 BUNDLE="attestations.jsonl"
 # The only workflow whose attestations count; candidate.yml also attests.
 SIGNER_WORKFLOW=".github/workflows/release.yml"
+# Release SHA256SUMS signers (`ssh-keygen -Y` allowed_signers). Keep in sync
+# with .github/release-signers and ReleaseSigners.keys.
+SIGNATURE_NAMESPACE="release-sums@chr33s"
+ALLOWED_SIGNERS='release namespaces="release-sums@chr33s" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGpguyE19BveEWHxNaowpmslcC3WE4BKZlXl4dgSmOmx'
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 
 # --- helpers ----------------------------------------------------------------
@@ -117,6 +121,18 @@ download_bundle() {
         "https://github.com/${REPO}/releases/download/${VERSION}/${BUNDLE}"
 }
 
+# Mandatory: SHA256SUMS must carry a signature from a key listed above, made
+# by a maintainer after release.yml built the draft. Nothing in SHA256SUMS is
+# trusted before this passes.
+verify_signature() {
+    local sums="$1" signature="$2"
+    printf '%s\n' "$ALLOWED_SIGNERS" > "${TMPDIR}/allowed_signers"
+    ssh-keygen -Y verify -f "${TMPDIR}/allowed_signers" -I release \
+        -n "$SIGNATURE_NAMESPACE" -s "$signature" < "$sums" > /dev/null \
+        || die "SHA256SUMS is not signed by a trusted release key — refusing to install"
+    info "SHA256SUMS signature verified."
+}
+
 verify_checksum() {
     local file="$1" expected="$2"
     local actual
@@ -207,6 +223,7 @@ verify_attestation() {
 # --- main -------------------------------------------------------------------
 
 need curl
+need ssh-keygen
 detect_platform
 
 VERSION="${VERSION:-$(latest_version)}"
@@ -222,6 +239,9 @@ printf 'Installing %s %s (%s)\n' "$BINARY" "$VERSION" "$TRIPLE"
 
 download_asset "$TARBALL" "${TMPDIR}/${TARBALL}"
 download_asset "SHA256SUMS" "${TMPDIR}/SHA256SUMS"
+download_asset "SHA256SUMS.sig" "${TMPDIR}/SHA256SUMS.sig" \
+    || die "Release ${VERSION} publishes no SHA256SUMS.sig — refusing to install an unsigned release"
+verify_signature "${TMPDIR}/SHA256SUMS" "${TMPDIR}/SHA256SUMS.sig"
 
 info "Verifying checksum..."
 EXPECTED="$(grep "${TARBALL}" "${TMPDIR}/SHA256SUMS" | cut -d' ' -f1)"
