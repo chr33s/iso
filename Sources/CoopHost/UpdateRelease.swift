@@ -14,6 +14,14 @@ public enum UpdateChannel {
   /// Release asset holding the Sigstore provenance bundle.
   public static let bundleAsset = "attestations.jsonl"
   public static let checksumAsset = "SHA256SUMS"
+  /// The one workflow allowed to sign release provenance. `candidate.yml`
+  /// also mints attestations in this repository; they must not verify here.
+  public static let signerWorkflow = ".github/workflows/release.yml"
+
+  /// The exact Fulcio certificate SAN for a release: workflow and tag ref.
+  public static func signerIdentity(tag: String) -> String {
+    "https://github.com/\(repository)/\(signerWorkflow)@refs/tags/\(tag)"
+  }
   /// Test-only: point metadata and downloads at a local fixture. Setting it
   /// disables attestation verification (and says so on stderr).
   public static let apiBaseVariable = "COOP_UPDATE_API_BASE_URL"
@@ -210,9 +218,15 @@ enum Provenance: Equatable {
       " (verified through the GitHub API because \(cause); an HTTP 403 here means your GitHub credential has no SSO session for \(UpdateChannel.repository))"
   }
 
-  /// `gh attestation verify` argv; the repository is always pinned.
-  static func verifyArguments(tarball: String, bundle: String?) -> [String] {
+  /// `gh attestation verify` argv. The repository, the signing workflow and
+  /// the tag it ran for are always pinned, so a bundle minted by another
+  /// workflow, for another tag, or on a self-hosted runner does not verify.
+  static func verifyArguments(tarball: String, bundle: String?, tag: String) -> [String] {
     var arguments = ["attestation", "verify", tarball, "--repo", UpdateChannel.repository]
+    arguments += [
+      "--cert-identity", UpdateChannel.signerIdentity(tag: tag), "--source-ref",
+      "refs/tags/\(tag)", "--deny-self-hosted-runners",
+    ]
     if let bundle { arguments += ["--bundle", bundle] }
     return arguments
   }

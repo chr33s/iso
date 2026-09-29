@@ -141,7 +141,7 @@ public struct Updater: Sendable {
     try Self.verifySHA256(tarball, expected: expected)
 
     let provenance = resolveProvenance(release, directory: work.path)
-    try verifyAttestation(tarball, provenance)
+    try verifyAttestation(tarball, provenance, tag: release.tag)
 
     // `--no-same-owner --no-same-permissions` ignore embedded uid/mode;
     // `-C <tempdir>` plus bsdtar's default refusal of `..` and absolute
@@ -316,7 +316,7 @@ public struct Updater: Sendable {
     return .bundle(destination)
   }
 
-  func verifyAttestation(_ tarball: String, _ provenance: Provenance) throws {
+  func verifyAttestation(_ tarball: String, _ provenance: Provenance, tag: String) throws {
     switch provenance {
     case .testMode: return
     case .noGh:
@@ -331,7 +331,7 @@ public struct Updater: Sendable {
     }
     do {
       try tools.run(
-        "gh", Provenance.verifyArguments(tarball: tarball, bundle: provenance.bundlePath))
+        "gh", Provenance.verifyArguments(tarball: tarball, bundle: provenance.bundlePath, tag: tag))
     } catch {
       throw ContextError(
         "Attestation verification failed for \(tarball) — refusing to install\(provenance.apiFallbackHint)",
