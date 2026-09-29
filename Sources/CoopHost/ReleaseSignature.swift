@@ -20,6 +20,14 @@ public enum ReleaseSigners {
   static var trusted: [SignerKey] { keys.map { try! SignerKey(parsing: $0) } }
 }
 
+/// Release archives withdrawn after publication. Neither a Sigstore bundle nor
+/// an `SSHSIG` can be revoked once a client holds it, so a bad release is
+/// withdrawn by listing its archive digest here in the next release; with
+/// anti-rollback, an updated binary then never installs it again.
+public enum ReleaseRevocations {
+  public static let digests: Set<SHA256Hex> = []
+}
+
 /// An ed25519 public key in OpenSSH wire form.
 struct SignerKey: Sendable, Equatable {
   /// The 51-byte `string "ssh-ed25519" || string key` blob.

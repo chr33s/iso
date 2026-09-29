@@ -19,6 +19,8 @@ struct Update: ParsableCommand {
       "Install a specific version (e.g. `v0.3.2` or `0.3.2`)", valueName: "VERSION"))
   var targetVersion: String?
   @Flag(name: .shortAndLong, help: "Skip the interactive confirmation prompt") var yes = false
+  @Flag(help: "Permit installing a release older than the current binary")
+  var allowDowngrade = false
 
   func run() throws {
     try CoopCLI.run {
@@ -26,7 +28,8 @@ struct Update: ParsableCommand {
       try checkDataRoot(global, environment)
       try AdminSupport.updater(environment, verbosity: global.verbose).run(
         Updater.Options(
-          checkOnly: check, force: force, pinnedVersion: targetVersion, skipConfirm: yes))
+          checkOnly: check, force: force, pinnedVersion: targetVersion, skipConfirm: yes,
+          allowDowngrade: allowDowngrade))
     }
   }
 }

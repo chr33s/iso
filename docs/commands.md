@@ -910,6 +910,7 @@ coop update [FLAGS]
 | `--check` | Report whether a newer release exists. Do not download or install. |
 | `--force` | Reinstall even if the current binary is already at the target version. |
 | `--version <VERSION>` | Install a specific release tag (e.g. `v0.3.2` or `0.3.2`). |
+| `--allow-downgrade` | Permit installing a release older than the current binary; refused otherwise. |
 | `-y`, `--yes` | Skip the interactive confirmation prompt. |
 
 If coop is installed in a protected directory (e.g. `/usr/local/bin`), run with `sudo`. Dev builds (built from an untagged or dirty tree) refuse to self-update; use `install.sh` to replace them.
@@ -920,6 +921,7 @@ coop update
 coop update --yes
 coop update --version v0.3.2
 coop update --force
+coop update --version v0.3.1 --allow-downgrade
 ```
 
 See also the [`updates` section](configuration.md#updates-section) of the configuration reference for the background-notification settings.
