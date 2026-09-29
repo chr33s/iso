@@ -64,11 +64,12 @@ that runs it. It requires Apple Silicon macOS 27+.
 - **`release.yml`** runs when a `v*` tag is pushed. It gates on CI, builds
   the macOS ARM64 archive, signs and notarizes it, generates `SHA256SUMS`,
   attests build provenance, extracts the `## vX.Y.Z` section from
-  `CHANGELOG.md` as the release notes, and publishes the GitHub release.
-  **A missing CHANGELOG section fails it.**
+  `CHANGELOG.md` as the release notes, and creates a **draft** GitHub
+  release. **A missing CHANGELOG section fails it.**
 
-So pushing the tag is the release. Everything below is about making sure that
-push succeeds and ships something correct.
+Pushing the tag builds the release; a maintainer's signature over its
+`SHA256SUMS` publishes it (see [Release signing](#release-signing)). Everything
+below is about making sure both succeed and ship something correct.
 
 ## Candidate download and verification
 
@@ -149,6 +150,51 @@ secrets:
 A missing secret fails the release, which burns the version, so configure the
 environment before tagging.
 
+## Release signing
+
+`coop update` and `install.sh` refuse a release unless `SHA256SUMS.sig` is an
+`ssh-keygen -Y sign` signature over its `SHA256SUMS`, in namespace
+`release-sums@chr33s`, by a key compiled into the running binary
+(`ReleaseSigners.keys` in `Sources/CoopHost/ReleaseSignature.swift`). The
+private key is a maintainer's SSH key in their ssh-agent; it never reaches CI,
+which is why `release.yml` stops at a draft.
+
+[`scripts/sign-release.py`](scripts/sign-release.py) does the signing:
+
+```bash
+python3 scripts/sign-release.py vX.Y.Z      # --key PUB to pick a signer, --no-publish to stop before publishing
+```
+
+It requires the release to still be a draft, downloads its tarballs,
+`SHA256SUMS` and `attestations.jsonl`, checks that `SHA256SUMS` lists exactly
+those tarballs with matching digests and that each attestation verifies with
+the same signer pin `coop update` uses, signs with the agent, verifies the
+signature against [`.github/release-signers`](.github/release-signers), uploads
+`SHA256SUMS.sig` and publishes the release.
+
+The signer list is kept in three places that a test holds equal:
+`ReleaseSigners.keys`, `.github/release-signers` and `ALLOWED_SIGNERS` in
+`install.sh`. It is compiled in, never fetched from `github.com/<user>.keys`,
+so rotating the key on GitHub changes nothing for clients.
+
+- **Rotating a key.** Add the new key to all three places, and cut a release
+  signed with a key already listed; its binary then trusts both. Sign later
+  releases with the new key and drop the old one in a later release.
+- **Backup key.** If every listed private key is lost, installed binaries can
+  never verify another release and users must reinstall with `install.sh`.
+  Keep a second, offline key (hardware token or separate Secure Enclave key)
+  listed.
+- **Compromised key.** Remove it and release immediately with the remaining
+  key; binaries older than that release still trust it until updated.
+
+## Withdrawing a published release
+
+Neither signatures nor Sigstore bundles can be revoked once published. To
+withdraw a bad release, add its archive digest (from its `SHA256SUMS`) to
+`ReleaseRevocations.digests` in `Sources/CoopHost/ReleaseSignature.swift` and
+cut the next release. Updated binaries refuse the revoked archive, and
+anti-rollback refuses any older release unless `--allow-downgrade` is passed.
+
 ## What runs where
 
 | Check | CI (on PR + on tag) | Local before tagging | Manual judgement |
@@ -226,12 +272,21 @@ Apple Silicon machine.
    git push origin vX.Y.Z
    ```
 
-   This triggers `release.yml`.
+   This triggers `release.yml`, which ends with a draft release.
 
-9. **Verify the published release.** On the GitHub release page confirm:
+9. **Sign and publish.** Once `release.yml` is green, with the release
+   signing key in your ssh-agent:
+
+   ```bash
+   python3 scripts/sign-release.py vX.Y.Z
+   ```
+
+   Clients do not see the draft, and would refuse it unsigned, until this runs.
+
+10. **Verify the published release.** On the GitHub release page confirm:
    - `coop-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `coop`, `coop-proxy`,
      `coop-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
-     `SHA256SUMS` and `attestations.jsonl`,
+     `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,
      `spctl --assess --type open --context context:primary-signature -v coop`
@@ -248,10 +303,11 @@ Apple Silicon machine.
      VERSION=vX.Y.Z INSTALL_DIR="$(mktemp -d)" bash install.sh
    ```
 
-   The run must print `Attestation verified against attestations.jsonl`. A
+   The run must print `SHA256SUMS signature verified.` and
+   `Attestation verified against attestations.jsonl`. A
    "Could not use `attestations.jsonl`" line instead means the bundle could not
    be downloaded — the installer cannot tell a missing asset from a failed
-   download, so confirm the asset on the release page (step 9's first bullet)
+   download, so confirm the asset on the release page (step 10's first bullet)
    before concluding it is missing.
 
 ## If the tag run fails
