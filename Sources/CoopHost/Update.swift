@@ -21,15 +21,18 @@ public struct Updater: Sendable {
     public var pinnedVersion: String?
     /// Skip the confirmation prompt.
     public var skipConfirm = false
+    /// Permit installing a release older than the running binary.
+    public var allowDowngrade = false
 
     public init(
       checkOnly: Bool = false, force: Bool = false, pinnedVersion: String? = nil,
-      skipConfirm: Bool = false
+      skipConfirm: Bool = false, allowDowngrade: Bool = false
     ) {
       self.checkOnly = checkOnly
       self.force = force
       self.pinnedVersion = pinnedVersion
       self.skipConfirm = skipConfirm
+      self.allowDowngrade = allowDowngrade
     }
   }
 
@@ -44,6 +47,8 @@ public struct Updater: Sendable {
   let now: @Sendable () -> UInt64
   /// Keys allowed to sign `SHA256SUMS`; replaced only by tests.
   var signers = ReleaseSigners.trusted
+  /// Archive digests never to install; replaced only by tests.
+  var revoked = ReleaseRevocations.digests
 
   public init(
     environment: [String: String], home: String?, build: CoopBuild = .current,
@@ -104,6 +109,13 @@ public struct Updater: Sendable {
       diagnostics.log(.info, "Already on latest: coop \(current)")
       return
     }
+    // Anti-rollback: an older release may carry a fix's absence or a
+    // revoked key, so moving back needs an explicit, separate opt-in.
+    if target < current && !options.allowDowngrade {
+      throw HostError(
+        "coop \(target) is older than the installed \(current); refusing to downgrade without --allow-downgrade"
+      )
+    }
     if !options.skipConfirm, try !confirm("Update coop from \(current) to \(target)?") {
       diagnostics.log(.info, "Update cancelled")
       return
@@ -146,6 +158,10 @@ public struct Updater: Sendable {
     let sumsText = try verifiedChecksums(sums, signature: signature)
     guard let expected = Checksums.parse(sumsText, file: tarballName) else {
       throw HostError("\(tarballName) not listed in SHA256SUMS")
+    }
+    guard !revoked.contains(expected) else {
+      throw HostError(
+        "\(tarballName) (\(expected.rawValue)) has been revoked; refusing to install")
     }
     try Self.verifySHA256(tarball, expected: expected)
 

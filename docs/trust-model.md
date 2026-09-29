@@ -519,6 +519,15 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
 6. Extraction with `tar -xzf --no-same-owner --no-same-permissions` (path-escape
    safe), then an atomic `rename`-over-self.
 
+Neither signature layer can be revoked once a client holds it, so withdrawal
+is by the next good release: **anti-rollback** refuses any target older than
+the running binary — pinned `--version` and `--force` alike — unless
+`--allow-downgrade` is passed, and `ReleaseRevocations.digests` lists archive
+digests that are refused before the checksum is even compared. Together an
+updated binary never moves back onto a withdrawn release without an explicit
+opt-in. `install.sh` installs whatever `VERSION` names and has neither guard;
+it is the deliberate recovery path.
+
 `COOP_UPDATE_API_BASE_URL` redirects the update origin **and** disables
 attestation; the release signature is still required, so that server must serve
 `SHA256SUMS` signed by a listed key. Only the pinned `github.com` default +

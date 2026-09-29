@@ -34,6 +34,7 @@ ALLOWED_EXTRA = {
     ("pull", "--discard"): "selective-hardening spec §5: staged workspace return",
     ("pull", "--stage-id"): "selective-hardening spec §5: staged workspace return",
     ("pull", "--stat"): "selective-hardening spec §5: staged workspace return",
+    ("update", "--allow-downgrade"): "update hardening: anti-rollback opt-in",
 }
 ALLOWED_MISSING_COMMANDS = {
     "quickstart": "C-03: hidden; fails with the setup/up/claude-or-codex replacement",

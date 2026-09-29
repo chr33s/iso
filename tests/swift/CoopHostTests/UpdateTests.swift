@@ -531,7 +531,7 @@ private struct UpdateFixture {
   var install: String { root + "/install" }
   var home: String { root + "/home" }
   var log: String { root + "/calls.log" }
-  let tag = "v9.9.9"
+  let tag: String
   let signingKey = Curve25519.Signing.PrivateKey()
   var directoryName: String { "coop-\(tag)-aarch64-apple-darwin" }
   var tarballName: String { directoryName + ".tar.gz" }
@@ -566,7 +566,8 @@ private struct UpdateFixture {
     exit 2
     """
 
-  init(withGh: Bool = false) throws {
+  init(withGh: Bool = false, tag: String = "v9.9.9") throws {
+    self.tag = tag
     root = try temporaryDirectory("update")
     try writeUpdateFile(bin + "/curl", Self.curl, mode: 0o755)
     if withGh { try writeUpdateFile(bin + "/gh", Self.gh, mode: 0o755) }
@@ -920,6 +921,43 @@ private let untouched = [
     ) {
       try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
     }
+    #expect(fixture.installed == untouched)
+  }
+
+  @Test func olderReleasesNeedAllowDowngrade() throws {
+    let fixture = try UpdateFixture(tag: "v0.5.0")
+    defer { fixture.remove() }
+    try fixture.publish(fullRelease)
+    for options in [
+      Updater.Options(pinnedVersion: "0.5.0", skipConfirm: true),
+      Updater.Options(force: true, skipConfirm: true),
+      Updater.Options(force: true, pinnedVersion: "0.5.0", skipConfirm: true),
+    ] {
+      #expect(
+        throws: HostError(
+          "coop 0.5.0 is older than the installed 0.6.0; refusing to downgrade without --allow-downgrade"
+        )
+      ) { try fixture.updater(log: DiagnosticsLog()).run(options) }
+    }
+    #expect(fixture.calls.allSatisfy { !$0.contains(" -o ") })
+    #expect(fixture.installed == untouched)
+    try fixture.updater(log: DiagnosticsLog()).run(
+      .init(pinnedVersion: "0.5.0", skipConfirm: true, allowDowngrade: true))
+    #expect(fixture.installed == fullRelease)
+  }
+
+  @Test func revokedArchivesAreRefused() throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    try fixture.publish(fullRelease)
+    let digest = Checksums.of(
+      Array(try Data(contentsOf: URL(fileURLWithPath: fixture.served + "/" + fixture.tarballName))))
+    var updater = fixture.updater(log: DiagnosticsLog())
+    updater.revoked = [digest]
+    #expect(
+      throws: HostError(
+        "\(fixture.tarballName) (\(digest.rawValue)) has been revoked; refusing to install")
+    ) { try updater.run(.init(skipConfirm: true)) }
     #expect(fixture.installed == untouched)
   }
 }
