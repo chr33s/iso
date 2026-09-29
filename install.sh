@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installer for coop — downloads a prebuilt binary from GitHub Releases.
+# Installer for iso — downloads a prebuilt binary from GitHub Releases.
 #
 # Usage:
 #   ./install.sh                          # latest version, uses gh or GITHUB_TOKEN
 #   VERSION=v0.2.1 ./install.sh           # specific version
 #   INSTALL_DIR=/usr/local/bin ./install.sh
 
-REPO="chr33s/coop"
-BINARY="coop"
+REPO="chr33s/iso"
+BINARY="iso"
 BUNDLE="attestations.jsonl"
 # The only workflow whose attestations count; candidate.yml also attests.
 SIGNER_WORKFLOW=".github/workflows/release.yml"
@@ -160,7 +160,7 @@ verify_attestation() {
 
     info "Verifying attestation..."
     # Pin the signer to the release workflow run for this exact tag, not just
-    # the repository: see the `coop update` trust chain in docs/trust-model.md.
+    # the repository: see the `iso update` trust chain in docs/trust-model.md.
     local signer_pin=(
         --cert-identity "https://github.com/${REPO}/${SIGNER_WORKFLOW}@refs/tags/${VERSION}"
         --source-ref "refs/tags/${VERSION}"
@@ -169,7 +169,7 @@ verify_attestation() {
     # Prefer the bundle published with the release: without --bundle, `gh`
     # refuses to run unauthenticated and then attaches its stored token to the
     # attestations API call, so a token with no SSO session for the org 403s on
-    # data that is anonymously readable. See the `coop update` trust chain in
+    # data that is anonymously readable. See the `iso update` trust chain in
     # docs/trust-model.md for what each transport does and does not pin.
     #
     # The probe is silenced because a missing bundle is expected on older
@@ -261,13 +261,13 @@ if [ -e "${EXTRACTED_DIR}/${PROXY_NAME}" ] && [ ! -f "${EXTRACTED_DIR}/${PROXY_N
     die "Proxy artifact is not a regular file"
 fi
 if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
-    [ -f "${EXTRACTED_DIR}/coop-sandbox" ] || die "Release is missing the coop-sandbox runtime"
-    [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ] || die "Release is missing the coop-proxy companion"
+    [ -f "${EXTRACTED_DIR}/iso-sandbox" ] || die "Release is missing the iso-sandbox runtime"
+    [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ] || die "Release is missing the iso-proxy companion"
 fi
 mkdir -p "$INSTALL_DIR"
 if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
-    mv "${EXTRACTED_DIR}/coop-sandbox" "${INSTALL_DIR}/coop-sandbox"
-    chmod +x "${INSTALL_DIR}/coop-sandbox"
+    mv "${EXTRACTED_DIR}/iso-sandbox" "${INSTALL_DIR}/iso-sandbox"
+    chmod +x "${INSTALL_DIR}/iso-sandbox"
 fi
 if [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
     mv "${EXTRACTED_DIR}/${PROXY_NAME}" "${INSTALL_DIR}/${PROXY_NAME}"

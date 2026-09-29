@@ -1,6 +1,6 @@
 Launch Codex inside the VM (bypasses the sandbox and approvals by default)
 
-Usage: coop codex [OPTIONS] [NAME] [ARGS]...
+Usage: iso codex [OPTIONS] [NAME] [ARGS]...
 
 Arguments:
   [NAME]     Instance name (required if multiple instances exist)

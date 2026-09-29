@@ -1,6 +1,6 @@
-Install a `coop-<name>` SSH alias for ad-hoc ssh/scp/rsync
+Install a `iso-<name>` SSH alias for ad-hoc ssh/scp/rsync
 
-Usage: coop ssh-config [OPTIONS] [NAME]
+Usage: iso ssh-config [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

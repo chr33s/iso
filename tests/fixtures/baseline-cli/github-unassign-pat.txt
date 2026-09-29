@@ -1,6 +1,6 @@
 Remove only the VM association; keep the shared stored credential
 
-Usage: coop github unassign-pat --vm <NAME>
+Usage: iso github unassign-pat --vm <NAME>
 
 Options:
       --vm <NAME>  

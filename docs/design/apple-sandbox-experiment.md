@@ -2,10 +2,10 @@
 > macOS API/deployment floor in this design record is historical or component
 > detail; Linux guests remain in scope.
 
-# Experiment Specification: Stock Apple Containers vs Direct Containerization for coop
+# Experiment Specification: Stock Apple Containers vs Direct Containerization for isolate
 
 **Status:** Run and concluded: results and decision in [`apple-sandbox-runtime.md`](apple-sandbox-runtime.md); Track B's checks live on as [`tests/integration-apple-sandbox.sh`](../../tests/integration-apple-sandbox.sh)
-**Target product:** macOS 27+ / Apple Silicon coop fork
+**Target product:** macOS 27+ / Apple Silicon isolate fork
 **Objective:** Determine whether stock Apple `container` containers can replace a fork of `container machine`; if not, determine whether a small purpose-built runtime on `apple/containerization` can satisfy the end-state architecture without forking the full Apple Container machine subsystem.
 **Date:** 2026-09-25
 
@@ -16,7 +16,7 @@ Primary baseline:
 - macOS: **27.x**, Apple Silicon
 - Apple `container`: **1.4.1**, released 2026-09-09
 - `apple/containerization`: **0.45.0** (the version pinned by `container` 1.4.1)
-- coop reference: `chr33s/coop` main at `db5eb22850880db671d82b787b61d8394fe6f256`
+- isolate reference: `chr33s/iso` main at `db5eb22850880db671d82b787b61d8394fe6f256`
 
 A second, non-decisive compatibility run MAY be made against current `apple/container` and `apple/containerization` main after the release-pinned experiment passes. Results from unreleased `main` MUST NOT be used to claim that the released runtime satisfies a requirement.
 
@@ -24,11 +24,11 @@ A second, non-decisive compatibility run MAY be made against current `apple/cont
 
 # 1. Question being answered
 
-Can coop use **ordinary stock Apple containers** as its persistent VM sandbox primitive while preserving the existing security model and the proposed OCI-first end state?
+Can isolate use **ordinary stock Apple containers** as its persistent VM sandbox primitive while preserving the existing security model and the proposed OCI-first end state?
 
-If not, can coop satisfy the same requirements by using **Apple Containerization directly** through a small Swift runtime without adopting or forking the general-purpose `container machine` layer?
+If not, can isolate satisfy the same requirements by using **Apple Containerization directly** through a small Swift runtime without adopting or forking the general-purpose `container machine` layer?
 
-The experiment is not trying to prove that either approach is generally better. It is trying to identify the smallest runtime architecture that fully satisfies coop's requirements.
+The experiment is not trying to prove that either approach is generally better. It is trying to identify the smallest runtime architecture that fully satisfies isolate's requirements.
 
 ---
 
@@ -37,7 +37,7 @@ The experiment is not trying to prove that either approach is generally better. 
 ## Track A — stock Apple containers
 
 ```text
-coop experiment harness
+iso experiment harness
         |
         | stock public CLI only
         v
@@ -64,7 +64,7 @@ container create \
   --masked-path NONE \
   --read-only-path NONE \
   --entrypoint /sbin/init \
-  <coop-machine-image>
+  <iso-machine-image>
 ```
 
 Notably absent:
@@ -95,7 +95,7 @@ apple/containerization 0.45.0
 Virtualization.framework + vmnet
 ```
 
-Track B uses the public Swift package directly and implements only the sandbox primitives coop needs.
+Track B uses the public Swift package directly and implements only the sandbox primitives isolate needs.
 
 It does **not** fork or import `container machine`.
 
@@ -105,7 +105,7 @@ It does **not** fork or import `container machine`.
 
 ## H-A: stock containers are sufficient
 
-An ordinary Apple container can behave as coop's persistent machine if the OCI workload uses systemd as its main process, receives the Linux capabilities needed for Docker, is attached to a unique custom network, and receives no host integration.
+An ordinary Apple container can behave as isolate's persistent machine if the OCI workload uses systemd as its main process, receives the Linux capabilities needed for Docker, is attached to a unique custom network, and receives no host integration.
 
 Expected advantages:
 
@@ -118,11 +118,11 @@ Expected advantages:
 
 Primary uncertainty:
 
-- whether normal container lifecycle exposes enough **persistent-machine resource and disk management** for the desired coop end state.
+- whether normal container lifecycle exposes enough **persistent-machine resource and disk management** for the desired isolate end state.
 
 ## H-B: direct Containerization is sufficient
 
-If stock containers are lifecycle-incomplete, `Containerization` provides enough lower-level primitives to implement a small coop-specific sandbox runtime without reimplementing a general container platform.
+If stock containers are lifecycle-incomplete, `Containerization` provides enough lower-level primitives to implement a small iso-specific sandbox runtime without reimplementing a general container platform.
 
 Expected advantages:
 
@@ -134,7 +134,7 @@ Expected advantages:
 
 Primary uncertainty:
 
-- how much lifecycle, persistence, networking, recovery, and service management coop must own itself.
+- how much lifecycle, persistence, networking, recovery, and service management isolate must own itself.
 
 ---
 
@@ -146,9 +146,9 @@ Failure of any invariant is a **hard failure** for that track unless the failure
 
 ## S1 — one VM per sandbox
 
-Each coop sandbox MUST execute in a distinct Linux VM.
+Each isolate sandbox MUST execute in a distinct Linux VM.
 
-No shared Linux kernel between two coop sandboxes.
+No shared Linux kernel between two isolate sandboxes.
 
 ## S2 — dedicated network
 
@@ -201,7 +201,7 @@ Runtime-internal bootstrap files are allowed only when their source is runtime-o
 
 The sandbox configuration MUST contain no host port publication and no host socket publication.
 
-Later coop-managed SSH forwards are out of scope for the runtime primitive and are tested separately.
+Later iso-managed SSH forwards are out of scope for the runtime primitive and are tested separately.
 
 ## S7 — explicit ownership
 
@@ -256,7 +256,7 @@ If effective state cannot be verified, the track fails the security contract.
 
 # 5. Required product behavior
 
-These requirements determine whether a security-valid runtime is actually useful for coop.
+These requirements determine whether a security-valid runtime is actually useful for isolate.
 
 ## P1 — OCI-native image
 
@@ -292,7 +292,7 @@ A stronger nested workload test SHOULD run a multi-process image or Docker build
 Write a random marker to:
 
 ```text
-/root or /var/lib/coop-experiment
+/root or /var/lib/iso-experiment
 ```
 
 and to Docker state.
@@ -420,13 +420,13 @@ Without host mounts:
 4. verify checksums;
 5. ensure no runtime feature implicitly shares the host source directory.
 
-This does not need the full coop `push`/`pull` implementation; it proves the runtime primitive does not block it.
+This does not need the full isolate `push`/`pull` implementation; it proves the runtime primitive does not block it.
 
 ---
 
 # 6. Experiment repository layout
 
-Do not initially modify coop lifecycle code.
+Do not initially modify isolate lifecycle code.
 
 Create an isolated experimental workspace, for example:
 
@@ -456,7 +456,7 @@ experiments/apple-sandbox/
 └── direct/
     ├── Package.swift
     ├── Sources/
-    │   └── CoopSandboxExperiment/
+    │   └── IsoSandboxExperiment/
     └── Tests/
 ```
 
@@ -573,7 +573,7 @@ Record existing container/network resources before the experiment.
 Build with stock:
 
 ```bash
-container build --platform linux/arm64 -t local/coop-exp:<id> image/
+container build --platform linux/arm64 -t local/iso-exp:<id> image/
 ```
 
 Capture:
@@ -592,8 +592,8 @@ Create one network for sandbox A and a different network for sandbox B.
 Example:
 
 ```bash
-container network create coop-exp-a-<random>
-container network create coop-exp-b-<random>
+container network create iso-exp-a-<random>
+container network create iso-exp-b-<random>
 ```
 
 Capture network inspection/list output.
@@ -604,17 +604,17 @@ Create without starting:
 
 ```bash
 container create \
-  --name coop-exp-a-<random> \
-  --label coop.experiment=<run-id> \
-  --label coop.owner=<random-owner-id> \
-  --network coop-exp-a-<random> \
+  --name iso-exp-a-<random> \
+  --label iso.experiment=<run-id> \
+  --label iso.owner=<random-owner-id> \
+  --network iso-exp-a-<random> \
   --cpus 4 \
   --memory 8g \
   --cap-add ALL \
   --masked-path NONE \
   --read-only-path NONE \
   --entrypoint /sbin/init \
-  local/coop-exp:<id>
+  local/iso-exp:<id>
 ```
 
 Absolutely do not pass:
@@ -790,7 +790,7 @@ All steps work without `ssh-keyscan` and without disabling host-key checking.
 Write:
 
 ```text
-/var/lib/coop-experiment/marker
+/var/lib/iso-experiment/marker
 ```
 
 Create Docker state:
@@ -846,7 +846,7 @@ Do not edit Apple runtime files directly.
 ### A12 classification
 
 - `PASS`: explicit size + growth supported.
-- `PARTIAL`: sufficient automatic growth semantics with a well-defined upper bound acceptable to coop.
+- `PARTIAL`: sufficient automatic growth semantics with a well-defined upper bound acceptable to isolate.
 - `GAP`: no way to meet requested disk sizing/growth.
 - `FAIL`: persistence/corruption issue.
 
@@ -957,7 +957,7 @@ Proceed to Track B immediately if stock containers fail:
 
 Track B should not begin by recreating Apple Container.
 
-Implement the smallest runtime necessary to retest coop's requirements.
+Implement the smallest runtime necessary to retest isolate's requirements.
 
 ## B0 — package baseline
 
@@ -974,7 +974,7 @@ Pin the package revision/version in `Package.swift`.
 Use a private experiment root such as:
 
 ```text
-~/Library/Application Support/coop-containerization-experiment/<run-id>/
+~/Library/Application Support/iso-containerization-experiment/<run-id>/
 ```
 
 Do not use the default Apple Container image store.
@@ -1045,7 +1045,7 @@ Measure:
 - persistence;
 - feasibility of cheap checkpoints/clones.
 
-The experiment should identify which model better matches coop.
+The experiment should identify which model better matches isolate.
 
 ## B4 — systemd and Docker
 
@@ -1065,7 +1065,7 @@ If a full systemd machine requires `runc` or additional configuration, record th
 
 ## B5 — dedicated networking
 
-The default `VmnetNetwork` alone is not automatically equivalent to "one isolated network per coop VM."
+The default `VmnetNetwork` alone is not automatically equivalent to "one isolated network per isolate VM."
 
 Construct the network topology so each sandbox receives an isolated peer domain.
 
@@ -1075,7 +1075,7 @@ Possible implementations to test:
 2. explicit vmnet network references/subnets per sandbox;
 3. a small network manager modeled after Apple's network service.
 
-Do not accept a design where all coop guests are peers on one segment merely because IPs are unique.
+Do not accept a design where all isolate guests are peers on one segment merely because IPs are unique.
 
 Run the full S3 peer-isolation suite.
 
@@ -1083,7 +1083,7 @@ Run the full S3 peer-isolation suite.
 
 Enumerate what a root guest can reach on the host through the chosen vmnet mode.
 
-If direct Containerization gives more control than stock Apple Container, test whether coop can reduce host reachability to the minimum required.
+If direct Containerization gives more control than stock Apple Container, test whether isolate can reduce host reachability to the minimum required.
 
 This is a comparison criterion, not just pass/fail.
 
@@ -1111,7 +1111,7 @@ This validates the preferred end-state split between:
 
 ```text
 native control for enrollment/security
-SSH for ordinary coop operations
+SSH for ordinary iso operations
 ```
 
 ## B9 — persistence model
@@ -1203,7 +1203,7 @@ Determine whether the VM dies with the owning process or persists.
 
 Design the eventual service model accordingly.
 
-For a persistent coop runtime, test a LaunchAgent-style long-lived owner if necessary.
+For a persistent isolate runtime, test a LaunchAgent-style long-lived owner if necessary.
 
 ## B14 — full security suite
 
@@ -1447,7 +1447,7 @@ Required sections:
 10. Performance comparison.
 11. Engineering-maintenance comparison.
 12. Recommended runtime architecture.
-13. Required deviations from the proposed coop end-state spec.
+13. Required deviations from the proposed isolate end-state spec.
 14. Open risks.
 
 The conclusion must be one of:
@@ -1541,7 +1541,7 @@ Only after this works should the experiment add checkpoints, resize, and a long-
 
 # 20. Why this experiment is structured this way
 
-Stock ordinary Apple containers have an important property that `container machine` currently lacks for coop: their dangerous host integrations are **opt-in**.
+Stock ordinary Apple containers have an important property that `container machine` currently lacks for isolate: their dangerous host integrations are **opt-in**.
 
 A stock container configuration can express:
 
@@ -1557,6 +1557,6 @@ and those fields are inspectable.
 
 This makes stock containers worth proving before maintaining a runtime fork.
 
-At the same time, the stock CLI does not currently expose every persistent-VM lifecycle primitive coop wants. Direct Containerization is therefore evaluated not as a totally different product, but as the next lower layer when the stock product surface becomes the constraint.
+At the same time, the stock CLI does not currently expose every persistent-VM lifecycle primitive isolate wants. Direct Containerization is therefore evaluated not as a totally different product, but as the next lower layer when the stock product surface becomes the constraint.
 
 The experiment deliberately keeps the same OCI image and security tests across both tracks so the decision is based on runtime behavior and maintenance burden rather than two unrelated prototypes.

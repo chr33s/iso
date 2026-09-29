@@ -1,4 +1,4 @@
-import CoopConfiguration
+import IsoConfiguration
 
 /// The production JSONC scanner under both syntax policies.
 public enum JSONCToJSONHarness {

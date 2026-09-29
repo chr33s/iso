@@ -1,6 +1,6 @@
 Clear a persistent devcontainer opt-out for a project
 
-Usage: coop devcontainer clear <PROJECT>
+Usage: iso devcontainer clear <PROJECT>
 
 Arguments:
   <PROJECT>  Project directory whose opt-out should be cleared

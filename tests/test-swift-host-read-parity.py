@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read-only commands: the Swift `coop` against the recorded baseline.
+"""Read-only commands: the Swift `iso` against the recorded baseline.
 
-    python3 tests/test-swift-host-read-parity.py --swift .build/debug/coop \
+    python3 tests/test-swift-host-read-parity.py --swift .build/debug/iso \
         [--golden tests/baseline/parity/read.json]
 
 Builds one synthetic state tree under a temporary HOME (instances without a
@@ -24,11 +24,11 @@ OWNER = "0a1b2c3d00112233445566778899aabb"
 HASH = "a" * 64
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "tests" / "baseline" / "parity" / "read.json"
-FIXTURES = ROOT / "tests" / "fixtures" / "coop-sandbox"
+FIXTURES = ROOT / "tests" / "fixtures" / "iso-sandbox"
 FIXTURE_ID = "coop-0a1b2c3d-00112233445566ff"
-FIXTURE_ROOT = "/Users/me/.coop/backends/apple-container-v1/runtime"
+FIXTURE_ROOT = "/Users/me/.iso/backends/apple-container-v1/runtime"
 
-# A stand-in `coop-sandbox`: answers `version` and `inspect` from the shared
+# A stand-in `iso-sandbox`: answers `version` and `inspect` from the shared
 # fixtures, rewriting the sandbox id and runtime root to the ones requested.
 FAKE_RUNTIME = """#!/bin/sh
 here=$(cd "$(dirname "$0")" && pwd)
@@ -56,7 +56,7 @@ printf 'Filesystem     1M-blocks  Used Available Use%% Mounted on\\n/dev/vda1   
 
 CONFIG_JSONC = """{
   // The settings the baseline was recorded with.
-  "apple_container": {"binary": "__BIN__/coop-sandbox"},
+  "apple_container": {"binary": "__BIN__/iso-sandbox"},
   "updates": {"mode": "off"},
   "profiles": {
     "zz-tools": {"apt_packages": ["jq", "ripgrep"], "post_install": "echo one\\necho two"},
@@ -118,11 +118,11 @@ def write(path, text):
 def sidecar(machine):
     return {
         "schema_version": 2, "backend": "apple-container", "owner_id": OWNER, "machine_id": machine,
-        "image_ref": "local/coop-exp:fx", "image_digest": "sha256:" + HASH, "image_manifest_id": "m",
+        "image_ref": "local/iso-exp:fx", "image_digest": "sha256:" + HASH, "image_manifest_id": "m",
         "guest_user": "ubuntu", "requested_cpus": 2, "requested_memory_bytes": 2147483648,
         "host_key_fingerprint": "SHA256:SYNTHETIC", "last_observed_owner_pid": None,
         "last_observed_ip": None, "reenroll_host_key": False, "created_at": "2026-09-27T00:00:00Z",
-        "runtime_identity": "coop-sandbox 0.2.0",
+        "runtime_identity": "iso-sandbox 0.2.0",
     }
 
 
@@ -138,7 +138,7 @@ def build_runtime(home):
         ("coop-0a1b2c3d-000000000000000d", running.replace('"running"', '"booting"', 1)),
     ]:
         (bin_dir / "fixtures" / f"inspect-{machine}.json").write_text(text.replace(FIXTURE_ID, machine))
-    for name, text in [("coop-sandbox", FAKE_RUNTIME), ("ssh", FAKE_SSH)]:
+    for name, text in [("iso-sandbox", FAKE_RUNTIME), ("ssh", FAKE_SSH)]:
         (bin_dir / name).write_text(text)
         (bin_dir / name).chmod(0o755)
     bin_dir.chmod(0o755)
@@ -147,7 +147,7 @@ def build_runtime(home):
 
 def build_state(home):
     bin_dir = build_runtime(home)
-    state = home / ".coop" / "backends" / "apple-container-v1"
+    state = home / ".iso" / "backends" / "apple-container-v1"
     write(state / "owner.json", json.dumps({"schema_version": 1, "backend": "apple-container", "owner_id": OWNER}))
     write(state / "vm_key", "SYNTHETIC")
     for name, suffix in [("alpha", "a"), ("beta", "b"), ("delta", "d")]:
@@ -197,7 +197,7 @@ def main():
     args = parser.parse_args()
     golden = json.loads(args.golden.read_text())
     failures = []
-    with tempfile.TemporaryDirectory(prefix="coop-parity-") as directory:
+    with tempfile.TemporaryDirectory(prefix="iso-parity-") as directory:
         # Canonical path: the runtime root is compared after realpath.
         home = Path(os.path.realpath(directory))
         build_state(home)

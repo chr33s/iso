@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "coop-proxy"
+PACKAGE = ROOT / "iso-proxy"
 FILES = ["Capability.swift", "OperationPolicy.swift", "HeaderPolicy.swift", "RequestTarget.swift"]
 
 
@@ -24,10 +24,10 @@ def main():
     parser.add_argument("--muter", required=True, type=Path)
     args = parser.parse_args()
     tool = args.muter.resolve(strict=True)
-    work = Path(tempfile.mkdtemp(prefix="coop-proxy-muter-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-proxy-muter-"))
     package = work / "package"
     shutil.copytree(PACKAGE, package, ignore=shutil.ignore_patterns(".build", ".swiftpm", "muter_tmp"))
-    hashes = {name: hashlib.sha256((package / "Sources/CoopProxyCore" / name).read_bytes()).hexdigest()
+    hashes = {name: hashlib.sha256((package / "Sources/IsoProxyCore" / name).read_bytes()).hexdigest()
               for name in FILES}
     (work / "source-sha256.json").write_text(json.dumps(hashes, indent=2) + "\n")
     (work / "tool-sha256.txt").write_text(hashlib.sha256(tool.read_bytes()).hexdigest() + "\n")
@@ -36,7 +36,7 @@ def main():
     command = [str(tool), "run", "--skip-update-check", "--skip-coverage", "--format", "json",
                "--output", str(report)]
     for name in FILES:
-        command.extend(["--files-to-mutate", "Sources/CoopProxyCore/" + name])
+        command.extend(["--files-to-mutate", "Sources/IsoProxyCore/" + name])
     with (work / "run.log").open("w") as log:
         result = subprocess.run(command, cwd=package, stdout=log, stderr=subprocess.STDOUT)
     if result.returncode or not report.is_file():
@@ -46,7 +46,7 @@ def main():
     found = set()
     for file in data["fileReports"]:
         found.add(file["fileName"])
-        instrumented = work / "package_mutated/Sources/CoopProxyCore" / file["fileName"]
+        instrumented = work / "package_mutated/Sources/IsoProxyCore" / file["fileName"]
         switches = instrumented.read_text().count("ProcessInfo.processInfo.environment[")
         if switches != len(file["appliedOperators"]):
             raise SystemExit(f"Mutation instrumentation mismatch for {file['fileName']}: "

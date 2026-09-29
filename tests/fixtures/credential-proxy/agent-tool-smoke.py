@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run INSIDE a disposable, proxy-configured guest with dedicated credentials.
 
-No provider credential is accepted here. coop must already have configured the
+No provider credential is accepted here. iso must already have configured the
 agent's local endpoint and per-VM capability. Raw agent output is never printed.
 """
 import argparse
@@ -168,7 +168,7 @@ def main():
     args = parser.parse_args()
     # No nonce in the prompt: the model must obtain it from a real guest tool.
     nonce = secrets.token_hex(32)
-    with tempfile.TemporaryDirectory(prefix="coop-agent-smoke-") as directory:
+    with tempfile.TemporaryDirectory(prefix="iso-agent-smoke-") as directory:
         Path(directory, "challenge.txt").write_text(nonce + "\n")
         prompt = ("Use your file-reading or shell tool to read challenge.txt in the current directory. "
                   "Then reply with exactly its contents. Do not use any other files or tools.")

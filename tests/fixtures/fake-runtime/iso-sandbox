@@ -1,0 +1,206 @@
+#!/usr/bin/python3
+"""Stateful stand-in for `iso-sandbox` (protocol 4) used by the lifecycle
+differential test. State lives in `<root>/fake-state.json`; every call's argv
+is appended to `calls.log` beside this script. Answers only what iso asks.
+"""
+import hashlib
+import json
+import os
+import sys
+import time
+
+NULL = object()
+HERE = os.path.dirname(os.path.abspath(__file__))
+PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINiqkOnkRV06x+SuorkF+O3KdBTVFznIV0+b58cidW1N root@guest"
+MOUNTS = [("proc", "proc", "/proc"), ("sysfs", "sysfs", "/sys"), ("devtmpfs", "none", "/dev"),
+          ("mqueue", "mqueue", "/dev/mqueue"), ("tmpfs", "tmpfs", "/dev/shm"),
+          ("cgroup2", "none", "/sys/fs/cgroup"), ("devpts", "devpts", "/dev/pts")]
+
+
+def log(argv):
+    with open(os.path.join(HERE, "calls.log"), "a") as handle:
+        handle.write(json.dumps(argv) + "\n")
+
+
+def out(value):
+    print(json.dumps(value, indent=2))
+
+
+def fail(message, code=1):
+    print(message, file=sys.stderr)
+    sys.exit(code)
+
+
+def option(args, name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+
+
+def main():
+    argv = sys.argv[1:]
+    log(argv)
+    if argv[:1] == ["version"]:
+        return out({"name": "iso-sandbox", "version": "0.4.0", "protocol": 4, "containerization": "0.45.0"})
+    words = []
+    rest = list(argv)
+    while rest and rest[0] != "--root":
+        words.append(rest.pop(0))
+    root = rest[1]
+    args = rest[2:]
+    path = os.path.join(root, "fake-state.json")
+    state = json.load(open(path)) if os.path.exists(path) else {
+        "sandboxes": {}, "images": [], "disks": [], "maintenance": None, "subnet": 1}
+    result = handle(words, args, root, state)
+    os.makedirs(root, exist_ok=True)
+    json.dump(state, open(path, "w"), indent=2)
+    if result is NULL:
+        out(None)
+    elif result is not None:
+        out(result)
+
+
+def rootfs(root, sandbox_id):
+    return os.path.join(root, "sandboxes", sandbox_id, "rootfs.ext4")
+
+
+def inspect(root, sandbox):
+    record = {k: sandbox[k] for k in ["id", "owner", "imageReference", "imageDigest", "cpus", "memoryBytes",
+                                       "diskBytes", "diskGeneration"]}
+    if sandbox.get("network"):
+        record["network"] = sandbox["network"]
+    if sandbox.get("expiresAt"):
+        record["expiresAt"] = sandbox["expiresAt"]
+    if sandbox.get("lastOperation"):
+        record["lastOperation"] = sandbox["lastOperation"]
+    result = {"record": record, "status": sandbox["status"],
+              "disk": {"logicalBytes": sandbox["diskBytes"], "allocatedBytes": 1 << 20}}
+    if sandbox["status"] == "running":
+        address = f"10.231.{sandbox['subnet']}.2"
+        result["live"] = {"pid": 4242, "ipv4": address}
+        result["effective"] = {
+            "id": sandbox["id"], "imageReference": sandbox["imageReference"], "imageDigest": sandbox["imageDigest"],
+            "cpus": sandbox["cpus"], "memoryBytes": sandbox["memoryBytes"],
+            "rootfs": {"type": "ext4", "source": rootfs(root, sandbox["id"]), "destination": "/", "options": []},
+            "mounts": [{"type": t, "source": s, "destination": d, "options": []} for t, s, d in MOUNTS],
+            "interfaces": [{"ipv4": address + "/24", "ipv4Gateway": f"10.231.{sandbox['subnet']}.1",
+                            "network": ("vmnet-host" if sandbox.get("network") else "vmnet-shared")
+                            + f":10.231.{sandbox['subnet']}.0/24"}],
+            "socketRelays": 0, "publishedPorts": 0, "sshAgentForwarding": False, "maskedPaths": [],
+            "readonlyPaths": [], "initArgv": ["/sbin/init"], "virtualization": False}
+    return result
+
+
+def write_disk(root, sandbox_id, size):
+    os.makedirs(os.path.dirname(rootfs(root, sandbox_id)), exist_ok=True)
+    with open(rootfs(root, sandbox_id), "a") as handle:
+        handle.truncate(size)
+
+
+def handle(words, args, root, state):
+    sandboxes = state["sandboxes"]
+    key = " ".join(words)
+    if key == "init":
+        os.makedirs(root, exist_ok=True)
+        return {"kernelSha256": "0" * 64, "initImage": "init", "root": root}
+    if key == "maintenance inspect":
+        return state["maintenance"] if state["maintenance"] else NULL
+    if key == "maintenance install":
+        state["maintenance"] = {"version": option(args, "--version"), "reference": option(args, "--image"),
+                                "digest": "sha256:" + "1" * 64}
+        return state["maintenance"]
+    if key == "image import":
+        reference = json.load(open(option(args, "--oci-tar")))["reference"]
+        entry = {"reference": reference, "digest": "sha256:" + hashlib.sha256(reference.encode()).hexdigest()}
+        state["images"] = [i for i in state["images"] if i["reference"] != reference] + [entry]
+        return [entry]
+    if key == "image list":
+        return state["images"]
+    if key == "image delete":
+        state["images"] = [i for i in state["images"] if i["reference"] != args[0]]
+        return None
+    if key == "disk list":
+        return state["disks"]
+    if key == "disk delete":
+        state["disks"] = [d for d in state["disks"] if d["name"] != args[0]]
+        return None
+    if key == "list":
+        return [{"id": s["id"], "status": s["status"], "owner": s["owner"]} for s in sandboxes.values()]
+    if key == "reconcile":
+        return {"removed": []}
+    if key == "exec":
+        sandbox_id = args[args.index("--timeout") + 2]
+        if sandbox_id not in sandboxes:
+            fail(f"no sandbox {sandbox_id}")
+        command = args[args.index("--") + 1:]
+        if command[:1] == ["/bin/cat"]:
+            print(PUBKEY)
+        elif command[:1] == ["/usr/bin/id"]:
+            print("1000")
+        return None
+    sandbox_id = args[0]
+    if key == "create":
+        if sandbox_id in sandboxes:
+            fail("exists")
+        image = option(args, "--image")
+        disk = option(args, "--from-disk")
+        if disk:
+            reference = next(s for s in state["disks"] if s["name"] == disk)["image"]
+        else:
+            reference = image
+        digest = next(i["digest"] for i in state["images"] if i["reference"] == reference)
+        size = int(option(args, "--disk-gib")) << 30
+        state["subnet"] += 1
+        sandboxes[sandbox_id] = {
+            "id": sandbox_id, "owner": option(args, "--owner"), "imageReference": reference, "imageDigest": digest,
+            "cpus": int(option(args, "--cpus")), "memoryBytes": int(option(args, "--memory-mib")) << 20,
+            "diskBytes": size, "diskGeneration": 0, "status": "stopped", "subnet": state["subnet"]}
+        if option(args, "--network") == "host-only":
+            sandboxes[sandbox_id]["network"] = "host_only"
+        write_disk(root, sandbox_id, size)
+        return sandboxes[sandbox_id]
+    sandbox = sandboxes.get(sandbox_id)
+    if sandbox is None:
+        fail(f"no sandbox {sandbox_id}")
+    if key == "inspect":
+        return inspect(root, sandbox)
+    if key == "start":
+        expires = option(args, "--expires-at")
+        sandbox["expiresAt"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expires))) if expires else None)
+        sandbox["status"] = "running"
+        return inspect(root, sandbox)
+    if key == "stop":
+        sandbox["status"] = "stopped"
+        return None
+    if key == "delete":
+        del sandboxes[sandbox_id]
+        return None
+    if key == "logs":
+        print("boot line")
+        return None
+    operation = option(args, "--operation")
+    if key == "set":
+        sandbox["cpus"] = int(option(args, "--cpus"))
+        sandbox["memoryBytes"] = int(option(args, "--memory-mib")) << 20
+    elif key == "grow":
+        sandbox["diskBytes"] = int(option(args, "--disk-gib")) << 30
+        write_disk(root, sandbox_id, sandbox["diskBytes"])
+    elif key == "commit":
+        entry = {"name": args[1], "logicalBytes": sandbox["diskBytes"], "image": sandbox["imageReference"]}
+        state["disks"].append(entry)
+        return {"name": entry["name"], "logicalBytes": entry["logicalBytes"]}
+    elif key == "restore":
+        if len(args) > 1 and not args[1].startswith("--"):
+            reference = next(s for s in state["disks"] if s["name"] == args[1])["image"]
+        else:
+            reference = option(args, "--image")
+        sandbox["imageReference"] = reference
+        sandbox["imageDigest"] = next(i["digest"] for i in state["images"] if i["reference"] == reference)
+        sandbox["diskGeneration"] += 1
+    else:
+        fail(f"unexpected: {key}", 64)
+    sandbox["lastOperation"] = operation
+    return inspect(root, sandbox)["record"]
+
+
+if __name__ == "__main__":
+    main()

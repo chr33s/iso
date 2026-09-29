@@ -1,6 +1,6 @@
 Stream VM serial console logs
 
-Usage: coop logs [OPTIONS] [NAME]
+Usage: iso logs [OPTIONS] [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

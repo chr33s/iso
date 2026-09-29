@@ -1,0 +1,11 @@
+firecracker_bin = "/usr/local/bin/firecracker"
+
+[vm]
+vcpu_count = 4
+kernel_path = "~/.iso/vmlinux"
+boot_args = "console=ttyS0"
+
+[network]
+host_ip = "172.16.0.1"
+subnet_mask = "/24"
+host_iface = "auto"

@@ -40,7 +40,7 @@ class PreflightTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for directory in ('scripts', 'tests', 'bin', 'Sources/CoopHost'):
+        for directory in ('scripts', 'tests', 'bin', 'Sources/IsoHost'):
             (self.root / directory).mkdir(parents=True)
         (self.root / 'scripts/preflight-release.sh').write_text(
             (ROOT / 'scripts/preflight-release.sh').read_text())
@@ -66,7 +66,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         path.chmod(0o755)
 
     def version(self, version):
-        (self.root / 'Sources/CoopHost/UpdateVersion.swift').write_text(
+        (self.root / 'Sources/IsoHost/UpdateVersion.swift').write_text(
             'public enum BuildInfo {\n'
             f'  public static let packageVersion = "{version}"\n'
             '}\n')
@@ -87,14 +87,14 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('Version sources agree; tag v9.8.7 is free.', result.stdout)
         calls = self.calls()
         for call in ('swift format lint --recursive --strict Package.swift Sources tests/swift '
-                     'fuzz/Targets fuzz/Entrypoints coop-proxy/Sources coop-proxy/Tests',
+                     'fuzz/Targets fuzz/Entrypoints iso-proxy/Sources iso-proxy/Tests',
                      'swift build --force-resolved-versions',
                      'swift test --force-resolved-versions',
-                     'swift test --package-path coop-sandbox --force-resolved-versions --no-parallel',
-                     'test-swift-host-read-parity.py --swift .build/debug/coop',
-                     'test-swift-host-lifecycle-parity.py --swift .build/debug/coop',
-                     'test-swift-host-data-root-parity.py --swift .build/debug/coop',
-                     'test-swift-host-cli-surface.py --swift .build/debug/coop',
+                     'swift test --package-path iso-sandbox --force-resolved-versions --no-parallel',
+                     'test-swift-host-read-parity.py --swift .build/debug/iso',
+                     'test-swift-host-lifecycle-parity.py --swift .build/debug/iso',
+                     'test-swift-host-data-root-parity.py --swift .build/debug/iso',
+                     'test-swift-host-cli-surface.py --swift .build/debug/iso',
                      'test-migrate-config.py', 'test-preflight-release.py',
                      'zizmor .github/workflows/', 'integration-install.sh ',
                      'integration-update.sh ', 'integration-uninstall.sh '):
@@ -113,7 +113,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('build-release.py --release --tag v9.8.7 --out .build/preflight-release', calls)
         self.assertIn('run-integration.sh ', calls)
         self.assertIn('fuzz.sh smoke 30', calls)
-        self.assertIn('swift test --package-path coop-proxy --force-resolved-versions', calls)
+        self.assertIn('swift test --package-path iso-proxy --force-resolved-versions', calls)
         self.assertIn('test-swift-proxy-process.py --skip-tls', calls)
         self.assertIn('All required checks passed for v9.8.7.', result.stdout)
 
@@ -132,7 +132,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('FAIL: Version consistency', result.stdout)
 
     def test_unreadable_version_fails(self):
-        (self.root / 'Sources/CoopHost/UpdateVersion.swift').write_text('// no version\n')
+        (self.root / 'Sources/IsoHost/UpdateVersion.swift').write_text('// no version\n')
         result = self.run_preflight('--quick')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Could not read packageVersion', result.stderr)
@@ -178,24 +178,24 @@ class ReleaseBinaryTests(unittest.TestCase):
             r"      - name: Verify release binaries\n.*?        run: \|\n(.*?)\n\n",
             workflow, re.S)[1]
         script = "\n".join(line[10:] for line in block.splitlines())
-        name = 'coop-v9.8.7-aarch64-apple-darwin'
+        name = 'iso-v9.8.7-aarch64-apple-darwin'
         for version, has_proxy, has_runtime, expected in [
-                ('coop 9.8.7 (abc1234)', True, True, 0),
-                ('coop 9.8.7-dev (abc1234+dirty)', True, True, 1),
-                ('coop 9.8.6 (abc1234)', True, True, 1),
-                ('coop 9.8.7 (abc1235)', True, True, 1),
-                ('coop 9.8.7 (abc1234)', False, True, 1),
-                ('coop 9.8.7 (abc1234)', True, False, 1)]:
+                ('iso 9.8.7 (abc1234)', True, True, 0),
+                ('iso 9.8.7-dev (abc1234+dirty)', True, True, 1),
+                ('iso 9.8.6 (abc1234)', True, True, 1),
+                ('iso 9.8.7 (abc1235)', True, True, 1),
+                ('iso 9.8.7 (abc1234)', False, True, 1),
+                ('iso 9.8.7 (abc1234)', True, False, 1)]:
             with self.subTest(version=version, proxy=has_proxy, runtime=has_runtime), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 bundle = root / 'bundle' / name
                 bundle.mkdir(parents=True)
-                binaries = {'coop': f"#!/bin/sh\nprintf '%s\\n' '{version}'\n"}
+                binaries = {'iso': f"#!/bin/sh\nprintf '%s\\n' '{version}'\n"}
                 if has_proxy:
-                    binaries['coop-proxy'] = '#!/bin/sh\nexit 0\n'
+                    binaries['iso-proxy'] = '#!/bin/sh\nexit 0\n'
                 if has_runtime:
-                    binaries['coop-sandbox'] = '#!/bin/sh\nexit 0\n'
+                    binaries['iso-sandbox'] = '#!/bin/sh\nexit 0\n'
                 for binary, text in binaries.items():
                     (bundle / binary).write_text(text)
                     (bundle / binary).chmod(0o755)
@@ -206,7 +206,7 @@ class ReleaseBinaryTests(unittest.TestCase):
                 result = subprocess.run(
                     ['bash', '-euc', script], cwd=root,
                     env={**os.environ, 'RUNNER_TEMP': str(root), 'GITHUB_ENV': str(github_env),
-                         'BINARY': 'coop', 'TAG': 'v9.8.7', 'TARGET': 'aarch64-apple-darwin',
+                         'BINARY': 'iso', 'TAG': 'v9.8.7', 'TARGET': 'aarch64-apple-darwin',
                          'REVISION': 'abc1234' + '0' * 33},
                     capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, expected, result.stderr)

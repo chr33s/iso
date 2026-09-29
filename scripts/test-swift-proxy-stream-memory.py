@@ -38,14 +38,14 @@ def validate(records):
 
 
 def main():
-    work = Path(tempfile.mkdtemp(prefix="coop-stream-memory-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-stream-memory-"))
     print(f"Stream memory evidence: {work}", flush=True)
     captured = work / "observations.json"
     logfile = work / "swift.log"
-    command = ["swift", "test", "--package-path", "coop-proxy", "--filter", TEST]
+    command = ["swift", "test", "--package-path", "iso-proxy", "--filter", TEST]
     with logfile.open("w") as log:
         result = subprocess.run(command, cwd=ROOT,
-            env=dict(os.environ, COOP_PROXY_STREAM_MEMORY_GATE="1", COOP_STREAM_OBSERVATIONS=str(captured)),
+            env=dict(os.environ, ISO_PROXY_STREAM_MEMORY_GATE="1", ISO_STREAM_OBSERVATIONS=str(captured)),
             stdout=log, stderr=subprocess.STDOUT, timeout=300)
     passed = result.returncode == 0 and f"Test {TEST}() passed" in logfile.read_text()
     (work / "report.json").write_text(json.dumps({

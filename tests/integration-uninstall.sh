@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end test for `coop uninstall`.
+# End-to-end test for `iso uninstall`.
 #
 # Runs the uninstall flow with HOME pointed at a throwaway tempdir, so the
-# tests never touch the developer's real ~/.coop. Verifies:
+# tests never touch the developer's real ~/.iso. Verifies:
 #
 #   1. --yes --keep-data removes the binary and leaves the data dir alone.
 #   2. --yes --purge removes binary, data dir, update-check state, and
-#      any coop SSH config blocks.
+#      any iso SSH config blocks.
 #   3. Non-interactive (non-TTY) without --yes exits non-zero with a hint.
 #   4. The dev-build guard refuses to remove a binary that lives in a SwiftPM
 #      build tree (`.build/{debug,release}` or `.build/<triple>/{debug,release}`).
@@ -19,13 +19,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Detach from the controlling terminal's stdin. coop gates interactive prompts
+# Detach from the controlling terminal's stdin. iso gates interactive prompts
 # (here, `uninstall`'s confirmation) on stdin being a TTY. The --yes calls skip
 # it and Test 3 pins its own stdin to /dev/null, so nothing blocks today, but a
 # future prompt-bearing case run from an interactive shell (the release
 # preflight) would read real keystrokes and block — under CI stdin is already
 # not a TTY, so it would never be caught there. Redirecting the whole script
-# makes every coop subprocess see a non-TTY stdin regardless of how the suite is
+# makes every iso subprocess see a non-TTY stdin regardless of how the suite is
 # invoked. The script itself never reads stdin.
 exec </dev/null
 
@@ -65,15 +65,15 @@ fail() {
 # dev-build guard). For the success-path tests we need a binary that *isn't*
 # under that pattern, so we stash a copy in $TMPDIR/bin. Test 4 copies it into
 # build-tree-shaped paths to exercise the guard without touching the real one.
-# COOP_SWIFT_SCRATCH_PATH overrides the default `.build` scratch path.
+# ISO_SWIFT_SCRATCH_PATH overrides the default `.build` scratch path.
 
-echo "==> Building coop..."
-SWIFT_SCRATCH="${COOP_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
+echo "==> Building iso..."
+SWIFT_SCRATCH="${ISO_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
 swift build --package-path "$PROJECT_DIR" --scratch-path "$SWIFT_SCRATCH" \
-    --product coop --force-resolved-versions --quiet
+    --product iso --force-resolved-versions --quiet
 BUILT_BIN="$(swift build --package-path "$PROJECT_DIR" --scratch-path "$SWIFT_SCRATCH" \
-    --show-bin-path)/coop"
-STABLE_BIN="$TMPDIR/bin/coop-stable"
+    --show-bin-path)/iso"
+STABLE_BIN="$TMPDIR/bin/iso-stable"
 cp "$BUILT_BIN" "$STABLE_BIN"
 
 # ── Isolate $HOME / XDG dirs ─────────────────────────────────────────────────
@@ -83,12 +83,12 @@ export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$HOME/.ssh"
 
-# Where coop writes the background update-check state. Must mirror
-# `UpdateCheckState` in Sources/CoopHost/UpdateCheck.swift
-# (~/Library/Application Support/coop/update-check.json on macOS).
+# Where iso writes the background update-check state. Must mirror
+# `UpdateCheckState` in Sources/IsoHost/UpdateCheck.swift
+# (~/Library/Application Support/iso/update-check.json on macOS).
 case "$(uname -s)" in
-    Darwin) STATE_FILE="$HOME/Library/Application Support/coop/update-check.json" ;;
-    *)      STATE_FILE="$XDG_STATE_HOME/coop/update-check.json" ;;
+    Darwin) STATE_FILE="$HOME/Library/Application Support/iso/update-check.json" ;;
+    *)      STATE_FILE="$XDG_STATE_HOME/iso/update-check.json" ;;
 esac
 
 # Pre-populate the state file so we can assert it's wiped by --purge.
@@ -101,16 +101,16 @@ JSON
 
 # Match the owned state and SSH namespace of this target's default backend.
 if [[ "$(uname -s)" == Darwin ]]; then
-    DATA_DIR="$HOME/.coop/backends/apple-container-v1"
-    CONFIG_DIR="$HOME/.coop"
+    DATA_DIR="$HOME/.iso/backends/apple-container-v1"
+    CONFIG_DIR="$HOME/.iso"
     SSH_PREFIX="coop-apple"
 else
-    DATA_DIR="$HOME/.coop"
-    CONFIG_DIR="$HOME/.coop"
-    SSH_PREFIX="coop"
+    DATA_DIR="$HOME/.iso"
+    CONFIG_DIR="$HOME/.iso"
+    SSH_PREFIX="iso"
 fi
 
-# Pre-populate ~/.coop with stub files so we can assert it's preserved or wiped.
+# Pre-populate ~/.iso with stub files so we can assert it's preserved or wiped.
 seed_data_dir() {
     local data_dir="$DATA_DIR"
     mkdir -p "$data_dir/images" "$data_dir/instances"
@@ -119,9 +119,9 @@ seed_data_dir() {
     printf '{}\n' > "$CONFIG_DIR/config.jsonc"
 }
 
-# Pre-populate ~/.ssh/config with a coop marker block; uninstall should strip
+# Pre-populate ~/.ssh/config with a iso marker block; uninstall should strip
 # it. Markers must match the `SSHConfigBlocks` markers in
-# Sources/CoopHost/Uninstall.swift (`# <prefix> START <host>` and `# <prefix> END`).
+# Sources/IsoHost/Uninstall.swift (`# <prefix> START <host>` and `# <prefix> END`).
 SSH_MARKER_BEGIN="# $SSH_PREFIX START $SSH_PREFIX-uninstall-test"
 SSH_MARKER_END="# $SSH_PREFIX END"
 seed_ssh_config() {
@@ -137,14 +137,14 @@ Host github.com
 EOF
 }
 
-# Fresh copy of the binary at $TMPDIR/bin/coop for each test that removes it.
+# Fresh copy of the binary at $TMPDIR/bin/iso for each test that removes it.
 fresh_binary() {
-    cp "$STABLE_BIN" "$TMPDIR/bin/coop"
+    cp "$STABLE_BIN" "$TMPDIR/bin/iso"
 }
 
 if [[ "$(uname -s)" == Darwin ]]; then
-    mkdir -p "$HOME/.coop/unrelated"
-    printf '%s\n' unrelated >"$HOME/.coop/unrelated/sentinel"
+    mkdir -p "$HOME/.iso/unrelated"
+    printf '%s\n' unrelated >"$HOME/.iso/unrelated/sentinel"
 fi
 
 # ── Test 1: --yes --keep-data preserves the data directory ───────────────────
@@ -155,8 +155,8 @@ seed_data_dir
 seed_state
 seed_ssh_config
 
-if "$TMPDIR/bin/coop" uninstall --yes --keep-data > "$TMPDIR/t1.log" 2>&1; then
-    if [[ -e "$TMPDIR/bin/coop" ]]; then
+if "$TMPDIR/bin/iso" uninstall --yes --keep-data > "$TMPDIR/t1.log" 2>&1; then
+    if [[ -e "$TMPDIR/bin/iso" ]]; then
         fail "binary still present after uninstall"
     else
         pass "binary removed"
@@ -172,9 +172,9 @@ if "$TMPDIR/bin/coop" uninstall --yes --keep-data > "$TMPDIR/t1.log" 2>&1; then
         fail "update-check state was removed despite --keep-data"
     fi
     if grep -q "$SSH_MARKER_BEGIN" "$HOME/.ssh/config"; then
-        fail "SSH coop block not stripped" "blocks should be removed even with --keep-data"
+        fail "SSH iso block not stripped" "blocks should be removed even with --keep-data"
     else
-        pass "SSH coop blocks stripped"
+        pass "SSH iso blocks stripped"
     fi
     if grep -q "github.com" "$HOME/.ssh/config"; then
         pass "unrelated SSH blocks preserved"
@@ -193,8 +193,8 @@ seed_data_dir
 seed_state
 seed_ssh_config
 
-if "$TMPDIR/bin/coop" uninstall --yes --purge > "$TMPDIR/t2.log" 2>&1; then
-    if [[ -e "$TMPDIR/bin/coop" ]]; then
+if "$TMPDIR/bin/iso" uninstall --yes --purge > "$TMPDIR/t2.log" 2>&1; then
+    if [[ -e "$TMPDIR/bin/iso" ]]; then
         fail "binary still present after --purge"
     else
         pass "binary removed"
@@ -210,16 +210,16 @@ if "$TMPDIR/bin/coop" uninstall --yes --purge > "$TMPDIR/t2.log" 2>&1; then
         pass "update-check state removed"
     fi
     if grep -q "$SSH_MARKER_BEGIN" "$HOME/.ssh/config" 2> /dev/null; then
-        fail "SSH coop block survived --purge"
+        fail "SSH iso block survived --purge"
     else
-        pass "SSH coop blocks stripped"
+        pass "SSH iso blocks stripped"
     fi
 else
     fail "uninstall --yes --purge exited non-zero" "$(tail -5 "$TMPDIR/t2.log")"
 fi
 
 if [[ "$(uname -s)" == Darwin ]]; then
-    if [[ -f "$CONFIG_DIR/config.jsonc" && "$(cat "$HOME/.coop/unrelated/sentinel")" == unrelated ]]; then
+    if [[ -f "$CONFIG_DIR/config.jsonc" && "$(cat "$HOME/.iso/unrelated/sentinel")" == unrelated ]]; then
         pass "purge preserves config outside the owned backend root"
     else
         fail "purge removed config outside the owned backend root"
@@ -234,7 +234,7 @@ seed_data_dir
 
 # stdin is already not a TTY when running under bash via the script harness;
 # redirect from /dev/null to be explicit.
-if "$TMPDIR/bin/coop" uninstall < /dev/null > "$TMPDIR/t3.log" 2>&1; then
+if "$TMPDIR/bin/iso" uninstall < /dev/null > "$TMPDIR/t3.log" 2>&1; then
     fail "uninstall without --yes succeeded in non-interactive mode"
 elif grep -qi "not a tty" "$TMPDIR/t3.log" && grep -q -- "--yes" "$TMPDIR/t3.log"; then
     pass "non-TTY without --yes errors with --yes hint"
@@ -243,7 +243,7 @@ else
         "$(tail -5 "$TMPDIR/t3.log")"
 fi
 
-if [[ -e "$TMPDIR/bin/coop" ]]; then
+if [[ -e "$TMPDIR/bin/iso" ]]; then
     pass "binary preserved after refusal"
 else
     fail "binary removed despite refusal"
@@ -254,8 +254,8 @@ fi
 echo "==> Test 4: dev-build guard refuses .build binaries"
 seed_data_dir
 
-for guarded in "$TMPDIR/project/.build/debug/coop" \
-    "$TMPDIR/project/.build/arm64-apple-macosx/release/coop"; do
+for guarded in "$TMPDIR/project/.build/debug/iso" \
+    "$TMPDIR/project/.build/arm64-apple-macosx/release/iso"; do
     mkdir -p "$(dirname "$guarded")"
     cp "$STABLE_BIN" "$guarded"
     label="${guarded#"$TMPDIR/project/"}"

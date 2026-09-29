@@ -1,8 +1,8 @@
-# Specification: Embedded Coop Secrets for the Swift 6 Port
+# Specification: Embedded Isolate Secrets for the Swift 6 Port
 
 **Status:** Approved implementation specification (2026-09-28)  
-**Target:** `chr33s/coop` Swift 6 rewrite, macOS 27+, Apple Silicon  
-**Primary goal:** provide local encrypted secret storage and `--env-file` resolution directly inside Coop, with no external `vault` executable or service  
+**Target:** `chr33s/iso` Swift 6 rewrite, macOS 27+, Apple Silicon  
+**Primary goal:** provide local encrypted secret storage and `--env-file` resolution directly inside Isolate, with no external `vault` executable or service  
 **Password KDF:** scrypt only  
 **Hardware factor:** Secure Enclave, directly integrated into Swift  
 **Recovery model:** **No recovery path by design**
@@ -11,13 +11,13 @@
 
 ## 1. Executive decision
 
-The Swift 6 Coop port SHALL include a small, local, single-user secret store derived from the useful local-security ideas in `chr33s/vault`, but it SHALL **not** port Vault's distributed replica format or general vault product.
+The Swift 6 Isolate port SHALL include a small, local, single-user secret store derived from the useful local-security ideas in `chr33s/vault`, but it SHALL **not** port Vault's distributed replica format or general vault product.
 
 The embedded implementation exists only to support:
 
-1. storing local secrets required by Coop;
+1. storing local secrets required by Isolate;
 2. resolving secret references from `--env-file` / `--env`;
-3. supplying known model-provider credentials directly to `coop-proxy` without exposing those credentials to the guest;
+3. supplying known model-provider credentials directly to `iso-proxy` without exposing those credentials to the guest;
 4. supplying explicitly requested generic secrets to the guest environment;
 5. basic local secret management (`init`, `set`, `rm`, `list`).
 
@@ -53,24 +53,24 @@ Loss of the Secure Enclave key SHALL make the store permanently unrecoverable.
 
 That consequence is **explicitly accepted by design**.
 
-## 1.1 Baseline: what coop already has
+## 1.1 Baseline: what isolate already has
 
 This specification extends the current `swift` branch; it does not replace it.
 Relevant existing pieces:
 
 | Existing piece | Where | Role today |
 |---|---|---|
-| `Secret<Value>` redacted wrapper | `Sources/CoopCore/Units.swift` | Redacted description/debug rendering for secret values |
-| `AtomicFile` | `Sources/CoopCore/AtomicFile.swift` | Temp-file + rename writes with bounded mode |
-| `FileLock` | `Sources/CoopCore/FileLock.swift` | Advisory state locks |
-| `SecretStore` (enum) | `Sources/CoopHost/SecretStore.swift` | macOS Keychain service names for `coop proxy setup` and `coop github setup-pat` |
+| `Secret<Value>` redacted wrapper | `Sources/IsoCore/Units.swift` | Redacted description/debug rendering for secret values |
+| `AtomicFile` | `Sources/IsoCore/AtomicFile.swift` | Temp-file + rename writes with bounded mode |
+| `FileLock` | `Sources/IsoCore/FileLock.swift` | Advisory state locks |
+| `SecretStore` (enum) | `Sources/IsoHost/SecretStore.swift` | macOS Keychain service names for `iso proxy setup` and `iso github setup-pat` |
 | `cmd:` references | `CredentialResolver.swift` | Structured credential fields (`proxy.<provider>.credential`, per-VM `proxy.json` overrides, `github.pat`, `claude.api_key`) run a host command on use |
-| `coop-proxy` stdin startup document (protocol v1) | `ProxyLifecycle.swift` | Provider credential reaches the proxy on stdin; the proxy child has an empty environment |
+| `iso-proxy` stdin startup document (protocol v1) | `ProxyLifecycle.swift` | Provider credential reaches the proxy on stdin; the proxy child has an empty environment |
 | `GuestEnvState` | `<instance>/guest_env.json` | Start-time `--env` / devcontainer `containerEnv` literals, overlaid on every later session |
 | `env_forward`, automatic `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` forwarding | `GuestSession.swift` | Raw values over SSH `SendEnv` when the proxy is off for that provider |
 
-Configuration is JSONC (`~/.coop/config.jsonc`); coop state lives under the data
-root `~/.coop`. Examples in this document use those formats.
+Configuration is JSONC (`~/.iso/config.jsonc`); isolate state lives under the data
+root `~/.iso`. Examples in this document use those formats.
 
 ---
 
@@ -83,11 +83,11 @@ Trusted:
 - macOS kernel;
 - the logged-in host user;
 - this Mac's Secure Enclave;
-- Coop's signed binaries;
-- Coop's host-side state directory;
+- Isolate's signed binaries;
+- Isolate's host-side state directory;
 - Swift Crypto / CryptoKit implementation;
 - macOS filesystem permissions;
-- `coop-proxy` as specified separately.
+- `iso-proxy` as specified separately.
 
 ## 2.2 Untrusted
 
@@ -98,15 +98,15 @@ Untrusted:
 - project files copied from the guest;
 - `.env` contents supplied by a project;
 - command-line inputs;
-- malformed or tampered Coop secret-store files.
+- malformed or tampered Isolate secret-store files.
 
 ## 2.3 Protected assets
 
 Protected assets:
 
-- secret values stored in Coop's encrypted local store;
+- secret values stored in Isolate's encrypted local store;
 - secret-store passphrase;
-- model-provider credentials resolved for `coop-proxy`.
+- model-provider credentials resolved for `iso-proxy`.
 
 The encrypted store protects primarily against:
 
@@ -122,7 +122,7 @@ It does **not** protect against:
 - malware running as the trusted host user while the user authorizes Secure Enclave access;
 - a malicious or compromised macOS kernel;
 - secrets already injected into a running guest environment;
-- provider credentials already loaded into a running `coop-proxy`.
+- provider credentials already loaded into a running `iso-proxy`.
 
 ---
 
@@ -132,7 +132,7 @@ It does **not** protect against:
 
 **Decision: APPROVED**
 
-The Coop secret store SHALL NOT implement:
+The Isolate secret store SHALL NOT implement:
 
 - a recovery key;
 - cloud escrow;
@@ -142,7 +142,7 @@ The Coop secret store SHALL NOT implement:
 - backup unlock secret;
 - alternate wrapping key.
 
-The store is cryptographically bound to the Secure Enclave key created on the Mac where `coop secrets init` is performed.
+The store is cryptographically bound to the Secure Enclave key created on the Mac where `iso secrets init` is performed.
 
 If that key becomes unavailable, the encrypted secret store is unrecoverable.
 
@@ -154,7 +154,7 @@ Examples include:
 - motherboard / Secure Enclave failure;
 - erasing or reinstalling the Mac in a way that destroys the key material;
 - loss/corruption/deletion of the Secure Enclave opaque key representation;
-- deleting the Coop Secure Enclave key state;
+- deleting the Isolate Secure Enclave key state;
 - restoring only `store.v1.json` from backup without the original usable enclave key state.
 
 ### Accepted operational consequence
@@ -179,13 +179,13 @@ recoverability
 
 ### Required documentation
 
-`coop secrets init` MUST display a clear warning before creating the store:
+`iso secrets init` MUST display a clear warning before creating the store:
 
 ```text
 This secret store is bound to this Mac's Secure Enclave.
 
 There is no recovery key or password-only fallback.
-If this Mac, its Secure Enclave key, or Coop's enclave key state is lost,
+If this Mac, its Secure Enclave key, or Iso's enclave key state is lost,
 the stored secrets cannot be recovered.
 
 Keep independent copies of important credentials with their original providers.
@@ -221,7 +221,7 @@ Port only the following ideas/behaviors.
 - strict dotenv parsing;
 - whole-value secret references;
 - fail-closed unresolved secret handling;
-- provider credentials kept out of the guest when Coop knows the protocol.
+- provider credentials kept out of the guest when Isolate knows the protocol.
 
 ## 4.2 Do not port
 
@@ -229,7 +229,7 @@ No Vault code is reused. Vault's sync, sharing, enrollment, recovery, auth log,
 CRDT/rotation machinery, its own proxy, and non-macOS keystores are all out of
 scope (see §56).
 
-The Secure Enclave logic is implemented directly in Swift inside Coop.
+The Secure Enclave logic is implemented directly in Swift inside Isolate.
 
 ---
 
@@ -239,7 +239,7 @@ The Secure Enclave logic is implemented directly in Swift inside Coop.
 
 **Decision: APPROVED**
 
-The embedded Coop secret store SHALL use a new compact format and SHALL NOT directly read existing `chr33s/vault` SQLite replicas.
+The embedded Isolate secret store SHALL use a new compact format and SHALL NOT directly read existing `chr33s/vault` SQLite replicas.
 
 Rationale:
 
@@ -253,7 +253,7 @@ Preserving Vault format compatibility would require substantial portions of:
 - SQLite state;
 - migration code.
 
-That would defeat the "only code required by Coop" objective.
+That would defeat the "only code required by Isolate" objective.
 
 A one-time migration/import tool MAY be implemented separately if required. It is not part of this specification.
 
@@ -266,20 +266,20 @@ replacement for existing credential sources.
 
 1. `cmd:` references remain valid everywhere they are accepted today, with
    unchanged semantics.
-2. The macOS Keychain remains the store written by `coop proxy setup` and
-   `coop github setup-pat` in v1. Those commands are not changed by this
+2. The macOS Keychain remains the store written by `iso proxy setup` and
+   `iso github setup-pat` in v1. Those commands are not changed by this
    specification.
 3. Structured credential fields that accept `cmd:` today
    (`proxy.<provider>.credential`, per-VM `proxy.json` overrides, `github.pat`,
    `claude.api_key`) additionally accept `vault:<secret-name>`, resolved by
-   `CredentialResolver` through `CoopSecrets`. A literal value remains rejected
+   `CredentialResolver` through `IsoSecrets`. A literal value remains rejected
    wherever it is rejected today.
 4. `.env` files and `--env` values use the whole-value `{vault:<secret-name>}`
    form (§27).
 5. All `vault:` / `{vault:}` references needed by one command are resolved in
    a single unlock (§33), regardless of which field they came from.
 6. Moving existing Keychain items into the enclave store is out of scope; a
-   later `coop secrets import --from-keychain` MAY be specified separately.
+   later `iso secrets import --from-keychain` MAY be specified separately.
 
 Provider-credential precedence per (instance, provider) becomes:
 
@@ -297,12 +297,12 @@ provider on that instance.
 
 # 6. Swift package architecture
 
-Module layout follows the existing package (`CoopCLI` → `CoopHost` →
-`CoopConfiguration` / `CoopCore`). Add one library target:
+Module layout follows the existing package (`IsoCLI` → `IsoHost` →
+`IsoConfiguration` / `IsoCore`). Add one library target:
 
 ```text
 Sources/
-  CoopSecrets/                 # depends on CoopCore only
+  IsoSecrets/                 # depends on IsoCore only
     SecretName.swift
     KDF.swift
     SecureEnclaveFactor.swift
@@ -312,10 +312,10 @@ Sources/
     SecretReference.swift      # {vault:name} / vault:name
     SecretResolver.swift
 
-  CoopCLI/
-    SecretsCommands.swift      # coop secrets init|set|rm|list|status
+  IsoCLI/
+    SecretsCommands.swift      # iso secrets init|set|rm|list|status
 
-  CoopHost/
+  IsoHost/
     CredentialResolver.swift   # + vault: references
     GuestEnvState.swift        # + typed declarations (§28)
     ProxyLifecycle.swift       # unchanged wire protocol; new credential source
@@ -326,21 +326,21 @@ Naming: the store type is `EnclaveStore`. The existing `SecretStore` enum
 
 Reuse, do not duplicate:
 
-- `Secret<Value>` (`CoopCore/Units.swift`) is the redacted value type (§36).
+- `Secret<Value>` (`IsoCore/Units.swift`) is the redacted value type (§36).
 - `AtomicFile` and `FileLock` are the write/lock primitives (§23). Because
-  `CoopSecrets` must not depend on `CoopHost`, move both into `CoopCore` in a
+  `IsoSecrets` must not depend on `IsoHost`, move both into `IsoCore` in a
   **separate preceding refactor PR** with no behavior change.
 
-`coop-proxy/` (separate package) needs **no change**: its stdin startup
+`iso-proxy/` (separate package) needs **no change**: its stdin startup
 document already carries the credential (§34).
 
-`CoopSecrets` SHOULD be usable from:
+`IsoSecrets` SHOULD be usable from:
 
-- the main Coop CLI;
+- the main Isolate CLI;
 - proxy-start orchestration;
 - unit tests.
 
-`CoopSecrets` MUST NOT depend on VM/runtime code.
+`IsoSecrets` MUST NOT depend on VM/runtime code.
 
 ---
 
@@ -360,7 +360,7 @@ implementation. On Darwin, `CryptoExtras` builds BoringSSL and depends on
 optimized KDF (a slower hand-written scrypt would force a lower work factor
 than attackers' tuned implementations).
 
-Everything else comes from system frameworks already imported by `CoopHost`:
+Everything else comes from system frameworks already imported by `IsoHost`:
 
 ```text
 CryptoKit:
@@ -387,11 +387,11 @@ No Argon2, SQLite, or third-party dotenv package is included.
 
 # 8. Secret-store location
 
-The store lives under coop's data root (`DataRoot`, default `~/.coop`),
-alongside all other coop state:
+The store lives under isolate's data root (`DataRoot`, default `~/.iso`),
+alongside all other isolate state:
 
 ```text
-~/.coop/
+~/.iso/
   secrets/
     store.v1.json
     device.sekey
@@ -402,7 +402,7 @@ alongside all other coop state:
 Permissions:
 
 ```text
-~/.coop/          0700
+~/.iso/          0700
 secrets/          0700
 store.v1.json     0600
 device.sekey      0600
@@ -430,7 +430,7 @@ The passphrase alone MUST NOT be sufficient.
 
 ## 9.2 Device key
 
-Create one Secure Enclave P-256 key-agreement private key for Coop secrets.
+Create one Secure Enclave P-256 key-agreement private key for Isolate secrets.
 
 Use access control equivalent to:
 
@@ -507,7 +507,7 @@ To unlock:
 1. construct `LAContext`;
 2. set a user-facing reason such as:
    ```text
-   Unlock Coop secrets
+   Unlock Iso secrets
    ```
 3. load the existing Secure Enclave private key;
 4. perform ECDH using the stored ephemeral public key;
@@ -520,14 +520,14 @@ Never create a new Secure Enclave key during an unlock attempt.
 If the stored key is missing/unreadable:
 
 ```text
-fatal: Coop secrets Secure Enclave key is unavailable; this store cannot be recovered
+fatal: Iso secrets Secure Enclave key is unavailable; this store cannot be recovered
 ```
 
 Do not silently regenerate.
 
 ## 9.6 Code-signing prerequisite
 
-Development and default release archives ship an ad-hoc-signed `coop`; only
+Development and default release archives ship an ad-hoc-signed `iso`; only
 the `--sign` release-candidate stage produces a Developer ID signature.
 
 Before implementation proceeds past a prototype, verify on macOS 27+ Apple
@@ -542,7 +542,7 @@ Also verify that a key created by one of these builds remains usable after
 upgrading to the next (the key must not be bound to a code-signing identity
 that changes between releases). If any case fails, record the constraint and
 the supported build types here before continuing; a store that becomes
-unreadable on `coop update` is a release blocker, not an accepted loss event.
+unreadable on `iso update` is a release blocker, not an accepted loss event.
 
 **Spike result (2026-09-28, macOS 27, Apple Silicon):** a
 `SecureEnclave.P256.KeyAgreement` key (`.privateKeyUsage`, optionally
@@ -551,14 +551,14 @@ unreadable on `coop update` is a release blocker, not an accepted loss event.
 second ad-hoc binary with a different cdhash and by a Developer ID-signed,
 hardened-runtime binary. No keychain entitlement was needed. With
 `.userPresence`, every use showed a Touch ID prompt. The key is not bound to
-the signing identity, so `coop update` does not strand it. The cancel path is
+the signing identity, so `iso update` does not strand it. The cancel path is
 still unverified and stays in the §48 hardware tests.
 
 ## 9.7 Corrupted key representation
 
 The same spike found that `SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation:)`
 **traps the process** (a `try!` inside CryptoKit, `CryptoKitError.invalidParameter`)
-when `device.sekey` is corrupted, instead of throwing. coop MUST therefore not
+when `device.sekey` is corrupted, instead of throwing. isolate MUST therefore not
 hand unverified bytes to that initializer:
 
 - `device.sekey` is stored in a small versioned envelope containing the
@@ -665,7 +665,7 @@ Resolved value MUST:
 
 ## Provider use
 
-Resolved value MUST satisfy `coop-proxy` header-value validation.
+Resolved value MUST satisfy `iso-proxy` header-value validation.
 
 Do not silently transform invalid bytes.
 
@@ -804,7 +804,7 @@ Prompt securely through `/dev/tty`:
 If required:
 
 ```text
-COOP_SECRETS_PASSPHRASE_FD=<fd>
+ISO_SECRETS_PASSPHRASE_FD=<fd>
 ```
 
 or equivalent internal fd-based input.
@@ -813,20 +813,20 @@ Do not support plaintext:
 
 ```text
 --passphrase value
-COOP_SECRETS_PASSPHRASE=value
+ISO_SECRETS_PASSPHRASE=value
 ```
 
 in production.
 
-`COOP_SECRETS_PASSPHRASE_FD` names a file descriptor, not a secret, but it is
+`ISO_SECRETS_PASSPHRASE_FD` names a file descriptor, not a secret, but it is
 new secret-input surface. It MUST be documented in `docs/trust-model.md`
-alongside the existing "never on argv" rules (§55.1), and coop MUST:
+alongside the existing "never on argv" rules (§55.1), and isolate MUST:
 
 - read the passphrase from that descriptor once and close it;
 - refuse the descriptor if it refers to a regular file that is group- or
   world-readable;
 - never forward the variable to guest-bound `ssh`/`scp`/`rsync`, runtime, or
-  `coop-proxy` child processes.
+  `iso-proxy` child processes.
 
 ---
 
@@ -850,7 +850,7 @@ Every store unlock:
 If any step fails:
 
 ```text
-unable to unlock Coop secrets store
+unable to unlock Iso secrets store
 ```
 
 except for the explicit unrecoverable-key case, which should state that the enclave key is unavailable and recovery is impossible.
@@ -862,23 +862,23 @@ except for the explicit unrecoverable-key case, which should state that the encl
 Add:
 
 ```bash
-coop secrets init
-coop secrets set <name>
-coop secrets rm <name>
-coop secrets list
+iso secrets init
+iso secrets set <name>
+iso secrets rm <name>
+iso secrets list
 ```
 
 Optional:
 
 ```bash
-coop secrets status
+iso secrets status
 ```
 
 Do not include a default plaintext `get` command.
 
 ---
 
-# 19. `coop secrets init`
+# 19. `iso secrets init`
 
 Behavior:
 
@@ -899,12 +899,12 @@ If verification fails, initialization fails and incomplete state is removed wher
 
 ---
 
-# 20. `coop secrets set`
+# 20. `iso secrets set`
 
 Example:
 
 ```bash
-coop secrets set anthropic
+iso secrets set anthropic
 ```
 
 Default input:
@@ -914,7 +914,7 @@ Default input:
 Automation:
 
 ```bash
-printf '%s' "$TOKEN" | coop secrets set anthropic --stdin
+printf '%s' "$TOKEN" | iso secrets set anthropic --stdin
 ```
 
 The secret never appears on argv.
@@ -931,10 +931,10 @@ Flow:
 
 ---
 
-# 21. `coop secrets rm`
+# 21. `iso secrets rm`
 
 ```bash
-coop secrets rm anthropic
+iso secrets rm anthropic
 ```
 
 - exclusive lock;
@@ -948,7 +948,7 @@ It cannot erase a secret already loaded into an active proxy or guest process.
 
 ---
 
-# 22. `coop secrets list`
+# 22. `iso secrets list`
 
 Unlocks and prints names/metadata only.
 
@@ -1010,8 +1010,8 @@ Fail closed beyond limits.
 Add:
 
 ```bash
-coop up --env-file .env
-coop start <instance> --env-file .env
+iso up --env-file .env
+iso start <instance> --env-file .env
 ```
 
 Existing:
@@ -1123,11 +1123,11 @@ values (`GuestEnvState`). Treat that shape as **version 1**:
   version 2 (below);
 - a version-1 file is upgraded to version 2 in memory, every entry becoming
   `kind: "literal"`;
-- coop writes version 2 only when the instance has at least one non-literal
+- isolate writes version 2 only when the instance has at least one non-literal
   declaration, so instances that never use references stay readable by older
-  coop binaries;
+  isolate binaries;
 - an older binary that meets a version-2 file MUST fail with a clear
-  "written by a newer coop" error rather than misreading it (add this check to
+  "written by a newer isolate" error rather than misreading it (add this check to
   the last release before this feature ships, or document that downgrading an
   instance that used references is unsupported).
 
@@ -1155,7 +1155,7 @@ Version 2 example:
 }
 ```
 
-Resolved plaintext MUST NOT be written to Coop instance state.
+Resolved plaintext MUST NOT be written to Isolate instance state.
 
 ---
 
@@ -1197,10 +1197,10 @@ DATABASE_PASSWORD={vault:database-password}
 Flow:
 
 ```text
-Coop secret store
+Iso secret store
    |
    v
-Coop
+Iso
    |
    v
 guest environment
@@ -1241,7 +1241,7 @@ to `vault:<name>` (D-003).
 A recognized provider secret:
 
 - is persisted only as a `provider_secret` declaration (§28);
-- is delivered only to `coop-proxy` (§34);
+- is delivered only to `iso-proxy` (§34);
 - NEVER becomes a guest environment variable, under any proxy mode, and is
   never reinterpreted as a generic secret or literal;
 - fails startup if the proxy for its provider cannot start (§35).
@@ -1259,8 +1259,8 @@ meaning:
 - if a proxy is active for that provider, the value is suppressed (not
   forwarded) with a warning — unchanged;
 - if no proxy is active for that provider, the value is forwarded raw over
-  `SendEnv` as today, and coop SHOULD print a one-line warning pointing at
-  `coop secrets` / `coop proxy setup`.
+  `SendEnv` as today, and isolate SHOULD print a one-line warning pointing at
+  `iso secrets` / `iso proxy setup`.
 
 Tightening legacy values (refusing raw forwarding) is governed by the Selective
 Hardening specification's `proxy.mode = "required"` and by a future
@@ -1310,16 +1310,16 @@ credentials and `github.pat` tokens through one process-wide store resolver
 (one unlock per batch of names; the passphrase is read once per process). It
 refuses `vault:` for fields placed in the guest (`claude.api_key` /
 `codex.api_key`, MCP headers), narrowing D-003 item 3 so that §31.1 holds. A
-generic reference may not name a secret a proxy credential also reads. `SecretName` moved to `CoopCore` so
+generic reference may not name a secret a proxy credential also reads. `SecretName` moved to `IsoCore` so
 configuration decoding can validate `vault:` names without depending on
-`CoopSecrets`.
+`IsoSecrets`.
 
 ## D-004 — Per-session unlock for generic secrets
 
 **Decision: APPROVED 2026-09-28 (deliberate UX cost)**
 
 `GuestEnvState` overlays the start-time environment onto **every** later
-session of an instance (`coop shell`, `coop exec`, agent launches). Because
+session of an instance (`iso shell`, `iso exec`, agent launches). Because
 only references are persisted, any session of an instance with generic
 `{vault:}` declarations must resolve them again, which requires:
 
@@ -1329,7 +1329,7 @@ passphrase + Secure Enclave user presence
 
 on every such invocation.
 
-Provider secrets do **not** cause this: the running `coop-proxy` already holds
+Provider secrets do **not** cause this: the running `iso-proxy` already holds
 the credential for the VM's lifetime, and later sessions need only the
 capability token.
 
@@ -1348,20 +1348,20 @@ Alternatives considered and deferred:
 
 ---
 
-# 34. `coop-proxy` integration
+# 34. `iso-proxy` integration
 
 Provider flow:
 
 ```text
-CoopSecrets
+IsoSecrets
     |
-    | plaintext exists in trusted Coop host process
+    | plaintext exists in trusted Iso host process
     v
-coop launcher (ProxyLauncher.start)
+iso launcher (ProxyLauncher.start)
     |
     | stdin startup document, protocol v1 (existing)
     v
-coop-proxy
+iso-proxy
     |
     | HTTPS
     v
@@ -1372,7 +1372,7 @@ This path already exists: `ProxyLauncher.start` resolves the credential, sends
 it in the stdin startup document only after confirming the proxy is the port's
 sole listener, and the proxy child runs with an empty environment. The only
 change is a new credential source feeding `resolver.resolve`; the wire protocol
-and `coop-proxy` package are unchanged.
+and `iso-proxy` package are unchanged.
 
 The provider credential MUST NOT appear:
 
@@ -1407,7 +1407,7 @@ No fallback to raw forwarding.
 Fail with a distinct permanent error:
 
 ```text
-Coop secrets cannot be unlocked because the Secure Enclave key for this store
+Iso secrets cannot be unlocked because the Secure Enclave key for this store
 is unavailable.
 
 This store has no recovery path.
@@ -1420,7 +1420,7 @@ Do not create a new key.
 
 # 36. Logging and secret types
 
-Use the existing `Secret<Value>` wrapper (`CoopCore/Units.swift`) for resolved
+Use the existing `Secret<Value>` wrapper (`IsoCore/Units.swift`) for resolved
 values — `Secret<[UInt8]>` for store values, `Secret<String>` once validated for
 environment/header use. Do not add a parallel `SecretValue` type.
 
@@ -1452,7 +1452,7 @@ Best-effort:
 - keep passphrase and DUK in mutable buffers;
 - clear temporary buffers after derivation;
 - release decrypted dictionary after use;
-- use `RLIMIT_CORE=0` for secret-bearing Coop/proxy processes where practical;
+- use `RLIMIT_CORE=0` for secret-bearing Iso/proxy processes where practical;
 - never create plaintext temp files.
 
 No claim of guaranteed memory zeroization.
@@ -1553,17 +1553,17 @@ PKI
 
 # 43. Legacy migration
 
-Existing Vault compatibility is not part of production Coop.
+Existing Vault compatibility is not part of production Isolate.
 
 If migration is needed, provide a one-time external path such as:
 
 ```bash
-vault export-coop-secrets | coop secrets import --stdin
+vault export-iso-secrets | iso secrets import --stdin
 ```
 
 No plaintext intermediate file.
 
-Do not add legacy Vault database parsing to production Coop.
+Do not add legacy Vault database parsing to production Isolate.
 
 ---
 
@@ -1808,7 +1808,7 @@ Generic environment secrets may appear in the guest by design but must not appea
 
 On macOS 27+ Apple Silicon:
 
-1. `coop secrets init`;
+1. `iso secrets init`;
 2. accept the no-recovery warning;
 3. set:
    ```text
@@ -1824,7 +1824,7 @@ On macOS 27+ Apple Silicon:
    ```
 5. run:
    ```bash
-   coop up --env-file .env
+   iso up --env-file .env
    ```
 6. assert:
    - passphrase + Secure Enclave authorization required;
@@ -1877,7 +1877,7 @@ Before release:
 - [ ] permissions fail closed;
 - [ ] atomic rewrite crash-tested;
 - [ ] tampered store fails authentication;
-- [ ] resolved values never persisted in Coop state;
+- [ ] resolved values never persisted in Isolate state;
 - [ ] provider credentials never enter guest;
 - [ ] generic secrets clearly documented as guest-visible;
 - [ ] env parser never executes shell;
@@ -1885,7 +1885,7 @@ Before release:
 - [ ] proxy fallback cannot expose provider credential;
 - [ ] core-dump posture reviewed;
 - [ ] destructive-loss/non-recovery test passes;
-- [ ] Secure Enclave works on every supported build type and survives `coop update` (§9.6);
+- [ ] Secure Enclave works on every supported build type and survives `iso update` (§9.6);
 - [ ] `guest_env.json` v1 → v2 migration and downgrade behavior tested (§28).
 
 ## 55.1 Cross-file updates
@@ -1893,12 +1893,12 @@ Before release:
 Keep these in sync in the same PR series (per `AGENTS.md`):
 
 - `docs/trust-model.md`: the enclave store as a new host secret source;
-  `COOP_SECRETS_PASSPHRASE_FD` under "Never on argv"; recognized provider
+  `ISO_SECRETS_PASSPHRASE_FD` under "Never on argv"; recognized provider
   secrets (§31.1) never enter the guest; generic `{vault:}` secrets are
   guest-visible.
 - `docs/configuration.md`, `config.example.jsonc`, `ConfigTemplate`: `vault:`
   on structured credential fields.
-- `docs/commands.md`, CLI surface baselines: `coop secrets …`, `--env-file`.
+- `docs/commands.md`, CLI surface baselines: `iso secrets …`, `--env-file`.
 - `docs/credential-proxy.md`: the new credential source and precedence (D-003).
 - `scripts/swift-host-fault-injection.py`: faults that (a) forward a
   recognized provider secret into guest env, (b) persist a resolved value in
@@ -1937,13 +1937,13 @@ Not in v1:
 ## Initialize
 
 ```bash
-coop secrets init
+iso secrets init
 ```
 
 Required warning:
 
 ```text
-WARNING: Coop secrets are bound to this Mac's Secure Enclave.
+WARNING: Iso secrets are bound to this Mac's Secure Enclave.
 
 There is no recovery key and no password-only fallback.
 
@@ -1959,8 +1959,8 @@ Continue? [y/N]
 ## Add secrets
 
 ```bash
-coop secrets set anthropic
-coop secrets set database-password
+iso secrets set anthropic
+iso secrets set database-password
 ```
 
 ## Manifest
@@ -1972,7 +1972,7 @@ DATABASE_PASSWORD={vault:database-password}
 # Literal:
 NODE_ENV=development
 
-# Host-only through coop-proxy:
+# Host-only through iso-proxy:
 ANTHROPIC_API_KEY={vault:anthropic}
 OPENAI_API_KEY={vault:openai}
 ```
@@ -1980,7 +1980,7 @@ OPENAI_API_KEY={vault:openai}
 ## Start
 
 ```bash
-coop up --env-file .env
+iso up --env-file .env
 ```
 
 ---
@@ -2015,12 +2015,12 @@ Secure Enclave                      |
   ~/.coop/secrets/store.v1.json
               |
               v
-         CoopSecrets
+         IsoSecrets
           /       \
  generic env     provider credential
       |                  |
       v                  v
-   guest env         coop-proxy
+   guest env         iso-proxy
                           |
                           v
                    Anthropic/OpenAI
@@ -2044,7 +2044,7 @@ This is intentional.
 
 # 59. Acceptance definition
 
-The embedded secrets feature is complete when Coop can:
+The embedded secrets feature is complete when Isolate can:
 
 ```text
 initialize a scrypt + Secure-Enclave-bound secret store
@@ -2053,7 +2053,7 @@ parse --env-file
 resolve {vault:name}
 persist only references
 inject generic secrets into guest sessions
-route provider secrets into coop-proxy
+route provider secrets into iso-proxy
 operate without any external vault executable/service
 fail permanently when the original Secure Enclave key is lost
 ```

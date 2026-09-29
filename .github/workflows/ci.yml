@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The Swift host (root package, product `coop`) and the Apple runtime.
+  # The Swift host (root package, product `iso`) and the Apple runtime.
   # Release calls this workflow, so these jobs also gate release builds.
   check:
     name: Host and runtime
@@ -58,10 +58,10 @@ jobs:
       # Replays the results recorded from the baseline host before its removal.
       - name: Command, lifecycle, data-root and CLI-surface baselines
         run: |
-          python3 tests/test-swift-host-read-parity.py --golden tests/baseline/parity/read.json --swift .build/debug/coop
-          python3 tests/test-swift-host-lifecycle-parity.py --golden tests/baseline/parity/lifecycle.json --swift .build/debug/coop
-          python3 tests/test-swift-host-data-root-parity.py --golden tests/baseline/parity/data-root.json --swift .build/debug/coop
-          python3 tests/test-swift-host-cli-surface.py --swift .build/debug/coop
+          python3 tests/test-swift-host-read-parity.py --golden tests/baseline/parity/read.json --swift .build/debug/iso
+          python3 tests/test-swift-host-lifecycle-parity.py --golden tests/baseline/parity/lifecycle.json --swift .build/debug/iso
+          python3 tests/test-swift-host-data-root-parity.py --golden tests/baseline/parity/data-root.json --swift .build/debug/iso
+          python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
 
       - name: Release preflight regression tests
         run: python3 tests/test-preflight-release.py
@@ -78,14 +78,14 @@ jobs:
       - name: Integration test — installer provenance
         run: ./tests/integration-install.sh
 
-      - name: Integration test — coop update
+      - name: Integration test — iso update
         run: ./tests/integration-update.sh
 
-      - name: Integration test — coop uninstall
+      - name: Integration test — iso uninstall
         run: ./tests/integration-uninstall.sh
 
-      - name: coop-sandbox build and unit tests
-        run: swift test --package-path coop-sandbox --force-resolved-versions --no-parallel
+      - name: iso-sandbox build and unit tests
+        run: swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
 
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke
@@ -113,8 +113,8 @@ jobs:
         shell: bash
         run: |
           ulimit -n 8192
-          swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
-          swift test --package-path coop-proxy --force-resolved-versions
+          swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
+          swift test --package-path iso-proxy --force-resolved-versions
           python3 scripts/test-swift-proxy-process.py --skip-tls
 
       - name: Shared forwarding and disconnect corpus

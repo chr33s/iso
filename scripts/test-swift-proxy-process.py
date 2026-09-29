@@ -13,7 +13,7 @@ import time
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SECRET = "coop-process-test-secret-never-real"
+SECRET = "iso-process-test-secret-never-real"
 TOKEN = "a" * 64
 
 
@@ -47,10 +47,10 @@ def main():
     parser.add_argument("--skip-tls", action="store_true")
     args = parser.parse_args()
     directory = subprocess.check_output(
-        ["swift", "build", "--package-path", str(ROOT / "coop-proxy"), "--show-bin-path"], text=True).strip()
-    binary = (Path(directory) / "coop-proxy-swift").resolve()
+        ["swift", "build", "--package-path", str(ROOT / "iso-proxy"), "--show-bin-path"], text=True).strip()
+    binary = (Path(directory) / "iso-proxy-swift").resolve()
     command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(binary),
-               "-f", str(ROOT / "Sources/CoopHost/seatbelt-proxy.sb"), str(binary)]
+               "-f", str(ROOT / "Sources/IsoHost/seatbelt-proxy.sb"), str(binary)]
 
     # Keep stdin open and unwritten: an unconfined process must fail before
     # waiting for a credential, much less binding a listener.
@@ -124,10 +124,10 @@ def main():
         assert result.returncode == 0, result.stderr
         assert "DNS/system TLS passed" in result.stderr
         print("PASS production profile file/exec/egress denial and live DNS/system TLS", flush=True)
-        profile = (ROOT / "Sources/CoopHost/seatbelt-proxy.sb").read_text()
+        profile = (ROOT / "Sources/IsoHost/seatbelt-proxy.sb").read_text()
         permission = '(allow mach-lookup (global-name "com.apple.trustd.agent"))'
         assert profile.count(permission) == 1
-        with tempfile.TemporaryDirectory(prefix="coop-proxy-profile-") as directory:
+        with tempfile.TemporaryDirectory(prefix="iso-proxy-profile-") as directory:
             mutant = Path(directory) / "without-trustd.sb"
             mutant.write_text(profile.replace(permission, ""))
             restricted = command.copy()

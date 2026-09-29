@@ -1,6 +1,6 @@
 Manage the coding agents installed inside a VM
 
-Usage: coop agent <COMMAND>
+Usage: iso agent <COMMAND>
 
 Commands:
   update  Update coding agent(s) to the latest version inside the VM

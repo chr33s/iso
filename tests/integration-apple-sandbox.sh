@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Real-hardware checks for coop-sandbox (coop-sandbox), the runtime
+# Real-hardware checks for iso-sandbox (iso-sandbox), the runtime
 # behind the `apple-container` build. Unit tests cannot boot VMs; this boots
 # real ones and checks what the backend's isolation contract relies on
 # (docs/trust-model.md): peer isolation between sandboxes, no host mounts,
@@ -11,21 +11,21 @@ set -uo pipefail
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity persistence
-#           resources growth snapshots recovery concurrency coop
+#           resources growth snapshots recovery concurrency iso
 #   CYCLES=5 stop/start cycles; CONCURRENCY="1 4 8" sandboxes per round;
 #   KILL_FRACTIONS="50 75 90 95 100 105 110": an interrupted mutation is
 #   killed at these percentages of the time an uninterrupted one took;
-#   COOP_KILL_FRACTIONS="25 50 75" the same for coop's.
+#   ISO_KILL_FRACTIONS="25 50 75" the same for iso's.
 #
 # Needs Apple Silicon, macOS 27+, Xcode 27, jq, and stock Apple `container`
 # with its service running (builds the test image, supplies the kernel). It
 # touches nothing but its own state root and image tag, both removed on exit.
-# The coop phase also builds `coop` (into the work
+# The iso phase also builds `iso` (into the work
 # directory) and drives it end to end against a data directory there; the
-# images `coop setup` builds in the stock `container` store are deleted too.
+# images `iso setup` builds in the stock `container` store are deleted too.
 
 if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
-    echo "SKIP: coop-sandbox needs an Apple Silicon Mac"
+    echo "SKIP: iso-sandbox needs an Apple Silicon Mac"
     exit 0
 fi
 CONTAINER=""
@@ -51,18 +51,18 @@ want() { [[ -z "$ONLY" || "$ONLY" == *",$1,"* ]]; }
 cd "$(dirname "$0")/.." || exit 1
 FIXTURES="$PWD/tests/fixtures/apple-sandbox"
 RUN="t$(openssl rand -hex 4)"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/coop-sandbox-test.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/iso-sandbox-test.XXXXXX")"
 ROOT="$WORK/root"
-IMAGE="local/coop-sandbox-test:$RUN"
-MAINTENANCE="local/coop-sandbox-test-maintenance:$RUN"
-SANDBOX="$WORK/bin/coop-sandbox"
+IMAGE="local/iso-sandbox-test:$RUN"
+MAINTENANCE="local/iso-sandbox-test-maintenance:$RUN"
+SANDBOX="$WORK/bin/iso-sandbox"
 CYCLES="${CYCLES:-5}"
 CONCURRENCY="${CONCURRENCY:-1 4 8}"
 KILL_FRACTIONS="${KILL_FRACTIONS:-50 75 90 95 100 105 110}"
-COOP_KILL_FRACTIONS="${COOP_KILL_FRACTIONS:-25 50 75}"
+ISO_KILL_FRACTIONS="${ISO_KILL_FRACTIONS:-25 50 75}"
 # A secret that exists only in this script's environment; it must never reach
 # the runtime, its logs, the image, or a guest.
-CANARY="coop-test-canary-$(openssl rand -hex 16)"
+CANARY="iso-test-canary-$(openssl rand -hex 16)"
 export CANARY
 
 pass_count=0
@@ -127,7 +127,7 @@ summary() {
 sbx() { "$SANDBOX" "$1" --root "$ROOT" "${@:2}"; }
 # Two-word subcommands take --root after both words.
 sbx2() { "$SANDBOX" "$1" "$2" --root "$ROOT" "${@:3}"; }
-name() { echo "coop-test-$1-$RUN"; }
+name() { echo "iso-test-$1-$RUN"; }
 create() { sbx create "$1" --image "$IMAGE" --cpus "${2:-2}" --memory-mib "${3:-2048}" --disk-gib "${4:-8}" --owner "$RUN" >/dev/null; }
 state() { sbx inspect "$1" 2>/dev/null | jq -r .status 2>/dev/null || echo missing; }
 guest() { local n="$1"; shift; sbx exec "$n" -- "$@"; }
@@ -157,7 +157,7 @@ ready() {
 }
 
 boot() { sbx start "$1" >/dev/null && ready "$1"; }
-verify() { guest "$1" /usr/local/sbin/coop-test-verify; }
+verify() { guest "$1" /usr/local/sbin/iso-test-verify; }
 
 # ── Peer isolation probes ─────────────────────────────────────
 
@@ -168,8 +168,8 @@ MIN_PROBES=17
 listeners() {
     guest "$1" sh -c '
         sysctl -qw net.ipv4.icmp_echo_ignore_broadcasts=0
-        systemctl is-active --quiet coop-test-tcp || systemd-run --quiet --unit=coop-test-tcp socat TCP6-LISTEN:7777,ipv6only=0,fork,reuseaddr SYSTEM:"echo pong"
-        systemctl is-active --quiet coop-test-udp || systemd-run --quiet --unit=coop-test-udp socat UDP6-RECVFROM:7778,ipv6only=0,fork SYSTEM:"echo upong"' >/dev/null
+        systemctl is-active --quiet iso-test-tcp || systemd-run --quiet --unit=iso-test-tcp socat TCP6-LISTEN:7777,ipv6only=0,fork,reuseaddr SYSTEM:"echo pong"
+        systemctl is-active --quiet iso-test-udp || systemd-run --quiet --unit=iso-test-udp socat UDP6-RECVFROM:7778,ipv6only=0,fork SYSTEM:"echo upong"' >/dev/null
     sleep 0.5
 }
 
@@ -209,7 +209,7 @@ cleanup() {
             done
         fi
         "$CONTAINER" image delete "$IMAGE" "$MAINTENANCE" >/dev/null 2>&1
-        coop_cleanup
+        iso_cleanup
         rm -rf "$WORK"
     else
         echo "Kept $WORK"
@@ -218,24 +218,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── coop end to end ──────────────────────────────────────────
+# ── iso end to end ──────────────────────────────────────────
 
-COOP="$WORK/swift-build/debug/coop"
-CDATA="$WORK/coop-data"
+ISO="$WORK/swift-build/debug/iso"
+CDATA="$WORK/iso-data"
 CSTATE="$CDATA/backends/apple-container-v1"
 CROOT="$CSTATE/runtime"
-CCFG="$WORK/coop.jsonc"
+CCFG="$WORK/iso.jsonc"
 # Same config with a short boot deadline, for a restart whose guest never
 # starts sshd.
-CCFG_FAIL="$WORK/coop-fail.jsonc"
+CCFG_FAIL="$WORK/iso-fail.jsonc"
 
-coop() { "$COOP" --config "$CCFG" "$@" </dev/null; }
+iso() { "$ISO" --config "$CCFG" "$@" </dev/null; }
 csbx() { "$SANDBOX" "$1" --root "$CROOT" "${@:2}"; }
 machine_id() { jq -r .machine_id "$CSTATE/instances/$1/apple-machine.json"; }
 record() { csbx inspect "$(machine_id "$1")" | jq -r ".record.$2"; }
-cstate() { coop status "$1" --json | jq -r .state; }
+cstate() { iso status "$1" --json | jq -r .state; }
 
-coop_cleanup() {
+iso_cleanup() {
     [[ -d "$CROOT" && -x "$SANDBOX" ]] || return 0
     local id owner short
     for id in $(csbx list 2>/dev/null | jq -r '.[].id' 2>/dev/null); do
@@ -246,7 +246,7 @@ coop_cleanup() {
     short="$(jq -r '.owner_id // empty' "$CSTATE/owner.json" 2>/dev/null | cut -c1-8)"
     [[ -n "$short" ]] || return 0
     local images
-    images="$("$CONTAINER" image list --quiet 2>/dev/null | grep "^local/coop-$short")"
+    images="$("$CONTAINER" image list --quiet 2>/dev/null | grep "^local/iso-$short")"
     # shellcheck disable=SC2086 # one image reference per word.
     [[ -z "$images" ]] || "$CONTAINER" image delete $images >/dev/null 2>&1
 }
@@ -279,10 +279,10 @@ B="$(name b)"
 
 echo "=== Phase: setup ==="
 mkdir -p "$WORK/bin"
-if ./scripts/build-coop-sandbox.sh "$WORK" >"$WORK/build.log" 2>&1; then
-    pass "coop-sandbox builds and signs"
+if ./scripts/build-iso-sandbox.sh "$WORK" >"$WORK/build.log" 2>&1; then
+    pass "iso-sandbox builds and signs"
 else
-    fail "coop-sandbox builds and signs" "see $WORK/build.log"
+    fail "iso-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
 check "version reports protocol 4 on containerization 0.45.0" \
@@ -301,8 +301,8 @@ imported="$("$SANDBOX" image import --root "$ROOT" --oci-tar "$WORK/image.tar")"
 # shellcheck disable=SC2016 # jq program text.
 check "image imports into the private store" jq -e --arg r "$IMAGE" 'any(.reference == $r)' <<<"$imported"
 rm -f "$WORK/image.tar"
-# A maintenance image equivalent to the one coop builds
-# (BuildContext.maintenanceDockerfile in Sources/CoopHost/ImageBuild.swift):
+# A maintenance image equivalent to the one iso builds
+# (BuildContext.maintenanceDockerfile in Sources/IsoHost/ImageBuild.swift):
 # Ubuntu with e2fsprogs.
 mkdir -p "$WORK/maintenance"
 printf '%s\n' 'FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3' \
@@ -403,11 +403,11 @@ if want exposure; then
     mi="$(guest "$A" cat /proc/self/mountinfo)"
     check "no virtiofs, 9p, FUSE, NFS, or SMB mounts" refuses grep -Eq ' - (virtiofs|9p|fuse|fuse\.[^ ]+|nfs4?|cifs|smb3?|smbfs) ' <<<"$mi"
     check "no host path in the mount table" refuses grep -q '/Users/' <<<"$mi"
-    token="coop-test-file-$(openssl rand -hex 12)"
-    printf '%s\n' "$token" >"$HOME/.coop-test-canary-$RUN"
+    token="iso-test-file-$(openssl rand -hex 12)"
+    printf '%s\n' "$token" >"$HOME/.iso-test-canary-$RUN"
     check "a host home file is not visible in the guest" \
         test -z "$(guest "$A" sh -c "grep -rslF '$token' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null | head -1")"
-    rm -f "$HOME/.coop-test-canary-$RUN"
+    rm -f "$HOME/.iso-test-canary-$RUN"
     genv="$(guest "$A" sh -c 'tr "\0" "\n" < /proc/1/environ; env')"
     check "no SSH_AUTH_SOCK in the guest" refuses grep -q SSH_AUTH_SOCK <<<"$genv"
     socks="$(guest "$A" sh -c 'find / -xdev -type s 2>/dev/null')"
@@ -417,7 +417,7 @@ if want exposure; then
         test -z "$(guest "$A" sh -c 'for p in $(seq 1 1024) 2375 5000 8080 268435456 268435457; do timeout 1 socat -u /dev/null VSOCK-CONNECT:2:$p 2>/dev/null && echo $p; done; true')"
     leaked=""
     # shellcheck disable=SC2009 # pgrep cannot match the environment `ps -E` shows.
-    ps -axwwE -o command= | grep -E 'coop-sandbox (run|start)' | grep -v grep | grep -qF "$CANARY" && leaked+=" runtime-env"
+    ps -axwwE -o command= | grep -E 'iso-sandbox (run|start)' | grep -v grep | grep -qF "$CANARY" && leaked+=" runtime-env"
     grep -qF "$CANARY" "$ROOT/sandboxes/$A/owner.log" "$ROOT/sandboxes/$A/boot.log" 2>/dev/null && leaked+=" logs"
     sbx inspect "$A" | grep -qF "$CANARY" && leaked+=" inspect"
     [[ -n "$(guest "$A" sh -c "grep -rlsF '$CANARY' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null | head -1")" ]] && leaked+=" guest"
@@ -428,7 +428,7 @@ fi
 if want identity; then
     echo ""
     echo "=== Phase: identity ==="
-    ssh-keygen -q -t ed25519 -N '' -C "coop-test-$RUN" -f "$KEY"
+    ssh-keygen -q -t ed25519 -N '' -C "iso-test-$RUN" -f "$KEY"
     : >"$KNOWN"
     enroll "$A"
     check "strict SSH against the key read over the native channel" test "$(pinned "$A" echo ok)" = ok
@@ -456,19 +456,19 @@ if want persistence; then
     echo ""
     echo "=== Phase: persistence ==="
     m="$(openssl rand -hex 8)"
-    guest "$A" sh -c "echo $m > /var/lib/coop-test/marker && docker volume create coopvol >/dev/null && docker run --rm -v coopvol:/v alpine:3.20 sh -c 'echo $m > /v/m'"
+    guest "$A" sh -c "echo $m > /var/lib/iso-test/marker && docker volume create isovol >/dev/null && docker run --rm -v isovol:/v alpine:3.20 sh -c 'echo $m > /v/m'"
     before="$(verify "$A" | jq -c '{machine_id, ssh_host_key}')"
     lost=""
     ips=()
     for ((c = 1; c <= CYCLES; c++)); do
         u="$(openssl rand -hex 4)"
         # An unsynced write immediately before a normal stop must survive it.
-        guest "$A" sh -c "echo $u > /var/lib/coop-test/unsynced"
+        guest "$A" sh -c "echo $u > /var/lib/iso-test/unsynced"
         sbx stop "$A"
         boot "$A" || { lost+=" boot@$c"; break; }
-        [[ "$(guest "$A" cat /var/lib/coop-test/marker)" == "$m" ]] || lost+=" file@$c"
-        [[ "$(guest "$A" cat /var/lib/coop-test/unsynced)" == "$u" ]] || lost+=" unsynced@$c"
-        [[ "$(guest "$A" docker run --rm -v coopvol:/v alpine:3.20 cat /v/m)" == "$m" ]] || lost+=" docker@$c"
+        [[ "$(guest "$A" cat /var/lib/iso-test/marker)" == "$m" ]] || lost+=" file@$c"
+        [[ "$(guest "$A" cat /var/lib/iso-test/unsynced)" == "$u" ]] || lost+=" unsynced@$c"
+        [[ "$(guest "$A" docker run --rm -v isovol:/v alpine:3.20 cat /v/m)" == "$m" ]] || lost+=" docker@$c"
         [[ "$(verify "$A" | jq -c '{machine_id, ssh_host_key}')" == "$before" ]] || lost+=" identity@$c"
         ips+=("$(ip4 "$A")")
     done
@@ -512,14 +512,14 @@ if want growth; then
     create "$g" 2 2048 8
     boot "$g"
     m="$(openssl rand -hex 6)"
-    guest "$g" sh -c "echo $m > /var/lib/coop-test/marker"
+    guest "$g" sh -c "echo $m > /var/lib/iso-test/marker"
     key="$(guest "$g" cat /etc/ssh/ssh_host_ed25519_key.pub)"
     sbx stop "$g"
     check "grow refuses to shrink" refuses sbx grow "$g" --disk-gib 4
     check "8 -> 32 GiB grows offline" sbx grow "$g" --disk-gib 32
     boot "$g"
     check "the guest filesystem is 32 GiB" test "$(guest "$g" df -B1 --output=size / | tail -1 | xargs)" -ge $((31 * 1024 * 1024 * 1024))
-    check "data and host key survive the grow" test "$(guest "$g" cat /var/lib/coop-test/marker)$(guest "$g" cat /etc/ssh/ssh_host_ed25519_key.pub)" = "$m$key"
+    check "data and host key survive the grow" test "$(guest "$g" cat /var/lib/iso-test/marker)$(guest "$g" cat /etc/ssh/ssh_host_ed25519_key.pub)" = "$m$key"
     sbx stop "$g"
     # Same-sandbox races serialize in the runtime: of two identical grows,
     # exactly one applies; a start racing a grow either waits for it and boots
@@ -548,27 +548,27 @@ fi
 if want snapshots; then
     echo ""
     echo "=== Phase: snapshots ==="
-    guest "$A" sh -c 'echo A > /var/lib/coop-test/state && docker volume create cp >/dev/null && docker run --rm -v cp:/v alpine:3.20 sh -c "echo A > /v/s"'
+    guest "$A" sh -c 'echo A > /var/lib/iso-test/state && docker volume create cp >/dev/null && docker run --rm -v cp:/v alpine:3.20 sh -c "echo A > /v/s"'
     mid="$(guest "$A" cat /etc/machine-id)"
     # Adversarial: a root guest disables its own `rm`; the identity reset must
     # not depend on the guest's tools.
-    guest "$A" sh -c 'cp /usr/bin/rm /usr/bin/rm.coop-test && cp /usr/bin/true /usr/bin/rm && sync'
+    guest "$A" sh -c 'cp /usr/bin/rm /usr/bin/rm.iso-test && cp /usr/bin/true /usr/bin/rm && sync'
     sbx stop "$A"
     check "commit saves the stopped disk" sbx commit "$A" snap
     check "commit refuses an existing name without --replace" refuses sbx commit "$A" snap
     boot "$A"
-    guest "$A" sh -c 'echo B > /var/lib/coop-test/state && docker run --rm -v cp:/v alpine:3.20 sh -c "echo B > /v/s" && echo x > /var/lib/coop-test/after && sync'
+    guest "$A" sh -c 'echo B > /var/lib/iso-test/state && docker run --rm -v cp:/v alpine:3.20 sh -c "echo B > /v/s" && echo x > /var/lib/iso-test/after && sync'
     sbx stop "$A"
     gen="$(sbx inspect "$A" | jq .record.diskGeneration)"
     check "restore replaces the disk" sbx restore "$A" snap
     check "restore bumps the disk generation" test "$(sbx inspect "$A" | jq .record.diskGeneration)" -gt "$gen"
     boot "$A"
     check "files and Docker volumes are back at the committed state" \
-        test "$(guest "$A" cat /var/lib/coop-test/state)$(guest "$A" docker run --rm -v cp:/v alpine:3.20 cat /v/s)" = AA
-    check "writes after the commit are gone" refuses guest "$A" test -e /var/lib/coop-test/after
+        test "$(guest "$A" cat /var/lib/iso-test/state)$(guest "$A" docker run --rm -v cp:/v alpine:3.20 cat /v/s)" = AA
+    check "writes after the commit are gone" refuses guest "$A" test -e /var/lib/iso-test/after
     check "the restored disk generated a fresh identity, despite the guest's disabled rm" \
         test "$(guest "$A" cat /etc/machine-id)" != "$mid"
-    guest "$A" sh -c 'cp /usr/bin/rm.coop-test /usr/bin/rm'
+    guest "$A" sh -c 'cp /usr/bin/rm.iso-test /usr/bin/rm'
     c="$(name clone)"
     check "a new sandbox can be created from a committed disk" \
         sbx create "$c" --from-disk snap --cpus 2 --memory-mib 2048 --disk-gib 20 --owner "$RUN"
@@ -598,7 +598,7 @@ if want recovery; then
     check "start recovers it" boot "$r"
     # Owner killed while running: the VM dies with it and launchd respawns it.
     m="$(openssl rand -hex 4)"
-    guest "$r" sh -c "echo $m > /var/lib/coop-test/crash && sync"
+    guest "$r" sh -c "echo $m > /var/lib/iso-test/crash && sync"
     old="$(sbx inspect "$r" | jq .live.pid)"
     kill -9 "$old"
     respawned=0
@@ -609,7 +609,7 @@ if want recovery; then
     done
     check "launchd respawns a killed owner" test "$respawned" = 1
     ready "$r"
-    check "synced data survives the crash" test "$(guest "$r" cat /var/lib/coop-test/crash)" = "$m"
+    check "synced data survives the crash" test "$(guest "$r" cat /var/lib/iso-test/crash)" = "$m"
     # A client killed mid-stop does not stop the halt.
     "$SANDBOX" stop --root "$ROOT" "$r" >/dev/null 2>&1 &
     sleep 0.05
@@ -633,7 +633,7 @@ if want recovery; then
     tdir="$ROOT/sandboxes/$t"
     create "$t"
     boot "$t"
-    guest "$t" sh -c 'echo base > /var/lib/coop-test/txn && sync'
+    guest "$t" sh -c 'echo base > /var/lib/iso-test/txn && sync'
     sbx stop "$t"
     sbx commit "$t" txn-base >/dev/null
     rec() { sbx inspect "$t" | jq -r ".record.$1"; }
@@ -703,7 +703,7 @@ if want recovery; then
     restore_ms="$(timed_ms sbx restore "$t" txn-base)"
     check "the sandbox boots after the interrupted grows" boot "$t"
     check "its filesystem matches the recorded disk size" fs_matches_record
-    guest "$t" sh -c 'echo newer > /var/lib/coop-test/txn && sync'
+    guest "$t" sh -c 'echo newer > /var/lib/iso-test/txn && sync'
     sbx stop "$t"
 
     ms="$(timed_ms sbx commit "$t" txn-timed)"
@@ -755,7 +755,7 @@ if want recovery; then
     check "the sandbox boots after the interrupted restores" boot "$t"
     expected=newer
     ((applied > 0)) && expected=base
-    check "its content is the $expected disk the record describes" test "$(guest "$t" cat /var/lib/coop-test/txn)" = "$expected"
+    check "its content is the $expected disk the record describes" test "$(guest "$t" cat /var/lib/iso-test/txn)" = "$expected"
     check "its filesystem matches the recorded disk size" fs_matches_record
     sbx stop "$t"
     check "an uninterrupted grow still applies" sbx grow "$t" --disk-gib $(($(rec diskBytes) / 1073741824 + 1))
@@ -817,10 +817,10 @@ if want concurrency; then
     done
 fi
 
-if want coop; then
+if want iso; then
     echo ""
-    echo "=== Phase: coop ==="
-    # Free the host for coop's own sandbox.
+    echo "=== Phase: iso ==="
+    # Free the host for iso's own sandbox.
     sbx stop "$A" >/dev/null 2>&1
     sbx stop "$B" >/dev/null 2>&1
     kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
@@ -836,57 +836,57 @@ if want coop; then
     write_cfg '{"boot_timeout_seconds": 15}' >"$CCFG_FAIL"
     mkdir -p "$WORK/project"
     echo "$RUN" >"$WORK/project/marker"
-    if swift build --product coop --force-resolved-versions --scratch-path "$WORK/swift-build" \
-        >"$WORK/coop-build.log" 2>&1 &&
-        coop setup -y >"$WORK/coop-setup.log" 2>&1; then
-        pass "coop setup builds, verifies, and publishes the image"
+    if swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
+        >"$WORK/iso-build.log" 2>&1 &&
+        iso setup -y >"$WORK/iso-setup.log" 2>&1; then
+        pass "iso setup builds, verifies, and publishes the image"
     else
-        fail "coop setup builds, verifies, and publishes the image" "see $WORK/coop-build.log, $WORK/coop-setup.log"
+        fail "iso setup builds, verifies, and publishes the image" "see $WORK/iso-build.log, $WORK/iso-setup.log"
         summary
     fi
     printf 'export FROM_ENV_FILE="from file"\nOVERRIDDEN=file\n' >"$WORK/e2e.env"
-    if coop up "$WORK/project" --name e2e --no-agents --no-github --env-file "$WORK/e2e.env" \
-        --env OVERRIDDEN=cli >"$WORK/coop-up.log" 2>&1; then
-        pass "coop up creates and boots an instance"
+    if iso up "$WORK/project" --name e2e --no-agents --no-github --env-file "$WORK/e2e.env" \
+        --env OVERRIDDEN=cli >"$WORK/iso-up.log" 2>&1; then
+        pass "iso up creates and boots an instance"
     else
-        fail "coop up creates and boots an instance" "see $WORK/coop-up.log"
+        fail "iso up creates and boots an instance" "see $WORK/iso-up.log"
         summary
     fi
     check "status reports running on the apple-container backend" \
-        test "$(coop status e2e --json | jq -r '"\(.state) \(.backend)"')" = "running apple-container"
-    check "the workspace is copied in" test "$(coop exec e2e -- cat /workspace/marker)" = "$RUN"
+        test "$(iso status e2e --json | jq -r '"\(.state) \(.backend)"')" = "running apple-container"
+    check "the workspace is copied in" test "$(iso exec e2e -- cat /workspace/marker)" = "$RUN"
     # Positive control for the egress-none probes below: the same probe
     # succeeds from this open instance.
     check "egress open: the TCP probe reaches the Internet" \
-        coop exec e2e -- timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
+        iso exec e2e -- timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
     # shellcheck disable=SC2016 # Expand in the guest.
     check "--env-file values reach guest sessions, --env wins" \
-        test "$(coop exec e2e -- sh -c 'echo "$FROM_ENV_FILE/$OVERRIDDEN"')" = "from file/cli"
-    coop exec e2e -- sh -c 'echo before > ~/snap-before' >/dev/null
-    check "coop stop stops the sandbox" coop stop e2e
+        test "$(iso exec e2e -- sh -c 'echo "$FROM_ENV_FILE/$OVERRIDDEN"')" = "from file/cli"
+    iso exec e2e -- sh -c 'echo before > ~/snap-before' >/dev/null
+    check "iso stop stops the sandbox" iso stop e2e
     check "status reports stopped" test "$(cstate e2e)" = stopped
-    check "coop start boots it again" coop start e2e --no-agents --no-github
-    check "guest data survives stop/start" test "$(coop exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
+    check "iso start boots it again" iso start e2e --no-agents --no-github
+    check "guest data survives stop/start" test "$(iso exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
 
     # Secure Enclave secret store end to end (needs Touch ID, so opt-in):
     # generic references reach the guest, provider references never do, and
     # no host state holds a resolved value.
-    if [[ "${COOP_TEST_SECRETS:-0}" == 1 ]]; then
+    if [[ "${ISO_TEST_SECRETS:-0}" == 1 ]]; then
         printf 'integration passphrase\n' >"$WORK/pass"
         chmod 600 "$WORK/pass"
         GENERIC="generic-$(openssl rand -hex 8)"
         PROVIDER="sk-provider-$(openssl rand -hex 8)"
-        withpass() { COOP_SECRETS_PASSPHRASE_FD=3 coop "$@" 3<"$WORK/pass"; }
-        check "coop secrets init creates the store" withpass secrets init --accept-no-recovery
-        printf '%s' "$GENERIC" | COOP_SECRETS_PASSPHRASE_FD=3 "$COOP" --config "$CCFG" \
+        withpass() { ISO_SECRETS_PASSPHRASE_FD=3 iso "$@" 3<"$WORK/pass"; }
+        check "iso secrets init creates the store" withpass secrets init --accept-no-recovery
+        printf '%s' "$GENERIC" | ISO_SECRETS_PASSPHRASE_FD=3 "$ISO" --config "$CCFG" \
             secrets set generic --stdin 3<"$WORK/pass" >/dev/null 2>&1
-        printf '%s' "$PROVIDER" | COOP_SECRETS_PASSPHRASE_FD=3 "$COOP" --config "$CCFG" \
+        printf '%s' "$PROVIDER" | ISO_SECRETS_PASSPHRASE_FD=3 "$ISO" --config "$CCFG" \
             secrets set anthropic --stdin 3<"$WORK/pass" >/dev/null 2>&1
-        check "coop secrets list shows names only" \
+        check "iso secrets list shows names only" \
             test "$(withpass secrets list 2>/dev/null | cut -f1 | tr '\n' ' ')" = "anthropic generic "
         printf 'GENERIC={vault:generic}\nANTHROPIC_API_KEY={vault:anthropic}\n' >"$WORK/vault.env"
-        coop stop e2e >/dev/null 2>&1
-        check "coop start resolves --env-file references" \
+        iso stop e2e >/dev/null 2>&1
+        check "iso start resolves --env-file references" \
             withpass start e2e --no-agents --no-github --env-file "$WORK/vault.env"
         # shellcheck disable=SC2016 # Expand in the guest.
         check "a generic reference reaches guest sessions" \
@@ -902,65 +902,65 @@ if want coop; then
         # Later checks run without a passphrase: drop the saved references.
         rm -f "$CSTATE/instances/e2e/guest_env.json"
     else
-        skip "secret store end to end (set COOP_TEST_SECRETS=1; needs Touch ID)"
+        skip "secret store end to end (set ISO_TEST_SECRETS=1; needs Touch ID)"
     fi
 
     # Staged pull: guest changes reach the project only on --apply, and an
     # escaping symlink makes the stage inapplicable.
-    coop exec e2e -- sh -c 'echo guest > /workspace/marker && mkdir -p /workspace/new && echo n > /workspace/new/f' >/dev/null
-    review="$(coop diff e2e 2>/dev/null)"
-    check "coop diff lists the guest's changes" grep -q '^  M marker' <<<"$review"
-    check "coop diff leaves the project untouched" test "$(cat "$WORK/project/marker")" = "$RUN"
+    iso exec e2e -- sh -c 'echo guest > /workspace/marker && mkdir -p /workspace/new && echo n > /workspace/new/f' >/dev/null
+    review="$(iso diff e2e 2>/dev/null)"
+    check "iso diff lists the guest's changes" grep -q '^  M marker' <<<"$review"
+    check "iso diff leaves the project untouched" test "$(cat "$WORK/project/marker")" = "$RUN"
     stage_id="$(sed -n 's/^Stage \([0-9a-f]*\) .*/\1/p' <<<"$review")"
-    check "coop pull --apply applies the reviewed stage" coop pull e2e --apply --stage-id "$stage_id"
+    check "iso pull --apply applies the reviewed stage" iso pull e2e --apply --stage-id "$stage_id"
     check "the applied change reached the project" test "$(cat "$WORK/project/marker")" = guest
     check "the applied stage is removed" test ! -e "$CSTATE/instances/e2e/stage"
-    coop exec e2e -- ln -s /etc/passwd /workspace/escape >/dev/null
+    iso exec e2e -- ln -s /etc/passwd /workspace/escape >/dev/null
     check "a stage with an escaping symlink is inapplicable" \
-        grep -q 'cannot be applied' <<<"$(coop diff e2e --stat 2>/dev/null)"
-    check "coop pull --apply refuses it" refuses coop pull e2e --apply
-    check "coop pull --discard removes the stage" coop pull e2e --discard
+        grep -q 'cannot be applied' <<<"$(iso diff e2e --stat 2>/dev/null)"
+    check "iso pull --apply refuses it" refuses iso pull e2e --apply
+    check "iso pull --discard removes the stage" iso pull e2e --discard
     check "the escape did not reach the project" test ! -e "$WORK/project/escape"
-    coop exec e2e -- rm /workspace/escape >/dev/null
+    iso exec e2e -- rm /workspace/escape >/dev/null
 
-    # What coop's own sandbox exposes, with a live agent and the canary in
-    # coop's environment.
+    # What iso's own sandbox exposes, with a live agent and the canary in
+    # iso's environment.
     mid="$(machine_id e2e)"
     eff="$(csbx inspect "$mid" | jq .effective)"
-    check "coop's sandbox: kernel pseudo-filesystems only" \
+    check "iso's sandbox: kernel pseudo-filesystems only" \
         jq -e '[.mounts[] | select(.type | IN("proc","sysfs","devtmpfs","mqueue","tmpfs","cgroup2","devpts") | not)] | length == 0' <<<"$eff"
-    check "coop's sandbox: no relays, ports, or agent forwarding" \
+    check "iso's sandbox: no relays, ports, or agent forwarding" \
         jq -e '.socketRelays == 0 and .publishedPorts == 0 and .sshAgentForwarding == false' <<<"$eff"
-    mi="$(coop exec e2e -- cat /proc/self/mountinfo)"
-    check "coop's guest: no file-sharing mounts or host paths" \
+    mi="$(iso exec e2e -- cat /proc/self/mountinfo)"
+    check "iso's guest: no file-sharing mounts or host paths" \
         refuses grep -Eq ' - (virtiofs|9p|fuse|fuse\.[^ ]+|nfs4?|cifs|smb3?|smbfs) |/Users/' <<<"$mi"
     # shellcheck disable=SC2016 # Expand in the guest.
     agent="$(
         eval "$(ssh-agent -s)" >/dev/null
-        coop exec e2e -- sh -c 'echo ${SSH_AUTH_SOCK:-none}'
+        iso exec e2e -- sh -c 'echo ${SSH_AUTH_SOCK:-none}'
         ssh-agent -k >/dev/null
     )"
-    check "coop exec forwards no host agent" test "$agent" = none
+    check "iso exec forwards no host agent" test "$agent" = none
     # The pattern splits the canary with an empty group: sudo logs its
     # command line to the guest journal, which must not be a match.
     pattern="${CANARY:0:24}()${CANARY:24}"
-    leaks="$(coop exec e2e -- sudo sh -c "grep -rlsE '$pattern' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev | head -3
+    leaks="$(iso exec e2e -- sudo sh -c "grep -rlsE '$pattern' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev | head -3
         cat /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | grep -cE '$pattern'")"
     if [[ "$leaks" == 0 ]]; then
-        pass "the canary in coop's environment reaches no guest file or process"
+        pass "the canary in iso's environment reaches no guest file or process"
     else
-        fail "the canary in coop's environment reaches no guest file or process" "$(tr '\n' ' ' <<<"$leaks")"
+        fail "the canary in iso's environment reaches no guest file or process" "$(tr '\n' ' ' <<<"$leaks")"
     fi
 
-    # Pinned identity: coop refuses a guest whose host key changed, both on a
+    # Pinned identity: iso refuses a guest whose host key changed, both on a
     # live connection and at the next start.
-    coop exec e2e -- sudo sh -c 'cp -a /etc/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key.pub /root/ &&
+    iso exec e2e -- sudo sh -c 'cp -a /etc/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key.pub /root/ &&
         rm -f /etc/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key.pub &&
         ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key && systemctl restart ssh' >/dev/null 2>&1
-    check "coop exec refuses a changed host key" refuses coop exec e2e -- true
-    coop stop e2e >/dev/null 2>&1
-    changed="$(coop start e2e --no-agents --no-github 2>&1)"
-    check "coop start refuses a changed host key" grep -q APPLE_HOST_KEY_CHANGED <<<"$changed"
+    check "iso exec refuses a changed host key" refuses iso exec e2e -- true
+    iso stop e2e >/dev/null 2>&1
+    changed="$(iso start e2e --no-agents --no-github 2>&1)"
+    check "iso start refuses a changed host key" grep -q APPLE_HOST_KEY_CHANGED <<<"$changed"
     check "the refused start leaves the sandbox stopped" test "$(csbx inspect "$mid" | jq -r .status)" = stopped
     # repair CMD...: run CMD as root over the runtime's own channel, which
     # needs no SSH, with the sandbox stopped before and after.
@@ -971,46 +971,46 @@ if want coop; then
         csbx stop "$mid" >/dev/null
     }
     repair cp -a /root/ssh_host_ed25519_key /root/ssh_host_ed25519_key.pub /etc/ssh/
-    check "the pinned key restored, coop starts again" coop start e2e --no-agents --no-github
+    check "the pinned key restored, iso starts again" iso start e2e --no-agents --no-github
 
     # sshd will not start on the next boot, so a restart after a resize fails.
-    coop exec e2e -- sudo systemctl mask ssh.service ssh.socket >/dev/null 2>&1
-    coop stop e2e >/dev/null 2>&1
-    check "resize --mem/--vcpus records the change" coop resize e2e --mem 3072 --vcpus 3
+    iso exec e2e -- sudo systemctl mask ssh.service ssh.socket >/dev/null 2>&1
+    iso stop e2e >/dev/null 2>&1
+    check "resize --mem/--vcpus records the change" iso resize e2e --mem 3072 --vcpus 3
     check "the runtime record holds the new memory" test "$(record e2e memoryBytes)" = $((3072 * 1024 * 1024))
     check "a failed resize --start is refused" \
-        refuses "$COOP" --config "$CCFG_FAIL" resize e2e --mem 4096 --start
+        refuses "$ISO" --config "$CCFG_FAIL" resize e2e --mem 4096 --start
     check "the failed restart leaves the sandbox stopped" test "$(csbx inspect "$(machine_id e2e)" | jq -r .status)" = stopped
     check "the failed restart rolls the memory back" test "$(record e2e memoryBytes)" = $((3072 * 1024 * 1024))
     check "no journal is left behind" test ! -e "$CSTATE/instances/e2e/operation.json"
     repair systemctl unmask ssh.service ssh.socket
-    resize_ms="$(timed_ms coop resize e2e --size 12)"
+    resize_ms="$(timed_ms iso resize e2e --size 12)"
     check "resize --size grows the disk" test "$(record e2e diskBytes)" = $((12 * 1073741824))
-    check "start after the resizes succeeds" coop start e2e --no-agents --no-github
-    check "the guest sees the new vCPU count (+1 runtime vCPU)" test "$(coop exec e2e -- nproc)" = 4
-    size="$(coop exec e2e -- df -B1 --output=size / | tail -1 | xargs)"
+    check "start after the resizes succeeds" iso start e2e --no-agents --no-github
+    check "the guest sees the new vCPU count (+1 runtime vCPU)" test "$(iso exec e2e -- nproc)" = 4
+    size="$(iso exec e2e -- df -B1 --output=size / | tail -1 | xargs)"
     check "the guest sees the grown disk" test "${size:-0}" -ge $((12 * 1024 * 1024 * 1024 * 95 / 100))
 
-    coop stop e2e >/dev/null 2>&1
-    check "coop commit saves an image" coop commit e2e --image e2e-snap
-    coop start e2e --no-agents --no-github >/dev/null 2>&1
-    coop exec e2e -- sh -c 'echo after > ~/snap-after' >/dev/null
-    coop stop e2e >/dev/null 2>&1
+    iso stop e2e >/dev/null 2>&1
+    check "iso commit saves an image" iso commit e2e --image e2e-snap
+    iso start e2e --no-agents --no-github >/dev/null 2>&1
+    iso exec e2e -- sh -c 'echo after > ~/snap-after' >/dev/null
+    iso stop e2e >/dev/null 2>&1
     gen="$(record e2e diskGeneration)"
-    restore_ms="$(timed_ms coop restore e2e --image e2e-snap)"
-    check "coop restore replaces the disk" test "$(record e2e diskGeneration)" -gt "$gen"
-    check "start after restore re-pins the new host key" coop start e2e --no-agents --no-github
-    check "restore keeps data from before the commit" test "$(coop exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
+    restore_ms="$(timed_ms iso restore e2e --image e2e-snap)"
+    check "iso restore replaces the disk" test "$(record e2e diskGeneration)" -gt "$gen"
+    check "start after restore re-pins the new host key" iso start e2e --no-agents --no-github
+    check "restore keeps data from before the commit" test "$(iso exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
     check "restore drops data written after the commit" \
-        test "$(coop exec e2e -- sh -c 'test -e ~/snap-after && echo present || echo absent')" = absent
+        test "$(iso exec e2e -- sh -c 'test -e ~/snap-after && echo present || echo absent')" = absent
 
-    # Interrupted coop mutations: SIGKILL coop and its runtime client partway
-    # through; the next start reconciles coop's journal with the runtime.
-    # kill_coop DELAY ARGS...: run coop ARGS, kill it and its children after DELAY.
-    kill_coop() {
+    # Interrupted iso mutations: SIGKILL iso and its runtime client partway
+    # through; the next start reconciles iso's journal with the runtime.
+    # kill_iso DELAY ARGS...: run iso ARGS, kill it and its children after DELAY.
+    kill_iso() {
         local d="$1" pid
         shift
-        "$COOP" --config "$CCFG" "$@" </dev/null >/dev/null 2>&1 &
+        "$ISO" --config "$CCFG" "$@" </dev/null >/dev/null 2>&1 &
         pid=$!
         sleep "$d"
         pkill -9 -P "$pid" 2>/dev/null
@@ -1018,42 +1018,42 @@ if want coop; then
         wait "$pid" 2>/dev/null
     }
     gib=12
-    for f in $COOP_KILL_FRACTIONS; do
+    for f in $ISO_KILL_FRACTIONS; do
         for op in restore resize; do
-            coop stop e2e >/dev/null 2>&1
+            iso stop e2e >/dev/null 2>&1
             if [[ "$op" == restore ]]; then
                 d="$(delay_s "$restore_ms" "$f")"
-                kill_coop "$d" restore e2e --image e2e-snap
+                kill_iso "$d" restore e2e --image e2e-snap
             else
                 d="$(delay_s "$resize_ms" "$f")"
                 gib=$((gib + 1))
-                kill_coop "$d" resize e2e --size "$gib"
+                kill_iso "$d" resize e2e --size "$gib"
             fi
-            check "a $op killed after ${d}s: the next start recovers" coop start e2e --no-agents --no-github
+            check "a $op killed after ${d}s: the next start recovers" iso start e2e --no-agents --no-github
             check "a $op killed after ${d}s: no journal is left" test ! -e "$CSTATE/instances/e2e/operation.json"
-            check "a $op killed after ${d}s: pinned SSH works" test "$(coop exec e2e -- echo ok 2>/dev/null)" = ok
-            size="$(coop exec e2e -- df -B1 --output=size / | tail -1 | xargs)"
+            check "a $op killed after ${d}s: pinned SSH works" test "$(iso exec e2e -- echo ok 2>/dev/null)" = ok
+            size="$(iso exec e2e -- df -B1 --output=size / | tail -1 | xargs)"
             check "a $op killed after ${d}s: the filesystem matches the record" \
                 test "${size:-0}" -ge $(($(record e2e diskBytes) * 95 / 100))
         done
     done
 
-    # A disk-generation increase coop did not make does not authorize a new
+    # A disk-generation increase iso did not make does not authorize a new
     # host key (INV-07): an out-of-band restore resets the guest's identity.
-    coop stop e2e >/dev/null 2>&1
+    iso stop e2e >/dev/null 2>&1
     mid="$(machine_id e2e)"
     csbx commit "$mid" oob >/dev/null && csbx restore "$mid" oob >/dev/null
-    check "coop start refuses a restore it did not make" refuses coop start e2e --no-agents --no-github
+    check "iso start refuses a restore it did not make" refuses iso start e2e --no-agents --no-github
     check "that refused start leaves the sandbox stopped" test "$(csbx inspect "$mid" | jq -r .status)" = stopped
     "$SANDBOX" disk delete --root "$CROOT" oob >/dev/null 2>&1
 
     # egress none: a host-only sandbox keeps SSH but has no route beyond the
     # host and no resolver; an `open` configuration refuses to hand it out.
-    jq '. + {egress: "none"}' "$CCFG" >"$WORK/coop-none.jsonc"
-    none() { "$COOP" --config "$WORK/coop-none.jsonc" "$@" </dev/null; }
+    jq '. + {egress: "none"}' "$CCFG" >"$WORK/iso-none.jsonc"
+    none() { "$ISO" --config "$WORK/iso-none.jsonc" "$@" </dev/null; }
     mkdir -p "$WORK/project-none"
-    if none up "$WORK/project-none" --name e2e-none --no-agents --no-github >"$WORK/coop-up-none.log" 2>&1; then
-        pass "egress none: coop up creates and boots a host-only instance"
+    if none up "$WORK/project-none" --name e2e-none --no-agents --no-github >"$WORK/iso-up-none.log" 2>&1; then
+        pass "egress none: iso up creates and boots a host-only instance"
         check "egress none: the runtime records host_only" \
             test "$(csbx inspect "$(machine_id e2e-none)" | jq -r .record.network)" = host_only
         check "egress none: guest SSH works" test "$(none exec e2e-none -- echo ok 2>/dev/null)" = ok
@@ -1061,17 +1061,17 @@ if want coop; then
             refuses none exec e2e-none -- timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
         check "egress none: no DNS resolution" \
             refuses none exec e2e-none -- timeout 5 getent hosts example.com
-        check "egress none: an open configuration refuses the instance" refuses coop exec e2e-none -- true
+        check "egress none: an open configuration refuses the instance" refuses iso exec e2e-none -- true
         none destroy e2e-none >/dev/null 2>&1
     else
-        fail "egress none: coop up creates and boots a host-only instance" "see $WORK/coop-up-none.log"
+        fail "egress none: iso up creates and boots a host-only instance" "see $WORK/iso-up-none.log"
     fi
 
     # Session TTL: the owner halts the VM at the deadline on its own.
-    jq '. + {limits: {session_ttl: 60}}' "$CCFG" >"$WORK/coop-ttl.jsonc"
-    ttl() { "$COOP" --config "$WORK/coop-ttl.jsonc" "$@" </dev/null; }
+    jq '. + {limits: {session_ttl: 60}}' "$CCFG" >"$WORK/iso-ttl.jsonc"
+    ttl() { "$ISO" --config "$WORK/iso-ttl.jsonc" "$@" </dev/null; }
     mkdir -p "$WORK/project-ttl"
-    if ttl up "$WORK/project-ttl" --name e2e-ttl --no-agents --no-github >"$WORK/coop-up-ttl.log" 2>&1; then
+    if ttl up "$WORK/project-ttl" --name e2e-ttl --no-agents --no-github >"$WORK/iso-up-ttl.log" 2>&1; then
         check "session ttl: the runtime records the deadline" \
             test "$(csbx inspect "$(machine_id e2e-ttl)" | jq -r '.record.expiresAt != null')" = true
         for _ in $(seq 60); do
@@ -1080,20 +1080,20 @@ if want coop; then
         done
         check "session ttl: the VM stops itself at the deadline" \
             test "$(csbx inspect "$(machine_id e2e-ttl)" | jq -r .status)" = stopped
-        check "session ttl: coop start begins a new session" ttl start e2e-ttl --no-agents --no-github
+        check "session ttl: iso start begins a new session" ttl start e2e-ttl --no-agents --no-github
         ttl destroy e2e-ttl >/dev/null 2>&1
     else
-        fail "session ttl: coop up boots the instance" "see $WORK/coop-up-ttl.log"
+        fail "session ttl: iso up boots the instance" "see $WORK/iso-up-ttl.log"
     fi
 
-    check "coop audit shows the recorded boots" grep -q '"event":"boot"' <<<"$(coop audit e2e 2>/dev/null)"
-    check "coop audit --suggest-config is advisory JSONC" \
-        grep -q "Advisory only" <<<"$(coop audit e2e --suggest-config 2>/dev/null)"
+    check "iso audit shows the recorded boots" grep -q '"event":"boot"' <<<"$(iso audit e2e 2>/dev/null)"
+    check "iso audit --suggest-config is advisory JSONC" \
+        grep -q "Advisory only" <<<"$(iso audit e2e --suggest-config 2>/dev/null)"
 
-    check "coop destroy removes the instance" coop destroy e2e
+    check "iso destroy removes the instance" iso destroy e2e
     check "the runtime has no sandbox left" test "$(csbx list | jq length)" = 0
     check "the instance state is gone" test ! -e "$CSTATE/instances/e2e"
-    check "the committed image can be deleted" coop images --delete e2e-snap
+    check "the committed image can be deleted" iso images --delete e2e-snap
 fi
 
 summary

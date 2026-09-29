@@ -1,14 +1,14 @@
-// coop configuration (JSONC: JSON plus // and /* */ comments).
-// `coop setup --config-only` writes this template to ~/.coop/config.jsonc.
+// iso configuration (JSONC: JSON plus // and /* */ comments).
+// `iso setup --config-only` writes this template to ~/.iso/config.jsonc.
 // Uncomment members to override defaults; an empty object gives the defaults.
-// Trailing commas are not accepted. Run `coop validate` to check the file.
+// Trailing commas are not accepted. Run `iso validate` to check the file.
 {
-  // "data_dir": "~/.coop",        // VM artifacts: images, instances, keys
+  // "data_dir": "~/.iso",        // VM artifacts: images, instances, keys
   // "ssh_port": 22,               // Guest SSH port
 
   // GitHub auth strategy: a string ("auto", "env", "off", "pat") or an object
-  // with per-repo PAT entries. `coop github setup-pat --repo owner/name`
-  // populates it; `coop github assign-pat --vm NAME --repo owner/name` selects
+  // with per-repo PAT entries. `iso github setup-pat --repo owner/name`
+  // populates it; `iso github assign-pat --vm NAME --repo owner/name` selects
   // an entry for one VM.
   // "github": "auto",
   // "github": {
@@ -21,7 +21,7 @@
   //   }
   // },
 
-  // "setup": { "prompt_for_pat": true },   // auto-prompt for a PAT at `coop start`
+  // "setup": { "prompt_for_pat": true },   // auto-prompt for a PAT at `iso start`
 
   // "vm": {
   //   "vcpu_count": 2,            // vCPUs per VM (override: --vcpus)
@@ -52,7 +52,7 @@
   //     }
   //   },
   //   // Route Claude Code at a host-side model; enable per VM with
-  //   // `coop model <vm> local`. A localhost host is rewritten to the
+  //   // `iso model <vm> local`. A localhost host is rewritten to the
   //   // guest's view of the host.
   //   "local_model": {
   //     "host_url": "http://localhost:11434",
@@ -72,9 +72,9 @@
   //   }
   // },
 
-  // Host-side credential-injecting proxy. `coop proxy setup [--openai]`
+  // Host-side credential-injecting proxy. `iso proxy setup [--openai]`
   // stores the credential in the macOS Keychain and writes the `cmd:`
-  // reference here. Credentials must be `cmd:` or `vault:NAME` (coop secrets)
+  // reference here. Credentials must be `cmd:` or `vault:NAME` (iso secrets)
   // references; literal values are rejected. Cannot be combined with codex auth "chatgpt".
   // "proxy": {
   //   "mode": "auto",             // "required": never forward a raw provider key;
@@ -111,8 +111,8 @@
   // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
   // "egress": "open",
 
-  // `coop pull` return path. "stage" pulls into a host-side stage for review;
-  // nothing reaches the local directory until `coop pull --apply`.
+  // `iso pull` return path. "stage" pulls into a host-side stage for review;
+  // nothing reaches the local directory until `iso pull --apply`.
   // "workspace": {
   //   "pull": {
   //     "mode": "direct",           // or "stage"
@@ -129,7 +129,7 @@
 
   // Apple sandbox backend. Unknown members are rejected.
   // "apple_container": {
-  //   "binary": "/absolute/path/to/coop-sandbox",
+  //   "binary": "/absolute/path/to/iso-sandbox",
   //   "builder": "/absolute/path/to/container",
   //   "kernel": "/absolute/path/to/vmlinux",
   //   "probe_timeout_seconds": 10,

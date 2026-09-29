@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review a coop pull request or local diff with independent, self-validated correctness, design, convention, security, API, test, documentation, and comment lenses. Use for PR review, /review follow-up, or when asked to inspect a branch without modifying it.
+description: Review an isolate pull request or local diff with independent, self-validated correctness, design, convention, security, API, test, documentation, and comment lenses. Use for PR review, /review follow-up, or when asked to inspect a branch without modifying it.
 ---
 
 # Review

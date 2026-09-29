@@ -1,9 +1,9 @@
 Inspect devcontainer.json support without starting setup or a VM
 
-Usage: coop devcontainer <COMMAND>
+Usage: iso devcontainer <COMMAND>
 
 Commands:
-  check   Parse devcontainer.json and print coop's translation report
+  check   Parse devcontainer.json and print iso's translation report
   ignore  Persistently ignore discovered devcontainer.json for a project
   status  Show persistent devcontainer opt-outs
   clear   Clear a persistent devcontainer opt-out for a project

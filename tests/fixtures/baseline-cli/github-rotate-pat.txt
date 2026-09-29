@@ -1,6 +1,6 @@
 Re-run the wizard against an existing entry
 
-Usage: coop github rotate-pat --repo <REPO>
+Usage: iso github rotate-pat --repo <REPO>
 
 Options:
       --repo <REPO>  Repo slug to rotate

@@ -1,6 +1,6 @@
 Manage GitHub PAT entries and VM assignments
 
-Usage: coop github <COMMAND>
+Usage: iso github <COMMAND>
 
 Commands:
   assign-pat    Select an existing stored PAT entry for subsequent VM sessions

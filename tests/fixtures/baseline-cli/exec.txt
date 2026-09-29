@@ -1,8 +1,8 @@
 Run a command in the VM and return its output (non-interactive)
 
-The command and its arguments must follow `--` to avoid conflicting with the optional instance name positional, e.g. `coop exec my-vm -- ls -la` or `coop exec -- ls -la`.
+The command and its arguments must follow `--` to avoid conflicting with the optional instance name positional, e.g. `iso exec my-vm -- ls -la` or `iso exec -- ls -la`.
 
-Usage: coop exec [NAME] -- <COMMAND>...
+Usage: iso exec [NAME] -- <COMMAND>...
 
 Arguments:
   [NAME]

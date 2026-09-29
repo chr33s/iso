@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate Sources/CoopHost/EmbeddedResources.swift from scripts/guest/.
+"""Regenerate Sources/IsoHost/EmbeddedResources.swift from scripts/guest/.
 
 The Swift host embeds guest scripts in the binary so it needs no resource
 files at run time. `EmbeddedResourcesTests` fails when this file is stale.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = sorted(p for p in (ROOT / "scripts" / "guest").rglob("*") if p.is_file())
-OUT = ROOT / "Sources" / "CoopHost" / "EmbeddedResources.swift"
+OUT = ROOT / "Sources" / "IsoHost" / "EmbeddedResources.swift"
 
 
 def literal(text):

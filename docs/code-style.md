@@ -1,8 +1,8 @@
 # Code style
 
-These are coop's project-specific Swift conventions for the host package
+These are isolate's project-specific Swift conventions for the host package
 (`Package.swift`, `Sources/`, `tests/swift/`, `fuzz/`) and the companion
-packages (`coop-proxy/`, `coop-sandbox/`). The focus is on **using the type
+packages (`iso-proxy/`, `iso-sandbox/`). The focus is on **using the type
 system to eliminate error states**, not on formatting, which `swift format`
 owns. The conventions and design lenses in the shared
 [`review`](../.agents/skills/review/SKILL.md) workflow enforce these; the
@@ -24,15 +24,15 @@ a bug through.
 
   ```sh
   swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
-  swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
+  swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
   ```
 
 - Tests use Swift Testing (`import Testing`, `@Test`, `#expect`/`#require`).
-- Keep module boundaries: `CoopCore` has no subprocess or network side
+- Keep module boundaries: `IsoCore` has no subprocess or network side
   effects, and its only filesystem mutation is the shared state-write
-  primitives (`AtomicFile`, `FileLock`); `CoopConfiguration` has no subprocesses and no TOML or
-  configuration-provider dependency; side effects live in `CoopHost`;
-  `CoopCLI` stays a thin layer of parsing, dispatch and presentation.
+  primitives (`AtomicFile`, `FileLock`); `IsoConfiguration` has no subprocesses and no TOML or
+  configuration-provider dependency; side effects live in `IsoHost`;
+  `IsoCLI` stays a thin layer of parsing, dispatch and presentation.
 
 ## Lean on the type system before lean on validation
 
@@ -47,7 +47,7 @@ unreachable?*
   runtime and guest output, registry responses — into strong types at the
   boundary and pass the strong type inward. `ConfigDecoding` does this for the
   whole configuration, so `ConfigValidation` only checks environmental facts;
-  `RuntimeProtocol` does it for `coop-sandbox` output.
+  `RuntimeProtocol` does it for `iso-sandbox` output.
 - **Smart constructors.** When an invariant can't be expressed structurally,
   keep the stored property `let` and expose only a validating initializer or
   static factory that throws `ValidationError`. The invariant then holds
@@ -69,7 +69,7 @@ flag on an options struct that mirrors a CLI flag is fine.
 
 ## Lifecycles and liveness
 
-coop orchestrates VMs through `setup → up/start → shell → stop → destroy`.
+isolate orchestrates VMs through `setup → up/start → shell → stop → destroy`.
 Operations are legal only in certain states. When you find yourself writing
 `guard isRunning else { throw … }` far from where the state was established,
 consider whether the state belongs in a type:
@@ -78,7 +78,7 @@ consider whether the state belongs in a type:
   switch over it and throw for illegal transitions. Use when call sites are
   few and an explicit error is reasonable (journal states, proxy phases).
 - **Proof values.** `AppleBackend.Running` / `AppleBackend.Stopped` have
-  initializers that are internal to `CoopHost`; commands get them only from
+  initializers that are internal to `IsoHost`; commands get them only from
   `asRunning` / `resolveRunning` / `asStopped`, and operations that need the
   precondition take the proof. Don't reach for this on a type that mostly does
   something else.
@@ -132,14 +132,14 @@ If a primitive appears in one place and crosses no boundary, leave it alone.
   or into the child's environment, never argv.
 - **No shell interpolation.** Guest shell commands are built with
   `RemoteCommand`: `.arg` for every dynamic value, `.literal` only for
-  coop-authored fragments. The only intentional host shell is a user-authored
+  iso-authored fragments. The only intentional host shell is a user-authored
   `cmd:` credential reference in `CredentialResolver`.
 - **State writes** go through `StateStore` / `AtomicFile` under the resource's
   `FileLock`: write a temporary sibling, fsync, rename, never widen the mode.
   Control files are read without following symlinks and with a size bound.
 - **Output streams.** stdout carries command output and `--json` only;
   diagnostics, prompts and progress go to stderr through `Diagnostics` /
-  `OutputStreams`. No `print` in `CoopHost`.
+  `OutputStreams`. No `print` in `IsoHost`.
 - **Recursive parsers** for untrusted documents cap nesting and run on
   `ParserStack`'s fixed stack.
 
@@ -164,7 +164,7 @@ Before reviewing, sync to latest remote (`git fetch origin`).
    spawned process, lock, PID file, temporary directory and credential is
    released on success, failure, timeout and cancellation.
 6. **API surface.** New `public` items: do they need to be public across
-   modules? Does the module boundary still hold (no side effects in `CoopCore`
+   modules? Does the module boundary still hold (no side effects in `IsoCore`
    beyond `AtomicFile` / `FileLock`)?
    `Sendable` conformances honest?
 7. **Tests cover behavior, not shape.** Edge cases — empty input, boundaries,

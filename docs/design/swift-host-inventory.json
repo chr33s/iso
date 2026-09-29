@@ -17,17 +17,17 @@
       "surface": "configuration",
       "item": "data_dir",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#defaultsMatchTheBaseline",
-      "notes": "string path, ~ expanded; default ~/.coop; null rejected"
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#defaultsMatchTheBaseline",
+      "notes": "string path, ~ expanded; default ~/.iso; null rejected"
     },
     {
       "id": "CFG-002",
       "surface": "configuration",
       "item": "ssh_port",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
       "notes": "integer 1..=65535; default 22; null rejected"
     },
     {
@@ -35,8 +35,8 @@
       "surface": "configuration",
       "item": "post_start",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#nullIsAbsentOnlyForOptionalFields",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#nullIsAbsentOnlyForOptionalFields",
       "notes": "optional string; null = absent"
     },
     {
@@ -44,8 +44,8 @@
       "surface": "configuration",
       "item": "forward_ports",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#forwardPortForms",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#forwardPortForms",
       "notes": "array of integer | 'GUEST[:HOST]' string | {guest, host?, label?}; unknown members ignored"
     },
     {
@@ -53,8 +53,8 @@
       "surface": "configuration",
       "item": "github",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#githubModesAndImpliedPat",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#githubModesAndImpliedPat",
       "notes": "optional string auto|env|off|pat or object {mode?, pat?, skip?}; implied mode"
     },
     {
@@ -62,8 +62,8 @@
       "surface": "configuration",
       "item": "github.pat.<owner/repo>.token",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#githubModesAndImpliedPat",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#githubModesAndImpliedPat",
       "notes": "required secret string (literal or cmd:), resolved on use"
     },
     {
@@ -71,8 +71,8 @@
       "surface": "configuration",
       "item": "github.skip",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#githubModesAndImpliedPat",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#githubModesAndImpliedPat",
       "notes": "array of repo slugs; presence implies pat"
     },
     {
@@ -80,8 +80,8 @@
       "surface": "configuration",
       "item": "setup.prompt_for_pat",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "boolean; default true"
     },
     {
@@ -89,8 +89,8 @@
       "surface": "configuration",
       "item": "vm.vcpu_count",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
       "notes": "integer 1..=255; default 2"
     },
     {
@@ -98,8 +98,8 @@
       "surface": "configuration",
       "item": "vm.mem_size_mib",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
       "notes": "integer >= 128; default 4096"
     },
     {
@@ -107,8 +107,8 @@
       "surface": "configuration",
       "item": "vm.template_size_gib",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#defaultsMatchTheBaseline",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#defaultsMatchTheBaseline",
       "notes": "integer >= 1; default 8"
     },
     {
@@ -116,8 +116,8 @@
       "surface": "configuration",
       "item": "guest_env.<NAME>",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "string values; POSIX names; byte-ordered"
     },
     {
@@ -125,8 +125,8 @@
       "surface": "configuration",
       "item": "profiles.<name>.{apt_packages,pre_install,post_install,marketplaces,plugins}",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/PreflightTests.swift#literalDottedKeysStayDistinctFromNesting",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/PreflightTests.swift#literalDottedKeysStayDistinctFromNesting",
       "notes": "literal dynamic keys; marketplaces ~ expanded"
     },
     {
@@ -134,8 +134,8 @@
       "surface": "configuration",
       "item": "updates.mode",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "off|notify; default notify"
     },
     {
@@ -143,8 +143,8 @@
       "surface": "configuration",
       "item": "updates.check_interval_hours",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
       "notes": "u64; default 24"
     },
     {
@@ -152,8 +152,8 @@
       "surface": "configuration",
       "item": "apple_container.{binary,builder,kernel}",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#defaultsMatchTheBaseline",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#defaultsMatchTheBaseline",
       "notes": "optional ~ expanded paths"
     },
     {
@@ -161,8 +161,8 @@
       "surface": "configuration",
       "item": "apple_container.*_timeout_seconds",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#integersAreExactAndBounded",
       "notes": "1..=86400; defaults 10/60/600/120/90/3600"
     },
     {
@@ -170,8 +170,8 @@
       "surface": "configuration",
       "item": "apple_container.<unknown>",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#unknownKeysFollowPerSectionPolicy",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#unknownKeysFollowPerSectionPolicy",
       "notes": "rejected (deny_unknown_fields)"
     },
     {
@@ -179,8 +179,8 @@
       "surface": "configuration",
       "item": "claude.api_key",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#apiKeyEnvironmentFallbackOnlyForAbsentSections",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#apiKeyEnvironmentFallbackOnlyForAbsentSections",
       "notes": "optional secret string; absent section falls back to the provider environment variable"
     },
     {
@@ -188,8 +188,8 @@
       "surface": "configuration",
       "item": "claude.env_forward",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "array of POSIX env names"
     },
     {
@@ -197,8 +197,8 @@
       "surface": "configuration",
       "item": "claude.marketplaces",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#environmentalValidation",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#environmentalValidation",
       "notes": "array; ~ entries expanded; absolute paths validated"
     },
     {
@@ -206,8 +206,8 @@
       "surface": "configuration",
       "item": "claude.plugins",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "array of strings"
     },
     {
@@ -215,8 +215,8 @@
       "surface": "configuration",
       "item": "claude.mcp_servers.<name>",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#mcpServerVariantsAreExclusive",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#mcpServerVariantsAreExclusive",
       "notes": "stdio {command,args,env} | http/sse {type,url,headers}; exclusive fields"
     },
     {
@@ -224,8 +224,8 @@
       "surface": "configuration",
       "item": "claude.config_dir",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#configDirectoryDistinguishesFalseTrueAndPaths",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#configDirectoryDistinguishesFalseTrueAndPaths",
       "notes": "null=default, false=disabled, true rejected, string=path"
     },
     {
@@ -233,8 +233,8 @@
       "surface": "configuration",
       "item": "claude.local_model",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#localModelInvariants",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#localModelInvariants",
       "notes": "{host_url http(s) with host, model non-empty, auth_token?}"
     },
     {
@@ -242,8 +242,8 @@
       "surface": "configuration",
       "item": "codex.api_key",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#apiKeyEnvironmentFallbackOnlyForAbsentSections",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#apiKeyEnvironmentFallbackOnlyForAbsentSections",
       "notes": "optional secret string; absent section falls back to the provider environment variable"
     },
     {
@@ -251,8 +251,8 @@
       "surface": "configuration",
       "item": "codex.env_forward",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "array of POSIX env names"
     },
     {
@@ -260,8 +260,8 @@
       "surface": "configuration",
       "item": "codex.marketplaces",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#environmentalValidation",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#environmentalValidation",
       "notes": "array; ~ entries expanded; absolute paths validated"
     },
     {
@@ -269,8 +269,8 @@
       "surface": "configuration",
       "item": "codex.plugins",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#wrongTypesAreReportedByPath",
       "notes": "array of strings"
     },
     {
@@ -278,8 +278,8 @@
       "surface": "configuration",
       "item": "codex.mcp_servers.<name>",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#mcpServerVariantsAreExclusive",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#mcpServerVariantsAreExclusive",
       "notes": "stdio {command,args,env} | http/sse {type,url,headers}; exclusive fields"
     },
     {
@@ -287,8 +287,8 @@
       "surface": "configuration",
       "item": "codex.config_dir",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#configDirectoryDistinguishesFalseTrueAndPaths",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#configDirectoryDistinguishesFalseTrueAndPaths",
       "notes": "null=default, false=disabled, true rejected, string=path"
     },
     {
@@ -296,8 +296,8 @@
       "surface": "configuration",
       "item": "codex.local_model",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#localModelInvariants",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#localModelInvariants",
       "notes": "{host_url http(s) with host, model non-empty, auth_token?}"
     },
     {
@@ -305,8 +305,8 @@
       "surface": "configuration",
       "item": "codex.auth",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#environmentalValidation",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#environmentalValidation",
       "notes": "api_key|chatgpt; conflicts with proxy.openai"
     },
     {
@@ -314,8 +314,8 @@
       "surface": "configuration",
       "item": "<unknown top-level and section keys>",
       "disposition": "preserved",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/full.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#unknownKeysFollowPerSectionPolicy",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/full.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#unknownKeysFollowPerSectionPolicy",
       "notes": "ignored (baseline serde default)"
     },
     {
@@ -323,9 +323,9 @@
       "surface": "configuration",
       "item": "file format",
       "disposition": "changed",
-      "baseline_reference": "src/config.rs CoopConfig::load",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#explicitPathsSelectFormatByExtension",
-      "decision": "spec 3.1: ~/.coop/config.jsonc; .json strict via --config; .toml stops with migration instructions"
+      "baseline_reference": "src/config.rs IsoConfig::load",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#explicitPathsSelectFormatByExtension",
+      "decision": "spec 3.1: ~/.iso/config.jsonc; .json strict via --config; .toml stops with migration instructions"
     },
     {
       "id": "CFG-101",
@@ -333,7 +333,7 @@
       "item": "proxy.{anthropic,openai}.credential",
       "disposition": "changed",
       "baseline_reference": "src/config.rs ProxyUpstream",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#proxyCredentialsMustBeCommandReferences",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#proxyCredentialsMustBeCommandReferences",
       "decision": "C-04: literal credentials rejected; cmd: references only"
     },
     {
@@ -341,8 +341,8 @@
       "surface": "configuration",
       "item": "firecracker_bin",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -350,8 +350,8 @@
       "surface": "configuration",
       "item": "vm.kernel_path",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -359,8 +359,8 @@
       "surface": "configuration",
       "item": "vm.boot_args",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -368,8 +368,8 @@
       "surface": "configuration",
       "item": "network.host_ip",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -377,8 +377,8 @@
       "surface": "configuration",
       "item": "network.subnet_mask",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -386,8 +386,8 @@
       "surface": "configuration",
       "item": "network.host_iface",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -395,8 +395,8 @@
       "surface": "configuration",
       "item": "network",
       "disposition": "removed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/retired.baseline.json",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/retired.baseline.json",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#retiredFirecrackerFieldsAreRejectedByName",
       "decision": "C-01"
     },
     {
@@ -404,8 +404,8 @@
       "surface": "configuration",
       "item": "local_model.host_url / mcp_servers.*.url serialization",
       "disposition": "changed",
-      "baseline_reference": "tests/swift/CoopConfigurationTests/Fixtures/parity/url-normalization.baseline.json",
-      "swift_test": "tests/swift/CoopHostTests/ModelTests.swift#reverseTunnelPlansKeepLoopbackNamesAndMovePrivilegedPorts",
+      "baseline_reference": "tests/swift/IsoConfigurationTests/Fixtures/parity/url-normalization.baseline.json",
+      "swift_test": "tests/swift/IsoHostTests/ModelTests.swift#reverseTunnelPlansKeepLoopbackNamesAndMovePrivilegedPorts",
       "notes": "Configuration keeps the configured spelling; every place the baseline serialized the URL (guest agent config, model.json, MCP definitions, model status) prints it WHATWG-normalized as the url crate did (EndpointURL): lowercase scheme/host, default port dropped, empty path as /",
       "decision": "normalize at serialization, not at load"
     },
@@ -415,7 +415,7 @@
       "item": "numeric literal kind (2.0 for integer fields)",
       "disposition": "preserved",
       "baseline_reference": "serde_json rejects floats for integer fields",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#fractionalLiteralsDoNotSatisfyIntegerFields",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#fractionalLiteralsDoNotSatisfyIntegerFields",
       "notes": "Foundation decodes 2.0 as Int64; the preflight records fraction/exponent literals by path"
     },
     {
@@ -423,16 +423,16 @@
       "surface": "configuration",
       "item": "missing explicit --config file",
       "disposition": "preserved",
-      "baseline_reference": "src/config.rs CoopConfig::load (defaults when absent)",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#malformedOrUnreadableFilesNeverBecomeDefaults"
+      "baseline_reference": "src/config.rs IsoConfig::load (defaults when absent)",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#malformedOrUnreadableFilesNeverBecomeDefaults"
     },
     {
       "id": "CFG-123",
       "surface": "configuration",
       "item": "~/.coop-apple legacy data_dir",
       "disposition": "removed",
-      "baseline_reference": "src/config.rs CoopConfig::load",
-      "swift_test": "tests/swift/CoopConfigurationTests/LoaderTests.swift#oldInstallationDirectoryHasNoSpecialDataDirectory",
+      "baseline_reference": "src/config.rs IsoConfig::load",
+      "swift_test": "tests/swift/IsoConfigurationTests/LoaderTests.swift#oldInstallationDirectoryHasNoSpecialDataDirectory",
       "notes": "user-approved change 2026-09-28: ~/.coop-apple migration, legacy data_dir rule and .coop-apple host-key alias dropped in both hosts"
     },
     {
@@ -441,17 +441,17 @@
       "item": "devcontainer JSONC comments",
       "disposition": "changed",
       "baseline_reference": "src/jsonc.rs jsonc_to_json",
-      "swift_test": "tests/swift/CoopConfigurationTests/ScannerTests.swift#commentsSeparateAdjacentTokens",
+      "swift_test": "tests/swift/IsoConfigurationTests/ScannerTests.swift#commentsSeparateAdjacentTokens",
       "notes": "comments become spaces instead of being removed, so tokens on either side of a comment no longer merge; devcontainer.json is parsed through this scanner (.devcontainer policy)"
     },
     {
       "id": "CLI-001",
       "surface": "cli",
-      "item": "coop",
+      "item": "iso",
       "disposition": "ported-partial",
-      "baseline_reference": "tests/fixtures/baseline-cli/coop.txt",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#globalOptionsParseBeforeOrAfterTheSubcommand",
-      "notes": "global --config and -v parse before or after the subcommand; default path is ~/.coop/config.jsonc; -v has no effect yet; baseline options: --config -v --verbose -h --help -V --version"
+      "baseline_reference": "tests/fixtures/baseline-cli/iso.txt",
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#globalOptionsParseBeforeOrAfterTheSubcommand",
+      "notes": "global --config and -v parse before or after the subcommand; default path is ~/.iso/config.jsonc; -v has no effect yet; baseline options: --config -v --verbose -h --help -V --version"
     },
     {
       "id": "CLI-002",
@@ -460,7 +460,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/up.txt",
       "notes": "copy/mount/git-repo creation, reuse/restart of an existing project instance, profile images, devcontainer translation, --env/--post-start/--forward-port; real hardware: create, idempotent re-run, env + hook, destroy",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#upAndStartParseTheBaselineFlags"
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#upAndStartParseTheBaselineFlags"
     },
     {
       "id": "CLI-003",
@@ -468,7 +468,7 @@
       "item": "quickstart",
       "disposition": "removed",
       "baseline_reference": "tests/fixtures/baseline-cli/quickstart.txt",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#globalOptionsParseBeforeOrAfterTheSubcommand",
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#globalOptionsParseBeforeOrAfterTheSubcommand",
       "decision": "C-03",
       "notes": "C-03: a hidden `quickstart` fails with the setup/up/claude-or-codex replacement; use setup, then up, then claude or codex; baseline options: --no-workspace --no-devcontainer -h --help"
     },
@@ -489,7 +489,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/devcontainer.txt",
       "notes": "subcommands check/ignore/status/clear; bare `devcontainer` prints help to stderr and exits 2 as the baseline did (help text in Argument Parser format)",
-      "swift_test": "tests/swift/CoopCLITests/DevcontainerCLITests.swift#bareDevcontainerIsAUsageError"
+      "swift_test": "tests/swift/IsoCLITests/DevcontainerCLITests.swift#bareDevcontainerIsAUsageError"
     },
     {
       "id": "CLI-006",
@@ -498,7 +498,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/start.txt",
       "notes": "restart by name/workspace/only-stopped, persisted forwards and guest env, --dry-run [--json]; real hardware verified",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#startRefusalsNameTheNextStep"
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#startRefusalsNameTheNextStep"
     },
     {
       "id": "CLI-007",
@@ -507,7 +507,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/shell.txt",
       "notes": "interactive PTY session and non-interactive command; alias `ssh`",
-      "swift_test": "tests/swift/CoopHostTests/HostTests.swift#remoteCommandEscapesArgumentsOnce"
+      "swift_test": "tests/swift/IsoHostTests/HostTests.swift#remoteCommandEscapesArgumentsOnce"
     },
     {
       "id": "CLI-008",
@@ -516,7 +516,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/claude.txt",
       "notes": "session with env forwarding, --env overlay and proxy-mode suppression; --ask adds --permission-mode default. GitHub token forwarding, assignments and repo detection come from HostGitHubTokens.",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#agentCommandsParseLikeTheBaseline"
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#agentCommandsParseLikeTheBaseline"
     },
     {
       "id": "CLI-009",
@@ -525,7 +525,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/claude-agents.txt",
       "notes": "alias ca; `claude agents` with trailing args. GitHub token forwarding, assignments and repo detection come from HostGitHubTokens.",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#agentCommandsParseLikeTheBaseline"
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#agentCommandsParseLikeTheBaseline"
     },
     {
       "id": "CLI-010",
@@ -534,7 +534,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/codex.txt",
       "notes": "codex_launch_args (bypass unless --ask; never for login/logout); chatgpt mode checks proxy conflict, guest Secret Service and keyring before codex-account. The chatgpt instance is the resolved running one (baseline re-resolved by name). GitHub token forwarding, assignments and repo detection come from HostGitHubTokens.",
-      "swift_test": "tests/swift/CoopHostTests/BootstrapTests.swift#codexBootstrapNeedAndPluginDelta"
+      "swift_test": "tests/swift/IsoHostTests/BootstrapTests.swift#codexBootstrapNeedAndPluginDelta"
     },
     {
       "id": "CLI-011",
@@ -579,7 +579,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/agent.txt",
       "notes": "agent update subcommand; see CLI-039",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#agentCommandsParseLikeTheBaseline"
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#agentCommandsParseLikeTheBaseline"
     },
     {
       "id": "CLI-016",
@@ -587,8 +587,8 @@
       "item": "model",
       "disposition": "ported-partial",
       "baseline_reference": "tests/fixtures/baseline-cli/model.txt",
-      "notes": "`coop model [NAME] [local|remote]` parsed from words (Argument Parser cannot mix a positional with subcommands); status text, prompts, live re-bootstrap and report lines match. Help text layout differs",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#modelWordsAreNameThenCommand"
+      "notes": "`iso model [NAME] [local|remote]` parsed from words (Argument Parser cannot mix a positional with subcommands); status text, prompts, live re-bootstrap and report lines match. Help text layout differs",
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#modelWordsAreNameThenCommand"
     },
     {
       "id": "CLI-017",
@@ -606,7 +606,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/push.txt",
       "notes": "rsync when the guest has it, tar pipe otherwise; real hardware verified",
-      "swift_test": "tests/swift/CoopHostTests/WorkspaceTests.swift#tarPipeCopiesTheProjectAndSkipsExcludes"
+      "swift_test": "tests/swift/IsoHostTests/WorkspaceTests.swift#tarPipeCopiesTheProjectAndSkipsExcludes"
     },
     {
       "id": "CLI-019",
@@ -615,7 +615,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/pull.txt",
       "notes": "rsync when the guest has it, tar pipe otherwise; real hardware verified",
-      "swift_test": "tests/swift/CoopHostTests/WorkspaceTests.swift#tarPipeCopiesTheProjectAndSkipsExcludes"
+      "swift_test": "tests/swift/IsoHostTests/WorkspaceTests.swift#tarPipeCopiesTheProjectAndSkipsExcludes"
     },
     {
       "id": "CLI-020",
@@ -624,7 +624,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/exec.txt",
       "notes": "output passes through; a remote failure exits 1 with the remote code in the message",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#upAndStartParseTheBaselineFlags"
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#upAndStartParseTheBaselineFlags"
     },
     {
       "id": "CLI-021",
@@ -633,7 +633,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/editor.txt",
       "notes": "VS Code then Zed strategies; `--clean`",
-      "swift_test": "tests/swift/CoopHostTests/WorkspaceTests.swift#editorStrategiesEscapeURLPaths"
+      "swift_test": "tests/swift/IsoHostTests/WorkspaceTests.swift#editorStrategiesEscapeURLPaths"
     },
     {
       "id": "CLI-022",
@@ -642,7 +642,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/ssh-config.txt",
       "notes": "coop-apple-<name> alias; real hardware verified with ssh -F",
-      "swift_test": "tests/swift/CoopHostTests/WorkspaceTests.swift#sshConfigBlocksLeaveOtherNamespacesAlone"
+      "swift_test": "tests/swift/IsoHostTests/WorkspaceTests.swift#sshConfigBlocksLeaveOtherNamespacesAlone"
     },
     {
       "id": "CLI-023",
@@ -678,7 +678,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/restore.txt",
       "notes": "disk-only restore and --reprovision (stop, swap, re-grow, first-boot provisioning with persisted forwards/env/workspace); real hardware verified",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#upAndStartParseTheBaselineFlags"
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#upAndStartParseTheBaselineFlags"
     },
     {
       "id": "CLI-027",
@@ -697,7 +697,7 @@
       "baseline_reference": "tests/fixtures/baseline-cli/github.txt",
       "notes": "all six subcommands ported; C-04: PATs are provisioned only in the macOS Keychain (see the subcommand items); baseline options: -h --help",
       "decision": "C-04",
-      "swift_test": "tests/swift/CoopCLITests/GitHubCLITests.swift#githubAssignmentCLIRequiresAValidVMAndEntry"
+      "swift_test": "tests/swift/IsoCLITests/GitHubCLITests.swift#githubAssignmentCLIRequiresAValidVMAndEntry"
     },
     {
       "id": "CLI-029",
@@ -706,7 +706,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/proxy.txt",
       "notes": "status and setup ported; setup is Keychain-only (CLI-050)",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#proxySetupStoresOnlyInTheKeychainAndWritesTheReference"
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#proxySetupStoresOnlyInTheKeychainAndWritesTheReference"
     },
     {
       "id": "CLI-030",
@@ -715,7 +715,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/validate.txt",
       "notes": "config load, environmental checks, PAT resolution and --probe (GET api.github.com/user via curl, token on stdin) ported; the probed login is sanitized for display; baseline options: --probe -h --help",
-      "swift_test": "tests/swift/CoopCLITests/GitHubCLITests.swift#validateProbeChecksEachResolvedToken"
+      "swift_test": "tests/swift/IsoCLITests/GitHubCLITests.swift#validateProbeChecksEachResolvedToken"
     },
     {
       "id": "CLI-031",
@@ -723,7 +723,7 @@
       "item": "init",
       "disposition": "changed",
       "baseline_reference": "tests/fixtures/baseline-cli/init.txt",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#configOnlySetupCreatesOnceAndReportsExisting",
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#configOnlySetupCreatesOnceAndReportsExisting",
       "decision": "C-03",
       "notes": "C-03: alias of setup --config-only with a stderr deprecation hint; an existing file is reported and left unchanged (exit 0) instead of an error; baseline options: -h --help"
     },
@@ -733,8 +733,8 @@
       "item": "update",
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/update.txt",
-      "notes": "channel chr33s/coop, API/asset argv, auth selection (gh, GITHUB_TOKEN on stdin, bare), SHA256SUMS, attestation (--bundle or API, fails closed; skipped without gh or under COOP_UPDATE_API_BASE_URL), runtime/proxy/self replacement order and messages match the baseline; startup notice and background check run after config load for context commands and validate; a Swift build is a dev build (refused) unless compiled with -D COOP_RELEASE_BUILD (S-05); archive layout assumptions are the Rust ones pending S-05",
-      "swift_test": "tests/swift/CoopHostTests/UpdateTests.swift#updateReplacesAllThreeBinariesAndRecordsTheTag"
+      "notes": "channel chr33s/iso, API/asset argv, auth selection (gh, GITHUB_TOKEN on stdin, bare), SHA256SUMS, attestation (--bundle or API, fails closed; skipped without gh or under ISO_UPDATE_API_BASE_URL), runtime/proxy/self replacement order and messages match the baseline; startup notice and background check run after config load for context commands and validate; a Swift build is a dev build (refused) unless compiled with -D ISO_RELEASE_BUILD (S-05); archive layout assumptions are the Rust ones pending S-05",
+      "swift_test": "tests/swift/IsoHostTests/UpdateTests.swift#updateReplacesAllThreeBinariesAndRecordsTheTag"
     },
     {
       "id": "CLI-033",
@@ -743,7 +743,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/uninstall.txt",
       "notes": "--yes/--keep-data/--purge, non-TTY refusal, best-effort config load, owned-root purge, update-check state removal, coop-apple SSH marker cleanup match tests/integration-uninstall.sh; the build-artifact guard also covers SwiftPM .build/ outputs; purge tears down each instance's port forwards and credential proxy before destroying it",
-      "swift_test": "tests/swift/CoopHostTests/UninstallTests.swift#purgeRemovesOwnedStateAndPreservesConfig"
+      "swift_test": "tests/swift/IsoHostTests/UninstallTests.swift#purgeRemovesOwnedStateAndPreservesConfig"
     },
     {
       "id": "CLI-034",
@@ -751,7 +751,7 @@
       "item": "completions",
       "disposition": "changed",
       "baseline_reference": "tests/fixtures/baseline-cli/completions.txt",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift#staticCompletionScriptsAreGenerated",
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift#staticCompletionScriptsAreGenerated",
       "decision": "C-02",
       "notes": "C-02: static Argument Parser scripts for bash, zsh, fish; powershell and elvish return an unsupported-shell error; COMPLETE= runtime hooks removed; baseline options: -h --help"
     },
@@ -762,7 +762,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/devcontainer-check.txt",
       "notes": "stderr report and --json for --stage setup/start/both match fixtures captured from the Rust host (tests/fixtures/devcontainer); reads no configuration; human report neutralizes control and format characters (except newline/tab) as '?'; non-ASCII text is decoded correctly (the baseline double-encoded it through its JSONC scanner); serde-style error positions differ on lines with comments (CFG-124) and parse errors caused by comments/trailing commas use the Swift scanner's blanking",
-      "swift_test": "tests/swift/CoopHostTests/DevcontainerTests.swift#reportMatchesRustFixtures"
+      "swift_test": "tests/swift/IsoHostTests/DevcontainerTests.swift#reportMatchesRustFixtures"
     },
     {
       "id": "CLI-036",
@@ -771,7 +771,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/devcontainer-ignore.txt",
       "notes": "output, devcontainer_preferences.json format and deleted-project key resolution match the baseline",
-      "swift_test": "tests/swift/CoopCLITests/DevcontainerCLITests.swift#preferenceCommandsMatchTheBaselineText"
+      "swift_test": "tests/swift/IsoCLITests/DevcontainerCLITests.swift#preferenceCommandsMatchTheBaselineText"
     },
     {
       "id": "CLI-037",
@@ -780,7 +780,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/devcontainer-status.txt",
       "notes": "output, devcontainer_preferences.json format and deleted-project key resolution match the baseline",
-      "swift_test": "tests/swift/CoopCLITests/DevcontainerCLITests.swift#preferenceCommandsMatchTheBaselineText"
+      "swift_test": "tests/swift/IsoCLITests/DevcontainerCLITests.swift#preferenceCommandsMatchTheBaselineText"
     },
     {
       "id": "CLI-038",
@@ -789,7 +789,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/devcontainer-clear.txt",
       "notes": "output, devcontainer_preferences.json format and deleted-project key resolution match the baseline",
-      "swift_test": "tests/swift/CoopCLITests/DevcontainerCLITests.swift#preferenceCommandsMatchTheBaselineText"
+      "swift_test": "tests/swift/IsoCLITests/DevcontainerCLITests.swift#preferenceCommandsMatchTheBaselineText"
     },
     {
       "id": "CLI-039",
@@ -798,7 +798,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/agent-update.txt",
       "notes": "update path, confirmation and report match; --check looks up the latest openai/codex release through the updater's GitHub transport (same URL and auth selection as the baseline)",
-      "swift_test": "tests/swift/CoopHostTests/ModelTests.swift#agentUpdateReinstallsCodexFromStdinAndRunsClaudeUpdate"
+      "swift_test": "tests/swift/IsoHostTests/ModelTests.swift#agentUpdateReinstallsCodexFromStdinAndRunsClaudeUpdate"
     },
     {
       "id": "CLI-040",
@@ -807,7 +807,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/model-local.txt",
       "notes": "model.json written by the Rust format (0600); endpoints prompted on a TTY; applied live through a Restart bootstrap",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#stoppedModelSwitchesPersistAndReport"
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#stoppedModelSwitchesPersistAndReport"
     },
     {
       "id": "CLI-041",
@@ -816,7 +816,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/model-remote.txt",
       "notes": "saved endpoints kept; applied live when running",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#modelStatusAndSwitchReports"
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#modelStatusAndSwitchReports"
     },
     {
       "id": "CLI-042",
@@ -843,7 +843,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/github-assign-pat.txt",
       "notes": "github_pat.json holds {\"repo\":…} only, 0600, entry must exist; fail-closed load, GITHUB_TOKEN/GH_TOKEN override rejection and --no-github opt-out preserved",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#assignmentsStoreOnlyTheEntryKey"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#assignmentsStoreOnlyTheEntryKey"
     },
     {
       "id": "CLI-045",
@@ -852,7 +852,7 @@
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/github-unassign-pat.txt",
       "notes": "unlinks the association only (never a symlink target); absent is not an error",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#assignmentStateIOErrorsAreNotAbsence"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#assignmentStateIOErrorsAreNotAbsence"
     },
     {
       "id": "CLI-046",
@@ -862,7 +862,7 @@
       "baseline_reference": "tests/fixtures/baseline-cli/github-setup-pat.txt",
       "notes": "C-04: the storage menu is gone; the token is stored with `security add-generic-password -U -s coop-github-pat -a <owner-repo> -w` and the same cmd: reference is written to github.pat.\"<repo>\" in the JSONC file. Keychain unavailable fails before the form is shown, with no fallback store. Probes, submodule discovery, curl argv/headers and messages unchanged",
       "decision": "C-04",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#setupPATValidatesStoresInTheKeychainAndWritesTheReference"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#setupPATValidatesStoresInTheKeychainAndWritesTheReference"
     },
     {
       "id": "CLI-047",
@@ -872,7 +872,7 @@
       "baseline_reference": "tests/fixtures/baseline-cli/github-rotate-pat.txt",
       "notes": "same wizard as setup-pat (C-04 Keychain-only); an unchanged reference does not rewrite the file",
       "decision": "C-04",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#rotateNotesAMissingEntry"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#rotateNotesAMissingEntry"
     },
     {
       "id": "CLI-048",
@@ -880,9 +880,9 @@
       "item": "github status",
       "disposition": "changed",
       "baseline_reference": "tests/fixtures/baseline-cli/github-status.txt",
-      "notes": "text and --json shapes match the baseline; C-04: only coop's Keychain reference is recognised as storage (\"macOS Keychain\" / \"macos_keychain\"); 1Password, file and Secret Service references are reported as unknown/null",
+      "notes": "text and --json shapes match the baseline; C-04: only iso's Keychain reference is recognised as storage (\"macOS Keychain\" / \"macos_keychain\"); 1Password, file and Secret Service references are reported as unknown/null",
       "decision": "C-04",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#statusReportsEntriesWithoutTokens"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#statusReportsEntriesWithoutTokens"
     },
     {
       "id": "CLI-049",
@@ -890,9 +890,9 @@
       "item": "github forget-pat",
       "disposition": "changed",
       "baseline_reference": "tests/fixtures/baseline-cli/github-forget-pat.txt",
-      "notes": "C-04: deletes the Keychain item for coop's own reference only; any other reference (1Password, file, …) is left untouched and reported as not recognised",
+      "notes": "C-04: deletes the Keychain item for iso's own reference only; any other reference (1Password, file, …) is left untouched and reported as not recognised",
       "decision": "C-04",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#forgetPATDeletesOnlyTheKeychainItemCoopWrote"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#forgetPATDeletesOnlyTheKeychainItemIsoWrote"
     },
     {
       "id": "CLI-050",
@@ -900,8 +900,8 @@
       "item": "proxy setup",
       "disposition": "changed",
       "baseline_reference": "tests/fixtures/baseline-cli/proxy-setup.txt",
-      "notes": "C-04: no backend menu; the credential is stored only in the macOS Keychain (service coop-<provider>[-<vm>], account <provider>) and the cmd:security find-generic-password reference is written to proxy.<provider> in the JSONC file or to <instance>/proxy.json. A missing /usr/bin/security or a refused write fails with nothing written. Guidance and report text name the Keychain and the JSONC keys.",
-      "swift_test": "tests/swift/CoopCLITests/AgentCommandTests.swift#proxySetupStoresOnlyInTheKeychainAndWritesTheReference",
+      "notes": "C-04: no backend menu; the credential is stored only in the macOS Keychain (service iso-<provider>[-<vm>], account <provider>) and the cmd:security find-generic-password reference is written to proxy.<provider> in the JSONC file or to <instance>/proxy.json. A missing /usr/bin/security or a refused write fails with nothing written. Guidance and report text name the Keychain and the JSONC keys.",
+      "swift_test": "tests/swift/IsoCLITests/AgentCommandTests.swift#proxySetupStoresOnlyInTheKeychainAndWritesTheReference",
       "decision": "C-04 Keychain-only provisioning"
     },
     {
@@ -919,8 +919,8 @@
       "item": "usage-error exit status",
       "disposition": "preserved",
       "baseline_reference": "clap exits 2",
-      "swift_test": "tests/swift/CoopCLITests/CLITests.swift",
-      "notes": "Argument Parser's 64 is mapped to 2 in CoopCommand.main"
+      "swift_test": "tests/swift/IsoCLITests/CLITests.swift",
+      "notes": "Argument Parser's 64 is mapped to 2 in IsoCommand.main"
     },
     {
       "id": "SUR-001",
@@ -947,7 +947,7 @@
       "disposition": "ported-partial",
       "baseline_reference": "src/",
       "notes": "workspace.json, mount sets, tar/rsync transfer with excludes, dirty checks, SSH aliases, editor launch; guest path validation via GuestPath.absolute",
-      "swift_test": "tests/swift/CoopHostTests/WorkspaceTests.swift#workspaceStateMatchesTheRustFormat"
+      "swift_test": "tests/swift/IsoHostTests/WorkspaceTests.swift#workspaceStateMatchesTheRustFormat"
     },
     {
       "id": "SUR-004",
@@ -956,7 +956,7 @@
       "disposition": "ported-partial",
       "baseline_reference": "src/",
       "notes": "ported: env forwarding and key suppression, --env snapshot overlay, Claude customization import/preferences/managed settings/onboarding, Codex config.toml merge (own TOML reader/writer), keyring and auth.json handling, plugin deltas, MCP registration, post_start, proxy start/stop/fail-closed, model tunnels. GitHub token resolution via HostGitHubTokens; clone_git_repo used by up --git-repo; devcontainer inputs wired in up/start",
-      "swift_test": "tests/swift/CoopHostTests/BootstrapTests.swift#firstBootBootstrapConfiguresBothAgents"
+      "swift_test": "tests/swift/IsoHostTests/BootstrapTests.swift#firstBootBootstrapConfiguresBothAgents"
     },
     {
       "id": "SUR-005",
@@ -965,7 +965,7 @@
       "disposition": "ported-partial",
       "baseline_reference": "src/",
       "notes": "GitHub token modes, repo-scoped PATs, VM assignment, submodule discovery, clone-token selection, instance repo detection; devcontainer translation (INT-001); local model routing (model local/remote)",
-      "swift_test": "tests/swift/CoopHostTests/GitHubTests.swift#submodulesAreClassifiedAgainstTheParent"
+      "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#submodulesAreClassifiedAgainstTheParent"
     },
     {
       "id": "SUR-006",
@@ -974,7 +974,7 @@
       "disposition": "ported",
       "baseline_reference": "src/",
       "notes": "profiles, proxy setup (Keychain provisioning, C-04), update and uninstall/purge ported",
-      "swift_test": "tests/swift/CoopHostTests/ProxyLifecycleTests.swift#keychainProvisioningUsesTheExistingNamesAndFailsExplicitly"
+      "swift_test": "tests/swift/IsoHostTests/ProxyLifecycleTests.swift#keychainProvisioningUsesTheExistingNamesAndFailsExplicitly"
     },
     {
       "id": "INT-001",
@@ -982,7 +982,7 @@
       "item": "devcontainer translation (setup/start stages, precedence, report, apply-to-config)",
       "disposition": "ported-partial",
       "baseline_reference": "src/devcontainer.rs",
-      "swift_test": "tests/swift/CoopHostTests/DevcontainerTests.swift#reportMatchesRustFixtures",
+      "swift_test": "tests/swift/IsoHostTests/DevcontainerTests.swift#reportMatchesRustFixtures",
       "notes": "translator, discovery, prompts, stored opt-outs, dry-run plan JSON and devcontainer_state.json ported with the baseline unit tests; wired into setup; wired into up/start (dry run, creation, applied-state warning). human report neutralizes control and format characters (except newline/tab) as '?'; non-ASCII text is decoded correctly (the baseline double-encoded it through its JSONC scanner); serde-style error positions differ on lines with comments (CFG-124) and parse errors caused by comments/trailing commas use the Swift scanner's blanking"
     },
     {
@@ -991,7 +991,7 @@
       "item": "devcontainer OCI Features (ghcr.io/devcontainers/features/*)",
       "disposition": "ported",
       "baseline_reference": "src/devcontainer_oci.rs",
-      "swift_test": "tests/swift/CoopHostTests/DevcontainerTests.swift#resolverFetchesOCIFeaturesWithBaselineArgv",
+      "swift_test": "tests/swift/IsoHostTests/DevcontainerTests.swift#resolverFetchesOCIFeaturesWithBaselineArgv",
       "notes": "same URLs and curl/tar argv (differential run against the Rust host with a stub curl); provision.sh and template-config.json oci_features byte-identical to the baseline in tests/test-swift-host-lifecycle-parity.py (setup devcontainer feature step); curl/tar found on PATH; the token request now has a 30-minute deadline (baseline: none)"
     },
     {
@@ -1000,7 +1000,7 @@
       "item": "devcontainer discovery for --git-repo (GitHub contents API)",
       "disposition": "ported-partial",
       "baseline_reference": "src/git_repo_devcontainer.rs",
-      "swift_test": "tests/swift/CoopHostTests/DevcontainerTests.swift#gitRepoDiscoverySendsTokenOnStdin",
+      "swift_test": "tests/swift/IsoHostTests/DevcontainerTests.swift#gitRepoDiscoverySendsTokenOnStdin",
       "notes": "same request argv and stdin token header; reached from `up --git-repo`"
     }
   ]

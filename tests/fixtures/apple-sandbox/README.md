@@ -1,8 +1,8 @@
 # Apple sandbox integration fixtures
 
 Used by [`tests/integration-apple-sandbox.sh`](../../integration-apple-sandbox.sh),
-which boots real `coop-sandbox` VMs (parser fixtures for the unit tests are in
-[`../coop-sandbox`](../coop-sandbox)):
+which boots real `iso-sandbox` VMs (parser fixtures for the unit tests are in
+[`../iso-sandbox`](../iso-sandbox)):
 
 - `image/` — the small test image the suite builds with stock `container`:
   systemd, sshd, Docker, and the probe tools. `verify.sh` checks it from inside

@@ -42,7 +42,7 @@ def main():
     assert sys.platform == "linux" and os.geteuid() == 0, "run only inside the Linux test guest as root"
     needles = [value.encode() for value in json.load(sys.stdin)]
     assert needles and all(needles)
-    with tempfile.TemporaryDirectory(prefix="coop-secret-scan-") as directory:
+    with tempfile.TemporaryDirectory(prefix="iso-secret-scan-") as directory:
         # Straddle the read boundary to prove the overlap check also works.
         canary = Path(directory) / "canary"
         canary.write_bytes(b"x" * (512 * 1024 - 3) + b"\n".join(needles))

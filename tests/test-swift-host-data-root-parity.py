@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""The default data-directory guard: the Swift `coop` against the recorded baseline.
+"""The default data-directory guard: the Swift `iso` against the recorded baseline.
 
-    python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/coop \
+    python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/iso \
         [--golden tests/baseline/parity/data-root.json]
 
-Each scenario builds a HOME, runs `coop list`, and compares exit status and the
+Each scenario builds a HOME, runs `iso list`, and compares exit status and the
 resulting directory layout with the results recorded from the baseline (Rust)
 host before its removal. The default
-`~/.coop` is refused when it holds upstream coop state or is not a real
+`~/.iso` is refused when it holds upstream coop state or is not a real
 directory; an explicit `--config` is never checked; a leftover
 `~/.coop-apple` is neither read nor moved.
 """
@@ -33,21 +33,21 @@ def state(root):
 
 
 def owned(home):
-    state(home / ".coop")
+    state(home / ".iso")
 
 
 def upstream_key(home):
-    (home / ".coop").mkdir()
-    (home / ".coop" / "vm_key").write_text("x")
+    (home / ".iso").mkdir()
+    (home / ".iso" / "vm_key").write_text("x")
 
 
 def upstream_instances(home):
-    (home / ".coop" / "instances").mkdir(parents=True)
+    (home / ".iso" / "instances").mkdir(parents=True)
 
 
 def linked_root(home):
     state(home / "elsewhere")
-    (home / ".coop").symlink_to(home / "elsewhere")
+    (home / ".iso").symlink_to(home / "elsewhere")
 
 
 def leftover(home):
@@ -89,14 +89,14 @@ def main():
     args = parser.parse_args()
     golden = json.loads(args.golden.read_text())
     failures = 0
-    with tempfile.TemporaryDirectory(prefix="coop-data-root-") as base:
+    with tempfile.TemporaryDirectory(prefix="iso-data-root-") as base:
         base = Path(os.path.realpath(base))
         for label, build, extra in SCENARIOS:
             home = base / f"swift-{label.replace(' ', '-')}"
             home.mkdir()
             build(home)
             argv = [a.format(home=home) for a in extra] + ["list"]
-            env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "COOP_NO_UPDATE_CHECK": "1", "RUST_LOG": "off"}
+            env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "ISO_NO_UPDATE_CHECK": "1", "RUST_LOG": "off"}
             result = subprocess.run([os.path.abspath(args.swift), *argv], capture_output=True, text=True, env=env,
                                     timeout=120)
             swift = (result.returncode, layout(home), result.stderr.strip()[-300:])

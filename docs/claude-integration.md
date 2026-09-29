@@ -1,58 +1,58 @@
 # Claude Code Integration
 
-coop sets up Claude Code inside guest VMs and gives you a single command to launch it. This guide covers the `coop claude` command, the configuration that controls what gets injected into the guest, and the bootstrap sequence that runs when a VM starts.
+isolate sets up Claude Code inside guest VMs and gives you a single command to launch it. This guide covers the `iso claude` command, the configuration that controls what gets injected into the guest, and the bootstrap sequence that runs when a VM starts.
 
 ## Launching Claude Code
 
 ```bash
-coop claude [instance-name] [-- extra-args...]
+iso claude [instance-name] [-- extra-args...]
 ```
 
 This SSHes into the guest and runs the `claude` CLI. The guest's managed `~/.claude/settings.json` (written during VM startup) sets `defaultMode: bypassPermissions` and `skipDangerousModePermissionPrompt: true`, so Claude operates without confirmation prompts. The VM is the isolation boundary; permission prompts inside it are redundant.
 
-To restore permission prompts for a single session, pass `--ask`. coop then launches `claude` with `--permission-mode default`, overriding the guest default:
+To restore permission prompts for a single session, pass `--ask`. isolate then launches `claude` with `--permission-mode default`, overriding the guest default:
 
 ```bash
-coop claude --ask
+iso claude --ask
 ```
 
 Trailing arguments go straight through to the `claude` CLI:
 
 ```bash
-coop claude -- --model sonnet --verbose
+iso claude -- --model sonnet --verbose
 ```
 
 ## Managing background agents
 
 ```bash
-coop claude-agents [instance-name] [-- extra-args...]
+iso claude-agents [instance-name] [-- extra-args...]
 # or the short alias:
-coop ca
+iso ca
 ```
 
-This runs `claude agents` in the guest, which opens the agent view — an interactive TUI for monitoring background agent sessions. Background sessions are managed by Claude Code (not by coop), so closing the TUI and reconnecting later with `coop ca` keeps you in sync with whatever is still running.
+This runs `claude agents` in the guest, which opens the agent view — an interactive TUI for monitoring background agent sessions. Background sessions are managed by Claude Code (not by isolate), so closing the TUI and reconnecting later with `iso ca` keeps you in sync with whatever is still running.
 
-The agent view itself has no sign-in prompt, but it forwards a `/login` command to a new Claude Code session. If you haven't signed Claude in with `coop claude` (and aren't forwarding an `ANTHROPIC_API_KEY`), run `/login` at the start of your `coop ca` session to start the sign-in flow.
+The agent view itself has no sign-in prompt, but it forwards a `/login` command to a new Claude Code session. If you haven't signed Claude in with `iso claude` (and aren't forwarding an `ANTHROPIC_API_KEY`), run `/login` at the start of your `iso ca` session to start the sign-in flow.
 
-If the remote TUI appears stuck or stops responding, use OpenSSH's local escape: type Enter, then `~.` to disconnect. coop forces the interactive SSH escape character to `~`, so the escape path is available even if your user SSH config changes or disables `EscapeChar`. If your terminal remains in raw/no-echo mode after the disconnect, run:
+If the remote TUI appears stuck or stops responding, use OpenSSH's local escape: type Enter, then `~.` to disconnect. isolate forces the interactive SSH escape character to `~`, so the escape path is available even if your user SSH config changes or disables `EscapeChar`. If your terminal remains in raw/no-echo mode after the disconnect, run:
 
 ```bash
 stty sane
 ```
 
-This is separate from SSH startup failures that exit with code 255. coop already restores the terminal after those failures; the escape sequence is for sessions where SSH is still connected and forwarding keystrokes to the remote TUI.
+This is separate from SSH startup failures that exit with code 255. isolate already restores the terminal after those failures; the escape sequence is for sessions where SSH is still connected and forwarding keystrokes to the remote TUI.
 
 `claude agents` accepts `--cwd <path>` (filter sessions by working directory) and `--setting-sources <sources>`; pass them after `--`:
 
 ```bash
-coop ca -- --cwd /workspace
+iso ca -- --cwd /workspace
 ```
 
-Closing the TUI does not stop background sessions; reopening `coop ca` reattaches to whatever Claude Code's daemon is still running.
+Closing the TUI does not stop background sessions; reopening `iso ca` reattaches to whatever Claude Code's daemon is still running.
 
 ## Configuration
 
-Claude-related settings live under the `claude` object in `~/.coop/config.jsonc`, except `github` which is a top-level field:
+Claude-related settings live under the `claude` object in `~/.iso/config.jsonc`, except `github` which is a top-level field:
 
 ```jsonc
 {
@@ -77,7 +77,7 @@ Every field is optional. An empty `claude` object (or omitting it entirely) skip
 
 ### API key forwarding
 
-coop forwards `ANTHROPIC_API_KEY` to the guest via SSH `SendEnv` on every session: `coop claude`, `coop shell`, and `coop exec` alike. The key is never written to disk inside the guest.
+isolate forwards `ANTHROPIC_API_KEY` to the guest via SSH `SendEnv` on every session: `iso claude`, `iso shell`, and `iso exec` alike. The key is never written to disk inside the guest.
 
 Resolution order:
 
@@ -88,23 +88,23 @@ If neither is set, the guest starts without an API key. You can authenticate int
 
 ### GitHub auth
 
-The `github` field controls how coop obtains a `GITHUB_TOKEN` for the guest. This token enables private repo cloning and `gh` CLI usage inside the VM.
+The `github` field controls how isolate obtains a `GITHUB_TOKEN` for the guest. This token enables private repo cloning and `gh` CLI usage inside the VM.
 
 | Value    | Behavior |
 |----------|----------|
 | `"auto"` | Check the `GITHUB_TOKEN` env var first. If unset, run `gh auth token` on the host to extract a token from the GitHub CLI. |
 | `"env"`  | Require `GITHUB_TOKEN` in the host environment. Warns if missing. |
 | `"off"`  | Skip GitHub token forwarding entirely. This is the default when `github` is unset. |
-| `"pat"`  | Use a per-repo fine-grained PAT from `github.pat`. GitHub enforces the permissions and repositories selected for that token. Run `coop github setup-pat --repo owner/name` to add an entry; see [configuration.md](configuration.md#fine-grained-pat-github-pat) for the full reference. |
+| `"pat"`  | Use a per-repo fine-grained PAT from `github.pat`. GitHub enforces the permissions and repositories selected for that token. Run `iso github setup-pat --repo owner/name` to add an entry; see [configuration.md](configuration.md#fine-grained-pat-github-pat) for the full reference. |
 
 A [VM PAT assignment](configuration.md#assign-an-existing-pat-to-a-vm) selects an existing entry independently of workspace detection.
 
-When a token is available, coop runs `gh auth setup-git` in the guest during bootstrap. This configures the git credential helper so `git clone` works against private repositories without further setup.
+When a token is available, isolate runs `gh auth setup-git` in the guest during bootstrap. This configures the git credential helper so `git clone` works against private repositories without further setup.
 
 ### Config directory
 
 `config_dir` selects a host directory to overlay into the guest's `~/.claude/`
-on every agent bootstrap (`coop up` or `coop start`, without `--no-agents`).
+on every agent bootstrap (`iso up` or `iso start`, without `--no-agents`).
 The default is `~/.claude`; a custom path supports `~` expansion:
 
 ```jsonc
@@ -145,7 +145,7 @@ risk dropping a disable preference. Invalid directory encoding is unsupported.
 
 #### Companion preferences and refresh
 
-From host `settings.json`, coop selects only:
+From host `settings.json`, isolate selects only:
 
 - `disableAllHooks` (boolean): applies to all guest Claude hooks, including hooks
   within copied skills/plugins and pre-existing guest hooks.
@@ -155,10 +155,10 @@ From host `settings.json`, coop selects only:
 - Boolean `enabledPlugins` entries whose exact IDs belong to copied,
   discoverable skills-directory plugins, including IDs recorded from previous
   copies retained by the overlay. Absent entries leave guest choices or
-  Claude's manifest/default enablement in effect; coop never synthesizes `true`.
+  Claude's manifest/default enablement in effect; isolate never synthesizes `true`.
 
 Explicit imported values override the corresponding guest user preferences.
-Unrelated guest settings and plugin entries survive. Coop's managed permissions,
+Unrelated guest settings and plugin entries survive. Isolate's managed permissions,
 authentication handling, and model/proxy routing retain their existing precedence;
 none can be supplied through this narrow host-settings merge. Claude's own
 project/managed settings precedence still applies above user settings.
@@ -171,8 +171,8 @@ again, according to the restored guest preference or Claude's default.
 An absent host `settings.json` is an empty preference set; malformed settings or
 invalid relevant preference types stop bootstrap before any Claude invocation.
 
-Coop retains a narrow `~/.claude/coop-import.json` snapshot for recovery, and
-`_coopImportedPreferences` ownership metadata in guest `settings.json` for atomic
+Isolate retains a narrow `~/.claude/iso-import.json` snapshot for recovery, and
+`_isoImportedPreferences` ownership metadata in guest `settings.json` for atomic
 restoration of previous values. Imported preferences are applied before transferring staged extensions and before onboarding,
 marketplace/plugin installation, or MCP registration, including after the existing
 corrupt-settings fallback. The fallback still loses unrelated corrupt guest state,
@@ -217,7 +217,7 @@ Each variable must be set in the host environment at the time of the SSH session
 
 Remote URLs are passed directly to `claude plugin marketplace add --scope user` inside the guest.
 
-Local directories are first copied into the guest at `~/.coop/marketplaces/<dirname>/` via SCP, then registered using the guest-side path. This is useful when developing a marketplace and testing plugins without publishing them to a remote source.
+Local directories are first copied into the guest at `~/.iso/marketplaces/<dirname>/` via SCP, then registered using the guest-side path. This is useful when developing a marketplace and testing plugins without publishing them to a remote source.
 
 ### Plugin installation
 
@@ -270,37 +270,37 @@ Server definitions can include an `env` map for environment variable name mappin
 
 ## Bootstrap sequence
 
-When `coop up` creates/restarts a project VM or `coop start` restarts a stopped VM (without `--no-agents`), coop executes the following steps after the VM boots and SSH becomes available:
+When `iso up` creates/restarts a project VM or `iso start` restarts a stopped VM (without `--no-agents`), isolate executes the following steps after the VM boots and SSH becomes available:
 
 1. **GitHub auth**: If a `GITHUB_TOKEN` is available, run `gh auth setup-git` in the guest.
 2. **User content preparation**: Stage the [allowlisted customizations](#config-directory) from `config_dir` and refresh their narrow companion-preference snapshot.
-3. **Managed permissions**: Merge coop's managed permission keys (`permissions.defaultMode: bypassPermissions` and `permissions.skipDangerousModePermissionPrompt: true`) into the guest's `~/.claude/settings.json`, preserving unrelated keys and applying the imported companion preferences described above. The setting must live in user scope — Claude Code ignores `skipDangerousModePermissionPrompt` from project settings. Other keys Claude Code stores in this file (notably `enabledPlugins` and `extraKnownMarketplaces`) are preserved except for the explicitly imported plugin IDs, so unrelated plugin and marketplace state survives a stop/start cycle. Coop also owns the `env` block for local-model routing (see [Local model support](#local-model-support)): it is set when the VM is in local-model mode and removed in remote mode, so any hand-authored `env` entries in this file are not preserved. A file that cannot be parsed is replaced with managed defaults, then the imported companion preferences are reapplied before invoking Claude.
+3. **Managed permissions**: Merge isolate's managed permission keys (`permissions.defaultMode: bypassPermissions` and `permissions.skipDangerousModePermissionPrompt: true`) into the guest's `~/.claude/settings.json`, preserving unrelated keys and applying the imported companion preferences described above. The setting must live in user scope — Claude Code ignores `skipDangerousModePermissionPrompt` from project settings. Other keys Claude Code stores in this file (notably `enabledPlugins` and `extraKnownMarketplaces`) are preserved except for the explicitly imported plugin IDs, so unrelated plugin and marketplace state survives a stop/start cycle. Isolate also owns the `env` block for local-model routing (see [Local model support](#local-model-support)): it is set when the VM is in local-model mode and removed in remote mode, so any hand-authored `env` entries in this file are not preserved. A file that cannot be parsed is replaced with managed defaults, then the imported companion preferences are reapplied before invoking Claude.
    After settings are written, transfer the staged content into guest `~/.claude/`, then seed onboarding when required.
-4. **Marketplaces**: Register each marketplace source (local directories are copied to the guest first). On first boot, coop compares the configured marketplaces against those already baked into the golden image (from `coop setup --profile`) and only installs the ones that are missing.
-5. **Plugins**: Install each plugin from the registered marketplaces. Like marketplaces, coop computes the delta against plugins already present in the golden image and skips those that are already installed.
+4. **Marketplaces**: Register each marketplace source (local directories are copied to the guest first). On first boot, isolate compares the configured marketplaces against those already baked into the golden image (from `iso setup --profile`) and only installs the ones that are missing.
+5. **Plugins**: Install each plugin from the registered marketplaces. Like marketplaces, isolate computes the delta against plugins already present in the golden image and skips those that are already installed.
 6. **MCP servers**: Register each MCP server definition.
 
-On restart (`coop start` of a stopped instance), coop refreshes GitHub auth (step 1), config directory contents (step 2), and the managed `~/.claude/settings.json` (step 3). Marketplaces, plugins, and MCP servers persist on the guest disk and are not re-installed.
+On restart (`iso start` of a stopped instance), isolate refreshes GitHub auth (step 1), config directory contents (step 2), and the managed `~/.claude/settings.json` (step 3). Marketplaces, plugins, and MCP servers persist on the guest disk and are not re-installed.
 
 ### Skipping bootstrap
 
 To create or restart a VM without any Claude Code configuration:
 
 ```bash
-coop up . --no-agents
-coop start --no-agents
+iso up . --no-agents
+iso start --no-agents
 ```
 
-This skips the entire bootstrap sequence. The VM boots normally but gets no API key, no GitHub token, no plugins, and no MCP servers. You can still run `coop claude` afterward, and that session forwards `ANTHROPIC_API_KEY` and any `env_forward` variables via SSH. Plugins and MCP servers won't be available unless you configure them manually inside the guest.
+This skips the entire bootstrap sequence. The VM boots normally but gets no API key, no GitHub token, no plugins, and no MCP servers. You can still run `iso claude` afterward, and that session forwards `ANTHROPIC_API_KEY` and any `env_forward` variables via SSH. Plugins and MCP servers won't be available unless you configure them manually inside the guest.
 
 ## Updating Claude Code
 
-Claude Code auto-updates in the background by default — it checks for a newer version on startup and periodically, and applies the update on the next launch. coop does not disable this and the guest has outbound network access, so Claude Code keeps itself current with no action from you.
+Claude Code auto-updates in the background by default — it checks for a newer version on startup and periodically, and applies the update on the next launch. isolate does not disable this and the guest has outbound network access, so Claude Code keeps itself current with no action from you.
 
 To force an update immediately rather than waiting for the background updater:
 
 ```bash
-coop agent update --claude
+iso agent update --claude
 ```
 
 This runs `claude update` synchronously inside the guest as the guest user. It is a convenience for when you want the newest version right now; for the recurring stale-agent problem, Codex is the one that needs attention (see [Updating Codex](codex-integration.md#updating-codex)). See [`agent update`](commands.md#agent-update).
@@ -309,10 +309,10 @@ This runs `claude update` synchronously inside the guest as the guest user. It i
 
 A VM can route Claude Code at a host-side local model server (Ollama / LM Studio
 / vLLM / llama.cpp) instead of Anthropic's cloud. The endpoint must serve the
-Anthropic Messages API. Switch a VM with [`coop model <vm> local`](commands.md#model)
-and back with `coop model <vm> remote`; configure the endpoint under
+Anthropic Messages API. Switch a VM with [`iso model <vm> local`](commands.md#model)
+and back with `iso model <vm> remote`; configure the endpoint under
 [`claude.local_model`](configuration.md#local-model-routing) or interactively
-at the `coop model … local` prompt.
+at the `iso model … local` prompt.
 
 The selection is per VM and independent of Codex — Claude can run on a local
 model while Codex stays on cloud, or the reverse. The endpoint Claude resolves
@@ -320,17 +320,17 @@ is the `claude.local_model` config object if present, otherwise an endpoint
 saved interactively for the instance, otherwise none (it stays on cloud).
 Config takes precedence over the saved endpoint.
 
-In local mode coop writes an `env` block into the managed
+In local mode isolate writes an `env` block into the managed
 `~/.claude/settings.json` (see step 3 of the [bootstrap sequence](#bootstrap-sequence))
 pointing `ANTHROPIC_BASE_URL` at the guest-visible endpoint, pinning every model
-tier to the configured model, and supplying `ANTHROPIC_AUTH_TOKEN`. coop owns
+tier to the configured model, and supplying `ANTHROPIC_AUTH_TOKEN`. isolate owns
 this `env` block: it is set in local mode and removed in remote mode, so
 hand-authored `env` entries are not preserved. Two cache-stability keys
 (`CLAUDE_CODE_ATTRIBUTION_HEADER=0`, `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1`)
 are set in local mode. They stop Claude Code from mutating the system prompt
 per request, which keeps a local inference server's prompt cache warm.
 
-Switching takes effect without a VM restart: coop rewrites `settings.json` live
+Switching takes effect without a VM restart: isolate rewrites `settings.json` live
 over SSH on a running VM (or saves the selection to apply on the next start). A
-running `claude` reads its config at launch, so relaunch it (`coop claude <vm>`)
+running `claude` reads its config at launch, so relaunch it (`iso claude <vm>`)
 to pick up the change.

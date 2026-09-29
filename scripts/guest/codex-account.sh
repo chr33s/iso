@@ -9,7 +9,7 @@ set -euo pipefail
 CODEX_BIN="/usr/local/bin/codex"
 CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml"
 KEYRING_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/keyrings"
-PROBE_SERVICE="coop-codex"
+PROBE_SERVICE="iso-codex"
 PROBE_ACCOUNT="keyring-probe"
 
 die() {
@@ -17,7 +17,7 @@ die() {
     exit 1
 }
 
-# coop writes `cli_auth_credentials_store = "keyring"` into the guest Codex
+# iso writes `cli_auth_credentials_store = "keyring"` into the guest Codex
 # config only under `[codex] auth = "chatgpt"`. Every other mode reads
 # credentials from auth.json, where the D-Bus/keyring session is pure overhead
 # (and its password prompt is an outright regression). Gating on the config the
@@ -48,7 +48,7 @@ PROBE_ERROR=""
 probe_keyring() {
     PROBE_ERROR="$(printf 'ok' \
         | timeout 5 secret-tool store \
-            --label="coop Codex keyring probe" \
+            --label="iso Codex keyring probe" \
             service "$PROBE_SERVICE" \
             account "$PROBE_ACCOUNT" \
             2>&1 >/dev/null)" || return 1
@@ -74,7 +74,7 @@ unlock_keyring() {
         printf '%s\n' \
             'codex-account: this VM has no guest keyring yet.' \
             'Choose a password to create one. It encrypts the Codex account' \
-            'credentials stored inside the guest, and later `coop codex` runs' \
+            'credentials stored inside the guest, and later `iso codex` runs' \
             'ask for it again. It is not your ChatGPT or host password.' >&2
     fi
 
@@ -118,18 +118,18 @@ unlock_keyring() {
 }
 
 if [ ! -x "$CODEX_BIN" ]; then
-    die "$CODEX_BIN is missing; rebuild the coop image"
+    die "$CODEX_BIN is missing; rebuild the iso image"
 fi
 
-# coop stages and maintains Codex state only in ~/.codex. In ChatGPT account
-# mode, an explicit CODEX_HOME could put auth.json outside coop's cleanup path
+# iso stages and maintains Codex state only in ~/.codex. In ChatGPT account
+# mode, an explicit CODEX_HOME could put auth.json outside iso's cleanup path
 # (including under /workspace, which is pulled back to the host). Refuse the
-# unsupported override before inspecting its config. coop writes the managed
+# unsupported override before inspecting its config. iso writes the managed
 # credential-store key as the first line, so a same-named nested key cannot
 # trigger this guard.
 if [ -n "${CODEX_HOME:-}" ] \
     && keyring_mode_in "$HOME/.codex/config.toml"; then
-    die "CODEX_HOME is set, but coop manages ~/.codex and it selects the keyring credential store; unset CODEX_HOME for Codex ChatGPT account auth"
+    die "CODEX_HOME is set, but iso manages ~/.codex and it selects the keyring credential store; unset CODEX_HOME for Codex ChatGPT account auth"
 fi
 
 if ! keyring_mode; then
@@ -138,23 +138,23 @@ fi
 
 # The keyring speaks D-Bus, and a headless SSH session has no session bus.
 # Re-exec under one, using the env guard to avoid recursing forever.
-if [ "${COOP_CODEX_ACCOUNT_DBUS:-0}" != "1" ]; then
+if [ "${ISO_CODEX_ACCOUNT_DBUS:-0}" != "1" ]; then
     command -v dbus-run-session >/dev/null 2>&1 \
-        || die "dbus-run-session is missing; install dbus-user-session or rebuild the coop image"
-    export COOP_CODEX_ACCOUNT_DBUS=1
+        || die "dbus-run-session is missing; install dbus-user-session or rebuild the iso image"
+    export ISO_CODEX_ACCOUNT_DBUS=1
     exec dbus-run-session -- "$0" "$@"
 fi
 
 for tool in gnome-keyring-daemon secret-tool timeout; do
     command -v "$tool" >/dev/null 2>&1 \
-        || die "$tool is missing; rebuild the coop image with Codex account-auth support"
+        || die "$tool is missing; rebuild the iso image with Codex account-auth support"
 done
 
 # A nested codex-account — an in-guest agent shelling out to `codex-account` or
 # `codex-yolo` — inherits this bus and its already-unlocked keyring. Unlocking
 # again there would fail, for the same reason the ordering below matters, so
 # reuse the session instead of prompting a second time.
-if [ "${COOP_CODEX_ACCOUNT_UNLOCKED:-0}" = "1" ]; then
+if [ "${ISO_CODEX_ACCOUNT_UNLOCKED:-0}" = "1" ]; then
     probe_keyring \
         || die "inherited guest Secret Service session is unusable${PROBE_ERROR:+: $PROBE_ERROR}"
 else
@@ -168,7 +168,7 @@ else
     unlock_keyring
     probe_keyring \
         || die "guest Secret Service is unavailable${PROBE_ERROR:+: $PROBE_ERROR}; check the keyring password"
-    export COOP_CODEX_ACCOUNT_UNLOCKED=1
+    export ISO_CODEX_ACCOUNT_UNLOCKED=1
 fi
 
 # Codex 0.154.0 can reuse a desktop daemon on another D-Bus session when

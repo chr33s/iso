@@ -109,7 +109,7 @@
  },
  "status alpha": {
   "exit": 0,
-  "stdout": "Instance 'alpha' (running)\n  Backend: apple-container (coop-sandbox)\n  Runtime: coop-sandbox 0.4.0 (containerization 0.45.0, protocol 4)\n  Sandbox: coop-0a1b2c3d-000000000000000a\n  Network: vmnet-shared:10.231.2.0/24 (dedicated)\n  vCPUs: 2\n  Memory: 2048 MiB\n  Disk: 8.1 GiB (0.7 GiB allocated)\n  Address: 10.231.2.2 (host key SHA256:SYNTHETIC)\n  Workspace: copied (no live mounts)\n  Load: 0.12  Mem: 1000/2000 MiB (50%)  Disk: 3200/20480 MiB (15%)\n"
+  "stdout": "Instance 'alpha' (running)\n  Backend: apple-container (iso-sandbox)\n  Runtime: iso-sandbox 0.4.0 (containerization 0.45.0, protocol 4)\n  Sandbox: coop-0a1b2c3d-000000000000000a\n  Network: vmnet-shared:10.231.2.0/24 (dedicated)\n  vCPUs: 2\n  Memory: 2048 MiB\n  Disk: 8.1 GiB (0.7 GiB allocated)\n  Address: 10.231.2.2 (host key SHA256:SYNTHETIC)\n  Workspace: copied (no live mounts)\n  Load: 0.12  Mem: 1000/2000 MiB (50%)  Disk: 3200/20480 MiB (15%)\n"
  },
  "status alpha --json": {
   "exit": 0,

@@ -1,6 +1,6 @@
 Resize a stopped instance's disk, memory, or vCPU count
 
-Usage: coop resize [OPTIONS] <--size <SIZE>|--mem <MEM>|--vcpus <VCPUS>> [NAME]
+Usage: iso resize [OPTIONS] <--size <SIZE>|--mem <MEM>|--vcpus <VCPUS>> [NAME]
 
 Arguments:
   [NAME]  Instance name (required if multiple instances exist)

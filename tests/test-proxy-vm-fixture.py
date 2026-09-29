@@ -83,7 +83,7 @@ with mock.patch.object(os, 'geteuid', return_value=0), mock.patch.object(socket.
         process.wait.assert_not_called()
 
     def test_reserved_listener_survives_sequential_provider_cleanup(self):
-        with tempfile.TemporaryDirectory(prefix="coop-reserved-listener-") as directory:
+        with tempfile.TemporaryDirectory(prefix="iso-reserved-listener-") as directory:
             with socket.socket() as reserved:
                 reserved.bind(("127.0.0.1", 0))
                 reserved.listen(8)
@@ -123,7 +123,7 @@ with mock.patch.object(os, 'geteuid', return_value=0), mock.patch.object(socket.
             process.stdout.close()
 
     def test_idle_tls_peer_does_not_block_accept_or_cleanup(self):
-        with tempfile.TemporaryDirectory(prefix="coop-fixture-cleanup-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="iso-fixture-cleanup-") as temporary:
             work = Path(temporary)
             subprocess.run([sys.executable, str(ROOT / "tests/fixtures/credential-proxy/generate-forwarding-certificates.py"), str(work)], check=True)
             for source, kind, destination in [("forward_leaf.der", "x509", "leaf.pem"),

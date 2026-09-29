@@ -2,9 +2,9 @@
 
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
 > guests remain supported. Source references below are to the Swift host
-> (`Sources/`), the runtime (`coop-sandbox/`) and the proxy (`coop-proxy/`).
+> (`Sources/`), the runtime (`iso-sandbox/`) and the proxy (`iso-proxy/`).
 
-This is the engineering-facing trust model for `coop` — the authoritative list
+This is the engineering-facing trust model for `iso` — the authoritative list
 of trust boundaries, taint sources, and the invariants that hold the isolation
 together. The shared [`review`](../.agents/skills/review/SKILL.md) workflow
 reads this file, and the root [`AGENTS.md`](../AGENTS.md) "Trust model" section
@@ -17,7 +17,7 @@ they don't introduce one.
 
 ## The core boundary: the VM
 
-**coop's isolation boundary is the Linux guest VM itself** — an Apple
+**isolate's isolation boundary is the Linux guest VM itself** — an Apple
 Containerization VM on a macOS 27+ Apple Silicon host. The point of the
 tool is to run AI coding agents (Claude Code, Codex) with broad autonomy
 *inside* that boundary, so the guest is deliberately permissive:
@@ -42,22 +42,22 @@ user launched it.
 
 | Zone | Trust | Notes |
 |------|-------|-------|
-| Host user + `config.jsonc` | Trusted | `cmd:` values run arbitrary `/bin/sh -c` on the host (`CredentialResolver` in `Sources/CoopHost/CredentialResolver.swift`), only when an operation needs the value — never merely by loading the configuration. The config file is a host code-execution surface; only the owner should write it. |
-| coop process (host) | Trusted | Holds/relays secrets, constructs guest commands, drives `coop-sandbox`, `container build`, `ssh`, and `coop-proxy`. Every subprocess goes through `ProcessRunner` with an argv, never a shell string. |
+| Host user + `config.jsonc` | Trusted | `cmd:` values run arbitrary `/bin/sh -c` on the host (`CredentialResolver` in `Sources/IsoHost/CredentialResolver.swift`), only when an operation needs the value — never merely by loading the configuration. The config file is a host code-execution surface; only the owner should write it. |
+| isolate process (host) | Trusted | Holds/relays secrets, constructs guest commands, drives `iso-sandbox`, `container build`, `ssh`, and `iso-proxy`. Every subprocess goes through `ProcessRunner` with an argv, never a shell string. |
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint, `8.8.8.8`. Reached over the network; authenticated where applicable. |
 
 ## Taint sources (treat as untrusted)
 
 - **Guest filesystem content pulled to the host.** `Workspace.pull`
-  (`Sources/CoopHost/Workspace.swift`) brings guest-authored file contents,
+  (`Sources/IsoHost/Workspace.swift`) brings guest-authored file contents,
   filenames, and symlinks onto the host filesystem. This is the **widest guest→host
   channel** and the primary place a path-traversal or symlink escape could land.
   A staged pull (`WorkspaceStage*.swift`) lands it in `<instance>/stage/`,
   walks it without following links, rejects special files, hard links,
   escaping symlinks and control-character names, enforces budgets, and applies
   descriptor-relative with a destination-drift and content-hash check.
-- **Committed disks.** `coop commit` turns a guest-mutated disk into an image,
+- **Committed disks.** `iso commit` turns a guest-mutated disk into an image,
   so the guest authors every file on it. Host-key and machine-id removal runs
   in a maintenance VM, never on the host (see
   [Apple sandbox backend](#apple-sandbox-backend)).
@@ -75,14 +75,14 @@ user launched it.
   release host — gated by a maintainer signature over `SHA256SUMS`, the
   checksum and (best-effort) Sigstore attestation.
 - **OCI feature blobs.** `DevcontainerOCI.swift` pulls devcontainer *Features*
-  from GHCR; the install snippet runs **in the guest**, not the host. coop
+  from GHCR; the install snippet runs **in the guest**, not the host. isolate
   verifies the manifest against its own bytes (and any `@sha256:` pin and
   registry-claimed digest) and each layer against its descriptor digest, and
   reads `install.sh` only as a bounded regular file (never through a symlink).
 
 ## Secrets and how they cross into the guest
 
-coop relays several secrets from the host into the guest: `ANTHROPIC_API_KEY`,
+isolate relays several secrets from the host into the guest: `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `GITHUB_TOKEN`/PAT, `CLAUDE_CODE_OAUTH_TOKEN`, arbitrary
 user `env_forward` entries, and the VM SSH key. The invariants:
 
@@ -93,19 +93,19 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   build a command line with the secret as an argument — it is visible in
   `ps`/`/proc`. The one known exception is the macOS Keychain store step
   (`security add-generic-password -w`, `SecretStore.swift`), whose CLI offers
-  no stdin path; it is documented at the call site and never appears in coop's
+  no stdin path; it is documented at the call site and never appears in isolate's
   messages. MCP server definitions (with resolved header secrets) reach
   `claude mcp add-json` on stdin, not the ssh command line.
 - **Nothing else rides the SSH environment.** Guest-bound `ssh`/`scp`/`rsync`
   inherit only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SHELL`, `TERM`,
-  `LANG` and `LC_*` from the host, plus the variables coop forwards on purpose.
+  `LANG` and `LC_*` from the host, plus the variables isolate forwards on purpose.
   A user's own `SendEnv` (the guest accepts any) therefore cannot carry a raw
   provider key into the guest in proxy mode. `guest_env.json` (start-time
   `--env` values) is owner-only, in an owner-only instance directory.
 - **Proxy processes are identified, not assumed.** A proxy starts only on a
   free port and must be the sole listener afterwards (`lsof`), or startup fails
   closed before the credential is sent; a recorded proxy or tunnel PID is
-  signalled only while it still names `coop-proxy` / `ssh`.
+  signalled only while it still names `iso-proxy` / `ssh`.
 - **`GITHUB_TOKEN` defaults to Off.** A saved VM PAT assignment is also explicit
   opt-in; it stores only a validated existing entry key. Invocation-level
   `--no-github` suppresses the assignment before loading it. Active assignments
@@ -119,29 +119,29 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   strategy to Off and disable the PAT wizard for that invocation. This does
   not scrub existing guest credentials or block explicit environment entries
   or one-shot clone authentication; see [GitHub auth](configuration.md#github-auth).
-- **Secret files stay `0600`, dirs `0700`.** coop stores secrets only in the
+- **Secret files stay `0600`, dirs `0700`.** isolate stores secrets only in the
   macOS Keychain; there is no plaintext-file or other fallback store. All
   managed writes go through `AtomicFile` / `StateStore`, which never relax
   permissions.
-- **Secrets stay out of logs.** `Secret<T>` (`Sources/CoopCore/Units.swift`)
+- **Secrets stay out of logs.** `Secret<T>` (`Sources/IsoCore/Units.swift`)
   and `EnvForward` render as `<redacted>` in descriptions, debug output, and
   reflection; subprocess descriptions redact secret arguments. Configuration
   and decoding errors name field paths, never values. Do not log a resolved
   secret.
 - **The stored token is indirected, never inlined.** The configuration holds a
   `cmd:...` retrieval command (`KeychainReference` in `SecretStore.swift` for
-  coop-created items) or a `vault:NAME` reference to the local secret store,
-  not the plaintext token; coop resolves it when it needs the value. Provider
+  iso-created items) or a `vault:NAME` reference to the local secret store,
+  not the plaintext token; isolate resolves it when it needs the value. Provider
   proxy credentials must be `cmd:` or `vault:` references; literal values are
   rejected.
 - **The local secret store.** Its passphrase is read from `/dev/tty` or from
-  the descriptor named by `COOP_SECRETS_PASSPHRASE_FD` (once per process),
-  never argv or a plaintext variable, and `coop secrets set` takes values from
+  the descriptor named by `ISO_SECRETS_PASSPHRASE_FD` (once per process),
+  never argv or a plaintext variable, and `iso secrets set` takes values from
   a prompt or stdin. A `{vault:}` guest-environment reference is persisted in
   `guest_env.json` as a reference only; its value is resolved per session and
   is guest-visible by design, like any `--env` value. A reference on a
   provider credential variable is persisted as a `provider_secret`, resolved
-  only into that VM's `coop-proxy` startup document, and never set in the
+  only into that VM's `iso-proxy` startup document, and never set in the
   guest environment; under `proxy.mode = "off"` it is an error. A generic
   reference may not name a secret a proxy credential also reads. `vault:` is
   refused for values placed in the guest (`claude.api_key`, `codex.api_key`,
@@ -150,19 +150,19 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   opt-in `proxy`). When enabled in remote model mode, `ANTHROPIC_API_KEY`
   (Claude) and/or `OPENAI_API_KEY` (Codex) are **not** forwarded
   (`suppressAnthropicKey` / `suppressOpenAIKey` in `Bootstrap.swift`, one per
-  provider); the host-side `coop-proxy` holds the real credential and the
+  provider); the host-side `iso-proxy` holds the real credential and the
   guest gets only a per-instance capability token (Claude via `settings.json`,
-  Codex via the `coop_local` provider's bearer `env_key`). In proxy mode Codex's
+  Codex via the `iso_local` provider's bearer `env_key`). In proxy mode Codex's
   `~/.codex/auth.json` is also **not** staged onto the guest disk (it holds a
   refreshable subscription token). Each credential is resolved on the host and
-  handed to `coop-proxy` over **stdin**, never argv or disk; a resolution failure
+  handed to `iso-proxy` over **stdin**, never argv or disk; a resolution failure
   fails the boot closed. A per-VM override
   (`ProxyState.swift`, `<inst.dir>/proxy.json`) selects a different host-side
   credential for one VM — resolution is override → default → off — without
   changing the proxy binary or the capability token. See
   [`credential-proxy.md`](credential-proxy.md).
 - **Codex ChatGPT account auth is persistent guest state.** With
-  `codex.auth` `"chatgpt"`, coop suppresses `OPENAI_API_KEY` across config,
+  `codex.auth` `"chatgpt"`, isolate suppresses `OPENAI_API_KEY` across config,
   process env, `env_forward`, and persisted `--env` overlays, writes
   `cli_auth_credentials_store = "keyring"` to guest `~/.codex/config.toml`, and
   excludes host `auth.json` from the guest copy. Codex stores its cached account
@@ -172,35 +172,35 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   credential its keyring session can unlock. The keyring setting is written
   during agent bootstrap, so `--no-agents` skips it. On a guest where no
   earlier boot wrote it, the wrapper then falls through to plain Codex and
-  `codex login` writes a plaintext `~/.codex/auth.json` instead. coop warns in
+  `codex login` writes a plaintext `~/.codex/auth.json` instead. isolate warns in
   exactly that case; the setting lives on the guest disk, so once written it
   survives a later `--no-agents` start. Two guardrails close the gaps that
   leaves: each bootstrap in this mode deletes any guest `~/.codex/auth.json`
   left by an earlier `api_key` boot or `--no-agents` login (dropping the file
-  from the staged set only stops coop *copying* one, it removes nothing), and
-  `coop codex` refuses to launch when the guest config does not actually
+  from the staged set only stops isolate *copying* one, it removes nothing), and
+  `iso codex` refuses to launch when the guest config does not actually
   select the keyring store — otherwise the wrapper would pass through to plain
   Codex and write the token in the clear. The wrapper also fails closed when a
-  session-level `CODEX_HOME` is set while coop's managed
-  `~/.codex/config.toml` selects keyring mode; coop does not otherwise stage or
+  session-level `CODEX_HOME` is set while isolate's managed
+  `~/.codex/config.toml` selects keyring mode; isolate does not otherwise stage or
   maintain an alternate Codex home.
 
 ## SSH boundary
 
 - Every guest SSH connection pins the guest's host key. The options come from
-  one place, `SSHTarget` (`Sources/CoopHost/SSH.swift`: `hostKeyOptions` and
+  one place, `SSHTarget` (`Sources/IsoHost/SSH.swift`: `hostKeyOptions` and
   `transportOptions` — the one list `ssh`, `scp`, and rsync's `-e` all derive
   from — and the `~/.ssh/config` block in `SSHConfig.swift`):
   `StrictHostKeyChecking=yes` against a per-instance `known_hosts`,
-  `GlobalKnownHostsFile=/dev/null`, `HostKeyAlias=<machine>.coop`,
+  `GlobalKnownHostsFile=/dev/null`, `HostKeyAlias=<machine>.iso`,
   `UpdateHostKeys=no`, `ForwardAgent=no`, `IdentityAgent=none`, and
-  `IdentitiesOnly=yes`, so coop's guest-facing SSH authenticates with its own
-  key file and never consults the host agent. coop's own transports add
+  `IdentitiesOnly=yes`, so isolate's guest-facing SSH authenticates with its own
+  key file and never consults the host agent. isolate's own transports add
   `BatchMode=yes`, so a rejected key fails instead of falling back to a
   password prompt; the block written for the user's own `ssh coop-apple-<name>`
   deliberately does not.
 - The Ed25519 host key is read once over the runtime's native control channel
-  (`coop-sandbox exec` over vsock to the owned sandbox, never `ssh-keyscan`)
+  (`iso-sandbox exec` over vsock to the owned sandbox, never `ssh-keyscan`)
   and written by `HostKeyPin` (`HostKeys.swift`). A missing or changed key is a
   hard error. Pins written by older builds under the `.coop-apple` alias no
   longer match and must be re-enrolled. Flag any path that re-enrolls
@@ -242,7 +242,7 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in
   `sandbox-exec -p` with the Seatbelt profile embedded in
-  `Sources/CoopHost/SeatbeltProfile.swift`.
+  `Sources/IsoHost/SeatbeltProfile.swift`.
   File writes and program execution are denied; outbound connections are
   restricted to ports 443 and 53. Startup probes the denials before binding.
   If confinement or HTTP readiness fails, VM startup aborts. The guest cannot
@@ -259,11 +259,11 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 
 ## Apple sandbox backend
 
-The same VM boundary applies. The backend drives coop-sandbox
-(`coop-sandbox`), a runtime coop builds on `apple/containerization`. The
+The same VM boundary applies. The backend drives iso-sandbox
+(`iso-sandbox`), a runtime isolate builds on `apple/containerization`. The
 isolation contract lives in two layers: the runtime cannot express host
-exposure, and coop verifies the effective configuration anyway
-(`AppleBackend`, `SandboxRuntime`, `IsolationGate` in `Sources/CoopHost/`).
+exposure, and isolate verifies the effective configuration anyway
+(`AppleBackend`, `SandboxRuntime`, `IsolationGate` in `Sources/IsoHost/`).
 
 - **Runtime shape.** Each instance is its own VM on its own vmnet network
   (`10.231.N.0/24`). The runtime's `SandboxRecord` has no field for a host
@@ -277,7 +277,7 @@ exposure, and coop verifies the effective configuration anyway
   `vmnet-host:`) against the record. Adding any other such field, a widening
   network mode (bridged, shared-network, a published port), or a `create` flag
   for one is a finding.
-- **Boundary audit.** `coop audit` reads `<instance>/audit.jsonl`, written
+- **Boundary audit.** `iso audit` reads `<instance>/audit.jsonl`, written
   by the host from host-side state only (configuration modes, proxied
   providers, variable names, counts); nothing guest-authored or secret is
   recorded, and the file is owner-only and bounded.
@@ -290,10 +290,10 @@ exposure, and coop verifies the effective configuration anyway
   stop request or a signal) reaches the guest through guest-agent calls a root
   guest can wedge, so if the guest is still running ten seconds after the
   forced kill the owner exits, which ends the in-process VM.
-- **Runtime qualification.** `SandboxRuntime` qualification accepts only `coop-sandbox`
+- **Runtime qualification.** `SandboxRuntime` qualification accepts only `iso-sandbox`
   with protocol 4 and `containerization` 0.45.0. The runtime itself accepts
-  only a kernel whose sha256 is in `KernelPin.allowed`. On first `coop setup`,
-  `coop-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
+  only a kernel whose sha256 is in `KernelPin.allowed`. On first `iso setup`,
+  `iso-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
   (the runtime's only outbound fetch) and refuses it unless it resolves to the
   pinned digest. No config key or flag relaxes these checks; adding one is a
   finding.
@@ -330,20 +330,20 @@ exposure, and coop verifies the effective configuration anyway
   guest reaches the host through its NAT gateway and
   the host's LAN address. On a Mac that includes anything listening on all
   interfaces, such as sshd when Remote Login is on, AirPlay Receiver, and
-  rapportd. **Accepted by design**: those services authenticate their clients, and coop's own host listeners bind
+  rapportd. **Accepted by design**: those services authenticate their clients, and isolate's own host listeners bind
   loopback and reach a guest only through its SSH tunnel. vmnet has no
   per-network filter, so closing this would need a root-owned `pf` anchor on
   every Mac. The Apple default network (other workloads' containers) and host
   vsock are not reachable from a sandbox. A change that exposes a host
   *credential* service to guests is a finding.
 - **Native control channel.** Host keys are read, and image checks run, through
-  `coop-sandbox exec`: an argv delivered over vsock to the guest agent, never a
-  shell string. Only fixed commands and coop-chosen paths go through it;
+  `iso-sandbox exec`: an argv delivered over vsock to the guest agent, never a
+  shell string. Only fixed commands and iso-chosen paths go through it;
   guest-controlled text never does. The owner's control socket is `0600` in a
   `0700` per-user directory and checks the peer UID.
 - **Host-key pinning and re-enrollment.** A changed key fails with
   `APPLE_HOST_KEY_CHANGED`. The only path that replaces a pin is a start after
-  `coop restore`: coop replaced the disk itself, and the restore removed the
+  `iso restore`: isolate replaced the disk itself, and the restore removed the
   host keys. That path is journaled with an operation id. After a crash, the
   runtime's record must show both a higher disk generation and that
   operation as its last committed one before the flag is set. Flag any other
@@ -365,13 +365,13 @@ exposure, and coop verifies the effective configuration anyway
   sticky, nor group-writable unless it is sticky or its group is `wheel` or
   `admin` (whose members can already use sudo; Homebrew's prefix is
   `admin`-writable). The check reads mode bits only; an ACL that grants
-  others write access is not detected. `scripts/build-coop-sandbox.sh` signs the runtime with the
+  others write access is not detected. `scripts/build-iso-sandbox.sh` signs the runtime with the
   hardened runtime and refuses an install `bin/` that is owned by neither
   you nor root, world-writable, or group-writable by a group other than
   `wheel` or `admin`. The runtime runs with umask `077`
   and keeps its state directories `0700` and disk files `0600`.
-- **Guest-controlled text** that coop displays (host-key comments,
-  runtime/guest error text, console-log excerpts, and `coop logs` in both
+- **Guest-controlled text** that isolate displays (host-key comments,
+  runtime/guest error text, console-log excerpts, and `iso logs` in both
   snapshot and `--follow` mode) has its control characters replaced first.
 - **Local-model tunnels** (`ProxyLifecycle.swift`) are reconciled on
   every bootstrap, and every boot first closes those recorded for the
@@ -380,16 +380,16 @@ exposure, and coop verifies the effective configuration anyway
   host server. Tunnel PIDs are only trusted or signalled while `ps` still
   reports them as an `ssh` process.
 - **Ownership.** Sandboxes and committed disks are named
-  `coop-<owner8>-<random16>`. Nothing is deleted unless the local owner record
+  `iso-<owner8>-<random16>`. Nothing is deleted unless the local owner record
   and the instance record both match, and the runtime refuses to delete a
-  sandbox recorded for another owner tag. The `coop-` prefix alone is never
+  sandbox recorded for another owner tag. The `iso-` prefix alone is never
   enough.
 - **Image build context** is a private temporary directory holding rendered
   files and the VM-access **public** key only. There are no build args or
   secrets. The OCI build runs in stock `container`'s builder. The result is
   imported into the runtime's private store as an OCI archive, and the
   builder's copy is deleted.
-- **Committed disks** (`coop commit`) have their SSH host keys and machine-id
+- **Committed disks** (`iso commit`) have their SSH host keys and machine-id
   removed before they are saved, so instances created from them normally
   generate their own identity. This is not a uniqueness guarantee: the disk
   still boots guest-authored code, which can restore an identity it stashed.
@@ -400,7 +400,7 @@ exposure, and coop verifies the effective configuration anyway
   refuses a symlinked `/etc` or `/etc/ssh`, and removes a symlinked key or
   machine-id rather than following it. Disk growth runs the same way.
   Maintenance VMs have no network, and whatever they run stays inside that VM.
-- **The maintenance image** is built by `coop setup` like the instance image
+- **The maintenance image** is built by `iso setup` like the instance image
   (stock builder, the same digest-pinned Ubuntu base and apt, so no new
   outbound URL), from a fixed recipe with no build context beyond its
   Dockerfile: Ubuntu plus e2fsprogs. The runtime unpacks it into its own
@@ -414,7 +414,7 @@ exposure, and coop verifies the effective configuration anyway
   - no disk is replaced under a VM that can use it (the runtime's per-sandbox
     guard covers owner startup, including launchd respawns);
   - a rollback never overwrites a newer change;
-  - a host key is re-pinned only after a restore correlated with coop's own
+  - a host key is re-pinned only after a restore correlated with isolate's own
     operation id. The only exception is the pre-operation-id journal fallback
     described under host-key pinning above.
 
@@ -422,11 +422,11 @@ exposure, and coop verifies the effective configuration anyway
   outside that fallback, or guessing at unreadable staged state) is a
   finding.
 
-## `coop update` trust chain
+## `iso update` trust chain
 
 Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
 
-1. Metadata from the pinned `chr33s/coop` GitHub repo (compile-time const).
+1. Metadata from the pinned `chr33s/iso` GitHub repo (compile-time const).
 2. `normalizeTag` — the version tag is validated as semver **before** it enters
    the API URL path (path-traversal guard).
 3. **Mandatory signature.** `SHA256SUMS.sig` must be present and must be an
@@ -452,7 +452,7 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
 4. **Mandatory checksum.** The `SHA256SUMS` asset must be present (install is
    refused otherwise) and every downloaded tarball is verified against it
    (`verifySHA256`, fixed-size digest compare).
-5. **Best-effort attestation.** `gh attestation verify --repo chr33s/coop
+5. **Best-effort attestation.** `gh attestation verify --repo chr33s/iso
    --bundle attestations.jsonl` (Sigstore provenance), against the bundle asset
    downloaded from the same release.
 
@@ -486,11 +486,11 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
    What still defeats a substituted bundle is the **subject-digest binding** —
    `gh` digests the artifact and requires a matching subject — plus the
    **signer pin**. Both clients pass `--cert-identity
-   https://github.com/chr33s/coop/.github/workflows/release.yml@refs/tags/<tag>`,
+   https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/<tag>`,
    `--source-ref refs/tags/<tag>` and `--deny-self-hosted-runners`
    (`Provenance.verifyArguments`, `signer_pin` in `install.sh`), on the bundle
    and the API path alike. A bundle minted by any other workflow in
-   `chr33s/coop` — `candidate.yml` also holds `attestations: write` — or by
+   `chr33s/iso` — `candidate.yml` also holds `attestations: write` — or by
    `release.yml` for a different tag, or on a self-hosted runner, is refused.
    `--repo` alone would accept all of those.
 
@@ -507,7 +507,7 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
    API — that is no stricter on integrity, but a digest mismatch, a corrupt
    download and an unusable `gh` all surface here, and switching transports
    would mask them. Skipped with a logged note if `gh` is absent, and skipped
-   entirely when `COOP_UPDATE_API_BASE_URL` is overridden (test mode). So
+   entirely when `ISO_UPDATE_API_BASE_URL` is overridden (test mode). So
    Sigstore provenance is *not* guaranteed on hosts without `gh` — the
    signature is the floor there.
 6. Extraction with `tar -xzf --no-same-owner --no-same-permissions` (path-escape
@@ -522,7 +522,7 @@ updated binary never moves back onto a withdrawn release without an explicit
 opt-in. `install.sh` installs whatever `VERSION` names and has neither guard;
 it is the deliberate recovery path.
 
-`COOP_UPDATE_API_BASE_URL` redirects the update origin **and** disables
+`ISO_UPDATE_API_BASE_URL` redirects the update origin **and** disables
 attestation; the release signature is still required, so that server must serve
 `SHA256SUMS` signed by a listed key. Only the pinned `github.com` default +
 attestation provide Sigstore provenance. Flag any change that widens where that override
@@ -555,4 +555,4 @@ Stop and get explicit human confirmation before merging a change that:
   traversal first;
 - logs or traces tainted or secret content — that channel becomes an
   exfiltration path;
-- softens any step of the `coop update` verification chain.
+- softens any step of the `iso update` verification chain.

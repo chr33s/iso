@@ -36,12 +36,12 @@ def save_observations(observations, destination):
 
 
 def main():
-    work = Path(tempfile.mkdtemp(prefix="coop-forwarding-corpus-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-forwarding-corpus-"))
     print(f"Corpus evidence: {work}", flush=True)
     cases = json.loads(CORPUS.read_text())
     assert cases and len({case["id"] for case in cases}) == len(cases)
     commands = {
-        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "iso-proxy", "--filter",
                   "sharedForwardingCorpusThroughTLS"],
     }
     required = {
@@ -52,7 +52,7 @@ def main():
     observations = {}
     for implementation, command in commands.items():
         captured = work / f"{implementation}-observations.json"
-        environment = dict(os.environ, COOP_FORWARD_OBSERVATIONS=str(captured))
+        environment = dict(os.environ, ISO_FORWARD_OBSERVATIONS=str(captured))
         with (work / f"{implementation}.log").open("w") as log:
             result = subprocess.run(command, cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT)
         output = (work / f"{implementation}.log").read_text()

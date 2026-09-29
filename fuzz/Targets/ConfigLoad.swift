@@ -1,5 +1,5 @@
-import CoopConfiguration
 import Foundation
+import IsoConfiguration
 
 /// The full configuration pipeline on in-memory input: JSONC scan,
 /// duplicate/limit preflight, Foundation decoding, domain validation, and a

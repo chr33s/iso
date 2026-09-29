@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """H-02 flag surface: every baseline command path and option exists in the Swift CLI.
 
-    python3 tests/test-swift-host-cli-surface.py --swift .build/debug/coop
+    python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
 
 Reads tests/fixtures/baseline-cli/commands.json (captured from the Rust
-host) and, for each command path, parses `coop <path> --help` from the
+host) and, for each command path, parses `iso <path> --help` from the
 Swift host. Differences must be listed in ALLOWED with the decision that
 permits them; anything else fails.
 """
@@ -42,7 +42,7 @@ ALLOWED_MISSING_COMMANDS = {
 
 
 def swift_options(binary, path):
-    argv = [binary] + (path.split() if path != "coop" else []) + ["--help"]
+    argv = [binary] + (path.split() if path != "iso" else []) + ["--help"]
     result = subprocess.run(argv, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         return None

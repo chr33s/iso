@@ -1,8 +1,8 @@
 One-shot: ensure default image, start an instance for cwd, launch Claude.
 
-Re-runnable: if an instance already exists for the current workspace it is reconnected (running) or restarted (stopped) instead of being recreated. For per-instance tuning (profiles, mounts, image, ...) use `coop setup` / `coop up` directly.
+Re-runnable: if an instance already exists for the current workspace it is reconnected (running) or restarted (stopped) instead of being recreated. For per-instance tuning (profiles, mounts, image, ...) use `iso setup` / `iso up` directly.
 
-Usage: coop quickstart [OPTIONS]
+Usage: iso quickstart [OPTIONS]
 
 Options:
       --no-workspace

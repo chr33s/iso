@@ -1,4 +1,4 @@
-import CoopCore
+import IsoCore
 
 /// `RepoSlug.parse(url:)` on arbitrary input: `git remote get-url` output and
 /// `--git-repo` arguments cross a trust boundary.

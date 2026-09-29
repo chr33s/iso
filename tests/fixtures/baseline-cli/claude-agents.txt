@@ -1,6 +1,6 @@
 Open the Claude Code agent view inside the VM (`claude agents`)
 
-Usage: coop claude-agents [NAME] [ARGS]...
+Usage: iso claude-agents [NAME] [ARGS]...
 
 Arguments:
   [NAME]     Instance name (required if multiple instances exist)

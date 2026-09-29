@@ -24,7 +24,7 @@ rm -f /etc/ssh/ssh_host_*
 rm -f /var/lib/dbus/machine-id
 ln -sf /etc/machine-id /var/lib/dbus/machine-id
 
-cat > /etc/systemd/system/coop-test-hostkeys.service <<'UNIT'
+cat > /etc/systemd/system/iso-test-hostkeys.service <<'UNIT'
 [Unit]
 Description=Generate SSH host keys on first boot
 Before=ssh.service
@@ -39,7 +39,7 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl set-default multi-user.target
-systemctl enable coop-test-hostkeys.service ssh.service docker.service containerd.service
+systemctl enable iso-test-hostkeys.service ssh.service docker.service containerd.service
 systemctl disable ssh.socket 2>/dev/null || true
 # Units that cannot work inside a VM-backed container workload.
 systemctl mask \
@@ -49,7 +49,7 @@ systemctl mask \
     systemd-firstboot.service 2>/dev/null || true
 
 passwd -l root
-mkdir -p /root/.ssh /var/lib/coop-test /workspace
+mkdir -p /root/.ssh /var/lib/iso-test /workspace
 chmod 700 /root/.ssh
 
 apt-get clean

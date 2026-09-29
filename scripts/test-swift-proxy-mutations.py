@@ -10,23 +10,23 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "coop-proxy"
+PACKAGE = ROOT / "iso-proxy"
 SOURCES = PACKAGE / "Sources"
 MUTATIONS = [
-    ("deny becomes allow", "CoopProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
+    ("deny becomes allow", "IsoProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
      'guard method == "POST" else { return true }'),
-    ("POST becomes any method", "CoopProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
+    ("POST becomes any method", "IsoProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
      'guard true else { return false }'),
-    ("exact path becomes prefix", "CoopProxyCore/OperationPolicy.swift", 'target.path == "/v1/messages"',
+    ("exact path becomes prefix", "IsoProxyCore/OperationPolicy.swift", 'target.path == "/v1/messages"',
      'target.path.hasPrefix("/v1/messages")'),
-    ("stripped header is preserved", "CoopProxyCore/HeaderPolicy.swift", '!removed.contains($0.name.lowercased())', '!removed.contains($0.name.lowercased()) || true'),
-    ("capability equality is inverted", "CoopProxyCore/Capability.swift",
+    ("stripped header is preserved", "IsoProxyCore/HeaderPolicy.swift", '!removed.contains($0.name.lowercased())', '!removed.contains($0.name.lowercased()) || true'),
+    ("capability equality is inverted", "IsoProxyCore/Capability.swift",
      'return HMAC<SHA256>.isValidAuthenticationCode', 'return !HMAC<SHA256>.isValidAuthenticationCode'),
-    ("header field limit removed", "CoopProxyTransport/InboundPipeline.swift",
+    ("header field limit removed", "IsoProxyTransport/InboundPipeline.swift",
      "limits.maxHeaderFieldSize = Limits.headerFieldBytes", "limits.maxHeaderFieldSize = 80 * 1024"),
-    ("header block limit removed", "CoopProxyTransport/InboundPipeline.swift",
+    ("header block limit removed", "IsoProxyTransport/InboundPipeline.swift",
      "limits.maxHeaderListSize = Limits.headerBlockBytes", "limits.maxHeaderListSize = 2 * 1024 * 1024"),
-    ("header count limit removed", "CoopProxyTransport/InboundPipeline.swift",
+    ("header count limit removed", "IsoProxyTransport/InboundPipeline.swift",
      "limits.maxHeaderFieldCount = Limits.headerCount", "limits.maxHeaderFieldCount = 256"),
 ]
 

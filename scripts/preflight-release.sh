@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release preflight for coop.
+# Release preflight for iso.
 #
 # Runs every check that gates a release from one machine, mirroring the CI
 # jobs (swift format, build, test, the recorded-baseline parity checks, the
 # lightweight integration scripts) so a doomed tag is never pushed, and adds
 # the checks CI does not perform:
-#   - Swift package version (Sources/CoopHost/UpdateVersion.swift) / CHANGELOG
+#   - Swift package version (Sources/IsoHost/UpdateVersion.swift) / CHANGELOG
 #     / git-tag agreement
 #   - the release archive, built through scripts/build-release.py exactly as
 #     release.yml builds it (a break otherwise first surfaces on the tag,
@@ -75,11 +75,11 @@ step() {
   fi
 }
 
-# The version `coop --version` reports and scripts/build-release.py checks
+# The version `iso --version` reports and scripts/build-release.py checks
 # the tag against.
 package_version() {
   sed -n 's/.*public static let packageVersion = "\([^"]*\)".*/\1/p' \
-    Sources/CoopHost/UpdateVersion.swift | head -n 1
+    Sources/IsoHost/UpdateVersion.swift | head -n 1
 }
 
 macos_27() {
@@ -103,7 +103,7 @@ check_versions() {
   local v tag
   v="$(package_version)"
   if [[ -z "$v" ]]; then
-    echo "Could not read packageVersion from Sources/CoopHost/UpdateVersion.swift" >&2
+    echo "Could not read packageVersion from Sources/IsoHost/UpdateVersion.swift" >&2
     return 1
   fi
   tag="v$v"
@@ -118,7 +118,7 @@ check_versions() {
   fi
 
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    printf 'Tag %s already exists — bump packageVersion in Sources/CoopHost/UpdateVersion.swift first\n' "$tag"
+    printf 'Tag %s already exists — bump packageVersion in Sources/IsoHost/UpdateVersion.swift first\n' "$tag"
     return 1
   fi
 
@@ -127,7 +127,7 @@ check_versions() {
 
 run_format() {
   swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints \
-    coop-proxy/Sources coop-proxy/Tests
+    iso-proxy/Sources iso-proxy/Tests
 }
 
 run_host_tests() {
@@ -138,11 +138,11 @@ run_host_tests() {
 
 # The recorded-baseline replays CI runs against the debug build.
 run_baselines() {
-  local coop=.build/debug/coop failed=0
-  python3 tests/test-swift-host-read-parity.py --swift "$coop" || failed=1
-  python3 tests/test-swift-host-lifecycle-parity.py --swift "$coop" || failed=1
-  python3 tests/test-swift-host-data-root-parity.py --swift "$coop" || failed=1
-  python3 tests/test-swift-host-cli-surface.py --swift "$coop" || failed=1
+  local iso=.build/debug/iso failed=0
+  python3 tests/test-swift-host-read-parity.py --swift "$iso" || failed=1
+  python3 tests/test-swift-host-lifecycle-parity.py --swift "$iso" || failed=1
+  python3 tests/test-swift-host-data-root-parity.py --swift "$iso" || failed=1
+  python3 tests/test-swift-host-cli-surface.py --swift "$iso" || failed=1
   return "$failed"
 }
 
@@ -151,12 +151,12 @@ run_swift_proxy() {
     warn "Swift proxy validation requires macOS 27+ — run its package/process gates before tagging"
     return 0
   fi
-  swift test --package-path coop-proxy --force-resolved-versions || return
+  swift test --package-path iso-proxy --force-resolved-versions || return
   python3 scripts/test-swift-proxy-process.py --skip-tls
 }
 
 run_sandbox_tests() {
-  swift test --package-path coop-sandbox --force-resolved-versions --no-parallel
+  swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
 }
 
 # The unsigned release archive, built as release.yml builds it (signing and
@@ -190,13 +190,13 @@ step "Format (swift format lint --strict)" run_format
 step "Swift host build and tests" run_host_tests
 step "Recorded-baseline parity" run_baselines
 step "Swift proxy tests" run_swift_proxy
-step "coop-sandbox tests" run_sandbox_tests
+step "iso-sandbox tests" run_sandbox_tests
 step "Workflow audit (zizmor)" run_zizmor
 step "Configuration migration tests" python3 tests/test-migrate-config.py
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
 step "Integration — installer provenance" ./tests/integration-install.sh
-step "Integration — coop update" ./tests/integration-update.sh
-step "Integration — coop uninstall" ./tests/integration-uninstall.sh
+step "Integration — iso update" ./tests/integration-update.sh
+step "Integration — iso uninstall" ./tests/integration-uninstall.sh
 
 if [[ "$RUN_FUZZ" == 1 ]]; then
   step "Fuzzing" run_fuzz

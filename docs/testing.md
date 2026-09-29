@@ -1,7 +1,7 @@
 # Testing
 
-coop's host is the Swift package at the repository root (`Package.swift`:
-`CoopCore`, `CoopConfiguration`, `CoopSecrets`, `CoopHost`, `CoopCLI`). Its test
+isolate's host is the Swift package at the repository root (`Package.swift`:
+`IsoCore`, `IsoConfiguration`, `IsoSecrets`, `IsoHost`, `IsoCLI`). Its test
 layers are:
 
 - **Swift package tests** (`tests/swift/`) — unit and contract tests for every
@@ -17,7 +17,7 @@ layers are:
 - **Integration tests** — real Apple Containerization VMs. Manual; run for
   guest-visible and lifecycle changes.
 
-The credential proxy (`coop-proxy/`) and the Apple runtime (`coop-sandbox/`)
+The credential proxy (`iso-proxy/`) and the Apple runtime (`iso-sandbox/`)
 are separate Swift packages with their own tests (below).
 
 Supported host: **macOS 27+ Apple Silicon only**. Linux guests are in scope;
@@ -27,7 +27,7 @@ Linux hosts are not.
 
 ```bash
 swift build --force-resolved-versions
-swift test --force-resolved-versions          # CoopCore/Configuration/Host/CLI + corpus replay
+swift test --force-resolved-versions          # IsoCore/Configuration/Host/CLI + corpus replay
 swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
 swift test --sanitize=address --scratch-path .build-asan     # also:
 swift test --sanitize=thread --scratch-path .build-tsan
@@ -35,22 +35,22 @@ swift test --sanitize=undefined --scratch-path .build-ubsan
 
 python3 tests/test-migrate-config.py          # TOML -> JSONC converter (Python 3.11+)
 python3 tests/test-swift-host-inventory.py    # compatibility inventory completeness
-python3 tests/test-swift-host-read-parity.py --swift .build/debug/coop
-python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/coop
-python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/coop
-python3 tests/test-swift-host-cli-surface.py --swift .build/debug/coop
+python3 tests/test-swift-host-read-parity.py --swift .build/debug/iso
+python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/iso
+python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/iso
+python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
 python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
 ```
 
 Use a separate `--scratch-path` per sanitizer so instrumented builds do not
 invalidate `.build`. The package tests use synthetic credentials and isolated
-temporary state; they never touch `~/.coop`.
+temporary state; they never touch `~/.iso`.
 
 The parity checks replay results recorded from the former Rust host (baseline
 `e3ba69e`) in `tests/baseline/parity/`; no Rust toolchain is needed. The
 read-parity check runs the Swift host against a synthetic state tree, with a
-stand-in `coop-sandbox` (answering from `tests/fixtures/coop-sandbox`) and a
+stand-in `iso-sandbox` (answering from `tests/fixtures/iso-sandbox`) and a
 stand-in `ssh` on `PATH`, and compares stdout and exit status command by
 command; recorded differences are listed in the script. The lifecycle check
 does the same for `setup`, `resize`, `commit`, `restore`, `stop`, `destroy`,
@@ -62,13 +62,13 @@ guest image changes those contexts and every hash derived from them; record it
 in the golden's `revisions` list as the old→new hash substitutions (applied to
 the golden), and confirm that reversing them reproduces the previous golden
 exactly, so nothing else changed. The data-root check covers
-the refusal of upstream coop state in the default `~/.coop`. The CLI-surface
+the refusal of upstream coop state in the default `~/.iso`. The CLI-surface
 check compares every baseline command path and option in
 `tests/fixtures/baseline-cli/commands.json` with the Swift host's `--help`;
 allowed differences are listed with their decision in the script.
 
 Configuration parity fixtures live in
-`tests/swift/CoopConfigurationTests/Fixtures/parity/`: each `.toml` has the
+`tests/swift/IsoConfigurationTests/Fixtures/parity/`: each `.toml` has the
 baseline loader's normalized result (`.baseline.json`) and its conversion to
 `.jsonc` by `scripts/migrate-config-to-jsonc.py`; the Swift loader must produce
 the same values, except for enumerated differences (C-01 retired fields and
@@ -85,7 +85,7 @@ packages from a staged copy and assembles the release archive; see
 
 ```bash
 ./tests/run-integration.sh                        # every phase, ~20 min
-./tests/run-integration.sh --only coop            # coop end to end
+./tests/run-integration.sh --only iso            # iso end to end
 ./tests/run-integration.sh --only isolation,snapshots --keep
 ```
 
@@ -159,7 +159,7 @@ the production executable.
 The live gates below use their own provider credentials, never everyday ones.
 Create an Anthropic workspace and an OpenAI project for them, each with a low
 spend limit and access to the approved models. Keep them in Keychain items of
-their own. Do not use `coop proxy setup` for this, because it writes the
+their own. Do not use `iso proxy setup` for this, because it writes the
 `coop-anthropic`/`coop-openai` items your normal install reads.
 
 Do not type or paste a key at the `security add-generic-password ... -w`
@@ -170,8 +170,8 @@ console. Instead, copy the key to the clipboard and send the whole command to
 `security` on stdin. This keeps the key out of argv and shell history:
 
 ```bash
-{ printf 'add-generic-password -U -s coop-live-anthropic -a coop-live -w '; pbpaste; echo; } | security -i
-{ printf 'add-generic-password -U -s coop-live-openai -a coop-live -w '; pbpaste; echo; } | security -i
+{ printf 'add-generic-password -U -s iso-live-anthropic -a iso-live -w '; pbpaste; echo; } | security -i
+{ printf 'add-generic-password -U -s iso-live-openai -a iso-live -w '; pbpaste; echo; } | security -i
 pbcopy </dev/null   # clear the clipboard
 ```
 
@@ -179,7 +179,7 @@ pbcopy </dev/null   # clear the clipboard
 last four characters against the provider console, without printing the key:
 
 ```bash
-security find-generic-password -s coop-live-openai -a coop-live -w |
+security find-generic-password -s iso-live-openai -a iso-live -w |
   awk '{print length($0), substr($0, length($0)-3)}'
 ```
 
@@ -187,28 +187,28 @@ If the provider rejects a key, this shows its error message. The key goes into
 curl's header on stdin (`-H @-`):
 
 ```bash
-security find-generic-password -s coop-live-openai -a coop-live -w |
+security find-generic-password -s iso-live-openai -a iso-live -w |
   sed 's/^/Authorization: Bearer /' |
   curl -sS -H @- -H 'Content-Type: application/json' \
     -d '{"model":"APPROVED_MODEL","input":"ping","max_output_tokens":16}' \
     https://api.openai.com/v1/responses
 ```
 
-The Keychain Access app (File → New Password Item: name `coop-live-openai`,
-account `coop-live`) also stores the full value. When finished, delete both
-items with `security delete-generic-password -s coop-live-<provider> -a coop-live`
+The Keychain Access app (File → New Password Item: name `iso-live-openai`,
+account `iso-live`) also stores the full value. When finished, delete both
+items with `security delete-generic-password -s iso-live-<provider> -a iso-live`
 and revoke the keys.
 
 For the guest gate, point a private config at these items. Give it its own
-`data_dir` so it never touches `~/.coop`:
+`data_dir` so it never touches `~/.iso`:
 
 ```jsonc
 {
-  "data_dir": "~/coop-live/data",
+  "data_dir": "~/iso-live/data",
   "github": "off",
   "proxy": {
-    "anthropic": { "credential": "cmd:security find-generic-password -s coop-live-anthropic -a coop-live -w", "auth": "api_key" },
-    "openai": { "credential": "cmd:security find-generic-password -s coop-live-openai -a coop-live -w", "auth": "bearer" }
+    "anthropic": { "credential": "cmd:security find-generic-password -s iso-live-anthropic -a iso-live -w", "auth": "api_key" },
+    "openai": { "credential": "cmd:security find-generic-password -s iso-live-openai -a iso-live -w", "auth": "bearer" }
   }
 }
 ```
@@ -233,7 +233,7 @@ The default token ceiling is 256 per generation request; an approved test may
 select 16–1024 with `--max-output-tokens`. No model is selected implicitly.
 Use `--scheme bearer` for a dedicated Anthropic bearer credential when supported
 by the account. Pass `--binary` to select the built artifact (for example
-`coop-proxy/.build/debug/coop-proxy-swift`, the default, after `swift build --package-path coop-proxy`). It runs under the production Seatbelt profile
+`iso-proxy/.build/debug/iso-proxy-swift`, the default, after `swift build --package-path iso-proxy`). It runs under the production Seatbelt profile
 with an empty child environment and startup JSON over stdin. Core dumps are
 disabled before reading the credential. Output contains phase counts, model,
 binary hash, and secret-audit status, without response bodies or proxy logs.
@@ -263,13 +263,13 @@ python3 tests/integration-proxy-transition.py --live-agents \
 
 It builds a private runtime and one throwaway VM, `proxy-live`, whose proxies
 read the dedicated credentials through `cmd:` references. By default these are
-the `coop-live-anthropic`/`coop-live-openai` Keychain items above. Use
+the `iso-live-anthropic`/`iso-live-openai` Keychain items above. Use
 `--anthropic-credential`/`--openai-credential` to pass other `cmd:` references;
 the script rejects anything that is not a `cmd:` reference. It configures only
 the providers that have models. The script then:
 
 - checks that each agent's guest endpoint is a loopback address;
-- checks that each running proxy is the built `coop-proxy` and prints its
+- checks that each running proxy is the built `iso-proxy` and prints its
   sha256;
 - runs the agent check below once per model and prints each summary.
 
@@ -280,18 +280,18 @@ synthetic-credential guest scan; that is covered by the base gate.
 To run it by hand instead, prepare a disposable guest with the Swift proxy
 selected, dedicated test credentials configured on the host, and normal agent
 bootstrap enabled. Run the following from the repository root, substituting its
-private coop config, VM name, and approved model:
+private isolate config, VM name, and approved model:
 
 ```bash
-coop --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
+iso --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
   "$(cat tests/fixtures/credential-proxy/agent-tool-smoke.py)" \
   --agent codex --model APPROVED_MODEL
-coop --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
+iso --config PRIVATE_CONFIG shell PRIVATE_VM -- python3 -c \
   "$(cat tests/fixtures/credential-proxy/agent-tool-smoke.py)" \
   --agent claude --model APPROVED_MODEL
 ```
 
-This script must run **inside the guest**. It uses the existing coop agent
+This script must run **inside the guest**. It uses the existing isolate agent
 configuration and capability; it accepts no provider credential. It creates a
 temporary challenge file whose random contents are absent from the prompt,
 requires a successful tool result containing those contents, then requires a
@@ -324,7 +324,7 @@ tool-use probe retains its 180-second limit.
 The shared malformed HTTP harness runs the real Swift proxy under Seatbelt:
 
 ```bash
-swift build --package-path coop-proxy
+swift build --package-path iso-proxy
 python3 scripts/test-proxy-contract.py --fuzz-cases 10000 --seed 20260927
 python3 scripts/test-proxy-contract.py --replay /path/to/request.bin
 ```
@@ -349,7 +349,7 @@ discovery, ping result handling, and bounded HTTP retries. These use a
 temporary loopback HTTP server and require Python 3, Bash, and curl;
 CI runs them. The full VM suite additionally checks these probes against
 real guests. A host FORWARD policy other than ACCEPT still causes an explicit
-skip of the routed guest-isolation probe, since it would mask the coop rule.
+skip of the routed guest-isolation probe, since it would mask the isolate rule.
 
 Run `python3 tests/test-codex-account.py` for the account wrapper's argument,
 login/logout, API-key passthrough, and `codex-yolo` regressions (also in
@@ -357,7 +357,7 @@ CI). To additionally test implicit daemon reuse with a real Linux Codex binary
 (on a Linux machine, since the wrapper runs in the Linux guest):
 
 ```bash
-COOP_TEST_CODEX="$(command -v codex)" python3 tests/test-codex-account.py
+ISO_TEST_CODEX="$(command -v codex)" python3 tests/test-codex-account.py
 ```
 
 This requires `dbus-run-session`, `gnome-keyring-daemon`, `secret-tool`, and
@@ -375,9 +375,9 @@ and migration from a profile-provided system command. Package layout and
 completeness remain the native installer's responsibility.
 
 
-## Apple runtime (`coop-sandbox`)
+## Apple runtime (`iso-sandbox`)
 
-The host's own tests (`CoopHostTests`) replace the `coop-sandbox` runtime (and
+The host's own tests (`IsoHostTests`) replace the `iso-sandbox` runtime (and
 the stock `container` builder) with scripted fakes, so they run without either
 installed. The runtime itself is a Swift package with its own unit tests (IDs,
 records, subnet allocation, the control protocol, reconcile, and in
@@ -385,7 +385,7 @@ records, subnet allocation, the control protocol, reconcile, and in
 locking); none of them boots a VM:
 
 ```bash
-swift test --package-path coop-sandbox --no-parallel
+swift test --package-path iso-sandbox --no-parallel
 ```
 
 The runtime tests run serially: several take, release, and re-probe `flock`
@@ -394,12 +394,12 @@ still held. Serial runs have not shown it. The cause is not yet identified
 (subprocesses started by other tests are the main suspect; switching them to
 `posix_spawn` did not remove it).
 
-Parser fixtures in `tests/fixtures/coop-sandbox/` are real `coop-sandbox`
+Parser fixtures in `tests/fixtures/iso-sandbox/` are real `iso-sandbox`
 output; the directory's README says how they were captured.
 
 ### Apple runtime real-hardware checks
 
-`tests/integration-apple-sandbox.sh` boots real `coop-sandbox` VMs and checks
+`tests/integration-apple-sandbox.sh` boots real `iso-sandbox` VMs and checks
 what unit tests cannot:
 
 - peer isolation between sandboxes over IPv4/IPv6 TCP, UDP, and ICMP,
@@ -420,17 +420,17 @@ what unit tests cannot:
   in parallel;
 - the maintenance image (install, and survival after its store image is
   deleted) and same-sandbox races (concurrent grows, start against grow);
-- `coop` itself end to end (the `coop` phase): `setup`, `up`, `status`,
+- `iso` itself end to end (the `iso` phase): `setup`, `up`, `status`,
   `exec`, `stop`/`start`, `resize --mem/--vcpus/--size`, rollback of a
   `resize --start` whose boot fails, `commit`, `restore` with host-key
-  re-pinning, `destroy`, and image deletion. The phase also checks coop's
+  re-pinning, `destroy`, and image deletion. The phase also checks isolate's
   own sandbox for host mounts, agent forwarding, and canary leakage. It
-  requires coop to refuse a changed host key and a restore it did not
-  make. It kills `coop restore` and `coop resize --size` partway
-  (`COOP_KILL_FRACTIONS`), and the next `start` must recover.
+  requires isolate to refuse a changed host key and a restore it did not
+  make. It kills `iso restore` and `iso resize --size` partway
+  (`ISO_KILL_FRACTIONS`), and the next `start` must recover.
 
 It builds the runtime, a small test image (`tests/fixtures/apple-sandbox/`),
-and `coop`, all under a temporary work directory, and removes its state root,
+and `iso`, all under a temporary work directory, and removes its state root,
 sandboxes, and images on exit (`--keep` retains the work directory):
 
 ```bash
@@ -439,7 +439,7 @@ sandboxes, and images on exit (`--keep` retains the work directory):
 ```
 
 Phases: `setup disks machine isolation exposure identity persistence
-resources growth snapshots recovery concurrency coop`. It needs Apple Silicon,
+resources growth snapshots recovery concurrency iso`. It needs Apple Silicon,
 macOS 27+, Xcode 27, `jq`, and stock Apple `container` with its service
 running.
 
@@ -484,13 +484,13 @@ The credential proxy has its own policy mutation sweep (Muter) and targeted
 mutation script; see [Swift proxy policy mutation
 sweep](#swift-proxy-policy-mutation-sweep).
 
-## Credential proxy (`coop-proxy`)
+## Credential proxy (`iso-proxy`)
 
 The proxy is a separate Swift package. When changing it, run at least:
 
 ```bash
-swift format lint --recursive --strict coop-proxy/Sources coop-proxy/Tests
-swift test --package-path coop-proxy --force-resolved-versions
+swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
+swift test --package-path iso-proxy --force-resolved-versions
 python3 scripts/test-swift-proxy-process.py --skip-tls
 ```
 
@@ -541,7 +541,7 @@ its queued request is cancelled. Reproduce with a local TCP fixture that receive
 the TLS ClientHello but never answers it:
 
 ```bash
-COOP_PROXY_HANDSHAKE_AUDIT=1 swift test --package-path coop-proxy --filter auditCancellationDuringTLSHandshake
+ISO_PROXY_HANDSHAKE_AUDIT=1 swift test --package-path iso-proxy --filter auditCancellationDuringTLSHandshake
 ```
 
 This opt-in dependency audit fails the two-second upstream socket closure
@@ -550,12 +550,12 @@ for the thirty-second establishment deadline. It uses the pinned client's TLS
 configuration, a local synthetic destination, and no credentials. Forwarding now
 uses direct SwiftNIO/NIOSSL with owned sockets; this audit preserves the reason
 for that replacement and is not the acceptance test for the new bridge.
-Run `swift test --package-path coop-proxy --filter bridgeCancellationClosesStalledTLSHandshake`
+Run `swift test --package-path iso-proxy --filter bridgeCancellationClosesStalledTLSHandshake`
 for guest-disconnect coverage through the new bridge, for both provider identities.
 
 ### Cancellable Swift TLS connection component
 
-Run `swift test --package-path coop-proxy --filter ownedTLS` for the direct
+Run `swift test --package-path iso-proxy --filter ownedTLS` for the direct
 SwiftNIO/NIOSSL connection component. It owns candidate sockets before TCP
 connect and retains that ownership through TLS. Local tests cover cancellation
 of stalled and established TLS sockets, late DNS results after cancellation,
@@ -580,7 +580,7 @@ DNS/candidate admission has the dedicated tests below.
 Run:
 
 ```bash
-swift test --package-path coop-proxy --filter 'tlsProbeCancellation|productionClientSharesSocketBudget'
+swift test --package-path iso-proxy --filter 'tlsProbeCancellation|productionClientSharesSocketBudget'
 ```
 
 The client registers native HTTP requests and DNS/TLS probes before admitting
@@ -602,7 +602,7 @@ not itself assert that every socket close future has completed.
 Run:
 
 ```bash
-swift test --package-path coop-proxy --filter 'cancelledDNS|dnsCancellation|dnsFailurePreserves|guestCancellationCannot|productionClientSharesSocketBudget|cancelledSocketKeepsAdmission'
+swift test --package-path iso-proxy --filter 'cancelledDNS|dnsCancellation|dnsFailurePreserves|guestCancellationCannot|productionClientSharesSocketBudget|cancelledSocketKeepsAdmission'
 ```
 
 The production client shares budgets for 256 underlying DNS lookups and 256
@@ -635,7 +635,7 @@ status, partial provider body, guest EOF, and one-slot capacity recovery. Local
 For the Swift matrix and complete-response regression alone, run:
 
 ```bash
-swift test --package-path coop-proxy --filter 'upstreamDisconnectClosesGuestAndRestoresPermits|completedResponseDrainsAfterUpstreamClosesDuringGuestWrite'
+swift test --package-path iso-proxy --filter 'upstreamDisconnectClosesGuestAndRestoresPermits|completedResponseDrainsAfterUpstreamClosesDuringGuestWrite'
 ```
 
 The verified local TLS fixture closes before response headers or during an
@@ -698,8 +698,8 @@ socket buffers. Per-peer sent/received counts and cleanup are recorded. Omit
 `--direction` to run both aggregate directions.
 
 Neither mode measures a
-Seatbelt-confined process. Tests are opt-in through `COOP_PROXY_MEMORY_GATE` and
-`COOP_PROXY_UPLOAD_MEMORY_GATE`; the runner sets the selected variable and rejects
+Seatbelt-confined process. Tests are opt-in through `ISO_PROXY_MEMORY_GATE` and
+`ISO_PROXY_UPLOAD_MEMORY_GATE`; the runner sets the selected variable and rejects
 skipped test selections.
 
 ### Swift aggregate partial/malformed-header memory gate
@@ -719,7 +719,7 @@ The runner checks sample coverage and recorded outcomes and rejects a skipped
 test. This workload covers concurrent parser buffering and malformed-client
 churn; it does not measure 256 simultaneous streamed request/response bodies or
 the confined executable. Its opt-in variable is
-`COOP_PROXY_AGGREGATE_MEMORY_GATE`.
+`ISO_PROXY_AGGREGATE_MEMORY_GATE`.
 
 ### Swift held-stream aggregate memory gate
 
@@ -734,7 +734,7 @@ The gate requires less than 256 MiB whole-process RSS growth per provider and
 less than 64 MiB additional growth after that provider's first round. The runner
 also validates the existing stream-capacity contract and memory sample coverage.
 These regression budgets include all local provider/guest TLS fixtures. The test
-is opt-in through `COOP_PROXY_STREAM_MEMORY_GATE`. This measures many established,
+is opt-in through `ISO_PROXY_STREAM_MEMORY_GATE`. This measures many established,
 mostly idle streams; saturation with 256 continuously producing stalled streams
 and the confined executable are separate workloads.
 
@@ -749,8 +749,8 @@ incrementally and its SHA-256 must match the expected patterned body. A separate
 request declaring 64 MiB plus one byte must receive 413 with zero upstream TCP
 connections or HTTP requests. Both paths require guest EOF and upstream socket
 closure. The runner validates six complete records, retaining logs and raw observations in a printed
-temporary directory. Test-only `COOP_BODY_LIMIT_OBSERVATIONS` captures counts
-and digest. The individual gate is `swift test --package-path coop-proxy --filter realTLSDeclaredBodyLimit`.
+temporary directory. Test-only `ISO_BODY_LIMIT_OBSERVATIONS` captures counts
+and digest. The individual gate is `swift test --package-path iso-proxy --filter realTLSDeclaredBodyLimit`.
 A chunked request with
 `Expect: 100-continue` must receive 411 as its first response, with zero upstream
 connections, requests, body bytes, or injected credentials. The shared runner
@@ -765,8 +765,8 @@ write. The upload must remain incomplete and the upstream socket must close.
 The runner validates both providers' status, partial body and closure observations, retaining
 raw elapsed times while excluding scheduler timing from equality comparison.
 Logs, raw observations and comparison evidence are retained in a printed
-temporary directory. `COOP_IDLE_OBSERVATIONS` is consumed only by test code.
-The individual gate is `swift test --package-path coop-proxy --filter realTLSUploadIdleDeadline`.
+temporary directory. `ISO_IDLE_OBSERVATIONS` is consumed only by test code.
+The individual gate is `swift test --package-path iso-proxy --filter realTLSUploadIdleDeadline`.
 
 Run the compared TLS stream-capacity gate on macOS:
 
@@ -779,10 +779,10 @@ printed temporary directory. It validates six complete, unique rounds against
 the contract and compares held-response count, upstream request/closure counts,
 excess-response bytes and completed-response count. Unexpected fields and
 incorrect field types fail validation. Record order is ignored. The optional
-`COOP_STREAM_OBSERVATIONS` path is read only by test code. Individual gates are:
+`ISO_STREAM_OBSERVATIONS` path is read only by test code. Individual gates are:
 
 ```bash
-swift test --package-path coop-proxy --filter realTLSStreamsHold256Slots
+swift test --package-path iso-proxy --filter realTLSStreamsHold256Slots
 ```
 
 For each provider they hold 256 responses after their first SSE chunk and
@@ -825,7 +825,7 @@ Header names are lowercased and pairs sorted; duplicate entries are retained.
 No headers are omitted. Both fixture servers send the same explicit Date
 header. Raw byte arrays and headers remain in the observation files for
 inspection. The optional observation path is consumed only by test code
-(`COOP_FORWARD_OBSERVATIONS`).
+(`ISO_FORWARD_OBSERVATIONS`).
 
 The comparison tripwire was checked by changing captured request/response
 bytes, path, status, duplicate header count, and upstream count: each
@@ -849,7 +849,7 @@ They use the real 30-second establishment deadline and require local 502,
 zero HTTP requests and upstream socket release. Raw elapsed milliseconds are
 retained and checked against the corpus's 29–35 second bounds; scheduler timing
 need not be identical across implementations. Two additional cases route the
-fixed provider endpoint to the reserved name `coop-proxy-test.invalid` in test
+fixed provider endpoint to the reserved name `iso-proxy-test.invalid` in test
 code only. They require a DNS failure, local 502, zero upstream HTTP requests
 and physical guest closure. Swift checks the typed A/AAAA resolver errors and
 the absence of TCP connection attempts.
@@ -858,7 +858,7 @@ TCP connect remains a separate case.
 
 ### Swift proxy policy mutation sweep
 
-`coop-proxy/muter.conf.yml` scopes the four policy files required by the
+`iso-proxy/muter.conf.yml` scopes the four policy files required by the
 port specification. Build [Muter](https://github.com/muter-mutation-testing/muter)
 at revision `7f1f2584e0a27fc05c952a5c8cdd52b10cc9513f`. In that checkout, apply
 `scripts/patches/muter-preserve-syntax-identity.patch` from this repository using
@@ -894,11 +894,11 @@ some correctness failures, so a standing harness only earns its keep where
 input crosses a trust boundary. CI replays the corpus and runs a bounded smoke
 of every target; longer campaigns are manual.
 
-Harness bodies live in `fuzz/Targets/` (the `CoopFuzzHarnesses` package
+Harness bodies live in `fuzz/Targets/` (the `IsoFuzzHarnesses` package
 target) and libFuzzer entrypoints in `fuzz/Entrypoints/`. `scripts/fuzz.sh`
 compiles LLVM libFuzzer from the sources vendored in `fuzz/libfuzzer/` (see its
 README; the file manifest must match the SHA-256 pinned in the script, or
-`COOP_LIBFUZZER_SRC` supplies another checkout) with Xcode `clang++`, and the
+`ISO_LIBFUZZER_SRC` supplies another checkout) with Xcode `clang++`, and the
 production Swift sources from this revision with Xcode `swiftc`,
 AddressSanitizer and SanitizerCoverage (inline 8-bit counters, PC tables,
 comparison tracing). Campaigns use libFuzzer value profiling.
@@ -930,7 +930,7 @@ reproduce it with `scripts/fuzz.sh replay <target> <artifact>`.
   error.
 
 The ordinary `swift test` suite replays `fuzz/corpus/` through the same
-harness bodies (`CoopFuzzReplayTests`); that is regression coverage, not
+harness bodies (`IsoFuzzReplayTests`); that is regression coverage, not
 fuzzing. Promote a minimized, synthetic reproducer into
 `fuzz/corpus/<target>/` so it runs in both. Qualification results and
 campaign records are in the

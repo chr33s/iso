@@ -35,15 +35,15 @@ def validate(record, rounds):
 
 
 def main():
-    work = Path(tempfile.mkdtemp(prefix="coop-aggregate-memory-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-aggregate-memory-"))
     print(f"Aggregate memory evidence: {work}", flush=True)
     report = []
     for rounds in [2, 8]:
         captured = work / f"{rounds}.json"
         logfile = work / f"{rounds}.log"
-        command = ["swift", "test", "--package-path", "coop-proxy", "--filter", TEST]
-        environment = dict(os.environ, COOP_PROXY_AGGREGATE_MEMORY_GATE="1",
-                           COOP_MEMORY_ROUNDS=str(rounds), COOP_MEMORY_OBSERVATIONS=str(captured))
+        command = ["swift", "test", "--package-path", "iso-proxy", "--filter", TEST]
+        environment = dict(os.environ, ISO_PROXY_AGGREGATE_MEMORY_GATE="1",
+                           ISO_MEMORY_ROUNDS=str(rounds), ISO_MEMORY_OBSERVATIONS=str(captured))
         with logfile.open("w") as log:
             result = subprocess.run(command, cwd=ROOT, env=environment,
                                     stdout=log, stderr=subprocess.STDOUT, timeout=300)

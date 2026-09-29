@@ -29,10 +29,10 @@ def validate(records):
 
 
 def main():
-    work = Path(tempfile.mkdtemp(prefix="coop-body-idle-"))
+    work = Path(tempfile.mkdtemp(prefix="iso-body-idle-"))
     print(f"Body-idle evidence: {work}", flush=True)
     commands = {
-        "swift": ["swift", "test", "--package-path", "coop-proxy", "--filter",
+        "swift": ["swift", "test", "--package-path", "iso-proxy", "--filter",
                   "realTLSUploadIdleDeadlineResetsAndCancelsUpstream"],
     }
     markers = {"swift": "Test realTLSUploadIdleDeadlineResetsAndCancelsUpstream() passed"}
@@ -42,7 +42,7 @@ def main():
         captured = work / f"{implementation}-observations.json"
         with (work / f"{implementation}.log").open("w") as log:
             result = subprocess.run(command, cwd=ROOT,
-                env=dict(os.environ, COOP_IDLE_OBSERVATIONS=str(captured)),
+                env=dict(os.environ, ISO_IDLE_OBSERVATIONS=str(captured)),
                 stdout=log, stderr=subprocess.STDOUT)
         output = (work / f"{implementation}.log").read_text()
         passed = result.returncode == 0 and markers[implementation] in output

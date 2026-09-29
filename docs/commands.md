@@ -3,23 +3,23 @@
 > **Host support:** This fork supports macOS 27+ on Apple Silicon only. Linux
 > guests remain supported.
 
-coop creates isolated VM environments for running Claude Code and Codex. Supported hosts are macOS 27+ Apple Silicon, using the Apple sandbox backend.
+isolate creates isolated VM environments for running Claude Code and Codex. Supported hosts are macOS 27+ Apple Silicon, using the Apple sandbox backend.
 
 ## Global Flags
 
 | Flag | Description |
 |------|-------------|
-| `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.coop/config.jsonc`). A `.toml` path stops with a [migration hint](configuration.md#migrating-from-toml). |
+| `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.iso/config.jsonc`). A `.toml` path stops with a [migration hint](configuration.md#migrating-from-toml). |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
 | `--version` | Print version and exit. |
 
 ## Instance Name Resolution
 
-Most commands accept an optional instance name. coop resolves the target instance with three rules:
+Most commands accept an optional instance name. isolate resolves the target instance with three rules:
 
-- **Zero instances exist.** The command fails and tells you to run `coop up`.
-- **One instance exists.** The name is optional. coop selects it automatically.
-- **Multiple instances exist.** The name is required. coop lists available instances on error.
+- **Zero instances exist.** The command fails and tells you to run `iso up`.
+- **One instance exists.** The name is optional. isolate selects it automatically.
+- **Multiple instances exist.** The name is required. isolate lists available instances on error.
 
 ## Commands
 
@@ -28,24 +28,24 @@ Most commands accept an optional instance name. coop resolves the target instanc
 Ensure an environment exists and is running for a project directory.
 
 ```
-coop up [DIR] [FLAGS]
+iso up [DIR] [FLAGS]
 ```
 
-`DIR` defaults to the current directory. coop canonicalizes it and uses it as
+`DIR` defaults to the current directory. isolate canonicalizes it and uses it as
 the project identity for instance naming, devcontainer discovery, GitHub PAT
-lookup, and future `coop up DIR` affinity. If a matching instance is already
+lookup, and future `iso up DIR` affinity. If a matching instance is already
 running, `up` reports success without creating another VM. If a matching
 instance is stopped, `up` restarts it. If no matching instance exists, `up`
 creates one. Pass `--new-instance` with `--name` to skip the lookup and create
 a second, separately named instance for the same directory or `--git-repo`
-URL. That leaves the project with two matching instances, so later `coop up`
+URL. That leaves the project with two matching instances, so later `iso up`
 runs report the ambiguity instead of choosing one — address the instances by
-name (`coop start <name>`, `coop shell <name>`) from then on.
+name (`iso start <name>`, `iso shell <name>`) from then on.
 
 By default, `up` copies/syncs the project into `/workspace`. Pass `--mount`
 to use the mount transport for the project at `/workspace` instead. The Apple
 backend has no host mounts, so this is a one-time sync at creation; use
-`coop push` / `coop pull` afterwards. `--copy` is accepted as an explicit spelling of the default.
+`iso push` / `iso pull` afterwards. `--copy` is accepted as an explicit spelling of the default.
 Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 `/workspace` inside the guest.
 
@@ -69,7 +69,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable) |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot |
-| `--env KEY=VALUE` | Env var to set in the guest (repeatable). A whole value `{vault:NAME}` is resolved from [`coop secrets`](#secrets) for each session |
+| `--env KEY=VALUE` | Env var to set in the guest (repeatable). A whole value `{vault:NAME}` is resolved from [`iso secrets`](#secrets) for each session |
 | `--env-file <path>` | A `.env` file of guest env vars (`KEY=value`, quoted values, `export`, comments; `{vault:NAME}` references). Parsed strictly, never by a shell. `--env` wins over it |
 | `--devcontainer <path>` | Explicit path to a `devcontainer.json` to use (skips discovery and prompt) |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation |
@@ -77,57 +77,57 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--json` | With `--dry-run`, emit the resolved plan as JSON on stdout (`{ report, profiles, guest_user, vm }`) instead of the text report on stderr |
 
 ```
-coop up .
-coop up ~/code/my-project --mount
-coop up . --profile python,node
-coop up . --copy --forward-port 3000
-coop up . --extra-mount ~/data:/data
-coop up --git-repo https://github.com/trailofbits/coop.git
+iso up .
+iso up ~/code/my-project --mount
+iso up . --profile python,node
+iso up . --copy --forward-port 3000
+iso up . --extra-mount ~/data:/data
+iso up --git-repo https://github.com/trailofbits/coop.git
 ```
 
 Creation options such as `--vcpus`, `--mem`, `--disk`, `--image`,
 `--profile`, `--extra-mount`, `--git-repo`, `--exclude-git`, and
-`--devcontainer` are applied only when `up` creates a new instance. `coop up
+`--devcontainer` are applied only when `up` creates a new instance. `iso up
 --profile <list>`
 derives an image name from the sorted profile list, runs the same stale-image
-check as `coop setup`, and builds or rebuilds that image if needed. Explicit
-named images are unchanged: use `coop setup --image <name> --profile ...`
-followed by `coop up --image <name>` when you want to choose the image name
+check as `iso setup`, and builds or rebuilds that image if needed. Explicit
+named images are unchanged: use `iso setup --image <name> --profile ...`
+followed by `iso up --image <name>` when you want to choose the image name
 yourself. If a matching project instance already exists, destroy it first to
 recreate it with different creation options. Runtime startup options such as
 `--forward-port`, `--post-start`, and `--env` can be used when `up` creates or
 restarts an instance; if the matching instance is already running, stop it
 first so those options can take effect.
 
-When a local `devcontainer.json` was applied while creating the instance, coop stores
-its path and content hash. Later `coop up` reconnects or restarts warn if that
+When a local `devcontainer.json` was applied while creating the instance, isolate stores
+its path and content hash. Later `iso up` reconnects or restarts warn if that
 file changed, but the existing VM is not mutated automatically. Destroy and
 recreate the instance to apply creation-time devcontainer changes such as
 `features`, `hostRequirements`, `mounts`, `image`/`build`, or `remoteUser`.
 
 ### `quickstart` (removed)
 
-`coop quickstart` has been removed. It now exits with an error that names the
-replacement sequence: `coop setup` (create the config and build the image),
-`coop up [DIR]`, then `coop claude` or `coop codex`.
+`iso quickstart` has been removed. It now exits with an error that names the
+replacement sequence: `iso setup` (create the config and build the image),
+`iso up [DIR]`, then `iso claude` or `iso codex`.
 
 ### `init`
 
-Deprecated alias for [`coop setup --config-only`](#setup). Prints a
+Deprecated alias for [`iso setup --config-only`](#setup). Prints a
 deprecation note on stderr, then runs the same implementation.
 
 ```
-coop init
+iso init
 ```
 
 No additional flags.
 
 ### `setup`
 
-Run this once after installing coop. It creates `~/.coop/config.jsonc` from
+Run this once after installing isolate. It creates `~/.iso/config.jsonc` from
 the commented template when no configuration exists, checks prerequisites, and
 builds a template root filesystem with the Apple runtime. It never boots an
-instance or launches an agent; follow it with `coop up`.
+instance or launches an agent; follow it with `iso up`.
 
 With `--config-only`, setup only writes the JSONC template and exits: it
 installs nothing, provisions no credentials, and builds no image. An existing
@@ -135,7 +135,7 @@ configuration file is reported and left unchanged. Image options (such as
 `--profile`, `--image`, `--rebuild`) are rejected with `--config-only`.
 
 ```
-coop setup [FLAGS]
+iso setup [FLAGS]
 ```
 
 | Flag | Description |
@@ -158,20 +158,20 @@ coop setup [FLAGS]
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any setup work. |
 
 ```
-coop setup -y --profile python,node --template-size 12
-coop setup --config-only
-coop setup --image ml-dev --profile python
-coop setup -y --workspace . --devcontainer .devcontainer/devcontainer.json
+iso setup -y --profile python,node --template-size 12
+iso setup --config-only
+iso setup --image ml-dev --profile python
+iso setup -y --workspace . --devcontainer .devcontainer/devcontainer.json
 ```
 
-See [docs/devcontainer.md](devcontainer.md) for the subset of `devcontainer.json` coop reads.
+See [docs/devcontainer.md](devcontainer.md) for the subset of `devcontainer.json` isolate reads.
 
 ### `devcontainer check`
 
-Parse a `devcontainer.json` file and print the same translation report that `setup --dry-run` and `start --dry-run` use, without loading coop config, checking for updates, setting up an image, or starting a VM. Setup-stage checks resolve supported public GHCR OCI Features so the report can show the digest and `install.sh` hash that would run.
+Parse a `devcontainer.json` file and print the same translation report that `setup --dry-run` and `start --dry-run` use, without loading isolate config, checking for updates, setting up an image, or starting a VM. Setup-stage checks resolve supported public GHCR OCI Features so the report can show the digest and `install.sh` hash that would run.
 
 ```
-coop devcontainer check <path> [--stage setup|start|both]
+iso devcontainer check <path> [--stage setup|start|both]
 ```
 
 | Flag | Description |
@@ -189,7 +189,7 @@ With `--json`, a single stage emits one report object (`{ entries, source_path, 
 Record a persistent opt-out for a project directory. Future automatic discovery for that project skips `.devcontainer/devcontainer.json` and reports that the stored preference was used. Explicit `--devcontainer <path>` still applies a file for that run.
 
 ```
-coop devcontainer ignore <project-dir>
+iso devcontainer ignore <project-dir>
 ```
 
 ### `devcontainer status`
@@ -197,15 +197,15 @@ coop devcontainer ignore <project-dir>
 Inspect persistent devcontainer opt-outs. With no project argument, this lists all stored opt-outs.
 
 ```
-coop devcontainer status [project-dir]
+iso devcontainer status [project-dir]
 ```
 
 ### `devcontainer clear`
 
-Remove a persistent devcontainer opt-out for a project. If the project directory was moved or deleted, use the absolute path shown by `coop devcontainer status`.
+Remove a persistent devcontainer opt-out for a project. If the project directory was moved or deleted, use the absolute path shown by `iso devcontainer status`.
 
 ```
-coop devcontainer clear <project-dir>
+iso devcontainer clear <project-dir>
 ```
 
 ### `start`
@@ -213,10 +213,10 @@ coop devcontainer clear <project-dir>
 Restart a stopped VM.
 
 ```
-coop start [NAME] [FLAGS]
+iso start [NAME] [FLAGS]
 ```
 
-`start` normally restarts existing stopped instances. Use `coop up [DIR]` to
+`start` normally restarts existing stopped instances. Use `iso up [DIR]` to
 create or reconnect to a project environment. Without `NAME`, `start` restarts
 the only stopped instance if exactly one exists; with multiple stopped
 instances, pass the instance name.
@@ -227,10 +227,10 @@ instances, pass the instance name.
 | `--workspace <dir>` | Restart the stopped instance associated with this project path |
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
-| `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable). Lives for the lifetime of the VM; torn down on `coop stop`. |
-| `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo (see [`coop github setup-pat`](#github)). |
+| `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable). Lives for the lifetime of the VM; torn down on `iso stop`. |
+| `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo (see [`iso github setup-pat`](#github)). |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot. Overrides the `post_start` configuration field. Failure is logged but does not fail the start. |
-| `--env KEY=VALUE` | Env var to set in the guest (repeatable); a whole value `{vault:NAME}` is resolved from [`coop secrets`](#secrets). Overrides `--env-file`, `guest_env` config entries and any forwarded values with the same name. |
+| `--env KEY=VALUE` | Env var to set in the guest (repeatable); a whole value `{vault:NAME}` is resolved from [`iso secrets`](#secrets). Overrides `--env-file`, `guest_env` config entries and any forwarded values with the same name. |
 | `--env-file <path>` | A `.env` file of guest env vars, as for `up`. |
 | `--devcontainer <path>` | Dry-run translation aid; normal restarts reject devcontainer creation options. |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation (escape hatch for CI). |
@@ -238,18 +238,18 @@ instances, pass the instance name.
 | `--json` | With `--dry-run`, emit the resolved plan as JSON on stdout instead of the text report on stderr. |
 
 Normal `start` restarts an existing VM without re-reading or re-applying
-`devcontainer.json`. If the instance was created with a devcontainer file, coop
+`devcontainer.json`. If the instance was created with a devcontainer file, isolate
 warns when the recorded file path now has different contents. See
 [docs/devcontainer.md](devcontainer.md) for the supported keys, discovery
 rules, and recreate guidance.
 
 ```
-coop start
-coop start my-project
-coop start my-project --no-agents
-coop start my-project --no-github
-coop start --env RUST_LOG=info --env MY_FLAG=1
-coop start --forward-port 3000 --forward-port 8080:18080
+iso start
+iso start my-project
+iso start my-project --no-agents
+iso start my-project --no-github
+iso start --env RUST_LOG=info --env MY_FLAG=1
+iso start --forward-port 3000 --forward-port 8080:18080
 ```
 
 `--no-claude` is accepted as a deprecated alias for `--no-agents` and will be removed in a future release. Using it prints a deprecation warning.
@@ -259,7 +259,7 @@ coop start --forward-port 3000 --forward-port 8080:18080
 Open an interactive shell in the VM, or run a single command non-interactively.
 
 ```
-coop shell [NAME] [FLAGS] [-- COMMAND...]
+iso shell [NAME] [FLAGS] [-- COMMAND...]
 ```
 
 | Flag | Description |
@@ -270,17 +270,17 @@ coop shell [NAME] [FLAGS] [-- COMMAND...]
 Without a trailing command, `shell` drops you into an interactive shell at `/workspace`. With a trailing command, it executes the command and returns its exit code.
 
 ```
-coop shell
-coop shell my-project
-coop shell my-project -- cat /etc/os-release
+iso shell
+iso shell my-project
+iso shell my-project -- cat /etc/os-release
 ```
 
 ### `claude`
 
-Launch Claude Code inside the VM. The guest's `~/.claude/settings.json` (written during VM startup) sets `defaultMode: bypassPermissions` and `skipDangerousModePermissionPrompt: true`, so Claude Code runs without permission prompts — the VM itself is the isolation boundary. Use `--ask` to override the guest default for that session (coop passes `--permission-mode default`).
+Launch Claude Code inside the VM. The guest's `~/.claude/settings.json` (written during VM startup) sets `defaultMode: bypassPermissions` and `skipDangerousModePermissionPrompt: true`, so Claude Code runs without permission prompts — the VM itself is the isolation boundary. Use `--ask` to override the guest default for that session (isolate passes `--permission-mode default`).
 
 ```
-coop claude [NAME] [FLAGS] [ARGS...]
+iso claude [NAME] [FLAGS] [ARGS...]
 ```
 
 | Flag | Description |
@@ -290,20 +290,20 @@ coop claude [NAME] [FLAGS] [ARGS...]
 | `ARGS...` | Extra arguments passed through to `claude` |
 
 ```
-coop claude
-coop claude my-project --ask
-coop claude my-project -- --model sonnet
+iso claude
+iso claude my-project --ask
+iso claude my-project -- --model sonnet
 ```
 
 ### `claude-agents`
 
-Open the Claude Code agent view (`claude agents`) inside the VM. Claude Code's background agents are managed by its own daemon, so closing the terminal does not stop in-flight sessions; reconnect with `coop claude-agents` to see them again.
+Open the Claude Code agent view (`claude agents`) inside the VM. Claude Code's background agents are managed by its own daemon, so closing the terminal does not stop in-flight sessions; reconnect with `iso claude-agents` to see them again.
 
-If the remote TUI stops responding, type Enter, then `~.` to disconnect the SSH session. coop forces OpenSSH's interactive escape character to `~`, so this works even if your user SSH config disables or changes `EscapeChar`. If the terminal remains in a broken raw/no-echo state afterward, run `stty sane`.
+If the remote TUI stops responding, type Enter, then `~.` to disconnect the SSH session. isolate forces OpenSSH's interactive escape character to `~`, so this works even if your user SSH config disables or changes `EscapeChar`. If the terminal remains in a broken raw/no-echo state afterward, run `stty sane`.
 
 ```
-coop claude-agents [NAME] [FLAGS] [ARGS...]
-coop ca [NAME] [FLAGS] [ARGS...]
+iso claude-agents [NAME] [FLAGS] [ARGS...]
+iso ca [NAME] [FLAGS] [ARGS...]
 ```
 
 | Flag | Description |
@@ -314,17 +314,17 @@ coop ca [NAME] [FLAGS] [ARGS...]
 Alias: `ca`.
 
 ```
-coop claude-agents
-coop ca my-project
-coop ca my-project -- --cwd /workspace
+iso claude-agents
+iso ca my-project
+iso ca my-project -- --cwd /workspace
 ```
 
 ### `codex`
 
-Launch Codex inside the VM. By default coop passes `--dangerously-bypass-approvals-and-sandbox`, so Codex runs without its sandbox or approval prompts — parity with `coop claude`. The VM is the isolation boundary, and Codex's own Linux sandbox does not work in the guest (no functioning bubblewrap), so leaving it enabled makes every shell command Codex runs fail. Use `--ask` to keep Codex's sandbox and approval prompts for that session. With `"codex": { "auth": "chatgpt" }`, `coop codex` launches through the guest keyring wrapper. The `login` and `logout` subcommands are always launched without the bypass flag: they never start an agent session, so there is nothing to sandbox.
+Launch Codex inside the VM. By default isolate passes `--dangerously-bypass-approvals-and-sandbox`, so Codex runs without its sandbox or approval prompts — parity with `iso claude`. The VM is the isolation boundary, and Codex's own Linux sandbox does not work in the guest (no functioning bubblewrap), so leaving it enabled makes every shell command Codex runs fail. Use `--ask` to keep Codex's sandbox and approval prompts for that session. With `"codex": { "auth": "chatgpt" }`, `iso codex` launches through the guest keyring wrapper. The `login` and `logout` subcommands are always launched without the bypass flag: they never start an agent session, so there is nothing to sandbox.
 
 ```
-coop codex [NAME] [FLAGS] [ARGS...]
+iso codex [NAME] [FLAGS] [ARGS...]
 ```
 
 | Flag | Description |
@@ -334,10 +334,10 @@ coop codex [NAME] [FLAGS] [ARGS...]
 | `ARGS...` | Extra arguments passed through to `codex` |
 
 ```
-coop codex
-coop codex my-project --ask
-coop codex my-project -- --model gpt-5
-coop codex my-project -- login --device-auth
+iso codex
+iso codex my-project --ask
+iso codex my-project -- --model gpt-5
+iso codex my-project -- login --device-auth
 ```
 
 ### `exec`
@@ -347,7 +347,7 @@ Run a command in the VM and print its output. No PTY is allocated and stdin is n
 The command and its arguments must follow `--` so they are not mistaken for the instance name.
 
 ```
-coop exec [NAME] -- COMMAND...
+iso exec [NAME] -- COMMAND...
 ```
 
 | Flag | Description |
@@ -356,8 +356,8 @@ coop exec [NAME] -- COMMAND...
 | `COMMAND...` | Command and arguments to run after `--` (required) |
 
 ```
-coop exec -- uname -a
-coop exec my-project -- docker ps
+iso exec -- uname -a
+iso exec my-project -- docker ps
 ```
 
 ### `stop`
@@ -365,7 +365,7 @@ coop exec my-project -- docker ps
 Gracefully stop a running VM. The instance disk is preserved. Use `start` to relaunch or `destroy` to remove it.
 
 ```
-coop stop [NAME]
+iso stop [NAME]
 ```
 
 | Flag | Description |
@@ -373,8 +373,8 @@ coop stop [NAME]
 | `NAME` | Instance name (required if multiple instances exist) |
 
 ```
-coop stop
-coop stop my-project
+iso stop
+iso stop my-project
 ```
 
 ### `destroy`
@@ -382,7 +382,7 @@ coop stop my-project
 Stop the VM and remove its resources: disk, config, and SSH entries. Images are preserved unless you pass `--all`.
 
 ```
-coop destroy [NAME] [FLAGS]
+iso destroy [NAME] [FLAGS]
 ```
 
 | Flag | Description |
@@ -391,17 +391,17 @@ coop destroy [NAME] [FLAGS]
 | `--all` | Also remove every image and the VM access key |
 
 ```
-coop destroy my-project
-coop destroy --all
+iso destroy my-project
+iso destroy --all
 ```
 
 ### `list`
 
-Print every instance with its state: `running`, `stopped`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`coop-sandbox inspect`). Use `status` instead when you need resource usage or per-instance detail.
+Print every instance with its state: `running`, `stopped`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`iso-sandbox inspect`). Use `status` instead when you need resource usage or per-instance detail.
 
 ```
-coop list
-coop ls
+iso list
+iso ls
 ```
 
 Alias: `ls`.
@@ -415,7 +415,7 @@ Alias: `ls`.
 Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance.
 
 ```
-coop status [NAME]
+iso status [NAME]
 ```
 
 | Flag | Description |
@@ -424,20 +424,20 @@ coop status [NAME]
 | `--json` | Emit machine-readable JSON instead of the text output |
 
 ```
-coop status
-coop status my-project
+iso status
+iso status my-project
 ```
 
-With `--json`, a bare `coop status` emits a JSON array and `coop status NAME`
+With `--json`, a bare `iso status` emits a JSON array and `iso status NAME`
 emits a single object. Each carries the common fields — `name`, `state`
 (`running`/`stopped`, or `unknown` in the bare-`status` array), `image`, `backend`
 (always `apple-container`), and `usage`
 (raw MiB / load, or `null` when stopped or the query fails). The rich
 single-instance text report (guest IP, PID, SSH port, …) is text-only. JSON goes
-to stdout; tracing stays on stderr, so `coop status --json | jq` stays clean.
+to stdout; tracing stays on stderr, so `iso status --json | jq` stays clean.
 
 ```
-$ coop status my-project --json
+$ iso status my-project --json
 {
   "name": "my-project",
   "state": "running",
@@ -452,12 +452,12 @@ $ coop status my-project --json
 
 Update the coding agents (Claude Code and Codex) installed inside a running VM
 to their latest versions, without rebuilding the golden image. Both agents are
-installed "latest at build time" during `coop setup`, so they can go stale in
+installed "latest at build time" during `iso setup`, so they can go stale in
 long-running VMs and in new VMs created from an old image. To refresh the image
-itself instead, rebuild it with `coop setup --rebuild`.
+itself instead, rebuild it with `iso setup --rebuild`.
 
 ```
-coop agent update [NAME] [--claude] [--codex] [--check] [-y]
+iso agent update [NAME] [--claude] [--codex] [--check] [-y]
 ```
 
 | Argument / Flag | Description |
@@ -471,28 +471,28 @@ coop agent update [NAME] [--claude] [--codex] [--check] [-y]
 With no agent flag, both agents are updated; passing both `--claude` and
 `--codex` is the same as passing neither. The VM must be running.
 
-`coop agent update --codex` re-runs OpenAI's native installer as the guest
+`iso agent update --codex` re-runs OpenAI's native installer as the guest
 user, including when migrating an older direct-binary installation. The full
 package stays in the user's home directory, with `/usr/local/bin/codex` linked
 to `~/.local/bin/codex`. The guest user can also run `codex update` directly
 without sudo. Claude Code already auto-updates in the background;
-`coop agent update --claude` runs `claude update` now, synchronously — a
+`iso agent update --claude` runs `claude update` now, synchronously — a
 convenience rather than a fix.
 
 `--check` reports each agent's installed version and, for Codex, the latest
 release on GitHub, changing nothing:
 
 ```
-$ coop agent update my-project --check
+$ iso agent update my-project --check
 Claude Code  1.2.3            up to date (auto-updates in background)
-Codex        0.4.1 → 0.5.0    update available — run: coop agent update --codex
+Codex        0.4.1 → 0.5.0    update available — run: iso agent update --codex
 ```
 
 ```
-coop agent update                 # both agents, resolved instance
-coop agent update my-project      # both agents, instance "my-project"
-coop agent update --codex         # Codex only
-coop agent update --check         # report versions, change nothing
+iso agent update                 # both agents, resolved instance
+iso agent update my-project      # both agents, instance "my-project"
+iso agent update --codex         # Codex only
+iso agent update --check         # report versions, change nothing
 ```
 
 ### `model`
@@ -503,7 +503,7 @@ restarts. Switching rewrites the guest agent config; it never rebuilds or
 restarts the VM.
 
 ```
-coop model [NAME] [local|remote]
+iso model [NAME] [local|remote]
 ```
 
 | Argument | Description |
@@ -516,35 +516,35 @@ With no subcommand, `model` prints the current mode and the endpoint each tool
 (Claude, Codex) resolves to:
 
 ```
-$ coop model my-project
+$ iso model my-project
 Instance: my-project
 Mode:     local
 Claude   local — qwen2.5-coder:32b @ http://localhost:11434
 Codex    cloud (no local endpoint configured)
 ```
 
-`coop model NAME local` switches the VM to local mode. Each tool routes locally
+`iso model NAME local` switches the VM to local mode. Each tool routes locally
 only if it resolves an endpoint — from `claude.local_model` /
 `codex.local_model` in the configuration, or from one saved earlier. For any tool
-that has neither, and only in an interactive terminal, coop prompts for a host
+that has neither, and only in an interactive terminal, isolate prompts for a host
 URL, model name, and optional auth token, then saves that endpoint for the
 instance. (A non-interactive run declines the prompt.) If no tool ends up with
 an endpoint, the command fails. Claude and Codex are independent: you can put
 one on a local model and leave the other on cloud.
 
-`coop model NAME remote` switches back to cloud defaults for both tools. Saved
+`iso model NAME remote` switches back to cloud defaults for both tools. Saved
 endpoints are kept, so a later `local` does not re-prompt.
 
-Switching never requires a VM restart — coop rewrites the guest config live over
+Switching never requires a VM restart — isolate rewrites the guest config live over
 SSH when the VM is running, or saves it to apply on the next start. An
 already-running `claude`/`codex` reads its config at launch, so relaunch the
-agent (for example `coop claude NAME`) to pick up the change.
+agent (for example `iso claude NAME`) to pick up the change.
 
 ```
-coop model
-coop model my-project
-coop model my-project local
-coop model my-project remote
+iso model
+iso model my-project
+iso model my-project local
+iso model my-project remote
 ```
 
 See the [`local_model`](configuration.md#local-model-routing) configuration
@@ -558,7 +558,7 @@ materialization details.
 Stream the VM serial console output.
 
 ```
-coop logs [NAME] [FLAGS]
+iso logs [NAME] [FLAGS]
 ```
 
 | Flag | Description |
@@ -567,17 +567,17 @@ coop logs [NAME] [FLAGS]
 | `-f`, `--follow` | Follow log output (like `tail -f`) |
 
 ```
-coop logs
-coop logs my-project -f
+iso logs
+iso logs my-project -f
 ```
 
 ### `push`
 
 Copy a local directory into the running VM at `/workspace`. Defaults to the
-host path recorded when the instance was created with `coop up`.
+host path recorded when the instance was created with `iso up`.
 
 ```
-coop push [NAME] [FLAGS]
+iso push [NAME] [FLAGS]
 ```
 
 | Flag | Description |
@@ -588,17 +588,17 @@ coop push [NAME] [FLAGS]
 | `--exclude-git` | Skip the `.git/` directory in this transfer |
 
 ```
-coop push
-coop push my-project --dir ./src --force
+iso push
+iso push my-project --dir ./src --force
 ```
 
 ### `pull`
 
 Copy the VM's `/workspace` to a local directory. Defaults to the host path
-recorded when the instance was created with `coop up`.
+recorded when the instance was created with `iso up`.
 
 ```
-coop pull [NAME] [FLAGS]
+iso pull [NAME] [FLAGS]
 ```
 
 | Flag | Description |
@@ -614,33 +614,33 @@ coop pull [NAME] [FLAGS]
 | `--discard` | Delete the current stage |
 
 With `workspace.pull.mode = "stage"` ([configuration](configuration.md#workspace-section)),
-a plain `coop pull` behaves like `--review`. See
+a plain `iso pull` behaves like `--review`. See
 [staged pulls](workspaces.md#staged-pulls).
 
 ```
-coop pull
-coop pull my-project --dir ./local-copy --force
-coop pull my-project --review
-coop pull my-project --apply --stage-id 1a2b3c4d
+iso pull
+iso pull my-project --dir ./local-copy --force
+iso pull my-project --review
+iso pull my-project --apply --stage-id 1a2b3c4d
 ```
 
 ### `diff`
 
-Stage the guest workspace and print what `coop pull --apply` would change:
+Stage the guest workspace and print what `iso pull --apply` would change:
 added, modified and type-changed paths, then text diffs. Equivalent to
-`coop pull --review`.
+`iso pull --review`.
 
 ```
-coop diff [NAME] [--dir <dir>] [--exclude-git] [--stat]
+iso diff [NAME] [--dir <dir>] [--exclude-git] [--stat]
 ```
 
 ### `editor`
 
 Open an editor (VS Code or Zed) connected to the guest VM over SSH remote.
-`coop vscode` remains as an alias.
+`iso vscode` remains as an alias.
 
 ```
-coop editor [NAME] [--project PATH] [--editor code|zed] [--clean]
+iso editor [NAME] [--project PATH] [--editor code|zed] [--clean]
 ```
 
 | Flag | Description |
@@ -651,21 +651,21 @@ coop editor [NAME] [--project PATH] [--editor code|zed] [--clean]
 | `--clean` | Remove the SSH config entry for this instance and exit |
 
 ```
-coop editor
-coop editor my-project --project /workspace/subdir
-coop editor my-project --editor zed
-coop editor my-project --clean
+iso editor
+iso editor my-project --project /workspace/subdir
+iso editor my-project --editor zed
+iso editor my-project --clean
 ```
 
 ### `ssh-config`
 
 Install a `coop-apple-<name>` alias into `~/.ssh/config` so plain `ssh`, `scp`, and
 `rsync` reach the guest without remembering its host, port, user, or key. This
-is the same SSH config block `coop editor` writes, but without launching an
+is the same SSH config block `iso editor` writes, but without launching an
 editor.
 
 ```
-coop ssh-config [NAME] [--clean]
+iso ssh-config [NAME] [--clean]
 ```
 
 | Flag | Description |
@@ -674,24 +674,24 @@ coop ssh-config [NAME] [--clean]
 | `--clean` | Remove the SSH config entry for this instance and exit |
 
 ```
-coop ssh-config
-coop ssh-config my-project
+iso ssh-config
+iso ssh-config my-project
 ssh coop-apple-my-project
 scp ./file coop-apple-my-project:/workspace/
 rsync -az ./dir/ coop-apple-my-project:/workspace/dir/
-coop ssh-config my-project --clean
+iso ssh-config my-project --clean
 ```
 
-The alias is created only when you run `coop ssh-config` (or `coop editor`).
-The lifecycle keeps it tidy: `coop stop` and `coop destroy` remove the block,
-and `coop start` refreshes an already-installed block so it stays valid across
+The alias is created only when you run `iso ssh-config` (or `iso editor`).
+The lifecycle keeps it tidy: `iso stop` and `iso destroy` remove the block,
+and `iso start` refreshes an already-installed block so it stays valid across
 a restart, since the guest address can change.
 
 The block pins each guest's host key: it sets `StrictHostKeyChecking yes` with
-the instance's own `known_hosts` and `HostKeyAlias <machine>.coop`, plus
+the instance's own `known_hosts` and `HostKeyAlias <machine>.iso`, plus
 `ForwardAgent no` and `IdentityAgent none`, and a changed key is refused. Pins
 recorded by older builds under the `.coop-apple` alias no longer match and the
-instance is refused until you re-enroll it (`coop restore <name> --reprovision`)
+instance is refused until you re-enroll it (`iso restore <name> --reprovision`)
 or recreate it.
 
 Use `ssh-config` for ad-hoc copies of arbitrary paths. To sync the tracked
@@ -702,7 +702,7 @@ workspace directory in bulk, use [`push`](#push) / [`pull`](#pull) instead.
 List or delete golden images. Without flags, prints every image with its profiles, creation date, and size.
 
 ```
-coop images [FLAGS]
+iso images [FLAGS]
 ```
 
 | Flag | Description |
@@ -711,15 +711,15 @@ coop images [FLAGS]
 | `--json` | Emit a JSON array instead of the text table |
 
 ```
-coop images
-coop images --delete old-image
+iso images
+iso images --delete old-image
 ```
 
 With `--json`, each element is `{ "name", "profiles", "created", "size_bytes" }`.
 Absence is modelled honestly: `profiles` is `[]` (not `"none"`), `created` is
 `null` (not `"unknown"`), and `size_bytes` is the raw byte count (the text path's
 `"8.0 GiB"` is presentation only), or `null` on the Apple sandbox backend,
-whose images live in the runtime's image store rather than coop's data
+whose images live in the runtime's image store rather than isolate's data
 directory.
 
 ### `resize`
@@ -729,7 +729,7 @@ be stopped first. At least one of `--size`, `--mem`, or `--vcpus` is required;
 they can be combined in a single command.
 
 ```
-coop resize [NAME] [--size <SIZE>] [--mem <MIB>] [--vcpus <N>] [--start]
+iso resize [NAME] [--size <SIZE>] [--mem <MIB>] [--vcpus <N>] [--start]
 ```
 
 | Flag | Description |
@@ -743,11 +743,11 @@ coop resize [NAME] [--size <SIZE>] [--mem <MIB>] [--vcpus <N>] [--start]
 Absolute disk values set the disk to that exact size; a `+` prefix adds to the
 current size. Memory and vCPU changes are written to the instance's backend
 record in the runtime, which is authoritative — the value survives restarts
-and is reported by `coop status`. The global `vm` settings in the
+and is reported by `iso status`. The global `vm` settings in the
 configuration only seed these values for *new* instances.
 
 By default the instance is left stopped and the change takes effect on the next
-`coop start`. Pass `--start` to boot it immediately. The resource change is
+`iso start`. Pass `--start` to boot it immediately. The resource change is
 journaled, so an interrupted change is recovered by the next command that
 touches the instance.
 
@@ -757,18 +757,18 @@ transactionally, so if the second step fails the disk change has already taken
 effect.
 
 ```
-coop resize my-project --size 150G
-coop resize --size +20
-coop resize my-project --mem 8192 --vcpus 4
-coop resize my-project --mem 4096 --start
+iso resize my-project --size 150G
+iso resize --size +20
+iso resize my-project --mem 8192 --vcpus 4
+iso resize my-project --mem 4096 --start
 ```
 
 ### `commit`
 
-Save a stopped instance's filesystem as a reusable image, like `docker container commit`. The committed image is an ordinary coop image: `coop images` lists it and `coop up --image <name>` launches new instances from it. The instance must be stopped first so the filesystem is consistent.
+Save a stopped instance's filesystem as a reusable image, like `docker container commit`. The committed image is an ordinary isolate image: `iso images` lists it and `iso up --image <name>` launches new instances from it. The instance must be stopped first so the filesystem is consistent.
 
 ```
-coop commit [NAME] --image <name> [FLAGS]
+iso commit [NAME] --image <name> [FLAGS]
 ```
 
 | Flag | Description |
@@ -778,31 +778,31 @@ coop commit [NAME] --image <name> [FLAGS]
 | `--force` | Overwrite an existing image with the same name |
 
 ```
-coop stop my-project
-coop commit my-project --image my-project-baseline
-coop up . --image my-project-baseline --name fork
+iso stop my-project
+iso commit my-project --image my-project-baseline
+iso up . --image my-project-baseline --name fork
 ```
 
 ### `restore`
 
-Roll a stopped instance back to an image's filesystem in place. The instance keeps its name, index, IP, and workspace association — only the disk is replaced and its recorded image is updated. Run `coop start` afterwards to bring it back up.
+Roll a stopped instance back to an image's filesystem in place. The instance keeps its name, index, IP, and workspace association — only the disk is replaced and its recorded image is updated. Run `iso start` afterwards to bring it back up.
 
-On the Apple sandbox backend, the restored disk has no SSH host keys, so the next `coop start` pins the key the guest generates. The address is not guaranteed either: a sandbox moves to a new subnet when its old one has been quarantined (see [backends.md](backends.md#stop-destroy-recovery)).
+On the Apple sandbox backend, the restored disk has no SSH host keys, so the next `iso start` pins the key the guest generates. The address is not guaranteed either: a sandbox moves to a new subnet when its old one has been quarantined (see [backends.md](backends.md#stop-destroy-recovery)).
 
 This pairs with `commit` for a known-good checkpoint before a risky run:
 
 ```
-coop stop my-project
-coop commit my-project --image safe-point   # checkpoint
-coop start my-project
+iso stop my-project
+iso commit my-project --image safe-point   # checkpoint
+iso start my-project
 # ... a bypass-permissions agent run trashes the environment ...
-coop stop my-project
-coop restore my-project --image safe-point   # back to the checkpoint, same VM
-coop start my-project
+iso stop my-project
+iso restore my-project --image safe-point   # back to the checkpoint, same VM
+iso start my-project
 ```
 
 ```
-coop restore [NAME] [--image <name>] [--reprovision] [-y] [--no-agents] [--no-prompt]
+iso restore [NAME] [--image <name>] [--reprovision] [-y] [--no-agents] [--no-prompt]
 ```
 
 | Flag | Description |
@@ -814,23 +814,23 @@ coop restore [NAME] [--image <name>] [--reprovision] [-y] [--no-agents] [--no-pr
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM. Requires `--reprovision` |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT. Requires `--reprovision` |
 
-Unlike `destroy` + `up --image`, `restore` keeps the same instance identity (name, index, IP) instead of allocating a new one. The disk is reset to the image's size, so restoring an image built before a `coop resize` returns the instance to the smaller size.
+Unlike `destroy` + `up --image`, `restore` keeps the same instance identity (name, index, IP) instead of allocating a new one. The disk is reset to the image's size, so restoring an image built before a `iso resize` returns the instance to the smaller size.
 
 #### `--reprovision`
 
-The `coop start` in the checkpoint recipe above deliberately does *not* re-sync `/workspace` or reinstall plugins: a checkpoint image already carries both, and overwriting them would defeat the rollback. Restoring a **base** image is the other case — nothing on that disk to preserve — so a plain `coop start` there leaves an empty `/workspace` and no plugins.
+The `iso start` in the checkpoint recipe above deliberately does *not* re-sync `/workspace` or reinstall plugins: a checkpoint image already carries both, and overwriting them would defeat the rollback. Restoring a **base** image is the other case — nothing on that disk to preserve — so a plain `iso start` there leaves an empty `/workspace` and no plugins.
 
-`--reprovision` is that case. Unlike a plain `restore`, which requires a stopped instance, it also accepts a running one and stops it itself. The disk is replaced as usual, and the guest is then provisioned as a **first boot**: the recorded workspace is re-synced, re-cloned or re-mounted, agents are re-bootstrapped, and plugins, marketplaces and MCP servers are reinstalled. The instance is left **running** rather than stopped, so no follow-up `coop start` is needed.
+`--reprovision` is that case. Unlike a plain `restore`, which requires a stopped instance, it also accepts a running one and stops it itself. The disk is replaced as usual, and the guest is then provisioned as a **first boot**: the recorded workspace is re-synced, re-cloned or re-mounted, agents are re-bootstrapped, and plugins, marketplaces and MCP servers are reinstalled. The instance is left **running** rather than stopped, so no follow-up `iso start` is needed.
 
 It is also the way to start an instance over without re-typing every flag it was created with — the inverse of "destroy it and remember what I passed":
 
 ```
-coop restore my-project --reprovision                  # confirm, then reset to the recorded image
-coop restore my-project --reprovision -y               # no prompt (required in scripts)
-coop restore my-project --reprovision --image rust-24  # reset onto a different image
+iso restore my-project --reprovision                  # confirm, then reset to the recorded image
+iso restore my-project --reprovision -y               # no prompt (required in scripts)
+iso restore my-project --reprovision --image rust-24  # reset onto a different image
 ```
 
-Kept across the wipe, because coop persists them host-side:
+Kept across the wipe, because isolate persists them host-side:
 
 | Setting | Where it lives |
 |---------|----------------|
@@ -844,13 +844,13 @@ Kept across the wipe, because coop persists them host-side:
 | Model mode and proxy settings | `model.json` / `proxy.json` |
 | Credentials saved in the host secret store | unchanged; guest forwarding depends on the configured auth mode |
 
-**Not replayed**, because coop does not persist them:
+**Not replayed**, because isolate does not persist them:
 
-- Extra `--extra-mount` directories. Only the *primary* workspace source is recorded in `workspace.json`, so coop replays none of them. coop does not guarantee that such a mount is served again after the reboot. There is no way to re-add a mount to an existing instance — `--extra-mount` is creation-only, and `coop push` writes to the recorded workspace path — so recovering one means `coop destroy` and a fresh `coop up`.
+- Extra `--extra-mount` directories. Only the *primary* workspace source is recorded in `workspace.json`, so isolate replays none of them. isolate does not guarantee that such a mount is served again after the reboot. There is no way to re-add a mount to an existing instance — `--extra-mount` is creation-only, and `iso push` writes to the recorded workspace path — so recovering one means `iso destroy` and a fresh `iso up`.
 - `--exclude-git`. A workspace originally pushed without `.git/` is re-synced with it.
-- A devcontainer's `postStartCommand`, which reaches the guest only during `coop up`. Its `features` are baked into the image and so do survive. (`postCreateCommand` is unaffected because coop does not implement it — it is reported as an unrecognised `devcontainer.json` key.)
+- A devcontainer's `postStartCommand`, which reaches the guest only during `iso up`. Its `features` are baked into the image and so do survive. (`postCreateCommand` is unaffected because isolate does not implement it — it is reported as an unrecognised `devcontainer.json` key.)
 
-Before replacing the disk, coop checks that the image exists, the state files
+Before replacing the disk, isolate checks that the image exists, the state files
 parse, the recorded workspace directory is still there, and host ports for
 forwards are available. A later failure leaves the instance in place with a
 partly provisioned guest. Re-running the command replaces the disk again and
@@ -869,7 +869,7 @@ Compared with the neighbouring commands:
 List or inspect available profiles. With no subcommand, lists every profile (builtin and custom).
 
 ```
-coop profiles [SUBCOMMAND]
+iso profiles [SUBCOMMAND]
 ```
 
 | Subcommand | Description |
@@ -878,31 +878,31 @@ coop profiles [SUBCOMMAND]
 | `show <name>` | Print the full definition of a profile: apt packages, pre/post-install scripts, marketplaces, plugins |
 
 ```
-coop profiles
-coop profiles list
-coop profiles list --json
-coop profiles show rust
+iso profiles
+iso profiles list
+iso profiles list --json
+iso profiles show rust
 ```
 
 `list` groups builtin and custom profiles separately. `show` resolves the name against custom profiles first, then builtins, and prints `(custom)` or `(builtin)` next to the name.
 
-`coop profiles list --json` emits `{ "builtin": [...], "custom": [...] }`, each entry `{ "name", "summary" }`.
+`iso profiles list --json` emits `{ "builtin": [...], "custom": [...] }`, each entry `{ "name", "summary" }`.
 
 ### `update`
 
-Replace the running coop binary with a release from `github.com/chr33s/coop`.
+Replace the running isolate binary with a release from `github.com/chr33s/iso`.
 Release tags come from `swift`. The updater verifies the platform tarball's
 SHA-256 and, when `gh` is installed, its repository build-provenance attestation.
-The updater installs the bundled `coop-sandbox` and `coop-proxy` before replacing
+The updater installs the bundled `iso-sandbox` and `iso-proxy` before replacing
 the host. Each file replacement is atomic; the set of files is not a single
 transaction. If a later replacement fails, rerun the installer for the same
 release to restore a matching set. Missing companions are rejected before replacement.
 Until a fork release is published and verified, rebuild from source.
 
-No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `coop update` uses it, which helps avoid GitHub API rate limits.
+No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `iso update` uses it, which helps avoid GitHub API rate limits.
 
 ```
-coop update [FLAGS]
+iso update [FLAGS]
 ```
 
 | Flag | Description |
@@ -913,50 +913,50 @@ coop update [FLAGS]
 | `--allow-downgrade` | Permit installing a release older than the current binary; refused otherwise. |
 | `-y`, `--yes` | Skip the interactive confirmation prompt. |
 
-If coop is installed in a protected directory (e.g. `/usr/local/bin`), run with `sudo`. Dev builds (built from an untagged or dirty tree) refuse to self-update; use `install.sh` to replace them.
+If isolate is installed in a protected directory (e.g. `/usr/local/bin`), run with `sudo`. Dev builds (built from an untagged or dirty tree) refuse to self-update; use `install.sh` to replace them.
 
 ```
-coop update --check
-coop update
-coop update --yes
-coop update --version v0.3.2
-coop update --force
-coop update --version v0.3.1 --allow-downgrade
+iso update --check
+iso update
+iso update --yes
+iso update --version v0.3.2
+iso update --force
+iso update --version v0.3.1 --allow-downgrade
 ```
 
 See also the [`updates` section](configuration.md#updates-section) of the configuration reference for the background-notification settings.
 
 ### `uninstall`
 
-Remove the coop binary and, optionally, its data directories (`~/.coop` and the update-check state). Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run coop uninstall` does not delete your build artifact.
+Remove the isolate binary and, optionally, its data directories (`~/.iso` and the update-check state). Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
 
 ```
-coop uninstall [FLAGS]
+iso uninstall [FLAGS]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip interactive confirmation prompts. Removes data unless `--keep-data` is set. |
-| `--keep-data` | Remove only the binary; preserve `~/.coop` and the update-check state. Conflicts with `--purge`. |
-| `--purge` | Also remove `~/.coop` and the update-check state without prompting. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
+| `--keep-data` | Remove only the binary; preserve `~/.iso` and the update-check state. Conflicts with `--purge`. |
+| `--purge` | Also remove `~/.iso` and the update-check state without prompting. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
 
 Without `--yes`, the command prints a summary (binary path, data directory, instance and image counts) and asks for confirmation. A second prompt asks whether to also remove the data directory unless `--keep-data` or `--purge` is set. Non-interactive runs require `--yes`.
 
 If the binary lives in a protected directory (e.g. `/usr/local/bin`), run with `sudo`. A config file outside the data directory is left in place and a note is printed.
 
 ```
-coop uninstall                       # interactive: prompts for binary and data
-coop uninstall --yes                 # CI: remove binary and data, no prompts
-coop uninstall --yes --keep-data     # CI: remove binary only
-coop uninstall --yes --purge         # CI: remove binary and data, explicit
+iso uninstall                       # interactive: prompts for binary and data
+iso uninstall --yes                 # CI: remove binary and data, no prompts
+iso uninstall --yes --keep-data     # CI: remove binary only
+iso uninstall --yes --purge         # CI: remove binary and data, explicit
 ```
 
 ### `completions`
 
-Print a static shell completion script for bash, zsh, or fish. Completion covers commands, options, and fixed values only; instance, image, and profile names are not completed (use `coop list`, `coop images`, `coop profiles`). See [docs/shell-completion.md](shell-completion.md) for full setup recipes per shell.
+Print a static shell completion script for bash, zsh, or fish. Completion covers commands, options, and fixed values only; instance, image, and profile names are not completed (use `iso list`, `iso images`, `iso profiles`). See [docs/shell-completion.md](shell-completion.md) for full setup recipes per shell.
 
 ```
-coop completions <SHELL>
+iso completions <SHELL>
 ```
 
 | Argument | Description |
@@ -964,10 +964,10 @@ coop completions <SHELL>
 | `SHELL` | Target shell: `bash`, `zsh`, or `fish`. `powershell` and `elvish` are no longer provided and fail with an error. |
 
 ```
-coop completions bash | sudo tee /etc/bash_completion.d/coop > /dev/null
-coop completions bash > ~/.local/share/bash-completion/completions/coop
-coop completions zsh > ~/.zfunc/_coop
-coop completions fish > ~/.config/fish/completions/coop.fish
+iso completions bash | sudo tee /etc/bash_completion.d/iso > /dev/null
+iso completions bash > ~/.local/share/bash-completion/completions/iso
+iso completions zsh > ~/.zfunc/_iso
+iso completions fish > ~/.config/fish/completions/iso.fish
 ```
 
 ### `github`
@@ -975,7 +975,7 @@ coop completions fish > ~/.config/fish/completions/coop.fish
 Manage GitHub authentication. Specifically, the scoped fine-grained PAT (FGPAT) workflow that pairs `"pat"` mode with per-repo `github.pat["owner/repo"]` entries in the configuration. See the [GitHub auth section](configuration.md#github-auth) of the configuration reference for the full data model.
 
 ```
-coop github <subcommand>
+iso github <subcommand>
 ```
 
 | Subcommand | Effect |
@@ -985,20 +985,20 @@ coop github <subcommand>
 | `setup-pat [--repo owner/name]` | Run the wizard end-to-end: open the GitHub PAT-creation form, validate the pasted token against `api.github.com`, store it in the macOS Keychain (no fallback store), and write a `github.pat["owner/repo"]` entry that references it with `cmd:`. The repo is auto-detected from `git remote get-url origin` when `--repo` is omitted. |
 | `rotate-pat --repo owner/name` | Re-run the wizard for an existing entry (FGPATs expire — max 1 year). |
 | `status [--vm NAME] [--probe] [--json]` | List configured entries and whether they are stored in the macOS Keychain. By default the `cmd:` reference is *not* resolved (so no Keychain or other prompt fires). Pass `--probe` to also resolve each entry (one secret-store unlock covers every `vault:` entry) and report whether the secret store still serves it. Pass `--json` for machine-readable output. |
-| `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references coop's Keychain item, delete that item. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want coop to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
+| `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references isolate's Keychain item, delete that item. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want isolate to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
 
 ```
-coop github setup-pat --repo trailofbits/coop
-coop github status
-coop github status --probe
-coop github status --json
-coop github rotate-pat --repo trailofbits/coop
-coop github forget-pat --repo trailofbits/coop
+iso github setup-pat --repo trailofbits/coop
+iso github status
+iso github status --probe
+iso github status --json
+iso github rotate-pat --repo trailofbits/coop
+iso github forget-pat --repo trailofbits/coop
 ```
 
-`coop github status --json` emits `{ "mode", "entries", "skip" }`. `mode` is
+`iso github status --json` emits `{ "mode", "entries", "skip" }`. `mode` is
 `off`/`auto`/`env`/`pat`; each entry is `{ "repo", "storage", "probe" }` with
-`storage` either `macos_keychain` (coop's Keychain reference) or `null` (any
+`storage` either `macos_keychain` (isolate's Keychain reference) or `null` (any
 other `cmd:` reference) and `probe` (`ok`/`unexpected_format`/
 `resolve_failed`, or `null` unless `--probe`). The token value is never emitted.
 
@@ -1013,11 +1013,11 @@ for precedence, opt-out, conflicts, rotation, and bootstrap timing.
 ### `proxy`
 
 Manage the host-side credential-injecting proxy. When a `proxy.<provider>`
-upstream is configured, coop runs a `coop-proxy` process on the host for the
+upstream is configured, isolate runs a `iso-proxy` process on the host for the
 lifetime of each remote-mode VM: the guest is pointed at the proxy and holds
 only a per-instance capability token, while the real API key stays on the host
 and is injected onto outbound requests the guest never sees. Applies only in
-remote model mode (`coop model <vm> remote`); local mode takes precedence. See
+remote model mode (`iso model <vm> remote`); local mode takes precedence. See
 the [credential proxy guide](credential-proxy.md) and the
 [`proxy` configuration reference](configuration.md#proxy-section) for the data
 model.
@@ -1028,12 +1028,12 @@ model.
 | `status [--vm <name>]` | Show what each VM's agents resolve to (per-VM override → default → off), with credentials redacted. Pass `--vm <name>` for the effective resolution of a single VM instead of all. |
 
 ```
-coop proxy setup
-coop proxy setup --openai
-coop proxy setup --vm my-project
-coop proxy setup --api-key
-coop proxy status
-coop proxy status --vm my-project
+iso proxy setup
+iso proxy setup --openai
+iso proxy setup --vm my-project
+iso proxy setup --api-key
+iso proxy status
+iso proxy status --vm my-project
 ```
 
 ### `secrets`
@@ -1046,11 +1046,11 @@ the stored secrets are gone, even with the passphrase and a copy of the files.
 See [the design](design/embedded-secrets-spec.md).
 
 ```
-coop secrets init [--accept-no-recovery]
-coop secrets set <name> [--stdin]
-coop secrets rm <name>
-coop secrets list
-coop secrets status
+iso secrets init [--accept-no-recovery]
+iso secrets set <name> [--stdin]
+iso secrets rm <name>
+iso secrets list
+iso secrets status
 ```
 
 | Subcommand | Description |
@@ -1061,20 +1061,20 @@ coop secrets status
 | `list` | Print secret names and update times; never values. |
 | `status` | Report whether the store exists and the Secure Enclave is usable, without unlocking. |
 
-`coop uninstall --purge` does not remove the store; delete `<data_dir>/secrets/`
+`iso uninstall --purge` does not remove the store; delete `<data_dir>/secrets/`
 yourself if you want it gone.
 
 Names match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. The passphrase is read from the
 terminal (`/dev/tty`) with echo off; for automation, pass it on an inherited
-descriptor named by `COOP_SECRETS_PASSPHRASE_FD` (a regular file must not be
+descriptor named by `ISO_SECRETS_PASSPHRASE_FD` (a regular file must not be
 group- or world-readable). There is no passphrase flag or plaintext variable.
 
 #### Secrets in the guest environment
 
 `--env NAME={vault:secret}` or a `NAME={vault:secret}` line in an `--env-file`
 puts a stored secret into the guest environment. Only the reference is saved
-with the instance; the value is resolved each time coop opens a session, so
-every `coop shell`, `exec` and agent launch of that instance asks for the
+with the instance; the value is resolved each time isolate opens a session, so
+every `iso shell`, `exec` and agent launch of that instance asks for the
 passphrase and Touch ID once. **The value is visible to everything in the
 guest** — the Secure Enclave protects it at rest on the host only. The
 reference must be the whole value (`URL=postgres://u:{vault:pw}@h` is
@@ -1092,12 +1092,12 @@ wrong passphrase or a missing secret stops them early. References work only
 in `--env` and `--env-file`; a `{vault:` in devcontainer `containerEnv` or
 config `guest_env` is passed as literal text (with a warning for
 `containerEnv`). Once an instance stores a reference, its `guest_env.json`
-uses a newer format that older coop releases refuse to read; downgrading such
+uses a newer format that older isolate releases refuse to read; downgrading such
 an instance is unsupported.
 
 ### `audit`
 
-Show the boundary events coop recorded for an instance: each boot's egress,
+Show the boundary events isolate recorded for an instance: each boot's egress,
 `proxy.mode`, proxied providers, provider-secret variable names and the
 number of stored-secret references; raw provider variables forwarded into the
 guest (names only); stops; and workspace returns (counts). Values, tokens,
@@ -1106,7 +1106,7 @@ file contents and request bodies are never recorded. The log is
 dropped first).
 
 ```
-coop audit [NAME] [--suggest-config]
+iso audit [NAME] [--suggest-config]
 ```
 
 `--suggest-config` prints an advisory JSONC fragment that only narrows what
@@ -1119,8 +1119,8 @@ is suggested only when every boot already ran without it.
 Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. A `github.pat` entry stored with `vault:` is reported as `stored secret, not resolved` and never unlocks the secret store. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live; `vault:` entries are resolved in one unlock.
 
 ```
-coop validate
-coop validate --probe
+iso validate
+iso validate --probe
 ```
 
 | Flag | Description |

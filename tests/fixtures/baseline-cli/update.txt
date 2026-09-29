@@ -1,6 +1,6 @@
-Replace the running coop binary with the latest GitHub release
+Replace the running iso binary with the latest GitHub release
 
-Usage: coop update [OPTIONS]
+Usage: iso update [OPTIONS]
 
 Options:
       --check              Only check for an available update — do not download or install

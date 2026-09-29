@@ -1,0 +1,6 @@
+{
+  "containerization" : "0.45.0",
+  "name" : "iso-sandbox",
+  "protocol" : 4,
+  "version" : "0.4.0"
+}

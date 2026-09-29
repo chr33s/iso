@@ -6,8 +6,8 @@ ENV container=container \
     DEBIAN_FRONTEND=noninteractive
 
 COPY machine-setup.sh /tmp/machine-setup.sh
-COPY sshd.conf /etc/ssh/sshd_config.d/10-coop-test.conf
-COPY verify.sh /usr/local/sbin/coop-test-verify
+COPY sshd.conf /etc/ssh/sshd_config.d/10-iso-test.conf
+COPY verify.sh /usr/local/sbin/iso-test-verify
 RUN bash /tmp/machine-setup.sh && rm -f /tmp/machine-setup.sh
 
 STOPSIGNAL SIGRTMIN+3

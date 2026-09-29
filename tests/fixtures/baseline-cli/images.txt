@@ -1,6 +1,6 @@
 List or manage golden images
 
-Usage: coop images [OPTIONS]
+Usage: iso images [OPTIONS]
 
 Options:
       --delete <DELETE>  Delete a named image

@@ -1,6 +1,6 @@
 List or inspect available profiles
 
-Usage: coop profiles [COMMAND]
+Usage: iso profiles [COMMAND]
 
 Commands:
   list  List all available profiles (builtin and custom)

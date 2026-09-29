@@ -1,6 +1,6 @@
 Show the full definition of a profile
 
-Usage: coop profiles show <NAME>
+Usage: iso profiles show <NAME>
 
 Arguments:
   <NAME>  Profile name to inspect

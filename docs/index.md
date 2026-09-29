@@ -1,14 +1,14 @@
 # Documentation index
 
-System-of-record map for `coop`. The root [`AGENTS.md`](../AGENTS.md) is the
+System-of-record map for `iso`. The root [`AGENTS.md`](../AGENTS.md) is the
 short navigational entrypoint; durable detail lives here.
 
-This is the `chr33s/coop` fork of Trail of Bits’ coop. Supported hosts are
+This is the `chr33s/iso` fork of Trail of Bits’ isolate. Supported hosts are
 **macOS 27+ on Apple Silicon only**; guests run Linux. The host CLI is Swift
 (root [`Package.swift`](../Package.swift), [`Sources/`](../Sources/)) with one
 Apple backend. The credential proxy is the Swift package
-[`coop-proxy/`](../coop-proxy/); the Apple runtime is
-[`coop-sandbox/`](../coop-sandbox/). Historical design records may describe the
+[`iso-proxy/`](../iso-proxy/); the Apple runtime is
+[`iso-sandbox/`](../iso-sandbox/). Historical design records may describe the
 former Rust host and Firecracker/Lima backends; they do not imply support.
 See the [fork motivation](../README.md#why-this-fork)
 and [source installation](getting-started.md#build-from-source). Design records
@@ -19,7 +19,7 @@ preserve historical experiments; the acceptance map identifies outstanding gates
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — Swift module map, the Apple backend,
   host→guest data flow, architectural invariants.
 - [`trust-model.md`](trust-model.md) — trust boundaries, taint sources, secret
-  handling, `coop update` verification. The authoritative security spec the
+  handling, `iso update` verification. The authoritative security spec the
   `review-security` agent reads. (Disclosure policy is [`SECURITY.md`](../SECURITY.md).)
 - [`code-style.md`](code-style.md) — Swift authoring conventions and the
   review / authoring checklists.
@@ -53,10 +53,10 @@ preserve historical experiments; the acceptance map identifies outstanding gates
 ## For users
 
 - [`getting-started.md`](getting-started.md) — install and first VM.
-- [`commands.md`](commands.md) — every `coop` subcommand.
+- [`commands.md`](commands.md) — every `iso` subcommand.
 - [`configuration.md`](configuration.md) — `config.jsonc` reference and
   TOML migration.
-- [`backends.md`](backends.md) — the Apple sandbox backend (`coop-sandbox` on `apple/containerization`) and its state layout.
+- [`backends.md`](backends.md) — the Apple sandbox backend (`iso-sandbox` on `apple/containerization`) and its state layout.
 - [`images-and-profiles.md`](images-and-profiles.md),
   [`workspaces.md`](workspaces.md), [`multi-instance.md`](multi-instance.md),
   [`devcontainer.md`](devcontainer.md), [`editor.md`](editor.md),

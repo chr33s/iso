@@ -1,6 +1,6 @@
-Generate a starter config file at ~/.coop/config.toml
+Generate a starter config file at ~/.iso/config.toml
 
-Usage: coop init
+Usage: iso init
 
 Options:
   -h, --help  Print help

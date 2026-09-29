@@ -1,6 +1,6 @@
 Open an editor (VS Code or Zed) connected to the guest VM
 
-Usage: coop editor [OPTIONS] [NAME]
+Usage: iso editor [OPTIONS] [NAME]
 
 Arguments:
   [NAME]

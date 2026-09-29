@@ -1,6 +1,6 @@
 Store a provider credential in a secret backend and wire it into `[proxy.<provider>]` (the default) or a per-VM override. Anthropic (Claude) is the default provider; pass `--openai` for Codex
 
-Usage: coop proxy setup [OPTIONS]
+Usage: iso proxy setup [OPTIONS]
 
 Options:
       --openai     Configure the `OpenAI` (Codex) upstream instead of Anthropic. `OpenAI` keys are always injected as `Authorization: Bearer`

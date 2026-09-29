@@ -1,6 +1,6 @@
 Manage the credential-injecting proxy (issue #411)
 
-Usage: coop proxy <COMMAND>
+Usage: iso proxy <COMMAND>
 
 Commands:
   setup   Store a provider credential in a secret backend and wire it into `[proxy.<provider>]` (the default) or a per-VM override. Anthropic (Claude) is the default provider; pass `--openai` for Codex

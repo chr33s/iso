@@ -1,25 +1,25 @@
-# coop: Selective Sandlock-Inspired Hardening
+# isolate: Selective Sandlock-Inspired Hardening
 
 **Status:** Approved (2026-09-28)  
-**Target:** `chr33s/coop` Swift fork (`swift` branch), macOS 27+ on Apple Silicon  
-**Scope:** Security features worth borrowing from Sandlock without attempting feature parity or changing coop's VM-first trust model  
+**Target:** `chr33s/iso` Swift fork (`swift` branch), macOS 27+ on Apple Silicon  
+**Scope:** Security features worth borrowing from Sandlock without attempting feature parity or changing isolate's VM-first trust model  
 **Date:** 2026-09-28
 
 ---
 
 ## 1. Summary
 
-coop should borrow a small set of Sandlock ideas that strengthen **effects crossing the VM boundary**, while preserving coop's existing model:
+isolate should borrow a small set of Sandlock ideas that strengthen **effects crossing the VM boundary**, while preserving isolate's existing model:
 
 > The agent may own the guest. Security controls must bound what leaves the guest, what host authority the guest can exercise, and what host state guest-controlled data can mutate.
 
 The proposed feature set is:
 
-1. **Transactional workspace return** — stage, validate, diff, and explicitly apply guest-authored workspace changes, building on the existing `coop pull`.
+1. **Transactional workspace return** — stage, validate, diff, and explicitly apply guest-authored workspace changes, building on the existing `iso pull`.
 2. **Host-enforced egress modes** — add `open` and `none`, gated on a feasibility spike (§6.0); `provider-only` is a preset (`none` + required proxy), not a separate network mode. Consider a generic allowlist only later.
 3. **Provider proxy policy** — add a `proxy.mode` setting (`auto` / `required` / `off`) on top of the existing per-(VM, provider), per-boot capability tokens, plus the tests that pin those properties.
 4. **Boundary resource budgets** — bound session duration, guest disk growth, logs, and workspace export volume at host-controlled boundaries.
-5. **Boundary audit / learn mode** — observe security-relevant boundary use and generate a suggested coop configuration or preset.
+5. **Boundary audit / learn mode** — observe security-relevant boundary use and generate a suggested isolate configuration or preset.
 
 This proposal intentionally does **not** add Sandlock-style Landlock/seccomp confinement around agents inside the VM, transparent HTTPS MITM, syscall policy callbacks, chroot/proc virtualization, or a general Sandlock-compatible policy language.
 
@@ -27,7 +27,7 @@ This proposal intentionally does **not** add Sandlock-style Landlock/seccomp con
 
 ## 2. Background
 
-### 2.1 coop's current security model
+### 2.1 isolate's current security model
 
 The Swift fork documents the Linux guest VM as the isolation boundary. The guest is deliberately permissive:
 
@@ -48,20 +48,20 @@ The Apple backend additionally constrains the VM/runtime shape:
   launchd "owner" process;
 - effective runtime configuration is verified before use.
 
-Configuration is JSONC (`~/.coop/config.jsonc`); coop state lives under `~/.coop`.
+Configuration is JSONC (`~/.iso/config.jsonc`); isolate state lives under `~/.iso`.
 All configuration examples below use JSONC.
 
 ### 2.1.1 Current provider proxy (already implemented)
 
 The credential proxy (`docs/credential-proxy.md`, `ProxyLifecycle.swift`) is
-**opt-in and off by default**. Without it, coop forwards raw
+**opt-in and off by default**. Without it, isolate forwards raw
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` into the
 guest over SSH `SendEnv`. When enabled for a provider:
 
 - the credential comes from a `cmd:` reference (Keychain via
-  `coop proxy setup`, or user-supplied), with per-VM overrides in
+  `iso proxy setup`, or user-supplied), with per-VM overrides in
   `<instance>/proxy.json`;
-- coop runs **one `coop-proxy` process per (VM, provider)**, confined by
+- isolate runs **one `iso-proxy` process per (VM, provider)**, confined by
   Seatbelt, bound to host loopback;
 - `ProxyLauncher.start` mints a **fresh 32-byte random capability token on
   every start** and delivers the credential over stdin;
@@ -80,23 +80,23 @@ path "would need a root-owned `pf` anchor on every Mac."
 
 These are the invariants and constraints this proposal starts from.
 
-### 2.2 Relationship to the Embedded Coop Secrets specification
+### 2.2 Relationship to the Embedded Isolate Secrets specification
 
 This specification is **not** the normative design for secret storage, secret resolution, `.env` parsing, `{vault:name}` references, or classification of generic versus provider secrets.
 
 Those responsibilities belong to the companion specification:
 
-> **Specification: Embedded Coop Secrets for the Swift 6 Port**
+> **Specification: Embedded Isolate Secrets for the Swift 6 Port**
 
 That specification owns:
 
 - Secure Enclave-bound encrypted secret storage;
 - passphrase/KDF/AEAD behavior;
-- `coop secrets` lifecycle commands;
+- `iso secrets` lifecycle commands;
 - `.env` parsing and secret-reference resolution;
 - classification of generic secrets versus provider secrets;
 - generic-secret injection into the guest;
-- delivery of recognized provider-secret plaintext into `coop-proxy`;
+- delivery of recognized provider-secret plaintext into `iso-proxy`;
 - the invariant that recognized provider secrets do not fall back to raw guest forwarding.
 
 This selective-hardening specification owns only the **authority granted after that handoff**, including:
@@ -108,14 +108,14 @@ This selective-hardening specification owns only the **authority granted after t
 - interaction between provider capabilities and network egress modes;
 - non-secret boundary audit metadata.
 
-If the two specifications appear to conflict on secret storage, resolution, classification, or whether a recognized provider secret may enter the guest, the Embedded Coop Secrets specification is normative.
+If the two specifications appear to conflict on secret storage, resolution, classification, or whether a recognized provider secret may enter the guest, the Embedded Isolate Secrets specification is normative.
 
 Terminology used here is defined there:
 
-- **recognized provider secret** — Embedded Coop Secrets §31.1: a
+- **recognized provider secret** — Embedded Isolate Secrets §31.1: a
   `{vault:}` / `vault:` reference bound to a recognized provider variable or
   proxy credential field. Never enters the guest under any mode.
-- **legacy provider value** — Embedded Coop Secrets §31.2: a literal,
+- **legacy provider value** — Embedded Isolate Secrets §31.2: a literal,
   `env_forward`, or automatically forwarded host value of a recognized
   variable. Keeps today's behavior unless this specification's
   `proxy.mode = "required"` applies.
@@ -124,7 +124,7 @@ Terminology used here is defined there:
 
 Sandlock takes a different approach: it confines a Linux process on the host kernel with Landlock, seccomp, network policy, COW filesystem semantics, credential injection, resource limits, profiles, and a `learn` workflow.
 
-The useful ideas for coop are not the host-kernel confinement mechanisms themselves. The useful ideas are:
+The useful ideas for isolate are not the host-kernel confinement mechanisms themselves. The useful ideas are:
 
 - **transactionality** — changes can be inspected before commit;
 - **explicit authority** — network and credentials are capabilities rather than ambient access;
@@ -159,7 +159,7 @@ The security story should remain explainable as:
 
 ### G4. Fail closed at security boundaries
 
-If validation, enforcement setup, proxy readiness, or policy compilation fails, coop must refuse the affected operation rather than silently widening authority.
+If validation, enforcement setup, proxy readiness, or policy compilation fails, isolate must refuse the affected operation rather than silently widening authority.
 
 ### G5. Avoid feature-parity scope
 
@@ -177,13 +177,13 @@ The guest is intentionally permissive and root-capable. Adding a sound inner pro
 
 ### NG2. No transparent HTTPS interception as a baseline feature
 
-coop should not add a general TLS MITM proxy to enforce arbitrary HTTP method/host/path policies.
+isolate should not add a general TLS MITM proxy to enforce arbitrary HTTP method/host/path policies.
 
 Service-specific host capability proxies are preferred where justified.
 
 ### NG3. No general dynamic syscall/policy callback engine
 
-coop should not add a Sandlock-compatible or event-driven policy runtime.
+isolate should not add a Sandlock-compatible or event-driven policy runtime.
 
 ### NG4. No guest-enforced security controls
 
@@ -203,7 +203,7 @@ Anything in the guest remains attacker-controlled for host-security reasoning.
 
 **Priority:** P0  
 **Borrowed concept:** Sandlock COW / dry-run / commit-abort semantics  
-**coop adaptation:** Apply transactionality at the guest→host workspace boundary.
+**isolate adaptation:** Apply transactionality at the guest→host workspace boundary.
 
 ## 5.1 Problem
 
@@ -216,9 +216,9 @@ Even with path-traversal protections, direct application has two security/usabil
 
 The VM disk is already the disposable execution surface. The important transaction boundary is therefore not inside the guest filesystem; it is **when guest output becomes host workspace state**.
 
-## 5.1.1 Existing `coop pull`
+## 5.1.1 Existing `iso pull`
 
-`coop pull [NAME] [--dir DIR] [--force]` exists today (`Workspace.swift`,
+`iso pull [NAME] [--dir DIR] [--force]` exists today (`Workspace.swift`,
 `docs/workspaces.md`):
 
 - transport is **rsync with `--delete`** when the guest has rsync, otherwise a
@@ -235,14 +235,14 @@ transport:
 2. validate and build the manifest from the staged tree (§5.5–5.8), computing
    deletions by comparing the staged tree to the destination rather than
    trusting rsync `--delete`;
-3. apply from staging to the destination with coop's own apply code (§5.10).
+3. apply from staging to the destination with isolate's own apply code (§5.10).
 
 The existing dirty-tree check still runs before apply. `--force` skips only
 that check; it MUST NOT skip stage validation or budgets.
 
 ## 5.2 Required behavior
 
-coop MUST support a staged pull flow:
+isolate MUST support a staged pull flow:
 
 ```text
 guest workspace
@@ -267,10 +267,10 @@ Guest data MUST NOT be written directly into the target workspace until validati
 Minimum surface:
 
 ```bash
-coop diff <vm>                 # new command
-coop pull <vm> --review        # new flags on the existing command
-coop pull <vm> --apply
-coop pull <vm> --discard
+iso diff <vm>                 # new command
+iso pull <vm> --review        # new flags on the existing command
+iso pull <vm> --apply
+iso pull <vm> --discard
 ```
 
 These are new CLI surface: update `docs/commands.md` and the CLI-surface
@@ -279,9 +279,9 @@ baselines (`tests/test-swift-host-cli-surface.py`) with them.
 An implementation MAY instead expose explicit stage identifiers:
 
 ```bash
-coop pull <vm> --stage
-coop pull <vm> --apply <stage-id>
-coop pull <vm> --discard <stage-id>
+iso pull <vm> --stage
+iso pull <vm> --apply <stage-id>
+iso pull <vm> --discard <stage-id>
 ```
 
 Exact naming is not normative. The security semantics below are normative.
@@ -319,7 +319,7 @@ Hard links SHOULD be rejected in v1 unless the apply algorithm gives them explic
 
 ## 5.6 Path validation
 
-For every staged entry coop MUST validate that:
+For every staged entry isolate MUST validate that:
 
 - the logical path is relative;
 - no path component is `..`;
@@ -358,7 +358,7 @@ The manifest SHOULD additionally contain:
 
 ## 5.8 Budgets
 
-Before apply, coop MUST enforce configurable limits:
+Before apply, isolate MUST enforce configurable limits:
 
 ```jsonc
 {
@@ -385,7 +385,7 @@ validation runs.
 
 ## 5.9 Diff
 
-`coop diff` / `--review` SHOULD show:
+`iso diff` / `--review` SHOULD show:
 
 - added/modified/deleted file counts;
 - byte delta;
@@ -412,7 +412,7 @@ Applying a stage MUST:
 
 The initial version does **not** need whole-tree atomicity.
 
-If apply fails partway through, coop MUST:
+If apply fails partway through, isolate MUST:
 
 - report exactly which operations were applied;
 - retain enough stage metadata for diagnosis;
@@ -434,7 +434,7 @@ Config:
 }
 ```
 
-`direct` is today's `coop pull` behavior, unchanged.
+`direct` is today's `iso pull` behavior, unchanged.
 
 A later release SHOULD consider making `stage` the default for interactive use after sufficient compatibility data.
 
@@ -443,7 +443,7 @@ A later release SHOULD consider making `stage` the default for interactive use a
 - Config lives at `workspace.pull` (`mode`, `max_files`, `max_bytes`,
   `max_file_bytes`); `review_deletes_over` / `review_type_changes` are not
   implemented.
-- **No deletions.** A direct `coop pull` has never deleted host files (rsync
+- **No deletions.** A direct `iso pull` has never deleted host files (rsync
   pull runs without `--delete`), so a staged apply applies only add, modify
   and type-change. Deletion review is deferred.
 - One stage per instance at `<instance>/stage/`; a new stage replaces the old.
@@ -487,7 +487,7 @@ Tests MUST cover:
 
 **Priority:** P0/P1  
 **Borrowed concept:** Sandlock deny-by-default / allowlisted egress  
-**coop adaptation:** A small number of host-enforced network modes.
+**isolate adaptation:** A small number of host-enforced network modes.
 
 ## 6.1 Problem
 
@@ -505,10 +505,10 @@ yet, and the phase plan (§13) depends on which one works.
 The spike MUST evaluate, on macOS 27+ Apple Silicon against the pinned
 `apple/containerization` runtime:
 
-1. **Runtime/vmnet mode** — whether `coop-sandbox` can attach a sandbox to a
+1. **Runtime/vmnet mode** — whether `iso-sandbox` can attach a sandbox to a
    vmnet mode without external NAT (e.g. host-only) while keeping host→guest
    SSH working. Preferred: no privileged install, enforced by the runtime
-   configuration coop already verifies before hand-out.
+   configuration isolate already verifies before hand-out.
 2. **Root-owned `pf` anchor** bound to each sandbox's `10.231.N.0/24` subnet.
    Requires a privileged install/uninstall step, must follow subnet
    quarantine/re-addressing after unclean exits, and is itself a trust-model
@@ -519,7 +519,7 @@ The spike MUST evaluate, on macOS 27+ Apple Silicon against the pinned
 Spike output, recorded before Phase 3 (`egress = "none"`) starts:
 
 - chosen mechanism and why;
-- how coop **proves** the policy is active (§6.6) from outside the guest;
+- how isolate **proves** the policy is active (§6.6) from outside the guest;
 - whether IPv6 and UDP are covered;
 - whether guest→host/LAN reachability (§2.1.2) is closed, narrowed, or
   unchanged under `none`;
@@ -533,13 +533,13 @@ feature is dropped rather than shipped in a weaker form (NG4).
 **Chosen mechanism: vmnet host mode, per sandbox, selected by the runtime.**
 
 - Today `Owner.makeNetwork` calls containerization 0.45.0's
-  `VmnetNetwork(subnet:)`, whose default is `VMNET_SHARED_MODE` (NAT). coop never
+  `VmnetNetwork(subnet:)`, whose default is `VMNET_SHARED_MODE` (NAT). isolate never
   chooses the mode, and the owner reports a hard-coded `vmnet-shared:` label.
 - `VMNET_HOST_MODE` is reachable through the same macOS 26+
   `vmnet_network_configuration_*` API. The configuration also exposes
   `disable_nat44`, `disable_nat66`, `disable_dns_proxy`, and
   `disable_router_advertisement`. `VmnetNetwork` does not surface the last two,
-  but its public `Interface(reference:…)` lets `coop-sandbox` build the network
+  but its public `Interface(reference:…)` lets `iso-sandbox` build the network
   itself without forking containerization.
 - A probe created host-mode networks as a normal user from a binary carrying
   only the existing `com.apple.security.virtualization` entitlement. No root
@@ -561,7 +561,7 @@ sandbox record, set at create time. The owner reports the mode and the
 NAT44/NAT66/DNS-proxy/RA flags from the configuration it passed to
 `vmnet_network_create`, with the label `vmnet-host:10.231.N.0/24`. The
 isolation gate (`IsolationGate.verifyNetwork`) compares these with the policy
-coop expects and fails closed. This proves the configuration the VM was
+isolate expects and fails closed. This proves the configuration the VM was
 created from, not guest behavior; guest-side probes are test evidence only.
 
 The mode is fixed per sandbox at create time. Changing `egress` for an
@@ -575,7 +575,7 @@ and 1.1.1.1 (UDP and TCP), raw UDP, and the LAN router. Host→guest SSH,
 This held with host `net.inet.ip.forwarding=1`. Guest→host reachability was
 unchanged and covers **every host address**, including the LAN IP and Remote
 Login's sshd. Not tested: Internet Sharing enabled, IPv6 egress in the control
-(the host has no IPv6 uplink). Wrapping a coop-built `vmnet_network_ref` in
+(the host has no IPv6 uplink). Wrapping a iso-built `vmnet_network_ref` in
 `VmnetNetwork.Interface(reference:)` works without forking containerization.
 
 Config naming: `network` is a retired Firecracker top-level key that
@@ -614,8 +614,8 @@ Current-style general guest outbound network access.
 
 The guest has no general external egress.
 
-coop's required management path remains available: host→guest SSH and the
-`ssh -R` / `ssh -L` tunnels coop provisions (credential proxy, local-model
+isolate's required management path remains available: host→guest SSH and the
+`ssh -R` / `ssh -L` tunnels isolate provisions (credential proxy, local-model
 tunnels, `--forward-port`). These ride the host-initiated SSH connection and
 are not guest egress.
 
@@ -639,7 +639,7 @@ Security enforcement MUST be outside the guest.
 Acceptable implementation classes include:
 
 - host-owned network topology;
-- host firewall rules bound to a coop-owned interface/address;
+- host firewall rules bound to a iso-owned interface/address;
 - host-owned forwarding/proxy architecture;
 - runtime-level networking controls.
 
@@ -654,7 +654,7 @@ The implementation MUST NOT rely on:
 
 The Swift trust model already documents and accepts guest→host reachability
 through the NAT gateway and the host's LAN address, including host services
-listening on all interfaces (§2.1.2). coop's own listeners bind loopback and
+listening on all interfaces (§2.1.2). isolate's own listeners bind loopback and
 reach a guest only through SSH tunnels, so they do not depend on that path.
 
 `none` MUST explicitly state whether it changes that accepted reachability. The
@@ -662,7 +662,7 @@ answer comes from the §6.0 spike.
 
 Default rule:
 
-> A host service is not reachable merely because it exists. It must be a coop-provisioned capability or a documented required management endpoint.
+> A host service is not reachable merely because it exists. It must be a iso-provisioned capability or a documented required management endpoint.
 
 The implementation SHOULD minimize ambient access to arbitrary host/LAN services.
 
@@ -676,7 +676,7 @@ DNS policy MUST NOT be represented as stronger than the underlying enforcement m
 
 ## 6.6 Failure behavior
 
-If coop cannot prove that the selected egress policy is active, VM startup MUST fail.
+If isolate cannot prove that the selected egress policy is active, VM startup MUST fail.
 
 Policy setup SHOULD be revalidated:
 
@@ -742,13 +742,13 @@ Tests MUST demonstrate that:
 
 **Priority:** P1  
 **Borrowed concept:** Sandlock credential injection / capability-oriented authority  
-**coop adaptation:** Add an explicit `proxy.mode` policy on top of the existing capability proxy, and pin its existing capability properties with tests; do not define a second secret-storage or secret-routing system.
+**isolate adaptation:** Add an explicit `proxy.mode` policy on top of the existing capability proxy, and pin its existing capability properties with tests; do not define a second secret-storage or secret-routing system.
 
 ## 7.1 Normative dependency
 
-Secret storage, secret resolution, provider-secret classification, and delivery of provider plaintext into `coop-proxy` are specified by:
+Secret storage, secret resolution, provider-secret classification, and delivery of provider plaintext into `iso-proxy` are specified by:
 
-> **Specification: Embedded Coop Secrets for the Swift 6 Port**
+> **Specification: Embedded Isolate Secrets for the Swift 6 Port**
 
 This section MUST NOT redefine those mechanisms.
 
@@ -766,7 +766,7 @@ The purpose of this feature is narrower: define the **guest-facing capability** 
 The capability itself is already narrowly scoped (§7.4). What is missing is
 **policy**:
 
-- the proxy is opt-in, and when it is off coop forwards legacy provider
+- the proxy is opt-in, and when it is off isolate forwards legacy provider
   values raw into the guest, with no way to demand otherwise;
 - there is no setting that makes "the proxy must be used, or fail" explicit;
 - the existing capability properties are true by construction but not pinned
@@ -777,11 +777,11 @@ The capability itself is already narrowly scoped (§7.4). What is missing is
 These requirements are **already met** by the current implementation and are
 restated so tests can pin them. For supported provider proxies:
 
-- the upstream provider credential MUST remain on the host as required by the Embedded Coop Secrets specification;
-- the guest receives only a coop capability token plus required proxy endpoint configuration;
+- the upstream provider credential MUST remain on the host as required by the Embedded Isolate Secrets specification;
+- the guest receives only an isolate capability token plus required proxy endpoint configuration;
 - a capability MUST identify one VM instance;
 - a capability MUST be limited to one provider;
-- the proxy MUST use a fixed upstream selected by coop, never a guest-supplied upstream destination;
+- the proxy MUST use a fixed upstream selected by isolate, never a guest-supplied upstream destination;
 - upstream credentials MUST NOT appear in guest environment, argv, files, instance state, or staged workspace content.
 
 ## 7.4 Capability lifecycle (existing behavior)
@@ -792,7 +792,7 @@ shared token table:
 | Property | How it holds today |
 |---|---|
 | Cryptographically random | `ProxyLauncher.start` mints `randomHex(32)` per start |
-| Bound to one VM | One `coop-proxy` process per VM; each knows only its own token and is reachable only through that VM's `ssh -R` tunnel |
+| Bound to one VM | One `iso-proxy` process per VM; each knows only its own token and is reachable only through that VM's `ssh -R` tunnel |
 | Bound to one provider | One process per (VM, provider), fixed upstream per process |
 | Bound to one boot | A new token is minted on every start; stop/destroy kills the process and deletes the token file |
 | Reuse within a boot | Later sessions of the same running boot read the current token file |
@@ -807,7 +807,7 @@ New work in this area is limited to:
 
 - **Optional expiry** — the host MAY pass an `expires_at` in the stdin
   startup document; the proxy then rejects the token after that time. This
-  requires a `coop-proxy` protocol version bump.
+  requires a `iso-proxy` protocol version bump.
 - **Regression tests** for every row above (§7.9).
 
 A capability may be stored in guest state because it grants only the explicitly intended proxy authority, not the upstream provider credential.
@@ -851,7 +851,7 @@ Normative semantics (terms from §2.2):
 
 **As implemented (step 7):** an explicit declaration (`env_forward`,
 `guest_env`, runtime `--env`) of a recognized variable is an error under
-`required`; values coop forwards automatically (the host environment, an
+`required`; values isolate forwards automatically (the host environment, an
 agent's `api_key`, which defaults from the host environment) are withheld
 with a debug note instead, since the user did not ask for them. The startup
 check requires at least one provider proxy for a remote-mode VM with agents.
@@ -869,14 +869,14 @@ variables, not only `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
   downgrade.
 
 If a user intentionally wants a secret to be guest-visible, that must use the
-explicit **generic-secret** mechanism defined by the Embedded Coop Secrets
+explicit **generic-secret** mechanism defined by the Embedded Isolate Secrets
 specification.
 
 A future release MAY change the default to `required`; that is a
 security-tightening default change and needs release notes and migration
 guidance (§14.4).
 
-`proxy.mode` also applies only in remote model mode; `coop model <vm> local`
+`proxy.mode` also applies only in remote model mode; `iso model <vm> local`
 continues to take precedence and tear the proxy down, as today.
 
 ## 7.6 Interaction with network modes
@@ -954,7 +954,7 @@ refusal path (e.g. dropping the legacy-value check) that a test detects.
 
 **Priority:** P1/P2  
 **Borrowed concept:** Sandlock resource limits  
-**coop adaptation:** Enforce budgets on resources visible outside the guest.
+**isolate adaptation:** Enforce budgets on resources visible outside the guest.
 
 ## 8.1 Rationale
 
@@ -986,24 +986,24 @@ size is already fixed at creation (`--disk`, `vm.template_size_gib`); see §8.6.
 
 When a hard TTL is configured:
 
-- coop MUST track it outside the guest;
+- isolate MUST track it outside the guest;
 - expiry MUST stop the VM/session according to documented semantics;
 - guest clock changes MUST NOT affect enforcement.
 
 ### Enforcer
 
-`coop` is a short-lived CLI; there is no coop host daemon. The only long-lived
+`iso` is a short-lived CLI; there is no isolate host daemon. The only long-lived
 host process per VM is the sandbox **owner**, a launchd job started by
-`coop-sandbox start` that holds the VM. TTL enforcement therefore belongs in
+`iso-sandbox start` that holds the VM. TTL enforcement therefore belongs in
 the runtime:
 
-- `coop up` / `coop start` passes the deadline (host wall-clock time,
-  computed on the host) to `coop-sandbox`, which records it in the sandbox
+- `iso up` / `iso start` passes the deadline (host wall-clock time,
+  computed on the host) to `iso-sandbox`, which records it in the sandbox
   record;
 - the owner process stops the VM when the deadline passes;
 - expiry MUST unload the launchd job (or mark the sandbox expired) so launchd's
   crash-restart does not simply reboot the VM;
-- every `coop` command that hands out a connection also checks the deadline
+- every `iso` command that hands out a connection also checks the deadline
   and refuses an expired instance, so enforcement does not depend solely on the
   owner being alive at the deadline.
 
@@ -1015,7 +1015,7 @@ the gate refuses an expired record (`APPLE_SESSION_EXPIRED`). `max_log_bytes`
 is not implemented: the guest-controlled console log is already capped at
 8 MiB by the runtime and the owner log holds only runtime-authored lines.
 
-Host sleep counts toward the TTL (wall-clock, not monotonic). `coop start` of
+Host sleep counts toward the TTL (wall-clock, not monotonic). `iso start` of
 an expired instance starts a new TTL window only if the user explicitly
 restarts it; document this.
 
@@ -1024,10 +1024,10 @@ An interactive warning before expiry MAY be provided but is not security-relevan
 ## 8.4 Log/output budget
 
 Host-side captured output SHOULD have a maximum retained size. Today this
-means the per-sandbox console and owner logs under `~/.coop/runtime/`
-(streamed by `coop logs`) and coop's own diagnostics.
+means the per-sandbox console and owner logs under `~/.iso/runtime/`
+(streamed by `iso logs`) and isolate's own diagnostics.
 
-On overflow, coop SHOULD:
+On overflow, isolate SHOULD:
 
 - continue execution where safe;
 - truncate or rotate according to a documented rule;
@@ -1046,9 +1046,9 @@ Budget checks MUST happen before applying staged data to the trusted workspace.
 The guest disk is a fixed-size ext4 image set at creation (`--disk`), which
 already bounds guest-visible capacity. What is not bounded is host-side growth
 of that image file if it is sparse. If the runtime exposes a reliable
-host-controlled bound on that growth, coop SHOULD surface it.
+host-controlled bound on that growth, isolate SHOULD surface it.
 
-If the underlying runtime does not provide a robust host-side limit, coop MUST NOT emulate one with guest filesystem quotas and claim equivalent security.
+If the underlying runtime does not provide a robust host-side limit, isolate MUST NOT emulate one with guest filesystem quotas and claim equivalent security.
 
 ## 8.7 Security acceptance criteria
 
@@ -1066,21 +1066,21 @@ Tests SHOULD cover:
 
 **Priority:** P2  
 **Borrowed concept:** `sandlock learn`  
-**coop adaptation:** Observe cross-boundary authority use, not syscalls.
+**isolate adaptation:** Observe cross-boundary authority use, not syscalls.
 
 ## 9.1 Goal
 
-Help users discover which coop capabilities a workflow actually uses so they can choose a narrower preset/config without manually understanding every channel.
+Help users discover which isolate capabilities a workflow actually uses so they can choose a narrower preset/config without manually understanding every channel.
 
 ## 9.2 Proposed CLI
 
 ```bash
-coop audit <vm>                    # new command
-coop audit <vm> --suggest-config
+iso audit <vm>                    # new command
+iso audit <vm> --suggest-config
 ```
 
-`coop audit` does not exist today; it is new CLI surface (update
-`docs/commands.md` and the CLI-surface baselines). There is no `coop run`
+`iso audit` does not exist today; it is new CLI surface (update
+`docs/commands.md` and the CLI-surface baselines). There is no `iso run`
 command; an audit-while-running wrapper is out of scope for this proposal.
 
 ## 9.3 Events to record
@@ -1090,7 +1090,7 @@ Audit SHOULD focus on security-relevant boundary events:
 ### Network
 
 - attempted/allowed outbound destination where observable;
-- whether access used general egress or a coop proxy;
+- whether access used general egress or an isolate proxy;
 - denied attempts where enforcement provides them.
 
 ### Credentials
@@ -1133,7 +1133,7 @@ Default audit logs MUST NOT contain:
 
 Boundary audit MUST NOT become a secret-store authentication or access-history subsystem.
 
-The Embedded Coop Secrets design intentionally has no secret-store auth log. Boundary audit records only the use of host/VM capabilities after configuration and secret resolution. It SHOULD record events such as "VM X used the Anthropic proxy" rather than "secret Y was unlocked/read."
+The Embedded Isolate Secrets design intentionally has no secret-store auth log. Boundary audit records only the use of host/VM capabilities after configuration and secret resolution. It SHOULD record events such as "VM X used the Anthropic proxy" rather than "secret Y was unlocked/read."
 
 ## 9.5 Suggested config output
 
@@ -1151,7 +1151,7 @@ The Embedded Coop Secrets design intentionally has no secret-store auth log. Bou
 ```
 
 The fragment is printed to stdout for the user to merge; `--suggest-config`
-MUST NOT edit `~/.coop/config.jsonc` itself.
+MUST NOT edit `~/.iso/config.jsonc` itself.
 
 Suggested config MUST be advisory.
 
@@ -1182,10 +1182,10 @@ Suggested presets:
 **As implemented (step 12):** `security.preset` (config only; no `--security`
 flag) supplies defaults for `egress`, `proxy.mode` and `workspace.pull.mode`,
 and explicit fields win; `up`/`start --dry-run --json` prints the expansion
-under `security`. `coop audit [NAME] [--suggest-config]` reads
+under `security`. `iso audit [NAME] [--suggest-config]` reads
 `<instance>/audit.jsonl` (host-recorded boot policy, raw provider forwards,
 stops and workspace returns; owner-only, 1 MiB cap). Per-request proxy
-metadata (§7.7) is not recorded yet: it needs `coop-proxy` changes.
+metadata (§7.7) is not recorded yet: it needs `iso-proxy` changes.
 
 ## 10.1 `networked`
 
@@ -1221,14 +1221,14 @@ workspace return: stage
 Possible CLI (new flag on `up` / `start`):
 
 ```bash
-coop up --security networked
-coop up --security provider-only
-coop up --security offline
+iso up --security networked
+iso up --security provider-only
+iso up --security offline
 ```
 
-Preset expansion SHOULD be inspectable. There is no `coop config` command
-today; either add `coop config explain --security <preset>` as new surface, or
-reuse `coop up --dry-run --json`, which already prints the resolved plan, by
+Preset expansion SHOULD be inspectable. There is no `iso config` command
+today; either add `iso config explain --security <preset>` as new surface, or
+reuse `iso up --dry-run --json`, which already prints the resolved plan, by
 including the expanded security settings in it. Prefer the latter (no new
 command).
 
@@ -1246,7 +1246,7 @@ Security-sensitive overrides SHOULD be shown in startup diagnostics.
 This is illustrative, not a frozen schema.
 
 ```jsonc
-// ~/.coop/config.jsonc (excerpt)
+// ~/.iso/config.jsonc (excerpt)
 {
   "security": { "preset": "provider-only" },
   "egress": "none",
@@ -1267,7 +1267,7 @@ This is illustrative, not a frozen schema.
 }
 ```
 
-New fields MUST be added in the same change to `CoopConfig` decoding and
+New fields MUST be added in the same change to `IsoConfig` decoding and
 validation, `ConfigTemplate`, `config.example.jsonc` and
 `docs/configuration.md`.
 
@@ -1294,7 +1294,7 @@ updated to say whether `none` changes it (§6.4).
 
 ## 12.3 Provider capability invariant
 
-> Provider-secret storage, resolution, classification, and plaintext handoff to `coop-proxy` are governed by the Embedded Coop Secrets specification. A recognized provider secret never falls back to guest injection. Guest authority is represented only by a capability accepted by exactly one fixed-upstream host proxy process per (VM, provider), minted fresh on every start. Under `proxy.mode = "required"`, no recognized provider variable reaches the guest by any path.
+> Provider-secret storage, resolution, classification, and plaintext handoff to `iso-proxy` are governed by the Embedded Isolate Secrets specification. A recognized provider secret never falls back to guest injection. Guest authority is represented only by a capability accepted by exactly one fixed-upstream host proxy process per (VM, provider), minted fresh on every start. Under `proxy.mode = "required"`, no recognized provider variable reaches the guest by any path.
 
 ## 12.4 Budget invariant
 
@@ -1319,12 +1319,12 @@ off as a trust-model change.
 
 Deliver:
 
-- staging directory, with the existing rsync / tar-pipe `coop pull`
+- staging directory, with the existing rsync / tar-pipe `iso pull`
   transports retargeted into it;
 - manifest;
 - structural validation;
 - file/byte budgets;
-- `coop diff` and apply/discard;
+- `iso diff` and apply/discard;
 - comprehensive malicious-path tests.
 
 Reason: directly hardens the widest documented guest→host channel and requires no networking redesign.
@@ -1334,7 +1334,7 @@ Reason: directly hardens the widest documented guest→host channel and requires
 Deliver:
 
 - `proxy.mode = auto|required|off` with the compatible `auto` semantics of §7.5;
-- integration with the Embedded Coop Secrets provider-secret path;
+- integration with the Embedded Isolate Secrets provider-secret path;
 - regression tests pinning the existing per-(VM, provider), per-boot capability properties;
 - optional capability expiry (proxy protocol bump) if wanted.
 
@@ -1370,7 +1370,7 @@ Export budgets ship with Phase 1.
 Deliver:
 
 - event schema;
-- `coop audit`;
+- `iso audit`;
 - `--suggest-config`;
 - `offline` / `provider-only` / `networked` presets and their `--dry-run --json` expansion.
 
@@ -1394,19 +1394,19 @@ The following must be startup/operation failures, not warnings:
 
 ## 14.2 No hidden downgrade
 
-coop MUST NOT silently change:
+isolate MUST NOT silently change:
 
 ```text
 none -> open
 proxy required -> guest credential forwarding
 provider_secret -> generic guest secret
 stage -> direct
-stage validation/budgets skipped by `coop pull --force`
+stage validation/budgets skipped by `iso pull --force`
 ```
 
-A user may explicitly choose a weaker network/workspace mode where the relevant specification permits it, but automatic security downgrade is prohibited. `--force` on `coop pull` keeps its current meaning (skip the destination dirty-tree check) and nothing more.
+A user may explicitly choose a weaker network/workspace mode where the relevant specification permits it, but automatic security downgrade is prohibited. `--force` on `iso pull` keeps its current meaning (skip the destination dirty-tree check) and nothing more.
 
-Provider-secret classification is not a downgradeable mode: intentionally guest-visible credentials must be declared through the generic-secret path defined by the Embedded Coop Secrets specification.
+Provider-secret classification is not a downgradeable mode: intentionally guest-visible credentials must be declared through the generic-secret path defined by the Embedded Isolate Secrets specification.
 
 ## 14.3 Diagnostics
 
@@ -1479,7 +1479,7 @@ No product telemetry is required by this proposal.
 Local audit records should be:
 
 - opt-in or explicitly invoked;
-- stored under coop's state directory;
+- stored under isolate's state directory;
 - permission-restricted;
 - bounded in size;
 - redactable/deletable by normal file removal.
@@ -1490,7 +1490,7 @@ Do not transmit audit data to a remote service as part of this feature.
 
 # 17. Rejected Alternatives
 
-## 17.1 "Run Sandlock inside every coop VM"
+## 17.1 "Run Sandlock inside every isolate VM"
 
 Rejected as the baseline design.
 
@@ -1502,7 +1502,7 @@ Reasons:
 - does not improve the core VM escape boundary;
 - risks users confusing inner policy with host isolation.
 
-It may still be useful for individual advanced users inside a guest, but coop should not depend on it.
+It may still be useful for individual advanced users inside a guest, but isolate should not depend on it.
 
 ## 17.2 "Use guest firewall rules for egress"
 
@@ -1551,12 +1551,12 @@ This proposal was derived from the current project documentation as of 2026-09-2
 
 Companion normative specification:
 
-- **Specification: Embedded Coop Secrets for the Swift 6 Port** — normative for local secret storage, resolution, generic/provider classification, and plaintext provider handoff into `coop-proxy`.
+- **Specification: Embedded Isolate Secrets for the Swift 6 Port** — normative for local secret storage, resolution, generic/provider classification, and plaintext provider handoff into `iso-proxy`.
 
 External/current project sources:
 
-- `chr33s/coop` Swift trust model:  
-  https://github.com/chr33s/coop/blob/swift/docs/trust-model.md
+- `chr33s/iso` Swift trust model:  
+  https://github.com/chr33s/iso/blob/swift/docs/trust-model.md
 - Sandlock repository / feature overview:  
   https://github.com/multikernel/sandlock
 - Sandlock `learn` RFC/background:  
@@ -1564,11 +1564,11 @@ External/current project sources:
 
 Key observed facts used by this proposal:
 
-- coop's VM is the intended isolation boundary and the guest is deliberately permissive;
+- isolate's VM is the intended isolation boundary and the guest is deliberately permissive;
 - guest filesystem data crossing back to the host is treated as tainted, with workspace pull/sync identified as the widest guest→host channel;
 - the Swift Apple backend verifies a runtime shape with no host mounts, socket relays, published ports, or agent forwarding;
-- coop already has an opt-in host-side provider proxy (one process per VM and provider, fresh token per start, reached over `ssh -R`) that keeps supported model API keys out of the guest (`docs/credential-proxy.md`, `ProxyLifecycle.swift`);
+- isolate already has an opt-in host-side provider proxy (one process per VM and provider, fresh token per start, reached over `ssh -R`) that keeps supported model API keys out of the guest (`docs/credential-proxy.md`, `ProxyLifecycle.swift`);
 - vmnet has no per-network filter; guest→host/LAN reachability is accepted by design (`docs/trust-model.md`);
-- `coop pull` uses rsync `--delete` or a verified tar-pipe directly into the destination (`docs/workspaces.md`);
+- `iso pull` uses rsync `--delete` or a verified tar-pipe directly into the destination (`docs/workspaces.md`);
 - Sandlock exposes COW/dry-run semantics, network controls, credential injection, resource limits, profiles, and a `learn` workflow.
 

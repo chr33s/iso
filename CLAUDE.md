@@ -1,4 +1,4 @@
-# coop agent guide
+# isolate agent guide
 
 Follow the shared repository instructions in [`AGENTS.md`](AGENTS.md). Agent
 workflows are in [`.agents/skills/`](.agents/skills/); compatibility commands
@@ -7,10 +7,10 @@ under [`.claude/commands/`](.claude/commands/) invoke those workflows.
 <!-- The remainder is retained as a standalone fallback for clients that do
 not follow the shared entrypoint link. Keep normative changes in AGENTS.md. -->
 
-This is the `chr33s/coop` fork, supporting **macOS 27+ on Apple Silicon hosts
+This is the `chr33s/iso` fork, supporting **macOS 27+ on Apple Silicon hosts
 only**. Linux guests remain supported; Linux hosts are outside this fork's
 scope. The host CLI is Swift (root `Package.swift`); the credential proxy
-(`coop-proxy/`) and Apple VM runtime (`coop-sandbox/`) remain separate Swift
+(`iso-proxy/`) and Apple VM runtime (`iso-sandbox/`) remain separate Swift
 packages and separate processes. See [README.md](README.md) for motivation and
 fork installation guidance.
 
@@ -35,12 +35,12 @@ navigational; durable detail lives in [`docs/`](docs/).
 
 ## Architecture (one paragraph)
 
-A Swift CLI (`CoopCLI` on Swift Argument Parser, over `CoopHost`,
-`CoopSecrets`, `CoopConfiguration` and `CoopCore`) that orchestrates VM lifecycle (setup →
+A Swift CLI (`IsoCLI` on Swift Argument Parser, over `IsoHost`,
+`IsoSecrets`, `IsoConfiguration` and `IsoCore`) that orchestrates VM lifecycle (setup →
 up/start → shell → stop → destroy → status/logs) on one concrete Apple backend:
-`coop-sandbox` VMs on `apple/containerization`, driven over the runtime's JSON
+`iso-sandbox` VMs on `apple/containerization`, driven over the runtime's JSON
 CLI. Each command loads one validated JSONC configuration snapshot
-(`~/.coop/config.jsonc`). SSH, workspace, config/secret injection, and agent
+(`~/.iso/config.jsonc`). SSH, workspace, config/secret injection, and agent
 bootstrap run from the host over pinned-host-key SSH. Full detail:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -57,7 +57,7 @@ credential exposure. Authoritative boundaries and the stop-and-confirm checklist
 Stop and confirm before merging code that adds an outbound URL / network
 listener / egress rule, forwards a new secret into the guest, runs a subprocess
 on tainted bytes, writes a host path from tainted data, logs/traces tainted or
-secret content, or softens the `coop update` verification chain.
+secret content, or softens the `iso update` verification chain.
 
 ## Development commands
 
@@ -65,16 +65,16 @@ Toolchain: Xcode 27 (Swift 6.4, Swift 6 language mode), macOS 27+ on Apple
 Silicon. Python 3.11+ for the migration, parity and integration scripts.
 
 ```bash
-swift build                                                   # debug build → .build/debug/coop
+swift build                                                   # debug build → .build/debug/iso
 swift test --force-resolved-versions                          # host package tests
 swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
 swift test --sanitize=address --scratch-path .build-address   # also thread, undefined
-swift test --package-path coop-proxy --force-resolved-versions   # credential proxy
-swift test --package-path coop-sandbox --no-parallel             # Apple runtime
+swift test --package-path iso-proxy --force-resolved-versions   # credential proxy
+swift test --package-path iso-sandbox --no-parallel             # Apple runtime
 python3 tests/test-migrate-config.py                          # TOML → JSONC converter
 python3 tests/test-swift-host-inventory.py                    # compatibility inventory
-python3 tests/test-swift-host-cli-surface.py --swift .build/debug/coop
-python3 tests/test-swift-host-read-parity.py --swift .build/debug/coop   # also lifecycle, data-root
+python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
+python3 tests/test-swift-host-read-parity.py --swift .build/debug/iso   # also lifecycle, data-root
 python3 scripts/swift-host-fault-injection.py                 # tests catch injected faults
 scripts/fuzz.sh smoke                                         # bounded libFuzzer run, all targets
 python3 scripts/build-release.py [--release --test --tag vX.Y.Z]  # release archive
@@ -116,7 +116,7 @@ including fault injection and the
 
 Follow [`docs/code-style.md`](docs/code-style.md): Swift 6 language mode,
 `swift format lint --strict` clean, value types and enums over booleans,
-smart-constructor types in `CoopCore`, parse-don't-validate at boundaries,
+smart-constructor types in `IsoCore`, parse-don't-validate at boundaries,
 typed throws where callers switch on a closed error type, every subprocess
 through `ProcessRunner` with no shell interpolation (`RemoteCommand` for guest
 commands), state writes through `StateStore`/`AtomicFile`, and diagnostics on

@@ -6,8 +6,8 @@
  "explicit --config is not checked": {
   "exit": 0,
   "layout": {
-   ".coop": "dir",
-   ".coop/vm_key": "file"
+   ".iso": "dir",
+   ".iso/vm_key": "file"
   }
  },
  "ignores a leftover coop-apple directory": {
@@ -23,17 +23,17 @@
  "owned state": {
   "exit": 0,
   "layout": {
-   ".coop": "dir",
-   ".coop/backends": "dir",
-   ".coop/backends/apple-container-v1": "dir",
-   ".coop/backends/apple-container-v1/instances": "dir",
-   ".coop/backends/apple-container-v1/owner.json": "file"
+   ".iso": "dir",
+   ".iso/backends": "dir",
+   ".iso/backends/apple-container-v1": "dir",
+   ".iso/backends/apple-container-v1/instances": "dir",
+   ".iso/backends/apple-container-v1/owner.json": "file"
   }
  },
  "refuses a symlinked root": {
   "exit": 1,
   "layout": {
-   ".coop": "-> <HOME>/elsewhere",
+   ".iso": "-> <HOME>/elsewhere",
    "elsewhere": "dir",
    "elsewhere/backends": "dir",
    "elsewhere/backends/apple-container-v1": "dir",
@@ -44,15 +44,15 @@
  "refuses upstream instances": {
   "exit": 1,
   "layout": {
-   ".coop": "dir",
-   ".coop/instances": "dir"
+   ".iso": "dir",
+   ".iso/instances": "dir"
   }
  },
  "refuses upstream key": {
   "exit": 1,
   "layout": {
-   ".coop": "dir",
-   ".coop/vm_key": "file"
+   ".iso": "dir",
+   ".iso/vm_key": "file"
   }
  }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install coop's pinned development tools and git hook with mise
+# Install iso's pinned development tools and git hook with mise
 # (https://mise.jdx.dev). Versions live in mise.toml: the Swift toolchain,
 # Python, jq, yq, shellcheck, actionlint, zizmor and Apple's `container` CLI.
 # Xcode 27 is still required for the macOS SDK and code signing.

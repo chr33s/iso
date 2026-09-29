@@ -1,15 +1,15 @@
 // swift-tools-version: 6.2
-// coop host CLI (Swift port; see docs/design/swift-host-spec.md). The runtime
-// (`coop-sandbox/`) and credential proxy (`coop-proxy/`) remain separate
+// iso host CLI (Swift port; see docs/design/swift-host-spec.md). The runtime
+// (`iso-sandbox/`) and credential proxy (`iso-proxy/`) remain separate
 // packages and separate processes; this package never links them.
 import PackageDescription
 
 let package = Package(
-  name: "coop",
+  name: "iso",
   platforms: [.macOS("27.0")],
   products: [
-    .executable(name: "coop", targets: ["CoopCLI"]),
-    .library(name: "CoopConfiguration", targets: ["CoopConfiguration"]),
+    .executable(name: "iso", targets: ["IsoCLI"]),
+    .library(name: "IsoConfiguration", targets: ["IsoConfiguration"]),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
@@ -18,21 +18,21 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.0"),
   ],
   targets: [
-    .target(name: "CoopCore"),
-    .target(name: "CoopConfiguration", dependencies: ["CoopCore"]),
-    // The local secret store; must not depend on CoopHost (VM/runtime code).
+    .target(name: "IsoCore"),
+    .target(name: "IsoConfiguration", dependencies: ["IsoCore"]),
+    // The local secret store; must not depend on IsoHost (VM/runtime code).
     .target(
-      name: "CoopSecrets",
-      dependencies: ["CoopCore", .product(name: "CryptoExtras", package: "swift-crypto")]),
+      name: "IsoSecrets",
+      dependencies: ["IsoCore", .product(name: "CryptoExtras", package: "swift-crypto")]),
     // seatbelt-proxy.sb is the canonical copy of the embedded profile
     // (SeatbeltProfile.swift); the proxy test scripts pass it to sandbox-exec.
     .target(
-      name: "CoopHost", dependencies: ["CoopCore", "CoopConfiguration", "CoopSecrets"],
+      name: "IsoHost", dependencies: ["IsoCore", "IsoConfiguration", "IsoSecrets"],
       exclude: ["seatbelt-proxy.sb"]),
     .executableTarget(
-      name: "CoopCLI",
+      name: "IsoCLI",
       dependencies: [
-        "CoopCore", "CoopConfiguration", "CoopHost", "CoopSecrets",
+        "IsoCore", "IsoConfiguration", "IsoHost", "IsoSecrets",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]),
     // tests/ also holds the integration scripts; Swift tests live under
@@ -41,21 +41,21 @@ let package = Package(
     // libFuzzer entrypoints; the replay test runs the corpus through them in
     // ordinary builds. Not part of any product.
     .target(
-      name: "CoopFuzzHarnesses", dependencies: ["CoopCore", "CoopConfiguration"],
+      name: "IsoFuzzHarnesses", dependencies: ["IsoCore", "IsoConfiguration"],
       path: "fuzz/Targets"),
     .testTarget(
-      name: "CoopFuzzReplayTests", dependencies: ["CoopFuzzHarnesses"],
-      path: "tests/swift/CoopFuzzReplayTests"),
+      name: "IsoFuzzReplayTests", dependencies: ["IsoFuzzHarnesses"],
+      path: "tests/swift/IsoFuzzReplayTests"),
     .testTarget(
-      name: "CoopCoreTests", dependencies: ["CoopCore"], path: "tests/swift/CoopCoreTests"),
+      name: "IsoCoreTests", dependencies: ["IsoCore"], path: "tests/swift/IsoCoreTests"),
     .testTarget(
-      name: "CoopConfigurationTests", dependencies: ["CoopConfiguration"],
-      path: "tests/swift/CoopConfigurationTests", resources: [.copy("Fixtures")]),
+      name: "IsoConfigurationTests", dependencies: ["IsoConfiguration"],
+      path: "tests/swift/IsoConfigurationTests", resources: [.copy("Fixtures")]),
     .testTarget(
-      name: "CoopHostTests", dependencies: ["CoopHost"], path: "tests/swift/CoopHostTests"),
+      name: "IsoHostTests", dependencies: ["IsoHost"], path: "tests/swift/IsoHostTests"),
     .testTarget(
-      name: "CoopSecretsTests", dependencies: ["CoopSecrets"], path: "tests/swift/CoopSecretsTests"),
-    .testTarget(name: "CoopCLITests", dependencies: ["CoopCLI"], path: "tests/swift/CoopCLITests"),
+      name: "IsoSecretsTests", dependencies: ["IsoSecrets"], path: "tests/swift/IsoSecretsTests"),
+    .testTarget(name: "IsoCLITests", dependencies: ["IsoCLI"], path: "tests/swift/IsoCLITests"),
   ],
   swiftLanguageModes: [.v6]
 )
