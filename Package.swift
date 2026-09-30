@@ -24,11 +24,15 @@ let package = Package(
     .target(
       name: "IsoSecrets",
       dependencies: ["IsoCore", .product(name: "CryptoExtras", package: "swift-crypto")]),
-    // seatbelt-proxy.sb is the canonical copy of the embedded profile
-    // (SeatbeltProfile.swift); the proxy test scripts pass it to sandbox-exec.
+    // seatbelt-proxy.sb and seatbelt-inference.sb are the canonical copies of
+    // the embedded profiles (SeatbeltProfile.swift); the test scripts pass
+    // them to sandbox-exec.
     .target(
       name: "IsoHost", dependencies: ["IsoCore", "IsoConfiguration", "IsoSecrets"],
-      exclude: ["seatbelt-proxy.sb"]),
+      exclude: [
+        "seatbelt-proxy.sb", "seatbelt-inference.sb", "seatbelt-inference-backend.sb",
+        "inference-launcher.py",
+      ]),
     .executableTarget(
       name: "IsoCLI",
       dependencies: [

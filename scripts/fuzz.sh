@@ -23,7 +23,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/fuzz/.build"
-TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad)
+HOST_TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad)
+# iso-inference gateway parsers (iso-proxy/Sources/IsoInferenceFuzz).
+INFERENCE_TARGETS=(InferenceRequest InferenceStream InferenceControl)
+TARGETS=("${HOST_TARGETS[@]}" "${INFERENCE_TARGETS[@]}")
 
 # LLVM libFuzzer at commit a47b42eb9f9b (release/22.x), vendored in
 # fuzz/libfuzzer (see its README). SHA-256 over the sorted `shasum -a 256`
@@ -97,14 +100,26 @@ link_target() { # target, entrypoint
     "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
 }
 
+link_inference_target() { # target, entrypoint
+  xcrun swiftc "${SWIFT_FLAGS[@]}" -I "$BUILD" "$2" \
+    "$BUILD/libIsoInferenceFuzz.a" "$BUILD/libIsoInferenceCore.a" "$BUILD/libIsoProxyCore.a" \
+    "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
+}
+
 cmd_build() {
   mkdir -p "$BUILD"
   build_libfuzzer
   swift_module IsoCore "$ROOT"/Sources/IsoCore/*.swift
   swift_module IsoConfiguration "$ROOT"/Sources/IsoConfiguration/*.swift
   swift_module IsoFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
+  swift_module IsoProxyCore "$ROOT"/iso-proxy/Sources/IsoProxyCore/*.swift
+  swift_module IsoInferenceCore "$ROOT"/iso-proxy/Sources/IsoInferenceCore/*.swift
+  swift_module IsoInferenceFuzz "$ROOT"/iso-proxy/Sources/IsoInferenceFuzz/*.swift
   local t
-  for t in "${TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
+  for t in "${HOST_TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
+  for t in "${INFERENCE_TARGETS[@]}"; do
+    link_inference_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"
+  done
   echo "built: ${TARGETS[*]} in $BUILD" >&2
 }
 

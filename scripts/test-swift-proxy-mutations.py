@@ -8,6 +8,7 @@ This targeted gate supplements, rather than substitutes for, a full Muter sweep.
 
 from pathlib import Path
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "iso-proxy"
@@ -28,6 +29,28 @@ MUTATIONS = [
      "limits.maxHeaderListSize = Limits.headerBlockBytes", "limits.maxHeaderListSize = 2 * 1024 * 1024"),
     ("header count limit removed", "IsoProxyTransport/InboundPipeline.swift",
      "limits.maxHeaderFieldCount = Limits.headerCount", "limits.maxHeaderFieldCount = 256"),
+    # iso-inference (docs/design/secure-local-inference-spec.md §15).
+    ("inference capability bypassed", "IsoInferenceGateway/RequestHandler.swift",
+     "guard session.capability.authorizes(headers) else {",
+     "guard session.capability.authorizes(headers) || true else {"),
+    ("inference inactive session admitted", "IsoInferenceGateway/RequestHandler.swift",
+     "guard session.admits(at: .now) else {", "guard session.admits(at: .now) || true else {"),
+    ("inference unknown field dropped", "IsoInferenceCore/Schema.swift",
+     "throw InferenceError(.unsupported, \"field '\\(field)' is not supported\")", "continue"),
+    ("inference denied field dropped", "IsoInferenceCore/Schema.swift",
+     "throw InferenceError(.policyDenied, \"field '\\(field)' is not permitted\")", "continue"),
+    ("inference duplicate keys accepted", "IsoInferenceCore/JSON.swift",
+     "guard seen.insert(key).inserted else { throw .duplicateKey }", "_ = seen.insert(key)"),
+    ("inference query allowlist removed", "IsoInferenceCore/Protocols.swift",
+     "guard api.allowedQueries.contains(String(pieces[1])) else { return nil }", ""),
+    ("inference upstream model not rewritten", "IsoInferenceCore/Normalizer.swift",
+     "document[\"model\"] = .string(grant.upstreamModel)", ""),
+    ("inference transport start ignored", "IsoInferenceGateway/Gateway.swift",
+     "&& identity.start == binding.start", ""),
+    ("inference drain releases on disconnect", "IsoInferenceGateway/RequestHandler.swift",
+     "      cancellation = .draining\n", "      cancellation = .draining\n      settle()\n"),
+    ("inference backend port outside the launch list", "IsoInferenceGateway/Gateway.swift",
+     "if let allowed = backendPorts,", "if let allowed = backendPorts, allowed.isEmpty,"),
 ]
 
 
@@ -39,10 +62,12 @@ def run_tests():
 
 
 def main():
+    # An optional argument selects mutations whose name contains it.
+    selected = [m for m in MUTATIONS if len(sys.argv) < 2 or sys.argv[1] in m[0]]
     baseline = run_tests()
     if baseline.returncode:
         raise SystemExit("Baseline failed:\n" + baseline.stdout + baseline.stderr)
-    for name, filename, before, after in MUTATIONS:
+    for name, filename, before, after in selected:
         path = SOURCES / filename
         original = path.read_text()
         if original.count(before) != 1:

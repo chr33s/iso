@@ -6,7 +6,9 @@ let package = Package(
   platforms: [.macOS("27.0")],
   products: [
     .library(name: "IsoProxyCore", targets: ["IsoProxyCore"]),
+    .library(name: "IsoInferenceCore", targets: ["IsoInferenceCore"]),
     .executable(name: "iso-proxy-swift", targets: ["IsoProxy"]),
+    .executable(name: "iso-inference", targets: ["IsoInference"]),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
@@ -41,5 +43,36 @@ let package = Package(
         .product(name: "NIOEmbedded", package: "swift-nio"),
       ], resources: [.copy("Fixtures")]),
     .testTarget(name: "IsoProxyCoreTests", dependencies: ["IsoProxyCore"]),
+    .target(name: "IsoInferenceCore", dependencies: ["IsoProxyCore"]),
+    // Fuzz harness bodies: scripts/fuzz.sh links them with libFuzzer entry
+    // points; the corpus replay test runs them in ordinary builds.
+    .target(name: "IsoInferenceFuzz", dependencies: ["IsoInferenceCore", "IsoProxyCore"]),
+    .target(
+      name: "IsoInferenceGateway",
+      dependencies: [
+        "IsoInferenceCore", "IsoProxyCore", "IsoProxyTransport",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+      ]),
+    .executableTarget(
+      name: "IsoInference",
+      dependencies: [
+        "IsoInferenceCore", "IsoInferenceGateway",
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]),
+    .testTarget(
+      name: "IsoInferenceGatewayTests",
+      dependencies: [
+        "IsoInferenceGateway", "IsoInferenceCore", "IsoProxyCore",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+      ]),
+    .testTarget(
+      name: "IsoInferenceCoreTests",
+      dependencies: ["IsoInferenceCore", "IsoProxyCore", "IsoInferenceFuzz"],
+      resources: [.copy("Fixtures")]),
   ]
 )

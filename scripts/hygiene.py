@@ -20,7 +20,13 @@ MAX_BYTES = 500 * 1024
 CONFLICT_MARKERS = (b"<<<<<<< ", b"=======\n", b">>>>>>> ")
 # Fuzz inputs, vendored LLVM sources and captured baseline CLI output keep
 # their original bytes.
-EXEMPT = ("fuzz/corpus/", "fuzz/libfuzzer/", "tests/fixtures/baseline-cli/")
+EXEMPT = (
+    "fuzz/corpus/",
+    "fuzz/libfuzzer/",
+    "tests/fixtures/baseline-cli/",
+    # Recorded client request bodies, kept byte for byte.
+    "iso-proxy/Tests/IsoInferenceCoreTests/Fixtures/clients/",
+)
 
 
 def git(*args):
