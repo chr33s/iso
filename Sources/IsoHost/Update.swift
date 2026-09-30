@@ -185,6 +185,7 @@ public struct Updater: Sendable {
     // proxy, or an unwritable sibling, aborts before `iso` is replaced.
     try SelfReplace.replaceSiblingRuntime(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingProxy(extractDirectory, currentExecutable: currentExecutable)
+    try SelfReplace.replaceSiblingInference(extractDirectory, currentExecutable: currentExecutable)
     guard let currentExecutable else {
       throw HostError("Failed to resolve current executable path")
     }
@@ -514,6 +515,7 @@ public enum SelfReplace {
   static let obsoleteProxyNames = ["iso-proxy-rs", "iso-proxy-swift"]
   static let proxyName = "iso-proxy"
   static let runtimeName = "iso-sandbox"
+  static let inferenceName = "iso-inference"
 
   static func join(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : directory + "/" + name
@@ -639,8 +641,24 @@ public enum SelfReplace {
     guard isRegularFile(extractDirectory + "/" + proxyName) else {
       throw HostError("Release is missing the iso-proxy companion")
     }
+    guard isRegularFile(extractDirectory + "/" + inferenceName) else {
+      throw HostError("Release is missing the iso-inference companion")
+    }
     let directory = try installDirectory(currentExecutable)
     try atomicReplace(runtime, over: join(directory, runtimeName))
+  }
+
+  /// Replace the inference gateway sibling from the same verified archive.
+  /// `replaceSiblingRuntime` has already required it.
+  public static func replaceSiblingInference(
+    _ extractDirectory: String, currentExecutable: String?
+  ) throws {
+    let gateway = extractDirectory + "/" + inferenceName
+    guard isRegularFile(gateway) else {
+      throw HostError("Release is missing the iso-inference companion")
+    }
+    let directory = try installDirectory(currentExecutable)
+    try atomicReplace(gateway, over: join(directory, inferenceName))
   }
 
   /// Replace the proxy sibling from the same verified archive and remove

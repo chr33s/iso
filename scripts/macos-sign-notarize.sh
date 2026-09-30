@@ -7,7 +7,8 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/macos-sign-notarize.sh DIR
-#     DIR holds iso, iso-proxy and iso-sandbox; each is re-signed in place.
+#     DIR holds iso, iso-proxy, iso-inference and iso-sandbox; each is
+#     re-signed in place.
 #
 # Environment (all required):
 #   MACOS_CERTIFICATE_P12        base64 Developer ID Application .p12
@@ -66,6 +67,7 @@ sign() {
 }
 sign "${dir}/iso"
 sign "${dir}/iso-proxy"
+sign "${dir}/iso-inference"
 sign --entitlements "${root}/iso-sandbox/iso-sandbox.entitlements" "${dir}/iso-sandbox"
 
 printf '%s' "${NOTARY_API_KEY_P8}" | base64 --decode > "${work}/notary.p8"
@@ -80,6 +82,6 @@ if [[ "${status}" != Accepted ]]; then
     exit 1
 fi
 
-for binary in iso iso-proxy iso-sandbox; do
+for binary in iso iso-proxy iso-inference iso-sandbox; do
     spctl --assess --type open --context context:primary-signature --verbose=2 "${dir}/${binary}"
 done

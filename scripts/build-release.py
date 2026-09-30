@@ -12,7 +12,8 @@ Stages, in order, each explicit:
             Sources/IsoHost/BuildRevision.swift there. The working tree is
             never modified. `--expected-revision` requires a clean checkout
             of exactly that commit, before and after the build.
-2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`) and
+2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`), the
+            inference gateway (`iso-inference`, same package) and
             the Apple runtime (`iso-sandbox`, ad-hoc signed with its
             entitlement by scripts/build-iso-sandbox.sh). `--release` builds
             with optimizations and `-D ISO_RELEASE_BUILD`, which makes
@@ -23,7 +24,7 @@ Stages, in order, each explicit:
             MACOS_*/NOTARY_* secrets; every other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
-            iso-sandbox, LICENSE, BUILD.json), plus a `SHA256SUMS` listing
+            iso-inference, iso-sandbox, LICENSE, BUILD.json), plus a `SHA256SUMS` listing
             the archive, next to it in `--out`. `<name>` is `--tag`, else the
             revision. This is the layout `iso update` and install.sh expect.
 
@@ -45,7 +46,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIPLE = "aarch64-apple-darwin"
-BINARIES = ["iso", "iso-proxy", "iso-sandbox"]
+BINARIES = ["iso", "iso-proxy", "iso-inference", "iso-sandbox"]
 SIGNING_ENV = frozenset({
     "MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY",
     "NOTARY_API_KEY_P8", "NOTARY_API_KEY_ID", "NOTARY_API_ISSUER_ID",
@@ -117,6 +118,7 @@ def build(staging, configuration, release, prefix):
     return {
         "iso": host / "iso",
         "iso-proxy": proxy / "iso-proxy-swift",
+        "iso-inference": proxy / "iso-inference",
         "iso-sandbox": prefix / "bin/iso-sandbox",
     }
 

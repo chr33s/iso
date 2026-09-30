@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Guarded local inference
+
+- **`iso-inference`**: a new companion binary, a per-user gateway confined
+  by its own Seatbelt profile (`Sources/IsoHost/seatbelt-inference.sb`). With
+  `inference.mode = "required"` each VM boot gets its own session: a loopback
+  listener reached through a pinned `ssh -R` forward, a fresh capability, and
+  activation bound to that forward's `ssh` process and to the session deadline.
+  Requests pass exact routes and closed per-API field tables. They are then
+  rebuilt for a host-selected backend and model, with output limits clamped and
+  shared budgets applied. A client disconnect does not free a running
+  generation until the backend's qualified completion evidence arrives; missing
+  evidence quarantines the backend. Design:
+  `docs/design/secure-local-inference-spec.md`.
+- **Configuration**: `inference` (`mode`, `global_limits`,
+  `qualification_profiles`, `backends`, `services`), and
+  `claude.local_model` / `codex.local_model` accept `{ "service": NAME }`.
+  Under `required`, no provider credential, credential proxy or raw model
+  tunnel is used, the endpoint form is refused, `codex.auth = "chatgpt"` is
+  refused, and an agent without a service cannot be launched.
+- **Commands**: `iso inference status|doctor|attach|revoke|requalify|stop`,
+  and `--model-mode local|remote` on `up` and `start`.
+- **Release archives** now contain `iso-inference`; `install.sh` and
+  `iso update` require it beside `iso-sandbox` and `iso-proxy`.
+- **Managed MLX backend**: `iso inference provision` installs an mlx-lm
+  server as a LaunchDaemon under the `_isoinference` role account, with
+  root-owned code and weights, a Keychain bearer token and its own Seatbelt
+  profile (`Sources/IsoHost/seatbelt-inference-backend.sb`). It uses one `sudo`
+  step. `deprovision` and `restart-backend` reverse and restart it. New
+  backend fields are `run_as` and `managed`. Before each session, iso verifies
+  the owning account, authentication and confinement
+  (`INFERENCE_BACKEND_UNSAFE_OWNER`).
+- **`iso inference init`** writes hardened defaults: `required` mode, the
+  `offline` preset, an 8-hour session TTL, a managed backend and a
+  `local-chat` service.
+- The gateway's Seatbelt profile now allows outbound connections only to the
+  configured backend ports, and reads only of system paths, its binary and
+  its state directory. `doctor` also lists the user's own listeners that
+  guests can reach.
+- `context_overflow` accepts `"accept"` for backends that process prompts
+  past their window (mlx-lm 0.31).
+
 ### Boundary hardening and local secrets
 
 - **Staged pulls**: `iso diff` and `iso pull --review` pull the guest

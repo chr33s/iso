@@ -350,8 +350,15 @@ private let withoutBundle = Release(
   }
   #expect(!pathExists(install + "/iso-sandbox"))
   try writeUpdateFile(extract + "/iso-proxy", "proxy")
+  #expect(throws: HostError("Release is missing the iso-inference companion")) {
+    try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
+  }
+  #expect(!pathExists(install + "/iso-sandbox"))
+  try writeUpdateFile(extract + "/iso-inference", "gateway")
   try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
   #expect(readText(install + "/iso-sandbox") == "runtime")
+  try SelfReplace.replaceSiblingInference(extract, currentExecutable: install + "/iso")
+  #expect(readText(install + "/iso-inference") == "gateway")
 }
 
 @Test func unwritableInstallDirectoryIsReported() throws {
@@ -573,7 +580,7 @@ private struct UpdateFixture {
     if withGh { try writeUpdateFile(bin + "/gh", Self.gh, mode: 0o755) }
     for (name, text) in [
       ("iso", "installed-iso"), ("iso-proxy", "installed-proxy"),
-      ("iso-sandbox", "installed-runtime"),
+      ("iso-sandbox", "installed-runtime"), ("iso-inference", "installed-inference"),
     ] {
       try writeUpdateFile(install + "/" + name, text, mode: 0o755)
     }
@@ -667,15 +674,17 @@ enum FixtureSignature { case trusted, untrusted, missing }
 
 private let fullRelease = [
   "iso": "new-iso", "iso-proxy": "new-proxy", "iso-sandbox": "new-runtime",
+  "iso-inference": "new-inference",
 ]
 private let untouched = [
   "iso": "installed-iso", "iso-proxy": "installed-proxy", "iso-sandbox": "installed-runtime",
+  "iso-inference": "installed-inference",
 ]
 
 /// Serialized: these spawn many short-lived processes, and the process-wide
 /// descriptor-leak check in HostTests tolerates only a little concurrency.
 @Suite(.serialized) struct UpdateEndToEnd {
-  @Test func updateReplacesAllThreeBinariesAndRecordsTheTag() throws {
+  @Test func updateReplacesAllFourBinariesAndRecordsTheTag() throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
     try fixture.publish(fullRelease)
@@ -752,6 +761,10 @@ private let untouched = [
     for (members, message) in [
       (["iso": "new", "iso-proxy": "p"], "Release is missing the iso-sandbox runtime"),
       (["iso": "new", "iso-sandbox": "r"], "Release is missing the iso-proxy companion"),
+      (
+        ["iso": "new", "iso-sandbox": "r", "iso-proxy": "p"],
+        "Release is missing the iso-inference companion"
+      ),
       (
         ["iso": "new", "iso-sandbox": "r", "iso-proxy-rs": "old"],
         "Release contains an obsolete proxy transition artifact"

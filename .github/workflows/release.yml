@@ -50,8 +50,8 @@ jobs:
           version: 2026.8.3
           cache: false
 
-      # One release entrypoint (spec S-05): builds iso, iso-proxy and
-      # iso-sandbox from this exact clean revision with -D ISO_RELEASE_BUILD
+      # One release entrypoint (spec S-05): builds iso, iso-proxy,
+      # iso-inference and iso-sandbox from this exact clean revision with -D ISO_RELEASE_BUILD
       # and archives them unsigned. Tests already ran in the `ci` job.
       - name: Build release archive
         env:
@@ -78,6 +78,7 @@ jobs:
             exit 1
           fi
           test -x "$dir/iso-proxy"
+          test -x "$dir/iso-inference"
           test -x "$dir/iso-sandbox"
           "$dir/iso-sandbox" version
           echo "TARBALL=$RUNNER_TEMP/dist/${name}.tar.gz" >> "$GITHUB_ENV"
@@ -132,7 +133,7 @@ jobs:
           scripts/macos-sign-notarize.sh "staging/${name}"
           # BUILD.json records the unsigned binaries; describe the signed ones.
           manifest="staging/${name}/BUILD.json"
-          for binary in iso iso-proxy iso-sandbox; do
+          for binary in iso iso-proxy iso-inference iso-sandbox; do
             sha="$(shasum -a 256 "staging/${name}/${binary}" | cut -d' ' -f1)"
             jq --arg b "$binary" --arg s "$sha" '.binaries[$b] = $s' "$manifest" > "$manifest.new"
             mv "$manifest.new" "$manifest"

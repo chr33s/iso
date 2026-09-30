@@ -263,11 +263,14 @@ fi
 if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
     [ -f "${EXTRACTED_DIR}/iso-sandbox" ] || die "Release is missing the iso-sandbox runtime"
     [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ] || die "Release is missing the iso-proxy companion"
+    [ -f "${EXTRACTED_DIR}/iso-inference" ] || die "Release is missing the iso-inference companion"
 fi
 mkdir -p "$INSTALL_DIR"
 if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
     mv "${EXTRACTED_DIR}/iso-sandbox" "${INSTALL_DIR}/iso-sandbox"
     chmod +x "${INSTALL_DIR}/iso-sandbox"
+    mv "${EXTRACTED_DIR}/iso-inference" "${INSTALL_DIR}/iso-inference"
+    chmod +x "${INSTALL_DIR}/iso-inference"
 fi
 if [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
     mv "${EXTRACTED_DIR}/${PROXY_NAME}" "${INSTALL_DIR}/${PROXY_NAME}"

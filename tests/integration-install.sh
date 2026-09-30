@@ -38,6 +38,8 @@ echo installed-iso-proxy
 EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
+printf '#!/bin/sh\necho installed-iso-inference\n' >"$FIXTURE/$ARCHIVE_DIR/iso-inference"
+chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-inference"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso" "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
 
@@ -185,6 +187,11 @@ if "$INSTALL_DIR/iso" | grep -q '^installed-iso$' \
             pass "installer installs the Apple runtime"
         else
             fail "installer installs the Apple runtime"
+        fi
+        if [[ "$("$INSTALL_DIR/iso-inference")" == installed-iso-inference ]]; then
+            pass "installer installs the inference gateway"
+        else
+            fail "installer installs the inference gateway"
         fi
     fi
 else

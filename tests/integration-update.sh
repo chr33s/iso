@@ -212,6 +212,8 @@ echo "MARKER: fake-proxy-binary"
 EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
+printf '#!/bin/sh\necho installed-iso-inference\n' >"$TMPDIR/build/${FAKE_DIR}/iso-inference"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-inference"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso" "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
 write_sums
@@ -262,6 +264,11 @@ if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
         pass "update installs the Apple runtime"
     else
         fail "update installs the Apple runtime"
+    fi
+    if [[ "$("$TMPDIR/bin/iso-inference")" == installed-iso-inference ]]; then
+        pass "update installs the inference gateway"
+    else
+        fail "update installs the inference gateway"
     fi
 fi
 if [[ -x "$TMPDIR/bin/iso-proxy" ]] \

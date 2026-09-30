@@ -11,8 +11,9 @@ are outside this fork's scope.
 The installer, updater, and repository provenance checks target `chr33s/iso`.
 Release tags must point to commits reachable from the `swift` branch. A
 release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
-the Swift host `iso`, the Swift credential proxy `iso-proxy`, and the
-signed `iso-sandbox` runtime, plus `LICENSE` and `BUILD.json`.
+the Swift host `iso`, the Swift credential proxy `iso-proxy`, the local
+inference gateway `iso-inference` and the signed `iso-sandbox` runtime, plus
+`LICENSE` and `BUILD.json`.
 
 No hosted candidate or fork release of the Swift host has been published or
 verified yet. Build from source until those gates pass. Hosted attestation and
@@ -31,8 +32,8 @@ build entrypoint. Its stages are explicit and run in order:
    modified. `--expected-revision SHA` requires a clean checkout of exactly
    that commit, before and after the build.
 2. **build** — `iso` (release: optimized, `-D ISO_RELEASE_BUILD`, which makes
-   `iso update` treat the binary as a release), `iso-proxy`, and
-   `iso-sandbox` (ad-hoc signed with its virtualization entitlement by
+   `iso update` treat the binary as a release), `iso-proxy`, `iso-inference`
+   and `iso-sandbox` (ad-hoc signed with its virtualization entitlement by
    `scripts/build-iso-sandbox.sh`), all with `--force-resolved-versions`.
 3. **test** (`--test`) — every package's tests in the staging copy.
 4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
@@ -104,7 +105,7 @@ set -e
 mkdir candidate
 tar -xzf "$ARCHIVE" -C candidate
 cd "candidate/iso-${REVISION:0:12}-aarch64-apple-darwin"
-for binary in iso iso-proxy iso-sandbox; do
+for binary in iso iso-proxy iso-inference iso-sandbox; do
   codesign --verify --strict "$binary"
 done
 cat BUILD.json
@@ -125,7 +126,7 @@ workflow identity; use those original identities when verifying old artifacts.
 `scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
 staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
-`iso`, `iso-proxy`, and `iso-sandbox` with a Developer ID Application
+`iso`, `iso-proxy`, `iso-inference` and `iso-sandbox` with a Developer ID Application
 certificate (hardened runtime, secure timestamp; `iso-sandbox` keeps its
 virtualization entitlement), submits them to Apple's notary service, and fails
 unless notarization is `Accepted`. A browser-downloaded archive then runs
@@ -285,7 +286,7 @@ Apple Silicon machine.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
+     `iso-inference`, `iso-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,
