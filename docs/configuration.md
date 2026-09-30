@@ -42,6 +42,7 @@ Comments are not carried over. Once `config.jsonc` exists, a remaining `config.t
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline"}`: defaults for the hardening settings. See [security presets](#security-presets). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `egress` | string | `"open"` | Guest network reach beyond the host: `"open"` (NAT to the host's uplinks) or `"none"`. See [egress](#egress). |
+| `inference` | object | unset (`"mode": "off"`) | Guarded host-side local models through the `iso-inference` gateway. See [`inference`](#inference-section). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
 
 ## GitHub auth
@@ -400,10 +401,148 @@ Each object takes the same fields:
 ```
 
 An endpoint set here takes precedence over one entered interactively and saved
-in the instance's `model.json` by `iso model … local`. See the local-model
+in the instance's `model.json` by `iso model … local`.
+
+These endpoints are **transport, not policy**: the guest reaches the model
+server directly (over the tunnel or the LAN) and can use any route, model or
+option it serves. For a policy boundary use the guarded form,
+`"local_model": { "service": "NAME" }`, with
+[`inference.mode = "required"`](#inference-section). The guarded form accepts
+nothing else, and `required` refuses the endpoint form. See the local-model
 sections of [docs/claude-integration.md](claude-integration.md) and
 [docs/codex-integration.md](codex-integration.md) for how each endpoint is
 materialized into guest config.
+
+## `inference` section
+
+Guarded local inference (the design is
+[docs/design/secure-local-inference-spec.md](design/secure-local-inference-spec.md)).
+With `"mode": "required"`, each running VM gets one session on the host
+`iso-inference` gateway: its own loopback listener, reached through a pinned
+`ssh -R` forward, and a fresh per-session capability. The gateway accepts only
+the granted API routes and a closed set of request fields for each API. It
+rebuilds each request for a fixed backend and model, clamps output limits, and
+enforces shared budgets. It never forwards the guest's headers, credentials or
+unknown fields.
+
+Under `required`:
+
+- no provider credential reaches the guest (declaring one is an error), no
+  credential proxy starts, and no raw `local_model` tunnel is created;
+- an agent without a guarded service cannot be launched (`iso claude` /
+  `iso codex` fail instead of using the cloud);
+- `codex.auth = "chatgpt"` is refused;
+- a gateway, backend or verification failure fails the start. There is no
+  fallback to a raw endpoint or the cloud.
+
+```jsonc
+"inference": {
+  "mode": "required",
+  "global_limits": { "max_active_requests": 2 },
+  "qualification_profiles": {
+    "mlx-reviewed": {
+      "protocol": "anthropic-messages",
+      "completion_evidence": "drain",
+      "context_overflow": "reject",
+      "input_overhead": { "per_request_bytes": 4096, "per_message_bytes": 64 },
+      "max_input_bytes": "1MiB"
+    }
+  },
+  "backends": {
+    "mlx-main": {
+      "base_url": "http://127.0.0.1:8080",
+      "protocol": "anthropic-messages",
+      "qualification_profile": "mlx-reviewed"
+    }
+  },
+  "services": {
+    "local-coder": {
+      "backend": "mlx-main",
+      "upstream_model": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+      "frontend_apis": ["anthropic-messages"],
+      "max_context_tokens": 131072
+    }
+  }
+},
+"claude": { "local_model": { "service": "local-coder" } }
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | `"off"` | `"off"` (no gateway; legacy endpoints work as raw transport) or `"required"`. There is no automatic fallback mode. |
+| `global_limits.max_active_requests` | integer | `2` | Generations running at once across every VM and data root (1–64). |
+| `global_limits.max_queued_requests` | integer | `32` | Requests waiting across every VM (0–1024). |
+| `global_limits.max_request_buffer_bytes` | byte count | `"64MiB"` | Memory for request bodies being read or queued (1 MiB–1 GiB). |
+
+A running gateway only tightens its global limits: a registration with smaller
+values lowers them for everyone, and larger values have no effect until it restarts.
+
+**`qualification_profiles.<name>`** records what you verified about a backend
+and model. The gateway enforces it; iso does not verify it.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `protocol` | string | required | `"openai-chat"`, `"openai-responses"` or `"anthropic-messages"`: the protocol the backend itself serves. Only same-protocol adapters exist; no translation between protocols. |
+| `completion_evidence` | string | required | How the backend proves a cancelled request stopped: `"drain"` (read the stream to its end), `"stream-close"` (closing the stream stops generation) or `"none"` (any cancellation quarantines the backend). |
+| `stream_close_drain_ms` | integer | `500` | With `stream-close`, how long a closed request keeps its slot (0–60000). Cover the backend's prefill time for the largest allowed prompt: mlx-lm cannot stop during prefill. |
+| `context_overflow` | string | required | What the backend does with an over-long prompt: `"reject"`, `"truncate"` or `"accept"` (processes it past its window; only `max_input_bytes` limits it). Shown in status. |
+| `input_overhead.per_request_bytes`, `.per_message_bytes` | integer | required | Chat-template overhead added to the byte bound on input tokens. |
+| `max_input_bytes` | byte count | required | Upper bound on the (byte-bounded) prompt size. |
+| `max_request_body_bytes` | byte count | `"4MiB"` | Largest request body accepted. |
+| `token_counter` | string | `"none"` | `"backend"` allows `anthropic-count-tokens` through the backend's own endpoint. |
+
+**`backends.<name>`**:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `base_url` | string | required | Exactly `http://127.0.0.1:<port>`, port 1024–65535, no path, query or credentials. DNS names, wildcard, IPv6 and LAN addresses are refused. |
+| `protocol` | string | required | Must equal the profile's `protocol`. |
+| `qualification_profile` | string | required | A `qualification_profiles` name. |
+| `max_active_requests` | integer | `1` | Generations at once on this backend. Entries naming the same port share one limit. |
+| `credential` | string | unset | A `cmd:` or `vault:NAME` reference, resolved on the host and sent to the backend as a bearer token. Never guest-visible. Not allowed with `managed` (iso generates and stores the token). |
+| `run_as` | string | unset | The account the backend must run as. When set, a start fails with `INFERENCE_BACKEND_UNSAFE_OWNER` unless the account exists, differs from yours and you own no listener on the port. Managed backends always use `_isoinference`. |
+| `managed` | object | unset | Let iso install and run the backend (below). |
+
+**`backends.<name>.managed`**: an mlx-lm server that `iso inference provision`
+installs as a LaunchDaemon under the `_isoinference` role account, with a
+generated bearer token, root-owned code and weights, and a Seatbelt profile.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `server` | string | required | `"mlx-lm"`. |
+| `python` | string | one of | Absolute path of an interpreter that imports `mlx_lm` 0.31.x. Its installation prefix must not be writable by you. |
+| `install` | string | one of | Install this mlx-lm version (0.31.x) into a root-owned virtualenv instead. Uses the network during `provision`. |
+| `model` | string or object | required | An absolute model directory (copied in), or `{"repo": "OWNER/NAME", "revision": "<40-hex commit>"}` fetched by the role account during `provision`. |
+| `memory_limit` | byte count | unset | MLX memory ceiling (1 GiB–4 TiB). |
+| `confinement` | string | `"seatbelt"` | `"seatbelt"` or `"none"`. `none` is reported as unconfined in status. |
+
+A managed backend's name becomes its launchd label and directory, so it may
+not start with `.`. `iso inference init` writes this configuration with
+hardened defaults.
+
+**`services.<name>`**: the name is the model alias the guest uses.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `backend` | string | required | A `backends` name. |
+| `upstream_model` | string | required | The backend's model id, substituted into every request. |
+| `frontend_apis` | array | required | APIs granted: `"anthropic-messages"` (Claude Code), `"openai-responses"` (Codex), `"openai-chat"`, `"anthropic-count-tokens"`, `"model-discovery"`. Each must match the backend protocol. |
+| `max_context_tokens` | integer | required | The model's context window; Claude Code is told it through `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. |
+| `default_output_tokens` | integer | `4096` | Output limit when a request sets none. |
+| `max_output_tokens` | integer | `8192` | Ceiling (≤ 32768). Larger requested limits are clamped, not rejected. |
+| `max_input_bytes` | byte count | unset | Tightens the profile's input bound. |
+
+Before a session starts, iso checks that the backend listens on 127.0.0.1 and
+answers on **no** non-loopback host address. A model server bound to `0.0.0.0`
+fails with `INFERENCE_BACKEND_UNSAFE_BIND`, because a guest could reach it
+directly. `egress: "none"` does not stop a guest from reaching services that
+listen on the Mac's other addresses. Run `iso inference doctor` to repeat the
+checks.
+
+For a backend with `run_as` or `managed`, iso also checks the owning account,
+and for managed backends that an unauthenticated request is refused and the
+process runs sandboxed. `iso inference status` reports these as
+`host_checks`.
 
 ## `proxy` section
 

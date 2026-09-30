@@ -31,6 +31,60 @@ public enum ConfigEditor {
       root, format: format, path: path, environment: environment, limits: limits)
   }
 
+  /// `iso inference init` (secure-local-inference spec §20.6): set each
+  /// dotted key to its value. A key already set to a different value is a
+  /// conflict, refused unless `force`. Returns the new document and the keys
+  /// it changed.
+  public static func applyDefaults(
+    existing: [UInt8]?, format: ConfigFormat, path: String, settings: [([String], JSONValue)],
+    force: Bool, environment: ConfigEnvironment, limits: JSONLimits = .configuration
+  ) throws(ConfigError) -> (bytes: [UInt8], changed: [String]) {
+    var root =
+      try existing.map { bytes throws(ConfigError) in
+        try ConfigLoader.parse(bytes, format: format, path: path, limits: limits)
+      } ?? .object([:])
+    _ = try ConfigLoader.decode(root, path: path, environment: environment)
+    var changed: [String] = []
+    var conflicts: [String] = []
+    for (parts, value) in settings {
+      let key = parts.joined(separator: ".")
+      let current = lookup(root, parts)
+      if let current, current.semanticallyEquals(value) { continue }
+      if current != nil && !force {
+        conflicts.append(key)
+        continue
+      }
+      root = try set(root, parts, value, path: path)
+      changed.append(key)
+    }
+    guard conflicts.isEmpty else {
+      throw .invalidField(
+        path: path, field: conflicts.joined(separator: ", "),
+        reason: "already set to a different value; pass --force to replace")
+    }
+    return (
+      try encodeVerified(
+        root, format: format, path: path, environment: environment, limits: limits),
+      changed
+    )
+  }
+
+  static func lookup(_ value: JSONValue, _ parts: [String]) -> JSONValue? {
+    guard let first = parts.first else { return value }
+    guard case .object(let members) = value, let next = members[first] else { return nil }
+    return lookup(next, Array(parts.dropFirst()))
+  }
+
+  static func set(_ value: JSONValue, _ parts: [String], _ new: JSONValue, path: String)
+    throws(ConfigError) -> JSONValue
+  {
+    guard let first = parts.first else { return new }
+    var members = try object(value, field: first, path: path)
+    members[first] = try set(
+      members[first] ?? .object([:]), Array(parts.dropFirst()), new, path: path)
+    return .object(members)
+  }
+
   private static func object(_ value: JSONValue?, field: String, path: String) throws(ConfigError)
     -> [String: JSONValue]
   {

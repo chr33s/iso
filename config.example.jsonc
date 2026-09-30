@@ -89,6 +89,40 @@
   //   }
   // },
 
+  // Guarded local inference through the host `iso-inference` gateway
+  // (docs/design/secure-local-inference-spec.md). With "required", agents
+  // use only these services: no cloud credential, proxy or raw model tunnel.
+  // The backend must be a server you started on 127.0.0.1; a profile records
+  // what you qualified about it.
+  // "inference": {
+  //   "mode": "required",
+  //   "qualification_profiles": {
+  //     "mlx-reviewed": {
+  //       "protocol": "anthropic-messages",
+  //       "completion_evidence": "drain",   // "stream-close" or "none"
+  //       "context_overflow": "reject",     // or "truncate", "accept"
+  //       "input_overhead": { "per_request_bytes": 4096, "per_message_bytes": 64 },
+  //       "max_input_bytes": "1MiB"
+  //     }
+  //   },
+  //   "backends": {
+  //     "mlx-main": {
+  //       "base_url": "http://127.0.0.1:8080",
+  //       "protocol": "anthropic-messages",
+  //       "qualification_profile": "mlx-reviewed"
+  //     }
+  //   },
+  //   "services": {
+  //     "local-coder": {
+  //       "backend": "mlx-main",
+  //       "upstream_model": "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
+  //       "frontend_apis": ["anthropic-messages"],
+  //       "max_context_tokens": 131072
+  //     }
+  //   }
+  // },
+  // ...then select it per agent: "claude": { "local_model": { "service": "local-coder" } }
+
   // "profiles": {
   //   "my-tools": {
   //     "apt_packages": ["ripgrep", "fd-find", "jq"],

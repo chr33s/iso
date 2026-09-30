@@ -237,6 +237,19 @@ enum ConfigDecoder {
       }
     }
     let presetDefaults = preset ?? .networked
+    let inference = try r.defaulted("inference", .off, Self.inference)
+    let claude = try agent(r, "claude", env: env, apiKeyVariable: "ANTHROPIC_API_KEY")
+    let codex = try agent(r, "codex", env: env, apiKeyVariable: "OPENAI_API_KEY")
+    try checkLocalSelection(claude, agent: "claude", needs: .anthropicMessages, inference, r)
+    try checkLocalSelection(codex, agent: "codex", needs: .openAIResponses, inference, r)
+    if inference.mode == .required, case .object(let section)? = r.members["codex"],
+      section["auth"] == .string("chatgpt")
+    {
+      throw FieldError(
+        r.child("codex") + [.key("auth")],
+        "codex.auth = \"chatgpt\" signs Codex in to the cloud; inference.mode = \"required\" allows only guarded local services"
+      )
+    }
     return IsoConfig(
       dataDirectory: dataDir,
       vm: try r.defaulted("vm", .defaults, vm),
@@ -248,8 +261,8 @@ enum ConfigDecoder {
         let s = try ObjectReader(v, at: p)
         return SetupConfig(promptForPAT: try s.defaulted("prompt_for_pat", true, Parse.bool))
       },
-      claude: try agent(r, "claude", env: env, apiKeyVariable: "ANTHROPIC_API_KEY"),
-      codex: try agent(r, "codex", env: env, apiKeyVariable: "OPENAI_API_KEY"),
+      claude: claude,
+      codex: codex,
       codexAuth: try r.defaulted("codex", .apiKey) { v, p throws(FieldError) in
         try ObjectReader(v, at: p).defaulted("auth", .apiKey) { v, p throws(FieldError) in
           try Parse.stringEnum(v, p, [CodexAuthMode.apiKey, .chatgpt])
@@ -318,7 +331,7 @@ enum ConfigDecoder {
             }
           })
       },
-      securityPreset: preset)
+      securityPreset: preset, inference: inference)
   }
 
   static func workspacePull(
@@ -408,7 +421,7 @@ enum ConfigDecoder {
     guard let value = r.members[key] else {
       return AgentConfig(
         apiKey: env.variables[apiKeyVariable].map(Secret.init), envForward: [], marketplaces: [],
-        plugins: [], mcpServers: [:], configDirectory: .default, localModel: nil)
+        plugins: [], mcpServers: [:], configDirectory: .default, localSelection: nil)
     }
     let path = r.child(key)
     let a = try ObjectReader(value, at: path)
@@ -438,13 +451,30 @@ enum ConfigDecoder {
         default: throw FieldError(p, "expected a path string, false, or null, found \(v.typeName)")
         }
       },
-      localModel: try a.optional("local_model", localModel))
+      localSelection: try a.optional("local_model", localSelection))
   }
 
   /// Marketplace entries mix URLs, GitHub slugs and host paths; only entries
   /// that start with `~` are paths to expand.
   static func expandMarketplaces(_ entries: [String], env: ConfigEnvironment) -> [String] {
     entries.map { $0.hasPrefix("~") ? HostPath(expanding: $0, home: env.home).path : $0 }
+  }
+
+  /// `{ "service": NAME }` (guarded) or the legacy endpoint object; a
+  /// guarded form carries nothing else (§11.1).
+  static func localSelection(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> LocalModelSelection
+  {
+    let r = try ObjectReader(value, at: path)
+    if r.members["service"] != nil {
+      try r.rejectUnknown(allowing: ["service"])
+      let raw = try r.required("service", Parse.string)
+      return .service(
+        try Parse.domain(r.child("service")) { () throws(ValidationError) in
+          try InferenceServiceName(raw)
+        })
+    }
+    return .endpoint(try localModel(value, path))
   }
 
   static func localModel(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)

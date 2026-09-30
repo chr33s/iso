@@ -74,6 +74,7 @@ public struct IsoConfig: Sendable, Equatable {
   public let limits: LimitsConfig
   /// The preset whose defaults this configuration was decoded with.
   public let securityPreset: SecurityPreset?
+  public let inference: InferenceConfig
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
   public static let backendRoot = "backends/apple-container-v1"
@@ -172,7 +173,17 @@ public struct AgentConfig: Sendable, Equatable {
   public let plugins: [String]
   public let mcpServers: [String: MCPServer]
   public let configDirectory: ConfigDirectory
-  public let localModel: LocalModel?
+  public let localSelection: LocalModelSelection?
+
+  /// The legacy raw endpoint, when that form is configured.
+  public var localModel: LocalModel? {
+    if case .endpoint(let model)? = localSelection { model } else { nil }
+  }
+
+  /// The guarded inference service, when that form is configured.
+  public var localService: InferenceServiceName? {
+    if case .service(let name)? = localSelection { name } else { nil }
+  }
 }
 
 public enum CodexAuthMode: String, Sendable, Equatable {
@@ -408,7 +419,7 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
-      egress: egress, limits: limits, securityPreset: securityPreset
+      egress: egress, limits: limits, securityPreset: securityPreset, inference: inference
     )
   }
 }
