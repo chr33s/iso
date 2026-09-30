@@ -35,6 +35,8 @@ ALLOWED_EXTRA = {
     ("pull", "--stage-id"): "selective-hardening spec §5: staged workspace return",
     ("pull", "--stat"): "selective-hardening spec §5: staged workspace return",
     ("update", "--allow-downgrade"): "update hardening: anti-rollback opt-in",
+    ("up", "--model-mode"): "secure-local-inference spec §12.1: model mode before preflight",
+    ("start", "--model-mode"): "secure-local-inference spec §12.1: model mode before preflight",
 }
 ALLOWED_MISSING_COMMANDS = {
     "quickstart": "C-03: hidden; fails with the setup/up/claude-or-codex replacement",

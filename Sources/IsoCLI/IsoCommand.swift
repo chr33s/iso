@@ -19,6 +19,7 @@ struct IsoCommand: ParsableCommand {
       List.self, Status.self, AgentCommand.self, ModelCommand.self, Logs.self, Push.self,
       Pull.self, Diff.self, Exec.self, Editor.self, SSHConfigCommand.self, Images.self, Resize.self,
       Commit.self, Restore.self, ProfilesCommand.self, GitHubCommand.self, ProxyCommand.self,
+      InferenceCommand.self,
       SecretsCommand.self, Audit.self,
       Validate.self, Init.self, Update.self, Uninstall.self, Completions.self,
     ])

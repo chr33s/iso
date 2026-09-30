@@ -18,9 +18,33 @@ extension CommandContext {
         isoExecutable: CommandLine.executablePath),
       github: HostGitHubTokens(
         config: config, environment: environment.variables, diagnostics: diagnostics),
-      diagnostics: diagnostics, secrets: secretResolver)
+      diagnostics: diagnostics, secrets: secretResolver,
+      inference: inferenceController(resolver: resolver))
+  }
+
+  /// The inference gateway controller. The boot closure reads the running
+  /// sandbox's owner and session deadline through the isolation gate.
+  func inferenceController(resolver: CredentialResolver) -> InferenceController? {
+    guard let home = environment.home else { return nil }
+    let backend = self.backend
+    return InferenceController(
+      config: config, environment: environment.variables, resolver: resolver,
+      diagnostics: diagnostics, isoExecutable: CommandLine.executablePath,
+      proxies: ProxyLauncher(
+        environment: environment.variables, resolver: resolver, diagnostics: diagnostics,
+        isoExecutable: CommandLine.executablePath),
+      home: home,
+      boot: { instance in
+        guard let running = try backend.asRunning(instance) else {
+          throw HostError("Instance '\(instance.name)' is not running")
+        }
+        return InferenceBoot(
+          ownerPID: running.ready.ownerPID, deadline: running.ready.sessionDeadline)
+      })
   }
 }
+
+extension ModelMode: ExpressibleByArgument {}
 
 /// Interactive prompts on stderr; a non-TTY stdin declines.
 enum TerminalPrompt {
@@ -100,6 +124,7 @@ struct ClaudeCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      try context.agents.requireInferenceService(forClaude: true)
       let (_, session) = try context.agents.openSession(
         context.backend, name: name, instances: context.listInstances())
       // The managed settings default to bypass mode; --ask overrides it.
@@ -130,6 +155,7 @@ struct ClaudeAgentsCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      try context.agents.requireInferenceService(forClaude: true)
       let (_, session) = try context.agents.openSession(
         context.backend, name: name, instances: context.listInstances())
       try InteractiveSSH.run(
@@ -157,6 +183,7 @@ struct CodexCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      try context.agents.requireInferenceService(forClaude: false)
       let (running, session) = try context.agents.openSession(
         context.backend, name: name, instances: context.listInstances())
       let (ask, args) = splitAsk(ask, args)
@@ -236,6 +263,9 @@ struct ModelCommand: ParsableCommand {
   }
 
   static func status(_ context: CommandContext, _ instance: Instance) throws {
+    if context.config.inference.mode == .required {
+      return try InferenceStatus.modelLines(context, instance)
+    }
     let state = try ModelState.loadOrDefault(instance)
     context.output.out("Instance: \(instance.name)")
     context.output.out("Mode:     \(state.mode.rawValue)")
@@ -260,6 +290,14 @@ struct ModelCommand: ParsableCommand {
 
   static func setLocal(_ context: CommandContext, _ instance: Instance) throws {
     let config = context.config
+    if config.inference.mode == .required {
+      // Guarded services are the only model path; there is nothing to prompt.
+      var state = try ModelState.loadOrDefault(instance)
+      state.mode = .local
+      try state.save(instance, diagnostics: context.diagnostics)
+      _ = try applyToRunning(context, instance)
+      return try InferenceStatus.modelLines(context, instance)
+    }
     var state = try ModelState.loadOrDefault(instance)
     state.mode = .local
     // Offer each tool that resolves no endpoint; a non-TTY declines.
@@ -281,6 +319,11 @@ struct ModelCommand: ParsableCommand {
   }
 
   static func setRemote(_ context: CommandContext, _ instance: Instance) throws {
+    if context.config.inference.mode == .required {
+      throw HostError(
+        "inference.mode = \"required\" allows only guarded local inference; `iso model \(instance.name) remote` is refused"
+      )
+    }
     var state = try ModelState.loadOrDefault(instance)
     // Saved endpoints stay so a later `local` does not prompt again.
     state.mode = .remote

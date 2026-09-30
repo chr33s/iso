@@ -205,7 +205,12 @@ extension AgentBootstrap {
       let codex = config.codex
       let source = configSourceDirectory(
         codex.configDirectory, defaultName: ".codex", label: "codex.config_dir")
-      let local = try codexProviderTable(modelState, proxy: proxy)
+      let local =
+        inferenceRequired
+        ? try inferenceSession(instance, target: session.target).flatMap {
+          codexInferenceTable($0.session)
+        }
+        : try codexProviderTable(modelState, proxy: proxy)
       if local != nil && !modelState.codexMaterialized {
         modelState.codexMaterialized = true
         try modelState.save(instance, diagnostics: diagnostics)
@@ -230,7 +235,8 @@ extension AgentBootstrap {
 
       try copyCodexConfig(
         session.target, source: source, local: local, managesLocal: managesLocal,
-        proxyActive: proxy != nil, keyringMaterialized: modelState.codexKeyringMaterialized)
+        proxyActive: proxy != nil || inferenceRequired,
+        keyringMaterialized: modelState.codexKeyringMaterialized)
 
       // Recorded only once the guest actually has (or has lost) the key.
       let wantsKeyring = config.codexAuth == .chatgpt
@@ -239,7 +245,8 @@ extension AgentBootstrap {
         try modelState.save(instance, diagnostics: diagnostics)
       }
 
-      if proxy != nil {
+      // Stale managed cloud auth from earlier modes must not survive (§12.2).
+      if proxy != nil || inferenceRequired {
         try removeGuestCodexAuthJSON(session.target)
       } else if wantsKeyring {
         do { try removeGuestCodexAuthJSON(session.target) } catch {

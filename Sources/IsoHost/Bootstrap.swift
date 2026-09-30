@@ -53,12 +53,17 @@ public struct AgentBootstrap: Sendable {
   let diagnostics: Diagnostics
   /// For `{vault:}` entries in `guest_env.json`; nil refuses them.
   let secrets: (any SecretReferenceResolver)?
+  /// The inference gateway controller; required when
+  /// `inference.mode = "required"`.
+  public let inference: InferenceController?
 
   public init(
     config: IsoConfig, client: SSHClient, environment: [String: String], home: String?,
     resolver: CredentialResolver, proxies: ProxyLauncher, github: any GitHubTokenSource,
-    diagnostics: Diagnostics, secrets: (any SecretReferenceResolver)? = nil
+    diagnostics: Diagnostics, secrets: (any SecretReferenceResolver)? = nil,
+    inference: InferenceController? = nil
   ) {
+    self.inference = inference
     self.secrets = secrets
     self.config = config
     self.client = client
@@ -85,6 +90,9 @@ public struct AgentBootstrap: Sendable {
     case noEgress(ProxyProvider)
     /// ChatGPT account auth keeps Codex credentials in the guest keyring.
     case chatgptAuth
+    /// `inference.mode = "required"`: agents use only guarded local
+    /// services, so no provider credential has a use in the guest.
+    case inferenceRequired(ProxyProvider)
 
     var description: String {
       switch self {
@@ -92,9 +100,12 @@ public struct AgentBootstrap: Sendable {
       case .required: "proxy.mode = \"required\""
       case .noEgress: "egress = \"none\""
       case .chatgptAuth: AgentBootstrap.chatgptReason
+      case .inferenceRequired: "inference.mode = \"required\""
       }
     }
   }
+
+  var inferenceRequired: Bool { config.inference.mode == .required }
 
   /// Recognized provider variables withheld from the guest. A proxied
   /// provider withholds all of its variables; `proxy.mode = "required"` and
@@ -105,6 +116,10 @@ public struct AgentBootstrap: Sendable {
     let noEgress = config.egress == .none
     var out: [String: WithholdReason] = [:]
     for (provider, proxied) in [(ProxyProvider.anthropic, proxyAnthropic), (.openai, proxyOpenAI)] {
+      if inferenceRequired {
+        for name in provider.recognizedVariables { out[name] = .inferenceRequired(provider) }
+        continue
+      }
       guard proxied || required || noEgress else { continue }
       for name in provider.recognizedVariables {
         out[name] =
@@ -122,6 +137,10 @@ public struct AgentBootstrap: Sendable {
   /// proxy-mode behavior).
   func refuse(_ name: String, from source: String, reason: WithholdReason) throws {
     switch reason {
+    case .inferenceRequired:
+      throw HostError(
+        "\(reason): \(source) entry '\(name)' would put a provider credential in the guest; agents use only guarded local inference services"
+      )
     case .required(let provider), .noEgress(let provider):
       throw HostError(
         "\(reason): \(source) entry '\(name)' would put a provider credential in the guest; remove it or configure `proxy.\(provider.rawValue)`"
@@ -203,6 +222,14 @@ public struct AgentBootstrap: Sendable {
     _ instance: Instance, _ provider: ProxyProvider, entries: [EnvVarName: EnvValue]
   ) throws -> Bool {
     let routed = try GuestEnvState.providerSecrets(entries)[provider]
+    if inferenceRequired {
+      if let routed {
+        throw HostError(
+          "\(routed.variable)={vault:\(routed.name)} is a provider credential, but inference.mode = \"required\" starts no provider proxy and forwards no provider credential; remove it"
+        )
+      }
+      return false
+    }
     guard config.proxy.mode != .off else {
       if let routed { throw ProxyState.unavailable(routed) }
       return false
@@ -219,6 +246,8 @@ public struct AgentBootstrap: Sendable {
   public func requireProviderProxy(
     _ instance: Instance, noAgents: Bool, guestEnvironment: [EnvVarName: EnvValue]
   ) throws {
+    // Guarded local inference replaces every cloud path.
+    guard !inferenceRequired else { return }
     guard !noAgents, config.proxy.mode == .required || config.egress == .none,
       try ModelState.loadOrDefault(instance).mode == .remote
     else { return }
@@ -293,7 +322,9 @@ public struct AgentBootstrap: Sendable {
           }
         }
       }
-      if let model {
+      if inferenceRequired {
+        try inferenceEnvironment(instance, target: target, into: &env)
+      } else if let model {
         if model.mode == .local, let endpoint = model.resolvedCodex(config.codex) {
           env.set(ModelRouting.codexLocalEnvKey, Secret(endpoint.authTokenOrDefault))
         } else if proxyOpenAI,
@@ -370,6 +401,9 @@ public struct AgentBootstrap: Sendable {
     postStartOverride: String?, mode: BootMode
   ) throws {
     proxies.stopModelTunnels(instance)
+    // A VM (re)start is the host decision that lifts a manual revocation;
+    // the previous boot's session died with its forward.
+    InferenceController.clearManualRevocation(instance)
     recordBoot(instance)
     let postStart = postStartOverride ?? config.postStart
     let proxyConfigured =
@@ -453,8 +487,13 @@ public struct AgentBootstrap: Sendable {
       diagnostics.log(.info, "Configuring GitHub auth in guest")
       try github.configureGuest(client, session)
     }
-    let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
-    try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
+    if inferenceRequired {
+      // Raw model tunnels never coexist with guarded inference (AT-21).
+      proxies.stopModelTunnels(instance)
+    } else {
+      let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
+      try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
+    }
     try bootstrapClaude(session, instance: instance, mode: mode)
     try bootstrapCodex(session, instance: instance, mode: mode)
   }
@@ -529,7 +568,7 @@ public struct AgentBootstrap: Sendable {
     _ instance: Instance, provider: ProxyProvider, modelState: ModelState, target: SSHTarget
   ) throws -> ProxyHandle? {
     let upstream =
-      modelState.mode == .remote
+      modelState.mode == .remote && !inferenceRequired
       ? try ProxyState.effectiveUpstream(instance, provider, config: config.proxy) : nil
     guard let upstream else {
       proxies.stop(instance, provider: provider)

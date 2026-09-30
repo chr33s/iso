@@ -291,6 +291,8 @@ public enum LocalEndpoints {
   public static func tunnels(_ state: ModelState, config: IsoConfig) throws -> [UInt16:
     ReverseTunnel]
   {
+    // Guarded inference never uses a raw model tunnel (INV-01, AT-21).
+    guard config.inference.mode == .off else { return [:] }
     var tunnels: [UInt16: ReverseTunnel] = [:]
     for endpoint in [
       active(state, state.resolvedClaude(config.claude)),

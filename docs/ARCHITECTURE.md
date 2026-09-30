@@ -17,17 +17,19 @@ specified in [`design/swift-host-spec.md`](design/swift-host-spec.md).
 
 ## Executables and packages
 
-A distribution holds three executables, each its own process:
+A distribution holds four executables, each its own process:
 
 | Executable | Package | Responsibility |
 |---|---|---|
 | `iso` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
 | `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations |
 | `iso-proxy` | [`iso-proxy/`](../iso-proxy) | Confined, credential-bearing provider transport |
+| `iso-inference` | [`iso-proxy/`](../iso-proxy) (`IsoInferenceCore`, `IsoInferenceGateway`) | Confined per-user gateway that exposes host-side local models to VMs through per-session capabilities ([design](design/secure-local-inference-spec.md)) |
 
-The host drives the runtime over its JSON CLI and starts the proxy through its
-startup protocol; it never links either package. `iso` resolves
-`iso-sandbox` and `iso-proxy` beside its own executable.
+The host drives the runtime over its JSON CLI, starts the proxy through its
+startup protocol and talks to the gateway over its owner-only control socket;
+it never links those packages. `iso` resolves `iso-sandbox`, `iso-proxy` and
+`iso-inference` beside its own executable.
 
 ## Layout
 
@@ -44,7 +46,7 @@ iso/
 ├── tests/                   # integration, parity and migration scripts; baselines
 ├── fuzz/                    # libFuzzer harnesses (Targets/, Entrypoints/), corpus, vendored libFuzzer
 ├── iso-sandbox/            # Swift Apple Containerization VM runtime
-├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
+├── iso-proxy/              # Swift credential proxy and the iso-inference gateway (shared transport)
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)
 └── docs/                    # this tree
 ```
@@ -75,7 +77,9 @@ shared with devcontainer input under explicit policies) → `JSONPreflight`
 (UTF-8, duplicate keys by decoded name, trailing commas, resource limits,
 fraction/exponent literals) → Foundation `JSONDecoder` into `JSONValue` →
 `ConfigDecoding` (explicit absent/null/wrong-type handling, per-section
-unknown-key policy, retired-field rejection) → the immutable `IsoConfig`.
+unknown-key policy, retired-field rejection; `InferenceDecoding` for the
+closed `inference` section and the `local_model` endpoint/service union) → the
+immutable `IsoConfig`.
 `ConfigLoader` selects the file (`--config`, default `~/.iso/config.jsonc`,
 legacy-TOML refusal); `ConfigValidation` checks environmental facts at
 lifecycle boundaries; `ConfigEditor` and `GitHubConfigEdits` make structural
@@ -100,7 +104,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Backend and runtime | `AppleBackend` (probes, liveness proofs, SSH target), `AppleLifecycle` (create/boot/stop/destroy/resize/commit/restore with journals), `AppleSetup` + `ImageBuild` + `ImageRecords` (image preparation and records), `SandboxRuntime` (the narrow runtime-client seam), `RuntimeOperations` (mutating runtime calls, deadlines, cancellability), `RuntimeProtocol` (typed parsers for untrusted runtime output) |
 | Processes and signals | `ProcessRunner` (the one subprocess launcher: argv, environment, bounded capture, deadlines, process groups), `ChildGroups` (forward termination signals to child groups), `Shutdown` (sticky SIGINT/SIGTERM flag for interruptible operations) |
 | SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (`SendEnv` forwarding, minimal guest-bound environment), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
-| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
+| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `ProxyLifecycle` (proxy processes and reverse tunnels), `InferenceLifecycle` + `BootstrapInference` (the `iso-inference` gateway controller: start, register, forward, activate, revoke; guest agent configuration under `inference.mode = "required"`), `ManagedBackend` + `InferenceBackendChecks` (the root provisioning step for a managed mlx-lm LaunchDaemon, and the `run_as`, authentication and confinement checks), `EmbeddedManagedBackend` (generated from `inference-launcher.py` and `seatbelt-inference-backend.sb`), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
 | GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
@@ -166,7 +170,10 @@ The lifecycle is **setup → up/start → shell → stop → destroy**. A first 
 4. **Forwards and state** — refresh an installed SSH alias, persist and spawn
    port forwards, persist `guest_env.json` and devcontainer state.
 5. **Bootstrap** — GitHub credential helper when a token is forwarded; Claude
-   and Codex configuration injection; provider proxies and local-model tunnels;
+   and Codex configuration injection; provider proxies and local-model tunnels,
+   or, under `inference.mode = "required"`, a verified `iso-inference` session
+   (register, sole-listener check, pinned `ssh -R` forward, nonce check,
+   activation bound to the forward process) instead of both;
    `postStartCommand`.
 6. **Workspace** — `--workspace` copies via a tar pipe; `--git-repo` clones in
    the guest; mounts are a one-time sync (use `iso push` / `iso pull`).
@@ -201,7 +208,7 @@ fetch release metadata, download the platform archive, `SHA256SUMS` and
 `ReleaseSigners` (mandatory), the checksum (mandatory) and the Sigstore
 attestation, extract into a private
 temporary directory with path validation, then replace `iso-sandbox`,
-`iso-proxy` and finally `iso`. Any failure before a replacement leaves every
+`iso-proxy`, `iso-inference` and finally `iso`. Any failure before a replacement leaves every
 installed binary untouched; each replacement is atomic but the set is not a
 single transaction. Only release builds (`-D ISO_RELEASE_BUILD`, set by
 `scripts/build-release.py --release`) update themselves. A background notifier

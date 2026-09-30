@@ -25,6 +25,8 @@ struct StartOptions {
   var persistedGuestEnvironment: [EnvVarName: EnvValue] = [:]
   var devcontainerPath: String?
   var appliedDevcontainer: AppliedDevcontainer?
+  /// `--model-mode`: recorded before the offline/provider preflight.
+  var modelMode: ModelMode?
 }
 
 /// One command's lifecycle: the loaded configuration plus the explicit
@@ -66,10 +68,26 @@ final class ProjectLifecycle {
       proxies: ProxyLauncher(
         environment: context.environment.variables, resolver: resolver, diagnostics: diagnostics,
         isoExecutable: CommandLine.executablePath),
-      github: tokens, diagnostics: diagnostics, secrets: secrets)
+      github: tokens, diagnostics: diagnostics, secrets: secrets,
+      inference: context.inferenceController(resolver: resolver))
   }
 
   func listInstances() throws -> [Instance] { try context.listInstances() }
+
+  /// Records `--model-mode` before any preflight that depends on it, so a
+  /// fresh offline VM can select local inference without a cloud boot.
+  func applyModelMode(_ instance: Instance, _ mode: ModelMode?) throws {
+    guard let mode else { return }
+    if config.inference.mode == .required, mode == .remote {
+      throw HostError(
+        "inference.mode = \"required\" allows only guarded local inference; --model-mode remote is refused"
+      )
+    }
+    var state = try ModelState.loadOrDefault(instance)
+    guard state.mode != mode else { return }
+    state.mode = mode
+    try state.save(instance, diagnostics: diagnostics)
+  }
 
   func applyVMOverrides(vcpus: UInt8?, memory: VmMemory?) throws {
     if vcpus == 0 { throw HostError("--vcpus must be > 0") }
@@ -205,8 +223,10 @@ final class ProjectLifecycle {
     // Busy host ports fail before any VM cost.
     let forwardSet = PortForward.merge(config: config.forwardPorts, cli: options.forwardPorts)
     try PortForwards.checkCollisions(forwardSet)
+    try applyModelMode(instance, options.modelMode)
     try agents.requireProviderProxy(
       instance, noAgents: options.noAgents, guestEnvironment: options.persistedGuestEnvironment)
+    try agents.preflightInference(instance, noAgents: options.noAgents)
     try backend.createAndStart(instance, diskGiB: options.disk.map { UInt64($0.value) })
     try provisionFirstBoot(instance, options, repo: repo, forwardSet: forwardSet)
   }
@@ -307,8 +327,10 @@ final class ProjectLifecycle {
     try preflightReferences(guestEnvironment, instance: instance, repo: repo)
     foldGuestEnvironment(guestEnvironment)
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
+    try applyModelMode(instance, options.modelMode)
     try agents.requireProviderProxy(
       instance, noAgents: options.noAgents, guestEnvironment: guestEnvironment)
+    try agents.preflightInference(instance, noAgents: options.noAgents)
     try backend.startExisting(instance)
     try Shutdown.check()
     let target = try readyTarget(instance)
@@ -429,6 +451,12 @@ struct Up: ParsableCommand {
   var noAgents = false
   @Flag(help: "Use github = \"off\" for this invocation and skip the GitHub PAT prompt")
   var noGithub = false
+  @Option(
+    name: .customLong("model-mode"),
+    help: ArgumentHelp(
+      "Select cloud (`remote`) or host-side local models (`local`) before agent bootstrap",
+      valueName: "MODE"))
+  var modelMode: ModelMode?
   @Option(
     help: "Named image to use when creating a new instance (default: \"default\")",
     transform: parseImageName)
@@ -705,10 +733,12 @@ struct UpFlow {
   }
 
   func baseStartOptions() throws -> StartOptions {
-    StartOptions(
+    var options = StartOptions(
       noAgents: command.noAgents, noPrompt: command.noPrompt, forwardPorts: command.forwardPort,
       configTarget: try command.global.configTarget(context.environment),
       postStartOverride: command.postStart)
+    options.modelMode = command.modelMode
+    return options
   }
 
   func restart(_ instance: Instance) throws {
@@ -803,6 +833,12 @@ struct Start: ParsableCommand {
   @Flag(help: "Use github = \"off\" for this invocation and skip the GitHub PAT prompt")
   var noGithub = false
   @Option(
+    name: .customLong("model-mode"),
+    help: ArgumentHelp(
+      "Select cloud (`remote`) or host-side local models (`local`) before agent bootstrap",
+      valueName: "MODE"))
+  var modelMode: ModelMode?
+  @Option(
     help:
       "Forward a guest port to the host (`GUEST[:HOST]`, repeatable). `--forward-port 3000` forwards guest 3000 to host 3000; `--forward-port 3000:3001` forwards guest 3000 to host 3001",
     transform: parsePortForward)
@@ -864,6 +900,7 @@ struct Start: ParsableCommand {
         name: name, workspaceDirectory: workspace, noAgents: noAgents, noPrompt: noPrompt,
         forwardPorts: forwardPort, configTarget: try global.configTarget(context.environment),
         postStartOverride: postStart, devcontainerPath: devcontainer)
+      options.modelMode = modelMode
       let instance = try Self.stoppedTarget(lifecycle, options)
       options.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
         cli: guestEnvironment, envFile: envFile, devcontainer: nil)

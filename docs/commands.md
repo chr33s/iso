@@ -63,6 +63,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--disk <GiB>` | Instance disk size when creating a new instance |
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
+| `--model-mode <local\|remote>` | Record the VM's model mode before the provider preflight, so a fresh `egress: "none"` VM can start on a local model without a cloud boot. Under `inference.mode = "required"` only `local` is accepted. |
 | `--image <name>` | Named image to use when creating a new instance (default: `default`) |
 | `--profile <list>` | Build or reuse a profile-derived image when creating a new instance, named from the sorted profiles (for example `node-python`) |
 | `--exclude-git` | Skip `.git/` when copying/syncing local directories; does not strip `.git` from a `--git-repo` clone |
@@ -227,6 +228,7 @@ instances, pass the instance name.
 | `--workspace <dir>` | Restart the stopped instance associated with this project path |
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
+| `--model-mode <local\|remote>` | Record the VM's model mode before the provider preflight, so a fresh `egress: "none"` VM can start on a local model without a cloud boot. Under `inference.mode = "required"` only `local` is accepted. |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable). Lives for the lifetime of the VM; torn down on `iso stop`. |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo (see [`iso github setup-pat`](#github)). |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot. Overrides the `post_start` configuration field. Failure is logged but does not fail the start. |
@@ -534,6 +536,10 @@ one on a local model and leave the other on cloud.
 
 `iso model NAME remote` switches back to cloud defaults for both tools. Saved
 endpoints are kept, so a later `local` does not re-prompt.
+
+Under [`inference.mode = "required"`](configuration.md#inference-section) the
+guarded services are the only model path. `iso model NAME` lists each tool's
+service, backend and profile, `local` applies them, and `remote` is refused.
 
 Switching never requires a VM restart — isolate rewrites the guest config live over
 SSH when the VM is running, or saves it to apply on the next start. An
@@ -1035,6 +1041,41 @@ iso proxy setup --api-key
 iso proxy status
 iso proxy status --vm my-project
 ```
+
+### `inference`
+
+Manage the guarded local inference gateway (`iso-inference`). It runs once
+per host user under its own Seatbelt profile, starts on demand, and exits
+after 10 idle minutes. See the [`inference` configuration
+reference](configuration.md#inference-section) and the
+[design](design/secure-local-inference-spec.md).
+
+| Subcommand | Effect |
+|------------|--------|
+| `status [NAME] [--json]` | Mode, egress, gateway epoch, enforced limits, each session (state, aliases, APIs, transport PID, deadline) and each backend (profile, completion evidence, `backend_cancellation_verified`, `backend_isolation_verified`, active/queued work, quarantine). No capability or credential is printed. |
+| `doctor [--json]` | Checks the gateway identity, each backend's loopback reachability and absence from non-loopback addresses (`INFERENCE_BACKEND_UNSAFE_BIND`), the `run_as` account, authentication and confinement (`INFERENCE_BACKEND_UNSAFE_OWNER`), listeners your own account exposes, qualification limits, quarantines and egress. Exits non-zero on a failure. |
+| `attach NAME --service S --api A` | Grant an application in the VM a service. Sessions then carry `ISO_INFERENCE_BASE_URL`, `ISO_INFERENCE_MODEL` and `ISO_INFERENCE_TOKEN`. |
+| `revoke NAME` | Revoke the VM's session now. It stays revoked until the VM restarts or a grant is attached. |
+| `requalify BACKEND [--restart]` | Clear a quarantine after you drained or restarted the backend. The gateway never kills an attached backend; `--restart` restarts a managed backend first. |
+| `stop [--force]` | Stop the gateway; refused while sessions are active unless `--force`. |
+| `init [--python P \| --install V] [--model DIR \| --model-repo R --model-revision C] [--backend N] [--port P] [--memory-limit B] [--force]` | Write hardened defaults: `inference.mode = "required"`, the `offline` security preset, an 8-hour session TTL, a managed mlx-lm backend and a `local-chat` service. Existing different values are left alone unless `--force`. |
+| `provision BACKEND` | Install a managed backend: the `_isoinference` role account, root-owned files under `/Library/Application Support/iso-inference/`, a Keychain bearer token, and a Seatbelt-confined LaunchDaemon. Runs one step through `sudo`, then verifies the result. |
+| `deprovision BACKEND` | Remove the LaunchDaemon, files and token (and the role account when no managed backend remains). Runs one step through `sudo`. |
+| `restart-backend BACKEND` | Restart a managed backend's LaunchDaemon. Runs one step through `sudo`. |
+
+```
+iso inference status
+iso inference doctor
+iso inference attach my-project --service local-coder --api openai-chat
+iso inference revoke my-project
+iso inference requalify mlx-main
+iso inference init --python /opt/homebrew/bin/python3 --model ~/models/Qwen3-4B-4bit
+iso inference provision mlx-main
+```
+
+mlx-lm serves Chat Completions only, so the managed backend suits `attach`
+with `--api openai-chat`; Claude Code and Codex need a backend that speaks
+their protocol.
 
 ### `secrets`
 

@@ -74,4 +74,80 @@ enum SeatbeltProfile {
     (allow network-outbound (remote unix-socket))
 
     """#
+
+  /// Confines `iso-inference`; byte-identical to `seatbelt-inference.sb`
+  /// beside it. Writes only under `STATE_DIR`, reads only system files, the
+  /// binary and `STATE_DIR`, no program execution except the initial exec of
+  /// `INFERENCE_BIN`, and outbound connections only to the backend ports
+  /// `inference(backendPorts:)` renders in place of the marker.
+  static let inferenceTemplate = #"""
+    ;; Seatbelt (SBPL) profile confining the host-side iso-inference gateway on
+    ;; macOS (docs/design/secure-local-inference-spec.md §10). Applied by the
+    ;; launcher via `sandbox-exec -p` (Sources/IsoHost/InferenceLifecycle.swift)
+    ;; and asserted by `iso-inference --jail-selftest`, which refuses to start
+    ;; unless file writes outside STATE_DIR, program execution and non-loopback
+    ;; egress are denied.
+    ;;
+    ;; This is a separate profile from seatbelt-proxy.sb: the cloud proxy's
+    ;; allowance (ports 443 and 53 on any host) is not widened, and this profile
+    ;; allows no non-loopback egress at all.
+    (version 1)
+    (deny default)
+
+    ;; sandbox-exec execve-replaces itself with the gateway binary; that one exec
+    ;; must be allowed. No other program can be executed.
+    (allow process-exec* (literal (param "INFERENCE_BIN")))
+
+    ;; Reads: system libraries and data, the gateway binary and its state
+    ;; directory. Metadata stays readable for path resolution; the root
+    ;; directory itself is read by the runtime at startup. Guest strings never
+    ;; become paths.
+    (allow file-read-metadata)
+    (allow file-read*
+      (literal "/")
+      (subpath "/System")
+      (subpath "/usr/lib")
+      (subpath "/usr/share")
+      (subpath "/private/var/db/timezone")
+      (literal "/dev/null")
+      (literal "/dev/random")
+      (literal "/dev/urandom")
+      (literal (param "INFERENCE_BIN"))
+      (subpath (param "STATE_DIR")))
+
+    (allow sysctl-read)
+    (allow system-socket)
+    (allow process-info* (target self))
+    ;; The session's `ssh -R` process: identity (proc_pidinfo) at activation
+    ;; and its exit notification (§12.3). Read-only process metadata.
+    (allow process-info-pidinfo)
+    (allow mach-lookup (global-name "com.apple.system.logger"))
+
+    ;; Writes only under the owner-only state directory: the control socket,
+    ;; startup lock, outstanding-work journal and audit log.
+    (allow file-write* (subpath (param "STATE_DIR")))
+    (allow network-bind (local unix-socket (subpath (param "STATE_DIR"))))
+    (allow network-inbound (local unix-socket (subpath (param "STATE_DIR"))))
+
+    ;; Session listeners on loopback, reached through the pinned reverse
+    ;; tunnel. Outbound: only the configured backend ports, one rule per port,
+    ;; rendered by the launcher in place of the marker below.
+    (allow network-bind (local ip "localhost:*"))
+    (allow network-inbound (local ip "localhost:*"))
+    ;; @BACKEND_PORTS@
+
+    """#
+
+  static let backendPortsMarker = ";; @BACKEND_PORTS@"
+
+  /// The profile for one gateway launch. Each port gets one outbound rule;
+  /// with no ports the gateway can reach no backend.
+  static func inference(backendPorts: [UInt16]) -> String {
+    let rules = backendPorts.sorted().map {
+      "(allow network-outbound (remote ip \"localhost:\($0)\"))"
+    }
+    return inferenceTemplate.replacingOccurrences(
+      of: backendPortsMarker,
+      with: rules.isEmpty ? ";; no backend ports" : rules.joined(separator: "\n"))
+  }
 }

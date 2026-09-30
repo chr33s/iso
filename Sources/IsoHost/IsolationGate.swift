@@ -44,10 +44,15 @@ public enum IsolationGate {
     /// PID of the owner process; a different PID later means a restart.
     public let ownerPID: Int32
     public let ipv4: IPv4Address
-    fileprivate init(sandbox: MachineName, ownerPID: Int32, ipv4: IPv4Address) {
+    /// When the owner halts this boot (`limits.session_ttl`), if ever.
+    public let sessionDeadline: Date?
+    fileprivate init(
+      sandbox: MachineName, ownerPID: Int32, ipv4: IPv4Address, sessionDeadline: Date?
+    ) {
       self.sandbox = sandbox
       self.ownerPID = ownerPID
       self.ipv4 = ipv4
+      self.sessionDeadline = sessionDeadline
     }
   }
 
@@ -132,7 +137,9 @@ public enum IsolationGate {
         "sandbox \(name) runs \(argv) with nested virtualization \(effective.virtualization); expected /sbin/init without it"
       )
     }
-    return Ready(sandbox: name, ownerPID: live.pid, ipv4: ip)
+    return Ready(
+      sandbox: name, ownerPID: live.pid, ipv4: ip,
+      sessionDeadline: inspection.record.sessionDeadline)
   }
 
   static func verifyHostExposure(_ name: MachineName, _ effective: Effective, runtimeRoot: String)

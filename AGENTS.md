@@ -6,8 +6,9 @@ Apple Silicon hosts.
 This is the `chr33s/iso` fork, supporting **macOS 27+ on Apple Silicon hosts
 only**. Linux guests remain supported; Linux hosts are outside this fork's
 scope. The host CLI is Swift (root `Package.swift`); the credential proxy
-(`iso-proxy/`) and Apple VM runtime (`iso-sandbox/`) remain separate Swift
-packages and separate processes. See [README.md](README.md) for motivation and
+(`iso-proxy/`, which also builds the `iso-inference` local-model gateway) and
+Apple VM runtime (`iso-sandbox/`) remain separate Swift packages and separate
+processes. See [README.md](README.md) for motivation and
 fork installation guidance.
 
 ## Agent entrypoint
@@ -65,7 +66,7 @@ swift build                                                   # debug build → 
 swift test --force-resolved-versions                          # host package tests
 swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
 swift test --sanitize=address --scratch-path .build-address   # also thread, undefined
-swift test --package-path iso-proxy --force-resolved-versions   # credential proxy
+swift test --package-path iso-proxy --force-resolved-versions   # credential proxy, inference gateway
 swift test --package-path iso-sandbox --no-parallel             # Apple runtime
 python3 tests/test-migrate-config.py                          # TOML → JSONC converter
 python3 tests/test-swift-host-inventory.py                    # compatibility inventory
@@ -79,7 +80,8 @@ mise run check                                                # pre-commit gates
 
 The parity scripts replay recorded baselines from `tests/baseline/parity/`.
 When changing the proxy also run
-`python3 scripts/test-swift-proxy-process.py --skip-tls`. Details and the
+`python3 scripts/test-swift-proxy-process.py --skip-tls`; when changing the
+inference gateway, `python3 scripts/test-inference-gateway-process.py`. Details and the
 remaining checks are in [`docs/testing.md`](docs/testing.md).
 
 ## Before committing

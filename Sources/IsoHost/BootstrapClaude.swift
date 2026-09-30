@@ -396,8 +396,16 @@ extension AgentBootstrap {
     let proxy = try startAgentProxy(
       instance, provider: .anthropic, modelState: modelState, target: session.target)
     do {
-      let localEnv = try claudeLocalEnv(modelState, proxy: proxy)
-      try writeManagedClaudeSettings(session.target, localEnv: localEnv)
+      if inferenceRequired {
+        if let (current, _) = try inferenceSession(instance, target: session.target) {
+          try writeClaudeInferenceSettings(instance, target: session.target, session: current)
+        } else {
+          try writeManagedClaudeSettings(session.target, localEnv: [:])
+        }
+      } else {
+        try writeManagedClaudeSettings(
+          session.target, localEnv: try claudeLocalEnv(modelState, proxy: proxy))
+      }
       if let staged {
         try copyStaged(staged, target: session.target, to: ".claude", label: "Claude")
       }

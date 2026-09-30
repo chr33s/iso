@@ -11,7 +11,7 @@ set -uo pipefail
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity persistence
-#           resources growth snapshots recovery concurrency iso
+#           resources growth snapshots recovery concurrency iso inference
 #   CYCLES=5 stop/start cycles; CONCURRENCY="1 4 8" sandboxes per round;
 #   KILL_FRACTIONS="50 75 90 95 100 105 110": an interrupted mutation is
 #   killed at these percentages of the time an uninterrupted one took;
@@ -1094,6 +1094,155 @@ if want iso; then
     check "the runtime has no sandbox left" test "$(csbx list | jq length)" = 0
     check "the instance state is gone" test ! -e "$CSTATE/instances/e2e"
     check "the committed image can be deleted" iso images --delete e2e-snap
+fi
+
+# Guarded local inference (docs/design/secure-local-inference-spec.md §15):
+# a real VM under `inference.mode = "required"` and `egress: "none"` reaches
+# two scripted host backends only through the iso-inference gateway. Uses the
+# per-user gateway location and stops that gateway at the end, so no other
+# iso-inference may be running for this user.
+if want inference; then
+    echo ""
+    echo "=== Phase: inference ==="
+    kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
+    ICFG="$WORK/iso-inference.jsonc"
+    iinf() { "$ISO" --config "$ICFG" "$@" </dev/null; }
+    free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+    port_a="$(free_port)"
+    port_r="$(free_port)"
+    log_a="$WORK/backend-anthropic.jsonl"
+    log_r="$WORK/backend-responses.jsonl"
+    : >"$log_a"
+    : >"$log_r"
+    python3 tests/fixtures/inference-backend.py anthropic-messages 127.0.0.1 "$port_a" "$log_a" &
+    backend_a=$!
+    python3 tests/fixtures/inference-backend.py openai-responses 127.0.0.1 "$port_r" "$log_r" &
+    backend_r=$!
+    # $1: extra top-level settings as a JSON object; $2: the anthropic backend port.
+    write_inference_cfg() {
+        jq -n --arg data "$CDATA" --arg binary "$SANDBOX" --arg builder "$CONTAINER" \
+            --arg kernel "$kernel" --argjson pa "$2" --argjson pr "$port_r" --argjson extra "$1" '
+            def profile($p): {protocol: $p, completion_evidence: "drain", context_overflow: "reject",
+              input_overhead: {per_request_bytes: 4096, per_message_bytes: 64},
+              max_input_bytes: "2MiB"};
+            {data_dir: $data, github: "off", egress: "none",
+             vm: {vcpu_count: 2, mem_size_mib: 2048, template_size_gib: 8},
+             apple_container: {binary: $binary, builder: $builder, kernel: $kernel},
+             inference: {mode: "required",
+               qualification_profiles: {anthropic: profile("anthropic-messages"),
+                                        responses: profile("openai-responses")},
+               backends: {
+                 "fake-anthropic": {base_url: "http://127.0.0.1:\($pa)", protocol: "anthropic-messages",
+                                    qualification_profile: "anthropic"},
+                 "fake-responses": {base_url: "http://127.0.0.1:\($pr)", protocol: "openai-responses",
+                                    qualification_profile: "responses"}},
+               services: {
+                 "local-claude": {backend: "fake-anthropic", upstream_model: "fake/claude-upstream",
+                                  frontend_apis: ["anthropic-messages"], max_context_tokens: 200000},
+                 "local-codex": {backend: "fake-responses", upstream_model: "fake/codex-upstream",
+                                 frontend_apis: ["openai-responses"], max_context_tokens: 200000}}},
+             claude: {config_dir: false, local_model: {service: "local-claude"}},
+             codex: {config_dir: false, local_model: {service: "local-codex"}}} + $extra'
+    }
+    write_inference_cfg '{}' "$port_a" >"$ICFG"
+    if [[ ! -x "$ISO" ]]; then
+        swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
+            >"$WORK/iso-build.log" 2>&1 || fail "inference: iso builds" "see $WORK/iso-build.log"
+    fi
+    if swift build --package-path iso-proxy --product iso-inference --force-resolved-versions \
+        --scratch-path "$WORK/proxy-build" >"$WORK/inference-build.log" 2>&1 &&
+        cp "$WORK/proxy-build/debug/iso-inference" "$(dirname "$ISO")/iso-inference" &&
+        iinf setup -y >"$WORK/inference-setup.log" 2>&1; then
+        pass "inference: iso-inference builds beside iso and the image is ready"
+    else
+        fail "inference: iso-inference builds beside iso and the image is ready" \
+            "see $WORK/inference-build.log, $WORK/inference-setup.log"
+    fi
+    mkdir -p "$WORK/project-inf"
+    if ANTHROPIC_API_KEY="$CANARY" OPENAI_API_KEY="$CANARY" \
+        iinf up "$WORK/project-inf" --name inf --no-github >"$WORK/iso-up-inf.log" 2>&1; then
+        pass "inference: iso up boots with agents under inference.mode required"
+        state="$(iinf inference status inf --json)"
+        check "inference: the gateway reports one active session" \
+            test "$(jq -r '[.sessions[] | select(.state == "active")] | length' <<<"$state")" = 1
+        check "inference: status names the unverified backend isolation" \
+            test "$(jq -r '[.backends[].backend_isolation_verified] | unique | .[0]' <<<"$state")" = false
+        check "inference: no provider credential reaches the guest" \
+            refuses grep -q "$CANARY" <<<"$(iinf exec inf -- env 2>/dev/null)"
+        # shellcheck disable=SC2016 # Expand in the guest.
+        token="$(iinf exec inf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        check "inference: Claude's managed settings carry a 64-hex capability" test "${#token}" = 64
+        body='{"model":"local-claude","max_tokens":64000,"messages":[{"role":"user","content":"hi"}],"stream":true}'
+        code_anon="$(iinf exec inf -- curl -s -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
+            -d "$body" http://127.0.0.1:10788/v1/messages 2>/dev/null)"
+        check "inference: a request without the capability is refused (401)" test "$code_anon" = 401
+        before="$(wc -l <"$log_a" | tr -d ' ')"
+        reply="$(iinf exec inf -- curl -s -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -d "$body" 'http://127.0.0.1:10788/v1/messages?beta=true' 2>/dev/null)"
+        check "inference: an authorized request streams the backend's reply under the alias" \
+            grep -q '"model":"local-claude"' <<<"$reply"
+        check "inference: the upstream model id never reaches the guest" \
+            refuses grep -q "fake/claude-upstream" <<<"$reply"
+        last="$(tail -1 "$log_a")"
+        check "inference: the backend received the host-selected model and a clamped limit" \
+            test "$(jq -r '"\(.body.model) \(.body.max_tokens) \(.body.stream)"' <<<"$last")" = "fake/claude-upstream 8192 true"
+        denied="$(iinf exec inf -- curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $token" \
+            -H 'content-type: application/json' \
+            -d '{"model":"local-claude","max_tokens":10,"messages":[],"draft_model":"x"}' \
+            http://127.0.0.1:10788/v1/messages 2>/dev/null)"
+        check "inference: a host-selected field is refused (403) before the backend" test "$denied" = 403
+        check "inference: only the authorized request reached the backend" \
+            test "$(wc -l <"$log_a" | tr -d ' ')" = $((before + 1))
+        # shellcheck disable=SC2016 # Expand in the guest.
+        host_ip="$(iinf exec inf -- sh -c 'ip -4 -o addr show eth0 | awk "{print \$4}" | cut -d/ -f1 | sed "s/\.[0-9]*$/.1/"' 2>/dev/null)"
+        check "inference: the backend is not reachable directly from the guest" \
+            refuses iinf exec inf -- timeout 5 bash -c "exec 3<>/dev/tcp/$host_ip/$port_a"
+        claude_out="$(iinf exec inf -- sh -c 'cd /tmp && timeout 180 ~/.local/bin/claude -p "say ok" 2>&1' 2>/dev/null)"
+        check "inference: Claude Code completes a turn through the gateway" grep -qx "ok" <<<"$claude_out"
+        codex_out="$(iinf exec inf -- sh -c 'cd /tmp && timeout 180 codex exec --skip-git-repo-check "say ok" </dev/null 2>&1' 2>/dev/null)"
+        check "inference: Codex completes a turn through the gateway" grep -q "^ok$" <<<"$codex_out"
+        check "inference: Codex asked for the host-selected model" \
+            grep -q '"model": "fake/codex-upstream"' <<<"$(jq -c . "$log_r" | sed 's/"model":/"model": /g')"
+        # The forward's exit revokes the session; the next session re-registers.
+        fwd="$(cat "$CSTATE/instances/inf/proxy-inference-fwd.pid" 2>/dev/null)"
+        [[ -n "$fwd" ]] && kill "$fwd" 2>/dev/null
+        sleep 2
+        check "inference: killing the forward revokes the session" \
+            test "$(iinf inference status inf --json | jq -r '[.sessions[] | select(.state == "active")] | length')" = 0
+        check "inference: the next command establishes a fresh session" \
+            test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
+        check "inference: the old capability no longer works" \
+            test "$(iinf exec inf -- curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $token" \
+                -H 'content-type: application/json' -d "$body" http://127.0.0.1:10788/v1/messages 2>/dev/null)" = 401
+        check "inference: iso inference revoke removes the session" iinf inference revoke inf
+        check "inference: a revoked VM still runs commands" test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
+        check "inference: and stays without a session" \
+            test "$(iinf inference status inf --json | jq -r '.sessions | length')" = 0
+        check "inference: iso stop succeeds" iinf stop inf
+        # A backend that also listens beyond loopback fails the start.
+        kill "$backend_a" 2>/dev/null
+        wait "$backend_a" 2>/dev/null
+        python3 tests/fixtures/inference-backend.py anthropic-messages 0.0.0.0 "$port_a" "$log_a" &
+        backend_a=$!
+        # Wait for the listener: a start before it exists fails as unavailable.
+        for _ in $(seq 100); do
+            python3 -c 'import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 0.2)' \
+                "$port_a" 2>/dev/null && break
+            sleep 0.1
+        done
+        check "inference: a backend bound beyond loopback refuses the start" refuses iinf start inf --no-github
+        unsafe_start="$("$ISO" --config "$ICFG" start inf --no-github 2>&1 </dev/null)"
+        check "inference: and says why" grep -q INFERENCE_BACKEND_UNSAFE_BIND <<<"$unsafe_start"
+        grep -q INFERENCE_BACKEND_UNSAFE_BIND <<<"$unsafe_start" \
+            || printf '%s\n' "$unsafe_start" | tail -5 >&2
+        check "inference: doctor reports the unsafe bind" refuses iinf inference doctor
+        iinf destroy inf >/dev/null 2>&1
+    else
+        fail "inference: iso up boots with agents under inference.mode required" "see $WORK/iso-up-inf.log"
+    fi
+    kill "$backend_a" "$backend_r" 2>/dev/null
+    iinf inference stop --force >/dev/null 2>&1
+    rm -f "$(dirname "$ISO")/iso-inference"
 fi
 
 summary

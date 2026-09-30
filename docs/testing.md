@@ -40,7 +40,7 @@ python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/iso
 python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/iso
 python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
-python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
+python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*, inference-launcher.py or seatbelt-inference-backend.sb
 ```
 
 Use a separate `--scratch-path` per sanitizer so instrumented builds do not
@@ -483,6 +483,60 @@ walks this workflow.
 The credential proxy has its own policy mutation sweep (Muter) and targeted
 mutation script; see [Swift proxy policy mutation
 sweep](#swift-proxy-policy-mutation-sweep).
+
+## Inference gateway (`iso-inference`)
+
+The gateway lives in the `iso-proxy` package (`IsoInferenceCore`,
+`IsoInferenceGateway`, `IsoInferenceFuzz`, executable `iso-inference`). When
+changing it, or the host side (`Sources/IsoHost/InferenceLifecycle.swift`,
+`BootstrapInference.swift`, `Sources/IsoConfiguration/Inference*.swift`), run:
+
+```bash
+swift test --package-path iso-proxy --force-resolved-versions   # core + gateway + corpus replay
+swift build --package-path iso-proxy --product iso-inference
+python3 scripts/test-inference-gateway-process.py               # confined binary, real ssh transport
+python3 tests/test-inference-launcher.py                        # managed-backend launcher, stand-in mlx_lm
+python3 scripts/test-swift-proxy-mutations.py inference         # gateway policy mutants
+python3 scripts/swift-host-fault-injection.py --only inference-unsafe-bind   # and the other inference-* faults
+scripts/fuzz.sh run InferenceRequest 300                        # also InferenceStream, InferenceControl
+./tests/run-integration.sh --only inference                     # real VM, Claude Code and Codex
+```
+
+- **Core tests** (`Tests/IsoInferenceCoreTests`) cover the strict JSON parser,
+  the closed field tables, output clamping, the input bound, the stream
+  translators, the scheduler and the control protocol. The client fixtures in
+  `Fixtures/clients/` are **recorded requests** from Claude Code 2.1.285 and
+  Codex CLI 0.159.2, captured against a local stand-in server. String content
+  is replaced by same-length placeholders, so the fixtures keep each request's
+  structure and size but no prompt or host detail. A client update that sends
+  a new field fails these tests until the field table is revised: that is the
+  requalification step (spec §8.5).
+- **Gateway tests** (`Tests/IsoInferenceGatewayTests`) run the real NIO
+  gateway in process against a scripted loopback backend. Each denial test
+  asserts both the client status and that the backend received nothing.
+- **The process test** runs the built binary under `sandbox-exec` with
+  `Sources/IsoHost/seatbelt-inference.sb`. It checks the unconfined refusal,
+  the jail self-test, the socket mode, the startup lock, transport-identity
+  checks with a real `ssh` process, and revocation when that process exits.
+- **The launcher test** runs `Sources/IsoHost/inference-launcher.py`
+  against stand-in `mlx_lm` and `mlx` modules. It checks the bearer check,
+  `Origin` refusal, model pinning, the loopback bind, memory limits and the
+  version gate. `InferenceHardeningTests` covers provisioning against a fake
+  `dscl` and `launchctl`, with no root access.
+- **The VM phase** (`inference` in `tests/integration-apple-sandbox.sh`)
+  boots a VM with `egress: "none"` and `inference.mode = "required"` against
+  two scripted host backends (`tests/fixtures/inference-backend.py`). It checks
+  capability enforcement from the guest, that the backend is unreachable
+  directly, that Claude Code and Codex each complete a turn, revocation on
+  forward exit and `iso inference revoke`, and the unsafe-bind refusal. It uses
+  the per-user gateway location and stops that gateway at the end.
+
+Not covered by automated tests: qualifying a real MLX server and model, and
+the root provisioning step. mlx-lm 0.31.3 was qualified by hand (spec §19:
+the backend profile under Metal, `stream-close` evidence, `accept` overflow),
+and `iso inference init` writes those values. Other servers, versions and
+models remain owner decisions recorded in `inference.qualification_profiles`
+(spec §17).
 
 ## Credential proxy (`iso-proxy`)
 

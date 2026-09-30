@@ -38,4 +38,19 @@ public enum ConfigStore {
     // A `cmd:` reference is not itself secret: 0644 as before, never widened.
     try AtomicFile.write(updated, to: path, mode: .atMost(0o644))
   }
+
+  /// `iso inference init`: apply the hardened defaults under the lock.
+  public static func applyDefaults(
+    at path: String, format: ConfigFormat, settings: [([String], JSONValue)], force: Bool,
+    environment: ConfigEnvironment
+  ) throws -> [String] {
+    let lock = try FileLock.sibling(of: path)
+    defer { lock.release() }
+    let existing = try ConfigLoader.readSnapshot(path, limit: JSONLimits.configuration.maxBytes)
+    let (updated, changed) = try ConfigEditor.applyDefaults(
+      existing: existing, format: format, path: path, settings: settings, force: force,
+      environment: environment)
+    if !changed.isEmpty { try AtomicFile.write(updated, to: path, mode: .atMost(0o644)) }
+    return changed
+  }
 }

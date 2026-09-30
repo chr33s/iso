@@ -262,6 +262,12 @@ public struct ProxyLauncher: Sendable {
   public func stopAll(_ instance: Instance) {
     for provider in ProxyProvider.allCases { stop(instance, provider: provider) }
     stopModelTunnels(instance)
+    // The forward's exit revokes the gateway session (spec §12.3).
+    killPIDFile(
+      Self.forwardPIDPath(instance, InferenceController.forwardName), label: "inference tunnel",
+      expect: .ssh)
+    unlink(InferenceController.statePath(instance))
+    unlink(InferenceController.tokenPath(instance))
   }
 
   /// The persisted Codex capability token, if a proxy is running.
@@ -296,12 +302,9 @@ public struct ProxyLauncher: Sendable {
 
   func locateProxyBinary() throws -> String {
     guard let isoExecutable else { throw HostError("Failed to locate the iso executable") }
-    let directory = (isoExecutable as NSString).deletingLastPathComponent
-    let candidate = directory + "/iso-proxy"
-    var status = stat()
-    guard stat(candidate, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+    guard let candidate = siblingBinary("iso-proxy", of: isoExecutable) else {
       throw HostError(
-        "Swift proxy iso-proxy not found next to iso at \(directory) — build with scripts/build-release.py or reinstall iso"
+        "Swift proxy iso-proxy not found next to iso at \((isoExecutable as NSString).deletingLastPathComponent) — build with scripts/build-release.py or reinstall iso"
       )
     }
     return candidate
@@ -369,25 +372,35 @@ public struct ProxyLauncher: Sendable {
     }
   }
 
-  /// After readiness: the listener on `port` is the proxy iso started.
-  static func requireListener(_ pid: pid_t, port: UInt16) throws {
+  /// PIDs of this user's processes listening on `address:port` (every
+  /// address when nil); nil when `lsof` cannot run.
+  static func listenerPIDs(address: String?, port: UInt16) -> [pid_t]? {
     guard
       let output = try? ProcessRunner().capture(
         .init(
           executable: "/usr/sbin/lsof",
-          arguments: ["-nP", "-a", "-iTCP@127.0.0.1:\(port)", "-sTCP:LISTEN", "-t"],
+          arguments: [
+            "-nP", "-a", "-iTCP\(address.map { "@" + $0 } ?? ""):\(port)", "-sTCP:LISTEN", "-t",
+          ],
           environment: [:], deadline: .seconds(10), outputLimit: 64 << 10, overflow: .drain))
-    else {
+    else { return nil }
+    return rustLines(String(decoding: output.stdout, as: UTF8.self)).compactMap {
+      pid_t($0.trimmingUnicodeWhitespace())
+    }
+  }
+
+  /// After readiness: the listener on `port` is the proxy iso started.
+  static func requireListener(_ pid: pid_t, port: UInt16, label: String = "credential proxy")
+    throws
+  {
+    guard let listeners = listenerPIDs(address: "127.0.0.1", port: port) else {
       throw HostError(
         "could not confirm which process serves 127.0.0.1:\(port) — refusing to start the VM (fail-closed)"
       )
     }
-    let listeners = rustLines(String(decoding: output.stdout, as: UTF8.self)).compactMap {
-      pid_t($0.trimmingUnicodeWhitespace())
-    }
     guard listeners == [pid] else {
       throw HostError(
-        "127.0.0.1:\(port) is served by pid \(listeners.map(String.init).joined(separator: ", ")), not the credential proxy iso started (pid \(pid)) — refusing to start the VM (fail-closed)"
+        "127.0.0.1:\(port) is served by pid \(listeners.map(String.init).joined(separator: ", ")), not the \(label) iso started (pid \(pid)) — refusing to start the VM (fail-closed)"
       )
     }
   }
@@ -436,8 +449,17 @@ public struct ProxyLauncher: Sendable {
   /// A bounded, credential-free probe: the status line must be exactly an
   /// `HTTP/1.1 401` response.
   static func httpReady(port: UInt16, budget: Duration = .milliseconds(200)) -> Bool {
+    httpStatusLine(port: port, path: "/v1/messages", budget: budget)?
+      .starts(with: Array("HTTP/1.1 401 ".utf8)) ?? false
+  }
+
+  /// A bounded `GET` to 127.0.0.1: the response's status line (with CRLF),
+  /// or nil when nothing answers within `budget`.
+  static func httpStatusLine(
+    port: UInt16, path: String, headers: [String] = [], budget: Duration
+  ) -> [UInt8]? {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
-    guard fd >= 0 else { return false }
+    guard fd >= 0 else { return nil }
     defer { close(fd) }
     _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
     var one: Int32 = 1
@@ -459,31 +481,30 @@ public struct ProxyLauncher: Sendable {
       }
     }
     if connected != 0 {
-      guard errno == EINPROGRESS, wait(Int16(POLLOUT)) else { return false }
+      guard errno == EINPROGRESS, wait(Int16(POLLOUT)) else { return nil }
       var error: Int32 = 0
       var length = socklen_t(MemoryLayout<Int32>.size)
       guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0, error == 0 else {
-        return false
+        return nil
       }
     }
-    var request = Array(
-      "GET /v1/messages HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".utf8)[...]
+    let head = (["GET \(path) HTTP/1.1", "Host: localhost", "Connection: close"] + headers)
+      .map { $0 + "\r\n" }.joined()
+    var request = Array((head + "\r\n").utf8)[...]
     while !request.isEmpty {
-      guard wait(Int16(POLLOUT)) else { return false }
+      guard wait(Int16(POLLOUT)) else { return nil }
       let sent = request.withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
-      guard sent > 0 else { return false }
+      guard sent > 0 else { return nil }
       request = request.dropFirst(sent)
     }
     var status: [UInt8] = []
     var byte: UInt8 = 0
     while status.count < 128 {
-      guard wait(Int16(POLLIN)), recv(fd, &byte, 1, 0) == 1 else { return false }
+      guard wait(Int16(POLLIN)), recv(fd, &byte, 1, 0) == 1 else { return nil }
       status.append(byte)
-      if status.suffix(2) == [0x0D, 0x0A] {
-        return status.starts(with: Array("HTTP/1.1 401 ".utf8))
-      }
+      if status.suffix(2) == [0x0D, 0x0A] { return status }
     }
-    return false
+    return nil
   }
 
   // MARK: Reverse tunnels
@@ -608,6 +629,15 @@ public struct ProxyLauncher: Sendable {
       case .ssh: return words.first.map { ($0 as NSString).lastPathComponent == "ssh" } ?? false
       }
     }
+  }
+
+  /// Whether a recorded forward's `ssh` is still running.
+  func forwardIsRunning(_ instance: Instance, name: String) -> Bool {
+    guard let bytes = try? StateStore.readControlFile(Self.forwardPIDPath(instance, name)),
+      let pid = Int32(String(decoding: bytes, as: UTF8.self).trimmingUnicodeWhitespace()), pid > 0,
+      let command = Self.commandLine(pid)
+    else { return false }
+    return RecordedProcess.ssh.matches(command)
   }
 
   /// The command line of `pid`, nil when no such process.
@@ -912,4 +942,13 @@ public enum ProxyProvisioning {
     }
     return reference(service: service, account: account)
   }
+}
+
+/// The companion `name` installed beside `isoExecutable`, when it is a
+/// regular file.
+func siblingBinary(_ name: String, of isoExecutable: String) -> String? {
+  let candidate = (isoExecutable as NSString).deletingLastPathComponent + "/" + name
+  var status = stat()
+  guard stat(candidate, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else { return nil }
+  return candidate
 }

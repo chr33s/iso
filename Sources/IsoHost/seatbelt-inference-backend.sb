@@ -1,0 +1,53 @@
+;; Seatbelt (SBPL) profile confining an iso-managed mlx-lm backend
+;; (docs/design/secure-local-inference-spec.md §20.4). launchd runs
+;; `sandbox-exec -f profile.sb -D ... PYTHON launcher.py ...` as the role
+;; account. `iso inference provision` qualifies the profile: the job must
+;; answer an authenticated request before provisioning succeeds.
+;; Qualified with mlx-lm 0.31.3 / mlx 0.32.3 on macOS 27 (Apple GPU): each
+;; rule below is needed for a Metal generation; everything else is denied.
+(version 1)
+(deny default)
+
+;; The interpreter only (a venv `python` resolves to PYTHON_EXECUTABLE).
+(allow process-exec*
+  (literal (param "PYTHON"))
+  (literal (param "PYTHON_EXECUTABLE")))
+
+;; Reads: system libraries, the Python installation and its base, the backend
+;; directory (weights, launcher, token) and the cache. Metadata stays
+;; readable for path resolution.
+(allow file-read-metadata)
+(allow file-read*
+  (literal "/")
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/private/var/db/timezone")
+  (literal "/dev/null")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+  (subpath (param "PYTHON_PREFIX"))
+  (subpath (param "PYTHON_BASE_PREFIX"))
+  (subpath (param "BACKEND_DIR"))
+  (subpath (param "CACHE_DIR")))
+
+;; Writes: the role-owned cache and log directories only.
+(allow file-write*
+  (literal "/dev/null")
+  (subpath (param "CACHE_DIR"))
+  (subpath (param "LOG_DIR")))
+
+(allow sysctl-read)
+(allow system-socket)
+(allow process-info* (target self))
+
+;; Metal compute: the GPU device and IOSurface user clients and the shader
+;; compiler service.
+(allow iokit-open
+  (iokit-user-client-class "AGXDeviceUserClient")
+  (iokit-user-client-class "IOSurfaceRootUserClient"))
+(allow mach-lookup (global-name "com.apple.MTLCompilerService"))
+
+;; Serve the gateway on the configured loopback port; no outbound connections.
+(allow network-bind (local ip (string-append "localhost:" (param "PORT"))))
+(allow network-inbound (local ip (string-append "localhost:" (param "PORT"))))
