@@ -49,6 +49,9 @@ preserve historical experiments; the acceptance map identifies outstanding gates
     references;
   - [`selective-hardening-spec.md`](design/selective-hardening-spec.md):
     staged workspace return, `proxy.mode`, egress modes, budgets, and audit.
+  - [`secure-local-inference-spec.md`](design/secure-local-inference-spec.md):
+    the host-enforced inference gateway (`iso-inference`) that exposes a
+    host-side local model to a VM through per-session capabilities.
 
 ## For users
 
