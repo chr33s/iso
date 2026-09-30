@@ -150,25 +150,25 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
 
 
 class ReleaseBinaryTests(unittest.TestCase):
-    def test_release_source_gate_rejects_commit_outside_swift(self):
+    def test_release_source_gate_rejects_commit_outside_main(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
         script = re.search(
-            r"- name: Require a release commit from swift\n        run: (.*)",
+            r"- name: Require a release commit from main\n        run: (.*)",
             workflow)[1]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             def git(*args):
                 return subprocess.run(['git', *args], cwd=root, check=True,
                                       capture_output=True, text=True).stdout.strip()
-            git('init', '-b', 'swift')
+            git('init', '-b', 'main')
             git('config', 'user.name', 'Fixture')
             git('config', 'user.email', 'fixture@example.invalid')
             git('commit', '--allow-empty', '-m', 'release source')
-            git('update-ref', 'refs/remotes/origin/swift', 'HEAD')
+            git('update-ref', 'refs/remotes/origin/main', 'HEAD')
             accepted = subprocess.run(['bash', '-euc', script], cwd=root)
             self.assertEqual(accepted.returncode, 0)
             git('checkout', '-b', 'unpublished')
-            git('commit', '--allow-empty', '-m', 'not on swift')
+            git('commit', '--allow-empty', '-m', 'not on main')
             rejected = subprocess.run(['bash', '-euc', script], cwd=root)
             self.assertNotEqual(rejected.returncode, 0)
 

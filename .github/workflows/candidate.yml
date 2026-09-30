@@ -7,7 +7,7 @@ permissions: {}
 
 jobs:
   ci:
-    if: github.repository == 'chr33s/iso' && github.ref == 'refs/heads/swift'
+    if: github.repository == 'chr33s/iso' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
     uses: $/.github/workflows/ci.yml

@@ -92,7 +92,7 @@ gh attestation verify "$ARCHIVE" \
   --repo chr33s/iso \
   --bundle attestations.jsonl \
   --signer-workflow chr33s/iso/.github/workflows/candidate.yml \
-  --source-ref refs/heads/swift \
+  --source-ref refs/heads/main \
   --source-digest "$REVISION"
 ```
 
