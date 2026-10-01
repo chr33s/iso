@@ -141,6 +141,44 @@ private final class TunnelHosts: @unchecked Sendable {
   #expect(Monotonic.within(10, now: 9, limit: 2) == false)
 }
 
+@Test func relayStopsReadingWhenTheQueueIsFull() {
+  #expect(
+    RelayRoom(pending: 4, perDirection: 4, aggregateAvailable: 100).allowed == 0)
+  #expect(
+    RelayRoom(pending: 1, perDirection: 8, aggregateAvailable: 2).allowed == 2)
+  var pair: [Int32] = [-1, -1]
+  #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+  defer {
+    close(pair[0])
+    close(pair[1])
+  }
+  let budget = RelayBudget(cap: 4)
+  var remaining = Array("0123456789".utf8)
+  var heldFull = false
+  var spins = 0
+  Tunnel.pump(
+    pair[0], pair[1],
+    alive: {
+      spins += 1
+      return spins <= 4
+    }, maxReads: nil, idle: .seconds(1), queueCap: 4, budget: budget,
+    read: { _, pointer, count in
+      let take = min(count, remaining.count)
+      if take > 0 {
+        remaining.withUnsafeBytes { raw in _ = memcpy(pointer, raw.baseAddress, take) }
+        remaining.removeFirst(take)
+      }
+      return take == 0 ? -1 : take
+    },
+    write: { _, _, _ in
+      if budget.available == 0 { heldFull = true }
+      errno = EAGAIN
+      return -1
+    })
+  #expect(remaining.count == 6)
+  #expect(heldFull)
+}
+
 @Test func admissionStopsAtTheSpecCaps() {
   var state = AdmissionState()
   for _ in 0..<EgressBudgets.maxSockets {

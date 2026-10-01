@@ -13,6 +13,8 @@ public enum EgressBudgets {
   public static let maxSockets = 128
   public static let maxTunnels = 64
   public static let maxDNS = 16
+  public static let relayQueue = 256 * 1024
+  public static let relayAggregate = 32 * 1024 * 1024
 }
 
 public enum Monotonic {
