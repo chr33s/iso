@@ -276,6 +276,10 @@ fi
 if [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
     mv "${EXTRACTED_DIR}/${PROXY_NAME}" "${INSTALL_DIR}/${PROXY_NAME}"
     chmod +x "${INSTALL_DIR}/${PROXY_NAME}"
+    if [ -f "${EXTRACTED_DIR}/iso-egress" ]; then
+        mv "${EXTRACTED_DIR}/iso-egress" "${INSTALL_DIR}/iso-egress"
+        chmod +x "${INSTALL_DIR}/iso-egress"
+    fi
     for stale in "${BINARY}-proxy-rs" "${BINARY}-proxy" "${BINARY}-proxy-swift"; do
         [ "$stale" = "$PROXY_NAME" ] || rm -f "${INSTALL_DIR}/${stale}"
     done

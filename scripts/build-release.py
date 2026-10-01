@@ -12,9 +12,10 @@ Stages, in order, each explicit:
             Sources/IsoHost/BuildRevision.swift there. The working tree is
             never modified. `--expected-revision` requires a clean checkout
             of exactly that commit, before and after the build.
-2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`) and
-            the Apple runtime (`iso-sandbox`, ad-hoc signed with its
-            entitlement by scripts/build-iso-sandbox.sh). `--release` builds
+2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`),
+            the filtered-egress companion (`iso-egress`), and the Apple
+            runtime (`iso-sandbox`, ad-hoc signed with its entitlement by
+            scripts/build-iso-sandbox.sh). `--release` builds
             with optimizations and `-D ISO_RELEASE_BUILD`, which makes
             `iso update` treat the binary as a release.
 3. test     (`--test`) every package's tests in the staging copy.
@@ -23,7 +24,8 @@ Stages, in order, each explicit:
             MACOS_*/NOTARY_* secrets; every other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
-            iso-sandbox, LICENSE, BUILD.json), plus a `SHA256SUMS` listing
+            iso-egress, iso-sandbox, LICENSE, BUILD.json), plus a
+            `SHA256SUMS` listing
             the archive, next to it in `--out`. `<name>` is `--tag`, else the
             revision. This is the layout `iso update` and install.sh expect.
 
@@ -45,7 +47,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIPLE = "aarch64-apple-darwin"
-BINARIES = ["iso", "iso-proxy", "iso-sandbox"]
+BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox"]
 SIGNING_ENV = frozenset({
     "MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY",
     "NOTARY_API_KEY_P8", "NOTARY_API_KEY_ID", "NOTARY_API_ISSUER_ID",
@@ -112,11 +114,17 @@ def build(staging, configuration, release, prefix):
     run(["swift", "build", "--package-path", proxy_package, *common], staging)
     proxy = Path(run(["swift", "build", "--package-path", proxy_package, *common, "--show-bin-path"],
                      staging, capture=True).strip())
+    phase("Build iso-egress")
+    egress_package = staging / "iso-egress"
+    run(["swift", "build", "--package-path", egress_package, *common], staging)
+    egress = Path(run(["swift", "build", "--package-path", egress_package, *common, "--show-bin-path"],
+                      staging, capture=True).strip())
     phase("Build and ad-hoc sign iso-sandbox")
     run([staging / "scripts/build-iso-sandbox.sh", prefix], staging)
     return {
         "iso": host / "iso",
         "iso-proxy": proxy / "iso-proxy-swift",
+        "iso-egress": egress / "iso-egress",
         "iso-sandbox": prefix / "bin/iso-sandbox",
     }
 
@@ -126,6 +134,8 @@ def test(staging):
     run(["swift", "test", "--force-resolved-versions"], staging)
     phase("Test iso-proxy")
     run(["swift", "test", "--package-path", staging / "iso-proxy", "--force-resolved-versions"], staging)
+    phase("Test iso-egress")
+    run(["swift", "test", "--package-path", staging / "iso-egress", "--force-resolved-versions"], staging)
     phase("Test iso-sandbox")
     run(["swift", "test", "--package-path", staging / "iso-sandbox", "--no-parallel"], staging)
 

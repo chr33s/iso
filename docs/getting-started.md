@@ -23,8 +23,8 @@ Linux hosts and macOS 26 are outside this fork’s support scope.
 
 Until a verified fork release is published, follow [Build from source](#build-from-source).
 The configured release channel is `chr33s/iso`, built from tagged commits on
-`swift`. Its macOS archives install `iso`, `iso-proxy`, and `iso-sandbox`
-together; see [Apple prerequisites](backends.md).
+`swift`. Its macOS archives install `iso`, `iso-proxy`, `iso-egress`, and
+`iso-sandbox` together; see [Apple prerequisites](backends.md).
 Once the macOS channel has a verified release:
 
 ```sh
@@ -69,12 +69,12 @@ python3 scripts/build-release.py --release
 ```
 
 This is the one release build entrypoint. It builds `iso` (this package),
-`iso-proxy`, and `iso-sandbox` (ad-hoc signed with its entitlement) from a
-staged copy of the checkout and writes
+`iso-proxy`, `iso-egress`, and `iso-sandbox` (ad-hoc signed with its
+entitlement) from a staged copy of the checkout and writes
 `iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
-`.build/release-archive/`. Add `--test` to run all three packages' tests
-first. Extract the archive and install its three executables in the same
-directory on `PATH`.
+`.build/release-archive/`. Add `--test` to run every package's tests first.
+Extract the archive and install its executables in the same directory on
+`PATH`. A missing `iso-egress` blocks only filtered boots.
 
 For a development build of the host CLI alone:
 

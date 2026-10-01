@@ -189,6 +189,7 @@ public struct Updater: Sendable {
     // proxy, or an unwritable sibling, aborts before `iso` is replaced.
     try SelfReplace.replaceSiblingRuntime(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingProxy(extractDirectory, currentExecutable: currentExecutable)
+    try SelfReplace.replaceSiblingEgress(extractDirectory, currentExecutable: currentExecutable)
     guard let currentExecutable else {
       throw HostError("Failed to resolve current executable path")
     }
@@ -517,6 +518,7 @@ struct UpdateTools: Sendable {
 public enum SelfReplace {
   static let obsoleteProxyNames = ["iso-proxy-rs", "iso-proxy-swift"]
   static let proxyName = "iso-proxy"
+  static let egressName = "iso-egress"
   static let runtimeName = "iso-sandbox"
 
   static func join(_ directory: String, _ name: String) -> String {
@@ -663,5 +665,20 @@ public enum SelfReplace {
     for stale in obsoleteProxyNames where unlink(join(directory, stale)) != 0 && errno != ENOENT {
       throw ContextError("Failed to remove stale proxy", cause: HostError(rustIOError(errno)))
     }
+  }
+
+  /// Install `iso-egress` from a four-binary archive. A three-binary archive
+  /// has no companion; that is not an error. Filtered boots fail later if it
+  /// is still missing.
+  public static func replaceSiblingEgress(_ extractDirectory: String, currentExecutable: String?)
+    throws
+  {
+    let egress = extractDirectory + "/" + egressName
+    guard pathExists(egress) else { return }
+    guard isRegularFile(egress) else {
+      throw HostError("Egress companion is not a regular file")
+    }
+    let directory = try installDirectory(currentExecutable)
+    try atomicReplace(egress, over: join(directory, egressName))
   }
 }

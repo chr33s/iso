@@ -280,6 +280,21 @@ private let withoutBundle = Release(
   try SelfReplace.replaceSiblingProxy(extract, currentExecutable: nil)
 }
 
+@Test func egressReplacementInstallsWhenPresentAndSkipsAThreeBinaryArchive() throws {
+  let extract = try temporaryDirectory("extract")
+  let install = try temporaryDirectory("install")
+  defer {
+    try? FileManager.default.removeItem(atPath: extract)
+    try? FileManager.default.removeItem(atPath: install)
+  }
+  try writeUpdateFile(install + "/iso", "iso-binary")
+  try SelfReplace.replaceSiblingEgress(extract, currentExecutable: install + "/iso")
+  #expect(!pathExists(install + "/iso-egress"))
+  try writeUpdateFile(extract + "/iso-egress", "companion")
+  try SelfReplace.replaceSiblingEgress(extract, currentExecutable: install + "/iso")
+  #expect(readText(install + "/iso-egress") == "companion")
+}
+
 @Test func proxyReplacementSwapsTheSiblingAndDropsLegacyNames() throws {
   let extract = try temporaryDirectory("extract")
   let install = try temporaryDirectory("install")

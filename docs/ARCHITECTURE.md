@@ -23,17 +23,19 @@ specified in [`design/swift-host-spec.md`](design/swift-host-spec.md).
 
 ## Executables and packages
 
-A distribution holds three executables, each its own process:
+A distribution holds four executables, each its own process:
 
 | Executable | Package | Responsibility |
 |---|---|---|
 | `iso` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
 | `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations |
 | `iso-proxy` | [`iso-proxy/`](../iso-proxy) | Confined, credential-bearing provider transport |
+| `iso-egress` | [`iso-egress/`](../iso-egress) | Confined CONNECT companion for filtered egress; no provider credentials |
 
-The host drives the runtime over its JSON CLI and starts the proxy through its
-startup protocol; it never links either package. `iso` resolves
-`iso-sandbox` and `iso-proxy` beside its own executable.
+The host drives the runtime over its JSON CLI and starts companions through
+their startup protocols; it never links those packages. `iso` resolves
+`iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable. A
+missing `iso-egress` blocks only filtered boots.
 
 ## Layout
 
