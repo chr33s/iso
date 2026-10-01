@@ -568,8 +568,8 @@ live `bootId` still matches the boot that started it, the owner lock is
 held, and the session deadline has not passed. A leftover `live.json` does
 not keep the grant. The companion exits if that renewal stops. A missing
 companion or boot id fails the boot; there is no NAT fallback. An unapproved
-CONNECT is denied before a target is chosen. An approved public connection
-has not been proven on a real VM. The companion is a blind CONNECT proxy for
+CONNECT is denied before a target is chosen. An approved name is relayed byte for byte, without the proxy header, in a
+socket fixture. A connection to a public host has not been proven on a real VM. The companion is a blind CONNECT proxy for
 the recorded allowlist on port 443 only. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.
 `egress_filter.allowed_hosts` is valid only with `"filtered"`; an empty list

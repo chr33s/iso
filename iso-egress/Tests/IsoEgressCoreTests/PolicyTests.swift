@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import Testing
 
 @testable import IsoEgressCore
@@ -51,6 +52,94 @@ import Testing
   #expect(buffer == expected)
   #expect(approved.withUnsafeBytes { send(pair[0], $0.baseAddress, $0.count, 0) } == approved.count)
   #expect(ConnectGate.approvedHost(pair[1], allow: allow, capability: "secret") == "example.com")
+}
+
+@Test func approvedTunnelIsByteTransparentAndDropsTheRequestHead() throws {
+  var client: [Int32] = [-1, -1]
+  var upstream: [Int32] = [-1, -1]
+  #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &client) == 0)
+  #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &upstream) == 0)
+  let proxyClient = client[1]
+  let proxyUpstream = upstream[1]
+  let seen = TunnelHosts()
+  let done = NSCondition()
+  let finished = TunnelFlag()
+  var timeout = timeval(tv_sec: 2, tv_usec: 0)
+  setsockopt(client[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  setsockopt(upstream[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  let opened = Thread {
+    try? Tunnel.open(
+      proxyClient, host: "example.com",
+      connect: { host in
+        seen.add(host)
+        return proxyUpstream
+      })
+    finished.mark()
+    done.lock()
+    done.signal()
+    done.unlock()
+  }
+  opened.start()
+  let established = ConnectGate.responseBytes(nil)
+  var header = [UInt8](repeating: 0, count: established.count)
+  #expect(recv(client[0], &header, header.count, 0) == established.count)
+  #expect(header == established)
+  let text = String(decoding: header, as: UTF8.self)
+  #expect(!text.contains("Content-Length"))
+  #expect(!text.contains("Transfer-Encoding"))
+  #expect(!text.contains("Proxy-Authorization"))
+  let ping = Array("ping".utf8)
+  let pong = Array("pong".utf8)
+  #expect(ping.withUnsafeBytes { send(client[0], $0.baseAddress, $0.count, 0) } == ping.count)
+  #expect(pong.withUnsafeBytes { send(upstream[0], $0.baseAddress, $0.count, 0) } == pong.count)
+  var fromClient = [UInt8](repeating: 0, count: ping.count)
+  var fromUpstream = [UInt8](repeating: 0, count: pong.count)
+  #expect(recv(upstream[0], &fromClient, fromClient.count, 0) == ping.count)
+  #expect(fromClient == ping)
+  #expect(String(decoding: fromClient, as: UTF8.self) == "ping")
+  #expect(recv(client[0], &fromUpstream, fromUpstream.count, 0) == pong.count)
+  #expect(fromUpstream == pong)
+  close(client[0])
+  client[0] = -1
+  done.lock()
+  while !finished.isSet {
+    if !done.wait(until: Date().addingTimeInterval(2)) { break }
+  }
+  done.unlock()
+  #expect(finished.isSet)
+  #expect(seen.hosts == ["example.com"])
+  close(client[1])
+  close(upstream[0])
+}
+
+private final class TunnelHosts: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [String] = []
+  func add(_ host: String) {
+    lock.lock()
+    values.append(host)
+    lock.unlock()
+  }
+  var hosts: [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return values
+  }
+}
+
+private final class TunnelFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = false
+  func mark() {
+    lock.lock()
+    value = true
+    lock.unlock()
+  }
+  var isSet: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
 }
 
 @Test func connectRequiresAuthAndPort443() throws {
