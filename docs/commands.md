@@ -481,7 +481,7 @@ iso run <agent> [--workspace DIR] [--name NAME]
 | `--json` | With `--dry-run`, emit a versioned preview on stdout |
 | `-- AGENT_ARGS` | Arguments forwarded to the agent. They are not interpreted by a host shell |
 
-Filtered egress is not enabled. Definition network hints are shown and are not grants. `iso claude` and `iso codex` keep their existing behavior. A disposable instance is not adopted by a later `iso up`.
+Filtered egress has partial local VM evidence, not full qualification (see [testing](testing.md#local-filtered-vm-evidence-partial)). Definition network hints are shown and are not grants. `iso claude` and `iso codex` keep their existing behavior. A disposable instance is not adopted by a later `iso up`.
 
 ```
 iso run claude

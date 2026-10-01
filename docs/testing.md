@@ -605,6 +605,44 @@ public DNS/HTTPS, or a VM. CI and release preflight run these package/process ga
 
 DNS/candidate admission has the dedicated tests below.
 
+### Local filtered-VM evidence (partial)
+
+At commit `97725551b1e7a13ecdf66744f72394220c2d4b9a`, a one-off diagnostic
+runner (`python3 /tmp/iso-filtered-vm-check.py`, not a checked-in or CI gate)
+exited **0** on Apple Silicon macOS 27.0 (26A428), Swift 6.4
+(`swift-6.4-RELEASE`), and stock `container` client/service 1.5.0.
+The host and egress binaries were debug builds; the runtime was a release
+build signed ad hoc with its virtualization entitlement. SHA-256:
+
+| Binary | Hash |
+| --- | --- |
+| `iso` | `48b213e5f9a021496d11245bf75d02311bb8f2b94f7ea110038a3222661997b5` |
+| `iso-egress` | `33faa679c93d1efa65579cefb071fe8051d89cdfcb74c406840bd05e25d7d137` |
+| `iso-sandbox` | `789143ad28cda75c3352ba46d44c035e441dcccc1d801206323a9ca2aadaca7c` |
+
+The runner used private config/data directories, the `boundary-fixture`
+profile, `proxy.mode: "off"`, an environment stripped of provider credentials,
+and separate project directories for open/filtered instances. It ran
+`setup -y --profile boundary-fixture` and `up --no-agents --no-github`.
+It checked the runtime's effective interface and executed these guest probes
+through `iso exec NAME -- ...`:
+
+- `curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://api.github.com`
+  returned **200** in both the open control VM and the filtered VM whose
+  sole approved host was `api.github.com`. This exercised production confined
+  DNS/connect, the authenticated reverse tunnel, and verified end-to-end TLS.
+- `curl -sS --max-time 10 -o /dev/null https://api.openai.com` was refused
+  with **CONNECT 403** in the filtered VM, before any provider request.
+- A guest shell checked that `timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'`
+  failed, then returned `blocked` with exit **0** over the still-working SSH
+  connection. The filtered VM had one `vmnet-host:` interface, zero runtime
+  socket relays, and zero published ports. Both instances were destroyed.
+
+This is a narrow live-VM witness, **not F1 qualification**:
+cross-VM capability misuse, IPv6/adversarial routing, lifecycle revocation,
+resource exhaustion, full NET-20 composite readiness, credential brokers,
+native agents, and release/install/update acceptance remain unrun here.
+
 ### Native upstream client shutdown
 
 Run:

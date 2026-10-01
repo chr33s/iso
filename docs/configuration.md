@@ -572,12 +572,16 @@ CONNECT is denied before a target is chosen. An approved name is relayed byte fo
 socket fixture. A slow request head is abandoned after five seconds, DNS after five,
 a connect after ten, and an idle tunnel after 300, all on a monotonic
 clock. A mixed or host-local answer is not dialed. Accepted sockets stop at
-128, tunnels at 64, and in-flight DNS lookups at 16. A relay direction stops
+128 and tunnels at 64; DNS admission has 16 slots, but resolver-worker
+accounting after a timeout remains unqualified. A relay direction stops
 reading at 256 KiB, and all tunnels share a 32 MiB queue. The production
-Seatbelt profile denies file writes, child execution, and non-443 TCP. A
-filtered guest session is handed out only while that boot's companion and
-tunnel are still running. A connection to a public host
-has not been proven on a real VM. The companion is a blind CONNECT proxy for
+Seatbelt profile denies file writes, child execution, and TCP ports other than
+443 and DNS port 53. Existing session handoff checks compare the boot identity
+and companion/tunnel processes; full composite readiness remains incomplete.
+A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
+and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
+This does not qualify lifecycle revocation or the full filtered boundary.
+The companion is a blind CONNECT proxy for
 the recorded allowlist on port 443 only. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.
 `egress_filter.allowed_hosts` is valid only with `"filtered"`; an empty list
