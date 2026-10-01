@@ -24,6 +24,8 @@ EXEMPT = (
     "fuzz/corpus/",
     "fuzz/libfuzzer/",
     "tests/fixtures/baseline-cli/",
+    # Upstream sources and patches, kept byte for byte.
+    "iso-sandbox/Vendor/",
     # Recorded client request bodies, kept byte for byte.
     "iso-proxy/Tests/IsoInferenceCoreTests/Fixtures/clients/",
 )

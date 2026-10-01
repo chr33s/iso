@@ -1,0 +1,214 @@
+From 7cd2311fdc170e4c13e6f4b43655ea31735e56ae Mon Sep 17 00:00:00 2001
+From: chris <chr33s@icloud.com>
+Date: Thu, 1 Oct 2026 06:10:08 +0700
+Subject: [PATCH 2/2] Limit concurrent connections in UnixSocketRelay
+
+A relayed socket accepts connections from whichever side is untrusted
+(the guest for `.into`, local processes for `.outOf`). Each relayed
+connection holds two file descriptors in the process that runs the
+relay, so an unbounded number of connections can exhaust that process's
+descriptor limit. On macOS that process is the one hosting the VM.
+
+Add `UnixSocketConfiguration.maxConnections`. When set, a connection
+that arrives while that many are being relayed is closed immediately,
+before the relay dials or connects the other side. `nil` (the default)
+keeps the current unlimited behavior. Connections are accepted one at a
+time and each relay is registered before the next accept, so the count
+checked is exact.
+
+Tested on macOS 27 with a VZ guest opening 400 concurrent connections
+through an `.into` relay with `maxConnections: 32`: the hosting
+process peaked at 99 descriptors (35 at rest) and returned to 35, and
+the relay kept serving. Without the limit it passed its 256 soft limit.
+---
+ .../UnixSocketConfiguration.swift             |  8 ++
+ .../Containerization/UnixSocketRelay.swift    | 24 +++++
+ .../UnixSocketRelayTests.swift                | 92 +++++++++++++++++++
+ 3 files changed, 124 insertions(+)
+
+diff --git a/Sources/Containerization/UnixSocketConfiguration.swift b/Sources/Containerization/UnixSocketConfiguration.swift
+index ec7f941..1358376 100644
+--- a/Sources/Containerization/UnixSocketConfiguration.swift
++++ b/Sources/Containerization/UnixSocketConfiguration.swift
+@@ -43,6 +43,12 @@ public struct UnixSocketConfiguration: Sendable {
+     /// .outOf direction this will be the socket on the host.
+     public var permissions: FilePermissions?
+ 
++    /// The most connections relayed at once. A connection that arrives while
++    /// this many are active is closed immediately, so the side that opens
++    /// connections cannot exhaust the file descriptors of the process running
++    /// the relay. Values below 1 are treated as 1; `nil` places no limit.
++    public var maxConnections: Int?
++
+     /// The direction of the relay. `.into` for sharing a unix socket on your
+     /// host into the container/guest. `outOf` shares a socket in the container/guest
+     /// onto your host.
+@@ -60,11 +66,13 @@ public struct UnixSocketConfiguration: Sendable {
+         source: URL,
+         destination: URL,
+         permissions: FilePermissions? = nil,
++        maxConnections: Int? = nil,
+         direction: Direction = .into
+     ) {
+         self.source = source
+         self.destination = destination
+         self.permissions = permissions
++        self.maxConnections = maxConnections
+         self.direction = direction
+     }
+ }
+diff --git a/Sources/Containerization/UnixSocketRelay.swift b/Sources/Containerization/UnixSocketRelay.swift
+index d982899..ab42530 100644
+--- a/Sources/Containerization/UnixSocketRelay.swift
++++ b/Sources/Containerization/UnixSocketRelay.swift
+@@ -109,6 +109,12 @@ extension UnixSocketRelay {
+             $0.t = Task {
+                 do {
+                     for try await connection in connectionStream {
++                        guard self.admitsConnection() else {
++                            try? connection.close()
++                            self.log?.warning(
++                                "closing host connection: relay for vsock \(self.port) is at its connection limit")
++                            continue
++                        }
+                         do {
+                             try await self.handleHostUnixConn(
+                                 hostConn: connection,
+@@ -146,6 +152,12 @@ extension UnixSocketRelay {
+             $0.t = Task {
+                 defer { try? listener.finish() }
+                 for await connection in listener {
++                    guard self.admitsConnection() else {
++                        try? connection.close()
++                        self.log?.warning(
++                            "closing guest connection: relay for \(hostPath.path) is at its connection limit")
++                        continue
++                    }
+                     do {
+                         try await self.handleGuestVsockConn(
+                             vsockConn: connection,
+@@ -162,6 +174,18 @@ extension UnixSocketRelay {
+         }
+     }
+ 
++    /// Connections are accepted one at a time and a relay is registered
++    /// before the next is accepted, so the count seen here is exact.
++    private func admitsConnection() -> Bool {
++        guard let limit = configuration.maxConnections else { return true }
++        return state.withLock { $0.activeRelays.count } < max(limit, 1)
++    }
++
++    /// The number of connections currently relayed.
++    package var activeConnectionCount: Int {
++        state.withLock { $0.activeRelays.count }
++    }
++
+     private func handleHostUnixConn(
+         hostConn: ContainerizationOS.Socket,
+         port: UInt32,
+diff --git a/Tests/ContainerizationTests/UnixSocketRelayTests.swift b/Tests/ContainerizationTests/UnixSocketRelayTests.swift
+index 5ff125e..5386750 100644
+--- a/Tests/ContainerizationTests/UnixSocketRelayTests.swift
++++ b/Tests/ContainerizationTests/UnixSocketRelayTests.swift
+@@ -154,6 +154,98 @@ struct UnixSocketRelayTests {
+         _ = try host.write(data: request)
+         #expect(try await read(from: peer.fileDescriptor, count: request.count) == request)
+     }
++
++    private func waitForActiveConnections(_ relay: UnixSocketRelay, _ count: Int) async throws {
++        while relay.activeConnectionCount != count {
++            try await Task.sleep(for: .milliseconds(1))
++        }
++    }
++
++    @Test(.timeLimit(.minutes(1)))
++    func guestConnectionsBeyondTheLimitCloseUntilARelayFinishes() async throws {
++        let path = URL(filePath: "/tmp/relay-\(UUID().uuidString).sock")
++        defer { try? FileManager.default.removeItem(at: path) }
++        let type = try UnixType(path: path.path, unlinkExisting: true)
++        let server = try Socket(type: type)
++        try server.listen()
++        defer { try? server.close() }
++        let vm = RelayVirtualMachine()
++        let relay = try UnixSocketRelay(
++            port: vm.listener.port,
++            socket: .init(source: path, destination: path, maxConnections: 1, direction: .into),
++            vm: vm
++        )
++        try await relay.start()
++        defer { try? relay.stop() }
++
++        let (first, firstPeer) = try socketPair()
++        _ = vm.listener.yield(first)
++        try await waitUntilReadable(server.fileDescriptor)
++        let firstHost = try server.accept()
++        try await waitForActiveConnections(relay, 1)
++
++        // At the limit: the next connection is closed without reaching the host.
++        let (excess, excessPeer) = try socketPair()
++        defer { try? excessPeer.close() }
++        _ = vm.listener.yield(excess)
++        #expect(try await read(from: excessPeer.fileDescriptor, count: 1).isEmpty)
++        #expect(relay.activeConnectionCount == 1)
++
++        // Finishing the first relay frees its slot.
++        try firstPeer.close()
++        try firstHost.close()
++        try await waitForActiveConnections(relay, 0)
++        let (next, nextPeer) = try socketPair()
++        defer { try? nextPeer.close() }
++        _ = vm.listener.yield(next)
++        try await waitUntilReadable(server.fileDescriptor)
++        let nextHost = try server.accept()
++        defer { try? nextHost.close() }
++        let request = Data("after a slot frees".utf8)
++        try nextPeer.write(contentsOf: request)
++        #expect(try await read(from: nextHost.fileDescriptor, count: request.count) == request)
++    }
++
++    @Test(.timeLimit(.minutes(1)))
++    func hostConnectionsBeyondTheLimitClose() async throws {
++        let path = URL(filePath: "/tmp/relay-\(UUID().uuidString).sock")
++        defer { try? FileManager.default.removeItem(at: path) }
++        let type = try UnixType(path: path.path)
++        let vm = RelayVirtualMachine()
++        let relay = try UnixSocketRelay(
++            port: vm.listener.port,
++            socket: .init(source: path, destination: path, maxConnections: 1, direction: .outOf),
++            vm: vm
++        )
++        try await relay.start()
++        defer { try? relay.stop() }
++
++        let (connection, peer) = try socketPair()
++        defer {
++            try? peer.close()
++            vm.dialConnection.withLock {
++                try? $0?.close()
++                $0 = nil
++            }
++        }
++        vm.dialConnection.withLock { $0 = connection }
++        let first = try Socket(type: type)
++        defer { try? first.close() }
++        try first.connect()
++        try await waitForActiveConnections(relay, 1)
++
++        // At the limit: the next host connection is closed without dialing
++        // the guest, even though a guest connection is available.
++        let (spare, sparePeer) = try socketPair()
++        defer { try? sparePeer.close() }
++        vm.dialConnection.withLock { $0 = spare }
++        let excess = try Socket(type: type)
++        defer { try? excess.close() }
++        try excess.connect()
++        #expect(try await read(from: excess.fileDescriptor, count: 1).isEmpty)
++        #expect(relay.activeConnectionCount == 1)
++        #expect(vm.dialConnection.withLock { $0 != nil })
++    }
+ }
+ 
+ private final class RelayVirtualMachine: VirtualMachineInstance {
+-- 
+2.56.0
+

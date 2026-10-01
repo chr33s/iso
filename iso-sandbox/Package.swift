@@ -10,7 +10,9 @@ let package = Package(
     .executable(name: "iso-sandbox", targets: ["IsoSandbox"])
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/containerization.git", exact: "0.45.0"),
+    // containerization 0.45.0 with two host-side relay fixes, vendored until
+    // they are released upstream (Vendor/containerization/VENDORED.md).
+    .package(path: "Vendor/containerization"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.7.0"),
     // Already resolved through containerization; named for `FilePath`.
     .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
@@ -39,6 +41,8 @@ let package = Package(
       name: "IsoSandboxTests",
       dependencies: [
         "IsoSandboxCore",
+        .product(name: "Containerization", package: "containerization"),
+        .product(name: "ContainerizationExtras", package: "containerization"),
         .product(name: "ContainerizationEXT4", package: "containerization"),
         .product(name: "SystemPackage", package: "swift-system"),
       ]
