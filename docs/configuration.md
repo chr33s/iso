@@ -564,8 +564,9 @@ anything listening on the host's addresses (see the
 `"filtered"` uses the same host-only network as `"none"` and starts
 `iso-egress` beside the `iso` binary. It requires iso-sandbox protocol 5.
 A host lease renews the companion once a second only while the runtime's
-live `bootId` still matches the boot that started it and the session
-deadline has not passed. The companion exits if that renewal stops. A missing companion or boot id fails the boot;
+live `bootId` still matches the boot that started it, the owner lock is
+held, and the session deadline has not passed. A leftover `live.json` does
+not keep the grant. The companion exits if that renewal stops. A missing companion or boot id fails the boot;
 there is no NAT fallback. The companion is a blind CONNECT proxy for the
 recorded allowlist on port 443 only. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.

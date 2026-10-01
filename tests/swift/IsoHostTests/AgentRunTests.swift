@@ -116,6 +116,37 @@ import Testing
   #expect(throws: HostError.self) { try AgentCatalog.review(sourcePath: reserved) }
 }
 
+@Test func egressLeaseRequiresTheOwnerLock() throws {
+  let directory = FileManager.default.temporaryDirectory.appending(
+    path: "iso-lock-\(UUID().uuidString)", directoryHint: .isDirectory)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let lock = directory.appending(path: "owner.lock")
+  FileManager.default.createFile(atPath: lock.path, contents: nil)
+  #expect(EgressLease.ownerLockHeld(at: lock.path) == false)
+  #expect(
+    EgressLease.ownerLockHeld(at: directory.appending(path: "missing.lock").path) == false)
+  let child = Process()
+  child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+  child.arguments = [
+    "-c",
+    "import fcntl,time,sys; f=open(sys.argv[1],'a+'); fcntl.flock(f,fcntl.LOCK_EX); time.sleep(5)",
+    lock.path,
+  ]
+  try child.run()
+  defer { child.terminate() }
+  let deadline = Date().addingTimeInterval(2)
+  var held = false
+  while Date() < deadline {
+    if EgressLease.ownerLockHeld(at: lock.path) {
+      held = true
+      break
+    }
+    usleep(20_000)
+  }
+  #expect(held)
+}
+
 @Test func egressLeaseClosesAtTheSessionDeadline() throws {
   let directory = FileManager.default.temporaryDirectory.appending(
     path: "iso-lease-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -138,15 +169,19 @@ import Testing
   #expect(
     EgressLease.renewalAllowed(
       ownsRecordedIdentity: true, liveBootID: "previous", expectedBootID: "current", livePID: 7,
-      expectedPID: 7, sessionOpen: true) == false)
+      expectedPID: 7, sessionOpen: true, ownerAlive: true) == false)
   #expect(
     EgressLease.renewalAllowed(
       ownsRecordedIdentity: true, liveBootID: "current", expectedBootID: "current", livePID: 7,
-      expectedPID: 7, sessionOpen: true))
+      expectedPID: 7, sessionOpen: true, ownerAlive: true))
   #expect(
     EgressLease.renewalAllowed(
       ownsRecordedIdentity: true, liveBootID: "current", expectedBootID: "current", livePID: 7,
-      expectedPID: 7, sessionOpen: false) == false)
+      expectedPID: 7, sessionOpen: false, ownerAlive: true) == false)
+  #expect(
+    EgressLease.renewalAllowed(
+      ownsRecordedIdentity: true, liveBootID: "current", expectedBootID: "current", livePID: 7,
+      expectedPID: 7, sessionOpen: true, ownerAlive: false) == false)
 }
 
 @Test func disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof() throws {

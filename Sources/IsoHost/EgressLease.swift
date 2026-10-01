@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import IsoCore
 
@@ -32,14 +33,27 @@ public enum EgressLease {
     return now < deadline
   }
 
-  /// Both the host record and the runtime's current boot must match, and the
-  /// session deadline must not have passed.
+  /// A missing or unreadable lock is not held. An exclusive non-blocking
+  /// flock that succeeds means no owner process holds it.
+  public static func ownerLockHeld(at path: String) -> Bool {
+    let fd = open(path, O_RDWR | O_CLOEXEC)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+      _ = flock(fd, LOCK_UN)
+      return false
+    }
+    return true
+  }
+
+  /// The recorded identity, live boot, session deadline, and owner lock must
+  /// all still match. A leftover `live.json` is not enough.
   public static func renewalAllowed(
     ownsRecordedIdentity: Bool, liveBootID: String?, expectedBootID: String, livePID: Int32?,
-    expectedPID: Int32, sessionOpen: Bool
+    expectedPID: Int32, sessionOpen: Bool, ownerAlive: Bool
   ) -> Bool {
     ownsRecordedIdentity && liveBootID == expectedBootID && !expectedBootID.isEmpty
-      && livePID == expectedPID && sessionOpen
+      && livePID == expectedPID && sessionOpen && ownerAlive
   }
 
   public static func run(
@@ -48,13 +62,16 @@ public enum EgressLease {
     let fd: Int32 = 3
     while true {
       let live = liveIdentity(at: livePath)
-      let recordPath = (livePath as NSString).deletingLastPathComponent + "/record.json"
+      let directoryURL = (livePath as NSString).deletingLastPathComponent
+      let recordPath = directoryURL + "/record.json"
       guard
         renewalAllowed(
           ownsRecordedIdentity: stillOwns(
             directory: directory, machineID: machineID, ownerPID: ownerPID),
           liveBootID: live?.bootID, expectedBootID: bootID, livePID: live?.pid,
-          expectedPID: ownerPID, sessionOpen: sessionOpen(recordPath: recordPath, now: Date()))
+          expectedPID: ownerPID,
+          sessionOpen: sessionOpen(recordPath: recordPath, now: Date()),
+          ownerAlive: ownerLockHeld(at: directoryURL + "/owner.lock"))
       else { return }
       var byte: UInt8 = 1
       if write(fd, &byte, 1) != 1 { return }
