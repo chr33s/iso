@@ -33,6 +33,7 @@ PYTHON_GATES = [
     'tests/test-migrate-config.py', 'tests/test-preflight-release.py',
     'scripts/test-swift-proxy-process.py', 'scripts/build-release.py',
     'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
+    'scripts/test-swift-egress-mutations.py',
 ]
 SHELL_GATES = [
     'tests/integration-install.sh', 'tests/integration-update.sh',
@@ -126,14 +127,17 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('swift build --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('test-swift-egress-jail.py', calls)
         self.assertIn('test-swift-egress-lease.py', calls)
+        self.assertIn('test-swift-egress-mutations.py', calls)
         self.assertIn('All required checks passed for v9.8.7.', result.stdout)
 
-    def test_egress_lease_failure_is_fatal(self):
+    def test_egress_process_and_mutation_failures_are_fatal(self):
         self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
-        result = self.run_preflight('--quick', fail='test-swift-egress-lease.py')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAIL: Swift egress tests and confined lease', result.stdout)
-        self.assertIn('Preflight FAILED', result.stdout)
+        for gate in ('test-swift-egress-lease.py', 'test-swift-egress-mutations.py'):
+            with self.subTest(gate=gate):
+                result = self.run_preflight('--quick', fail=gate)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('FAIL: Swift egress tests and confined lease', result.stdout)
+                self.assertIn('Preflight FAILED', result.stdout)
 
     def test_older_macos_warns_instead_of_building_the_archive(self):
         result = self.run_preflight()

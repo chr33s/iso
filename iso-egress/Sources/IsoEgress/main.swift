@@ -92,30 +92,29 @@ enum EgressMain {
 
   static func connectPublic(_ host: String, admission: Admission) throws -> Int32? {
     let local = HostAddresses.current()
-    guard admission.tryDNS() else { return nil }
-    defer { admission.endDNS() }
-    guard let info = Resolver.lookup(host) else { return nil }
-    defer { freeaddrinfo(info) }
-    var cursor: UnsafeMutablePointer<addrinfo>? = info
-    var addresses: [String] = []
-    while let node = cursor {
-      if let text = numeric(node) { addresses.append(text) }
-      cursor = node.pointee.ai_next
+    guard let resolved = Resolver.lookup(host, admission: admission) else { return nil }
+    return resolved.withAddressInfo { info in
+      var cursor: UnsafePointer<addrinfo>? = info
+      var addresses: [String] = []
+      while let node = cursor {
+        if let text = numeric(node) { addresses.append(text) }
+        cursor = node.pointee.ai_next.map { UnsafePointer($0) }
+      }
+      guard AddressChoice.firstPublic(addresses, local: local) != nil else { return nil }
+      guard let first = info.pointee.ai_addr else { return nil }
+      let fd = socket(info.pointee.ai_family, SOCK_STREAM, 0)
+      guard fd >= 0 else { return nil }
+      guard Dial.connect(fd, address: first, length: info.pointee.ai_addrlen),
+        Dial.peerIsPublic(fd, local: local)
+      else {
+        close(fd)
+        return nil
+      }
+      return fd
     }
-    guard AddressChoice.firstPublic(addresses, local: local) != nil else { return nil }
-    guard let first = info.pointee.ai_addr else { return nil }
-    let fd = socket(info.pointee.ai_family, SOCK_STREAM, 0)
-    guard fd >= 0 else { return nil }
-    guard Dial.connect(fd, address: first, length: info.pointee.ai_addrlen),
-      Dial.peerIsPublic(fd, local: local)
-    else {
-      close(fd)
-      return nil
-    }
-    return fd
   }
 
-  static func numeric(_ node: UnsafeMutablePointer<addrinfo>) -> String? {
+  static func numeric(_ node: UnsafePointer<addrinfo>) -> String? {
     var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
     guard
       getnameinfo(

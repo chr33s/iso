@@ -32,7 +32,8 @@ SPDX-License-Identifier: Apache-2.0
   qualification remains open (see `docs/testing.md`). The companion reads
   renewals from the supervisor's pipe, and a queued renewal cannot revive an
   expired lease. GitHub auth changes and devcontainer overlays preserve the
-  configured allowlist.
+  configured allowlist. Timed-out DNS waits retain their work slots until
+  libc resolution finishes, and address lists are freed even when they arrive late.
 
 ### Boundary hardening and local secrets
 

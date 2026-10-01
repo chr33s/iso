@@ -603,7 +603,23 @@ the process and close its listener and an unfinished guest request. This does
 not exercise the host supervisor, runtime owner/boot checks, successful tunnels,
 public DNS/HTTPS, or a VM. CI and release preflight run these package/process gates.
 
-DNS/candidate admission has the dedicated tests below.
+`swift test --package-path iso-egress --force-resolved-versions --filter
+'resolver|productionResolver|deadlineRejects'` covers the DNS work budget and
+address-list ownership. Sixteen controlled workers stay blocked beyond their
+callers' deadlines; another lookup cannot start until one worker finishes.
+The fixtures check slot recovery and exactly-once cleanup for late, successful,
+and failed results. A native numeric lookup exercises the production resolver
+without DNS traffic or dialing a socket. The wait uses a monotonic dispatch
+deadline; finishing after it cannot deliver a result. libc `getaddrinfo` is not
+cancelled: stuck work remains charged until it returns or the companion exits.
+
+`python3 scripts/test-swift-egress-mutations.py` runs clean controls in a private
+package copy, then deliberately releases slots early, removes each result
+cleanup path, and accepts late results. Each named test must run and fail;
+compilation errors and empty selections do not count. CI and release preflight
+run this gate. These are local worker/ownership tests, not a VM exhaustion gate.
+
+DNS/candidate admission for the credential proxy has the dedicated tests below.
 
 ### Local filtered-VM evidence (partial)
 

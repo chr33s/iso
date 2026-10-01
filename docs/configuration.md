@@ -572,8 +572,9 @@ CONNECT is denied before a target is chosen. An approved name is relayed byte fo
 socket fixture. A slow request head is abandoned after five seconds, DNS after five,
 a connect after ten, and an idle tunnel after 300, all on a monotonic
 clock. A mixed or host-local answer is not dialed. Accepted sockets stop at
-128 and tunnels at 64; DNS admission has 16 slots, but resolver-worker
-accounting after a timeout remains unqualified. A relay direction stops
+128 and tunnels at 64. The 16 DNS slots belong to resolver work, not waiting
+clients: a timed-out libc lookup keeps its slot until it returns. New lookups
+are refused while all slots remain occupied. A relay direction stops
 reading at 256 KiB, and all tunnels share a 32 MiB queue. The production
 Seatbelt profile denies file writes, child execution, and TCP ports other than
 443 and DNS port 53. Existing session handoff checks compare the boot identity

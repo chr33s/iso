@@ -167,7 +167,8 @@ run_swift_egress() {
   swift test --package-path iso-egress --force-resolved-versions || return
   swift build --package-path iso-egress --force-resolved-versions || return
   python3 scripts/test-swift-egress-jail.py || return
-  python3 scripts/test-swift-egress-lease.py
+  python3 scripts/test-swift-egress-lease.py || return
+  python3 scripts/test-swift-egress-mutations.py
 }
 
 run_sandbox_tests() {

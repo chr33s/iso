@@ -102,6 +102,7 @@ jobs:
           swift build --package-path iso-egress --force-resolved-versions
           python3 scripts/test-swift-egress-jail.py
           python3 scripts/test-swift-egress-lease.py
+          python3 scripts/test-swift-egress-mutations.py
 
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke

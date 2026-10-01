@@ -1,4 +1,5 @@
 import Darwin
+import Dispatch
 import Foundation
 
 /// Choose one numeric address only when every answer is public and none
@@ -17,38 +18,46 @@ public enum Deadline {
   public static func wait<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () -> T)
     -> T?
   {
-    let box = Box<T>()
+    let nanoseconds = Int(min(Monotonic.nanoseconds(limit), UInt64(Int.max)))
+    let box = Box<T>(deadline: .now() + .nanoseconds(nanoseconds))
     let thread = Thread {
       let value = work()
       box.finish(value)
     }
     thread.start()
-    return box.value(within: Monotonic.nanoseconds(limit))
+    return box.value()
   }
 }
 
-private final class Box<T>: @unchecked Sendable {
-  private let lock = NSCondition()
-  private var value: T?
-  private var finished = false
-
-  func finish(_ value: T) {
-    lock.lock()
-    self.value = value
-    finished = true
-    lock.signal()
-    lock.unlock()
+final class Box<T: Sendable>: @unchecked Sendable {
+  private enum State {
+    case waiting
+    case finished(T)
+    case abandoned
   }
 
-  func value(within limit: UInt64) -> T? {
-    let start = Monotonic.now()
-    lock.lock()
-    defer { lock.unlock() }
-    while !finished {
-      if !Monotonic.within(start, now: Monotonic.now(), limit: limit) { return nil }
-      _ = lock.wait(until: Date().addingTimeInterval(0.02))
+  private let lock = NSLock()
+  private let signal = DispatchSemaphore(value: 0)
+  private let deadline: DispatchTime
+  private var state = State.waiting
+
+  init(deadline: DispatchTime) { self.deadline = deadline }
+
+  func finish(_ value: T) {
+    lock.withLock {
+      guard case .waiting = state else { return }
+      state = DispatchTime.now() <= deadline ? .finished(value) : .abandoned
     }
-    return value
+    signal.signal()
+  }
+
+  func value() -> T? {
+    let ready = signal.wait(timeout: deadline) == .success
+    return lock.withLock {
+      defer { state = .abandoned }
+      guard ready, case .finished(let value) = state else { return nil }
+      return value
+    }
   }
 }
 
@@ -76,34 +85,63 @@ public enum HostAddresses {
 }
 
 public enum Resolver {
-  /// `nil` on timeout, failure, or an empty answer. The caller frees the pointer.
+  /// `nil` on admission refusal, timeout, failure, or an empty answer.
   public static func lookup(
-    _ host: String, port: String = "443", deadline: Duration = EgressBudgets.dns
-  )
-    -> UnsafeMutablePointer<addrinfo>?
-  {
-    let found = Deadline.wait(deadline) { () -> LookupResult in
+    _ host: String, admission: Admission, port: String = "443",
+    deadline: Duration = EgressBudgets.dns
+  ) -> ResolvedAddresses? {
+    lookup(admission: admission, deadline: deadline) {
       var hints = addrinfo()
       hints.ai_family = AF_UNSPEC
       hints.ai_socktype = SOCK_STREAM
       var resolved: UnsafeMutablePointer<addrinfo>?
       let code = getaddrinfo(host, port, &hints, &resolved)
-      return LookupResult(code: code, info: resolved)
+      return ResolvedAddresses.adopting(resolved, status: code)
     }
-    guard let found, found.code == 0, let info = found.info else {
-      if let info = found?.info { freeaddrinfo(info) }
-      return nil
-    }
-    return info
+  }
+
+  static func lookup(
+    admission: Admission, deadline: Duration,
+    resolve: @escaping @Sendable () -> ResolvedAddresses?
+  ) -> ResolvedAddresses? {
+    guard admission.tryDNS() else { return nil }
+    // libc resolution cannot be cancelled. Its slot outlives the caller's wait.
+    return Deadline.wait(deadline) {
+      defer { admission.endDNS() }
+      return resolve()
+    } ?? nil
   }
 }
 
-private final class LookupResult: @unchecked Sendable {
-  let code: Int32
-  let info: UnsafeMutablePointer<addrinfo>?
-  init(code: Int32, info: UnsafeMutablePointer<addrinfo>?) {
-    self.code = code
+/// Owns an immutable libc address list, including results arriving after timeout.
+public final class ResolvedAddresses: @unchecked Sendable {
+  private let info: UnsafeMutablePointer<addrinfo>
+  private let release: @Sendable (UnsafeMutablePointer<addrinfo>) -> Void
+
+  private init(
+    _ info: UnsafeMutablePointer<addrinfo>,
+    release: @escaping @Sendable (UnsafeMutablePointer<addrinfo>) -> Void
+  ) {
     self.info = info
+    self.release = release
+  }
+
+  static func adopting(
+    _ info: UnsafeMutablePointer<addrinfo>?, status: Int32,
+    release: @escaping @Sendable (UnsafeMutablePointer<addrinfo>) -> Void = { freeaddrinfo($0) }
+  ) -> ResolvedAddresses? {
+    guard status == 0, let info else {
+      if let info { release(info) }
+      return nil
+    }
+    return ResolvedAddresses(info, release: release)
+  }
+
+  deinit { release(info) }
+
+  /// The list is borrowed for this callback only; do not free or retain pointers.
+  public func withAddressInfo<T>(_ body: (UnsafePointer<addrinfo>) throws -> T) rethrows -> T {
+    try withExtendedLifetime(self) { try body(UnsafePointer(info)) }
   }
 }
 
