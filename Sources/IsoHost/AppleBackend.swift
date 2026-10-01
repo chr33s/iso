@@ -132,6 +132,21 @@ public final class AppleBackend: Sendable {
       let target = try SSHTarget.pinned(
         config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
         user: sidecar.guestUser)
+      let sandboxDir = "\(runtime.root)/sandboxes/\(sidecar.machineID.rawValue)"
+      if let failure = FilteredHandoff.prove(
+        filtered: config.egress == .filtered,
+        recordedBootID: FilteredHandoff.bootID(at: instance.directory + "/egress-boot-id"),
+        liveBootID: EgressLease.liveIdentity(at: sandboxDir + "/live.json")?.bootID,
+        ownerLockHeld: EgressLease.ownerLockHeld(at: sandboxDir + "/owner.lock"),
+        companionAlive: ProxyLauncher.recordedProcessAlive(
+          ProxyLauncher.pidPath(instance, "egress"), expect: .egress),
+        tunnelAlive: ProxyLauncher.recordedProcessAlive(
+          ProxyLauncher.forwardPIDPath(instance, "egress"), expect: .ssh))
+      {
+        throw HostError(
+          "FILTERED_EGRESS_NOT_READY: \(failure) for '\(instance.name)'. The VM is still running; `iso stop \(instance.name)` does not connect to the guest."
+        )
+      }
       return Running(instance: instance, sidecar: sidecar, ready: ready, target: target)
     } catch {
       throw ContextError(

@@ -116,6 +116,29 @@ import Testing
   #expect(throws: HostError.self) { try AgentCatalog.review(sourcePath: reserved) }
 }
 
+@Test func filteredHandoffRefusesAChangedBoot() {
+  #expect(
+    FilteredHandoff.prove(
+      filtered: false, recordedBootID: nil, liveBootID: nil, ownerLockHeld: false,
+      companionAlive: false, tunnelAlive: false) == nil)
+  #expect(
+    FilteredHandoff.prove(
+      filtered: true, recordedBootID: "boot", liveBootID: "boot", ownerLockHeld: true,
+      companionAlive: true, tunnelAlive: true) == nil)
+  #expect(
+    FilteredHandoff.prove(
+      filtered: true, recordedBootID: "boot", liveBootID: "other", ownerLockHeld: true,
+      companionAlive: true, tunnelAlive: true) == .bootChanged)
+  #expect(
+    FilteredHandoff.prove(
+      filtered: true, recordedBootID: nil, liveBootID: "boot", ownerLockHeld: true,
+      companionAlive: true, tunnelAlive: true) == .missingBoot)
+  #expect(
+    FilteredHandoff.prove(
+      filtered: true, recordedBootID: "boot", liveBootID: "boot", ownerLockHeld: true,
+      companionAlive: false, tunnelAlive: true) == .companionDown)
+}
+
 @Test func egressLeaseRequiresTheOwnerLock() throws {
   let directory = FileManager.default.temporaryDirectory.appending(
     path: "iso-lock-\(UUID().uuidString)", directoryHint: .isDirectory)

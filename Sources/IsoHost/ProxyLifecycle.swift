@@ -318,6 +318,8 @@ public struct ProxyLauncher: Sendable {
     do {
       try AtomicFile.write(
         Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600))
+      try AtomicFile.write(
+        Array(boot.bootID.utf8), to: instance.directory + "/egress-boot-id", mode: .atMost(0o644))
     } catch {
       stopEgress(instance)
       throw error
@@ -343,6 +345,10 @@ public struct ProxyLauncher: Sendable {
     let capability = EgressPorts.capabilityPath(instance)
     if unlink(capability) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove egress capability \(capability) (non-fatal)")
+    }
+    let bootID = instance.directory + "/egress-boot-id"
+    if unlink(bootID) != 0 && errno != ENOENT {
+      diagnostics.debug("Failed to remove egress boot id \(bootID) (non-fatal)")
     }
   }
 
@@ -778,6 +784,14 @@ public struct ProxyLauncher: Sendable {
       case .lease: return words.contains("egress-lease")
       }
     }
+  }
+
+  static func recordedProcessAlive(_ path: String, expect: RecordedProcess) -> Bool {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+      let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0,
+      let command = commandLine(pid)
+    else { return false }
+    return expect.matches(command)
   }
 
   /// The command line of `pid`, nil when no such process.

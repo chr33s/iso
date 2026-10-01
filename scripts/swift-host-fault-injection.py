@@ -366,6 +366,10 @@ FAULTS = [
      "&& sessionOpen && ownerAlive",
      "&& sessionOpen",
      "egressLeaseStopsWhenTheRecordedOwnerChanges"),
+    ("filtered-handoff-boot", "Sources/IsoHost/FilteredHandoff.swift",
+     "guard recordedBootID == liveBootID else { return .bootChanged }",
+     "if false { return .bootChanged }",
+     "filteredHandoffRefusesAChangedBoot"),
 ]
 
 
