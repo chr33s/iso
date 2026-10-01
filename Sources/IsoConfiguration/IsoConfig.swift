@@ -87,7 +87,7 @@ public struct IsoConfig: Sendable, Equatable {
     proxy: ProxyConfig, guestEnvironment: [GuestVariable], profiles: [String: CustomProfile],
     postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
-    egressFilter: EgressFilter = .empty, limits: LimitsConfig, securityPreset: SecurityPreset?
+    egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?
   ) {
     self.dataDirectory = dataDirectory
     self.vm = vm

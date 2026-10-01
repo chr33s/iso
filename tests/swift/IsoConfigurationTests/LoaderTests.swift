@@ -29,6 +29,26 @@ private func select(_ explicit: String?, existing: Set<String>) throws(ConfigErr
   try ConfigLoader.select(explicitPath: explicit, home: "/h", fileExists: { existing.contains($0) })
 }
 
+@Test(arguments: ["github-disabled", "github-replaced", "devcontainer", "vm", "egress"])
+func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
+  let original = try load(
+    #"{"egress":"filtered","egress_filter":{"allowed_hosts":["API.GitHub.COM.","example.com"]}}"#)
+  let modified: IsoConfig
+  switch overlay {
+  case "github-disabled": modified = original.disablingGitHub()
+  case "github-replaced": modified = original.replacingGitHub(.env)
+  case "devcontainer":
+    modified = original.applyingDevcontainer(
+      vcpus: 3, memory: nil, postStart: "true",
+      guestEnvironment: [(try EnvVarName("TERM"), "xterm")])
+  case "vm": modified = original.overridingVM(vcpus: 3, memory: nil, templateSize: nil)
+  default: modified = original.overridingEgress(.filtered)
+  }
+  #expect(original.egressFilter.allowedHosts.map(\.rawValue) == ["api.github.com", "example.com"])
+  #expect(modified.egress == .filtered)
+  #expect(modified.egressFilter == original.egressFilter)
+}
+
 @Test func explicitPathsSelectFormatByExtension() throws {
   #expect(try select("/x/c.jsonc", existing: []) == .file(path: "/x/c.jsonc", format: .jsonc))
   #expect(try select("/x/c.json", existing: []) == .file(path: "/x/c.json", format: .json))

@@ -21,7 +21,8 @@ extension IsoConfig {
       claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
-      workspacePull: workspacePull, egress: egress, limits: limits, securityPreset: securityPreset)
+      workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
+      securityPreset: securityPreset)
   }
 
   /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
@@ -33,7 +34,8 @@ extension IsoConfig {
       setup: SetupConfig(promptForPAT: false), claude: claude, codex: codex, codexAuth: codexAuth,
       proxy: proxy, guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
-      workspacePull: workspacePull, egress: egress, limits: limits, securityPreset: securityPreset)
+      workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
+      securityPreset: securityPreset)
   }
 }
 

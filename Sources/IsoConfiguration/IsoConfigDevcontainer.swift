@@ -31,7 +31,7 @@ extension IsoConfig {
       guestEnvironment: variables, profiles: profiles, postStart: postStart ?? self.postStart,
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
-      egress: egress, limits: limits, securityPreset: securityPreset
+      egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset
     )
   }
 }

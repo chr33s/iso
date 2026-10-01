@@ -30,6 +30,7 @@ SPDX-License-Identifier: Apache-2.0
   runtime cannot start that mode. An approved-versus-denied destination
   check on a real VM has not been run. The companion reads renewals from
   the supervisor's pipe, and a queued renewal cannot revive an expired lease.
+  GitHub auth changes and devcontainer overlays preserve the configured allowlist.
 
 ### Boundary hardening and local secrets
 
