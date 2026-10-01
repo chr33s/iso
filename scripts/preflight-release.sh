@@ -159,6 +159,17 @@ run_swift_proxy() {
   python3 scripts/test-swift-proxy-process.py --skip-tls
 }
 
+run_swift_egress() {
+  if ! macos_27; then
+    warn "Swift egress validation requires macOS 27+ — run its package/lease gates before tagging"
+    return 0
+  fi
+  swift test --package-path iso-egress --force-resolved-versions || return
+  swift build --package-path iso-egress --force-resolved-versions || return
+  python3 scripts/test-swift-egress-jail.py || return
+  python3 scripts/test-swift-egress-lease.py
+}
+
 run_sandbox_tests() {
   swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
 }
@@ -194,6 +205,7 @@ step "Format (swift format lint --strict)" run_format
 step "Swift host build and tests" run_host_tests
 step "Recorded-baseline parity" run_baselines
 step "Swift proxy tests" run_swift_proxy
+step "Swift egress tests and confined lease" run_swift_egress
 step "iso-sandbox tests" run_sandbox_tests
 step "Workflow audit (zizmor)" run_zizmor
 step "Configuration migration tests" python3 tests/test-migrate-config.py

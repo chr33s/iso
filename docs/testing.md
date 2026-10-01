@@ -593,6 +593,16 @@ replace credentialed provider/agent smoke tests or broader memory measurements.
 `python3 scripts/test-swift-egress-jail.py` runs `iso-egress --jail-selftest`
 under `seatbelt-egress.sb` and checks write, exec, and non-443 denial. It does
 not open a public connection or boot a VM.
+
+After `swift build --package-path iso-egress --force-resolved-versions`, run
+`python3 scripts/test-swift-egress-lease.py`. It starts the production companion
+under the unchanged Seatbelt profile with startup JSON on stdin and a real
+renewal pipe on fd 3. Synthetic denied CONNECTs must keep working beyond the
+initial two-second grace period; pipe EOF and missed renewals must terminate
+the process and close its listener and an unfinished guest request. This does
+not exercise the host supervisor, runtime owner/boot checks, successful tunnels,
+public DNS/HTTPS, or a VM. CI and release preflight run these package/process gates.
+
 DNS/candidate admission has the dedicated tests below.
 
 ### Native upstream client shutdown

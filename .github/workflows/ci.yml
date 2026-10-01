@@ -94,6 +94,15 @@ jobs:
       - name: iso-sandbox build and unit tests
         run: swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
 
+      - name: Filtered-egress unit and confined lease gates
+        shell: bash
+        run: |
+          swift format lint --recursive --strict iso-egress/Package.swift iso-egress/Sources iso-egress/Tests
+          swift test --package-path iso-egress --force-resolved-versions
+          swift build --package-path iso-egress --force-resolved-versions
+          python3 scripts/test-swift-egress-jail.py
+          python3 scripts/test-swift-egress-lease.py
+
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke
         shell: bash

@@ -28,7 +28,8 @@ SPDX-License-Identifier: Apache-2.0
 - **Filtered egress** starts `iso-egress` for `egress: "filtered"` and renews
   it only while the protocol-5 live `bootId` still matches. A protocol-4
   runtime cannot start that mode. An approved-versus-denied destination
-  check on a real VM has not been run.
+  check on a real VM has not been run. The companion reads renewals from
+  the supervisor's pipe, and a queued renewal cannot revive an expired lease.
 
 ### Boundary hardening and local secrets
 

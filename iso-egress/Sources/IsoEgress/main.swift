@@ -2,33 +2,6 @@ import Darwin
 import Foundation
 import IsoEgressCore
 
-/// fd 3 is the supervisor's renewal pipe. No byte for 2 seconds, or EOF,
-/// closes the listener. This is not a runtime boot-id check.
-enum Lease {
-  static let fd: Int32 = 3
-  static let limit = Monotonic.nanoseconds(EgressBudgets.lease)
-  static let lock = NSLock()
-  nonisolated(unsafe) static var last = Monotonic.now()
-
-  static func alive() -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    var probe = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-    let ready = poll(&probe, 1, 0)
-    if ready < 0 {
-      return errno == EINTR && Monotonic.within(last, now: Monotonic.now(), limit: limit)
-    }
-    if probe.revents & Int16(POLLIN) != 0 {
-      var byte: UInt8 = 0
-      let count = recv(fd, &byte, 1, 0)
-      if count <= 0 { return false }
-      last = Monotonic.now()
-    }
-    if probe.revents & (Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)) != 0 { return false }
-    return Monotonic.within(last, now: Monotonic.now(), limit: limit)
-  }
-}
-
 struct Startup: Decodable {
   let listen: String
   let capability: String
@@ -48,8 +21,10 @@ enum EgressMain {
     let allow = EgressAllowlist(hosts)
     let fd = try listenLoopback(port)
     let admission = Admission()
+    // fd 3 belongs to the host supervisor, never to a guest HTTP connection.
+    let lease = ControlLease(descriptor: 3)
     FileHandle.standardError.write(Data("iso-egress listening 127.0.0.1:\(port)\n".utf8))
-    while Lease.alive() {
+    while lease.alive() {
       var listen = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
       if poll(&listen, 1, 200) < 0 {
         if errno == EINTR { continue }
@@ -65,7 +40,7 @@ enum EgressMain {
       let capability = startup.capability
       Thread {
         defer { admission.endSocket() }
-        handle(client, allow: allow, capability: capability, admission: admission)
+        handle(client, allow: allow, capability: capability, admission: admission, lease: lease)
       }.start()
     }
     close(fd)
@@ -94,7 +69,8 @@ enum EgressMain {
   }
 
   static func handle(
-    _ client: Int32, allow: EgressAllowlist, capability: String, admission: Admission
+    _ client: Int32, allow: EgressAllowlist, capability: String, admission: Admission,
+    lease: ControlLease
   ) {
     defer { close(client) }
     guard let host = ConnectGate.approvedHost(client, allow: allow, capability: capability) else {
@@ -108,7 +84,7 @@ enum EgressMain {
     do {
       try Tunnel.open(
         client, host: host, connect: { try connectPublic($0, admission: admission) },
-        alive: Lease.alive)
+        alive: lease.alive)
     } catch {
       respond(client, .unsupported)
     }

@@ -32,6 +32,7 @@ PYTHON_GATES = [
     'tests/test-swift-host-data-root-parity.py', 'tests/test-swift-host-cli-surface.py',
     'tests/test-migrate-config.py', 'tests/test-preflight-release.py',
     'scripts/test-swift-proxy-process.py', 'scripts/build-release.py',
+    'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
 ]
 SHELL_GATES = [
     'tests/integration-install.sh', 'tests/integration-update.sh',
@@ -92,6 +93,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         calls = self.calls()
         for call in ('swift format lint --recursive --strict Package.swift Sources tests/swift '
                      'fuzz/Targets fuzz/Entrypoints iso-proxy/Sources iso-proxy/Tests '
+                     'iso-egress/Package.swift iso-egress/Sources iso-egress/Tests '
                      'iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests',
                      'swift build --force-resolved-versions',
                      'swift test --force-resolved-versions',
@@ -120,7 +122,18 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('fuzz.sh smoke 30', calls)
         self.assertIn('swift test --package-path iso-proxy --force-resolved-versions', calls)
         self.assertIn('test-swift-proxy-process.py --skip-tls', calls)
+        self.assertIn('swift test --package-path iso-egress --force-resolved-versions', calls)
+        self.assertIn('swift build --package-path iso-egress --force-resolved-versions', calls)
+        self.assertIn('test-swift-egress-jail.py', calls)
+        self.assertIn('test-swift-egress-lease.py', calls)
         self.assertIn('All required checks passed for v9.8.7.', result.stdout)
+
+    def test_egress_lease_failure_is_fatal(self):
+        self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
+        result = self.run_preflight('--quick', fail='test-swift-egress-lease.py')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL: Swift egress tests and confined lease', result.stdout)
+        self.assertIn('Preflight FAILED', result.stdout)
 
     def test_older_macos_warns_instead_of_building_the_archive(self):
         result = self.run_preflight()
@@ -168,6 +181,7 @@ class ReleaseBinaryTests(unittest.TestCase):
             git('init', '-b', 'main')
             git('config', 'user.name', 'Fixture')
             git('config', 'user.email', 'fixture@example.invalid')
+            git('config', 'commit.gpgsign', 'false')
             git('commit', '--allow-empty', '-m', 'release source')
             git('update-ref', 'refs/remotes/origin/main', 'HEAD')
             accepted = subprocess.run(['bash', '-euc', script], cwd=root)
