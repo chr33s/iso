@@ -33,8 +33,8 @@ description = "Whitespace, final newlines, YAML, large files and merge markers i
 run = "python3 scripts/hygiene.py"
 
 [tasks.lint]
-description = "swift format lint --strict over the host package"
-run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints"
+description = "swift format lint --strict over the host package and the Apple runtime"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests"
 
 [tasks.build]
 description = "Build the Swift host"

@@ -34,7 +34,7 @@ Linux hosts are not.
 ```bash
 swift build --force-resolved-versions
 swift test --force-resolved-versions          # IsoCore/Configuration/Host/CLI + corpus replay
-swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 swift test --sanitize=address --scratch-path .build-asan     # also:
 swift test --sanitize=thread --scratch-path .build-tsan
 swift test --sanitize=undefined --scratch-path .build-ubsan

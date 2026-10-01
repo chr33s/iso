@@ -131,7 +131,7 @@ check_versions() {
 
 run_format() {
   swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints \
-    iso-proxy/Sources iso-proxy/Tests
+    iso-proxy/Sources iso-proxy/Tests iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 }
 
 run_host_tests() {

@@ -61,7 +61,7 @@ The tasks are defined in `mise.toml`. Whatever they cover, run these gates
 before submitting a host change:
 
 ```bash
-swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 swift build --force-resolved-versions
 swift test --force-resolved-versions
 ```

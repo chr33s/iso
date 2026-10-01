@@ -91,7 +91,8 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('Version sources agree; tag v9.8.7 is free.', result.stdout)
         calls = self.calls()
         for call in ('swift format lint --recursive --strict Package.swift Sources tests/swift '
-                     'fuzz/Targets fuzz/Entrypoints iso-proxy/Sources iso-proxy/Tests',
+                     'fuzz/Targets fuzz/Entrypoints iso-proxy/Sources iso-proxy/Tests '
+                     'iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests',
                      'swift build --force-resolved-versions',
                      'swift test --force-resolved-versions',
                      'swift test --package-path iso-sandbox --force-resolved-versions --no-parallel',
