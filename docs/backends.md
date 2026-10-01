@@ -38,12 +38,13 @@ Host Docker is not needed. Docker runs *inside* the guest.
 scripts/build-iso-sandbox.sh            # installs ~/.local/opt/iso-sandbox/bin/iso-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`; isolate refuses a runtime whose protocol or `containerization` version differs from the one it was built for.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. isolate accepts protocol 4 or 5 with containerization 0.45.0 and refuses any other protocol or containerization version. Filtered egress requires protocol 5.
 
 ### Supported combinations
 
 | iso-sandbox | containerization | macOS | Hardware | Evidence |
 |---|---|---|---|---|
+| 0.5.0 (protocol 5) | 0.45.0 | 27.0 | Apple Silicon | Adds `live.bootId`, a random owner identity that is not stored on the disk. The host still accepts protocol 4 for existing commands. Filtered egress requires protocol 5 and refuses to start without a live boot id. A real-VM filtered destination check has not been run. |
 | 0.4.0 (protocol 4) | 0.45.0 | 27.0 | Apple Silicon | Adds the session deadline (`record.expiresAt`, `start --expires-at`) behind `limits.session_ttl`. Evidence: [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) setup and `iso` phases including the session-TTL checks (2026-09-28): 91 passed, 1 skipped by design; the isolation and exposure phases last ran on 0.3.0 |
 | 0.3.0 (protocol 3), refused since protocol 4 | 0.45.0 | 27.0 | Apple Silicon | Adds the per-sandbox `network` mode (`shared` / `host_only`, `create --network`) behind `egress`. Evidence: [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) setup, machine, isolation, exposure and `iso` phases including the egress-none checks (2026-09-28): 108 passed, 2 skipped by design |
 | 0.2.0 (protocol 2), refused since protocol 3 | 0.45.0 | 27.0 | Apple Silicon | [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) (all phases, including maintenance install, same-sandbox races, and the `iso` end-to-end phase): 103 passed, 1 skipped by design ([run record](design/apple-sandbox-transactions.md#4-validation)) |
@@ -109,7 +110,7 @@ explicit `apple_container.binary` still takes precedence. `iso update` targets
 
 `iso setup`:
 
-1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 4, containerization 0.45.0), and creates `owner.json` and the VM-access key pair.
+1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 4 or 5, containerization 0.45.0), and creates `owner.json` and the VM-access key pair. Filtered egress requires protocol 5.
 2. Initializes the runtime root: copies the kernel after checking its pinned sha256, and pulls the pinned init image. Unless the runtime already has the current maintenance image, builds it (Ubuntu with e2fsprogs; log in `maintenance-build.log`), installs it with `iso-sandbox maintenance install`, and deletes the store copy.
 3. Renders a minimal build context in a private temporary directory: a Dockerfile `FROM ubuntu:24.04` pinned by digest, the Apple provisioning script (packages, profiles, OCI features, guest user, Claude Code, Codex, Docker), and a machine-setup script. The context contains the isolate **public** key only. There are no build arguments and no secrets.
 4. Checks that the builder's service is running, then runs `container build --platform linux/arm64 -t local/iso-<owner>:<hash>-<nonce>`, with output in `images/<name>/build.log`. Every build gets a fresh tag, so a rebuild never retags an image in use.

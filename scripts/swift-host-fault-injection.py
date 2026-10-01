@@ -354,6 +354,10 @@ FAULTS = [
      "marker.features == [StateSchema.disposableFeature]",
      "marker.features == []",
      "disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof"),
+    ("filtered-boot-protocol", "Sources/IsoHost/RuntimeProtocol.swift",
+     "advertised == bootIdentity && !(bootID?.isEmpty ?? true)",
+     "advertised == bootIdentity || advertised == 4",
+     "filteredBootRequiresProtocolFiveAndALiveBootID"),
 ]
 
 

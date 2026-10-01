@@ -271,8 +271,24 @@ public struct ProxyLauncher: Sendable {
 
   /// Start the credential-free CONNECT companion for a filtered boot. A missing
   /// binary fails the boot; nothing falls back to NAT.
-  public func startEgress(_ instance: Instance, config: IsoConfig, target: SSHTarget) throws {
+  public func startEgress(
+    _ instance: Instance, config: IsoConfig, target: SSHTarget, runtime: SandboxRuntime?
+  ) throws {
     guard config.egress == .filtered else { return }
+    guard let sidecar = try MachineSidecar.loadIfPresent(instance),
+      let ownerPID = sidecar.lastObservedOwnerPID
+    else {
+      throw HostError("filtered egress requires a recorded sandbox owner for '\(instance.name)'")
+    }
+    guard let runtime else {
+      throw HostError(
+        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity)")
+    }
+    let boot = try runtime.requireFilteredBoot(sidecar.machineID)
+    guard boot.ownerPID == ownerPID else {
+      throw HostError(
+        "filtered egress boot id does not match the recorded sandbox owner for '\(instance.name)'")
+    }
     let binary = try locateEgressBinary()
     let port = EgressPorts.port(instance)
     let capability = randomHex(32)
@@ -282,11 +298,6 @@ public struct ProxyLauncher: Sendable {
       ("capability", .string(capability)),
       ("allowedHosts", .array(hosts.map(OutputJSON.string))),
     ])
-    guard let sidecar = try MachineSidecar.loadIfPresent(instance),
-      let ownerPID = sidecar.lastObservedOwnerPID
-    else {
-      throw HostError("filtered egress requires a recorded sandbox owner for '\(instance.name)'")
-    }
     var leasePipe: [Int32] = [-1, -1]
     guard pipe(&leasePipe) == 0 else { throw HostError("Failed to create the egress lease pipe") }
     defer {
@@ -294,7 +305,8 @@ public struct ProxyLauncher: Sendable {
       if leasePipe[1] >= 0 { close(leasePipe[1]) }
     }
     try spawnLease(
-      instance, machineID: sidecar.machineID.rawValue, ownerPID: ownerPID, writeEnd: leasePipe[1])
+      instance, machineID: sidecar.machineID.rawValue, ownerPID: ownerPID, bootID: boot.bootID,
+      livePath: boot.livePath, writeEnd: leasePipe[1])
     do {
       try spawnEgress(
         instance, port: port, binary: binary, startup: Array(startup.compactRendered().utf8),
@@ -347,8 +359,10 @@ public struct ProxyLauncher: Sendable {
     return candidate
   }
 
-  func spawnLease(_ instance: Instance, machineID: String, ownerPID: Int32, writeEnd: Int32) throws
-  {
+  func spawnLease(
+    _ instance: Instance, machineID: String, ownerPID: Int32, bootID: String, livePath: String,
+    writeEnd: Int32
+  ) throws {
     guard let isoExecutable else { throw HostError("Failed to locate the iso executable") }
     let logPath = instance.directory + "/egress-lease.log"
     let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
@@ -356,7 +370,9 @@ public struct ProxyLauncher: Sendable {
     defer { close(log) }
     let child = try DetachedChild.spawn(
       executable: isoExecutable,
-      arguments: ["egress-lease", instance.directory, machineID, String(ownerPID)],
+      arguments: [
+        "egress-lease", instance.directory, machineID, String(ownerPID), bootID, livePath,
+      ],
       environment: ["PATH": "/usr/bin:/bin"], stdin: .null, stderr: log, inherit: [(writeEnd, 3)])
     try AtomicFile.write(
       Array(String(child.pid).utf8), to: instance.directory + "/egress-lease.pid",

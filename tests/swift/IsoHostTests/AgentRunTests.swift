@@ -120,6 +120,14 @@ import Testing
   #expect(
     EgressLease.stillOwns(directory: "/no/such/instance", machineID: "missing", ownerPID: 1)
       == false)
+  #expect(
+    EgressLease.renewalAllowed(
+      ownsRecordedIdentity: true, liveBootID: "previous", expectedBootID: "current", livePID: 7,
+      expectedPID: 7) == false)
+  #expect(
+    EgressLease.renewalAllowed(
+      ownsRecordedIdentity: true, liveBootID: "current", expectedBootID: "current", livePID: 7,
+      expectedPID: 7))
 }
 
 @Test func disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof() throws {

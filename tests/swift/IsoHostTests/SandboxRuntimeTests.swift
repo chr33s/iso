@@ -49,6 +49,11 @@ let qualifiedVersion =
 @Test func qualificationAcceptsOnlyTheValidatedRuntime() throws {
   let good = try RuntimeProtocol.parseVersion(Array(qualifiedVersion.utf8))
   #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.4.0"))
+  let current =
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
+  #expect(
+    try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(current.utf8))).contains(
+      "protocol 5"))
   for bad in [
     #"{"name":"container","version":"1","protocol":4,"containerization":"0.45.0"}"#,
     #"{"name":"iso-sandbox","version":"0.3.0","protocol":3,"containerization":"0.45.0"}"#,
@@ -60,6 +65,39 @@ let qualifiedVersion =
       try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(bad.utf8)))
     }
   }
+}
+
+@Test func filteredBootRequiresProtocolFiveAndALiveBootID() throws {
+  let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appending(path: "../../fixtures/iso-sandbox/inspect-running.json").standardized
+  var object =
+    try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as! [String: Any]
+  let name = try MachineName("coop-0a1b2c3d-00112233445566ff")
+  let protocol4 =
+    #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#
+  let protocol5 =
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
+  func runtime(_ version: String, _ inspect: [String: Any]) -> SandboxRuntime {
+    let text = String(
+      data: try! JSONSerialization.data(withJSONObject: inspect), encoding: .utf8)!
+    return SandboxRuntime(
+      executor: ScriptedRuntime { args in
+        args == ["version"] ? ScriptedRuntime.ok(version) : ScriptedRuntime.ok(text)
+      }, root: "/state/runtime", settings: .defaults)
+  }
+  #expect(throws: RuntimeError.self) { try runtime(protocol4, object).requireFilteredBoot(name) }
+  var live = object["live"] as! [String: Any]
+  live["bootId"] = ""
+  object["live"] = live
+  #expect(throws: RuntimeError.self) { try runtime(protocol5, object).requireFilteredBoot(name) }
+  live["bootId"] = "abc"
+  object["live"] = live
+  let boot = try runtime(protocol5, object).requireFilteredBoot(name)
+  #expect(boot.bootID == "abc")
+  #expect(boot.ownerPID == 81564)
+  #expect(boot.livePath == "/state/runtime/sandboxes/\(name.rawValue)/live.json")
+  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 4, bootID: "abc") == false)
+  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "") == false)
 }
 
 @Test func unqualifiedRuntimeIsKeptButRefusedForHandOut() throws {

@@ -1,7 +1,7 @@
 import Foundation
 import IsoCore
 
-/// Typed parsers for `iso-sandbox` JSON output (protocol 4). Runtime output
+/// Typed parsers for `iso-sandbox` JSON output (protocols 4 and 5). Runtime output
 /// is untrusted input: every record is decoded into a closed type, reported
 /// identifiers are checked against the one requested, and the effective VM
 /// configuration the isolation gate reads rejects unknown fields, so a
@@ -82,6 +82,8 @@ public struct SandboxRecord: Sendable, Equatable, Codable {
 public struct LiveState: Sendable, Equatable, Codable {
   public let pid: Int32
   public let ipv4: IPv4Address?
+  /// Protocol 5. Absent on a protocol-4 runtime.
+  public let bootId: String?
 }
 
 public struct EffectiveMount: Sendable, Equatable, Decodable {
@@ -201,7 +203,16 @@ public struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 }
 
 public enum RuntimeProtocol {
-  public static let version: UInt32 = 4
+  /// Protocol advertised by this checkout's runtime.
+  public static let version: UInt32 = 5
+  /// Protocol 4 remains usable for commands that do not need a boot id.
+  public static let compatible: Set<UInt32> = [4, 5]
+  public static let bootIdentity: UInt32 = 5
+
+  /// Filtered egress needs the current protocol and a non-empty live boot id.
+  public static func filteredBootAllowed(advertised: UInt32, bootID: String?) -> Bool {
+    advertised == bootIdentity && !(bootID?.isEmpty ?? true)
+  }
 
   static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], _ what: String)
     throws(RuntimeError)

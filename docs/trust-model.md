@@ -304,8 +304,9 @@ exposure, and isolate verifies the effective configuration anyway
   stop request or a signal) reaches the guest through guest-agent calls a root
   guest can wedge, so if the guest is still running ten seconds after the
   forced kill the owner exits, which ends the in-process VM.
-- **Runtime qualification.** `SandboxRuntime` qualification accepts only `iso-sandbox`
-  with protocol 4 and `containerization` 0.45.0. The runtime itself accepts
+- **Runtime qualification.** `SandboxRuntime` qualification accepts `iso-sandbox`
+  protocol 4 or 5 with `containerization` 0.45.0. Filtered egress requires
+  protocol 5 and a live `bootId`. The runtime itself accepts
   only a kernel whose sha256 is in `KernelPin.allowed`. On first `iso setup`,
   `iso-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
   (the runtime's only outbound fetch) and refuses it unless it resolves to the

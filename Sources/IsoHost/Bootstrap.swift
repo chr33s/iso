@@ -393,10 +393,11 @@ public struct AgentBootstrap: Sendable {
   /// post-start hook. `up`/`start` call this once SSH is ready.
   public func bootstrapAndPostStart(
     _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
-    postStartOverride: String?, mode: BootMode, skipAgentBootstrap: Bool = false
+    postStartOverride: String?, mode: BootMode, skipAgentBootstrap: Bool = false,
+    runtime: SandboxRuntime? = nil
   ) throws {
     proxies.stopModelTunnels(instance)
-    try proxies.startEgress(instance, config: config, target: target)
+    try proxies.startEgress(instance, config: config, target: target, runtime: runtime)
     recordBoot(instance)
     let postStart = postStartOverride ?? config.postStart
     let proxyConfigured =

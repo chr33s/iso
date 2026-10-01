@@ -7,8 +7,9 @@ only adds the optional `record.lastOperation`, absent until a sandbox's first `s
 or `restore`, and protocol 3 only adds the optional `record.network` (absent
 for shared-mode sandboxes) and the `vmnet-host:` interface label for
 host-only ones, and protocol 4 only adds the optional `record.expiresAt`
-(absent without a session TTL), so they are unchanged, and `version.json` was
-updated to 0.4.0:
+(absent without a session TTL). Protocol 5 adds optional `live.bootId`,
+absent in these captures, so they still decode. `version.json` remains the
+protocol-4 capture:
 
 - `version.json` — `iso-sandbox version`
 - `inspect-stopped.json` — `iso-sandbox inspect` of a created, stopped sandbox

@@ -163,6 +163,13 @@ public struct ProcessRuntimeExecutor: RuntimeExecutor {
   }
 }
 
+/// Protocol-5 identity captured before a filtered companion starts.
+public struct FilteredBoot: Sendable, Equatable {
+  public let bootID: String
+  public let ownerPID: Int32
+  public let livePath: String
+}
+
 /// A resolved, qualified-or-not `iso-sandbox`. Qualification failure is
 /// kept rather than raised so cleanup of owned resources can still run on
 /// an unqualified runtime; anything that boots or hands out a guest calls
@@ -177,15 +184,25 @@ public struct SandboxRuntime: Sendable {
   public let root: String
   public let settings: AppleContainerConfig
   public let qualification: Result<String, RuntimeError>
+  /// Protocol from a successful version probe, otherwise 0.
+  public let advertisedProtocol: UInt32
 
   public init(executor: any RuntimeExecutor, root: String, settings: AppleContainerConfig) {
     self.executor = executor
     self.root = root
     self.settings = settings
-    qualification = Result { () throws(RuntimeError) in
+    let probed: Result<RuntimeVersion, RuntimeError> = Result { () throws(RuntimeError) in
       let output = try Self.checked(
         executor, ["version"], deadline: settings.probeTimeout.duration, limit: Self.textLimit)
-      return try Self.qualify(RuntimeProtocol.parseVersion(output))
+      return try RuntimeProtocol.parseVersion(output)
+    }
+    switch probed {
+    case .success(let version):
+      advertisedProtocol = version.protocol
+      qualification = Result { () throws(RuntimeError) in try Self.qualify(version) }
+    case .failure(let error):
+      advertisedProtocol = 0
+      qualification = .failure(error)
     }
   }
 
@@ -203,8 +220,8 @@ public struct SandboxRuntime: Sendable {
       settings: config.appleContainer)
   }
 
-  /// Accept only the protocol and containerization release this host was
-  /// validated with.
+  /// Accept protocol 4 or 5 with the containerization release this host was
+  /// validated with. Filtered egress checks protocol 5 separately.
   public static func qualify(_ version: RuntimeVersion) throws(RuntimeError) -> String {
     let identity =
       "\(version.name) \(version.version) (containerization \(version.containerization), protocol \(version.protocol))"
@@ -213,10 +230,11 @@ public struct SandboxRuntime: Sendable {
         "\(identity) is not iso-sandbox; `apple_container.binary` must point at the runtime built by scripts/build-iso-sandbox.sh"
       )
     }
-    guard version.protocol == RuntimeProtocol.version, version.containerization == containerization
+    guard RuntimeProtocol.compatible.contains(version.protocol),
+      version.containerization == containerization
     else {
       throw .unqualified(
-        "\(identity) is not the qualified runtime (protocol \(RuntimeProtocol.version), containerization \(containerization)); rebuild it from this checkout with scripts/build-iso-sandbox.sh"
+        "\(identity) is not a qualified runtime (protocol 4 or \(RuntimeProtocol.version), containerization \(containerization)); rebuild it from this checkout with scripts/build-iso-sandbox.sh"
       )
     }
     return identity
@@ -261,6 +279,24 @@ public struct SandboxRuntime: Sendable {
 
   public func inspect(_ name: MachineName) throws(RuntimeError) -> SandboxInspection {
     try RuntimeProtocol.parseInspect(probe(["inspect"], [name.rawValue]), expected: name)
+  }
+
+  /// Protocol 5 boot identity. A protocol-4 runtime, or a live state without
+  /// `bootId`, fails before filtered egress can start.
+  public func requireFilteredBoot(_ name: MachineName) throws(RuntimeError) -> FilteredBoot {
+    try requireQualified()
+    let inspection = try inspect(name)
+    let bootID = inspection.live?.bootId
+    guard RuntimeProtocol.filteredBootAllowed(advertised: advertisedProtocol, bootID: bootID),
+      let live = inspection.live, let bootID
+    else {
+      throw .unqualified(
+        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity) and a live boot id for \(name); this runtime is protocol \(advertisedProtocol)"
+      )
+    }
+    return FilteredBoot(
+      bootID: bootID, ownerPID: live.pid,
+      livePath: "\(root)/sandboxes/\(name.rawValue)/live.json")
   }
 
   public func images() throws(RuntimeError) -> [RuntimeImage] {

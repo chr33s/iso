@@ -24,7 +24,11 @@ SPDX-License-Identifier: Apache-2.0
   abandoned records.
 - **`iso images inspect` and `iso images cache status`**: host-recorded image
   provenance. Runtime cache allocation is reported as unavailable. Prune and
-  edit are not available. Filtered egress is not enabled.
+  edit are not available.
+- **Filtered egress** starts `iso-egress` for `egress: "filtered"` and renews
+  it only while the protocol-5 live `bootId` still matches. A protocol-4
+  runtime cannot start that mode. An approved-versus-denied destination
+  check on a real VM has not been run.
 
 ### Boundary hardening and local secrets
 

@@ -237,7 +237,7 @@ final class ProjectLifecycle {
     try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.noAgents,
       postStartOverride: options.postStartOverride, mode: .firstBoot,
-      skipAgentBootstrap: options.skipAgentBootstrap)
+      skipAgentBootstrap: options.skipAgentBootstrap, runtime: try backend.runtime())
     try Shutdown.check()
 
     let transfer = context.transfer
@@ -328,7 +328,7 @@ final class ProjectLifecycle {
     try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.noAgents,
       postStartOverride: options.postStartOverride, mode: .restart,
-      skipAgentBootstrap: options.skipAgentBootstrap)
+      skipAgentBootstrap: options.skipAgentBootstrap, runtime: try backend.runtime())
     diagnostics.log(
       .info, "Instance '\(instance.name)' restarted — SSH: \(target.host):\(target.port)")
   }

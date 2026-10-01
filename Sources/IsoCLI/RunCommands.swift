@@ -89,9 +89,13 @@ struct EgressLeaseCommand: ParsableCommand {
   @Argument var instanceDirectory: String
   @Argument var machineID: String
   @Argument var ownerPID: Int32
+  @Argument var bootID: String
+  @Argument var livePath: String
 
   func run() {
-    EgressLease.run(directory: instanceDirectory, machineID: machineID, ownerPID: ownerPID)
+    EgressLease.run(
+      directory: instanceDirectory, machineID: machineID, ownerPID: ownerPID, bootID: bootID,
+      livePath: livePath)
   }
 }
 

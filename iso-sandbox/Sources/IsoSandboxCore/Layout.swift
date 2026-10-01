@@ -3,8 +3,8 @@ import Foundation
 
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
-public let protocolVersion = 4
-public let runtimeVersion = "0.4.0"
+public let protocolVersion = 5
+public let runtimeVersion = "0.5.0"
 public let containerizationVersion = "0.45.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns
@@ -330,6 +330,9 @@ public struct LiveState: Codable, Sendable {
   public var startedAt: Date
   public var ipv4: String?
   public var ipv6: String?
+  /// Random identity for this owner process. Absent in a protocol-4 file.
+  /// It is not part of the disk record, so a restore does not keep it.
+  public var bootId: String? = nil
 }
 
 public enum SandboxStatus: String, Codable, Sendable {

@@ -1,11 +1,18 @@
 import Containerization
 import ContainerizationExtras
 import ContainerizationOCI
+import Darwin
 import Foundation
 import vmnet
 
 /// The process that owns one running sandbox VM. Virtualization.framework
 /// runs the VM in-process, so the owner's lifetime bounds the VM's.
+func makeBootID() -> String {
+  var bytes = [UInt8](repeating: 0, count: 16)
+  arc4random_buf(&bytes, bytes.count)
+  return bytes.map { String(format: "%02x", $0) }.joined()
+}
+
 public enum Owner {
   /// systemd's "halt" request: SIGRTMIN+3 on Linux (SIGRTMIN = 34).
   static let systemdHalt = Signal(rawValue: 37)
@@ -53,7 +60,8 @@ public enum Owner {
     let live = LiveState(
       pid: getpid(), startedAt: Date(),
       ipv4: interface.ipv4Address.address.description,
-      ipv6: interface.ipv6Address?.address.description)
+      ipv6: interface.ipv6Address?.address.description,
+      bootId: makeBootID())
     try JSONEncoder.pretty.encode(live).write(to: paths.live, options: .atomic)
     log("started pid=\(live.pid) ipv4=\(live.ipv4 ?? "-") ipv6=\(live.ipv6 ?? "-")")
 

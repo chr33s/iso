@@ -285,8 +285,8 @@ else
     fail "iso-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 4 on containerization 0.45.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "4 0.45.0"
+check "version reports protocol 5 on containerization 0.45.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "5 0.45.0"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&
     "$CONTAINER" image save --platform linux/arm64 -o "$WORK/image.tar" "$IMAGE" >/dev/null 2>&1; then
     pass "test image builds"

@@ -28,7 +28,7 @@ signed ad hoc. This fork requires macOS 27+ on Apple Silicon and Xcode 27. The p
 underlying API/deployment floor remains macOS 26; that is not a supported-host
 claim for the complete fork.
 
-## CLI (protocol 4)
+## CLI (protocol 5)
 
 Every command except `version` takes `--root <absolute path>`, the state root.
 It is canonicalized with realpath(3), and every path the runtime reports lies
@@ -67,6 +67,10 @@ reconcile                                 clear crashed owners, finish interrupt
 
 Status is `running`, `booting` (owner up, control channel not yet answering),
 `stopped`, or `crashed` (owner died; `start` recovers).
+
+`inspect` of a running sandbox includes `live.bootId`. The owner generates it
+when it starts and does not store it in `record.json`, so restoring a disk
+does not restore it.
 
 `set`, `grow`, and `restore` record `--operation` (or a generated id) as
 `record.lastOperation` when they commit, so a caller can tell after a crash
