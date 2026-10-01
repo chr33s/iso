@@ -139,6 +139,7 @@ public enum ConnectParser {
       throw DenialError(.unsupported)
     }
     let target = String(request[1])
+    guard target.utf8.count <= EgressBudgets.maxTargetBytes else { throw DenialError(.unsupported) }
     guard !target.contains("@"), let colon = target.lastIndex(of: ":") else {
       throw DenialError(.portNotAllowed)
     }
@@ -147,9 +148,14 @@ public enum ConnectParser {
     guard portText == "443", let port = Int(portText) else { throw DenialError(.portNotAllowed) }
     let host: ExactHostname
     do { host = try ExactHostname(hostText) } catch { throw DenialError(.hostNotAllowed) }
+    var headers = Array(lines.dropFirst())
+    while headers.last?.isEmpty == true { headers.removeLast() }
+    guard headers.count <= EgressBudgets.maxHeaders, !headers.contains(where: { $0.isEmpty }) else {
+      throw DenialError(.unsupported)
+    }
     var password: String?
     var seenAuth = false
-    for line in lines.dropFirst() where !line.isEmpty {
+    for line in headers {
       let lower = line.lowercased()
       if lower.hasPrefix("transfer-encoding:") || lower.hasPrefix("content-length:") {
         throw DenialError(.unsupported)
@@ -238,10 +244,18 @@ public enum ConnectGate {
     decide(head, allow: allow, capability: capability)
   }
 
-  public static func readHead(_ client: Int32) -> [UInt8] {
+  public static func readHead(_ client: Int32, deadline: Duration = EgressBudgets.head) -> [UInt8] {
+    let start = Monotonic.now()
+    let limit = Monotonic.nanoseconds(deadline)
     var head = [UInt8]()
     var byte: UInt8 = 0
     while head.count < 16 * 1024 {
+      let now = Monotonic.now()
+      guard Monotonic.within(start, now: now, limit: limit) else { return head }
+      let remain = limit &- (now &- start)
+      var probe = pollfd(fd: client, events: Int16(POLLIN), revents: 0)
+      let milliseconds = Int32(max(1, min(remain / 1_000_000, 1_000)))
+      if poll(&probe, 1, milliseconds) <= 0 { return head }
       if recv(client, &byte, 1, 0) != 1 { return head }
       head.append(byte)
       if head.suffix(4) == [13, 10, 13, 10] { break }

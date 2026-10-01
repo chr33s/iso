@@ -20,7 +20,8 @@ public enum Tunnel {
   /// Copies bytes in both directions until one side closes, `alive` is false,
   /// or `maxReads` reads have completed. Nothing is inserted between the bytes.
   public static func relay(
-    _ left: Int32, _ right: Int32, alive: () -> Bool = { true }, maxReads: Int? = nil
+    _ left: Int32, _ right: Int32, alive: () -> Bool = { true }, maxReads: Int? = nil,
+    idle: Duration = EgressBudgets.idleTunnel
   ) {
     var buffer = [UInt8](repeating: 0, count: 16 * 1024)
     var fds = [
@@ -28,9 +29,15 @@ public enum Tunnel {
       pollfd(fd: right, events: Int16(POLLIN), revents: 0),
     ]
     var reads = 0
+    var last = Monotonic.now()
+    let idleLimit = Monotonic.nanoseconds(idle)
     while alive() {
       if let maxReads, reads >= maxReads { return }
-      if poll(&fds, 2, 200) <= 0 { continue }
+      let now = Monotonic.now()
+      if !Monotonic.within(last, now: now, limit: idleLimit) { return }
+      let remain = idleLimit &- (now &- last)
+      let wait = Int32(max(1, min(remain / 1_000_000, 200)))
+      if poll(&fds, 2, wait) <= 0 { continue }
       for index in 0..<2 where fds[index].revents & Int16(POLLIN) != 0 {
         let count = recv(fds[index].fd, &buffer, buffer.count, 0)
         if count <= 0 { return }
@@ -42,6 +49,7 @@ public enum Tunnel {
           sent += n
         }
         reads += 1
+        last = Monotonic.now()
       }
     }
   }

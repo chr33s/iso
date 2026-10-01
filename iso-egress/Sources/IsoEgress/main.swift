@@ -6,21 +6,23 @@ import IsoEgressCore
 /// closes the listener. This is not a runtime boot-id check.
 enum Lease {
   static let fd: Int32 = 3
-  static let limit: TimeInterval = 2
-  nonisolated(unsafe) static var last = Date()
+  static let limit = Monotonic.nanoseconds(EgressBudgets.lease)
+  nonisolated(unsafe) static var last = Monotonic.now()
 
   static func alive() -> Bool {
     var probe = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
     let ready = poll(&probe, 1, 0)
-    if ready < 0 { return errno == EINTR && Date().timeIntervalSince(last) <= limit }
+    if ready < 0 {
+      return errno == EINTR && Monotonic.within(last, now: Monotonic.now(), limit: limit)
+    }
     if probe.revents & Int16(POLLIN) != 0 {
       var byte: UInt8 = 0
       let count = recv(fd, &byte, 1, 0)
       if count <= 0 { return false }
-      last = Date()
+      last = Monotonic.now()
     }
     if probe.revents & (Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)) != 0 { return false }
-    return Date().timeIntervalSince(last) <= limit
+    return Monotonic.within(last, now: Monotonic.now(), limit: limit)
   }
 }
 
