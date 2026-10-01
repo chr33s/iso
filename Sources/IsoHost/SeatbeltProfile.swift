@@ -102,7 +102,7 @@ enum SeatbeltProfile {
     (allow network-outbound (remote tcp "*:53"))
     (allow network-outbound (remote udp "*:53"))
     (allow network-outbound (remote unix-socket))
-    """#
+    """# + "\n"
 }
 
 enum EgressPorts {

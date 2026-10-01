@@ -14,6 +14,9 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(SeatbeltProfile.proxy == text)
   #expect(SeatbeltProfile.proxy.contains("(deny default)"))
   #expect(SeatbeltProfile.proxy.contains(#"(allow process-exec* (literal (param "PROXY_BIN")))"#))
+  let egressPath = repositoryRoot.appending(path: "Sources/IsoHost/seatbelt-egress.sb").path
+  #expect(SeatbeltProfile.egress == (try #require(readFile(egressPath))))
+  #expect(SeatbeltProfile.egress.contains("(deny default)"))
 }
 
 @Test func proxyPortsArePerInstanceAndPerProvider() throws {

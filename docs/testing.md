@@ -579,6 +579,9 @@ DNS/TLS probe through the owned connection and shared admission budgets. It veri
 both provider identities without sending HTTP requests or credentials, then checks
 that removing the exact trustd permission breaks system verification. It does not
 replace credentialed provider/agent smoke tests or broader memory measurements.
+`python3 scripts/test-swift-egress-jail.py` runs `iso-egress --jail-selftest`
+under `seatbelt-egress.sb` and checks write, exec, and non-443 denial. It does
+not open a public connection or boot a VM.
 DNS/candidate admission has the dedicated tests below.
 
 ### Native upstream client shutdown
