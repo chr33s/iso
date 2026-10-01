@@ -10,6 +10,9 @@ public enum EgressBudgets {
   public static let connect = Duration.seconds(10)
   public static let idleTunnel = Duration.seconds(300)
   public static let lease = Duration.seconds(2)
+  public static let maxSockets = 128
+  public static let maxTunnels = 64
+  public static let maxDNS = 16
 }
 
 public enum Monotonic {

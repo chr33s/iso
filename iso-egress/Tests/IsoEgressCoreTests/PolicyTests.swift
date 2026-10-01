@@ -141,6 +141,27 @@ private final class TunnelHosts: @unchecked Sendable {
   #expect(Monotonic.within(10, now: 9, limit: 2) == false)
 }
 
+@Test func admissionStopsAtTheSpecCaps() {
+  var state = AdmissionState()
+  for _ in 0..<EgressBudgets.maxSockets {
+    state = state.admitSocket()!
+  }
+  #expect(state.admitSocket() == nil)
+  state = state.releaseSocket()
+  #expect(state.admitSocket() != nil)
+  var tunnels = AdmissionState()
+  for _ in 0..<EgressBudgets.maxTunnels {
+    tunnels = tunnels.admitTunnel()!
+  }
+  #expect(tunnels.admitTunnel() == nil)
+  var dns = AdmissionState()
+  for _ in 0..<EgressBudgets.maxDNS {
+    dns = dns.admitDNS()!
+  }
+  #expect(dns.admitDNS() == nil)
+  #expect(dns.releaseDNS().admitDNS() != nil)
+}
+
 @Test func mixedOrLocalAnswersAreNotDialed() {
   #expect(AddressChoice.firstPublic(["1.1.1.1", "10.0.0.1"], local: []) == nil)
   #expect(AddressChoice.firstPublic(["1.1.1.1"], local: ["1.1.1.1"]) == nil)

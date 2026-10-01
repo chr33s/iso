@@ -7,9 +7,12 @@ import IsoEgressCore
 enum Lease {
   static let fd: Int32 = 3
   static let limit = Monotonic.nanoseconds(EgressBudgets.lease)
+  static let lock = NSLock()
   nonisolated(unsafe) static var last = Monotonic.now()
 
   static func alive() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
     var probe = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
     let ready = poll(&probe, 1, 0)
     if ready < 0 {
@@ -44,6 +47,7 @@ enum EgressMain {
     for raw in startup.allowedHosts { hosts.append(try ExactHostname(raw)) }
     let allow = EgressAllowlist(hosts)
     let fd = try listenLoopback(port)
+    let admission = Admission()
     FileHandle.standardError.write(Data("iso-egress listening 127.0.0.1:\(port)\n".utf8))
     while Lease.alive() {
       var listen = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
@@ -53,7 +57,16 @@ enum EgressMain {
       }
       if listen.revents & Int16(POLLIN) == 0 { continue }
       let client = accept(fd, nil, nil)
-      if client >= 0 { handle(client, allow: allow, capability: startup.capability) }
+      guard client >= 0 else { continue }
+      guard admission.trySocket() else {
+        close(client)
+        continue
+      }
+      let capability = startup.capability
+      Thread {
+        defer { admission.endSocket() }
+        handle(client, allow: allow, capability: capability, admission: admission)
+      }.start()
     }
     close(fd)
     Foundation.exit(0)
@@ -74,26 +87,37 @@ enum EgressMain {
         bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
       }
     }
-    guard bound == 0, listen(fd, 16) == 0 else {
+    guard bound == 0, listen(fd, Int32(EgressBudgets.maxSockets)) == 0 else {
       throw PolicyError("bind failed")
     }
     return fd
   }
 
-  static func handle(_ client: Int32, allow: EgressAllowlist, capability: String) {
+  static func handle(
+    _ client: Int32, allow: EgressAllowlist, capability: String, admission: Admission
+  ) {
     defer { close(client) }
     guard let host = ConnectGate.approvedHost(client, allow: allow, capability: capability) else {
       return
     }
+    guard admission.tryTunnel() else {
+      respond(client, .unsupported)
+      return
+    }
+    defer { admission.endTunnel() }
     do {
-      try Tunnel.open(client, host: host, connect: connectPublic, alive: Lease.alive)
+      try Tunnel.open(
+        client, host: host, connect: { try connectPublic($0, admission: admission) },
+        alive: Lease.alive)
     } catch {
       respond(client, .unsupported)
     }
   }
 
-  static func connectPublic(_ host: String) throws -> Int32? {
+  static func connectPublic(_ host: String, admission: Admission) throws -> Int32? {
     let local = HostAddresses.current()
+    guard admission.tryDNS() else { return nil }
+    defer { admission.endDNS() }
     guard let info = Resolver.lookup(host) else { return nil }
     defer { freeaddrinfo(info) }
     var cursor: UnsafeMutablePointer<addrinfo>? = info

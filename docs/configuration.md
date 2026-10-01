@@ -571,7 +571,8 @@ companion or boot id fails the boot; there is no NAT fallback. An unapproved
 CONNECT is denied before a target is chosen. An approved name is relayed byte for byte, without the proxy header, in a
 socket fixture. A slow request head is abandoned after five seconds, DNS after five,
 a connect after ten, and an idle tunnel after 300, all on a monotonic
-clock. A mixed or host-local answer is not dialed. A connection to a public host
+clock. A mixed or host-local answer is not dialed. Accepted sockets stop at
+128, tunnels at 64, and in-flight DNS lookups at 16. A connection to a public host
 has not been proven on a real VM. The companion is a blind CONNECT proxy for
 the recorded allowlist on port 443 only. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.
