@@ -116,6 +116,12 @@ import Testing
   #expect(throws: HostError.self) { try AgentCatalog.review(sourcePath: reserved) }
 }
 
+@Test func egressLeaseStopsWhenTheRecordedOwnerChanges() {
+  #expect(
+    EgressLease.stillOwns(directory: "/no/such/instance", machineID: "missing", ownerPID: 1)
+      == false)
+}
+
 @Test func disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof() throws {
   let root = FileManager.default.temporaryDirectory.appending(path: "iso-run-\(UUID().uuidString)")
     .path

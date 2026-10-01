@@ -282,8 +282,27 @@ public struct ProxyLauncher: Sendable {
       ("capability", .string(capability)),
       ("allowedHosts", .array(hosts.map(OutputJSON.string))),
     ])
-    try spawnEgress(
-      instance, port: port, binary: binary, startup: Array(startup.compactRendered().utf8))
+    guard let sidecar = try MachineSidecar.loadIfPresent(instance),
+      let ownerPID = sidecar.lastObservedOwnerPID
+    else {
+      throw HostError("filtered egress requires a recorded sandbox owner for '\(instance.name)'")
+    }
+    var leasePipe: [Int32] = [-1, -1]
+    guard pipe(&leasePipe) == 0 else { throw HostError("Failed to create the egress lease pipe") }
+    defer {
+      if leasePipe[0] >= 0 { close(leasePipe[0]) }
+      if leasePipe[1] >= 0 { close(leasePipe[1]) }
+    }
+    try spawnLease(
+      instance, machineID: sidecar.machineID.rawValue, ownerPID: ownerPID, writeEnd: leasePipe[1])
+    do {
+      try spawnEgress(
+        instance, port: port, binary: binary, startup: Array(startup.compactRendered().utf8),
+        controlRead: leasePipe[0])
+    } catch {
+      stopEgress(instance)
+      throw error
+    }
     do {
       try AtomicFile.write(
         Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600))
@@ -306,6 +325,7 @@ public struct ProxyLauncher: Sendable {
   }
 
   public func stopEgress(_ instance: Instance) {
+    killPIDFile(instance.directory + "/egress-lease.pid", label: "egress lease", expect: .lease)
     killPIDFile(Self.pidPath(instance, "egress"), label: "egress", expect: .egress)
     killPIDFile(Self.forwardPIDPath(instance, "egress"), label: "egress tunnel", expect: .ssh)
     let capability = EgressPorts.capabilityPath(instance)
@@ -327,7 +347,25 @@ public struct ProxyLauncher: Sendable {
     return candidate
   }
 
-  func spawnEgress(_ instance: Instance, port: UInt16, binary: String, startup: [UInt8]) throws {
+  func spawnLease(_ instance: Instance, machineID: String, ownerPID: Int32, writeEnd: Int32) throws
+  {
+    guard let isoExecutable else { throw HostError("Failed to locate the iso executable") }
+    let logPath = instance.directory + "/egress-lease.log"
+    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    guard log >= 0 else { throw HostError.posix("Failed to create egress lease log", logPath) }
+    defer { close(log) }
+    let child = try DetachedChild.spawn(
+      executable: isoExecutable,
+      arguments: ["egress-lease", instance.directory, machineID, String(ownerPID)],
+      environment: ["PATH": "/usr/bin:/bin"], stdin: .null, stderr: log, inherit: [(writeEnd, 3)])
+    try AtomicFile.write(
+      Array(String(child.pid).utf8), to: instance.directory + "/egress-lease.pid",
+      mode: .atMost(0o644))
+  }
+
+  func spawnEgress(
+    _ instance: Instance, port: UInt16, binary: String, startup: [UInt8], controlRead: Int32
+  ) throws {
     killPIDFile(Self.pidPath(instance, "egress"), label: "stale egress", expect: .egress)
     try Self.requireFreePort(port)
     let resolved =
@@ -344,7 +382,7 @@ public struct ProxyLauncher: Sendable {
       child = try DetachedChild.spawn(
         executable: sandboxExec,
         arguments: ["-D", "EGRESS_BIN=\(resolved)", "-p", SeatbeltProfile.egress, resolved],
-        environment: [:], stdin: .pipe, stderr: log)
+        environment: [:], stdin: .pipe, stderr: log, inherit: [(controlRead, 3)])
     } catch {
       throw ContextError("Failed to spawn \(binary)", cause: error)
     }
@@ -712,6 +750,8 @@ public struct ProxyLauncher: Sendable {
     case egress
     /// A tunnel `ssh`.
     case ssh
+    /// `iso egress-lease`, the renewal process.
+    case lease
 
     func matches(_ command: String) -> Bool {
       let words = command.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
@@ -719,6 +759,7 @@ public struct ProxyLauncher: Sendable {
       case .proxy: return words.contains { ($0 as NSString).lastPathComponent == "iso-proxy" }
       case .egress: return words.contains { ($0 as NSString).lastPathComponent == "iso-egress" }
       case .ssh: return words.first.map { ($0 as NSString).lastPathComponent == "ssh" } ?? false
+      case .lease: return words.contains("egress-lease")
       }
     }
   }
@@ -859,7 +900,7 @@ struct DetachedChild {
 
   static func spawn(
     executable: String, arguments: [String], environment: [String: String], stdin: Input,
-    stderr: Int32
+    stderr: Int32, inherit: [(Int32, Int32)] = []
   ) throws -> DetachedChild {
     var pipeFDs: [Int32] = [-1, -1]
     if stdin == .pipe {
@@ -880,6 +921,9 @@ struct DetachedChild {
     }
     posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)
     posix_spawn_file_actions_adddup2(&actions, stderr, 2)
+    for (source, target) in inherit {
+      posix_spawn_file_actions_adddup2(&actions, source, target)
+    }
     var attributes: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attributes)
     defer { posix_spawnattr_destroy(&attributes) }

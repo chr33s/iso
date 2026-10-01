@@ -80,6 +80,21 @@ struct RunCommand: ParsableCommand {
   }
 }
 
+struct EgressLeaseCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "egress-lease",
+    abstract: "Renew a filtered-egress companion until its recorded boot identity changes",
+    shouldDisplay: false)
+
+  @Argument var instanceDirectory: String
+  @Argument var machineID: String
+  @Argument var ownerPID: Int32
+
+  func run() {
+    EgressLease.run(directory: instanceDirectory, machineID: machineID, ownerPID: ownerPID)
+  }
+}
+
 struct RunCleanup: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "run-cleanup",

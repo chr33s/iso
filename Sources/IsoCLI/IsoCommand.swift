@@ -26,6 +26,7 @@ struct IsoCommand: ParsableCommand {
       Commit.self, Restore.self, ProfilesCommand.self, GitHubCommand.self, ProxyCommand.self,
       SecretsCommand.self, Audit.self,
       Validate.self, Init.self, Update.self, Uninstall.self, Completions.self,
+      EgressLeaseCommand.self,
     ])
 
   @OptionGroup var global: GlobalOptions

@@ -2,6 +2,28 @@ import Darwin
 import Foundation
 import IsoEgressCore
 
+/// fd 3 is the supervisor's renewal pipe. No byte for 2 seconds, or EOF,
+/// closes the listener. This is not a runtime boot-id check.
+enum Lease {
+  static let fd: Int32 = 3
+  static let limit: TimeInterval = 2
+  nonisolated(unsafe) static var last = Date()
+
+  static func alive() -> Bool {
+    var probe = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    let ready = poll(&probe, 1, 0)
+    if ready < 0 { return errno == EINTR && Date().timeIntervalSince(last) <= limit }
+    if probe.revents & Int16(POLLIN) != 0 {
+      var byte: UInt8 = 0
+      let count = recv(fd, &byte, 1, 0)
+      if count <= 0 { return false }
+      last = Date()
+    }
+    if probe.revents & (Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)) != 0 { return false }
+    return Date().timeIntervalSince(last) <= limit
+  }
+}
+
 struct Startup: Decodable {
   let listen: String
   let capability: String
@@ -21,10 +43,18 @@ enum EgressMain {
     let allow = EgressAllowlist(hosts)
     let fd = try listenLoopback(port)
     FileHandle.standardError.write(Data("iso-egress listening 127.0.0.1:\(port)\n".utf8))
-    while true {
+    while Lease.alive() {
+      var listen = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+      if poll(&listen, 1, 200) < 0 {
+        if errno == EINTR { continue }
+        break
+      }
+      if listen.revents & Int16(POLLIN) == 0 { continue }
       let client = accept(fd, nil, nil)
       if client >= 0 { handle(client, allow: allow, capability: startup.capability) }
     }
+    close(fd)
+    Foundation.exit(0)
   }
 
   static func listenLoopback(_ port: UInt16) throws -> Int32 {
@@ -126,8 +156,8 @@ enum EgressMain {
       pollfd(fd: left, events: Int16(POLLIN), revents: 0),
       pollfd(fd: right, events: Int16(POLLIN), revents: 0),
     ]
-    while true {
-      if poll(&fds, 2, 300_000) <= 0 { return }
+    while Lease.alive() {
+      if poll(&fds, 2, 200) <= 0 { continue }
       for index in 0..<2 where fds[index].revents & Int16(POLLIN) != 0 {
         let count = recv(fds[index].fd, &buffer, buffer.count, 0)
         if count <= 0 { return }

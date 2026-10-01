@@ -562,7 +562,9 @@ anything listening on the host's addresses (see the
 [trust model](trust-model.md#apple-sandbox-backend)).
 
 `"filtered"` uses the same host-only network as `"none"` and starts
-`iso-egress` beside the `iso` binary. A missing companion fails the boot;
+`iso-egress` beside the `iso` binary. A host lease renews it once a second;
+the companion exits if that renewal stops or the recorded machine owner
+changes. This is not a runtime boot id. A missing companion fails the boot;
 there is no NAT fallback. The companion is a blind CONNECT proxy for the
 recorded allowlist on port 443 only. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.
