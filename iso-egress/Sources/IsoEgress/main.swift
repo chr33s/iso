@@ -80,27 +80,16 @@ enum EgressMain {
 
   static func handle(_ client: Int32, allow: EgressAllowlist, capability: String) {
     defer { close(client) }
-    var head = [UInt8]()
-    var byte: UInt8 = 0
-    while head.count < 16 * 1024 {
-      if recv(client, &byte, 1, 0) != 1 { return }
-      head.append(byte)
-      if head.suffix(4) == [13, 10, 13, 10] { break }
+    guard let host = ConnectGate.approvedHost(client, allow: allow, capability: capability) else {
+      return
     }
     do {
-      let request = try ConnectParser.parse(head)
-      guard ConnectParser.constantTimeEqual(request.password, capability) else {
-        return respond(client, .authRequired)
-      }
-      guard allow.allows(request.host) else { return respond(client, .hostNotAllowed) }
-      guard let upstream = try connectPublic(request.host.rawValue) else {
+      guard let upstream = try connectPublic(host) else {
         return respond(client, .addressNotPublic)
       }
       defer { close(upstream) }
       respond(client, nil)
       relay(client, upstream)
-    } catch let error as DenialError {
-      respond(client, error.denial)
     } catch {
       respond(client, .unsupported)
     }
@@ -143,11 +132,8 @@ enum EgressMain {
   }
 
   static func respond(_ client: Int32, _ denial: Denial?) {
-    let text =
-      denial == nil
-      ? "HTTP/1.1 200 Connection Established\r\n\r\n"
-      : "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    _ = Array(text.utf8).withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) }
+    let bytes = ConnectGate.responseBytes(denial)
+    _ = bytes.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) }
   }
 
   static func relay(_ left: Int32, _ right: Int32) {

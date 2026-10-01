@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Exact ASCII DNS name. A name does not match a parent, child, or suffix.
@@ -195,4 +196,75 @@ public struct EgressAllowlist: Sendable, Equatable {
   public let hosts: Set<String>
   public init(_ hosts: [ExactHostname]) { self.hosts = Set(hosts.map(\.rawValue)) }
   public func allows(_ host: ExactHostname) -> Bool { hosts.contains(host.rawValue) }
+}
+
+/// Decision before any upstream connection. An unapproved host never becomes
+/// a connect target.
+public enum ConnectDecision: Equatable, Sendable {
+  case connect(String)
+  case deny(Denial)
+}
+
+public enum ConnectGate {
+  public static func decide(_ head: [UInt8], allow: EgressAllowlist, capability: String)
+    -> ConnectDecision
+  {
+    do {
+      let request = try ConnectParser.parse(head)
+      guard ConnectParser.constantTimeEqual(request.password, capability) else {
+        return .deny(.authRequired)
+      }
+      guard allow.allows(request.host) else { return .deny(.hostNotAllowed) }
+      return .connect(request.host.rawValue)
+    } catch let error as DenialError {
+      return .deny(error.denial)
+    } catch {
+      return .deny(.unsupported)
+    }
+  }
+
+  public static func responseBytes(_ denial: Denial?) -> [UInt8] {
+    let text =
+      denial == nil
+      ? "HTTP/1.1 200 Connection Established\r\n\r\n"
+      : "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    return Array(text.utf8)
+  }
+
+  /// The host to connect, or a denial. The caller connects only on success.
+  public static func connectTarget(_ head: [UInt8], allow: EgressAllowlist, capability: String)
+    -> ConnectDecision
+  {
+    decide(head, allow: allow, capability: capability)
+  }
+
+  public static func readHead(_ client: Int32) -> [UInt8] {
+    var head = [UInt8]()
+    var byte: UInt8 = 0
+    while head.count < 16 * 1024 {
+      if recv(client, &byte, 1, 0) != 1 { return head }
+      head.append(byte)
+      if head.suffix(4) == [13, 10, 13, 10] { break }
+    }
+    return head
+  }
+
+  public static func writeResponse(_ client: Int32, _ denial: Denial?) {
+    let bytes = responseBytes(denial)
+    _ = bytes.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) }
+  }
+
+  /// Reads one CONNECT. A denial is written and no host is returned, so the
+  /// caller cannot connect. An approval returns the host and writes nothing.
+  public static func approvedHost(_ client: Int32, allow: EgressAllowlist, capability: String)
+    -> String?
+  {
+    switch connectTarget(readHead(client), allow: allow, capability: capability) {
+    case .deny(let denial):
+      writeResponse(client, denial)
+      return nil
+    case .connect(let host):
+      return host
+    }
+  }
 }
