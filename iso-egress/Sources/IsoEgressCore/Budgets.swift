@@ -6,6 +6,8 @@ public enum EgressBudgets {
   public static let maxHeaders = 64
   public static let maxTargetBytes = 1024
   public static let head = Duration.seconds(5)
+  public static let dns = Duration.seconds(5)
+  public static let connect = Duration.seconds(10)
   public static let idleTunnel = Duration.seconds(300)
   public static let lease = Duration.seconds(2)
 }

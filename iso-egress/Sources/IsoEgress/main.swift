@@ -93,11 +93,8 @@ enum EgressMain {
   }
 
   static func connectPublic(_ host: String) throws -> Int32? {
-    var hints = addrinfo()
-    hints.ai_family = AF_UNSPEC
-    hints.ai_socktype = SOCK_STREAM
-    var info: UnsafeMutablePointer<addrinfo>?
-    guard getaddrinfo(host, "443", &hints, &info) == 0, let info else { return nil }
+    let local = HostAddresses.current()
+    guard let info = Resolver.lookup(host) else { return nil }
     defer { freeaddrinfo(info) }
     var cursor: UnsafeMutablePointer<addrinfo>? = info
     var addresses: [String] = []
@@ -105,13 +102,13 @@ enum EgressMain {
       if let text = numeric(node) { addresses.append(text) }
       cursor = node.pointee.ai_next
     }
-    guard !addresses.isEmpty, addresses.allSatisfy({ AddressPolicy.isPublic($0) }) else {
-      return nil
-    }
+    guard AddressChoice.firstPublic(addresses, local: local) != nil else { return nil }
     guard let first = info.pointee.ai_addr else { return nil }
     let fd = socket(info.pointee.ai_family, SOCK_STREAM, 0)
     guard fd >= 0 else { return nil }
-    if connect(fd, first, info.pointee.ai_addrlen) != 0 {
+    guard Dial.connect(fd, address: first, length: info.pointee.ai_addrlen),
+      Dial.peerIsPublic(fd, local: local)
+    else {
       close(fd)
       return nil
     }

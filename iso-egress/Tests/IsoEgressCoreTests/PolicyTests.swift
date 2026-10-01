@@ -141,6 +141,70 @@ private final class TunnelHosts: @unchecked Sendable {
   #expect(Monotonic.within(10, now: 9, limit: 2) == false)
 }
 
+@Test func mixedOrLocalAnswersAreNotDialed() {
+  #expect(AddressChoice.firstPublic(["1.1.1.1", "10.0.0.1"], local: []) == nil)
+  #expect(AddressChoice.firstPublic(["1.1.1.1"], local: ["1.1.1.1"]) == nil)
+  #expect(AddressChoice.firstPublic(["1.1.1.1", "8.8.8.8"], local: []) == "1.1.1.1")
+  #expect(HostAddresses.current().contains("127.0.0.1"))
+}
+
+@Test func deadlinesAndPeerChecksFailClosed() throws {
+  let started = Monotonic.now()
+  #expect(
+    Deadline.wait(.milliseconds(40)) { () -> Int in
+      Thread.sleep(forTimeInterval: 0.2)
+      return 1
+    } == nil)
+  #expect(Monotonic.now() &- started < 1_000_000_000)
+  #expect(Deadline.wait(.seconds(1)) { 7 } == 7)
+  let listener = socket(AF_INET, SOCK_STREAM, 0)
+  #expect(listener >= 0)
+  var address = sockaddr_in()
+  address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+  address.sin_family = sa_family_t(AF_INET)
+  address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+  let bound = withUnsafePointer(to: &address) {
+    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+    }
+  }
+  #expect(bound == 0)
+  #expect(listen(listener, 1) == 0)
+  var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+  _ = withUnsafeMutablePointer(to: &address) {
+    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &length) }
+  }
+  let client = socket(AF_INET, SOCK_STREAM, 0)
+  let connected = withUnsafePointer(to: &address) {
+    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      Dial.connect(
+        client, address: $0, length: socklen_t(MemoryLayout<sockaddr_in>.size), timeout: .seconds(1)
+      )
+    }
+  }
+  #expect(connected)
+  #expect(Dial.peerIsPublic(client, local: []) == false)
+  close(client)
+  close(listener)
+  let remote = socket(AF_INET, SOCK_STREAM, 0)
+  var blackhole = sockaddr_in()
+  blackhole.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+  blackhole.sin_family = sa_family_t(AF_INET)
+  blackhole.sin_port = UInt16(443).bigEndian
+  blackhole.sin_addr = in_addr(s_addr: inet_addr("192.0.2.1"))
+  let dialStarted = Monotonic.now()
+  let reached = withUnsafePointer(to: &blackhole) {
+    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      Dial.connect(
+        remote, address: $0, length: socklen_t(MemoryLayout<sockaddr_in>.size),
+        timeout: .milliseconds(50))
+    }
+  }
+  #expect(reached == false)
+  #expect(Monotonic.now() &- dialStarted < 1_000_000_000)
+  close(remote)
+}
+
 @Test func slowHeadAndIdleTunnelStop() throws {
   var pair: [Int32] = [-1, -1]
   #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
