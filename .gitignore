@@ -14,8 +14,8 @@ __pycache__/
 /.build/
 /.build-*/
 /.swiftpm/
-/fuzz/.build/
-/fuzz/.swiftpm/
+/*/.build/
+/*/.swiftpm/
 /fuzz/artifacts/
 
 /target/

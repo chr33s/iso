@@ -445,6 +445,12 @@ struct FakeFileSystem: ConfigFileSystem {
 @Test func egressDefaultsToOpenAndAcceptsNone() throws {
   #expect(try load("{}").egress == .open)
   #expect(try load(#"{"egress": "none"}"#).egress == .none)
+  #expect(
+    try load(#"{"egress": "filtered", "egress_filter": {"allowed_hosts": ["Example.COM."]}}"#)
+      .egressFilter.allowedHosts.map(\.rawValue) == ["example.com"])
+  #expect(
+    fieldError(#"{"egress": "none", "egress_filter": {"allowed_hosts": []}}"#)?.field
+      == "egress_filter")
   #expect(fieldError(#"{"egress": "provider-only"}"#)?.field == "egress")
   // `network` stays a retired Firecracker key.
   #expect(throws: (any Error).self) { try load(#"{"network": {"egress": "none"}}"#) }

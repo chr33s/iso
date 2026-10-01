@@ -406,6 +406,37 @@ func parsePortForward(_ text: String) throws -> PortForward {
   do { return try PortForward.parse(text) } catch { throw UsageError(oneLine(error)) }
 }
 
+struct EgressOptions: ParsableArguments {
+  @Option(help: "Egress mode when creating an instance: open, none, or filtered") var egress:
+    String?
+  @Option(
+    name: .customLong("allow-host"),
+    help: "Exact host to approve for a filtered boot. Does not change none or open to filtered"
+  )
+  var allowHost: [String] = []
+}
+
+func applyEgressOverride(_ config: IsoConfig, mode: String?, hosts: [String]) throws -> IsoConfig {
+  guard mode != nil || !hosts.isEmpty else { return config }
+  let resolved: EgressMode
+  if let mode {
+    guard let parsed = EgressMode(rawValue: mode) else {
+      throw HostError("--egress must be open, none, or filtered")
+    }
+    resolved = parsed
+  } else {
+    resolved = config.egress
+  }
+  if !hosts.isEmpty, resolved != .filtered {
+    throw HostError(
+      "--allow-host requires an effective filtered egress; it does not change none or open to filtered"
+    )
+  }
+  var extra: [ExactHostname] = []
+  for host in hosts { extra.append(try ExactHostname(host)) }
+  return config.overridingEgress(resolved, extraHosts: extra)
+}
+
 func parseGuestEnvironment(_ text: String) throws -> (EnvVarName, EnvValue) {
   do { return try GuestEnvState.parseCLIArgument(text) } catch { throw UsageError(oneLine(error)) }
 }
@@ -497,6 +528,7 @@ struct Up: ParsableCommand {
   @Flag(help: "Translate `devcontainer.json` and print the report, then exit before any VM work")
   var dryRun = false
   @Flag(help: "With --dry-run, emit the resolved plan as JSON on stdout") var json = false
+  @OptionGroup var egressOptions: EgressOptions
 
   func validate() throws {
     if newInstance && name == nil {
@@ -536,7 +568,9 @@ struct Up: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global)
+      let context = try CommandContext.load(global) {
+        try applyEgressOverride($0, mode: egressOptions.egress, hosts: egressOptions.allowHost)
+      }
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
       let target = try Self.profileTarget(profiles)
       if target != nil, let image {
@@ -865,6 +899,7 @@ struct Start: ParsableCommand {
     help: "Translate `devcontainer.json` and print the report, then exit before doing any VM work")
   var dryRun = false
   @Flag(help: "With --dry-run, emit the resolved plan as JSON on stdout") var json = false
+  @OptionGroup var egressOptions: EgressOptions
 
   func validate() throws {
     if devcontainer != nil && noDevcontainer {
@@ -878,7 +913,9 @@ struct Start: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global)
+      let context = try CommandContext.load(global) {
+        try applyEgressOverride($0, mode: egressOptions.egress, hosts: egressOptions.allowHost)
+      }
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
       if CommandLine.arguments.contains("--no-claude") {
         context.diagnostics.warn(

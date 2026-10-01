@@ -50,7 +50,8 @@ extension SandboxRuntime {
         "--cpus", String(cpus), "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
         "--owner",
         owner.rawValue,
-      ] + (egress == .none ? ["--network", "host-only"] : []), deadline: createDeadline,
+      ] + (egress.requiresHostOnlyNetwork ? ["--network", "host-only"] : []),
+      deadline: createDeadline,
       limit: Self.jsonLimit, cancellable: true)
   }
 

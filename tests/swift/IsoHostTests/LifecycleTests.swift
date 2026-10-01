@@ -328,13 +328,14 @@ private struct FakeInstallation {
   try backend.stop(running)
 
   // The configuration flipping back to open is refused, not silently widened.
+  // The creation-time policy record answers before the runtime is asked.
   let open = try emptyConfig(
     #""data_dir": "\#(install.root)/data", "apple_container": {"binary": "\#(install.root)/bin/iso-sandbox", "builder": "\#(install.root)/bin/container", "kernel": "\#(install.root)/kernel", "boot_timeout_seconds": 5}"#
   )
-  let error = try #require(throws: RuntimeError.self) {
+  let error = try #require(throws: HostError.self) {
     try backend.reconfigured(open).startExisting(instance)
   }
-  #expect("\(error)".contains("APPLE_NETWORK_ISOLATION"))
+  #expect("\(error)".contains("POLICY_CHANGE_REQUIRES_RESTART"))
   try backend.destroyInstance(instance)
 }
 

@@ -231,6 +231,7 @@ extension AppleBackend {
     let memoryMiB = UInt64(config.vm.memory.mib.value)
     let source: SandboxRuntime.Source =
       manifest.disk.map { .disk($0.name) } ?? .image(manifest.imageRef)
+    try NetworkPolicy.save(config, instance)
     try journal.advance(instance, .create(stage: .creatingMachine))
     try runtime.create(
       machine, source: source, cpus: cpus, memoryMiB: memoryMiB, diskGiB: diskGiB, owner: owner.id,
@@ -265,6 +266,7 @@ extension AppleBackend {
   /// is re-enrolled).
   public func startExisting(_ instance: Instance) throws {
     _ = try config.validated()
+    try NetworkPolicy.enforce(instance, config: config)
     let runtime = try runtime()
     let identity = try runtime.requireQualified()
     let lock = try InstanceStore.lock(instance)

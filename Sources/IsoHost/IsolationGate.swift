@@ -79,9 +79,9 @@ public enum IsolationGate {
         "sandbox \(expected.sandbox) records unknown network mode \(debugQuoted(sanitizeForDisplay(other)))"
       )
     }
-    guard hostOnly == (expected.egress == .none) else {
+    guard hostOnly == expected.egress.requiresHostOnlyNetwork else {
       throw .networkIsolation(
-        "sandbox \(expected.sandbox) was created with egress \(hostOnly ? "none" : "open") but the configuration says \(expected.egress.rawValue); egress is fixed when an instance is created — recreate it (iso destroy, then iso up) or change `egress` back"
+        "sandbox \(expected.sandbox) was created with \(hostOnly ? "host-only" : "shared") networking but the configuration says egress \(expected.egress.rawValue); egress is fixed when an instance is created — recreate it (iso destroy, then iso up) or change `egress` back"
       )
     }
     let recorded = Resources(cpus: record.cpus, memoryBytes: record.memoryBytes)
@@ -182,7 +182,7 @@ public enum IsolationGate {
     ).first
       .flatMap { try? IPv4Address(String($0)) }
     var subnetOK = false
-    let prefix = egress == .none ? "vmnet-host:10.231." : "vmnet-shared:10.231."
+    let prefix = egress.requiresHostOnlyNetwork ? "vmnet-host:10.231." : "vmnet-shared:10.231."
     let suffix = ".0/24"
     if let address, interface.network.hasPrefix(prefix), interface.network.hasSuffix(suffix),
       interface.network.utf8.count > prefix.utf8.count + suffix.utf8.count

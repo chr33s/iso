@@ -122,6 +122,7 @@ public final class AppleBackend: Sendable {
     case .running: break
     }
     do {
+      try NetworkPolicy.enforce(instance, config: config)
       _ = try runtime.requireQualified()
       let ready = try IsolationGate.verifyEffective(
         inspection,

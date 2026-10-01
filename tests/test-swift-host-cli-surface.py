@@ -35,6 +35,10 @@ ALLOWED_EXTRA = {
     ("pull", "--stage-id"): "selective-hardening spec §5: staged workspace return",
     ("pull", "--stat"): "selective-hardening spec §5: staged workspace return",
     ("update", "--allow-downgrade"): "update hardening: anti-rollback opt-in",
+    ("up", "--egress"): "sandboxy spec F1: destination-filtered egress",
+    ("up", "--allow-host"): "sandboxy spec F1: destination-filtered egress",
+    ("start", "--egress"): "sandboxy spec F1: destination-filtered egress",
+    ("start", "--allow-host"): "sandboxy spec F1: destination-filtered egress",
 }
 ALLOWED_MISSING_COMMANDS = {
     "quickstart": "C-03: hidden; fails with the setup/up/claude-or-codex replacement",

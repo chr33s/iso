@@ -75,9 +75,41 @@ public struct IsoConfig: Sendable, Equatable {
   public let appleContainer: AppleContainerConfig
   public let workspacePull: WorkspacePullConfig
   public let egress: EgressMode
+  /// Empty unless `egress` is `filtered`.
+  public let egressFilter: EgressFilter
   public let limits: LimitsConfig
   /// The preset whose defaults this configuration was decoded with.
   public let securityPreset: SecurityPreset?
+
+  public init(
+    dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
+    setup: SetupConfig, claude: AgentConfig, codex: AgentConfig, codexAuth: CodexAuthMode,
+    proxy: ProxyConfig, guestEnvironment: [GuestVariable], profiles: [String: CustomProfile],
+    postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
+    appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
+    egressFilter: EgressFilter = .empty, limits: LimitsConfig, securityPreset: SecurityPreset?
+  ) {
+    self.dataDirectory = dataDirectory
+    self.vm = vm
+    self.sshPort = sshPort
+    self.github = github
+    self.setup = setup
+    self.claude = claude
+    self.codex = codex
+    self.codexAuth = codexAuth
+    self.proxy = proxy
+    self.guestEnvironment = guestEnvironment
+    self.profiles = profiles
+    self.postStart = postStart
+    self.forwardPorts = forwardPorts
+    self.updates = updates
+    self.appleContainer = appleContainer
+    self.workspacePull = workspacePull
+    self.egress = egress
+    self.egressFilter = egressFilter
+    self.limits = limits
+    self.securityPreset = securityPreset
+  }
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
   public static let backendRoot = "backends/apple-container-v1"
@@ -324,6 +356,34 @@ public enum EgressMode: String, Sendable, Equatable {
   /// and iso's SSH tunnels (credential proxy, local models, port forwards)
   /// still work; the guest can still reach services on the host itself.
   case none
+  /// Host-only VM plus a separate CONNECT companion. Not a credential
+  /// control: provider keys still follow `proxy.mode`.
+  case filtered
+
+  /// `none` and `filtered` both use the runtime's host-only network.
+  public var requiresHostOnlyNetwork: Bool { self != .open }
+}
+
+/// Approved exact hostnames for `egress: filtered`. Empty means no general
+/// destinations. Hints from an agent definition are not part of this set.
+public struct EgressFilter: Sendable, Equatable {
+  public static let maxHosts = 256
+  public let allowedHosts: [ExactHostname]
+
+  public init(allowedHosts: [ExactHostname]) {
+    var seen: Set<String> = []
+    var ordered: [ExactHostname] = []
+    for host in allowedHosts where seen.insert(host.rawValue).inserted {
+      ordered.append(host)
+    }
+    self.allowedHosts = ordered.sorted { $0.rawValue < $1.rawValue }
+  }
+
+  public static let empty = EgressFilter(allowedHosts: [])
+
+  public func allowing(_ extra: [ExactHostname]) -> EgressFilter {
+    EgressFilter(allowedHosts: allowedHosts + extra)
+  }
 }
 
 /// `security.preset` (selective-hardening spec §10): defaults for the
@@ -412,7 +472,19 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
-      egress: egress, limits: limits, securityPreset: securityPreset
+      egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset
     )
+  }
+
+  /// This command's egress override. Does not rewrite the config file.
+  public func overridingEgress(_ mode: EgressMode, extraHosts: [ExactHostname] = []) -> IsoConfig {
+    let filter = mode == .filtered ? egressFilter.allowing(extraHosts) : .empty
+    return IsoConfig(
+      dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
+      claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
+      guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
+      securityPreset: securityPreset)
   }
 }

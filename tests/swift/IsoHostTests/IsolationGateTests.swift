@@ -211,9 +211,11 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
 
 @Test func egressNoneRequiresAHostOnlySandbox() throws {
   let shared = try running()
-  // A host-only record and interface pass only when egress is none.
+  // Host-only networking satisfies none and filtered. Shared never does.
   #expect(try gate(try bytes(hostOnly(shared)), egress: .none).sandbox == gateSandbox)
+  #expect(try gate(try bytes(hostOnly(shared)), egress: .filtered).sandbox == gateSandbox)
   #expect(try egressClass(hostOnly(shared), .open) == .network)
+  #expect(try egressClass(shared, .filtered) == .network)
   // A shared (NAT) sandbox never satisfies egress none.
   #expect(try egressClass(shared, .none) == .network)
   // A host-only record whose VM reports a shared interface is refused.

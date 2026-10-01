@@ -203,6 +203,34 @@ extension JSONValue {
 /// Maps a decoded document onto the typed model. Pure: reads only the value
 /// and the injected environment; never touches the filesystem or runs a
 /// credential command.
+func egressFilter(_ reader: ObjectReader) throws(FieldError) -> EgressFilter {
+  let mode = try reader.defaulted("egress", EgressMode.open) { value, path throws(FieldError) in
+    try Parse.stringEnum(value, path, [EgressMode.open, .none, .filtered])
+  }
+  let filter = try reader.optional("egress_filter") { value, path throws(FieldError) in
+    let object = try ObjectReader(value, at: path)
+    try object.rejectUnknown(allowing: ["allowed_hosts"])
+    let hosts = try object.defaulted("allowed_hosts", [ExactHostname]()) {
+      value, path throws(FieldError) in
+      try Parse.array(value, path) { item, itemPath throws(FieldError) in
+        let raw = try Parse.string(item, itemPath)
+        return try Parse.domain(itemPath) { () throws(ValidationError) in try ExactHostname(raw) }
+      }
+    }
+    guard hosts.count <= EgressFilter.maxHosts else {
+      throw FieldError(path + [.key("allowed_hosts")], "more than \(EgressFilter.maxHosts) entries")
+    }
+    return EgressFilter(allowedHosts: hosts)
+  }
+  if mode != .filtered {
+    if filter != nil {
+      throw FieldError(reader.child("egress_filter"), "is valid only with egress \"filtered\"")
+    }
+    return .empty
+  }
+  return filter ?? .empty
+}
+
 enum ConfigDecoder {
   /// Firecracker host settings removed by C-01. Rejected by name even where
   /// unknown keys are otherwise ignored.
@@ -304,8 +332,9 @@ enum ConfigDecoder {
         }
       },
       egress: try r.defaulted("egress", presetDefaults.egress) { v, p throws(FieldError) in
-        try Parse.stringEnum(v, p, [EgressMode.open, .none])
+        try Parse.stringEnum(v, p, [EgressMode.open, .none, .filtered])
       },
+      egressFilter: try egressFilter(r),
       limits: try r.defaulted("limits", .none) { v, p throws(FieldError) in
         let l = try ObjectReader(v, at: p)
         try l.rejectUnknown(allowing: ["session_ttl"])

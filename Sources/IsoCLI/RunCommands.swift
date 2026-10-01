@@ -38,6 +38,9 @@ struct RunCommand: ParsableCommand {
   @Flag(help: "With --dry-run, emit versioned preview JSON on stdout") var json = false
   @Flag(help: "Authorize image preparation, which uses the host network and no project credentials")
   var prepare = false
+  @Option(help: "Egress mode when creating an instance: open, none, or filtered") var egress:
+    String?
+  @Option(help: "Exact host to add for a new filtered boot") var allowHost: [String] = []
   @Argument(
     parsing: .postTerminator,
     help: "Arguments forwarded to the agent. Put them after `--`."
@@ -59,7 +62,10 @@ struct RunCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let (ask, forwarded) = splitAsk(ask, args)
-      let context = try CommandContext.load(global, backgroundWork: !dryRun)
+      let context = try CommandContext.load(
+        global,
+        override: { try applyEgressOverride($0, mode: egress, hosts: allowHost) },
+        backgroundWork: !dryRun)
       let flow = RunFlow(
         context: context, agent: try AgentDefinitionID(self.agent), workspace: workspace,
         name: name,

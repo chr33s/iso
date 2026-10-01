@@ -47,7 +47,7 @@ Comments are not carried over. Once `config.jsonc` exists, a remaining `config.t
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline"}`: defaults for the hardening settings. See [security presets](#security-presets). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
-| `egress` | string | `"open"` | Guest network reach beyond the host: `"open"` (NAT to the host's uplinks) or `"none"`. See [egress](#egress). |
+| `egress` | string | `"open"` | Guest network reach beyond the host: `"open"`, `"none"`, or `"filtered"`. See [egress](#egress). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
 
 ## GitHub auth
@@ -561,8 +561,18 @@ guest from services on the Mac itself: like `"open"`, a guest can connect to
 anything listening on the host's addresses (see the
 [trust model](trust-model.md#apple-sandbox-backend)).
 
+`"filtered"` uses the same host-only network as `"none"`. The separate
+`iso-egress` package can parse an allowlist and a CONNECT request, but this
+host build does not start or supervise that companion yet, so a filtered VM
+has no general route and approved hosts are not reachable through it. It is
+not credential protection: `proxy.mode` still decides whether raw provider
+keys are forwarded. `egress_filter.allowed_hosts` is valid only with
+`"filtered"`; an empty list approves nothing. Agent definition hints are not
+added to that list. An existing instance cannot change its creation-time mode
+through `--egress`.
+
 The mode is fixed when an instance is created; `up`/`start` of an instance
-created under the other mode is refused rather than silently widened or
+created under another mode is refused rather than silently widened or
 narrowed. Recreate the instance (`iso destroy`, then `iso up`) to change it.
 No raw provider credential enters a `"none"` guest, whatever `proxy.mode`
 says: provider variables are withheld (declaring one is an error) and the host
