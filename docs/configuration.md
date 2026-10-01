@@ -561,15 +561,14 @@ guest from services on the Mac itself: like `"open"`, a guest can connect to
 anything listening on the host's addresses (see the
 [trust model](trust-model.md#apple-sandbox-backend)).
 
-`"filtered"` uses the same host-only network as `"none"`. The separate
-`iso-egress` package can parse an allowlist and a CONNECT request, but this
-host build does not start or supervise that companion yet, so a filtered VM
-has no general route and approved hosts are not reachable through it. It is
-not credential protection: `proxy.mode` still decides whether raw provider
-keys are forwarded. `egress_filter.allowed_hosts` is valid only with
-`"filtered"`; an empty list approves nothing. Agent definition hints are not
-added to that list. An existing instance cannot change its creation-time mode
-through `--egress`.
+`"filtered"` uses the same host-only network as `"none"` and starts
+`iso-egress` beside the `iso` binary. A missing companion fails the boot;
+there is no NAT fallback. The companion is a blind CONNECT proxy for the
+recorded allowlist on port 443 only. It is not credential protection:
+`proxy.mode` still decides whether raw provider keys are forwarded.
+`egress_filter.allowed_hosts` is valid only with `"filtered"`; an empty list
+approves nothing. Agent definition hints are not added to that list. An
+existing instance cannot change its creation-time mode through `--egress`.
 
 The mode is fixed when an instance is created; `up`/`start` of an instance
 created under another mode is refused rather than silently widened or

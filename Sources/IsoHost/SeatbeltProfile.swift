@@ -82,4 +82,33 @@ enum SeatbeltProfile {
     (allow network-outbound (remote unix-socket))
 
     """#
+
+  /// Blind CONNECT companion. No TLS trust evaluation and no credential files.
+  static let egress = #"""
+    (version 1)
+    (deny default)
+    (allow process-exec* (literal (param "EGRESS_BIN")))
+    (allow file-read*)
+    (allow sysctl-read)
+    (allow system-socket)
+    (allow process-info* (target self))
+    (allow mach-lookup
+      (global-name "com.apple.mDNSResponder")
+      (global-name "com.apple.system.opendirectoryd.libinfo")
+      (global-name "com.apple.system.logger"))
+    (allow network-bind (local ip "localhost:*"))
+    (allow network-inbound (local ip "localhost:*"))
+    (allow network-outbound (remote tcp "*:443"))
+    (allow network-outbound (remote tcp "*:53"))
+    (allow network-outbound (remote udp "*:53"))
+    (allow network-outbound (remote unix-socket))
+    """#
+}
+
+enum EgressPorts {
+  static let base: UInt16 = 10788
+  static func port(_ instance: Instance) -> UInt16 { base &+ instance.index.value }
+  static func capabilityPath(_ instance: Instance) -> String {
+    instance.directory + "/egress-capability"
+  }
 }

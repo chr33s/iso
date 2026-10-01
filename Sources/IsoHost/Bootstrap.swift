@@ -307,7 +307,29 @@ public struct AgentBootstrap: Sendable {
         }
       }
     }
+    if config.egress == .filtered, let instance {
+      try applyFilteredProxy(&env, instance)
+    }
     return SSHSession(target: target, env: env)
+  }
+
+  /// Managed proxy variables for a filtered boot. User config cannot override
+  /// them. The capability is guest-visible by design and is not logged.
+  func applyFilteredProxy(_ env: inout EnvForward, _ instance: Instance) throws {
+    guard let bytes = try StateStore.readControlFile(EgressPorts.capabilityPath(instance)),
+      let capability = String(validating: bytes, as: UTF8.self), !capability.isEmpty
+    else {
+      throw HostError(
+        "filtered egress has no capability for '\(instance.name)'; restart the instance"
+      )
+    }
+    let port = EgressPorts.port(instance)
+    let value = Secret("http://iso:\(capability)@127.0.0.1:\(port)")
+    for name in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"] {
+      env.set(name, value)
+    }
+    env.set("NO_PROXY", Secret("localhost,127.0.0.1"))
+    env.set("no_proxy", Secret("localhost,127.0.0.1"))
   }
 
   /// One batch resolution for every reference in `state`, each checked to
@@ -374,6 +396,7 @@ public struct AgentBootstrap: Sendable {
     postStartOverride: String?, mode: BootMode, skipAgentBootstrap: Bool = false
   ) throws {
     proxies.stopModelTunnels(instance)
+    try proxies.startEgress(instance, config: config, target: target)
     recordBoot(instance)
     let postStart = postStartOverride ?? config.postStart
     let proxyConfigured =

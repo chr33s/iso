@@ -262,10 +262,116 @@ public struct ProxyLauncher: Sendable {
     }
   }
 
-  /// Every provider proxy and every model tunnel (stop/destroy).
+  /// Every provider proxy, the filtered-egress companion, and every model tunnel.
   public func stopAll(_ instance: Instance) {
     for provider in ProxyProvider.allCases { stop(instance, provider: provider) }
+    stopEgress(instance)
     stopModelTunnels(instance)
+  }
+
+  /// Start the credential-free CONNECT companion for a filtered boot. A missing
+  /// binary fails the boot; nothing falls back to NAT.
+  public func startEgress(_ instance: Instance, config: IsoConfig, target: SSHTarget) throws {
+    guard config.egress == .filtered else { return }
+    let binary = try locateEgressBinary()
+    let port = EgressPorts.port(instance)
+    let capability = randomHex(32)
+    let hosts = config.egressFilter.allowedHosts.map(\.rawValue)
+    let startup = OutputJSON.object([
+      ("listen", .string("127.0.0.1:\(port)")),
+      ("capability", .string(capability)),
+      ("allowedHosts", .array(hosts.map(OutputJSON.string))),
+    ])
+    try spawnEgress(
+      instance, port: port, binary: binary, startup: Array(startup.compactRendered().utf8))
+    do {
+      try AtomicFile.write(
+        Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600))
+    } catch {
+      stopEgress(instance)
+      throw error
+    }
+    do {
+      try spawnReverseForward(
+        instance, name: "egress", target: target, guestPort: port,
+        hostAddress: try IPv4Address("127.0.0.1"), hostPort: port)
+    } catch {
+      stopEgress(instance)
+      throw error
+    }
+    diagnostics.log(
+      .info,
+      "Started filtered egress companion on 127.0.0.1:\(port) (guest loopback, port 443 only)"
+    )
+  }
+
+  public func stopEgress(_ instance: Instance) {
+    killPIDFile(Self.pidPath(instance, "egress"), label: "egress", expect: .egress)
+    killPIDFile(Self.forwardPIDPath(instance, "egress"), label: "egress tunnel", expect: .ssh)
+    let capability = EgressPorts.capabilityPath(instance)
+    if unlink(capability) != 0 && errno != ENOENT {
+      diagnostics.debug("Failed to remove egress capability \(capability) (non-fatal)")
+    }
+  }
+
+  func locateEgressBinary() throws -> String {
+    guard let isoExecutable else { throw HostError("Failed to locate the iso executable") }
+    let directory = (isoExecutable as NSString).deletingLastPathComponent
+    let candidate = directory + "/iso-egress"
+    var status = stat()
+    guard stat(candidate, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+      throw HostError(
+        "iso-egress not found next to iso at \(directory). Filtered egress cannot start; build iso-egress and place it beside iso. No NAT fallback is used."
+      )
+    }
+    return candidate
+  }
+
+  func spawnEgress(_ instance: Instance, port: UInt16, binary: String, startup: [UInt8]) throws {
+    killPIDFile(Self.pidPath(instance, "egress"), label: "stale egress", expect: .egress)
+    try Self.requireFreePort(port)
+    let resolved =
+      realpath(binary, nil).map { pointer in
+        defer { free(pointer) }
+        return String(cString: pointer)
+      } ?? binary
+    let logPath = Self.logPath(instance, "egress")
+    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    guard log >= 0 else { throw HostError.posix("Failed to create egress log", logPath) }
+    defer { close(log) }
+    var child: DetachedChild
+    do {
+      child = try DetachedChild.spawn(
+        executable: sandboxExec,
+        arguments: ["-D", "EGRESS_BIN=\(resolved)", "-p", SeatbeltProfile.egress, resolved],
+        environment: [:], stdin: .pipe, stderr: log)
+    } catch {
+      throw ContextError("Failed to spawn \(binary)", cause: error)
+    }
+    do {
+      try child.writeAndCloseStdin(startup)
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !Self.accepts(port: port) {
+        if let status = child.poll() {
+          throw HostError("iso-egress exited before listening (\(status))")
+        }
+        if ContinuousClock.now >= deadline {
+          throw HostError("Timed out waiting for iso-egress to listen on 127.0.0.1:\(port)")
+        }
+        usleep(50_000)
+      }
+      try Self.requireListener(child.pid, port: port)
+    } catch {
+      child.kill()
+      throw error
+    }
+    do {
+      try AtomicFile.write(
+        Array(String(child.pid).utf8), to: Self.pidPath(instance, "egress"), mode: .atMost(0o644))
+    } catch {
+      child.kill()
+      throw error
+    }
   }
 
   /// The persisted Codex capability token, if a proxy is running.
@@ -602,6 +708,8 @@ public struct ProxyLauncher: Sendable {
   enum RecordedProcess {
     /// `iso-proxy` (sandbox-exec replaced itself with it).
     case proxy
+    /// `iso-egress` (sandbox-exec replaced itself with it).
+    case egress
     /// A tunnel `ssh`.
     case ssh
 
@@ -609,6 +717,7 @@ public struct ProxyLauncher: Sendable {
       let words = command.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
       switch self {
       case .proxy: return words.contains { ($0 as NSString).lastPathComponent == "iso-proxy" }
+      case .egress: return words.contains { ($0 as NSString).lastPathComponent == "iso-egress" }
       case .ssh: return words.first.map { ($0 as NSString).lastPathComponent == "ssh" } ?? false
       }
     }
