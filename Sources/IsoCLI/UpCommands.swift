@@ -29,6 +29,9 @@ struct StartOptions {
   var persistedGuestEnvironment: [EnvVarName: EnvValue] = [:]
   var devcontainerPath: String?
   var appliedDevcontainer: AppliedDevcontainer?
+  /// Skip Claude/Codex bootstrap without disabling the required-proxy check.
+  /// Used by a generic no-auth `iso run`.
+  var skipAgentBootstrap = false
 }
 
 /// One command's lifecycle: the loaded configuration plus the explicit
@@ -233,7 +236,8 @@ final class ProjectLifecycle {
     }
     try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.noAgents,
-      postStartOverride: options.postStartOverride, mode: .firstBoot)
+      postStartOverride: options.postStartOverride, mode: .firstBoot,
+      skipAgentBootstrap: options.skipAgentBootstrap)
     try Shutdown.check()
 
     let transfer = context.transfer
@@ -323,7 +327,8 @@ final class ProjectLifecycle {
     try GuestEnvState(entries: guestEnvironment).save(instance, diagnostics: diagnostics)
     try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.noAgents,
-      postStartOverride: options.postStartOverride, mode: .restart)
+      postStartOverride: options.postStartOverride, mode: .restart,
+      skipAgentBootstrap: options.skipAgentBootstrap)
     diagnostics.log(
       .info, "Instance '\(instance.name)' restarted — SSH: \(target.host):\(target.port)")
   }
@@ -335,7 +340,8 @@ final class ProjectLifecycle {
     -> Instance?
   {
     let matching = try listInstances().filter {
-      WorkspaceState.loadOrWarn(
+      guard Self.affinityCandidate($0, diagnostics: diagnostics) else { return false }
+      return WorkspaceState.loadOrWarn(
         $0, consequence: "workspace-affinity matching will skip this instance",
         diagnostics: diagnostics)?.source.hostPath == canonical
     }
@@ -347,9 +353,25 @@ final class ProjectLifecycle {
     }
   }
 
+  /// Disposable runs are not adopted by project affinity. Unreadable
+  /// feature state is skipped rather than treated as a persistent match.
+  static func affinityCandidate(_ instance: Instance, diagnostics: Diagnostics) -> Bool {
+    switch InstanceAffinity.eligibility(instance) {
+    case .eligible: return true
+    case .disposable:
+      diagnostics.debug("skipping disposable instance '\(instance.name)' for project affinity")
+      return false
+    case .unreadable(let reason):
+      diagnostics.warn(
+        "skipping instance '\(instance.name)' for project affinity: \(reason)")
+      return false
+    }
+  }
+
   func gitRepoInstance(_ url: String) throws -> Instance? {
     let matching = try listInstances().filter {
-      WorkspaceState.loadOrWarn(
+      guard Self.affinityCandidate($0, diagnostics: diagnostics) else { return false }
+      return WorkspaceState.loadOrWarn(
         $0, consequence: "git-repo matching will skip this instance", diagnostics: diagnostics)?
         .source == .gitRepo(url: url)
     }

@@ -141,6 +141,45 @@ public enum StateSchema {
     try check(StateStore.decode(Header.self, bytes, path: path), path: path, want: want)
     return try StateStore.decode(T.self, bytes, path: path)
   }
+
+  /// Schema 2 sidecars stay readable. Schema 3 is accepted only with a known
+  /// feature list; anything else fails closed. A version-2 reader still
+  /// refuses schema 3 via `check`.
+  static func decodeSidecar(_ bytes: [UInt8], path: String) throws -> MachineSidecar {
+    let header = try StateStore.decode(Header.self, bytes, path: path)
+    guard header.backend == backend else {
+      throw RuntimeError.identityConflict(
+        "\(path) belongs to backend \(debugQuoted(header.backend)), not \(backend); refusing to use it"
+      )
+    }
+    switch header.schemaVersion {
+    case version:
+      let sidecar = try StateStore.decode(MachineSidecar.self, bytes, path: path)
+      if sidecar.features != nil {
+        throw RuntimeError.identityConflict(
+          "\(path) is schema \(version) but carries feature annotations")
+      }
+      return sidecar
+    case featureVersion:
+      let sidecar = try StateStore.decode(MachineSidecar.self, bytes, path: path)
+      let features = sidecar.features ?? []
+      guard !features.isEmpty else {
+        throw RuntimeError.identityConflict(
+          "\(path) is schema \(featureVersion) without required features")
+      }
+      if let unknown = features.first(where: { !knownFeatures.contains($0) }) {
+        throw RuntimeError.identityConflict("\(path) requires unknown feature \(unknown)")
+      }
+      return sidecar
+    default:
+      // Preserve the version-1 retired-backend explanation and the generic
+      // mismatch used by a version-2 reader.
+      try check(header, path: path, want: version)
+      throw RuntimeError.identityConflict(
+        "\(path) has schema version \(header.schemaVersion); this build understands \(version) and \(featureVersion)"
+      )
+    }
+  }
 }
 
 // MARK: - Owner
@@ -202,6 +241,14 @@ public struct MachineSidecar: Sendable, Equatable, Codable {
   public var reenrollHostKey: Bool
   public var createdAt: String
   public var runtimeIdentity: String
+  /// Present only on schema 3. Schema 2 records leave this nil and do not
+  /// write the key.
+  public var features: [String]? = nil
+
+  public var isDisposableRun: Bool {
+    schemaVersion == StateSchema.featureVersion
+      && features?.contains(StateSchema.disposableFeature) == true
+  }
 
   public static func path(_ instance: Instance) -> String {
     instance.directory + "/apple-machine.json"
@@ -210,7 +257,15 @@ public struct MachineSidecar: Sendable, Equatable, Codable {
   public static func loadIfPresent(_ instance: Instance) throws -> MachineSidecar? {
     let path = path(instance)
     guard let bytes = try StateStore.readControlFile(path) else { return nil }
-    return try StateSchema.decode(MachineSidecar.self, bytes, path: path)
+    return try StateSchema.decodeSidecar(bytes, path: path)
+  }
+
+  /// Mark a created sandbox as disposable. A baseline host refuses schema 3.
+  public func markingDisposable() -> MachineSidecar {
+    var copy = self
+    copy.schemaVersion = StateSchema.featureVersion
+    copy.features = [StateSchema.disposableFeature]
+    return copy
   }
 
   /// Refuse a record that is not this installation's, or whose runtime name
@@ -242,6 +297,7 @@ public struct MachineSidecar: Sendable, Equatable, Codable {
     case reenrollHostKey = "reenroll_host_key"
     case createdAt = "created_at"
     case runtimeIdentity = "runtime_identity"
+    case features
   }
 
   /// Optional fields are written as `null`, as serde does, not omitted.
@@ -263,6 +319,9 @@ public struct MachineSidecar: Sendable, Equatable, Codable {
     try c.encode(reenrollHostKey, forKey: .reenrollHostKey)
     try c.encode(createdAt, forKey: .createdAt)
     try c.encode(runtimeIdentity, forKey: .runtimeIdentity)
+    if schemaVersion >= StateSchema.featureVersion {
+      try c.encode(features ?? [], forKey: .features)
+    }
   }
 }
 

@@ -335,6 +335,25 @@ FAULTS = [
     ("stage-content-digest", "Sources/IsoHost/WorkspaceStageApply.swift",
      "guard copied == digest else {", "guard copied == digest || true else {",
      "stageTamperingAfterReviewIsRefused"),
+    ("agent-unknown-field", "Sources/IsoConfiguration/AgentDefinition.swift",
+     """    try reader.rejectUnknown(allowing: [
+      "schema_version", "id", "display_name", "environment", "launch", "auth_adapter",
+      "network_hints",
+    ])""",
+     "",
+     "definitionRejectsUnknownFieldsAndBudgets"),
+    ("agent-env-allowlist", "Sources/IsoConfiguration/AgentDefinition.swift",
+     "guard AgentEnvironmentAllowlist.names.contains(key) else {",
+     "guard true || AgentEnvironmentAllowlist.names.contains(key) else {",
+     "definitionRejectsUnknownFieldsAndBudgets"),
+    ("agent-catalog-nofollow", "Sources/IsoHost/AgentCatalog.swift",
+     "let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)",
+     "let fd = open(path, O_RDONLY | O_CLOEXEC)",
+     "catalogInstallUsesTheReviewedValueAndRejectsSymlinks"),
+    ("disposable-affinity", "Sources/IsoHost/RunSession.swift",
+     "marker.features == [StateSchema.disposableFeature]",
+     "marker.features == []",
+     "disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof"),
 ]
 
 

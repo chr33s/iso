@@ -362,7 +362,10 @@ struct ModelCommand: ParsableCommand {
 struct AgentCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "agent", abstract: "Manage the coding agents installed inside a VM",
-    subcommands: [AgentUpdateCommand.self])
+    subcommands: [
+      AgentListCommand.self, AgentInspectCommand.self, AgentAddCommand.self,
+      AgentUpdateCommand.self,
+    ])
 }
 
 struct AgentUpdateCommand: ParsableCommand {

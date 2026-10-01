@@ -54,7 +54,10 @@ preserve historical experiments; the acceptance map identifies outstanding gates
     Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
     references;
   - [`selective-hardening-spec.md`](design/selective-hardening-spec.md):
-    staged workspace return, `proxy.mode`, egress modes, budgets, and audit.
+    staged workspace return, `proxy.mode`, egress modes, budgets, and audit;
+  - [`sandboxy-inspired-features-spec.md`](design/sandboxy-inspired-features-spec.md):
+    proposed one-command sessions, declarative agents, image inspection, and
+    destination-filtered egress. Filtered egress is not implemented.
 
 ## For users
 

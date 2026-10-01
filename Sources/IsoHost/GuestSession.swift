@@ -200,6 +200,37 @@ public enum InteractiveSSH {
     session.sshOptions + ["-e", "~", "-t", session.target.address, remote]
   }
 
+  /// Guest command in `workingDirectory`. A missing directory fails the
+  /// remote `cd`; nothing is created on the host or in the guest.
+  public static func remote(_ command: [String], workingDirectory: GuestPath) -> String {
+    "cd \(shellEscape(workingDirectory.rawValue)) && "
+      + command.map(shellEscape).joined(separator: " ")
+  }
+
+  /// Like `run`, but returns the ssh status and can skip the PTY. Used by
+  /// `iso run` so agent and cleanup outcomes stay distinguishable.
+  public static func runReporting(
+    _ client: SSHClient, _ session: SSHSession, _ command: [String],
+    workingDirectory: GuestPath, allocatePTY: Bool, diagnostics: Diagnostics
+  ) throws -> ProcessRunner.Termination {
+    let remote = Self.remote(command, workingDirectory: workingDirectory)
+    diagnostics.log(
+      .info, "Connecting via SSH to \(session.target.host):\(session.target.port) (\(remote))")
+    guard let ssh = client.sshExecutable() else {
+      throw HostError("Failed to launch SSH — is the ssh client installed?")
+    }
+    var environment = session.env.overlay(client.environment)
+    if allocatePTY { environment["TERM"] = guestTerm(client.environment) }
+    let arguments =
+      allocatePTY
+      ? session.sshOptions + ["-e", "~", "-t", session.target.address, remote]
+      : session.sshOptions + [session.target.address, remote]
+    let termination = try client.runner.attached(
+      client.request(ssh, arguments, environment: environment), inheritStdin: true)
+    if allocatePTY && !termination.succeeded { restoreTerminal(client) }
+    return termination
+  }
+
   /// With a PTY; a failed session leaves the terminal restored.
   public static func run(
     _ client: SSHClient, _ session: SSHSession, _ command: [String], diagnostics: Diagnostics

@@ -106,7 +106,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Backend and runtime | `AppleBackend` (probes, liveness proofs, SSH target), `AppleLifecycle` (create/boot/stop/destroy/resize/commit/restore with journals), `AppleSetup` + `ImageBuild` + `ImageRecords` (image preparation and records), `SandboxRuntime` (the narrow runtime-client seam), `RuntimeOperations` (mutating runtime calls, deadlines, cancellability), `RuntimeProtocol` (typed parsers for untrusted runtime output) |
 | Processes and signals | `ProcessRunner` (the one subprocess launcher: argv, environment, bounded capture, deadlines, process groups), `ChildGroups` (forward termination signals to child groups), `Shutdown` (sticky SIGINT/SIGTERM flag for interruptible operations) |
 | SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (`SendEnv` forwarding, minimal guest-bound environment), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
-| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
+| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `AgentCatalog` / `AgentLaunchPlan` (definition catalog and reviewed adapter dispatch), `RunSession` (disposable-run ownership), `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
 | GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
@@ -122,7 +122,9 @@ options, `init` alias, removed `quickstart`, exit-status mapping),
 `ReadCommands.swift` (`CommandContext`, list/status/logs and other read-only
 commands), `LifecycleCommands.swift` (setup, stop, destroy, resize, commit,
 restore), `UpCommands.swift` (up/start/shell/exec and the shared start
-machinery), `AgentCommands.swift` (claude/codex/agent/model), `WorkspaceCommands.swift`
+machinery), `AgentCommands.swift` (claude/codex/agent/model),
+`AgentDefinitionCommands.swift` (agent list/inspect/add),
+`RunCommands.swift` (`run` and `run-cleanup`), `WorkspaceCommands.swift`
 (push/pull/editor/ssh-config), `DevcontainerCommands.swift`,
 `GitHubCommands.swift`, and `AdminCommands.swift` (update, uninstall).
 

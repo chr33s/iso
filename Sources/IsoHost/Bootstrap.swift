@@ -371,7 +371,7 @@ public struct AgentBootstrap: Sendable {
   /// post-start hook. `up`/`start` call this once SSH is ready.
   public func bootstrapAndPostStart(
     _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
-    postStartOverride: String?, mode: BootMode
+    postStartOverride: String?, mode: BootMode, skipAgentBootstrap: Bool = false
   ) throws {
     proxies.stopModelTunnels(instance)
     recordBoot(instance)
@@ -409,8 +409,12 @@ public struct AgentBootstrap: Sendable {
         "forwarding \(raw.joined(separator: ", ")) into the guest in plain text; `iso proxy setup` keeps provider credentials on the host"
       )
     }
-    if noAgents {
-      diagnostics.log(.info, "Skipping guest agent bootstrap (--no-agents)")
+    if noAgents || skipAgentBootstrap {
+      diagnostics.log(
+        .info,
+        noAgents
+          ? "Skipping guest agent bootstrap (--no-agents)"
+          : "Skipping unrelated Claude/Codex bootstrap for a no-auth launch")
     } else {
       try bootstrapAgents(session, instance: instance, mode: mode)
     }

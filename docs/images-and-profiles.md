@@ -174,6 +174,12 @@ Delete a named image:
 iso images --delete polyglot
 ```
 
+`iso images inspect <name>` reports host-recorded provenance (recipe hash,
+profiles, guest user, digest when a manifest exists). Unknown fields stay
+unknown. `iso images cache status` lists manifests and instance records
+without measuring runtime allocation or deleting anything. Prune and edit are
+not available.
+
 ## Committing an instance to an image
 
 `iso commit` captures a stopped instance's filesystem as a new image, the inverse of the template-to-instance copy `iso up` performs. Like `docker container commit`, it saves files — not live memory.

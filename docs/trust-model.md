@@ -80,6 +80,14 @@ user launched it.
 - **Downloaded update artifacts.** `Update.swift` tarball + `SHA256SUMS` from the
   release host — gated by a maintainer signature over `SHA256SUMS`, the
   checksum and (best-effort) Sigstore attestation.
+- **Installed agent definitions.** `iso agent add` copies a reviewed JSON
+  document into `<data_dir>/agents/`. The file is untrusted input: it can
+  select an existing image or profile and a compiled adapter, and it can
+  suggest hostnames, but it cannot grant network destinations, read a host
+  secret, mount a host path, or run a host command. `iso run` builds guest
+  argv with `RemoteCommand` escaping and does not re-read the file after the
+  launch plan is frozen. A disposable instance is marked so `iso up` will not
+  adopt it.
 - **OCI feature blobs.** `DevcontainerOCI.swift` pulls devcontainer *Features*
   from GHCR; the install snippet runs **in the guest**, not the host. isolate
   verifies the manifest against its own bytes (and any `@sha256:` pin and

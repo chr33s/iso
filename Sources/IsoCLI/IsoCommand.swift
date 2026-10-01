@@ -19,7 +19,8 @@ struct IsoCommand: ParsableCommand {
     version: IsoVersion.string,
     subcommands: [
       Up.self, Quickstart.self, Setup.self, DevcontainerCommand.self, Start.self, Shell.self,
-      ClaudeCommand.self, ClaudeAgentsCommand.self, CodexCommand.self, Stop.self, Destroy.self,
+      ClaudeCommand.self, ClaudeAgentsCommand.self, CodexCommand.self, RunCommand.self,
+      RunCleanup.self, Stop.self, Destroy.self,
       List.self, Status.self, AgentCommand.self, ModelCommand.self, Logs.self, Push.self,
       Pull.self, Diff.self, Exec.self, Editor.self, SSHConfigCommand.self, Images.self, Resize.self,
       Commit.self, Restore.self, ProfilesCommand.self, GitHubCommand.self, ProxyCommand.self,

@@ -8,6 +8,24 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Agent sessions
+
+- **`iso run`**: one command resolves a project the way `iso up` does, then
+  launches Claude, Codex, or an installed agent definition. A warm match is
+  not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a
+  VM, build an image, resolve a credential, or check for updates.
+- **Agent definitions**: `iso agent list|inspect|add` installs a host-owned
+  JSON definition. Definitions request a reviewed `none`, `claude`, or
+  `codex` adapter and may suggest hosts; they do not grant network,
+  credentials, or mounts. `iso agent update` is unchanged.
+- **`--rm`**: creates a new disposable instance, marks it ineligible for
+  project affinity, and destroys it only when the session record proves
+  ownership. A pending staged pull is retained. `iso run-cleanup` reconciles
+  abandoned records.
+- **`iso images inspect` and `iso images cache status`**: host-recorded image
+  provenance. Runtime cache allocation is reported as unavailable. Prune and
+  edit are not available. Filtered egress is not enabled.
+
 ### Boundary hardening and local secrets
 
 - **Staged pulls**: `iso diff` and `iso pull --review` pull the guest

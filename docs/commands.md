@@ -454,6 +454,78 @@ $ iso status my-project --json
 }
 ```
 
+### `run`
+
+Ensure a project environment is running, then launch an agent. This reuses
+`up`'s project affinity. A running match is not pushed, rebuilt, or
+bootstrapped again, and guest output is not copied back.
+
+```
+iso run <agent> [--workspace DIR] [--name NAME]
+        [--image NAME | --profile LIST]
+        [--prepare] [--rm] [--ask] [--dry-run] [--json]
+        [-- AGENT_ARGS...]
+```
+
+| Flag | Description |
+|------|-------------|
+| `<agent>` | `claude`, `codex`, or an installed definition id |
+| `--workspace <dir>` | Project directory (default: current directory) |
+| `--name <name>` | Instance name. Must match the recorded workspace when both are set |
+| `--image <name>` | Image for a new instance. Mutually exclusive with `--profile` |
+| `--profile <list>` | Profile set for a new instance. Replaces a definition's environment selector |
+| `--prepare` | Authorize image preparation. Preparation uses the host network and receives neither the workspace nor provider credentials |
+| `--rm` | Create a new disposable instance and destroy it after the agent exits. Never attaches cleanup to an existing VM |
+| `--ask` | Use the adapter's permission prompts instead of its default bypass |
+| `--dry-run` | Print the prospective launch. Does not start a VM, build an image, resolve a credential, or check for updates |
+| `--json` | With `--dry-run`, emit a versioned preview on stdout |
+| `-- AGENT_ARGS` | Arguments forwarded to the agent. They are not interpreted by a host shell |
+
+Filtered egress is not enabled. Definition network hints are shown and are not grants. `iso claude` and `iso codex` keep their existing behavior. A disposable instance is not adopted by a later `iso up`.
+
+```
+iso run claude
+iso run codex --name payments
+iso run claude --rm --workspace ./scratch
+iso run codex --workspace ./service --dry-run --json
+```
+
+### `run-cleanup`
+
+Reconcile an abandoned disposable run. Deletes an instance only when the session record, owner, marker, and sandbox id agree. A pending staged pull is retained.
+
+```
+iso run-cleanup --dry-run
+iso run-cleanup --session <ID>
+```
+
+### `agent list`
+
+List built-in and installed agent definitions. Invalid catalog files are reported and are not used.
+
+```
+iso agent list
+```
+
+### `agent inspect`
+
+Show one definition without launching it, resolving a credential, or making a network request.
+
+```
+iso agent inspect <id> [--json]
+```
+
+### `agent add`
+
+Validate a `.json` or `.jsonc` definition, show the canonical copy, and install it under `<data_dir>/agents/<id>.json`. Repository files are not discovered or approved automatically. `--yes` confirms installation; replacement also requires `--replace`.
+
+```
+iso agent add ./repo-helper.jsonc
+iso agent add ./claude-review.jsonc --yes
+```
+
+A definition selects an image or profile and a reviewed adapter (`none`, `claude`, or `codex`). It cannot grant mounts, credentials, host commands, or network destinations.
+
 ### `agent update`
 
 Update the coding agents (Claude Code and Codex) installed inside a running VM
@@ -719,7 +791,11 @@ iso images [FLAGS]
 ```
 iso images
 iso images --delete old-image
+iso images inspect default
+iso images cache status
 ```
+
+`inspect` reports host-recorded provenance. Unknown legacy fields stay unknown. Runtime cache allocation is reported as unavailable rather than guessed. `cache status` distinguishes manifests from instance records and does not sum shared disk space. Prune and edit are not available.
 
 With `--json`, each element is `{ "name", "profiles", "created", "size_bytes" }`.
 Absence is modelled honestly: `profiles` is `[]` (not `"none"`), `created` is

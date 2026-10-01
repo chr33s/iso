@@ -19,20 +19,23 @@ struct CommandContext {
   let diagnostics: Diagnostics
   let ssh: SSHClient
 
-  static func load(_ global: GlobalOptions, override: (IsoConfig) throws -> IsoConfig = { $0 })
-    throws
-    -> CommandContext
-  {
+  static func load(
+    _ global: GlobalOptions, override: (IsoConfig) throws -> IsoConfig = { $0 },
+    backgroundWork: Bool = true
+  ) throws -> CommandContext {
     let environment = ConfigEnvironment.process
     try checkDataRoot(global, environment)
     let config = try override(
       ConfigLoader.load(global.selection(environment: environment), environment: environment))
     let diagnostics = Diagnostics(verbosity: global.verbose)
-    AdminSupport.updateNotice(config, environment: environment, diagnostics: diagnostics)
-    // Every credential resolver in this process reads `vault:` references
-    // through the one store.
-    CredentialResolver.processSecrets = StoreSecretResolver.shared(
-      EnclaveStore(directory: config.dataDirectory.appending("secrets").path))
+    // Dry-run must not check for updates or attach a credential resolver.
+    if backgroundWork {
+      AdminSupport.updateNotice(config, environment: environment, diagnostics: diagnostics)
+      // Every credential resolver in this process reads `vault:` references
+      // through the one store.
+      CredentialResolver.processSecrets = StoreSecretResolver.shared(
+        EnclaveStore(directory: config.dataDirectory.appending("secrets").path))
+    }
     return CommandContext(
       environment: environment, config: config,
       backend: AppleBackend(
@@ -232,7 +235,9 @@ func parseInstanceName(_ text: String) throws -> InstanceName {
 // MARK: - images
 
 struct Images: ParsableCommand {
-  static let configuration = CommandConfiguration(abstract: "List or manage golden images")
+  static let configuration = CommandConfiguration(
+    abstract: "List or manage golden images",
+    subcommands: [ImagesInspect.self, ImagesCache.self])
 
   @OptionGroup var global: GlobalOptions
   @Option(help: "Delete a named image", transform: parseImageName) var delete: ImageName?
@@ -278,6 +283,55 @@ struct Images: ParsableCommand {
       context.output.out(
         "\(image.name) profiles: \(padded(profiles, 30)) created: \(padded(image.config?.created ?? "unknown", 24)) size: n/a (runtime image store)"
       )
+    }
+  }
+}
+
+struct ImagesInspect: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "inspect",
+    abstract: "Show host-recorded image provenance. Runtime cache details may be unavailable.")
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(help: "Image name", transform: parseImageName) var name: ImageName
+  @Flag(help: "Emit JSON") var json = false
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global, backgroundWork: false)
+      let report = try ImageInspectionReport.inspect(context.config, name)
+      if json {
+        context.output.write(report.json.rendered())
+      } else {
+        for line in report.lines { context.output.out(line) }
+      }
+    }
+  }
+}
+
+struct ImagesCache: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "cache", abstract: "Report image-cache records without deleting them",
+    subcommands: [ImagesCacheStatus.self])
+}
+
+struct ImagesCacheStatus: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "status",
+    abstract: "Distinguish manifests from instance records. Runtime allocation is not measured.")
+
+  @OptionGroup var global: GlobalOptions
+  @Flag(help: "Emit JSON") var json = false
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global, backgroundWork: false)
+      let report = try ImageInspectionReport.cacheStatus(context.config)
+      if json {
+        context.output.write(report.json.rendered())
+      } else {
+        for line in report.lines { context.output.out(line) }
+      }
     }
   }
 }

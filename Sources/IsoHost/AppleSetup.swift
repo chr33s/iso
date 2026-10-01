@@ -12,10 +12,13 @@ public struct SetupOptions: Sendable {
   public var builderTimeout: Duration?
   /// devcontainer Features resolved from the registry, installed in order.
   public var ociFeatures: [ResolvedFeature]
+  /// `iso run` sets this so a stale or missing image is not rebuilt without
+  /// `--prepare`. `iso setup` leaves it false.
+  public var refuseRebuild: Bool
 
   public init(
     rebuild: Bool, profiles: [ProfileDefinition], image: ImageName, guestUser: GuestUser,
-    builderTimeout: Duration?, ociFeatures: [ResolvedFeature] = []
+    builderTimeout: Duration?, ociFeatures: [ResolvedFeature] = [], refuseRebuild: Bool = false
   ) {
     self.rebuild = rebuild
     self.profiles = profiles
@@ -23,7 +26,10 @@ public struct SetupOptions: Sendable {
     self.guestUser = guestUser
     self.builderTimeout = builderTimeout
     self.ociFeatures = ociFeatures
+    self.refuseRebuild = refuseRebuild
   }
+
+  public static let preparationRequiredPrefix = "PREPARATION_REQUIRED"
 }
 
 /// `template-config.json` as the Apple backend writes it.
@@ -181,6 +187,11 @@ extension AppleBackend {
     {
       diagnostics.log(.info, "Image '\(options.image)' is up to date (\(previous.imageRef))")
       return
+    }
+    if options.refuseRebuild {
+      throw HostError(
+        "\(SetupOptions.preparationRequiredPrefix): image '\(options.image)' needs preparation. Re-run with --prepare. Preparation uses the host network and does not receive the project workspace or provider credentials."
+      )
     }
     let builder = try ImageBuilder.open(config, environment: environment)
     try builder.requireService()
