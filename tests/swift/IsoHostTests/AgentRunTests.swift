@@ -116,6 +116,21 @@ import Testing
   #expect(throws: HostError.self) { try AgentCatalog.review(sourcePath: reserved) }
 }
 
+@Test func egressLeaseClosesAtTheSessionDeadline() throws {
+  let directory = FileManager.default.temporaryDirectory.appending(
+    path: "iso-lease-\(UUID().uuidString)", directoryHint: .isDirectory)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let record = directory.appending(path: "record.json")
+  try Data(#"{"expiresAt":"2020-01-01T00:00:00Z"}"#.utf8).write(to: record)
+  #expect(EgressLease.sessionOpen(recordPath: record.path, now: Date()) == false)
+  try Data("{}".utf8).write(to: record)
+  #expect(EgressLease.sessionOpen(recordPath: record.path, now: Date()))
+  #expect(
+    EgressLease.sessionOpen(
+      recordPath: directory.appending(path: "missing.json").path, now: Date()) == false)
+}
+
 @Test func egressLeaseStopsWhenTheRecordedOwnerChanges() {
   #expect(
     EgressLease.stillOwns(directory: "/no/such/instance", machineID: "missing", ownerPID: 1)
@@ -123,11 +138,15 @@ import Testing
   #expect(
     EgressLease.renewalAllowed(
       ownsRecordedIdentity: true, liveBootID: "previous", expectedBootID: "current", livePID: 7,
-      expectedPID: 7) == false)
+      expectedPID: 7, sessionOpen: true) == false)
   #expect(
     EgressLease.renewalAllowed(
       ownsRecordedIdentity: true, liveBootID: "current", expectedBootID: "current", livePID: 7,
-      expectedPID: 7))
+      expectedPID: 7, sessionOpen: true))
+  #expect(
+    EgressLease.renewalAllowed(
+      ownsRecordedIdentity: true, liveBootID: "current", expectedBootID: "current", livePID: 7,
+      expectedPID: 7, sessionOpen: false) == false)
 }
 
 @Test func disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof() throws {

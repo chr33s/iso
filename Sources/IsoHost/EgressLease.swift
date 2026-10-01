@@ -21,13 +21,25 @@ public enum EgressLease {
     return (bootID, Int32(pid))
   }
 
-  /// Both the host record and the runtime's current boot must match.
+  /// A missing or unreadable record, or an unparseable deadline, is closed.
+  /// No `expiresAt` means the session has no TTL.
+  public static func sessionOpen(recordPath: String, now: Date) -> Bool {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: recordPath)),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return false }
+    guard let text = object["expiresAt"] as? String else { return true }
+    guard let deadline = ISO8601DateFormatter().date(from: text) else { return false }
+    return now < deadline
+  }
+
+  /// Both the host record and the runtime's current boot must match, and the
+  /// session deadline must not have passed.
   public static func renewalAllowed(
     ownsRecordedIdentity: Bool, liveBootID: String?, expectedBootID: String, livePID: Int32?,
-    expectedPID: Int32
+    expectedPID: Int32, sessionOpen: Bool
   ) -> Bool {
     ownsRecordedIdentity && liveBootID == expectedBootID && !expectedBootID.isEmpty
-      && livePID == expectedPID
+      && livePID == expectedPID && sessionOpen
   }
 
   public static func run(
@@ -36,12 +48,13 @@ public enum EgressLease {
     let fd: Int32 = 3
     while true {
       let live = liveIdentity(at: livePath)
+      let recordPath = (livePath as NSString).deletingLastPathComponent + "/record.json"
       guard
         renewalAllowed(
           ownsRecordedIdentity: stillOwns(
             directory: directory, machineID: machineID, ownerPID: ownerPID),
           liveBootID: live?.bootID, expectedBootID: bootID, livePID: live?.pid,
-          expectedPID: ownerPID)
+          expectedPID: ownerPID, sessionOpen: sessionOpen(recordPath: recordPath, now: Date()))
       else { return }
       var byte: UInt8 = 1
       if write(fd, &byte, 1) != 1 { return }

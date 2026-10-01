@@ -358,6 +358,10 @@ FAULTS = [
      "advertised == bootIdentity && !(bootID?.isEmpty ?? true)",
      "advertised == bootIdentity || advertised == 4",
      "filteredBootRequiresProtocolFiveAndALiveBootID"),
+    ("filtered-lease-deadline", "Sources/IsoHost/EgressLease.swift",
+     "&& livePID == expectedPID && sessionOpen",
+     "&& livePID == expectedPID",
+     "egressLeaseStopsWhenTheRecordedOwnerChanges"),
 ]
 
 
