@@ -93,6 +93,40 @@ private let otherKey =
       == "local/coop-aaaaaaaa:\(id.prefix(16))-01234567")
 }
 
+@Test(arguments: [0, 42]) func imageAPTCommandsExposeProgressAndBoundRepositoryReads(
+  aptExit: Int
+) throws {
+  let context = BuildContext.render(publicKey: key, profiles: [], guestUser: .default)
+  let dockerfile = try #require(context.files.first { $0.name == "Dockerfile" }?.content)
+  let provision = try #require(context.files.first { $0.name == "provision.sh" }?.content)
+  let options =
+    "-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+  #expect(dockerfile.contains("apt-get \(options) update;"))
+  #expect(dockerfile.contains("apt-get \(options) install -y --no-install-recommends"))
+  #expect(!dockerfile.contains("-qq"))
+
+  // Execute the rendered package block with an argv-recording APT stand-in.
+  // No repository setup, package installation or guest configuration runs here.
+  let start = try #require(provision.range(of: "echo '  [guest] Updating package lists...'"))
+  let end = try #require(provision[start.lowerBound...].range(of: " < /dev/null\n"))
+  let header = provision.components(separatedBy: "\n").prefix(6).joined(separator: "\n")
+  let stub = "apt-get() { printf '<%s>\\n' \"$@\"; return \(aptExit); }\n"
+  let script = header + "\n" + stub + provision[start.lowerBound..<end.upperBound]
+  let output = try ProcessRunner().capture(
+    .init(
+      executable: "/bin/bash", arguments: [], environment: [:], deadline: .seconds(5),
+      input: Array(script.utf8)))
+  #expect(output.termination == .exited(Int32(aptExit)))
+  let arguments = String(decoding: output.stdout, as: UTF8.self)
+  let calls = aptExit == 0 ? 2 : 1
+  for option in ["Acquire::Retries=2", "Acquire::http::Timeout=30", "Acquire::https::Timeout=30"] {
+    #expect(arguments.components(separatedBy: "<\(option)>").count - 1 == calls)
+  }
+  #expect(arguments.contains("<update>"))
+  #expect(arguments.contains("<install>") == (aptExit == 0))
+  #expect(!arguments.contains("<-qq>"))
+}
+
 private func emptyConfig(_ extra: String = "") throws -> IsoConfig {
   try ConfigLoader.decode(
     ConfigLoader.parse(Array("{\(extra)}".utf8), format: .jsonc, path: "c", limits: .configuration),

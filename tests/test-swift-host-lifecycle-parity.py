@@ -308,6 +308,13 @@ def main():
     parser.add_argument("--swift", required=True)
     args = parser.parse_args()
     golden = json.loads(args.golden.read_text())
+    # Keep the recorded baseline intact; image recipe revisions substitute
+    # only their reviewed hashes (including the 16-character image-tag prefix).
+    for revision in golden.get("revisions", []):
+        for before, after in revision.get("substitutions", {}).items():
+            for field in ("steps", "contexts"):
+                text = json.dumps(golden[field])
+                golden[field] = json.loads(text.replace(before, after).replace(before[:16], after[:16]))
     failures = []
     with tempfile.TemporaryDirectory(prefix="iso-lifecycle-") as base:
         # A fixed synthetic key: it feeds manifest ids and build contexts, so

@@ -65,8 +65,9 @@ runtime in `tests/fixtures/fake-runtime/` (also a fake `container` builder),
 and also compares the runtime call sequence, the resulting state files, and
 the captured image build contexts byte for byte. An intended change to the
 guest image changes those contexts and every hash derived from them; record it
-in the golden's `revisions` list as the old→new hash substitutions (applied to
-the golden), and confirm that reversing them reproduces the previous golden
+in the golden's `revisions` list as the old→new hash substitutions (the runner
+applies them to the recorded contexts/state/calls, including image-tag prefixes),
+and confirm that reversing them reproduces the previous golden
 exactly, so nothing else changed. The data-root check covers
 the refusal of upstream coop state in the default `~/.iso`. The CLI-surface
 check compares every baseline command path and option in
@@ -436,8 +437,18 @@ what unit tests cannot:
   (`ISO_KILL_FRACTIONS`), and the next `start` must recover.
 
 It builds the runtime, a small test image (`tests/fixtures/apple-sandbox/`),
-and `iso`, all under a temporary work directory, and removes its state root,
-sandboxes, and images on exit (`--keep` retains the work directory):
+and `iso`, all under a temporary work directory. The `iso` phase uses an explicit
+`boundary-fixture` profile with Claude/Codex stubs that exit 125 if invoked;
+all its successful guest boots use `--no-agents`. This phase qualifies VM
+lifecycle and isolation, not native agent installation or execution. Native
+agent checks remain part of the separate proxy/agent gates.
+
+The suite removes its state root, sandboxes, and images on exit. On failure,
+it first copies build/setup and other top-level logs into a private
+`iso-sandbox-failure.*` directory and prints that path; no VM or disk is kept.
+`--keep` instead retains the complete work directory and its resources.
+Run `python3 tests/test-apple-integration-harness.py` for offline cleanup and
+agent-stub regressions (also in CI):
 
 ```bash
 ./tests/integration-apple-sandbox.sh                   # ~20 min

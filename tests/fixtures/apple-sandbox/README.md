@@ -7,6 +7,10 @@ which boots real `iso-sandbox` VMs (parser fixtures for the unit tests are in
 - `image/` — the small test image the suite builds with stock `container`:
   systemd, sshd, Docker, and the probe tools. `verify.sh` checks it from inside
   the guest.
+- `stub-agents.sh` — the `iso` phase's explicit `boundary-fixture` profile.
+  It supplies Claude/Codex executables that exit 125 if invoked, avoiding native
+  agent downloads in a lifecycle suite that always uses `--no-agents`. This
+  fixture does not qualify agent installation or agent execution.
 - `peer-probe.sh` — run as root in one sandbox against another; prints one
   JSON line per isolation probe (TCP/UDP/ICMP over IPv4/IPv6, forged routes,
   static neighbours, spoofed source, broadcast/multicast).

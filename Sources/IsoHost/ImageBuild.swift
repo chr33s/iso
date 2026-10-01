@@ -209,8 +209,8 @@ public struct BuildContext: Sendable, Equatable {
     COPY . \(contextDirectory)/
     RUN set -eux; \\
         export DEBIAN_FRONTEND=noninteractive; \\
-        apt-get update -qq; \\
-        apt-get install -y -qq --no-install-recommends \\
+        apt-get \(Provisioning.aptNetworkOptions) update; \\
+        apt-get \(Provisioning.aptNetworkOptions) install -y --no-install-recommends \\
             ca-certificates curl gnupg systemd systemd-sysv dbus openssh-server sudo \\
             iproute2 iputils-ping lsb-release e2fsprogs; \\
         bash \(contextDirectory)/provision.sh; \\
@@ -292,6 +292,10 @@ public final class TemporaryDirectory: @unchecked Sendable {
 
 /// The provisioning script run inside the image build.
 public enum Provisioning {
+  // Bound stalled repository reads without extending the overall image-build deadline.
+  static let aptNetworkOptions =
+    "-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+
   public static let basePackages = [
     "openssh-server", "dbus-user-session", "curl", "wget", "git", "build-essential",
     "ca-certificates", "gnupg",
@@ -312,17 +316,17 @@ public enum Provisioning {
     s += "set -euo pipefail\n"
     s += "export DEBIAN_FRONTEND=noninteractive\n"
     s += "export DPKG_OPTIONS='--force-confnew'\n"
-    s += "APT_OPTS=(-o Dpkg::Options::=--force-confnew)\n\n"
+    s += "APT_OPTS=(\(aptNetworkOptions) -o Dpkg::Options::=--force-confnew)\n\n"
     s += EmbeddedResources.guestScript("gh-cli-repo.sh") + "\n"
     s += EmbeddedResources.guestScript("docker-repo.sh") + "\n"
     for pre in profiles.compactMap(\.preInstall) {
       s += "\n" + pre + (pre.hasSuffix("\n") ? "" : "\n")
     }
     s += "\necho '  [guest] Updating package lists...'\n"
-    s += "apt-get update -qq\n\n"
+    s += "apt-get \"${APT_OPTS[@]}\" update\n\n"
     let packages = basePackages + ghPackages + dockerPackages + profiles.flatMap(\.aptPackages)
     s += "echo '  [guest] Installing all packages...'\n"
-    s += "apt-get install -y -qq \"${APT_OPTS[@]}\" --no-install-recommends \\\n    "
+    s += "apt-get \"${APT_OPTS[@]}\" install -y --no-install-recommends \\\n    "
     s += packages.joined(separator: " ") + " < /dev/null\n"
     for post in profiles.compactMap(\.postInstall) {
       s += "\n" + post + (post.hasSuffix("\n") ? "" : "\n")

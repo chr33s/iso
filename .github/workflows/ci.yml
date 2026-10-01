@@ -67,6 +67,9 @@ jobs:
           python3 tests/test-swift-host-data-root-parity.py --golden tests/baseline/parity/data-root.json --swift .build/debug/iso
           python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
 
+      - name: VM integration harness regression tests
+        run: python3 tests/test-apple-integration-harness.py
+
       - name: Release preflight regression tests
         run: python3 tests/test-preflight-release.py
 

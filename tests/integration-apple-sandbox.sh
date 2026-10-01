@@ -202,6 +202,23 @@ isolated() {
 cleanup() {
     local rc=$?
     if (( KEEP == 0 )); then
+        # Keep diagnostic files on failure, not live VMs or sparse disks. A
+        # pointer into WORK is otherwise useless after this cleanup removes it.
+        if (( rc != 0 )); then
+            local diagnostics log
+            umask 077
+            if diagnostics="$(mktemp -d "${TMPDIR:-/tmp}/iso-sandbox-failure.XXXXXX")"; then
+                for log in "$WORK"/*.log; do
+                    [[ ! -f "$log" ]] || cp "$log" "$diagnostics/"
+                done
+                for log in maintenance-build.log images/default/build.log; do
+                    [[ ! -f "$WORK/iso-data/backends/apple-container-v1/$log" ]] ||
+                        cp "$WORK/iso-data/backends/apple-container-v1/$log" \
+                            "$diagnostics/${log//\//-}"
+                done
+                echo "Failure logs kept at $diagnostics" >&2
+            fi
+        fi
         if [[ -x "$SANDBOX" && -d "$ROOT" ]]; then
             for n in $(sbx list 2>/dev/null | jq -r '.[].id' 2>/dev/null); do
                 sbx stop "$n" >/dev/null 2>&1
@@ -827,8 +844,10 @@ if want iso; then
     # $1: extra apple_container settings as a JSON object.
     write_cfg() {
         jq -n --arg data "$CDATA" --arg binary "$SANDBOX" --arg builder "$CONTAINER" \
-            --arg kernel "$kernel" --argjson extra "${1:-"{}"}" \
+            --arg kernel "$kernel" --rawfile stubs "$FIXTURES/stub-agents.sh" \
+            --argjson extra "${1:-"{}"}" \
             '{data_dir: $data, github: "off",
+              profiles: {"boundary-fixture": {post_install: $stubs}},
               vm: {vcpu_count: 2, mem_size_mib: 2048, template_size_gib: 8},
               apple_container: ({binary: $binary, builder: $builder, kernel: $kernel} + $extra)}'
     }
@@ -838,10 +857,10 @@ if want iso; then
     echo "$RUN" >"$WORK/project/marker"
     if swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
         >"$WORK/iso-build.log" 2>&1 &&
-        iso setup -y >"$WORK/iso-setup.log" 2>&1; then
-        pass "iso setup builds, verifies, and publishes the image"
+        iso setup -y --profile boundary-fixture >"$WORK/iso-setup.log" 2>&1; then
+        pass "iso setup builds, verifies, and publishes the boundary fixture image"
     else
-        fail "iso setup builds, verifies, and publishes the image" "see $WORK/iso-build.log, $WORK/iso-setup.log"
+        fail "iso setup builds, verifies, and publishes the boundary fixture image" "see $WORK/iso-build.log, $WORK/iso-setup.log"
         summary
     fi
     printf 'export FROM_ENV_FILE="from file"\nOVERRIDDEN=file\n' >"$WORK/e2e.env"

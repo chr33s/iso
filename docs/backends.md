@@ -72,6 +72,11 @@ The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.15-186`, the ker
 
 Each timeout must be between 1 and 86400 seconds. Unknown keys are rejected, and there is no key to mount the home directory, forward the SSH agent, share a network, or skip qualification. The `vm` CPU/memory, image, guest-user, profile, and workspace settings apply; `vm.template_size_gib` is the default disk size.
 
+Instance-image APT update/install commands show download output, retry transient
+repository failures twice, and use 30-second HTTP/HTTPS connection and data
+timeouts. These do not extend `build_timeout_seconds` or bound native agent
+installers separately.
+
 ### State
 
 The config file defaults to `~/.iso/config.jsonc` (see
