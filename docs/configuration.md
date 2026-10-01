@@ -418,8 +418,9 @@ materialized into guest config.
 Guarded local inference (the design is
 [docs/design/secure-local-inference-spec.md](design/secure-local-inference-spec.md)).
 With `"mode": "required"`, each running VM gets one session on the host
-`iso-inference` gateway: its own loopback listener, reached through a pinned
-`ssh -R` forward, and a fresh per-session capability. The gateway accepts only
+`iso-inference` gateway: its own Unix socket on the host, relayed into the VM
+over vsock by the sandbox runtime and reached at `127.0.0.1:10788` in the
+guest, and a fresh per-session capability. The gateway accepts only
 the granted API routes and a closed set of request fields for each API. It
 rebuilds each request for a fixed backend and model, clamps output limits, and
 enforces shared budgets. It never forwards the guest's headers, credentials or

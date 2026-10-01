@@ -3,8 +3,8 @@ import Foundation
 
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
-public let protocolVersion = 4
-public let runtimeVersion = "0.4.0"
+public let protocolVersion = 5
+public let runtimeVersion = "0.5.0"
 public let containerizationVersion = "0.45.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns
@@ -157,6 +157,12 @@ public struct SandboxPaths: Sendable {
     return URL(fileURLWithPath: tmp, isDirectory: true).appendingPathComponent(
       "iso-sbx", isDirectory: true)
   }()
+  /// The host end of this sandbox's inference relay: the gateway's socket,
+  /// in a private per-user directory beside the control sockets.
+  public var inferenceSocket: URL {
+    InferenceRelay.hostDirectory.appendingPathComponent("\(Self.stableHash(dir.path)).sock")
+  }
+
   /// launchd label, unique per state root and sandbox.
   public var launchdLabel: String { "dev.coop.sandbox.\(Self.stableHash(dir.path))" }
 
@@ -259,8 +265,9 @@ public struct OperationID: RawRepresentable, Codable, Hashable, Sendable, Custom
 }
 
 /// Durable description of a persistent sandbox. Deliberately has no field
-/// for host mounts, socket relays, published ports, or agent forwarding:
-/// those states are not expressible.
+/// for host mounts, published ports, or agent forwarding, and no path for a
+/// socket relay: the one relay it can request (`inferenceRelay`) has a host
+/// path the runtime derives.
 /// How a sandbox's vmnet network reaches beyond the host. Fixed at create.
 public enum NetworkMode: String, Codable, Sendable {
   /// NAT to the host's uplinks (vmnet shared mode).
@@ -300,8 +307,12 @@ public struct SandboxRecord: Codable, Sendable {
   /// --expires-at` and cleared by a `start` without it. The owner halts
   /// the VM at this time and refuses to boot past it.
   public var expiresAt: Date?
+  /// Relay the iso inference gateway's socket for this sandbox into the
+  /// guest over vsock (secure-local-inference spec §22). Absent means off.
+  public var inferenceRelay: Bool?
 
   public var networkMode: NetworkMode { network ?? .shared }
+  public var relaysInference: Bool { inferenceRelay ?? false }
   public var subnet: String { Self.subnet(subnetIndex) }
   public static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
 
@@ -493,4 +504,19 @@ extension JSONDecoder {
     d.dateDecodingStrategy = .iso8601
     return d
   }
+}
+
+/// The one socket relay a sandbox can have (secure-local-inference spec
+/// §22): the iso inference gateway's per-sandbox socket, relayed into the
+/// guest at a fixed path. Only these constants and the derived host path
+/// are ever used.
+public enum InferenceRelay {
+  /// Outside `/run`, which systemd replaces with a tmpfs after the relay is
+  /// mounted.
+  public static let guestPath = "/var/lib/iso-inference/gateway.sock"
+  /// Connections relayed at once; more are closed on arrival, so a guest
+  /// cannot exhaust the owner's file descriptors.
+  public static let maxConnections = 32
+  public static let hostDirectory = SandboxPaths.controlDirectory.appendingPathComponent(
+    "inference", isDirectory: true)
 }

@@ -29,7 +29,7 @@ public final class GatewaySession: Sendable {
     var deadline: ContinuousClock.Instant?
     var watch: DispatchSourceProcess?
     var listener: Channel?
-    var port = 0
+    var socketPath: String?
     var channels: [ObjectIdentifier: Channel] = [:]
   }
 
@@ -62,7 +62,8 @@ public final class GatewaySession: Sendable {
   }
 
   public var phase: Phase { state.withLock { $0.phase } }
-  public var port: Int { state.withLock { $0.port } }
+  /// The bound session socket, until revocation.
+  public var socketPath: String? { state.withLock { $0.socketPath } }
 
   /// Whether a request may be admitted now.
   func admits(at instant: ContinuousClock.Instant) -> Bool {

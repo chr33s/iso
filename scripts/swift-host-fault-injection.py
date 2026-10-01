@@ -383,9 +383,20 @@ FAULTS = [
     ("inference-unauthenticated-backend", "Sources/IsoHost/ManagedBackend.swift",
      "guard BackendProbe.status(port: port, token: nil) == 401 else {", "guard true else {",
      "provisioningRefusesABackendThatAnswersWithoutItsToken"),
+    # vsock session transport (spec §22).
+    ("inference-relay-gate", "Sources/IsoHost/IsolationGate.swift",
+     "\n      && effective.inferenceRelay == (inferenceRelay ? relay : nil)", "",
+     "onlyTheDerivedInferenceRelayPassesAndOnlyWhenRequired"),
+    ("inference-relay-record", "Sources/IsoHost/IsolationGate.swift",
+     "guard inspection.record.relaysInference == expected.inferenceRelay else {",
+     "guard true else {",
+     "onlyTheDerivedInferenceRelayPassesAndOnlyWhenRequired"),
+    ("inference-relay-socket-directory", "Sources/IsoHost/InferenceLifecycle.swift",
+     'guard path == relayDirectory + "/" + name, ', "guard ",
+     "sessionsNeedTheGateVerifiedRelaySocket"),
     ("inference-memo-forward-identity", "Sources/IsoHost/InferenceLifecycle.swift",
-     "HostProcess.start(entry.forwardPID) == entry.forwardStart", "true",
-     "rememberedSessionsNeedTheSameForwardProcess"),
+     "HostProcess.start(entry.ownerPID) == entry.ownerStart", "true",
+     "rememberedSessionsNeedTheSameOwnerProcess"),
 ]
 
 

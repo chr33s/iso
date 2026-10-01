@@ -64,7 +64,7 @@ Silicon. Python 3.11+ for the migration, parity and integration scripts.
 ```bash
 swift build                                                   # debug build → .build/debug/iso
 swift test --force-resolved-versions                          # host package tests
-swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 swift test --sanitize=address --scratch-path .build-address   # also thread, undefined
 swift test --package-path iso-proxy --force-resolved-versions   # credential proxy, inference gateway
 swift test --package-path iso-sandbox --no-parallel             # Apple runtime

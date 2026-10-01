@@ -37,7 +37,7 @@ extension SandboxRuntime {
 
   public func create(
     _ name: MachineName, source: Source, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
-    owner: OwnerID, egress: EgressMode
+    owner: OwnerID, egress: EgressMode, inferenceRelay: Bool
   ) throws(RuntimeError) {
     let from: [String] =
       switch source {
@@ -50,16 +50,23 @@ extension SandboxRuntime {
         "--cpus", String(cpus), "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
         "--owner",
         owner.rawValue,
-      ] + (egress == .none ? ["--network", "host-only"] : []), deadline: createDeadline,
+      ] + (egress == .none ? ["--network", "host-only"] : [])
+        + (inferenceRelay ? ["--inference-relay"] : []), deadline: createDeadline,
       limit: Self.jsonLimit, cancellable: true)
   }
 
-  /// `expiresAt` bounds this boot's session (the owner halts the VM then).
-  public func start(_ name: MachineName, expiresAt: Date? = nil) throws(RuntimeError) {
+  /// `expiresAt` bounds this boot's session (the owner halts the VM then);
+  /// `inferenceRelay`, when set, changes whether this and later boots relay
+  /// the inference gateway socket (recorded by the runtime under its
+  /// mutation guard).
+  public func start(_ name: MachineName, expiresAt: Date? = nil, inferenceRelay: Bool? = nil)
+    throws(RuntimeError)
+  {
     _ = try checked(
       ["start"],
       [name.rawValue, "--wait-seconds", String(settings.bootTimeout.seconds)]
-        + (expiresAt.map { ["--expires-at", String(Int64($0.timeIntervalSince1970))] } ?? []),
+        + (expiresAt.map { ["--expires-at", String(Int64($0.timeIntervalSince1970))] } ?? [])
+        + (inferenceRelay.map { ["--inference-relay", $0 ? "on" : "off"] } ?? []),
       deadline: bootDeadline + .seconds(10), limit: Self.jsonLimit, cancellable: true)
   }
 

@@ -9,7 +9,8 @@ private func registration(_ grants: [ServiceGrant]) -> ControlProtocol.Registrat
   ControlProtocol.Registration(
     instance: key,
     boot: BootIdentity(ownerPID: 42, ownerStart: ProcessStart(seconds: 1, microseconds: 2)),
-    nonce: String(repeating: "a", count: 32), limits: .defaults, grants: grants)
+    nonce: String(repeating: "a", count: 32), limits: .defaults, grants: grants,
+    socket: "8e84b04d471a546a.sock")
 }
 
 private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProtocol.Request {
@@ -65,8 +66,9 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   let good = ControlProtocol.encode(.shutdown(force: false))
   var unknown = good
   unknown["extra"] = .bool(true)
+  // Version 1 (TCP session ports) is refused, as is any other.
   var version = good
-  version["version"] = .int(2)
+  version["version"] = .int(ControlProtocol.version - 1)
   var op = good
   op["op"] = .string("exec")
   for message in [unknown, version, op] {
@@ -91,4 +93,19 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   let openAI = try json(String(decoding: error.body(for: .openAIResponses), as: UTF8.self))
   #expect(openAI["error"]?["code"]?.string == "INFERENCE_CAPACITY")
   #expect(InferenceErrorCode.allCases.allSatisfy { (400...599).contains($0.status) })
+}
+
+@Test func sessionSocketNamesCannotLeaveTheRelayDirectory() throws {
+  for bad in [
+    "../x.sock", "/tmp/a.sock", "8E84.sock", "a.sock.sock", ".sock", "8e84b04d471a546a0.sock",
+    "8e84",
+  ] {
+    #expect(!ControlProtocol.Registration.isSocketName(bad), "\(bad)")
+  }
+  #expect(ControlProtocol.Registration.isSocketName("8e84b04d471a546a.sock"))
+  #expect(ControlProtocol.Registration.isSocketName("f.sock"))
+  var document = ControlProtocol.encode(.register(registration([grant(.anthropicMessages)])))
+  _ = try ControlProtocol.decodeRequest(document)
+  document["socket"] = .string("../../escape.sock")
+  #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(document) }
 }

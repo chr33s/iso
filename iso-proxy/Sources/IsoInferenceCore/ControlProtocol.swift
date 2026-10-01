@@ -5,7 +5,9 @@ import IsoProxyCore
 /// owner-only Unix-domain socket. Unknown versions, operations and members
 /// are rejected; duplicate keys fail the parser.
 public enum ControlProtocol {
-  public static let version: Int64 = 1
+  /// 2: sessions are Unix sockets named by the registration (`socket`), not
+  /// TCP ports (§22).
+  public static let version: Int64 = 2
   public static let maxFrameBytes = 256 << 10
 
   public enum Request: Sendable {
@@ -32,16 +34,28 @@ public enum ControlProtocol {
     public let nonce: String
     public let limits: GlobalLimits
     public let grants: [ServiceGrant]
+    /// The session socket's file name in the gateway's relay directory: the
+    /// host end of the instance's vsock relay (§22).
+    public let socket: String
 
     public init(
       instance: InstanceKey, boot: BootIdentity, nonce: String, limits: GlobalLimits,
-      grants: [ServiceGrant]
+      grants: [ServiceGrant], socket: String
     ) {
       self.instance = instance
       self.boot = boot
       self.nonce = nonce
       self.limits = limits
       self.grants = grants
+      self.socket = socket
+    }
+
+    /// 1–16 lowercase hex digits and `.sock`: the runtime's hash name. It
+    /// can never name a path outside the relay directory.
+    public static func isSocketName(_ name: String) -> Bool {
+      guard name.hasSuffix(".sock") else { return false }
+      let stem = name.utf8.dropLast(5)
+      return (1...16).contains(stem.count) && stem.allSatisfy(isLowerHex)
     }
 
     /// Digest of the authorization-relevant policy (credentials excluded).
@@ -122,6 +136,7 @@ public enum ControlProtocol {
           "owner_start": .string(registration.boot.ownerStart.description),
         ]))
       out["nonce"] = .string(registration.nonce)
+      out["socket"] = .string(registration.socket)
       out["global_limits"] = .object(encode(registration.limits))
       out["grants"] = .array(
         registration.grants.map { .object(encode($0, includeCredential: true)) })
@@ -161,7 +176,13 @@ public enum ControlProtocol {
     }
     switch try r.string("op", maxBytes: 64) {
     case "register_session":
-      try r.only(["version", "op", "instance", "boot", "nonce", "global_limits", "grants"])
+      try r.only([
+        "version", "op", "instance", "boot", "nonce", "socket", "global_limits", "grants",
+      ])
+      let socket = try r.string("socket", maxBytes: 32)
+      guard Registration.isSocketName(socket) else {
+        throw InferenceError(.requestInvalid, "socket must be 1-16 lowercase hex digits and .sock")
+      }
       let boot = try r.object("boot")
       try boot.only(["owner_pid", "owner_start"])
       let nonce = try r.string("nonce", maxBytes: 64)
@@ -183,7 +204,8 @@ public enum ControlProtocol {
           instance: try decodeInstance(r.object("instance")),
           boot: BootIdentity(
             ownerPID: try boot.pid("owner_pid"), ownerStart: try boot.start("owner_start")),
-          nonce: nonce, limits: try decodeLimits(r.object("global_limits")), grants: grants))
+          nonce: nonce, limits: try decodeLimits(r.object("global_limits")), grants: grants,
+          socket: socket))
     case "activate_session":
       try r.only(["version", "op", "session_id", "epoch", "transport", "deadline_seconds"])
       let transport = try r.object("transport")

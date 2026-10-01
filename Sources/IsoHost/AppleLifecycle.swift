@@ -15,8 +15,12 @@ extension AppleBackend {
   func expected(_ sidecar: MachineSidecar, _ runtime: SandboxRuntime) -> IsolationGate.Expected {
     .init(
       sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-      resources: sidecar.resources, egress: config.egress)
+      resources: sidecar.resources, egress: config.egress, inferenceRelay: relaysInference)
   }
+
+  /// Guarded inference reaches the gateway through the sandbox's vsock
+  /// relay (secure-local-inference §22); nothing else asks for one.
+  var relaysInference: Bool { config.inference.mode == .required }
 
   // MARK: Boot
 
@@ -27,8 +31,10 @@ extension AppleBackend {
     return "\n(Console log unavailable; try `iso logs`.) [\(name)]"
   }
 
-  func boot(_ runtime: SandboxRuntime, _ name: MachineName, expiresAt: Date?) throws {
-    do { try runtime.start(name, expiresAt: expiresAt) } catch {
+  func boot(
+    _ runtime: SandboxRuntime, _ name: MachineName, expiresAt: Date?, inferenceRelay: Bool?
+  ) throws {
+    do { try runtime.start(name, expiresAt: expiresAt, inferenceRelay: inferenceRelay) } catch {
       throw RuntimeError.bootTimeout(
         "sandbox \(name) failed to boot: \(error)\(bootLogTail(runtime, name))")
     }
@@ -108,13 +114,15 @@ extension AppleBackend {
   /// `sessionTTL` starts a new session window for this boot.
   func bootValidated(
     _ runtime: SandboxRuntime, _ expected: IsolationGate.Expected,
-    until deadline: ContinuousClock.Instant, sessionTTL: SessionTTL? = nil
+    until deadline: ContinuousClock.Instant, sessionTTL: SessionTTL? = nil,
+    switchInferenceRelay: Bool = false
   )
     throws -> (IsolationGate.Ready, HostPublicKey)
   {
     try boot(
       runtime, expected.sandbox,
-      expiresAt: sessionTTL.map { Date().addingTimeInterval(TimeInterval($0.seconds)) })
+      expiresAt: sessionTTL.map { Date().addingTimeInterval(TimeInterval($0.seconds)) },
+      inferenceRelay: switchInferenceRelay ? expected.inferenceRelay : nil)
     let ready = try waitReady(runtime, expected, until: deadline)
     return (ready, try readHostKey(runtime, ready, until: deadline))
   }
@@ -234,7 +242,7 @@ extension AppleBackend {
     try journal.advance(instance, .create(stage: .creatingMachine))
     try runtime.create(
       machine, source: source, cpus: cpus, memoryMiB: memoryMiB, diskGiB: diskGiB, owner: owner.id,
-      egress: config.egress)
+      egress: config.egress, inferenceRelay: relaysInference)
     try journal.advance(instance, .create(stage: .machineCreated))
     var sidecar = MachineSidecar(
       schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: owner.id,
@@ -284,8 +292,11 @@ extension AppleBackend {
     let trust: HostKeyTrust = sidecar.reenrollHostKey ? .reenrollAfterRestore : .requirePin
     let ready: IsolationGate.Ready
     do {
+      // Created with the relay setting of its time; a changed
+      // `inference.mode` switches it for this boot (§22).
       let (booted, key) = try bootValidated(
-        runtime, expected(sidecar, runtime), until: deadline, sessionTTL: config.limits.sessionTTL)
+        runtime, expected(sidecar, runtime), until: deadline, sessionTTL: config.limits.sessionTTL,
+        switchInferenceRelay: inspection.record.relaysInference != relaysInference)
       ready = booted
       try HostKeyPin.apply(trust, instance: instance, machine: sidecar.machineID, key: key)
       if case .reenrollAfterRestore = trust {

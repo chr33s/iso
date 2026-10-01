@@ -172,8 +172,9 @@ The lifecycle is **setup → up/start → shell → stop → destroy**. A first 
 5. **Bootstrap** — GitHub credential helper when a token is forwarded; Claude
    and Codex configuration injection; provider proxies and local-model tunnels,
    or, under `inference.mode = "required"`, a verified `iso-inference` session
-   (register, sole-listener check, pinned `ssh -R` forward, nonce check,
-   activation bound to the forward process) instead of both;
+   (register on the Unix socket the sandbox relays into the guest over vsock,
+   nonce check, activation bound to the sandbox owner process, guest bridge
+   on `127.0.0.1:10788`) instead of both;
    `postStartCommand`.
 6. **Workspace** — `--workspace` copies via a tar pipe; `--git-repo` clones in
    the guest; mounts are a one-time sync (use `iso push` / `iso pull`).

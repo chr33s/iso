@@ -266,17 +266,20 @@ the `iso-inference` gateway (design:
 [docs/design/secure-local-inference-spec.md](design/secure-local-inference-spec.md)).
 The gateway enforces an API boundary. It does not isolate the host.
 
-- **Transport and identity.** Each VM boot gets one session. The session has
-  its own listener bound to `127.0.0.1:0`, and the gateway keeps that socket
-  for the session's lifetime. A fresh pinned `ssh -R` forward carries the guest's
-  `127.0.0.1:10788+index` to it. Before activation the controller confirms that
-  the gateway PID is the port's sole listener and that the gateway reports the
-  registered nonce. Activation binds the session to the forward's `ssh` process
-  (PID, start time, owner), which the gateway watches with kqueue, and to the
-  sandbox's session deadline, measured on a clock that counts host sleep. The
-  forward exiting, the deadline passing, `iso stop`/`destroy` or
-  `iso inference revoke` revokes the session. A restarted gateway starts a new
-  epoch and does not reactivate old capabilities.
+- **Transport and identity.** Each VM boot gets one session, on a Unix
+  socket the gateway binds (`0600`) in the owner-only relay directory
+  `<per-user temp>/iso-sbx/inference`. No inference listener exists on host
+  TCP. The instance's sandbox runtime relays that socket into the guest over
+  vsock (spec §22), where systemd bridges `127.0.0.1:10788` to it. The relay's
+  host path is derived by the runtime and checked by `IsolationGate`, and the
+  relay closes connections beyond 32 at once. Before activation the controller
+  confirms that the gateway reports the registered nonce. Activation binds the
+  session to the instance's sandbox owner process (PID, start time, command
+  `iso-sandbox`), which the gateway watches with kqueue, and to the sandbox's
+  session deadline, measured on a clock that counts host sleep. The VM
+  stopping, the deadline passing, `iso destroy` or `iso inference revoke`
+  revokes the session. A restarted gateway starts a new epoch and does not
+  reactivate old capabilities.
 - **Capability.** A 256-bit capability from the system CSPRNG, compared in
   constant time (HMAC, `IsoProxyCore.Capability`). It authorizes the whole VM
   (root in the guest can use it, by design) and only on its own session's
@@ -360,7 +363,9 @@ exposure, and isolate verifies the effective configuration anyway
 
 - **Runtime shape.** Each instance is its own VM on its own vmnet network
   (`10.231.N.0/24`). The runtime's `SandboxRecord` has no field for a host
-  mount, socket relay, published port, or agent forwarding, and its VM
+  mount, published port, or agent forwarding, and no path for a socket relay:
+  its one relay, `inferenceRelay`, is a boolean whose host path the runtime
+  derives (the inference gateway's socket, spec §22). Its VM
   configuration is built in one function (`Owner.machineConfiguration`) with
   kernel pseudo-filesystems only. Its one network field, `network`, can only
   narrow reach: absent means vmnet shared (NAT) mode, `host_only` (from
@@ -398,7 +403,10 @@ exposure, and isolate verifies the effective configuration anyway
   - a root disk at exactly `<runtime root>/sandboxes/<id>/rootfs.ext4`;
   - only the seven kernel pseudo-filesystem mounts, each from its fixed source
     and destination;
-  - zero socket relays and published ports, and no agent forwarding;
+  - no published ports and no agent forwarding, and no socket relay except,
+    when `inference.mode = "required"`, exactly the inference relay: the
+    derived host socket, `/var/lib/iso-inference/gateway.sock` in the guest,
+    capped at 32 connections;
   - exactly one interface on a per-sandbox vmnet subnet, carrying the reported
     address;
   - CPUs, memory, owner, and image digest matching the record.

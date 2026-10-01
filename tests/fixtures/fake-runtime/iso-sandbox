@@ -1,11 +1,12 @@
 #!/usr/bin/python3
-"""Stateful stand-in for `iso-sandbox` (protocol 4) used by the lifecycle
+"""Stateful stand-in for `iso-sandbox` (protocol 5) used by the lifecycle
 differential test. State lives in `<root>/fake-state.json`; every call's argv
 is appended to `calls.log` beside this script. Answers only what iso asks.
 """
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -39,7 +40,7 @@ def main():
     argv = sys.argv[1:]
     log(argv)
     if argv[:1] == ["version"]:
-        return out({"name": "iso-sandbox", "version": "0.4.0", "protocol": 4, "containerization": "0.45.0"})
+        return out({"name": "iso-sandbox", "version": "0.5.0", "protocol": 5, "containerization": "0.45.0"})
     words = []
     rest = list(argv)
     while rest and rest[0] != "--root":
@@ -62,6 +63,18 @@ def rootfs(root, sandbox_id):
     return os.path.join(root, "sandboxes", sandbox_id, "rootfs.ext4")
 
 
+def inference_socket(root, sandbox_id):
+    """The relay's host socket, derived as the runtime does (FNV-1a of the
+    sandbox directory) in `iso-sbx/inference` under the per-user temp dir."""
+    directory = root.rstrip("/") + "/sandboxes/" + sandbox_id
+    h = 14695981039346656037
+    for byte in directory.encode():
+        h = ((h ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    temporary = subprocess.run(["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True,
+                               text=True, check=True).stdout.strip().rstrip("/")
+    return f"{temporary}/iso-sbx/inference/{h:x}.sock"
+
+
 def inspect(root, sandbox):
     record = {k: sandbox[k] for k in ["id", "owner", "imageReference", "imageDigest", "cpus", "memoryBytes",
                                        "diskBytes", "diskGeneration"]}
@@ -71,6 +84,8 @@ def inspect(root, sandbox):
         record["expiresAt"] = sandbox["expiresAt"]
     if sandbox.get("lastOperation"):
         record["lastOperation"] = sandbox["lastOperation"]
+    if sandbox.get("inferenceRelay"):
+        record["inferenceRelay"] = True
     result = {"record": record, "status": sandbox["status"],
               "disk": {"logicalBytes": sandbox["diskBytes"], "allocatedBytes": 1 << 20}}
     if sandbox["status"] == "running":
@@ -84,8 +99,13 @@ def inspect(root, sandbox):
             "interfaces": [{"ipv4": address + "/24", "ipv4Gateway": f"10.231.{sandbox['subnet']}.1",
                             "network": ("vmnet-host" if sandbox.get("network") else "vmnet-shared")
                             + f":10.231.{sandbox['subnet']}.0/24"}],
-            "socketRelays": 0, "publishedPorts": 0, "sshAgentForwarding": False, "maskedPaths": [],
+            "socketRelays": 1 if sandbox.get("inferenceRelay") else 0, "publishedPorts": 0,
+            "sshAgentForwarding": False, "maskedPaths": [],
             "readonlyPaths": [], "initArgv": ["/sbin/init"], "virtualization": False}
+        if sandbox.get("inferenceRelay"):
+            result["effective"]["inferenceRelay"] = {
+                "host": inference_socket(root, sandbox["id"]),
+                "guest": "/var/lib/iso-inference/gateway.sock", "maxConnections": 32}
     return result
 
 
@@ -155,6 +175,8 @@ def handle(words, args, root, state):
             "diskBytes": size, "diskGeneration": 0, "status": "stopped", "subnet": state["subnet"]}
         if option(args, "--network") == "host-only":
             sandboxes[sandbox_id]["network"] = "host_only"
+        if "--inference-relay" in args:
+            sandboxes[sandbox_id]["inferenceRelay"] = True
         write_disk(root, sandbox_id, size)
         return sandboxes[sandbox_id]
     sandbox = sandboxes.get(sandbox_id)
@@ -166,6 +188,8 @@ def handle(words, args, root, state):
         expires = option(args, "--expires-at")
         sandbox["expiresAt"] = (
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expires))) if expires else None)
+        if option(args, "--inference-relay"):
+            sandbox["inferenceRelay"] = option(args, "--inference-relay") == "on"
         sandbox["status"] = "running"
         return inspect(root, sandbox)
     if key == "stop":

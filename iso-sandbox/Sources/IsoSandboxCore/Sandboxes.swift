@@ -114,7 +114,7 @@ public enum Sandboxes {
   public static func create(
     root: SandboxRoot, id: SandboxID, owner: String, source: SandboxSource, cpus: Int,
     memoryBytes: UInt64, diskBytes: UInt64,
-    network: NetworkMode = .shared
+    network: NetworkMode = .shared, inferenceRelay: Bool = false
   ) async throws -> SandboxRecord {
     let operation = try OperationLock.shared(root)
     defer { withExtendedLifetime(operation) {} }
@@ -131,7 +131,7 @@ public enum Sandboxes {
         return try await populate(
           root: root, paths: paths, id: id, owner: owner, source: source, cpus: cpus,
           memoryBytes: memoryBytes, diskBytes: diskBytes,
-          network: network)
+          network: network, inferenceRelay: inferenceRelay)
       } catch {
         try? FileManager.default.removeItem(at: paths.dir)
         throw error
@@ -142,7 +142,7 @@ public enum Sandboxes {
   static func populate(
     root: SandboxRoot, paths: SandboxPaths, id: SandboxID, owner: String, source: SandboxSource,
     cpus: Int, memoryBytes: UInt64,
-    diskBytes: UInt64, network: NetworkMode
+    diskBytes: UInt64, network: NetworkMode, inferenceRelay: Bool
   ) async throws -> SandboxRecord {
 
     let imageReference: String
@@ -187,6 +187,7 @@ public enum Sandboxes {
         subnetIndex: index,
         createdAt: Date())
       r.network = network == .shared ? nil : network
+      r.inferenceRelay = inferenceRelay ? true : nil
       // Writing the record commits the create.
       try paths.save(r)
       record = r
@@ -210,7 +211,9 @@ public enum Sandboxes {
   // MARK: start / stop
 
   public static func start(
-    root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval, expiresAt: Date? = nil
+    root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval,
+    expiresAt: Date? = nil,
+    inferenceRelay: Bool? = nil
   ) async throws -> LiveState {
     if let expiresAt, expiresAt <= Date() { throw SandboxError("--expires-at is in the past") }
     try root.requireInitialized()
@@ -225,8 +228,12 @@ public enum Sandboxes {
         try? FileManager.default.removeItem(at: paths.live)
       }
       try requireStopped(paths, id)
-      if record.expiresAt != expiresAt {
+      // Like the session window, the relay applies to this boot; a crashed
+      // owner's state was cleared above, so a crash cannot block the change.
+      let relay = inferenceRelay.map { $0 ? true : nil } ?? record.inferenceRelay
+      if record.expiresAt != expiresAt || record.inferenceRelay != relay {
         record.expiresAt = expiresAt
+        record.inferenceRelay = relay
         try paths.save(record)
       }
       Launchd.bootout(paths.launchdLabel)

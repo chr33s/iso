@@ -43,6 +43,26 @@ public enum JailProbes {
     return result
   }
 
+  /// Binds a TCP socket to `address` on an ephemeral port and listens; 0
+  /// when that was allowed.
+  public static func listenError(address text: String) -> Int32 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return errno }
+    defer { close(fd) }
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = 0
+    address.sin_addr = in_addr(s_addr: inet_addr(text))
+    let bound = withUnsafePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
+        bind(fd, pointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    guard bound == 0 else { return errno }
+    return listen(fd, 1) == 0 ? 0 : errno
+  }
+
   /// A non-blocking TCP connect to `address:port`; the immediate errno (0,
   /// or `EINPROGRESS` when the connect was allowed and is pending).
   public static func connectError(address text: String, port: UInt16) -> Int32 {

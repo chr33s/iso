@@ -262,10 +262,7 @@ public struct ProxyLauncher: Sendable {
   public func stopAll(_ instance: Instance) {
     for provider in ProxyProvider.allCases { stop(instance, provider: provider) }
     stopModelTunnels(instance)
-    // The forward's exit revokes the gateway session (spec §12.3).
-    killPIDFile(
-      Self.forwardPIDPath(instance, InferenceController.forwardName), label: "inference tunnel",
-      expect: .ssh)
+    // The sandbox owner's exit revokes the gateway session (spec §22).
     unlink(InferenceController.statePath(instance))
     unlink(InferenceController.tokenPath(instance))
   }
@@ -629,15 +626,6 @@ public struct ProxyLauncher: Sendable {
       case .ssh: return words.first.map { ($0 as NSString).lastPathComponent == "ssh" } ?? false
       }
     }
-  }
-
-  /// Whether a recorded forward's `ssh` is still running.
-  func forwardIsRunning(_ instance: Instance, name: String) -> Bool {
-    guard let bytes = try? StateStore.readControlFile(Self.forwardPIDPath(instance, name)),
-      let pid = Int32(String(decoding: bytes, as: UTF8.self).trimmingUnicodeWhitespace()), pid > 0,
-      let command = Self.commandLine(pid)
-    else { return false }
-    return RecordedProcess.ssh.matches(command)
   }
 
   /// The command line of `pid`, nil when no such process.

@@ -6,9 +6,11 @@
 
 - **`iso-inference`**: a new companion binary, a per-user gateway confined
   by its own Seatbelt profile (`Sources/IsoHost/seatbelt-inference.sb`). With
-  `inference.mode = "required"` each VM boot gets its own session: a loopback
-  listener reached through a pinned `ssh -R` forward, a fresh capability, and
-  activation bound to that forward's `ssh` process and to the session deadline.
+  `inference.mode = "required"` each VM boot gets its own session: a Unix
+  socket the sandbox runtime relays into the guest over vsock (bridged to
+  `127.0.0.1:10788`), a fresh capability, and activation bound to the
+  sandbox owner process and to the session deadline. No inference listener
+  exists on host TCP.
   Requests pass exact routes and closed per-API field tables. They are then
   rebuilt for a host-selected backend and model, with output limits clamped and
   shared budgets applied. A client disconnect does not free a running
@@ -40,6 +42,13 @@
   configured backend ports, and reads only of system paths, its binary and
   its state directory. `doctor` also lists the user's own listeners that
   guests can reach.
+- **iso-sandbox protocol 5**: a sandbox record can request the one inference
+  relay (`create --inference-relay`, and `start --inference-relay on|off` per boot); its host
+  path is derived by the runtime and reported by `inspect`. containerization
+  0.45.0 is vendored with two host-side relay fixes (a failed connection no
+  longer ends the relay; at most 32 relayed connections) until they are
+  released upstream (`iso-sandbox/Vendor/containerization/VENDORED.md`). The
+  recorded read-parity baseline's runtime line now reads protocol 5.
 - `context_overflow` accepts `"accept"` for backends that process prompts
   past their window (mlx-lm 0.31).
 

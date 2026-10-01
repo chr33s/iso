@@ -39,7 +39,8 @@ extension CommandContext {
           throw HostError("Instance '\(instance.name)' is not running")
         }
         return InferenceBoot(
-          ownerPID: running.ready.ownerPID, deadline: running.ready.sessionDeadline)
+          ownerPID: running.ready.ownerPID, deadline: running.ready.sessionDeadline,
+          relaySocket: running.ready.inferenceSocket)
       })
   }
 }

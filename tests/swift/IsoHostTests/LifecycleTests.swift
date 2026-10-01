@@ -187,6 +187,50 @@ private struct FakeInstallation {
   #expect(try backend.runtime().list().isEmpty)
 }
 
+/// `inference.mode = "required"`: the sandbox relays the gateway socket
+/// (§22), the gate accepts exactly that relay on every path that reaches a
+/// running instance, and a sandbox created without it gets it before boot.
+@Test func requiredInferenceRelaysTheGatewaySocketThroughEveryGate() throws {
+  let required =
+    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let directory = install.config.instancesDirectory.appending("proj").path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let instance = Instance(
+    name: try InstanceName("proj"), index: InstanceIndex(0)!, directory: directory, image: .default)
+  try instance.save()
+
+  // Created without inference: no relay.
+  try install.backend.createAndStart(instance, diskGiB: nil)
+  let plain = try #require(try install.backend.asRunning(instance))
+  #expect(plain.ready.inferenceSocket == nil)
+  try install.backend.stop(plain)
+  _ = install.calls()
+
+  // The configuration now requires inference: the start switches the relay
+  // on for this boot, and every gate accepts it.
+  let guarded = install.backend.reconfigured(
+    try emptyConfig(
+      #""data_dir": "\#(install.root)/data", "apple_container": {"binary": "\#(install.root)/bin/iso-sandbox", "builder": "\#(install.root)/bin/container", "kernel": "\#(install.root)/kernel", "boot_timeout_seconds": 5}"#
+        + required))
+  try guarded.startExisting(instance)
+  #expect(
+    install.calls().contains {
+      $0.starts(with: ["start"]) && $0.joined(separator: " ").contains("--inference-relay on")
+    })
+  let running = try #require(try guarded.asRunning(instance))
+  let socket = try #require(running.ready.inferenceSocket)
+  #expect(socket.hasPrefix(IsolationGate.relayDirectory + "/"))
+  _ = try guarded.sshTarget(instance)
+  // The unguarded configuration refuses the relayed sandbox.
+  #expect(throws: (any Error).self) { try install.backend.asRunning(instance) }
+  try guarded.destroyInstance(instance)
+}
+
 @Test func interruptedCreateIsCleanedUpByDestroy() throws {
   let install = try FakeInstallation()
   defer { install.remove() }

@@ -72,6 +72,10 @@ public struct SandboxRecord: Sendable, Equatable, Codable {
   public let network: String?
   /// ISO 8601 end of the current session, absent without a session TTL.
   public let expiresAt: String?
+  /// The inference gateway's socket is relayed into the guest (§22).
+  public let inferenceRelay: Bool?
+
+  public var relaysInference: Bool { inferenceRelay ?? false }
 
   /// The session deadline, if one is recorded and parses.
   public var sessionDeadline: Date? {
@@ -119,6 +123,28 @@ public struct EffectiveInterface: Sendable, Equatable, Decodable {
   }
 }
 
+/// The inference relay the owner configured (secure-local-inference §22).
+public struct EffectiveRelay: Sendable, Equatable, Decodable {
+  public let host: String
+  public let guest: String
+  public let maxConnections: Int?
+
+  enum CodingKeys: String, CodingKey, CaseIterable { case host, guest, maxConnections }
+
+  public init(host: String, guest: String, maxConnections: Int?) {
+    self.host = host
+    self.guest = guest
+    self.maxConnections = maxConnections
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let c = try StrictKeys.container(decoder, CodingKeys.self)
+    host = try c.decode(String.self, forKey: .host)
+    guest = try c.decode(String.self, forKey: .guest)
+    maxConnections = try c.decodeIfPresent(Int.self, forKey: .maxConnections)
+  }
+}
+
 /// What the running VM was configured with, reported by its owner process.
 public struct Effective: Sendable, Equatable, Decodable {
   public let id: String
@@ -130,6 +156,7 @@ public struct Effective: Sendable, Equatable, Decodable {
   public let mounts: [EffectiveMount]
   public let interfaces: [EffectiveInterface]
   public let socketRelays: UInt32
+  public let inferenceRelay: EffectiveRelay?
   public let publishedPorts: UInt32
   public let sshAgentForwarding: Bool
   public let maskedPaths: [String]
@@ -139,7 +166,8 @@ public struct Effective: Sendable, Equatable, Decodable {
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, imageReference, imageDigest, cpus, memoryBytes, rootfs, mounts, interfaces
-    case socketRelays, publishedPorts, sshAgentForwarding, maskedPaths, readonlyPaths, initArgv
+    case socketRelays, inferenceRelay, publishedPorts, sshAgentForwarding, maskedPaths
+    case readonlyPaths, initArgv
     case virtualization
   }
 
@@ -154,6 +182,7 @@ public struct Effective: Sendable, Equatable, Decodable {
     mounts = try c.decode([EffectiveMount].self, forKey: .mounts)
     interfaces = try c.decode([EffectiveInterface].self, forKey: .interfaces)
     socketRelays = try c.decode(UInt32.self, forKey: .socketRelays)
+    inferenceRelay = try c.decodeIfPresent(EffectiveRelay.self, forKey: .inferenceRelay)
     publishedPorts = try c.decode(UInt32.self, forKey: .publishedPorts)
     sshAgentForwarding = try c.decode(Bool.self, forKey: .sshAgentForwarding)
     maskedPaths = try c.decode([String].self, forKey: .maskedPaths)
@@ -201,7 +230,7 @@ public struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 }
 
 public enum RuntimeProtocol {
-  public static let version: UInt32 = 4
+  public static let version: UInt32 = 5
 
   static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], _ what: String)
     throws(RuntimeError)

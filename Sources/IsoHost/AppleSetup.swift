@@ -246,12 +246,12 @@ extension AppleBackend {
       sandbox: machine, owner: owner.id, runtimeRoot: runtime.root,
       // Verification needs no instance policy: the sandbox is deleted after
       // the image checks and never handed to a user or agent.
-      resources: Resources(cpus: 2, memoryBytes: 2048 << 20), egress: .open)
+      resources: Resources(cpus: 2, memoryBytes: 2048 << 20), egress: .open, inferenceRelay: false)
     let result = Result { () throws in
       try runtime.create(
         machine, source: .image(reference), cpus: 2, memoryMiB: 2048,
         diskGiB: UInt64(config.vm.templateSize.value),
-        owner: owner.id, egress: .open)
+        owner: owner.id, egress: .open, inferenceRelay: false)
       try IsolationGate.verifyRecord(try runtime.inspect(machine), expected)
       let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
       _ = try bootValidated(runtime, expected, until: deadline)

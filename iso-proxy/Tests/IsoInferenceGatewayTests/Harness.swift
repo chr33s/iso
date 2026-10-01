@@ -165,16 +165,19 @@ struct RawResponse {
 }
 
 enum RawClient {
-  static func connect(_ port: Int) -> Int32 {
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    var address = sockaddr_in()
-    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = UInt16(port).bigEndian
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+  /// A session socket, as the sandbox owner's relay connects to it.
+  static func connect(_ path: String) -> Int32 {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &address.sun_path) { raw in
+      let bytes = Array(path.utf8)
+      raw.copyBytes(from: bytes)
+      raw[bytes.count] = 0
+    }
     _ = withUnsafePointer(to: &address) {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
       }
     }
     var timeout = timeval(tv_sec: 20, tv_usec: 0)
@@ -228,10 +231,10 @@ enum RawClient {
   }
 
   static func request(
-    port: Int, method: String = "POST", target: String, token: String?, body: String,
+    socket: String, method: String = "POST", target: String, token: String?, body: String,
     extraHeaders: [(String, String)] = [], contentLength: Bool = true
   ) -> RawResponse {
-    let fd = connect(port)
+    let fd = connect(socket)
     defer { close(fd) }
     var head = "\(method) \(target) HTTP/1.1\r\nhost: 127.0.0.1\r\n"
     if let token { head += "authorization: Bearer \(token)\r\n" }
@@ -247,6 +250,8 @@ enum RawClient {
 /// An in-process gateway with one registered, activated session.
 final class Harness: @unchecked Sendable {
   let directory: String
+  /// Short, so session socket paths fit `sun_path`.
+  let relayDirectory: String
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
   let gateway: Gateway
   var transports: [Process] = []
@@ -261,15 +266,21 @@ final class Harness: @unchecked Sendable {
         toFile: directory + "/journal/\(port).count", atomically: true, encoding: .utf8)
     }
     let journal = try Journal(directory: directory + "/journal")
+    relayDirectory = "/tmp/ir-" + String(UUID().uuidString.prefix(8))
+    try FileManager.default.createDirectory(
+      atPath: relayDirectory, withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700])
     gateway = Gateway(
       group: group, journal: journal, audit: AuditLog(path: directory + "/audit.log"),
-      backendPorts: backendPorts, transportCommand: "sleep", onExit: {})
+      relayDirectory: relayDirectory, backendPorts: backendPorts, transportCommand: "sleep",
+      onExit: {})
   }
 
   deinit {
     for process in transports where process.isRunning { process.terminate() }
     try? group.syncShutdownGracefully()
     try? FileManager.default.removeItem(atPath: directory)
+    try? FileManager.default.removeItem(atPath: relayDirectory)
   }
 
   func spawnTransport() throws -> (Process, TransportBinding) {
@@ -284,7 +295,8 @@ final class Harness: @unchecked Sendable {
 
   struct Session {
     let id: String
-    let port: Int
+    /// The session socket's path.
+    let socket: String
     let token: String
     let transport: Process
   }
@@ -296,7 +308,8 @@ final class Harness: @unchecked Sendable {
     let registration = ControlProtocol.Registration(
       instance: .init(dataRoot: directory, name: name),
       boot: BootIdentity(ownerPID: 1, ownerStart: ProcessStart(seconds: 1, microseconds: 0)),
-      nonce: String(repeating: "0", count: 32), limits: .defaults, grants: grants)
+      nonce: String(repeating: "0", count: 32), limits: .defaults, grants: grants,
+      socket: Self.socketName(name))
     let registered = try gateway.register(registration)
     let (process, binding) = try spawnTransport()
     if activate {
@@ -306,8 +319,17 @@ final class Harness: @unchecked Sendable {
           deadlineSeconds: deadlineSeconds))
     }
     return Session(
-      id: registered.sessionID, port: registered.port, token: registered.capability.expose(),
+      id: registered.sessionID, socket: relayDirectory + "/" + registered.socket,
+      token: registered.capability.expose(),
       transport: process)
+  }
+
+  /// The runtime names a socket by a hex hash; one per instance name here.
+  static func socketName(_ instance: String) -> String {
+    let hash = instance.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
+      ($0 ^ UInt64($1)) &* 1_099_511_628_211
+    }
+    return String(hash, radix: 16) + ".sock"
   }
 
   func backend(_ port: UInt16) -> JSONObject? {

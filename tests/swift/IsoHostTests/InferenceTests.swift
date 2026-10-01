@@ -58,13 +58,14 @@ private func controller(_ config: IsoConfig, guest: FakeGuest, state: String) ->
   return InferenceController(
     config: config, environment: guest.environment, resolver: resolver,
     diagnostics: guest.sink.diagnostics, isoExecutable: nil, proxies: guest.proxies(resolver),
-    boot: { _ in InferenceBoot(ownerPID: getpid(), deadline: nil) },
-    sandboxExec: "/usr/bin/sandbox-exec", stateDirectory: state)
+    boot: { _ in
+      InferenceBoot(ownerPID: getpid(), deadline: nil, relaySocket: state + "-relay/8e84.sock")
+    },
+    sandboxExec: "/usr/bin/sandbox-exec", stateDirectory: state, relayDirectory: state + "-relay")
 }
 
 private let session = InferenceSession(
-  sessionID: "s", epoch: "e", guestPort: 10790, token: Secret(String(repeating: "c", count: 64)),
-  services: [])
+  sessionID: "s", epoch: "e", token: Secret(String(repeating: "c", count: 64)), services: [])
 
 @Test func inferenceSeatbeltProfileMatchesItsCanonicalFile() throws {
   let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -126,14 +127,14 @@ private let session = InferenceSession(
   defer { guest.remove() }
   let agents = guest.bootstrap(try guardedConfig())
   let env = agents.claudeInferenceEnv(session)
-  #expect(env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:10790")
+  #expect(env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:10788")
   #expect(env["ANTHROPIC_AUTH_TOKEN"] == session.token.expose())
   #expect(env["ANTHROPIC_MODEL"] == "local-claude")
   #expect(env["ANTHROPIC_SMALL_FAST_MODEL"] == "local-claude")
   #expect(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "65536")
   let table = try #require(agents.codexInferenceTable(session))
   let rendered = table.document
-  #expect(rendered.contains(#"base_url = "http://127.0.0.1:10790/v1""#))
+  #expect(rendered.contains(#"base_url = "http://127.0.0.1:10788/v1""#))
   #expect(rendered.contains(#"model = "local-codex""#))
   #expect(rendered.contains(#"wire_api = "responses""#))
   #expect(!rendered.contains(session.token.expose()))
@@ -168,13 +169,14 @@ private let session = InferenceSession(
   let config = try guardedConfig()
   let instance = try testInstance(guest.root + "/instance", index: 2)
   let control = controller(config, guest: guest, state: guest.root + "/inference")
-  #expect(InferenceController.guestPort(instance) == 10790)
+  #expect(InferenceController.guestPort == 10788)
   let services = try control.requestedServices(instance)
   #expect(services.map(\.rawValue) == ["local-claude", "local-codex"])
   let message = try control.registrationMessage(
     instance, resolved: services.map(control.resolved), boot: (1, "1.0"),
-    nonce: String(repeating: "0", count: 32))
+    nonce: String(repeating: "0", count: 32), socket: "8e84.sock")
   let rendered = OutputJSON.object(message).rendered()
+  #expect(rendered.contains(#""socket": "8e84.sock""#))
   #expect(rendered.contains(#""credential": "backend-secret""#))
   #expect(rendered.contains(#""upstream_model": "mlx/claude-ish""#))
   #expect(rendered.contains(#""completion_evidence": "drain""#))
@@ -324,23 +326,42 @@ final class UnixReplyServer: @unchecked Sendable {
   }
 }
 
-@Test func rememberedSessionsNeedTheSameForwardProcess() throws {
+@Test func rememberedSessionsNeedTheSameOwnerProcess() throws {
   let guest = try FakeGuest()
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
   let memo = SessionMemo()
   let start = try #require(HostProcess.start(getpid()))
   memo.remember(
-    instance, .init(fingerprint: "f", session: session, forwardPID: getpid(), forwardStart: start))
+    instance, .init(fingerprint: "f", session: session, ownerPID: getpid(), ownerStart: start))
   #expect(memo.session(instance, fingerprint: "f") == session)
   #expect(memo.session(instance, fingerprint: "other") == nil, "changed grants re-register")
   // Claude's settings are written once per session per command.
   #expect(memo.markClaudeSettings(instance, session: session))
   #expect(!memo.markClaudeSettings(instance, session: session))
-  // A forward with another start time (a reused PID) is not the one remembered.
+  // An owner with another start time (a reused PID) is not the one remembered.
   memo.remember(
-    instance, .init(fingerprint: "f", session: session, forwardPID: getpid(), forwardStart: "0.0"))
+    instance, .init(fingerprint: "f", session: session, ownerPID: getpid(), ownerStart: "0.0"))
   #expect(memo.session(instance, fingerprint: "f") == nil)
   memo.forget(instance)
   #expect(memo.session(instance, fingerprint: "f") == nil)
+}
+
+@Test func sessionsNeedTheGateVerifiedRelaySocket() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let control = controller(try guardedConfig(), guest: guest, state: guest.root + "/inference")
+  let relay = guest.root + "/inference-relay"
+  #expect(
+    try control.relaySocketName(relay + "/8e84b04d471a546a.sock", instance: instance)
+      == "8e84b04d471a546a.sock")
+  // No relay (a sandbox booted before inference was required), another
+  // directory, or a name the runtime never derives: no session.
+  for bad in [
+    nil, "/tmp/8e84.sock", relay + "/../8e84.sock", relay + "/8E84.sock", relay + "/x.sock",
+    relay + "/8e84b04d471a546a0.sock",
+  ] as [String?] {
+    #expect(throws: HostError.self) { try control.relaySocketName(bad, instance: instance) }
+  }
 }

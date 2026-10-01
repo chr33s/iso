@@ -28,7 +28,7 @@ Linux hosts are not.
 ```bash
 swift build --force-resolved-versions
 swift test --force-resolved-versions          # IsoCore/Configuration/Host/CLI + corpus replay
-swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
+swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 swift test --sanitize=address --scratch-path .build-asan     # also:
 swift test --sanitize=thread --scratch-path .build-tsan
 swift test --sanitize=undefined --scratch-path .build-ubsan
@@ -516,8 +516,15 @@ scripts/fuzz.sh run InferenceRequest 300                        # also Inference
   asserts both the client status and that the backend received nothing.
 - **The process test** runs the built binary under `sandbox-exec` with
   `Sources/IsoHost/seatbelt-inference.sb`. It checks the unconfined refusal,
-  the jail self-test, the socket mode, the startup lock, transport-identity
-  checks with a real `ssh` process, and revocation when that process exits.
+  the jail self-test, the socket mode, the startup lock, that sessions are
+  `0600` Unix sockets in the relay directory with no TCP listener, socket-name
+  validation, transport-identity checks against a stand-in sandbox owner
+  process, and revocation (and socket removal) when that process exits.
+- **The vendored relay** (`iso-sandbox/Vendor/containerization`) has its own
+  tests: `swift test --package-path iso-sandbox/Vendor/containerization
+  --filter UnixSocketRelayTests`. `InferenceRelayTests` in iso-sandbox cover
+  the record field, the derived host path and the owner's relay
+  configuration.
 - **The launcher test** runs `Sources/IsoHost/inference-launcher.py`
   against stand-in `mlx_lm` and `mlx` modules. It checks the bearer check,
   `Origin` refusal, model pinning, the loopback bind, memory limits and the
@@ -527,8 +534,9 @@ scripts/fuzz.sh run InferenceRequest 300                        # also Inference
   boots a VM with `egress: "none"` and `inference.mode = "required"` against
   two scripted host backends (`tests/fixtures/inference-backend.py`). It checks
   capability enforcement from the guest, that the backend is unreachable
-  directly, that Claude Code and Codex each complete a turn, revocation on
-  forward exit and `iso inference revoke`, and the unsafe-bind refusal. It uses
+  directly, that Claude Code and Codex each complete a turn, the guest bridge
+  and relayed socket with no gateway TCP listener, revocation on `iso stop`
+  and `iso inference revoke`, and the unsafe-bind refusal. It uses
   the per-user gateway location and stops that gateway at the end.
 
 Not covered by automated tests: qualifying a real MLX server and model, and

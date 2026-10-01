@@ -44,11 +44,11 @@ final class ScriptedRuntime: RuntimeExecutor {
 }
 
 let qualifiedVersion =
-  #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#
+  #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
 
 @Test func qualificationAcceptsOnlyTheValidatedRuntime() throws {
   let good = try RuntimeProtocol.parseVersion(Array(qualifiedVersion.utf8))
-  #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.4.0"))
+  #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.5.0"))
   for bad in [
     #"{"name":"container","version":"1","protocol":4,"containerization":"0.45.0"}"#,
     #"{"name":"iso-sandbox","version":"0.3.0","protocol":3,"containerization":"0.45.0"}"#,
@@ -85,7 +85,7 @@ let qualifiedVersion =
     }
   }
   let runtime = SandboxRuntime(executor: executor, root: "/state/runtime", settings: .defaults)
-  #expect(try runtime.requireQualified().contains("protocol 4"))
+  #expect(try runtime.requireQualified().contains("protocol 5"))
   #expect(try runtime.list() == [ListedSandbox(id: "iso-a", status: .crashed)])
   do {
     _ = try runtime.images()

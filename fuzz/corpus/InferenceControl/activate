@@ -1,1 +1,1 @@
-{"version": 1, "op": "activate_session", "session_id": "s", "epoch": "e", "transport": {"pid": 2, "start": "3.4"}, "deadline_seconds": 60}
+{"version": 2, "op": "activate_session", "session_id": "s", "epoch": "e", "transport": {"pid": 2, "start": "3.4"}, "deadline_seconds": 60}

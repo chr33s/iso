@@ -2,8 +2,8 @@
 ;; macOS (docs/design/secure-local-inference-spec.md §10). Applied by the
 ;; launcher via `sandbox-exec -p` (Sources/IsoHost/InferenceLifecycle.swift)
 ;; and asserted by `iso-inference --jail-selftest`, which refuses to start
-;; unless file writes outside STATE_DIR, program execution and non-loopback
-;; egress are denied.
+;; unless file writes outside STATE_DIR and RELAY_DIR, TCP listeners, program
+;; execution and non-loopback egress are denied.
 ;;
 ;; This is a separate profile from seatbelt-proxy.sb: the cloud proxy's
 ;; allowance (ports 443 and 53 on any host) is not widened, and this profile
@@ -30,13 +30,15 @@
   (literal "/dev/random")
   (literal "/dev/urandom")
   (literal (param "INFERENCE_BIN"))
-  (subpath (param "STATE_DIR")))
+  (subpath (param "STATE_DIR"))
+  (subpath (param "RELAY_DIR")))
 
 (allow sysctl-read)
 (allow system-socket)
 (allow process-info* (target self))
-;; The session's `ssh -R` process: identity (proc_pidinfo) at activation
-;; and its exit notification (§12.3). Read-only process metadata.
+;; The instance's sandbox owner process, which carries the vsock relay:
+;; identity (proc_pidinfo) at activation and its exit notification
+;; (§12.3, §22). Read-only process metadata.
 (allow process-info-pidinfo)
 (allow mach-lookup (global-name "com.apple.system.logger"))
 
@@ -46,9 +48,12 @@
 (allow network-bind (local unix-socket (subpath (param "STATE_DIR"))))
 (allow network-inbound (local unix-socket (subpath (param "STATE_DIR"))))
 
-;; Session listeners on loopback, reached through the pinned reverse
-;; tunnel. Outbound: only the configured backend ports, one rule per port,
-;; rendered by the launcher in place of the marker below.
-(allow network-bind (local ip "localhost:*"))
-(allow network-inbound (local ip "localhost:*"))
+;; Session sockets: one Unix socket per instance in the owner-only relay
+;; directory, which the sandbox runtime relays into that instance's guest
+;; over vsock (§22). No TCP listener. Outbound: only the configured backend
+;; ports, one rule per port, rendered by the launcher in place of the marker
+;; below.
+(allow file-write* (subpath (param "RELAY_DIR")))
+(allow network-bind (local unix-socket (subpath (param "RELAY_DIR"))))
+(allow network-inbound (local unix-socket (subpath (param "RELAY_DIR"))))
 ;; @BACKEND_PORTS@

@@ -4,12 +4,15 @@ import Foundation
 import IsoInferenceGateway
 import NIOPosix
 
-/// `iso-inference --state-dir DIR --backend-port PORT... [--jail-selftest]`
+/// `iso-inference --state-dir DIR --relay-dir DIR --backend-port PORT...
+/// [--jail-selftest]`
 ///
 /// The per-user inference gateway. `iso` starts it under `sandbox-exec`
 /// with the gateway Seatbelt profile; it refuses to run unconfined. The
 /// state directory (owner-only) holds the control socket, the startup lock,
-/// the outstanding-work journal and the audit log.
+/// the outstanding-work journal and the audit log. Session sockets are
+/// bound in the relay directory (owner-only), where the sandbox runtime
+/// relays them into guests over vsock.
 enum Exit: Int32 {
   case ok = 0
   case failure = 1
@@ -22,11 +25,15 @@ func log(_ message: String) {
   FileHandle.standardError.write(Data(("iso-inference: " + message + "\n").utf8))
 }
 
-/// The state directory, the backend ports the launch profile allows (the
-/// gateway refuses registrations naming any other), and self-test mode.
-func arguments() -> (stateDirectory: String, ports: Set<UInt16>, selftest: Bool)? {
+/// The state and relay directories, the backend ports the launch profile
+/// allows (the gateway refuses registrations naming any other), and
+/// self-test mode.
+func arguments() -> (
+  stateDirectory: String, relayDirectory: String, ports: Set<UInt16>, selftest: Bool
+)? {
   var rest = Array(CommandLine.arguments.dropFirst())[...]
   var directory: String?
+  var relay: String?
   var ports = Set<UInt16>()
   var selftest = false
   while let flag = rest.popFirst() {
@@ -35,19 +42,22 @@ func arguments() -> (stateDirectory: String, ports: Set<UInt16>, selftest: Bool)
     case "--state-dir":
       guard directory == nil, let value = rest.popFirst(), value.hasPrefix("/") else { return nil }
       directory = value
+    case "--relay-dir":
+      guard relay == nil, let value = rest.popFirst(), value.hasPrefix("/") else { return nil }
+      relay = value
     case "--backend-port":
       guard let value = rest.popFirst(), let port = UInt16(value), port >= 1024 else { return nil }
       ports.insert(port)
     default: return nil
     }
   }
-  guard let directory, !ports.isEmpty else { return nil }
-  return (directory, ports, selftest)
+  guard let directory, let relay, !ports.isEmpty else { return nil }
+  return (directory, relay, ports, selftest)
 }
 
-/// The state directory must be a real directory owned by this user and
-/// closed to everyone else.
-func checkStateDirectory(_ path: String) -> Bool {
+/// The state and relay directories must be real directories owned by this
+/// user and closed to everyone else.
+func checkPrivateDirectory(_ path: String) -> Bool {
   var info = stat()
   guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == getuid(),
     info.st_mode & 0o077 == 0
@@ -60,24 +70,27 @@ func main() -> Exit {
   // Every socket is written with SO_NOSIGPIPE or through NIO; this is a
   // backstop so a peer that disappears never kills the gateway.
   signal(SIGPIPE, SIG_IGN)
-  guard let (stateDirectory, ports, selftest) = arguments() else {
-    log("usage: iso-inference --state-dir ABSOLUTE_DIR --backend-port PORT... [--jail-selftest]")
+  guard let (stateDirectory, relayDirectory, ports, selftest) = arguments() else {
+    log(
+      "usage: iso-inference --state-dir ABSOLUTE_DIR --relay-dir ABSOLUTE_DIR --backend-port PORT... [--jail-selftest]"
+    )
     return .usage
   }
-  guard checkStateDirectory(stateDirectory) else {
-    log("state directory must be an owner-only (0700) directory owned by this user")
+  guard checkPrivateDirectory(stateDirectory), checkPrivateDirectory(relayDirectory) else {
+    log("state and relay directories must be owner-only (0700) directories owned by this user")
     return .failure
   }
   do {
     try Jail.disableCoreDumps()
-    try Jail.requireConfinement(stateDirectory: stateDirectory, backendPorts: ports)
+    try Jail.requireConfinement(
+      stateDirectory: stateDirectory, relayDirectory: relayDirectory, backendPorts: ports)
   } catch {
     log("confinement check failed: \(error)")
     return .failure
   }
   if selftest {
     log(
-      "jail self-test: writes outside the state directory, exec, non-loopback egress and unlisted loopback ports denied"
+      "jail self-test: writes outside the state and relay directories, TCP listeners, exec, non-loopback egress and unlisted loopback ports denied"
     )
     return .ok
   }
@@ -98,7 +111,8 @@ func main() -> Exit {
     let journal = try Journal(directory: stateDirectory + "/journal")
     let audit = AuditLog(path: stateDirectory + "/audit.log")
     gateway = Gateway(
-      group: group, journal: journal, audit: audit, backendPorts: ports, onExit: { done.signal() })
+      group: group, journal: journal, audit: audit, relayDirectory: relayDirectory,
+      backendPorts: ports, onExit: { done.signal() })
     control = try ControlServer(path: stateDirectory + "/control.sock", gateway: gateway)
   } catch {
     log("startup failed: \(error)")

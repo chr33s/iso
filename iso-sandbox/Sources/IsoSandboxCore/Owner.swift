@@ -44,8 +44,12 @@ public enum Owner {
     let rootfs = Containerization.Mount.block(
       format: "ext4", source: paths.rootfs.path, destination: "/", options: [])
     let console = try ConsoleLog(url: paths.bootLog)
+    if record.relaysInference {
+      // The gateway binds the host socket here; nothing else may.
+      try ControlSocket.prepareDirectory(for: paths.inferenceSocket)
+    }
     let config = machineConfiguration(
-      record: record, interface: interface, bootLog: .fileHandle(console.writer))
+      record: record, paths: paths, interface: interface, bootLog: .fileHandle(console.writer))
     let container = try LinuxContainer(id.rawValue, rootfs: rootfs, vmm: vmm, configuration: config)
     try await container.create()
     try await container.start()
@@ -201,7 +205,7 @@ public enum Owner {
   }
 
   static func machineConfiguration(
-    record: SandboxRecord, interface: any Interface, bootLog: BootLog
+    record: SandboxRecord, paths: SandboxPaths, interface: any Interface, bootLog: BootLog
   ) -> LinuxContainer.Configuration {
     var config = LinuxContainer.Configuration()
     var process = LinuxProcessConfiguration()
@@ -224,9 +228,17 @@ public enum Owner {
     hosts.entries.append(
       .init(ipAddress: interface.ipv4Address.address.description, hostnames: [record.id.rawValue]))
     config.hosts = hosts
-    // Kernel pseudo-filesystems only; no host shares, no socket relays.
+    // Kernel pseudo-filesystems only; no host shares. The only socket relay
+    // is the inference gateway's, when the record asks for it.
     config.mounts = LinuxContainer.defaultMounts()
-    config.sockets = []
+    config.sockets =
+      record.relaysInference
+      ? [
+        UnixSocketConfiguration(
+          source: paths.inferenceSocket,
+          destination: URL(fileURLWithPath: InferenceRelay.guestPath),
+          maxConnections: InferenceRelay.maxConnections, direction: .into)
+      ] : []
     // systemd and dockerd need to write cgroup/sysctl state.
     config.maskedPaths = []
     config.readonlyPaths = []
@@ -258,6 +270,9 @@ public enum Owner {
             "\(record.networkMode == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet)")
       },
       socketRelays: config.sockets.count,
+      inferenceRelay: config.sockets.first.map {
+        .init(host: $0.source.path, guest: $0.destination.path, maxConnections: $0.maxConnections)
+      },
       publishedPorts: 0,
       sshAgentForwarding: false,
       maskedPaths: config.maskedPaths,
@@ -359,7 +374,7 @@ actor Lifecycle {
 
   func markStopped() {
     stopped = true
-    waiters.forEach { $0.resume() }
+    for waiter in waiters { waiter.resume() }
     waiters.removeAll()
   }
 

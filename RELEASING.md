@@ -139,14 +139,14 @@ every other `swift` and helper subprocess.
 The signing workflows use the `release` GitHub environment, which must define these
 secrets:
 
-| Secret | Value |
-|--------|-------|
-| `MACOS_CERTIFICATE_P12` | base64 of the Developer ID Application `.p12` (certificate + private key) |
-| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
-| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
-| `NOTARY_API_KEY_P8` | base64 of an App Store Connect API key (`.p8`, Developer role) |
-| `NOTARY_API_KEY_ID` | that key's ID |
-| `NOTARY_API_ISSUER_ID` | the App Store Connect issuer ID |
+| Secret                       | Value                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| `MACOS_CERTIFICATE_P12`      | base64 of the Developer ID Application `.p12` (certificate + private key) |
+| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password                                                |
+| `MACOS_SIGNING_IDENTITY`     | e.g. `Developer ID Application: Name (TEAMID)`                            |
+| `NOTARY_API_KEY_P8`          | base64 of an App Store Connect API key (`.p8`, Developer role)            |
+| `NOTARY_API_KEY_ID`          | that key's ID                                                             |
+| `NOTARY_API_ISSUER_ID`       | the App Store Connect issuer ID                                           |
 
 A missing secret fails the release, which burns the version, so configure the
 environment before tagging.
@@ -198,18 +198,18 @@ anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 
 ## What runs where
 
-| Check | CI (on PR + on tag) | Local before tagging | Manual judgement |
-|-------|:---:|:---:|:---:|
-| `swift format lint --strict`, build, package tests | ✓ | ✓ | |
-| Python host checks (migration, inventory, parity, CLI surface) | ✓ | ✓ | |
-| Fuzz corpus replay + bounded smoke | ✓ | ✓ | |
-| Host-only install/update/uninstall and regression suites | ✓ | ✓ | |
-| Version ↔ CHANGELOG ↔ tag agreement | | ✓ (`build-release.py --tag`, preflight) | |
-| Release archive (`build-release.py --release --test`) | | ✓ | |
-| Sanitizer runs (`--sanitize=address/thread/undefined`) | | ✓ | when host code changed |
-| Fault injection (`scripts/swift-host-fault-injection.py`) | | ✓ | when security-relevant behavior changed |
-| Fuzz campaigns (`scripts/fuzz.sh run`) | | opt-in | when a parser changed |
-| Apple VM integration and proxy VM gates | | ✓ | Apple runtime/proxy and lifecycle behavior |
+| Check                                                          | CI (on PR + on tag) |          Local before tagging           |              Manual judgement              |
+| -------------------------------------------------------------- | :-----------------: | :-------------------------------------: | :----------------------------------------: |
+| `swift format lint --strict`, build, package tests             |          ✓          |                    ✓                    |                                            |
+| Python host checks (migration, inventory, parity, CLI surface) |          ✓          |                    ✓                    |                                            |
+| Fuzz corpus replay + bounded smoke                             |          ✓          |                    ✓                    |                                            |
+| Host-only install/update/uninstall and regression suites       |          ✓          |                    ✓                    |                                            |
+| Version ↔ CHANGELOG ↔ tag agreement                            |                     | ✓ (`build-release.py --tag`, preflight) |                                            |
+| Release archive (`build-release.py --release --test`)          |                     |                    ✓                    |                                            |
+| Sanitizer runs (`--sanitize=address/thread/undefined`)         |                     |                    ✓                    |           when host code changed           |
+| Fault injection (`scripts/swift-host-fault-injection.py`)      |                     |                    ✓                    |  when security-relevant behavior changed   |
+| Fuzz campaigns (`scripts/fuzz.sh run`)                         |                     |                 opt-in                  |           when a parser changed            |
+| Apple VM integration and proxy VM gates                        |                     |                    ✓                    | Apple runtime/proxy and lifecycle behavior |
 
 CI cannot boot VMs; the VM suites and longer campaigns run on a macOS 27+
 Apple Silicon machine.
@@ -285,31 +285,32 @@ Apple Silicon machine.
    Clients do not see the draft, and would refuse it unsigned, until this runs.
 
 10. **Verify the published release.** On the GitHub release page confirm:
-   - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-inference`, `iso-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
-     `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
-   - the build-provenance attestation is attached,
-   - the binaries are notarized: after extracting the archive,
-     `spctl --assess --type open --context context:primary-signature -v iso`
-     reports `source=Notarized Developer ID`,
-   - the notes match the `## vX.Y.Z` CHANGELOG section.
 
-   Then smoke-test the install path with credentials stripped, so the
-   credential-free bundle verification is exercised as an external user sees
-   it. Pin `VERSION` to the tag you just pushed rather than relying on
-   "latest":
+- `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
+  `iso-inference`, `iso-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
+  `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
+- the build-provenance attestation is attached,
+- the binaries are notarized: after extracting the archive,
+  `spctl --assess --type open --context context:primary-signature -v iso`
+  reports `source=Notarized Developer ID`,
+- the notes match the `## vX.Y.Z` CHANGELOG section.
 
-   ```bash
-   env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$(mktemp -d)" \
-     VERSION=vX.Y.Z INSTALL_DIR="$(mktemp -d)" bash install.sh
-   ```
+Then smoke-test the install path with credentials stripped, so the
+credential-free bundle verification is exercised as an external user sees
+it. Pin `VERSION` to the tag you just pushed rather than relying on
+"latest":
 
-   The run must print `SHA256SUMS signature verified.` and
-   `Attestation verified against attestations.jsonl`. A
-   "Could not use `attestations.jsonl`" line instead means the bundle could not
-   be downloaded — the installer cannot tell a missing asset from a failed
-   download, so confirm the asset on the release page (step 10's first bullet)
-   before concluding it is missing.
+```bash
+env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$(mktemp -d)" \
+  VERSION=vX.Y.Z INSTALL_DIR="$(mktemp -d)" bash install.sh
+```
+
+The run must print `SHA256SUMS signature verified.` and
+`Attestation verified against attestations.jsonl`. A
+"Could not use `attestations.jsonl`" line instead means the bundle could not
+be downloaded — the installer cannot tell a missing asset from a failed
+download, so confirm the asset on the release page (step 10's first bullet)
+before concluding it is missing.
 
 ## If the tag run fails
 

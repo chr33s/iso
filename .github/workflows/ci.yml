@@ -85,8 +85,11 @@ jobs:
       - name: Integration test — iso uninstall
         run: ./tests/integration-uninstall.sh
 
-      - name: iso-sandbox build and unit tests
-        run: swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
+      - name: iso-sandbox format, build and unit tests
+        run: |
+          swift format lint --recursive --strict iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
+          swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
+          swift test --package-path iso-sandbox/Vendor/containerization --filter UnixSocketRelayTests
 
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke

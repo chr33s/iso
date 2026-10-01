@@ -34,16 +34,21 @@ public final class Gateway: Sendable {
   let ticker: Mutex<DispatchSourceTimer?> = Mutex(nil)
   let stopped = Mutex(false)
   let onExit: @Sendable () -> Void
-  /// The command name a transport process must have (`ssh`); a test seam.
+  /// The command name a transport process must have: the instance's
+  /// sandbox owner (`iso-sandbox`), whose VM carries the relay. A test seam.
   let transportCommand: String
   /// Backend ports the launch profile allows; nil only in tests.
   let backendPorts: Set<UInt16>?
+  /// Where session sockets are bound: the host ends of the instances' vsock
+  /// relays (§22). The launch profile allows Unix sockets only here.
+  let relayDirectory: String
 
   public init(
     group: EventLoopGroup, journal: Journal, audit: AuditLog, limits: GlobalLimits = .defaults,
-    backendPorts: Set<UInt16>? = nil, transportCommand: String = "ssh",
-    onExit: @escaping @Sendable () -> Void
+    relayDirectory: String, backendPorts: Set<UInt16>? = nil,
+    transportCommand: String = "iso-sandbox", onExit: @escaping @Sendable () -> Void
   ) {
+    self.relayDirectory = relayDirectory
     self.backendPorts = backendPorts
     self.transportCommand = transportCommand
     self.group = group
@@ -101,7 +106,7 @@ public final class Gateway: Sendable {
 
   public struct Registered: Sendable {
     public let sessionID: String
-    public let port: Int
+    public let socket: String
     public let capability: Secret
     public let policyDigest: String
   }
@@ -124,16 +129,21 @@ public final class Gateway: Sendable {
     let session = GatewaySession(
       id: randomHex(16), registration: registration, capability: capability,
       registered: ContinuousClock.now)
+    let path = relayDirectory + "/" + registration.socket
     let listener: Channel
     do {
-      listener = try SessionListener.bind(gateway: self, session: session, group: group).wait()
+      listener = try SessionListener.bind(gateway: self, session: session, path: path, group: group)
+        .wait()
     } catch {
-      throw InferenceError(.backendUnavailable, "cannot bind a session listener")
+      throw InferenceError(.backendUnavailable, "cannot bind a session socket")
     }
-    let port = listener.localAddress?.port ?? 0
+    guard chmod(path, 0o600) == 0 else {
+      listener.close(promise: nil)
+      throw InferenceError(.backendUnavailable, "cannot restrict the session socket")
+    }
     session.state.withLock {
       $0.listener = listener
-      $0.port = port
+      $0.socketPath = path
     }
     sessions.withLock { $0[session.id] = session }
     scheduler.addSession(session.id)
@@ -145,7 +155,7 @@ public final class Gateway: Sendable {
         "policy_digest": .string(session.policyDigest),
       ])
     return Registered(
-      sessionID: session.id, port: port, capability: Secret(token),
+      sessionID: session.id, socket: registration.socket, capability: Secret(token),
       policyDigest: session.policyDigest)
   }
 
@@ -265,6 +275,9 @@ public final class Gateway: Sendable {
     sessions.withLock { _ = $0.removeValue(forKey: session.id) }
     watch?.cancel()
     scheduler.removeSession(session.id, reason: .sessionRevoked)
+    // The socket file stays: a closed listener refuses the relay's
+    // connections, and the instance's next registration replaces the file.
+    // Unlinking here could race that registration, which reuses the name.
     listener?.close(promise: nil)
     for channel in channels { channel.close(promise: nil) }
     audit.record("session_revoked", ["session": .string(session.id), "reason": .string(reason)])
@@ -304,8 +317,8 @@ public final class Gateway: Sendable {
       .filter { instance == nil || $0.instance == instance }
       .sorted { $0.id < $1.id }
     let sessionList: [JSON] = live.map { session in
-      let (phase, port, transport, deadline) = session.state.withLock {
-        ($0.phase, $0.port, $0.transport, $0.deadline)
+      let (phase, socket, transport, deadline) = session.state.withLock {
+        ($0.phase, $0.socketPath, $0.transport, $0.deadline)
       }
       return .object(
         JSONObject([
@@ -315,7 +328,8 @@ public final class Gateway: Sendable {
               "data_root": .string(session.instance.dataRoot),
               "name": .string(session.instance.name),
             ])),
-          "port": .int(Int64(port)), "nonce": .string(session.nonce),
+          "socket": socket.map { .string(String($0.split(separator: "/").last ?? "")) } ?? .null,
+          "nonce": .string(session.nonce),
           "policy_digest": .string(session.policyDigest),
           "aliases": .array(session.grants.keys.sorted().map(JSON.string)),
           "apis": .array(session.apis.map(\.rawValue).sorted().map(JSON.string)),
@@ -382,16 +396,15 @@ func randomHex(_ bytes: Int) -> String {
   return ControlProtocol.hex(buffer)
 }
 
-/// Binds one session listener to `127.0.0.1:0` and keeps the bound socket
-/// for the session's lifetime: the port is never probed, released and
-/// re-bound (§5.2). No address reuse is set.
+/// Binds one session's Unix socket in the relay directory and keeps it for
+/// the session's lifetime (§22). The instance's sandbox owner relays guest
+/// connections to it over vsock; nothing listens on TCP.
 enum SessionListener {
-  static func bind(gateway: Gateway, session: GatewaySession, group: EventLoopGroup)
+  static func bind(gateway: Gateway, session: GatewaySession, path: String, group: EventLoopGroup)
     -> EventLoopFuture<Channel>
   {
     ServerBootstrap(group: group)
       .serverChannelOption(ChannelOptions.backlog, value: Int32(SessionLimits.connections))
-      .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
       .childChannelOption(ChannelOptions.autoRead, value: true)
       .childChannelOption(
         ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16 * 1024)
@@ -413,6 +426,6 @@ enum SessionListener {
           ])
         }
       }
-      .bind(host: "127.0.0.1", port: 0)
+      .bind(unixDomainSocketPath: path, cleanupExistingSocketFile: true)
   }
 }

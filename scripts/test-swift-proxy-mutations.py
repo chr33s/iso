@@ -49,6 +49,8 @@ MUTATIONS = [
      "&& identity.start == binding.start", ""),
     ("inference drain releases on disconnect", "IsoInferenceGateway/RequestHandler.swift",
      "      cancellation = .draining\n", "      cancellation = .draining\n      settle()\n"),
+    ("inference session socket name unchecked", "IsoInferenceCore/ControlProtocol.swift",
+     "guard Registration.isSocketName(socket) else {", "guard true else {"),
     ("inference backend port outside the launch list", "IsoInferenceGateway/Gateway.swift",
      "if let allowed = backendPorts,", "if let allowed = backendPorts, allowed.isEmpty,"),
 ]

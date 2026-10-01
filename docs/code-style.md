@@ -25,7 +25,11 @@ a bug through.
   ```sh
   swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
   swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
+  swift format lint --recursive --strict iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
   ```
+
+  The vendored `iso-sandbox/Vendor/containerization` keeps upstream's formatting
+  and is not linted here.
 
 - Tests use Swift Testing (`import Testing`, `@Test`, `#expect`/`#require`).
 - Keep module boundaries: `IsoCore` has no subprocess or network side

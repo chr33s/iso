@@ -12,7 +12,8 @@ extension AgentBootstrap {
   )
 
   /// The instance's gateway session, established or reused. nil when no
-  /// agent or grant requests a service.
+  /// agent or grant requests a service. A new session (re)installs the
+  /// guest's bridge to the relayed gateway socket.
   func inferenceSession(_ instance: Instance, target: SSHTarget) throws -> (
     session: InferenceSession, fresh: Bool
   )? {
@@ -21,7 +22,29 @@ extension AgentBootstrap {
       throw HostError(
         "inference.mode = \"required\" but this command has no inference controller (fail-closed)")
     }
-    return try inference.ensureSession(instance, target: target)
+    guard let result = try inference.ensureSession(instance, target: target) else { return nil }
+    if result.fresh {
+      do { try installInferenceBridge(target) } catch {
+        // Not left active without its bridge: the next command registers a
+        // fresh session and installs the bridge again.
+        inference.revoke(instance)
+        throw error
+      }
+    }
+    return result
+  }
+
+  /// `127.0.0.1:10788` in the guest, bridged by systemd to the relayed
+  /// gateway socket (§22).
+  func installInferenceBridge(_ target: SSHTarget) throws {
+    do {
+      try client.exec(
+        target, RemoteCommand().literal("sudo bash -s"),
+        stdin: Array(EmbeddedResources.guestScript("inference-bridge.sh").utf8))
+    } catch {
+      throw ContextError(
+        "Failed to install the guest's inference bridge (fail-closed)", cause: error)
+    }
   }
 
   /// SSH-session variables: the Codex provider key and an attach grant's

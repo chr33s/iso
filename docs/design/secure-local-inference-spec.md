@@ -1,8 +1,8 @@
 # Secure Host MLX Inference for iso
 
 **Status:** Implementation specification  
-**Version:** 0.4.0  
-**Date:** September 30, 2026  
+**Version:** 0.6.0  
+**Date:** October 1, 2026  
 **Repository:** `chr33s/iso`  
 **Design baseline:** commit `1784c5648f65d8d7bc1c901635cc33f11f80382e`  
 **Repository path:** `docs/design/secure-local-inference-spec.md`
@@ -13,7 +13,11 @@
 
 **Changes in 0.4.0:** host-side hardening (§20): a dedicated backend account, and an iso-provisioned, launchd-managed MLX backend. That backend requires bearer authentication, runs under its own Seatbelt profile and a GPU memory limit, and is restarted by the host. The gateway's Seatbelt profile allows only the configured backend ports and narrowed reads. `iso inference init` writes a hardened configuration, and `doctor` audits host listeners reachable from guests. Model fetching is an opt-in step pinned to a commit.
 
-> This specification is implemented; §19 records which acceptance tests have evidence and which claims remain open. It does not claim a qualified real MLX deployment: qualification profiles are owner decisions, and §17 lists what they must establish. Source review is not a substitute for the hardware and adversarial tests defined here.
+**Changes in 0.5.0 (design):** engine-neutral backends (§21). An owner manifest describes any loopback inference engine: its argv template, pinned artifacts, protocols and confinement capabilities. iso supplies the generic launcher, an auth front for engines without authentication, multi-protocol backends and per-profile deadlines. `iso inference qualify` measures qualification profiles instead of the owner entering them. The design is motivated by running ds4 on real hardware (§21.2).
+
+**Changes in 0.6.0:** vsock session transport (§22), implemented with the relay fixes vendored. A spike on real hardware showed that containerization 0.45.0 can relay a host Unix socket into the guest over vsock, fast and bound to the VM. It also showed that the relay dies permanently after one failed host connect, and that a guest can exhaust the owner process's descriptors. §22 sets the relay requirements, the runtime and `IsolationGate` changes, and a systemd guest bridge. SSH stays until the relay is fixed.
+
+> This specification is implemented through §20, and §22; §21 is a design. §19 records which acceptance tests have evidence and which claims remain open. It does not claim a qualified real MLX deployment: qualification profiles are owner decisions, and §17 lists what they must establish. Source review is not a substitute for the hardware and adversarial tests defined here.
 
 ## 1. Decision and security objective
 
@@ -559,7 +563,7 @@ Return sanitized JSON errors before streaming begins. After streaming begins, us
 | `503` | Backend unavailable/quarantined or service not ready. |
 | `504` | Queue, first-output, or generation deadline exceeded. |
 
-Use stable internal error codes including `INFERENCE_AUTH_INVALID`, `INFERENCE_POLICY_DENIED`, `INFERENCE_PROTOCOL_UNSUPPORTED`, `INFERENCE_BACKEND_UNSAFE_BIND`, `INFERENCE_BACKEND_QUARANTINED`, `INFERENCE_BACKEND_UNSAFE_OWNER`, `INFERENCE_MODEL_UNQUALIFIED`, and `INFERENCE_SESSION_REVOKED`.
+Use stable internal error codes including `INFERENCE_AUTH_INVALID`, `INFERENCE_POLICY_DENIED`, `INFERENCE_PROTOCOL_UNSUPPORTED`, `INFERENCE_BACKEND_UNSAFE_BIND`, `INFERENCE_BACKEND_QUARANTINED`, `INFERENCE_BACKEND_UNSAFE_OWNER`, `INFERENCE_MODEL_UNQUALIFIED`, `INFERENCE_SESSION_REVOKED`, and, with §21, `INFERENCE_ENGINE_INVALID` and `INFERENCE_ENGINE_MISMATCH`.
 
 Extend host audit events with registration, activation, revocation, denied operations, limit rejections, output-limit clamps, transport-process revocations, qualification changes, and quarantine. Record host-assigned instance/session/request IDs, authorized aliases, normalized operation codes, byte/token counts, durations, and reason codes. Do not record prompts, completions, tool arguments, capability values, backend credentials, raw attacker paths, or arbitrary headers.
 
@@ -634,11 +638,11 @@ Do not announce secure Codex or Claude local inference before that client's adap
 
 **Direct SSH tunnel to raw MLX:** Retain as a documented legacy transport option. It does not provide this policy boundary and is rejected under guarded required mode.
 
-**Dedicated vsock service:** Reconsider only as a separate data-plane transport after the HTTP policy and lifecycle are stable. It would need new runtime qualification and isolation-gate treatment, and must not expose the existing privileged control channel. The current contract deliberately excludes host socket relay exposure. See the [trust model][repo-trust].
+**Dedicated vsock service:** Designed in §22 as a relay into a host Unix socket. It is blocked on the relay defects recorded there. Reconsider only as a separate data-plane transport after the HTTP policy and lifecycle are stable. It would need new runtime qualification and isolation-gate treatment, and must not expose the existing privileged control channel. The current contract deliberately excludes host socket relay exposure. See the [trust model][repo-trust].
 
 **VM-network listener plus host firewall:** Deferred. It adds host-network policy and deployment requirements without replacing request authorization. Authentication and API policy would still be required.
 
-**Managed MLX backend:** Deferred extension for stronger filesystem, network, and compute containment. Resolve process ownership, Metal-compatible confinement, memory/cache enforcement, cancellation/kill guarantees, and asset provisioning before specifying it as supported.
+**Managed MLX backend:** Specified and implemented in §20. §21 generalizes it to any engine through manifests.
 
 **Outstanding qualification decisions:** Select the first supported backend/model/client version tuples, including an MLX-based server that natively serves Responses or Anthropic Messages; record the client fixtures that set fixture-derived limits and field tables; determine the completion-evidence class of stock `mlx_lm.server` (whether closing its stream stops generation, and whether its stream has a reliable terminal event); confirm the input-bound property and overhead constants for each model tokenizer; confirm the gateway's Seatbelt profile permits the kqueue process watch; and measure the filesystem/network restrictions compatible with their Metal runtime. These are release prerequisites for the corresponding claims, not reasons to weaken the default-deny policy.
 
@@ -784,6 +788,348 @@ Existing values are never overwritten silently: a conflicting key fails with a l
 - The root step runs against fake `dscl`, `launchctl` and `chown` tools under a prefix, so it is testable without privilege.
 - The process test checks that a loopback port absent from the list is denied to the gateway.
 - Qualification with real MLX (a small model under the backend profile) is recorded in §19 when run on hardware.
+
+## 21. Engine-neutral backends
+
+**Status: design, not implemented.** §20 hard-codes one engine: the managed backend is an mlx-lm server, with an mlx-lm launcher, an mlx-lm Seatbelt profile and hand-entered qualification values. This section generalizes the managed path. An inference engine becomes data: an owner-supplied manifest. iso keeps every security-relevant mechanism, and qualification becomes something iso measures rather than something the owner types. Adding an engine then needs no iso change, except for the cases listed in §21.13.
+
+### 21.1 Goals and non-goals
+
+Goals:
+
+- run any loopback HTTP engine that natively serves one or more of the supported protocols (§8.1), including ds4, mlx-lm and llama.cpp-style servers, managed or attached, with the §20 hardening;
+- let one engine process serve several protocols, so Claude Code and Codex can share one loaded model;
+- derive the qualification profile (§10, §17) from measurements tied to the exact engine, executable and model.
+
+Non-goals:
+
+- translating between protocols. This remains deferred (§17).
+- executable plugins, owner-written Seatbelt rules, or engine code running inside iso or the gateway;
+- downloading engines. Artifacts are local files pinned by hash (§21.3). Downloads stay a separate stop-and-confirm decision.
+
+### 21.2 Evidence from a second engine
+
+ds4 ([antirez/ds4][ds4], commit `8db1d1d`), was run on macOS 27 on an Apple M-series machine with 128 GiB of memory. The model was `DeepSeek-V4-Flash-IQ2XXS…-0731.gguf` (86.7 GB, 81.6 GiB resident), with `--ctx 32768`. The recorded Claude Code and Codex requests were replayed through the real confined gateway:
+
+| Finding | Consequence for this design |
+|---|---|
+| It serves `/v1/messages`, `/v1/responses`, `/v1/chat/completions` and `/v1/completions`, with structured tool calls on Messages (`tool_use`) and Responses (`function_call`). It has no `count_tokens`. | Claude Code and Codex work through the gateway unchanged: 200, and well-formed event sequences for 4 of the 5 recorded requests. |
+| The gateway refuses a second profile on the same port (`INFERENCE_MODEL_UNQUALIFIED`), and a profile has one protocol. | One engine process cannot serve Claude and Codex at once. Two processes do not fit in memory. §21.8 fixes this. |
+| It has no authentication. A browser-style `text/plain` POST carrying an `Origin` header is served even without `--cors`. | Any local process, or any web page, can drive generation. §21.6 fixes this. |
+| The 25k-token recorded Claude request hit the fixed 120 s first-output deadline (504). Prefill runs at about 360 tokens/s. | Deadlines must be per profile, and measured (§21.10). |
+| After a close, generation stops within a few tokens, whether streamed or not. During prefill it stops at the end of the current chunk (4096 tokens, about 12 s). | `stream-close` evidence, with a drain window that covers one prefill chunk. The harness measures this (§21.9). |
+| An over-long prompt gets an immediate 400 `context_length_exceeded`. | `context_overflow: reject`, which the harness detects. |
+| `--trace FILE` writes prompts and outputs. The disk KV cache stores prompt text. `--host` widens the bind. | The manifest forbids these flags (§21.4). Cache writes stay in the role-owned `cache/` directory. |
+
+### 21.3 Engine manifest
+
+Engines are declared under `inference.engines.<name>` in the configuration. They are part of the one validated snapshot each command loads. iso ships built-in manifests (the first is `mlx-lm-0.31`, which replaces the hard-coded §20 path). An owner manifest may not reuse a built-in name.
+
+```jsonc
+"inference": {
+  "engines": {
+    "ds4": {
+      "protocols": ["anthropic-messages", "openai-responses", "openai-chat"],
+      "executable": { "path": "/opt/ds4/ds4-server", "sha256": "…64 hex…" },
+      "files": [{ "path": "/opt/ds4/metal", "sha256": "…tree digest…" }],
+      "model": { "file": "/models/DeepSeek-V4-Flash.gguf", "sha256": "…", "placement": "copy" },
+      "params": { "ctx": { "type": "integer", "min": 1024, "max": 1048576, "default": 32768 } },
+      "launch": ["{executable}", "-m", "{model}", "--ctx", "{ctx}",
+                 "--host", "127.0.0.1", "--port", "{engine_port}", "--kv-disk-dir", "{cache_dir}"],
+      "forbid_args": ["--cors", "--trace"],
+      "health": { "path": "/v1/models", "status": 200 },
+      "auth": "none",
+      "model_ids": ["deepseek-v4-flash"],
+      "capabilities": ["metal", "write-cache"],
+      "memory": { "resident_gib": 82 }
+    }
+  },
+  "backends": {
+    "ds4-main": {
+      "base_url": "http://127.0.0.1:18180",
+      "engine": "ds4",
+      "managed": { "params": { "ctx": 65536 } }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `protocols` | The protocols (§8.1) the engine serves natively. Every protocol a backend exposes must be qualified (§21.9). |
+| `executable` | An absolute path and SHA-256. Managed provisioning copies it into the root-owned backend directory, and the job runs only that copy. |
+| `interpreter` | Instead of `executable`, for script engines: `{ "python": PATH }` or `{ "install": [pip requirement lines with --hash] }`, launched with the `interpreter` capability (§21.7). |
+| `files` | Support files or directories the engine reads at run time, pinned by digest and copied the same way. |
+| `model` | `file` or `directory`, with a digest. `placement` is `copy` (the default) or `adopt`, which renames the source into the root-owned tree when it is on the same volume. That avoids a second copy of a model of 100 GB or more, and hands the file to root. |
+| `params` | Typed, bounded parameters that the backend's `managed.params` may set. They are the only owner values that reach argv. |
+| `launch` | An argv template. Elements are literals or whole placeholders (§21.4). |
+| `forbid_args` | Literal arguments that may not appear in the rendered argv, whatever their source. |
+| `health` | A GET path and expected status, used for readiness. It is sent with the token when `auth` is native. |
+| `auth` | `native`: the engine enforces a bearer token read from the argument that `{token_file}` supplies. `none`: iso's auth front is required (§21.6). |
+| `model_ids` | The upstream model ids a service may name. |
+| `capabilities` | Confinement grants from iso's vocabulary (§21.7). |
+| `memory` | Declared resident size. Provisioning refuses a host without enough memory left over, and status reports it. |
+
+The existing `managed` form of §20.2 (`server: "mlx-lm"`, `python`/`install`, `model`) remains accepted. It is an alias for `engine: "mlx-lm-0.31"`.
+
+### 21.4 Manifest trust rules
+
+A manifest is owner-trusted host configuration, but iso treats it as data and enforces these rules:
+
+- **argv.** Each `launch` element is either a literal or exactly one placeholder. There is no substitution inside strings, no shell and no environment expansion. The placeholders that iso sets are `{executable}`, `{interpreter}`, `{launcher}`, `{model}`, `{engine_port}`, `{cache_dir}`, `{log_dir}` and `{token_file}`. Declared `params` are the only others. Their values are checked against their type and bounds, and must not start with `-`.
+- **Forbidden arguments.** The rendered argv must not contain any `forbid_args` element. iso adds a built-in deny list for bind and CORS flags that it knows for its built-in engines.
+- **Binding.** The engine binds `127.0.0.1:{engine_port}`, a port iso allocates. The §10 bind checks and the §20.1 owner checks apply to that port.
+- **Environment.** The job gets a fixed environment: `HOME` and `TMPDIR` under `cache/`, a minimal `PATH`, and offline flags for known model hubs. Manifests cannot add variables.
+- **Artifacts.** The executable, files and model are verified against their digests when provisioned. Copies are root-owned and read-only to the role account. At every launch, iso re-checks the size, inode and modification time. `iso inference verify <backend>` re-hashes everything in full.
+- **Identity.** A manifest's identity is the SHA-256 of its canonical JSON form. A qualification record (§21.9) is bound to it.
+
+### 21.5 Generic launcher
+
+§20.2 provisioning applies unchanged: the role account, the root-owned backend directory, the Keychain token, the LaunchDaemon and the single `sudo` step that takes a stdin plan. The engine-specific parts come from the manifest:
+
+- **ProgramArguments.** `sandbox-exec` runs the profile composed from `capabilities` (§21.7), then the rendered `launch` argv.
+- **Readiness.** `health` must answer within `health_deadline`, 300 s by default and adjustable per manifest up to 1800 s for large models. With `auth: none`, readiness is checked on the engine port and then through the front.
+- **The plan.** The stdin plan carries the manifest, its digest, the resolved `params`, the allocated ports and the artifact digests. The root step re-validates all of it with the same decoder the configuration uses. It never reads the user's configuration.
+
+### 21.6 Auth front
+
+An engine with `auth: "none"` is served through `iso-inference front`, a mode of the `iso-inference` binary that reuses its HTTP transport. It runs as the role account in a second LaunchDaemon, under its own profile. Inbound is allowed on the backend's public port, outbound on the engine port only. It has no filesystem writes except its log. For each request, the front:
+
+- requires `Authorization: Bearer <token>` (from `token`, compared in constant time);
+- refuses any `Origin` header, `OPTIONS`, and any `POST` whose content type is not `application/json`, which closes the browser simple-request path;
+- forwards method, path and body unchanged to `127.0.0.1:{engine_port}`, and streams the response back without buffering it;
+- enforces header and body bounds, not policy. Policy stays in the gateway.
+
+**Residual risk:** another local process can still find and connect to the engine port directly, because macOS loopback has no per-user isolation. Status therefore distinguishes `backend_authenticated: native | front | none`. `front` counts as authenticated for `backend_isolation_verified` only when the owner sets `accept_front_auth: true` on the backend. Otherwise doctor warns. Engines that add native authentication, or a Unix-socket listener (§21.13), close this gap.
+
+### 21.7 Confinement capabilities
+
+The backend profile is composed from a fixed base and named capabilities. Each capability is an SBPL fragment that ships with iso and is qualified on hardware:
+
+| Capability | Grants | Qualified by |
+|---|---|---|
+| (base, always) | Reads of system libraries, the executable and `files` copies, the model, and the backend directory. Bind and inbound on `{engine_port}` only. No outbound network. Execution of the executable only. `sysctl-read`. `process-info` on itself. | §19, mlx-lm |
+| `metal` | The `AGXDeviceUserClient` and `IOSurfaceRootUserClient` user clients, and `com.apple.MTLCompilerService`. | §19, mlx-lm 0.31.3 |
+| `interpreter` | Reads of the interpreter's `sys.prefix` and `sys.base_prefix`, and execution of its resolved executable. | §19 |
+| `write-cache` | Writes to `cache/` (disk KV caches, compiled kernels). | Per engine, by the harness |
+| `write-logs` | Writes to `logs/`. Always granted. | — |
+
+A manifest naming an unknown capability is refused (`INFERENCE_ENGINE_INVALID`). The harness (§21.9) runs the engine under exactly this profile. An engine that needs more than the vocabulary allows needs a new capability, which is an iso change (§21.13).
+
+### 21.8 Multi-protocol backends
+
+- **Profiles.** A qualification profile's `protocol` becomes `protocols`, an array. The old single `protocol` key is still accepted as a one-element array.
+- **Backends.** A backend's `protocol` likewise becomes `protocols`. It must equal the profile's set, and must be a subset of the engine's `protocols`.
+- **Gateway identity.** A backend is still identified by its port. Registration conflicts only when the profile's full content differs, so services with different APIs on the same port share the backend's concurrency limit and quarantine state.
+- **Services.** Each API in `frontend_apis` must be served natively by the backend. Adapters remain same-protocol only (§8.1).
+- **Wire format.** The control protocol grant carries `profile.protocols`, and the gateway selects the adapter per request from the granted API.
+
+### 21.9 Qualification harness (`iso inference qualify <backend>`)
+
+The harness runs on the host as the user. It starts a private, confined gateway with an ephemeral state directory, pointed at the backend exactly as a session would use it, and measures the following:
+
+| Probe | Method | Derives |
+|---|---|---|
+| Protocols | Replays each recorded client fixture set for every declared protocol through the gateway, then a tool-call round trip (a declared tool, then its result). A pass needs a 2xx response, a well-formed event sequence, and a structured tool call. | Which `protocols` are qualified. |
+| Stop after close | With the backend limited to one active request, it closes a streamed request during decode, a non-streamed request during decode, and a streamed request during prefill of the largest allowed input. It then sends a one-token probe and measures that probe's time to first byte against an idle baseline. | `completion_evidence`: `stream-close` when every close stops within the bound, otherwise `drain`, otherwise `none`. `stream_close_drain_ms` is the worst stop latency times 1.5. |
+| Overflow | Sends a prompt larger than the declared context. | `context_overflow`: `reject` for a 4xx context error, `truncate` for 2xx with `prompt_tokens` at or below the context, `accept` for 2xx with `prompt_tokens` above it. |
+| Input bound | Compares `usage` input tokens with the byte bound over the fixtures and synthetic prompts. | `input_overhead` constants, and whether the byte bound holds (§9). |
+| Latency | Time to first output at the largest allowed input, and decode rate. | `first_output_seconds` (twice the measurement, rounded up) and `generation_seconds` (§21.10). |
+| Logging | Scans `logs/` for canary prompt text after the run. | Whether the engine logs prompts (reported, not enforced). |
+
+The harness writes a qualification record: `qualification.json`, in the backend directory for managed backends (written through the root step), or `<state>/qualifications/<backend>.json` (`0600`) for attached ones. It contains:
+
+- the manifest digest, executable and model digests, resolved `params`, iso version, fixture-set versions and host hardware;
+- each derived value, with the raw measurements behind it;
+- the time of the run.
+
+**Use and invalidation:**
+
+- A backend without `qualification_profile` uses the record's profile.
+- A record is stale when any digest, the iso version's fixture set, or the `params` differ. A stale or missing record makes the backend `INFERENCE_MODEL_UNQUALIFIED` at session start, with the reason.
+- A hand-written `qualification_profile` still overrides the record, and status marks it `owner_asserted`.
+
+### 21.10 Per-profile deadlines
+
+`SessionLimits.firstOutputSeconds` (120) and `generationSeconds` (300) become profile fields `first_output_seconds` (1–3600) and `generation_seconds` (1–86400). Their defaults are unchanged. The gateway arms each request's timers from its grant's profile. A running gateway still only tightens shared global limits (§11). Deadlines are per backend, so they never loosen another backend's.
+
+### 21.11 CLI, status and errors
+
+- `iso inference engines [--json]`: the declared and built-in engines, with digests, protocols and capabilities.
+- `iso inference qualify <backend> [--protocol P]... [--fixtures DIR]`: runs §21.9 and prints the derived profile and the record path.
+- `iso inference verify <backend>`: re-hashes the artifacts against the manifest and the record.
+- `iso inference init --engine NAME`: writes a backend and services for any engine, one service per protocol, with the hardened defaults of §20.6.
+- `provision`, `deprovision` and `restart-backend` work for any managed engine. `provision` refuses to finish until `qualify` has passed, unless `--skip-qualify` is given (for example when qualification will be run later on other hardware).
+
+Status adds `backend_engine`, `engine_digest`, `backend_authenticated` (`native | front | none`), and `qualification` (`current | stale | missing | owner_asserted`, with `measured_at`).
+
+New stable error codes:
+
+- `INFERENCE_ENGINE_INVALID`: a manifest failed decoding, template or capability rules.
+- `INFERENCE_ENGINE_MISMATCH`: an artifact digest or launch check failed.
+
+A stale qualification reuses `INFERENCE_MODEL_UNQUALIFIED`.
+
+### 21.12 Trust-model changes
+
+- The engine stays inside the trusted computing base for the prompts it receives, as in §20.
+- A manifest is owner configuration, with the same trust as the rest of `config.jsonc`. It can choose which program runs as the role account, but cannot widen that account's confinement beyond the shipped vocabulary.
+- The harness sends synthetic prompts and recorded fixture bodies only. It never sends guest data.
+- The front is a new listener: loopback only, on a configured backend port, and bearer-authenticated. It falls under the stop-and-confirm rule for new network listeners, and is listed in `docs/trust-model.md`.
+
+### 21.13 What still requires an iso change
+
+- **A new confinement capability,** for example CUDA or ROCm on a future host platform, a new Metal service, or network access for engines that shard across machines.
+- **A new client protocol,** or a translating adapter (§17).
+- **A new listener transport:** Unix-domain-socket engines, which would remove the front's residual risk. This needs a gateway upstream type and a placeholder for the socket path.
+- **New fixture sets** when a supported client version changes its requests (§8.5).
+
+### 21.14 Acceptance tests
+
+| ID | Requirement |
+|---|---|
+| AT-23 | A manifest with a string-interpolated placeholder, an unknown placeholder, a parameter value starting with `-`, a forbidden argument or an unknown capability is refused. So is a rendered argv containing a literal from the deny list. |
+| AT-24 | A changed executable, file or model digest blocks launch with `INFERENCE_ENGINE_MISMATCH`, and makes the qualification record stale. |
+| AT-25 | One engine port serves `anthropic-messages` and `openai-responses` services in concurrent sessions, sharing the backend's limit and quarantine. |
+| AT-26 | With `auth: none`, the engine is reachable only through the front for clients that obey the protocol. The front refuses a missing or wrong token, `Origin`, `OPTIONS` and non-JSON POSTs. Status reports `front`. |
+| AT-27 | The harness derives the ds4 and mlx-lm values recorded in §19 and §21.2 (completion evidence, overflow class, a drain window covering prefill) against the real engines, and against scripted engines with known behavior. |
+| AT-28 | A stale or missing record fails session start with `INFERENCE_MODEL_UNQUALIFIED`. A record for another host or iso version is stale. |
+| AT-29 | Per-profile deadlines: a backend with `first_output_seconds: 600` serves a 25k-token Claude Code request that fails at the default 120 s. |
+
+### 21.15 Delivery sequence
+
+Each step is its own change, with refactors before behavior:
+
+1. **Multi-protocol profiles and per-profile deadlines** (§21.8, §21.10). This covers configuration, the control protocol and the gateway. It already lets an attached ds4 serve Claude and Codex at once.
+2. **The manifest decoder, the capability vocabulary and the generic launcher.** `managed.server: "mlx-lm"` is re-expressed as the built-in `mlx-lm-0.31` manifest, with no behavior change.
+3. **The auth front.**
+4. **The qualification harness and records,** then removing the need for hand-written profiles.
+5. **ds4 as the first owner manifest:** documentation example and hardware evidence in §19.
+
+[ds4]: https://github.com/antirez/ds4
+
+## 22. vsock session transport
+
+**Status: implemented, with the relay fixes vendored (§22.3).** Before this section, the guest reached its gateway session through a pinned `ssh -R` forward to a per-session listener on host loopback (§5, §12). The forward is replaced by a vsock relay into a per-instance host Unix socket, and the SSH forward path for inference is removed. The trust-model change in §22.6 was approved. This branch does not merge to `main` until upstream releases the vendored fixes.
+
+### 22.1 Why
+
+| | `ssh -R` (current) | vsock → host Unix socket |
+|---|---|---|
+| Host exposure | One TCP listener on loopback per session. Any local process can connect; only the capability stops it. | No host TCP. A `0600` socket in a `0700` per-user directory, reachable only through the instance VM's vsock device. |
+| Session identity | Built by iso: sole-listener check, `ssh` PID and start time, kqueue watch, forward identity. | Given by the VM: a connection can only come from that instance. The capability remains as defense in depth. |
+| Revocation and lifecycle | Kill the forward, and handle stale forwards, `sshd` restarts and a guest killing its end. | The relay lives and dies with the VM. Revocation is capability-only. |
+| Dependencies | Guest `sshd`, host `ssh`, pinned host keys. | The guest agent's relay, plus a guest-side bridge (§22.4). |
+
+### 22.2 Spike
+
+This was run on October 1, 2026, on macOS 27, Apple Silicon. iso-sandbox protocol 4 was built on containerization 0.45.0 and runs VMs with `VZVirtualMachineManager` and `LinuxContainer` (the guest agent is vminitd from the pinned `vminit` image). A throwaway build set `LinuxContainer.Configuration.sockets` to one `.into` relay, pairing a host Unix socket with a guest path. It used the integration test image, a private runtime root and a host HTTP server on the Unix socket.
+
+| Check | Result |
+|---|---|
+| Guest root reaches the host server through the relay | ✅ A request round trip works. |
+| Guest socket path | ❌ When placed under `/run`, it is hidden: the relay mounts it at container start, and systemd then mounts a fresh tmpfs over `/run`. A path outside `/run` (`/var/lib/iso-inference/gateway.sock`) works. |
+| Guest socket permissions | Created as `0000 root:root`. A non-root guest user is refused. The relay's `permissions` option needs `SystemPackage`, which iso-sandbox does not import yet. The bridge below makes this moot. |
+| Throughput | 20,000 SSE events in about 28 ms. An 8 MiB request body in 23 ms. 100 sequential requests in 262 ms, including `curl` start-up. |
+| Guest TCP bridge | ✅ A systemd socket unit on `127.0.0.1:10788` with `systemd-socket-proxyd` (present in the guest image) reaches the relay for root and non-root users, and streams. `socat` is absent from iso's guest image. |
+| Host socket briefly absent | ❌ One guest connection while the host socket was missing (as when the gateway is not running) **permanently killed the relay** for the VM's lifetime. Later connections were reset, even though the host server answered directly. |
+| 400 concurrent guest connections | ❌ The owner process went from 35 to 383 open descriptors, above its soft limit of 256, and stayed at 381 after every client exited. The relay died again. The owner's control channel (`exec`, `stop`) still answered. |
+| Public API | `LinuxContainer` exposes `dialVsock` (host to guest) but not a host-side `listen`. iso-sandbox therefore cannot run its own relay without a containerization change. |
+
+### 22.3 Relay defects that block adoption
+
+In containerization 0.45.0, `UnixSocketRelay.setupHostVsockListener` runs one accept loop. `handleGuestVsockConn` creates and connects the host socket outside its `do/catch`, so a failed connect ends the loop, and with it the relay. The host socket is created with `closeOnDeinit: false`, and the error path closes neither side, so descriptors leak. Nothing limits concurrent connections. A guest can therefore disable the relay permanently, and exhaust the descriptors of the process that owns the VM.
+
+Adoption requires a relay that satisfies:
+
+- **R1.** A failed host connect closes that guest connection only. The listener keeps accepting.
+- **R2.** A cap on concurrent relayed connections per VM (32). Excess connections are closed immediately.
+- **R3.** Both descriptors are closed on every exit path. The owner's descriptor count returns to baseline after load.
+- **R4.** Bytes only: no parsing and no buffering beyond a fixed chunk, with back-pressure between the two sides.
+- **R5.** The relay ends with the VM, and runs in no other process.
+
+It can be satisfied in either of two ways:
+
+- **Upstream fix (preferred):** a containerization change for R1–R3, contributed and pinned when released.
+- **iso-owned relay:** containerization exposes the VM's host-side `listen(port)` (or the instance) from `LinuxContainer`, and iso-sandbox implements R1–R5 itself.
+
+**Status of the fix.** Upstream `main` at `f24df2a` (September 30, 2026) already contains R1 and R3. Per-connection errors are caught and the loop continues, and failed setups close both sides. R2 is still missing. A patch adding `UnixSocketConfiguration.maxConnections` was drafted against that commit ("Limit concurrent connections in UnixSocketRelay"). It comes with unit tests for both directions, which fail with the limit disabled, and was checked on hardware: iso-sandbox built on the patched checkout with `maxConnections: 32`.
+
+- With the host socket absent, guest connections failed immediately, and the relay recovered when the socket returned (R1).
+- With 400 concurrent guest connections, the owner peaked at 99 descriptors and returned to its baseline of 35 (R2, R3).
+- The relay and the owner's control channel kept working.
+
+**Vendored.** `iso-sandbox/Vendor/containerization` is 0.45.0 plus the host-side relay change from `8b8cd7e` and this patch (`iso-sandbox/Vendor/patches/`), with tests trimmed to `UnixSocketRelayTests`. The guest agent stays the pinned `vminit:0.45.0` image, since both fixes are host-only. `VENDORED.md` records the provenance, and the removal step: point at the upstream release that contains both fixes, bump the `vminit` pin, and re-run the VM suite.
+
+### 22.4 Design
+
+**Runtime (iso-sandbox, protocol 5)**
+
+- **Record.** `SandboxRecord.inferenceRelay`, a boolean, defaults to false. It is set by `create --inference-relay`, and by `start --inference-relay on|off` for each boot. `start` records it under the runtime's mutation guard after clearing a crashed owner's state. The record holds no path.
+- **Host path.** The runtime derives it the way it derives the owner's control socket: `<per-user temp>/iso-sbx/inference/<hash of the sandbox directory>.sock`. The owner creates `iso-sbx/inference` as a `0700` directory owned by the user, and verifies it like the control-socket directory. The guest path is the constant `/var/lib/iso-inference/gateway.sock`, placed outside systemd's `/run` tmpfs (§22.2).
+- **Relay.** The owner configures exactly one `.into` relay, with `maxConnections: 32`.
+- **Reporting.** `inspect` reports it as `inferenceRelay: {host, guest, maxConnections}`, alongside `socketRelays`.
+
+**Gateway**
+
+- `iso-inference` is launched with `--relay-dir <per-user temp>/iso-sbx/inference`, and its Seatbelt profile allows creating, binding and accepting Unix sockets under that directory only (`RELAY_DIR`).
+- A registration names its socket (`socket`: 1–16 lowercase hex characters, the runtime's hash, plus `.sock`). The gateway binds `RELAY_DIR/<socket>` (`0600`), replacing any stale file. One session per instance means one socket per instance.
+- Session listeners on TCP are removed. The capability remains required on every request.
+- Activation binds the session to the instance's sandbox owner process. The PID and start time come from the registration's boot identity, and the command must be `iso-sandbox`. The owner's exit revokes the session through the existing kqueue watch.
+
+**Host (iso)**
+
+- `InferenceBoot` carries the relay host path read from `inspect`.
+- The controller refuses a path whose directory is not `<per-user temp>/iso-sbx/inference`, or whose name is not a 1–16 hex digit hash. It registers with that name and activates with the owner identity. No forward is created, and no loopback listener check is needed.
+- The session state records the owner's PID and start time. The per-command session memo and `current()` check that process instead of a forward.
+- iso creates the sandbox with the relay when `inference.mode == "required"`, and passes `start --inference-relay on|off` when the mode has changed since. Unchanged starts keep their exact runtime arguments.
+- `IsolationGate` accepts zero relays, or exactly the inference relay with the derived host path, the constant guest path and a cap of 32. The relay is accepted only when the configuration requires inference. A running boot whose relay does not match the configuration (the mode changed while it ran) is refused with a restart hint.
+- The bridge is installed when a session is created. If the install fails, the session is revoked, so the next command registers again and retries the install.
+- The control protocol is version 2: registrations name a `socket` instead of receiving a port.
+
+**Guest (bootstrap)**
+
+- iso installs `iso-inference.socket` (`ListenStream=127.0.0.1:10788`) and `iso-inference.service` (`systemd-socket-proxyd /var/lib/iso-inference/gateway.sock`). It enables the socket on each agent bootstrap.
+- The guest port is fixed at 10788 for every instance, since each VM has one. Agents use `http://127.0.0.1:10788` as before.
+
+**Removed**
+
+- For inference: the `ssh -R` forward, its PID file and memo identity, the sole-listener check, per-index guest ports, and TCP session listeners.
+- SSH remains for shells, agent bootstrap and the legacy raw tunnels of `mode: off`.
+
+### 22.5 Security properties
+
+- No inference listener exists on host TCP. Local processes need write access to the user's `0700` state directory, which is owner-only.
+- The guest cannot choose the host path. The runtime pins it to the per-user inference directory and verifies it, and iso's `IsolationGate` verifies it again.
+- Guest-driven load is bounded by R2 in the owner process, and by the gateway's per-session connection limit (§9).
+- The capability remains required. A bug in the relay path cannot hand one instance's session to another, because each instance has its own socket.
+
+### 22.6 Trust-model and `IsolationGate` changes (require sign-off)
+
+- The runtime contract changes from "no field for a socket relay" to "at most one socket relay, into the fixed guest path, from the instance's own inference socket".
+- `IsolationGate.Ready` requires either zero relays, or exactly that one: guest path equal to the constant, host path equal to the path iso computed for the instance.
+- `docs/trust-model.md` records the relay as a host exposure that is bounded (R1–R5) and authenticated (the capability).
+- The VM isolation suite is re-run with the relay present. The runtime's protocol version is bumped, and iso requires the new version before enabling the transport.
+
+### 22.7 Acceptance tests
+
+| ID | Requirement |
+|---|---|
+| AT-30 | A guest reaches its session through the bridge. No host TCP listener exists for inference sessions (`lsof -iTCP` shows none owned by the gateway). |
+| AT-31 | With the gateway stopped, a guest connection fails. After the gateway restarts, the next connection succeeds (R1). |
+| AT-32 | 400 concurrent guest connections: at most 32 are relayed. The owner's descriptor count returns to within 5 of baseline afterwards. The relay and the owner's control channel keep working (R2, R3). |
+| AT-33 | A record whose relay host path lies outside the instance's inference directory, is a symlink, or names another instance's socket is refused by the runtime and by `IsolationGate`. |
+| AT-34 | Instance A cannot reach instance B's session through the relay, even with B's capability, because each instance has its own socket. |
+| AT-35 | Stopping the VM revokes the session, bound to the owner process. SSH remains usable for shells, and no `ssh -R` is created for inference. |
+
+### 22.8 Delivery
+
+1. The relay fix (§22.3), upstream or through an exposed `listen`. Then pin the containerization release.
+2. iso-sandbox: the record field, validation, the owner relay, `inspect`, and a protocol bump.
+3. iso: Unix-socket session listeners in the gateway, the controller's transport identity bound to the owner process, the guest bridge units, `IsolationGate`, the trust-model update, and the integration phase.
+4. Remove the `ssh -R` inference path.
+
+Steps 1 (vendored), 2, 3 and 4 are implemented on this branch. The branch merges once the upstream release lands.
 
 ## Source references
 

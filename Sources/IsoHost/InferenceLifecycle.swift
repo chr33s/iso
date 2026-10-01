@@ -5,22 +5,27 @@ import IsoCore
 import Synchronization
 
 // Host-side controller for the `iso-inference` gateway
-// (docs/design/secure-local-inference-spec.md §12). One gateway runs per
-// host user under `sandbox-exec`, reached over an owner-only Unix socket in
-// a fixed per-user directory. Per VM boot session the controller registers
-// the instance's services, establishes a fresh pinned `ssh -R` forward to the
-// session's own listener, verifies it, and only then activates the session,
-// binding it to that forward process. Any failure revokes the partial
-// session: no raw endpoint and no cloud credential is used instead.
+// (docs/design/secure-local-inference-spec.md §12, §22). One gateway runs
+// per host user under `sandbox-exec`, reached over an owner-only Unix
+// socket in a fixed per-user directory. Per VM boot session the controller
+// registers the instance's services on the Unix socket its sandbox runtime
+// relays into the guest over vsock, verifies the registration, and only then
+// activates the session, binding it to the sandbox owner process that
+// carries the relay. Any failure revokes the partial session: no raw
+// endpoint and no cloud credential is used instead.
 
 /// What the controller needs about a running VM's boot.
 public struct InferenceBoot: Sendable {
   public let ownerPID: Int32
   public let deadline: Date?
+  /// The host end of the instance's vsock relay, verified by the isolation
+  /// gate; nil when the sandbox was booted without one.
+  public let relaySocket: String?
 
-  public init(ownerPID: Int32, deadline: Date?) {
+  public init(ownerPID: Int32, deadline: Date?, relaySocket: String?) {
     self.ownerPID = ownerPID
     self.deadline = deadline
+    self.relaySocket = relaySocket
   }
 }
 
@@ -28,12 +33,12 @@ public struct InferenceBoot: Sendable {
 public struct InferenceSession: Sendable, Equatable {
   public let sessionID: String
   public let epoch: String
-  public let guestPort: UInt16
   public let token: Secret<String>
   /// Services granted, by alias.
   public let services: [InferenceServiceName]
 
-  public var guestBaseURL: String { "http://127.0.0.1:\(guestPort)" }
+  /// The guest's bridge to the relayed gateway socket (§22).
+  public var guestBaseURL: String { "http://127.0.0.1:\(InferenceController.guestPort)" }
 }
 
 /// `iso inference attach`: a persisted application grant (§12.1).
@@ -71,10 +76,13 @@ public struct InferenceAttachGrant: Sendable, Equatable {
 }
 
 public struct InferenceController: Sendable {
-  /// Guest-side port of an instance's gateway forward: base + index, clear
-  /// of the credential proxy's 8788/9788 ranges.
-  public static let guestBasePort: UInt16 = 10788
-  static let forwardName = "inference"
+  /// The guest's loopback port for its gateway session: a systemd socket
+  /// bridged to the relayed Unix socket, one per VM, clear of the
+  /// credential proxy's 8788/9788 ranges.
+  public static let guestPort: UInt16 = 10788
+  /// The gateway control protocol this host speaks (IsoInferenceCore's
+  /// `ControlProtocol.version`).
+  static let controlVersion: UInt64 = 2
   static let controlTimeoutSeconds = 15
   static let startTimeout: Duration = .seconds(5)
 
@@ -87,6 +95,8 @@ public struct InferenceController: Sendable {
   let boot: @Sendable (Instance) throws -> InferenceBoot
   let sandboxExec: String
   public let stateDirectory: String
+  /// Where the gateway binds session sockets: the runtime's relay directory.
+  let relayDirectory: String
   /// Sessions this command established or verified (shared by copies).
   let sessions = SessionMemo()
 
@@ -98,14 +108,15 @@ public struct InferenceController: Sendable {
     self.init(
       config: config, environment: environment, resolver: resolver, diagnostics: diagnostics,
       isoExecutable: isoExecutable, proxies: proxies, boot: boot,
-      sandboxExec: "/usr/bin/sandbox-exec", stateDirectory: Self.stateDirectory(home: home))
+      sandboxExec: "/usr/bin/sandbox-exec", stateDirectory: Self.stateDirectory(home: home),
+      relayDirectory: IsolationGate.relayDirectory)
   }
 
   init(
     config: IsoConfig, environment: [String: String], resolver: CredentialResolver,
     diagnostics: Diagnostics, isoExecutable: String?, proxies: ProxyLauncher,
     boot: @escaping @Sendable (Instance) throws -> InferenceBoot, sandboxExec: String,
-    stateDirectory: String
+    stateDirectory: String, relayDirectory: String
   ) {
     self.config = config
     self.environment = environment
@@ -116,6 +127,7 @@ public struct InferenceController: Sendable {
     self.boot = boot
     self.sandboxExec = sandboxExec
     self.stateDirectory = stateDirectory
+    self.relayDirectory = relayDirectory
   }
 
   /// Fixed per user, independent of `data_dir`: every data root attaches to
@@ -128,10 +140,6 @@ public struct InferenceController: Sendable {
   static func tokenPath(_ instance: Instance) -> String { instance.directory + "/inference.token" }
   static func revokedPath(_ instance: Instance) -> String {
     instance.directory + "/inference-revoked"
-  }
-
-  public static func guestPort(_ instance: Instance) -> UInt16 {
-    guestBasePort &+ instance.index.value
   }
 
   // MARK: Services
@@ -180,32 +188,30 @@ public struct InferenceController: Sendable {
       return (remembered, false)
     }
     if let current = current(instance), current.fingerprint == fingerprint {
-      rememberSession(instance, current.session, fingerprint: fingerprint)
+      remember(instance, current.session, fingerprint: fingerprint, owner: current.owner)
       return (current.session, false)
     }
-    let session = try establish(
+    let (session, owner) = try establish(
       instance, target: target, services: services, fingerprint: fingerprint)
-    rememberSession(instance, session, fingerprint: fingerprint)
+    remember(instance, session, fingerprint: fingerprint, owner: owner)
     return (session, true)
   }
 
-  /// Remembered only with the exact forward process that carries it.
-  func rememberSession(_ instance: Instance, _ session: InferenceSession, fingerprint: String) {
-    guard
-      let bytes = try? StateStore.readControlFile(
-        ProxyLauncher.forwardPIDPath(instance, Self.forwardName)),
-      let pid = Int32(String(decoding: bytes, as: UTF8.self).trimmingUnicodeWhitespace()),
-      let start = HostProcess.start(pid)
-    else { return }
+  /// Remembered only with the exact owner process that carries the relay.
+  func remember(
+    _ instance: Instance, _ session: InferenceSession, fingerprint: String,
+    owner: (pid: Int32, start: String)
+  ) {
     sessions.remember(
       instance,
-      .init(fingerprint: fingerprint, session: session, forwardPID: pid, forwardStart: start))
+      .init(
+        fingerprint: fingerprint, session: session, ownerPID: owner.pid, ownerStart: owner.start))
   }
 
   /// §12.2 steps 3–7. Every failure revokes the partial session.
   func establish(
     _ instance: Instance, target: SSHTarget, services: [InferenceServiceName], fingerprint: String
-  ) throws -> InferenceSession {
+  ) throws -> (InferenceSession, owner: (pid: Int32, start: String)) {
     let resolved = try services.map(resolved)
     for (name, backend) in Set(resolved.map(\.backendName)).sorted().compactMap({ name in
       config.inference.backends[name].map { (name, $0) }
@@ -214,46 +220,33 @@ public struct InferenceController: Sendable {
     }
     try ensureGatewayCovers(Set(resolved.map(\.backend.port)))
     let bootInfo = try boot(instance)
+    let socket = try relaySocketName(bootInfo.relaySocket, instance: instance)
     guard let ownerStart = HostProcess.start(bootInfo.ownerPID) else {
       throw HostError("cannot read the sandbox owner process for '\(instance.name)'")
     }
-    // Old forward and capability first: a replaced session must not linger.
+    // The old capability first: a replaced session must not linger.
     revoke(instance)
     let nonce = randomHex(16)
     let registration = try registrationMessage(
-      instance, resolved: resolved, boot: (bootInfo.ownerPID, ownerStart), nonce: nonce)
+      instance, resolved: resolved, boot: (bootInfo.ownerPID, ownerStart), nonce: nonce,
+      socket: socket)
     let registered = try control(registration)
     guard case .string(let sessionID)? = registered["session_id"],
       case .string(let epoch)? = registered["epoch"],
       case .string(let capability)? = registered["capability"],
-      let port = registered["port"].flatMap(Self.integer).flatMap(UInt16.init(exactly:)),
-      let gatewayPID = registered["gateway_pid"].flatMap(Self.integer).flatMap(Int32.init(exactly:))
+      registered["socket"] == .string(socket)
     else { throw HostError("iso-inference returned an incomplete registration") }
     let token = Secret(capability)
-    let guestPort = Self.guestPort(instance)
     do {
-      // The retained listener must be the gateway's alone before any guest
-      // traffic is forwarded to it.
-      try ProxyLauncher.requireListener(gatewayPID, port: port, label: "inference gateway")
-      try proxies.spawnReverseForward(
-        instance, name: Self.forwardName, target: target, guestPort: guestPort,
-        hostAddress: try! IPv4Address("127.0.0.1"), hostPort: port)
       try verifyRegistered(instance, sessionID: sessionID, nonce: nonce)
-      guard
-        let forward = try StateStore.readControlFile(
-          ProxyLauncher.forwardPIDPath(instance, Self.forwardName)),
-        let forwardPID = Int32(
-          String(decoding: forward, as: UTF8.self).trimmingUnicodeWhitespace()),
-        let forwardStart = HostProcess.start(forwardPID)
-      else { throw HostError("the inference forward's process could not be identified") }
+      // The session lives as long as the owner process that carries the
+      // instance's relay: its exit (VM stop) revokes the session.
       var activation: [(String, OutputJSON)] = [
-        ("version", .uint(1)), ("op", .string("activate_session")),
+        ("version", .uint(Self.controlVersion)), ("op", .string("activate_session")),
         ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
         (
           "transport",
-          .object([
-            ("pid", .int(Int64(forwardPID))), ("start", .string(forwardStart)),
-          ])
+          .object([("pid", .int(Int64(bootInfo.ownerPID))), ("start", .string(ownerStart))])
         ),
       ]
       if let deadline = bootInfo.deadline {
@@ -267,15 +260,15 @@ public struct InferenceController: Sendable {
         Array(
           OutputJSON.object([
             ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
-            ("guest_port", .uint(UInt64(guestPort))), ("fingerprint", .string(fingerprint)),
+            ("owner_pid", .int(Int64(bootInfo.ownerPID))), ("owner_start", .string(ownerStart)),
+            ("fingerprint", .string(fingerprint)),
             ("services", .array(services.map { .string($0.rawValue) })),
           ]).rendered().utf8), to: Self.statePath(instance), mode: .atMost(0o600))
     } catch {
       _ = try? control([
-        ("version", .uint(1)), ("op", .string("revoke_session")),
+        ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
         ("session_id", .string(sessionID)),
       ])
-      stopForward(instance)
       removeState(instance)
       throw ContextError(
         "Failed to establish the inference session for '\(instance.name)' (fail-closed; no raw or cloud fallback)",
@@ -283,25 +276,53 @@ public struct InferenceController: Sendable {
     }
     diagnostics.log(
       .info,
-      "Inference gateway session active for '\(instance.name)' (guest → 127.0.0.1:\(guestPort); services \(services.map(\.rawValue).joined(separator: ", ")))"
+      "Inference gateway session active for '\(instance.name)' (guest → 127.0.0.1:\(Self.guestPort) over the sandbox relay; services \(services.map(\.rawValue).joined(separator: ", ")))"
     )
-    return InferenceSession(
-      sessionID: sessionID, epoch: epoch, guestPort: guestPort, token: token, services: services)
+    return (
+      InferenceSession(sessionID: sessionID, epoch: epoch, token: token, services: services),
+      (bootInfo.ownerPID, ownerStart)
+    )
+  }
+
+  /// The relay socket's file name, when the isolation gate verified it in
+  /// the relay directory. A sandbox booted without a relay cannot carry a
+  /// session.
+  func relaySocketName(_ path: String?, instance: Instance) throws -> String {
+    guard let path else {
+      throw HostError(
+        "'\(instance.name)' was booted without the inference relay; restart it (`iso stop`, then `iso start`) so the runtime relays the gateway socket (fail-closed)"
+      )
+    }
+    let name = String(path.split(separator: "/").last ?? "")
+    // The gate already matched the runtime's derived path; this keeps the
+    // gateway's name rule (1-16 lowercase ASCII hex digits, `.sock`).
+    let stem = name.hasSuffix(".sock") ? Array(name.utf8.dropLast(5)) : []
+    guard path == relayDirectory + "/" + name, (1...16).contains(stem.count),
+      stem.allSatisfy({ (0x30...0x39).contains($0) || (0x61...0x66).contains($0) })
+    else {
+      throw HostError(
+        "the inference relay of '\(instance.name)' is not a socket in \(relayDirectory) (fail-closed)"
+      )
+    }
+    return name
   }
 
   /// The recorded session when the gateway still reports it active under
-  /// the same epoch and its forward still runs.
-  func current(_ instance: Instance) -> (session: InferenceSession, fingerprint: String)? {
+  /// the same epoch and the sandbox owner it was bound to still runs.
+  func current(_ instance: Instance) -> (
+    session: InferenceSession, fingerprint: String, owner: (pid: Int32, start: String)
+  )? {
     guard let bytes = try? StateStore.readControlFile(Self.statePath(instance)),
       case .object(let state)? = try? ConfigLoader.parse(
         bytes, format: .json, path: "inference.json", limits: .configuration),
       case .string(let sessionID)? = state["session_id"], case .string(let epoch)? = state["epoch"],
       case .string(let fingerprint)? = state["fingerprint"],
-      let guestPort = state["guest_port"].flatMap(Self.integer).flatMap(UInt16.init(exactly:)),
+      let ownerPID = state["owner_pid"].flatMap(Self.integer).flatMap(Int32.init(exactly:)),
+      case .string(let ownerStart)? = state["owner_start"],
+      HostProcess.start(ownerPID) == ownerStart,
       case .array(let rawServices)? = state["services"],
       let tokenBytes = try? StateStore.readControlFile(Self.tokenPath(instance)),
       let token = String(validating: tokenBytes, as: UTF8.self),
-      proxies.forwardIsRunning(instance, name: Self.forwardName),
       let inspection = try? inspect(instance, start: false),
       case .object(let gateway)? = inspection["gateway"], gateway["epoch"] == .string(epoch),
       case .array(let sessions)? = inspection["sessions"],
@@ -316,8 +337,8 @@ public struct InferenceController: Sendable {
     }
     return (
       InferenceSession(
-        sessionID: sessionID, epoch: epoch, guestPort: guestPort, token: Secret(token),
-        services: services), fingerprint
+        sessionID: sessionID, epoch: epoch, token: Secret(token), services: services), fingerprint,
+      (ownerPID, ownerStart)
     )
   }
 
@@ -327,10 +348,9 @@ public struct InferenceController: Sendable {
   public func revoke(_ instance: Instance) {
     sessions.forget(instance)
     _ = try? control([
-      ("version", .uint(1)), ("op", .string("revoke_session")),
+      ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
       ("instance", .object(instanceKey(instance))),
     ])
-    stopForward(instance)
     removeState(instance)
   }
 
@@ -349,12 +369,6 @@ public struct InferenceController: Sendable {
   /// A VM restart or an explicit attach lifts a manual revocation.
   public static func clearManualRevocation(_ instance: Instance) {
     unlink(revokedPath(instance))
-  }
-
-  func stopForward(_ instance: Instance) {
-    proxies.killPIDFile(
-      ProxyLauncher.forwardPIDPath(instance, Self.forwardName), label: "inference tunnel",
-      expect: .ssh)
   }
 
   func removeState(_ instance: Instance) {
@@ -384,14 +398,14 @@ public struct InferenceController: Sendable {
 
   func registrationMessage(
     _ instance: Instance, resolved: [ResolvedInferenceService], boot: (Int32, String),
-    nonce: String
+    nonce: String, socket: String
   ) throws -> [(String, OutputJSON)] {
     let limits = config.inference.globalLimits
     return [
-      ("version", .uint(1)), ("op", .string("register_session")),
+      ("version", .uint(Self.controlVersion)), ("op", .string("register_session")),
       ("instance", .object(instanceKey(instance))),
       ("boot", .object([("owner_pid", .int(Int64(boot.0))), ("owner_start", .string(boot.1))])),
-      ("nonce", .string(nonce)),
+      ("nonce", .string(nonce)), ("socket", .string(socket)),
       (
         "global_limits",
         .object([
@@ -557,6 +571,25 @@ public struct InferenceController: Sendable {
     return Self.realPath(stateDirectory)
   }
 
+  /// The relay directory (§22), created `0700` when missing (its parent is
+  /// the runtime's control-socket directory). Returned resolved: Seatbelt
+  /// matches resolved paths.
+  func prepareRelayDirectory() throws -> String {
+    let parent = (relayDirectory as NSString).deletingLastPathComponent
+    for directory in [parent, relayDirectory] {
+      if mkdir(directory, 0o700) != 0 && errno != EEXIST {
+        throw HostError.posix("Failed to create", directory)
+      }
+      var info = stat()
+      guard lstat(directory, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR,
+        info.st_uid == getuid(), info.st_mode & 0o077 == 0
+      else {
+        throw HostError("\(directory) is not a private directory owned by this user (fail-closed)")
+      }
+    }
+    return Self.realPath(relayDirectory)
+  }
+
   var socketPath: String { stateDirectory + "/control.sock" }
 
   /// A verified connection check: the socket's peer is this user's
@@ -570,6 +603,7 @@ public struct InferenceController: Sendable {
     guard start else { throw HostError("the inference gateway is not running") }
     let binary = try locateBinary()
     let directory = try prepareStateDirectory()
+    let relay = try prepareRelayDirectory()
     let logPath = directory + "/gateway.log"
     let log = open(logPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
     guard log >= 0 else { throw HostError.posix("Failed to open", logPath) }
@@ -579,8 +613,9 @@ public struct InferenceController: Sendable {
     var child = try DetachedChild.spawn(
       executable: sandboxExec,
       arguments: [
-        "-D", "INFERENCE_BIN=\(binary)", "-D", "STATE_DIR=\(directory)", "-p",
-        SeatbeltProfile.inference(backendPorts: ports), binary, "--state-dir", directory,
+        "-D", "INFERENCE_BIN=\(binary)", "-D", "STATE_DIR=\(directory)", "-D",
+        "RELAY_DIR=\(relay)", "-p", SeatbeltProfile.inference(backendPorts: ports), binary,
+        "--state-dir", directory, "--relay-dir", relay,
       ] + ports.flatMap { ["--backend-port", String($0)] }, environment: [:], stdin: .null,
       stderr: log)
     let deadline = ContinuousClock.now + Self.startTimeout
@@ -662,7 +697,7 @@ public struct InferenceController: Sendable {
       case .object(let members) = try ConfigLoader.parse(
         reply, format: .json, path: "iso-inference", limits: .configuration)
     else { throw HostError("iso-inference sent a malformed reply") }
-    guard members["version"].flatMap(Self.integer) == 1 else {
+    guard members["version"].flatMap(Self.integer) == Int64(Self.controlVersion) else {
       throw HostError("iso-inference speaks an unsupported control protocol version")
     }
     guard members["ok"] == .bool(true) else {
@@ -675,19 +710,24 @@ public struct InferenceController: Sendable {
   }
 
   public func inspect(_ instance: Instance?, start: Bool = false) throws -> [String: JSONValue] {
-    var message: [(String, OutputJSON)] = [("version", .uint(1)), ("op", .string("inspect"))]
+    var message: [(String, OutputJSON)] = [
+      ("version", .uint(Self.controlVersion)), ("op", .string("inspect")),
+    ]
     if let instance { message.append(("instance", .object(instanceKey(instance)))) }
     return try control(message, start: start)
   }
 
   public func requalify(port: UInt16) throws {
     _ = try control([
-      ("version", .uint(1)), ("op", .string("requalify_backend")), ("port", .uint(UInt64(port))),
+      ("version", .uint(Self.controlVersion)), ("op", .string("requalify_backend")),
+      ("port", .uint(UInt64(port))),
     ])
   }
 
   public func stopGateway(force: Bool) throws {
-    _ = try control([("version", .uint(1)), ("op", .string("shutdown")), ("force", .bool(force))])
+    _ = try control([
+      ("version", .uint(Self.controlVersion)), ("op", .string("shutdown")), ("force", .bool(force)),
+    ])
   }
 
   static func integer(_ value: JSONValue) -> Int64? {
@@ -701,15 +741,15 @@ public struct InferenceController: Sendable {
 
 /// The sessions one command has established or verified, so later agent
 /// and session steps of that command reuse them without asking the gateway
-/// again. An entry holds only while its forward is the same process (PID and
-/// start time), and records whether Claude's managed settings already carry
-/// its capability.
+/// again. An entry holds only while the sandbox owner that carries the
+/// relay is the same process (PID and start time), and records whether
+/// Claude's managed settings already carry its capability.
 final class SessionMemo: Sendable {
   struct Entry: Sendable {
     let fingerprint: String
     let session: InferenceSession
-    let forwardPID: Int32
-    let forwardStart: String
+    let ownerPID: Int32
+    let ownerStart: String
     var claudeSettingsWritten = false
   }
 
@@ -724,11 +764,11 @@ final class SessionMemo: Sendable {
     _ = entries.withLock { $0.removeValue(forKey: instance.directory) }
   }
 
-  /// The remembered session, while its forward process still runs.
+  /// The remembered session, while its owner process still runs.
   func session(_ instance: Instance, fingerprint: String) -> InferenceSession? {
     guard let entry = entries.withLock({ $0[instance.directory] }),
       entry.fingerprint == fingerprint,
-      HostProcess.start(entry.forwardPID) == entry.forwardStart
+      HostProcess.start(entry.ownerPID) == entry.ownerStart
     else { return nil }
     return entry.session
   }

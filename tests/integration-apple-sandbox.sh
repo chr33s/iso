@@ -285,8 +285,8 @@ else
     fail "iso-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 4 on containerization 0.45.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "4 0.45.0"
+check "version reports protocol 5 on containerization 0.45.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "5 0.45.0"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&
     "$CONTAINER" image save --platform linux/arm64 -o "$WORK/image.tar" "$IMAGE" >/dev/null 2>&1; then
     pass "test image builds"
@@ -1203,13 +1203,22 @@ if want inference; then
         check "inference: Codex completes a turn through the gateway" grep -q "^ok$" <<<"$codex_out"
         check "inference: Codex asked for the host-selected model" \
             grep -q '"model": "fake/codex-upstream"' <<<"$(jq -c . "$log_r" | sed 's/"model":/"model": /g')"
-        # The forward's exit revokes the session; the next session re-registers.
-        fwd="$(cat "$CSTATE/instances/inf/proxy-inference-fwd.pid" 2>/dev/null)"
-        [[ -n "$fwd" ]] && kill "$fwd" 2>/dev/null
-        sleep 2
-        check "inference: killing the forward revokes the session" \
+        # The session reaches the guest through the sandbox's vsock relay
+        # (spec §22): a bridged guest port, a relayed socket, no host TCP.
+        check "inference: the guest bridge is a systemd socket on 127.0.0.1:10788" \
+            iinf exec inf -- systemctl is-active --quiet iso-inference.socket
+        check "inference: the gateway socket is relayed into the guest" \
+            iinf exec inf -- test -S /var/lib/iso-inference/gateway.sock
+        gateway_pid="$(iinf inference status inf --json | jq -r '.gateway.pid')"
+        check "inference: the gateway holds no TCP listener" \
+            test -z "$(lsof -nP -a -p "$gateway_pid" -iTCP -sTCP:LISTEN -t 2>/dev/null)"
+        # The sandbox owner's exit (VM stop) revokes the session; the next
+        # boot registers a fresh one.
+        check "inference: iso stop revokes the session" iinf stop inf
+        check "inference: and no session stays active" \
             test "$(iinf inference status inf --json | jq -r '[.sessions[] | select(.state == "active")] | length')" = 0
-        check "inference: the next command establishes a fresh session" \
+        check "inference: iso start establishes a fresh session" iinf start inf --no-github
+        check "inference: the next command runs" \
             test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
         check "inference: the old capability no longer works" \
             test "$(iinf exec inf -- curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $token" \

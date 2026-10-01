@@ -10,7 +10,7 @@ import Testing
     let harness = try Harness()
     let session = try harness.session([grant(.openAIChat, port: backend.port)])
     let response = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody,
+      socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody,
       extraHeaders: [("x-stainless-lang", "js"), ("cookie", "a=b")])
     #expect(response.status == 200)
     #expect(response.head.lowercased().contains("text/event-stream"))
@@ -34,7 +34,7 @@ import Testing
     let harness = try Harness()
     let session = try harness.session([grant(.openAIChat, port: backend.port)])
     let response = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token,
+      socket: session.socket, target: "/v1/chat/completions", token: session.token,
       body: #"{"model":"local-coder","messages":[{"role":"user","content":"hello"}]}"#)
     #expect(response.status == 200)
     let body = try JSONParser.parse(
@@ -53,60 +53,63 @@ import Testing
     let cases: [(RawResponse, Int)] = [
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: nil, body: chatBody), 401
+          socket: session.socket, target: "/v1/chat/completions", token: nil, body: chatBody), 401
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions",
+          socket: session.socket, target: "/v1/chat/completions",
           token: String(repeating: "a", count: 64), body: chatBody), 401
       ),
       // Session B's token on session A's listener.
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: other.token, body: chatBody),
+          socket: session.socket, target: "/v1/chat/completions", token: other.token, body: chatBody
+        ),
         401
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/models/pull", token: session.token, body: "{}"), 403
+          socket: session.socket, target: "/v1/models/pull", token: session.token, body: "{}"), 403
       ),
       (
         RawClient.request(
-          port: session.port, target: "http://127.0.0.1:1/v1/chat/completions",
+          socket: session.socket, target: "http://127.0.0.1:1/v1/chat/completions",
           token: session.token, body: chatBody), 403
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions?x=1", token: session.token,
+          socket: session.socket, target: "/v1/chat/completions?x=1", token: session.token,
           body: chatBody), 403
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/responses", token: session.token, body: chatBody), 403
+          socket: session.socket, target: "/v1/responses", token: session.token, body: chatBody),
+        403
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: session.token,
+          socket: session.socket, target: "/v1/chat/completions", token: session.token,
           body: chatBody, extraHeaders: [("origin", "https://evil.example")]), 403
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody,
+          socket: session.socket, target: "/v1/chat/completions", token: session.token,
+          body: chatBody,
           extraHeaders: [("transfer-encoding", "chunked")], contentLength: false), 411
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: session.token,
+          socket: session.socket, target: "/v1/chat/completions", token: session.token,
           body: #"{"model":"local-coder","messages":[],"draft_model":"x"}"#), 403
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: session.token,
+          socket: session.socket, target: "/v1/chat/completions", token: session.token,
           body: #"{"model":"other-model","messages":[]}"#), 403
       ),
       (
         RawClient.request(
-          port: session.port, target: "/v1/chat/completions", token: session.token,
+          socket: session.socket, target: "/v1/chat/completions", token: session.token,
           body: #"{"model":"local-coder","model":"x","messages":[]}"#), 400
       ),
     ]
@@ -122,13 +125,14 @@ import Testing
     let inactive = try harness.session([grant(.openAIChat, port: backend.port)], activate: false)
     #expect(
       RawClient.request(
-        port: inactive.port, target: "/v1/chat/completions", token: inactive.token, body: chatBody
+        socket: inactive.socket, target: "/v1/chat/completions", token: inactive.token,
+        body: chatBody
       ).status == 401)
     let session = try harness.session([grant(.openAIChat, port: backend.port)], name: "b")
     harness.gateway.revoke(.session(session.id))
     // The listener is closed: nothing answers, and the backend saw nothing.
     let response = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody)
+      socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody)
     #expect(response.status == 0 || response.status == 401)
     #expect(backend.requests.isEmpty)
   }
@@ -152,7 +156,7 @@ import Testing
         instance: .init(dataRoot: harness.directory, name: "x"),
         boot: BootIdentity(ownerPID: 1, ownerStart: ProcessStart(seconds: 1, microseconds: 0)),
         nonce: String(repeating: "0", count: 32), limits: .defaults,
-        grants: [grant(.openAIChat, port: backend.port)]))
+        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("x")))
     let (_, binding) = try harness.spawnTransport()
     let wrongStart = TransportBinding(
       pid: binding.pid, start: ProcessStart(seconds: binding.start.seconds + 1, microseconds: 0))
@@ -178,7 +182,7 @@ import Testing
       [grant(.openAIChat, port: backend.port)], deadlineSeconds: 1)
     #expect(
       RawClient.request(
-        port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody
+        socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody
       ).status == 200)
     #expect(eventually(5) { harness.gateway.inspect(nil)["sessions"]?.array?.isEmpty == true })
   }
@@ -187,7 +191,7 @@ import Testing
     let backend = try FakeBackend(.stream(chatEvents, pauseMilliseconds: 500))
     let harness = try Harness()
     let session = try harness.session([grant(.openAIChat, port: backend.port)])
-    let fd = RawClient.connect(session.port)
+    let fd = RawClient.connect(session.socket)
     RawClient.sendAll(
       fd,
       Array(
@@ -210,7 +214,7 @@ import Testing
     let harness = try Harness()
     let session = try harness.session(
       [grant(.openAIChat, port: backend.port, evidence: CompletionEvidence.none)])
-    let fd = RawClient.connect(session.port)
+    let fd = RawClient.connect(session.socket)
     RawClient.sendAll(
       fd,
       Array(
@@ -223,7 +227,7 @@ import Testing
         harness.backend(backend.port)?["quarantine"]?.string == "uncertain-cancellation"
       })
     let refused = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody)
+      socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody)
     #expect(refused.status == 503)
     #expect(backend.requests.count == 1)
     // Host requalification clears it; the abandoned slot is released.
@@ -250,14 +254,14 @@ import Testing
     let harness = try Harness(journalSeed: [backend.port: 1])
     let session = try harness.session([grant(.openAIChat, port: backend.port)])
     let response = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody)
+      socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody)
     #expect(response.status == 503)
     #expect(response.body.contains("INFERENCE_BACKEND_QUARANTINED"))
     #expect(backend.requests.isEmpty)
     try harness.gateway.requalify(BackendID(port: backend.port))
     #expect(
       RawClient.request(
-        port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody
+        socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody
       ).status == 200)
   }
 
@@ -270,7 +274,7 @@ import Testing
       Thread {
         results.add(
           RawClient.request(
-            port: session.port, target: "/v1/chat/completions", token: session.token,
+            socket: session.socket, target: "/v1/chat/completions", token: session.token,
             body: chatBody
           ).status)
       }
@@ -288,7 +292,7 @@ import Testing
     let harness = try Harness()
     let session = try harness.session([grant(.openAIChat, port: backend.port)])
     let response = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody)
+      socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody)
     #expect(response.status == 422)
     #expect(!response.body.contains("SECRET-PROMPT-TEXT"))
     let audit = try String(contentsOfFile: harness.directory + "/audit.log", encoding: .utf8)
@@ -310,7 +314,7 @@ import Testing
     let session = try harness.session(
       [grant(.openAIChat, port: 1, evidence: CompletionEvidence.none)])
     let response = RawClient.request(
-      port: session.port, target: "/v1/chat/completions", token: session.token, body: chatBody)
+      socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody)
     #expect(response.status == 503)
     #expect(harness.backend(1)?["quarantine"] == JSON.null)
   }

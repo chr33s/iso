@@ -131,6 +131,8 @@ struct Create: AsyncParsableCommand {
   @Option(help: "Ownership tag; `delete` requires it to match") var owner: String
   @Option(help: "shared (NAT to the host's uplinks) or host-only (no route beyond the host)")
   var network = "shared"
+  @Flag(help: "Relay the iso inference gateway's socket into the guest")
+  var inferenceRelay = false
 
   func validate() throws {
     guard (image == nil) != (fromDisk == nil) else {
@@ -147,7 +149,7 @@ struct Create: AsyncParsableCommand {
     let record = try await Sandboxes.create(
       root: try root.resolve(), id: try SandboxID(id), owner: owner, source: source, cpus: cpus,
       memoryBytes: memoryMib * mib, diskBytes: diskGib * gib,
-      network: network == "host-only" ? .hostOnly : .shared)
+      network: network == "host-only" ? .hostOnly : .shared, inferenceRelay: inferenceRelay)
     try printJSON(record)
   }
 }
@@ -160,13 +162,22 @@ struct Start: AsyncParsableCommand {
   @Option var waitSeconds = 120
   @Option(help: "End the session at this host time (Unix seconds); the owner halts the VM then")
   var expiresAt: Int64?
+  @Option(help: "on or off: relay the iso inference gateway's socket into the guest for this boot")
+  var inferenceRelay: String?
+
+  func validate() throws {
+    guard inferenceRelay.map({ ["on", "off"].contains($0) }) ?? true else {
+      throw ValidationError("--inference-relay must be on or off")
+    }
+  }
 
   func run() async throws {
     let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let live = try await Sandboxes.start(
       root: try root.resolve(), id: try SandboxID(id), executable: exe,
       wait: TimeInterval(waitSeconds),
-      expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
+      expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+      inferenceRelay: inferenceRelay.map { $0 == "on" })
     try printJSON(live)
   }
 }
@@ -267,6 +278,7 @@ struct Set: AsyncParsableCommand {
   @Option var cpus: Int?
   @Option var memoryMib: UInt64?
   @Option(help: "Refuse unless record.lastOperation is this operation") var expectOperation: String?
+
   func run() async throws {
     try printJSON(
       try await Sandboxes.setResources(

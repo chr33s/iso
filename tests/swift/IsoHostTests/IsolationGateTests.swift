@@ -15,7 +15,8 @@ private let gateRoot = "/Users/me/.iso/backends/apple-container-v1/runtime"
 private func expected() -> IsolationGate.Expected {
   .init(
     sandbox: gateSandbox, owner: gateOwner, runtimeRoot: gateRoot,
-    resources: Resources(cpus: 2, memoryBytes: 2048 * 1024 * 1024), egress: .open)
+    resources: Resources(cpus: 2, memoryBytes: 2048 * 1024 * 1024), egress: .open,
+    inferenceRelay: false)
 }
 
 private func gate(_ bytes: [UInt8]) throws(RuntimeError) -> IsolationGate.Ready {
@@ -174,10 +175,13 @@ func gateRejectsEachExposureNetworkAndIdentityChange(_ label: String) throws {
   #expect(
     layout.contains("public let containerizationVersion = \"\(SandboxRuntime.containerization)\"\n")
   )
-  #expect(
-    package.contains(
-      "\"https://github.com/apple/containerization.git\", exact: \"\(SandboxRuntime.containerization)\")"
-    ))
+  // containerization is vendored at this release plus relay fixes
+  // (iso-sandbox/Vendor/containerization/VENDORED.md) until they ship.
+  #expect(package.contains(".package(path: \"Vendor/containerization\")"))
+  let vendored = try String(
+    contentsOf: root.appending(path: "iso-sandbox/Vendor/containerization/VENDORED.md"),
+    encoding: .utf8)
+  #expect(vendored.contains("at tag `\(SandboxRuntime.containerization)`"))
 }
 
 // MARK: - egress
@@ -196,7 +200,7 @@ private func gate(_ bytes: [UInt8], egress: EgressMode) throws(RuntimeError) -> 
     RuntimeProtocol.parseInspect(bytes, expected: gateSandbox),
     .init(
       sandbox: base.sandbox, owner: base.owner, runtimeRoot: base.runtimeRoot,
-      resources: base.resources, egress: egress))
+      resources: base.resources, egress: egress, inferenceRelay: false))
 }
 
 private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -> ErrorClass? {
@@ -235,7 +239,7 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
   func expect(_ egress: EgressMode) -> IsolationGate.Expected {
     .init(
       sandbox: base.sandbox, owner: base.owner, runtimeRoot: base.runtimeRoot,
-      resources: base.resources, egress: egress)
+      resources: base.resources, egress: egress, inferenceRelay: false)
   }
   try IsolationGate.verifyRecord(inspection, expect(.none))
   #expect(throws: RuntimeError.self) { try IsolationGate.verifyRecord(inspection, expect(.open)) }
@@ -258,4 +262,61 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
   var object = try running()
   setPath(&object, ["record", "expiresAt"], "soon")
   #expect(throws: RuntimeError.self) { try gate(try bytes(object)) }
+}
+
+// MARK: - inference relay (secure-local-inference §22)
+
+private func relayGate(_ object: [String: Any], relay: Bool) throws -> ErrorClass? {
+  let base = expected()
+  let data = try bytes(object)
+  do {
+    let ready = try IsolationGate.verifyEffective(
+      RuntimeProtocol.parseInspect(data, expected: gateSandbox),
+      .init(
+        sandbox: base.sandbox, owner: base.owner, runtimeRoot: base.runtimeRoot,
+        resources: base.resources, egress: base.egress, inferenceRelay: relay))
+    #expect(ready.inferenceSocket == (relay ? relayedSocket : nil))
+    return nil
+  } catch {
+    return classify(error)
+  }
+}
+
+private let relayedSocket = IsolationGate.inferenceSocket(
+  runtimeRoot: gateRoot, sandbox: gateSandbox)
+
+private func withRelay(
+  _ object: [String: Any], host: String = relayedSocket,
+  guest: String = "/var/lib/iso-inference/gateway.sock", cap: Int? = 32, relays: Int = 1,
+  record: Bool = true
+) -> [String: Any] {
+  var copy = object
+  if record { setPath(&copy, ["record", "inferenceRelay"], true) }
+  setPath(&copy, ["effective", "socketRelays"], relays)
+  var relay: [String: Any] = ["host": host, "guest": guest]
+  if let cap { relay["maxConnections"] = cap }
+  setPath(&copy, ["effective", "inferenceRelay"], relay)
+  return copy
+}
+
+@Test func onlyTheDerivedInferenceRelayPassesAndOnlyWhenRequired() throws {
+  let base = try running()
+  #expect(
+    IsolationGate.inferenceSocket(runtimeRoot: gateRoot, sandbox: gateSandbox)
+      .hasPrefix(IsolationGate.relayDirectory + "/"))
+  #expect(try relayGate(withRelay(base), relay: true) == nil)
+  #expect(try relayGate(base, relay: false) == nil)
+  // A required relay that is missing, or a relay nobody asked for.
+  #expect(try relayGate(base, relay: true) == .hostExposure)
+  #expect(try relayGate(withRelay(base), relay: false) == .hostExposure)
+  // Any other host socket, guest path, cap or relay count.
+  for bad in [
+    withRelay(base, host: "/tmp/other.sock"),
+    withRelay(base, host: IsolationGate.relayDirectory + "/0.sock"),
+    withRelay(base, guest: "/run/iso-inference.sock"), withRelay(base, cap: nil),
+    withRelay(base, cap: 1000), withRelay(base, relays: 2),
+    withRelay(base, record: false),
+  ] {
+    #expect(try relayGate(bad, relay: true) == .hostExposure)
+  }
 }

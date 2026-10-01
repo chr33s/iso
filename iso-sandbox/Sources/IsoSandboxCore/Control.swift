@@ -51,6 +51,13 @@ public struct EffectiveConfig: Codable, Sendable {
   public var mounts: [MountView]
   public var interfaces: [InterfaceView]
   public var socketRelays: Int
+  public struct RelayView: Codable, Sendable, Equatable {
+    public var host: String
+    public var guest: String
+    public var maxConnections: Int?
+  }
+  /// The inference relay, when configured (see ``InferenceRelay``).
+  public var inferenceRelay: RelayView?
   public var publishedPorts: Int
   public var sshAgentForwarding: Bool
   public var maskedPaths: [String]

@@ -7,14 +7,15 @@ import IsoProxyCore
 /// error, not a missing path or an unreachable network.
 enum Jail {
   enum Failure: Error, CustomStringConvertible {
-    case coreLimit, fileWriteAllowed, stateWriteDenied, execAllowed, egressAllowed,
-      unlistedPortAllowed, loopbackDenied
+    case coreLimit, fileWriteAllowed, stateWriteDenied, tcpListenAllowed, execAllowed,
+      egressAllowed, unlistedPortAllowed, loopbackDenied
 
     var description: String {
       switch self {
       case .coreLimit: "cannot disable core dumps"
-      case .fileWriteAllowed: "writes outside the state directory are allowed"
-      case .stateWriteDenied: "writes inside the state directory are denied"
+      case .fileWriteAllowed: "writes outside the state and relay directories are allowed"
+      case .stateWriteDenied: "writes inside the state or relay directory are denied"
+      case .tcpListenAllowed: "listening on TCP is allowed"
       case .execAllowed: "program execution is allowed"
       case .egressAllowed: "non-loopback network egress is allowed"
       case .unlistedPortAllowed: "a loopback port outside the backend list is allowed"
@@ -27,16 +28,24 @@ enum Jail {
     guard JailProbes.disableCoreDumps() else { throw Failure.coreLimit }
   }
 
-  static func requireConfinement(stateDirectory: String, backendPorts: Set<UInt16>) throws {
+  static func requireConfinement(
+    stateDirectory: String, relayDirectory: String, backendPorts: Set<UInt16>
+  ) throws {
     let outside = "/private/tmp/iso-inference-jail-" + UUID().uuidString
     guard JailProbes.isDenial(JailProbes.createError(outside)) else {
       throw Failure.fileWriteAllowed
     }
-    let inside = stateDirectory + "/.jail-probe"
-    let probe = open(inside, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o600)
-    guard probe >= 0 else { throw Failure.stateWriteDenied }
-    close(probe)
-    unlink(inside)
+    for directory in [stateDirectory, relayDirectory] {
+      let inside = directory + "/.jail-probe"
+      let probe = open(inside, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o600)
+      guard probe >= 0 else { throw Failure.stateWriteDenied }
+      close(probe)
+      unlink(inside)
+    }
+    // Sessions are Unix sockets reached through the vsock relay (§22).
+    guard JailProbes.isDenial(JailProbes.listenError(address: "127.0.0.1")) else {
+      throw Failure.tcpListenAllowed
+    }
 
     guard JailProbes.isDenial(JailProbes.spawnError()) else { throw Failure.execAllowed }
 

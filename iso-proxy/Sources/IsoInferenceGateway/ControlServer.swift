@@ -99,7 +99,7 @@ public final class ControlServer: Sendable {
         ControlProtocol.success(
           JSONObject([
             "session_id": .string(registered.sessionID), "epoch": .string(gateway.epoch),
-            "port": .int(Int64(registered.port)),
+            "socket": .string(registered.socket),
             "capability": .string(registered.capability.expose()),
             "gateway_pid": .int(Int64(gateway.pid)),
             "policy_digest": .string(registered.policyDigest),

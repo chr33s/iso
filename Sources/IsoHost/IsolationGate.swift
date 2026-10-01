@@ -23,17 +23,50 @@ public enum IsolationGate {
     public let resources: Resources
     /// The configured egress policy the sandbox must have been created with.
     public let egress: EgressMode
+    /// Whether the sandbox must relay the inference gateway's socket
+    /// (§22); otherwise it must relay nothing.
+    public let inferenceRelay: Bool
 
     public init(
       sandbox: MachineName, owner: OwnerID, runtimeRoot: String, resources: Resources,
-      egress: EgressMode
+      egress: EgressMode, inferenceRelay: Bool
     ) {
       self.sandbox = sandbox
       self.owner = owner
       self.runtimeRoot = runtimeRoot
       self.resources = resources
       self.egress = egress
+      self.inferenceRelay = inferenceRelay
     }
+  }
+
+  // MARK: Inference relay (secure-local-inference §22)
+
+  /// Where the runtime puts the relays' host sockets: `iso-sbx/inference`
+  /// in the per-user temporary directory, beside the owners' control
+  /// sockets. The gateway binds its session sockets here.
+  public static let relayDirectory: String = {
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let count = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+    let temporary =
+      count > 0 && count <= buffer.count
+      ? String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+      : NSTemporaryDirectory()
+    return (temporary.hasSuffix("/") ? temporary : temporary + "/") + "iso-sbx/inference"
+  }()
+  public static let relayGuestPath = "/var/lib/iso-inference/gateway.sock"
+  public static let relayMaxConnections = 32
+
+  /// The host socket the runtime derives for `sandbox`: a hash of its
+  /// canonical directory, as the runtime computes it.
+  public static func inferenceSocket(runtimeRoot: String, sandbox: MachineName) -> String {
+    let directory =
+      (runtimeRoot.hasSuffix("/") ? String(runtimeRoot.dropLast()) : runtimeRoot)
+      + "/sandboxes/\(sandbox)"
+    let hash = directory.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
+      ($0 ^ UInt64($1)) &* 1_099_511_628_211
+    }
+    return relayDirectory + "/" + String(hash, radix: 16) + ".sock"
   }
 
   /// Process-local proof that a sandbox's current boot passed the gate. Not
@@ -46,13 +79,17 @@ public enum IsolationGate {
     public let ipv4: IPv4Address
     /// When the owner halts this boot (`limits.session_ttl`), if ever.
     public let sessionDeadline: Date?
+    /// The verified host end of the inference relay, if the boot has one.
+    public let inferenceSocket: String?
     fileprivate init(
-      sandbox: MachineName, ownerPID: Int32, ipv4: IPv4Address, sessionDeadline: Date?
+      sandbox: MachineName, ownerPID: Int32, ipv4: IPv4Address, sessionDeadline: Date?,
+      inferenceSocket: String?
     ) {
       self.sandbox = sandbox
       self.ownerPID = ownerPID
       self.ipv4 = ipv4
       self.sessionDeadline = sessionDeadline
+      self.inferenceSocket = inferenceSocket
     }
   }
 
@@ -99,6 +136,13 @@ public enum IsolationGate {
   {
     try verifyRecord(inspection, expected)
     let name = expected.sandbox
+    // The relay is set at each start from the configuration; a running boot
+    // must match it (checked after boot: `start` sets it, §22).
+    guard inspection.record.relaysInference == expected.inferenceRelay else {
+      throw .hostExposure(
+        "sandbox \(name) was booted \(inspection.record.relaysInference ? "with" : "without") the inference relay, but the configuration \(expected.inferenceRelay ? "requires" : "does not allow") it (inference.mode changed while it ran); restart it: `iso stop`, then `iso start`"
+      )
+    }
     guard inspection.status == .running else {
       throw .operationUncertain("sandbox \(name) is \(inspection.status.rawValue), not running")
     }
@@ -129,7 +173,8 @@ public enum IsolationGate {
         "sandbox \(name) booted \(effective.imageDigest) but records \(inspection.record.imageDigest)"
       )
     }
-    try verifyHostExposure(name, effective, runtimeRoot: expected.runtimeRoot)
+    try verifyHostExposure(
+      name, effective, runtimeRoot: expected.runtimeRoot, inferenceRelay: expected.inferenceRelay)
     try verifyNetwork(name, effective, ip, egress: expected.egress)
     guard effective.initArgv == ["/sbin/init"], !effective.virtualization else {
       let argv = "[" + effective.initArgv.map(debugQuoted).joined(separator: ", ") + "]"
@@ -139,18 +184,27 @@ public enum IsolationGate {
     }
     return Ready(
       sandbox: name, ownerPID: live.pid, ipv4: ip,
-      sessionDeadline: inspection.record.sessionDeadline)
+      sessionDeadline: inspection.record.sessionDeadline,
+      inferenceSocket: effective.inferenceRelay?.host)
   }
 
-  static func verifyHostExposure(_ name: MachineName, _ effective: Effective, runtimeRoot: String)
-    throws(RuntimeError)
-  {
+  static func verifyHostExposure(
+    _ name: MachineName, _ effective: Effective, runtimeRoot: String, inferenceRelay: Bool
+  ) throws(RuntimeError) {
     guard !effective.sshAgentForwarding else {
       throw .hostExposure("sandbox \(name) forwards the host SSH agent")
     }
-    guard effective.socketRelays == 0, effective.publishedPorts == 0 else {
+    // At most one relay: the inference gateway's derived socket into the
+    // fixed guest path, capped, and only when the configuration asks.
+    let relay = EffectiveRelay(
+      host: inferenceSocket(runtimeRoot: runtimeRoot, sandbox: name), guest: relayGuestPath,
+      maxConnections: relayMaxConnections)
+    let relays =
+      effective.socketRelays == (inferenceRelay ? 1 : 0)
+      && effective.inferenceRelay == (inferenceRelay ? relay : nil)
+    guard relays, effective.publishedPorts == 0 else {
       throw .hostExposure(
-        "sandbox \(name) relays \(effective.socketRelays) sockets and publishes \(effective.publishedPorts) ports; expected none"
+        "sandbox \(name) relays \(effective.socketRelays) sockets (\(effective.inferenceRelay.map { sanitizeForDisplay($0.host) + " -> " + sanitizeForDisplay($0.guest) } ?? "none")) and publishes \(effective.publishedPorts) ports; expected \(inferenceRelay ? "only the inference relay \(relay.host) -> \(relay.guest)" : "none")"
       )
     }
     let rootfs = rootfsPath(runtimeRoot: runtimeRoot, sandbox: name)

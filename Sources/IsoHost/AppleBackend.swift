@@ -123,11 +123,7 @@ public final class AppleBackend: Sendable {
     }
     do {
       _ = try runtime.requireQualified()
-      let ready = try IsolationGate.verifyEffective(
-        inspection,
-        .init(
-          sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-          resources: sidecar.resources, egress: config.egress))
+      let ready = try IsolationGate.verifyEffective(inspection, expected(sidecar, runtime))
       let target = try SSHTarget.pinned(
         config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
         user: sidecar.guestUser)
@@ -147,11 +143,7 @@ public final class AppleBackend: Sendable {
     let runtime = try runtime()
     let inspection = try runtime.inspect(sidecar.machineID)
     _ = try runtime.requireQualified()
-    let ready = try IsolationGate.verifyEffective(
-      inspection,
-      .init(
-        sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-        resources: sidecar.resources, egress: config.egress))
+    let ready = try IsolationGate.verifyEffective(inspection, expected(sidecar, runtime))
     return try SSHTarget.pinned(
       config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
       user: sidecar.guestUser)
