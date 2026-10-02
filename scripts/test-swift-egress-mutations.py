@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Check that filtered-egress DNS/ownership tests detect deliberately broken behavior.
+"""Check that filtered-egress DNS/ownership and relay tests detect broken behavior.
 
-Runs only local numeric-resolution and stalled-worker fixtures. No public DNS,
+Runs only local numeric-resolution, stalled-worker and socket fixtures. No public DNS,
 provider traffic, VM, or production policy bypass. Compile failures do not count.
 """
 import argparse
@@ -27,6 +27,37 @@ FAULTS = [
      'state = DispatchTime.now() <= deadline ? .finished(value) : .abandoned',
      'state = .finished(value)',
      'deadlineRejectsAResultFinishedAfterItsMonotonicDeadline'),
+    ('relay-hard-write-stops', 'case .end, .failed: return', 'case .end, .failed: break',
+     'relayHardWriteErrorTerminatesInsteadOfDroppingAndContinuing'),
+    ('relay-eof-drains', 'case .end: directions[index].phase = .draining', 'case .end: return',
+     'relayEOFDrainsQueuedBytesThroughBackpressureAndPartialWrites'),
+    ('relay-half-close-after-drain',
+     'where directions[index].phase == .draining && directions[index].queue.isEmpty',
+     'where directions[index].phase == .draining',
+     'relayEOFDrainsQueuedBytesThroughBackpressureAndPartialWrites'),
+    ('relay-both-directions-finish', 'directions.allSatisfy({ $0.phase == .finished })',
+     'directions.contains(where: { $0.phase == .finished })',
+     'relayHalfCloseDrainsAndStillAllowsTheOppositeResponse'),
+    ('relay-write-interruption',
+     'if error == EAGAIN || error == EWOULDBLOCK || error == EINTR { return .blocked }\n'
+     '      return .failed\n    }\n    guard count > 0',
+     'if error == EAGAIN || error == EWOULDBLOCK { return .blocked }\n'
+     '      return .failed\n    }\n    guard count > 0',
+     'relayEOFDrainsQueuedBytesThroughBackpressureAndPartialWrites'),
+    ('relay-read-interruption',
+     'budget.release(reserved)\n'
+     '      if error == EAGAIN || error == EWOULDBLOCK || error == EINTR { return .blocked }',
+     'budget.release(reserved)\n'
+     '      if error == EAGAIN || error == EWOULDBLOCK { return .blocked }',
+     'relayInterruptedReadPreservesTheDirectionAndItsReservation'),
+    ('relay-budget-on-exit', 'defer { budget.release(held) }', 'defer {}',
+     'relayHardWriteErrorTerminatesInsteadOfDroppingAndContinuing'),
+    ('relay-no-sigpipe', 'var noSignal: Int32 = 1', 'var noSignal: Int32 = 0',
+     'relayHalfCloseDrainsAndStillAllowsTheOppositeResponse'),
+    ('relay-paused-hangup',
+     'for index in 0..<2 where fds[index].events == 0 { fds[index].fd = -1 }',
+     'for index in 0..<2 where fds[index].events == 0 { _ = index }',
+     'relayPausedHangupWaitsInsteadOfSpinning'),
 ]
 
 
@@ -53,10 +84,11 @@ def main():
             print(control.stdout[-6000:], control.stderr[-6000:], file=sys.stderr)
             print('FAIL: unmodified control did not run and pass every target test', file=sys.stderr)
             return 2
-        path = package / 'Sources/IsoEgressCore/Dial.swift'
-        source = path.read_text()
         failures = []
         for ident, original, replacement, test_filter in faults:
+            filename = 'Tunnel.swift' if ident.startswith('relay-') else 'Dial.swift'
+            path = package / 'Sources/IsoEgressCore' / filename
+            source = path.read_text()
             if source.count(original) != 1:
                 failures.append(ident)
                 print(f'FAIL {ident}: anchor must match exactly once', flush=True)

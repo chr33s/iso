@@ -37,6 +37,11 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Boundary hardening and local secrets
 
+- **Filtered relay** drains queued bytes before forwarding half-closes, permits
+  the opposite response direction, and stops on hard I/O errors instead of
+  dropping data and continuing. Interrupted I/O is retried; paused hung-up
+  sources do not spin under backpressure. Local socket and mutation tests cover
+  these paths; full filtered-VM qualification remains open.
 - **Filtered lease state** uses typed PID/date decoding and bounded regular
   control-file reads without following symlinks. Invalid identities, malformed
   deadlines, and lock-probe errors stop renewal; only an absent/null deadline

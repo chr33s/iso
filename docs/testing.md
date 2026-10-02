@@ -618,11 +618,22 @@ without DNS traffic or dialing a socket. The wait uses a monotonic dispatch
 deadline; finishing after it cannot deliver a result. libc `getaddrinfo` is not
 cancelled: stuck work remains charged until it returns or the companion exits.
 
+`swift test --package-path iso-egress --force-resolved-versions --filter relay`
+covers queued EOF, bidirectional half-closes, partial writes, backpressure,
+interrupted reads/writes, hard write errors, and budget release after idle or
+revocation. Socket fixtures verify data and FIN ordering in both directions.
+A full destination socket plus an injected HUP event verifies that paused reads
+do not turn `poll` into a busy loop; the local socketpair did not reliably
+report HUP without read interest. These fixtures bypass no production address
+policy: they call the transport directly without invoking a connector.
+
 `python3 scripts/test-swift-egress-mutations.py` runs clean controls in a private
-package copy, then deliberately releases slots early, removes each result
-cleanup path, and accepts late results. Each named test must run and fail;
-compilation errors and empty selections do not count. CI and release preflight
-run this gate. These are local worker/ownership tests, not a VM exhaustion gate.
+package copy, then deliberately releases DNS slots early, removes result cleanup,
+accepts late results, and breaks relay error, EOF, half-close, retry, budget and
+paused-hangup behavior. Each named test must run and fail; compilation errors
+and empty selections do not count. CI and release preflight run this gate.
+These are local worker/ownership and socket tests, not a filtered VM exhaustion
+or lifecycle-revocation gate.
 
 DNS/candidate admission for the credential proxy has the dedicated tests below.
 

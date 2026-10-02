@@ -101,6 +101,7 @@ import Testing
   #expect(fromUpstream == pong)
   close(client[0])
   client[0] = -1
+  shutdown(upstream[0], SHUT_WR)
   done.lock()
   while !finished.isSet {
     if !done.wait(until: Date().addingTimeInterval(2)) { break }
@@ -152,6 +153,8 @@ private final class TunnelHosts: @unchecked Sendable {
     close(pair[0])
     close(pair[1])
   }
+  var marker: UInt8 = 1
+  #expect(send(pair[1], &marker, 1, 0) == 1)
   let budget = RelayBudget(cap: 4)
   var remaining = Array("0123456789".utf8)
   var heldFull = false
