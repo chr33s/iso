@@ -6,6 +6,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoSecrets
+import Synchronization
 
 /// Resolves stored-secret references (`{vault:}` / `vault:`). The CLI's
 /// implementation unlocks the secret store at most once per command.
@@ -24,7 +25,12 @@ public struct CredentialResolver: Sendable {
 
   /// The store the CLI installs for this process; the default for every
   /// resolver built without an explicit one.
-  nonisolated(unsafe) public static var processSecrets: (any SecretReferenceResolver)?
+  public static var processSecrets: (any SecretReferenceResolver)? {
+    get { processSecretResolver.withLock { $0 } }
+    set { processSecretResolver.withLock { $0 = newValue } }
+  }
+
+  private static let processSecretResolver = Mutex<(any SecretReferenceResolver)?>(nil)
 
   let runner: ProcessRunner
   let environment: [String: String]

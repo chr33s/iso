@@ -68,7 +68,7 @@ import Testing
   setsockopt(client[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
   setsockopt(upstream[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
   let opened = Thread {
-    try? Tunnel.open(
+    Tunnel.open(
       proxyClient, host: "example.com",
       connect: { host in
         seen.add(host)

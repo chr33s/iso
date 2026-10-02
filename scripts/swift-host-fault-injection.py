@@ -18,6 +18,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # (id, file, original text, replacement, swift test filter)
 FAULTS = [
+    ("file-lock-release", "Sources/IsoCore/FileLock.swift",
+     "      descriptor = nil\n      close(fd)", "      descriptor = nil\n      _ = fd",
+     "concurrentFileLockReleaseUnlocksWithoutClosingOtherDescriptors"),
+    ("file-lock-release-once", "Sources/IsoCore/FileLock.swift",
+     "      descriptor = nil\n      close(fd)", "      _ = descriptor\n      close(fd)",
+     "concurrentFileLockReleaseUnlocksWithoutClosingOtherDescriptors"),
+    ("secret-resolver-sharing", "Sources/IsoCLI/SecretsCommands.swift",
+     "      instances[store.directory] = created", "      _ = created",
+     "concurrentSecretResolversShareOneStoreCache"),
+    ("passphrase-cache", "Sources/IsoCLI/SecretsCommands.swift",
+     "      cached = passphrase", "      cached = nil",
+     "concurrentPassphraseReadsShareOneDescriptorRead"),
     ("scanner-strings", "Sources/IsoConfiguration/JSONCScanner.swift",
      "if byte == quote { state = .string }", "_ = quote",
      "commentMarkersInsideStringsAreData"),

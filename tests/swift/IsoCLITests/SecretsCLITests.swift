@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import IsoCore
 import IsoHost
+import IsoSecrets
 import Testing
 
 @testable import IsoCLI
@@ -30,18 +31,66 @@ private func pipeWith(_ text: String) -> Int32 {
   return fds[0]
 }
 
-@Test func passphraseDescriptorIsReadOnceWithoutTrailingNewline() throws {
-  PassphraseInput.reset()
-  defer { PassphraseInput.reset() }
-  let fd = pipeWith("hunter2 two\n")
-  let secret = try PassphraseInput.read(
-    prompt: "unused", environment: [PassphraseInput.descriptorVariable: String(fd)])
-  #expect(secret.expose() == Array("hunter2 two".utf8))
-  // A second batch in the same command reuses it; the closed descriptor
-  // (whose number may already name something else) is never read again.
-  let again = try PassphraseInput.read(
-    prompt: "unused", environment: [PassphraseInput.descriptorVariable: "999"])
-  #expect(again.expose() == Array("hunter2 two".utf8))
+@Suite(.serialized)
+struct PassphraseCacheTests {
+  @Test func passphraseDescriptorIsReadOnceWithoutTrailingNewline() throws {
+    PassphraseInput.reset()
+    defer { PassphraseInput.reset() }
+    let fd = pipeWith("hunter2 two\n")
+    let secret = try PassphraseInput.read(
+      prompt: "unused", environment: [PassphraseInput.descriptorVariable: String(fd)])
+    #expect(secret.expose() == Array("hunter2 two".utf8))
+    // A second batch in the same command reuses it; the closed descriptor
+    // (whose number may already name something else) is never read again.
+    let again = try PassphraseInput.read(
+      prompt: "unused", environment: [PassphraseInput.descriptorVariable: "999"])
+    #expect(again.expose() == Array("hunter2 two".utf8))
+  }
+
+  @Test func concurrentPassphraseReadsShareOneDescriptorRead() async throws {
+    PassphraseInput.reset()
+    defer { PassphraseInput.reset() }
+    let fd = pipeWith("synthetic-passphrase\n")
+    try await withThrowingTaskGroup(of: [UInt8].self) { group in
+      for _ in 0..<64 {
+        group.addTask {
+          try PassphraseInput.read(
+            prompt: "unused", environment: [PassphraseInput.descriptorVariable: String(fd)]
+          ).expose()
+        }
+      }
+      for try await bytes in group {
+        #expect(bytes == Array("synthetic-passphrase".utf8))
+      }
+    }
+    PassphraseInput.reset()
+    let next = pipeWith("replacement\n")
+    #expect(
+      try PassphraseInput.read(
+        prompt: "unused", environment: [PassphraseInput.descriptorVariable: String(next)]
+      ).expose() == Array("replacement".utf8))
+  }
+}
+
+@Test func concurrentSecretResolversShareOneStoreCache() async throws {
+  let store = EnclaveStore(
+    directory: FileManager.default.temporaryDirectory.appending(path: "iso-cache-\(UUID())").path)
+  let expected = StoreSecretResolver.shared(store)
+  try await withThrowingTaskGroup(of: ObjectIdentifier.self) { group in
+    for _ in 0..<64 {
+      group.addTask {
+        let resolver = StoreSecretResolver.shared(store)
+        let values = try resolver.resolve([])
+        #expect(values.isEmpty)
+        return ObjectIdentifier(resolver)
+      }
+    }
+    for try await identity in group {
+      #expect(identity == ObjectIdentifier(expected))
+    }
+  }
+  let other = StoreSecretResolver.shared(EnclaveStore(directory: store.directory + "-other"))
+  #expect(other !== expected)
 }
 
 @Test func passphraseDescriptorRefusesUnsafeSources() throws {

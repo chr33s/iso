@@ -75,7 +75,9 @@ public enum HostAddresses {
           address, socklen_t(address.pointee.sa_len), &buffer, socklen_t(buffer.count), nil, 0,
           NI_NUMERICHOST) == 0
         {
-          names.insert(String(cString: buffer).lowercased())
+          let host = String(
+            decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+          names.insert(host.lowercased())
         }
       }
       cursor = node.pointee.ifa_next
@@ -191,6 +193,8 @@ public enum Dial {
       }
     }
     guard named == 0 else { return false }
-    return AddressPolicy.isPublic(String(cString: buffer), local: local)
+    let host = String(
+      decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    return AddressPolicy.isPublic(host, local: local)
   }
 }

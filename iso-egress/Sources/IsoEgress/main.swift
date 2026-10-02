@@ -151,7 +151,7 @@ enum EgressMain {
         node.pointee.ai_addr, node.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0,
         NI_NUMERICHOST) == 0
     else { return nil }
-    return String(cString: buffer)
+    return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 
   static func respond(_ client: Int32, _ denial: Denial?, alive: () -> Bool) {

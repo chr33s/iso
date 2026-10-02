@@ -192,6 +192,10 @@ Before reviewing, sync to latest remote (`git fetch origin`).
    specific fields, not the whole configuration, when a function needs one field.
 3. **Value types by default.** Prefer `struct`/`enum` with `let` properties;
    use a class or actor only for identity or shared mutable state.
+   Protect synchronous shared state with `Synchronization.Mutex` so classes
+   can use checked `Sendable` conformances; use actors for asynchronous
+   isolation. Keep mutable process-wide caches inside immutable mutexes rather
+   than pairing `nonisolated(unsafe)` properties with separate locks.
 4. **One error case per user-meaningful failure.** Five `try`s that produce
    different actionable errors want an enum with five cases.
 5. **Resist the "configuration knob" reflex.** A new flag, environment

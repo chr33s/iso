@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public struct HostError: Error, Equatable, Sendable, CustomStringConvertible {
   public let message: String
@@ -14,8 +15,8 @@ public struct HostError: Error, Equatable, Sendable, CustomStringConvertible {
 /// locks: both implementations lock the same path with `LOCK_EX`, so a Swift
 /// and a Rust process serialize against each other during the port. The
 /// lock is released by `release()` or when the descriptor is closed.
-public final class FileLock: @unchecked Sendable {
-  private var descriptor: Int32
+public final class FileLock: Sendable {
+  private let descriptor: Mutex<Int32?>
 
   /// Blocks until `path` is locked, creating it (mode 0644) if needed.
   public init(path: String) throws(HostError) {
@@ -36,7 +37,7 @@ public final class FileLock: @unchecked Sendable {
       close(fd)
       throw .posix("Failed to acquire lock on", path, code)
     }
-    descriptor = fd
+    descriptor = Mutex(fd)
   }
 
   /// `.<name>.lock` beside `target` — the Rust `fs_util::lock_sibling` path.
@@ -48,9 +49,11 @@ public final class FileLock: @unchecked Sendable {
   }
 
   public func release() {
-    guard descriptor >= 0 else { return }
-    close(descriptor)
-    descriptor = -1
+    descriptor.withLock { descriptor in
+      guard let fd = descriptor else { return }
+      descriptor = nil
+      close(fd)
+    }
   }
 
   deinit { release() }

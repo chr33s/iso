@@ -284,7 +284,7 @@ public struct SandboxRuntime: Sendable {
   /// Protocol 5 boot identity. A protocol-4 runtime, or a live state without
   /// `bootId`, fails before filtered egress can start.
   public func requireFilteredBoot(_ name: MachineName) throws(RuntimeError) -> FilteredBoot {
-    try requireQualified()
+    _ = try requireQualified()
     let inspection = try inspect(name)
     let bootID = inspection.live?.bootId
     guard RuntimeProtocol.filteredBootAllowed(advertised: advertisedProtocol, bootID: bootID),

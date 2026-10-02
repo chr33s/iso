@@ -153,7 +153,10 @@ public struct SandboxPaths: Sendable {
   public static let controlDirectory: URL = {
     var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
     let n = confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count)
-    let tmp = n > 0 && n <= buf.count ? String(cString: buf) : NSTemporaryDirectory()
+    let tmp =
+      n > 0 && n <= buf.count
+      ? String(decoding: buf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+      : NSTemporaryDirectory()
     return URL(fileURLWithPath: tmp, isDirectory: true).appendingPathComponent(
       "iso-sbx", isDirectory: true)
   }()

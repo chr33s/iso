@@ -4,6 +4,7 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 import IsoSecrets
+import Synchronization
 
 struct SecretsCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -27,18 +28,16 @@ extension CommandContext {
 /// Resolves `{vault:}` references through the secret store: one passphrase
 /// prompt and one Secure Enclave check per batch of new names. Resolved
 /// values live only in this process's memory.
-final class StoreSecretResolver: SecretReferenceResolver, @unchecked Sendable {
+final class StoreSecretResolver: SecretReferenceResolver {
   let store: EnclaveStore
-  private let lock = NSLock()
-  private var cache: [SecretName: Secret<[UInt8]>] = [:]
+  private let cache = Mutex<[SecretName: Secret<[UInt8]>]>([:])
 
   init(store: EnclaveStore) { self.store = store }
 
-  nonisolated(unsafe) private static var instances: [String: StoreSecretResolver] = [:]
-  private static let instancesLock = NSLock()
+  private static let instances = Mutex<[String: StoreSecretResolver]>([:])
 
   static func shared(_ store: EnclaveStore) -> StoreSecretResolver {
-    instancesLock.withLock {
+    instances.withLock { instances in
       if let existing = instances[store.directory] { return existing }
       let created = StoreSecretResolver(store: store)
       instances[store.directory] = created
@@ -47,7 +46,7 @@ final class StoreSecretResolver: SecretReferenceResolver, @unchecked Sendable {
   }
 
   func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>] {
-    try lock.withLock {
+    try cache.withLock { cache in
       let missing = names.subtracting(cache.keys)
       if !missing.isEmpty {
         disableCoreDumps()
@@ -72,8 +71,7 @@ enum PassphraseInput {
   static let descriptorVariable = "ISO_SECRETS_PASSPHRASE_FD"
   static let maxLength = 4096
 
-  nonisolated(unsafe) private static var cached: Secret<[UInt8]>?
-  private static let cacheLock = NSLock()
+  private static let cached = Mutex<Secret<[UInt8]>?>(nil)
 
   /// The command's passphrase, read at most once per process: the descriptor
   /// is closed after its first read, and a command prompts only once.
@@ -81,7 +79,7 @@ enum PassphraseInput {
     prompt: String, confirm: Bool = false,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> Secret<[UInt8]> {
-    try cacheLock.withLock {
+    try cached.withLock { cached in
       if let cached { return cached }
       let passphrase = try readFresh(prompt: prompt, confirm: confirm, environment: environment)
       cached = passphrase
@@ -90,7 +88,7 @@ enum PassphraseInput {
   }
 
   /// Test seam: forget the cached passphrase.
-  static func reset() { cacheLock.withLock { cached = nil } }
+  static func reset() { cached.withLock { $0 = nil } }
 
   static func readFresh(
     prompt: String, confirm: Bool, environment: [String: String]

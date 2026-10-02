@@ -39,7 +39,7 @@ public enum Sandboxes {
   // MARK: status
 
   public static func status(_ paths: SandboxPaths) -> SandboxStatus {
-    guard let live = paths.loadLive() else {
+    guard paths.loadLive() != nil else {
       return ownerHoldsLock(paths) ? .booting : .stopped
     }
     // The owner holds its lock for its whole life, so the lock (not the
