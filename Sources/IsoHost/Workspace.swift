@@ -248,6 +248,7 @@ public struct WorkspaceTransfer: Sendable {
     var tarEnvironment = client.environment
     tarEnvironment["COPYFILE_DISABLE"] = "1"
     let extract = RemoteCommand().literal("tar xf - -C ").arg(guest.rawValue)
+    try target.requireHandoff()
     let output = try runner.pipeline(
       request(try tool("tar"), tarArguments, environment: tarEnvironment),
       request(try client.ssh(), target.sshOptions + [target.address, extract.rendered]))
@@ -284,6 +285,7 @@ public struct WorkspaceTransfer: Sendable {
     var producer = request(
       try client.ssh(), target.sshOptions + [target.address, command.rendered])
     producer.isCancelled = cancel
+    try target.requireHandoff()
     let output = try runner.pipeline(
       producer, request(try tool("tar"), ["xf", "-", "-C", destination]))
     if output.producer == .signaled(SIGPIPE) {
@@ -356,6 +358,7 @@ public struct WorkspaceTransfer: Sendable {
       Self.rsyncBaseArguments(target, excludeGit: excludeGit) + [
         "--delete", "\(source)/", "\(target.address):\(guest)/",
       ]
+    try target.requireHandoff()
     guard try runner.attached(request(try tool("rsync"), arguments), inheritStdin: true).succeeded
     else { throw HostError("rsync push failed") }
   }
@@ -372,12 +375,13 @@ public struct WorkspaceTransfer: Sendable {
       + ["\(target.address):\(guest)/", "\(destination)/"]
     var rsync = request(try tool("rsync"), arguments)
     rsync.isCancelled = cancel
+    try target.requireHandoff()
     guard try runner.attached(rsync, inheritStdin: true).succeeded
     else { throw HostError("rsync pull failed") }
   }
 
-  func guestHasRsync(_ target: SSHTarget) -> Bool {
-    client.succeeds(target, RemoteCommand().literal("which rsync"))
+  func guestHasRsync(_ target: SSHTarget) throws -> Bool {
+    try client.succeedsChecked(target, RemoteCommand().literal("which rsync"))
   }
 
   static func stateOrDefault(_ instance: Instance, directory: String?, command: String) throws
@@ -418,7 +422,7 @@ public struct WorkspaceTransfer: Sendable {
     else { throw HostError("Source directory \(source) does not exist") }
     if !force { try checkGuestClean(running.target, state.guestPath) }
     diagnostics.log(.info, "Pushing \(source) -> guest:\(state.guestPath)")
-    if guestHasRsync(running.target) {
+    if try guestHasRsync(running.target) {
       try rsyncPush(running.target, source: source, to: state.guestPath, excludeGit: excludeGit)
     } else {
       diagnostics.log(.info, "rsync not available on guest, using tar-pipe")
@@ -445,7 +449,7 @@ public struct WorkspaceTransfer: Sendable {
       throw ContextError("Failed to create \(destination)", cause: error)
     }
     diagnostics.log(.info, "Pulling guest:\(state.guestPath) -> \(destination)")
-    if guestHasRsync(running.target) {
+    if try guestHasRsync(running.target) {
       try rsyncPull(running.target, guest: state.guestPath, to: destination, excludeGit: excludeGit)
     } else {
       diagnostics.log(.info, "rsync not available on guest, using tar-pipe")
@@ -485,7 +489,7 @@ public struct WorkspaceTransfer: Sendable {
     do {
       diagnostics.log(.info, "Staging guest:\(state.guestPath) for \(destination)")
       do {
-        if guestHasRsync(target) {
+        if try guestHasRsync(target) {
           try rsyncPull(
             target, guest: state.guestPath, to: location.tree, excludeGit: excludeGit,
             preserveLinks: true, cancel: growth.shouldCancel)
@@ -564,7 +568,7 @@ public struct WorkspaceTransfer: Sendable {
         RemoteCommand().literal("sudo mkdir -p ").arg(mount.guestPath.rawValue)
           .literal(" && sudo chown ubuntu:ubuntu ").arg(mount.guestPath.rawValue))
       diagnostics.log(.info, "Syncing \(mount.hostPath) -> guest:\(mount.guestPath)")
-      if guestHasRsync(target) {
+      if try guestHasRsync(target) {
         try rsyncPush(target, source: mount.hostPath, to: mount.guestPath, excludeGit: excludeGit)
       } else {
         diagnostics.log(.info, "rsync not available on guest, using tar-pipe")
@@ -598,6 +602,7 @@ public struct WorkspaceTransfer: Sendable {
     do {
       // Drained, not failed, past the limit: a truncated listing is still
       // non-empty, so it reports the changes rather than an I/O error.
+      try target.requireHandoff()
       output = try runner.capture(
         request(try client.ssh(), target.sshOptions + [target.address, command.rendered])
           .with(overflow: .drain))

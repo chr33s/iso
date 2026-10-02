@@ -290,8 +290,18 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   instance fails; a healthy replacement identity also fails rather than adopting
   new authority for an old prepared environment. No private key or serialized
   proof is added. Nonfiltered behavior and intentional bootstrap preparation stay
-  unchanged. Administrative and workspace-transfer handoffs remain separate work;
-  this is not full NET-20 or ongoing supervision of already launched SSH.
+  unchanged. Live administrative and workspace-transfer targets also retain the
+  original proof in memory and check before SSH/SCP, tar/rsync, hook, editor and
+  managed-alias operations. Bootstrap first establishes pinned transport and
+  egress, then retains transport-only identity during broker preparation, with
+  composite proof required before releasing hooks and initial transfers. A
+  readiness refusal is distinct from an ordinary guest-command failure: hooks
+  and agent updates propagate it rather than warn-and-continue. Best-effort
+  capture/probe APIs return no result/false without launching the operation;
+  subsequent transfer fallbacks must recheck. Local control-master cleanup is
+  still permitted after refusal. These checks do not supervise already launched
+  processes or make direct external SSH consumers use host readiness checks;
+  this is not full NET-20.
 
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in

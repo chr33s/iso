@@ -546,12 +546,12 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   #expect(commands.contains("sudo env GUEST_USER='ubuntu' ISO_FORCE_INSTALL=1 bash -s"))
   #expect(readFile(guest.root + "/sudo-stdin") == EmbeddedResources.guestScript("codex.sh"))
 
-  let check = AgentUpdate.check(
+  let check = try AgentUpdate.check(
     guest.client, session, .codex, latestCodexTag: { "rust-v0.51.0" },
     diagnostics: guest.sink.diagnostics)
   #expect(
     check == ["Codex        0.50.0 → 0.51.0  update available — run: iso agent update --codex"])
-  let offline = AgentUpdate.check(
+  let offline = try AgentUpdate.check(
     guest.client, session, .codex, latestCodexTag: { throw HostError("offline") },
     diagnostics: guest.sink.diagnostics)
   #expect(offline[0].contains("could not determine latest version"))

@@ -143,6 +143,7 @@ public struct PortForwards: Sendable {
     do {
       // `-f` backgrounds the master after authentication; the launching
       // ssh exits and the master keeps no pipe of ours open.
+      try target.requireHandoff()
       output = try client.runner.capture(
         client.request(try client.ssh(), arguments).with(overflow: .drain))
     } catch {

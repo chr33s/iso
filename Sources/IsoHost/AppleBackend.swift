@@ -112,6 +112,38 @@ public final class AppleBackend: Sendable {
   /// Nil when stopped; a running sandbox must pass qualification and the
   /// isolation gate before its SSH target is handed out.
   public func asRunning(_ instance: Instance) throws -> Running? {
+    try asRunning(instance, proof: .composite)
+  }
+
+  /// Intentional bootstrap may establish/replace brokers. It still retains and
+  /// rechecks the original boot, policy, owner, target and egress signer.
+  public func asBootstrapRunning(_ instance: Instance) throws -> Running? {
+    try asRunning(instance, proof: .transport)
+  }
+
+  public func completeBootstrap(_ preparation: Running) throws -> Running {
+    try preparation.target.requireHandoff()
+    guard let running = try asRunning(preparation.instance) else {
+      throw HostError("FILTERED_HANDOFF_NOT_READY: instance stopped during preparation")
+    }
+    try WorkloadHandoff.requireTransport(preparation, running)
+    return running
+  }
+
+  enum HandoffProof: Sendable {
+    case composite, transport
+
+    func brokerKeys(_ prove: () throws -> [ProxyProvider: String]) rethrows -> [ProxyProvider:
+      String]
+    {
+      switch self {
+      case .composite: try prove()
+      case .transport: [:]
+      }
+    }
+  }
+
+  private func asRunning(_ instance: Instance, proof: HandoffProof) throws -> Running? {
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
     let inspection = try runtime.inspect(sidecar.machineID)
@@ -163,15 +195,23 @@ public final class AppleBackend: Sendable {
         }
         let egressKey = try FilteredReadiness.require(
           instance, target: target, environment: environment, policy: bootPolicy)
-        let brokerKeys = try BrokerReadiness.requireAll(
-          instance, config: config, target: target, environment: environment, policy: bootPolicy)
+        let brokerKeys = try proof.brokerKeys {
+          try BrokerReadiness.requireAll(
+            instance, config: config, target: target, environment: environment, policy: bootPolicy)
+        }
         handoffIdentity = .init(
           policy: bootPolicy, egressKey: egressKey.encoded, brokerKeys: brokerKeys)
       } else {
         handoffIdentity = nil
       }
-      return Running(
+      let expected = Running(
         instance: instance, sidecar: sidecar, ready: ready, target: target,
+        handoffIdentity: handoffIdentity)
+      let checkedTarget = WorkloadHandoff.bind(expected) {
+        try self.asRunning(instance, proof: proof)
+      }
+      return Running(
+        instance: instance, sidecar: sidecar, ready: ready, target: checkedTarget,
         handoffIdentity: handoffIdentity)
     } catch {
       throw ContextError(
@@ -237,6 +277,7 @@ public final class AppleBackend: Sendable {
     let sidecar = try ownedSidecar(running.instance)
     let runtime = try runtime()
     let decode = { (bytes: [UInt8]) in sanitizeForDisplay(String(decoding: bytes, as: UTF8.self)) }
+    try running.target.requireHandoff()
     if follow {
       var out = BoundedLineSplitter(limit: Self.maxLogLine)
       var err = BoundedLineSplitter(limit: Self.maxLogLine)

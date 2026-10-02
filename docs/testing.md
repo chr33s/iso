@@ -738,7 +738,23 @@ fresh proof. The interposer keeps challenges and replies in memory, not artifact
 post-preparation invalidation, fresh-probe failures, unchanged-identity controls,
 owner/target/boot/policy/key/provider-set replacement, and nonfiltered compatibility.
 Ten `workload-*` host faults remove the preparation/launch checks, fresh inspection,
-identity comparisons and compatibility bypass. Key-replacement decision fixtures
+identity comparisons and compatibility bypass. `AdministrativeHandoffTests` pair
+healthy and revoked controls for 19 SSH/SCP, tar/rsync, forward, hook, alias and editor
+operations, original-identity retention, nonfiltered compatibility, preparation
+invalidation, and distinct readiness errors in hooks/agent updates. Pure stage
+controls ensure transport proof does not demand future brokers while composite
+proof does. Thirty-six `admin-*` faults remove binding, operation checks, hook
+error propagation or the proof-stage distinction. The same VM interposer also
+checks late version-query, workspace-push and staged-pull refusals at probe and
+transfer-launch boundaries, followed by healthy transfer controls; a failed pull
+must not retain a stage. Readiness refusal remains distinct from an unsuccessful
+rsync availability probe. Reverse-forward controls check master/request boundaries
+and PID-file cleanup. The local-to-remote model-state fixture requires future
+brokers to prepare without an ordering deadlock before composite completion.
+Completion controls and faults reject changed owner, target, boot/policy or egress
+signer even when the later composite proof is otherwise healthy; intentional new
+broker keys remain permitted during bootstrap.
+Key-replacement decision fixtures
 are not real-VM broker-restart or capability-replay evidence.
 It removes its owned VMs, images and binary copies. This is not native-agent,
 provider-forwarding, exhaustion, lifecycle-revocation or full NET-20/F1 evidence.

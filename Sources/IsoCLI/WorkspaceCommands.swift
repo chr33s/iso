@@ -224,7 +224,7 @@ struct Editor: ParsableCommand {
       try EditorLauncher(
         environment: context.environment.variables, diagnostics: context.diagnostics
       )
-      .launch(running.instance, path: path, editor: editor)
+      .launch(running, path: path, editor: editor)
     }
   }
 }

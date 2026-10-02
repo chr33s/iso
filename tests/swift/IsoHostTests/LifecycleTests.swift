@@ -182,6 +182,27 @@ private struct FakeInstallation {
   func remove() { try? FileManager.default.removeItem(atPath: root) }
 }
 
+@Test func bootstrapCompletionDoesNotAdoptAReplacementProof() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("completion"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let running = try #require(try backend.asBootstrapRunning(instance))
+  let healthy = try backend.completeBootstrap(running)
+  #expect(healthy.ready == running.ready)
+  let preparation = AppleBackend.Running(
+    instance: instance, sidecar: running.sidecar, ready: running.ready, target: running.target,
+    handoffIdentity: .init(
+      policy: .init(bootID: "original-boot", policyHash: "original-policy"),
+      egressKey: "original-egress", brokerKeys: [:]))
+  #expect(throws: HostError.self) { _ = try backend.completeBootstrap(preparation) }
+}
+
 @Test func createStopStartAndDestroyAgainstTheFakeRuntime() throws {
   let install = try FakeInstallation()
   defer { install.remove() }

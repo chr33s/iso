@@ -70,14 +70,16 @@ public enum AgentUpdate {
 
   /// `<bin> --version` over SSH; nil when absent or unparsable.
   static func installedVersion(_ client: SSHClient, _ session: SSHSession, _ agent: Agent)
-    -> SemanticVersion?
+    throws -> SemanticVersion?
   {
     let bin = binary(agent, user: session.target.user)
-    guard
-      let raw = try? client.captureChecked(
+    do {
+      let raw = try client.captureChecked(
         session.target, RemoteCommand().arg(bin.rawValue).literal(" --version"))
-    else { return nil }
-    return SemanticVersion.first(in: raw)
+      return SemanticVersion.first(in: raw)
+    } catch let failure as GuestHandoffFailure {
+      throw failure
+    } catch { return nil }
   }
 
   public static func checkStatus(
@@ -94,9 +96,9 @@ public enum AgentUpdate {
   public static func check(
     _ client: SSHClient, _ session: SSHSession, _ selection: Selection,
     latestCodexTag: () throws -> String, diagnostics: Diagnostics
-  ) -> [String] {
-    selection.agents.map { agent in
-      let installed = installedVersion(client, session, agent)
+  ) throws -> [String] {
+    try selection.agents.map { agent in
+      let installed = try installedVersion(client, session, agent)
       var latest: SemanticVersion?
       if agent == .codex {
         do { latest = SemanticVersion.first(in: try latestCodexTag()) } catch {
@@ -145,6 +147,8 @@ public enum AgentUpdate {
       do {
         out(outcomeLine(agent, try update(client, session, agent)))
         if agent == .claude { out("  note: Claude Code also auto-updates in the background.") }
+      } catch let failure as GuestHandoffFailure {
+        throw failure
       } catch {
         failed = true
         out("\(agent.display): update failed — \(oneLineError(error))")
@@ -154,7 +158,7 @@ public enum AgentUpdate {
   }
 
   static func update(_ client: SSHClient, _ session: SSHSession, _ agent: Agent) throws -> Outcome {
-    let before = installedVersion(client, session, agent)
+    let before = try installedVersion(client, session, agent)
     switch agent {
     case .codex:
       do {
@@ -163,6 +167,8 @@ public enum AgentUpdate {
           RemoteCommand().literal("sudo env GUEST_USER=").arg(session.target.user.rawValue)
             .literal(" ISO_FORCE_INSTALL=1 bash -s"),
           stdin: Array(EmbeddedResources.guestScript("codex.sh").utf8))
+      } catch let failure as GuestHandoffFailure {
+        throw failure
       } catch {
         throw ContextError("failed to reinstall \(agent.display)", cause: error)
       }
@@ -171,11 +177,13 @@ public enum AgentUpdate {
         try client.exec(
           session.target,
           RemoteCommand().arg(binary(agent, user: session.target.user).rawValue).literal(" update"))
+      } catch let failure as GuestHandoffFailure {
+        throw failure
       } catch {
         throw ContextError("failed to update \(agent.display)", cause: error)
       }
     }
-    guard let after = installedVersion(client, session, agent) else {
+    guard let after = try installedVersion(client, session, agent) else {
       throw HostError(
         "could not read \(agent.display) version after update — the binary may be missing or broken"
       )

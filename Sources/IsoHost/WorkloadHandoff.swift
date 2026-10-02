@@ -10,7 +10,30 @@ enum WorkloadHandoff {
     let brokerKeys: [ProxyProvider: String]
   }
 
-  /// A fresh proof must describe the same prepared workload. A healthy new
+  static func bind(
+    _ expected: AppleBackend.Running,
+    inspect: @escaping @Sendable () throws -> AppleBackend.Running?
+  ) -> SSHTarget {
+    guard expected.handoffIdentity != nil else { return expected.target }
+    return expected.target.validating { try require(expected, inspect: inspect) }
+  }
+
+  /// Bootstrap may replace brokers, never the original transport identity.
+  static func requireTransport(_ expected: AppleBackend.Running, _ current: AppleBackend.Running)
+    throws
+  {
+    guard let identity = expected.handoffIdentity else { return }
+    guard current.ready == expected.ready, current.target == expected.target,
+      current.handoffIdentity?.policy == identity.policy,
+      current.handoffIdentity?.egressKey == identity.egressKey
+    else {
+      throw HostError(
+        "FILTERED_HANDOFF_CHANGED: bootstrap completion no longer matches the prepared transport identity"
+      )
+    }
+  }
+
+  /// A fresh proof must describe the same prepared session. A healthy new
   /// boot or restarted broker is not permission to reuse the old environment.
   static func require(
     _ expected: AppleBackend.Running,
@@ -19,7 +42,7 @@ enum WorkloadHandoff {
     // Nonfiltered launches retain their existing compatibility behavior.
     guard expected.handoffIdentity != nil else { return }
     guard let current = try inspect() else {
-      throw HostError("FILTERED_HANDOFF_NOT_READY: instance stopped before workload launch")
+      throw HostError("FILTERED_HANDOFF_NOT_READY: instance stopped before guest operation")
     }
     guard expected.ready == current.ready,
       expected.target == current.target,

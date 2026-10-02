@@ -733,6 +733,7 @@ public struct ProxyLauncher: Sendable {
 
     var master: DetachedChild
     do {
+      try target.requireHandoff()
       master = try DetachedChild.spawn(
         executable: ssh,
         arguments: target.sshOptions + [
@@ -760,6 +761,7 @@ public struct ProxyLauncher: Sendable {
       }
       var request: DetachedChild
       do {
+        try target.requireHandoff()
         request = try DetachedChild.spawn(
           executable: ssh,
           arguments: target.sshOptions + [

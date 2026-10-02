@@ -108,6 +108,7 @@ extension SSHClient {
 
   /// Output passes through; fails when the remote command does.
   public func exec(_ target: SSHTarget, _ command: RemoteCommand) throws {
+    try target.requireHandoff()
     let termination = try runner.attached(
       request(try ssh(), target.sshOptions + [target.address, command.rendered]),
       inheritStdin: true)
@@ -116,6 +117,7 @@ extension SSHClient {
 
   /// Like `exec`, with `env` forwarded.
   public func exec(_ session: SSHSession, _ command: RemoteCommand) throws {
+    try session.target.requireHandoff()
     let termination = try runner.attached(
       request(
         try ssh(), session.sshOptions + [session.target.address, command.rendered],
@@ -127,6 +129,7 @@ extension SSHClient {
   /// Like `exec(session:)`, with `stdin` for the remote command: a value
   /// that must not appear on the host argv (or in this error text).
   public func exec(_ session: SSHSession, _ command: RemoteCommand, stdin: [UInt8]) throws {
+    try session.target.requireHandoff()
     let termination = try runner.attached(
       request(
         try ssh(), session.sshOptions + [session.target.address, command.rendered],
@@ -139,6 +142,7 @@ extension SSHClient {
   public func exec(_ target: SSHTarget, _ command: RemoteCommand, stdin: [UInt8]) throws {
     let ssh = try ssh()
     let arguments = target.sshOptions + [target.address, command.rendered]
+    try target.requireHandoff()
     let termination = try runner.attached(
       request(ssh, arguments, input: stdin), inheritStdin: false)
     guard termination.succeeded else {
@@ -150,7 +154,14 @@ extension SSHClient {
 
   /// Whether the command succeeds; output discarded.
   public func succeeds(_ target: SSHTarget, _ command: RemoteCommand) -> Bool {
-    guard let ssh = sshExecutable(),
+    (try? succeedsChecked(target, command)) ?? false
+  }
+
+  /// Preserve readiness refusal where callers otherwise infer guest state.
+  func succeedsChecked(_ target: SSHTarget, _ command: RemoteCommand) throws -> Bool {
+    guard let ssh = sshExecutable() else { return false }
+    try target.requireHandoff()
+    guard
       let output = try? runner.capture(
         request(ssh, target.sshOptions + [target.address, command.rendered]).with(overflow: .drain))
     else { return false }
@@ -159,6 +170,7 @@ extension SSHClient {
 
   /// stdout of a successful command; stderr is discarded.
   public func captureChecked(_ target: SSHTarget, _ command: RemoteCommand) throws -> String {
+    try target.requireHandoff()
     let output: ProcessRunner.Output
     do {
       output = try runner.capture(
@@ -180,6 +192,7 @@ extension SSHClient {
     _ target: SSHTarget, local: String, remote: GuestPath, recursive: Bool = false
   ) throws {
     guard let scp = executable(named: "scp") else { throw HostError("Failed to run scp") }
+    try target.requireHandoff()
     let termination = try runner.attached(
       request(
         scp, target.scpOptions + (recursive ? ["-r"] : []) + [local, "\(target.address):\(remote)"]),

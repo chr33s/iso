@@ -294,10 +294,11 @@ struct ModelCommand: ParsableCommand {
 
   /// Re-materialize the guest configuration live; false when stopped.
   static func applyToRunning(_ context: CommandContext, _ instance: Instance) throws -> Bool {
-    guard let running = try context.backend.asRunning(instance) else { return false }
+    guard let running = try context.backend.asBootstrapRunning(instance) else { return false }
     let agents = context.agents
     let session = try agents.session(for: running)
     try agents.bootstrapAgents(session, instance: running.instance, mode: .restart)
+    if context.config.egress == .filtered { _ = try context.backend.completeBootstrap(running) }
     return true
   }
 
@@ -391,7 +392,7 @@ struct AgentUpdateCommand: ParsableCommand {
       let running = try context.backend.resolveRunning(name, instances: context.listInstances())
       let session = try context.agents.session(for: running)
       if check {
-        for line in AgentUpdate.check(
+        for line in try AgentUpdate.check(
           context.ssh, session, selection,
           latestCodexTag: {
             try AdminSupport.updater(context.environment, verbosity: global.verbose)

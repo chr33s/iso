@@ -234,7 +234,7 @@ final class ProjectLifecycle {
     if let applied = options.appliedDevcontainer {
       try DevcontainerState(applied: applied).save(instance)
     }
-    try agents.bootstrapAndPostStart(
+    let transferTarget = try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.noAgents,
       postStartOverride: options.postStartOverride, mode: .firstBoot,
       skipAgentBootstrap: options.skipAgentBootstrap, runtime: try backend.runtime())
@@ -251,14 +251,14 @@ final class ProjectLifecycle {
         throw HostError("Failed to resolve \(directory)")
       }
       try transfer.tarPipe(
-        target, source: absolute, to: guestWorkspace, excludeGit: options.excludeGit)
+        transferTarget, source: absolute, to: guestWorkspace, excludeGit: options.excludeGit)
       try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: absolute))
         .save(instance, diagnostics: diagnostics)
       recorded = true
     } else if let url = options.gitRepo {
       let assigned = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
       try GitHubGuest.clone(
-        context.ssh, target, url: url, github: config.github, assigned: assigned?.repo,
+        context.ssh, transferTarget, url: url, github: config.github, assigned: assigned?.repo,
         tokens: GitHubTokens(environment: context.environment.variables, diagnostics: diagnostics))
       try WorkspaceState(guestPath: guestWorkspace, source: .gitRepo(url: url))
         .save(instance, diagnostics: diagnostics)
@@ -266,9 +266,11 @@ final class ProjectLifecycle {
     }
     if !options.mounts.isEmpty {
       if recorded {
-        try transfer.syncMountContents(target, options.mounts, excludeGit: options.excludeGit)
+        try transfer.syncMountContents(
+          transferTarget, options.mounts, excludeGit: options.excludeGit)
       } else {
-        try transfer.syncMounts(target, instance, options.mounts, excludeGit: options.excludeGit)
+        try transfer.syncMounts(
+          transferTarget, instance, options.mounts, excludeGit: options.excludeGit)
       }
       diagnostics.warn(
         "\(AppleBackend.name) mounts use one-time sync, not live filesystem sharing. Use `iso push` / `iso pull` to sync changes."

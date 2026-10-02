@@ -15,6 +15,24 @@ public struct SSHTarget: Sendable, Equatable {
   public let keyPath: String
   public let knownHosts: String
   public let alias: String
+  var handoffCheck: (@Sendable () throws -> Void)? = nil
+
+  /// Connection identity excludes the process-local validator. Boot/policy and
+  /// signer identity are compared separately by WorkloadHandoff.
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.host == rhs.host && lhs.port == rhs.port && lhs.user == rhs.user
+      && lhs.keyPath == rhs.keyPath && lhs.knownHosts == rhs.knownHosts && lhs.alias == rhs.alias
+  }
+
+  func validating(_ check: @escaping @Sendable () throws -> Void) -> Self {
+    var target = self
+    target.handoffCheck = check
+    return target
+  }
+
+  func requireHandoff() throws {
+    do { try handoffCheck?() } catch { throw GuestHandoffFailure(cause: error) }
+  }
 
   /// Build the pinned target for `machine` at `ip`. Refuses a data path that
   /// ssh could not carry safely and an instance with no enrolled key.
@@ -109,7 +127,7 @@ public struct SSHClient: Sendable {
   /// stdout of `command` on the guest; stderr is discarded. Nil when ssh
   /// fails, times out, or prints non-UTF-8 output.
   public func capture(_ target: SSHTarget, _ command: String) -> String? {
-    guard let ssh = sshExecutable() else { return nil }
+    guard let ssh = sshExecutable(), (try? target.requireHandoff()) != nil else { return nil }
     guard
       let output = try? runner.capture(
         .init(
@@ -259,29 +277,27 @@ extension SSHClient {
       ]
     let start = ContinuousClock.now
     var delay: Duration = .milliseconds(250)
+    let closeMaster = {
+      _ = try? runner.capture(
+        .init(
+          executable: ssh,
+          arguments: ["-O", "exit", "-o", "ControlPath=\(control)", target.address],
+          environment: environment, deadline: .seconds(10), outputLimit: 64 << 10,
+          overflow: .drain))
+    }
+    defer { closeMaster() }
     while true {
       let remaining = timeout - (ContinuousClock.now - start)
+      try target.requireHandoff()
       let probe = try? runner.capture(
         .init(
           executable: ssh, arguments: options + [target.address, "true"], environment: environment,
           deadline: max(remaining, .seconds(15)), outputLimit: 64 << 10, overflow: .drain))
-      // Both outcomes close the master so a later session negotiates its own
-      // SendEnv (and a timed-out probe leaves nothing persisting).
-      let closeMaster = {
-        _ = try? runner.capture(
-          .init(
-            executable: ssh,
-            arguments: ["-O", "exit", "-o", "ControlPath=\(control)", target.address],
-            environment: environment, deadline: .seconds(10), outputLimit: 64 << 10,
-            overflow: .drain))
-      }
       if probe?.termination == .exited(0) {
         diagnostics.log(.info, "SSH is ready")
-        closeMaster()
         return
       }
       guard ContinuousClock.now - start < timeout else {
-        closeMaster()
         throw HostError(
           "SSH not ready after \(rustDuration(timeout)) — sshd may not be running in the guest")
       }

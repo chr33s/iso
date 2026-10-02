@@ -76,6 +76,7 @@ public struct SSHConfigFile: Sendable {
     try SSHConfigBlocks.checkAliasNotForeign(existing, host: host)
     let cleaned = SSHConfigBlocks.removeNamedMarkerBlock(existing, host: host)
     let block = Self.block(target, instance)
+    try target.requireHandoff()
     try write(cleaned.isEmpty ? block + "\n" : cleaned + "\n" + block + "\n")
     diagnostics.log(.info, "Updated SSH config at \(path)")
   }
@@ -212,7 +213,17 @@ public struct EditorLauncher: Sendable {
     return nil
   }
 
+  public func launch(_ running: AppleBackend.Running, path: GuestPath, editor: EditorKind?) throws {
+    try launch(running.instance, path: path, editor: editor, target: running.target)
+  }
+
   public func launch(_ instance: Instance, path: GuestPath, editor: EditorKind?) throws {
+    try launch(instance, path: path, editor: editor, target: nil)
+  }
+
+  private func launch(
+    _ instance: Instance, path: GuestPath, editor: EditorKind?, target: SSHTarget?
+  ) throws {
     var tried: [String] = []
     var failedEditor: EditorKind?
     for strategy in Self.strategies(editor, host: SSHConfigFile.host(instance), path: path) {
@@ -227,6 +238,7 @@ public struct EditorLauncher: Sendable {
         tried.append("\(strategy.name) (No such file or directory (os error 2))")
         continue
       }
+      try target?.requireHandoff()
       do {
         let termination = try runner.attached(
           .init(

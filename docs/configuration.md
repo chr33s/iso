@@ -614,8 +614,14 @@ owner/target and public signing identities in memory. They recheck the composite
 proof after environment preparation and immediately before spawning workload SSH;
 a healthy replacement boot or broker is not silently adopted by a prepared
 session. Reopen the session after an identity change. Bootstrap preparation stays
-separate so brokers can start before they are required. Administrative/transfer
-handoffs, complete unhealthy/listing semantics and full NET-20 remain incomplete.
+transport-only so brokers can start before they are required, while retaining
+its original egress/boot/policy/owner identity. Live administrative SSH and
+workspace-transfer targets carry process-local checks of the original composite
+identity; SSH/SCP, tar/rsync, hooks, editor launch and managed alias publication
+check before using those targets. Readiness refusals abort hooks and agent
+updates instead of becoming ordinary guest-command warnings or unknown versions.
+These are operation-boundary checks, not ongoing supervision. Complete
+unhealthy/listing semantics and full NET-20 remain incomplete.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.

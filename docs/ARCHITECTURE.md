@@ -114,7 +114,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
 | Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit`) |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
-| Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `WorkloadHandoff` (filtered prepared-workload identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
+| Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `WorkloadHandoff` (filtered prepared-session and guest-operation identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
 | Support | `Diagnostics` (stderr), `Prompt`, `OrderedJSON`, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 
 ### `IsoCLI`

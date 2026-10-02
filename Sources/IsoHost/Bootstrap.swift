@@ -381,10 +381,12 @@ public struct AgentBootstrap: Sendable {
     return try WorkloadSession(session: session, revalidate: revalidate)
   }
 
-  /// Bootstrap/administrative preparation, not a final workload handoff.
+  /// Retains the running target's proof across host-side environment preparation.
   public func session(for running: AppleBackend.Running) throws -> SSHSession {
-    try prepareSession(
+    let session = try prepareSession(
       running.instance, target: running.target, repo: github.instanceRepo(running.instance))
+    try session.target.requireHandoff()
+    return session
   }
 
   // MARK: - Post-boot sequence
@@ -403,13 +405,16 @@ public struct AgentBootstrap: Sendable {
   /// After a fresh or restarted boot: close the previous boot's model
   /// tunnels, bootstrap the agents (unless `noAgents`), then run the
   /// post-start hook. `up`/`start` call this once SSH is ready.
+  @discardableResult
   public func bootstrapAndPostStart(
     _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
     postStartOverride: String?, mode: BootMode, skipAgentBootstrap: Bool = false,
     runtime: SandboxRuntime? = nil
-  ) throws {
+  ) throws -> SSHTarget {
     proxies.stopModelTunnels(instance)
     try proxies.startEgress(instance, config: config, target: target, runtime: runtime)
+    let preparation = try bootstrapRunning(instance, fallback: target, runtime: runtime)
+    let preparationTarget = preparation?.target ?? target
     recordBoot(instance)
     let postStart = postStartOverride ?? config.postStart
     let proxyConfigured =
@@ -435,10 +440,12 @@ public struct AgentBootstrap: Sendable {
         _ = try github.resolvePAT(assigned)
       }
       diagnostics.log(.info, "Skipping guest agent bootstrap (--no-agents)")
-      try requireFilteredHandoff(instance, runtime: runtime)
-      return
+      try preparationTarget.requireHandoff()
+      return try requireFilteredHandoff(instance, runtime: runtime, preparation: preparation)
+        ?? preparationTarget
     }
-    let session = try prepareSession(instance, target: target, repo: repo)
+    let session = try prepareSession(instance, target: preparationTarget, repo: repo)
+    try preparationTarget.requireHandoff()
     let raw = ProxyProvider.allCases.flatMap(\.recognizedVariables).filter(session.env.contains)
     if !raw.isEmpty {
       BoundaryAudit.record(instance, .rawProviderForward(raw), diagnostics: diagnostics)
@@ -455,29 +462,52 @@ public struct AgentBootstrap: Sendable {
     } else {
       try bootstrapAgents(session, instance: instance, mode: mode)
     }
+    try preparationTarget.requireHandoff()
+    let hookTarget =
+      try requireFilteredHandoff(instance, runtime: runtime, preparation: preparation)
+      ?? preparationTarget
     if let postStart {
-      // Bootstrap may have just minted the Codex capability token.
+      // Capture composite identity before preparing the hook's environment.
       let hookSession =
-        noAgents ? session : try prepareSession(instance, target: target, repo: repo)
-      try requireFilteredHandoff(instance, runtime: runtime)
-      runPostStart(hookSession, command: postStart)
-    } else {
-      try requireFilteredHandoff(instance, runtime: runtime)
+        noAgents
+        ? SSHSession(target: hookTarget, env: session.env)
+        : try prepareSession(instance, target: hookTarget, repo: repo)
+      try hookTarget.requireHandoff()
+      try runPostStart(hookSession, command: postStart)
     }
+    return hookTarget
   }
 
-  /// Bootstrap is intentional preparation, not permission to run a project
-  /// hook against a stale transport. Rebuild the live proof after preparation.
-  func requireFilteredHandoff(_ instance: Instance, runtime: SandboxRuntime?) throws {
-    guard config.egress == .filtered else { return }
+  func bootstrapRunning(_ instance: Instance, fallback: SSHTarget, runtime: SandboxRuntime?) throws
+    -> AppleBackend.Running?
+  {
+    guard config.egress == .filtered else { return nil }
+    guard let runtime else {
+      throw HostError("FILTERED_EGRESS_NOT_READY: missing runtime for bootstrap")
+    }
+    let backend = AppleBackend(
+      config: config, environment: environment, runtime: { () throws(RuntimeError) in runtime })
+    guard let running = try backend.asBootstrapRunning(instance), running.target == fallback else {
+      throw HostError("FILTERED_HANDOFF_CHANGED: bootstrap target changed or stopped")
+    }
+    return running
+  }
+
+  @discardableResult
+  func requireFilteredHandoff(
+    _ instance: Instance, runtime: SandboxRuntime?, preparation: AppleBackend.Running? = nil
+  ) throws -> SSHTarget? {
+    guard config.egress == .filtered else { return nil }
     guard let runtime else {
       throw HostError("FILTERED_EGRESS_NOT_READY: missing runtime for handoff")
     }
     let backend = AppleBackend(
       config: config, environment: environment, runtime: { () throws(RuntimeError) in runtime })
-    guard try backend.asRunning(instance) != nil else {
+    if let preparation { return try backend.completeBootstrap(preparation).target }
+    guard let running = try backend.asRunning(instance) else {
       throw HostError("FILTERED_EGRESS_NOT_READY: sandbox stopped during bootstrap")
     }
+    return running.target
   }
 
   /// The boot's boundary policy, for `iso audit` (names and modes only).
@@ -497,13 +527,15 @@ public struct AgentBootstrap: Sendable {
         sessionTTL: config.limits.sessionTTL), diagnostics: diagnostics)
   }
 
-  /// The user's hook, evaluated by the guest shell; a failure only warns.
-  public func runPostStart(_ session: SSHSession, command: String) {
+  /// Ordinary guest-command failures warn; readiness refusals abort the handoff.
+  public func runPostStart(_ session: SSHSession, command: String) throws {
     diagnostics.log(.info, "Running post_start hook in guest")
     diagnostics.debug("post_start: \(command)")
     do {
       try client.exec(session, RemoteCommand().literal(command))
       diagnostics.debug("post_start hook completed")
+    } catch let failure as GuestHandoffFailure {
+      throw failure
     } catch {
       diagnostics.warn("post_start hook failed (continuing): \(error)")
     }

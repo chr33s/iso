@@ -156,7 +156,7 @@ sys.exit(result.returncode)
         env["PATH"] = str(interposer) + ":" + original_path
         try:
             for boundary, label in [(3, "after resolution, before preparation completes"),
-                                    (6, "after preparation, before final workload launch")]:
+                                    (9, "after preparation, before final workload launch")]:
                 counter.write_text("0")
                 trigger.write_text(str(boundary))
                 checkpoint.unlink(missing_ok=True)
@@ -167,6 +167,29 @@ sys.exit(result.returncode)
                 trigger.write_text("0")
                 run(["exec", "brokers", "--", "test", "!", "-e", "/tmp/iso-late-workload-marker"])
                 print("PASS broker paused", label, "refuses workload; resume restores fresh proof", flush=True)
+            for arguments, boundary, label in [
+                (["agent", "update", "brokers", "--check", "--claude"], 6, "administrative version query"),
+                (["push", "brokers", "--force"], 3, "workspace push probe"),
+                (["pull", "brokers", "--review", "--stat"], 3, "staged workspace pull probe"),
+                (["push", "brokers", "--force"], 6, "workspace push launch"),
+                (["pull", "brokers", "--review", "--stat"], 6, "staged workspace pull launch"),
+            ]:
+                (project / "marker").write_text("late-workspace-must-not-transfer\n")
+                counter.write_text("0")
+                trigger.write_text(str(boundary))
+                checkpoint.unlink(missing_ok=True)
+                release.unlink(missing_ok=True)
+                refusal, _ = run(arguments, expected=1, contains="FILTERED_BROKER_NOT_READY", timeout=25, interpose=boundary)
+                assert "rsync not available" not in refusal, "readiness refusal was reported as guest tool absence"
+                trigger.write_text("0")
+                run(["exec", "brokers", "--", "cat", "/workspace/marker"], contains="broker-fixture")
+                assert not (state / "stage").exists(), "failed handoff retained a stage"
+                print("PASS late broker revocation refuses", label, "without transferring data; fresh proof recovers", flush=True)
+            # Positive witnesses use the same transport after the broker resumes.
+            run(["push", "brokers", "--force"])
+            run(["exec", "brokers", "--", "cat", "/workspace/marker"], contains="late-workspace-must-not-transfer")
+            run(["pull", "brokers", "--review", "--stat"])
+            run(["pull", "brokers", "--discard"])
         finally:
             env["PATH"] = original_path
             trigger.write_text("0")
@@ -203,6 +226,20 @@ sys.exit(result.returncode)
             assert time.monotonic() < deadline
             time.sleep(.03)
         run(["status", "brokers"], expected=1, contains="FILTERED_BROKER_NOT_READY")
+        # Existing owner-controlled model state only: no new endpoint/listener or
+        # provider request. Future brokers must be prepared under transport proof.
+        model_path = state / "model.json"
+        model = json.loads(model_path.read_text()) if model_path.exists() else {}
+        model["mode"] = "local"
+        model_path.write_text(json.dumps(model))
+        model_path.chmod(0o600)
+        before_transition = [key(provider).read_bytes() for provider in ["anthropic", "openai"]]
+        run(["model", "brokers", "remote"])
+        run(["exec", "brokers", "--", "true"])
+        after_model = json.loads(model_path.read_text()) if model_path.exists() else {}
+        assert after_model.get("mode", "remote") == "remote"
+        assert all(key(provider).read_bytes() != old for provider, old in zip(["anthropic", "openai"], before_transition))
+        print("PASS local-to-remote preparation avoids ordering deadlock and completes composite proof", flush=True)
         run(["stop", "brokers"])
         assert all(not key(provider).exists() for provider in ["anthropic", "openai"])
         run(["start", "brokers", "--no-github"])

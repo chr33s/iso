@@ -69,7 +69,7 @@ private func workloadLaunchRechecksImmediatelyBeforeSpawning(launch: WorkloadLau
   #expect(guest.log("commands.log").isEmpty)
 }
 
-private func workloadRunning(
+func workloadRunning(
   _ guest: FakeGuest, identity: WorkloadHandoff.Identity?, pid: Int32 = 81564,
   host: String = "10.231.2.2"
 ) throws -> AppleBackend.Running {
