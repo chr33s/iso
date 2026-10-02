@@ -133,16 +133,24 @@ public final class AppleBackend: Sendable {
         config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
         user: sidecar.guestUser)
       let sandboxDir = "\(runtime.root)/sandboxes/\(sidecar.machineID.rawValue)"
+      let bootPolicy =
+        config.egress == .filtered ? try FilteredHandoff.recordedPolicy(instance) : nil
+      let live = EgressLease.liveIdentity(at: sandboxDir + "/live.json")
       if let failure = FilteredHandoff.prove(
         filtered: config.egress == .filtered,
-        recordedBootID: FilteredHandoff.bootID(at: instance.directory + "/egress-boot-id"),
-        liveBootID: EgressLease.liveIdentity(at: sandboxDir + "/live.json")?.bootID,
+        recordedBootID: bootPolicy?.bootID,
+        liveBootID: inspection.live?.bootId,
         ownerLockHeld: EgressLease.ownerLockHeld(at: sandboxDir + "/owner.lock"),
         companionAlive: ProxyLauncher.recordedProcessAlive(
           ProxyLauncher.pidPath(instance, "egress"), expect: .egress),
         tunnelAlive: ProxyLauncher.recordedProcessAlive(
-          ProxyLauncher.forwardPIDPath(instance, "egress"), expect: .ssh))
-      {
+          ProxyLauncher.forwardPIDPath(instance, "egress"), expect: .ssh),
+        advertisedProtocol: runtime.advertisedProtocol,
+        recordedPolicyHash: bootPolicy?.policyHash,
+        wantedPolicyHash: NetworkPolicy.make(config).policyHash,
+        ownerMatches: live?.bootID == inspection.live?.bootId
+          && live?.pid == sidecar.lastObservedOwnerPID && live?.pid == inspection.live?.pid
+      ) {
         throw HostError(
           "FILTERED_EGRESS_NOT_READY: \(failure) for '\(instance.name)'. The VM is still running; `iso stop \(instance.name)` does not connect to the guest."
         )

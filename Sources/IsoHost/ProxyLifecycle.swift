@@ -275,6 +275,8 @@ public struct ProxyLauncher: Sendable {
     _ instance: Instance, config: IsoConfig, target: SSHTarget, runtime: SandboxRuntime?
   ) throws {
     guard config.egress == .filtered else { return }
+    try NetworkPolicy.enforce(instance, config: config)
+    let policy = NetworkPolicy.make(config)
     guard let sidecar = try MachineSidecar.loadIfPresent(instance),
       let ownerPID = sidecar.lastObservedOwnerPID
     else {
@@ -292,7 +294,7 @@ public struct ProxyLauncher: Sendable {
     let binary = try locateEgressBinary()
     let port = EgressPorts.port(instance)
     let capability = randomHex(32)
-    let hosts = config.egressFilter.allowedHosts.map(\.rawValue)
+    let hosts = policy.allowedHosts
     let startup = OutputJSON.object([
       ("listen", .string("127.0.0.1:\(port)")),
       ("capability", .string(capability)),
@@ -318,8 +320,9 @@ public struct ProxyLauncher: Sendable {
     do {
       try AtomicFile.write(
         Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600))
-      try AtomicFile.write(
-        Array(boot.bootID.utf8), to: instance.directory + "/egress-boot-id", mode: .atMost(0o644))
+      try StateStore.writeControlFile(
+        FilteredHandoff.BootPolicy(bootID: boot.bootID, policyHash: policy.policyHash),
+        to: FilteredHandoff.policyPath(instance))
     } catch {
       stopEgress(instance)
       throw error
@@ -346,9 +349,10 @@ public struct ProxyLauncher: Sendable {
     if unlink(capability) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove egress capability \(capability) (non-fatal)")
     }
-    let bootID = instance.directory + "/egress-boot-id"
-    if unlink(bootID) != 0 && errno != ENOENT {
-      diagnostics.debug("Failed to remove egress boot id \(bootID) (non-fatal)")
+    for path in [FilteredHandoff.policyPath(instance), instance.directory + "/egress-boot-id"] {
+      if unlink(path) != 0 && errno != ENOENT {
+        diagnostics.debug("Failed to remove egress boot policy \(path) (non-fatal)")
+      }
     }
   }
 

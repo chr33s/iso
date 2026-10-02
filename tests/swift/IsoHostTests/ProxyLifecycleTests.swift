@@ -59,6 +59,25 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(ProxyLauncher.capabilityToken(instance, provider: .openai) == nil)
 }
 
+@Test func stoppingEgressClearsCurrentAndLegacyBootPolicy() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let path = FilteredHandoff.policyPath(instance)
+  try StateStore.writeControlFile(
+    FilteredHandoff.BootPolicy(bootID: "boot", policyHash: "hash"), to: path)
+  try writeFile(instance.directory + "/egress-boot-id", "legacy")
+  try writeFile(EgressPorts.capabilityPath(instance), "synthetic-capability")
+  #expect(try FilteredHandoff.recordedPolicy(instance) != nil)
+  let launcher = guest.proxies()
+  launcher.stopEgress(instance)
+  #expect(!FileManager.default.fileExists(atPath: path))
+  #expect(!FileManager.default.fileExists(atPath: instance.directory + "/egress-boot-id"))
+  #expect(!FileManager.default.fileExists(atPath: EgressPorts.capabilityPath(instance)))
+  launcher.stopEgress(instance)
+  #expect(try FilteredHandoff.recordedPolicy(instance) == nil)
+}
+
 @Test func modelTunnelRecordsAndIdentity() throws {
   let guest = try FakeGuest()
   defer { guest.remove() }

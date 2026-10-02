@@ -37,6 +37,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Boundary hardening and local secrets
 
+- **Filtered handoff state** rechecks runtime protocol 5, live boot/owner
+  identity and the boot's policy hash. Frozen policies reject inconsistent
+  hashes, hosts and modes. An atomic owner-only boot-policy record replaces
+  the boot-id-only file; older filtered sessions must be stopped and restarted.
+  These checks do not yet authenticate live companions, tunnels or required
+  brokers, and do not complete composite readiness.
 - **Filtered relay** drains queued bytes before forwarding half-closes, permits
   the opposite response direction, and stops on hard I/O errors instead of
   dropping data and continuing. Interrupted I/O is retried; paused hung-up

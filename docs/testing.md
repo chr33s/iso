@@ -637,6 +637,22 @@ or lifecycle-revocation gate.
 
 DNS/candidate admission for the credential proxy has the dedicated tests below.
 
+### Filtered handoff boot/policy checks
+
+`filteredHandoffRefusesAChangedBoot` and
+`filteredHandoffBindsProtocolPolicyAndOwner` pair a valid handoff control with
+protocol, boot, policy, owner, lock and process failures. Network policy tests
+reject forged hashes, noncanonical/invalid hosts and inconsistent modes;
+boot-policy record tests cover bounded no-symlink reads, schema/backend checks,
+owner-only writes and refusal to adopt legacy boot-id files. A lifecycle test
+checks removal of both boot-record formats and the capability on repeated stop.
+Malformed or unreadable boot-policy state throws rather than masquerading as
+an absent file. Ten new host faults remove protocol, policy, owner, hash,
+host/mode, record schema/identity/read-error or cleanup checks; the existing
+`filtered-handoff-boot` fault remains
+applicable. These tests do not authenticate the live companion, prove the
+reverse transport or required credential brokers, or complete NET-20.
+
 ### Filtered lease-record checks
 
 Lease-record tests exercise typed PID/date decoding, native ISO8601 date

@@ -18,11 +18,14 @@ public struct NetworkPolicy: Sendable, Equatable, Codable {
 
   public static func make(_ config: IsoConfig) -> NetworkPolicy {
     let hosts = config.egress == .filtered ? config.egressFilter.allowedHosts.map(\.rawValue) : []
-    let canonical =
-      "mode=\(config.egress.rawValue)\nhosts=\(hosts.joined(separator: ","))\nport=443\n"
     return NetworkPolicy(
       schemaVersion: currentSchema, backend: StateSchema.backend, mode: config.egress.rawValue,
-      allowedHosts: hosts, policyHash: "sha256:" + sha256Hex(Array(canonical.utf8)))
+      allowedHosts: hosts, policyHash: hash(mode: config.egress.rawValue, hosts: hosts))
+  }
+
+  private static func hash(mode: String, hosts: [String]) -> String {
+    let canonical = "mode=\(mode)\nhosts=\(hosts.joined(separator: ","))\nport=443\n"
+    return "sha256:" + sha256Hex(Array(canonical.utf8))
   }
 
   public static func save(_ config: IsoConfig, _ instance: Instance) throws {
@@ -36,6 +39,12 @@ public struct NetworkPolicy: Sendable, Equatable, Codable {
     guard record.schemaVersion == currentSchema, record.backend == StateSchema.backend else {
       throw HostError("\(path) is not a supported network policy record")
     }
+    guard let mode = EgressMode(rawValue: record.mode),
+      mode == .filtered || record.allowedHosts.isEmpty,
+      record.allowedHosts == Set(record.allowedHosts).sorted(),
+      record.allowedHosts.allSatisfy({ (try? ExactHostname($0))?.rawValue == $0 }),
+      record.policyHash == hash(mode: record.mode, hosts: record.allowedHosts)
+    else { throw HostError("\(path) has an invalid or inconsistent network policy") }
     return record
   }
 

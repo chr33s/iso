@@ -116,27 +116,43 @@ import Testing
   #expect(throws: HostError.self) { try AgentCatalog.review(sourcePath: reserved) }
 }
 
+private func handoffFailure(
+  filtered: Bool = true, recordedBootID: String? = "boot", liveBootID: String? = "boot",
+  ownerLockHeld: Bool = true, companionAlive: Bool = true, tunnelAlive: Bool = true,
+  advertisedProtocol: UInt32 = 5, recordedPolicyHash: String? = "hash",
+  wantedPolicyHash: String = "hash", ownerMatches: Bool = true
+) -> FilteredHandoff.Failure? {
+  FilteredHandoff.prove(
+    filtered: filtered, recordedBootID: recordedBootID, liveBootID: liveBootID,
+    ownerLockHeld: ownerLockHeld, companionAlive: companionAlive, tunnelAlive: tunnelAlive,
+    advertisedProtocol: advertisedProtocol, recordedPolicyHash: recordedPolicyHash,
+    wantedPolicyHash: wantedPolicyHash, ownerMatches: ownerMatches)
+}
+
 @Test func filteredHandoffRefusesAChangedBoot() {
+  #expect(handoffFailure() == nil)
+  #expect(handoffFailure(liveBootID: "other") == .bootChanged)
+  #expect(handoffFailure(recordedBootID: nil) == .missingBoot)
+  #expect(handoffFailure(recordedBootID: "") == .missingBoot)
+  #expect(handoffFailure(companionAlive: false) == .companionDown)
+  #expect(handoffFailure(tunnelAlive: false) == .tunnelDown)
+  #expect(handoffFailure(ownerLockHeld: false) == .ownerDown)
+}
+
+@Test func filteredHandoffBindsProtocolPolicyAndOwner() {
+  #expect(handoffFailure() == nil)
+  for version: UInt32 in [0, 4, 6] {
+    #expect(handoffFailure(advertisedProtocol: version) == .runtimeIncompatible)
+  }
+  #expect(handoffFailure(recordedPolicyHash: nil) == .policyChanged)
+  #expect(handoffFailure(recordedPolicyHash: "other") == .policyChanged)
+  #expect(handoffFailure(recordedPolicyHash: "", wantedPolicyHash: "") == .policyChanged)
+  #expect(handoffFailure(ownerMatches: false) == .ownerChanged)
   #expect(
-    FilteredHandoff.prove(
+    handoffFailure(
       filtered: false, recordedBootID: nil, liveBootID: nil, ownerLockHeld: false,
-      companionAlive: false, tunnelAlive: false) == nil)
-  #expect(
-    FilteredHandoff.prove(
-      filtered: true, recordedBootID: "boot", liveBootID: "boot", ownerLockHeld: true,
-      companionAlive: true, tunnelAlive: true) == nil)
-  #expect(
-    FilteredHandoff.prove(
-      filtered: true, recordedBootID: "boot", liveBootID: "other", ownerLockHeld: true,
-      companionAlive: true, tunnelAlive: true) == .bootChanged)
-  #expect(
-    FilteredHandoff.prove(
-      filtered: true, recordedBootID: nil, liveBootID: "boot", ownerLockHeld: true,
-      companionAlive: true, tunnelAlive: true) == .missingBoot)
-  #expect(
-    FilteredHandoff.prove(
-      filtered: true, recordedBootID: "boot", liveBootID: "boot", ownerLockHeld: true,
-      companionAlive: false, tunnelAlive: true) == .companionDown)
+      companionAlive: false, tunnelAlive: false, advertisedProtocol: 4,
+      recordedPolicyHash: nil, ownerMatches: false) == nil)
 }
 
 @Test func egressLeaseRequiresTheOwnerLock() throws {
