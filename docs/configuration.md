@@ -601,8 +601,15 @@ sessions without a public key must stop/restart with matching host and companion
 binaries; legacy HMAC keys are not adopted. Process-name checks
 remain prerequisites, not substitutes for live proof. Startup verifies this proof
 before agent preparation and again after preparation before a post-start hook.
-Required credential-broker composition and every late session handoff remain
-incomplete; these checks do not complete NET-20.
+After preparation, running-instance resolution and post-start hooks also require
+signed direct and guest-loopback responses from every effective remote provider
+broker. Local-model mode and `proxy.mode: "off"` require no broker. Skipping agent
+bootstrap does not waive configured broker requirements. Broker private keys are
+transient startup input; only `proxy-<provider>-readiness-public-key` persists,
+owner-private and removed on stop. Filtered boots require matching version-2
+`iso-proxy` startup support; nonfiltered boots keep version 1. Older filtered
+sessions must stop/restart to establish these identities. Every late session
+handoff and full NET-20 remain incomplete.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.

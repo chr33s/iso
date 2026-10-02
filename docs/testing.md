@@ -683,9 +683,39 @@ key cleanup. The existing boot-policy
 cleanup fault is kept synchronized. These tests and the confined process gate
 are not VM evidence. Real-VM checks must separately witness startup, hooks,
 healthy recovery from a paused tunnel, permanent lease expiry after a paused
-companion, and rejection of a wrong/missing public verification key. Required
-credential-broker composition, every late handoff, previous-boot capability replay, exhaustion and
-full NET-20/F1 qualification remain unverified.
+companion, and rejection of a wrong/missing public verification key. Every late
+handoff, previous-boot capability replay, exhaustion and full NET-20/F1
+qualification remain unverified.
+
+### Signed broker-composition checks
+
+Host `BrokerReadinessTests` and proxy transport `ReadinessTests` verify independent
+Ed25519 vectors, correctly signed wrong nonce/provider/boot/policy replies,
+forgeries, framing, version-1 compatibility, strict version-2 identities,
+public-only persistence and cleanup after a spoofed unsigned startup response.
+Provider requirements follow effective remote upstreams without resolving
+credentials; local-model and proxy-off modes require none. Eleven
+`broker-readiness-*` host faults and seven broker policy/timeout mutations make
+these assertions discriminating. The confined process gate
+`python3 scripts/test-swift-proxy-process.py --skip-tls` independently verifies
+fresh replies from both production providers without DNS or upstream requests.
+
+For a narrow real-VM gate, build the host, `iso-egress` and `iso-proxy`, then run:
+
+```bash
+python3 tests/integration-filtered-broker-readiness.py
+```
+
+It installs a signed private runtime and uses the fail-on-use boundary image,
+synthetic credentials, and an empty destination allowlist. It exercises both
+broker startups and a post-start hook, paused live-PID brokers and tunnels,
+wrong/missing public keys, termination, stop cleanup, restart rotation, and
+refusal to complete startup with or without a hook when `--no-agents` leaves
+required brokers absent, and healthy no-hook bootstrap. The no-hook refusal
+regression fails against the deliberately unchecked early-return behavior.
+It removes its owned VMs, images and binary copies. This is not native-agent,
+provider-forwarding, exhaustion, lifecycle-revocation or full NET-20/F1 evidence.
+The ordinary VM and proxy-transition suites remain separate required gates.
 
 ### Filtered lease-record checks
 

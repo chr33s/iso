@@ -22,6 +22,7 @@ final class InboundGate: ChannelDuplexHandler {
   private var deadline: Scheduled<Void>?
   private var bodyBytes = 0
   private var responseStarted = false
+  private var readinessNonce: String?
 
   init(config: ProxyConfig, connections: Capacity, requests: Capacity, wireBudget: HeaderWireBudget)
   {
@@ -56,6 +57,16 @@ final class InboundGate: ChannelDuplexHandler {
       else { return refuse(context, .requestHeaderFieldsTooLarge) }
       let headers = head.headers.map { Header($0.name, $0.value) }
       guard let target = try? RequestTarget(head.uri) else { return refuse(context, .badRequest) }
+      if target.path == BrokerReadiness.path, config.readiness != nil {
+        guard
+          let nonce = BrokerReadiness.challenge(
+            method: head.method.rawValue, uri: head.uri, headers: headers)
+        else { return refuse(context, .badRequest) }
+        readinessNonce = nonce
+        state = .body
+        arm(context, seconds: 2)
+        return
+      }
       guard config.capability.authorizes(headers) else { return refuse(context, .unauthorized) }
       guard
         OperationPolicy.allows(
@@ -100,6 +111,7 @@ final class InboundGate: ChannelDuplexHandler {
       }
       context.fireChannelRead(data)
     case .body(let buffer):
+      guard readinessNonce == nil else { return refuse(context, .badRequest) }
       guard state == .body else { return refuse(context, .badRequest) }
       guard buffer.readableBytes <= Limits.requestBodyBytes - bodyBytes
       else { return refuse(context, .payloadTooLarge) }
@@ -108,6 +120,33 @@ final class InboundGate: ChannelDuplexHandler {
       context.fireChannelRead(data)
     case .end(let trailers):
       guard state == .body, trailers == nil else { return refuse(context, .badRequest) }
+      if let nonce = readinessNonce {
+        guard let body = try? config.readiness?.response(nonce: nonce), body.count <= 768
+        else { return refuse(context, .internalServerError) }
+        state = .closed
+        deadline?.cancel()
+        deadline = nil
+        let headers = HTTPHeaders([
+          ("content-length", String(body.count)), ("connection", "close"),
+        ])
+        context.write(
+          wrapOutboundOut(
+            .head(
+              .init(
+                version: .http1_1, status: .ok, headers: headers))), promise: nil)
+        var buffer = context.channel.allocator.buffer(capacity: body.count)
+        buffer.writeBytes(body)
+        context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+        let channel = context.channel
+        // A peer that stops reading must not retain this local probe's connection.
+        deadline = context.eventLoop.scheduleTask(in: .seconds(1)) {
+          channel.close(promise: nil)
+        }
+        context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
+          channel.close(promise: nil)
+        }
+        return
+      }
       wireBudget.requestEnded()
       deadline?.cancel()
       deadline = nil

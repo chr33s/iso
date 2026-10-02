@@ -135,8 +135,15 @@ enum FilteredReadiness {
   static func guestRequest(
     _ target: SSHTarget, client: SSHClient, port: UInt16, nonce: String, capability: Secret<String>
   ) throws -> ProcessRunner.Request {
+    try guestExchangeRequest(
+      target, client: client, port: port, request: request(nonce: nonce, capability: capability))
+  }
+
+  static func guestExchangeRequest(
+    _ target: SSHTarget, client: SSHClient, port: UInt16, request: [UInt8]
+  ) throws -> ProcessRunner.Request {
     let command = RemoteCommand().literal("/usr/bin/timeout 2 /bin/bash -c ").arg(guestProbe)
-    let input = Array("\(port)\n".utf8) + request(nonce: nonce, capability: capability)
+    let input = Array("\(port)\n".utf8) + request
     return .init(
       executable: try client.ssh(),
       arguments: target.sshOptions + [target.address, command.rendered],

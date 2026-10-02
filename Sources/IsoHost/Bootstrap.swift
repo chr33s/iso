@@ -423,6 +423,7 @@ public struct AgentBootstrap: Sendable {
         _ = try github.resolvePAT(assigned)
       }
       diagnostics.log(.info, "Skipping guest agent bootstrap (--no-agents)")
+      try requireFilteredHandoff(instance, runtime: runtime)
       return
     }
     let session = try prepareSession(instance, target: target, repo: repo)
@@ -584,7 +585,18 @@ public struct AgentBootstrap: Sendable {
       proxies.stop(instance, provider: provider)
       return nil
     }
-    return try proxies.start(instance, provider: provider, upstream: upstream, target: target)
+    let policy: FilteredHandoff.BootPolicy?
+    if config.egress == .filtered {
+      guard let recorded = try FilteredHandoff.recordedPolicy(instance) else {
+        throw HostError(
+          "FILTERED_BROKER_NOT_READY: missing filtered boot policy; restart the instance")
+      }
+      policy = recorded
+    } else {
+      policy = nil
+    }
+    return try proxies.start(
+      instance, provider: provider, upstream: upstream, target: target, readinessPolicy: policy)
   }
 
   /// Copy a local marketplace directory into the guest; other sources pass

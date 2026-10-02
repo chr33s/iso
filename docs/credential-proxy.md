@@ -62,8 +62,9 @@ before connecting upstream. The only allowed method/path pairs are:
 | Anthropic | `POST /v1/messages` |
 | Anthropic | `POST /v1/messages/count_tokens` |
 
-All other methods and paths receive a local `403`. Unknown providers are
-rejected at startup.
+All other provider operations receive a local `403`. Unknown providers are
+rejected at startup. Filtered boots additionally expose the fixed local-only
+[signed readiness challenge](#filtered-broker-readiness); it never forwards.
 This limits a compromised guest to the model calls its configured coding agent
 needs, and prevents it from using the injected key for account, model, admin,
 or arbitrary retrieval APIs. Widening this list requires security review and
@@ -175,6 +176,30 @@ Proxy mode applies only in **remote** model mode. `iso model <vm> local` takes
 precedence (the VM routes at your local model server and the proxy is torn
 down). If credential resolution fails at start, the VM **fails closed** — it
 does not come up on a path where the agent silently has no or the wrong key.
+
+## Filtered broker readiness
+
+For filtered boots, each effective remote broker must prove reachability both
+on host loopback and through pinned SSH plus guest loopback, before startup
+releases hooks and whenever the backend resolves a running instance. Fresh
+Ed25519 replies bind nonce, provider, boot ID and frozen policy hash. Private
+signing seeds stay transient on startup stdin and in broker memory; only public
+verification keys persist in owner-private host state and are removed on stop.
+Copying public keys into a workspace grants no signing authority.
+
+The existing listener accepts only `GET /__iso/broker-ready` with `Host:
+localhost`, a lowercase 16-byte hex `X-Iso-Nonce`, and `Connection: close`;
+extra headers, bodies and trailers are refused. No provider capability is
+required and none is created or persisted by this probe. It returns signed
+public identity data, never credentials or an upstream response. Configured
+brokers remain required when `--no-agents` skips their bootstrap. Local-model
+and proxy-off modes require none.
+
+Filtered startup uses protocol version 2 with a readiness identity. Nonfiltered
+startup keeps version 1 without that identity; the HTTP 401 warm-up remains but
+is not filtered-session authentication. Existing filtered sessions must
+stop/restart with matching host and proxy binaries. These checks do not qualify
+every late handoff, exact tunnel identity, or full NET-20/F1.
 
 ## What it does and does not guarantee
 

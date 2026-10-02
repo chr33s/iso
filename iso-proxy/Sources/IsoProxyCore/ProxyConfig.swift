@@ -64,18 +64,27 @@ public struct ProxyConfig: Sendable {
   public let provider: Provider
   public let capability: Capability
   public let injection: Injection
+  public let readiness: BrokerReadiness?
 
   public init(json: Data) throws {
     guard json.count <= Limits.startupBytes else { throw PolicyError.invalidConfig }
     do {
       let wire = try JSONDecoder().decode(Wire.self, from: json)
-      guard wire.version == 1 else { throw PolicyError.invalidConfig }
+      guard
+        (wire.version == 1 && wire.readiness == nil)
+          || (wire.version == 2 && wire.readiness != nil)
+      else { throw PolicyError.invalidConfig }
       listen = try LoopbackAddress(wire.listen)
       provider = wire.provider
       capability = try Capability(wire.capabilityToken)
       injection = try Injection(
         scheme: wire.injection.scheme,
         credential: Secret(wire.injection.credential), provider: wire.provider)
+      readiness = try wire.readiness.map {
+        try BrokerReadiness(
+          privateKeyHex: $0.privateKeyHex, provider: wire.provider, bootID: $0.bootID,
+          policyHash: $0.policyHash)
+      }
     } catch {
       // JSONDecoder errors may quote invalid enum values or field names.
       throw PolicyError.invalidConfig
@@ -103,8 +112,9 @@ private struct Wire: Decodable {
   let provider: Provider
   let capabilityToken: String
   let injection: WireInjection
+  let readiness: WireReadiness?
   enum CodingKeys: String, CodingKey, CaseIterable {
-    case version, listen, provider, injection
+    case version, listen, provider, injection, readiness
     case capabilityToken = "capability_token"
   }
   init(from decoder: Decoder) throws {
@@ -115,6 +125,21 @@ private struct Wire: Decodable {
     provider = try c.decode(Provider.self, forKey: .provider)
     capabilityToken = try c.decode(String.self, forKey: .capabilityToken)
     injection = try c.decode(WireInjection.self, forKey: .injection)
+    readiness = try c.decodeIfPresent(WireReadiness.self, forKey: .readiness)
+  }
+}
+
+private struct WireReadiness: Decodable {
+  let privateKeyHex: String
+  let bootID: String
+  let policyHash: String
+  enum CodingKeys: String, CodingKey, CaseIterable { case privateKeyHex, bootID, policyHash }
+  init(from decoder: Decoder) throws {
+    try rejectUnknownFields(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    privateKeyHex = try c.decode(String.self, forKey: .privateKeyHex)
+    bootID = try c.decode(String.self, forKey: .bootID)
+    policyHash = try c.decode(String.self, forKey: .policyHash)
   }
 }
 

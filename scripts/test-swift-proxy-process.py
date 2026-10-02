@@ -5,7 +5,9 @@ Default execution includes credential-free live-provider system TLS probes.
 --skip-tls runs the offline startup/listener/shutdown cases only.
 """
 import argparse
+import base64
 import json
+import secrets
 from pathlib import Path
 import socket
 import subprocess
@@ -28,9 +30,9 @@ def free_port():
         return listener.getsockname()[1]
 
 
-def request(port, headers=""):
+def request(port, headers="", target="/v1/messages", host="guest"):
     with socket.create_connection(("127.0.0.1", port), timeout=0.5) as peer:
-        peer.sendall(("GET /v1/messages HTTP/1.1\r\nHost: guest\r\n" + headers +
+        peer.sendall((f"GET {target} HTTP/1.1\r\nHost: {host}\r\n" + headers +
                       "Connection: close\r\n\r\n").encode())
         response = b""
         while True:
@@ -40,6 +42,65 @@ def request(port, headers=""):
             response += chunk
             if len(response) > 65536:
                 raise AssertionError("unbounded local response")
+
+
+def readiness(command):
+    with tempfile.TemporaryDirectory(prefix="iso-broker-verifier-") as directory:
+        verifier = Path(directory) / "verify"
+        sdk = subprocess.check_output(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
+        subprocess.run(["swiftc", "-sdk", sdk, str(ROOT / "scripts/verify-egress-readiness.swift"),
+                        "-o", str(verifier)], check=True, timeout=120)
+        for provider in ["anthropic", "openai"]:
+            port = free_port()
+            value = config(port)
+            boot = secrets.token_hex(16)
+            policy = "sha256:" + "e" * 64
+            value.update(version=2, provider=provider,
+                         readiness={"privateKeyHex": "b" * 64, "bootID": boot, "policyHash": policy})
+            if provider == "openai":
+                value["injection"]["scheme"] = "bearer"
+            child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, env={})
+            try:
+                child.stdin.write(json.dumps(value).encode())
+                child.stdin.close()
+                child.stdin = None
+                deadline = time.monotonic() + 5
+                while True:
+                    assert child.poll() is None, "broker exited before serving"
+                    try:
+                        request(port)
+                        break
+                    except (ConnectionError, TimeoutError):
+                        assert time.monotonic() < deadline, "broker readiness timed out"
+                        time.sleep(.03)
+                for _ in range(2):
+                    nonce = secrets.token_hex(16)
+                    wire = request(port, f"X-Iso-Nonce: {nonce}\r\n", "/__iso/broker-ready", "localhost")
+                    assert len(wire) <= 1024
+                    headers, body = wire.split(b"\r\n\r\n", 1)
+                    assert headers.lower() == (f"http/1.1 200 ok\r\ncontent-length: {len(body)}\r\nconnection: close".encode())
+                    reply = json.loads(body)
+                    assert (reply["version"], reply["nonce"], reply["provider"], reply["bootID"], reply["policyHash"]) == (1, nonce, provider, boot, policy)
+                    fixture = {"publicKey": base64.b64encode(bytes.fromhex("7d59c5623dd40a74aa4d5a32ac645d3b3f95daeae4c22be25476dd6a486f7382")).decode(),
+                               "message": f"iso-broker-readiness-v1\n{nonce}\n{provider}\n{boot}\n{policy}\n",
+                               "signature": reply["signature"]}
+                    checked = subprocess.run([verifier], input=json.dumps(fixture).encode(), capture_output=True, env={}, timeout=5)
+                    assert checked.returncode == 0, "broker signature failed independent key check"
+                    fixture["signature"] = base64.b64encode(bytes(64)).decode()
+                    assert subprocess.run([verifier], input=json.dumps(fixture).encode(), capture_output=True, env={}, timeout=5).returncode != 0
+                    assert all(secret.encode() not in wire for secret in [SECRET, TOKEN, "b" * 64])
+                denied = request(port, f"X-Iso-Nonce: {nonce}\r\nAuthorization: Bearer {TOKEN}\r\n", "/__iso/broker-ready", "localhost")
+                assert denied.startswith(b"HTTP/1.1 400"), "readiness accepted provider authorization"
+                child.terminate()
+                stdout, stderr = child.communicate(timeout=5)
+                assert child.returncode == 0
+                assert all(secret.encode() not in stdout + stderr for secret in [SECRET, TOKEN, "b" * 64])
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.communicate(timeout=5)
+            print(f"PASS confined {provider} signed broker proof: fresh boot/policy/nonce, public-only verification, no upstream", flush=True)
 
 
 def main():
@@ -118,6 +179,8 @@ def main():
             child.kill()
             child.communicate(timeout=5)
     print("PASS production profile binds/accepts HTTP, keeps secrets off argv/logs, and shuts down", flush=True)
+
+    readiness(command)
 
     if not args.skip_tls:
         result = subprocess.run(command + ["--jail-selftest"], capture_output=True, text=True, env={}, timeout=65)

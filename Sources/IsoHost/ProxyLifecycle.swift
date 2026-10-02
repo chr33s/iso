@@ -208,7 +208,8 @@ public struct ProxyLauncher: Sendable {
   /// expose it to the guest at `127.0.0.1:<port>`. Fails closed: any error
   /// leaves no proxy, tunnel or token behind.
   public func start(
-    _ instance: Instance, provider: ProxyProvider, upstream: EffectiveUpstream, target: SSHTarget
+    _ instance: Instance, provider: ProxyProvider, upstream: EffectiveUpstream, target: SSHTarget,
+    readinessPolicy: FilteredHandoff.BootPolicy? = nil
   ) throws -> ProxyHandle {
     let credential: Secret<String>
     do {
@@ -220,9 +221,12 @@ public struct ProxyLauncher: Sendable {
     }
     let token = Secret(randomHex(32))
     let port = provider.port(instance)
+    let readiness = readinessPolicy.map {
+      BrokerReadiness.Startup(identity: .init(), policy: $0)
+    }
     let startup = Self.wireConfig(
       listen: "127.0.0.1:\(port)", capabilityToken: token, provider: provider, auth: upstream.auth,
-      credential: credential)
+      credential: credential, readiness: readiness)
     try spawnProxy(instance, name: provider.rawValue, port: port, startup: startup)
     if provider.persistsToken {
       do {
@@ -237,9 +241,17 @@ public struct ProxyLauncher: Sendable {
       }
     }
     do {
+      if let readiness {
+        try readiness.persistVerificationKey(instance, provider: provider)
+      }
       try spawnReverseForward(
         instance, name: provider.rawValue, target: target, guestPort: port,
         hostAddress: try! IPv4Address("127.0.0.1"), hostPort: port)
+      if let readiness {
+        try BrokerReadiness.require(
+          instance, target: target, environment: environment, provider: provider,
+          policy: readiness.policy)
+      }
     } catch {
       stop(instance, provider: provider)
       throw error
@@ -259,6 +271,10 @@ public struct ProxyLauncher: Sendable {
     let token = Self.tokenPath(instance, provider.rawValue)
     if unlink(token) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove proxy token file \(token) (non-fatal)")
+    }
+    let publicKey = BrokerReadiness.keyPath(instance, provider: provider)
+    if unlink(publicKey) != 0 && errno != ENOENT {
+      diagnostics.debug("Failed to remove broker verification key \(publicKey) (non-fatal)")
     }
   }
 
@@ -340,11 +356,16 @@ public struct ProxyLauncher: Sendable {
       try spawnReverseForward(
         instance, name: "egress", target: target, guestPort: port,
         hostAddress: try IPv4Address("127.0.0.1"), hostPort: port)
-      let backend = AppleBackend(
-        config: config, environment: environment, runtime: { () throws(RuntimeError) in runtime })
-      guard try backend.asRunning(instance) != nil else {
-        throw HostError("FILTERED_EGRESS_NOT_READY: sandbox stopped during startup")
-      }
+      // Brokers are established during intentional preparation, after this
+      // transport-only check. Do not mint a full Running session proof here.
+      let currentBoot = try runtime.requireFilteredBoot(sidecar.machineID)
+      guard currentBoot.bootID == boot.bootID, currentBoot.ownerPID == ownerPID,
+        EgressLease.ownerLockHeld(
+          at: (boot.livePath as NSString).deletingLastPathComponent + "/owner.lock")
+      else { throw HostError("FILTERED_EGRESS_NOT_READY: sandbox owner changed during startup") }
+      try FilteredReadiness.require(
+        instance, target: target, environment: environment,
+        policy: .init(bootID: boot.bootID, policyHash: policy.policyHash))
     } catch {
       stopEgress(instance)
       throw error
@@ -466,23 +487,30 @@ public struct ProxyLauncher: Sendable {
     return token.isEmpty ? nil : Secret(token)
   }
 
-  /// The `iso-proxy` stdin startup document (protocol version 1).
+  /// Version 1 for legacy boots; version 2 requires a local signed readiness identity.
   static func wireConfig(
     listen: String, capabilityToken: Secret<String>, provider: ProxyProvider,
-    auth: ProxyAuthScheme, credential: Secret<String>
+    auth: ProxyAuthScheme, credential: Secret<String>, readiness: BrokerReadiness.Startup? = nil
   ) -> Secret<[UInt8]> {
     let scheme = auth.wireName
-    let json = OrderedJSON.object(
-      .init([
-        ("listen", .string(listen)), ("capability_token", .string(capabilityToken.expose())),
-        ("version", .uint(1)), ("provider", .string(provider.rawValue)),
-        (
-          "injection",
-          .object(
-            .init([("scheme", .string(scheme)), ("credential", .string(credential.expose()))]))
-        ),
-      ]))
-    return Secret(Array(json.compact.utf8))
+    var document = OrderedJSON.Members([
+      ("listen", .string(listen)), ("capability_token", .string(capabilityToken.expose())),
+      ("version", .uint(readiness == nil ? 1 : 2)), ("provider", .string(provider.rawValue)),
+      (
+        "injection",
+        .object(
+          .init([("scheme", .string(scheme)), ("credential", .string(credential.expose()))]))
+      ),
+    ])
+    if let readiness {
+      document["readiness"] = .object(
+        .init([
+          ("privateKeyHex", .string(readiness.identity.startupKey.expose())),
+          ("bootID", .string(readiness.policy.bootID)),
+          ("policyHash", .string(readiness.policy.policyHash)),
+        ]))
+    }
+    return Secret(Array(OrderedJSON.object(document).compact.utf8))
   }
 
   func locateProxyBinary() throws -> String {

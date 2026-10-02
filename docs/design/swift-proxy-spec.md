@@ -376,6 +376,36 @@ Any incompatible provider/scheme combination MUST fail startup.
 Unknown fields SHOULD fail decoding unless there is a documented compatibility
 reason to permit them.
 
+#### Filtered signed readiness extension
+
+Nonfiltered startup retains version 1 with no readiness identity. Filtered
+startup uses version 2 and requires an additional `readiness` object with exactly
+`privateKeyHex` (32 lowercase-hex bytes), `bootID` (16 lowercase-hex bytes) and
+`policyHash` (`sha256:` plus 32 lowercase-hex bytes). Unknown identity fields and
+invalid version/identity combinations fail startup. The private seed arrives
+only on transient stdin and stays in process memory; the host persists only
+its Ed25519 public key, removes it on stop, and rotates it at broker startup.
+
+The existing loopback listener answers exactly `GET /__iso/broker-ready` with
+`Host: localhost`, `X-Iso-Nonce: <16 lowercase-hex bytes>` and `Connection: close`.
+No other headers, body or trailers are accepted. This local operation needs no
+provider capability and never performs upstream I/O. Its version-1 reply
+contains `version`, `nonce`, `provider`, `bootID`, `policyHash` and a base64
+Ed25519 `signature` over UTF-8:
+
+```text
+iso-broker-readiness-v1\n<nonce>\n<provider>\n<bootID>\n<policyHash>\n
+```
+
+The `\n` markers represent newline bytes, including the final newline. Replies
+use HTTP/1.1 200, exact Content-Length and Connection: close; the signed body is
+at most 768 bytes. Request completion is bounded to two seconds after parsed
+headers, and a pending signed-reply write closes after one second. Filtered host
+resolution requires fresh verified direct and pinned-SSH guest-loopback replies
+from every effective remote broker; legacy HTTP 401 warm-up alone is insufficient.
+This adds no provider operation, listener, capability persistence or confinement
+exception. Every late handoff and full NET-20/F1 remain separate qualification.
+
 ### 4.4 Environment scrubbing
 
 Before spawning the proxy, `iso` MUST build an explicit child environment.
@@ -507,6 +537,9 @@ Do not implement HTTP/1 framing manually on `Network.framework`.
 ---
 
 ## 7. Capability authentication
+
+Provider operations require capability authentication. The fixed version-2
+local readiness challenge (§4.3) is a public-identity proof, never forwarding.
 
 ### 7.1 Token format
 
@@ -1361,7 +1394,7 @@ UNTRUSTED GUEST
     cannot choose provider port
     cannot access upstream credential
     cannot widen allowed provider operations
-    cannot bypass capability authentication
+    cannot bypass capability authentication for provider forwarding
     cannot make proxy bind outside loopback
     cannot make proxy follow a redirect
 

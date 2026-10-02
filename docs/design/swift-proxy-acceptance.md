@@ -69,6 +69,13 @@ that every earlier result was rerun during this audit.
 | §23 post-parity candidates | Deferred as specified. | These are not prerequisites to inflate the initial parity scope. |
 | §24 invariants | Fixed identity, capability gate, stdin-only credential, confinement and streaming have implementation and scoped evidence. | Full completion remains unproven until all mandatory open items above are resolved. |
 
+The filtered NET-20 startup extension uses version-2 broker identities and
+fresh Ed25519 proofs on direct and guest-loopback paths; nonfiltered version-1
+startup and provider operations retain their contract. Unit/mutation/process
+checks and the narrow [broker VM gate](../testing.md#signed-broker-composition-checks)
+cover that composition. Every late handoff, live-provider acceptance and full
+NET-20/F1 remain separate gates.
+
 ## Execution order
 
 1. Known-length policy selected and applied; preserve its shared boundary gate

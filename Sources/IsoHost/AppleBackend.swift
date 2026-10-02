@@ -161,6 +161,8 @@ public final class AppleBackend: Sendable {
         }
         try FilteredReadiness.require(
           instance, target: target, environment: environment, policy: bootPolicy)
+        try BrokerReadiness.requireAll(
+          instance, config: config, target: target, environment: environment, policy: bootPolicy)
       }
       return Running(instance: instance, sidecar: sidecar, ready: ready, target: target)
     } catch {

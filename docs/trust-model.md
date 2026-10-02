@@ -267,7 +267,20 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   loopback. A guest that knows
   the CONNECT capability still cannot forge a reply. This proves reachability
   of the keyed companion through that path, not exact reverse-tunnel process
-  identity, required credential brokers, or every late session handoff.
+  identity or every late session handoff.
+
+- **Filtered credential-broker composition uses separate signatures.**
+  Each effective remote provider broker must answer fresh direct and pinned-SSH
+  guest-loopback challenges. Version-2 startup supplies a transient Ed25519 seed;
+  only `proxy-<provider>-readiness-public-key` persists. The local
+  `GET /__iso/broker-ready` challenge signs nonce, provider, boot ID and policy hash.
+  It needs no provider capability, exposes no credential, and cannot select an
+  upstream. Exact method, URI and three-header framing, no body/trailers, a
+  two-second completion deadline and a one-second signed-reply write deadline keep
+  this separate from provider forwarding. The existing capability gate, provider
+  operation allowlist, confinement and credential persistence are unchanged.
+  Local-model and proxy-off modes need no broker. This authenticates keyed broker
+  reachability, not exact tunnel identity, every late handoff, or full NET-20.
 
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in

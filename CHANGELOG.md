@@ -45,8 +45,12 @@ SPDX-License-Identifier: Apache-2.0
   loopback, bound to its boot ID and computed allowlist hash. The Ed25519 private
   signing key stays in process memory; only its public key is persisted, so
   workspace copies do not grant signing authority. No upstream request is needed.
-  Startup and post-start hooks fail closed on missing proof. Required credential-broker composition
-  and every late session handoff remain unfinished; this is not full NET-20.
+  Startup and post-start hooks fail closed on missing proof. Filtered running-instance
+  resolution also requires signed direct and guest-loopback proof from every effective
+  remote credential broker, bound to provider, nonce, boot and policy. Broker signing
+  keys remain in memory; only public keys persist. Nonfiltered version-1 startup and
+  provider forwarding rules are unchanged. Every late handoff and full NET-20 remain
+  unfinished.
 - **Filtered relay** drains queued bytes before forwarding half-closes, permits
   the opposite response direction, and stops on hard I/O errors instead of
   dropping data and continuing. Interrupted I/O is retried; paused hung-up

@@ -13,6 +13,16 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "iso-proxy"
 SOURCES = PACKAGE / "Sources"
 MUTATIONS = [
+    ("broker paused response deadline removed", "IsoProxyTransport/InboundGate.swift",
+     'context.eventLoop.scheduleTask(in: .seconds(1))', 'context.eventLoop.scheduleTask(in: .seconds(3600))'),
+    ("broker nonce validation removed", "IsoProxyCore/Readiness.swift",
+     'nonces.count == 1, Self.hex(nonces[0].value, count: 16) != nil', 'nonces.count == 1'),
+    ("broker method check removed", "IsoProxyCore/Readiness.swift", 'method == "GET",', 'true,'),
+    ("broker exact URI check removed", "IsoProxyCore/Readiness.swift", 'uri == path,', 'true,'),
+    ("broker closed headers removed", "IsoProxyCore/Readiness.swift", 'headers.count == 3', 'true'),
+    ("broker provider identity changed", "IsoProxyCore/Readiness.swift", 'self.provider = provider', 'self.provider = .anthropic'),
+    ("broker version separation removed", "IsoProxyCore/ProxyConfig.swift",
+     '(wire.version == 1 && wire.readiness == nil)', '(wire.version == 1)'),
     ("deny becomes allow", "IsoProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
      'guard method == "POST" else { return true }'),
     ("POST becomes any method", "IsoProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
