@@ -107,14 +107,14 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 |---|---|
 | Backend and runtime | `AppleBackend` (probes, liveness proofs, SSH target), `AppleLifecycle` (create/boot/stop/destroy/resize/commit/restore with journals), `AppleSetup` + `ImageBuild` + `ImageRecords` (image preparation and records), `SandboxRuntime` (the narrow runtime-client seam), `RuntimeOperations` (mutating runtime calls, deadlines, cancellability), `RuntimeProtocol` (typed parsers for untrusted runtime output) |
 | Processes and signals | `ProcessRunner` (the one subprocess launcher: argv, environment, bounded capture, deadlines, process groups), `ChildGroups` (forward termination signals to child groups), `Shutdown` (sticky SIGINT/SIGTERM flag for interruptible operations) |
-| SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (`SendEnv` forwarding, minimal guest-bound environment), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
+| SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (`SendEnv` forwarding, minimal guest-bound environment, opaque workload sessions), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
 | Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `AgentCatalog` / `AgentLaunchPlan` (definition catalog and reviewed adapter dispatch), `RunSession` (disposable-run ownership), `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
 | GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
 | Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit`) |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
-| Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `HostKeys` (ed25519 pins read over the runtime channel) |
+| Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `WorkloadHandoff` (filtered prepared-workload identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
 | Support | `Diagnostics` (stderr), `Prompt`, `OrderedJSON`, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 
 ### `IsoCLI`

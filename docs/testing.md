@@ -713,6 +713,16 @@ wrong/missing public keys, termination, stop cleanup, restart rotation, and
 refusal to complete startup with or without a hook when `--no-agents` leaves
 required brokers absent, and healthy no-hook bootstrap. The no-hook refusal
 regression fails against the deliberately unchecked early-return behavior.
+A trusted host SSH interposer also pauses a required broker after a genuine signed
+reply at two boundaries: initial resolution and completed session preparation.
+Both must refuse the later exec without creating its guest marker; resume restores
+fresh proof. The interposer keeps challenges and replies in memory, not artifacts.
+`WorkloadHandoffTests` separately cover all four interactive launch methods,
+post-preparation invalidation, fresh-probe failures, unchanged-identity controls,
+owner/target/boot/policy/key/provider-set replacement, and nonfiltered compatibility.
+Ten `workload-*` host faults remove the preparation/launch checks, fresh inspection,
+identity comparisons and compatibility bypass. Key-replacement decision fixtures
+are not real-VM broker-restart or capability-replay evidence.
 It removes its owned VMs, images and binary copies. This is not native-agent,
 provider-forwarding, exhaustion, lifecycle-revocation or full NET-20/F1 evidence.
 The ordinary VM and proxy-transition suites remain separate required gates.

@@ -99,10 +99,11 @@ enum FilteredReadiness {
     return key.value.isValidSignature(signature, for: Data(message.utf8))
   }
 
+  @discardableResult
   static func require(
     _ instance: Instance, target: SSHTarget, environment: [String: String],
     policy: FilteredHandoff.BootPolicy
-  ) throws {
+  ) throws -> VerificationKey {
     let key = try readVerificationKey(at: keyPath(instance))
     let capability = try readIdentity(at: EgressPorts.capabilityPath(instance))
     let port = EgressPorts.port(instance)
@@ -130,6 +131,7 @@ enum FilteredReadiness {
     guard verifies(output.stdout, nonce: guestNonce, policy: policy, key: key) else {
       throw HostError("FILTERED_EGRESS_NOT_READY: authenticated guest-loopback probe failed")
     }
+    return key
   }
 
   static func guestRequest(

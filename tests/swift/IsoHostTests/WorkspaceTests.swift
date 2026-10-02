@@ -235,7 +235,8 @@ private func transfer() -> WorkspaceTransfer {
   // `cat` reads stdin; with /dev/null it ends at once and writes nothing.
   let client = SSHClient(environment: ["PATH": "\(fakeSSH):/usr/bin:/bin", "FAKE_SSH_LOG": log])
   try InteractiveSSH.exec(
-    client, SSHSession(target: try target()), ["sh", "-c", "cat > \(root)/stdin-seen"],
+    client, WorkloadSession(session: SSHSession(target: try target()), revalidate: {}),
+    ["sh", "-c", "cat > \(root)/stdin-seen"],
     diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
   #expect(try String(contentsOfFile: root + "/stdin-seen", encoding: .utf8) == "")
 }

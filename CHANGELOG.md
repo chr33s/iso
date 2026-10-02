@@ -10,6 +10,11 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Agent sessions
 
+- **Filtered workload handoffs**: shell, exec, Claude, Codex and `iso run`
+  recheck authenticated readiness after environment preparation and just before
+  SSH launch, retaining the original boot/policy and signing identities. A healthy
+  replacement does not authorize reuse of a prepared session. Bootstrap remains
+  separate; administrative/transfer handoffs and full NET-20 are still unfinished.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

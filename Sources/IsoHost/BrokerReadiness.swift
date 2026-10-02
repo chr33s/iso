@@ -65,10 +65,11 @@ enum BrokerReadiness {
     return key.value.isValidSignature(signature, for: Data(message.utf8))
   }
 
+  @discardableResult
   static func require(
     _ instance: Instance, target: SSHTarget, environment: [String: String],
     provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
-  ) throws {
+  ) throws -> FilteredReadiness.VerificationKey {
     guard
       ProxyLauncher.recordedProcessAlive(
         ProxyLauncher.pidPath(instance, provider.rawValue), expect: .proxy),
@@ -114,15 +115,20 @@ enum BrokerReadiness {
       throw HostError(
         "FILTERED_BROKER_NOT_READY: authenticated \(provider.rawValue) guest-loopback probe failed")
     }
+    return key
   }
 
+  @discardableResult
   static func requireAll(
     _ instance: Instance, config: IsoConfig, target: SSHTarget,
     environment: [String: String], policy: FilteredHandoff.BootPolicy
-  ) throws {
+  ) throws -> [ProxyProvider: String] {
+    var keys: [ProxyProvider: String] = [:]
     for provider in try requiredProviders(instance, config: config) {
-      try require(
-        instance, target: target, environment: environment, provider: provider, policy: policy)
+      keys[provider] = try require(
+        instance, target: target, environment: environment, provider: provider, policy: policy
+      ).encoded
     }
+    return keys
   }
 }

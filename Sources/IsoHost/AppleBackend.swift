@@ -66,6 +66,7 @@ public final class AppleBackend: Sendable {
     public let sidecar: MachineSidecar
     public let ready: IsolationGate.Ready
     public let target: SSHTarget
+    let handoffIdentity: WorkloadHandoff.Identity?
   }
 
   /// Owner, no pending journal, sidecar, and ownership check.
@@ -155,16 +156,23 @@ public final class AppleBackend: Sendable {
           "FILTERED_EGRESS_NOT_READY: \(failure) for '\(instance.name)'. The VM is still running; `iso stop \(instance.name)` does not connect to the guest."
         )
       }
+      let handoffIdentity: WorkloadHandoff.Identity?
       if config.egress == .filtered {
         guard let bootPolicy else {
           throw HostError("FILTERED_EGRESS_NOT_READY: missing boot policy; restart the instance")
         }
-        try FilteredReadiness.require(
+        let egressKey = try FilteredReadiness.require(
           instance, target: target, environment: environment, policy: bootPolicy)
-        try BrokerReadiness.requireAll(
+        let brokerKeys = try BrokerReadiness.requireAll(
           instance, config: config, target: target, environment: environment, policy: bootPolicy)
+        handoffIdentity = .init(
+          policy: bootPolicy, egressKey: egressKey.encoded, brokerKeys: brokerKeys)
+      } else {
+        handoffIdentity = nil
       }
-      return Running(instance: instance, sidecar: sidecar, ready: ready, target: target)
+      return Running(
+        instance: instance, sidecar: sidecar, ready: ready, target: target,
+        handoffIdentity: handoffIdentity)
     } catch {
       throw ContextError(
         "Instance '\(instance.name)' is running but cannot be reached safely; `iso stop \(instance.name)` stops it without connecting to the guest",

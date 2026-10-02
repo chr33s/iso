@@ -387,8 +387,9 @@ struct AgentUpdateCommand: ParsableCommand {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
       let selection = AgentUpdate.Selection(claude: claude, codex: codex)
-      let (running, session) = try context.agents.openSession(
-        context.backend, name: name, instances: context.listInstances())
+      // Administrative preparation is not a user/agent workload launch.
+      let running = try context.backend.resolveRunning(name, instances: context.listInstances())
+      let session = try context.agents.session(for: running)
       if check {
         for line in AgentUpdate.check(
           context.ssh, session, selection,

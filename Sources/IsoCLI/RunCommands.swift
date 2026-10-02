@@ -383,7 +383,7 @@ struct RunFlow {
       try CodexChecks.ensureRemoteAuthConsistent(
         context.config, instance: running.instance, modelState: state)
     }
-    var ssh = try context.agents.session(for: running)
+    var ssh = try context.agents.workloadSession(for: running, backend: context.backend)
     for item in planned.defaults where !ssh.env.contains(item.name.rawValue) {
       ssh.env.set(item.name.rawValue, Secret(item.value))
     }

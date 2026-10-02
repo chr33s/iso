@@ -364,12 +364,24 @@ public struct AgentBootstrap: Sendable {
   /// running) and a session with forwarding and the `--env` overlay.
   public func openSession(
     _ backend: AppleBackend, name: InstanceName?, instances: [Instance]
-  ) throws -> (AppleBackend.Running, SSHSession) {
+  ) throws -> (AppleBackend.Running, WorkloadSession) {
     let running = try backend.resolveRunning(name, instances: instances)
-    return (running, try session(for: running))
+    return (running, try workloadSession(for: running, backend: backend))
   }
 
-  /// A session for an already-resolved running instance.
+  /// Preparation may unlock secrets or otherwise outlive the original proof.
+  /// Recheck afterwards and retain the same check for the final workload launch.
+  public func workloadSession(for running: AppleBackend.Running, backend: AppleBackend) throws
+    -> WorkloadSession
+  {
+    let session = try self.session(for: running)
+    let revalidate: @Sendable () throws -> Void = {
+      try WorkloadHandoff.require(running) { try backend.asRunning(running.instance) }
+    }
+    return try WorkloadSession(session: session, revalidate: revalidate)
+  }
+
+  /// Bootstrap/administrative preparation, not a final workload handoff.
   public func session(for running: AppleBackend.Running) throws -> SSHSession {
     try prepareSession(
       running.instance, target: running.target, repo: github.instanceRepo(running.instance))

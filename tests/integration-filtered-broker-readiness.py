@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -54,12 +55,59 @@ def exercise(work):
     (project / "marker").write_text("broker-fixture\n")
     argv = [str(binary / "iso"), "--config", str(config)]
 
-    def run(args, expected=0, contains=None, timeout=240, private=False):
+    # Trusted host-side interposer: release a genuine reply only after the
+    # controller pauses a broker. No challenge/capability/reply is saved or logged.
+    interposer = work / "ssh-interposer"
+    interposer.mkdir(mode=0o700)
+    counter, trigger, checkpoint, release = [work / name for name in
+                                            ["probe-count", "probe-trigger", "probe-checkpoint", "probe-release"]]
+    helper = interposer / "ssh"
+    helper.write_text("#!" + sys.executable + "\n" + "work = " + repr(str(work)) + "\n" + '''
+import os, pathlib, subprocess, sys, time
+root = pathlib.Path(work)
+if not sys.argv or "exec 3<>/dev/tcp/127.0.0.1/" not in sys.argv[-1]:
+    os.execv("/usr/bin/ssh", ["/usr/bin/ssh"] + sys.argv[1:])
+request = sys.stdin.buffer.read()
+result = subprocess.run(["/usr/bin/ssh"] + sys.argv[1:], input=request, capture_output=True)
+count = int((root / "probe-count").read_text()) + 1
+(root / "probe-count").write_text(str(count))
+if count == int((root / "probe-trigger").read_text()):
+    (root / "probe-checkpoint").write_text(str(count))
+    deadline = time.monotonic() + 4
+    while not (root / "probe-release").exists():
+        if time.monotonic() >= deadline:
+            sys.exit(124)
+        time.sleep(.005)
+sys.stdout.buffer.write(result.stdout)
+sys.stderr.buffer.write(result.stderr)
+sys.exit(result.returncode)
+''')
+    helper.chmod(0o700)
+    for path in [counter, trigger]:
+        path.write_text("0")
+        path.chmod(0o600)
+
+    def run(args, expected=0, contains=None, timeout=240, private=False, interpose=None):
         print("command", " ".join(args), flush=True)
         started = time.monotonic()
         with subprocess.Popen(argv + args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+            paused = None
             try:
+                if interpose is not None:
+                    deadline = time.monotonic() + 15
+                    while not checkpoint.exists():
+                        assert process.poll() is None, "CLI exited before the selected proof boundary"
+                        assert time.monotonic() < deadline, "proof boundary was not reached"
+                        time.sleep(.005)
+                    assert int(checkpoint.read_text()) == interpose
+                    pid = int((state / "proxy-openai.pid").read_text())
+                    command = subprocess.check_output(["/bin/ps", "-ww", "-p", str(pid), "-o", "command="], text=True)
+                    assert str(binary / "iso-proxy") in command
+                    os.kill(pid, signal.SIGSTOP)
+                    paused = pid
+                    release.write_text("release verified reply")
+                    release.chmod(0o600)
                 stdout, stderr = process.communicate(timeout=timeout)
             except BaseException:
                 try:
@@ -68,6 +116,12 @@ def exercise(work):
                     pass
                 process.wait(timeout=5)
                 raise
+            finally:
+                if paused is not None:
+                    try:
+                        os.kill(paused, signal.SIGCONT)
+                    except ProcessLookupError:
+                        pass
             result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
         text = result.stdout + result.stderr
         if not private:
@@ -98,6 +152,24 @@ def exercise(work):
                 assert all(secret.encode() not in path.read_bytes() for secret in SECRETS), "raw provider key in host instance state"
         assert not (state / "proxy-anthropic.token").exists(), "readiness persisted an Anthropic capability"
         print("PASS both required brokers bootstrap and prove live local/guest paths; no raw keys in guest env/config or host instance state", flush=True)
+        original_path = env["PATH"]
+        env["PATH"] = str(interposer) + ":" + original_path
+        try:
+            for boundary, label in [(3, "after resolution, before preparation completes"),
+                                    (6, "after preparation, before final workload launch")]:
+                counter.write_text("0")
+                trigger.write_text(str(boundary))
+                checkpoint.unlink(missing_ok=True)
+                release.unlink(missing_ok=True)
+                _, elapsed = run(["exec", "brokers", "--", "touch", "/tmp/iso-late-workload-marker"],
+                                 expected=1, contains="FILTERED_BROKER_NOT_READY", timeout=25, interpose=boundary)
+                assert elapsed < 15
+                trigger.write_text("0")
+                run(["exec", "brokers", "--", "test", "!", "-e", "/tmp/iso-late-workload-marker"])
+                print("PASS broker paused", label, "refuses workload; resume restores fresh proof", flush=True)
+        finally:
+            env["PATH"] = original_path
+            trigger.write_text("0")
         for provider in ["anthropic", "openai"]:
             for suffix in ["-fwd", ""]:
                 pid = int((state / f"proxy-{provider}{suffix}.pid").read_text())

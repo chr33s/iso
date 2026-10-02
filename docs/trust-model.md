@@ -282,6 +282,17 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   Local-model and proxy-off modes need no broker. This authenticates keyed broker
   reachability, not exact tunnel identity, every late handoff, or full NET-20.
 
+- **Filtered workload sessions cannot reuse a cached readiness decision.**
+  Shell, exec and agent launches take an opaque, process-local `WorkloadSession`.
+  Its factory retains the boot/policy, owner/target and public keys actually
+  authenticated during resolution, rechecks after environment preparation, and
+  rechecks again immediately before workload SSH is spawned. A stopped/unhealthy
+  instance fails; a healthy replacement identity also fails rather than adopting
+  new authority for an old prepared environment. No private key or serialized
+  proof is added. Nonfiltered behavior and intentional bootstrap preparation stay
+  unchanged. Administrative and workspace-transfer handoffs remain separate work;
+  this is not full NET-20 or ongoing supervision of already launched SSH.
+
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in
   `sandbox-exec -p` with the Seatbelt profile embedded in

@@ -608,8 +608,14 @@ bootstrap does not waive configured broker requirements. Broker private keys are
 transient startup input; only `proxy-<provider>-readiness-public-key` persists,
 owner-private and removed on stop. Filtered boots require matching version-2
 `iso-proxy` startup support; nonfiltered boots keep version 1. Older filtered
-sessions must stop/restart to establish these identities. Every late session
-handoff and full NET-20 remain incomplete.
+sessions must stop/restart to establish these identities. Filtered shell, exec,
+Claude, Codex and `iso run` workload sessions retain the verified boot, policy,
+owner/target and public signing identities in memory. They recheck the composite
+proof after environment preparation and immediately before spawning workload SSH;
+a healthy replacement boot or broker is not silently adopted by a prepared
+session. Reopen the session after an identity change. Bootstrap preparation stays
+separate so brokers can start before they are required. Administrative/transfer
+handoffs, complete unhealthy/listing semantics and full NET-20 remain incomplete.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.
