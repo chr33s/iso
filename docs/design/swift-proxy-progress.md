@@ -8,6 +8,10 @@
 > host (`Sources/`) replaced the Rust host in 2026-09, and Cargo is no longer
 > part of the build. Current commands are in [testing.md](../testing.md).
 
+> The Python process/forwarding/disconnect/body/capacity and RSS test runners
+> referenced below are historical. Their gates now run through the proxy Swift
+> package tests; see [current commands](../testing.md#credential-proxy-iso-proxy).
+
 # Swift proxy implementation progress
 
 The governing specification is [the Swift proxy specification](swift-proxy-spec.md). This record tracks implementation evidence; it does not replace or narrow

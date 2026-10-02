@@ -513,8 +513,31 @@ The proxy is a separate Swift package. When changing it, run at least:
 ```bash
 swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
 swift test --package-path iso-proxy --force-resolved-versions
-python3 scripts/test-swift-proxy-process.py --skip-tls
 ```
+
+Ordinary package tests include `IsoProxyProcessE2ETests`, which launches the
+production executable under `Sources/IsoHost/seatbelt-proxy.sb` with an empty
+environment and startup JSON on stdin. It verifies unconfined refusal before
+reading stdin, strict bounded startup, redacted diagnostics, real HTTP admission,
+secret-free argv, signed readiness for both providers, and shutdown/guest EOF.
+The pinned SwiftPM toolchain builds the executable alongside the active test
+bundle; discovery works with custom scratch paths and release configurations.
+To select an exact artifact explicitly (as CI and release preflight do):
+
+```bash
+swift build --package-path iso-proxy --force-resolved-versions
+bin_dir="$(swift build --package-path iso-proxy --show-bin-path)"
+ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy-swift" \
+  swift test --package-path iso-proxy --force-resolved-versions
+```
+
+Set `ulimit -n 8192` before capacity/resource gates. Swift tests retain observations
+and process diagnostics in printed private temporary directories. Credentials
+are synthetic; test trust anchors never change the host trust store. Observation
+validation runs without environment variables, checks exact keys and JSON types,
+and rejects missing/duplicate cases. `observationContractsRejectDeliberateBreakages`
+and `forwardingRejectsIncompleteAndDuplicateCorpusEvidence` exercise corrupted
+records to keep those assertions discriminating.
 
 The sections below describe its additional gates.
 
@@ -590,7 +613,7 @@ can deliver application bytes. Cancellation closes the underlying socket without
 waiting for the peer's TLS close notification. Controlled forwarding, lifecycle,
 body-limit, body-idle, stream-capacity and memory fixtures exercise this path.
 The historical AsyncHTTPClient audit above continues to reproduce that library's
-behavior. `python3 scripts/test-swift-proxy-process.py` runs the production-profile
+behavior. `ISO_PROXY_LIVE_TLS_GATE=1 swift test --package-path iso-proxy --filter IsoProxyProcessE2ETests` runs the production-profile
 DNS/TLS probe through the owned connection and shared admission budgets. It verifies
 both provider identities without sending HTTP requests or credentials, then checks
 that removing the exact trustd permission breaks system verification. It does not
@@ -714,7 +737,7 @@ Provider requirements follow effective remote upstreams without resolving
 credentials; local-model and proxy-off modes require none. Eleven
 `broker-readiness-*` host faults and seven broker policy/timeout mutations make
 these assertions discriminating. The confined process gate
-`python3 scripts/test-swift-proxy-process.py --skip-tls` independently verifies
+`swift test --package-path iso-proxy --filter signedReadinessUsesIndependentPublicKey` independently verifies
 fresh replies from both production providers without DNS or upstream requests.
 
 For a narrow real-VM gate, build the host, `iso-egress` and `iso-proxy`, then run:
@@ -900,13 +923,12 @@ and cleanup tests, not aggregate process RSS measurements.
 
 ### Shared upstream disconnects and Swift response completion
 
-Run `python3 scripts/test-proxy-upstream-disconnect.py` on macOS for the shared
-Swift matrix. It runs 16 exchanges: both providers, closure
-before headers or during the response body, abrupt TCP closure or clean TLS
-shutdown, and two rounds. Raw observations and comparison results are saved in
-the printed temporary directory. The runner checks the exact matrix and validates
-status, partial provider body, guest EOF, and one-slot capacity recovery. Local
-502 responses must have empty bodies. No live credentials or provider network are used.
+The Swift matrix runs 16 exchanges: both providers, closure before headers or
+during the response body, abrupt TCP closure or clean TLS shutdown, and two rounds.
+It saves raw observations in the printed temporary directory and validates the
+exact matrix, status, partial provider body, guest EOF, and one-slot capacity
+recovery. Local 502 responses must have empty bodies. All provider traffic uses
+local verified TLS fixtures with synthetic credentials.
 
 For the Swift matrix and complete-response regression alone, run:
 
@@ -930,207 +952,123 @@ Swift transport separately from the shared disconnect matrix.
 
 ### Swift upload and response memory gates
 
-Run `python3 scripts/test-swift-proxy-memory.py` on macOS for both directions;
-`--direction response` or `--direction upload` selects one. It starts separate
-selected-test processes for every workload, avoiding RSS
-interference from other unit tests. The production transport talks to a local
-verified TLS fixture. Each producer retains one 64 KiB buffer and awaits every
-write. Mach resident-size samples cover the entire test
-process, including proxy, provider and guest, after TLS setup.
+Run the opt-in Swift resource suite on macOS:
 
-For responses offering 256 MiB and 1 GiB, the guest disables socket reads.
-The gate requires less than 32 MiB RSS growth, less than 16 MiB upstream progress,
-and at least three seconds with no further upstream progress within a 20-second
-sampling budget. Closing the guest must close the upstream socket and stop its
-producer. Raw samples and command outcomes are retained. The thresholds are
-test regression budgets, not advertised production memory limits.
+```bash
+ulimit -n 8192
+ISO_PROXY_RESOURCE_GATE=1 swift test --package-path iso-proxy --filter ProxyMemoryE2ETests
+```
 
-For declared uploads of 16 MiB and 64 MiB, the provider stops reading after
-request headers. An outstanding TLS read may consume at most 64 KiB afterward.
-The guest must stop advancing below 8 MiB sent, with less than 32 MiB RSS growth
-and the same three-second plateau within 20 seconds. Closing the guest must stop
-its producer; the provider then resumes reads to drain socket buffers and observe
-EOF. This cleanup check does not establish upstream cancellation latency while
-provider reads remain paused.
+The suite serializes its gates and launches a fresh Swift Testing helper process
+for every workload, using the active built transport test bundle. It never
+invokes a nested build. Each child has a private process group, a real deadline,
+retained stdout/stderr and observations, and cleanup on success, failure, timeout
+or cancellation. Missing or skipped worker selections fail the parent test.
+Mach resident-size samples measure the entire isolated worker, including local
+proxy/provider/guest fixtures after TLS setup. These are regression budgets,
+rather than advertised production memory limits or confined-executable RSS.
 
-For aggregate response pressure, run
-`python3 scripts/test-swift-proxy-memory.py --direction response --connections 256`.
-It establishes all 256 TLS requests before releasing their producers together.
-Every guest disables reads. Each producer must advance by more than zero and
-less than 16 MiB, aggregate progress must plateau for three seconds, and all
-upstream sockets/producers must terminate after guest closure. The aggregate
-RSS growth budget is 256 MiB, measured after connection setup. The offered sizes
-are per stream (64 GiB and 256 GiB total), so passing requires backpressure well
-before the offered responses are exhausted. Per-peer progress is recorded.
+`responseAndUploadMatrix` runs both directions at one and 256 connections:
 
-For aggregate uploads, use the same runner with
-`--direction upload --connections 256`. All 256 TLS peers stop reading before
-guest producers start. Offered sizes are 16 MiB and 64 MiB per stream (4/16 GiB
-total). Each guest must stall below 8 MiB sent, each provider may consume at most
-64 KiB while stalled, aggregate progress must plateau for three seconds, and
-RSS growth after setup must remain below 256 MiB. Guest closure stops every
-producer; providers then resume reads solely to verify EOF after draining their
-socket buffers. Per-peer sent/received counts and cleanup are recorded. Omit
-`--direction` to run both aggregate directions.
+- Responses offer 256 MiB and 1 GiB per peer while guests disable reads. Each
+  producer must advance by more than zero and less than 16 MiB, then plateau
+  for three seconds within a 20-second sampling budget.
+- Uploads declare 16 MiB and 64 MiB per peer while providers stop reading after
+  headers. Each guest must stall below 8 MiB sent, and each provider may consume
+  at most 64 KiB while stalled. The same plateau requirement applies.
+- RSS growth must remain below 32 MiB for one peer or 256 MiB for 256 peers.
+  Guest closure must stop producers and close upstream sockets. For uploads,
+  providers resume reads solely to drain socket buffers and observe EOF; this
+  does not establish cancellation latency while provider reads remain paused.
 
-Neither mode measures a
-Seatbelt-confined process. Tests are opt-in through `ISO_PROXY_MEMORY_GATE` and
-`ISO_PROXY_UPLOAD_MEMORY_GATE`; the runner sets the selected variable and rejects
-skipped test selections.
+Use `--filter responseAndUploadMatrix` to select this gate alone. Worker variables
+`ISO_PROXY_MEMORY_GATE`, `ISO_PROXY_UPLOAD_MEMORY_GATE`, `ISO_MEMORY_RESPONSE_BYTES`,
+`ISO_MEMORY_UPLOAD_BYTES` and `ISO_MEMORY_CONNECTIONS` remain test-only controls;
+the parent supplies the complete matrix automatically.
 
 ### Swift aggregate partial/malformed-header memory gate
 
-Run `python3 scripts/test-swift-proxy-aggregate-memory.py` on macOS. Separate
-processes run two and eight rounds of 256 simultaneous incomplete headers, each
-roughly 48 KiB. The production listener/parser/gate must retain all 256 admitted
-connections and close an excess connection. Appending an oversized field must
-produce exactly one 431 and EOF for every admitted client, without forwarding any
-request parts. The next round must refill all 256 slots.
+With `ISO_PROXY_RESOURCE_GATE=1`, select `partialAndMalformedHeadersMatrix` to
+run two and eight rounds in separate processes. Each round holds 256 simultaneous
+incomplete headers of roughly 48 KiB and requires refusal of an excess connection.
+Appending an oversized field must produce exactly one 431 and EOF for every
+admitted client with zero forwarded parts, then refill all 256 slots.
 
-The test samples whole-process Mach RSS three times while the headers are held
-and once after rejection in every round. It requires less than 96 MiB growth
-from baseline and less than 32 MiB additional growth after the first round.
-These are regression budgets that include fixture clients and allocator reuse.
-The runner checks sample coverage and recorded outcomes and rejects a skipped
-test. This workload covers concurrent parser buffering and malformed-client
-churn; it does not measure 256 simultaneous streamed request/response bodies or
-the confined executable. Its opt-in variable is
+Mach RSS is sampled three times while headers are held and once after rejection
+per round. The gate requires less than 96 MiB growth from baseline and less than
+32 MiB additional growth after the first round. Schema, sample coverage, recorded
+counts and cleanup are validated by the parent. The worker's opt-in variable is
 `ISO_PROXY_AGGREGATE_MEMORY_GATE`.
 
 ### Swift held-stream aggregate memory gate
 
-Run `python3 scripts/test-swift-proxy-stream-memory.py` on macOS. It selects one
-isolated test process and uses the existing six verified-TLS capacity rounds:
-256 held responses, excess-connection refusal, and disconnect/completion/disconnect
-for both providers. RSS is sampled after establishing each batch, throughout the
-31-second silent interval in completion rounds, and after cleanup. Fixture
-bookkeeping releases closed channels after every round.
+With `ISO_PROXY_RESOURCE_GATE=1`, select `heldStreamsMatrix` for one isolated
+worker running six verified-TLS capacity rounds: 256 held responses, excess
+connection refusal, and disconnect/completion/disconnect for both providers.
+RSS is sampled after establishing each batch, throughout the 31-second silent
+interval in completion rounds, and after cleanup. Fixture bookkeeping releases
+closed channels after every round.
 
-The gate requires less than 256 MiB whole-process RSS growth per provider and
-less than 64 MiB additional growth after that provider's first round. The runner
-also validates the existing stream-capacity contract and memory sample coverage.
-These regression budgets include all local provider/guest TLS fixtures. The test
-is opt-in through `ISO_PROXY_STREAM_MEMORY_GATE`. This measures many established,
-mostly idle streams; saturation with 256 continuously producing stalled streams
-and the confined executable are separate workloads.
+The parent validates capacity, memory sample coverage, less than 256 MiB RSS
+growth per provider, and less than 64 MiB additional growth after that provider's
+first round. The worker's opt-in variable is `ISO_PROXY_STREAM_MEMORY_GATE`.
+This measures mostly idle streams; continuously producing stalled streams are
+covered by `responseAndUploadMatrix`.
 
 ### Shared proxy forwarding and TLS corpus
 
-Run `python3 scripts/test-proxy-body-limit.py` on macOS for the compared
-declared-length and unknown-length boundary gate. For each provider it streams
-exactly 64 MiB
-through verified TLS using bounded 64 KiB test buffers. The first chunk must
-reach the fixture before the guest sends the remainder; the receiver hashes
-incrementally and its SHA-256 must match the expected patterned body. A separate
-request declaring 64 MiB plus one byte must receive 413 with zero upstream TCP
-connections or HTTP requests. Both paths require guest EOF and upstream socket
-closure. The runner validates six complete records, retaining logs and raw observations in a printed
-temporary directory. Test-only `ISO_BODY_LIMIT_OBSERVATIONS` captures counts
-and digest. The individual gate is `swift test --package-path iso-proxy --filter realTLSDeclaredBodyLimit`.
-A chunked request with
-`Expect: 100-continue` must receive 411 as its first response, with zero upstream
-connections, requests, body bytes, or injected credentials. The shared runner
-compares six provider/framing cases for the Swift implementation.
-
-Run `python3 scripts/test-proxy-body-idle.py` on macOS for the compared body-idle
-gate. Both provider cases run concurrently within each implementation through
-verified TLS. Each advertises three body bytes, sends one, waits 15 seconds,
-and sends a second. Both bytes must reach the fixture before request completion,
-then the guest must receive local 408 and EOF 44–51 seconds after its initial
-write. The upload must remain incomplete and the upstream socket must close.
-The runner validates both providers' status, partial body and closure observations, retaining
-raw elapsed times while excluding scheduler timing from equality comparison.
-Logs, raw observations and comparison evidence are retained in a printed
-temporary directory. `ISO_IDLE_OBSERVATIONS` is consumed only by test code.
-The individual gate is `swift test --package-path iso-proxy --filter realTLSUploadIdleDeadline`.
-
-Run the compared TLS stream-capacity gate on macOS:
+These tests run during ordinary `swift test --package-path iso-proxy`; narrow
+selections are available:
 
 ```bash
-python3 scripts/test-proxy-stream-capacity.py
-```
-
-It retains logs, command outcomes and per-implementation observations in a
-printed temporary directory. It validates six complete, unique rounds against
-the contract and compares held-response count, upstream request/closure counts,
-excess-response bytes and completed-response count. Unexpected fields and
-incorrect field types fail validation. Record order is ignored. The optional
-`ISO_STREAM_OBSERVATIONS` path is read only by test code. Individual gates are:
-
-```bash
+swift test --package-path iso-proxy --filter realTLSDeclaredBodyLimit
+swift test --package-path iso-proxy --filter realTLSUploadIdleDeadline
 swift test --package-path iso-proxy --filter realTLSStreamsHold256Slots
+swift test --package-path iso-proxy --filter sharedForwardingCorpusThroughTLS
 ```
 
-For each provider they hold 256 responses after their first SSE chunk and
-require closure of a 257th authenticated request. Three rounds exercise
-disconnect, normal completion, then disconnect again. Refilling the complete
-allowance proves capacity recovery after both paths, and each round requires
-all upstream sockets to close. Separate embedded tests check request-lease lifetime because
-the production connection limit prevents a 257th socket reaching admission.
-Synthetic credentials and the same disposable certificate generator are used.
-The fixture server disables HTTP pipelining assistance so it continues reading
-peer EOF while a response is held open. These gates supplement the shared
-forwarding corpus. The comparison was checked by deliberately altering each
-count, dropping/duplicating rounds, adding a field and substituting a boolean
-for an integer; these alterations are rejected.
+The body-limit gate streams exactly 64 MiB for both providers through verified
+TLS using bounded 64 KiB buffers. The first chunk must arrive before the rest
+is sent, and incremental SHA-256 must match the expected patterned body.
+Declarations of 64 MiB plus one receive 413 with zero upstream TCP/HTTP requests.
+Chunked requests with `Expect: 100-continue` receive 411 first, with no upstream
+connections, body or credentials. All six records require guest EOF and the
+appropriate upstream closure counts.
 
-The completion round holds every stream open for 31 seconds after its first
-SSE chunk, then requires delivery of the final chunk and normal closure. This
-checks survival beyond the 30-second establishment budget, including a silent
-response interval. Captures retain `held_duration_ms`; the runner checks a
-31–36 second interval and omits scheduler timing from equality comparison.
-Disconnect rounds record zero hold time. The combined gate takes about two
-minutes plus build time.
+The body-idle cases run concurrently for both providers. Each advertises three
+bytes, sends one, waits 15 seconds, then sends another. Both bytes must arrive
+before completion, followed by local 408 and EOF 44–51 seconds after the initial
+write. The upload remains incomplete and the upstream socket closes.
 
-On macOS, run `python3 scripts/test-proxy-forwarding-corpus.py`. This runs the
-`tests/fixtures/credential-proxy/forwarding.json` cases through Swift loopback
-TLS fixtures. It retains logs, raw observations,
-normalized comparison, command outcomes and the corpus SHA-256 in a printed
-temporary directory, and rejects an empty test selection. Python 3 and OpenSSL
-are required in addition to Swift.
+The stream-capacity gate holds 256 responses after their first SSE chunk and
+requires closure of a 257th authenticated connection. Both providers run
+disconnect/completion/disconnect rounds, refill the complete allowance, and
+require closure of every upstream socket. Completion rounds stay silent for
+31 seconds before delivering the final SSE chunk and closing normally; observed
+hold durations must be 31–36 seconds. Disconnect rounds record zero hold time.
+Embedded tests separately verify request-lease lifetime because the production
+connection limit prevents the excess socket reaching request admission.
 
-Both tests generate disposable short-lived certificates with the shared
-`generate-forwarding-certificates.py` fixture generator. Swift keeps system
-trust evaluation with a per-evaluation extra root. Neither test disables hostname/chain verification or changes host trust.
-Destination substitutions exist only in tests; all credentials are synthetic.
+The forwarding gate reads `tests/fixtures/credential-proxy/forwarding.json`,
+validates its schema and unique nonempty IDs, and requires one observation per
+case. It checks method, raw path/query, upstream count, request/response headers,
+status, body bytes and physical guest EOF. The 18 cases include untrusted issuer,
+self-signed, wrong-hostname and expired certificates for both providers, two
+stalled TLS handshakes with the real 30-second establishment deadline (29–35
+second bounds), and two DNS failures using `iso-proxy-test.invalid`. Failures
+must produce local 502, zero upstream HTTP requests and secret-free diagnostics.
+Admitted replies must complete and close within five seconds while the guest
+keeps its write side open. Swift checks typed resolver errors and absence of
+TCP attempts for DNS failures. An unanswered TCP connect remains a separate case.
 
-For admitted requests, this gate checks shared expectations and compares
-captured method, raw path/query, upstream request count, all request/response
-headers, response status, peer connection closure, and SHA-256 of both bodies.
-Header names are lowercased and pairs sorted; duplicate entries are retained.
-No headers are omitted. Both fixture servers send the same explicit Date
-header. Raw byte arrays and headers remain in the observation files for
-inspection. The optional observation path is consumed only by test code
-(`ISO_FORWARD_OBSERVATIONS`).
-
-The comparison tripwire was checked by changing captured request/response
-bytes, path, status, duplicate header count, and upstream count: each
-alteration was rejected, while header-order/case-only changes compared equal.
-This gate complements the raw refusal/fuzz harness. The eight certificate-
-failure cases cover untrusted issuer, self-signed, wrong hostname and expired
-certificates for each provider. They compare local 502, zero upstream HTTP
-requests and physical peer closure; local error prose and its content headers
-are not compared. The fixtures assert
-that local diagnostics contain neither synthetic secret. The runner validates
-the exact observation schema for each case type. Shared streaming/resource and
-connect-timeout cases remain separate work before migration
-cutover. The admitted fixtures leave the guest write side open and require one
-complete response followed by peer EOF within five seconds. Swift observes
-channel inactivity without closing on the response header/end. Removing
-Swift's successful-response close in an isolated source copy fails this
-deadline, confirming the probe detects it.
-
-The corpus also contains two stalled TLS-handshake cases, one per provider.
-They use the real 30-second establishment deadline and require local 502,
-zero HTTP requests and upstream socket release. Raw elapsed milliseconds are
-retained and checked against the corpus's 29–35 second bounds; scheduler timing
-need not be identical across implementations. Two additional cases route the
-fixed provider endpoint to the reserved name `iso-proxy-test.invalid` in test
-code only. They require a DNS failure, local 502, zero upstream HTTP requests
-and physical guest closure. Swift checks the typed A/AAAA resolver errors and
-the absence of TCP connection attempts.
-The complete 18-case run takes about two minutes plus build time. An unanswered
-TCP connect remains a separate case.
+Fixtures use the shared Python/OpenSSL disposable certificate generator, system
+trust with an extra per-test root, and verified provider hostnames. Destination
+substitutions exist only in tests. No production endpoint override is added.
+Each test retains its complete observation records in a printed private temporary
+directory. Optional `ISO_FORWARD_OBSERVATIONS`, `ISO_BODY_LIMIT_OBSERVATIONS`,
+`ISO_IDLE_OBSERVATIONS`, `ISO_STREAM_OBSERVATIONS` and `ISO_DISCONNECT_OBSERVATIONS`
+paths remain available to test tooling, but validation does not depend on them.
+The forwarding and capacity runs each take roughly two minutes plus build time.
 
 ### Swift proxy policy mutation sweep
 

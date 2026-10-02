@@ -84,9 +84,8 @@ mise run check                                                # pre-commit gates
 ```
 
 The parity scripts replay recorded baselines from `tests/baseline/parity/`.
-When changing the proxy also run
-`python3 scripts/test-swift-proxy-process.py --skip-tls`. Details and the
-remaining checks are in [`docs/testing.md`](docs/testing.md).
+The proxy package tests include the confined production-process gate. Details
+and the remaining checks are in [`docs/testing.md`](docs/testing.md).
 
 ## Before committing
 

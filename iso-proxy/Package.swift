@@ -37,9 +37,11 @@ let package = Package(
     .testTarget(
       name: "IsoProxyTransportTests",
       dependencies: [
-        "IsoProxyTransport",
+        "IsoProxyTransport", "IsoProxyTestSupport",
         .product(name: "NIOEmbedded", package: "swift-nio"),
       ], resources: [.copy("Fixtures")]),
+    .target(name: "IsoProxyTestSupport", path: "Tests/IsoProxyTestSupport"),
+    .testTarget(name: "IsoProxyE2ETests", dependencies: ["IsoProxyTestSupport"]),
     .testTarget(name: "IsoProxyCoreTests", dependencies: ["IsoProxyCore"]),
   ]
 )

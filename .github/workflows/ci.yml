@@ -126,20 +126,15 @@ jobs:
         with:
           version: 2026.8.3
 
-      - name: Swift proxy format, unit, and confined-process gates
+      - name: Swift proxy format and offline E2E gates
         shell: bash
         run: |
           ulimit -n 8192
           swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
-          swift test --package-path iso-proxy --force-resolved-versions
-          python3 scripts/test-swift-proxy-process.py --skip-tls
-
-      - name: Shared forwarding and disconnect corpus
-        shell: bash
-        run: |
-          ulimit -n 8192
-          python3 scripts/test-proxy-forwarding-corpus.py
-          python3 scripts/test-proxy-upstream-disconnect.py
+          swift build --package-path iso-proxy --force-resolved-versions
+          bin_dir="$(swift build --package-path iso-proxy --show-bin-path)"
+          ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy-swift" \
+            swift test --package-path iso-proxy --force-resolved-versions
 
   zizmor:
     name: Workflow security audit

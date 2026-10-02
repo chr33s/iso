@@ -265,13 +265,14 @@ removed:
 
 ```sh
 swift build --package-path iso-proxy
-python3 scripts/test-swift-proxy-process.py
+ISO_PROXY_LIVE_TLS_GATE=1 swift test --package-path iso-proxy --filter IsoProxyProcessE2ETests
 ```
 
 The gate also exercises stdin configuration, actual HTTP bind/accept, secret-free
-argv/diagnostics, and shutdown with an open guest socket. `--skip-tls` runs only
-the offline portions and cannot establish TLS readiness. Controlled certificate rejection tests are also available in the Swift test
-suite. Remaining VM/live-agent and release validation is tracked in
+argv/diagnostics, and shutdown with an open guest socket. Without
+`ISO_PROXY_LIVE_TLS_GATE=1`, the package tests run only the offline portions and
+cannot establish TLS readiness. Controlled certificate rejection tests are also
+available in the Swift test suite. Remaining VM/live-agent and release validation is tracked in
 [implementation evidence](design/swift-proxy-progress.md). Unexecuted gates
 there remain open.
 

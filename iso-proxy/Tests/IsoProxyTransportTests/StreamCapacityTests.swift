@@ -1,6 +1,7 @@
 import AsyncHTTPClient
 import Foundation
 import IsoProxyCore
+import IsoProxyTestSupport
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOHTTP1
@@ -105,6 +106,9 @@ private func runStreamCapacity(measureMemory: Bool) async throws {
     observations.append(
       contentsOf: try await streamCapacity(
         provider: provider, fixtures: fixtures, measureMemory: measureMemory))
+  }
+  try recordEvidence(observations, name: "stream-capacity") {
+    try ObservationContracts.streamCapacity($0, memory: measureMemory)
   }
   if let path = ProcessInfo.processInfo.environment["ISO_STREAM_OBSERVATIONS"] {
     try JSONSerialization.data(

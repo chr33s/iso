@@ -1,6 +1,7 @@
 import AsyncHTTPClient
 import Foundation
 import IsoProxyCore
+import IsoProxyTestSupport
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOHTTP1
@@ -92,6 +93,10 @@ private func waitForIdleState(seconds: Int = 5, _ condition: @Sendable () -> Boo
   async let anthropic = idleUpload(provider: "anthropic", fixtures: fixtures)
   async let openai = idleUpload(provider: "openai", fixtures: fixtures)
   let observations = try await [anthropic, openai]
+  let encoded = try JSONEncoder().encode(observations)
+  let records = try JSONSerialization.jsonObject(with: encoded) as? [[String: Any]]
+  try recordEvidence(
+    try #require(records), name: "body-idle", validate: ObservationContracts.bodyIdle)
   if let path = ProcessInfo.processInfo.environment["ISO_IDLE_OBSERVATIONS"] {
     try JSONEncoder().encode(observations).write(to: URL(fileURLWithPath: path), options: .atomic)
   }

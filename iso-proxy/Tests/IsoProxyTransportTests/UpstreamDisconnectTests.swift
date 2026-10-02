@@ -1,6 +1,7 @@
 import AsyncHTTPClient
 import Foundation
 import IsoProxyCore
+import IsoProxyTestSupport
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOHTTP1
@@ -23,6 +24,7 @@ private enum DisconnectTransport: String, CaseIterable { case abruptTCP, cleanTL
       }
     }
   }
+  try recordEvidence(observations, name: "disconnect", validate: ObservationContracts.disconnect)
   if let path = ProcessInfo.processInfo.environment["ISO_DISCONNECT_OBSERVATIONS"] {
     try JSONSerialization.data(
       withJSONObject: observations, options: [.prettyPrinted, .sortedKeys]

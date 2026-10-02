@@ -155,8 +155,12 @@ run_swift_proxy() {
     warn "Swift proxy validation requires macOS 27+ — run its package/process gates before tagging"
     return 0
   fi
-  swift test --package-path iso-proxy --force-resolved-versions || return
-  python3 scripts/test-swift-proxy-process.py --skip-tls
+  local bin_dir
+  ulimit -n 8192 || return
+  swift build --package-path iso-proxy --force-resolved-versions || return
+  bin_dir="$(swift build --package-path iso-proxy --show-bin-path)" || return
+  ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy-swift" \
+    swift test --package-path iso-proxy --force-resolved-versions
 }
 
 run_swift_egress() {

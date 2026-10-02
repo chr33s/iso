@@ -1,6 +1,8 @@
 import AsyncHTTPClient
+import CryptoKit
 import Foundation
 import IsoProxyCore
+import IsoProxyTestSupport
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOHTTP1
@@ -54,15 +56,29 @@ private let repository: URL = {
 }()
 
 @Test func sharedForwardingCorpusThroughTLS() async throws {
-  let cases = try JSONDecoder().decode(
-    [ForwardCase].self,
-    from: Data(
-      contentsOf: repository.appendingPathComponent(
-        "tests/fixtures/credential-proxy/forwarding.json")))
+  let corpus = try Data(
+    contentsOf: repository.appendingPathComponent("tests/fixtures/credential-proxy/forwarding.json")
+  )
+  _ = try ObservationContracts.forwardingCases(corpus)
+  let cases = try JSONDecoder().decode([ForwardCase].self, from: corpus)
+  let evidence = try Evidence("forwarding")
+  try corpus.write(to: evidence.file("corpus.json"), options: .atomic)
+  let hash = SHA256.hash(data: corpus).map { String(format: "%02x", $0) }.joined()
+  try Data((hash + "\n").utf8).write(to: evidence.file("corpus.sha256"))
   let fixtures = try generateForwardingFixtures()
   defer { try? FileManager.default.removeItem(at: fixtures) }
   var observations: [[String: Any]] = []
-  for item in cases { observations.append(try await runForwardCase(item, fixtures: fixtures)) }
+  for item in cases {
+    observations.append(try await runForwardCase(item, fixtures: fixtures))
+    try JSONSerialization.data(
+      withJSONObject: observations, options: [.prettyPrinted, .sortedKeys]
+    )
+    .write(to: evidence.file("observations.json"), options: .atomic)
+  }
+  try ObservationContracts.forwarding(
+    decodeRecords(
+      JSONSerialization.jsonObject(with: Data(contentsOf: evidence.file("observations.json")))),
+    corpus: corpus)
   if let path = ProcessInfo.processInfo.environment["ISO_FORWARD_OBSERVATIONS"] {
     try JSONSerialization.data(
       withJSONObject: observations, options: [.prettyPrinted, .sortedKeys]

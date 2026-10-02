@@ -2,6 +2,7 @@ import AsyncHTTPClient
 import CryptoKit
 import Foundation
 import IsoProxyCore
+import IsoProxyTestSupport
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOHTTP1
@@ -102,6 +103,7 @@ private func waitForLimitState(_ stage: String, seconds: Int = 5, _ condition: @
         try await bodyLimit(provider: provider, declared: declared, fixtures: fixtures))
     }
   }
+  try recordEvidence(observations, name: "body-limit", validate: ObservationContracts.bodyLimit)
   if let path = ProcessInfo.processInfo.environment["ISO_BODY_LIMIT_OBSERVATIONS"] {
     try JSONSerialization.data(
       withJSONObject: observations, options: [.prettyPrinted, .sortedKeys]
