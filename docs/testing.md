@@ -652,9 +652,17 @@ gate was skipped. A retained recovery-only retry reproduced those failures.
 The killed job remained loaded with one run, no owner PID, and a pending
 semaphore spawn. Separate temporary `/bin/sleep` jobs also did not respawn
 within 15 seconds after SIGKILL with conditional or unconditional keepalive.
-These observations do not identify the scheduling cause. Automatic respawn
-qualification is **blocked**; do not infer it from successful explicit starts
-or change clean-exit/TTL behavior to work around it.
+A follow-up at `34f41243093d67f4d15a565dbc83fe051fbb6a73` kept two temporary
+`/bin/sleep 600` jobs alive for 20 seconds before SIGKILL, then observed them
+for 120 seconds. Neither conditional nor unconditional keepalive respawned.
+Scoped unified logs for both fixtures and the earlier VM jobs explicitly said
+`pending spawn, domain in on-demand-only mode`; `launchctl print gui/501`
+reported `on-demand count = 1`. That identifies launchd's reported deferral
+reason, not why the domain entered that mode. Both fixture jobs were unloaded;
+no global launchd settings or VM restart/TTL policy were changed. A separate
+user-domain bootstrap failed with status 5 and is not a working fallback.
+Automatic respawn qualification is **blocked**; do not infer it from successful
+explicit starts or change clean-exit/TTL behavior to work around it.
 
 A separate fresh `./tests/run-integration.sh --only iso` run exited **0**:
 **94 passed, 0 failed, 1 skipped** (Touch ID). This covers setup and `iso`, not
