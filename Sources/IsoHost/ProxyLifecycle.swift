@@ -294,11 +294,19 @@ public struct ProxyLauncher: Sendable {
     let binary = try locateEgressBinary()
     let port = EgressPorts.port(instance)
     let capability = randomHex(32)
+    let readinessIdentity = FilteredReadiness.SigningIdentity()
     let hosts = policy.allowedHosts
     let startup = OutputJSON.object([
       ("listen", .string("127.0.0.1:\(port)")),
       ("capability", .string(capability)),
       ("allowedHosts", .array(hosts.map(OutputJSON.string))),
+      (
+        "readiness",
+        .object([
+          ("version", .int(2)), ("privateKeyHex", .string(readinessIdentity.startupKey.expose())),
+          ("bootID", .string(boot.bootID)),
+        ])
+      ),
     ])
     var leasePipe: [Int32] = [-1, -1]
     guard pipe(&leasePipe) == 0 else { throw HostError("Failed to create the egress lease pipe") }
@@ -320,6 +328,7 @@ public struct ProxyLauncher: Sendable {
     do {
       try AtomicFile.write(
         Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600))
+      try readinessIdentity.persistVerificationKey(instance)
       try StateStore.writeControlFile(
         FilteredHandoff.BootPolicy(bootID: boot.bootID, policyHash: policy.policyHash),
         to: FilteredHandoff.policyPath(instance))
@@ -331,6 +340,11 @@ public struct ProxyLauncher: Sendable {
       try spawnReverseForward(
         instance, name: "egress", target: target, guestPort: port,
         hostAddress: try IPv4Address("127.0.0.1"), hostPort: port)
+      let backend = AppleBackend(
+        config: config, environment: environment, runtime: { () throws(RuntimeError) in runtime })
+      guard try backend.asRunning(instance) != nil else {
+        throw HostError("FILTERED_EGRESS_NOT_READY: sandbox stopped during startup")
+      }
     } catch {
       stopEgress(instance)
       throw error
@@ -349,9 +363,12 @@ public struct ProxyLauncher: Sendable {
     if unlink(capability) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove egress capability \(capability) (non-fatal)")
     }
-    for path in [FilteredHandoff.policyPath(instance), instance.directory + "/egress-boot-id"] {
+    for path in [
+      FilteredHandoff.policyPath(instance), instance.directory + "/egress-boot-id",
+      FilteredReadiness.keyPath(instance), instance.directory + "/egress-readiness-key",
+    ] {
       if unlink(path) != 0 && errno != ENOENT {
-        diagnostics.debug("Failed to remove egress boot policy \(path) (non-fatal)")
+        diagnostics.debug("Failed to remove egress control state \(path) (non-fatal)")
       }
     }
   }

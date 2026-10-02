@@ -131,7 +131,7 @@ check_versions() {
 
 run_format() {
   swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints \
-    iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
+    iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 }
 
 run_host_tests() {

@@ -253,6 +253,22 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   request bodies opaquely, so this does not isolate provider objects referenced
   by ID within an allowed request.
 
+- **Filtered-egress readiness is authenticated separately from guest access.**
+  The existing `iso-egress` loopback listener accepts only an exact version-2
+  `GET /__iso/egress-ready` challenge with the CONNECT capability and a fresh
+  nonce. Its Ed25519 signature binds the nonce, immutable boot ID and computed
+  allowlist hash; this operation never selects a target or performs DNS/upstream
+  I/O. A separate per-boot private signing key goes transiently to the confined
+  companion on stdin and remains only in process memory, never in a file, guest,
+  or command line. Only its public verification key is persisted in owner-private
+  host state (`egress-readiness-public-key`, removed on stop). Copying that public
+  file into a workspace does not give the guest signing authority. The host
+  authenticates bounded replies both directly and through pinned SSH plus guest
+  loopback. A guest that knows
+  the CONNECT capability still cannot forge a reply. This proves reachability
+  of the keyed companion through that path, not exact reverse-tunnel process
+  identity, required credential brokers, or every late session handoff.
+
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in
   `sandbox-exec -p` with the Seatbelt profile embedded in

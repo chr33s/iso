@@ -41,8 +41,12 @@ SPDX-License-Identifier: Apache-2.0
   identity and the boot's policy hash. Frozen policies reject inconsistent
   hashes, hosts and modes. An atomic owner-only boot-policy record replaces
   the boot-id-only file; older filtered sessions must be stopped and restarted.
-  These checks do not yet authenticate live companions, tunnels or required
-  brokers, and do not complete composite readiness.
+  Fresh challenges authenticate the live companion locally and through guest
+  loopback, bound to its boot ID and computed allowlist hash. The Ed25519 private
+  signing key stays in process memory; only its public key is persisted, so
+  workspace copies do not grant signing authority. No upstream request is needed.
+  Startup and post-start hooks fail closed on missing proof. Required credential-broker composition
+  and every late session handoff remain unfinished; this is not full NET-20.
 - **Filtered relay** drains queued bytes before forwarding half-closes, permits
   the opposite response direction, and stops on hard I/O errors instead of
   dropping data and continuing. Interrupted I/O is retried; paused hung-up

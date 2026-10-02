@@ -95,6 +95,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         for call in ('swift format lint --recursive --strict Package.swift Sources tests/swift '
                      'fuzz/Targets fuzz/Entrypoints iso-proxy/Sources iso-proxy/Tests '
                      'iso-egress/Package.swift iso-egress/Sources iso-egress/Tests '
+                     'scripts/verify-egress-readiness.swift '
                      'iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests',
                      'swift build --force-resolved-versions',
                      'swift test --force-resolved-versions',

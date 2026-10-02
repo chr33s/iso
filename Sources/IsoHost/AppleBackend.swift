@@ -155,6 +155,13 @@ public final class AppleBackend: Sendable {
           "FILTERED_EGRESS_NOT_READY: \(failure) for '\(instance.name)'. The VM is still running; `iso stop \(instance.name)` does not connect to the guest."
         )
       }
+      if config.egress == .filtered {
+        guard let bootPolicy else {
+          throw HostError("FILTERED_EGRESS_NOT_READY: missing boot policy; restart the instance")
+        }
+        try FilteredReadiness.require(
+          instance, target: target, environment: environment, policy: bootPolicy)
+      }
       return Running(instance: instance, sidecar: sidecar, ready: ready, target: target)
     } catch {
       throw ContextError(

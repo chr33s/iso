@@ -6,6 +6,13 @@ struct Startup: Decodable {
   let listen: String
   let capability: String
   let allowedHosts: [String]
+  let readiness: ReadinessIdentity?
+
+  struct ReadinessIdentity: Decodable {
+    let version: Int
+    let privateKeyHex: String
+    let bootID: String
+  }
 }
 
 enum EgressMain {
@@ -19,6 +26,14 @@ enum EgressMain {
     var hosts: [ExactHostname] = []
     for raw in startup.allowedHosts { hosts.append(try ExactHostname(raw)) }
     let allow = EgressAllowlist(hosts)
+    let readiness: EgressReadiness?
+    if let identity = startup.readiness {
+      guard identity.version == 2 else { throw PolicyError("unsupported readiness version") }
+      readiness = try EgressReadiness(
+        privateKeyHex: identity.privateKeyHex, bootID: identity.bootID, allow: allow)
+    } else {
+      readiness = nil
+    }
     let fd = try listenLoopback(port)
     let admission = Admission()
     // fd 3 belongs to the host supervisor, never to a guest HTTP connection.
@@ -40,7 +55,9 @@ enum EgressMain {
       let capability = startup.capability
       Thread {
         defer { admission.endSocket() }
-        handle(client, allow: allow, capability: capability, admission: admission, lease: lease)
+        handle(
+          client, allow: allow, capability: capability, admission: admission, lease: lease,
+          readiness: readiness)
       }.start()
     }
     close(fd)
@@ -70,11 +87,24 @@ enum EgressMain {
 
   static func handle(
     _ client: Int32, allow: EgressAllowlist, capability: String, admission: Admission,
-    lease: ControlLease
+    lease: ControlLease, readiness: EgressReadiness?
   ) {
     defer { close(client) }
-    guard let host = ConnectGate.approvedHost(client, allow: allow, capability: capability) else {
+    guard lease.alive() else { return }
+    let head = ConnectGate.readHead(client)
+    if head.starts(with: Array((EgressReadiness.requestLine + "\r\n").utf8)) {
+      let response =
+        readiness?.response(head, capability: capability, alive: lease.alive)
+        ?? ConnectGate.responseBytes(.unsupported)
+      _ = EgressReadiness.write(response, to: client, alive: lease.alive)
       return
+    }
+    let host: String
+    switch ConnectGate.connectTarget(head, allow: allow, capability: capability) {
+    case .deny(let denial):
+      respond(client, denial)
+      return
+    case .connect(let approved): host = approved
     }
     guard admission.tryTunnel() else {
       respond(client, .unsupported)

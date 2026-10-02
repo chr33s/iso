@@ -97,7 +97,7 @@ jobs:
       - name: Filtered-egress unit and confined lease gates
         shell: bash
         run: |
-          swift format lint --recursive --strict iso-egress/Package.swift iso-egress/Sources iso-egress/Tests
+          swift format lint --recursive --strict iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift
           swift test --package-path iso-egress --force-resolved-versions
           swift build --package-path iso-egress --force-resolved-versions
           python3 scripts/test-swift-egress-jail.py

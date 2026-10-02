@@ -602,8 +602,13 @@ not open a public connection or boot a VM.
 After `swift build --package-path iso-egress --force-resolved-versions`, run
 `python3 scripts/test-swift-egress-lease.py`. It starts the production companion
 under the unchanged Seatbelt profile with startup JSON on stdin and a real
-renewal pipe on fd 3. Synthetic denied CONNECTs must keep working beyond the
-initial two-second grace period; pipe EOF and missed renewals must terminate
+renewal pipe on fd 3. A test-only native Ed25519 verifier checks fresh signed
+boot/policy challenges and malformed/unauthorized denials on the existing listener;
+its key is anchored to independently generated OpenSSL vectors and a bad-signature
+control must fail. The verifier is compiled with the pinned Swift toolchain and
+selected macOS SDK; no extra crypto dependency is needed. These probes make no
+upstream request. Synthetic denied CONNECTs must keep working beyond the initial
+two-second grace period; pipe EOF and missed renewals must terminate
 the process and close its listener and an unfinished guest request. This does
 not exercise the host supervisor, runtime owner/boot checks, successful tunnels,
 public DNS/HTTPS, or a VM. CI and release preflight run these package/process gates.
@@ -630,8 +635,9 @@ policy: they call the transport directly without invoking a connector.
 `python3 scripts/test-swift-egress-mutations.py` runs clean controls in a private
 package copy, then deliberately releases DNS slots early, removes result cleanup,
 accepts late results, and breaks relay error, EOF, half-close, retry, budget and
-paused-hangup behavior. Each named test must run and fail; compilation errors
-and empty selections do not count. CI and release preflight run this gate.
+paused-hangup behavior. Six readiness faults remove capability, lease, nonce,
+framing, computed-policy or SIGPIPE checks. Each named test must run and fail;
+compilation errors and empty selections do not count. CI and release preflight run this gate.
 These are local worker/ownership and socket tests, not a filtered VM exhaustion
 or lifecycle-revocation gate.
 
@@ -652,6 +658,34 @@ host/mode, record schema/identity/read-error or cleanup checks; the existing
 `filtered-handoff-boot` fault remains
 applicable. These tests do not authenticate the live companion, prove the
 reverse transport or required credential brokers, or complete NET-20.
+
+### Authenticated filtered-transport checks
+
+`FilteredReadinessTests` and the companion's `ReadinessTests` use independently
+computed OpenSSL Ed25519 vectors to pin the version-2 wire contract. They check
+valid proof, forgeries, correctly signed wrong-boot/wrong-policy replies and nonce replay,
+HTTP framing, bounded no-symlink key reads, and owner-only writes/stop cleanup.
+The guest request contains only a public challenge and the already guest-visible
+capability on stdin, never the private signing key or raw provider environment.
+A real tar fixture with a custom data directory inside the workspace positively
+copies the public key and proves the private seed is absent. Knowing those public
+bytes cannot forge a signature. CryptoKit may randomize signatures, so tests
+verify actual signatures rather than demanding deterministic byte equality.
+The guest probe uses base-image Bash/coreutils, not an optional Python profile.
+Host-local exchange has a two-second monotonic deadline; the guest command has
+a two-second timeout and a five-second host process deadline, with 1024-byte output
+bounds. Native socketpairs check SIGPIPE protection, restored flags and a paused
+writer's monotonic one-second deadline.
+
+Ten `filtered-readiness-*` host faults remove signature, nonce, boot, policy,
+version, framing, read-error distinction, public-only persistence or current/legacy
+key cleanup. The existing boot-policy
+cleanup fault is kept synchronized. These tests and the confined process gate
+are not VM evidence. Real-VM checks must separately witness startup, hooks,
+healthy recovery from a paused tunnel, permanent lease expiry after a paused
+companion, and rejection of a wrong/missing public verification key. Required
+credential-broker composition, every late handoff, previous-boot capability replay, exhaustion and
+full NET-20/F1 qualification remain unverified.
 
 ### Filtered lease-record checks
 

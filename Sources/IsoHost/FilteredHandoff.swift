@@ -1,8 +1,8 @@
 import Foundation
 import IsoCore
 
-/// Boot, policy and recorded-process checks for filtered handoffs. These do
-/// not yet authenticate the live companion or prove the reverse transport.
+/// Metadata prerequisites for filtered handoffs. AppleBackend additionally
+/// requires fresh authenticated companion and guest-loopback responses.
 public enum FilteredHandoff {
   /// Written atomically when the companion starts for this boot. This is
   /// descriptive host state, not a persisted live-readiness proof.

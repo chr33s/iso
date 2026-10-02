@@ -590,14 +590,25 @@ and compare the frozen policy hash with the atomic host record
 `egress-boot-policy.json`. Network policy records must have canonical hosts
 and a matching computed hash. Older filtered sessions with only
 `egress-boot-id` must be stopped and restarted; that file is not adopted as a
-policy binding. Companion/tunnel PID checks remain process-name checks, not
-authenticated live or end-to-end probes. Full composite readiness, including
-required credential brokers and every post-bootstrap handoff, remains incomplete.
+policy binding. Running-instance resolution additionally requires fresh signed
+responses from the companion directly and through guest loopback at the recorded
+port. The companion signs its boot ID and independently computed allowlist hash;
+no upstream connection is made. The per-boot Ed25519 private key exists only in
+process memory and goes to companion startup on stdin. Only the public key is
+persisted in `egress-readiness-public-key`, owner-private and removed on stop;
+copying that file into a workspace cannot authorize a forged reply. Existing
+sessions without a public key must stop/restart with matching host and companion
+binaries; legacy HMAC keys are not adopted. Process-name checks
+remain prerequisites, not substitutes for live proof. Startup verifies this proof
+before agent preparation and again after preparation before a post-start hook.
+Required credential-broker composition and every late session handoff remain
+incomplete; these checks do not complete NET-20.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.
-The companion is a blind CONNECT proxy for
-the recorded allowlist on port 443 only. It is not credential protection:
+Network forwarding remains blind CONNECT for the recorded allowlist on port
+443 only. The existing listener also accepts the fixed local readiness challenge,
+which cannot select an upstream destination. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.
 `egress_filter.allowed_hosts` is valid only with `"filtered"`; an empty list
 approves nothing. Agent definition hints are not added to that list. An

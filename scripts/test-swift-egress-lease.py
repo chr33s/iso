@@ -8,7 +8,9 @@ import base64
 from contextlib import ExitStack
 import fcntl
 import json
+import hashlib
 import os
+import secrets
 from pathlib import Path
 import signal
 import socket
@@ -43,7 +45,7 @@ def control_pipe():
 
 
 class Companion:
-    def __init__(self, binary, port, log):
+    def __init__(self, binary, port, log, readiness=None):
         self.pid = None
         self.status = None
         self.control = None
@@ -65,8 +67,11 @@ class Companion:
                 actions = [(os.POSIX_SPAWN_DUP2, source, destination) for source, destination
                            in ((startup_read, 0), (stdout, 1), (stderr, 2), (read, 3))]
                 self.pid = os.posix_spawn(command[0], command, {}, file_actions=actions)
-                startup = json.dumps({'listen': f'127.0.0.1:{port}', 'capability': CAPABILITY,
-                                      'allowedHosts': ['example.com']}).encode()
+                settings = {'listen': f'127.0.0.1:{port}', 'capability': CAPABILITY,
+                            'allowedHosts': ['example.com']}
+                if readiness is not None:
+                    settings['readiness'] = readiness
+                startup = json.dumps(settings).encode()
                 assert os.write(startup_write, startup) == len(startup)
         except BaseException:
             self.close()
@@ -200,10 +205,100 @@ def exercise(binary, eof):
                 process.close()
 
 
+def exercise_readiness(binary, verifier):
+    """Independent authenticated-wire check against the actual confined executable."""
+    # OpenSSL 3.6.5 independently derived this public key for the synthetic seed.
+    # CryptoKit may randomize signatures, so verify instead of comparing bytes.
+    key = 'b' * 64
+    public = bytes.fromhex('7d59c5623dd40a74aa4d5a32ac645d3b3f95daeae4c22be25476dd6a486f7382')
+    boot = secrets.token_hex(16)
+    identity = {'version': 2, 'privateKeyHex': key, 'bootID': boot}
+    policy = 'sha256:' + hashlib.sha256(
+        b'mode=filtered\nhosts=example.com\nport=443\n').hexdigest()
+    with socket.socket() as reservation:
+        reservation.bind(('127.0.0.1', 0))
+        port = reservation.getsockname()[1]
+    with tempfile.TemporaryFile() as log:
+        process = Companion(binary, port, log, readiness=identity)
+        try:
+            process.ready()
+            authorization = base64.b64encode(f'iso:{CAPABILITY}'.encode()).decode()
+            previous = None
+            for _ in range(2):
+                nonce = secrets.token_hex(16)
+                head = ('GET /__iso/egress-ready HTTP/1.1\r\n'
+                        f'Proxy-Authorization: Basic {authorization}\r\n'
+                        f'X-Iso-Nonce: {nonce}\r\n\r\n').encode()
+                process.renew()
+                with process.connect() as client:
+                    client.settimeout(1)
+                    client.sendall(head)
+                    response = b''
+                    while True:
+                        part = client.recv(1025)
+                        if not part:
+                            break
+                        response += part
+                        assert len(response) <= 1024
+                headers, body = response.split(b'\r\n\r\n', 1)
+                assert headers == (b'HTTP/1.1 200 OK\r\nContent-Length: ' +
+                                   str(len(body)).encode() + b'\r\nConnection: close')
+                reply = json.loads(body)
+                assert (reply['version'], reply['nonce'], reply['bootID'], reply['policyHash']) == (
+                    2, nonce, boot, policy)
+                message = f'iso-egress-readiness-v2\n{nonce}\n{boot}\n{policy}\n'
+                fixture = {'publicKey': base64.b64encode(public).decode(),
+                           'message': message, 'signature': reply['signature']}
+                checked = subprocess.run([str(verifier)], input=json.dumps(fixture).encode(),
+                                         capture_output=True, timeout=5, env={})
+                assert checked.returncode == 0, 'companion signature did not verify'
+                fixture['signature'] = base64.b64encode(bytes(64)).decode()
+                broken = subprocess.run([str(verifier)], input=json.dumps(fixture).encode(),
+                                        capture_output=True, timeout=5, env={})
+                assert broken.returncode != 0, 'fixture verifier accepted an invalid signature'
+                assert key.encode() not in response and CAPABILITY.encode() not in response
+                if previous is not None:
+                    assert previous['nonce'] != nonce
+                    assert previous['signature'] != reply['signature']
+                previous = reply
+            for malformed in (
+                head.replace(authorization.encode(), b'wrong'),
+                head.replace(nonce.encode(), b'invalid'),
+                head.replace(b'\r\n\r\n', b'\r\nContent-Length: 1\r\n\r\n'),
+            ):
+                process.renew()
+                with process.connect() as client:
+                    client.settimeout(1)
+                    client.sendall(malformed)
+                    response = b''
+                    while True:
+                        part = client.recv(1025)
+                        if not part:
+                            break
+                        response += part
+                        assert len(response) <= 1024
+                assert response == (b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n'
+                                    b'Connection: close\r\n\r\n')
+            log.seek(0)
+            text = log.read(16384).decode(errors='replace')
+            assert key not in text and CAPABILITY not in text
+            print('PASS confined readiness: fresh authenticated boot/policy challenges, '
+                  'malformed and unauthorized probes denied; no upstream request', flush=True)
+        finally:
+            process.close()
+
+
 def main():
     binary = Path(subprocess.check_output(
         ['swift', 'build', '--package-path', str(ROOT / 'iso-egress'), '--show-bin-path'],
         text=True).strip()) / 'iso-egress'
+    with tempfile.TemporaryDirectory(prefix='iso-egress-verifier-') as directory:
+        verifier = Path(directory) / 'verify'
+        sdk = subprocess.check_output(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path'],
+                                      text=True).strip()
+        subprocess.run(['swiftc', '-sdk', sdk, str(ROOT / 'scripts/verify-egress-readiness.swift'),
+                        '-o', str(verifier)], check=True, timeout=120)
+        exercise_readiness(binary, verifier)
     exercise(binary, eof=True)
     exercise(binary, eof=False)
 

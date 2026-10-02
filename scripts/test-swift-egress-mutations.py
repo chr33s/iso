@@ -13,6 +13,21 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FAULTS = [
+    ('readiness-auth', 'ConnectParser.constantTimeEqual(password, capability)', 'true',
+     'readinessRefusesUnauthorizedRevokedAndAmbiguousChallenges'),
+    ('readiness-lease', 'Self.challenge(head, capability: capability), alive()',
+     'Self.challenge(head, capability: capability), true',
+     'readinessRefusesUnauthorizedRevokedAndAmbiguousChallenges'),
+    ('readiness-nonce', 'return hex(nonce, count: 16) != nil ? nonce : nil', 'return nonce',
+     'readinessRefusesUnauthorizedRevokedAndAmbiguousChallenges'),
+    ('readiness-framing',
+     'guard lines.count == 5, lines[0] == requestLine, lines[3].isEmpty, lines[4].isEmpty,',
+     'guard lines.count >= 3, lines[0] == requestLine,',
+     'readinessRefusesUnauthorizedRevokedAndAmbiguousChallenges'),
+    ('readiness-policy', 'allow.hosts.sorted().joined(separator: ",")', '""',
+     'readinessSignsTheComputedPolicyAndIndependentWireVector'),
+    ('readiness-no-sigpipe', 'var noSignal: Int32 = 1', 'var noSignal: Int32 = 0',
+     'readinessWritesWithoutSigpipeAndRestoresFlags'),
     ('dns-slot-follows-worker',
      'return Deadline.wait(deadline) {\n      defer { admission.endDNS() }',
      'defer { admission.endDNS() }\n    return Deadline.wait(deadline) {',
@@ -86,7 +101,8 @@ def main():
             return 2
         failures = []
         for ident, original, replacement, test_filter in faults:
-            filename = 'Tunnel.swift' if ident.startswith('relay-') else 'Dial.swift'
+            filename = ('Readiness.swift' if ident.startswith('readiness-') else
+                        'Tunnel.swift' if ident.startswith('relay-') else 'Dial.swift')
             path = package / 'Sources/IsoEgressCore' / filename
             source = path.read_text()
             if source.count(original) != 1:

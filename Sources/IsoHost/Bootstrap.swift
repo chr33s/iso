@@ -446,7 +446,24 @@ public struct AgentBootstrap: Sendable {
       // Bootstrap may have just minted the Codex capability token.
       let hookSession =
         noAgents ? session : try prepareSession(instance, target: target, repo: repo)
+      try requireFilteredHandoff(instance, runtime: runtime)
       runPostStart(hookSession, command: postStart)
+    } else {
+      try requireFilteredHandoff(instance, runtime: runtime)
+    }
+  }
+
+  /// Bootstrap is intentional preparation, not permission to run a project
+  /// hook against a stale transport. Rebuild the live proof after preparation.
+  func requireFilteredHandoff(_ instance: Instance, runtime: SandboxRuntime?) throws {
+    guard config.egress == .filtered else { return }
+    guard let runtime else {
+      throw HostError("FILTERED_EGRESS_NOT_READY: missing runtime for handoff")
+    }
+    let backend = AppleBackend(
+      config: config, environment: environment, runtime: { () throws(RuntimeError) in runtime })
+    guard try backend.asRunning(instance) != nil else {
+      throw HostError("FILTERED_EGRESS_NOT_READY: sandbox stopped during bootstrap")
     }
   }
 

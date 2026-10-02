@@ -67,13 +67,19 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   try StateStore.writeControlFile(
     FilteredHandoff.BootPolicy(bootID: "boot", policyHash: "hash"), to: path)
   try writeFile(instance.directory + "/egress-boot-id", "legacy")
+  try writeFile(instance.directory + "/egress-readiness-key", "legacy-signing-key")
   try writeFile(EgressPorts.capabilityPath(instance), "synthetic-capability")
+  try AtomicFile.write(
+    Array(String(repeating: "b", count: 64).utf8), to: FilteredReadiness.keyPath(instance),
+    mode: .atMost(0o600))
   #expect(try FilteredHandoff.recordedPolicy(instance) != nil)
   let launcher = guest.proxies()
   launcher.stopEgress(instance)
   #expect(!FileManager.default.fileExists(atPath: path))
   #expect(!FileManager.default.fileExists(atPath: instance.directory + "/egress-boot-id"))
   #expect(!FileManager.default.fileExists(atPath: EgressPorts.capabilityPath(instance)))
+  #expect(!FileManager.default.fileExists(atPath: FilteredReadiness.keyPath(instance)))
+  #expect(!FileManager.default.fileExists(atPath: instance.directory + "/egress-readiness-key"))
   launcher.stopEgress(instance)
   #expect(try FilteredHandoff.recordedPolicy(instance) == nil)
 }
