@@ -41,6 +41,7 @@ swift test --sanitize=undefined --scratch-path .build-ubsan
 
 python3 tests/test-migrate-config.py          # TOML -> JSONC converter (Python 3.11+)
 python3 tests/test-swift-host-inventory.py    # compatibility inventory completeness
+python3 tests/test-release-legal.py           # legal bytes and nested release notices
 python3 tests/test-swift-host-read-parity.py --swift .build/debug/iso
 python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/iso
 python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/iso

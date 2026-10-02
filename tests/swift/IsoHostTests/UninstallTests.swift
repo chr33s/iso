@@ -207,7 +207,7 @@ private struct UninstallFixture {
         "  data dir:  \(fixture.state) (0 instance(s), 0 image(s))",
         "Removed iso SSH config blocks",
         "Keeping \(fixture.state); reinstall iso to manage existing instances.",
-        "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/swift/install.sh | sh",
+        "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | sh",
       ])
   }
 

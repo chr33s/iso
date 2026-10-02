@@ -973,7 +973,7 @@ iso profiles show rust
 ### `update`
 
 Replace the running isolate binary with a release from `github.com/chr33s/iso`.
-Release tags come from `swift`. The updater verifies the platform tarball's
+Release tags come from `main`. The updater verifies the platform tarball's
 SHA-256 and, when `gh` is installed, its repository build-provenance attestation.
 The updater installs the bundled `iso-sandbox` and `iso-proxy` before replacing
 the host. Each file replacement is atomic; the set of files is not a single

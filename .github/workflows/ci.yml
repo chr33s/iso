@@ -50,14 +50,12 @@ jobs:
       - name: Workflow lint
         run: actionlint
 
-      # The inventory checks references to the removed Rust host at its recorded
-      # baseline commit, which the shallow checkout does not include.
+      # Recorded baseline evidence works in a shallow Swift-only checkout.
       - name: Configuration migration and compatibility inventory tests
         run: |
-          baseline=$(python3 -c 'import json; print(json.load(open("docs/design/swift-host-inventory.json"))["baseline_revision"])')
-          git fetch --no-tags --depth=1 origin "$baseline"
           python3 tests/test-migrate-config.py
           python3 tests/test-swift-host-inventory.py
+          python3 tests/test-release-legal.py
 
       # Replays the results recorded from the baseline host before its removal.
       - name: Command, lifecycle, data-root and CLI-surface baselines

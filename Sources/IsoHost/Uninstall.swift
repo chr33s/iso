@@ -99,7 +99,7 @@ public struct Uninstaller {
     try removeSelfBinary(binaryPath)
     diagnostics.log(
       .info,
-      "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/swift/install.sh | sh"
+      "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | sh"
     )
   }
 

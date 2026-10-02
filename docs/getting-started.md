@@ -23,12 +23,12 @@ Linux hosts and macOS 26 are outside this fork’s support scope.
 
 Until a verified fork release is published, follow [Build from source](#build-from-source).
 The configured release channel is `chr33s/iso`, built from tagged commits on
-`swift`. Its macOS archives install `iso`, `iso-proxy`, `iso-egress`, and
+`main`. Its macOS archives install `iso`, `iso-proxy`, `iso-egress`, and
 `iso-sandbox` together; see [Apple prerequisites](backends.md).
 Once the macOS channel has a verified release:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chr33s/iso/swift/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 ```
 
 `install.sh` verifies the downloaded tarball's SHA-256 against the release's

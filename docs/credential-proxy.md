@@ -296,7 +296,7 @@ explicit `--sign` stage used by the **Release candidate** workflow, which
 requires a clean exact revision, verifies binary signatures, and attests its
 candidate archive.
 
-The `chr33s/iso` release workflow requires tagged commits from `swift` and
+The `chr33s/iso` release workflow requires tagged commits from `main` and
 packages the host, Swift proxy, and signed runtime together on macOS. Only
 macOS 27+ Apple Silicon hosts are supported. Installer and updater provenance
 checks pin `chr33s/iso`. Archives must include both companions; missing

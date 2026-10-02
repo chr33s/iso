@@ -1,7 +1,7 @@
 {
   "spec": "docs/design/swift-host-spec.md",
   "baseline_revision": "e3ba69eccfcc92d4ebe964ed2a7b2bcbc5e02ae9",
-  "baseline_note": "HEAD of branch swift; same host sources as the spec's 143fdda (differences are test scripts only)",
+  "baseline_note": "HEAD of branch swift; same host sources as the spec's 143fdda (differences are test scripts only); source paths and SHA-256 digests archived in baseline_source_manifest before history pruning",
   "dispositions": [
     "ported",
     "preserved",
@@ -842,7 +842,7 @@
       "item": "github assign-pat",
       "disposition": "ported",
       "baseline_reference": "tests/fixtures/baseline-cli/github-assign-pat.txt",
-      "notes": "github_pat.json holds {\"repo\":…} only, 0600, entry must exist; fail-closed load, GITHUB_TOKEN/GH_TOKEN override rejection and --no-github opt-out preserved",
+      "notes": "github_pat.json holds {\"repo\":\u2026} only, 0600, entry must exist; fail-closed load, GITHUB_TOKEN/GH_TOKEN override rejection and --no-github opt-out preserved",
       "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#assignmentsStoreOnlyTheEntryKey"
     },
     {
@@ -890,7 +890,7 @@
       "item": "github forget-pat",
       "disposition": "changed",
       "baseline_reference": "tests/fixtures/baseline-cli/github-forget-pat.txt",
-      "notes": "C-04: deletes the Keychain item for iso's own reference only; any other reference (1Password, file, …) is left untouched and reported as not recognised",
+      "notes": "C-04: deletes the Keychain item for iso's own reference only; any other reference (1Password, file, \u2026) is left untouched and reported as not recognised",
       "decision": "C-04",
       "swift_test": "tests/swift/IsoHostTests/GitHubTests.swift#forgetPATDeletesOnlyTheKeychainItemIsoWrote"
     },
@@ -1003,5 +1003,6 @@
       "swift_test": "tests/swift/IsoHostTests/DevcontainerTests.swift#gitRepoDiscoverySendsTokenOnStdin",
       "notes": "same request argv and stdin token header; reached from `up --git-repo`"
     }
-  ]
+  ],
+  "baseline_source_manifest": "tests/fixtures/baseline-cli/source-manifest.json"
 }

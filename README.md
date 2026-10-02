@@ -11,6 +11,10 @@ Claude Code and Codex in isolated VMs, with a focused Swift credential proxy
 and an Apple Containerization runtime. **Supported hosts: macOS 27+ on Apple
 Silicon only.** Linux runs inside the guest VMs.
 
+Git history has been pruned to focus on the Swift implementation. Licensing
+and attribution remain in [NOTICE](NOTICE), [PROVENANCE.md](PROVENANCE.md)
+and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
 ## Why this fork?
 
 The use case is running coding agents with broad permissions inside disposable
@@ -39,7 +43,7 @@ Once a verified fork release is published, install `iso`, `iso-proxy`, and
 `iso-sandbox` together with:
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/chr33s/iso/swift/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 ```
 
 Until then, build from source with Xcode 27:
@@ -63,7 +67,7 @@ Then create the configuration and build the VM template image:
 iso setup
 ```
 
-The release channel targets `chr33s/iso`, with tagged commits from `swift`.
+The release channel targets `chr33s/iso`, with tagged commits from `main`.
 Configuration lives in `~/.iso/config.jsonc` (JSON with comments), with state
 under `~/.iso`. `iso setup --config-only` writes a commented template.
 Upstream TOML configurations are not read; convert one with

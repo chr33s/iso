@@ -8,7 +8,6 @@ changed and removed items must record a scope decision or notes.
 
 import json
 import re
-import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -16,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = json.loads((ROOT / "docs/design/swift-host-inventory.json").read_text())
 BASELINE_CLI = json.loads((ROOT / "tests/fixtures/baseline-cli/commands.json").read_text())
+BASELINE_SOURCES = json.loads((ROOT / INVENTORY["baseline_source_manifest"]).read_text())
 
 
 class InventoryTests(unittest.TestCase):
@@ -50,19 +50,22 @@ class InventoryTests(unittest.TestCase):
                     self.assertTrue(item.get("decision") or item.get("notes"))
 
     def test_baseline_references_exist(self):
-        """Test fixtures are in the tree; `src/` names the removed Rust host,
-        so it is checked at the recorded baseline revision (git history)."""
-        revision = INVENTORY["baseline_revision"]
+        """Rust references are archival evidence, independent of pruned Git objects."""
+        self.assertEqual(BASELINE_SOURCES["revision"], INVENTORY["baseline_revision"])
+        self.assertTrue(BASELINE_SOURCES["files"])
+        for digest in BASELINE_SOURCES["files"].values():
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
         for item in INVENTORY["items"]:
             reference = item["baseline_reference"].split(" ")[0]
             with self.subTest(item=item["id"]):
                 if reference.startswith("tests/"):
                     self.assertTrue((ROOT / reference).exists(), reference)
                 elif reference.startswith("src/"):
-                    found = subprocess.run(
-                        ["git", "cat-file", "-e", f"{revision}:{reference}"], cwd=ROOT,
-                        capture_output=True)
-                    self.assertEqual(found.returncode, 0, f"{reference} at {revision}")
+                    if reference.endswith("/"):
+                        self.assertTrue(any(path.startswith(reference) for path in BASELINE_SOURCES["files"]),
+                                        reference)
+                    else:
+                        self.assertIn(reference, BASELINE_SOURCES["files"])
 
 
 if __name__ == "__main__":

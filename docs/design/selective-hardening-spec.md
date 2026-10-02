@@ -1556,7 +1556,7 @@ Companion normative specification:
 External/current project sources:
 
 - `chr33s/iso` Swift trust model:  
-  https://github.com/chr33s/iso/blob/swift/docs/trust-model.md
+  https://github.com/chr33s/iso/blob/main/docs/trust-model.md
 - Sandlock repository / feature overview:  
   https://github.com/multikernel/sandlock
 - Sandlock `learn` RFC/background:  

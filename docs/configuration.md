@@ -709,7 +709,7 @@ Unknown members of `workspace` and `workspace.pull` are rejected.
 ## `updates` section
 
 Background update-check behavior for `iso update`. The fork channel targets
-`chr33s/iso` releases from `swift`. Development builds suppress these checks
+`chr33s/iso` releases from `main`. Development builds suppress these checks
 and refuse self-update.
 
 | Field | Type | Default | Description |

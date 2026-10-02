@@ -805,6 +805,20 @@
     "c5c9968f8e84971df10f57b10210c709e5a5025ae5d633833b6b8db3c2a2bc58": "5763885253e685c62646591d8e3fb2992d0b8af9b0c86e96ef8e7b4b1438d711",
     "12c46e86f419353a4ac9c171d3cd2ebeb14483a52073d51f6722bb0bd252bc40": "0a1a09ccbd46a7ed3733e5d5e2985e820330a87a2ed4c92d55552fb5e4126023"
    }
+  },
+  {
+   "date": "2026-10-03",
+   "change": "Add Apache 2.0 upstream derivation and modification notices to the embedded guest scripts.",
+   "effect": "The runner applies these substitutions to context hashes, manifest ids, image-tag prefixes and install_script_hash; all other recorded values remain unchanged.",
+   "substitutions": {
+    "5763885253e685c62646591d8e3fb2992d0b8af9b0c86e96ef8e7b4b1438d711": "fe76c25315bba8627b48d0a1c34b83c8362ea2d5c6d86c802bb061204c22b6c4",
+    "0a1a09ccbd46a7ed3733e5d5e2985e820330a87a2ed4c92d55552fb5e4126023": "1d907330be972ec35e2f0459e8db98d67553cf846111b382394ffdbd08ba6d2d",
+    "6927d076a7a7d56cccb54140ecf574cb1175b44e0abd981c22ad2c48de2e587b": "e3caab5df3c32b9791ebd9cba5c01caee686be689d684302210a4cbec3bf24e4",
+    "3e8832650852a8bebc9d29be5824f2d510a3d7a5edbf10192d842b3e8e68bae5": "60c48c5d7b5f9cf4fb069197fafc9cecc86fe780fbf659da92a6e09433fe91b1",
+    "1fbf56f63ed8a91a121d7cadb64d5e79596cb5878611a4ba5769c708b1a26b76": "da54d1958bd383170a601600b06fab591b0fc1f78e4ba05db3bfbbe96e0787ff",
+    "7595218ceecc1918d5d30804d703100280874a13289a133fd64348eaaf664186": "98b1246af1bf23f736df5fdfacab922d0e1983e4aa1518c8f04f47e9bc934257",
+    "829d46d3fea42e4dea92cc46127e03d8526a4e3f1e81d348bd9502c37b6c47ca": "4662a5def10de5c72fdd6dd76bc4c71789e290967ee438a9466ddfcda043b819"
+   }
   }
  ]
 }

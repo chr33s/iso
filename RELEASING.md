@@ -15,10 +15,12 @@ are outside this fork's scope.
 ## Fork distribution status
 
 The installer, updater, and repository provenance checks target `chr33s/iso`.
-Release tags must point to commits reachable from the `swift` branch. A
+Release tags must point to commits reachable from the `main` branch. A
 release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
 the Swift host `iso`, the Swift credential proxy `iso-proxy`, and the
-signed `iso-sandbox` runtime, plus `LICENSE` and `BUILD.json`.
+signed `iso-sandbox` runtime, plus `BUILD.json`, `LICENSE`, `NOTICE`,
+`PROVENANCE.md`, `THIRD_PARTY_LICENSES.md`, `fuzz/libfuzzer/LICENSE.TXT`
+and the pinned dependency licenses and notices under `third-party/`.
 
 No hosted candidate or fork release of the Swift host has been published or
 verified yet. Build from source until those gates pass. Hosted attestation and
@@ -80,7 +82,7 @@ below is about making sure both succeed and ship something correct.
 ## Candidate download and verification
 
 Run the **Release candidate** workflow (`.github/workflows/candidate.yml`)
-against `swift`. Its downloadable artifact is
+against `main`. Its downloadable artifact is
 `iso-candidate-<commit>-aarch64-apple-darwin`, containing:
 
 - `iso-<first 12 hex digits of the commit>-aarch64-apple-darwin.tar.gz`
@@ -139,7 +141,7 @@ without `xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled
 ticket, so Gatekeeper checks notarization online on first launch.
 
 Only the sign stage sees the signing secrets; the builder removes them from
-every other `swift` and helper subprocess.
+every other `main` and helper subprocess.
 
 The signing workflows use the `release` GitHub environment, which must define these
 secrets:
@@ -221,7 +223,7 @@ Apple Silicon machine.
 
 ## Release checklist
 
-1. **Land all release content on `swift`.** Open PRs merged, `swift` green in CI.
+1. **Land all release content on `main`.** Open PRs merged, `main` green in CI.
 
 2. **Pick the version** (`X.Y.Z`, semver). Breaking changes → major; new
    features → minor; fixes only → patch. Look at the `## Unreleased` section of
@@ -268,7 +270,7 @@ Apple Silicon machine.
      user-editable input (`ParseRepoSlug`, `JSONCToJSON`, `ConfigLoad`).
 
 7. **Open the bump PR** (`Sources/IsoHost/UpdateVersion.swift`, `CHANGELOG.md`), get it
-   reviewed, and merge to `swift`. Never push the bump straight to `swift`.
+   reviewed, and merge to `main`. Never push the bump straight to `main`.
 
 8. **Tag the merge commit and push.**
 
@@ -291,7 +293,7 @@ Apple Silicon machine.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-sandbox`, `LICENSE` and `BUILD.json`, plus release-level
+     `iso-sandbox`, the legal files listed above and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,

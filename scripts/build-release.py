@@ -24,7 +24,7 @@ Stages, in order, each explicit:
             MACOS_*/NOTARY_* secrets; every other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
-            iso-egress, iso-sandbox, LICENSE, BUILD.json), plus a
+            iso-egress, iso-sandbox, legal notices, BUILD.json), plus a
             `SHA256SUMS` listing
             the archive, next to it in `--out`. `<name>` is `--tag`, else the
             revision. This is the layout `iso update` and install.sh expect.
@@ -160,6 +160,45 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def copy_legal_files(staging, bundle):
+    """Ship project attribution and the licenses of the pinned build inputs."""
+    for relative in ("LICENSE", "NOTICE", "PROVENANCE.md", "THIRD_PARTY_LICENSES.md",
+                     "fuzz/libfuzzer/LICENSE.TXT"):
+        destination = bundle / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staging / relative, destination)
+    # iso-egress has no external dependencies and no Package.resolved.
+    for package in (Path("."), Path("iso-proxy"), Path("iso-sandbox")):
+        resolved = json.loads((staging / package / "Package.resolved").read_text())
+        for pin in resolved["pins"]:
+            checkout = staging / package / ".build/checkouts" / pin["identity"]
+            legal = sorted(p for p in checkout.rglob("*") if p.is_file()
+                           and p.name.upper().startswith(("LICENSE", "LICENCE", "NOTICE", "COPYING")))
+            if not any(p.parent == checkout and p.name.upper().startswith(("LICENSE", "LICENCE", "COPYING"))
+                       for p in legal):
+                raise SystemExit(f"missing dependency license: {package}/{pin['identity']}")
+            destination = bundle / "third-party" / (package.name or "host") / pin["identity"]
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "SOURCE.json").write_text(json.dumps(pin, indent=2) + "\n")
+            for source in legal:
+                target = destination / source.relative_to(checkout)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+
+
+def archive_bundle(bundle, destination):
+    with tarfile.open(destination, "w:gz") as tar:
+        for entry in sorted(bundle.rglob("*")):
+            info = tar.gettarinfo(entry, arcname=f"{bundle.name}/{entry.relative_to(bundle)}")
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            if info.isfile():
+                with entry.open("rb") as handle:
+                    tar.addfile(info, handle)
+            else:
+                tar.addfile(info)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--release", action="store_true", help="optimized release build (-D ISO_RELEASE_BUILD)")
@@ -198,7 +237,7 @@ def main():
         bundle.mkdir(parents=True)
         for binary, source in binaries.items():
             shutil.copy2(source, bundle / binary)
-        shutil.copy2(ROOT / "LICENSE", bundle / "LICENSE")
+        copy_legal_files(staging, bundle)
         if args.sign:
             phase("Sign and notarize (Developer ID)")
             run([ROOT / "scripts/macos-sign-notarize.sh", bundle], work, signing=True)
@@ -218,13 +257,7 @@ def main():
         phase("Archive")
         archive = args.out / f"{name}.tar.gz"
         staged = args.out / f".{name}.tar.gz.partial"
-        with tarfile.open(staged, "w:gz") as tar:
-            for entry in sorted(bundle.iterdir()):
-                info = tar.gettarinfo(entry, arcname=f"{name}/{entry.name}")
-                info.uid = info.gid = 0
-                info.uname = info.gname = ""
-                with entry.open("rb") as handle:
-                    tar.addfile(info, handle)
+        archive_bundle(bundle, staged)
         os.replace(staged, archive)
         (args.out / "SHA256SUMS").write_text(f"{sha256(archive)}  {archive.name}\n")
         print(f"{archive}\n{args.out / 'SHA256SUMS'}")
