@@ -56,6 +56,12 @@ SPDX-License-Identifier: Apache-2.0
   keys remain in memory; only public keys persist. Nonfiltered version-1 startup and
   provider forwarding rules are unchanged. Every late handoff and full NET-20 remain
   unfinished.
+- **Filtered CONNECT** requires a complete, bounded head, rejects malformed headers
+  and conflicting or duplicate Host authorities, and leaves coalesced tunnel bytes
+  on the socket. Refusals and successful handshakes use lease-aware, SIGPIPE-safe
+  writes with a one-second monotonic deadline. A failed handshake never starts
+  the relay. Local socket, confined-process and mutation gates cover these paths;
+  full filtered-VM qualification remains open.
 - **Filtered relay** drains queued bytes before forwarding half-closes, permits
   the opposite response direction, and stops on hard I/O errors instead of
   dropping data and continuing. Interrupted I/O is retried; paused hung-up

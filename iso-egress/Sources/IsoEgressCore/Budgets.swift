@@ -3,6 +3,7 @@ import Foundation
 
 /// Bounds from the filtered-egress spec. These are limits, not measured performance.
 public enum EgressBudgets {
+  public static let maxHeadBytes = 16 * 1024
   public static let maxHeaders = 64
   public static let maxTargetBytes = 1024
   public static let head = Duration.seconds(5)

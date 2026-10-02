@@ -607,7 +607,10 @@ boot/policy challenges and malformed/unauthorized denials on the existing listen
 its key is anchored to independently generated OpenSSL vectors and a bad-signature
 control must fail. The verifier is compiled with the pinned Swift toolchain and
 selected macOS SDK; no extra crypto dependency is needed. These probes make no
-upstream request. Synthetic denied CONNECTs must keep working beyond the initial
+upstream request. An unapproved CONNECT authority checks a delayed terminator,
+continued input under the absolute five-second head deadline, partial EOF,
+32 reset clients and subsequent service recovery without dialing upstream.
+Synthetic denied CONNECTs must keep working beyond the initial
 two-second grace period; pipe EOF and missed renewals must terminate
 the process and close its listener and an unfinished guest request. This does
 not exercise the host supervisor, runtime owner/boot checks, successful tunnels,
@@ -632,10 +635,24 @@ do not turn `poll` into a busy loop; the local socketpair did not reliably
 report HUP without read interest. These fixtures bypass no production address
 policy: they call the transport directly without invoking a connector.
 
+`swift test --package-path iso-egress --force-resolved-versions --filter
+'connect|tunnelRequires|tunnelDoes'` covers complete framing, header grammar and
+control bytes, duplicate/conflicting Host authorities, unchanged authentication,
+16 KiB/64-header boundaries, fragmented/coalesced input, interrupted/idle polls,
+late completion and lease revocation. Optional Host metadata must agree with
+CONNECT's canonical host and, if supplied, port 443. Content-Length and
+Transfer-Encoding are refused. Local socketpairs test complete success/refusal
+writes, SIGPIPE suppression, flag restoration and a stalled one-second writer.
+A saturated client socket proves failed success-response writes neither relay
+queued payload nor retain the connected upstream. These fixtures do not dial
+public targets or change the production connector/address policy.
+
 `python3 scripts/test-swift-egress-mutations.py` runs clean controls in a private
 package copy, then deliberately releases DNS slots early, removes result cleanup,
 accepts late results, and breaks relay error, EOF, half-close, retry, budget and
-paused-hangup behavior. Six readiness faults remove capability, lease, nonce,
+paused-hangup behavior. Eighteen CONNECT/handshake faults remove complete-head,
+size, grammar, authority, framing, retry, payload, lease, deadline or response-write
+checks. Six readiness faults remove capability, lease, nonce,
 framing, computed-policy or SIGPIPE checks. Each named test must run and fail;
 compilation errors and empty selections do not count. CI and release preflight run this gate.
 These are local worker/ownership and socket tests, not a filtered VM exhaustion

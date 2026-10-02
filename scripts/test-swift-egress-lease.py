@@ -14,6 +14,7 @@ import secrets
 from pathlib import Path
 import signal
 import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -205,6 +206,96 @@ def exercise(binary, eof):
                 process.close()
 
 
+def exercise_connect_framing(binary):
+    """Temporal/framing checks use an unapproved authority; never dial upstream."""
+    with socket.socket() as reservation:
+        reservation.bind(('127.0.0.1', 0))
+        port = reservation.getsockname()[1]
+    denied = b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
+    authorization = base64.b64encode(f'iso:{CAPABILITY}'.encode()).decode()
+    head = ('CONNECT denied.invalid:443 HTTP/1.1\r\n'
+            f'Proxy-Authorization: Basic {authorization}\r\n\r\n').encode()
+    with tempfile.TemporaryFile() as log:
+        process = Companion(binary, port, log)
+        try:
+            process.ready()
+
+            def reply(client, prefix=b''):
+                result = prefix
+                deadline = time.monotonic() + 1.5
+                client.settimeout(0.1)
+                while True:
+                    assert time.monotonic() < deadline, 'refusal did not finish'
+                    process.renew()
+                    try:
+                        block = client.recv(4096)
+                    except TimeoutError:
+                        continue
+                    if not block:
+                        break
+                    result += block
+                    assert len(result) <= len(denied), 'unbounded refusal'
+                assert result == denied, result
+                assert CAPABILITY.encode() not in result
+
+            with process.connect() as client:
+                client.settimeout(0.1)
+                client.sendall(head[:-2])
+                until = time.monotonic() + 1.2
+                while time.monotonic() < until:
+                    process.renew()
+                    try:
+                        premature = client.recv(1)
+                    except TimeoutError:
+                        continue
+                    raise AssertionError(f'unfinished CONNECT produced an early reply/EOF: {premature!r}')
+                client.sendall(head[-2:])
+                reply(client)
+
+            with process.connect() as client:
+                client.settimeout(0.1)
+                client.sendall(b'CONNECT ')
+                started = time.monotonic()
+                fragment = started
+                prefix = b''
+                while not prefix:
+                    now = time.monotonic()
+                    assert now - started < 6.5, 'progress renewed the absolute head deadline'
+                    process.renew()
+                    if now >= fragment and now - started < 4.8:
+                        client.sendall(b'x')
+                        fragment = now + 0.15
+                    try:
+                        prefix = client.recv(1)
+                        assert prefix, 'unfinished CONNECT closed without a refusal'
+                    except TimeoutError:
+                        pass
+                elapsed = time.monotonic() - started
+                assert 4.5 <= elapsed < 6.5, f'absolute head deadline elapsed {elapsed:.3f}s'
+                reply(client, prefix)
+
+            # A complete refusal after partial EOF remains a bounded response.
+            with process.connect() as client:
+                process.renew()
+                client.sendall(head[:-2])
+                client.shutdown(socket.SHUT_WR)
+                reply(client)
+            for _ in range(32):
+                process.renew()
+                with process.connect() as client:
+                    client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                    client.sendall(head)
+            process.renew()
+            process.denied_request()
+            assert process.poll() is None, 'reset clients terminated the companion'
+            log.seek(0)
+            assert CAPABILITY not in log.read(16384).decode(errors='replace')
+            print(f'PASS confined CONNECT: delayed terminator, absolute deadline {elapsed:.3f}s, '
+                  'partial EOF and 32 reset clients; service recovered; no upstream request', flush=True)
+        finally:
+            process.close()
+
+
 def exercise_readiness(binary, verifier):
     """Independent authenticated-wire check against the actual confined executable."""
     # OpenSSL 3.6.5 independently derived this public key for the synthetic seed.
@@ -299,6 +390,7 @@ def main():
         subprocess.run(['swiftc', '-sdk', sdk, str(ROOT / 'scripts/verify-egress-readiness.swift'),
                         '-o', str(verifier)], check=True, timeout=120)
         exercise_readiness(binary, verifier)
+    exercise_connect_framing(binary)
     exercise(binary, eof=True)
     exercise(binary, eof=False)
 

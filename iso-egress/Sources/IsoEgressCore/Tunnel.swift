@@ -8,12 +8,13 @@ public enum Tunnel {
   public static func open(
     _ client: Int32, host: String, connect: (String) throws -> Int32?, alive: () -> Bool = { true }
   ) rethrows {
+    guard alive() else { return }
     guard let upstream = try connect(host) else {
-      ConnectGate.writeResponse(client, .addressNotPublic)
+      ConnectGate.writeResponse(client, .addressNotPublic, alive: alive)
       return
     }
     defer { close(upstream) }
-    ConnectGate.writeResponse(client, nil)
+    guard ConnectGate.writeResponse(client, nil, alive: alive) else { return }
     relay(client, upstream, alive: alive)
   }
 

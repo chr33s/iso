@@ -91,7 +91,7 @@ enum EgressMain {
   ) {
     defer { close(client) }
     guard lease.alive() else { return }
-    let head = ConnectGate.readHead(client)
+    let head = ConnectGate.readHead(client, alive: lease.alive)
     if head.starts(with: Array((EgressReadiness.requestLine + "\r\n").utf8)) {
       let response =
         readiness?.response(head, capability: capability, alive: lease.alive)
@@ -102,12 +102,12 @@ enum EgressMain {
     let host: String
     switch ConnectGate.connectTarget(head, allow: allow, capability: capability) {
     case .deny(let denial):
-      respond(client, denial)
+      respond(client, denial, alive: lease.alive)
       return
     case .connect(let approved): host = approved
     }
     guard admission.tryTunnel() else {
-      respond(client, .unsupported)
+      respond(client, .unsupported, alive: lease.alive)
       return
     }
     defer { admission.endTunnel() }
@@ -116,7 +116,7 @@ enum EgressMain {
         client, host: host, connect: { try connectPublic($0, admission: admission) },
         alive: lease.alive)
     } catch {
-      respond(client, .unsupported)
+      respond(client, .unsupported, alive: lease.alive)
     }
   }
 
@@ -154,8 +154,8 @@ enum EgressMain {
     return String(cString: buffer)
   }
 
-  static func respond(_ client: Int32, _ denial: Denial?) {
-    ConnectGate.writeResponse(client, denial)
+  static func respond(_ client: Int32, _ denial: Denial?, alive: () -> Bool) {
+    ConnectGate.writeResponse(client, denial, alive: alive)
   }
 }
 

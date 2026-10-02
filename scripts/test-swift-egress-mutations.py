@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that filtered-egress DNS/ownership and relay tests detect broken behavior.
+"""Check filtered-egress CONNECT, readiness, DNS/ownership and relay tripwires.
 
 Runs only local numeric-resolution, stalled-worker and socket fixtures. No public DNS,
 provider traffic, VM, or production policy bypass. Compile failures do not count.
@@ -13,6 +13,50 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FAULTS = [
+    ('connect-complete-head', 'text.hasSuffix("\\r\\n\\r\\n")', 'true',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-head-size', 'bytes.count <= EgressBudgets.maxHeadBytes,', 'true,',
+     'connectHeadBoundsFramingBytesAndHeaderCount'),
+    ('connect-empty-name', '!name.isEmpty, name.utf8.allSatisfy(isToken),',
+     'name.utf8.allSatisfy(isToken),',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-header-names', 'name.utf8.allSatisfy(isToken),', 'true,',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-header-values', 'value.utf8.allSatisfy({ $0 == 9 || ($0 >= 32 && $0 != 127) })', 'true',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-host-authority', '!seenHost, hostMatches(String(value), target: host)', '!seenHost',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-host-duplicate', '!seenHost, hostMatches(String(value), target: host)',
+     'hostMatches(String(value), target: host)',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-framing-fields', 'case "transfer-encoding", "content-length": throw DenialError(.unsupported)',
+     'case "transfer-encoding", "content-length": break',
+     'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
+    ('connect-poll-interruption', 'if errno == EINTR { continue }', 'if errno == EINTR { return [] }',
+     'connectHeadRetriesWaitsAndInterruptionsWithoutConsumingTunnelBytes'),
+    ('connect-poll-timeout', 'if polled == 0 { continue }', 'if polled == 0 { return [] }',
+     'connectHeadRetriesWaitsAndInterruptionsWithoutConsumingTunnelBytes'),
+    ('connect-opaque-payload', 'recv(client, &buffer, take, MSG_DONTWAIT)',
+     'recv(client, &buffer, peeked, MSG_DONTWAIT)',
+     'connectHeadRetriesWaitsAndInterruptionsWithoutConsumingTunnelBytes'),
+    ('connect-read-lease', 'while head.count < EgressBudgets.maxHeadBytes && alive()',
+     'while head.count < EgressBudgets.maxHeadBytes',
+     'connectHeadNeverReturnsAnIncompleteOrRevokedRequest'),
+    ('connect-final-deadline', 'Monotonic.within(start, now: Monotonic.now(), limit: limit), alive()',
+     'true, alive()', 'connectHeadRefusesCompletionAfterItsDeadlineOrLease'),
+    ('connect-final-lease', 'Monotonic.within(start, now: Monotonic.now(), limit: limit), alive()',
+     'Monotonic.within(start, now: Monotonic.now(), limit: limit), true',
+     'connectHeadRefusesCompletionAfterItsDeadlineOrLease'),
+    ('connect-response-write', 'EgressReadiness.write(responseBytes(denial), to: client, alive: alive)',
+     'true', 'connectResponsesAreCompleteSignalSafeAndLeaseBound'),
+    ('connect-response-lease', 'EgressReadiness.write(responseBytes(denial), to: client, alive: alive)',
+     'EgressReadiness.write(responseBytes(denial), to: client, alive: { true })',
+     'connectResponsesAreCompleteSignalSafeAndLeaseBound'),
+    ('tunnel-open-handshake', 'guard ConnectGate.writeResponse(client, nil, alive: alive) else { return }',
+     '_ = ConnectGate.writeResponse(client, nil, alive: alive)',
+     'tunnelRequiresACompleteHandshakeBeforeRelayingAndClosesItsUpstream'),
+    ('tunnel-open-lease', 'guard alive() else { return }', '// fault: connect after revocation',
+     'tunnelDoesNotConnectOrRespondAfterRevocation'),
     ('readiness-auth', 'ConnectParser.constantTimeEqual(password, capability)', 'true',
      'readinessRefusesUnauthorizedRevokedAndAmbiguousChallenges'),
     ('readiness-lease', 'Self.challenge(head, capability: capability), alive()',
@@ -102,7 +146,8 @@ def main():
         failures = []
         for ident, original, replacement, test_filter in faults:
             filename = ('Readiness.swift' if ident.startswith('readiness-') else
-                        'Tunnel.swift' if ident.startswith('relay-') else 'Dial.swift')
+                        'Policy.swift' if ident.startswith('connect-') else
+                        'Tunnel.swift' if ident.startswith(('relay-', 'tunnel-open-')) else 'Dial.swift')
             path = package / 'Sources/IsoEgressCore' / filename
             source = path.read_text()
             if source.count(original) != 1:
