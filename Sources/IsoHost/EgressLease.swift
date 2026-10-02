@@ -13,28 +13,37 @@ public enum EgressLease {
     return sidecar.machineID.rawValue == machineID && sidecar.lastObservedOwnerPID == ownerPID
   }
 
-  public static func liveIdentity(at path: String) -> (bootID: String, pid: Int32)? {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let bootID = object["bootId"] as? String,
-      let pid = object["pid"] as? Int
-    else { return nil }
-    return (bootID, Int32(pid))
+  private struct LiveIdentity: Decodable {
+    let bootId: String
+    let pid: Int32
   }
 
-  /// A missing or unreadable record, or an unparseable deadline, is closed.
-  /// No `expiresAt` means the session has no TTL.
+  private struct SessionRecord: Decodable {
+    let expiresAt: Date?
+  }
+
+  public static func liveIdentity(at path: String) -> (bootID: String, pid: Int32)? {
+    guard let bytes = try? StateStore.readControlFile(path),
+      let live = try? JSONDecoder().decode(LiveIdentity.self, from: Data(bytes)),
+      live.pid > 0, !live.bootId.isEmpty
+    else { return nil }
+    return (live.bootId, live.pid)
+  }
+
+  /// A missing/unreadable record or invalid deadline is closed. Only an
+  /// absent or null `expiresAt` means the session has no TTL.
   public static func sessionOpen(recordPath: String, now: Date) -> Bool {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: recordPath)),
-      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    guard let bytes = try? StateStore.readControlFile(recordPath),
+      let record = try? decoder.decode(SessionRecord.self, from: Data(bytes))
     else { return false }
-    guard let text = object["expiresAt"] as? String else { return true }
-    guard let deadline = ISO8601DateFormatter().date(from: text) else { return false }
+    guard let deadline = record.expiresAt else { return true }
     return now < deadline
   }
 
-  /// A missing or unreadable lock is not held. An exclusive non-blocking
-  /// flock that succeeds means no owner process holds it.
+  /// Only non-blocking lock contention proves an owner may hold the lock;
+  /// successful acquisition, open failure, or any other probe error is closed.
   public static func ownerLockHeld(at path: String) -> Bool {
     let fd = open(path, O_RDWR | O_CLOEXEC)
     guard fd >= 0 else { return false }
@@ -43,7 +52,7 @@ public enum EgressLease {
       _ = flock(fd, LOCK_UN)
       return false
     }
-    return true
+    return errno == EWOULDBLOCK || errno == EAGAIN
   }
 
   /// The recorded identity, live boot, session deadline, and owner lock must

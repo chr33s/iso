@@ -566,8 +566,11 @@ anything listening on the host's addresses (see the
 A host lease renews the companion once a second only while the runtime's
 live `bootId` still matches the boot that started it, the owner lock is
 held, and the session deadline has not passed. A leftover `live.json` does
-not keep the grant. The companion exits if that renewal stops. A missing
-companion or boot id fails the boot; there is no NAT fallback. An unapproved
+not keep the grant. Lease records are bounded regular files, read without
+following symlinks. Owner PIDs must be positive signed 32-bit integers;
+malformed identities, deadlines, and lock-probe errors stop renewal. Only an
+absent or null deadline means unlimited TTL. The companion exits if that
+renewal stops. A missing companion or boot id fails the boot; there is no NAT fallback. An unapproved
 CONNECT is denied before a target is chosen. An approved name is relayed byte for byte, without the proxy header, in a
 socket fixture. A slow request head is abandoned after five seconds, DNS after five,
 a connect after ten, and an idle tunnel after 300, all on a monotonic

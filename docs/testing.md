@@ -626,6 +626,16 @@ run this gate. These are local worker/ownership tests, not a VM exhaustion gate.
 
 DNS/candidate admission for the credential proxy has the dedicated tests below.
 
+### Filtered lease-record checks
+
+Lease-record tests exercise typed PID/date decoding, native ISO8601 date
+encoding, absent/null TTL compatibility, and bounded no-symlink control reads.
+A real socket descriptor produces `ENOTSUP` from `flock`, which must not be
+mistaken for owner contention. Six `filtered-lease-*` faults remove decoding,
+positive-PID validation, lock-error classification, or control-file checks;
+the deadline/owner renewal faults also remain applicable. These local tests do
+not qualify live filtered-VM revocation or composite readiness.
+
 ### Native owner startup and launchd scheduling
 
 `iso-sandbox start` bootstraps its job and explicitly requests `launchctl

@@ -185,6 +185,107 @@ import Testing
       recordPath: directory.appending(path: "missing.json").path, now: Date()) == false)
 }
 
+@Test(arguments: [
+  "0", "-1", "2147483648", "-2147483649", "9223372036854775807",
+  "18446744073709551615", "1.5", "true", "false", "null", #""7""#,
+])
+func egressLeaseRejectsInvalidOwnerPIDs(pidJSON: String) throws {
+  let root = try scratchDirectory("lease-pid")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let path = root + "/live.json"
+  try writeFile(path, #"{"bootId":"boot","pid":\#(pidJSON)}"#)
+  #expect(EgressLease.liveIdentity(at: path) == nil)
+}
+
+@Test func egressLeaseDecodesOnlyValidLiveIdentities() throws {
+  let root = try scratchDirectory("lease-live")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let path = root + "/live.json"
+  for pid in [Int32(1), Int32.max] {
+    try writeFile(path, #"{"bootId":"boot","pid":\#(pid),"unused":true}"#)
+    let identity = try #require(EgressLease.liveIdentity(at: path))
+    #expect(identity.bootID == "boot")
+    #expect(identity.pid == pid)
+  }
+  for text in [
+    "{}", "[]", "not-json", #"{"bootId":"","pid":7}"#,
+    #"{"bootId":true,"pid":7}"#, #"{"pid":7}"#, #"{"bootId":"boot"}"#,
+  ] {
+    try writeFile(path, text)
+    #expect(EgressLease.liveIdentity(at: path) == nil)
+  }
+  #expect(EgressLease.liveIdentity(at: root + "/missing.json") == nil)
+}
+
+@Test(arguments: ["7", "false", "true", "[]", "{}", #""invalid-date""#])
+func egressLeaseRejectsMalformedSessionDeadlines(deadlineJSON: String) throws {
+  let root = try scratchDirectory("lease-deadline")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let path = root + "/record.json"
+  try writeFile(path, #"{"expiresAt":\#(deadlineJSON)}"#)
+  #expect(!EgressLease.sessionOpen(recordPath: path, now: Date()))
+}
+
+@Test func egressLeaseAcceptsOnlyOpenNativeSessionRecords() throws {
+  let root = try scratchDirectory("lease-native-record")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let path = root + "/record.json"
+  let now = Date(timeIntervalSince1970: 1_700_000_000)
+  for text in ["{}", #"{"expiresAt":null,"other":"ignored"}"#] {
+    try writeFile(path, text)
+    #expect(EgressLease.sessionOpen(recordPath: path, now: now))
+  }
+  for offset in [-1.0, 0.0, 1.0] {
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(["expiresAt": now.addingTimeInterval(offset)])
+    try data.write(to: URL(fileURLWithPath: path))
+    #expect(EgressLease.sessionOpen(recordPath: path, now: now) == (offset > 0))
+  }
+  for text in ["[]", "null", "not-json"] {
+    try writeFile(path, text)
+    #expect(!EgressLease.sessionOpen(recordPath: path, now: now))
+  }
+}
+
+@Test func egressLeaseDoesNotMistakeLockProbeErrorsForContention() throws {
+  let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+  #expect(fd >= 0)
+  guard fd >= 0 else { return }
+  defer { close(fd) }
+  let path = "/dev/fd/\(fd)"
+  let probe = open(path, O_RDWR | O_CLOEXEC)
+  #expect(probe >= 0)
+  guard probe >= 0 else { return }
+  defer { close(probe) }
+  #expect(flock(probe, LOCK_EX | LOCK_NB) == -1)
+  #expect(errno == ENOTSUP)
+  #expect(!EgressLease.ownerLockHeld(at: path))
+}
+
+@Test func egressLeaseControlFilesAreBoundedRegularFilesWithoutSymlinks() throws {
+  let root = try scratchDirectory("lease-controls")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let live = root + "/live.json"
+  let record = root + "/record.json"
+  try writeFile(live, #"{"bootId":"boot","pid":7}"#)
+  try writeFile(record, "{}")
+  #expect(EgressLease.liveIdentity(at: live)?.pid == 7)
+  #expect(EgressLease.sessionOpen(recordPath: record, now: Date()))
+  try FileManager.default.createSymbolicLink(atPath: root + "/live-link", withDestinationPath: live)
+  try FileManager.default.createSymbolicLink(
+    atPath: root + "/record-link", withDestinationPath: record)
+  #expect(EgressLease.liveIdentity(at: root + "/live-link") == nil)
+  #expect(!EgressLease.sessionOpen(recordPath: root + "/record-link", now: Date()))
+  let prefix = String(repeating: " ", count: 1 << 20)
+  try writeFile(live, prefix + #"{"bootId":"boot","pid":7}"#)
+  try writeFile(record, prefix + "{}")
+  #expect(EgressLease.liveIdentity(at: live) == nil)
+  #expect(!EgressLease.sessionOpen(recordPath: record, now: Date()))
+  #expect(EgressLease.liveIdentity(at: root) == nil)
+  #expect(!EgressLease.sessionOpen(recordPath: root, now: Date()))
+}
+
 @Test func egressLeaseStopsWhenTheRecordedOwnerChanges() {
   #expect(
     EgressLease.stillOwns(directory: "/no/such/instance", machineID: "missing", ownerPID: 1)

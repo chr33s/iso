@@ -37,6 +37,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Boundary hardening and local secrets
 
+- **Filtered lease state** uses typed PID/date decoding and bounded regular
+  control-file reads without following symlinks. Invalid identities, malformed
+  deadlines, and lock-probe errors stop renewal; only an absent/null deadline
+  permits unlimited TTL. This hardening does not qualify full filtered egress.
 - **Apple owner startup** explicitly requests the bootstrapped launchd job
   without killing an already-started owner. A loaded but deferred `RunAtLoad`
   job no longer stalls first boot. Failed requests attempt to unload the job
