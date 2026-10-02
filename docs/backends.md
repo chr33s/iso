@@ -134,7 +134,7 @@ Marketplaces and plugins are not baked into the image. The first boot installs t
 1. Write `operation.json`.
 2. `iso-sandbox create` with explicit CPUs, memory (MiB), and disk (`--disk`, or the committed image's size, or `vm.template_size_gib`). The disk is an APFS clone of the image's cached base, so this takes milliseconds after an image's first use.
 3. Check the runtime's record: owner tag, CPUs, and memory.
-4. `iso-sandbox start` loads the sandbox's owner as a launchd job and returns once it answers. The owner process holds the VM and a dedicated `10.231.N.0/24` vmnet network.
+4. `iso-sandbox start` loads the sandbox's owner as a launchd job, explicitly requests startup with `kickstart` without `-k`, and returns once the owner answers. A loaded but deferred `RunAtLoad` job is not readiness. The owner process holds the VM and a dedicated `10.231.N.0/24` vmnet network.
 5. The isolation gate reads the effective VM configuration from the owner and checks all of the following:
    - The sandbox runs `/sbin/init`, without nested virtualization.
    - It boots from its own disk under `runtime/sandboxes/<id>/`.
@@ -166,7 +166,7 @@ All three need the instance stopped.
 - **Stop.** `stop` asks systemd to halt (the runtime forces the VM down after 60 s) and confirms the sandbox reached `stopped`. An unconfirmed stop is `APPLE_OPERATION_UNCERTAIN`, and nothing is deleted. When the normal liveness check fails (an unqualified runtime, a sandbox that fails the gate, or an unfinished journal), `iso stop` stops the owned sandbox through the runtime alone, with no SSH and no qualification, and keeps its disk. `iso status` lists such an instance as `unknown`. A boot that fails or times out during `iso start` stops the sandbox again.
 - **Interrupts.** Ctrl-C interrupts only image builds, creates, and boots. Stop, delete, and cleanup commands always run to completion.
 - **Destroy.** `destroy` acts only on sandboxes whose names and local records match this installation's owner ID; the runtime also refuses to delete a sandbox whose recorded owner differs. It stops and deletes the sandbox, confirms it is gone, then removes local state. If an operation was interrupted (`operation.json` exists), `destroy` checks what the runtime actually has and removes only what the journal says isolate created.
-- **Crashed owners.** The VM lives inside its owner process. If that process dies, the VM powers off (no VM is ever orphaned) and launchd starts the owner again, which boots the same disk. Journaled ext4 recovers, but unsynced guest writes can be lost.
+- **Crashed owners.** The VM lives inside its owner process. If that process dies, the VM powers off (no VM is ever orphaned). The launchd job requests relaunch after abnormal exits, booting the same disk, but the local automatic-respawn gate is currently blocked ([evidence](testing.md#native-owner-startup-and-launchd-scheduling)). Journaled ext4 recovers on restart, but unsynced guest writes can be lost.
 - **Subnet leaks.** After an unclean exit, vmnet keeps the sandbox's subnet reserved for hours. The runtime then quarantines it and moves the sandbox to a free subnet, so its address changes while its identity does not.
 - **Image deletion.** Only this installation's images and committed disks are deleted. Instances never depend on them after creation.
 

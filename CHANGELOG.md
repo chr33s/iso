@@ -37,6 +37,11 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Boundary hardening and local secrets
 
+- **Apple owner startup** explicitly requests the bootstrapped launchd job
+  without killing an already-started owner. A loaded but deferred `RunAtLoad`
+  job no longer stalls first boot. Failed requests attempt to unload the job
+  and preserve cleanup errors. Automatic crash-respawn qualification remains
+  blocked on the local host; explicit-start evidence does not prove it.
 - **Staged pulls**: `iso diff` and `iso pull --review` pull the guest
   workspace into a host-side stage and print it for review; `iso pull --apply
   [--stage-id ID]` applies it and `--discard` drops it. Special files, hard

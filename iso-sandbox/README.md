@@ -12,8 +12,13 @@ forwarding. The sandbox record has no field for any of those, so they cannot be
 configured. A running sandbox is owned by one `iso-sandbox run` process, which
 holds the VM (Virtualization.framework runs it in-process) and serves a
 peer-UID-checked 0600 Unix socket for exec/stop/inspect. `start` loads that
-owner as a launchd job from a plist in the sandbox directory. launchd respawns
-it if it is killed, and nothing starts at login.
+owner as a launchd job from a plist in the sandbox directory and explicitly
+requests startup with `kickstart` (without `-k`, so an already-started owner is
+not killed). A failed startup request attempts to unload that job and reports
+any unload failure. Readiness still requires the owner's control response.
+The job is configured to relaunch after abnormal exits, and nothing starts at
+login; the local crash-respawn qualification remains blocked
+([testing](../docs/testing.md#native-owner-startup-and-launchd-scheduling)).
 
 ## Build
 

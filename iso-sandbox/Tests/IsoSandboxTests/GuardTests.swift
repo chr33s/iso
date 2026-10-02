@@ -156,6 +156,57 @@ import Testing
     #expect(plist["ProgramArguments"] as? [String] == ["/x", "run"])
   }
 
+  @Test func launchdDemandsAnOwnerWithoutKillingAnExistingOne() throws {
+    var calls: [[String]] = []
+    try Launchd.bootstrap(
+      plist: URL(fileURLWithPath: "/state/launchd.plist"), domain: "gui/501", label: "fixture"
+    ) { argv in
+      calls.append(argv)
+      return (0, "")
+    }
+    #expect(
+      calls == [
+        ["/bin/launchctl", "bootstrap", "gui/501", "/state/launchd.plist"],
+        ["/bin/launchctl", "kickstart", "gui/501/fixture"],
+      ])
+  }
+
+  @Test(arguments: ["bootstrap", "kickstart", "rollback"])
+  func launchdStartupFailurePreservesItsCauseAndCleansOnlyItsJob(failure: String) {
+    var calls: [[String]] = []
+    do {
+      try Launchd.bootstrap(
+        plist: URL(fileURLWithPath: "/state/launchd.plist"), domain: "user/501", label: "fixture"
+      ) { argv in
+        calls.append(argv)
+        switch argv[1] {
+        case "bootstrap": return failure == "bootstrap" ? (5, "load-denied") : (0, "")
+        case "kickstart": return (7, "demand-denied")
+        default: return failure == "rollback" ? (9, "unload-denied") : (0, "")
+        }
+      }
+      Issue.record("startup failure was ignored")
+    } catch let error as SandboxError {
+      if failure == "bootstrap" {
+        #expect(calls.count == 1)
+        #expect(error.description == "launchctl bootstrap failed (5): load-denied")
+      } else {
+        #expect(
+          calls == [
+            ["/bin/launchctl", "bootstrap", "user/501", "/state/launchd.plist"],
+            ["/bin/launchctl", "kickstart", "user/501/fixture"],
+            ["/bin/launchctl", "bootout", "user/501/fixture"],
+          ])
+        #expect(error.description.contains("launchctl kickstart failed (7): demand-denied"))
+        #expect(
+          error.description.contains("launchctl bootout also failed") == (failure == "rollback"))
+        if failure == "rollback" { #expect(error.description.contains("(9): unload-denied")) }
+      }
+    } catch {
+      Issue.record("unexpected startup error type")
+    }
+  }
+
   @Test func guestOutputIsCapped() throws {
     let w = BufferWriter()
     try w.write(Data(count: BufferWriter.limit - 1))

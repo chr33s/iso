@@ -236,7 +236,7 @@ public enum Sandboxes {
         arguments: ["run", id.rawValue, "--root", root.root.path], log: paths.ownerLog)
       try Launchd.write(plist, to: paths.launchdPlist)
       try clearOwnerFailure(paths)
-      try Launchd.bootstrap(plist: paths.launchdPlist, domain: domain)
+      try Launchd.bootstrap(plist: paths.launchdPlist, domain: domain, label: paths.launchdLabel)
     }
 
     let deadline = Date().addingTimeInterval(wait)

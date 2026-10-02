@@ -497,6 +497,11 @@ update the fault's original text so it still applies (a stale entry fails the
 run). The [`mutation-check`](../.agents/skills/mutation-check/SKILL.md) skill
 walks this workflow.
 
+Entries whose source is under `iso-sandbox/` run that package's tests with
+`--force-resolved-versions --no-parallel`; controls are grouped by package.
+The runtime owner-demand, non-killing startup, rollback, and failure propagation
+entries target `Launchd.bootstrap`. Other entries retain the host test target.
+
 The credential proxy has its own policy mutation sweep (Muter) and targeted
 mutation script; see [Swift proxy policy mutation
 sweep](#swift-proxy-policy-mutation-sweep).
@@ -620,6 +625,41 @@ compilation errors and empty selections do not count. CI and release preflight
 run this gate. These are local worker/ownership tests, not a VM exhaustion gate.
 
 DNS/candidate admission for the credential proxy has the dedicated tests below.
+
+### Native owner startup and launchd scheduling
+
+`iso-sandbox start` bootstraps its job and explicitly requests `launchctl
+kickstart DOMAIN/LABEL` without `-k`. A nonzero request attempts `bootout` for
+that exact job; both failure statuses remain visible if cleanup also fails.
+The ordinary owner ping/isolation checks still establish readiness.
+
+The local startup/recovery checkpoint used a working-tree patch atop
+`ddb560a0dc57a0ffa892b82c97764a1f6f96f2f1`, on arm64 macOS 27.0 (26A428),
+Swift 6.4, and container client/service 1.5.0. The ad-hoc-signed runtime used
+for the manual non-killing demand and recovery retry had SHA256
+`82b24e7fc72869e4768207982f37c8e27e5628538cdab5695d84403a8646b113`.
+
+A local retained diagnostic showed a bootstrapped job
+with `runs = 0`, `state = not running`, and `pended nondemand spawn = speculative`.
+Demanding that job started its owner and VM. A repeated non-killing demand
+preserved the running owner's PID and `live.bootId`.
+
+The subsequent `./tests/run-integration.sh --only iso,recovery` run built the
+images and passed setup plus the `iso` lifecycle checks, but exited **1**:
+**109 passed, 2 failed, 1 skipped**. The recovery failures were automatic owner
+respawn after SIGKILL and its dependent synced-data check. The Touch ID secret
+gate was skipped. A retained recovery-only retry reproduced those failures.
+The killed job remained loaded with one run, no owner PID, and a pending
+semaphore spawn. Separate temporary `/bin/sleep` jobs also did not respawn
+within 15 seconds after SIGKILL with conditional or unconditional keepalive.
+These observations do not identify the scheduling cause. Automatic respawn
+qualification is **blocked**; do not infer it from successful explicit starts
+or change clean-exit/TTL behavior to work around it.
+
+A separate fresh `./tests/run-integration.sh --only iso` run exited **0**:
+**94 passed, 0 failed, 1 skipped** (Touch ID). This covers setup and `iso`, not
+a fresh full-suite or filtered qualification. Diagnostic VMs, images, and disks
+were removed; private failure/status logs were retained.
 
 ### Local filtered-VM evidence (partial)
 

@@ -382,6 +382,18 @@ FAULTS = [
      '"-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"',
      '"-o Acquire::Retries=0"',
      "imageAPTCommandsExposeProgressAndBoundRepositoryReads"),
+    ("runtime-owner-demand", "iso-sandbox/Sources/IsoSandboxCore/Launchd.swift",
+     'request([launchctl, "kickstart", target])', '(status: Int32(0), output: "")',
+     "launchdDemandsAnOwnerWithoutKillingAnExistingOne"),
+    ("runtime-owner-no-kill", "iso-sandbox/Sources/IsoSandboxCore/Launchd.swift",
+     'request([launchctl, "kickstart", target])', 'request([launchctl, "kickstart", "-k", target])',
+     "launchdDemandsAnOwnerWithoutKillingAnExistingOne"),
+    ("runtime-owner-rollback", "iso-sandbox/Sources/IsoSandboxCore/Launchd.swift",
+     'request([launchctl, "bootout", target])', '(status: Int32(0), output: "")',
+     "launchdStartupFailurePreservesItsCauseAndCleansOnlyItsJob"),
+    ("runtime-owner-demand-error", "iso-sandbox/Sources/IsoSandboxCore/Launchd.swift",
+     "guard started.status == 0 else {", "guard true else {",
+     "launchdStartupFailurePreservesItsCauseAndCleansOnlyItsJob"),
     ("filtered-handoff-boot", "Sources/IsoHost/FilteredHandoff.swift",
      "guard recordedBootID == liveBootID else { return .bootChanged }",
      "if false { return .bootChanged }",
@@ -389,18 +401,27 @@ FAULTS = [
 ]
 
 
-TOP_LEVEL_SKIPS = {".git", ".build", "target", "iso-proxy", "iso-sandbox"}
+TOP_LEVEL_SKIPS = {".git", ".build", "target", "iso-proxy"}
 
 
 def skip_top_level(directory, names):
+    if Path(directory) == ROOT / "iso-sandbox":
+        return set(names) & {".build", ".swiftpm"}
     if Path(directory) != ROOT:
         return set()
     return {name for name in names if name in TOP_LEVEL_SKIPS or name.startswith("mutants.out")}
 
 
-def run_tests(scratch, test_filter):
+def test_package(relative):
+    return "iso-sandbox" if relative.startswith("iso-sandbox/") else "."
+
+
+def run_tests(scratch, test_filter, package="."):
+    argv = ["swift", "test"]
+    if package != ".":
+        argv += ["--package-path", str(scratch / package), "--force-resolved-versions", "--no-parallel"]
     return subprocess.run(
-        ["swift", "test", "--filter", test_filter],
+        argv + ["--filter", test_filter],
         cwd=scratch, capture_output=True, text=True, timeout=1800,
     )
 
@@ -425,7 +446,7 @@ def run_fault(scratch, fault, verbose):
         # Concurrency faults are timing dependent; retry to make detection robust.
         attempts = 5 if ident == "config-writer-lock" else 1
         for _ in range(attempts):
-            result = run_tests(scratch, test_filter)
+            result = run_tests(scratch, test_filter, test_package(relative))
             if verbose:
                 print(result.stdout[-2000:], result.stderr[-2000:])
             if failed_a_test(result):
@@ -439,7 +460,7 @@ def run_fault(scratch, fault, verbose):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--only", help="run a single fault id")
+    parser.add_argument("--only", choices=[f[0] for f in FAULTS], help="run a single fault id")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     faults = [f for f in FAULTS if not args.only or f[0] == args.only]
@@ -447,19 +468,19 @@ def main():
         scratch = Path(directory) / "iso"
         shutil.copytree(
             ROOT, scratch,
-            # Top-level build output and the companion packages only: a
-            # pattern would also drop same-named fixtures (tests/fixtures/
-            # iso-sandbox), and fuzz/Targets is a package target.
+            # Skip build output and unused companion packages, not similarly
+            # named fixtures or fuzz/Targets (a package target).
             ignore=skip_top_level,
         )
         # Control: every filter passes unmodified, so a failure under a fault
         # is the fault's effect and not a broken copy or a flaky test.
-        filters = "|".join(sorted({f[4] for f in faults}))
-        control = run_tests(scratch, filters)
-        if control.returncode != 0 or not passed_count(control):
-            print(control.stdout[-3000:], control.stderr[-3000:], file=sys.stderr)
-            print("control run failed: the unmodified copy does not pass", file=sys.stderr)
-            return 2
+        for package in sorted({test_package(f[1]) for f in faults}):
+            filters = "|".join(sorted({f[4] for f in faults if test_package(f[1]) == package}))
+            control = run_tests(scratch, filters, package)
+            if control.returncode != 0 or not passed_count(control):
+                print(control.stdout[-3000:], control.stderr[-3000:], file=sys.stderr)
+                print(f"control run failed: the unmodified {package} copy does not pass", file=sys.stderr)
+                return 2
         survivors = []
         for fault in faults:
             outcome = run_fault(scratch, fault, args.verbose)

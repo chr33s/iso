@@ -4,9 +4,9 @@ import Foundation
 ///
 /// The VM lives inside its owner process, so each running sandbox is one
 /// launchd job loaded from a plist in the sandbox directory (never in
-/// `~/Library/LaunchAgents`, so nothing starts at login). launchd restarts the
-/// owner whenever it exits abnormally (killed, crashed); the owner exits 0 on a
-/// clean halt and on its own startup errors, so neither respawns.
+/// `~/Library/LaunchAgents`, so nothing starts at login). The job requests
+/// relaunch after abnormal exits; the owner exits 0 on a clean halt and on its
+/// own startup errors, so neither requests a relaunch.
 public enum Launchd {
   static let launchctl = "/bin/launchctl"
 
@@ -45,10 +45,29 @@ public enum Launchd {
     run([launchctl, "print", "\(domain)/\(label)"]).status == 0
   }
 
-  public static func bootstrap(plist url: URL, domain: String) throws {
-    let r = run([launchctl, "bootstrap", domain, url.path])
-    guard r.status == 0 else {
-      throw SandboxError("launchctl bootstrap failed (\(r.status)): \(r.output)")
+  public static func bootstrap(plist url: URL, domain: String, label: String) throws {
+    try bootstrap(plist: url, domain: domain, label: label, request: run)
+  }
+
+  static func bootstrap(
+    plist url: URL, domain: String, label: String,
+    request: ([String]) -> (status: Int32, output: String)
+  ) throws {
+    let loaded = request([launchctl, "bootstrap", domain, url.path])
+    guard loaded.status == 0 else {
+      throw SandboxError("launchctl bootstrap failed (\(loaded.status)): \(loaded.output)")
+    }
+    let target = "\(domain)/\(label)"
+    // RunAtLoad may remain a speculative spawn. Demand startup, but never
+    // use -k: an owner that already started must keep its VM and boot identity.
+    let started = request([launchctl, "kickstart", target])
+    guard started.status == 0 else {
+      let unloaded = request([launchctl, "bootout", target])
+      var message = "launchctl kickstart failed (\(started.status)): \(started.output)"
+      if unloaded.status != 0 {
+        message += "; launchctl bootout also failed (\(unloaded.status)): \(unloaded.output)"
+      }
+      throw SandboxError(message)
     }
   }
 
