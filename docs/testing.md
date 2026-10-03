@@ -813,46 +813,27 @@ not qualify live filtered-VM revocation or composite readiness.
 
 ### Native owner startup and launchd scheduling
 
-`iso-sandbox start` bootstraps its job and explicitly requests `launchctl
+`iso-sandbox start` loads its owner into `user/<uid>`, with
+`LimitLoadToSessionType = Background`, and explicitly requests `launchctl
 kickstart DOMAIN/LABEL` without `-k`. A nonzero request attempts `bootout` for
 that exact job; both failure statuses remain visible if cleanup also fails.
-The ordinary owner ping/isolation checks still establish readiness.
+Readiness still requires the owner's control response. Stop and delete also
+unload GUI-domain jobs left by older runtimes.
 
-The local startup/recovery checkpoint used a working-tree patch atop
-`ddb560a0dc57a0ffa892b82c97764a1f6f96f2f1`, on arm64 macOS 27.0 (26A428),
-Swift 6.4, and container client/service 1.5.0. The ad-hoc-signed runtime used
-for the manual non-killing demand and recovery retry had SHA256
-`82b24e7fc72869e4768207982f37c8e27e5628538cdab5695d84403a8646b113`.
+With the GUI session locked, `gui/<uid>` was in on-demand-only mode. On macOS
+27.0 (26A428), launchd deferred automatic VM-owner respawn after SIGKILL and
+reported a pending semaphore spawn. Independent `/bin/sleep` jobs reproduced
+that deferral. Explicit startup succeeded, so startup readiness alone did not
+qualify recovery. The background user domain continued automatic respawn while
+the same GUI session stayed locked; omitting the Background session type made
+user-domain bootstrap fail with status 5.
 
-A local retained diagnostic showed a bootstrapped job
-with `runs = 0`, `state = not running`, and `pended nondemand spawn = speculative`.
-Demanding that job started its owner and VM. A repeated non-killing demand
-preserved the running owner's PID and `live.bootId`.
-
-The subsequent `./tests/run-integration.sh --only iso,recovery` run built the
-images and passed setup plus the `iso` lifecycle checks, but exited **1**:
-**109 passed, 2 failed, 1 skipped**. The recovery failures were automatic owner
-respawn after SIGKILL and its dependent synced-data check. The Touch ID secret
-gate was skipped. A retained recovery-only retry reproduced those failures.
-The killed job remained loaded with one run, no owner PID, and a pending
-semaphore spawn. Separate temporary `/bin/sleep` jobs also did not respawn
-within 15 seconds after SIGKILL with conditional or unconditional keepalive.
-A follow-up at `34f41243093d67f4d15a565dbc83fe051fbb6a73` kept two temporary
-`/bin/sleep 600` jobs alive for 20 seconds before SIGKILL, then observed them
-for 120 seconds. Neither conditional nor unconditional keepalive respawned.
-Scoped unified logs for both fixtures and the earlier VM jobs explicitly said
-`pending spawn, domain in on-demand-only mode`; `launchctl print gui/501`
-reported `on-demand count = 1`. That identifies launchd's reported deferral
-reason, not why the domain entered that mode. Both fixture jobs were unloaded;
-no global launchd settings or VM restart/TTL policy were changed. A separate
-user-domain bootstrap failed with status 5 and is not a working fallback.
-Automatic respawn qualification is **blocked**; do not infer it from successful
-explicit starts or change clean-exit/TTL behavior to work around it.
-
-A separate fresh `./tests/run-integration.sh --only iso` run exited **0**:
-**94 passed, 0 failed, 1 skipped** (Touch ID). This covers setup and `iso`, not
-a fresh full-suite or filtered qualification. Diagnostic VMs, images, and disks
-were removed; private failure/status logs were retained.
+The `recovery` phase verifies a new live owner PID after SIGKILL, synced data
+survival, and no respawn after a clean guest poweroff, including a wait beyond
+the launchd throttle interval. The `iso` phase also verifies that session TTL
+stops the VM and that an explicit start begins a new session. The
+`runtime-owner-background-*` faults pin the domain/session pair alongside the
+existing demand, non-killing startup, rollback, and error-propagation faults.
 
 ### Local filtered-VM evidence (partial)
 

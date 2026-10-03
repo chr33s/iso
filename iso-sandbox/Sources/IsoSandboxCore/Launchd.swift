@@ -10,10 +10,9 @@ import Foundation
 public enum Launchd {
   static let launchctl = "/bin/launchctl"
 
-  /// `gui/<uid>` when a GUI session exists, else `user/<uid>` (e.g. over SSH).
+  /// The background user domain keeps supervising VMs while the GUI is locked.
   public static func domain() -> String {
-    let uid = getuid()
-    return run([launchctl, "print", "gui/\(uid)"]).status == 0 ? "gui/\(uid)" : "user/\(uid)"
+    "user/\(getuid())"
   }
 
   public static func plist(label: String, executable: String, arguments: [String], log: URL)
@@ -23,6 +22,8 @@ public enum Launchd {
       "Label": label,
       "ProgramArguments": [executable] + arguments,
       "RunAtLoad": true,
+      // Without this session type, bootstrap into the user domain is rejected.
+      "LimitLoadToSessionType": "Background",
       "KeepAlive": ["SuccessfulExit": false],
       "ThrottleInterval": 10,
       // The owner halts systemd on SIGTERM; give it time before SIGKILL.
@@ -71,9 +72,7 @@ public enum Launchd {
     }
   }
 
-  /// Unload `label` from whichever domain holds it (a job started over SSH
-  /// lives in `user/`, one started from a GUI session in `gui/`); a job that
-  /// is not loaded is not an error.
+  /// Also unload GUI jobs created by older runtimes; an unloaded job is harmless.
   public static func bootout(_ label: String) {
     let uid = getuid()
     for domain in ["gui/\(uid)", "user/\(uid)"] where isLoaded(label, domain: domain) {

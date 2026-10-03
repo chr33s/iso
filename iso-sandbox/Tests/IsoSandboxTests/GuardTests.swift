@@ -151,6 +151,8 @@ import Testing
     let plist = Launchd.plist(
       label: "l", executable: "/x", arguments: ["run"], log: URL(fileURLWithPath: "/tmp/l"))
     #expect(plist["KeepAlive"] as? [String: Bool] == ["SuccessfulExit": false])
+    #expect(plist["LimitLoadToSessionType"] as? String == "Background")
+    #expect(Launchd.domain() == "user/\(getuid())")
     let env = plist["EnvironmentVariables"] as? [String: String] ?? [:]
     #expect(Set(env.keys) == ["PATH", "HOME"])
     #expect(plist["ProgramArguments"] as? [String] == ["/x", "run"])

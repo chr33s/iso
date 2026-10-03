@@ -632,6 +632,13 @@ if want recovery; then
     check "launchd respawns a killed owner" test "$respawned" = 1
     ready "$r"
     check "synced data survives the crash" test "$(guest "$r" cat /var/lib/iso-test/crash)" = "$m"
+    check "the recovered guest can schedule a clean poweroff" \
+        guest "$r" systemd-run --quiet --unit=iso-test-poweroff --on-active=1 systemctl poweroff
+    for _ in $(seq 100); do [[ "$(state "$r")" == stopped ]] && break; sleep 0.2; done
+    check "a clean guest poweroff stops its owner" test "$(state "$r")" = stopped
+    sleep 12
+    check "launchd leaves a cleanly exited owner stopped" test "$(state "$r")" = stopped
+    check "the sandbox starts after a clean poweroff" boot "$r"
     # A client killed mid-stop does not stop the halt.
     "$SANDBOX" stop --root "$ROOT" "$r" >/dev/null 2>&1 &
     sleep 0.05
