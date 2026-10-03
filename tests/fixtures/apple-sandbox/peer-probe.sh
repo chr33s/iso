@@ -10,6 +10,14 @@ udp() { local out; out="$(echo x | timeout 4 nc -u -w2 "$@" 7778 2>/dev/null)"; 
 icmp() { ping -c2 -W2 "$@" >/dev/null 2>&1; }
 # probe NAME CMD...: emit whether CMD reached the target.
 probe() { local name="$1"; shift; if "$@"; then emit "$name" true; else emit "$name" false; fi; }
+# Qualification callers require the adversarial route/neighbor state to exist;
+# a failed setup must not masquerade as an isolated network.
+inject() {
+    if ! "$@" 2>/dev/null && [[ "${ISO_REQUIRE_INJECTION:-0}" == 1 ]]; then
+        echo "Failed to establish adversarial network state: $1 $2" >&2
+        exit 1
+    fi
+}
 
 probe ipv4-tcp tcp -w2 "$T4"
 probe ipv4-udp udp "$T4"
@@ -19,17 +27,17 @@ probe ipv6-udp udp -6 "$T6"
 probe ipv6-icmp icmp -6 "$T6"
 
 # Forged on-link routes: claim the target is directly on eth0 (bypass gateway).
-ip route add "$T4/32" dev eth0 2>/dev/null
+inject ip route add "$T4/32" dev eth0
 probe ipv4-onlink-route-tcp tcp -w2 "$T4"
 probe ipv4-onlink-route-icmp icmp "$T4"
-ip -6 route add "$T6/128" dev eth0 2>/dev/null
+inject ip -6 route add "$T6/128" dev eth0
 probe ipv6-onlink-route-tcp tcp -6 -w2 "$T6"
 
 # Neighbor manipulation: a static ARP/NDP entry for the target with its real
 # MAC (if known), then retry L2-direct.
 if [[ -n "$TMAC" ]]; then
-    ip neigh replace "$T4" lladdr "$TMAC" dev eth0 nud permanent 2>/dev/null
-    ip -6 neigh replace "$T6" lladdr "$TMAC" dev eth0 nud permanent 2>/dev/null
+    inject ip neigh replace "$T4" lladdr "$TMAC" dev eth0 nud permanent
+    inject ip -6 neigh replace "$T6" lladdr "$TMAC" dev eth0 nud permanent
     probe ipv4-static-neigh-tcp tcp -w2 "$T4"
     probe ipv6-static-neigh-tcp tcp -6 -w2 "$T6"
     ip neigh del "$T4" dev eth0 2>/dev/null; ip -6 neigh del "$T6" dev eth0 2>/dev/null
@@ -39,7 +47,7 @@ ip route del "$T4/32" dev eth0 2>/dev/null; ip -6 route del "$T6/128" dev eth0 2
 # Source spoofing: move our own address into the target's subnet and send.
 T4NET="${T4%.*}"
 SPOOF="$T4NET.250"
-ip addr add "$SPOOF/24" dev eth0 2>/dev/null
+inject ip addr add "$SPOOF/24" dev eth0
 probe ipv4-spoofed-src-tcp tcp -s "$SPOOF" -w2 "$T4"
 probe ipv4-spoofed-src-icmp icmp -I "$SPOOF" "$T4"
 ip addr del "$SPOOF/24" dev eth0 2>/dev/null

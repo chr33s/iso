@@ -621,6 +621,12 @@ which cannot select an upstream destination. It is not credential protection:
 `egress_filter.allowed_hosts` is valid only with `"filtered"`; an empty list
 approves nothing. Agent definition hints are not added to that list. An
 existing instance cannot change its creation-time mode through `--egress`.
+The allowlist is frozen for each running boot. After `iso stop`, `iso start`
+may use a new validated allowlist without recreating the VM. The new policy
+is recorded only after boot isolation and pinned-host-key checks succeed;
+running guest handoffs reject a different configured allowlist. Stop a crashed
+instance explicitly before changing its allowlist, since its owner may still
+be scheduled to respawn.
 
 The mode is fixed when an instance is created; `up`/`start` of an instance
 created under another mode is refused rather than silently widened or

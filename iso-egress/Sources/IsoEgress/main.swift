@@ -55,7 +55,7 @@ enum EgressMain {
       let capability = startup.capability
       Thread {
         defer { admission.endSocket() }
-        handle(
+        EgressSession.handle(
           client, allow: allow, capability: capability, admission: admission, lease: lease,
           readiness: readiness)
       }.start()
@@ -85,78 +85,11 @@ enum EgressMain {
     return fd
   }
 
-  static func handle(
-    _ client: Int32, allow: EgressAllowlist, capability: String, admission: Admission,
-    lease: ControlLease, readiness: EgressReadiness?
-  ) {
-    defer { close(client) }
-    guard lease.alive() else { return }
-    let head = ConnectGate.readHead(client, alive: lease.alive)
-    if head.starts(with: Array((EgressReadiness.requestLine + "\r\n").utf8)) {
-      let response =
-        readiness?.response(head, capability: capability, alive: lease.alive)
-        ?? ConnectGate.responseBytes(.unsupported)
-      _ = EgressReadiness.write(response, to: client, alive: lease.alive)
-      return
-    }
-    let host: String
-    switch ConnectGate.connectTarget(head, allow: allow, capability: capability) {
-    case .deny(let denial):
-      respond(client, denial, alive: lease.alive)
-      return
-    case .connect(let approved): host = approved
-    }
-    guard admission.tryTunnel() else {
-      respond(client, .unsupported, alive: lease.alive)
-      return
-    }
-    defer { admission.endTunnel() }
-    do {
-      try Tunnel.open(
-        client, host: host, connect: { try connectPublic($0, admission: admission) },
-        alive: lease.alive)
-    } catch {
-      respond(client, .unsupported, alive: lease.alive)
-    }
-  }
+}
 
-  static func connectPublic(_ host: String, admission: Admission) throws -> Int32? {
-    let local = HostAddresses.current()
-    guard let resolved = Resolver.lookup(host, admission: admission) else { return nil }
-    return resolved.withAddressInfo { info in
-      var cursor: UnsafePointer<addrinfo>? = info
-      var addresses: [String] = []
-      while let node = cursor {
-        if let text = numeric(node) { addresses.append(text) }
-        cursor = node.pointee.ai_next.map { UnsafePointer($0) }
-      }
-      guard AddressChoice.firstPublic(addresses, local: local) != nil else { return nil }
-      guard let first = info.pointee.ai_addr else { return nil }
-      let fd = socket(info.pointee.ai_family, SOCK_STREAM, 0)
-      guard fd >= 0 else { return nil }
-      guard Dial.connect(fd, address: first, length: info.pointee.ai_addrlen),
-        Dial.peerIsPublic(fd, local: local)
-      else {
-        close(fd)
-        return nil
-      }
-      return fd
-    }
-  }
-
-  static func numeric(_ node: UnsafePointer<addrinfo>) -> String? {
-    var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-    guard
-      getnameinfo(
-        node.pointee.ai_addr, node.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0,
-        NI_NUMERICHOST) == 0
-    else { return nil }
-    return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-  }
-
-  static func respond(_ client: Int32, _ denial: Denial?, alive: () -> Bool) {
-    ConnectGate.writeResponse(client, denial, alive: alive)
-  }
+if CommandLine.arguments.dropFirst().elementsEqual(["--version"]) {
+  print("iso-egress \(EgressVersion.string)")
+  exit(0)
 }
 
 if CommandLine.arguments.dropFirst().elementsEqual(["--jail-selftest"]) {

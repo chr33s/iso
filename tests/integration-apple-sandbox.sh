@@ -28,11 +28,9 @@ if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
     echo "SKIP: iso-sandbox needs an Apple Silicon Mac"
     exit 0
 fi
-CONTAINER=""
-for candidate in /usr/local/bin/container /opt/homebrew/bin/container; do
-    [[ -x "$candidate" ]] && { CONTAINER="$candidate"; break; }
-done
-[[ -n "$CONTAINER" ]] || { echo "SKIP: no Apple container CLI installed"; exit 0; }
+CONTAINER="$(command -v container || true)"
+[[ -x "$CONTAINER" ]] || { echo "SKIP: no Apple container CLI installed"; exit 0; }
+"$CONTAINER" --version
 for tool in swift jq ssh ssh-keygen nc openssl python3; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done

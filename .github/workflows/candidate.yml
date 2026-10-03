@@ -52,7 +52,7 @@ jobs:
           mkdir "$RUNNER_TEMP/iso-candidate"
           tar -xzf "$TARBALL" -C "$RUNNER_TEMP/iso-candidate"
           cd "$RUNNER_TEMP"/iso-candidate/iso-*-aarch64-apple-darwin
-          for binary in iso iso-proxy iso-sandbox; do
+          for binary in iso iso-proxy iso-egress iso-sandbox; do
             test -x "$binary"
             test "$(shasum -a 256 "$binary" | cut -d' ' -f1)" = "$(jq -r ".binaries[\"$binary\"]" BUILD.json)"
             codesign --verify --strict "$binary"

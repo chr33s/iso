@@ -39,6 +39,7 @@ package enum EmbeddedResources {
         # Retry with exponential backoff — transient network errors are common
         # during cloud-init (DNS not ready, CDN hiccups, etc.).
         # Uses `if` to suppress set -e for the curl command.
+        echo '  [guest] Downloading Claude Code installer...'
         MAX_RETRIES=4
         RETRY_DELAY=5
         for attempt in $(seq 1 "$MAX_RETRIES"); do
@@ -60,7 +61,9 @@ package enum EmbeddedResources {
             RETRY_DELAY=$((RETRY_DELAY * 2))
         done
 
+        echo '  [guest] Download complete; running Claude Code installer...'
         su - "${GUEST_USER}" -c "bash '$INSTALLER'" </dev/null
+        echo '  [guest] Claude Code installer finished.'
     fi
 
     """#,

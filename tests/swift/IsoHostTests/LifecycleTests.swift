@@ -242,6 +242,56 @@ private struct FakeInstallation {
   #expect(try backend.runtime().list().isEmpty)
 }
 
+@Test func stoppedBootReplacesAllowlistOnlyAfterSuccessfulBoot() throws {
+  let install = try FakeInstallation(extra: #", "egress": "filtered""#)
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("policy"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let original = try #require(try NetworkPolicy.load(instance))
+  let changed = install.config.overridingEgress(
+    .filtered, extraHosts: [try ExactHostname("example.com")])
+  let updated = backend.reconfigured(changed)
+  #expect(throws: HostError.self) { try NetworkPolicy.enforce(instance, config: changed) }
+  #expect(throws: HostError.self) { try updated.startExisting(instance) }
+  #expect(try NetworkPolicy.load(instance) == original)
+  let sidecar = try MachineSidecar.load(instance)
+  let runtime = try backend.runtime()
+  let statePath = runtime.root + "/fake-state.json"
+  let stateBytes = try Data(contentsOf: URL(fileURLWithPath: statePath))
+  let state = try #require(JSONSerialization.jsonObject(with: stateBytes) as? [String: Any])
+  for status in ["crashed", "booting"] {
+    var changedState = state
+    var sandboxes = try #require(state["sandboxes"] as? [String: [String: Any]])
+    sandboxes[sidecar.machineID.rawValue]?["status"] = status
+    changedState["sandboxes"] = sandboxes
+    try JSONSerialization.data(withJSONObject: changedState).write(
+      to: URL(fileURLWithPath: statePath))
+    #expect(throws: (any Error).self) { try updated.startExisting(instance) }
+    #expect(try NetworkPolicy.load(instance) == original)
+  }
+  try stateBytes.write(to: URL(fileURLWithPath: statePath))
+  _ = try runtime.stop(sidecar.machineID)
+
+  // A new policy must not survive a boot that fails the pinned-host-key check.
+  let pin = try Data(contentsOf: URL(fileURLWithPath: instance.knownHostsPath))
+  try Data("invalid pin\n".utf8).write(to: URL(fileURLWithPath: instance.knownHostsPath))
+  #expect(throws: (any Error).self) { try updated.startExisting(instance) }
+  #expect(try runtime.inspect(sidecar.machineID).status == .stopped)
+  #expect(try NetworkPolicy.load(instance) == original)
+  try pin.write(to: URL(fileURLWithPath: instance.knownHostsPath))
+
+  try updated.startExisting(instance)
+  #expect(try NetworkPolicy.load(instance) == NetworkPolicy.make(changed))
+  try NetworkPolicy.enforce(instance, config: changed)
+  #expect(throws: HostError.self) { try NetworkPolicy.enforce(instance, config: install.config) }
+  try updated.destroyInstance(instance)
+}
+
 @Test func interruptedCreateIsCleanedUpByDestroy() throws {
   let install = try FakeInstallation()
   defer { install.remove() }

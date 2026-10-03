@@ -172,6 +172,7 @@ run_swift_egress() {
   swift build --package-path iso-egress --force-resolved-versions || return
   python3 scripts/test-swift-egress-jail.py || return
   python3 scripts/test-swift-egress-lease.py || return
+  python3 scripts/test-swift-egress-pressure.py || return
   python3 scripts/test-swift-egress-mutations.py
 }
 
@@ -202,6 +203,14 @@ run_fuzz() {
   scripts/fuzz.sh smoke "${FUZZ_SECONDS:-30}"
 }
 
+run_filtered_vm() {
+  if ! macos_27; then
+    warn "Filtered VM validation requires macOS 27+ — run its hardware gate before tagging"
+    return 0
+  fi
+  python3 tests/integration-filtered-broker-readiness.py
+}
+
 # ── Run ──────────────────────────────────────────────────────────
 
 step "Working tree clean" check_worktree
@@ -214,6 +223,8 @@ step "Swift egress tests and confined lease" run_swift_egress
 step "iso-sandbox tests" run_sandbox_tests
 step "Workflow audit (zizmor)" run_zizmor
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
+step "Hosted candidate verifier regression tests" python3 tests/test-verify-candidate.py
+step "Published release acceptance regression tests" python3 tests/test-accept-release.py
 step "Integration — installer provenance" ./tests/integration-install.sh
 step "Integration — iso update" ./tests/integration-update.sh
 step "Integration — iso uninstall" ./tests/integration-uninstall.sh
@@ -229,6 +240,7 @@ if [[ "$QUICK" == 1 ]]; then
 else
   step "Release archive (scripts/build-release.py)" run_release_archive
   step "Apple VM integration" ./tests/run-integration.sh
+  step "Filtered VM transport, revocation and network" run_filtered_vm
 fi
 
 # ── Summary ──────────────────────────────────────────────────────

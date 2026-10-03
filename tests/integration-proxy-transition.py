@@ -52,6 +52,8 @@ def main():
     live = parser.add_argument_group("live agent tool use (H-07; real credentials, billed)")
     live.add_argument("--live-agents", action="store_true",
                       help="run only the in-guest agent tool-use check with dedicated credentials")
+    live.add_argument("--filtered", action="store_true",
+                      help="qualify live guest agents under filtered egress with no approved CONNECT destinations")
     live.add_argument("--claude-model", action="append", default=[], metavar="MODEL",
                       help="approved Anthropic model for `--agent claude` (repeatable)")
     live.add_argument("--codex-model", action="append", default=[], metavar="MODEL",
@@ -62,6 +64,8 @@ def main():
     live.add_argument("--openai-credential", default=LIVE_CREDENTIALS["openai"], metavar="CMD_REF",
                       help="`cmd:` reference for the dedicated OpenAI credential (default: iso-live-openai Keychain item)")
     args = parser.parse_args()
+    if args.filtered and not args.live_agents:
+        parser.error("--filtered requires --live-agents")
     if args.live_agents:
         if args.controlled_upstream or args.controlled_upstream_preflight:
             parser.error("--live-agents runs on its own; run --controlled-upstream separately")
@@ -83,8 +87,9 @@ def main():
     host = work / "bin/iso"
     data = work / "data"
     state = data / "backends/apple-container-v1"
-    provider = next((Path(p) for p in ["/opt/homebrew/bin/container", "/usr/local/bin/container"] if Path(p).is_file()), None)
+    provider = shutil.which("container")
     assert provider, "Apple container CLI is required"
+    provider = Path(provider).resolve(strict=True)
     def run(argv, *, capture=False, timeout=1200, check=True, input=None):
         with subprocess.Popen([str(a) for a in argv], cwd=ROOT, env=env,
                               stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
@@ -135,9 +140,18 @@ def main():
     def live_agents(args):
         name = "proxy-live"
         phase("Live: boot a throwaway VM with dedicated credentials")
-        iso("up", work / "project", "--name", name, "--no-github", "--no-devcontainer")
-        iso("exec", name, "--", "sudo", "apt-get", "update")
-        iso("exec", name, "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
+        profile = ["--profile", "proxy-filtered-acceptance"] if args.filtered else []
+        iso("up", work / "project", "--name", name, "--no-github", "--no-devcontainer", *profile)
+        if not args.filtered:
+            iso("exec", name, "--", "sudo", "apt-get", "update")
+            iso("exec", name, "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
+        else:
+            # Dependencies were baked during image preparation; never open a
+            # filtered workload's network to install them.
+            iso("exec", name, "--", "python3", "--version")
+            network = json.loads((state / "instances" / name / "network-policy.json").read_text())
+            assert network["mode"] == "filtered" and network["allowedHosts"] == []
+            phase("Live: filtered boot policy has no approved CONNECT destinations")
         phase("Live: guest endpoints and proxy identity")
         instance = state / "instances" / name
         expected = hashlib.sha256((work / "bin/iso-proxy").read_bytes()).hexdigest()
@@ -159,7 +173,8 @@ def main():
                 f"{provider_name}: unexpected proxy executable {command}"
             actual = hashlib.sha256(command.read_bytes()).hexdigest()
             assert actual == expected, f"{provider_name}: proxy binary changed"
-            record = {"provider": provider_name, "guest_endpoint": endpoint, "proxy_sha256": actual}
+            record = {"provider": provider_name, "guest_endpoint": endpoint, "proxy_sha256": actual,
+                      "egress": "filtered" if args.filtered else "open"}
             print(json.dumps(record), flush=True)
             log.write(json.dumps(record) + "\n")
         install_agent_probe(name)
@@ -219,6 +234,12 @@ def main():
                              capture=True).strip())
         shutil.copy2(iso_binary, work / "bin/iso")
         shutil.copy2(proxy_bin / "iso-proxy", work / "bin/iso-proxy")
+        if args.filtered:
+            egress_package = ROOT / "iso-egress"
+            run(["swift", "build", "--package-path", egress_package, "--force-resolved-versions"])
+            egress_bin = Path(run(["swift", "build", "--package-path", egress_package, "--show-bin-path"],
+                                  capture=True).strip())
+            shutil.copy2(egress_bin / "iso-egress", work / "bin/iso-egress")
         kernel = (Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve(strict=True)
         # Proxy credentials are `cmd:` references; outside --live-agents the
         # values stay synthetic.
@@ -231,17 +252,21 @@ def main():
         else:
             proxies = {provider_name: {"credential": f"cmd:printf %s {fake}", "auth": "bearer"}
                        for provider_name, fake in [("openai", FAKES[0]), ("anthropic", FAKES[1])]}
-        config.write_text(json.dumps({
+        configuration = {
             "data_dir": str(data), "github": "off",
             "vm": {"vcpu_count": 2, "mem_size_mib": 4096, "template_size_gib": 16},
             "apple_container": {"binary": str(work / "bin/iso-sandbox"), "builder": str(provider),
                                 "kernel": str(kernel)},
             "proxy": proxies,
-        }, indent=2) + "\n")
+        }
+        if args.filtered:
+            configuration.update(egress="filtered", egress_filter={"allowed_hosts": []},
+                                 profiles={"proxy-filtered-acceptance": {"apt_packages": ["python3"]}})
+        config.write_text(json.dumps(configuration, indent=2) + "\n")
         (work / "project").mkdir()
         (work / "peer-project").mkdir()
         phase("Build VM images")
-        iso("setup", "-y")
+        iso("setup", "-y", *(["--profile", "proxy-filtered-acceptance"] if args.filtered else []))
         if args.live_agents:
             live_agents(args)
             succeeded = True

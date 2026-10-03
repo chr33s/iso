@@ -36,9 +36,11 @@ fi
 PYTHON_GATES = [
     'tests/test-read-contract.py', 'tests/test-lifecycle-contract.py',
     'tests/test-data-root-contract.py', 'tests/test-cli-surface.py',
-    'tests/test-preflight-release.py',
+    'tests/test-preflight-release.py', 'tests/test-verify-candidate.py', 'tests/test-accept-release.py',
     'scripts/build-release.py',
     'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
+    'scripts/test-swift-egress-pressure.py',
+    'tests/integration-filtered-broker-readiness.py',
     'scripts/test-swift-egress-mutations.py',
 ]
 SHELL_GATES = [
@@ -111,11 +113,13 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                      'test-data-root-contract.py --swift .build/debug/iso',
                      'test-cli-surface.py --swift .build/debug/iso',
                      'test-preflight-release.py',
+                     'test-verify-candidate.py', 'test-accept-release.py',
                      'zizmor .github/workflows/', 'integration-install.sh ',
                      'integration-update.sh ', 'integration-uninstall.sh '):
             self.assertIn(call, calls)
         # --quick skips the archive build, the VM suite and fuzzing.
         self.assertFalse([c for c in calls if c.startswith(('build-release.py', 'run-integration.sh', 'fuzz.sh'))])
+        self.assertNotIn('integration-filtered-broker-readiness.py', calls)
         self.assertFalse([c for c in calls if c.startswith(('cargo', 'rustup'))])
         self.assertNotIn('Next: tag', result.stdout)
         self.assertIn('unrun gates before tagging', result.stdout)
@@ -137,6 +141,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('test-swift-egress-jail.py', calls)
         self.assertIn('test-swift-egress-lease.py', calls)
         self.assertIn('test-swift-egress-mutations.py', calls)
+        self.assertIn('integration-filtered-broker-readiness.py', calls)
         self.assertIn('All required checks passed for v9.8.7.', result.stdout)
 
     def test_proxy_build_and_e2e_failures_are_fatal(self):
@@ -152,12 +157,18 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
 
     def test_egress_process_and_mutation_failures_are_fatal(self):
         self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
-        for gate in ('test-swift-egress-lease.py', 'test-swift-egress-mutations.py'):
+        for gate in ('test-swift-egress-lease.py', 'test-swift-egress-pressure.py', 'test-swift-egress-mutations.py'):
             with self.subTest(gate=gate):
                 result = self.run_preflight('--quick', fail=gate)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('FAIL: Swift egress tests and confined lease', result.stdout)
                 self.assertIn('Preflight FAILED', result.stdout)
+
+    def test_filtered_vm_failure_is_fatal(self):
+        self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
+        result = self.run_preflight(fail='integration-filtered-broker-readiness.py')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL: Filtered VM transport, revocation and network', result.stdout)
 
     def test_older_macos_warns_instead_of_building_the_archive(self):
         result = self.run_preflight()

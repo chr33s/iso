@@ -13,10 +13,52 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FAULTS = [
+    ('session-tunnel-admission', 'guard admission.tryTunnel() else {', 'guard true else {',
+     'pendingConnectionsStayBoundedThroughDisconnectRevocationAndRecovery'),
+    ('session-tunnel-release', 'defer { admission.endTunnel() }', 'defer {}',
+     'pendingConnectionsStayBoundedThroughDisconnectRevocationAndRecovery'),
+    ('session-late-revocation', 'client, host: host, connect: connect,\n        alive: alive)',
+     'client, host: host, connect: connect,\n        alive: { true })',
+     'pendingConnectionsStayBoundedThroughDisconnectRevocationAndRecovery'),
+    ('session-dns-slot', 'return Deadline.wait(deadline) {\n      defer { admission.endDNS() }',
+     'defer { admission.endDNS() }\n    return Deadline.wait(deadline) {',
+     'sessionDNSPressureRetainsWorkersAfterRequestTimeoutAndRecovers'),
+    ('connector-entire-answer', 'AddressChoice.firstPublic(addresses, local: local) != nil',
+     '!addresses.isEmpty', 'publicConnectorResolvesEveryRequestAndNeverDialsForbiddenAnswers'),
+    ('connector-malformed-answer', 'guard let text = numeric(node) else { return nil }',
+     'guard let text = numeric(node) else { break }',
+     'publicConnectorResolvesEveryRequestAndNeverDialsForbiddenAnswers'),
+    ('connector-local-snapshot', 'let local = local()', 'let local: Set<String> = []',
+     'publicConnectorResolvesEveryRequestAndNeverDialsForbiddenAnswers'),
+    ('address-global-unicast', 'bytes[0] & 0xE0 == 0x20', 'true',
+     'addressPolicyRejectsSpecialPurposeAndTransitionForms'),
+    ('address-ietf-prefix', '([0x20, 0x01, 0x00], 23)', '([0x20, 0x03, 0x00], 23)',
+     'addressPolicyRejectsSpecialPurposeAndTransitionForms'),
+    ('address-documentation-prefix', '([0x20, 0x01, 0x0D, 0xB8], 32)',
+     '([0x20, 0x01, 0x0D, 0xB9], 32)', 'addressPolicyRejectsSpecialPurposeAndTransitionForms'),
+    ('address-6to4-prefix', '([0x20, 0x02], 16)', '([0x20, 0x03], 16)',
+     'addressPolicyRejectsSpecialPurposeAndTransitionForms'),
+    ('address-documentation-boundary', 'return partial == 0', 'return true',
+     'addressPolicyAllowsPublicBoundariesAndRejectsEquivalentHostAddresses'),
+    ('address-local-equivalence', 'return !local.contains { ipv6($0) == v6 }', 'return true',
+     'addressPolicyAllowsPublicBoundariesAndRejectsEquivalentHostAddresses'),
+    ('address-6to4-ipv4', 'if a == 192 && b == 88 && octets[2] == 99 { return false }',
+     'if a == 192 && b == 88 && octets[2] == 99 { return true }',
+     'addressPolicyRejectsSpecialPurposeAndTransitionForms'),
+    ('dial-timeout', 'let ready = wait(&probe, 1, milliseconds)',
+     'let ready = wait(&probe, 1, 1)', 'stalledDialUsesItsDeadlineAndRestoresSocketFlags'),
+    ('dial-timeout-refusal', 'error = ETIMEDOUT', 'error = 0',
+     'stalledDialUsesItsDeadlineAndRestoresSocketFlags'),
+    ('dial-restore-flags', '_ = fcntl(fd, F_SETFL, flags)\n    return error == 0',
+     'return error == 0', 'stalledDialUsesItsDeadlineAndRestoresSocketFlags'),
     ('admission-state-update', 'state = next', '_ = next',
      'concurrentAdmissionEnforcesAndRefillsEachLimit'),
     ('relay-budget-reservation', 'used += take', '_ = take',
      'concurrentRelayReservationsNeverExceedTheAggregateBudget'),
+    ('relay-pressure-budget', 'used += take', '_ = take',
+     'productionScaleRelayPressureBoundsBothDirectionsAndRecovers'),
+    ('relay-pressure-direction', 'max(0, min(perDirection - pending, aggregateAvailable))',
+     'max(0, aggregateAvailable)', 'productionScaleRelayPressureBoundsBothDirectionsAndRecovers'),
     ('connect-complete-head', 'text.hasSuffix("\\r\\n\\r\\n")', 'true',
      'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
     ('connect-head-size', 'bytes.count <= EgressBudgets.maxHeadBytes,', 'true,',
@@ -150,9 +192,12 @@ def main():
         failures = []
         for ident, original, replacement, test_filter in faults:
             filename = ('Admission.swift' if ident == 'admission-state-update' else
-                        'RelayQueue.swift' if ident == 'relay-budget-reservation' else
+                        'Dial.swift' if ident == 'session-dns-slot' else
+                        'EgressSession.swift' if ident.startswith('session-') else
+                        'PublicConnector.swift' if ident.startswith('connector-') else
+                        'RelayQueue.swift' if ident in ('relay-budget-reservation', 'relay-pressure-budget', 'relay-pressure-direction') else
                         'Readiness.swift' if ident.startswith('readiness-') else
-                        'Policy.swift' if ident.startswith('connect-') else
+                        'Policy.swift' if ident.startswith(('connect-', 'address-')) else
                         'Tunnel.swift' if ident.startswith(('relay-', 'tunnel-open-')) else 'Dial.swift')
             path = package / 'Sources/IsoEgressCore' / filename
             source = path.read_text()

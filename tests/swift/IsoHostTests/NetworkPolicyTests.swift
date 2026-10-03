@@ -121,3 +121,19 @@ func networkPolicyRequiresCreationRecordInEveryMode(_ mode: EgressMode) throws {
     #expect(try NetworkPolicy.load(instance)?.mode == mode.rawValue)
   }
 }
+
+@Test func networkPolicyPreservesModeAndFreezesRunningAllowlist() throws {
+  try withPolicyFixture { instance, config in
+    try NetworkPolicy.save(config, instance)
+    let changed = config.overridingEgress(
+      .filtered, extraHosts: [try ExactHostname("other.example.com")])
+    try NetworkPolicy.enforceMode(instance, config: changed)
+    #expect(throws: HostError.self) { try NetworkPolicy.enforce(instance, config: changed) }
+    #expect(try NetworkPolicy.load(instance) == NetworkPolicy.make(config))
+    for mode in [EgressMode.open, .none] {
+      #expect(throws: HostError.self) {
+        try NetworkPolicy.enforceMode(instance, config: config.overridingEgress(mode))
+      }
+    }
+  }
+}

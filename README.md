@@ -6,41 +6,21 @@ SPDX-License-Identifier: Apache-2.0
 
 # isolate
 
-A fork of [Trail of Bits’ coop](https://github.com/trailofbits/coop) for running
-Claude Code and Codex in isolated VMs, with a focused Swift credential proxy
-and an Apple Containerization runtime. **Supported hosts: macOS 27+ on Apple
-Silicon only.** Linux runs inside the guest VMs.
+isolate is a Swift fork of [Trail of Bits’ coop](https://github.com/trailofbits/coop)
+for running Claude Code and Codex in disposable Linux VMs on **macOS 27+ Apple
+Silicon**. It replaces the Rust host and credential proxy with Swift and uses a
+purpose-built runtime on Apple Containerization. Focusing on one host platform
+and removing the former Rust networking and TLS dependency tree reduces what
+needs maintenance and security review. The aim is a smaller attack surface;
+Swift alone does not guarantee fewer vulnerabilities or complete isolation.
 
-## Why this fork?
-
-The use case is running coding agents with broad permissions inside disposable
-VMs while keeping provider API keys on the host. This fork replaces the upstream Rust
-host and credential proxy with Swift implementations on macOS 27+ and provides a
-small, purpose-built Apple VM runtime. Keeping one proxy implementation and
-removing its former Rust networking and TLS dependency tree reduces the code,
-dependencies, and platform combinations that need security review and maintenance.
-The aim is a smaller attack surface and fewer places for vulnerabilities to
-arise; it is not a guarantee of fewer vulnerabilities or complete isolation.
-
-The root Swift package builds `iso`. Three separate packages build its
-companions: [`iso-proxy/`](iso-proxy/), [`iso-egress/`](iso-egress/), and
-[`iso-sandbox/`](iso-sandbox/). See the [architecture](docs/ARCHITECTURE.md)
-and [release validation](docs/release-validation.md). Source attribution is
-recorded in [NOTICE](NOTICE), [PROVENANCE.md](PROVENANCE.md), and
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
-isolate is a CLI that manages disposable virtual machines where Claude Code and Codex have full tool access: Docker, git, compilers, package managers, with the VM as the isolation boundary. Each VM is isolated, reproducible, and cheap to create and destroy.
+Agents get full tool access inside the VM: Docker, git, compilers and package
+managers. The VM is the isolation boundary. A host credential proxy can keep
+provider API keys out of the guest.
 
 ## Setup
 
-Once a verified fork release is published, install `iso`, `iso-proxy`, `iso-egress`, and
-`iso-sandbox` together with:
-
-```shell
-curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
-```
-
-Until then, build from source with Xcode 27:
+Build from source with Xcode 27 until a verified fork release is published:
 
 ```shell
 git clone https://github.com/chr33s/iso.git
@@ -48,30 +28,33 @@ cd iso
 python3 scripts/build-release.py --release
 ```
 
-The archive under `.build/release-archive/` holds all four executables;
-install them in the same directory on `PATH`. `swift build` builds only the
-host CLI (`.build/debug/iso`) for development. See
-[Build from source](docs/getting-started.md#build-from-source),
-[Prerequisites](docs/getting-started.md#prerequisites) and
+Install all four executables from the archive in `.build/release-archive/`
+into the same directory on `PATH`: `iso`, `iso-proxy`, `iso-egress` and
+`iso-sandbox`. See [prerequisites](docs/getting-started.md#prerequisites),
+[build instructions](docs/getting-started.md#build-from-source) and
 [Apple backend setup](docs/backends.md#macos--apple-sandbox).
 
-Then create the configuration and build the VM template image:
+Once a verified release is available, you can install the bundle with:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
+```
+
+Create the configuration and build the VM template:
 
 ```shell
 iso setup
 ```
 
-The release channel targets `chr33s/iso`, with tagged commits from `main`.
-Configuration lives in `~/.iso/config.jsonc` (JSON with comments), with state
-under `~/.iso`. `iso setup --config-only` writes a commented template.
-See [state](docs/backends.md#state), [release status](RELEASING.md) and
-[`iso update`](docs/commands.md#update).
+Configuration lives in `~/.iso/config.jsonc`; state lives under `~/.iso`.
+Use `iso setup --config-only` to write just the commented configuration template.
+See [release status](RELEASING.md) and [`iso update`](docs/commands.md#update).
 
 ## Usage
 
-Start an instance for the current project and launch an agent CLI:
+Start a VM for your project, then launch an agent:
 
-```
+```shell
 cd ~/code/my-project
 iso up
 iso claude
@@ -79,56 +62,38 @@ iso claude
 iso codex
 ```
 
-## Hardening
+## Security controls
 
-Beyond the upstream feature set, this fork can narrow what crosses the VM
-boundary. All of it is opt-in; with no configuration isolate behaves like
-`networked` below.
+Default VMs have network access. The [credential proxy](docs/credential-proxy.md)
+is automatic for providers with a configured upstream; other restrictions are
+opt-in.
 
-- **Security presets.** `"security": {"preset": "provider-only"}` sets
-  `egress: "none"`, `proxy.mode: "required"` and staged pulls in one line;
-  `offline` is for local models or fully pre-provisioned images.
-  See [Security presets](docs/configuration.md#security-presets).
-- **Credential proxy by default.** Under `proxy.mode` `"auto"`, a provider
-  with a configured upstream is reached through the host-side
-  [credential proxy](docs/credential-proxy.md) and its API key never enters the
-  guest; `"required"` withholds every provider credential variable.
-  See [`proxy.mode`](docs/configuration.md#proxymode).
-- **No-egress sandboxes.** `"egress": "none"` gives the guest no route beyond
-  the Mac; SSH and the tunnels isolate runs over it keep working. It does not
-  block services listening on the Mac itself.
-  See [`egress`](docs/configuration.md#egress).
-- **Local secret store.** `iso secrets` keeps secrets encrypted under a
-  passphrase and this Mac's Secure Enclave key, with no recovery path.
-  `--env NAME={vault:name}` or `--env-file` references resolve them per
-  session. A reference on a provider key becomes the proxy credential
-  and is never sent into the guest.
-  See [`secrets`](docs/commands.md#secrets).
-- **Staged pulls.** `iso diff` or `iso pull --review` copies guest files into
-  a checked stage (file types, symlink targets, size budgets) that you apply or
-  discard. See [Staged pulls](docs/workspaces.md#staged-pulls).
-- **Session TTL.** `"limits": {"session_ttl": "8h"}` has the host halt each
-  boot at a deadline on the host clock. See
-  [`limits`](docs/configuration.md#limits).
-- **Audit log.** `iso audit` shows each instance's recorded boundary events
-  (egress, proxy mode, forwarded variable names, workspace returns), never
-  values. `--suggest-config` proposes a narrower configuration.
-  See [`audit`](docs/commands.md#audit).
+- [Security presets](docs/configuration.md#security-presets):
+  `"security": {"preset": "provider-only"}` requires the proxy, disables direct
+  egress and stages file returns for review. `offline` suits local models or
+  pre-provisioned images.
+- [Credential handling](docs/configuration.md#proxymode): `proxy.mode: "required"`
+  withholds all provider credential variables from the guest.
+- [Network limits](docs/configuration.md#egress): `"egress": "none"` blocks routes
+  beyond the Mac while preserving SSH and its tunnels. **Guests can still reach
+  services on the Mac.**
+- [Secret storage](docs/commands.md#secrets): `iso secrets` encrypts local secrets
+  with a passphrase and this Mac's Secure Enclave key, with no recovery path.
+- [File review](docs/workspaces.md#staged-pulls): `iso diff` or `iso pull --review`
+  stages guest files for inspection before you apply or discard them.
+- [Session limits](docs/configuration.md#limits):
+  `"limits": {"session_ttl": "8h"}` stops each boot at a host-clock deadline.
+- [Audit records](docs/commands.md#audit): `iso audit` reports boundary events and
+  forwarded variable names, never their values.
+
+Read the [trust model](docs/trust-model.md) for the boundaries and their limits.
 
 ## Documentation
 
-- [Documentation index](docs/index.md)
-- [Getting started](docs/getting-started.md)
-- [Command reference](docs/commands.md)
-- [Configuration reference](docs/configuration.md)
-- [Images and profiles](docs/images-and-profiles.md)
-- [Workspace sync](docs/workspaces.md)
-- [Claude Code integration](docs/claude-integration.md)
-- [Codex integration](docs/codex-integration.md)
-- [Credential proxy](docs/credential-proxy.md)
-- [Editor integration](docs/editor.md) and [devcontainers](docs/devcontainer.md)
-- [Multi-instance](docs/multi-instance.md)
-- [Platform backends](docs/backends.md)
-- [Shell completion](docs/shell-completion.md)
-- [Architecture](docs/ARCHITECTURE.md) and [trust model](docs/trust-model.md)
+- [Getting started](docs/getting-started.md), [commands](docs/commands.md) and
+  [configuration](docs/configuration.md)
+- [Full documentation index](docs/index.md)
+- [Architecture](docs/ARCHITECTURE.md) and [release validation](docs/release-validation.md)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
+- Attribution: [NOTICE](NOTICE), [provenance](PROVENANCE.md) and
+  [third-party licenses](THIRD_PARTY_LICENSES.md)

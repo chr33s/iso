@@ -58,9 +58,10 @@ package enum Denial: String, Sendable {
   case unsupported = "UNSUPPORTED"
 }
 
-/// IPv4/IPv6 classification. Transition forms are denied rather than unwrapped
-/// except IPv4-mapped addresses, which are classified as the embedded IPv4.
+/// Conservative public-unicast policy, pinned to the IANA special-purpose
+/// registries dated 2025-10-09. Mapped and transition forms are never unwrapped.
 package enum AddressPolicy {
+  package static let revision = "iana-2025-10-09-v1"
   package static func isPublicIPv4(_ octets: [UInt8]) -> Bool {
     guard octets.count == 4 else { return false }
     let a = octets[0]
@@ -71,6 +72,7 @@ package enum AddressPolicy {
     if a == 172 && (16...31).contains(b) { return false }
     if a == 192 && b == 168 { return false }
     if a == 192 && b == 0 { return false }
+    if a == 192 && b == 88 && octets[2] == 99 { return false }
     if a == 198 && (b == 18 || b == 19) { return false }
     if a == 192 && b == 0 && octets[2] == 2 { return false }
     if a == 198 && b == 51 && octets[2] == 100 { return false }
@@ -79,9 +81,11 @@ package enum AddressPolicy {
   }
 
   package static func isPublic(_ address: String, local: Set<String> = []) -> Bool {
-    if local.contains(address.lowercased()) { return false }
-    if let v4 = ipv4(address) { return isPublicIPv4(v4) }
-    return isPublicIPv6(address)
+    if let v4 = ipv4(address) {
+      return isPublicIPv4(v4) && !local.contains { ipv4($0) == v4 }
+    }
+    guard let v6 = ipv6(address), isPublicIPv6(address) else { return false }
+    return !local.contains { ipv6($0) == v6 }
   }
 
   static func ipv4(_ text: String) -> [UInt8]? {
@@ -98,20 +102,31 @@ package enum AddressPolicy {
   }
 
   static func isPublicIPv6(_ text: String) -> Bool {
-    let lower = text.lowercased()
-    if lower.contains(".") { return false }
-    if lower == "::" || lower == "::1" { return false }
-    if lower.hasPrefix("fe80:") || lower.hasPrefix("fe8") || lower.hasPrefix("fe9")
-      || lower.hasPrefix("fea") || lower.hasPrefix("feb")
-    {
-      return false
+    guard let bytes = ipv6(text), bytes[0] & 0xE0 == 0x20 else { return false }
+    return !deniedIPv6.contains { prefix in
+      let whole = prefix.bits / 8
+      let partial = prefix.bits % 8
+      guard bytes.prefix(whole).elementsEqual(prefix.bytes.prefix(whole)) else { return false }
+      return partial == 0
+        || (bytes[whole] >> (8 - partial)) == (prefix.bytes[whole] >> (8 - partial))
     }
-    if lower.hasPrefix("fc") || lower.hasPrefix("fd") { return false }
-    if lower.hasPrefix("ff") { return false }
-    if lower.hasPrefix("2001:db8") { return false }
-    if lower.hasPrefix("64:ff9b") { return false }
-    if lower.hasPrefix("::ffff:") { return false }
-    return lower.contains(":")
+  }
+
+  // Only 2000::/3 global unicast is eligible. Deny IETF protocol assignments
+  // as a whole (including their globally reachable exceptions), documentation,
+  // and 6to4. Everything outside 2000::/3, including mapped/NAT64, is denied.
+  private static let deniedIPv6: [(bytes: [UInt8], bits: Int)] = [
+    ([0x20, 0x01, 0x00], 23),  // 2001::/23
+    ([0x20, 0x01, 0x0D, 0xB8], 32),  // 2001:db8::/32
+    ([0x20, 0x02], 16),  // 2002::/16
+    ([0x3F, 0xFF, 0x00], 20),  // 3fff::/20
+  ]
+
+  private static func ipv6(_ text: String) -> [UInt8]? {
+    guard !text.utf8.contains(0), !text.contains("%") else { return nil }
+    var address = in6_addr()
+    guard text.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
+    return withUnsafeBytes(of: address) { Array($0) }
   }
 }
 

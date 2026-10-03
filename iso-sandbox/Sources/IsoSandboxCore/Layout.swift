@@ -4,7 +4,7 @@ import Foundation
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
 package let protocolVersion = 5
-package let runtimeVersion = "0.5.0"
+package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.45.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns

@@ -121,7 +121,7 @@ public func inputFile(_ data: Data, evidence: Evidence, name: String) throws -> 
 public func proxyBinary() throws -> URL {
   if let path = ProcessInfo.processInfo.environment["ISO_PROXY_E2E_BINARY"] {
     try check(path.hasPrefix("/"), "ISO_PROXY_E2E_BINARY must be absolute")
-    let binary = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    let binary = try canonicalExecutable(URL(fileURLWithPath: path))
     try check(
       FileManager.default.isExecutableFile(atPath: binary.path), "proxy binary is not executable")
     return binary
@@ -133,7 +133,16 @@ public func proxyBinary() throws -> URL {
   try check(
     FileManager.default.isExecutableFile(atPath: binary.path),
     "build iso-proxy or set ISO_PROXY_E2E_BINARY")
-  return binary
+  return try canonicalExecutable(binary)
+}
+
+private func canonicalExecutable(_ url: URL) throws -> URL {
+  // Foundation preserves /var aliases on macOS; Seatbelt matches /private/var.
+  guard let path = realpath(url.path, nil) else {
+    throw ObservationFailure.invalid("cannot resolve proxy executable")
+  }
+  defer { free(path) }
+  return URL(fileURLWithPath: String(cString: path))
 }
 
 public func activeTestBundle() throws -> URL {

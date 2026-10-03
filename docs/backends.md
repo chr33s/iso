@@ -44,7 +44,7 @@ It builds the Swift package in release mode, signs it ad hoc with the hardened r
 
 | iso-sandbox | containerization | macOS | Hardware | Evidence |
 |---|---|---|---|---|
-| 0.5.0 (protocol 5) | 0.45.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
+| 0.1.0 (protocol 5) | 0.45.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
 
 The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.15-186`, the kernel `container` 1.4.1 installs) and its init image (`vminit:0.45.0` by digest). `iso setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Narrow real-VM signed broker composition gate; synthetic keys, no provider calls.
+"""Real-VM filtered transport, broker, pressure and peer-isolation probes.
 
-Uses the fail-on-use boundary image, not native agent/provider qualification.
+Uses synthetic keys and a fail-on-use agent image, not native provider qualification.
+CONNECT/HTTPS controls contact api.github.com; no provider operation is performed.
 Build host/iso-egress/iso-proxy first. The runtime is installed and signed here.
 """
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -15,11 +17,19 @@ import sys
 import tempfile
 import time
 
+from filtered_egress_readiness import exercise as exercise_egress
+from filtered_network_boundary import exercise as exercise_network
+from filtered_lifecycle_revocation import exercise as exercise_revocation
+
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS = ["iso-broker-test-anthropic", "iso-broker-test-openai", "iso-broker-host-ant", "iso-broker-host-oai"]
 
 
-def exercise(work):
+def exercise(work, only=None):
+    builder_cli = shutil.which("container")
+    assert builder_cli, "Apple container CLI is required"
+    builder_cli = Path(builder_cli).resolve(strict=True)
+    print("builder", builder_cli, subprocess.check_output([builder_cli, "--version"], text=True).strip(), flush=True)
     env = {key: value for key, value in os.environ.items()
            if key in {"HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"}}
     env.update(ANTHROPIC_API_KEY=SECRETS[2], OPENAI_API_KEY=SECRETS[3])
@@ -39,14 +49,16 @@ def exercise(work):
     state = work / "data/backends/apple-container-v1/instances/brokers"
     config.write_text(json.dumps({
         "data_dir": str(work / "data"), "github": "off", "egress": "filtered",
-        "egress_filter": {"allowed_hosts": []},
+        "egress_filter": {"allowed_hosts": ["api.github.com"] if only == "network" else []},
         "proxy": {"mode": "required", "anthropic": {"credential": "cmd:printf %s " + SECRETS[0]},
                   "openai": {"credential": "cmd:printf %s " + SECRETS[1], "auth": "bearer"}},
         "claude": {"config_dir": False}, "codex": {"config_dir": False},
         "post_start": "printf 'broker-proof-hook\\n' > /tmp/iso-broker-hook",
-        "profiles": {"boundary-fixture": {"post_install": (ROOT / "tests/fixtures/apple-sandbox/stub-agents.sh").read_text()}},
+        "profiles": {"boundary-fixture": {
+            "apt_packages": ["python3", "socat", "netcat-openbsd", "iputils-ping"],
+            "post_install": (ROOT / "tests/fixtures/apple-sandbox/stub-agents.sh").read_text()}},
         "vm": {"vcpu_count": 2, "mem_size_mib": 2048, "template_size_gib": 8},
-        "apple_container": {"binary": str(runtime), "builder": "/opt/homebrew/bin/container",
+        "apple_container": {"binary": str(runtime), "builder": str(builder_cli),
                             "kernel": str((Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve())},
     }))
     os.chmod(config, 0o600)
@@ -87,10 +99,10 @@ sys.exit(result.returncode)
         path.write_text("0")
         path.chmod(0o600)
 
-    def run(args, expected=0, contains=None, timeout=240, private=False, interpose=None):
+    def run(args, expected=0, contains=None, timeout=240, private=False, interpose=None, input=None):
         print("command", " ".join(args), flush=True)
         started = time.monotonic()
-        with subprocess.Popen(argv + args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        with subprocess.Popen(argv + args, env=env, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
             paused = None
             try:
@@ -108,7 +120,7 @@ sys.exit(result.returncode)
                     paused = pid
                     release.write_text("release verified reply")
                     release.chmod(0o600)
-                stdout, stderr = process.communicate(timeout=timeout)
+                stdout, stderr = process.communicate(input=input, timeout=timeout)
             except BaseException:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -136,6 +148,7 @@ sys.exit(result.returncode)
     def key(provider):
         return state / f"proxy-{provider}-readiness-public-key"
 
+    cleanup_configuration = config.read_text()
     try:
         run(["setup", "-y", "--profile", "boundary-fixture"], timeout=1200)
         run(["up", str(project), "--name", "brokers", "--no-github", "--no-devcontainer"])
@@ -152,6 +165,13 @@ sys.exit(result.returncode)
                 assert all(secret.encode() not in path.read_bytes() for secret in SECRETS), "raw provider key in host instance state"
         assert not (state / "proxy-anthropic.token").exists(), "readiness persisted an Anthropic capability"
         print("PASS both required brokers bootstrap and prove live local/guest paths; no raw keys in guest env/config or host instance state", flush=True)
+        selected = {"egress": lambda: exercise_egress(state, binary, config, run),
+                    "revocation": lambda: exercise_revocation(state, binary, config, run),
+                    "network": lambda: exercise_network(work, config, run)}
+        if only in selected:
+            selected[only]()
+            print(f"PASS selected {only} VM gate (other phases not run)", flush=True)
+            return
         original_path = env["PATH"]
         env["PATH"] = str(interposer) + ":" + original_path
         try:
@@ -260,26 +280,38 @@ sys.exit(result.returncode)
         run(["start", "brokers", "--no-github"])
         run(["exec", "brokers", "--", "true"])
         print("PASS no-hook startup still requires every broker; normal no-hook bootstrap restores healthy proof", flush=True)
+        if only == "brokers":
+            print("PASS selected brokers VM gate (other phases not run)", flush=True)
+            return
+        exercise_egress(state, binary, config, run)
+        exercise_revocation(state, binary, config, run)
+        exercise_network(work, config, run)
     finally:
+        # A failed configuration probe must not prevent owned-resource cleanup.
+        config.write_text(cleanup_configuration)
         run(["destroy", "--all"], timeout=240)
         owner_path = work / "data/backends/apple-container-v1/owner.json"
         if owner_path.exists():
             prefix = "local/iso-" + json.loads(owner_path.read_text())["owner_id"][:8]
-            images = subprocess.check_output(["/opt/homebrew/bin/container", "image", "list", "--quiet"], env=env, text=True)
+            images = subprocess.check_output([builder_cli, "image", "list", "--quiet"], env=env, text=True)
             for image in images.splitlines():
                 if image.startswith((prefix + ":", prefix + "-maintenance:")):
-                    subprocess.run(["/opt/homebrew/bin/container", "image", "delete", image], env=env, check=True)
+                    subprocess.run([builder_cli, "image", "delete", image], env=env, check=True)
         shutil.rmtree(work)
         print("cleaned private VM, images, workspace and binary copies", flush=True)
-    print("PASS narrow filtered broker composition; no native agent, upstream, full NET-20/F1 qualification", flush=True)
+    print("PASS filtered transport, broker, pressure and network probes; native agents and full NET-20/F1 qualification remain separate", flush=True)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", choices=("brokers", "egress", "revocation", "network"),
+                        help="run one phase for diagnosis; default runs all phases")
+    args = parser.parse_args()
     work = Path(tempfile.mkdtemp(prefix="iso-filtered-brokers-"))
     os.chmod(work, 0o700)
     print(f"Artifacts: {work}", flush=True)
     try:
-        exercise(work)
+        exercise(work, args.only)
     except BaseException:
         # Before VM/image setup there are only private binary/config copies.
         if work.exists() and not (work / "data").exists():

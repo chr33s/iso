@@ -153,10 +153,22 @@ package enum Dial {
     _ fd: Int32, address: UnsafePointer<sockaddr>, length: socklen_t,
     timeout: Duration = EgressBudgets.connect
   ) -> Bool {
+    connect(
+      fd, address: address, length: length, timeout: timeout,
+      start: Darwin.connect, wait: Darwin.poll)
+  }
+
+  // Internal syscall seam: release callers always use Darwin connect/poll above.
+  static func connect(
+    _ fd: Int32, address: UnsafePointer<sockaddr>, length: socklen_t,
+    timeout: Duration,
+    start: (Int32, UnsafePointer<sockaddr>, socklen_t) -> Int32,
+    wait: (UnsafeMutablePointer<pollfd>?, nfds_t, Int32) -> Int32
+  ) -> Bool {
     let flags = fcntl(fd, F_GETFL)
     guard flags >= 0 else { return false }
     guard fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }
-    let started = Darwin.connect(fd, address, length)
+    let started = start(fd, address, length)
     if started == 0 {
       _ = fcntl(fd, F_SETFL, flags)
       return true
@@ -167,7 +179,7 @@ package enum Dial {
     }
     var probe = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
     let milliseconds = Int32(max(1, min(Monotonic.nanoseconds(timeout) / 1_000_000, 60_000)))
-    let ready = poll(&probe, 1, milliseconds)
+    let ready = wait(&probe, 1, milliseconds)
     var error: Int32 = 0
     var size = socklen_t(MemoryLayout<Int32>.size)
     if ready > 0 {

@@ -51,6 +51,19 @@ Use a separate `--scratch-path` per sanitizer so instrumented builds do not
 invalidate `.build`. The package tests use synthetic credentials and isolated
 temporary state; they never touch `~/.iso`.
 
+With Swift 6.4's default Swift Build engine, the undefined-sanitizer build can
+fail to link C dependency instrumentation with missing `__ubsan_handle_*`
+symbols. If that occurs, explicitly link the matching Xcode runtime:
+
+```bash
+ubsan_runtime_dir="$(xcrun clang --print-runtime-dir)"
+swift test --sanitize=undefined --scratch-path .build-ubsan --force-resolved-versions \
+  -Xlinker "$ubsan_runtime_dir/libclang_rt.ubsan_osx_dynamic.dylib"
+```
+
+Record the original link failure and the retry result separately; a build
+failure does not qualify as a sanitizer pass.
+
 The read and lifecycle checks use synthetic state and fake runtime/SSH/builder
 processes. Reviewed iso expectations live in `tests/fixtures/contracts/`.
 Read checks cover command output and failures; lifecycle checks also cover
@@ -253,6 +266,14 @@ python3 tests/integration-proxy-transition.py --live-agents \
   --claude-model APPROVED_MODEL [--claude-model ...] \
   --codex-model APPROVED_MODEL [--codex-model ...]
 ```
+
+For F1 native-agent acceptance, add `--filtered`. The runner builds and stages
+`iso-egress`, bakes Python into a dedicated preparation image, and starts the
+workload in filtered mode with an empty approved-host list. Provider traffic
+must therefore use the credential brokers. It does not open the workload's
+network for package installation. Results identify the egress mode; an open-mode
+pass does not qualify filtered native-agent behavior. This option requires
+`--live-agents` and the same explicitly approved models and dedicated credentials.
 
 It builds a private runtime and one throwaway VM, `proxy-live`, whose proxies
 read the dedicated credentials through `cmd:` references. By default these are
@@ -642,6 +663,25 @@ the process and close its listener and an unfinished guest request. This does
 not exercise the host supervisor, runtime owner/boot checks, successful tunnels,
 public DNS/HTTPS, or a VM. CI and release preflight run these package/process gates.
 
+`AddressPolicyTests.swift` checks the versioned `iana-2025-10-09-v1` address
+policy against the [IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+and [IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/)
+special-purpose registries dated 2025-10-09. IPv6 must parse numerically and fall
+within `2000::/3`, excluding `2001::/23`, `2001:db8::/32`, `2002::/16`, and
+`3fff::/20`. The entire IETF protocol-assignment block is conservatively denied,
+including its globally reachable exceptions. Mapped/translation forms are
+denied, not converted to IPv4. IPv4 additionally denies `192.88.99.0/24`;
+the existing conservative IPv4 exclusions remain. Boundary witnesses, malformed
+input, and equivalent spellings of this Mac's addresses have regression tests.
+The `address-*` mutations test the denial and host-exclusion decisions.
+`PublicConnectorTests.swift` drives the production resolution/validation path
+with changing answers for the same hostname, mixed public/private and host-local
+answers, and malformed entries. Only fully approved lists reach the injected
+numeric dialer, which receives the first address without another hostname lookup.
+Every request refreshes its host-interface snapshot and resolver result.
+The `connector-*` faults exercise whole-answer, malformed-answer and local-address
+refusal. These fixtures make no external DNS or connection requests.
+
 `swift test --package-path iso-egress --force-resolved-versions --filter
 'resolver|productionResolver|deadlineRejects'` covers the DNS work budget and
 address-list ownership. Sixteen controlled workers stay blocked beyond their
@@ -743,14 +783,16 @@ these assertions discriminating. The confined process gate
 `swift test --package-path iso-proxy --filter signedReadinessUsesIndependentPublicKey` independently verifies
 fresh replies from both production providers without DNS or upstream requests.
 
-For a narrow real-VM gate, build the host, `iso-egress` and `iso-proxy`, then run:
+For the real-VM filtered transport gate, build the host, `iso-egress` and
+`iso-proxy`, then run:
 
 ```bash
 python3 tests/integration-filtered-broker-readiness.py
 ```
 
-It installs a signed private runtime and uses the fail-on-use boundary image,
-synthetic credentials, and an empty destination allowlist. It exercises both
+It installs an ad-hoc-signed private runtime and uses the fail-on-use boundary image
+with Python and network-probe tools, synthetic credentials, and initially an empty
+destination allowlist. It exercises both
 broker startups and a post-start hook, paused live-PID brokers and tunnels,
 wrong/missing public keys, termination, stop cleanup, restart rotation, and
 refusal to complete startup with or without a hook when `--no-agents` leaves
@@ -782,9 +824,65 @@ signer even when the later composite proof is otherwise healthy; intentional new
 broker keys remain permitted during bootstrap.
 Key-replacement decision fixtures
 are not real-VM broker-restart or capability-replay evidence.
-It removes its owned VMs, images and binary copies. This is not native-agent,
-provider-forwarding, exhaustion, lifecycle-revocation or full NET-20/F1 evidence.
+The additional egress probes explicitly approve `api.github.com` and assert:
+
+- Valid capabilities establish CONNECT tunnels; foreign-VM and previous-boot
+  capabilities fail against that same approved destination. Readiness-route
+  authentication has separate positive and negative controls.
+- Changed allowlists refuse running handoffs, then apply after an explicit
+  stop/start on the same VM. Host regressions also verify fixed egress modes,
+  crashed/booting refusal, and preservation of the old policy after failed boot
+  validation; `network-policy-*` fault injections cover those decisions.
+- Guest socket pressure admits exactly 128 of 160 sockets, closes overflow,
+  expires slow incomplete heads, and recovers after three rounds. The same fixture
+  runs locally under the production Seatbelt profile with
+  `python3 scripts/test-swift-egress-pressure.py` (also in CI/preflight).
+  `ProductionPressureTests.swift` additionally fills real relay queues at the
+  production 256 KiB per-direction and 32 MiB aggregate limits with 1/64 tunnels.
+  Injected I/O supplies deterministic backpressure; partial drains and revocation
+  must reclaim the budget. This is queue-allocation coverage, not kernel socket
+  memory or end-to-end stalled DNS/connect coverage. Both queue-accounting and
+  directional-limit faults are checked by the egress mutation runner.
+  `DialPressureTests.swift` forces `EINPROGRESS` through an internal syscall
+  seam, uses a real bounded kernel wait, and checks timeout refusal and socket
+  flag restoration. It also checks the production ten-second wait argument.
+  Release callers always use Darwin connect/poll; the seam grants no destination
+  approval and is not exposed through configuration or the CLI. Timeout,
+  refusal, and flag-restoration faults must fail the test. Handler-level pending
+  connection pressure is covered separately by `SessionPressureTests.swift`:
+  the production request handler accepts 64 pending connectors, refuses overflow,
+  retains capacity while disconnected/revoked work finishes, suppresses late
+  success responses, and serves a successful tunnel after recovery. DNS pressure
+  drives that same handler with 16 stalled resolver workers; request timeout and
+  disconnect cannot free the workers' slots early. The `session-*` mutations
+  check admission, cleanup, revocation and DNS-worker ownership. These are local
+  socket fixtures with injected stalls, not a release-process load campaign.
+- Paused reverse tunnels refuse handoffs and recover on resume; wrong/missing
+  public verification keys fail closed. A companion paused for ten seconds cannot
+  revive from queued renewals. Stop clears authority and restart rotates it.
+- Supervisor death, changed live boot identity, owner SIGKILL/automatic respawn,
+  and session TTL close the old grant. Explicit restart restores usable proof.
+- A reachable open-network control precedes direct Internet TCP denial. Filtered
+  guest peer probes cover IPv4/IPv6, forged routes/neighbours, source spoofing and
+  multicast, with named-probe assertions, required injection success, and host
+  positive controls before and after. Approved HTTPS verifies real TLS; an
+  unapproved CONNECT fails.
+- A separate ephemeral TCP listener bound only to the owned VM's host-side IPv4
+  address measures filtered guest→host-service reachability. Nonce checks from
+  the host before and after prove the service is available; the guest result is
+  reported explicitly. Host-service access is distinct from peer isolation.
+
+These are executable assertions, not a claim that a particular release candidate
+has passed. The runner removes its owned VMs, images and binary copies. Native
+agents, live-provider forwarding, the complete DNS/connect/relay pressure matrix,
+and full NET-20/F1 candidate qualification remain separate gates.
 The ordinary VM and proxy-transition suites remain separate required gates.
+For diagnosis, `--only brokers`, `--only egress`, `--only revocation`, or
+`--only network` runs a selected phase after common setup. A selected-phase pass
+does not qualify the other phases. Unreachable host positive controls fail the
+network phase; they must not be interpreted as guest isolation evidence. Initial
+controls retry for up to 60 seconds to allow host IPv6 initialization, with each
+probe invocation bounded to 30 seconds; post-attack controls must pass immediately.
 
 ### Filtered lease-record checks
 

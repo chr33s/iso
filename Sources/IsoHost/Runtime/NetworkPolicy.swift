@@ -2,8 +2,8 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Creation-time egress policy. A later config change does not retarget a
-/// running boot; every instance must retain the policy recorded at creation.
+/// Creation-time egress mode and the most recently started boot's allowlist.
+/// Configuration changes never retarget a running boot.
 package struct NetworkPolicy: Sendable, Equatable, Codable {
   package static let currentSchema: UInt32 = 3
   package var schemaVersion: UInt32
@@ -48,30 +48,28 @@ package struct NetworkPolicy: Sendable, Equatable, Codable {
     return record
   }
 
-  /// Require the creation-time record in every mode before boot or handoff.
-  package static func enforce(_ instance: Instance, config: IsoConfig) throws {
+  /// Require the fixed mode before boot; allowlists are checked separately.
+  @discardableResult
+  package static func enforceMode(_ instance: Instance, config: IsoConfig) throws -> NetworkPolicy {
     guard let recorded = try load(instance) else {
       throw HostError(
         "Instance '\(instance.name)' has no recorded network policy. Recreate it with `iso destroy` and `iso up`; its creation-time egress policy cannot be established."
       )
     }
-    if config.egress == .filtered {
-      guard recorded.mode == EgressMode.filtered.rawValue else {
-        throw HostError(
-          "POLICY_CHANGE_REQUIRES_RESTART: instance '\(instance.name)' was not created with filtered egress. Recreate it; this flag cannot change an existing instance's mode."
-        )
-      }
-      let wanted = Set(config.egressFilter.allowedHosts.map(\.rawValue))
-      guard Set(recorded.allowedHosts) == wanted else {
-        throw HostError(
-          "POLICY_CHANGE_REQUIRES_RESTART: filtered allowlist differs from the recorded boot policy for '\(instance.name)'."
-        )
-      }
-      return
-    }
-    if recorded.mode != config.egress.rawValue {
+    guard recorded.mode == config.egress.rawValue else {
       throw HostError(
-        "POLICY_CHANGE_REQUIRES_RESTART: instance '\(instance.name)' was created with egress \(recorded.mode), not \(config.egress.rawValue)."
+        "POLICY_CHANGE_REQUIRES_RESTART: instance '\(instance.name)' was created with egress \(recorded.mode), not \(config.egress.rawValue). Recreate it to change mode."
+      )
+    }
+    return recorded
+  }
+
+  /// Require the complete boot policy at every running-guest handoff.
+  package static func enforce(_ instance: Instance, config: IsoConfig) throws {
+    let recorded = try enforceMode(instance, config: config)
+    guard recorded.allowedHosts == make(config).allowedHosts else {
+      throw HostError(
+        "POLICY_CHANGE_REQUIRES_RESTART: filtered allowlist differs from the recorded boot policy for '\(instance.name)'. Stop and start it to apply the new allowlist."
       )
     }
   }

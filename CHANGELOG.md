@@ -8,8 +8,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.1.0
+
 ### Agent sessions
 
+- **Filtered address policy** parses IPv6 numerically, rejects unsupported
+  transition and special-purpose ranges, and recognizes host-interface addresses
+  across equivalent IPv6 spellings. The conservative policy is pinned to the
+  IANA registries dated 2025-10-09.
+- **Filtered allowlist changes** apply on the same VM after an explicit stop
+  and successful start. Running boots retain their policy, failed boot validation
+  preserves it, and the instance's egress mode remains fixed at creation.
 - **Filtered workload handoffs**: shell, exec, Claude, Codex and `iso run`
   recheck authenticated readiness after environment preparation and just before
   SSH launch, retaining the original boot/policy and signing identities. A healthy
@@ -76,8 +85,10 @@ SPDX-License-Identifier: Apache-2.0
 - **Apple owner startup** explicitly requests the bootstrapped launchd job
   without killing an already-started owner. A loaded but deferred `RunAtLoad`
   job no longer stalls first boot. Failed requests attempt to unload the job
-  and preserve cleanup errors. Automatic crash-respawn qualification remains
-  blocked on the local host; explicit-start evidence does not prove it.
+  and preserve cleanup errors. Owners run in the background user launchd domain
+  so a locked GUI session does not defer automatic respawn. Recovery qualification
+  separately checks a new owner PID after SIGKILL; explicit startup alone does
+  not establish that behavior.
 - **Staged pulls**: `iso diff` and `iso pull --review` pull the guest
   workspace into a host-side stage and print it for review; `iso pull --apply
   [--stage-id ID]` applies it and `--discard` drops it. Special files, hard

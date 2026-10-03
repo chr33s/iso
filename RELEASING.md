@@ -92,6 +92,19 @@ against `main`. Its downloadable artifact is
 After unzipping the GitHub artifact, enter its directory. Set `REVISION` to the
 full commit SHA from the workflow run, then verify before extracting:
 
+The automated equivalent, run from the repository checkout, verifies the pinned
+attestation before extraction, rejects unsafe archive members, checks clean build
+metadata and all four executable hashes, and requires Developer ID signatures and
+notarized Gatekeeper assessments before running either version command:
+
+```bash
+python3 scripts/verify-candidate.py /path/to/unzipped-artifact --revision FULL_COMMIT_SHA
+```
+
+It requires `gh` and macOS signing tools. It does not install the candidate or
+qualify clean-machine lifecycle, VM isolation, or live-provider behavior. For
+manual verification, use:
+
 ```bash
 REVISION="FULL_COMMIT_SHA_FROM_WORKFLOW_RUN"
 ARCHIVE="iso-${REVISION:0:12}-aarch64-apple-darwin.tar.gz"
@@ -252,7 +265,15 @@ Apple Silicon machine.
    ```bash
    ./tests/run-integration.sh
    python3 tests/integration-proxy-transition.py --controlled-upstream
+   python3 tests/integration-filtered-broker-readiness.py
    ```
+
+   The full preflight also runs the filtered VM gate; `--quick` skips it.
+   This gate uses synthetic provider credentials and explicit public HTTPS
+   controls, not billed provider operations.
+   For failure diagnosis, use `--only brokers|egress|revocation|network` (choose
+   one); a focused run does not replace the full gate. An unreachable positive
+   control is a qualification failure, not evidence of isolation.
 
    Live-provider and guest-agent tests remain required for proxy acceptance:
    `scripts/test-proxy-live.py` per approved model, then
@@ -317,6 +338,22 @@ Apple Silicon machine.
    be downloaded — the installer cannot tell a missing asset from a failed
    download, so confirm the asset on the release page (step 10's first bullet)
    before concluding it is missing.
+
+   For a repeatable isolated install, four-binary replacement, version/signing
+   check, and CLI uninstall, run:
+
+   ```bash
+   python3 scripts/accept-release.py --version vX.Y.Z
+   ```
+
+   This uses a private HOME, GitHub config, and install directory, with provider
+   credentials, GitHub tokens, proxy variables, and update-origin overrides
+   stripped. The first-release path forces a same-version replacement; later
+   releases can use `--from-version vA.B.C` for cross-version upgrade acceptance.
+   It creates no VM and performs no provider calls. Run it on a clean supported
+   Mac for clean-machine evidence; a private HOME on a development Mac alone
+   does not establish that evidence. Uninstall checks the current CLI-removal
+   contract; the harness then removes its private directory and companions.
 
 ## If the tag run fails
 

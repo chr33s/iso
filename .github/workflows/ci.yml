@@ -64,7 +64,10 @@ jobs:
         run: python3 tests/test-apple-integration-harness.py
 
       - name: Release preflight regression tests
-        run: python3 tests/test-preflight-release.py
+        run: |
+          python3 tests/test-preflight-release.py
+          python3 tests/test-verify-candidate.py
+          python3 tests/test-accept-release.py
 
       - name: Proxy runner and fixture regression tests
         run: |
@@ -95,6 +98,7 @@ jobs:
           swift build --package-path iso-egress --force-resolved-versions
           python3 scripts/test-swift-egress-jail.py
           python3 scripts/test-swift-egress-lease.py
+          python3 scripts/test-swift-egress-pressure.py
           python3 scripts/test-swift-egress-mutations.py
 
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.

@@ -12,6 +12,10 @@ import NIOPosix
 @main
 struct ProxyMain {
   static func main() async {
+    if CommandLine.arguments.dropFirst().elementsEqual(["--version"]) {
+      print("iso-proxy \(ProxyVersion.string)")
+      return
+    }
     do {
       try Jail.disableCoreDumps()
       try Jail.requireConfinement()

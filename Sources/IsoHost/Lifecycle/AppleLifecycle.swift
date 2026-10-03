@@ -266,7 +266,7 @@ extension AppleBackend {
   /// is re-enrolled).
   package func startExisting(_ instance: Instance) throws {
     _ = try config.validated()
-    try NetworkPolicy.enforce(instance, config: config)
+    try NetworkPolicy.enforceMode(instance, config: config)
     let runtime = try runtime()
     let identity = try runtime.requireQualified()
     let lock = try InstanceStore.lock(instance)
@@ -275,7 +275,11 @@ extension AppleBackend {
     var sidecar = try ownedSidecar(instance)
     let inspection = try runtime.inspect(sidecar.machineID)
     switch inspection.status {
-    case .stopped, .crashed: break
+    case .stopped: break
+    case .crashed:
+      // A crashed owner may still be scheduled for automatic respawn. Require
+      // an explicit stop before replacing that session's allowlist.
+      try NetworkPolicy.enforce(instance, config: config)
     case .running: throw HostError("Instance '\(instance.name)' is already running")
     case .booting:
       throw RuntimeError.operationUncertain(
@@ -300,6 +304,10 @@ extension AppleBackend {
         try sidecar.save(instance)
       }
       try waitForSSH(instance, ready, user: sidecar.guestUser, until: deadline)
+      // Commit only after the new boot has passed isolation and host-key checks.
+      // A failed boot leaves the previous policy intact; later handoffs require
+      // a separately authenticated companion bound to this boot and policy.
+      try NetworkPolicy.save(config, instance)
     } catch {
       stopAfterFailure(runtime, sidecar.machineID)
       throw error
