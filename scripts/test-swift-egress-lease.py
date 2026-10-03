@@ -20,7 +20,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILE = ROOT / 'Sources/IsoHost/seatbelt-egress.sb'
+PROFILE = ROOT / 'Sources/IsoHost/Guest/Resources/seatbelt-egress.sb'
 CAPABILITY = 'lease-fixture-not-a-provider-credential'
 
 

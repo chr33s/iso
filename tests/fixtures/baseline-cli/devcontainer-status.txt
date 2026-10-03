@@ -1,9 +1,0 @@
-Show persistent devcontainer opt-outs
-
-Usage: iso devcontainer status [PROJECT]
-
-Arguments:
-  [PROJECT]  Project directory to inspect; omitted lists every stored opt-out
-
-Options:
-  -h, --help  Print help

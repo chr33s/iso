@@ -18,6 +18,6 @@ remoteUser                                              applied      devcontaine
 image                                                   unsupported  devcontainer.json  mcr.microsoft.com/devcontainers/base:ubuntu  iso builds its own rootfs; base images are ignored                                            $
 customizations                                          unsupported  devcontainer.json  <...>                                        editor-specific; not relevant to iso                                                          $
 name                                                    unsupported  devcontainer.json  demo                                         informational only; iso names instances via --name or auto-generates                          $
-zeta                                                    unsupported  devcontainer.json  {"b":[1,2.5,"x\ty"],"a":null}                unrecognised devcontainer.json key                                                            $
+zeta                                                    unsupported  devcontainer.json  {"a":null,"b":[1,2.5,"x\ty"]}                unrecognised devcontainer.json key                                                            $
 alpha                                                   unsupported  devcontainer.json  1                                            unrecognised devcontainer.json key                                                            $
 $

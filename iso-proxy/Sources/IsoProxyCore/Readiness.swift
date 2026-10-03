@@ -3,14 +3,14 @@ import Foundation
 
 /// Local proof of broker identity, not provider authorization or upstream health.
 /// The signing seed stays in memory; the guest capability cannot sign replies.
-public struct BrokerReadiness: Sendable {
-  public static let path = "/__iso/broker-ready"
+package struct BrokerReadiness: Sendable {
+  package static let path = "/__iso/broker-ready"
   private let key: Curve25519.Signing.PrivateKey
   private let provider: Provider
   private let bootID: String
   private let policyHash: String
 
-  public init(privateKeyHex: String, provider: Provider, bootID: String, policyHash: String) throws
+  package init(privateKeyHex: String, provider: Provider, bootID: String, policyHash: String) throws
   {
     guard let seed = Self.hex(privateKeyHex, count: 32), Self.hex(bootID, count: 16) != nil,
       policyHash.hasPrefix("sha256:"), Self.hex(String(policyHash.dropFirst(7)), count: 32) != nil
@@ -40,7 +40,7 @@ public struct BrokerReadiness: Sendable {
   }
 
   /// No credentials, body, query, or selectable destination on this route.
-  public static func challenge(method: String, uri: String, headers: [Header]) -> String? {
+  package static func challenge(method: String, uri: String, headers: [Header]) -> String? {
     guard method == "GET", uri == path, headers.count == 3 else { return nil }
     let hosts = headers.filter { $0.name.lowercased() == "host" }
     let connections = headers.filter { $0.name.lowercased() == "connection" }
@@ -52,7 +52,7 @@ public struct BrokerReadiness: Sendable {
     return nonces[0].value
   }
 
-  public func response(nonce: String) throws -> Data {
+  package func response(nonce: String) throws -> Data {
     guard Self.hex(nonce, count: 16) != nil else { throw PolicyError.invalidHeader }
     let message =
       "iso-broker-readiness-v1\n\(nonce)\n\(provider.rawValue)\n\(bootID)\n\(policyHash)\n"

@@ -2,7 +2,7 @@ import IsoCore
 
 /// The closed set of secret-store failures callers branch on. No case ever
 /// carries a secret value or passphrase.
-public enum EnclaveStoreError: Error, Equatable, CustomStringConvertible {
+package enum EnclaveStoreError: Error, Equatable, CustomStringConvertible {
   case notInitialized
   case alreadyInitialized
   /// Device-key files exist but `store.v1.json` does not.
@@ -23,7 +23,7 @@ public enum EnclaveStoreError: Error, Equatable, CustomStringConvertible {
   case limitExceeded(String)
   case io(String)
 
-  public var description: String {
+  package var description: String {
     switch self {
     case .notInitialized: "No iso secret store; create one with `iso secrets init`"
     case .alreadyInitialized: "A iso secret store already exists"

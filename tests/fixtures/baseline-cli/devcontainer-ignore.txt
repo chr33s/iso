@@ -1,9 +1,0 @@
-Persistently ignore discovered devcontainer.json for a project
-
-Usage: iso devcontainer ignore <PROJECT>
-
-Arguments:
-  <PROJECT>  Project directory whose discovered devcontainer.json should be ignored
-
-Options:
-  -h, --help  Print help

@@ -2,43 +2,43 @@ import Containerization
 import Foundation
 
 /// What `create` clones a new sandbox from.
-public enum SandboxSource: Sendable {
+package enum SandboxSource: Sendable {
   case image(String)
   case disk(SandboxID)
 }
 
 /// Metadata saved beside a committed disk; a sandbox created from it
 /// inherits these fields.
-public struct DiskMetadata: Codable, Sendable {
-  public var imageReference: String
-  public var imageDigest: String
-  public var environment: [String]
-  public var diskBytes: UInt64
-  public var committedFrom: SandboxID
-  public var createdAt: Date
+package struct DiskMetadata: Codable, Sendable {
+  package var imageReference: String
+  package var imageDigest: String
+  package var environment: [String]
+  package var diskBytes: UInt64
+  package var committedFrom: SandboxID
+  package var createdAt: Date
 }
 
-public struct InspectOutput: Encodable, Sendable {
-  public var record: SandboxRecord
-  public var status: SandboxStatus
-  public var live: LiveState?
-  public var effective: EffectiveConfig?
-  public var disk: DiskSummary
+package struct InspectOutput: Encodable, Sendable {
+  package var record: SandboxRecord
+  package var status: SandboxStatus
+  package var live: LiveState?
+  package var effective: EffectiveConfig?
+  package var disk: DiskSummary
 }
 
-public struct ReconcileAction: Codable, Sendable {
-  public var id: String
-  public var status: String
-  public var action: String
+package struct ReconcileAction: Codable, Sendable {
+  package var id: String
+  package var status: String
+  package var action: String
 }
 
 /// Sandbox lifecycle operations. Every mutation of a sandbox's disk or
 /// record runs under its mutation guard and requires it to be stopped with
 /// no live owner.
-public enum Sandboxes {
+package enum Sandboxes {
   // MARK: status
 
-  public static func status(_ paths: SandboxPaths) -> SandboxStatus {
+  package static func status(_ paths: SandboxPaths) -> SandboxStatus {
     guard paths.loadLive() != nil else {
       return ownerHoldsLock(paths) ? .booting : .stopped
     }
@@ -78,7 +78,7 @@ public enum Sandboxes {
     return "cannot open its owner lock \(paths.lock.path): \(String(cString: strerror(code)))"
   }
 
-  public static func requireStopped(_ paths: SandboxPaths, _ id: SandboxID) throws {
+  package static func requireStopped(_ paths: SandboxPaths, _ id: SandboxID) throws {
     if let why = lockProbeFailure(paths) { throw SandboxError("\(id) state is unknown: \(why)") }
     let s = status(paths)
     guard s == .stopped else { throw SandboxError("\(id) is \(s.rawValue); stop it first") }
@@ -111,7 +111,7 @@ public enum Sandboxes {
 
   // MARK: create
 
-  public static func create(
+  package static func create(
     root: SandboxRoot, id: SandboxID, owner: String, source: SandboxSource, cpus: Int,
     memoryBytes: UInt64, diskBytes: UInt64,
     network: NetworkMode = .shared
@@ -180,13 +180,12 @@ public enum Sandboxes {
 
     var record: SandboxRecord?
     try SubnetAllocator(root: root).allocate(for: id) { index in
-      var r = SandboxRecord(
+      let r = SandboxRecord(
         id: id, owner: owner, imageReference: imageReference, imageDigest: imageDigest,
         baseDisk: baseDisk,
         environment: environment, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes,
         subnetIndex: index,
-        createdAt: Date())
-      r.network = network == .shared ? nil : network
+        createdAt: Date(), network: network)
       // Writing the record commits the create.
       try paths.save(r)
       record = r
@@ -209,7 +208,7 @@ public enum Sandboxes {
 
   // MARK: start / stop
 
-  public static func start(
+  package static func start(
     root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval, expiresAt: Date? = nil
   ) async throws -> LiveState {
     if let expiresAt, expiresAt <= Date() { throw SandboxError("--expires-at is in the past") }
@@ -268,7 +267,7 @@ public enum Sandboxes {
   /// Halt systemd cleanly, wait for the owner to exit, and unload its job.
   /// Idempotent: stopping a stopped sandbox succeeds. Not guarded: it
   /// changes no disk or record, and must work while an owner is starting.
-  public static func stop(root: SandboxRoot, id: SandboxID, timeout: TimeInterval) async throws {
+  package static func stop(root: SandboxRoot, id: SandboxID, timeout: TimeInterval) async throws {
     let paths = root.sandbox(id)
     _ = try paths.loadRecord()
     if let why = lockProbeFailure(paths) {
@@ -295,7 +294,7 @@ public enum Sandboxes {
 
   // MARK: inspect
 
-  public static func inspect(root: SandboxRoot, id: SandboxID) throws -> InspectOutput {
+  package static func inspect(root: SandboxRoot, id: SandboxID) throws -> InspectOutput {
     let paths = root.sandbox(id)
     let record = try paths.loadRecord()
     let s = status(paths)
@@ -313,7 +312,7 @@ public enum Sandboxes {
   /// Change CPU/memory, applied at the next start. With `expect`, refuses
   /// unless the record's last operation is still `expect`, so a caller
   /// undoing its own change never overwrites a newer one.
-  public static func setResources(
+  package static func setResources(
     root: SandboxRoot, id: SandboxID, cpus: Int?, memoryBytes: UInt64?,
     operation: OperationID? = nil, expect: OperationID? = nil
   ) async throws -> SandboxRecord {
@@ -344,7 +343,7 @@ public enum Sandboxes {
     }
   }
 
-  public static func grow(
+  package static func grow(
     root: SandboxRoot, id: SandboxID, diskBytes: UInt64, operation: OperationID? = nil
   ) async throws -> SandboxRecord {
     let lock = try OperationLock.shared(root)
@@ -381,7 +380,7 @@ public enum Sandboxes {
   }
 
   /// Save a stopped sandbox's disk as `name`, with its identity removed.
-  public static func commit(root: SandboxRoot, id: SandboxID, name: SandboxID, replace: Bool)
+  package static func commit(root: SandboxRoot, id: SandboxID, name: SandboxID, replace: Bool)
     async throws -> DiskSummary
   {
     let lock = try OperationLock.shared(root)
@@ -423,7 +422,7 @@ public enum Sandboxes {
   /// or a fresh copy of an image, grown back to the sandbox's size if that
   /// is larger. The new disk has no host keys, so the next boot generates
   /// new ones.
-  public static func restore(
+  package static func restore(
     root: SandboxRoot, id: SandboxID, source: SandboxSource, operation: OperationID? = nil
   ) async throws
     -> SandboxRecord
@@ -472,7 +471,7 @@ public enum Sandboxes {
     }
   }
 
-  public static func deleteDisk(root: SandboxRoot, name: SandboxID) async throws {
+  package static func deleteDisk(root: SandboxRoot, name: SandboxID) async throws {
     let lock = try OperationLock.shared(root)
     defer { withExtendedLifetime(lock) {} }
     try await withDisk(root, name, .exclusive) {
@@ -504,7 +503,7 @@ public enum Sandboxes {
 
   /// Does not settle a staged disk update first: deleting must stay
   /// possible even when that state is unreadable.
-  public static func delete(root: SandboxRoot, id: SandboxID, owner: String) async throws {
+  package static func delete(root: SandboxRoot, id: SandboxID, owner: String) async throws {
     let lock = try OperationLock.shared(root)
     defer { withExtendedLifetime(lock) {} }
     let paths = root.sandbox(id)
@@ -529,7 +528,7 @@ public enum Sandboxes {
   /// Clear crashed owners' state, finish interrupted disk updates and
   /// deletes, and remove uncommitted creates and leftover scratch files. A
   /// sandbox whose guard is held is left for a later run.
-  public static func reconcile(root: SandboxRoot) throws -> [ReconcileAction] {
+  package static func reconcile(root: SandboxRoot) throws -> [ReconcileAction] {
     var out: [ReconcileAction] = []
     // The sweep below must not race an in-flight offline operation; while
     // one runs, only per-sandbox recovery (crashed owners, staged disk
@@ -640,19 +639,19 @@ public enum Sandboxes {
 
   /// Scratch files left by an interrupted offline operation.
   static func isScratch(_ name: String) -> Bool {
-    [".tmp-", ".update-", ".grow-", ".restore-", ".maintenance-"].contains { name.hasPrefix($0) }
+    [".tmp-", ".update-", ".maintenance-"].contains { name.hasPrefix($0) }
   }
 
   // MARK: logs
 
   /// The last `lines` lines of `url`. Splits on bytes: the serial console
   /// writes CRLF, which Swift's `String` treats as a single character.
-  public static func logTail(_ url: URL, lines: Int) -> String {
+  package static func logTail(_ url: URL, lines: Int) -> String {
     String(decoding: tailData(url, lines: lines), as: UTF8.self)
   }
 
   /// The last `lines` lines of `url`, reading at most its last 256 KiB.
-  public static func tailData(_ url: URL, lines: Int, window: UInt64 = 256 * 1024) -> Data {
+  package static func tailData(_ url: URL, lines: Int, window: UInt64 = 256 * 1024) -> Data {
     guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
     defer { try? handle.close() }
     guard let end = try? handle.seekToEnd() else { return Data() }
@@ -663,7 +662,7 @@ public enum Sandboxes {
     return tailLines(Data(data), lines)
   }
 
-  public static func tailLines(_ data: Data, _ lines: Int) -> Data {
+  package static func tailLines(_ data: Data, _ lines: Int) -> Data {
     var parts = data.split(separator: 0x0A, omittingEmptySubsequences: false)
     if parts.last?.isEmpty == true { parts.removeLast() }
     let kept = parts.suffix(lines)

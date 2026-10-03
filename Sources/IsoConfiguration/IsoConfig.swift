@@ -7,10 +7,10 @@ import IsoCore
 
 /// A host filesystem path from configuration with a leading `~` component
 /// expanded at construction, so every path field is expanded on every load.
-public struct HostPath: Hashable, Sendable, CustomStringConvertible {
-  public let path: String
+package struct HostPath: Hashable, Sendable, CustomStringConvertible {
+  package let path: String
 
-  public init(expanding raw: String, home: String?) {
+  package init(expanding raw: String, home: String?) {
     if let home, raw == "~" || raw.hasPrefix("~/") {
       let rest = raw.dropFirst().drop(while: { $0 == "/" })
       path = rest.isEmpty ? home : (home.hasSuffix("/") ? home + rest : home + "/" + rest)
@@ -19,69 +19,69 @@ public struct HostPath: Hashable, Sendable, CustomStringConvertible {
     }
   }
 
-  public init(absolute path: String) { self.path = path }
+  package init(absolute path: String) { self.path = path }
 
-  public func appending(_ component: String) -> HostPath {
+  package func appending(_ component: String) -> HostPath {
     HostPath(absolute: path.hasSuffix("/") ? path + component : path + "/" + component)
   }
 
-  public var parent: HostPath? {
+  package var parent: HostPath? {
     let url = URL(fileURLWithPath: path)
     let parent = url.deletingLastPathComponent().path
     return parent == path ? nil : HostPath(absolute: parent)
   }
 
-  public var description: String { path }
+  package var description: String { path }
 }
 
 /// Host facts configuration loading may read. Injected so tests and fuzzing
 /// never observe the developer's home directory or environment.
-public struct ConfigEnvironment: Sendable {
-  public var home: String?
-  public var variables: [String: String]
+package struct ConfigEnvironment: Sendable {
+  package var home: String?
+  package var variables: [String: String]
 
-  public init(home: String?, variables: [String: String]) {
+  package init(home: String?, variables: [String: String]) {
     self.home = home
     self.variables = variables
   }
 
-  public static var process: ConfigEnvironment {
+  package static var process: ConfigEnvironment {
     let variables = ProcessInfo.processInfo.environment
     let home = variables["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     return ConfigEnvironment(home: home, variables: variables)
   }
 
-  public static let empty = ConfigEnvironment(home: nil, variables: [:])
+  package static let empty = ConfigEnvironment(home: nil, variables: [:])
 }
 
 /// The validated, immutable configuration a command runs with (S-02).
 /// Credential references are carried unresolved; nothing here executes them.
-public struct IsoConfig: Sendable, Equatable {
-  public let dataDirectory: HostPath
-  public let vm: VMConfig
-  public let sshPort: UInt16
-  public let github: GitHubAuth?
-  public let setup: SetupConfig
-  public let claude: AgentConfig
-  public let codex: AgentConfig
-  public let codexAuth: CodexAuthMode
-  public let proxy: ProxyConfig
+package struct IsoConfig: Sendable, Equatable {
+  package let dataDirectory: HostPath
+  package let vm: VMConfig
+  package let sshPort: UInt16
+  package let github: GitHubAuth?
+  package let setup: SetupConfig
+  package let claude: AgentConfig
+  package let codex: AgentConfig
+  package let codexAuth: CodexAuthMode
+  package let proxy: ProxyConfig
   /// Literal guest variables in byte order of name (Rust `BTreeMap` order).
-  public let guestEnvironment: [GuestVariable]
-  public let profiles: [String: CustomProfile]
-  public let postStart: String?
-  public let forwardPorts: [PortForward]
-  public let updates: UpdateConfig
-  public let appleContainer: AppleContainerConfig
-  public let workspacePull: WorkspacePullConfig
-  public let egress: EgressMode
+  package let guestEnvironment: [GuestVariable]
+  package let profiles: [String: CustomProfile]
+  package let postStart: String?
+  package let forwardPorts: [PortForward]
+  package let updates: UpdateConfig
+  package let appleContainer: AppleContainerConfig
+  package let workspacePull: WorkspacePullConfig
+  package let egress: EgressMode
   /// Empty unless `egress` is `filtered`.
-  public let egressFilter: EgressFilter
-  public let limits: LimitsConfig
+  package let egressFilter: EgressFilter
+  package let limits: LimitsConfig
   /// The preset whose defaults this configuration was decoded with.
-  public let securityPreset: SecurityPreset?
+  package let securityPreset: SecurityPreset?
 
-  public init(
+  package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
     setup: SetupConfig, claude: AgentConfig, codex: AgentConfig, codexAuth: CodexAuthMode,
     proxy: ProxyConfig, guestEnvironment: [GuestVariable], profiles: [String: CustomProfile],
@@ -112,39 +112,39 @@ public struct IsoConfig: Sendable, Equatable {
   }
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
-  public static let backendRoot = "backends/apple-container-v1"
+  package static let backendRoot = "backends/apple-container-v1"
 
-  public var stateRoot: HostPath { dataDirectory.appending(Self.backendRoot) }
-  public var imagesDirectory: HostPath { stateRoot.appending("images") }
-  public var instancesDirectory: HostPath { stateRoot.appending("instances") }
-  public var sshKeyPath: HostPath { stateRoot.appending("vm_key") }
+  package var stateRoot: HostPath { dataDirectory.appending(Self.backendRoot) }
+  package var imagesDirectory: HostPath { stateRoot.appending("images") }
+  package var instancesDirectory: HostPath { stateRoot.appending("instances") }
+  package var sshKeyPath: HostPath { stateRoot.appending("vm_key") }
 }
 
-public struct GuestVariable: Sendable, Equatable {
-  public let name: EnvVarName
-  public let value: String
+package struct GuestVariable: Sendable, Equatable {
+  package let name: EnvVarName
+  package let value: String
 }
 
-public struct VMConfig: Sendable, Equatable {
-  public let vcpuCount: UInt8
-  public let memory: VmMemory
-  public let templateSize: GiB
+package struct VMConfig: Sendable, Equatable {
+  package let vcpuCount: UInt8
+  package let memory: VmMemory
+  package let templateSize: GiB
 
-  public static let defaults = VMConfig(
+  package static let defaults = VMConfig(
     vcpuCount: 2, memory: try! VmMemory(MiB(4096)!), templateSize: GiB(8)!)
 }
 
-public struct SetupConfig: Sendable, Equatable {
-  public let promptForPAT: Bool
+package struct SetupConfig: Sendable, Equatable {
+  package let promptForPAT: Bool
 }
 
-public enum GitHubAuth: Sendable, Equatable {
+package enum GitHubAuth: Sendable, Equatable {
   case auto
   case env
   case off
   case pat(PATConfig)
 
-  public var modeName: String {
+  package var modeName: String {
     switch self {
     case .auto: "auto"
     case .env: "env"
@@ -154,32 +154,32 @@ public enum GitHubAuth: Sendable, Equatable {
   }
 }
 
-public struct PATConfig: Sendable, Equatable {
+package struct PATConfig: Sendable, Equatable {
   /// Per-repo tokens: a literal or a `cmd:` reference, resolved on use.
-  public let entries: [RepoSlug: Secret<String>]
-  public let skip: [RepoSlug]
+  package let entries: [RepoSlug: Secret<String>]
+  package let skip: [RepoSlug]
 }
 
-public enum ConfigDirectory: Sendable, Equatable {
+package enum ConfigDirectory: Sendable, Equatable {
   case `default`
   case custom(HostPath)
   case disabled
 }
 
-public enum MCPServer: Sendable, Equatable {
+package enum MCPServer: Sendable, Equatable {
   case stdio(command: String, args: [String], env: [EnvVarName: EnvVarName])
   case http(url: URL, headers: [String: Secret<String>])
   case sse(url: URL, headers: [String: Secret<String>])
 }
 
-public struct LocalModel: Sendable, Equatable {
-  public let hostURL: URL
-  public let model: String
-  public let authToken: Secret<String>?
+package struct LocalModel: Sendable, Equatable {
+  package let hostURL: URL
+  package let model: String
+  package let authToken: Secret<String>?
 
-  public static let authFallback = "iso-local"
+  package static let authFallback = "iso-local"
 
-  public init(hostURL: String, model: String, authToken: Secret<String>?) throws(ValidationError) {
+  package init(hostURL: String, model: String, authToken: Secret<String>?) throws(ValidationError) {
     guard !model.trimmingUnicodeWhitespace().isEmpty else {
       throw ValidationError("local model 'model' must not be empty")
     }
@@ -199,32 +199,32 @@ public struct LocalModel: Sendable, Equatable {
 }
 
 /// Settings shared by the `claude` and `codex` sections.
-public struct AgentConfig: Sendable, Equatable {
+package struct AgentConfig: Sendable, Equatable {
   /// Configured key, or for an absent section the provider's environment
   /// variable (the baseline default). A `cmd:` value is resolved on use.
-  public let apiKey: Secret<String>?
-  public let envForward: [EnvVarName]
-  public let marketplaces: [String]
-  public let plugins: [String]
-  public let mcpServers: [String: MCPServer]
-  public let configDirectory: ConfigDirectory
-  public let localModel: LocalModel?
+  package let apiKey: Secret<String>?
+  package let envForward: [EnvVarName]
+  package let marketplaces: [String]
+  package let plugins: [String]
+  package let mcpServers: [String: MCPServer]
+  package let configDirectory: ConfigDirectory
+  package let localModel: LocalModel?
 }
 
-public enum CodexAuthMode: String, Sendable, Equatable {
+package enum CodexAuthMode: String, Sendable, Equatable {
   case apiKey = "api_key"
   case chatgpt
 }
 
-public enum ProxyAuthScheme: String, Sendable, Equatable {
+package enum ProxyAuthScheme: String, Sendable, Equatable {
   case apiKey = "api_key"
   case bearer
 
   /// The injection name in iso-proxy's startup document and guest_env.json.
-  public var wireName: String { self == .apiKey ? "x_api_key" : "bearer" }
+  package var wireName: String { self == .apiKey ? "x_api_key" : "bearer" }
 }
 
-public enum ProxyProvider: String, Sendable, CaseIterable {
+package enum ProxyProvider: String, Sendable, CaseIterable {
   case anthropic
   case openai
 
@@ -232,7 +232,7 @@ public enum ProxyProvider: String, Sendable, CaseIterable {
   /// injection scheme each one's value uses. The one table for both
   /// withholding (none reaches the guest raw with a proxy or under
   /// `proxy.mode = "required"`) and routing stored secrets to the proxy.
-  public var credentialVariables: [(name: String, auth: ProxyAuthScheme)] {
+  package var credentialVariables: [(name: String, auth: ProxyAuthScheme)] {
     switch self {
     case .anthropic:
       [
@@ -243,10 +243,10 @@ public enum ProxyProvider: String, Sendable, CaseIterable {
     }
   }
 
-  public var recognizedVariables: [String] { credentialVariables.map(\.name) }
+  package var recognizedVariables: [String] { credentialVariables.map(\.name) }
 
   /// The provider and scheme a credential variable routes to, if any.
-  public static func route(forVariable name: String) -> (ProxyProvider, ProxyAuthScheme)? {
+  package static func route(forVariable name: String) -> (ProxyProvider, ProxyAuthScheme)? {
     for provider in allCases {
       if let entry = provider.credentialVariables.first(where: { $0.name == name }) {
         return (provider, entry.auth)
@@ -257,9 +257,9 @@ public enum ProxyProvider: String, Sendable, CaseIterable {
 }
 
 /// `proxy.mode` (selective-hardening spec §7.5).
-public enum ProxyMode: String, Sendable, Equatable {
-  /// A configured provider runs through its proxy; others keep the legacy
-  /// raw forwarding.
+package enum ProxyMode: String, Sendable, Equatable {
+  /// A configured provider runs through its proxy; other providers use
+  /// direct credential forwarding.
   case auto
   /// No recognized provider variable reaches the guest by any path, and a
   /// remote-model VM must have at least one provider proxy.
@@ -271,45 +271,45 @@ public enum ProxyMode: String, Sendable, Equatable {
 /// A provider credential reference. Literal credentials are not
 /// representable: construction requires a `cmd:` command or a `vault:<name>`
 /// reference to the local secret store (C-04, embedded-secrets D-003).
-public struct CredentialReference: Sendable, Equatable, CustomStringConvertible {
+package struct CredentialReference: Sendable, Equatable, CustomStringConvertible {
   /// The reference text (`cmd:…` or `vault:…`), never a secret itself.
-  public let command: Secret<String>
+  package let command: Secret<String>
 
-  public init?(_ value: String) {
+  package init?(_ value: String) {
     guard value.hasPrefix("cmd:") || value.hasPrefix("vault:") else { return nil }
     command = Secret(value)
   }
 
-  public var description: String {
+  package var description: String {
     command.expose().hasPrefix("vault:") ? command.expose() : "cmd:<redacted>"
   }
 }
 
-public struct ProxyUpstream: Sendable, Equatable {
-  public let credential: CredentialReference
-  public let auth: ProxyAuthScheme
+package struct ProxyUpstream: Sendable, Equatable {
+  package let credential: CredentialReference
+  package let auth: ProxyAuthScheme
 }
 
-public struct ProxyConfig: Sendable, Equatable {
-  public let anthropic: ProxyUpstream?
-  public let openai: ProxyUpstream?
-  public let mode: ProxyMode
+package struct ProxyConfig: Sendable, Equatable {
+  package let anthropic: ProxyUpstream?
+  package let openai: ProxyUpstream?
+  package let mode: ProxyMode
 
-  public init(anthropic: ProxyUpstream?, openai: ProxyUpstream?, mode: ProxyMode = .auto) {
+  package init(anthropic: ProxyUpstream?, openai: ProxyUpstream?, mode: ProxyMode = .auto) {
     self.anthropic = anthropic
     self.openai = openai
     self.mode = mode
   }
 
   /// Secret-store names the configured upstreams read (`vault:NAME`).
-  public var storedCredentialNames: Set<SecretName> {
+  package var storedCredentialNames: Set<SecretName> {
     Set(
       [anthropic, openai].compactMap {
         SecretName.vaultReference($0?.credential.command.expose() ?? "")
       })
   }
 
-  public func upstream(for provider: ProxyProvider) -> ProxyUpstream? {
+  package func upstream(for provider: ProxyProvider) -> ProxyUpstream? {
     switch provider {
     case .anthropic: anthropic
     case .openai: openai
@@ -317,39 +317,39 @@ public struct ProxyConfig: Sendable, Equatable {
   }
 }
 
-public struct CustomProfile: Sendable, Equatable {
-  public let aptPackages: [String]
-  public let preInstall: String?
-  public let postInstall: String?
-  public let marketplaces: [String]
-  public let plugins: [String]
+package struct CustomProfile: Sendable, Equatable {
+  package let aptPackages: [String]
+  package let preInstall: String?
+  package let postInstall: String?
+  package let marketplaces: [String]
+  package let plugins: [String]
 }
 
-public enum UpdateMode: String, Sendable, Equatable {
+package enum UpdateMode: String, Sendable, Equatable {
   case off
   case notify
 }
 
-public struct UpdateConfig: Sendable, Equatable {
-  public let mode: UpdateMode
-  public let checkIntervalHours: UInt64
+package struct UpdateConfig: Sendable, Equatable {
+  package let mode: UpdateMode
+  package let checkIntervalHours: UInt64
 }
 
-public struct AppleContainerConfig: Sendable, Equatable {
-  public let binary: HostPath?
-  public let builder: HostPath?
-  public let kernel: HostPath?
-  public let probeTimeout: TimeoutSecs
-  public let operationTimeout: TimeoutSecs
-  public let createTimeout: TimeoutSecs
-  public let bootTimeout: TimeoutSecs
-  public let stopTimeout: TimeoutSecs
-  public let buildTimeout: TimeoutSecs
+package struct AppleContainerConfig: Sendable, Equatable {
+  package let binary: HostPath?
+  package let builder: HostPath?
+  package let kernel: HostPath?
+  package let probeTimeout: TimeoutSecs
+  package let operationTimeout: TimeoutSecs
+  package let createTimeout: TimeoutSecs
+  package let bootTimeout: TimeoutSecs
+  package let stopTimeout: TimeoutSecs
+  package let buildTimeout: TimeoutSecs
 }
 
 /// Guest network reach beyond the host (selective-hardening spec §6). Fixed
 /// per instance when its sandbox is created.
-public enum EgressMode: String, Sendable, Equatable {
+package enum EgressMode: String, Sendable, Equatable {
   /// NAT to the host's uplinks, as before.
   case open
   /// vmnet host mode: no route beyond the host and no DNS. Host→guest SSH
@@ -361,16 +361,16 @@ public enum EgressMode: String, Sendable, Equatable {
   case filtered
 
   /// `none` and `filtered` both use the runtime's host-only network.
-  public var requiresHostOnlyNetwork: Bool { self != .open }
+  package var requiresHostOnlyNetwork: Bool { self != .open }
 }
 
 /// Approved exact hostnames for `egress: filtered`. Empty means no general
 /// destinations. Hints from an agent definition are not part of this set.
-public struct EgressFilter: Sendable, Equatable {
-  public static let maxHosts = 256
-  public let allowedHosts: [ExactHostname]
+package struct EgressFilter: Sendable, Equatable {
+  package static let maxHosts = 256
+  package let allowedHosts: [ExactHostname]
 
-  public init(allowedHosts: [ExactHostname]) {
+  package init(allowedHosts: [ExactHostname]) {
     var seen: Set<String> = []
     var ordered: [ExactHostname] = []
     for host in allowedHosts where seen.insert(host.rawValue).inserted {
@@ -379,16 +379,16 @@ public struct EgressFilter: Sendable, Equatable {
     self.allowedHosts = ordered.sorted { $0.rawValue < $1.rawValue }
   }
 
-  public static let empty = EgressFilter(allowedHosts: [])
+  package static let empty = EgressFilter(allowedHosts: [])
 
-  public func allowing(_ extra: [ExactHostname]) -> EgressFilter {
+  package func allowing(_ extra: [ExactHostname]) -> EgressFilter {
     EgressFilter(allowedHosts: allowedHosts + extra)
   }
 }
 
 /// `security.preset` (selective-hardening spec §10): defaults for the
 /// hardening settings. A field written explicitly always wins.
-public enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
+package enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
   /// Today's defaults: open egress, `proxy.mode` auto, direct pulls.
   case networked
   /// No egress, provider credentials only through the proxy, staged pulls.
@@ -408,59 +408,59 @@ public enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
 }
 
 /// `limits` (selective-hardening spec §8).
-public struct LimitsConfig: Sendable, Equatable {
+package struct LimitsConfig: Sendable, Equatable {
   /// Each boot ends this long after it starts, enforced by the sandbox owner
   /// on the host clock. nil: no limit.
-  public let sessionTTL: SessionTTL?
+  package let sessionTTL: SessionTTL?
 
-  public init(sessionTTL: SessionTTL?) { self.sessionTTL = sessionTTL }
+  package init(sessionTTL: SessionTTL?) { self.sessionTTL = sessionTTL }
 
-  public static let none = LimitsConfig(sessionTTL: nil)
+  package static let none = LimitsConfig(sessionTTL: nil)
 }
 
 /// How `iso pull` returns guest files: straight into the destination
 /// (`direct`, the historical behavior) or through a reviewed stage.
-public enum WorkspacePullMode: String, Sendable, Equatable {
+package enum WorkspacePullMode: String, Sendable, Equatable {
   case direct
   case stage
 }
 
 /// Hard budgets a stage must fit before it can be applied.
-public struct StageLimits: Sendable, Equatable {
+package struct StageLimits: Sendable, Equatable {
   /// Staged entries of any type.
-  public let maxFiles: UInt64
+  package let maxFiles: UInt64
   /// Total regular-file bytes.
-  public let maxBytes: ByteCount
+  package let maxBytes: ByteCount
   /// Largest single regular file.
-  public let maxFileBytes: ByteCount
+  package let maxFileBytes: ByteCount
 
-  public init(maxFiles: UInt64, maxBytes: ByteCount, maxFileBytes: ByteCount) {
+  package init(maxFiles: UInt64, maxBytes: ByteCount, maxFileBytes: ByteCount) {
     self.maxFiles = maxFiles
     self.maxBytes = maxBytes
     self.maxFileBytes = maxFileBytes
   }
 
-  public static let defaults = StageLimits(
+  package static let defaults = StageLimits(
     maxFiles: 50_000, maxBytes: ByteCount(bytes: 1 << 30)!,
     maxFileBytes: ByteCount(bytes: 256 << 20)!)
 }
 
 /// `workspace.pull`.
-public struct WorkspacePullConfig: Sendable, Equatable {
-  public let mode: WorkspacePullMode
-  public let limits: StageLimits
+package struct WorkspacePullConfig: Sendable, Equatable {
+  package let mode: WorkspacePullMode
+  package let limits: StageLimits
 
-  public init(mode: WorkspacePullMode, limits: StageLimits) {
+  package init(mode: WorkspacePullMode, limits: StageLimits) {
     self.mode = mode
     self.limits = limits
   }
 
-  public static let defaults = WorkspacePullConfig(mode: .direct, limits: .defaults)
+  package static let defaults = WorkspacePullConfig(mode: .direct, limits: .defaults)
 }
 
 extension IsoConfig {
   /// One command's CLI overrides of `vm`; the file is never rewritten.
-  public func overridingVM(vcpus: UInt8?, memory: VmMemory?, templateSize: GiB?) -> IsoConfig {
+  package func overridingVM(vcpus: UInt8?, memory: VmMemory?, templateSize: GiB?) -> IsoConfig {
     let vm = VMConfig(
       vcpuCount: vcpus ?? self.vm.vcpuCount, memory: memory ?? self.vm.memory,
       templateSize: templateSize ?? self.vm.templateSize)
@@ -477,7 +477,7 @@ extension IsoConfig {
   }
 
   /// This command's egress override. Does not rewrite the config file.
-  public func overridingEgress(_ mode: EgressMode, extraHosts: [ExactHostname] = []) -> IsoConfig {
+  package func overridingEgress(_ mode: EgressMode, extraHosts: [ExactHostname] = []) -> IsoConfig {
     let filter = mode == .filtered ? egressFilter.allowing(extraHosts) : .empty
     return IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,

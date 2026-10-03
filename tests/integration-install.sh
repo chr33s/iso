@@ -41,6 +41,8 @@ cat >"$FIXTURE/$ARCHIVE_DIR/iso-proxy" <<'EOF'
 echo installed-iso-proxy
 EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
+printf '#!/bin/sh\necho installed-iso-egress\n' >"$FIXTURE/$ARCHIVE_DIR/iso-egress"
+chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-egress"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso" "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
@@ -181,19 +183,13 @@ else
 fi
 unset ISO_TEST_GH_REQUIRE_BUNDLE
 
-if "$INSTALL_DIR/iso" | grep -q '^installed-iso$' \
-    && "$INSTALL_DIR/iso-proxy" | grep -q '^installed-iso-proxy$'; then
-    pass "installer extracts iso and iso-proxy"
-    if [[ "$TRIPLE" == aarch64-apple-darwin ]]; then
-        if [[ "$("$INSTALL_DIR/iso-sandbox")" == installed-iso-sandbox ]]; then
-            pass "installer installs the Apple runtime"
-        else
-            fail "installer installs the Apple runtime"
-        fi
+for artifact in iso iso-proxy iso-sandbox iso-egress; do
+    if [[ "$("$INSTALL_DIR/$artifact")" == "installed-$artifact" ]]; then
+        pass "installer installs $artifact"
+    else
+        fail "installer installs $artifact"
     fi
-else
-    fail "installer extracts iso and iso-proxy"
-fi
+done
 
 SIGNER_PIN="--cert-identity https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/${VERSION} --source-ref refs/tags/${VERSION} --deny-self-hosted-runners"
 if grep -qF -- "--repo chr33s/iso ${SIGNER_PIN} --bundle " "$GH_LOG"; then
@@ -301,88 +297,63 @@ else
 fi
 sign_sums
 
-echo "==> Test 6: missing companion policy"
-rm "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
-(cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
-write_sums
-printf '%s\n' 'old-iso' >"$INSTALL_DIR/iso"
-if [[ "$TRIPLE" == aarch64-apple-darwin ]]; then
-    if ! run_installer >"$TEST_ROOT/t6.log" 2>&1 \
-        && [[ "$(cat "$INSTALL_DIR/iso")" == old-iso ]]; then
-        pass "Apple install rejects missing companion before host replacement"
-    else
-        fail "Apple install rejects missing companion before host replacement"
-    fi
-else
-if run_installer >"$TEST_ROOT/t6.log" 2>&1 \
-    && [[ "$("$INSTALL_DIR/iso")" == "installed-iso" \
-       && "$("$INSTALL_DIR/iso-proxy")" == "installed-iso-proxy" ]]; then
-    pass "legacy install replaces iso and preserves the existing companion"
-else
-    fail "legacy install replaces iso and preserves the existing companion" \
-        "$(tail -10 "$TEST_ROOT/t6.log")"
-fi
-fi
-
 repack_fixture() {
     (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
     write_sums
 }
 
-echo "==> Test 7: Swift-only package installs its proxy"
-printf '#!/bin/sh\necho iso-proxy\n' >"$FIXTURE/$ARCHIVE_DIR/iso-proxy"
-if [[ "$TRIPLE" == aarch64-apple-darwin ]]; then
-    mv "$FIXTURE/$ARCHIVE_DIR/iso-sandbox" "$FIXTURE/runtime-backup"
+seed_install() {
+    for artifact in iso iso-sandbox iso-proxy iso-egress; do
+        printf '%s\n' "keep-$artifact" >"$INSTALL_DIR/$artifact"
+    done
+}
+
+install_unchanged() {
+    for artifact in iso iso-sandbox iso-proxy iso-egress; do
+        [[ "$(cat "$INSTALL_DIR/$artifact")" == "keep-$artifact" ]] || return 1
+    done
+}
+
+echo "==> Test 6: every release binary is required before replacement"
+for missing in iso iso-sandbox iso-proxy iso-egress; do
+    mv "$FIXTURE/$ARCHIVE_DIR/$missing" "$FIXTURE/missing-backup"
     repack_fixture
-    printf '%s\n' keep-host >"$INSTALL_DIR/iso"
-    printf '%s\n' keep-runtime >"$INSTALL_DIR/iso-sandbox"
-    printf '%s\n' keep-proxy >"$INSTALL_DIR/iso-proxy"
-    if ! run_installer >"$TEST_ROOT/missing-runtime.log" 2>&1 \
-        && [[ "$(cat "$INSTALL_DIR/iso")" == keep-host \
-           && "$(cat "$INSTALL_DIR/iso-sandbox")" == keep-runtime \
-           && "$(cat "$INSTALL_DIR/iso-proxy")" == keep-proxy ]]; then
-        pass "missing Apple runtime preserves all installed binaries"
+    seed_install
+    if ! run_installer >"$TEST_ROOT/missing-$missing.log" 2>&1 \
+        && grep -q "Release is missing a regular $missing binary" "$TEST_ROOT/missing-$missing.log" \
+        && install_unchanged; then
+        pass "missing $missing preserves all four installed binaries"
     else
-        fail "missing Apple runtime preserves all installed binaries"
+        fail "missing $missing preserves all four installed binaries" "$(tail -10 "$TEST_ROOT/missing-$missing.log")"
     fi
-    mv "$FIXTURE/runtime-backup" "$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
-fi
-repack_fixture
-if run_installer >"$TEST_ROOT/t7.log" 2>&1 \
-    && [[ "$("$INSTALL_DIR/iso-proxy")" == iso-proxy ]]; then
-    pass "verified transition package installs the Swift executable"
-else
-    fail "verified transition package installs the Swift executable" "$(tail -10 "$TEST_ROOT/t7.log")"
-fi
+    mv "$FIXTURE/missing-backup" "$FIXTURE/$ARCHIVE_DIR/$missing"
+done
 
-echo "==> Test 8: obsolete Rust package is rejected before replacement"
-rm "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
-printf old-rust >"$FIXTURE/$ARCHIVE_DIR/iso-proxy-rs"
-printf '%s\n' keep-host >"$INSTALL_DIR/iso"
-printf '%s\n' keep-rust >"$INSTALL_DIR/iso-proxy-rs"
-printf '%s\n' keep-swift >"$INSTALL_DIR/iso-proxy-swift"
+echo "==> Test 7: symlink artifacts are rejected before replacement"
+mv "$FIXTURE/$ARCHIVE_DIR/iso-egress" "$FIXTURE/egress-backup"
+ln -s iso-proxy "$FIXTURE/$ARCHIVE_DIR/iso-egress"
 repack_fixture
-if run_installer >"$TEST_ROOT/t8.log" 2>&1; then
-    fail "obsolete Rust pair aborts installation"
-elif grep -q 'obsolete proxy transition artifact' "$TEST_ROOT/t8.log" \
-    && [[ "$(cat "$INSTALL_DIR/iso")" == keep-host \
-       && "$(cat "$INSTALL_DIR/iso-proxy-rs")" == keep-rust \
-       && "$(cat "$INSTALL_DIR/iso-proxy-swift")" == keep-swift ]]; then
-    pass "obsolete Rust pair leaves all installed files unchanged"
+seed_install
+if ! run_installer >"$TEST_ROOT/symlink.log" 2>&1 \
+    && grep -q "Release is missing a regular iso-egress binary" "$TEST_ROOT/symlink.log" \
+    && install_unchanged; then
+    pass "symlink companion preserves all four installed binaries"
 else
-    fail "obsolete Rust pair leaves all installed files unchanged" "$(tail -10 "$TEST_ROOT/t8.log")"
+    fail "symlink companion preserves all four installed binaries" "$(tail -10 "$TEST_ROOT/symlink.log")"
 fi
-
-echo "==> Test 9: legacy package removes stale transition selection"
-rm "$FIXTURE/$ARCHIVE_DIR/iso-proxy-rs"
-printf '#!/bin/sh\necho legacy-proxy\n' >"$FIXTURE/$ARCHIVE_DIR/iso-proxy"
+rm "$FIXTURE/$ARCHIVE_DIR/iso-egress"
+mv "$FIXTURE/egress-backup" "$FIXTURE/$ARCHIVE_DIR/iso-egress"
 repack_fixture
-if run_installer >"$TEST_ROOT/t9.log" 2>&1 \
-    && [[ "$("$INSTALL_DIR/iso-proxy")" == legacy-proxy \
-       && ! -e "$INSTALL_DIR/iso-proxy-rs" && ! -e "$INSTALL_DIR/iso-proxy-swift" ]]; then
-    pass "legacy package removes stale transition siblings"
+if run_installer >"$TEST_ROOT/complete.log" 2>&1; then
+    for artifact in iso iso-sandbox iso-proxy iso-egress; do
+        if [[ "$("$INSTALL_DIR/$artifact")" == "installed-$artifact" ]]; then
+            pass "complete release replaces $artifact"
+        else
+            fail "complete release replaces $artifact"
+        fi
+    done
 else
-    fail "legacy package removes stale transition siblings" "$(tail -10 "$TEST_ROOT/t9.log")"
+    fail "complete release installs successfully" "$(tail -10 "$TEST_ROOT/complete.log")"
 fi
 
 echo

@@ -19,7 +19,7 @@ Only flag issues **introduced or materially changed by the diff**. Cross-referen
 ## isolate's test layers
 
 - **Swift package tests** live under `tests/swift/` (`IsoCoreTests`, `IsoConfigurationTests`, `IsoHostTests`, `IsoCLITests`, and `IsoFuzzReplayTests`, which replays `fuzz/corpus/`). Host tests replace `iso-sandbox`, `container`, and `ssh` with scripted fakes; `IsoCLI` stays a thin executable.
-- **Python host checks**: configuration migration (`tests/test-migrate-config.py`), compatibility inventory, golden parity against recorded baseline results (`tests/baseline/parity/`), and the CLI surface.
+- **Python host checks**: read and lifecycle contracts (`tests/fixtures/contracts/`), default data-root safety, and every registered CLI help path.
 - **Fault injection** (`scripts/swift-host-fault-injection.py`): each security-relevant behavior names a production line, a fault that removes it, and the test filter that must fail.
 - **Fuzzing** (`scripts/fuzz.sh`, targets `ParseRepoSlug`, `JSONCToJSON`, `ConfigLoad`); CI runs a bounded smoke.
 - **Integration tests** (`tests/run-integration.sh` → `tests/integration-apple-sandbox.sh`) boot real Apple Containerization VMs; proxy changes also need `tests/integration-proxy-transition.py`. They are not run in CI. CI does run `tests/integration-install.sh`, `tests/integration-update.sh`, and `tests/integration-uninstall.sh`.

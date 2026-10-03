@@ -4,8 +4,8 @@ import NIOPosix
 
 /// Socket listener shared by the production bridge and controlled test harness.
 /// The executable must establish confinement before calling bind.
-public enum Server {
-  public static func bind(
+package enum Server {
+  package static func bind(
     config: ProxyConfig, group: MultiThreadedEventLoopGroup,
     upstream: UpstreamClient, registry: ConnectionRegistry = ConnectionRegistry()
   ) -> EventLoopFuture<Channel> {
@@ -19,7 +19,7 @@ public enum Server {
     }
   }
 
-  public static func bind(
+  package static func bind(
     config: ProxyConfig, group: EventLoopGroup, registry: ConnectionRegistry = ConnectionRegistry(),
     application: @escaping @Sendable (Channel) -> EventLoopFuture<Void>
   ) -> EventLoopFuture<Channel> {

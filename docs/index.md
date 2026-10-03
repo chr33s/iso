@@ -14,11 +14,9 @@ This is the `chr33s/iso` fork of Trail of Bits’ isolate. Supported hosts are
 (root [`Package.swift`](../Package.swift), [`Sources/`](../Sources/)) with one
 Apple backend. The credential proxy is the Swift package
 [`iso-proxy/`](../iso-proxy/); the Apple runtime is
-[`iso-sandbox/`](../iso-sandbox/). Historical design records may describe the
-former Rust host and Firecracker/Lima backends; they do not imply support.
-See the [fork motivation](../README.md#why-this-fork)
-and [source installation](getting-started.md#build-from-source). Design records
-preserve historical experiments; the acceptance map identifies outstanding gates.
+[`iso-sandbox/`](../iso-sandbox/). See the [project motivation](../README.md#why-this-fork),
+[source installation](getting-started.md#build-from-source), and
+[release validation](release-validation.md).
 
 ## For contributors (engineering)
 
@@ -29,27 +27,16 @@ preserve historical experiments; the acceptance map identifies outstanding gates
   `review-security` agent reads. (Disclosure policy is [`SECURITY.md`](../SECURITY.md).)
 - [`code-style.md`](code-style.md) — Swift authoring conventions and the
   review / authoring checklists.
-- [`testing.md`](testing.md) — Swift package tests, sanitizers, parity and
-  migration checks, fault injection, libFuzzer fuzzing, integration suites.
+- [`testing.md`](testing.md) — Swift package tests, sanitizers, behavior
+  contracts, fault injection, libFuzzer fuzzing, integration suites.
 - [`platform-notes.md`](platform-notes.md) — Docker networking, scp `~`
   caveat, diagnostics on stderr.
 - [`design/`](design/) — decision records:
-  - [`swift-host-spec.md`](design/swift-host-spec.md): the port from the Rust
-    host to Swift, JSONC configuration, compatibility and cutover gates;
-    [`swift-host-acceptance.md`](design/swift-host-acceptance.md) is its
-    gate/evidence ledger and [`swift-host-inventory.json`](design/swift-host-inventory.json)
-    the machine-readable compatibility inventory;
   - [`apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md): why the
     Apple backend runs its own runtime;
   - [`apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
     its mutation invariants, disk-update recovery, per-sandbox locking, and
     maintenance image.
-  - [`swift-proxy-spec.md`](design/swift-proxy-spec.md): approved Swift proxy
-    contract and acceptance requirements;
-  - [`swift-proxy-acceptance.md`](design/swift-proxy-acceptance.md): Swift proxy
-    requirement/evidence map, remaining decisions, and cutover gates;
-    [`swift-proxy-progress.md`](design/swift-proxy-progress.md) records the
-    implementation and validation history;
   - [`embedded-secrets-spec.md`](design/embedded-secrets-spec.md): the
     Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
     references;
@@ -63,8 +50,7 @@ preserve historical experiments; the acceptance map identifies outstanding gates
 
 - [`getting-started.md`](getting-started.md) — install and first VM.
 - [`commands.md`](commands.md) — every `iso` subcommand.
-- [`configuration.md`](configuration.md) — `config.jsonc` reference and
-  TOML migration.
+- [`configuration.md`](configuration.md) — `config.jsonc` reference.
 - [`backends.md`](backends.md) — the Apple sandbox backend (`iso-sandbox` on `apple/containerization`) and its state layout.
 - [`images-and-profiles.md`](images-and-profiles.md),
   [`workspaces.md`](workspaces.md), [`multi-instance.md`](multi-instance.md),

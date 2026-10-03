@@ -79,7 +79,7 @@ func workloadRunning(
   let text = String(decoding: bytes, as: UTF8.self).replacingOccurrences(
     of: "81564", with: String(pid))
   let inspection = try StateStore.decode(SandboxInspection.self, Array(text.utf8), path: "fixture")
-  let machine = try MachineName("coop-0a1b2c3d-00112233445566ff")
+  let machine = try MachineName("iso-0a1b2c3d-00112233445566ff")
   let owner = try OwnerID("0a1b2c3d00112233445566778899aabb")
   let ready = try IsolationGate.verifyEffective(
     inspection,
@@ -92,12 +92,12 @@ func workloadRunning(
     Array(
       #"""
       {"schema_version":2,"backend":"apple-container","owner_id":"0a1b2c3d00112233445566778899aabb",
-       "machine_id":"coop-0a1b2c3d-00112233445566ff","image_ref":"iso-image/default:1",
+       "machine_id":"iso-0a1b2c3d-00112233445566ff","image_ref":"iso-image/default:1",
        "image_digest":"sha256:\#(String(repeating: "b", count: 64))","image_manifest_id":"m1",
        "guest_user":"ubuntu","requested_cpus":2,"requested_memory_bytes":2147483648,
        "host_key_fingerprint":"SHA256:synthetic","last_observed_owner_pid":81564,
        "last_observed_ip":"10.231.2.2","reenroll_host_key":false,
-       "created_at":"2026-09-27T00:00:00Z","runtime_identity":"fixture"}
+       "created_at":"2026-09-27T00:00:00Z","runtime_identity":"fixture","lifecycle":"reusable"}
       """#.utf8), path: "fixture")
   return AppleBackend.Running(
     instance: try testInstance(guest.root + "/instance"), sidecar: sidecar, ready: ready,

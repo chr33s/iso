@@ -27,7 +27,7 @@ def exercise(work):
     binary = work / "bin"
     binary.mkdir()
     for package, product, installed in [(ROOT, "iso", "iso"), (ROOT / "iso-egress", "iso-egress", "iso-egress"),
-                                        (ROOT / "iso-proxy", "iso-proxy-swift", "iso-proxy")]:
+                                        (ROOT / "iso-proxy", "iso-proxy", "iso-proxy")]:
         directory = subprocess.check_output(["swift", "build", "--package-path", str(package), "--show-bin-path"], text=True).strip()
         shutil.copy2(Path(directory) / product, binary / installed)
     subprocess.run([str(ROOT / "scripts/build-iso-sandbox.sh"), str(work / "runtime")], check=True, env=env)
@@ -264,7 +264,7 @@ sys.exit(result.returncode)
         run(["destroy", "--all"], timeout=240)
         owner_path = work / "data/backends/apple-container-v1/owner.json"
         if owner_path.exists():
-            prefix = "local/coop-" + json.loads(owner_path.read_text())["owner_id"][:8]
+            prefix = "local/iso-" + json.loads(owner_path.read_text())["owner_id"][:8]
             images = subprocess.check_output(["/opt/homebrew/bin/container", "image", "list", "--quiet"], env=env, text=True)
             for image in images.splitlines():
                 if image.startswith((prefix + ":", prefix + "-maintenance:")):

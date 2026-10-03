@@ -255,37 +255,16 @@ tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}"
 
 info "Installing to ${INSTALL_DIR}..."
 EXTRACTED_DIR="${TMPDIR}/${BINARY}-${VERSION}-${TRIPLE}"
-EXTRACTED="${EXTRACTED_DIR}/${BINARY}"
-[ -f "$EXTRACTED" ] || die "Binary not found in tarball"
-for obsolete in "${BINARY}-proxy-rs" "${BINARY}-proxy-swift"; do
-    [ ! -e "${EXTRACTED_DIR}/${obsolete}" ] || die "Release contains an obsolete proxy transition artifact"
+# A release is one complete set. Check every member before changing the install.
+for artifact in "$BINARY" iso-sandbox iso-proxy iso-egress; do
+    [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ] \
+        || die "Release is missing a regular ${artifact} binary"
 done
-PROXY_NAME="${BINARY}-proxy"
-if [ -e "${EXTRACTED_DIR}/${PROXY_NAME}" ] && [ ! -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
-    die "Proxy artifact is not a regular file"
-fi
-if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
-    [ -f "${EXTRACTED_DIR}/iso-sandbox" ] || die "Release is missing the iso-sandbox runtime"
-    [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ] || die "Release is missing the iso-proxy companion"
-fi
 mkdir -p "$INSTALL_DIR"
-if [ "$TRIPLE" = "aarch64-apple-darwin" ]; then
-    mv "${EXTRACTED_DIR}/iso-sandbox" "${INSTALL_DIR}/iso-sandbox"
-    chmod +x "${INSTALL_DIR}/iso-sandbox"
-fi
-if [ -f "${EXTRACTED_DIR}/${PROXY_NAME}" ]; then
-    mv "${EXTRACTED_DIR}/${PROXY_NAME}" "${INSTALL_DIR}/${PROXY_NAME}"
-    chmod +x "${INSTALL_DIR}/${PROXY_NAME}"
-    if [ -f "${EXTRACTED_DIR}/iso-egress" ]; then
-        mv "${EXTRACTED_DIR}/iso-egress" "${INSTALL_DIR}/iso-egress"
-        chmod +x "${INSTALL_DIR}/iso-egress"
-    fi
-    for stale in "${BINARY}-proxy-rs" "${BINARY}-proxy" "${BINARY}-proxy-swift"; do
-        [ "$stale" = "$PROXY_NAME" ] || rm -f "${INSTALL_DIR}/${stale}"
-    done
-fi
-mv "$EXTRACTED" "${INSTALL_DIR}/${BINARY}"
-chmod +x "${INSTALL_DIR}/${BINARY}"
+for artifact in iso-sandbox iso-proxy iso-egress "$BINARY"; do
+    mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
+    chmod +x "${INSTALL_DIR}/${artifact}"
+done
 
 printf '\n  %s %s installed to %s/%s\n' "$BINARY" "$VERSION" "$INSTALL_DIR" "$BINARY"
 

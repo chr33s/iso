@@ -1,6 +1,0 @@
-Restore cloud defaults (Anthropic / `OpenAI`)
-
-Usage: iso model remote
-
-Options:
-  -h, --help  Print help

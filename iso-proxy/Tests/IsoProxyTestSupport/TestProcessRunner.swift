@@ -129,10 +129,10 @@ public func proxyBinary() throws -> URL {
   // SwiftPM's pinned toolchain builds executable products before running tests.
   // Resolve beside the active .xctest bundle, including custom scratch/configuration paths.
   let binary = try activeTestBundle().deletingLastPathComponent().appendingPathComponent(
-    "iso-proxy-swift")
+    "iso-proxy")
   try check(
     FileManager.default.isExecutableFile(atPath: binary.path),
-    "build iso-proxy-swift or set ISO_PROXY_E2E_BINARY")
+    "build iso-proxy or set ISO_PROXY_E2E_BINARY")
   return binary
 }
 

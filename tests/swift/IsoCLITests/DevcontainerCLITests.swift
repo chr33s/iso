@@ -79,10 +79,18 @@ private func temporaryDirectory() throws -> String {
   try DevcontainerCheck.run(
     path: file, stage: .both, json: true, resolver: resolver, output: streams)
   let json = streams.stdout.joined(separator: "\n")
-  #expect(json.hasPrefix("{\n  \"setup\": {"))
+  let reports = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+  #expect(Set(reports.keys) == ["setup", "start"])
+  #expect(reports["setup"] is [String: Any])
   // Start assumes the image was built with the setup-stage `remoteUser`,
   // so `containerEnv` applies.
-  #expect(json.contains("\"note\": \"A\""))
+  let start = try #require(reports["start"] as? [String: Any])
+  let entries = try #require(start["entries"] as? [[String: Any]])
+  #expect(
+    entries.contains {
+      $0["key"] as? String == "containerEnv" && $0["note"] as? String == "A"
+        && $0["status"] as? String == "applied"
+    })
   #expect(captured.text.isEmpty)
 
   let text = RecordingStreams()

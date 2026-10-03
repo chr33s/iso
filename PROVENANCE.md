@@ -24,21 +24,3 @@ JSON files use adjacent `.license` files because JSON has no comment syntax.
 New fork-specific implementations do not acquire upstream-derivation notices
 merely because they implement new features in this project. LLVM libFuzzer
 remains unmodified with its own license and exceptions.
-
-The compatibility inventory's Rust source references are historical citations.
-`tests/fixtures/baseline-cli/source-manifest.json` records the source paths and
-SHA-256 digests at the old baseline revision. Inventory checks use that record
-and retained golden fixtures, without fetching or resolving pruned commits.
-
-Before rewriting, the complete repository was saved as
-`iso-pre-swift-prune-20261003.bundle` in the Git common directory, with
-backup tag `backup/pre-swift-prune-20261003`. The old-to-new commit map is
-saved beside the bundle as `iso-swift-prune-20261003-map.json`. These local
-artifacts remain outside the rewritten branch history. Restore the backup
-with `git clone /path/to/iso-pre-swift-prune-20261003.bundle restored-iso`.
-
-Only local `main` is rewritten. Existing release tags and other branches keep
-their original identities; published archives, checksums and attestations
-remain tied to those original identities. Publishing rewritten `main` needs
-a reviewed force update with a lease against the remote's current tip.
-Do not move release tags or republish signed archives implicitly.

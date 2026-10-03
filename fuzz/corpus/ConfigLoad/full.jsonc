@@ -29,7 +29,7 @@
     ],
     "pat": {
       "owner/repo": {
-        "token": "cmd:security find-generic-password -s coop-github-pat -a owner-repo -w"
+        "token": "cmd:security find-generic-password -s iso-github-pat -a owner-repo -w"
       },
       "other/re.po": {
         "token": "github_pat_SYNTHETIC_NOT_A_TOKEN"
@@ -104,7 +104,7 @@
   },
   "proxy": {
     "anthropic": {
-      "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+      "credential": "cmd:security find-generic-password -s iso-anthropic -a anthropic -w",
       "auth": "bearer"
     }
   },

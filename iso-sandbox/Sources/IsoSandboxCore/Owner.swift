@@ -14,14 +14,14 @@ func makeBootID() -> String {
   return bytes.map { String(format: "%02x", $0) }.joined()
 }
 
-public enum Owner {
+package enum Owner {
   /// systemd's "halt" request: SIGRTMIN+3 on Linux (SIGRTMIN = 34).
   static let systemdHalt = Signal(rawValue: 37)
   static let haltGraceSeconds: UInt64 = 60
   /// After the forced kill, before the owner gives up on the guest agent.
   static let killGraceSeconds: UInt64 = 10
 
-  public static func run(root: SandboxRoot, id: SandboxID) async throws {
+  package static func run(root: SandboxRoot, id: SandboxID) async throws {
     try root.requireInitialized()
     let paths = root.sandbox(id)
     signal(SIGPIPE, SIG_IGN)
@@ -188,7 +188,7 @@ public enum Owner {
     while true {
       do {
         let subnet = try CIDRv4(record.subnet)
-        switch record.networkMode {
+        switch record.network {
         case .shared: return try VmnetNetwork(subnet: subnet)
         case .hostOnly: return try HostOnlyNetwork(subnet: subnet)
         }
@@ -226,7 +226,7 @@ public enum Owner {
     config.hostname = record.id.rawValue
     config.interfaces = [interface]
     // Host-only sandboxes get no resolver: the vmnet DNS proxy is off.
-    if record.networkMode == .shared, let gateway = interface.ipv4Gateway {
+    if record.network == .shared, let gateway = interface.ipv4Gateway {
       config.dns = DNS(nameservers: [gateway.description])
     }
     var hosts = Hosts.default
@@ -264,7 +264,7 @@ public enum Owner {
           ipv4: $0.ipv4Address.description, ipv4Gateway: $0.ipv4Gateway?.description,
           ipv6: $0.ipv6Address?.description,
           network:
-            "\(record.networkMode == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet)")
+            "\(record.network == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet)")
       },
       socketRelays: config.sockets.count,
       publishedPorts: 0,

@@ -106,3 +106,18 @@ private func withPolicyFixture(_ body: (Instance, IsoConfig) throws -> Void) thr
     #expect(throws: HostError.self) { try FilteredHandoff.recordedPolicy(instance) }
   }
 }
+
+@Test(arguments: [EgressMode.open, .none, .filtered])
+func networkPolicyRequiresCreationRecordInEveryMode(_ mode: EgressMode) throws {
+  try withPolicyFixture { instance, _ in
+    let config = try testConfig("\"egress\": \"\(mode.rawValue)\"")
+    #expect(try NetworkPolicy.load(instance) == nil)
+    let error = try #require(throws: HostError.self) {
+      try NetworkPolicy.enforce(instance, config: config)
+    }
+    #expect(error.message.contains("no recorded network policy"))
+    try NetworkPolicy.save(config, instance)
+    try NetworkPolicy.enforce(instance, config: config)
+    #expect(try NetworkPolicy.load(instance)?.mode == mode.rawValue)
+  }
+}

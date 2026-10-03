@@ -43,7 +43,7 @@ private let otherKey =
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let instance = Instance(
     name: try InstanceName("t"), index: InstanceIndex(0)!, directory: directory, image: .default)
-  let machine = try MachineName("coop-0a1b2c3d-00112233445566ff")
+  let machine = try MachineName("iso-0a1b2c3d-00112233445566ff")
   let parsed = try HostPublicKey(parsing: key)
   #expect(throws: RuntimeError.self) {
     try HostKeyPin.apply(.requirePin, instance: instance, machine: machine, key: parsed)
@@ -54,7 +54,7 @@ private let otherKey =
   #expect(status.st_mode & 0o777 == 0o600)
   #expect(
     try String(contentsOfFile: instance.knownHostsPath, encoding: .utf8)
-      == "coop-0a1b2c3d-00112233445566ff.coop ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINiqkOnkRV06x+SuorkF+O3KdBTVFznIV0+b58cidW1N\n"
+      == "iso-0a1b2c3d-00112233445566ff.iso ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINiqkOnkRV06x+SuorkF+O3KdBTVFznIV0+b58cidW1N\n"
   )
   try HostKeyPin.apply(.requirePin, instance: instance, machine: machine, key: parsed)
   #expect(throws: RuntimeError.self) {
@@ -90,7 +90,7 @@ private let otherKey =
   #expect(
     BuildContext.imageRef(
       owner: try OwnerID(String(repeating: "a", count: 32)), manifestID: id, buildID: "01234567")
-      == "local/coop-aaaaaaaa:\(id.prefix(16))-01234567")
+      == "local/iso-aaaaaaaa:\(id.prefix(16))-01234567")
 }
 
 @Test(arguments: [0, 42]) func imageAPTCommandsExposeProgressAndBoundRepositoryReads(
@@ -228,7 +228,7 @@ private struct FakeInstallation {
 
   // Running: reachable through the gate; a second create is refused.
   let running = try #require(try backend.asRunning(instance))
-  #expect(running.target.hostKeyOptions.contains("HostKeyAlias=\(sidecar.machineID).coop"))
+  #expect(running.target.hostKeyOptions.contains("HostKeyAlias=\(sidecar.machineID).iso"))
   #expect(throws: (any Error).self) { try backend.createAndStart(instance, diskGiB: nil) }
   #expect(throws: (any Error).self) { try backend.startExisting(instance) }
 
@@ -343,7 +343,7 @@ private struct FakeInstallation {
   let stranger = try OwnerID(String(repeating: "f", count: 32))
   let journal = Journal(
     schemaVersion: 2, backend: "apple-container", ownerID: stranger,
-    machineID: try MachineName("coop-ffffffff-0000000000000001"),
+    machineID: try MachineName("iso-ffffffff-0000000000000001"),
     op: .create(stage: .machineCreated))
   try StateStore.writeControlFile(journal, to: Journal.path(instance))
   do {

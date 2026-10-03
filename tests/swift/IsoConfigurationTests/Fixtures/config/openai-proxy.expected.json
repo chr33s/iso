@@ -1,0 +1,58 @@
+{
+  "data_dir": "/home/fixture/.iso",
+  "vm": {
+    "vcpu_count": 2,
+    "mem_size_mib": 4096,
+    "template_size_gib": 8
+  },
+  "ssh_port": 22,
+  "github": null,
+  "setup": {
+    "prompt_for_pat": true
+  },
+  "claude": {
+    "api_key": null,
+    "env_forward": [],
+    "marketplaces": [],
+    "plugins": [],
+    "mcp_servers": {},
+    "config_dir": null,
+    "local_model": null
+  },
+  "codex": {
+    "auth": "api_key",
+    "api_key": "cmd:pass show openai",
+    "env_forward": [],
+    "marketplaces": [],
+    "plugins": [],
+    "mcp_servers": {},
+    "config_dir": null,
+    "local_model": null
+  },
+  "proxy": {
+    "anthropic": null,
+    "openai": {
+      "credential": "cmd:security find-generic-password -s iso-openai -a openai -w",
+      "auth": "api_key"
+    }
+  },
+  "guest_env": {},
+  "profiles": {},
+  "post_start": null,
+  "forward_ports": [],
+  "updates": {
+    "mode": "notify",
+    "check_interval_hours": 24
+  },
+  "apple_container": {
+    "binary": null,
+    "builder": null,
+    "kernel": null,
+    "probe_timeout_seconds": 10,
+    "operation_timeout_seconds": 60,
+    "create_timeout_seconds": 600,
+    "boot_timeout_seconds": 120,
+    "stop_timeout_seconds": 90,
+    "build_timeout_seconds": 3600
+  }
+}

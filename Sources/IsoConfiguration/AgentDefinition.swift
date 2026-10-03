@@ -2,7 +2,7 @@ import Foundation
 import IsoCore
 
 /// How a defined agent expects its guest terminal to be allocated.
-public enum AgentTerminalMode: String, Sendable, Equatable, CaseIterable {
+package enum AgentTerminalMode: String, Sendable, Equatable, CaseIterable {
   case auto
   case required
   case never
@@ -10,28 +10,28 @@ public enum AgentTerminalMode: String, Sendable, Equatable, CaseIterable {
 
 /// Image or profile set a definition requests. It selects existing image
 /// machinery; it does not embed an install language.
-public enum AgentEnvironmentSelection: Sendable, Equatable {
+package enum AgentEnvironmentSelection: Sendable, Equatable {
   case image(ImageName)
   case profiles([String])
 }
 
-public struct GuestEnvironmentDefault: Sendable, Equatable {
-  public let name: EnvVarName
-  public let value: String
+package struct GuestEnvironmentDefault: Sendable, Equatable {
+  package let name: EnvVarName
+  package let value: String
 
-  public init(name: EnvVarName, value: String) {
+  package init(name: EnvVarName, value: String) {
     self.name = name
     self.value = value
   }
 }
 
-public struct AgentLaunchSpec: Sendable, Equatable {
-  public let argv: [String]
-  public let workingDirectory: GuestPath
-  public let terminal: AgentTerminalMode
-  public let environment: [GuestEnvironmentDefault]
+package struct AgentLaunchSpec: Sendable, Equatable {
+  package let argv: [String]
+  package let workingDirectory: GuestPath
+  package let terminal: AgentTerminalMode
+  package let environment: [GuestEnvironmentDefault]
 
-  public init(
+  package init(
     argv: [String], workingDirectory: GuestPath, terminal: AgentTerminalMode,
     environment: [GuestEnvironmentDefault]
   ) {
@@ -45,25 +45,25 @@ public struct AgentLaunchSpec: Sendable, Equatable {
 /// A validated agent definition. Built-ins and installed files use this same
 /// model. It requests a reviewed adapter and may suggest hosts; it cannot
 /// grant network, credentials, mounts, or host commands.
-public struct AgentDefinition: Sendable, Equatable {
-  public static let schemaVersion = 1
-  public static let maxArgvEntries = 128
-  public static let maxArgvEntryBytes = 4 * 1024
-  public static let maxArgvBytes = 64 * 1024
-  public static let maxProfiles = 64
-  public static let maxHints = 256
-  public static let maxWorkingDirectoryBytes = 4 * 1024
-  public static let maxDisplayScalars = 128
-  public static let fileBytes = 256 * 1024
+package struct AgentDefinition: Sendable, Equatable {
+  package static let schemaVersion = 1
+  package static let maxArgvEntries = 128
+  package static let maxArgvEntryBytes = 4 * 1024
+  package static let maxArgvBytes = 64 * 1024
+  package static let maxProfiles = 64
+  package static let maxHints = 256
+  package static let maxWorkingDirectoryBytes = 4 * 1024
+  package static let maxDisplayScalars = 128
+  package static let fileBytes = 256 * 1024
 
-  public let id: AgentDefinitionID
-  public let displayName: String
-  public let environment: AgentEnvironmentSelection?
-  public let launch: AgentLaunchSpec
-  public let authAdapter: AgentAdapterID
-  public let networkHints: [ExactHostname]
+  package let id: AgentDefinitionID
+  package let displayName: String
+  package let environment: AgentEnvironmentSelection?
+  package let launch: AgentLaunchSpec
+  package let authAdapter: AgentAdapterID
+  package let networkHints: [ExactHostname]
 
-  public init(
+  package init(
     id: AgentDefinitionID, displayName: String, environment: AgentEnvironmentSelection?,
     launch: AgentLaunchSpec, authAdapter: AgentAdapterID, networkHints: [ExactHostname]
   ) {
@@ -76,24 +76,24 @@ public struct AgentDefinition: Sendable, Equatable {
   }
 }
 
-public struct AgentDefinitionError: Error, Equatable, Sendable, CustomStringConvertible {
-  public let message: String
-  public init(_ message: String) { self.message = message }
-  public var description: String { message }
+package struct AgentDefinitionError: Error, Equatable, Sendable, CustomStringConvertible {
+  package let message: String
+  package init(_ message: String) { self.message = message }
+  package var description: String { message }
 }
 
 extension JSONLimits {
   /// Parser budgets for one agent-definition file. These are limits, not
   /// measured performance.
-  public static let agentDefinition = JSONLimits(
+  package static let agentDefinition = JSONLimits(
     maxBytes: AgentDefinition.fileBytes, maxDepth: 16, maxKeys: 512, maxArrayElements: 256,
     maxNumberLength: 32, maxStringBytes: AgentDefinition.maxArgvEntryBytes)
 }
 
-public enum AgentDefinitionDecoder {
+package enum AgentDefinitionDecoder {
   /// Parse one definition document. `format` selects comment stripping;
   /// unknown fields, duplicate keys, and the budgets above are rejected.
-  public static func decode(_ bytes: [UInt8], path: String, format: ConfigFormat) throws
+  package static func decode(_ bytes: [UInt8], path: String, format: ConfigFormat) throws
     -> AgentDefinition
   {
     let value: JSONValue
@@ -111,7 +111,7 @@ public enum AgentDefinitionDecoder {
     }
   }
 
-  public static func decode(_ value: JSONValue) throws -> AgentDefinition {
+  package static func decode(_ value: JSONValue) throws -> AgentDefinition {
     let reader = try ObjectReader(value, at: [])
     try reader.rejectUnknown(allowing: [
       "schema_version", "id", "display_name", "environment", "launch", "auth_adapter",
@@ -145,7 +145,7 @@ public enum AgentDefinitionDecoder {
 
   /// Canonical document used for the definition hash and the installed copy.
   /// Field order is part of the hash.
-  public static func canonical(_ definition: AgentDefinition) -> OutputJSON {
+  package static func canonical(_ definition: AgentDefinition) -> OutputJSON {
     var members: [(String, OutputJSON)] = [
       ("schema_version", .int(Int64(AgentDefinition.schemaVersion))),
       ("id", .string(definition.id.rawValue)),
@@ -186,7 +186,7 @@ public enum AgentDefinitionDecoder {
     return .object(members)
   }
 
-  public static func canonicalBytes(_ definition: AgentDefinition) -> [UInt8] {
+  package static func canonicalBytes(_ definition: AgentDefinition) -> [UInt8] {
     Array(canonical(definition).compactRendered().utf8)
   }
 }

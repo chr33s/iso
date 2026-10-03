@@ -214,17 +214,20 @@ private let sampleDigest =
   #expect(applied.contentHash == sha256(text))
 }
 
-@Test func renderValueFormsFollowSerdeJSON() throws {
+@Test func renderValueFormsPreserveJSONValues() throws {
   let t = try translate(
     #"{ "wackyNum": 1, "wackyStr": "hello", "o": {"b": [1, 2.5, -0, 1e16, "x\ty"], "a": null, "b": 3} }"#
   )
   #expect(rows(t, "wackyNum").first?.value == "1")
   #expect(rows(t, "wackyStr").first?.value == "hello")
-  // Document order, a repeated key keeps its first position and last value.
-  #expect(rows(t, "o").first?.value == #"{"b":3,"a":null}"#)
+  // A repeated object key keeps its last value.
+  #expect(try canonicalJSON(rows(t, "o").first?.value) == canonicalJSON(#"{"b":3,"a":null}"#))
   let floats = try translate(
     #"{ "f": [2.5, -0, 1e16, 1e-7, 100.0, 123456789012345678901234567890] }"#)
-  #expect(rows(floats, "f").first?.value == "[2.5,-0.0,1e+16,1e-7,100.0,1.2345678901234568e+29]")
+  let values = try #require(rows(floats, "f").first?.value)
+  #expect(
+    try JSONDecoder().decode([Double].self, from: Data(values.utf8))
+      == [2.5, -0.0, 1e16, 1e-7, 100.0, 1.2345678901234568e29])
   #expect(try rows(translate(#"{ "image": "ignored" }"#), "image").first?.value == "ignored")
 }
 
@@ -415,7 +418,7 @@ private func parseError(_ text: String) -> String? {
   let t = try translate("{ \"a\": \"\\u001b[31mred\\u202e\" }")
   #expect(t.report.render().contains("?[31mred?"))
   // JSON keeps the exact value.
-  #expect(t.report.json.rendered().contains("\\u001b[31mred"))
+  #expect(try JSONOutput.render(t.report).contains("\\u001b[31mred"))
 }
 
 @Test func reportJSONShape() throws {
@@ -424,19 +427,20 @@ private func parseError(_ text: String) -> String? {
   report.sourcePath = "/p"
   report.ignoredPaths = ["/q"]
   #expect(
-    report.json.compactRendered()
-      == #"{"entries":[{"key":"hostRequirements.cpus","status":"applied","source":"devcontainer","value":"4","note":""}],"source_path":"/p","ignored_paths":["/q"]}"#
-  )
+    try canonicalJSON(JSONOutput.render(report))
+      == canonicalJSON(
+        #"{"entries":[{"key":"hostRequirements.cpus","status":"applied","source":"devcontainer","value":"4","note":""}],"source_path":"/p","ignored_paths":["/q"]}"#
+      ))
 }
 
 private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
   .deletingLastPathComponent().deletingLastPathComponent().appending(
     path: "fixtures/devcontainer")
 
-/// `iso devcontainer check` output captured from the Rust host for
+/// Expected `iso devcontainer check` output for
 /// `sample.jsonc`, with its canonical path replaced by `{PATH}`.
 @Test(arguments: ["both", "setup", "start"])
-func reportMatchesRustFixtures(_ stage: String) throws {
+func reportMatchesFixtures(_ stage: String) throws {
   let sample = canonicalPath(fixtures.appending(path: "sample.jsonc").path)!
   let file = try ParsedDevcontainer.load(sample)
   let start = { (user: GuestUser) in DevcontainerTranslatorInputs(persistedGuestUser: user) }
@@ -444,19 +448,23 @@ func reportMatchesRustFixtures(_ stage: String) throws {
   let startT = Devcontainer.translate(
     file, inputs: start(stage == "both" ? setupT.guestUser ?? .default : .default), stage: .start)
   var text: String
-  let json: OutputJSON
+  let json: String
   switch stage {
   case "setup":
     text = setupT.report.render() + "\n"
-    json = setupT.report.json
+    json = try JSONOutput.render(setupT.report)
   case "start":
     text = startT.report.render() + "\n"
-    json = startT.report.json
+    json = try JSONOutput.render(startT.report)
   default:
     text =
       "setup-stage translation:\n" + setupT.report.render() + "\n\nstart-stage translation:\n"
       + startT.report.render() + "\n"
-    json = .object([("setup", setupT.report.json), ("start", startT.report.json)])
+    struct Reports: Encodable {
+      let setup: DevcontainerReport
+      let start: DevcontainerReport
+    }
+    json = try JSONOutput.render(Reports(setup: setupT.report, start: startT.report))
   }
   text = text.replacingOccurrences(of: sample, with: "{PATH}")
   let marked = text.dropLast().split(separator: "\n", omittingEmptySubsequences: false)
@@ -466,7 +474,9 @@ func reportMatchesRustFixtures(_ stage: String) throws {
   #expect(marked == expectedText)
   let expectedJSON = try String(
     contentsOf: fixtures.appending(path: "check-\(stage).json"), encoding: .utf8)
-  #expect(json.rendered().replacingOccurrences(of: sample, with: "{PATH}") == expectedJSON)
+  #expect(
+    try canonicalJSON(json.replacingOccurrences(of: sample, with: "{PATH}"))
+      == canonicalJSON(expectedJSON))
 }
 
 // MARK: - Discovery
@@ -581,7 +591,7 @@ private func instance(_ directory: String) throws -> Instance {
   #expect(try remote.changedWarning(instanceName: "demo") == nil)
 }
 
-@Test func devcontainerStateRoundTripsInRustFormat() throws {
+@Test func devcontainerStateRoundTrips() throws {
   let directory = try temporaryDirectory()
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let inst = try instance(directory)
@@ -591,9 +601,10 @@ private func instance(_ directory: String) throws -> Instance {
   try state.save(inst)
   let text = try String(contentsOfFile: inst.devcontainerStatePath, encoding: .utf8)
   #expect(
-    text
-      == "{\n  \"applied\": {\n    \"path\": \"/p/devcontainer.json\",\n    \"content_hash\": \"\(sha256("{}"))\",\n    \"source\": \"remote_contents\"\n  }\n}"
-  )
+    try canonicalJSON(text)
+      == canonicalJSON(
+        "{\n  \"applied\": {\n    \"path\": \"/p/devcontainer.json\",\n    \"content_hash\": \"\(sha256("{}"))\",\n    \"source\": \"remote_contents\"\n  }\n}"
+      ))
   #expect(try DevcontainerState.load(inst) == state)
   // A pre-`source` record defaults to a local file.
   try write(
@@ -613,8 +624,9 @@ private func instance(_ directory: String) throws -> Instance {
   let key = try preferences.setIgnored(project)
   try preferences.save(path)
   #expect(
-    try String(contentsOfFile: path, encoding: .utf8)
-      == "{\n  \"projects\": {\n    \"\(key)\": {\n      \"ignore\": true\n    }\n  }\n}")
+    try canonicalJSON(String(contentsOfFile: path, encoding: .utf8))
+      == canonicalJSON(
+        "{\n  \"projects\": {\n    \"\(key)\": {\n      \"ignore\": true\n    }\n  }\n}"))
   var loaded = try DevcontainerPreferences.load(path)
   #expect(try loaded.ignoredProject(project) == key)
   #expect(loaded.ignoredProjects == [key])
@@ -1088,14 +1100,17 @@ private func resolver(_ prompter: FakePrompter, _ sink: Sink) -> DevcontainerRes
     report: nil, profiles: ["node"], guestUser: .default, vcpus: 4, memory: MiB(2048), disk: GiB(50)
   )
   #expect(
-    empty.json.compactRendered()
-      == #"{"report":null,"profiles":["node"],"guest_user":"ubuntu","vm":{"vcpus":4,"mem_mib":2048,"disk_gib":50}}"#
-  )
+    try canonicalJSON(JSONOutput.render(empty))
+      == canonicalJSON(
+        #"{"report":null,"profiles":["node"],"guest_user":"ubuntu","vm":{"vcpus":4,"mem_mib":2048,"disk_gib":50}}"#
+      ))
   let full = DevcontainerDryRunPlan(
     report: report, profiles: [], guestUser: .default, vcpus: nil, memory: nil, disk: nil)
   #expect(
-    full.json.compactRendered().contains(#""vm":{"vcpus":null,"mem_mib":null,"disk_gib":null}"#))
-  #expect(full.json.compactRendered().contains(#""status":"applied","source":"devcontainer""#))
+    try canonicalJSON(JSONOutput.render(full))
+      == canonicalJSON(
+        #"{"report":{"entries":[{"key":"hostRequirements.cpus","status":"applied","source":"devcontainer","value":"4","note":""}],"source_path":null,"ignored_paths":[]},"profiles":[],"guest_user":"ubuntu","vm":{"vcpus":null,"mem_mib":null,"disk_gib":null}}"#
+      ))
 }
 
 @Test func featureFilesAreReadOnlyAsBoundedRegularFiles() throws {

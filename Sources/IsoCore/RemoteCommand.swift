@@ -4,7 +4,7 @@
 
 /// POSIX single-quote escaping (`shlex.quote`'s algorithm): the value
 /// reaches a shell as one literal word.
-public func shellEscape(_ value: String) -> String {
+package func shellEscape(_ value: String) -> String {
   var escaped = "'"
   for character in value {
     if character == "'" { escaped += "'\\''" } else { escaped.append(character) }
@@ -18,49 +18,49 @@ public func shellEscape(_ value: String) -> String {
 /// dynamic value may reach it: forgetting to escape and escaping twice are
 /// both unrepresentable. Parts are concatenated verbatim; literals carry
 /// their own spacing.
-public struct RemoteCommand: Sendable, Equatable, CustomStringConvertible {
-  public private(set) var rendered = ""
+package struct RemoteCommand: Sendable, Equatable, CustomStringConvertible {
+  package private(set) var rendered = ""
 
-  public init() {}
+  package init() {}
 
   /// A trusted fragment authored by iso (control flow, fixed flags).
   /// Never pass a dynamic value here.
-  public func literal(_ fragment: String) -> RemoteCommand {
+  package func literal(_ fragment: String) -> RemoteCommand {
     var copy = self
     copy.rendered += fragment
     return copy
   }
 
   /// An untrusted value, shell-escaped once.
-  public func arg(_ value: String) -> RemoteCommand {
+  package func arg(_ value: String) -> RemoteCommand {
     var copy = self
     copy.rendered += shellEscape(value)
     return copy
   }
 
-  public var description: String { rendered }
+  package var description: String { rendered }
 }
 
 /// An absolute or relative path inside the guest, carried as text.
-public struct GuestPath: Hashable, Sendable, CustomStringConvertible, Codable {
-  public let rawValue: String
+package struct GuestPath: Hashable, Sendable, CustomStringConvertible, Codable {
+  package let rawValue: String
 
-  public init(_ path: String) { rawValue = path }
+  package init(_ path: String) { rawValue = path }
 
-  public static func absolute(_ path: String) throws(ValidationError) -> GuestPath {
+  package static func absolute(_ path: String) throws(ValidationError) -> GuestPath {
     guard path.hasPrefix("/") else {
       throw ValidationError("Guest path must be absolute: '\(path)'")
     }
     return GuestPath(path)
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     rawValue = try decoder.singleValueContainer().decode(String.self)
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }

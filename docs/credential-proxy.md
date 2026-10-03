@@ -99,7 +99,7 @@ and SSE have no corresponding total-size cap.
 ## Enabling it
 
 The easiest path is `iso proxy setup`: it takes a pasted credential, stores it
-in the macOS Keychain (service `coop-anthropic` or `coop-openai`), and writes
+in the macOS Keychain (service `iso-anthropic` or `iso-openai`), and writes
 the `proxy.<provider>` object for you with a `cmd:` reference — so the
 credential is never plaintext in the config. The Keychain is the only built-in
 store; if it is unavailable, setup fails rather than falling back.
@@ -160,8 +160,8 @@ can use a different credential — for per-project billing, scope, or revocation
 with `iso proxy setup --openai --vm <name>` (or `--anthropic --vm <name>`). The
 override is stored in that instance's state (`<inst.dir>/proxy.json`), not in a
 growing config object, and its Keychain item is namespaced separately
-(`coop-openai-<vm>`). A per-VM override must also be a `cmd:` reference; an
-older literal override is rejected until you re-run `iso proxy setup --vm`.
+(`iso-openai-<vm>`). A per-VM override must be a `cmd:` or `vault:` reference. Literal credentials
+are rejected when loading the state file.
 
 Resolution per provider is **override → default → off**: the per-VM override
 wins, else the config default, else the proxy is off for that provider. This is
@@ -273,23 +273,22 @@ argv/diagnostics, and shutdown with an open guest socket. Without
 `ISO_PROXY_LIVE_TLS_GATE=1`, the package tests run only the offline portions and
 cannot establish TLS readiness. Controlled certificate rejection tests are also
 available in the Swift test suite. Remaining VM/live-agent and release validation is tracked in
-[implementation evidence](design/swift-proxy-progress.md). Unexecuted gates
-there remain open.
+[release validation](release-validation.md).
 
 ### Local builds and distribution
 
 On Apple Silicon macOS 27+, the one release build entrypoint builds the host,
-the Swift proxy, and the runtime together:
+the credential proxy, the egress companion, and the runtime together:
 
 ```sh
 python3 scripts/build-release.py                  # unsigned development archive
 python3 scripts/build-release.py --release --test # optimized, with every package's tests
 ```
 
-The SwiftPM product is named `iso-proxy-swift`; the archive installs it under
+The SwiftPM product is named `iso-proxy`; the archive installs it under
 the stable `iso-proxy` name understood by existing updaters. The archive
 `iso-<tag|revision>-aarch64-apple-darwin.tar.gz` holds `iso`, `iso-proxy`,
-the ad-hoc signed `iso-sandbox`, LICENSE and BUILD.json (source revision and
+`iso-egress`, the ad-hoc signed `iso-sandbox`, LICENSE and BUILD.json (source revision and
 binary digests), with a `SHA256SUMS` beside it. Local checksums do not
 establish release provenance. Signing and notarization are a separate,
 explicit `--sign` stage used by the **Release candidate** workflow, which
@@ -297,13 +296,12 @@ requires a clean exact revision, verifies binary signatures, and attests its
 candidate archive.
 
 The `chr33s/iso` release workflow requires tagged commits from `main` and
-packages the host, Swift proxy, and signed runtime together on macOS. Only
+packages the host, credential proxy, egress companion, and signed runtime together on macOS. Only
 macOS 27+ Apple Silicon hosts are supported. Installer and updater provenance
-checks pin `chr33s/iso`. Archives must include both companions; missing
-companions or obsolete `iso-proxy-rs`/`iso-proxy-swift` transition artifacts
-are rejected before replacement. Verification precedes installation; companion
-replacements precede the host replacement. Hosted candidate and release
-verification remain pending.
+checks pin `chr33s/iso`. Archives must include all three companions; missing companions are rejected
+before replacement. Verification precedes installation; companion
+replacements precede the host replacement. A changed candidate requires its own hosted verification; see
+[release validation](release-validation.md).
 
 The host resolves only the adjacent `iso-proxy` executable. There is no
 implementation selector or fallback. Missing binaries, confinement failures,

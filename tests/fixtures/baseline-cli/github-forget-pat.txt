@@ -1,7 +1,0 @@
-Remove a configured PAT entry and its stored secret
-
-Usage: iso github forget-pat --repo <REPO>
-
-Options:
-      --repo <REPO>  Repo slug whose entry should be removed
-  -h, --help         Print help

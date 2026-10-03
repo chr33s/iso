@@ -1,5 +1,5 @@
 <!--
-Derived from trailofbits/coop.
+Derived from chr33s/iso.
 Modified by chr33s: ported/adapted for the Swift implementation.
 SPDX-License-Identifier: Apache-2.0
 -->
@@ -15,7 +15,7 @@ isolate creates isolated VM environments for running Claude Code and Codex. Supp
 
 | Flag | Description |
 |------|-------------|
-| `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.iso/config.jsonc`). A `.toml` path stops with a [migration hint](configuration.md#migrating-from-toml). |
+| `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.iso/config.jsonc`). The selected file must exist. |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
 | `--version` | Print version and exit. |
 
@@ -88,7 +88,7 @@ iso up ~/code/my-project --mount
 iso up . --profile python,node
 iso up . --copy --forward-port 3000
 iso up . --extra-mount ~/data:/data
-iso up --git-repo https://github.com/trailofbits/coop.git
+iso up --git-repo https://github.com/chr33s/iso.git
 ```
 
 Creation options such as `--vcpus`, `--mem`, `--disk`, `--image`,
@@ -110,23 +110,6 @@ its path and content hash. Later `iso up` reconnects or restarts warn if that
 file changed, but the existing VM is not mutated automatically. Destroy and
 recreate the instance to apply creation-time devcontainer changes such as
 `features`, `hostRequirements`, `mounts`, `image`/`build`, or `remoteUser`.
-
-### `quickstart` (removed)
-
-`iso quickstart` has been removed. It now exits with an error that names the
-replacement sequence: `iso setup` (create the config and build the image),
-`iso up [DIR]`, then `iso claude` or `iso codex`.
-
-### `init`
-
-Deprecated alias for [`iso setup --config-only`](#setup). Prints a
-deprecation note on stderr, then runs the same implementation.
-
-```
-iso init
-```
-
-No additional flags.
 
 ### `setup`
 
@@ -257,8 +240,6 @@ iso start my-project --no-github
 iso start --env RUST_LOG=info --env MY_FLAG=1
 iso start --forward-port 3000 --forward-port 8080:18080
 ```
-
-`--no-claude` is accepted as a deprecated alias for `--no-agents` and will be removed in a future release. Using it prints a deprecation warning.
 
 ### `shell`
 
@@ -737,7 +718,7 @@ iso editor my-project --clean
 
 ### `ssh-config`
 
-Install a `coop-apple-<name>` alias into `~/.ssh/config` so plain `ssh`, `scp`, and
+Install a `iso-<name>` alias into `~/.ssh/config` so plain `ssh`, `scp`, and
 `rsync` reach the guest without remembering its host, port, user, or key. This
 is the same SSH config block `iso editor` writes, but without launching an
 editor.
@@ -754,9 +735,9 @@ iso ssh-config [NAME] [--clean]
 ```
 iso ssh-config
 iso ssh-config my-project
-ssh coop-apple-my-project
-scp ./file coop-apple-my-project:/workspace/
-rsync -az ./dir/ coop-apple-my-project:/workspace/dir/
+ssh iso-my-project
+scp ./file iso-my-project:/workspace/
+rsync -az ./dir/ iso-my-project:/workspace/dir/
 iso ssh-config my-project --clean
 ```
 
@@ -768,7 +749,7 @@ a restart, since the guest address can change.
 The block pins each guest's host key: it sets `StrictHostKeyChecking yes` with
 the instance's own `known_hosts` and `HostKeyAlias <machine>.iso`, plus
 `ForwardAgent no` and `IdentityAgent none`, and a changed key is refused. Pins
-recorded by older builds under the `.coop-apple` alias no longer match and the
+recorded by older builds under the `.iso` alias no longer match and the
 instance is refused until you re-enroll it (`iso restore <name> --reprovision`)
 or recreate it.
 
@@ -795,7 +776,7 @@ iso images inspect default
 iso images cache status
 ```
 
-`inspect` reports host-recorded provenance. Unknown legacy fields stay unknown. Runtime cache allocation is reported as unavailable rather than guessed. `cache status` distinguishes manifests from instance records and does not sum shared disk space. Prune and edit are not available.
+`inspect` reports host-recorded provenance. Absent provenance fields are reported as unknown. Runtime cache allocation is reported as unavailable rather than guessed. `cache status` distinguishes manifests from instance records and does not sum shared disk space. Prune and edit are not available.
 
 With `--json`, each element is `{ "name", "profiles", "created", "size_bytes" }`.
 Absence is modelled honestly: `profiles` is `[]` (not `"none"`), `created` is
@@ -1070,12 +1051,12 @@ iso github <subcommand>
 | `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references isolate's Keychain item, delete that item. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want isolate to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
 
 ```
-iso github setup-pat --repo trailofbits/coop
+iso github setup-pat --repo chr33s/iso
 iso github status
 iso github status --probe
 iso github status --json
-iso github rotate-pat --repo trailofbits/coop
-iso github forget-pat --repo trailofbits/coop
+iso github rotate-pat --repo chr33s/iso
+iso github forget-pat --repo chr33s/iso
 ```
 
 `iso github status --json` emits `{ "mode", "entries", "skip" }`. `mode` is
@@ -1173,9 +1154,9 @@ A generic reference may not name a secret that a proxy credential also reads. `u
 wrong passphrase or a missing secret stops them early. References work only
 in `--env` and `--env-file`; a `{vault:` in devcontainer `containerEnv` or
 config `guest_env` is passed as literal text (with a warning for
-`containerEnv`). Once an instance stores a reference, its `guest_env.json`
-uses a newer format that older isolate releases refuse to read; downgrading such
-an instance is unsupported.
+`containerEnv`). Every nonempty `guest_env.json` uses version 2 with typed
+literal, secret-reference and provider-reference entries. Missing or unsupported
+versions are rejected; resolved secrets are never written to the snapshot.
 
 ### `audit`
 

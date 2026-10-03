@@ -9,8 +9,7 @@ import IsoCore
 import IsoHost
 import IsoSecrets
 
-/// Swift host CLI. Development build during the port: commands not listed
-/// here are not yet ported and do not exist in this binary.
+/// Host CLI entrypoint and supported command tree.
 @main
 struct IsoCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -18,21 +17,20 @@ struct IsoCommand: ParsableCommand {
     abstract: "Isolated VM environment for running Claude Code and Codex",
     version: IsoVersion.string,
     subcommands: [
-      Up.self, Quickstart.self, Setup.self, DevcontainerCommand.self, Start.self, Shell.self,
+      Up.self, Setup.self, DevcontainerCommand.self, Start.self, Shell.self,
       ClaudeCommand.self, ClaudeAgentsCommand.self, CodexCommand.self, RunCommand.self,
       RunCleanup.self, Stop.self, Destroy.self,
       List.self, Status.self, AgentCommand.self, ModelCommand.self, Logs.self, Push.self,
       Pull.self, Diff.self, Exec.self, Editor.self, SSHConfigCommand.self, Images.self, Resize.self,
       Commit.self, Restore.self, ProfilesCommand.self, GitHubCommand.self, ProxyCommand.self,
       SecretsCommand.self, Audit.self,
-      Validate.self, Init.self, Update.self, Uninstall.self, Completions.self,
+      Validate.self, Update.self, Uninstall.self, Completions.self,
       EgressLeaseCommand.self,
     ])
 
   @OptionGroup var global: GlobalOptions
 
-  /// Usage errors exit 2, as the baseline clap parser did (Argument Parser
-  /// defaults to 64).
+  /// Usage errors exit 2; override Argument Parser's default of 64.
   static func main() {
     ChildGroups.installTerminationHandlers()
     do {
@@ -63,7 +61,7 @@ struct GlobalOptions: ParsableArguments {
   }
 
   /// Target for commands that create the file: the explicit path or the
-  /// default JSONC location (never a legacy TOML path).
+  /// default JSONC location.
   func writableTarget(environment: ConfigEnvironment) throws(ConfigError) -> (
     path: String, format: ConfigFormat
   ) {
@@ -73,7 +71,7 @@ struct GlobalOptions: ParsableArguments {
   }
 }
 
-/// Maps typed failures to stderr and the baseline exit status (1).
+/// Maps typed failures to stderr and exit status 1.
 func run(_ body: () throws -> Void) throws {
   do {
     try body()
@@ -89,43 +87,9 @@ func run(_ body: () throws -> Void) throws {
   }
 }
 
-struct Init: ParsableCommand {
-  static let configuration = CommandConfiguration(
-    abstract: "Deprecated alias for `iso setup --config-only`")
-
-  @OptionGroup var global: GlobalOptions
-
-  func run() throws {
-    try IsoCLI.run {
-      let streams = StandardStreams()
-      streams.error("note: `iso init` is deprecated; use `iso setup --config-only`")
-      let target = try global.writableTarget(environment: .process)
-      try SetupConfigOnly.run(target.path, format: target.format, output: streams)
-    }
-  }
-}
-
-/// C-03: `quickstart` is gone; say what replaces it instead of a usage error.
-struct Quickstart: ParsableCommand {
-  static let configuration = CommandConfiguration(
-    abstract: "Removed: use `iso setup`, then `iso up`, then `iso claude` or `iso codex`",
-    shouldDisplay: false)
-
-  @OptionGroup var global: GlobalOptions
-  @Argument(parsing: .allUnrecognized) var ignored: [String] = []
-
-  func run() throws {
-    try IsoCLI.run {
-      throw HostError(
-        "`iso quickstart` has been removed. Run `iso setup` to create the config and build the image, then `iso up [DIR]` to start a VM for your project, then `iso claude` or `iso codex` to launch an agent."
-      )
-    }
-  }
-}
-
 enum SetupConfigOnly {
-  /// Shared by `setup --config-only` and `init`. An existing file is left
-  /// untouched and reported; nothing else is installed or started.
+  /// Create the configuration template without installing or starting anything.
+  /// An existing file is left untouched and reported.
   static func run(_ path: String, format: ConfigFormat, output: some OutputStreams) throws {
     if try ConfigStore.createTemplate(at: path, format: format) {
       output.out("Created \(path). Edit to customize, or leave as-is for defaults.")
@@ -180,7 +144,7 @@ extension GitHubAPI: GitHubUserProbe {}
 
 enum ValidateReport {
   /// Environmental checks, then each PAT entry resolved explicitly (the one
-  /// place `validate` runs `cmd:` references, as the baseline did). A
+  /// place `validate` runs `cmd:` references). A
   /// `vault:` entry is left unresolved unless `probe` is set, which unlocks
   /// the secret store once for all of them and checks each resolved token
   /// against `GET /user`.
@@ -264,32 +228,20 @@ struct Completions: ParsableCommand {
   }
 }
 
-/// C-02: static, Argument Parser-generated scripts only. Generation reads no
+/// Static Argument Parser-generated scripts. Generation reads no
 /// configuration, secrets, state or runtime.
 enum CompletionScripts {
   static let supported: [(name: String, shell: CompletionShell)] = [
     ("bash", .bash), ("zsh", .zsh), ("fish", .fish),
   ]
-  static let retired: Set<String> = ["powershell", "elvish"]
 
   static func script(for name: String) -> String? {
     supported.first { $0.name == name }.map { IsoCommand.completionScript(for: $0.shell) }
   }
 
   static func unsupportedMessage(_ name: String) -> String {
-    if retired.contains(name) {
-      return "\(name) completions are no longer provided; supported shells: bash, zsh, fish"
-    }
     return "unsupported shell '\(name)'; supported shells: bash, zsh, fish"
   }
-}
-
-protocol OutputStreams {
-  /// One line to stdout.
-  func out(_ line: String)
-  /// Raw text to stdout (already newline-terminated).
-  func write(_ text: String)
-  func error(_ line: String)
 }
 
 struct StandardStreams: OutputStreams {

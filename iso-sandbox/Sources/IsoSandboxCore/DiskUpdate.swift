@@ -15,7 +15,7 @@ import Foundation
 /// This recovers deterministically from a process crash at any step. It
 /// makes no claim about sudden power loss: each rename is atomic, but the
 /// steps are not synced to disk as a group.
-public enum DiskUpdate {
+package enum DiskUpdate {
   struct Pending: Codable {
     /// Basename of the prepared disk in the sandbox directory.
     var work: String
@@ -31,7 +31,7 @@ public enum DiskUpdate {
   struct InjectedFault: Error {}
 
   /// The scratch disk an update prepares.
-  public static func workDisk(_ paths: SandboxPaths, _ operation: OperationID) -> URL {
+  package static func workDisk(_ paths: SandboxPaths, _ operation: OperationID) -> URL {
     paths.dir.appendingPathComponent(".update-\(operation.rawValue).ext4")
   }
 
@@ -86,38 +86,13 @@ public enum DiskUpdate {
   /// cannot be read, or that contradicts itself, is an error: guessing
   /// could pair a disk with another update's record.
   static func loadPending(_ paths: SandboxPaths) throws -> (Pending, URL)? {
-    let current = try read(paths.pendingDiskUpdate)
-    let legacy = try read(paths.legacyPendingRestore)
-    func unreadable(_ file: URL, _ error: Error) -> SandboxError {
-      SandboxError(
-        "\(paths.id) has an unreadable staged disk update at \(file.path) (\(error)); compare rootfs.ext4 with "
-          + "record.json by hand before removing it")
-    }
-    switch (current, legacy) {
-    case (nil, nil):
-      return nil
-    case (let data?, nil):
-      do {
-        return (try JSONDecoder.iso.decode(Pending.self, from: data), paths.pendingDiskUpdate)
-      } catch {
-        throw unreadable(paths.pendingDiskUpdate, error)
-      }
-    case (nil, let data?):
-      // Runtime 0.1.0 staged only restores, always at one scratch name.
-      struct Legacy: Codable {
-        var inode: UInt64
-        var record: SandboxRecord
-      }
-      do {
-        let old = try JSONDecoder.iso.decode(Legacy.self, from: data)
-        let pending = Pending(work: ".restore-rootfs.ext4", inode: old.inode, record: old.record)
-        return (pending, paths.legacyPendingRestore)
-      } catch {
-        throw unreadable(paths.legacyPendingRestore, error)
-      }
-    case (_?, _?):
+    guard let data = try read(paths.pendingDiskUpdate) else { return nil }
+    do {
+      return (try JSONDecoder.iso.decode(Pending.self, from: data), paths.pendingDiskUpdate)
+    } catch {
       throw SandboxError(
-        "\(paths.id) has two staged disk updates; compare rootfs.ext4 with record.json by hand")
+        "\(paths.id) has an unreadable staged disk update at \(paths.pendingDiskUpdate.path) (\(error)); compare rootfs.ext4 with "
+          + "record.json by hand before removing it")
     }
   }
 

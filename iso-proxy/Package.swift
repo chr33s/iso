@@ -1,12 +1,11 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 import PackageDescription
 
 let package = Package(
   name: "iso-proxy",
   platforms: [.macOS("27.0")],
   products: [
-    .library(name: "IsoProxyCore", targets: ["IsoProxyCore"]),
-    .executable(name: "iso-proxy-swift", targets: ["IsoProxy"]),
+    .executable(name: "iso-proxy", targets: ["IsoProxy"])
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
@@ -43,5 +42,6 @@ let package = Package(
     .target(name: "IsoProxyTestSupport", path: "Tests/IsoProxyTestSupport"),
     .testTarget(name: "IsoProxyE2ETests", dependencies: ["IsoProxyTestSupport"]),
     .testTarget(name: "IsoProxyCoreTests", dependencies: ["IsoProxyCore"]),
-  ]
+  ],
+  swiftLanguageModes: [.v6]
 )

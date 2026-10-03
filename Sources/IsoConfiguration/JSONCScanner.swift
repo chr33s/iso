@@ -6,7 +6,7 @@
 /// devcontainer input (S-06). It never interprets JSON values: it replaces
 /// comment bytes with spaces (keeping line breaks, so diagnostics keep their
 /// line numbers) and leaves syntax and value decoding to later stages.
-public enum JSONCSyntaxPolicy: Sendable {
+package enum JSONCSyntaxPolicy: Sendable {
   /// Host configuration: RFC 8259 JSON plus `//` and non-nesting `/* */`
   /// comments. An unterminated block comment is an error; trailing commas
   /// are left in place for the structural preflight to reject.
@@ -17,15 +17,15 @@ public enum JSONCSyntaxPolicy: Sendable {
   case devcontainer
 }
 
-public struct JSONCScanError: Error, Equatable, Sendable, CustomStringConvertible {
-  public enum Kind: Sendable, Equatable {
+package struct JSONCScanError: Error, Equatable, Sendable, CustomStringConvertible {
+  package enum Kind: Sendable, Equatable {
     case invalidUTF8
     case unterminatedBlockComment
   }
-  public let kind: Kind
-  public let location: SourceLocation?
+  package let kind: Kind
+  package let location: SourceLocation?
 
-  public var description: String {
+  package var description: String {
     switch kind {
     case .invalidUTF8: "configuration is not valid UTF-8"
     case .unterminatedBlockComment:
@@ -34,10 +34,10 @@ public struct JSONCScanError: Error, Equatable, Sendable, CustomStringConvertibl
   }
 }
 
-public struct SourceLocation: Hashable, Sendable, CustomStringConvertible {
-  public let line: Int
-  public let column: Int
-  public var description: String { "line \(line), column \(column)" }
+package struct SourceLocation: Hashable, Sendable, CustomStringConvertible {
+  package let line: Int
+  package let column: Int
+  package var description: String { "line \(line), column \(column)" }
 
   /// 1-based line and byte column of `offset` within `bytes`.
   static func of(offset: Int, in bytes: [UInt8]) -> SourceLocation {
@@ -51,7 +51,7 @@ public struct SourceLocation: Hashable, Sendable, CustomStringConvertible {
   }
 }
 
-public enum JSONCScanner {
+package enum JSONCScanner {
   private enum State {
     case normal, string, escape, lineComment, blockComment, blockCommentStar
   }
@@ -67,7 +67,7 @@ public enum JSONCScanner {
 
   /// Returns `input` with comments (and, for `.devcontainer`, trailing
   /// commas) replaced by spaces. Output length always equals input length.
-  public static func strip(_ input: [UInt8], policy: JSONCSyntaxPolicy) throws(JSONCScanError)
+  package static func strip(_ input: [UInt8], policy: JSONCSyntaxPolicy) throws(JSONCScanError)
     -> [UInt8]
   {
     guard String(validating: input, as: UTF8.self) != nil else {

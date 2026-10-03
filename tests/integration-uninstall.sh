@@ -88,7 +88,7 @@ export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$HOME/.ssh"
 
 # Where iso writes the background update-check state. Must mirror
-# `UpdateCheckState` in Sources/IsoHost/UpdateCheck.swift
+# `UpdateCheckState` in Sources/IsoHost/Update/UpdateCheck.swift
 # (~/Library/Application Support/iso/update-check.json on macOS).
 case "$(uname -s)" in
     Darwin) STATE_FILE="$HOME/Library/Application Support/iso/update-check.json" ;;
@@ -107,7 +107,7 @@ JSON
 if [[ "$(uname -s)" == Darwin ]]; then
     DATA_DIR="$HOME/.iso/backends/apple-container-v1"
     CONFIG_DIR="$HOME/.iso"
-    SSH_PREFIX="coop-apple"
+    SSH_PREFIX="iso"
 else
     DATA_DIR="$HOME/.iso"
     CONFIG_DIR="$HOME/.iso"
@@ -125,7 +125,7 @@ seed_data_dir() {
 
 # Pre-populate ~/.ssh/config with a iso marker block; uninstall should strip
 # it. Markers must match the `SSHConfigBlocks` markers in
-# Sources/IsoHost/Uninstall.swift (`# <prefix> START <host>` and `# <prefix> END`).
+# Sources/IsoHost/Update/Uninstall.swift (`# <prefix> START <host>` and `# <prefix> END`).
 SSH_MARKER_BEGIN="# $SSH_PREFIX START $SSH_PREFIX-uninstall-test"
 SSH_MARKER_END="# $SSH_PREFIX END"
 seed_ssh_config() {

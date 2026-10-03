@@ -1,5 +1,5 @@
 /// Rust `str::parse::<uN>()`: an optional `+` then ASCII digits, no overflow.
-public func parseUnsigned<T: FixedWidthInteger & UnsignedInteger>(
+package func parseUnsigned<T: FixedWidthInteger & UnsignedInteger>(
   _ text: String, as _: T.Type = T.self
 ) -> T? {
   var digits = Substring(text).utf8[...]
@@ -17,55 +17,55 @@ public func parseUnsigned<T: FixedWidthInteger & UnsignedInteger>(
 }
 
 /// Non-zero memory quantity in mebibytes.
-public struct MiB: Hashable, Comparable, Sendable, CustomStringConvertible {
-  public let value: UInt32
-  public init?(_ value: UInt32) {
+package struct MiB: Hashable, Comparable, Sendable, CustomStringConvertible {
+  package let value: UInt32
+  package init?(_ value: UInt32) {
     guard value > 0 else { return nil }
     self.value = value
   }
-  public static func parseCLI(_ text: String) throws(ValidationError) -> MiB {
+  package static func parseCLI(_ text: String) throws(ValidationError) -> MiB {
     guard let n = parseUnsigned(text, as: UInt32.self) else {
       throw ValidationError("expected positive integer MiB, got '\(text)'")
     }
     guard let mib = MiB(n) else { throw ValidationError("MiB must be > 0, got '\(text)'") }
     return mib
   }
-  public var gibibytes: Double { Double(value) / 1024 }
-  public var description: String { String(value) }
-  public static func < (a: Self, b: Self) -> Bool { a.value < b.value }
+  package var gibibytes: Double { Double(value) / 1024 }
+  package var description: String { String(value) }
+  package static func < (a: Self, b: Self) -> Bool { a.value < b.value }
 }
 
 /// Non-zero disk quantity in gibibytes.
-public struct GiB: Hashable, Comparable, Sendable, CustomStringConvertible {
-  public let value: UInt32
-  public init?(_ value: UInt32) {
+package struct GiB: Hashable, Comparable, Sendable, CustomStringConvertible {
+  package let value: UInt32
+  package init?(_ value: UInt32) {
     guard value > 0 else { return nil }
     self.value = value
   }
-  public static func parseCLI(_ text: String) throws(ValidationError) -> GiB {
+  package static func parseCLI(_ text: String) throws(ValidationError) -> GiB {
     guard let n = parseUnsigned(text, as: UInt32.self) else {
       throw ValidationError("expected positive integer GiB, got '\(text)'")
     }
     guard let gib = GiB(n) else { throw ValidationError("GiB must be > 0, got '\(text)'") }
     return gib
   }
-  public var description: String { String(value) }
-  public static func < (a: Self, b: Self) -> Bool { a.value < b.value }
+  package var description: String { String(value) }
+  package static func < (a: Self, b: Self) -> Bool { a.value < b.value }
 }
 
 /// Non-zero byte budget: plain bytes, or an integer with a `KiB`, `MiB` or
 /// `GiB` suffix (`"256MiB"`).
-public struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertible {
-  public let bytes: UInt64
+package struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertible {
+  package let bytes: UInt64
 
-  public init?(bytes: UInt64) {
+  package init?(bytes: UInt64) {
     guard bytes > 0 else { return nil }
     self.bytes = bytes
   }
 
   static let suffixes: [(String, UInt64)] = [("KiB", 1 << 10), ("MiB", 1 << 20), ("GiB", 1 << 30)]
 
-  public init(parsing text: String) throws(ValidationError) {
+  package init(parsing text: String) throws(ValidationError) {
     var digits = text
     var scale: UInt64 = 1
     if let (suffix, factor) = Self.suffixes.first(where: { text.hasSuffix($0.0) }) {
@@ -85,26 +85,26 @@ public struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertible
   }
 
   /// The largest exact binary unit: `1GiB`, `1536KiB`, `100`.
-  public var description: String {
+  package var description: String {
     for (suffix, factor) in Self.suffixes.reversed() where bytes % factor == 0 {
       return "\(bytes / factor)\(suffix)"
     }
     return String(bytes)
   }
 
-  public static func < (a: Self, b: Self) -> Bool { a.bytes < b.bytes }
+  package static func < (a: Self, b: Self) -> Bool { a.bytes < b.bytes }
 }
 
 /// A session length: plain seconds or an `s`/`m`/`h` suffix, from one
 /// minute to 30 days.
 /// A duration written as plain seconds or with an `s`/`m`/`h` suffix. Range
 /// checks stay with the caller.
-public enum DurationText: Equatable, Sendable {
+package enum DurationText: Equatable, Sendable {
   case seconds(UInt64)
   case invalid
   case overflow
 
-  public init(parsing text: String) {
+  package init(parsing text: String) {
     var digits = Substring(text)
     var scale: UInt64 = 1
     switch digits.last {
@@ -126,18 +126,18 @@ public enum DurationText: Equatable, Sendable {
   }
 }
 
-public struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
-  public static let range: ClosedRange<UInt32> = 60...(30 * 24 * 3600)
-  public let seconds: UInt32
+package struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
+  package static let range: ClosedRange<UInt32> = 60...(30 * 24 * 3600)
+  package let seconds: UInt32
 
-  public init(seconds: UInt32) throws(ValidationError) {
+  package init(seconds: UInt32) throws(ValidationError) {
     guard Self.range.contains(seconds) else {
       throw ValidationError("session_ttl must be between 1m and 720h")
     }
     self.seconds = seconds
   }
 
-  public init(parsing text: String) throws(ValidationError) {
+  package init(parsing text: String) throws(ValidationError) {
     switch DurationText(parsing: text) {
     case .invalid:
       throw ValidationError("expected a duration such as 3600, \"30m\" or \"8h\", got '\(text)'")
@@ -151,36 +151,36 @@ public struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
     }
   }
 
-  public var description: String {
+  package var description: String {
     seconds % 3600 == 0
       ? "\(seconds / 3600)h" : seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds)s"
   }
 }
 
 /// Guest RAM at or above the bootable floor, enforced on every entry point.
-public struct VmMemory: Hashable, Comparable, Sendable, CustomStringConvertible {
-  public static let minimum = MiB(128)!
-  public let mib: MiB
+package struct VmMemory: Hashable, Comparable, Sendable, CustomStringConvertible {
+  package static let minimum = MiB(128)!
+  package let mib: MiB
 
-  public init(_ mib: MiB) throws(ValidationError) {
+  package init(_ mib: MiB) throws(ValidationError) {
     guard mib >= Self.minimum else {
       throw ValidationError("mem_size_mib=\(mib) is too low (minimum \(Self.minimum))")
     }
     self.mib = mib
   }
-  public static func parseCLI(_ text: String) throws(ValidationError) -> VmMemory {
+  package static func parseCLI(_ text: String) throws(ValidationError) -> VmMemory {
     try VmMemory(MiB.parseCLI(text))
   }
-  public var description: String { mib.description }
-  public static func < (a: Self, b: Self) -> Bool { a.mib < b.mib }
+  package var description: String { mib.description }
+  package static func < (a: Self, b: Self) -> Bool { a.mib < b.mib }
 }
 
 /// Disk size specification: absolute (`150`, `150G`) or relative (`+20`).
-public enum DiskSize: Hashable, Sendable {
+package enum DiskSize: Hashable, Sendable {
   case absolute(GiB)
   case relative(GiB)
 
-  public static func parse(_ text: String) throws(ValidationError) -> DiskSize {
+  package static func parse(_ text: String) throws(ValidationError) -> DiskSize {
     var rest = Substring(text)
     let relative = rest.unicodeScalars.first == "+"
     if relative { rest = Substring(rest.unicodeScalars.dropFirst()) }
@@ -194,7 +194,7 @@ public enum DiskSize: Hashable, Sendable {
     return relative ? .relative(gib) : .absolute(gib)
   }
 
-  public func resolve(current: GiB) throws(ValidationError) -> GiB {
+  package func resolve(current: GiB) throws(ValidationError) -> GiB {
     switch self {
     case .absolute(let gib): return gib
     case .relative(let delta):
@@ -206,34 +206,34 @@ public enum DiskSize: Hashable, Sendable {
 }
 
 /// A deadline in whole seconds, `1...86_400`.
-public struct TimeoutSecs: Hashable, Sendable, CustomStringConvertible {
-  public static let maximum: UInt32 = 86_400
-  public let seconds: UInt32
+package struct TimeoutSecs: Hashable, Sendable, CustomStringConvertible {
+  package static let maximum: UInt32 = 86_400
+  package let seconds: UInt32
 
-  public init(_ seconds: UInt32) throws(ValidationError) {
+  package init(_ seconds: UInt32) throws(ValidationError) {
     guard seconds > 0, seconds <= Self.maximum else {
       throw ValidationError(
         "timeout must be between 1 and \(Self.maximum) seconds, got \(seconds)")
     }
     self.seconds = seconds
   }
-  public var duration: Duration { .seconds(Int64(seconds)) }
-  public var description: String { String(seconds) }
+  package var duration: Duration { .seconds(Int64(seconds)) }
+  package var description: String { String(seconds) }
 }
 
 /// Instance index `0...252`; persisted in `instance.json`.
-public struct InstanceIndex: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
-  public static let maximum: UInt16 = 252
-  public let value: UInt16
+package struct InstanceIndex: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
+  package static let maximum: UInt16 = 252
+  package let value: UInt16
 
-  public init?(_ value: UInt16) {
+  package init?(_ value: UInt16) {
     guard value <= Self.maximum else { return nil }
     self.value = value
   }
-  public var description: String { String(value) }
-  public static func < (a: Self, b: Self) -> Bool { a.value < b.value }
+  package var description: String { String(value) }
+  package static func < (a: Self, b: Self) -> Bool { a.value < b.value }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(UInt16.self)
     guard let index = InstanceIndex(raw) else {
       throw DecodingError.dataCorrupted(
@@ -244,19 +244,19 @@ public struct InstanceIndex: Hashable, Comparable, Sendable, CustomStringConvert
     self = index
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(value)
   }
 }
 
 /// A guest port forwarded to the host for the VM's lifetime.
-public struct PortForward: Hashable, Sendable {
-  public let guest: UInt16
-  public let host: UInt16
-  public let label: String?
+package struct PortForward: Hashable, Sendable {
+  package let guest: UInt16
+  package let host: UInt16
+  package let label: String?
 
-  public init(guest: UInt16, host: UInt16? = nil, label: String? = nil) throws(ValidationError) {
+  package init(guest: UInt16, host: UInt16? = nil, label: String? = nil) throws(ValidationError) {
     guard guest > 0 else { throw ValidationError("port must be > 0") }
     guard host != 0 else { throw ValidationError("port must be > 0") }
     self.guest = guest
@@ -265,7 +265,7 @@ public struct PortForward: Hashable, Sendable {
   }
 
   /// CLI spec `GUEST[:HOST]`.
-  public static func parse(_ spec: String) throws(ValidationError) -> PortForward {
+  package static func parse(_ spec: String) throws(ValidationError) -> PortForward {
     let scalars = spec.unicodeScalars
     let colon = scalars.firstIndex(of: ":")
     let guestText = String(scalars[..<(colon ?? scalars.endIndex)]).trimmingUnicodeWhitespace()
@@ -293,7 +293,7 @@ public struct PortForward: Hashable, Sendable {
 
   /// Config entries first, then CLI entries; a later duplicate guest port wins
   /// in place.
-  public static func merge(config: [PortForward], cli: [PortForward]) -> [PortForward] {
+  package static func merge(config: [PortForward], cli: [PortForward]) -> [PortForward] {
     var out: [PortForward] = []
     for forward in config + cli {
       if let index = out.firstIndex(where: { $0.guest == forward.guest }) {
@@ -308,13 +308,13 @@ public struct PortForward: Hashable, Sendable {
 
 /// A value that never appears in `description`, `debugDescription`,
 /// reflection or string interpolation. Reading it requires `expose()`.
-public struct Secret<Value: Sendable & Equatable>: Sendable, Equatable, CustomStringConvertible,
+package struct Secret<Value: Sendable & Equatable>: Sendable, Equatable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
   private let value: Value
-  public init(_ value: Value) { self.value = value }
-  public func expose() -> Value { value }
-  public var description: String { "<redacted>" }
-  public var debugDescription: String { "Secret(<redacted>)" }
-  public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
+  package init(_ value: Value) { self.value = value }
+  package func expose() -> Value { value }
+  package var description: String { "<redacted>" }
+  package var debugDescription: String { "Secret(<redacted>)" }
+  package var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
 }

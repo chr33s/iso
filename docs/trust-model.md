@@ -48,7 +48,7 @@ user launched it.
 
 | Zone | Trust | Notes |
 |------|-------|-------|
-| Host user + `config.jsonc` | Trusted | `cmd:` values run arbitrary `/bin/sh -c` on the host (`CredentialResolver` in `Sources/IsoHost/CredentialResolver.swift`), only when an operation needs the value — never merely by loading the configuration. The config file is a host code-execution surface; only the owner should write it. |
+| Host user + `config.jsonc` | Trusted | `cmd:` values run arbitrary `/bin/sh -c` on the host (`CredentialResolver` in `Sources/IsoHost/Credentials/CredentialResolver.swift`), only when an operation needs the value — never merely by loading the configuration. The config file is a host code-execution surface; only the owner should write it. |
 | isolate process (host) | Trusted | Holds/relays secrets, constructs guest commands, drives `iso-sandbox`, `container build`, `ssh`, and `iso-proxy`. Every subprocess goes through `ProcessRunner` with an argv, never a shell string. |
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint, `8.8.8.8`. Reached over the network; authenticated where applicable. |
@@ -56,7 +56,7 @@ user launched it.
 ## Taint sources (treat as untrusted)
 
 - **Guest filesystem content pulled to the host.** `Workspace.pull`
-  (`Sources/IsoHost/Workspace.swift`) brings guest-authored file contents,
+  (`Sources/IsoHost/Workspace/Workspace.swift`) brings guest-authored file contents,
   filenames, and symlinks onto the host filesystem. This is the **widest guest→host
   channel** and the primary place a path-traversal or symlink escape could land.
   A staged pull (`WorkspaceStage*.swift`) lands it in `<instance>/stage/`,
@@ -202,7 +202,7 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 ## SSH boundary
 
 - Every guest SSH connection pins the guest's host key. The options come from
-  one place, `SSHTarget` (`Sources/IsoHost/SSH.swift`: `hostKeyOptions` and
+  one place, `SSHTarget` (`Sources/IsoHost/Guest/SSH.swift`: `hostKeyOptions` and
   `transportOptions` — the one list `ssh`, `scp`, and rsync's `-e` all derive
   from — and the `~/.ssh/config` block in `SSHConfig.swift`):
   `StrictHostKeyChecking=yes` against a per-instance `known_hosts`,
@@ -211,13 +211,12 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   `IdentitiesOnly=yes`, so isolate's guest-facing SSH authenticates with its own
   key file and never consults the host agent. isolate's own transports add
   `BatchMode=yes`, so a rejected key fails instead of falling back to a
-  password prompt; the block written for the user's own `ssh coop-apple-<name>`
+  password prompt; the block written for the user's own `ssh iso-<name>`
   deliberately does not.
 - The Ed25519 host key is read once over the runtime's native control channel
   (`iso-sandbox exec` over vsock to the owned sandbox, never `ssh-keyscan`)
   and written by `HostKeyPin` (`HostKeys.swift`). A missing or changed key is a
-  hard error. Pins written by older builds under the `.coop-apple` alias no
-  longer match and must be re-enrolled. Flag any path that re-enrolls
+  hard error. Flag any path that re-enrolls
   automatically or builds a target without the pinned options.
 - The guest SSH key (`<data_dir>/backends/apple-container-v1/vm_key`, ed25519,
   **passphrase-less by design**) is a VM-access credential. Do not "harden" it
@@ -306,7 +305,7 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in
   `sandbox-exec -p` with the Seatbelt profile embedded in
-  `Sources/IsoHost/SeatbeltProfile.swift`.
+  `Sources/IsoHost/Guest/SeatbeltProfile.swift`.
   File writes and program execution are denied; outbound connections are
   restricted to ports 443 and 53. Startup probes the denials before binding.
   If confinement or HTTP readiness fails, VM startup aborts. The guest cannot
@@ -355,7 +354,7 @@ exposure, and isolate verifies the effective configuration anyway
   guest can wedge, so if the guest is still running ten seconds after the
   forced kill the owner exits, which ends the in-process VM.
 - **Runtime qualification.** `SandboxRuntime` qualification accepts `iso-sandbox`
-  protocol 4 or 5 with `containerization` 0.45.0. Filtered egress requires
+  protocol 5 with `containerization` 0.45.0. Filtered egress requires
   protocol 5 and a live `bootId`. The runtime itself accepts
   only a kernel whose sha256 is in `KernelPin.allowed`. On first `iso setup`,
   `iso-sandbox init` pulls `ghcr.io/apple/containerization/vminit:0.45.0`
@@ -480,11 +479,10 @@ exposure, and isolate verifies the effective configuration anyway
     guard covers owner startup, including launchd respawns);
   - a rollback never overwrites a newer change;
   - a host key is re-pinned only after a restore correlated with isolate's own
-    operation id. The only exception is the pre-operation-id journal fallback
-    described under host-key pinning above.
+    operation id.
 
   Weakening any of these (skipping the guard, re-pinning on generation alone
-  outside that fallback, or guessing at unreadable staged state) is a
+  or guessing at unreadable staged state) is a
   finding.
 
 ## `iso update` trust chain

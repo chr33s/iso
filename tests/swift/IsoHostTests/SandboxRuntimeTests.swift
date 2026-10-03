@@ -44,17 +44,18 @@ final class ScriptedRuntime: RuntimeExecutor {
 }
 
 let qualifiedVersion =
-  #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#
+  #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
 
 @Test func qualificationAcceptsOnlyTheValidatedRuntime() throws {
   let good = try RuntimeProtocol.parseVersion(Array(qualifiedVersion.utf8))
-  #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.4.0"))
+  #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.5.0"))
   let current =
     #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
   #expect(
     try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(current.utf8))).contains(
       "protocol 5"))
   for bad in [
+    #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#,
     #"{"name":"container","version":"1","protocol":4,"containerization":"0.45.0"}"#,
     #"{"name":"iso-sandbox","version":"0.3.0","protocol":3,"containerization":"0.45.0"}"#,
     #"{"name":"iso-sandbox","version":"0.2.0","protocol":2,"containerization":"0.45.0"}"#,
@@ -72,7 +73,7 @@ let qualifiedVersion =
     .appending(path: "../../fixtures/iso-sandbox/inspect-running.json").standardized
   var object =
     try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as! [String: Any]
-  let name = try MachineName("coop-0a1b2c3d-00112233445566ff")
+  let name = try MachineName("iso-0a1b2c3d-00112233445566ff")
   let protocol4 =
     #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#
   let protocol5 =
@@ -123,7 +124,7 @@ let qualifiedVersion =
     }
   }
   let runtime = SandboxRuntime(executor: executor, root: "/state/runtime", settings: .defaults)
-  #expect(try runtime.requireQualified().contains("protocol 4"))
+  #expect(try runtime.requireQualified().contains("protocol 5"))
   #expect(try runtime.list() == [ListedSandbox(id: "iso-a", status: .crashed)])
   do {
     _ = try runtime.images()

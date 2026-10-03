@@ -52,10 +52,15 @@ import Testing
   try GitHubStatus.run(context, vm: nil, probe: false, json: false)
   try GitHubStatus.run(context, vm: nil, probe: false, json: true)
   #expect(
-    streams.stdout == [
-      "github mode: pat", "entries (0):", "skip (1):", "  a/b", "{", "  \"mode\": \"pat\",",
-      "  \"entries\": [],", "  \"skip\": [", "    \"a/b\"", "  ]", "}",
-    ])
+    Array(streams.stdout.prefix(4)) == ["github mode: pat", "entries (0):", "skip (1):", "  a/b"])
+  let report = try #require(
+    JSONSerialization.jsonObject(
+      with: Data(streams.stdout.dropFirst(4).joined(separator: "\n").utf8))
+      as? [String: Any])
+  #expect(Set(report.keys) == ["mode", "entries", "skip"])
+  #expect(report["mode"] as? String == "pat")
+  #expect(report["entries"] as? [String] == [])
+  #expect(report["skip"] as? [String] == ["a/b"])
 }
 
 @Test func validateProbeChecksEachResolvedToken() throws {

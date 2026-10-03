@@ -12,7 +12,7 @@ private func fixture(_ name: String) throws -> [UInt8] {
   Array(try Data(contentsOf: sandboxFixtures.appending(path: name)))
 }
 
-private let sandbox = try! MachineName("coop-0a1b2c3d-00112233445566ff")
+private let sandbox = try! MachineName("iso-0a1b2c3d-00112233445566ff")
 private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
 
 // MARK: - Runtime protocol (shared fixtures with the Rust host)
@@ -20,7 +20,7 @@ private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
 @Test func versionParses() throws {
   let version = try RuntimeProtocol.parseVersion(try fixture("version.json"))
   #expect(version.name == "iso-sandbox")
-  #expect(version.protocol == 4)
+  #expect(version.protocol == 5)
   #expect(version.containerization == "0.45.0")
   #expect(throws: RuntimeError.self) {
     try RuntimeProtocol.parseVersion(Array(#"{"name":"x"}"#.utf8))
@@ -46,7 +46,7 @@ private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
 
 @Test func inspectRejectsOtherIdsAndUnknownEffectiveFields() throws {
   let running = try fixture("inspect-running.json")
-  let other = try MachineName("coop-0a1b2c3d-ffffffffffffffff")
+  let other = try MachineName("iso-0a1b2c3d-ffffffffffffffff")
   #expect(throws: RuntimeError.self) { try RuntimeProtocol.parseInspect(running, expected: other) }
   do {
     _ = try RuntimeProtocol.parseInspect(running, expected: other)
@@ -57,8 +57,12 @@ private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
     }
   }
   let text = String(decoding: running, as: UTF8.self)
-  let widened = text.replacingOccurrences(
-    of: "\"socketRelays\" : 0,", with: "\"socketRelays\" : 0,\n    \"hostShares\" : [\"/Users\"],")
+  var document = try #require(JSONSerialization.jsonObject(with: Data(running)) as? [String: Any])
+  var effective = try #require(document["effective"] as? [String: Any])
+  effective["hostShares"] = ["/Users"]
+  document["effective"] = effective
+  let widened = String(
+    decoding: try JSONSerialization.data(withJSONObject: document), as: UTF8.self)
   #expect(widened != text)
   do {
     _ = try RuntimeProtocol.parseInspect(Array(widened.utf8), expected: sandbox)
@@ -116,7 +120,7 @@ private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
 // MARK: - Names
 
 @Test func runtimeNamesFollowTheRustRules() throws {
-  #expect(throws: Never.self) { try MachineName("coop-0a1b2c3d-00112233445566ff") }
+  #expect(throws: Never.self) { try MachineName("iso-0a1b2c3d-00112233445566ff") }
   for bad in [
     "", "-lead", "trail-", "Upper", "has_underscore", "semi;colon", "a b", "../x",
     String(repeating: "a", count: 49),
@@ -126,7 +130,7 @@ private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
   #expect(throws: Never.self) { try MachineName(String(repeating: "a", count: 48)) }
   let generated = try MachineName.generate(for: ownerID, randomHex: "00112233445566ff")
   #expect(generated.belongs(to: ownerID))
-  #expect(!(try MachineName("coop-0a1b2c3dx-1")).belongs(to: ownerID))
+  #expect(!(try MachineName("iso-0a1b2c3dx-1")).belongs(to: ownerID))
   #expect(!(try MachineName("users-machine")).belongs(to: ownerID))
   #expect(throws: ValidationError.self) { try OwnerID("short") }
   #expect(throws: ValidationError.self) { try OwnerID("0A1B2C3D00112233445566778899AABB") }
@@ -176,9 +180,9 @@ private func write(_ text: String, _ path: String) throws {
 
 private let sidecarJSON = """
   {
-    "schema_version": 2, "backend": "apple-container",
+    "schema_version": 2, "backend": "apple-container", "lifecycle": "reusable",
     "owner_id": "0a1b2c3d00112233445566778899aabb",
-    "machine_id": "coop-0a1b2c3d-00112233445566ff",
+    "machine_id": "iso-0a1b2c3d-00112233445566ff",
     "image_ref": "iso-image/default:1", "image_digest": "sha256:\(String(repeating: "b", count: 64))",
     "image_manifest_id": "m1", "guest_user": "ubuntu", "requested_cpus": 2,
     "requested_memory_bytes": 4294967296, "host_key_fingerprint": "SHA256:abc",
@@ -187,7 +191,7 @@ private let sidecarJSON = """
   }
   """
 
-@Test func stateRecordsWrittenByRustAreReadable() throws {
+@Test func currentStateRecordsAreReadable() throws {
   let root = try temporaryRoot()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let config = try stateConfig(root)
@@ -201,7 +205,7 @@ private let sidecarJSON = """
   try write(#"{"name":"proj","index":3}"#, instanceDirectory + "/instance.json")
   try write(sidecarJSON, instanceDirectory + "/apple-machine.json")
   try write(
-    #"{"schema_version":2,"backend":"apple-container","owner_id":"0a1b2c3d00112233445566778899aabb","machine_id":"coop-0a1b2c3d-00112233445566ff","op":{"kind":"set-resources","operation":"iso-00ff","prior":{"cpus":2,"memory_bytes":1024}}}"#,
+    #"{"schema_version":2,"backend":"apple-container","owner_id":"0a1b2c3d00112233445566778899aabb","machine_id":"iso-0a1b2c3d-00112233445566ff","op":{"kind":"set-resources","operation":"iso-00ff","prior":{"cpus":2,"memory_bytes":1024}}}"#,
     instanceDirectory + "/operation.json")
   let instance = try InstanceStore.resolve(config, name: nil)
   #expect(instance.name.rawValue == "proj")
@@ -217,7 +221,7 @@ private let sidecarJSON = """
   #expect(journal.op.recoveryHint(instance.name) == "run `iso start proj` to finish it")
 }
 
-@Test func journalRoundTripsInTheRustTaggedForm() throws {
+@Test func journalOperationsRoundTrip() throws {
   let ops: [JournalOp] = [
     .create(stage: .creatingMachine), .destroy(stage: .machineDeleted),
     .restoreDisk(operation: try OperationID("iso-1"), priorGeneration: 4),
@@ -235,7 +239,7 @@ private let sidecarJSON = """
   #expect(CreateStage.reserved < .creatingMachine && CreateStage.creatingMachine < .machineCreated)
 }
 
-@Test func foreignAndRetiredSchemasAreRefused() throws {
+@Test func foreignAndUnknownSchemasAreRefused() throws {
   let root = try temporaryRoot()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let config = try stateConfig(root)
@@ -254,7 +258,7 @@ private let sidecarJSON = """
     _ = try MachineSidecar.loadIfPresent(instance)
     Issue.record("schema 1 accepted")
   } catch let error as RuntimeError {
-    #expect(error.description.contains("retired `container machine` backend"))
+    #expect(error.description.contains("schema version 1"))
   }
   try write(
     sidecarJSON.replacingOccurrences(of: "\"schema_version\": 2", with: "\"schema_version\": 3"),
@@ -345,7 +349,7 @@ private let sidecarJSON = """
       "\"owner_id\""))
 }
 
-@Test func defaultDataRootRefusesUpstreamState() throws {
+@Test func defaultDataRootRequiresARealDirectory() throws {
   let home = try TemporaryDirectory(prefix: "iso-data-root-")
   defer { home.remove() }
   let root = home.path + "/.iso"
@@ -357,8 +361,8 @@ private let sidecarJSON = """
   #expect(throws: Never.self) {
     try DataRoot.check(home: home.path, usesDefaultConfiguration: true)
   }
-  FileManager.default.createFile(atPath: root + "/vm_key", contents: Data())
-  #expect(throws: (any Error).self) {
+  FileManager.default.createFile(atPath: root + "/unrelated", contents: Data())
+  #expect(throws: Never.self) {
     try DataRoot.check(home: home.path, usesDefaultConfiguration: true)
   }
   #expect(throws: Never.self) {
@@ -369,4 +373,22 @@ private let sidecarJSON = """
   #expect(throws: (any Error).self) {
     try DataRoot.check(home: home.path, usesDefaultConfiguration: true)
   }
+}
+
+@Test func sidecarLifecycleIsRequiredAndClosed() throws {
+  for invalid in [
+    sidecarJSON.replacingOccurrences(of: "\"lifecycle\": \"reusable\",", with: ""),
+    sidecarJSON.replacingOccurrences(of: "\"reusable\"", with: "\"unknown\""),
+  ] {
+    #expect(throws: (any Error).self) {
+      try StateSchema.decodeSidecar(Array(invalid.utf8), path: "sidecar")
+    }
+  }
+  let reusable = try StateSchema.decodeSidecar(Array(sidecarJSON.utf8), path: "sidecar")
+  #expect(!reusable.isDisposableRun)
+  let disposable = reusable.markingDisposable()
+  #expect(disposable.isDisposableRun)
+  #expect(disposable.schemaVersion == reusable.schemaVersion)
+  let encoded = try StateStore.encode(disposable, path: "sidecar")
+  #expect(try StateSchema.decodeSidecar(encoded, path: "sidecar") == disposable)
 }

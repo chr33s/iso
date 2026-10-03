@@ -6,10 +6,10 @@ import Foundation
 /// refuses to recreate it, so a subnet that fails to come up is quarantined
 /// for a while rather than retried at once. Quarantine is bounded in size
 /// and time, so a leak can never exhaust the range permanently.
-public struct SubnetAllocator: Sendable {
-  public static let range = 1...250
-  public static let quarantineTTL: TimeInterval = 24 * 60 * 60
-  public static let maxQuarantined = 64
+package struct SubnetAllocator: Sendable {
+  package static let range = 1...250
+  package static let quarantineTTL: TimeInterval = 24 * 60 * 60
+  package static let maxQuarantined = 64
 
   struct State: Codable {
     var quarantined: [Int: Date] = [:]
@@ -17,7 +17,7 @@ public struct SubnetAllocator: Sendable {
 
   let root: SandboxRoot
 
-  public init(root: SandboxRoot) { self.root = root }
+  package init(root: SandboxRoot) { self.root = root }
 
   /// Runs `body` under an exclusive lock on the allocation state.
   func locked<T>(_ body: (inout State) throws -> T) throws -> T {
@@ -63,7 +63,8 @@ public struct SubnetAllocator: Sendable {
   /// Picks a free index (not used by another sandbox, not quarantined) and
   /// passes it to `commit`, which must persist it before the lock is
   /// released so concurrent allocations never collide.
-  public func allocate(for id: SandboxID, now: Date = Date(), commit: (Int) throws -> Void) throws {
+  package func allocate(for id: SandboxID, now: Date = Date(), commit: (Int) throws -> Void) throws
+  {
     try locked { state in
       Self.prune(&state, now: now)
       let used = Set(try root.allRecords().filter { $0.id != id }.map(\.subnetIndex))
@@ -77,7 +78,7 @@ public struct SubnetAllocator: Sendable {
 
   /// Quarantines `index` (vmnet refused it), then allocates a replacement
   /// the same way as ``allocate(for:now:commit:)``.
-  public func quarantineAndReallocate(
+  package func quarantineAndReallocate(
     _ index: Int, for id: SandboxID, now: Date = Date(), commit: (Int) throws -> Void
   ) throws {
     try locked { state in

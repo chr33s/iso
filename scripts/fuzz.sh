@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Coverage-guided fuzzing for the Swift host parsers (docs/design/swift-host-spec.md
-# section 7.1). No Cargo is invoked.
+# Coverage-guided fuzzing for the Swift host parsers; see docs/testing.md.
 #
 #   scripts/fuzz.sh build                      # instrumented targets
 #   scripts/fuzz.sh run TARGET [SECONDS] [SEED] # bounded campaign
@@ -32,7 +31,7 @@ LIBFUZZER_MANIFEST_SHA256="0b52df7b0808e66eb5efdd5c3fbcaf72335279ba90e1f26e04f4c
 DEFAULT_LIBFUZZER_SRC="$ROOT/fuzz/libfuzzer"
 LIBFUZZER_SRC="${ISO_LIBFUZZER_SRC:-$DEFAULT_LIBFUZZER_SRC}"
 
-# Per-input and campaign bounds (recorded in docs/design/swift-host-acceptance.md).
+# Per-input and campaign bounds (documented in docs/testing.md).
 MAX_LEN=65536
 TIMEOUT_SECONDS=10
 RSS_LIMIT_MB=2048

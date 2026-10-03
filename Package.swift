@@ -1,5 +1,5 @@
 // swift-tools-version: 6.4
-// iso host CLI (Swift port; see docs/design/swift-host-spec.md). The runtime
+// iso host CLI; see docs/ARCHITECTURE.md. The runtime
 // (`iso-sandbox/`) and credential proxy (`iso-proxy/`) remain separate
 // packages and separate processes; this package never links them.
 import PackageDescription
@@ -8,8 +8,7 @@ let package = Package(
   name: "iso",
   platforms: [.macOS("27.0")],
   products: [
-    .executable(name: "iso", targets: ["IsoCLI"]),
-    .library(name: "IsoConfiguration", targets: ["IsoConfiguration"]),
+    .executable(name: "iso", targets: ["IsoCLI"])
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
@@ -30,7 +29,7 @@ let package = Package(
     // (SeatbeltProfile.swift); companion test scripts pass them to sandbox-exec.
     .target(
       name: "IsoHost", dependencies: ["IsoCore", "IsoConfiguration", "IsoSecrets"],
-      exclude: ["seatbelt-proxy.sb", "seatbelt-egress.sb"]),
+      exclude: ["Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb"]),
     .executableTarget(
       name: "IsoCLI",
       dependencies: [

@@ -1,10 +1,10 @@
 /// A secret identifier: `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. Names are
 /// identifiers, never filenames (embedded-secrets spec §11).
-public struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 128
-  public let rawValue: String
+package struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 128
+  package let rawValue: String
 
-  public init(_ text: String) throws(ValidationError) {
+  package init(_ text: String) throws(ValidationError) {
     let bytes = Array(text.utf8)
     guard !bytes.isEmpty, bytes.count <= Self.maxLength else {
       throw ValidationError("secret name must be 1-\(Self.maxLength) characters")
@@ -21,7 +21,7 @@ public struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertibl
 
   /// The name a `vault:<name>` reference points at; nil for any other text
   /// and for an invalid name.
-  public static func vaultReference(_ text: String) -> SecretName? {
+  package static func vaultReference(_ text: String) -> SecretName? {
     let prefix = "vault:"
     guard text.hasPrefix(prefix) else { return nil }
     return try? SecretName(String(text.dropFirst(prefix.count)))
@@ -31,7 +31,7 @@ public struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertibl
     (0x30...0x39).contains(byte) || (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte)
   }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let text = try decoder.singleValueContainer().decode(String.self)
     do {
       try self.init(text)
@@ -41,13 +41,13 @@ public struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertibl
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 
-  public var description: String { rawValue }
-  public static func < (a: Self, b: Self) -> Bool {
+  package var description: String { rawValue }
+  package static func < (a: Self, b: Self) -> Bool {
     a.rawValue.utf8.lexicographicallyPrecedes(b.rawValue.utf8)
   }
 }

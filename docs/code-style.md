@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 These are isolate's project-specific Swift conventions for the host package
 (`Package.swift`, `Sources/`, `tests/swift/`, `fuzz/`) and the companion
-packages (`iso-proxy/`, `iso-sandbox/`). The focus is on **using the type
+packages (`iso-proxy/`, `iso-egress/`, `iso-sandbox/`). The focus is on **using the type
 system to eliminate error states**, not on formatting, which `swift format`
 owns. The conventions and design lenses in the shared
 [`review`](../.agents/skills/review/SKILL.md) workflow enforce these; the
@@ -33,7 +33,8 @@ a bug through.
 
   ```sh
   swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
-  swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
+  swift format lint --recursive --strict iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests
+  swift format lint --recursive --strict iso-egress/Package.swift iso-egress/Sources iso-egress/Tests
   swift format lint --recursive --strict iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
   ```
 
@@ -184,8 +185,9 @@ Before reviewing, sync to latest remote (`git fetch origin`).
 5. **Processes and cleanup.** New subprocesses go through `ProcessRunner`; every
    spawned process, lock, PID file, temporary directory and credential is
    released on success, failure, timeout and cancellation.
-6. **API surface.** New `public` items: do they need to be public across
-   modules? Does the module boundary still hold (no side effects in `IsoCore`
+6. **API surface.** Use `internal` within a target and `package` across targets
+   in the same package. Reserve `public` for an intentional external API; the
+   distribution exposes executables, not library products. Does the module boundary still hold (no side effects in `IsoCore`
    beyond `AtomicFile` / `FileLock`)?
    `Sendable` conformances honest?
 7. **Tests cover behavior, not shape.** Edge cases — empty input, boundaries,

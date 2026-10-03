@@ -16,10 +16,10 @@ func staticCompletionScriptsAreGenerated(_ shell: String) throws {
   #expect(!script.contains("---completion"))
 }
 
-@Test func retiredAndUnknownShellsAreActionableErrors() {
+@Test func unsupportedShellsAreActionableErrors() {
   #expect(CompletionScripts.script(for: "powershell") == nil)
   #expect(CompletionScripts.script(for: "elvish") == nil)
-  #expect(CompletionScripts.unsupportedMessage("powershell").contains("no longer provided"))
+  #expect(CompletionScripts.unsupportedMessage("powershell").contains("unsupported shell"))
   #expect(
     CompletionScripts.unsupportedMessage("tcsh").contains("supported shells: bash, zsh, fish"))
 }
@@ -30,12 +30,10 @@ func staticCompletionScriptsAreGenerated(_ shell: String) throws {
     let validate = try #require(command as? Validate)
     #expect(validate.global.config == "/x.jsonc")
   }
-  // C-03: `quickstart` parses (any old flags included) only to explain its removal.
-  let quickstart = try #require(
-    try IsoCommand.parseAsRoot(["quickstart", "--no-workspace"]) as? Quickstart)
-  #expect(throws: ExitCode(1)) { try quickstart.run() }
   #expect(try IsoCommand.parseAsRoot(["setup", "--config-only"]) is Setup)
-  #expect(try IsoCommand.parseAsRoot(["init"]) is Init)
+  for command in ["init", "quickstart"] {
+    #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot([command]) }
+  }
 }
 
 final class RecordingStreams: OutputStreams, @unchecked Sendable {
@@ -173,7 +171,7 @@ func rustLinesForTest(_ text: String) -> [String] {
 @Test func upAndStartParseTheBaselineFlags() throws {
   let up = try #require(
     try IsoCommand.parseAsRoot([
-      "up", "/p", "--no-claude", "--profile", "rust,python", "--profile", "go", "--env", "A=b",
+      "up", "/p", "--no-agents", "--profile", "rust,python", "--profile", "go", "--env", "A=b",
       "--forward-port", "3000:3001", "--mem", "2048",
     ]) as? Up)
   #expect(up.noAgents)
@@ -199,8 +197,7 @@ func rustLinesForTest(_ text: String) -> [String] {
 }
 
 @Test func startRefusalsNameTheNextStep() {
-  let target = ConfigTarget(path: "/c.jsonc", format: .jsonc)
-  var options = StartOptions(configTarget: target)
+  var options = StoppedInstanceSelection()
   #expect(Start.noStoppedInstanceMessage(options).hasPrefix("No stopped instances exist."))
   options.workspaceDirectory = "/p"
   options.devcontainerPath = "/p/dc.json"

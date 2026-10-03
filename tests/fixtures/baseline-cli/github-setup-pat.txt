@@ -1,7 +1,0 @@
-Run the fine-grained PAT wizard for a repo
-
-Usage: iso github setup-pat [OPTIONS]
-
-Options:
-      --repo <REPO>  Repo slug to scope to (auto-detected if omitted)
-  -h, --help         Print help

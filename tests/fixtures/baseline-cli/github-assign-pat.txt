@@ -1,8 +1,0 @@
-Select an existing stored PAT entry for subsequent VM sessions
-
-Usage: iso github assign-pat --vm <NAME> --repo <REPO>
-
-Options:
-      --vm <NAME>    
-      --repo <REPO>  Stored entry key, not the workspace or the token's permission scope
-  -h, --help         Print help

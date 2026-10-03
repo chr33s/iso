@@ -6,7 +6,7 @@ import IsoCore
 
 extension GitHubAuth {
   /// The `github.pat."owner/repo"` token reference, in PAT mode only.
-  public func patEntry(_ repo: RepoSlug) -> Secret<String>? {
+  package func patEntry(_ repo: RepoSlug) -> Secret<String>? {
     guard case .pat(let pat) = self else { return nil }
     return pat.entries[repo]
   }
@@ -15,7 +15,7 @@ extension GitHubAuth {
 extension IsoConfig {
   /// The same configuration with `github` replaced (after the PAT wizard or
   /// a skip marker rewrote it on disk), keeping every command-line override.
-  public func replacingGitHub(_ github: GitHubAuth?) -> IsoConfig {
+  package func replacingGitHub(_ github: GitHubAuth?) -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
       claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
@@ -28,7 +28,7 @@ extension IsoConfig {
   /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
   /// for this command. The caller also passes `githubDisabled` to the VM
   /// assignment check so a stored assignment is not even read.
-  public func disablingGitHub() -> IsoConfig {
+  package func disablingGitHub() -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: .off,
       setup: SetupConfig(promptForPAT: false), claude: claude, codex: codex, codexAuth: codexAuth,
@@ -40,11 +40,11 @@ extension IsoConfig {
 }
 
 /// A verified GitHub edit of the configuration document.
-public struct GitHubConfigEdit: Sendable {
-  public let bytes: [UInt8]
+package struct GitHubConfigEdit: Sendable {
+  package let bytes: [UInt8]
   /// Some `github.pat.*.token` is a literal rather than a `cmd:` reference;
   /// the file is then written owner-only.
-  public let holdsLiteralToken: Bool
+  package let holdsLiteralToken: Bool
 }
 
 /// Structural edits of the `github` member, with the Rust wizard's rules:
@@ -54,7 +54,7 @@ public struct GitHubConfigEdit: Sendable {
 /// rotation does not rewrite (and strip the comments of) the file.
 extension ConfigEditor {
   /// Set `github.pat."<repo>" = {"token": token}` and drop `repo` from `skip`.
-  public static func upsertPAT(
+  package static func upsertPAT(
     existing: [UInt8]?, format: ConfigFormat, path: String, repo: RepoSlug, token: String,
     environment: ConfigEnvironment, limits: JSONLimits = .configuration
   ) throws(ConfigError) -> GitHubConfigEdit? {
@@ -73,7 +73,7 @@ extension ConfigEditor {
   }
 
   /// Remove `github.pat."<repo>"`; everything else is kept.
-  public static func removePAT(
+  package static func removePAT(
     existing: [UInt8], format: ConfigFormat, path: String, repo: RepoSlug,
     environment: ConfigEnvironment, limits: JSONLimits = .configuration
   ) throws(ConfigError) -> GitHubConfigEdit? {
@@ -92,7 +92,7 @@ extension ConfigEditor {
   /// Record `repo` in `github.skip` (the auto-prompt's `never`). `mode` is
   /// forced to `"pat"` because the skip list is only read in PAT mode; PAT
   /// mode without a matching entry forwards no token, as `off` does.
-  public static func addSkipMarker(
+  package static func addSkipMarker(
     existing: [UInt8]?, format: ConfigFormat, path: String, repo: RepoSlug,
     environment: ConfigEnvironment, limits: JSONLimits = .configuration
   ) throws(ConfigError) -> GitHubConfigEdit? {

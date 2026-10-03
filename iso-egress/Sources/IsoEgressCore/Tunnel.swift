@@ -4,8 +4,8 @@ import Foundation
 /// Relays an already-approved CONNECT. The connector is called with the
 /// hostname only, after the request head has been consumed, so proxy
 /// authentication is not written upstream.
-public enum Tunnel {
-  public static func open(
+package enum Tunnel {
+  package static func open(
     _ client: Int32, host: String, connect: (String) throws -> Int32?, alive: () -> Bool = { true }
   ) rethrows {
     guard alive() else { return }
@@ -21,7 +21,7 @@ public enum Tunnel {
   /// Copies bytes until both directions drain after EOF, a hard error occurs,
   /// `alive` is false, or `maxReads` reads have completed. Half-closes are
   /// forwarded only after their queued bytes; backpressure stops reads.
-  public static func relay(
+  package static func relay(
     _ left: Int32, _ right: Int32, alive: () -> Bool = { true }, maxReads: Int? = nil,
     idle: Duration = EgressBudgets.idleTunnel, queueCap: Int = EgressBudgets.relayQueue,
     budget: RelayBudget = .shared

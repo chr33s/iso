@@ -8,14 +8,14 @@
 
 /// Safe-name character class `[a-zA-Z0-9_.-]` shared by image names, repo
 /// segments and secret-store names so they cannot drift apart.
-public func isSafeNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
+package func isSafeNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
   switch scalar {
   case "a"..."z", "A"..."Z", "0"..."9", "-", "_", ".": true
   default: false
   }
 }
 
-public func validateSafeCharacters(_ name: String, kind: String) throws(ValidationError) {
+package func validateSafeCharacters(_ name: String, kind: String) throws(ValidationError) {
   if let bad = name.unicodeScalars.first(where: { !isSafeNameCharacter($0) }) {
     throw ValidationError(
       "\(kind) contains invalid character \(quoted(bad)) (allowed: a-z, A-Z, 0-9, '-', '_', '.')")
@@ -34,11 +34,11 @@ private func isInstanceNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
   }
 }
 
-public struct InstanceName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 64
-  public let rawValue: String
+package struct InstanceName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 64
+  package let rawValue: String
 
-  public init(_ name: String) throws(ValidationError) {
+  package init(_ name: String) throws(ValidationError) {
     guard !name.isEmpty else { throw ValidationError("Instance name must not be empty") }
     let length = name.utf8.count
     guard length <= Self.maxLength else {
@@ -56,10 +56,10 @@ public struct InstanceName: Hashable, Comparable, Sendable, CustomStringConverti
     rawValue = name
   }
 
-  public var description: String { rawValue }
-  public static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+  package var description: String { rawValue }
+  package static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -67,18 +67,18 @@ public struct InstanceName: Hashable, Comparable, Sendable, CustomStringConverti
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
-public struct ImageName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 64
-  public static let `default` = try! ImageName("default")
-  public let rawValue: String
+package struct ImageName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 64
+  package static let `default` = try! ImageName("default")
+  package let rawValue: String
 
-  public init(_ name: String) throws(ValidationError) {
+  package init(_ name: String) throws(ValidationError) {
     guard !name.isEmpty else { throw ValidationError("Image name is empty") }
     // A leading '.' covers '.' and '..' and keeps dotfiles out of images/.
     guard name.unicodeScalars.first != "." else {
@@ -92,10 +92,10 @@ public struct ImageName: Hashable, Comparable, Sendable, CustomStringConvertible
     rawValue = name
   }
 
-  public var description: String { rawValue }
-  public static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+  package var description: String { rawValue }
+  package static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -103,17 +103,17 @@ public struct ImageName: Hashable, Comparable, Sendable, CustomStringConvertible
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
 /// POSIX environment variable name `[a-zA-Z_][a-zA-Z0-9_]*`.
-public struct EnvVarName: Hashable, Comparable, Sendable, CustomStringConvertible {
-  public let rawValue: String
+package struct EnvVarName: Hashable, Comparable, Sendable, CustomStringConvertible {
+  package let rawValue: String
 
-  public init(_ name: String) throws(ValidationError) {
+  package init(_ name: String) throws(ValidationError) {
     guard let first = name.unicodeScalars.first else {
       throw ValidationError("env var name must not be empty")
     }
@@ -130,15 +130,15 @@ public struct EnvVarName: Hashable, Comparable, Sendable, CustomStringConvertibl
     rawValue = name
   }
 
-  public var description: String { rawValue }
-  public static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+  package var description: String { rawValue }
+  package static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 }
 
 /// GitHub `owner/repo` slug: exactly one `/`, non-empty segments, safe class.
-public struct RepoSlug: Hashable, Comparable, Sendable, CustomStringConvertible {
-  public let rawValue: String
+package struct RepoSlug: Hashable, Comparable, Sendable, CustomStringConvertible {
+  package let rawValue: String
 
-  public init(_ slug: String) throws(ValidationError) {
+  package init(_ slug: String) throws(ValidationError) {
     let scalars = slug.unicodeScalars
     guard let slash = scalars.firstIndex(of: "/") else {
       throw ValidationError("Repo slug must be 'owner/repo', got '\(slug)'")
@@ -159,14 +159,14 @@ public struct RepoSlug: Hashable, Comparable, Sendable, CustomStringConvertible 
   }
 
   /// CLI form: surrounding whitespace is trimmed before validation.
-  public static func parseCLI(_ argument: String) throws(ValidationError) -> RepoSlug {
+  package static func parseCLI(_ argument: String) throws(ValidationError) -> RepoSlug {
     try RepoSlug(argument.trimmingASCIIWhitespace())
   }
 
-  public var owner: String { String(rawValue.split(separator: "/", maxSplits: 1)[0]) }
-  public var repo: String { String(rawValue.split(separator: "/", maxSplits: 1)[1]) }
-  public var description: String { rawValue }
-  public static func < (a: Self, b: Self) -> Bool {
+  package var owner: String { String(rawValue.split(separator: "/", maxSplits: 1)[0]) }
+  package var repo: String { String(rawValue.split(separator: "/", maxSplits: 1)[1]) }
+  package var description: String { rawValue }
+  package static func < (a: Self, b: Self) -> Bool {
     Array(a.rawValue.utf8).lexicographicallyPrecedes(b.rawValue.utf8)
   }
 
@@ -176,7 +176,7 @@ public struct RepoSlug: Hashable, Comparable, Sendable, CustomStringConvertible 
 
   /// Parse `git remote get-url` output or a `--git-repo` argument. Returns nil
   /// for non-GitHub URLs and for paths that are not exactly `owner/repo`.
-  public static func parse(url: String) -> RepoSlug? {
+  package static func parse(url: String) -> RepoSlug? {
     let bytes = Array(url.trimmingUnicodeWhitespace().utf8)
     for prefix in urlPrefixes where bytes.starts(with: prefix.utf8) {
       var path = bytes[prefix.utf8.count...]
@@ -204,7 +204,7 @@ extension String {
   }
 
   /// Rust `str::trim`: strips Unicode `White_Space` from both ends.
-  public func trimmingUnicodeWhitespace() -> String {
+  package func trimmingUnicodeWhitespace() -> String {
     let scalars = unicodeScalars
     guard let start = scalars.firstIndex(where: { !$0.properties.isWhitespace }) else { return "" }
     let end = scalars.lastIndex(where: { !$0.properties.isWhitespace })!

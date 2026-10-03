@@ -6,22 +6,22 @@ import CryptoKit
 
 /// CryptoKit verifies an HMAC of the decoded capability using its constant-time
 /// authentication primitive. The random, process-local key never leaves memory.
-public struct Capability: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+package struct Capability: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
   private let key: SymmetricKey
   private let tag: HMAC<SHA256>.MAC
 
-  public init(_ encoded: String) throws {
+  package init(_ encoded: String) throws {
     guard let bytes = Self.decode(encoded) else { throw PolicyError.invalidCapability }
     key = SymmetricKey(size: .bits256)
     tag = HMAC<SHA256>.authenticationCode(for: bytes, using: key)
   }
 
-  public func verifies(_ encoded: String) -> Bool {
+  package func verifies(_ encoded: String) -> Bool {
     guard let bytes = Self.decode(encoded) else { return false }
     return HMAC<SHA256>.isValidAuthenticationCode(tag, authenticating: bytes, using: key)
   }
 
-  public func authorizes(_ headers: [Header]) -> Bool {
+  package func authorizes(_ headers: [Header]) -> Bool {
     let authorization = headers.filter { $0.name.lowercased() == "authorization" }
     let apiKeys = headers.filter { $0.name.lowercased() == "x-api-key" }
     guard authorization.count <= 1, apiKeys.count <= 1,
@@ -53,6 +53,6 @@ public struct Capability: Sendable, CustomStringConvertible, CustomDebugStringCo
     return result
   }
 
-  public var description: String { "<redacted>" }
-  public var debugDescription: String { "Capability(<redacted>)" }
+  package var description: String { "<redacted>" }
+  package var debugDescription: String { "Capability(<redacted>)" }
 }

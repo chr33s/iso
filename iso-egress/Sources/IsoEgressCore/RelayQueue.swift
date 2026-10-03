@@ -1,29 +1,29 @@
 import Synchronization
 
 /// Bytes held for one tunnel direction, and the shared ceiling across tunnels.
-public struct RelayRoom: Equatable, Sendable {
-  public var pending: Int
-  public let perDirection: Int
-  public let aggregateAvailable: Int
+package struct RelayRoom: Equatable, Sendable {
+  package var pending: Int
+  package let perDirection: Int
+  package let aggregateAvailable: Int
 
   /// How many more bytes this direction may read. Zero means stop reading.
-  public var allowed: Int {
+  package var allowed: Int {
     max(0, min(perDirection - pending, aggregateAvailable))
   }
 }
 
-public final class RelayBudget: Sendable {
-  public static let shared = RelayBudget(cap: EgressBudgets.relayAggregate)
+package final class RelayBudget: Sendable {
+  package static let shared = RelayBudget(cap: EgressBudgets.relayAggregate)
   private let used = Mutex(0)
-  public let cap: Int
+  package let cap: Int
 
-  public init(cap: Int) { self.cap = cap }
+  package init(cap: Int) { self.cap = cap }
 
-  public var available: Int {
+  package var available: Int {
     used.withLock { max(0, cap - $0) }
   }
 
-  public func reserve(_ requested: Int) -> Int {
+  package func reserve(_ requested: Int) -> Int {
     used.withLock { used in
       let take = min(max(0, requested), max(0, cap - used))
       used += take
@@ -31,7 +31,7 @@ public final class RelayBudget: Sendable {
     }
   }
 
-  public func release(_ count: Int) {
+  package func release(_ count: Int) {
     used.withLock { $0 = max(0, $0 - count) }
   }
 }

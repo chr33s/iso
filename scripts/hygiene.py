@@ -18,9 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 500 * 1024
 CONFLICT_MARKERS = (b"<<<<<<< ", b"=======\n", b">>>>>>> ")
-# Fuzz inputs, vendored LLVM sources and captured baseline CLI output keep
+# Fuzz inputs and vendored LLVM sources keep
 # their original bytes.
-EXEMPT = ("fuzz/corpus/", "fuzz/libfuzzer/", "tests/fixtures/baseline-cli/")
+EXEMPT = ("fuzz/corpus/", "fuzz/libfuzzer/")
 
 
 def git(*args):

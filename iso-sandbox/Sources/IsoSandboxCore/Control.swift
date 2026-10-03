@@ -3,14 +3,14 @@ import Foundation
 /// Local control protocol between CLI invocations and a sandbox's owner
 /// process: one newline-terminated JSON request, one JSON response, over a
 /// Unix socket in a 0700 per-user directory.
-public struct ControlRequest: Codable, Sendable {
-  public enum Op: String, Codable, Sendable { case ping, exec, stop, inspect }
-  public var op: Op
-  public var argv: [String]? = nil
-  public var stdin: Data? = nil
-  public var timeoutSeconds: Int64? = nil
+package struct ControlRequest: Codable, Sendable {
+  package enum Op: String, Codable, Sendable { case ping, exec, stop, inspect }
+  package var op: Op
+  package var argv: [String]? = nil
+  package var stdin: Data? = nil
+  package var timeoutSeconds: Int64? = nil
 
-  public init(op: Op, argv: [String]? = nil, stdin: Data? = nil, timeoutSeconds: Int64? = nil) {
+  package init(op: Op, argv: [String]? = nil, stdin: Data? = nil, timeoutSeconds: Int64? = nil) {
     self.op = op
     self.argv = argv
     self.stdin = stdin
@@ -18,51 +18,51 @@ public struct ControlRequest: Codable, Sendable {
   }
 }
 
-public struct ControlResponse: Codable, Sendable {
-  public var ok: Bool
-  public var error: String? = nil
-  public var exitCode: Int32? = nil
-  public var stdout: Data? = nil
-  public var stderr: Data? = nil
-  public var inspect: EffectiveConfig? = nil
+package struct ControlResponse: Codable, Sendable {
+  package var ok: Bool
+  package var error: String? = nil
+  package var exitCode: Int32? = nil
+  package var stdout: Data? = nil
+  package var stderr: Data? = nil
+  package var inspect: EffectiveConfig? = nil
 }
 
 /// What the running VM was actually configured with, read back from the
 /// in-memory `LinuxContainer.Configuration`.
-public struct EffectiveConfig: Codable, Sendable {
-  public struct MountView: Codable, Sendable {
-    public var type: String
-    public var source: String
-    public var destination: String
-    public var options: [String]
+package struct EffectiveConfig: Codable, Sendable {
+  package struct MountView: Codable, Sendable {
+    package var type: String
+    package var source: String
+    package var destination: String
+    package var options: [String]
   }
-  public struct InterfaceView: Codable, Sendable {
-    public var ipv4: String
-    public var ipv4Gateway: String?
-    public var ipv6: String?
-    public var network: String
+  package struct InterfaceView: Codable, Sendable {
+    package var ipv4: String
+    package var ipv4Gateway: String?
+    package var ipv6: String?
+    package var network: String
   }
-  public var id: String
-  public var imageReference: String
-  public var imageDigest: String
-  public var cpus: Int
-  public var memoryBytes: UInt64
-  public var rootfs: MountView
-  public var mounts: [MountView]
-  public var interfaces: [InterfaceView]
-  public var socketRelays: Int
-  public var publishedPorts: Int
-  public var sshAgentForwarding: Bool
-  public var maskedPaths: [String]
-  public var readonlyPaths: [String]
-  public var initArgv: [String]
-  public var virtualization: Bool
+  package var id: String
+  package var imageReference: String
+  package var imageDigest: String
+  package var cpus: Int
+  package var memoryBytes: UInt64
+  package var rootfs: MountView
+  package var mounts: [MountView]
+  package var interfaces: [InterfaceView]
+  package var socketRelays: Int
+  package var publishedPorts: Int
+  package var sshAgentForwarding: Bool
+  package var maskedPaths: [String]
+  package var readonlyPaths: [String]
+  package var initArgv: [String]
+  package var virtualization: Bool
 }
 
-public enum ControlSocket {
+package enum ControlSocket {
   /// Largest request line an owner reads; bounds its memory per
   /// connection. `exec -i` stdin travels inside the request.
-  public static let maxRequestBytes = 8 << 20
+  package static let maxRequestBytes = 8 << 20
 
   static func prepareDirectory(for path: URL) throws {
     let dir = path.deletingLastPathComponent()
@@ -100,7 +100,7 @@ public enum ControlSocket {
   }
 
   /// Binds and listens; `handler` runs per connection on a detached task.
-  public static func serve(
+  package static func serve(
     at path: URL, handler: @escaping @Sendable (ControlRequest) async -> ControlResponse
   ) throws {
     try prepareDirectory(for: path)
@@ -167,7 +167,7 @@ public enum ControlSocket {
 
   /// Sends one request. `timeout` bounds the wait for the reply (nil waits
   /// indefinitely, for a long exec); an expired wait is an error.
-  public static func call(_ path: URL, _ request: ControlRequest, timeout: TimeInterval? = 30)
+  package static func call(_ path: URL, _ request: ControlRequest, timeout: TimeInterval? = 30)
     throws -> ControlResponse
   {
     try verifyDirectory(for: path)

@@ -1,6 +1,6 @@
 /// Identifiers shared with the Apple runtime and persisted in host state.
-/// Each validates exactly as the Rust host does, so records written by
-/// either implementation are accepted by both.
+/// Constructors enforce the character, length and ownership rules used
+/// when creating and decoding runtime records.
 
 private func isLowerAlnumOrDash(_ byte: UInt8) -> Bool {
   (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte)
@@ -9,11 +9,11 @@ private func isLowerAlnumOrDash(_ byte: UInt8) -> Bool {
 
 /// A runtime object name iso generated: `[a-z0-9]([a-z0-9-]*[a-z0-9])?`, at
 /// most 48 characters. Never derived from project names, users, or paths.
-public struct MachineName: Hashable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 48
-  public let rawValue: String
+package struct MachineName: Hashable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 48
+  package let rawValue: String
 
-  public init(_ name: String) throws(ValidationError) {
+  package init(_ name: String) throws(ValidationError) {
     let bytes = Array(name.utf8)
     guard !bytes.isEmpty, bytes.count <= Self.maxLength, bytes.allSatisfy(isLowerAlnumOrDash),
       bytes.first != UInt8(ascii: "-"), bytes.last != UInt8(ascii: "-")
@@ -21,22 +21,22 @@ public struct MachineName: Hashable, Sendable, CustomStringConvertible, Codable 
     rawValue = name
   }
 
-  /// `coop-<owner8>-<16 random hex>`.
-  public static func generate(for owner: OwnerID, randomHex: String) throws(ValidationError)
+  /// `iso-<owner8>-<16 random hex>`.
+  package static func generate(for owner: OwnerID, randomHex: String) throws(ValidationError)
     -> MachineName
   {
-    try MachineName("coop-\(owner.short)-\(randomHex)")
+    try MachineName("iso-\(owner.short)-\(randomHex)")
   }
 
   /// Whether this name was generated for `owner`. Necessary but never
   /// sufficient for deletion: callers also require matching local metadata.
-  public func belongs(to owner: OwnerID) -> Bool {
-    rawValue.hasPrefix("coop-\(owner.short)-")
+  package func belongs(to owner: OwnerID) -> Bool {
+    rawValue.hasPrefix("iso-\(owner.short)-")
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -44,17 +44,17 @@ public struct MachineName: Hashable, Sendable, CustomStringConvertible, Codable 
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
 /// 32 lowercase hex characters identifying one installation's resources.
-public struct OwnerID: Hashable, Sendable, CustomStringConvertible, Codable {
-  public let rawValue: String
+package struct OwnerID: Hashable, Sendable, CustomStringConvertible, Codable {
+  package let rawValue: String
 
-  public init(_ value: String) throws(ValidationError) {
+  package init(_ value: String) throws(ValidationError) {
     let bytes = Array(value.utf8)
     let hex = bytes.allSatisfy {
       (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0)
@@ -67,10 +67,10 @@ public struct OwnerID: Hashable, Sendable, CustomStringConvertible, Codable {
   }
 
   /// The 8-character prefix embedded in generated names.
-  public var short: String { String(rawValue.prefix(8)) }
-  public var description: String { rawValue }
+  package var short: String { String(rawValue.prefix(8)) }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -78,17 +78,17 @@ public struct OwnerID: Hashable, Sendable, CustomStringConvertible, Codable {
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
 /// Identifies one runtime mutation (`iso-sandbox --operation`).
-public struct OperationID: Hashable, Sendable, CustomStringConvertible, Codable {
-  public let rawValue: String
+package struct OperationID: Hashable, Sendable, CustomStringConvertible, Codable {
+  package let rawValue: String
 
-  public init(_ value: String) throws(ValidationError) {
+  package init(_ value: String) throws(ValidationError) {
     let bytes = Array(value.utf8)
     guard !bytes.isEmpty, bytes.count <= 64, bytes.allSatisfy(isLowerAlnumOrDash) else {
       throw ValidationError("invalid operation id \(debugQuoted(value))")
@@ -96,9 +96,9 @@ public struct OperationID: Hashable, Sendable, CustomStringConvertible, Codable 
     rawValue = value
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -106,7 +106,7 @@ public struct OperationID: Hashable, Sendable, CustomStringConvertible, Codable 
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
@@ -114,12 +114,12 @@ public struct OperationID: Hashable, Sendable, CustomStringConvertible, Codable 
 
 /// The unprivileged uid-1000 guest account: `[a-z_][a-z0-9_-]*`, at most 32
 /// characters, never `root`.
-public struct GuestUser: Hashable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 32
-  public static let `default` = try! GuestUser("ubuntu")
-  public let rawValue: String
+package struct GuestUser: Hashable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 32
+  package static let `default` = try! GuestUser("ubuntu")
+  package let rawValue: String
 
-  public init(_ name: String) throws(ValidationError) {
+  package init(_ name: String) throws(ValidationError) {
     guard !name.isEmpty else { throw ValidationError("guest user must not be empty") }
     let length = name.utf8.count
     guard length <= Self.maxLength else {
@@ -143,10 +143,10 @@ public struct GuestUser: Hashable, Sendable, CustomStringConvertible, Codable {
     rawValue = name
   }
 
-  public var home: String { "/home/\(rawValue)" }
-  public var description: String { rawValue }
+  package var home: String { "/home/\(rawValue)" }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -154,27 +154,27 @@ public struct GuestUser: Hashable, Sendable, CustomStringConvertible, Codable {
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
 /// Rust `{:?}` quoting for strings in diagnostics.
-public func debugQuoted(_ text: String) -> String {
+package func debugQuoted(_ text: String) -> String {
   "\"" + text.unicodeScalars.map { $0.escaped(asASCII: false) }.joined() + "\""
 }
 
 /// Replace control characters (other than newline and tab) and Unicode
 /// format characters, so text echoed from the runtime or a guest can neither
 /// drive the operator's terminal nor reorder or hide what it shows.
-public func sanitizeForDisplay(_ text: String) -> String {
+package func sanitizeForDisplay(_ text: String) -> String {
   neutralizeControls(text.trimmingUnicodeWhitespace())
 }
 
 /// `sanitizeForDisplay` without the trim: for log and error lines whose
 /// layout (indentation) is part of the message.
-public func neutralizeControls(_ text: String) -> String {
+package func neutralizeControls(_ text: String) -> String {
   var out = String.UnicodeScalarView()
   for scalar in text.unicodeScalars {
     let control = scalar.properties.generalCategory == .control
@@ -190,10 +190,10 @@ public func neutralizeControls(_ text: String) -> String {
 
 /// Dotted-quad IPv4 address, parsed like Rust `Ipv4Addr::from_str`: four
 /// decimal octets, no leading zeros, no surrounding text.
-public struct IPv4Address: Hashable, Sendable, CustomStringConvertible, Codable {
-  public let octets: [UInt8]
+package struct IPv4Address: Hashable, Sendable, CustomStringConvertible, Codable {
+  package let octets: [UInt8]
 
-  public init(_ text: String) throws(ValidationError) {
+  package init(_ text: String) throws(ValidationError) {
     let parts = text.split(separator: ".", omittingEmptySubsequences: false)
     var octets: [UInt8] = []
     for part in parts {
@@ -208,9 +208,9 @@ public struct IPv4Address: Hashable, Sendable, CustomStringConvertible, Codable 
     self.octets = octets
   }
 
-  public var description: String { octets.map(String.init).joined(separator: ".") }
+  package var description: String { octets.map(String.init).joined(separator: ".") }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -218,7 +218,7 @@ public struct IPv4Address: Hashable, Sendable, CustomStringConvertible, Codable 
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(description)
   }

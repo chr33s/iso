@@ -16,7 +16,7 @@ see [`backends.md`](backends.md).
 ## Docker networking in the guest
 
 The Apple runtime boots a full Linux kernel with nftables and `iptable_raw`, so
-the image (`ImageBuild.guestConfig` in `Sources/IsoHost/ImageBuild.swift`)
+the image (`ImageBuild.guestConfig` in `Sources/IsoHost/Guest/ImageBuild.swift`)
 applies no kernel workarounds: Docker runs with its default `iptables-nft`
 backend and its raw-table "direct access filtering" rule, and
 `/etc/resolv.conf` is left as the base image provides it. The Firecracker-era
@@ -32,7 +32,7 @@ remote paths. `scp file user@host:~/.claude/CLAUDE.md` silently creates a litera
 Fix: `GuestPath` values use `./` instead of `~/` in remote paths (e.g.
 `GuestPath("./.claude")`). SFTP defaults to the user's home directory, so
 `./path` is equivalent to `~/path`. This convention is used by
-`SSHSession.copy` (`Sources/IsoHost/GuestSession.swift`).
+`SSHSession.copy` (`Sources/IsoHost/Guest/GuestSession.swift`).
 
 SSH commands (`exec`) are unaffected — the remote shell expands `~` normally.
 Only scp's SFTP mode has this issue.

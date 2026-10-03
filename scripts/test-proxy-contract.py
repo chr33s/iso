@@ -161,7 +161,7 @@ def main():
     if args.swift is None:
         directory = subprocess.check_output(["swift", "build", "--package-path", str(ROOT / "iso-proxy"),
                                              "--show-bin-path"], text=True).strip()
-        args.swift = Path(directory) / "iso-proxy-swift"
+        args.swift = Path(directory) / "iso-proxy"
     cases = json.loads((ROOT / "tests/fixtures/credential-proxy/refusals.json").read_text())
     if args.capacity_only:
         cases = []
@@ -175,7 +175,7 @@ def main():
             config = {"version": 1, "listen": f"127.0.0.1:{port}", "provider": provider,
                       "capability_token": TOKEN, "injection": {"scheme": "bearer", "credential": SECRET}}
             command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(binary),
-                       "-f", str(ROOT / "Sources/IsoHost/seatbelt-proxy.sb"), str(binary)]
+                       "-f", str(ROOT / "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb"), str(binary)]
             child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, env={})
             try:

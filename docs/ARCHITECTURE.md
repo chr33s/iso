@@ -18,8 +18,7 @@ VMs on `apple/containerization` ([`iso-sandbox`](../iso-sandbox)). See
 This document maps the modules, the backend, the data flow from host to guest,
 and the architectural invariants. For the security view of the same system, see
 [`trust-model.md`](trust-model.md); for Swift conventions, see
-[`code-style.md`](code-style.md). The port from the former Rust host is
-specified in [`design/swift-host-spec.md`](design/swift-host-spec.md).
+[`code-style.md`](code-style.md).
 
 ## Executables and packages
 
@@ -46,22 +45,37 @@ iso/
 │   ├── IsoCore/            # validated values, AtomicFile/FileLock; no subprocess or network side effects
 │   ├── IsoConfiguration/   # JSONC scanning, preflight, decoding, config edits
 │   ├── IsoSecrets/         # Secure Enclave-bound local secret store
-│   ├── IsoHost/            # filesystem, locks, subprocesses, SSH, lifecycle, agents, updater
-│   └── IsoCLI/             # Argument Parser commands (executable `iso`)
+│   ├── IsoHost/            # host orchestration, grouped within one target
+│   │   ├── Lifecycle/     # setup/up/start/run/reprovision workflows and requests
+│   │   ├── Runtime/       # runtime protocol, isolation checks, readiness and handoff
+│   │   ├── Processes/     # spawning, signal propagation, detached child ownership
+│   │   ├── Guest/         # SSH, bootstrap, images, agents, proxy startup; Resources/
+│   │   ├── Credentials/   # credential resolution, Keychain, GitHub and proxy config
+│   │   ├── Workspace/     # transfer and staged-return workflows
+│   │   ├── Devcontainer/  # parsing, translation and verified OCI Features
+│   │   ├── State/         # persistence, config writes and boundary audit
+│   │   ├── Update/        # verified releases, versioning and uninstall
+│   │   └── Support/       # command context, diagnostics and bounded parsing
+│   └── IsoCLI/             # Argument Parser executable `iso`
+│       ├── Commands/      # argument parsing, prompts, dispatch and presentation
+│       └── Support/       # typed CLI response models
 ├── tests/swift/             # Swift test targets (one per module + fuzz corpus replay)
-├── tests/                   # integration, parity and migration scripts; baselines
+├── tests/                   # integration and command contract scripts; fixtures
 ├── fuzz/                    # libFuzzer harnesses (Targets/, Entrypoints/), corpus, vendored libFuzzer
 ├── iso-sandbox/            # Swift Apple Containerization VM runtime
 ├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
+├── iso-egress/             # Swift filtered-egress companion: destination policy, leases, CONNECT
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)
 └── docs/                    # this tree
 ```
 
 Target dependencies: `IsoConfiguration`, `IsoSecrets` and `IsoHost` depend
 on `IsoCore`; `IsoSecrets` also uses swift-crypto's `CryptoExtras`;
-`IsoHost` also depends on `IsoConfiguration`; `IsoCLI` assembles them with
+`IsoHost` also depends on `IsoConfiguration` and `IsoSecrets`; `IsoCLI` assembles them with
 Swift Argument Parser. Both external dependencies are pinned in
-`Package.resolved`.
+`Package.resolved`. Internal cross-target APIs use `package` access; types used
+within a target stay `internal`. The four packages publish executable products.
+Folders group related code without creating additional module boundaries.
 
 ### `IsoCore`
 
@@ -71,21 +85,21 @@ the safe-name character class), `RuntimeNames.swift` (runtime object names and
 identifiers persisted in host state), `Units.swift` (memory/disk quantities,
 vCPU counts, the bootable RAM floor), `GitRepoURL.swift` (clone URL plus its
 `owner/repo` slug), `RemoteCommand.swift` (injection-safe guest shell commands
-and `GuestPath`), `OutputJSON*.swift` (`--json` output with the baseline's
-exact member order and number formatting), and the state-write primitives
+and `GuestPath`), `JSONOutput` (Foundation encoding of typed output) with
+`OutputJSON` for dynamic configuration/guest documents, and the state-write primitives
 `AtomicFile.swift` and `FileLock.swift` (with `HostError`), shared with
 modules that must not depend on `IsoHost`.
 
 ### `IsoConfiguration`
 
-The JSONC pipeline (spec section 3): `JSONCScanner` (the one comment scanner,
+The JSONC pipeline: `JSONCScanner` (the one comment scanner,
 shared with devcontainer input under explicit policies) → `JSONPreflight`
 (UTF-8, duplicate keys by decoded name, trailing commas, resource limits,
 fraction/exponent literals) → Foundation `JSONDecoder` into `JSONValue` →
 `ConfigDecoding` (explicit absent/null/wrong-type handling, per-section
-unknown-key policy, retired-field rejection) → the immutable `IsoConfig`.
+unknown-key policy) → the immutable `IsoConfig`.
 `ConfigLoader` selects the file (`--config`, default `~/.iso/config.jsonc`,
-legacy-TOML refusal); `ConfigValidation` checks environmental facts at
+missing-selected-file refusal); `ConfigValidation` checks environmental facts at
 lifecycle boundaries; `ConfigEditor` and `GitHubConfigEdits` make structural
 edits that keep unmodeled keys; `ConfigTemplate` is the template written by
 `setup --config-only` (kept equal to [`config.example.jsonc`](../config.example.jsonc)
@@ -105,34 +119,31 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 
 | Area | Files |
 |---|---|
-| Backend and runtime | `AppleBackend` (probes, liveness proofs, SSH target), `AppleLifecycle` (create/boot/stop/destroy/resize/commit/restore with journals), `AppleSetup` + `ImageBuild` + `ImageRecords` (image preparation and records), `SandboxRuntime` (the narrow runtime-client seam), `RuntimeOperations` (mutating runtime calls, deadlines, cancellability), `RuntimeProtocol` (typed parsers for untrusted runtime output) |
+| Lifecycle and runtime | `AppleBackend` (probes, liveness proofs, SSH target), `AppleLifecycle` (create/boot/stop/destroy/resize/commit/restore with journals), `AppleSetup` + `ImageBuild` + `ImageRecords` (image preparation and records), `ProjectLifecycle`, `UpWorkflow`, `RunWorkflow` and `ReprovisionWorkflow` (host orchestration accepting typed request values), `SandboxRuntime` (the narrow runtime-client seam), `RuntimeOperations` (mutating runtime calls, deadlines, cancellability), `RuntimeProtocol` (typed parsers for untrusted runtime output) |
 | Processes and signals | `ProcessRunner` (the one subprocess launcher: argv, environment, bounded capture, deadlines, process groups), `ChildGroups` (forward termination signals to child groups), `Shutdown` (sticky SIGINT/SIGTERM flag for interruptible operations) |
 | SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (`SendEnv` forwarding, minimal guest-bound environment, opaque workload sessions), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
-| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `AgentCatalog` / `AgentLaunchPlan` (definition catalog and reviewed adapter dispatch), `RunSession` (disposable-run ownership), `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
-| GitHub and secrets | `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
+| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `AgentCatalog` / `AgentLaunchPlan` (definition catalog and reviewed adapter dispatch), `RunSession` (disposable-run ownership), `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyStartup` (startup wire encoding), `ProxyUpstreams` (provider selection), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
+| GitHub and secrets | `ProxyProvisioning` (Keychain-backed setup), `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
 | Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit`) |
-| Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (upstream-state guard) |
+| Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (real-directory guard) |
 | Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `WorkloadHandoff` (filtered prepared-session and guest-operation identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
-| Support | `Diagnostics` (stderr), `Prompt`, `OrderedJSON`, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
+| Support | `CommandContext` (validated config and injected host services), `Diagnostics` (stderr), `Prompt`, bounded guest JSON parsing/editing, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 
 ### `IsoCLI`
 
-One file per command domain: `IsoCommand.swift` (root command, global
-options, `init` alias, removed `quickstart`, exit-status mapping),
-`ReadCommands.swift` (`CommandContext`, list/status/logs and other read-only
-commands), `LifecycleCommands.swift` (setup, stop, destroy, resize, commit,
-restore), `UpCommands.swift` (up/start/shell/exec and the shared start
-machinery), `AgentCommands.swift` (claude/codex/agent/model),
-`AgentDefinitionCommands.swift` (agent list/inspect/add),
-`RunCommands.swift` (`run` and `run-cleanup`), `WorkspaceCommands.swift`
-(push/pull/editor/ssh-config), `DevcontainerCommands.swift`,
-`GitHubCommands.swift`, and `AdminCommands.swift` (update, uninstall).
+`IsoCommand.swift` defines the root command, global options and exit-status
+mapping. `Commands/` groups parsing and presentation by command domain; it
+converts arguments into host request values and dispatches to the workflows in
+`IsoHost/Lifecycle/`. Prompts and CLI-specific rendering remain here. Shared host
+services and validated configuration live in `IsoHost/Support/CommandContext`.
+`Support/JSONResponses.swift` defines owned `Encodable` response models; dynamic
+JSON is reserved for guest/configuration documents whose keys are not owned by iso.
 
 ## The backend
 
-There is one concrete backend, `AppleBackend` (spec S-01). There is no backend
+There is one concrete backend, `AppleBackend`. There is no backend
 trait, no compile-time or runtime backend selection, and no capability matrix.
 `SandboxRuntime` is the only seam: a narrow runtime-client interface so tests
 can script `iso-sandbox` responses. Disk and resource mutations follow the
@@ -155,8 +166,8 @@ witnessed by the type.
 `IsoCommand.main()` installs `ChildGroups` termination handlers, parses the
 command line (usage errors exit 2, as before), and runs the subcommand.
 Commands that must work without a loaded configuration — `completions`,
-`setup --config-only`/`init`, `update`, `uninstall`, `devcontainer check` —
-handle that themselves. Others build a `CommandContext` (S-02): the data-root
+`setup --config-only`, `update`, `uninstall`, `devcontainer check` —
+handle that themselves. Others build a `CommandContext`: the data-root
 guard, one validated `IsoConfig` snapshot with explicit CLI overrides applied,
 `Diagnostics`, the background update notice, the `AppleBackend`, and the SSH
 client. Handlers receive immutable values; credentials are resolved separately
@@ -188,8 +199,8 @@ security-relevant details of each crossing are in [`trust-model.md`](trust-model
 ### Configuration and state
 
 Configuration is JSONC at `~/.iso/config.jsonc`, or strict JSON through an
-explicit `--config *.json`; a `.toml` path or a lone legacy `config.toml`
-stops with instructions for [`scripts/migrate-config-to-jsonc.py`](../scripts/migrate-config-to-jsonc.py).
+explicit `--config *.json`. Explicit paths must exist; only an absent implicit
+default configuration selects built-in defaults.
 See [`configuration.md`](configuration.md). Value bounds live in `IsoCore`
 constructors, so validation only checks environmental facts. Proxy credentials
 are `cmd:` references resolved just in time; `proxy setup` provisions them in

@@ -8,61 +8,45 @@ import Testing
 
 // MARK: - SSH config blocks
 
-/// Rust default-build literals rewritten into this build's namespace.
-private func apple(_ text: String) -> String {
-  text.replacingOccurrences(of: "# coop START", with: SSHConfigBlocks.markerPrefix)
-    .replacingOccurrences(of: "# coop END", with: SSHConfigBlocks.markerEnd)
-    .replacingOccurrences(of: "coop-test", with: "coop-apple-test")
-    .replacingOccurrences(of: "coop-other", with: "coop-apple-other")
-}
-
 @Test func removeAllBlocksKeepsEverythingElse() {
-  let input = apple(
-    "Host other\n    HostName 1.2.3.4\n# coop START coop-0\nHost coop-0\n    HostName 172.16.0.2\n# coop END\nHost another\n    HostName 5.6.7.8\n# coop START iso-1\nHost iso-1\n    HostName 172.16.0.3\n# coop END\n"
-  )
+  let input =
+    ("Host other\n    HostName 1.2.3.4\n# iso START iso-0\nHost iso-0\n    HostName 172.16.0.2\n# iso END\nHost another\n    HostName 5.6.7.8\n# iso START iso-1\nHost iso-1\n    HostName 172.16.0.3\n# iso END\n")
   #expect(
     SSHConfigBlocks.removeMarkerBlocks(input)
       == "Host other\n    HostName 1.2.3.4\nHost another\n    HostName 5.6.7.8\n")
   #expect(
-    SSHConfigBlocks.removeMarkerBlocks(apple("# coop START coop-a\nHost coop-a\n# coop END\n"))
+    SSHConfigBlocks.removeMarkerBlocks(("# iso START iso-a\nHost iso-a\n# iso END\n"))
       == "")
   // CRLF files keep their other lines; trailing blank lines collapse to one newline.
   #expect(SSHConfigBlocks.removeMarkerBlocks("Host k\r\n\n\n") == "Host k\n")
 }
 
 @Test func namedRemovalLeavesOtherBlocks() {
-  let input = apple(
-    "# coop START coop-a\nHost coop-a\n    HostName 172.16.0.2\n# coop END\n# coop START coop-b\nHost coop-b\n    HostName 172.16.0.3\n# coop END\n"
-  )
-  let result = SSHConfigBlocks.removeNamedMarkerBlock(input, host: "coop-a")
-  #expect(!result.contains("Host coop-a"))
-  #expect(result.contains("Host coop-b"))
+  let input =
+    ("# iso START iso-a\nHost iso-a\n    HostName 172.16.0.2\n# iso END\n# iso START iso-b\nHost iso-b\n    HostName 172.16.0.3\n# iso END\n")
+  let result = SSHConfigBlocks.removeNamedMarkerBlock(input, host: "iso-a")
+  #expect(!result.contains("Host iso-a"))
+  #expect(result.contains("Host iso-b"))
   #expect(result.contains("172.16.0.3"))
   let plain = "Host something\n    HostName 1.2.3.4\n"
-  #expect(SSHConfigBlocks.removeNamedMarkerBlock(plain, host: "coop-x") == plain)
+  #expect(SSHConfigBlocks.removeNamedMarkerBlock(plain, host: "iso-x") == plain)
   // An END marker outside the named block is kept.
-  let stray = apple("Host k\n# coop END\n")
-  #expect(SSHConfigBlocks.removeNamedMarkerBlock(stray, host: "coop-apple-x") == stray)
+  let stray = ("Host k\n# iso END\n")
+  #expect(SSHConfigBlocks.removeNamedMarkerBlock(stray, host: "iso-x") == stray)
 }
 
-@Test func appleBuildLeavesDefaultBuildBlocksAlone() {
-  let defaultBlocks =
-    "# coop START coop-test\nHost coop-test\n    HostName 172.16.0.2\n# coop END\n"
-  #expect(SSHConfigBlocks.removeMarkerBlocks(defaultBlocks) == defaultBlocks)
-  #expect(SSHConfigBlocks.removeMarkerBlocks(defaultBlocks + apple(defaultBlocks)) == defaultBlocks)
-}
-
-@Test func aliasOwnedByTheOtherBuildIsRefused() {
-  let foreign = "# coop START coop-apple-test\nHost coop-apple-test\n"
-  #expect(throws: (any Error).self) {
-    try SSHConfigBlocks.checkAliasNotForeign(foreign, host: "coop-apple-test")
+@Test func explicitUserAliasIsRefused() throws {
+  for declaration in ["Host iso-test", "Host other iso-test", "HOST ISO-TEST"] {
+    #expect(throws: (any Error).self) {
+      try SSHConfigBlocks.checkAliasAvailable(declaration, host: "iso-test")
+    }
   }
   #expect(throws: Never.self) {
-    try SSHConfigBlocks.checkAliasNotForeign(
-      apple("# coop START coop-test\n"), host: "coop-apple-test")
-    try SSHConfigBlocks.checkAliasNotForeign(foreign, host: "coop-apple-other")
+    try SSHConfigBlocks.checkAliasAvailable("Host other\nHost *\n", host: "iso-test")
+    try SSHConfigBlocks.checkAliasAvailable(
+      "# iso START iso-test\nHost iso-test\n# iso END\n", host: "iso-test")
   }
-  #expect(SSHConfigBlocks.host(for: try! InstanceName("test")) == "coop-apple-test")
+  #expect(SSHConfigBlocks.host(for: try InstanceName("test")) == "iso-test")
 }
 
 @Test func fileCleanupRewritesOnlyWhenSomethingWasRemoved() throws {
@@ -87,13 +71,12 @@ private func apple(_ text: String) -> String {
   try writeUpdateFile(
     path,
     unrelated
-      + apple(
-        "# coop START coop-test\nHost coop-test\n# coop END\n# coop START coop-other\nHost coop-other\n    HostName 172.16.0.3\n# coop END\n"
-      ), mode: 0o640)
+      + ("# iso START iso-test\nHost iso-test\n# iso END\n# iso START iso-other\nHost iso-other\n    HostName 172.16.0.3\n# iso END\n"),
+    mode: 0o640)
   try SSHConfigBlocks.remove(
-    host: "coop-apple-test", instanceName: "test", at: path, diagnostics: log.diagnostics)
-  #expect(!(readText(path) ?? "").contains("coop-apple-test"))
-  #expect((readText(path) ?? "").contains(apple("# coop START coop-other")))
+    host: "iso-test", instanceName: "test", at: path, diagnostics: log.diagnostics)
+  #expect(!(readText(path) ?? "").contains("iso-test"))
+  #expect((readText(path) ?? "").contains(("# iso START iso-other")))
   #expect(log.all == ["Removed SSH config block for instance 'test'"])
   try SSHConfigBlocks.removeAll(at: path, diagnostics: log.diagnostics)
   #expect(readText(path) == unrelated)
@@ -163,7 +146,7 @@ private struct UninstallFixture {
     try writeUpdateFile(stateFile, #"{"last_checked_at": 0, "latest_known_version": "v9.9.9"}"#)
     try writeUpdateFile(
       sshConfig,
-      "# coop-apple START coop-apple-uninstall-test\nHost coop-apple-uninstall-test\n    HostName 172.16.0.42\n# coop-apple END\n\n# unrelated user block\nHost github.com\n    User git\n",
+      "# iso START iso-uninstall-test\nHost iso-uninstall-test\n    HostName 172.16.0.42\n# iso END\n\n# unrelated user block\nHost github.com\n    User git\n",
       mode: 0o600)
     try writeUpdateFile(binary, "binary", mode: 0o755)
   }
@@ -222,7 +205,7 @@ private struct UninstallFixture {
     #expect(!pathExists((fixture.stateFile as NSString).deletingLastPathComponent))
     #expect(readText(fixture.home + "/.iso/config.jsonc") == "{}")
     #expect(readText(fixture.home + "/.iso/unrelated/sentinel") == "unrelated")
-    #expect(!(readText(fixture.sshConfig) ?? "").contains("coop-apple"))
+    #expect(!(readText(fixture.sshConfig) ?? "").contains("iso"))
     #expect((readText(fixture.sshConfig) ?? "").contains("Host github.com"))
     // Baseline quirk: the check runs after the owned root is gone, so only the
     // config canonicalizes and the "can't tell" branch suppresses the notice.

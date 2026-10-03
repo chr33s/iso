@@ -8,10 +8,10 @@ set -euo pipefail
 # Release preflight for iso.
 #
 # Runs every check that gates a release from one machine, mirroring the CI
-# jobs (swift format, build, test, the recorded-baseline parity checks, the
+# jobs (swift format, build, test, the current contract checks, the
 # lightweight integration scripts) so a doomed tag is never pushed, and adds
 # the checks CI does not perform:
-#   - Swift package version (Sources/IsoHost/UpdateVersion.swift) / CHANGELOG
+#   - Swift package version (Sources/IsoHost/Update/UpdateVersion.swift) / CHANGELOG
 #     / git-tag agreement
 #   - the release archive, built through scripts/build-release.py exactly as
 #     release.yml builds it (a break otherwise first surfaces on the tag,
@@ -82,8 +82,8 @@ step() {
 # The version `iso --version` reports and scripts/build-release.py checks
 # the tag against.
 package_version() {
-  sed -n 's/.*public static let packageVersion = "\([^"]*\)".*/\1/p' \
-    Sources/IsoHost/UpdateVersion.swift | head -n 1
+  sed -n 's/.*package static let packageVersion = "\([^"]*\)".*/\1/p' \
+    Sources/IsoHost/Update/UpdateVersion.swift | head -n 1
 }
 
 macos_27() {
@@ -107,7 +107,7 @@ check_versions() {
   local v tag
   v="$(package_version)"
   if [[ -z "$v" ]]; then
-    echo "Could not read packageVersion from Sources/IsoHost/UpdateVersion.swift" >&2
+    echo "Could not read packageVersion from Sources/IsoHost/Update/UpdateVersion.swift" >&2
     return 1
   fi
   tag="v$v"
@@ -122,7 +122,7 @@ check_versions() {
   fi
 
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    printf 'Tag %s already exists — bump packageVersion in Sources/IsoHost/UpdateVersion.swift first\n' "$tag"
+    printf 'Tag %s already exists — bump packageVersion in Sources/IsoHost/Update/UpdateVersion.swift first\n' "$tag"
     return 1
   fi
 
@@ -141,12 +141,12 @@ run_host_tests() {
 }
 
 # The recorded-baseline replays CI runs against the debug build.
-run_baselines() {
+run_contracts() {
   local iso=.build/debug/iso failed=0
-  python3 tests/test-swift-host-read-parity.py --swift "$iso" || failed=1
-  python3 tests/test-swift-host-lifecycle-parity.py --swift "$iso" || failed=1
-  python3 tests/test-swift-host-data-root-parity.py --swift "$iso" || failed=1
-  python3 tests/test-swift-host-cli-surface.py --swift "$iso" || failed=1
+  python3 tests/test-read-contract.py --swift "$iso" || failed=1
+  python3 tests/test-lifecycle-contract.py --swift "$iso" || failed=1
+  python3 tests/test-data-root-contract.py --swift "$iso" || failed=1
+  python3 tests/test-cli-surface.py --swift "$iso" || failed=1
   return "$failed"
 }
 
@@ -159,7 +159,7 @@ run_swift_proxy() {
   ulimit -n 8192 || return
   swift build --package-path iso-proxy --force-resolved-versions || return
   bin_dir="$(swift build --package-path iso-proxy --show-bin-path)" || return
-  ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy-swift" \
+  ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy" \
     swift test --package-path iso-proxy --force-resolved-versions
 }
 
@@ -208,12 +208,11 @@ step "Working tree clean" check_worktree
 step "Version consistency" check_versions
 step "Format (swift format lint --strict)" run_format
 step "Swift host build and tests" run_host_tests
-step "Recorded-baseline parity" run_baselines
+step "Host behavior contracts" run_contracts
 step "Swift proxy tests" run_swift_proxy
 step "Swift egress tests and confined lease" run_swift_egress
 step "iso-sandbox tests" run_sandbox_tests
 step "Workflow audit (zizmor)" run_zizmor
-step "Configuration migration tests" python3 tests/test-migrate-config.py
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
 step "Integration — installer provenance" ./tests/integration-install.sh
 step "Integration — iso update" ./tests/integration-update.sh

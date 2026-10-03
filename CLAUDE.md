@@ -16,8 +16,8 @@ not follow the shared entrypoint link. Keep normative changes in AGENTS.md. -->
 This is the `chr33s/iso` fork, supporting **macOS 27+ on Apple Silicon hosts
 only**. Linux guests remain supported; Linux hosts are outside this fork's
 scope. The host CLI is Swift (root `Package.swift`); the credential proxy
-(`iso-proxy/`) and Apple VM runtime (`iso-sandbox/`) remain separate Swift
-packages and separate processes. See [README.md](README.md) for motivation and
+(`iso-proxy/`), filtered-egress companion (`iso-egress/`), and Apple VM runtime
+(`iso-sandbox/`) remain separate Swift packages and separate processes. See [README.md](README.md) for motivation and
 fork installation guidance.
 
 ## Agent entrypoint
@@ -68,7 +68,7 @@ secret content, or softens the `iso update` verification chain.
 ## Development commands
 
 Toolchain: Xcode 27 (Swift 6.4, Swift 6 language mode), macOS 27+ on Apple
-Silicon. Python 3.11+ for the migration, parity and integration scripts.
+Silicon. Python 3.11+ for the host contract and integration scripts.
 
 ```bash
 swift build                                                   # debug build → .build/debug/iso
@@ -76,18 +76,18 @@ swift test --force-resolved-versions                          # host package tes
 swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 swift test --sanitize=address --scratch-path .build-address   # also thread, undefined
 swift test --package-path iso-proxy --force-resolved-versions   # credential proxy
+swift test --package-path iso-egress --force-resolved-versions  # filtered egress
 swift test --package-path iso-sandbox --no-parallel             # Apple runtime
-python3 tests/test-migrate-config.py                          # TOML → JSONC converter
-python3 tests/test-swift-host-inventory.py                    # compatibility inventory
-python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
-python3 tests/test-swift-host-read-parity.py --swift .build/debug/iso   # also lifecycle, data-root
+python3 tests/test-cli-surface.py --swift .build/debug/iso
+python3 tests/test-read-contract.py --swift .build/debug/iso   # also lifecycle, data-root
 python3 scripts/swift-host-fault-injection.py                 # tests catch injected faults
 scripts/fuzz.sh smoke                                         # bounded libFuzzer run, all targets
 python3 scripts/build-release.py [--release --test --tag vX.Y.Z]  # release archive
-mise run check                                                # pre-commit gates (mise.toml)
+mise run check                                                # host gates (mise.toml)
+mise run check-all                                            # all four packages
 ```
 
-The parity scripts replay recorded baselines from `tests/baseline/parity/`.
+The host contract scripts check reviewed expectations in `tests/fixtures/contracts/`.
 The proxy package tests include the confined production-process gate. Details
 and the remaining checks are in [`docs/testing.md`](docs/testing.md).
 

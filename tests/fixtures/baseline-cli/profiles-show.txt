@@ -1,9 +1,0 @@
-Show the full definition of a profile
-
-Usage: iso profiles show <NAME>
-
-Arguments:
-  <NAME>  Profile name to inspect
-
-Options:
-  -h, --help  Print help

@@ -3,7 +3,7 @@ import IsoCore
 /// A guest environment value: a literal, or a whole-value reference to a
 /// stored secret (`{vault:<name>}`, embedded-secrets spec §27). Only the
 /// reference is ever persisted; the value is resolved when a session needs it.
-public enum EnvValue: Hashable, Sendable {
+package enum EnvValue: Hashable, Sendable {
   case literal(String)
   case secret(SecretName)
 
@@ -12,7 +12,7 @@ public enum EnvValue: Hashable, Sendable {
   /// `{vault:name}` as the entire value is a reference. Any other use of
   /// `{vault:` (a prefix, suffix or embedded reference) is rejected rather
   /// than passed through as a literal.
-  public static func parse(_ text: String) throws(ValidationError) -> EnvValue {
+  package static func parse(_ text: String) throws(ValidationError) -> EnvValue {
     guard text.contains(prefix) else { return .literal(text) }
     // The name grammar excludes `{`, `}` and `:`, so a second reference or
     // trailing text cannot hide inside the name.
@@ -29,7 +29,7 @@ public enum EnvValue: Hashable, Sendable {
     }
   }
 
-  public var reference: SecretName? {
+  package var reference: SecretName? {
     if case .secret(let name) = self { name } else { nil }
   }
 }
@@ -37,11 +37,11 @@ public enum EnvValue: Hashable, Sendable {
 /// A strict `.env` reader (spec §26): `KEY=value`, quoted values, `export`,
 /// comments. It never runs a shell, expands variables or joins lines; any
 /// malformed line fails the whole file.
-public enum EnvFile {
-  public static let maxBytes = 1 << 20
+package enum EnvFile {
+  package static let maxBytes = 1 << 20
 
   /// Entries in file order; a later duplicate of a key wins.
-  public static func parse(_ text: String) throws(ValidationError) -> [(EnvVarName, EnvValue)] {
+  package static func parse(_ text: String) throws(ValidationError) -> [(EnvVarName, EnvValue)] {
     var out: [(EnvVarName, EnvValue)] = []
     // Split on LF scalars: "\r\n" is a single Character, so a Character
     // split would read a CRLF file as one line.

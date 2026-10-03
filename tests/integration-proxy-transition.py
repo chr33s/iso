@@ -218,7 +218,7 @@ def main():
         proxy_bin = Path(run(["swift", "build", "--package-path", proxy_package, "--show-bin-path"],
                              capture=True).strip())
         shutil.copy2(iso_binary, work / "bin/iso")
-        shutil.copy2(proxy_bin / "iso-proxy-swift", work / "bin/iso-proxy")
+        shutil.copy2(proxy_bin / "iso-proxy", work / "bin/iso-proxy")
         kernel = (Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve(strict=True)
         # Proxy credentials are `cmd:` references; outside --live-agents the
         # values stay synthetic.

@@ -5,44 +5,37 @@
 import Foundation
 
 /// Document syntax, chosen by file extension only (never by sniffing).
-public enum ConfigFormat: Sendable, Equatable {
+package enum ConfigFormat: Sendable, Equatable {
   case jsonc
   case json
 
-  public init(path: String) throws(ConfigError) {
+  package init(path: String) throws(ConfigError) {
     switch (path as NSString).pathExtension {
     case "jsonc": self = .jsonc
     case "json": self = .json
-    case "toml":
-      throw .migrationRequired(tomlPath: path, jsoncPath: Self.jsoncSibling(of: path))
     default: throw .unsupportedExtension(path: path)
     }
-  }
-
-  static func jsoncSibling(of path: String) -> String {
-    (path as NSString).deletingPathExtension + ".jsonc"
   }
 }
 
 /// Where a command's configuration comes from (spec section 3.4).
-public enum ConfigSelection: Sendable, Equatable {
-  /// A file to load; missing files follow `missingFileBehavior`.
+package enum ConfigSelection: Sendable, Equatable {
+  /// A selected file must exist when loaded.
   case file(path: String, format: ConfigFormat)
   /// No configuration file exists at the default location.
   case defaultsOnly(defaultPath: String)
 }
 
-public enum ConfigLoader {
-  public static let defaultFileName = "config.jsonc"
-  public static let legacyFileName = "config.toml"
+package enum ConfigLoader {
+  package static let defaultFileName = "config.jsonc"
 
-  public static func defaultDirectory(home: String?) -> String {
+  package static func defaultDirectory(home: String?) -> String {
     HostPath(expanding: "~/.iso", home: home ?? ".").path
   }
 
   /// Resolve `--config` or the default path. An explicit path is used as-is
   /// (even if missing); the default never falls back across formats.
-  public static func select(
+  package static func select(
     explicitPath: String?, home: String?,
     fileExists: (String) -> Bool = FileManager.default.fileExists
   ) throws(ConfigError) -> ConfigSelection {
@@ -52,14 +45,12 @@ public enum ConfigLoader {
     let directory = defaultDirectory(home: home)
     let jsonc = directory + "/" + defaultFileName
     if fileExists(jsonc) { return .file(path: jsonc, format: .jsonc) }
-    let toml = directory + "/" + legacyFileName
-    if fileExists(toml) { throw .migrationRequired(tomlPath: toml, jsoncPath: jsonc) }
     return .defaultsOnly(defaultPath: jsonc)
   }
 
-  /// Load and validate the selected configuration. A missing explicit file
-  /// yields defaults (baseline behavior); read and parse failures never do.
-  public static func load(
+  /// Load the selected file, or defaults when the implicit configuration was absent.
+  /// A missing selected file is an error, including a file removed after selection.
+  package static func load(
     _ selection: ConfigSelection, environment: ConfigEnvironment,
     limits: JSONLimits = .configuration
   ) throws(ConfigError) -> IsoConfig {
@@ -68,7 +59,7 @@ public enum ConfigLoader {
       return try decode(.object([:]), path: "<defaults>", environment: environment)
     case .file(let path, let format):
       guard let bytes = try readSnapshot(path, limit: limits.maxBytes) else {
-        return try decode(.object([:]), path: path, environment: environment)
+        throw .missingFile(path: path)
       }
       let value = try parse(bytes, format: format, path: path, limits: limits)
       return try decode(value, path: path, environment: environment)
@@ -77,7 +68,9 @@ public enum ConfigLoader {
 
   /// Steps 2–5 of the pipeline on an in-memory snapshot: UTF-8, comment
   /// scan, structural preflight, Foundation decode into `JSONValue`.
-  public static func parse(_ bytes: [UInt8], format: ConfigFormat, path: String, limits: JSONLimits)
+  package static func parse(
+    _ bytes: [UInt8], format: ConfigFormat, path: String, limits: JSONLimits
+  )
     throws(ConfigError) -> JSONValue
   {
     guard bytes.count <= limits.maxBytes else {
@@ -112,7 +105,7 @@ public enum ConfigLoader {
   }
 
   /// Step 6: typed decoding and domain validation of a parsed document.
-  public static func decode(_ value: JSONValue, path: String, environment: ConfigEnvironment)
+  package static func decode(_ value: JSONValue, path: String, environment: ConfigEnvironment)
     throws(ConfigError) -> IsoConfig
   {
     do {
@@ -120,7 +113,6 @@ public enum ConfigLoader {
     } catch {
       switch error {
       case .rootNotObject: throw .rootNotObject(path: path)
-      case .retired(let fields): throw .retiredFields(path: path, fields: fields)
       case .field(let failure):
         throw .invalidField(path: path, field: failure.field, reason: failure.reason)
       }
@@ -129,7 +121,7 @@ public enum ConfigLoader {
 
   /// Reads a regular file, at most `limit + 1` bytes (so an oversized file
   /// is detected without reading all of it); nil when it does not exist.
-  public static func readSnapshot(_ path: String, limit: Int) throws(ConfigError) -> [UInt8]? {
+  package static func readSnapshot(_ path: String, limit: Int) throws(ConfigError) -> [UInt8]? {
     // The C string is borrowed only for open; the resulting descriptor is owned here.
     let descriptor = unsafe open(path, O_RDONLY | O_CLOEXEC)
     if descriptor < 0 {

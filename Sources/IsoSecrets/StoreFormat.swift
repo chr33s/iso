@@ -3,10 +3,10 @@ import Foundation
 import IsoCore
 
 /// Store limits (spec §24).
-public enum StoreLimits {
-  public static let fileBytes = 16 << 20
-  public static let entries = 4096
-  public static let valueBytes = 1 << 20
+package enum StoreLimits {
+  package static let fileBytes = 16 << 20
+  package static let entries = 4096
+  package static let valueBytes = 1 << 20
 }
 
 /// `store.v1.json`: the outer envelope. It holds no secret names or values.
@@ -32,7 +32,7 @@ struct StoreEnvelope: Codable, Equatable {
     let tag: String
   }
 
-  static let formatName = "coop-secrets"
+  static let formatName = "iso-secrets"
   static let currentVersion = 1
 
   let format: String
@@ -52,11 +52,11 @@ struct StoreEnvelope: Codable, Equatable {
     return try ScryptParameters(n: kdf.n, r: kdf.r, p: kdf.p, salt: Array(salt))
   }
 
-  /// `coop-secrets:v1:scrypt:<N>:<r>:<p>:<base64-salt>`, locale-independent.
+  /// `iso-secrets:v1:scrypt:<N>:<r>:<p>:<base64-salt>`, locale-independent.
   static func additionalData(_ parameters: ScryptParameters) -> Data {
     let salt = Data(parameters.salt).base64EncodedString()
     return Data(
-      "coop-secrets:v1:scrypt:\(parameters.n):\(parameters.r):\(parameters.p):\(salt)".utf8)
+      "iso-secrets:v1:scrypt:\(parameters.n):\(parameters.r):\(parameters.p):\(salt)".utf8)
   }
 
   static func seal(

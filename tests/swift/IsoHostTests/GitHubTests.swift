@@ -204,10 +204,10 @@ private let assignmentConfig = #"""
   }
 
   @Test func keychainReferencesRoundTripThroughTheirCommand() throws {
-    let reference = KeychainReference(service: "coop-github-pat", account: "trailofbits-iso")
+    let reference = KeychainReference(service: "iso-github-pat", account: "trailofbits-iso")
     #expect(
       reference.description
-        == "cmd:security find-generic-password -s coop-github-pat -a trailofbits-iso -w")
+        == "cmd:security find-generic-password -s iso-github-pat -a trailofbits-iso -w")
     #expect(KeychainReference.parse(reference.description) == reference)
     // `cmd:` with leading space parses the same; other commands are opaque.
     #expect(
@@ -215,7 +215,7 @@ private let assignmentConfig = #"""
         == KeychainReference(service: "s", account: "a"))
     for opaque in [
       "cmd:op item get 'foo' --fields password --reveal", "cmd:cat ~/.iso/state/github-pat/x.txt",
-      "cmd:secret-tool lookup service coop-github-pat account x", "cmd:echo opaque",
+      "cmd:secret-tool lookup service iso-github-pat account x", "cmd:echo opaque",
       "github_pat_literal", "cmd:security find-generic-password -s s -a a",
     ] {
       #expect(KeychainReference.parse(opaque) == nil, "\(opaque)")
@@ -264,16 +264,16 @@ private let assignmentConfig = #"""
     defer { stubs.remove() }
     let keychain = Keychain(security: stubs.bin + "/security", environment: stubs.environment)
     let reference = try keychain.store(
-      service: "coop-github-pat", account: SecretAccount(repo: slug("o/r")),
+      service: "iso-github-pat", account: SecretAccount(repo: slug("o/r")),
       secret: Secret("github_pat_SYNTHETIC"))
-    #expect(reference == KeychainReference(service: "coop-github-pat", account: "o-r"))
+    #expect(reference == KeychainReference(service: "iso-github-pat", account: "o-r"))
     #expect(
       stubs.calls("security")
-        == ["add-generic-password -U -s coop-github-pat -a o-r -w github_pat_SYNTHETIC"])
+        == ["add-generic-password -U -s iso-github-pat -a o-r -w github_pat_SYNTHETIC"])
     try stubs.write("36", "security.exit")
     do {
       _ = try keychain.store(
-        service: "coop-github-pat", account: SecretAccount("o-r"),
+        service: "iso-github-pat", account: SecretAccount("o-r"),
         secret: Secret("github_pat_SYNTHETIC"))
       Issue.record("expected failure")
     } catch {
@@ -282,8 +282,8 @@ private let assignmentConfig = #"""
       #expect(text.contains("-w <redacted> exited with exit status: 36"))
       #expect(!text.contains("SYNTHETIC"))
     }
-    keychain.delete(service: "coop-github-pat", account: try SecretAccount("o-r"))
-    #expect(stubs.calls("security").last == "delete-generic-password -s coop-github-pat -a o-r")
+    keychain.delete(service: "iso-github-pat", account: try SecretAccount("o-r"))
+    #expect(stubs.calls("security").last == "delete-generic-password -s iso-github-pat -a o-r")
   }
 
   @Test func missingKeychainFailsWithoutFallback() throws {
@@ -536,7 +536,9 @@ private let assignmentConfig = #"""
     #expect(try GitHubAssignment.load(inst) == nil)
     try GitHubAssignment(repo: slug("org/assigned")).save(cfg, inst)
     let path = inst.directory + "/github_pat.json"
-    #expect(try String(contentsOfFile: path, encoding: .utf8) == #"{"repo":"org/assigned"}"#)
+    #expect(
+      try canonicalJSON(String(contentsOfFile: path, encoding: .utf8))
+        == canonicalJSON(#"{"repo":"org/assigned"}"#))
     #expect(fileMode(path) == 0o600)
     #expect(
       try GitHubAssignment.active(cfg, inst, githubDisabled: false)?.repo == slug("org/assigned"))
@@ -620,7 +622,9 @@ private let assignmentConfig = #"""
         let inst = try instance(cfg)
         try GitHubAssignment(repo: slug("org/assigned")).save(cfg, inst)
         if source == nil {
-          try Data(#"{"entries": {"\#(name)": "not-printed"}}"#.utf8).write(
+          try Data(
+            #"{"version":2,"entries":{"\#(name)":{"kind":"literal","value":"not-printed"}}}"#.utf8
+          ).write(
             to: URL(fileURLWithPath: inst.guestEnvironmentStatePath))
         }
         do {
@@ -709,7 +713,7 @@ private let assignmentConfig = #"""
     let stubs = try Stubs()
     defer { stubs.remove() }
     let cfg = try config(
-      #"{"data_dir": "\#(stubs.root)/data", "github": {"mode": "pat", "skip": ["z/skip"], "pat": {"org/entry": {"token": "github_pat_never_print"}, "org/kc": {"token": "cmd:security find-generic-password -s coop-github-pat -a org-kc -w"}}}}"#
+      #"{"data_dir": "\#(stubs.root)/data", "github": {"mode": "pat", "skip": ["z/skip"], "pat": {"org/entry": {"token": "github_pat_never_print"}, "org/kc": {"token": "cmd:security find-generic-password -s iso-github-pat -a org-kc -w"}}}}"#
     )
     let inst = try instance(cfg)
     let github = host(stubs)
@@ -719,27 +723,29 @@ private let assignmentConfig = #"""
         == "github mode: pat\nentries (2):\n  org/entry\n    storage: unknown\n  org/kc\n    storage: macOS Keychain\nskip (1):\n  z/skip\n"
     )
     #expect(
-      view.json().rendered() == """
-        {
-          "mode": "pat",
-          "entries": [
-            {
-              "repo": "org/entry",
-              "storage": null,
-              "probe": null
-            },
-            {
-              "repo": "org/kc",
-              "storage": "macos_keychain",
-              "probe": null
-            }
-          ],
-          "skip": [
-            "z/skip"
-          ]
-        }
+      try canonicalJSON(JSONOutput.render(view))
+        == canonicalJSON(
+          """
+          {
+            "mode": "pat",
+            "entries": [
+              {
+                "repo": "org/entry",
+                "storage": null,
+                "probe": null
+              },
+              {
+                "repo": "org/kc",
+                "storage": "macos_keychain",
+                "probe": null
+              }
+            ],
+            "skip": [
+              "z/skip"
+            ]
+          }
 
-        """)
+          """))
 
     try stubs.write("github_pat_SYNTH", "keychain-item")
     view = try github.status(cfg, probe: true, instance: nil)
@@ -749,11 +755,9 @@ private let assignmentConfig = #"""
     try GitHubAssignment(repo: slug("org/entry")).save(cfg, inst)
     view = try github.status(cfg, probe: false, instance: inst)
     #expect(view.text().hasPrefix("VM projects: selection Assignment; assigned entry: org/entry\n"))
-    #expect(
-      view.json().rendered().contains(
-        "\"vm\": {\n    \"name\": \"projects\",\n    \"assigned_entry\": \"org/entry\",\n    \"source\": \"assignment\"\n  },"
-      ))
-    #expect(!view.json().rendered().contains("never_print"))
+    let vm = try #require(try jsonObject(JSONOutput.render(view))["vm"] as? [String: String])
+    #expect(vm == ["name": "projects", "assigned_entry": "org/entry", "source": "assignment"])
+    #expect(try !JSONOutput.render(view).contains("never_print"))
 
     let off = cfg.replacingGitHub(nil)
     view = try github.status(off, probe: false, instance: inst)
@@ -787,12 +791,15 @@ private let assignmentConfig = #"""
     #expect(skipOnly.text() == "github mode: pat\nentries (0):\nskip (1):\n  a/b\n")
     let off = try github.status(config(#"{"github": "off"}"#), probe: false, instance: nil)
     #expect(
-      off.json().rendered() == "{\n  \"mode\": \"off\",\n  \"entries\": [],\n  \"skip\": []\n}\n")
+      try canonicalJSON(JSONOutput.render(off))
+        == canonicalJSON("{\n  \"mode\": \"off\",\n  \"entries\": [],\n  \"skip\": []\n}\n"))
     let probe = try github.status(
       config(#"{"github": {"pat": {"a/b": {"token": "cmd:exit 3"}, "c/d": {"token": "ghp_x"}}}}"#),
       probe: true, instance: nil)
     #expect(probe.entries.map(\.probe) == [.resolveFailed, .unexpectedFormat])
-    #expect(probe.json().rendered().contains("\"probe\": \"resolve_failed\""))
+    let entries = try #require(
+      try jsonObject(JSONOutput.render(probe))["entries"] as? [[String: Any]])
+    #expect(entries.map { $0["probe"] as? String } == ["resolve_failed", "unexpected_format"])
   }
 
   // MARK: - Wizard
@@ -812,7 +819,7 @@ private let assignmentConfig = #"""
       cfg, target: ConfigTarget(path: path, format: .jsonc), repo: slug("acme/parent"))
 
     let written = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
-    let reference = "cmd:security find-generic-password -s coop-github-pat -a acme-parent -w"
+    let reference = "cmd:security find-generic-password -s iso-github-pat -a acme-parent -w"
     #expect(written.github?.patEntry(slug("acme/parent"))?.expose() == reference)
     guard case .pat(let pat)? = written.github else { throw HostError("mode") }
     #expect(pat.skip.isEmpty)
@@ -820,7 +827,7 @@ private let assignmentConfig = #"""
     #expect(fileMode(path) == 0o644)
     #expect(
       stubs.calls("security")
-        == ["add-generic-password -U -s coop-github-pat -a acme-parent -w github_pat_SYNTHETIC"])
+        == ["add-generic-password -U -s iso-github-pat -a acme-parent -w github_pat_SYNTHETIC"])
     #expect(stubs.calls("open") == ["https://github.com/settings/personal-access-tokens/new"])
     #expect(console.echo.all == ["off", "on"])
     let out = console.output.text
@@ -938,7 +945,7 @@ private let assignmentConfig = #"""
     let path = stubs.root + "/config.jsonc"
     let text = #"""
       {"github": {"mode": "pat", "pat": {
-        "acme/kc": {"token": "cmd:security find-generic-password -s coop-github-pat -a acme-kc -w"},
+        "acme/kc": {"token": "cmd:security find-generic-password -s iso-github-pat -a acme-kc -w"},
         "acme/op": {"token": "cmd:op item get 'acme' --fields password --reveal"},
         "acme/file": {"token": "cmd:cat \#(stubs.root)/github-pat/acme-file.txt"}}}}
       """#
@@ -953,7 +960,7 @@ private let assignmentConfig = #"""
     let github = host(stubs, console: console, logs: logs)
     var cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
     try github.forgetPAT(cfg, target: target, repo: slug("acme/kc"))
-    #expect(stubs.calls("security") == ["delete-generic-password -s coop-github-pat -a acme-kc"])
+    #expect(stubs.calls("security") == ["delete-generic-password -s iso-github-pat -a acme-kc"])
     #expect(console.output.text.hasPrefix("Removed PAT entry for acme/kc.\nnote: the token itself"))
     for repo in ["acme/op", "acme/file"] {
       cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
@@ -1060,6 +1067,7 @@ private let assignmentConfig = #"""
     try stubs.respond(userURL, 200, #"{"login":"o"}"#)
     try stubs.respond(parentURL, 404)
     let target = ConfigTarget(path: stubs.root + "/c.jsonc", format: .jsonc)
+    try Data("{}".utf8).write(to: URL(fileURLWithPath: target.path))
     let logs = Lines()
     let yes = ScriptedConsole(["y", "github_pat_x", "yes"])
     let cfg = try config("{}")

@@ -3,8 +3,8 @@ import Foundation
 /// Atomic replacement: write a writer-unique sibling temporary file, fsync,
 /// set its mode, then `rename(2)` over the target. On any failure the
 /// temporary file is removed and the previous target is left intact.
-public enum AtomicFile {
-  public enum ModePolicy: Sendable, Equatable {
+package enum AtomicFile {
+  package enum ModePolicy: Sendable, Equatable {
     /// Keep an existing file's mode; new files get `mode`.
     case preserveExisting(default: mode_t)
     /// Use `mode`, but never widen an existing file: the result is
@@ -12,7 +12,7 @@ public enum AtomicFile {
     case atMost(mode_t)
   }
 
-  public static func write(_ bytes: [UInt8], to path: String, mode policy: ModePolicy)
+  package static func write(_ bytes: [UInt8], to path: String, mode policy: ModePolicy)
     throws(HostError)
   {
     let parent = (path as NSString).deletingLastPathComponent
@@ -57,7 +57,7 @@ public enum AtomicFile {
   }
 
   /// Create `path` only if nothing (not even a dangling symlink) exists there.
-  public static func createExclusive(_ bytes: [UInt8], at path: String, mode: mode_t)
+  package static func createExclusive(_ bytes: [UInt8], at path: String, mode: mode_t)
     throws(HostError)
   {
     let parent = (path as NSString).deletingLastPathComponent

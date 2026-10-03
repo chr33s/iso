@@ -18,7 +18,7 @@ isolate moves code between the host and guest VM. The normal way to get code in 
 ```bash
 iso up ./my-project
 iso up ./my-project --mount
-iso up --git-repo https://github.com/trailofbits/coop.git
+iso up --git-repo https://github.com/chr33s/iso.git
 ```
 
 `iso up` treats the directory as the project identity. Re-running the same

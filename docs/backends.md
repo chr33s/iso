@@ -38,17 +38,13 @@ Host Docker is not needed. Docker runs *inside* the guest.
 scripts/build-iso-sandbox.sh            # installs ~/.local/opt/iso-sandbox/bin/iso-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. isolate accepts protocol 4 or 5 with containerization 0.45.0 and refuses any other protocol or containerization version. Filtered egress requires protocol 5.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. isolate accepts protocol 5 with containerization 0.45.0 and refuses any other protocol or containerization version.
 
 ### Supported combinations
 
 | iso-sandbox | containerization | macOS | Hardware | Evidence |
 |---|---|---|---|---|
-| 0.5.0 (protocol 5) | 0.45.0 | 27.0 | Apple Silicon | Adds `live.bootId`, a random owner identity that is not stored on the disk. The host still accepts protocol 4 for existing commands. Filtered egress requires protocol 5 and refuses to start without a live boot id. A local filtered-VM check passed approved HTTPS and destination/direct-TCP denial; full qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
-| 0.4.0 (protocol 4) | 0.45.0 | 27.0 | Apple Silicon | Adds the session deadline (`record.expiresAt`, `start --expires-at`) behind `limits.session_ttl`. Evidence: [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) setup and `iso` phases including the session-TTL checks (2026-09-28): 91 passed, 1 skipped by design; the isolation and exposure phases last ran on 0.3.0 |
-| 0.3.0 (protocol 3), refused since protocol 4 | 0.45.0 | 27.0 | Apple Silicon | Adds the per-sandbox `network` mode (`shared` / `host_only`, `create --network`) behind `egress`. Evidence: [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) setup, machine, isolation, exposure and `iso` phases including the egress-none checks (2026-09-28): 108 passed, 2 skipped by design |
-| 0.2.0 (protocol 2), refused since protocol 3 | 0.45.0 | 27.0 | Apple Silicon | [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) (all phases, including maintenance install, same-sandbox races, and the `iso` end-to-end phase): 103 passed, 1 skipped by design ([run record](design/apple-sandbox-transactions.md#4-validation)) |
-| 0.1.0 (protocol 1), refused since protocol 2 | 0.45.0 | 27.0 | Apple Silicon | [`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh) (isolation, host exposure, canary, pinning, persistence, resources, growth, commit/restore, crash recovery, concurrency), isolate `setup`/`up`/`exec`/`stop`/`resize`/`commit`/`restore`/`destroy` end to end |
+| 0.5.0 (protocol 5) | 0.45.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
 
 The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.15-186`, the kernel `container` 1.4.1 installs) and its init image (`vminit:0.45.0` by digest). `iso setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
 
@@ -79,16 +75,10 @@ installers separately.
 
 ### State
 
-The config file defaults to `~/.iso/config.jsonc` (see
-[Migrating from TOML](configuration.md#migrating-from-toml) for an older
-`config.toml`), and `data_dir` defaults to `~/.iso`. A default `~/.iso` that holds upstream coop VM artifacts
-(`images/`, `instances/`, `vm_key`, …) or is not a real directory is refused;
-select a separate `data_dir` with `--config`. Custom config paths are not
-checked. A directory left at `~/.coop-apple` by earlier fork releases is
-neither read nor moved: move it to `~/.iso` by hand while no VM is running,
-then recreate or re-enroll (`iso restore <name> --reprovision`) its
-instances: host-key pins now use the `<machine>.iso` alias, and pins written
-under the old `.coop-apple` alias are refused.
+Configuration defaults to `~/.iso/config.jsonc`, and `data_dir` defaults to
+`~/.iso`. An explicit `--config` path must exist. The default data root must
+be a real directory when present; symlink and regular-file roots are refused.
+Custom configuration may select a separate `data_dir`.
 
 The local secret store (`iso secrets`) lives in `<data_dir>/secrets/`.
 Backend state remains under `<data_dir>/backends/apple-container-v1/`:
@@ -101,10 +91,12 @@ Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 Control files are `0600`, directories `0700`. `uninstall --purge` destroys
 owned instances and removes only `backends/apple-container-v1/`; config files,
 the secret store (`<data_dir>/secrets/`) and unrelated files remain. Workspace copies skip `.iso/`. The
-`coop-apple-<name>` SSH aliases and markers keep their names, so they do not
-collide with upstream coop's `coop-<name>` entries. Paths may contain spaces but not quote or control characters.
+`iso-<name>` SSH aliases use `# iso START` / `# iso END` markers. Explicit
+user aliases with the same name are refused. Paths may contain spaces but not quote or control characters.
 
-Instances created by the retired `container machine` backend (schema 1) are refused, including by `iso destroy`, `destroy --all`, and `uninstall --purge`. Remove such an instance's directory under `backends/apple-container-v1/instances/` by hand, and delete its machine and network in Apple `container` (`container machine delete`, `container network delete`).
+Host records require the current schema and backend identity. Machine sidecars
+also require an explicit `lifecycle` (`reusable` or `disposable`); unknown or
+missing values are refused. A fresh installation does not adopt older state.
 
 Fork macOS releases use this backend and include `iso-sandbox` beside `iso`.
 The host prefers that adjacent runtime, then the manual install locations; an
@@ -115,7 +107,7 @@ explicit `apple_container.binary` still takes precedence. `iso update` targets
 
 `iso setup`:
 
-1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 4 or 5, containerization 0.45.0), and creates `owner.json` and the VM-access key pair. Filtered egress requires protocol 5.
+1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 5, containerization 0.45.0), and creates `owner.json` and the VM-access key pair.
 2. Initializes the runtime root: copies the kernel after checking its pinned sha256, and pulls the pinned init image. Unless the runtime already has the current maintenance image, builds it (Ubuntu with e2fsprogs; log in `maintenance-build.log`), installs it with `iso-sandbox maintenance install`, and deletes the store copy.
 3. Renders a minimal build context in a private temporary directory: a Dockerfile `FROM ubuntu:24.04` pinned by digest, the Apple provisioning script (packages, profiles, OCI features, guest user, Claude Code, Codex, Docker), and a machine-setup script. The context contains the isolate **public** key only. There are no build arguments and no secrets.
 4. Checks that the builder's service is running, then runs `container build --platform linux/arm64 -t local/iso-<owner>:<hash>-<nonce>`, with output in `images/<name>/build.log`. Every build gets a fresh tag, so a rebuild never retags an image in use.

@@ -5,25 +5,25 @@
 /// its own internal depth. This pass rejects all of those and enforces the
 /// resource limits before any value is materialized. It validates RFC 8259
 /// grammar strictly but builds no values: decoding stays with Foundation.
-public struct JSONLimits: Sendable, Equatable {
+package struct JSONLimits: Sendable, Equatable {
   /// Largest accepted document, in bytes (before comment stripping).
-  public var maxBytes: Int
+  package var maxBytes: Int
   /// Deepest accepted container nesting; the root container is depth 1.
-  public var maxDepth: Int
+  package var maxDepth: Int
   /// Most object members accepted across the whole document.
-  public var maxKeys: Int
+  package var maxKeys: Int
   /// Most elements accepted in any one array.
-  public var maxArrayElements: Int
+  package var maxArrayElements: Int
   /// Longest accepted number literal, in bytes.
-  public var maxNumberLength: Int
+  package var maxNumberLength: Int
   /// Longest accepted string literal (raw, escapes included), in bytes.
-  public var maxStringBytes: Int
+  package var maxStringBytes: Int
 
-  public static let configuration = JSONLimits(
+  package static let configuration = JSONLimits(
     maxBytes: 1 << 20, maxDepth: 32, maxKeys: 16_384, maxArrayElements: 4_096,
     maxNumberLength: 64, maxStringBytes: 64 << 10)
 
-  public init(
+  package init(
     maxBytes: Int, maxDepth: Int, maxKeys: Int, maxArrayElements: Int, maxNumberLength: Int,
     maxStringBytes: Int
   ) {
@@ -37,11 +37,11 @@ public struct JSONLimits: Sendable, Equatable {
 }
 
 /// A position inside a JSON document: an object key or an array index.
-public enum JSONPathComponent: Hashable, Sendable, CustomStringConvertible {
+package enum JSONPathComponent: Hashable, Sendable, CustomStringConvertible {
   case key(String)
   case index(Int)
 
-  public var description: String {
+  package var description: String {
     switch self {
     case .key(let key): key
     case .index(let index): "[\(index)]"
@@ -51,7 +51,7 @@ public enum JSONPathComponent: Hashable, Sendable, CustomStringConvertible {
 
 /// Human-readable path such as `claude.mcp_servers["a.b"].args[0]`. Keys that
 /// are not plain identifiers are quoted so `"a.b"` stays distinct from `a.b`.
-public func renderPath(_ path: [JSONPathComponent]) -> String {
+package func renderPath(_ path: [JSONPathComponent]) -> String {
   guard !path.isEmpty else { return "<root>" }
   var out = ""
   for component in path {
@@ -98,8 +98,8 @@ extension Unicode.Scalar {
   }
 }
 
-public struct JSONPreflightError: Error, Equatable, Sendable, CustomStringConvertible {
-  public enum Kind: Sendable, Equatable {
+package struct JSONPreflightError: Error, Equatable, Sendable, CustomStringConvertible {
+  package enum Kind: Sendable, Equatable {
     case tooLarge(limit: Int)
     case byteOrderMark
     case syntax(String)
@@ -110,10 +110,10 @@ public struct JSONPreflightError: Error, Equatable, Sendable, CustomStringConver
     case numberTooLong(path: String, limit: Int)
     case stringTooLong(path: String, limit: Int)
   }
-  public let kind: Kind
-  public let location: SourceLocation?
+  package let kind: Kind
+  package let location: SourceLocation?
 
-  public var description: String {
+  package var description: String {
     let message =
       switch kind {
       case .tooLarge(let limit): "document exceeds \(limit) bytes"
@@ -132,18 +132,18 @@ public struct JSONPreflightError: Error, Equatable, Sendable, CustomStringConver
 
 /// Paths of number literals written with a fraction or exponent, so decoding
 /// can keep `1.0` distinct from `1` (Foundation decodes both as `Int64`).
-public struct JSONPreflightResult: Sendable {
-  public let fractionalNumberPaths: Set<[JSONPathComponent]>
+package struct JSONPreflightResult: Sendable {
+  package let fractionalNumberPaths: Set<[JSONPathComponent]>
 }
 
-public enum JSONPreflight {
+package enum JSONPreflight {
   private enum Container {
     case object
     case array(count: Int)
   }
 
   /// Validates `bytes` (comment-free JSON) and returns number-literal kinds.
-  public static func check(_ bytes: [UInt8], limits: JSONLimits) throws(JSONPreflightError)
+  package static func check(_ bytes: [UInt8], limits: JSONLimits) throws(JSONPreflightError)
     -> JSONPreflightResult
   {
     var scanner = Scanner(bytes: bytes, limits: limits)

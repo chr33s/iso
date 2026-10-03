@@ -71,49 +71,13 @@ import Testing
     #expect(try paths.loadRecord().diskGeneration == before.diskGeneration)
   }
 
-  /// A restore staged by runtime 0.1.0 and interrupted after its disk swap
-  /// still commits; one interrupted before the swap is discarded.
-  @Test func legacyStagedRestoreIsRecovered() async throws {
-    struct Legacy: Codable {
-      var inode: UInt64
-      var record: SandboxRecord
-    }
-    let r = try root()
-    let paths = try stoppedSandbox(r, "a")
-    let legacyWork = paths.dir.appendingPathComponent(".restore-rootfs.ext4")
-    let legacyPending = paths.dir.appendingPathComponent("restore.pending.json")
-    var next = try paths.loadRecord()
-    next.diskGeneration += 1
-    next.imageReference = "restored"
-
-    try Data("new".utf8).write(to: legacyWork)
-    try JSONEncoder.pretty.encode(Legacy(inode: SandboxPaths.inode(legacyWork)!, record: next))
-      .write(to: legacyPending)
-    #expect(rename(legacyWork.path, paths.rootfs.path) == 0)
-    #expect(try paths.loadRecord().imageReference == "restored", "readers see the committed update")
-    #expect(try paths.readRecordFile().diskGeneration == 0, "but only a guarded mutation writes it")
-    #expect(try DiskUpdate.settle(paths))
-    #expect(try paths.readRecordFile().imageReference == "restored")
-    #expect(!FileManager.default.fileExists(atPath: legacyPending.path))
-
-    var later = next
-    later.diskGeneration += 1
-    try Data("newer".utf8).write(to: legacyWork)
-    try JSONEncoder.pretty.encode(Legacy(inode: SandboxPaths.inode(legacyWork)!, record: later))
-      .write(to: legacyPending)
-    #expect(try paths.loadRecord().diskGeneration == next.diskGeneration)
-    _ = try await Sandboxes.setResources(root: r, id: try SandboxID("a"), cpus: 2, memoryBytes: nil)
-    #expect(try paths.loadRecord().diskGeneration == next.diskGeneration)
-    #expect(!FileManager.default.fileExists(atPath: legacyPending.path))
-    #expect(!FileManager.default.fileExists(atPath: legacyWork.path))
-    #expect(try Data(contentsOf: paths.rootfs) == Data("new".utf8))
-  }
-
   @Test func mutationsRequireAStoppedSandbox() async throws {
     let r = try root()
     let paths = try stoppedSandbox(r, "a")
-    try JSONEncoder.pretty.encode(LiveState(pid: getpid(), startedAt: Date(), ipv4: nil, ipv6: nil))
-      .write(to: paths.live)
+    try JSONEncoder.pretty.encode(
+      LiveState(pid: getpid(), startedAt: Date(), ipv4: nil, ipv6: nil, bootId: "test-boot")
+    )
+    .write(to: paths.live)
     #expect(Sandboxes.status(paths) != .stopped)
     await #expect(throws: SandboxError.self) {
       try await Sandboxes.setResources(root: r, id: try SandboxID("a"), cpus: 2, memoryBytes: nil)
@@ -131,7 +95,7 @@ import Testing
     let r = try root()
     let paths = try stoppedSandbox(r, "a")
     for name in [
-      ".update-x.ext4", ".grow-rootfs.ext4", ".restore-rootfs.ext4", ".maintenance-x.ext4",
+      ".update-x.ext4", ".maintenance-x.ext4",
     ] {
       try Data().write(to: paths.dir.appendingPathComponent(name))
     }
@@ -161,15 +125,15 @@ import Testing
   @Test func launchdDemandsAnOwnerWithoutKillingAnExistingOne() throws {
     var calls: [[String]] = []
     try Launchd.bootstrap(
-      plist: URL(fileURLWithPath: "/state/launchd.plist"), domain: "gui/501", label: "fixture"
+      plist: URL(fileURLWithPath: "/state/launchd.plist"), domain: "user/501", label: "fixture"
     ) { argv in
       calls.append(argv)
       return (0, "")
     }
     #expect(
       calls == [
-        ["/bin/launchctl", "bootstrap", "gui/501", "/state/launchd.plist"],
-        ["/bin/launchctl", "kickstart", "gui/501/fixture"],
+        ["/bin/launchctl", "bootstrap", "user/501", "/state/launchd.plist"],
+        ["/bin/launchctl", "kickstart", "user/501/fixture"],
       ])
   }
 
@@ -307,8 +271,10 @@ import Testing
     let paths = try stoppedSandbox(r, "a")
     let fd = holdOwnerLock(paths)
     #expect(Sandboxes.status(paths) == .booting, "owner launched, live.json not yet written")
-    try JSONEncoder.pretty.encode(LiveState(pid: 999_999, startedAt: Date(), ipv4: nil, ipv6: nil))
-      .write(to: paths.live)
+    try JSONEncoder.pretty.encode(
+      LiveState(pid: 999_999, startedAt: Date(), ipv4: nil, ipv6: nil, bootId: "test-boot")
+    )
+    .write(to: paths.live)
     #expect(Sandboxes.status(paths) == .booting, "a live owner whose control socket is not up yet")
     close(fd)
     #expect(Sandboxes.status(paths) == .crashed)
@@ -333,7 +299,8 @@ import Testing
   @Test func liveStateWithoutTheOwnerLockIsCrashed() throws {
     let r = try root()
     let paths = try stoppedSandbox(r, "a")
-    let live = LiveState(pid: getpid(), startedAt: Date(), ipv4: nil, ipv6: nil)
+    let live = LiveState(
+      pid: getpid(), startedAt: Date(), ipv4: nil, ipv6: nil, bootId: "test-boot")
     try JSONEncoder.pretty.encode(live).write(to: paths.live)
     #expect(paths.loadLive() != nil)
     #expect(Sandboxes.status(paths) == .crashed)

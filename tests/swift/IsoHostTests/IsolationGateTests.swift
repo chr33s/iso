@@ -8,7 +8,7 @@ import Testing
 private let gateFixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
   .appending(path: "../../fixtures/iso-sandbox").standardized
 
-private let gateSandbox = try! MachineName("coop-0a1b2c3d-00112233445566ff")
+private let gateSandbox = try! MachineName("iso-0a1b2c3d-00112233445566ff")
 private let gateOwner = try! OwnerID("0a1b2c3d00112233445566778899aabb")
 private let gateRoot = "/Users/me/.iso/backends/apple-container-v1/runtime"
 
@@ -170,9 +170,10 @@ func gateRejectsEachExposureNetworkAndIdentityChange(_ label: String) throws {
     encoding: .utf8)
   let package = try String(
     contentsOf: root.appending(path: "iso-sandbox/Package.swift"), encoding: .utf8)
-  #expect(layout.contains("public let protocolVersion = \(RuntimeProtocol.version)\n"))
+  #expect(layout.contains("package let protocolVersion = \(RuntimeProtocol.version)\n"))
   #expect(
-    layout.contains("public let containerizationVersion = \"\(SandboxRuntime.containerization)\"\n")
+    layout.contains(
+      "package let containerizationVersion = \"\(SandboxRuntime.containerization)\"\n")
   )
   #expect(
     package.contains(

@@ -24,7 +24,9 @@ private func confined(
     executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
     arguments: [
       "-D", "PROXY_BIN=\(binary.path)", "-f",
-      (profile ?? proxyRepository.appendingPathComponent("Sources/IsoHost/seatbelt-proxy.sb")).path,
+      (profile
+        ?? proxyRepository.appendingPathComponent(
+          "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb")).path,
       binary.path,
     ] + arguments,
     input: input, evidence: evidence, name: name)
@@ -205,7 +207,8 @@ struct IsoProxyProcessE2ETests {
       try String(decoding: child.output(), as: UTF8.self).contains("DNS/system TLS passed"),
       "TLS self-test did not execute")
     let profile = try String(
-      contentsOf: proxyRepository.appendingPathComponent("Sources/IsoHost/seatbelt-proxy.sb"),
+      contentsOf: proxyRepository.appendingPathComponent(
+        "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb"),
       encoding: .utf8)
     let permission = "(allow mach-lookup (global-name \"com.apple.trustd.agent\"))"
     try check(

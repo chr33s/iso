@@ -3,13 +3,13 @@ import NIOCore
 
 /// Tracks children so shutdown cancels streams before shutting down the client.
 /// The closing flag covers accepts racing with listener shutdown.
-public final class ConnectionRegistry: Sendable {
+package final class ConnectionRegistry: Sendable {
   private struct State {
     var closing = false
     var channels: [ObjectIdentifier: Channel] = [:]
   }
   private let state = NIOLockedValueBox(State())
-  public init() {}
+  package init() {}
 
   func add(_ channel: Channel) {
     let id = ObjectIdentifier(channel)
@@ -27,7 +27,7 @@ public final class ConnectionRegistry: Sendable {
     }
   }
 
-  public func closeAll() async {
+  package func closeAll() async {
     let channels = state.withLockedValue { state in
       state.closing = true
       let channels = Array(state.channels.values)

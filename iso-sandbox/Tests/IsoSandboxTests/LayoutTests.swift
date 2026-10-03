@@ -81,26 +81,50 @@ import Testing
     #expect(back.environment == ["A=1"])
   }
 
-  @Test func networkModeIsAbsentForSharedAndOnlyNarrows() throws {
+  @Test func networkModeIsExplicitAndOnlyNarrows() throws {
     var r = SandboxRecord(
       id: try SandboxID("a"), owner: "o", imageReference: "i", imageDigest: "d", baseDisk: nil,
       environment: [],
       cpus: 1, memoryBytes: 1, diskBytes: 1, subnetIndex: 1,
       createdAt: Date(timeIntervalSince1970: 0))
-    // Shared records keep their pre-protocol-3 shape.
     let shared =
       try JSONSerialization.jsonObject(with: JSONEncoder.pretty.encode(r)) as? [String: Any] ?? [:]
-    #expect(shared["network"] == nil)
+    #expect(shared["network"] as? String == "shared")
     #expect(
-      try JSONDecoder.iso.decode(SandboxRecord.self, from: JSONEncoder.pretty.encode(r)).networkMode
+      try JSONDecoder.iso.decode(SandboxRecord.self, from: JSONEncoder.pretty.encode(r)).network
         == .shared)
     r.network = .hostOnly
     let back = try JSONDecoder.iso.decode(SandboxRecord.self, from: JSONEncoder.pretty.encode(r))
-    #expect(back.networkMode == .hostOnly)
+    #expect(back.network == .hostOnly)
     #expect(
       String(decoding: try JSONEncoder.pretty.encode(r), as: UTF8.self).contains("\"host_only\""))
     // Only these two modes exist; nothing wider is representable.
     #expect(Set([NetworkMode.shared, .hostOnly].map(\.rawValue)) == ["shared", "host_only"])
+  }
+
+  @Test func currentRecordsRequireNetworkAndBootIdentity() throws {
+    let record = SandboxRecord(
+      id: try SandboxID("a"), owner: "o", imageReference: "i", imageDigest: "d", baseDisk: nil,
+      environment: [], cpus: 1, memoryBytes: 1, diskBytes: 1, subnetIndex: 1,
+      createdAt: Date(timeIntervalSince1970: 0))
+    var wire = try #require(
+      JSONSerialization.jsonObject(with: JSONEncoder.pretty.encode(record)) as? [String: Any])
+    wire.removeValue(forKey: "network")
+    #expect(throws: DecodingError.self) {
+      try JSONDecoder.iso.decode(
+        SandboxRecord.self, from: JSONSerialization.data(withJSONObject: wire))
+    }
+
+    let live = LiveState(
+      pid: 123, startedAt: Date(timeIntervalSince1970: 0), ipv4: nil, ipv6: nil, bootId: "boot")
+    let encoded = try JSONEncoder.pretty.encode(live)
+    #expect(try JSONDecoder.iso.decode(LiveState.self, from: encoded).bootId == "boot")
+    var liveWire = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    liveWire.removeValue(forKey: "bootId")
+    #expect(throws: DecodingError.self) {
+      try JSONDecoder.iso.decode(
+        LiveState.self, from: JSONSerialization.data(withJSONObject: liveWire))
+    }
   }
 
   @Test func sessionExpiryRoundTripsAndIsAbsentByDefault() throws {

@@ -1,5 +1,5 @@
 <!--
-Derived from trailofbits/coop.
+Derived from chr33s/iso.
 Modified by chr33s: ported/adapted for the Swift implementation.
 SPDX-License-Identifier: Apache-2.0
 -->
@@ -11,9 +11,9 @@ SPDX-License-Identifier: Apache-2.0
 
 isolate reads configuration from `~/.iso/config.jsonc` by default. Pass `--config <path>` to use a different file: a `.jsonc` path is read as JSONC, a `.json` path as strict JSON, and any other extension is rejected. There is no automatic `config.json` search.
 
-**JSONC** here means RFC 8259 JSON plus `//` line comments and `/* ... */` block comments outside strings. Block comments do not nest. Trailing commas, single-quoted strings, unquoted keys, and other JSON5 extensions are rejected, as are duplicate object keys. Keys use snake_case; former TOML sections are nested objects. The document is limited to 1 MiB, nesting depth 32, 16,384 keys, 4,096 array elements, and 64 KiB strings.
+**JSONC** here means RFC 8259 JSON plus `//` line comments and `/* ... */` block comments outside strings. Block comments do not nest. Trailing commas, single-quoted strings, unquoted keys, and other JSON5 extensions are rejected, as are duplicate object keys. Keys use snake_case and sections are nested objects. The document is limited to 1 MiB, nesting depth 32, 16,384 keys, 4,096 array elements, and 64 KiB strings.
 
-If no configuration file exists, isolate uses built-in defaults. A valid minimal config is an empty object, `{}`. `iso setup --config-only` writes a commented template (the same content as [`config.example.jsonc`](../config.example.jsonc)); `iso init` is a deprecated alias for it.
+If the implicit default configuration is absent, isolate uses built-in defaults. An explicit `--config` path must exist; a missing selected file is an error. A valid minimal config is an empty object, `{}`. `iso setup --config-only` writes a commented template (the same content as [`config.example.jsonc`](../config.example.jsonc)).
 
 Commands that edit the configuration (`iso proxy setup`, `iso github setup-pat` and related PAT commands) rewrite the file as formatted strict JSON: comments and formatting are not preserved, but unrelated keys are.
 
@@ -21,22 +21,11 @@ A leading `~` is expanded to the home directory in path-valued fields (`data_dir
 
 Run `iso validate` to surface errors and warnings before anything touches a VM. Errors name the field path and error category; they never print the file's contents or secret values.
 
-## Migrating from TOML
-
-isolate no longer reads TOML. If `--config` names a `.toml` file, or `~/.iso/config.toml` exists without a `~/.iso/config.jsonc`, isolate stops with instructions instead of starting with defaults. Convert the file once with the offline converter (Python 3.11+, standard library only):
-
-```sh
-python3 scripts/migrate-config-to-jsonc.py \
-  --input ~/.iso/config.toml --output ~/.iso/config.jsonc
-```
-
-The converter leaves the source untouched, refuses an existing destination, writes the output with mode `0600`, and never executes `cmd:` values. It refuses:
-
-- **Retired fields** — `firecracker_bin`, `vm.kernel_path`, `vm.boot_args`, and the `network` section (`host_ip`, `subnet_mask`, `host_iface`). These Firecracker settings have no effect on the Apple backend. Pass `--drop-retired-fields` to remove exactly those fields; the converter reports their paths, never their values.
-- **Literal proxy credentials** — `proxy.anthropic.credential` and `proxy.openai.credential` must be `cmd:` references. Store the credential with [`iso proxy setup`](commands.md#proxy) (macOS Keychain) or write your own `cmd:` reference.
-- Values without a lossless JSON form, such as TOML dates.
-
-Comments are not carried over. Once `config.jsonc` exists, a remaining `config.toml` is ignored.
+Unknown top-level and `vm` fields are rejected, so misspelled configuration
+cannot silently select defaults. Agent/provider objects retain their documented
+section-specific extensibility. Structural editors preserve unrelated keys in permitted extensible sections
+and validate the edited configuration before writing it. Run `iso validate`
+after hand edits.
 
 ## Top-level fields
 
@@ -83,10 +72,10 @@ In pat mode isolate forwards a *per-repo* fine-grained personal access token: th
 Configure via the wizard:
 
 ```sh
-iso github setup-pat --repo trailofbits/coop
+iso github setup-pat --repo chr33s/iso
 ```
 
-The wizard opens the PAT-creation form in your browser, validates the token via `/user` and `/repos/<repo>`, stores the token in the macOS Keychain (service `coop-github-pat`, account `owner-repo`), and writes a `github.pat["owner/repo"]` entry. The token itself is stored only in the Keychain — the config file holds a `cmd:` invocation that retrieves it. If the Keychain is unavailable the wizard fails; there is no fallback store.
+The wizard opens the PAT-creation form in your browser, validates the token via `/user` and `/repos/<repo>`, stores the token in the macOS Keychain (service `iso-github-pat`, account `owner-repo`), and writes a `github.pat["owner/repo"]` entry. The token itself is stored only in the Keychain — the config file holds a `cmd:` invocation that retrieves it. If the Keychain is unavailable the wizard fails; there is no fallback store.
 
 #### Submodule discovery
 
@@ -112,11 +101,11 @@ Multi-repo example:
   "github": {
     "mode": "pat",
     "pat": {
-      "trailofbits/coop": {
-        "token": "cmd:security find-generic-password -s coop-github-pat -a trailofbits-iso -w"
+      "chr33s/iso": {
+        "token": "cmd:security find-generic-password -s iso-github-pat -a trailofbits-iso -w"
       },
-      "trailofbits/coop-plugins": {
-        "token": "cmd:security find-generic-password -s coop-github-pat -a trailofbits-iso-plugins -w"
+      "example/agent-plugins": {
+        "token": "cmd:security find-generic-password -s iso-github-pat -a trailofbits-iso-plugins -w"
       }
     }
   }
@@ -131,12 +120,12 @@ Bring-your-own-token (no wizard, useful for CI/Terraform). Any `cmd:` invocation
     "mode": "pat",
     "pat": {
       // Vault
-      "trailofbits/coop": {
+      "chr33s/iso": {
         "token": "cmd:vault read -field=token secret/iso/github/trailofbits-iso"
       },
       // 1Password CLI
-      "trailofbits/coop-plugins": {
-        "token": "cmd:op read op://Private/coop-github-pat/password"
+      "example/agent-plugins": {
+        "token": "cmd:op read op://Private/iso-github-pat/password"
       }
     }
   }
@@ -444,7 +433,7 @@ the instance's `proxy.json`, not in the config file).
 
 | Value | Behavior |
 |-------|----------|
-| `"auto"` (default) | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one keeps the legacy raw forwarding, with a warning at `up`/`start`. |
+| `"auto"` (default) | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one uses direct credential forwarding, with a warning at `up`/`start`. |
 | `"required"` | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) reaches the guest by any path. Values isolate would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
 | `"off"` | No proxy starts; configured upstreams and per-VM overrides are ignored, and credentials are forwarded as without a proxy. A `{vault:}` provider secret from `--env`/`--env-file` is an error rather than being forwarded. |
 
@@ -465,7 +454,7 @@ Both objects take the same fields:
 {
   "proxy": {
     "anthropic": {
-      "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+      "credential": "cmd:security find-generic-password -s iso-anthropic -a anthropic -w",
       "auth": "api_key"
     },
     "openai": {
@@ -598,7 +587,7 @@ process memory and goes to companion startup on stdin. Only the public key is
 persisted in `egress-readiness-public-key`, owner-private and removed on stop;
 copying that file into a workspace cannot authorize a forged reply. Existing
 sessions without a public key must stop/restart with matching host and companion
-binaries; legacy HMAC keys are not adopted. Process-name checks
+binaries. Process-name checks
 remain prerequisites, not substitutes for live proof. Startup verifies this proof
 before agent preparation and again after preparation before a post-start hook.
 After preparation, running-instance resolution and post-start hooks also require

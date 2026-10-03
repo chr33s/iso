@@ -124,7 +124,7 @@ time.sleep(60)
                         self.assertEqual(json.loads(result.stdout), (OVERRIDE if keyring else []) + args)
             # Exercise the actual provisioned yolo command, including its bypass flag.
             # The heredoc sits in a Swift multi-line literal indented like its `cat` line.
-            provision = (ROOT / 'Sources/IsoHost/ImageBuild.swift').read_text()
+            provision = (ROOT / 'Sources/IsoHost/Guest/ImageBuild.swift').read_text()
             block = re.search(r"^( *)cat > /usr/local/bin/codex-yolo <<'YOLOEOF'\n(.*?)\n\1YOLOEOF$",
                               provision, re.M | re.S)
             yolo = "\n".join(line[len(block[1]):] for line in block[2].splitlines())

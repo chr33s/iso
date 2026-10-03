@@ -24,7 +24,7 @@ private func instance(_ directory: String) throws -> Instance {
 private func target(knownHosts: String = "/state/known_hosts") throws -> SSHTarget {
   SSHTarget(
     host: "192.168.64.5", port: 22, user: .default, keyPath: "/data/vm key",
-    knownHosts: knownHosts, alias: "coop-0a1b2c3d-00112233445566ff.coop")
+    knownHosts: knownHosts, alias: "iso-0a1b2c3d-00112233445566ff.iso")
 }
 
 private func transfer() -> WorkspaceTransfer {
@@ -33,16 +33,17 @@ private func transfer() -> WorkspaceTransfer {
     diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
 }
 
-@Test func workspaceStateMatchesTheRustFormat() throws {
+@Test func workspaceStateRoundTrips() throws {
   let directory = try scratch()
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let state = WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: "/p/app"))
   try state.save(try instance(directory))
   let text = try String(contentsOfFile: directory + "/workspace.json", encoding: .utf8)
   #expect(
-    text
-      == "{\n  \"guest_path\": \"/workspace\",\n  \"source\": {\n    \"kind\": \"workspace\",\n    \"host_path\": \"/p/app\"\n  }\n}"
-  )
+    try canonicalJSON(text)
+      == canonicalJSON(
+        "{\n  \"guest_path\": \"/workspace\",\n  \"source\": {\n    \"kind\": \"workspace\",\n    \"host_path\": \"/p/app\"\n  }\n}"
+      ))
   #expect(try WorkspaceState.load(try instance(directory)) == state)
   try Data(
     #"{"guest_path":"/workspace","source":{"kind":"git_repo","url":"https://github.com/o/r"}}"#.utf8
@@ -76,8 +77,8 @@ private func transfer() -> WorkspaceTransfer {
   let block = SSHConfigFile.block(try target(), try instance("/i"))
   #expect(
     block == """
-      # coop-apple START coop-apple-test
-      Host coop-apple-test
+      # iso START iso-test
+      Host iso-test
           HostName 192.168.64.5
           Port 22
           User ubuntu
@@ -86,18 +87,19 @@ private func transfer() -> WorkspaceTransfer {
           StrictHostKeyChecking yes
           UserKnownHostsFile /state/known_hosts
           GlobalKnownHostsFile /dev/null
-          HostKeyAlias coop-0a1b2c3d-00112233445566ff.coop
+          HostKeyAlias iso-0a1b2c3d-00112233445566ff.iso
           UpdateHostKeys no
           ForwardAgent no
           IdentityAgent none
           LogLevel ERROR
-      # coop-apple END
+      # iso END
       """)
-  let upstream = "# coop START coop-test\nHost coop-test\n    HostName 172.16.0.2\n# coop END\n"
+  let upstream =
+    "# user-managed START\nHost user-test\n    HostName 172.16.0.2\n# user-managed END\n"
   #expect(SSHConfigBlocks.removeMarkerBlocks(upstream) == upstream)
   #expect(SSHConfigBlocks.removeMarkerBlocks(upstream + block + "\n") == upstream)
   #expect(
-    SSHConfigBlocks.removeNamedMarkerBlock(upstream + block + "\n", host: "coop-apple-other")
+    SSHConfigBlocks.removeNamedMarkerBlock(upstream + block + "\n", host: "iso-other")
       == upstream
       + block + "\n")
 
@@ -115,17 +117,17 @@ private func transfer() -> WorkspaceTransfer {
   #expect(try String(contentsOfFile: file.path, encoding: .utf8) == block + "\n")
   try file.remove(try instance(directory))
   #expect(try String(contentsOfFile: file.path, encoding: .utf8) == "")
-  try Data("# coop START coop-apple-test\n".utf8).write(to: URL(fileURLWithPath: file.path))
+  try Data("Host iso-test\n".utf8).write(to: URL(fileURLWithPath: file.path))
   #expect(throws: (any Error).self) { try file.update(try target(), try instance(directory)) }
 }
 
 @Test func editorStrategiesEscapeURLPaths() {
-  let code = EditorLauncher.strategies(.code, host: "coop-apple-test", path: guestWorkspace)
+  let code = EditorLauncher.strategies(.code, host: "iso-test", path: guestWorkspace)
   #expect(code.map(\.command) == ["code", "open"])
-  #expect(code[0].arguments == ["--remote", "ssh-remote+coop-apple-test", "/workspace"])
-  let zed = EditorLauncher.strategies(.zed, host: "coop-apple-test", path: GuestPath("/a#b c%d?e"))
-  #expect(zed[0].arguments == ["ssh://coop-apple-test/a%23b%20c%25d%3Fe"])
-  #expect(zed[1].arguments == ["zed://ssh/coop-apple-test/a%23b%20c%25d%3Fe"])
+  #expect(code[0].arguments == ["--remote", "ssh-remote+iso-test", "/workspace"])
+  let zed = EditorLauncher.strategies(.zed, host: "iso-test", path: GuestPath("/a#b c%d?e"))
+  #expect(zed[0].arguments == ["ssh://iso-test/a%23b%20c%25d%3Fe"])
+  #expect(zed[1].arguments == ["zed://ssh/iso-test/a%23b%20c%25d%3Fe"])
   #expect(EditorLauncher.strategies(nil, host: "h", path: guestWorkspace).count == 4)
 }
 
@@ -168,9 +170,10 @@ private func transfer() -> WorkspaceTransfer {
   ]
   try PortForwards.save(forwards, try instance(directory), diagnostics: diagnostics)
   #expect(
-    try String(contentsOfFile: directory + "/forwards.json", encoding: .utf8)
-      == "{\n  \"forwards\": [\n    {\n      \"guest\": 3000,\n      \"host\": 3000\n    },\n    {\n      \"guest\": 8080,\n      \"host\": 9090,\n      \"label\": \"api\"\n    }\n  ]\n}"
-  )
+    try canonicalJSON(String(contentsOfFile: directory + "/forwards.json", encoding: .utf8))
+      == canonicalJSON(
+        "{\n  \"forwards\": [\n    {\n      \"guest\": 3000,\n      \"host\": 3000\n    },\n    {\n      \"guest\": 8080,\n      \"host\": 9090,\n      \"label\": \"api\"\n    }\n  ]\n}"
+      ))
   #expect(try PortForwards.load(try instance(directory)) == forwards)
   try PortForwards.save([], try instance(directory), diagnostics: diagnostics)
   #expect(!FileManager.default.fileExists(atPath: directory + "/forwards.json"))
@@ -202,7 +205,7 @@ private func transfer() -> WorkspaceTransfer {
   }
 }
 
-@Test func allocationPicksIndexAndNameLikeTheRustHost() throws {
+@Test func allocationPicksAvailableIndexAndName() throws {
   let root = try scratch()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let config = try ConfigLoader.decode(
@@ -212,8 +215,9 @@ private func transfer() -> WorkspaceTransfer {
   #expect(first.name.rawValue == "my-project")
   #expect(first.index.value == 0)
   #expect(
-    try String(contentsOfFile: first.directory + "/instance.json", encoding: .utf8)
-      == "{\n  \"name\": \"my-project\",\n  \"index\": 0,\n  \"image\": \"default\"\n}")
+    try canonicalJSON(String(contentsOfFile: first.directory + "/instance.json", encoding: .utf8))
+      == canonicalJSON(
+        "{\n  \"name\": \"my-project\",\n  \"index\": 0,\n  \"image\": \"default\"\n}"))
   let second = try Instance.allocate(
     config, name: nil, image: .default, workspacePath: "/other/my.project")
   #expect(second.name.rawValue == "my-project-2")

@@ -4,8 +4,8 @@
 
 /// The JSONC template `iso setup --config-only` writes. Must equal
 /// `config.example.jsonc` at the repository root (enforced by a test).
-public enum ConfigTemplate {
-  public static let jsonc = #"""
+package enum ConfigTemplate {
+  package static let jsonc = #"""
     // Derived from trailofbits/coop.
     // Modified by chr33s: ported/adapted for the Swift implementation.
     // SPDX-License-Identifier: Apache-2.0
@@ -28,7 +28,7 @@ public enum ConfigTemplate {
       //   "skip": ["owner/big-repo"],   // repos to skip the auto-prompt for
       //   "pat": {
       //     "owner/repo": {
-      //       "token": "cmd:security find-generic-password -s coop-github-pat -a owner-repo -w"
+      //       "token": "cmd:security find-generic-password -s iso-github-pat -a owner-repo -w"
       //     }
       //   }
       // },
@@ -92,11 +92,11 @@ public enum ConfigTemplate {
       //   "mode": "auto",             // "required": never forward a raw provider key;
       //                               // "off": start no proxy
       //   "anthropic": {
-      //     "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+      //     "credential": "cmd:security find-generic-password -s iso-anthropic -a anthropic -w",
       //     "auth": "api_key"         // "api_key" (x-api-key) or "bearer" (setup-token)
       //   },
       //   "openai": {
-      //     "credential": "cmd:security find-generic-password -s coop-openai -a openai -w",
+      //     "credential": "cmd:security find-generic-password -s iso-openai -a openai -w",
       //     "auth": "bearer"
       //   }
       // },

@@ -43,5 +43,6 @@ let package = Package(
         .product(name: "SystemPackage", package: "swift-system"),
       ]
     ),
-  ]
+  ],
+  swiftLanguageModes: [.v6]
 )

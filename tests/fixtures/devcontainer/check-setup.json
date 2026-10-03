@@ -123,7 +123,7 @@
       "key": "zeta",
       "status": "unsupported",
       "source": "devcontainer",
-      "value": "{\"b\":[1,2.5,\"x\\ty\"],\"a\":null}",
+      "value": "{\"a\":null,\"b\":[1,2.5,\"x\\ty\"]}",
       "note": "unrecognised devcontainer.json key"
     },
     {

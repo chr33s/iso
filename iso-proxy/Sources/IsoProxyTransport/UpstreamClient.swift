@@ -7,14 +7,14 @@ import NIOSSL
 
 /// One dedicated client per proxy process. Call shutdown before stopping the
 /// externally owned event loop group. No caller environment is consulted.
-public final class UpstreamClient: Sendable {
+package final class UpstreamClient: Sendable {
   private let group: MultiThreadedEventLoopGroup
   private let work = UpstreamWork()
   private let resolutions = Capacity(Limits.requests)
   private let resolutionFactory: BoundedResolver.Factory
   private let socketCapacity: Capacity
 
-  public convenience init(group: MultiThreadedEventLoopGroup) {
+  package convenience init(group: MultiThreadedEventLoopGroup) {
     self.init(group: group, resolutionFactory: { NIORandomizedDNSResolver(loop: $0) })
   }
 
@@ -87,7 +87,7 @@ public final class UpstreamClient: Sendable {
 
   /// Credential-free DNS/TLS probe through the forwarding transport. It sends
   /// no HTTP request and never receives or injects a provider credential.
-  public func probeTLS(provider: Provider) async throws {
+  package func probeTLS(provider: Provider) async throws {
     let loop = group.next()
     let (connection, completed) = try await loop.submit { [self] in
       try work.start {
@@ -118,5 +118,5 @@ public final class UpstreamClient: Sendable {
     try await channel.closeFuture.get()
   }
 
-  public func shutdown() async throws { await work.shutdown() }
+  package func shutdown() async throws { await work.shutdown() }
 }

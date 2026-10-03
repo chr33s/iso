@@ -17,7 +17,7 @@ iso editor my-instance
 This command:
 
 1. Writes an SSH config block for the instance into `~/.ssh/config`.
-2. Launches VS Code with `code --remote ssh-remote+coop-apple-{name} /workspace`. When it cannot spawn a VS Code strategy, isolate tries the VS Code app (`open -a 'Visual Studio Code'`, macOS only), then Zed with `zed ssh://coop-apple-{name}/workspace`.
+2. Launches VS Code with `code --remote ssh-remote+iso-{name} /workspace`. When it cannot spawn a VS Code strategy, isolate tries the VS Code app (`open -a 'Visual Studio Code'`, macOS only), then Zed with `zed ssh://iso-{name}/workspace`.
 3. Prints the SSH config entry to stderr for manual use with other editors.
 
 ## The `iso editor` command
@@ -49,18 +49,18 @@ isolate includes this instruction when `--editor code` cannot launch VS Code, or
 
 ### Zed
 
-Zed connects with `zed ssh://coop-apple-{name}/workspace` (macOS fallback: an `open zed://ssh/...` URL when the `zed` CLI is not on PATH). Zed shells out to the system `ssh`, so it picks up the `coop-apple-{name}` alias — host, port, user, key, and pinned host key — from `~/.ssh/config` with no extra setup. To install the `zed` CLI, open Zed and run:
+Zed connects with `zed ssh://iso-{name}/workspace` (macOS fallback: an `open zed://ssh/...` URL when the `zed` CLI is not on PATH). Zed shells out to the system `ssh`, so it picks up the `iso-{name}` alias — host, port, user, key, and pinned host key — from `~/.ssh/config` with no extra setup. To install the `zed` CLI, open Zed and run:
 
 > Cmd+Shift+P, then "cli: install"
 
 Two Zed-specific caveats:
 
-- On first connect, Zed downloads a `zed-remote-server` binary inside the guest from zed.dev. If your guest has restricted egress, enable `upload_binary_over_ssh` on the `coop-apple-{name}` entry in Zed's `ssh_connections` setting so the binary is uploaded over SSH instead:
+- On first connect, Zed downloads a `zed-remote-server` binary inside the guest from zed.dev. If your guest has restricted egress, enable `upload_binary_over_ssh` on the `iso-{name}` entry in Zed's `ssh_connections` setting so the binary is uploaded over SSH instead:
 
   ```json
   {
     "ssh_connections": [
-      { "host": "coop-apple-my-instance", "upload_binary_over_ssh": true }
+      { "host": "iso-my-instance", "upload_binary_over_ssh": true }
     ]
   }
   ```
@@ -71,8 +71,8 @@ Two Zed-specific caveats:
 isolate writes SSH config entries to `~/.ssh/config`, delimited by marker comments:
 
 ```
-# coop-apple START coop-apple-my-instance
-Host coop-apple-my-instance
+# iso START iso-my-instance
+Host iso-my-instance
     HostName 10.231.3.2
     Port 22
     User ubuntu
@@ -86,12 +86,12 @@ Host coop-apple-my-instance
     ForwardAgent no
     IdentityAgent none
     LogLevel ERROR
-# coop-apple END
+# iso END
 ```
 
 The block pins the guest's host key: a changed key is refused rather than
-accepted. The `coop-apple-` prefix and markers keep these entries separate from
-an upstream coop build's `coop-<name>` blocks.
+accepted. The `iso-` prefix and markers identify managed entries. An explicit
+user-defined alias with the same name is refused.
 
 Each run of `iso editor` replaces the existing block for that instance, or creates one if none exists. To install the same block without launching an editor — for plain `ssh`/`scp`/`rsync` — use [`iso ssh-config`](commands.md#ssh-config).
 
@@ -110,7 +110,7 @@ Each run of `iso editor` replaces the existing block for that instance, or creat
 
 1. Run `iso editor my-instance` to generate the SSH config.
 2. In your JetBrains IDE, open **File > Remote Development > SSH Connection**.
-3. Select the `coop-apple-{name}` host.
+3. Select the `iso-{name}` host.
 4. Set the project directory to `/workspace`.
 
 ### Cursor
@@ -118,7 +118,7 @@ Each run of `iso editor` replaces the existing block for that instance, or creat
 Cursor uses the same Remote SSH extension as VS Code. Run `iso editor` and the host appears in Cursor's SSH targets. You can also launch it directly:
 
 ```bash
-cursor --remote ssh-remote+coop-apple-my-instance /workspace
+cursor --remote ssh-remote+iso-my-instance /workspace
 ```
 
 ### Manual SSH
@@ -126,7 +126,7 @@ cursor --remote ssh-remote+coop-apple-my-instance /workspace
 The host alias works from any terminal:
 
 ```bash
-ssh coop-apple-my-instance
+ssh iso-my-instance
 ```
 
 The SSH config block supplies the hostname, port, user, key, and host-key verification settings.
@@ -138,13 +138,13 @@ Use `--forward-port` with [`iso up`](commands.md#up) or
 For a temporary forward while an editor is connected, use SSH directly:
 
 ```bash
-ssh -L 3000:localhost:3000 coop-apple-my-instance
+ssh -L 3000:localhost:3000 iso-my-instance
 ```
 
 This binds local port 3000 to port 3000 inside the guest. Stack multiple `-L` flags for additional ports:
 
 ```bash
-ssh -L 3000:localhost:3000 -L 5432:localhost:5432 coop-apple-my-instance
+ssh -L 3000:localhost:3000 -L 5432:localhost:5432 iso-my-instance
 ```
 
 VS Code's Remote SSH extension exposes a Ports panel that handles forwarding once connected.

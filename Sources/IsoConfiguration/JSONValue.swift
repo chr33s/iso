@@ -3,12 +3,12 @@ import Foundation
 /// Exact JSON number. Integer literals keep their exact value; literals
 /// written with a fraction or exponent stay `decimal` even when integral, so
 /// a typed integer field can reject `2.0` as the baseline did.
-public enum JSONNumber: Hashable, Sendable, CustomStringConvertible {
+package enum JSONNumber: Hashable, Sendable, CustomStringConvertible {
   case integer(Int64)
   case unsigned(UInt64)
   case decimal(Decimal)
 
-  public var description: String {
+  package var description: String {
     switch self {
     case .integer(let value): String(value)
     case .unsigned(let value): String(value)
@@ -19,7 +19,7 @@ public enum JSONNumber: Hashable, Sendable, CustomStringConvertible {
 
 /// Lossless structural form of a decoded document: dynamic maps, unmodeled
 /// keys and structural edits operate on this, never on typed models.
-public enum JSONValue: Hashable, Sendable {
+package enum JSONValue: Hashable, Sendable {
   case null
   case bool(Bool)
   case number(JSONNumber)
@@ -27,7 +27,7 @@ public enum JSONValue: Hashable, Sendable {
   case array([JSONValue])
   case object([String: JSONValue])
 
-  public var typeName: String {
+  package var typeName: String {
     switch self {
     case .null: "null"
     case .bool: "boolean"
@@ -38,7 +38,7 @@ public enum JSONValue: Hashable, Sendable {
     }
   }
 
-  public subscript(key: String) -> JSONValue? {
+  package subscript(key: String) -> JSONValue? {
     if case .object(let members) = self { members[key] } else { nil }
   }
 }
@@ -64,7 +64,7 @@ final class FractionalPaths: Sendable {
 }
 
 extension JSONValue: Codable {
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     if var array = try? decoder.unkeyedContainer() {
       var elements: [JSONValue] = []
       while !array.isAtEnd { elements.append(try array.decode(JSONValue.self)) }
@@ -107,7 +107,7 @@ extension JSONValue: Codable {
     return .decimal(try single.decode(Decimal.self))
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     switch self {
     case .null:
       var single = encoder.singleValueContainer()

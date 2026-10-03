@@ -75,8 +75,8 @@ import Testing
     recordedEgress: nil, networkHints: [try ExactHostname("github.com")],
     unresolved: ["runtime state"],
     cleanupIntent: "retain", ask: false, blockedReason: nil)
-  let text = preview.json.rendered()
-  #expect(text.contains("\"approved_hosts\": []"))
+  let text = try JSONOutput.render(preview)
+  #expect(try jsonObject(text)["approved_hosts"] as? [String] == [])
   #expect(text.contains("github.com"))
   #expect(!text.contains("sk-"))
   #expect(!text.contains("cmd:"))

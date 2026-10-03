@@ -15,12 +15,12 @@ final class StoreLock {
 }
 
 /// Proof that the operator accepted the no-recovery warning (D-001).
-public enum NoRecoveryAcknowledgement: Sendable { case accepted }
+package enum NoRecoveryAcknowledgement: Sendable { case accepted }
 
-public struct SecretMetadata: Sendable, Equatable {
-  public let name: SecretName
-  public let createdAt: String
-  public let updatedAt: String
+package struct SecretMetadata: Sendable, Equatable {
+  package let name: SecretName
+  package let createdAt: String
+  package let updatedAt: String
 }
 
 /// The Secure Enclave-bound local secret store (embedded-secrets spec).
@@ -28,12 +28,12 @@ public struct SecretMetadata: Sendable, Equatable {
 /// Unlocking needs both the passphrase (scrypt) and the device unlock key
 /// sealed to the device factor; either alone decrypts nothing. Every
 /// operation unlocks once; nothing is cached between calls.
-public struct EnclaveStore: Sendable {
-  public let directory: String
+package struct EnclaveStore: Sendable {
+  package let directory: String
   let factor: any DeviceFactor
   let now: @Sendable () -> Date
 
-  public init(
+  package init(
     directory: String, factor: any DeviceFactor = SecureEnclaveFactor(),
     now: @escaping @Sendable () -> Date = Date.init
   ) {
@@ -47,11 +47,11 @@ public struct EnclaveStore: Sendable {
   var sealedKeyPath: String { directory + "/store-duk.sealed" }
   var lockPath: String { directory + "/store.lock" }
 
-  public var exists: Bool { FileManager.default.fileExists(atPath: storePath) }
+  package var exists: Bool { FileManager.default.fileExists(atPath: storePath) }
 
   /// Key files present without `store.v1.json`: an interrupted `init`, or a
   /// store file lost from this directory.
-  public var leftovers: [String] {
+  package var leftovers: [String] {
     [deviceKeyPath, sealedKeyPath].filter { FileManager.default.fileExists(atPath: $0) }
   }
 
@@ -59,7 +59,7 @@ public struct EnclaveStore: Sendable {
 
   /// Creates the store, then proves a full unlock before reporting success.
   /// Any failure removes what this call created.
-  public func initialize(
+  package func initialize(
     passphrase: Secret<[UInt8]>, acknowledgement: NoRecoveryAcknowledgement,
     parameters: ScryptParameters = .fresh()
   ) throws(EnclaveStoreError) {
@@ -91,7 +91,7 @@ public struct EnclaveStore: Sendable {
     }
   }
 
-  public func set(_ name: SecretName, value: Secret<[UInt8]>, passphrase: Secret<[UInt8]>)
+  package func set(_ name: SecretName, value: Secret<[UInt8]>, passphrase: Secret<[UInt8]>)
     throws(EnclaveStoreError)
   {
     guard value.expose().count <= StoreLimits.valueBytes else {
@@ -116,7 +116,7 @@ public struct EnclaveStore: Sendable {
     try rewrite(unlocked)
   }
 
-  public func remove(_ name: SecretName, passphrase: Secret<[UInt8]>) throws(EnclaveStoreError) {
+  package func remove(_ name: SecretName, passphrase: Secret<[UInt8]>) throws(EnclaveStoreError) {
     let lock = try acquireLock()
     defer { lock.release() }
     var unlocked = try unlock(passphrase)
@@ -126,7 +126,7 @@ public struct EnclaveStore: Sendable {
     try rewrite(unlocked)
   }
 
-  public func list(passphrase: Secret<[UInt8]>) throws(EnclaveStoreError) -> [SecretMetadata] {
+  package func list(passphrase: Secret<[UInt8]>) throws(EnclaveStoreError) -> [SecretMetadata] {
     let lock = try acquireLock()
     defer { lock.release() }
     let unlocked = try unlock(passphrase)
@@ -139,7 +139,7 @@ public struct EnclaveStore: Sendable {
 
   /// Batch resolution: one scrypt derivation and one user-presence check for
   /// every name. A missing name fails the whole call.
-  public func resolve(_ names: Set<SecretName>, passphrase: Secret<[UInt8]>)
+  package func resolve(_ names: Set<SecretName>, passphrase: Secret<[UInt8]>)
     throws(EnclaveStoreError) -> [SecretName: Secret<[UInt8]>]
   {
     let lock = try acquireLock()

@@ -274,13 +274,15 @@ private let withoutBundle = Release(
 
 // MARK: - Sibling replacement
 
-@Test func proxyReplacementIsANoOpWithoutAProxy() throws {
+@Test func proxyReplacementRequiresAProxy() throws {
   let extract = try temporaryDirectory("extract")
   defer { try? FileManager.default.removeItem(atPath: extract) }
-  try SelfReplace.replaceSiblingProxy(extract, currentExecutable: nil)
+  #expect(throws: HostError("Release is missing the iso-proxy companion")) {
+    try SelfReplace.replaceSiblingProxy(extract, currentExecutable: nil)
+  }
 }
 
-@Test func egressReplacementInstallsWhenPresentAndSkipsAThreeBinaryArchive() throws {
+@Test func egressReplacementRequiresAndInstallsItsCompanion() throws {
   let extract = try temporaryDirectory("extract")
   let install = try temporaryDirectory("install")
   defer {
@@ -288,14 +290,16 @@ private let withoutBundle = Release(
     try? FileManager.default.removeItem(atPath: install)
   }
   try writeUpdateFile(install + "/iso", "iso-binary")
-  try SelfReplace.replaceSiblingEgress(extract, currentExecutable: install + "/iso")
+  #expect(throws: HostError("Release is missing the iso-egress companion")) {
+    try SelfReplace.replaceSiblingEgress(extract, currentExecutable: install + "/iso")
+  }
   #expect(!pathExists(install + "/iso-egress"))
   try writeUpdateFile(extract + "/iso-egress", "companion")
   try SelfReplace.replaceSiblingEgress(extract, currentExecutable: install + "/iso")
   #expect(readText(install + "/iso-egress") == "companion")
 }
 
-@Test func proxyReplacementSwapsTheSiblingAndDropsLegacyNames() throws {
+@Test func proxyReplacementSwapsTheSibling() throws {
   let extract = try temporaryDirectory("extract")
   let install = try temporaryDirectory("install")
   defer {
@@ -304,16 +308,11 @@ private let withoutBundle = Release(
   }
   try writeUpdateFile(extract + "/iso-proxy", "swift")
   try writeUpdateFile(install + "/iso", "iso-binary")
-  for name in ["iso-proxy-swift", "iso-proxy-rs"] {
-    try writeUpdateFile(install + "/" + name, "old")
-  }
   try SelfReplace.replaceSiblingProxy(extract, currentExecutable: install + "/iso")
   #expect(readText(install + "/iso-proxy") == "swift")
   var status = stat()
   stat(install + "/iso-proxy", &status)
   #expect(status.st_mode & 0o777 == 0o755)
-  #expect(!pathExists(install + "/iso-proxy-swift"))
-  #expect(!pathExists(install + "/iso-proxy-rs"))
   #expect(readText(install + "/iso") == "iso-binary")
   // No staging or probe files are left behind.
   #expect(
@@ -329,27 +328,7 @@ private let withoutBundle = Release(
   }
 }
 
-@Test func obsoleteProxyArchiveIsRejectedBeforeReplacement() throws {
-  let extract = try temporaryDirectory("extract")
-  let install = try temporaryDirectory("install")
-  defer {
-    try? FileManager.default.removeItem(atPath: extract)
-    try? FileManager.default.removeItem(atPath: install)
-  }
-  try writeUpdateFile(extract + "/iso-proxy-rs", "old-rust")
-  try writeUpdateFile(extract + "/iso-proxy", "new-swift")
-  try writeUpdateFile(extract + "/iso-sandbox", "runtime")
-  try writeUpdateFile(install + "/iso-proxy", "old-swift")
-  for replace in [SelfReplace.replaceSiblingProxy, SelfReplace.replaceSiblingRuntime] {
-    #expect(throws: HostError("Release contains an obsolete proxy transition artifact")) {
-      try replace(extract, install + "/iso")
-    }
-  }
-  #expect(readText(install + "/iso-proxy") == "old-swift")
-  #expect(!pathExists(install + "/iso-sandbox"))
-}
-
-@Test func runtimeReplacementRequiresBothCompanions() throws {
+@Test func runtimeReplacementRequiresAllCompanions() throws {
   let extract = try temporaryDirectory("extract")
   let install = try temporaryDirectory("install")
   defer {
@@ -365,6 +344,11 @@ private let withoutBundle = Release(
   }
   #expect(!pathExists(install + "/iso-sandbox"))
   try writeUpdateFile(extract + "/iso-proxy", "proxy")
+  #expect(throws: HostError("Release is missing the iso-egress companion")) {
+    try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
+  }
+  #expect(!pathExists(install + "/iso-sandbox"))
+  try writeUpdateFile(extract + "/iso-egress", "egress")
   try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
   #expect(readText(install + "/iso-sandbox") == "runtime")
 }
@@ -390,7 +374,7 @@ private let withoutBundle = Release(
 
 // MARK: - Background check state
 
-@Test func updateStateRoundTripsInTheBaselineFormat() throws {
+@Test func updateStateRoundTrips() throws {
   let home = try temporaryDirectory("home")
   defer { try? FileManager.default.removeItem(atPath: home) }
   let path = try #require(UpdateCheck.statePath(home: home))
@@ -399,7 +383,8 @@ private let withoutBundle = Release(
   try UpdateCheck.writeState(
     UpdateState(lastCheckedAt: 42, latestKnownVersion: "v1.2.3"), home: home)
   #expect(
-    readText(path) == "{\n  \"last_checked_at\": 42,\n  \"latest_known_version\": \"v1.2.3\"\n}")
+    try canonicalJSON(readText(path))
+      == canonicalJSON("{\n  \"last_checked_at\": 42,\n  \"latest_known_version\": \"v1.2.3\"\n}"))
   var status = stat()
   stat(path, &status)
   #expect(status.st_mode & 0o777 == 0o644)
@@ -407,7 +392,9 @@ private let withoutBundle = Release(
     UpdateCheck.readState(home: home)
       == UpdateState(lastCheckedAt: 42, latestKnownVersion: "v1.2.3"))
   try UpdateCheck.writeState(UpdateState(lastCheckedAt: 7), home: home)
-  #expect(readText(path) == "{\n  \"last_checked_at\": 7,\n  \"latest_known_version\": null\n}")
+  #expect(
+    try canonicalJSON(readText(path))
+      == canonicalJSON("{\n  \"last_checked_at\": 7,\n  \"latest_known_version\": null\n}"))
   // Missing fields default; malformed content is no state.
   try writeUpdateFile(path, #"{"latest_known_version": "v9.9.9"}"#)
   #expect(
@@ -588,7 +575,7 @@ private struct UpdateFixture {
     if withGh { try writeUpdateFile(bin + "/gh", Self.gh, mode: 0o755) }
     for (name, text) in [
       ("iso", "installed-iso"), ("iso-proxy", "installed-proxy"),
-      ("iso-sandbox", "installed-runtime"),
+      ("iso-sandbox", "installed-runtime"), ("iso-egress", "installed-egress"),
     ] {
       try writeUpdateFile(install + "/" + name, text, mode: 0o755)
     }
@@ -600,12 +587,24 @@ private struct UpdateFixture {
   /// Pack `members` into the release archive and publish matching sums.
   func publish(
     _ members: [String: String], corruptSums: Bool = false, bundle: String? = nil,
-    signature: FixtureSignature = .trusted, base: String = "http://fixture"
+    signature: FixtureSignature = .trusted, base: String = "http://fixture",
+    nonRegular: (name: String, symlink: Bool)? = nil
   ) throws {
     let stage = root + "/stage"
     try? FileManager.default.removeItem(atPath: stage)
     for (name, text) in members {
       try writeUpdateFile(stage + "/" + directoryName + "/" + name, text, mode: 0o755)
+    }
+    if let nonRegular {
+      let path = stage + "/" + directoryName + "/" + nonRegular.name
+      try FileManager.default.removeItem(atPath: path)
+      if nonRegular.symlink {
+        try FileManager.default.createSymbolicLink(
+          atPath: path,
+          withDestinationPath: nonRegular.name == "iso-proxy" ? "iso-sandbox" : "iso-proxy")
+      } else {
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)
+      }
     }
     try FileManager.default.createDirectory(atPath: served, withIntermediateDirectories: true)
     let tar = Process()
@@ -682,15 +681,17 @@ enum FixtureSignature { case trusted, untrusted, missing }
 
 private let fullRelease = [
   "iso": "new-iso", "iso-proxy": "new-proxy", "iso-sandbox": "new-runtime",
+  "iso-egress": "new-egress",
 ]
 private let untouched = [
   "iso": "installed-iso", "iso-proxy": "installed-proxy", "iso-sandbox": "installed-runtime",
+  "iso-egress": "installed-egress",
 ]
 
 /// Serialized: these spawn many short-lived processes, and the process-wide
 /// descriptor-leak check in HostTests tolerates only a little concurrency.
 @Suite(.serialized) struct UpdateEndToEnd {
-  @Test func updateReplacesAllThreeBinariesAndRecordsTheTag() throws {
+  @Test func updateReplacesAllFourBinariesAndRecordsTheTag() throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
     try fixture.publish(fullRelease)
@@ -761,18 +762,17 @@ private let untouched = [
     #expect(fixture.installed == untouched)
   }
 
-  @Test func missingCompanionsAndObsoleteProxiesPreserveTheInstall() throws {
+  @Test func missingCompanionsPreserveTheInstall() throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
-    for (members, message) in [
-      (["iso": "new", "iso-proxy": "p"], "Release is missing the iso-sandbox runtime"),
-      (["iso": "new", "iso-sandbox": "r"], "Release is missing the iso-proxy companion"),
-      (
-        ["iso": "new", "iso-sandbox": "r", "iso-proxy-rs": "old"],
-        "Release contains an obsolete proxy transition artifact"
-      ),
-      (["iso-proxy": "p", "iso-sandbox": "r"], "Extracted binary not found at"),
+    for (missing, message) in [
+      ("iso-sandbox", "Release is missing the iso-sandbox runtime"),
+      ("iso-proxy", "Release is missing the iso-proxy companion"),
+      ("iso-egress", "Release is missing the iso-egress companion"),
+      ("iso", "Extracted binary not found at"),
     ] {
+      var members = fullRelease
+      members.removeValue(forKey: missing)
       try fixture.publish(members)
       do {
         try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
@@ -782,6 +782,22 @@ private let untouched = [
       }
       #expect(fixture.installed == untouched)
     }
+  }
+
+  @Test(arguments: ["iso", "iso-sandbox", "iso-proxy", "iso-egress"], [false, true])
+  func nonRegularReleaseMembersPreserveTheInstall(_ artifact: String, _ symlink: Bool) throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    try fixture.publish(fullRelease, nonRegular: (artifact, symlink))
+    do {
+      try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+      Issue.record("installed a nonregular \(artifact)")
+    } catch {
+      let message =
+        artifact == "iso" ? "Extracted binary not found at" : "Release is missing the \(artifact)"
+      #expect("\(error)".contains(message))
+    }
+    #expect(fixture.installed == untouched)
   }
 
   @Test func checkAndUpToDatePathsNeverDownload() throws {

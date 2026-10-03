@@ -1,5 +1,5 @@
-public enum OperationPolicy {
-  public static func allows(method: String, target: RequestTarget, provider: Provider) -> Bool {
+package enum OperationPolicy {
+  package static func allows(method: String, target: RequestTarget, provider: Provider) -> Bool {
     guard method == "POST" else { return false }
     switch provider {
     case .anthropic:

@@ -52,7 +52,7 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
 @Test func explicitPathsSelectFormatByExtension() throws {
   #expect(try select("/x/c.jsonc", existing: []) == .file(path: "/x/c.jsonc", format: .jsonc))
   #expect(try select("/x/c.json", existing: []) == .file(path: "/x/c.json", format: .json))
-  #expect(throws: ConfigError.migrationRequired(tomlPath: "/x/c.toml", jsoncPath: "/x/c.jsonc")) {
+  #expect(throws: ConfigError.unsupportedExtension(path: "/x/c.toml")) {
     try select("/x/c.toml", existing: ["/x/c.toml"])
   }
   #expect(throws: ConfigError.unsupportedExtension(path: "/x/config")) {
@@ -68,11 +68,8 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
     try select(nil, existing: ["/h/.iso/config.jsonc", "/h/.iso/config.toml"])
       == .file(path: "/h/.iso/config.jsonc", format: .jsonc))
   #expect(
-    throws: ConfigError.migrationRequired(
-      tomlPath: "/h/.iso/config.toml", jsoncPath: "/h/.iso/config.jsonc")
-  ) {
     try select(nil, existing: ["/h/.iso/config.toml"])
-  }
+      == .defaultsOnly(defaultPath: "/h/.iso/config.jsonc"))
   // No automatic config.json search.
   #expect(
     try select(nil, existing: ["/h/.iso/config.json"])
@@ -103,11 +100,7 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
   #expect(throws: ConfigError.unreadable(path: dir.path, reason: "not a regular file")) {
     try ConfigLoader.load(.file(path: dir.path, format: .jsonc), environment: fixtureHome)
   }
-  // A missing explicit file keeps the baseline "use defaults" behavior.
-  let missing = try ConfigLoader.load(
-    .file(path: directory.appending(path: "none.jsonc").path, format: .jsonc),
-    environment: fixtureHome)
-  #expect(missing.sshPort == 22)
+
 }
 
 @Test func strictJSONRejectsComments() {
@@ -117,16 +110,22 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
   #expect(throws: Never.self) { try ConfigLoader.load(bytes: "{} // c", format: .jsonc) }
 }
 
-@Test func oldInstallationDirectoryHasNoSpecialDataDirectory() throws {
-  let env = ConfigEnvironment(home: "/h", variables: [:])
-  let config = try ConfigLoader.load(
-    .file(path: "/h/.coop-apple/config.jsonc", format: .jsonc), environment: env)
-  #expect(config.dataDirectory.path == "/h/.iso")
+@Test func missingSelectedConfigurationFailsButImplicitAbsenceUsesDefaults() throws {
+  let home = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+  let path = home.appending(path: "missing.jsonc").path
+  let selected = try ConfigLoader.select(explicitPath: path, home: home.path)
+  #expect(throws: ConfigError.missingFile(path: path)) {
+    try ConfigLoader.load(selected, environment: fixtureHome)
+  }
+  let implicit = try ConfigLoader.select(explicitPath: nil, home: home.path)
+  let defaults = try ConfigLoader.load(implicit, environment: fixtureHome)
+  #expect(defaults.sshPort == 22)
+  #expect(defaults.egress == .open)
 }
 
 // MARK: - Absent / null / false / wrong type
 
-@Test func defaultsMatchTheBaseline() throws {
+@Test func defaultConfigurationValues() throws {
   let c = try load("{}")
   #expect(c.dataDirectory.path == "/home/fixture/.iso")
   #expect(c.stateRoot.path == "/home/fixture/.iso/backends/apple-container-v1")
@@ -265,26 +264,24 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
 }
 
 @Test func unknownKeysFollowPerSectionPolicy() throws {
-  // Ignored everywhere except apple_container, as in the baseline.
+  // Extensible agent/provider sections preserve their own unknown members.
   #expect(throws: Never.self) {
     try load(
-      #"{"future": 1, "vm": {"x": 1}, "claude": {"x": 1}, "proxy": {"x": 1}, "updates": {"x": 1}}"#)
+      #"{"claude": {"x": 1}, "proxy": {"x": 1}, "updates": {"x": 1}}"#)
   }
   #expect(fieldError(#"{"apple_container": {"binray": "/x"}}"#)?.field == "apple_container.binray")
   #expect(fieldError(#"{"apple_container": {"binray": "/x"}}"#)?.reason == "unknown field")
 }
 
-@Test func retiredFirecrackerFieldsAreRejectedByName() {
-  for (text, fields) in [
-    (#"{"firecracker_bin": "/x"}"#, ["firecracker_bin"]),
-    (#"{"network": {}}"#, ["network"]),
-    (#"{"network": null}"#, ["network"]),
-    (#"{"vm": {"kernel_path": "/k"}}"#, ["vm.kernel_path"]),
-    (#"{"vm": {"boot_args": ""}}"#, ["vm.boot_args"]),
+@Test func unknownRootAndVMFieldsAreRejected() {
+  for (text, field) in [
+    (#"{"egres": "none"}"#, "egres"),
+    (#"{"future": null}"#, "future"),
+    (#"{"vm": {"memory": 4096}}"#, "vm.memory"),
+    (#"{"vm": {"extra": null}}"#, "vm.extra"),
   ] {
-    #expect(throws: ConfigError.retiredFields(path: "config.jsonc", fields: fields)) {
-      try load(text)
-    }
+    #expect(fieldError(text)?.field == field)
+    #expect(fieldError(text)?.reason == "unknown field")
   }
 }
 
@@ -472,7 +469,7 @@ struct FakeFileSystem: ConfigFileSystem {
     fieldError(#"{"egress": "none", "egress_filter": {"allowed_hosts": []}}"#)?.field
       == "egress_filter")
   #expect(fieldError(#"{"egress": "provider-only"}"#)?.field == "egress")
-  // `network` stays a retired Firecracker key.
+  // Network policy uses the explicit top-level egress field.
   #expect(throws: (any Error).self) { try load(#"{"network": {"egress": "none"}}"#) }
 }
 

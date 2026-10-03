@@ -232,20 +232,10 @@ func egressFilter(_ reader: ObjectReader) throws(FieldError) -> EgressFilter {
 }
 
 enum ConfigDecoder {
-  /// Firecracker host settings removed by C-01. Rejected by name even where
-  /// unknown keys are otherwise ignored.
-  static let retiredTopLevel = ["firecracker_bin", "network"]
-  static let retiredVM = ["kernel_path", "boot_args"]
-
   static func decode(_ root: JSONValue, environment: ConfigEnvironment) throws(ConfigDecodeFailure)
     -> IsoConfig
   {
-    guard case .object(let top) = root else { throw .rootNotObject }
-    var retired = retiredTopLevel.filter { top[$0] != nil }
-    if case .object(let vm)? = top["vm"] {
-      retired += retiredVM.filter { vm[$0] != nil }.map { "vm.\($0)" }
-    }
-    if !retired.isEmpty { throw .retired(retired) }
+    guard case .object = root else { throw .rootNotObject }
     do {
       return try decodeFields(ObjectReader(root, at: []), environment: environment)
     } catch {
@@ -257,6 +247,11 @@ enum ConfigDecoder {
     throws(FieldError)
     -> IsoConfig
   {
+    try r.rejectUnknown(allowing: [
+      "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
+      "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
+      "workspace", "egress", "egress_filter", "limits", "security",
+    ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
       HostPath(expanding: try Parse.string(v, p), home: env.home)
@@ -374,6 +369,7 @@ enum ConfigDecoder {
 
   static func vm(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError) -> VMConfig {
     let r = try ObjectReader(value, at: path)
+    try r.rejectUnknown(allowing: ["vcpu_count", "mem_size_mib", "template_size_gib"])
     let defaults = VMConfig.defaults
     return VMConfig(
       vcpuCount: try r.defaulted("vcpu_count", defaults.vcpuCount) { v, p throws(FieldError) in
@@ -657,7 +653,6 @@ enum ConfigDecoder {
 
 enum ConfigDecodeFailure: Error {
   case rootNotObject
-  case retired([String])
   case field(FieldError)
 }
 
@@ -665,7 +660,7 @@ enum ConfigDecodeFailure: Error {
 func utf8Less(_ a: String, _ b: String) -> Bool { a.utf8.lexicographicallyPrecedes(b.utf8) }
 
 extension AppleContainerConfig {
-  public static let defaults = AppleContainerConfig(
+  package static let defaults = AppleContainerConfig(
     binary: nil, builder: nil, kernel: nil, probeTimeout: try! TimeoutSecs(10),
     operationTimeout: try! TimeoutSecs(60), createTimeout: try! TimeoutSecs(600),
     bootTimeout: try! TimeoutSecs(120), stopTimeout: try! TimeoutSecs(90),

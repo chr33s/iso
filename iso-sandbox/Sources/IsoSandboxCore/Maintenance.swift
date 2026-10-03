@@ -9,17 +9,17 @@ import SystemPackage
 /// root's `maintenance/` directory. It is kept apart from the image store,
 /// so deleting or replacing an application image never affects it, and its
 /// capacity follows its own content, never an application image's.
-public struct MaintenanceArtifact: Codable, Sendable {
+package struct MaintenanceArtifact: Codable, Sendable {
   /// Caller-chosen version of the image's recipe; a caller reinstalls
   /// when it wants another.
-  public var version: String
-  public var reference: String
+  package var version: String
+  package var reference: String
   /// Content digest of the image it was unpacked from.
-  public var digest: String
-  public var capacityBytes: UInt64
-  public var installedAt: Date
+  package var digest: String
+  package var capacityBytes: UInt64
+  package var installedAt: Date
   /// Basename of the unpacked disk in `maintenance/`.
-  public var disk: String
+  package var disk: String
 }
 
 /// Offline disk maintenance in a short-lived VM.
@@ -28,7 +28,7 @@ public struct MaintenanceArtifact: Codable, Sendable {
 /// ``MaintenanceArtifact``, with no network, and the target disk attached
 /// either as a raw device or mounted at `/isodisk`. The target is data
 /// only: none of its programs run.
-public enum Maintenance {
+package enum Maintenance {
   enum Attach {
     /// The device node itself, for fsck/resize of an unmounted filesystem.
     case raw
@@ -74,7 +74,7 @@ public enum Maintenance {
     }
   }
 
-  public static func installed(root: SandboxRoot) throws -> MaintenanceArtifact? {
+  package static func installed(root: SandboxRoot) throws -> MaintenanceArtifact? {
     let url = artifactURL(root)
     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
     return try JSONDecoder.iso.decode(MaintenanceArtifact.self, from: Data(contentsOf: url))
@@ -83,7 +83,7 @@ public enum Maintenance {
   /// Unpack `reference` from the image store as the maintenance boot disk
   /// and record it as `version`. The store entry is no longer needed
   /// afterwards; callers may delete it.
-  public static func install(root: SandboxRoot, reference: String, version: String) async throws
+  package static func install(root: SandboxRoot, reference: String, version: String) async throws
     -> MaintenanceArtifact
   {
     try root.requireInitialized()
@@ -160,7 +160,7 @@ public enum Maintenance {
 
   /// Grow `disk`'s ext4 to fill its (already enlarged) file. The formatter's
   /// ext4 uses sparse_super2, which the guest kernel cannot resize online.
-  public static func growFilesystem(root: SandboxRoot, scratch: URL, disk: URL) async throws
+  package static func growFilesystem(root: SandboxRoot, scratch: URL, disk: URL) async throws
     -> String
   {
     try await run(
@@ -170,7 +170,7 @@ public enum Maintenance {
 
   /// Remove per-machine identity from `disk` so every sandbox cloned from it
   /// generates its own SSH host keys and machine-id on first boot.
-  public static func resetIdentity(root: SandboxRoot, scratch: URL, disk: URL) async throws
+  package static func resetIdentity(root: SandboxRoot, scratch: URL, disk: URL) async throws
     -> String
   {
     try await run(

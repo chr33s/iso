@@ -17,16 +17,16 @@ are outside this fork's scope.
 The installer, updater, and repository provenance checks target `chr33s/iso`.
 Release tags must point to commits reachable from the `main` branch. A
 release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
-the Swift host `iso`, the Swift credential proxy `iso-proxy`, and the
+the Swift host `iso`, the credential proxy `iso-proxy`, the egress companion
+`iso-egress`, and the
 signed `iso-sandbox` runtime, plus `BUILD.json`, `LICENSE`, `NOTICE`,
 `PROVENANCE.md`, `THIRD_PARTY_LICENSES.md`, `fuzz/libfuzzer/LICENSE.TXT`
 and the pinned dependency licenses and notices under `third-party/`.
 
-No hosted candidate or fork release of the Swift host has been published or
-verified yet. Build from source until those gates pass. Hosted attestation and
-remaining acceptance gates are tracked in the
-[host acceptance ledger](docs/design/swift-host-acceptance.md) (H-09) and the
-[proxy acceptance map](docs/design/swift-proxy-acceptance.md).
+Qualify a hosted candidate from the exact revision being published. Historical
+local or hosted results do not qualify a changed archive. Attestation and
+candidate validation requirements are tracked in
+[release validation](docs/release-validation.md).
 
 ## Building a release archive
 
@@ -35,11 +35,11 @@ build entrypoint. Its stages are explicit and run in order:
 
 1. **source** — copies the tracked (and untracked, unignored) files of this
    checkout into a private staging directory and stamps the revision into
-   `Sources/IsoHost/BuildRevision.swift` there; the working tree is never
+   `Sources/IsoHost/Update/BuildRevision.swift` there; the working tree is never
    modified. `--expected-revision SHA` requires a clean checkout of exactly
    that commit, before and after the build.
 2. **build** — `iso` (release: optimized, `-D ISO_RELEASE_BUILD`, which makes
-   `iso update` treat the binary as a release), `iso-proxy`, and
+   `iso update` treat the binary as a release), `iso-proxy`, `iso-egress`, and
    `iso-sandbox` (ad-hoc signed with its virtualization entitlement by
    `scripts/build-iso-sandbox.sh`), all with `--force-resolved-versions`.
 3. **test** (`--test`) — every package's tests in the staging copy.
@@ -112,7 +112,7 @@ set -e
 mkdir candidate
 tar -xzf "$ARCHIVE" -C candidate
 cd "candidate/iso-${REVISION:0:12}-aarch64-apple-darwin"
-for binary in iso iso-proxy iso-sandbox; do
+for binary in iso iso-proxy iso-egress iso-sandbox; do
   codesign --verify --strict "$binary"
 done
 cat BUILD.json
@@ -124,7 +124,7 @@ cat BUILD.json
 `BUILD.json` must name the expected commit in `source_revision`, with
 `source_dirty: false`, `release_build: true`, `tested: true`, and
 `developer_id_signed: true`, and its `binaries` digests must match the
-extracted files. All three binaries stay
+extracted files. All four binaries stay
 together. Earlier downloads retain their original archive layout and signer
 workflow identity; use those original identities when verifying old artifacts.
 
@@ -133,7 +133,7 @@ workflow identity; use those original identities when verifying old artifacts.
 `scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
 staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
-`iso`, `iso-proxy`, and `iso-sandbox` with a Developer ID Application
+`iso`, `iso-proxy`, `iso-egress`, and `iso-sandbox` with a Developer ID Application
 certificate (hardened runtime, secure timestamp; `iso-sandbox` keeps its
 virtualization entitlement), submits them to Apple's notary service, and fails
 unless notarization is `Accepted`. A browser-downloaded archive then runs
@@ -163,7 +163,7 @@ environment before tagging.
 `iso update` and `install.sh` refuse a release unless `SHA256SUMS.sig` is an
 `ssh-keygen -Y sign` signature over its `SHA256SUMS`, in namespace
 `release-sums@chr33s`, by a key compiled into the running binary
-(`ReleaseSigners.keys` in `Sources/IsoHost/ReleaseSignature.swift`). The
+(`ReleaseSigners.keys` in `Sources/IsoHost/Update/ReleaseSignature.swift`). The
 private key is a maintainer's SSH key in their ssh-agent; it never reaches CI,
 which is why `release.yml` stops at a draft.
 
@@ -199,7 +199,7 @@ so rotating the key on GitHub changes nothing for clients.
 
 Neither signatures nor Sigstore bundles can be revoked once published. To
 withdraw a bad release, add its archive digest (from its `SHA256SUMS`) to
-`ReleaseRevocations.digests` in `Sources/IsoHost/ReleaseSignature.swift` and
+`ReleaseRevocations.digests` in `Sources/IsoHost/Update/ReleaseSignature.swift` and
 cut the next release. Updated binaries refuse the revoked archive, and
 anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 
@@ -208,7 +208,7 @@ anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 | Check | CI (on PR + on tag) | Local before tagging | Manual judgement |
 |-------|:---:|:---:|:---:|
 | `swift format lint --strict`, build, package tests | ✓ | ✓ | |
-| Python host checks (migration, inventory, parity, CLI surface) | ✓ | ✓ | |
+| Python host behavior and CLI contract checks | ✓ | ✓ | |
 | Fuzz corpus replay + bounded smoke | ✓ | ✓ | |
 | Host-only install/update/uninstall and regression suites | ✓ | ✓ | |
 | Version ↔ CHANGELOG ↔ tag agreement | | ✓ (`build-release.py --tag`, preflight) | |
@@ -230,7 +230,7 @@ Apple Silicon machine.
    `CHANGELOG.md` to judge.
 
 3. **Bump the version.** Edit `packageVersion` in
-   `Sources/IsoHost/UpdateVersion.swift`.
+   `Sources/IsoHost/Update/UpdateVersion.swift`.
 
 4. **Promote the changelog.** Rename `## Unreleased` to `## vX.Y.Z` in
    `CHANGELOG.md`. The text under it becomes the GitHub release notes verbatim,
@@ -269,13 +269,13 @@ Apple Silicon machine.
    - `scripts/fuzz.sh run <target> 600` when it changed a parser of
      user-editable input (`ParseRepoSlug`, `JSONCToJSON`, `ConfigLoad`).
 
-7. **Open the bump PR** (`Sources/IsoHost/UpdateVersion.swift`, `CHANGELOG.md`), get it
+7. **Open the bump PR** (`Sources/IsoHost/Update/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `main`. Never push the bump straight to `main`.
 
 8. **Tag the merge commit and push.**
 
    ```bash
-   git checkout swift && git pull
+   git checkout main && git pull
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
@@ -293,7 +293,7 @@ Apple Silicon machine.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-sandbox`, the legal files listed above and `BUILD.json`, plus release-level
+     `iso-egress`, `iso-sandbox`, the legal files listed above and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,

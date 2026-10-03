@@ -1,7 +1,0 @@
-Remove only the VM association; keep the shared stored credential
-
-Usage: iso github unassign-pat --vm <NAME>
-
-Options:
-      --vm <NAME>  
-  -h, --help       Print help

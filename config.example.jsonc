@@ -20,7 +20,7 @@
   //   "skip": ["owner/big-repo"],   // repos to skip the auto-prompt for
   //   "pat": {
   //     "owner/repo": {
-  //       "token": "cmd:security find-generic-password -s coop-github-pat -a owner-repo -w"
+  //       "token": "cmd:security find-generic-password -s iso-github-pat -a owner-repo -w"
   //     }
   //   }
   // },
@@ -84,11 +84,11 @@
   //   "mode": "auto",             // "required": never forward a raw provider key;
   //                               // "off": start no proxy
   //   "anthropic": {
-  //     "credential": "cmd:security find-generic-password -s coop-anthropic -a anthropic -w",
+  //     "credential": "cmd:security find-generic-password -s iso-anthropic -a anthropic -w",
   //     "auth": "api_key"         // "api_key" (x-api-key) or "bearer" (setup-token)
   //   },
   //   "openai": {
-  //     "credential": "cmd:security find-generic-password -s coop-openai -a openai -w",
+  //     "credential": "cmd:security find-generic-password -s iso-openai -a openai -w",
   //     "auth": "bearer"
   //   }
   // },

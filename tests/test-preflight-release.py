@@ -34,9 +34,9 @@ fi
 '''
 
 PYTHON_GATES = [
-    'tests/test-swift-host-read-parity.py', 'tests/test-swift-host-lifecycle-parity.py',
-    'tests/test-swift-host-data-root-parity.py', 'tests/test-swift-host-cli-surface.py',
-    'tests/test-migrate-config.py', 'tests/test-preflight-release.py',
+    'tests/test-read-contract.py', 'tests/test-lifecycle-contract.py',
+    'tests/test-data-root-contract.py', 'tests/test-cli-surface.py',
+    'tests/test-preflight-release.py',
     'scripts/build-release.py',
     'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
     'scripts/test-swift-egress-mutations.py',
@@ -52,7 +52,7 @@ class PreflightTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for directory in ('scripts', 'tests', 'bin', 'Sources/IsoHost'):
+        for directory in ('scripts', 'tests', 'bin', 'Sources/IsoHost/Update'):
             (self.root / directory).mkdir(parents=True)
         (self.root / 'scripts/preflight-release.sh').write_text(
             (ROOT / 'scripts/preflight-release.sh').read_text())
@@ -78,9 +78,9 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         path.chmod(0o755)
 
     def version(self, version):
-        (self.root / 'Sources/IsoHost/UpdateVersion.swift').write_text(
-            'public enum BuildInfo {\n'
-            f'  public static let packageVersion = "{version}"\n'
+        (self.root / 'Sources/IsoHost/Update/UpdateVersion.swift').write_text(
+            'package enum BuildInfo {\n'
+            f'  package static let packageVersion = "{version}"\n'
             '}\n')
 
     def run_preflight(self, *args, fail=''):
@@ -106,11 +106,11 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                      'swift build --force-resolved-versions',
                      'swift test --force-resolved-versions',
                      'swift test --package-path iso-sandbox --force-resolved-versions --no-parallel',
-                     'test-swift-host-read-parity.py --swift .build/debug/iso',
-                     'test-swift-host-lifecycle-parity.py --swift .build/debug/iso',
-                     'test-swift-host-data-root-parity.py --swift .build/debug/iso',
-                     'test-swift-host-cli-surface.py --swift .build/debug/iso',
-                     'test-migrate-config.py', 'test-preflight-release.py',
+                     'test-read-contract.py --swift .build/debug/iso',
+                     'test-lifecycle-contract.py --swift .build/debug/iso',
+                     'test-data-root-contract.py --swift .build/debug/iso',
+                     'test-cli-surface.py --swift .build/debug/iso',
+                     'test-preflight-release.py',
                      'zizmor .github/workflows/', 'integration-install.sh ',
                      'integration-update.sh ', 'integration-uninstall.sh '):
             self.assertIn(call, calls)
@@ -131,7 +131,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('swift test --package-path iso-proxy --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-proxy --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-proxy --show-bin-path', calls)
-        self.assertIn(f'proxy-e2e-binary={self.root}/.build/proxy-test/iso-proxy-swift', calls)
+        self.assertIn(f'proxy-e2e-binary={self.root}/.build/proxy-test/iso-proxy', calls)
         self.assertIn('swift test --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('test-swift-egress-jail.py', calls)
@@ -174,7 +174,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('FAIL: Version consistency', result.stdout)
 
     def test_unreadable_version_fails(self):
-        (self.root / 'Sources/IsoHost/UpdateVersion.swift').write_text('// no version\n')
+        (self.root / 'Sources/IsoHost/Update/UpdateVersion.swift').write_text('// no version\n')
         result = self.run_preflight('--quick')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Could not read packageVersion', result.stderr)
@@ -186,9 +186,9 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('Preflight FAILED', result.stdout)
 
     def test_baseline_failure_is_fatal(self):
-        result = self.run_preflight('--quick', fail='test-swift-host-lifecycle-parity.py')
+        result = self.run_preflight('--quick', fail='test-lifecycle-contract.py')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAIL: Recorded-baseline parity', result.stdout)
+        self.assertIn('FAIL: Host behavior contracts', result.stdout)
 
 
 class ReleaseBinaryTests(unittest.TestCase):

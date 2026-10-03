@@ -1,23 +1,18 @@
 # iso-sandbox fixtures
 
-Output of `iso-sandbox` (containerization 0.45.0), captured from one
-sandbox on macOS 27 and used by the `apple_container` unit tests. The inspect
-records were captured from 0.1.0 (protocol 1); in inspect output, protocol 2
-only adds the optional `record.lastOperation`, absent until a sandbox's first `set`, `grow`,
-or `restore`, and protocol 3 only adds the optional `record.network` (absent
-for shared-mode sandboxes) and the `vmnet-host:` interface label for
-host-only ones, and protocol 4 only adds the optional `record.expiresAt`
-(absent without a session TTL). Protocol 5 adds optional `live.bootId`,
-absent in these captures, so they still decode. `version.json` remains the
-protocol-4 capture:
+Representative protocol-5 output from `iso-sandbox` 0.5.0 with
+containerization 0.45.0, used by host runtime-boundary tests.
 
-- `version.json` — `iso-sandbox version`
-- `inspect-stopped.json` — `iso-sandbox inspect` of a created, stopped sandbox
-- `inspect-running.json` — the same sandbox running (live state and effective
-  VM configuration)
+- `version.json` — runtime version and qualified protocol/dependency.
+- `inspect-stopped.json` — a created, stopped sandbox.
+- `inspect-running.json` — a running sandbox, live owner and effective VM configuration.
 
-The sandbox id is `coop-0a1b2c3d-00112233445566ff`, the owner
-`0a1b2c3d00112233445566778899aabb`, and the runtime root was rewritten to
-`/Users/me/.iso/backends/apple-container-v1/runtime`; the tests
-substitute their own values for all three. Regenerate after any change to the
-runtime's JSON output, and bump the protocol version for an incompatible one.
+The record has an explicit `network` mode, and running live state has a
+nonempty `bootId`. Missing required fields must fail decoding. Optional operation
+and expiration values reflect whether that operation or TTL exists.
+
+The sandbox ID is `iso-0a1b2c3d-00112233445566ff`, the owner is
+`0a1b2c3d00112233445566778899aabb`, and the runtime root is
+`/Users/me/.iso/backends/apple-container-v1/runtime`. Tests substitute their
+own values. Update these fixtures with runtime contract changes and bump the
+protocol for incompatible changes.

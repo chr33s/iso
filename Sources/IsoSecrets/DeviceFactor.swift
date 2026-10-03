@@ -7,7 +7,7 @@ import Security
 /// The device-bound factor: a P-256 key-agreement key the store's Device
 /// Unlock Key (DUK) is sealed to. Production uses the Secure Enclave; tests
 /// use a software key with the same sealing format.
-public protocol DeviceFactor: Sendable {
+package protocol DeviceFactor: Sendable {
   /// Creates a new key. Returns its opaque representation and public key.
   func createKey() throws(EnclaveStoreError) -> (
     representation: [UInt8], publicKey: P256.KeyAgreement.PublicKey
@@ -19,14 +19,14 @@ public protocol DeviceFactor: Sendable {
 
 /// The Secure Enclave key: `WhenUnlockedThisDeviceOnly`, `.privateKeyUsage`
 /// and `.userPresence`. Never created during an unlock.
-public struct SecureEnclaveFactor: DeviceFactor {
-  public let reason: String
+package struct SecureEnclaveFactor: DeviceFactor {
+  package let reason: String
 
-  public init(reason: String = "Unlock Iso secrets") { self.reason = reason }
+  package init(reason: String = "Unlock Iso secrets") { self.reason = reason }
 
-  public static var available: Bool { SecureEnclave.isAvailable }
+  package static var available: Bool { SecureEnclave.isAvailable }
 
-  public func createKey() throws(EnclaveStoreError) -> (
+  package func createKey() throws(EnclaveStoreError) -> (
     representation: [UInt8], publicKey: P256.KeyAgreement.PublicKey
   ) {
     guard SecureEnclave.isAvailable else { throw .secureEnclaveUnavailable }
@@ -44,7 +44,7 @@ public struct SecureEnclaveFactor: DeviceFactor {
     }
   }
 
-  public func agree(representation: [UInt8], with peer: P256.KeyAgreement.PublicKey)
+  package func agree(representation: [UInt8], with peer: P256.KeyAgreement.PublicKey)
     throws(EnclaveStoreError) -> SharedSecret
   {
     guard SecureEnclave.isAvailable else { throw .enclaveKeyUnavailable }
@@ -99,7 +99,7 @@ struct DeviceKeyFile: Codable, Equatable {
 /// nonce (12) || ciphertext (32) || tag (16)`.
 enum SealedDeviceUnlockKey {
   static let version: UInt8 = 1
-  static let info = Data("coop/secrets/enclave-duk/v1".utf8)
+  static let info = Data("iso/secrets/enclave-duk/v1".utf8)
   static let length = 1 + 65 + 12 + 32 + 16
 
   static func seal(

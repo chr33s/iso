@@ -1,6 +1,0 @@
-Generate a starter config file at ~/.iso/config.toml
-
-Usage: iso init
-
-Options:
-  -h, --help  Print help

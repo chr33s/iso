@@ -512,7 +512,7 @@ Each slice is gated behind explicit config (proxy mode is opt-in), per isolate's
 **The attestation is over the tarball, so bundle the proxy inside it.** The release
 workflow attests each per-target artifact — `actions/attest-build-provenance` with
 `subject-path: "iso-*.tar.gz"` (`release.yml`) — and `install.sh` verifies it with
-`gh attestation verify <tarball> --repo trailofbits/coop`, falling back to the
+`gh attestation verify <tarball> --repo chr33s/iso`, falling back to the
 published `SHA256SUMS`. Anything shipped *inside* that already-attested tarball
 inherits the identical SLSA build-provenance guarantee with **no new attestation
 machinery**. So `iso-proxy` ships in the same tarball as `iso`.

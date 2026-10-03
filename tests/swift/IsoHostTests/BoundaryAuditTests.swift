@@ -28,9 +28,10 @@ private func auditInstance() throws -> Instance {
   let lines = try BoundaryAudit.lines(instance)
   #expect(lines.count == 2)
   #expect(
-    lines[0]
-      == #"{"time":"2027-01-15T08:00:00Z","event":"boot","egress":"none","proxy_mode":"required","proxied":["anthropic"],"provider_secrets":["ANTHROPIC_API_KEY"],"guest_references":2,"session_ttl_seconds":3600}"#
-  )
+    try canonicalJSON(lines[0])
+      == canonicalJSON(
+        #"{"time":"2027-01-15T08:00:00Z","event":"boot","egress":"none","proxy_mode":"required","proxied":["anthropic"],"provider_secrets":["ANTHROPIC_API_KEY"],"guest_references":2,"session_ttl_seconds":3600}"#
+      ))
   var info = stat()
   #expect(stat(BoundaryAudit.path(instance), &info) == 0 && info.st_mode & 0o777 == 0o600)
 }
@@ -46,8 +47,11 @@ private func auditInstance() throws -> Instance {
   let lines = try BoundaryAudit.lines(instance)
   // The older half is dropped, whole lines only, and the newest event kept.
   #expect(lines.count > 1000 && lines.count < 30_000)
-  #expect(lines.allSatisfy { $0.hasPrefix("{\"time\"") })
-  #expect(lines.last?.contains(#""event":"pull_apply","applied":7"#) == true)
+  let records = try lines.map(jsonObject)
+  #expect(records.allSatisfy { $0["time"] is String })
+  let last = try #require(records.last)
+  #expect(last["event"] as? String == "pull_apply")
+  #expect(last["applied"] as? Int == 7)
 }
 
 @Test func concurrentRecordersLoseNoEvents() throws {
@@ -113,8 +117,11 @@ private func auditInstance() throws -> Instance {
     #""egress": "none", "proxy": {"anthropic": {"credential": "cmd:printf x"}}"#)
   guest.bootstrap(config).recordBoot(instance)
   let boot = try #require(try BoundaryAudit.lines(instance).last)
-  #expect(
-    boot.contains(#""event":"boot","egress":"none","proxy_mode":"auto","proxied":["anthropic"]"#))
+  let record = try jsonObject(boot)
+  #expect(record["event"] as? String == "boot")
+  #expect(record["egress"] as? String == "none")
+  #expect(record["proxy_mode"] as? String == "auto")
+  #expect(record["proxied"] as? [String] == ["anthropic"])
   #expect(!boot.contains("printf"))
 }
 
@@ -122,9 +129,10 @@ private func auditInstance() throws -> Instance {
   let config = try testConfig(
     #""security": {"preset": "offline"}, "limits": {"session_ttl": "2h"}"#)
   #expect(
-    config.securitySummary.compactRendered()
-      == #"{"preset":"offline","egress":"none","proxy_mode":"off","workspace_pull":"stage","session_ttl":"2h"}"#
-  )
+    try canonicalJSON(config.securitySummary.compactRendered())
+      == canonicalJSON(
+        #"{"preset":"offline","egress":"none","proxy_mode":"off","workspace_pull":"stage","session_ttl":"2h"}"#
+      ))
 }
 
 @Test func suggestedConfigNeverEndsWithATrailingComma() {

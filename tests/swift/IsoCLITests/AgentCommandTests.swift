@@ -156,7 +156,7 @@ private struct CLIFixture {
     .file(path: configPath, format: .jsonc), environment: fixture.context.environment)
   #expect(
     written.proxy.openai?.credential.command.expose()
-      == "cmd:security find-generic-password -s coop-openai -a openai -w")
+      == "cmd:security find-generic-password -s iso-openai -a openai -w")
   #expect(written.proxy.openai?.auth == .bearer)
   #expect(
     !(String(data: FileManager.default.contents(atPath: configPath)!, encoding: .utf8)!).contains(
@@ -173,9 +173,8 @@ private struct CLIFixture {
   #expect(state.anthropic?.auth == .apiKey)
   #expect(
     state.anthropic?.credential
-      == .reference(
-        CredentialReference(
-          "cmd:security find-generic-password -s coop-anthropic-dev -a anthropic -w")!))
+      == CredentialReference(
+        "cmd:security find-generic-password -s iso-anthropic-dev -a anthropic -w")!)
 
   // Unknown VM or a failed Keychain write: nothing is written anywhere.
   #expect(throws: (any Error).self) {
@@ -208,8 +207,8 @@ private func lifecycleFixture(_ extra: String, secrets: CountingSecrets = Counti
   return (fixture, ProjectLifecycle(fixture.context, noGitHub: false, secrets: secrets), instance)
 }
 
-private func startOptions(_ context: CommandContext) throws -> StartOptions {
-  StartOptions(
+private func startOptions(_ context: CommandContext) throws -> BootOptions {
+  BootOptions(
     noPrompt: true,
     configTarget: ConfigTarget(
       path: (context.environment.home ?? "/tmp") + "/config.jsonc", format: .jsonc))
@@ -255,18 +254,18 @@ private func startOptions(_ context: CommandContext) throws -> StartOptions {
   let options = try startOptions(fixture.context)
   // The backend has no runtime here: reaching it would fail differently.
   let fresh = try #require(throws: HostError.self) {
-    try lifecycle.startInstance(instance, options)
+    try lifecycle.startInstance(instance, CreationRequest(boot: options))
   }
   #expect(fresh.message.contains("no provider proxy is configured"))
   let restarted = try #require(throws: HostError.self) {
-    try lifecycle.restart(instance, options)
+    try lifecycle.restart(instance, RestartRequest(boot: options))
   }
   #expect(restarted.message.contains("no provider proxy is configured"))
   // Skipping agents skips the requirement, so the backend is reached.
   var noAgents = options
   noAgents.noAgents = true
   let reached = try #require(throws: (any Error).self) {
-    try lifecycle.startInstance(instance, noAgents)
+    try lifecycle.startInstance(instance, CreationRequest(boot: noAgents))
   }
   #expect(!"\(reached)".contains("no provider proxy is configured"))
 }

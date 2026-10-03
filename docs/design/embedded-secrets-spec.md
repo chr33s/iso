@@ -1,17 +1,17 @@
-# Specification: Embedded Isolate Secrets for the Swift 6 Port
+# Specification: Embedded isolate secrets
 
-**Status:** Approved implementation specification (2026-09-28)  
-**Target:** `chr33s/iso` Swift 6 rewrite, macOS 27+, Apple Silicon  
-**Primary goal:** provide local encrypted secret storage and `--env-file` resolution directly inside Isolate, with no external `vault` executable or service  
-**Password KDF:** scrypt only  
-**Hardware factor:** Secure Enclave, directly integrated into Swift  
+**Status:** Approved implementation specification (2026-09-28)
+**Target:** `chr33s/iso` Swift 6, macOS 27+, Apple Silicon
+**Primary goal:** provide local encrypted secret storage and `--env-file` resolution directly inside Isolate, with no external `vault` executable or service
+**Password KDF:** scrypt only
+**Hardware factor:** Secure Enclave, directly integrated into Swift
 **Recovery model:** **No recovery path by design**
 
 ---
 
 ## 1. Executive decision
 
-The Swift 6 Isolate port SHALL include a small, local, single-user secret store derived from the useful local-security ideas in `chr33s/vault`, but it SHALL **not** port Vault's distributed replica format or general vault product.
+The Swift 6 isolate implementation SHALL include a small, local, single-user secret store derived from the useful local-security ideas in `chr33s/vault`, but it SHALL **not** port Vault's distributed replica format or general vault product.
 
 The embedded implementation exists only to support:
 
@@ -55,7 +55,7 @@ That consequence is **explicitly accepted by design**.
 
 ## 1.1 Baseline: what isolate already has
 
-This specification extends the current `swift` branch; it does not replace it.
+This specification defines the embedded secret-store boundary.
 Relevant existing pieces:
 
 | Existing piece | Where | Role today |
@@ -63,7 +63,7 @@ Relevant existing pieces:
 | `Secret<Value>` redacted wrapper | `Sources/IsoCore/Units.swift` | Redacted description/debug rendering for secret values |
 | `AtomicFile` | `Sources/IsoCore/AtomicFile.swift` | Temp-file + rename writes with bounded mode |
 | `FileLock` | `Sources/IsoCore/FileLock.swift` | Advisory state locks |
-| `SecretStore` (enum) | `Sources/IsoHost/SecretStore.swift` | macOS Keychain service names for `iso proxy setup` and `iso github setup-pat` |
+| `SecretStore` (enum) | `Sources/IsoHost/Credentials/SecretStore.swift` | macOS Keychain service names for `iso proxy setup` and `iso github setup-pat` |
 | `cmd:` references | `CredentialResolver.swift` | Structured credential fields (`proxy.<provider>.credential`, per-VM `proxy.json` overrides, `github.pat`, `claude.api_key`) run a host command on use |
 | `iso-proxy` stdin startup document (protocol v1) | `ProxyLifecycle.swift` | Provider credential reaches the proxy on stdin; the proxy child has an empty environment |
 | `GuestEnvState` | `<instance>/guest_env.json` | Start-time `--env` / devcontainer `containerEnv` literals, overlaid on every later session |
@@ -255,7 +255,7 @@ Preserving Vault format compatibility would require substantial portions of:
 
 That would defeat the "only code required by Isolate" objective.
 
-A one-time migration/import tool MAY be implemented separately if required. It is not part of this specification.
+Existing Vault databases are outside the fresh-install contract.
 
 ## D-003 — Relationship to the Keychain and `cmd:` references
 
@@ -487,7 +487,7 @@ shared = ECDH(ephemeralPrivate, enclavePublic)
 wrapKey = HKDF-SHA256(
     shared,
     salt = ephemeralPublicBytes,
-    info = "coop/secrets/enclave-duk/v1"
+    info = "iso/secrets/enclave-duk/v1"
 )
 sealedDUK = AES-GCM(wrapKey, DUK)
 ```
@@ -580,7 +580,7 @@ Example outer JSON:
 
 ```json
 {
-  "format": "coop-secrets",
+  "format": "iso-secrets",
   "version": 1,
   "kdf": {
     "algorithm": "scrypt",
@@ -735,7 +735,7 @@ Then:
 storeKey = HKDF-SHA256(
     inputKeyMaterial = passwordKey,
     salt = DUK,
-    info = "coop/secrets/store-key/v1",
+    info = "iso/secrets/store-key/v1",
     output = 32
 )
 ```
@@ -781,7 +781,7 @@ KDF salt
 Recommended canonical AAD:
 
 ```text
-coop-secrets:v1:scrypt:<N>:<r>:<p>:<base64-salt>
+iso-secrets:v1:scrypt:<N>:<r>:<p>:<base64-salt>
 ```
 
 No locale-dependent formatting.
@@ -1114,22 +1114,12 @@ No interpolation engine in v1.
 
 Persist typed declarations, never resolved secrets.
 
-### Migration from the current `guest_env.json`
+### Current `guest_env.json` contract
 
-Today `<instance>/guest_env.json` is unversioned and holds only literal string
-values (`GuestEnvState`). Treat that shape as **version 1**:
-
-- readers accept both version 1 (no `version` field, string values) and
-  version 2 (below);
-- a version-1 file is upgraded to version 2 in memory, every entry becoming
-  `kind: "literal"`;
-- isolate writes version 2 only when the instance has at least one non-literal
-  declaration, so instances that never use references stay readable by older
-  isolate binaries;
-- an older binary that meets a version-2 file MUST fail with a clear
-  "written by a newer isolate" error rather than misreading it (add this check to
-  the last release before this feature ships, or document that downgrading an
-  instance that used references is unsupported).
+Every nonempty snapshot uses version 2 and typed entries. Literal values,
+generic secret references, and provider references share the same versioned
+format. Missing or unsupported versions are rejected. Empty snapshots remove
+the file. There are no unversioned readers or downgrade writers.
 
 Version 2 example:
 
@@ -1246,15 +1236,14 @@ A recognized provider secret:
   never reinterpreted as a generic secret or literal;
 - fails startup if the proxy for its provider cannot start (§35).
 
-## 31.2 Legacy provider values
+## 31.2 Literal and forwarded provider values
 
-A **legacy provider value** is any other source of a recognized variable name:
+A **literal or forwarded provider value** is any other source of a recognized variable name:
 a literal in `.env` / `--env` / `guest_env`, an `env_forward` entry, or the
 automatic host-environment forward of `ANTHROPIC_API_KEY` /
 `CLAUDE_CODE_OAUTH_TOKEN`.
 
-Legacy values keep today's behavior so existing configurations do not change
-meaning:
+Literal and forwarded values follow the configured proxy policy:
 
 - if a proxy is active for that provider, the value is suppressed (not
   forwarded) with a warning — unchanged;
@@ -1262,9 +1251,9 @@ meaning:
   `SendEnv` as today, and isolate SHOULD print a one-line warning pointing at
   `iso secrets` / `iso proxy setup`.
 
-Tightening legacy values (refusing raw forwarding) is governed by the Selective
-Hardening specification's `proxy.mode = "required"` and by a future
-default change with release notes; it is not done implicitly here.
+The Selective Hardening specification's `proxy.mode = "required"` refuses raw
+forwarding of recognized provider credentials. That policy also applies to
+literal and forwarded values.
 
 ---
 
@@ -1298,9 +1287,8 @@ If references exist:
 ## Later `exec` / shell / agent commands
 
 **As implemented (step 8):** `--env-file` and `--env` accept whole-value
-`{vault:}` references; `guest_env.json` is written as version 2 only when a
-reference is present; the CLI resolves every reference a command needs in one
-batch (one passphrase + one Secure Enclave check per command).
+`{vault:}` references; every nonempty `guest_env.json` uses version 2. The CLI
+resolves every reference a command needs in one batch (one passphrase + one Secure Enclave check per command).
 
 **As implemented (step 9):** a `{vault:}` reference on a recognized provider
 variable is persisted as `kind: "provider_secret"` and selects that
@@ -1551,19 +1539,11 @@ PKI
 
 ---
 
-# 43. Legacy migration
+# 43. Fresh-install storage boundary
 
-Existing Vault compatibility is not part of production Isolate.
-
-If migration is needed, provide a one-time external path such as:
-
-```bash
-vault export-iso-secrets | iso secrets import --stdin
-```
-
-No plaintext intermediate file.
-
-Do not add legacy Vault database parsing to production Isolate.
+Initialize a new isolate store. Existing Vault replicas and their import formats
+are outside this implementation. Do not add Vault database parsing or plaintext
+intermediate files to production isolate.
 
 ---
 
@@ -1605,7 +1585,7 @@ struct rather than an actor, because every caller is a synchronous
 `ParsableCommand`; each call takes the store's `FileLock`, unlocks once, and
 keeps nothing afterwards. The device factor is a `DeviceFactor` protocol
 (`SecureEnclaveFactor` in production, a software P-256 key in tests). The
-store directory is `<data_dir>/secrets`, `~/.coop/secrets` by default.
+store directory is `<data_dir>/secrets`, `~/.iso/secrets` by default.
 
 `EnclaveStoreError` is a closed enum (typed throws, per `docs/code-style.md`)
 with a distinct `enclaveKeyUnavailable` case for the permanent-loss error
@@ -1886,7 +1866,7 @@ Before release:
 - [ ] core-dump posture reviewed;
 - [ ] destructive-loss/non-recovery test passes;
 - [ ] Secure Enclave works on every supported build type and survives `iso update` (§9.6);
-- [ ] `guest_env.json` v1 → v2 migration and downgrade behavior tested (§28).
+- [ ] `guest_env.json` version 2 literal/reference round trips and unsupported-version refusal tested (§28).
 
 ## 55.1 Cross-file updates
 
@@ -2012,7 +1992,7 @@ Secure Enclave                      |
               |
          AES-256-GCM
               |
-  ~/.coop/secrets/store.v1.json
+  ~/.iso/secrets/store.v1.json
               |
               v
          IsoSecrets

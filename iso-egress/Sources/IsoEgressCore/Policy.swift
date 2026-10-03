@@ -2,10 +2,10 @@ import Darwin
 import Foundation
 
 /// Exact ASCII DNS name. A name does not match a parent, child, or suffix.
-public struct ExactHostname: Hashable, Sendable, CustomStringConvertible {
-  public let rawValue: String
+package struct ExactHostname: Hashable, Sendable, CustomStringConvertible {
+  package let rawValue: String
 
-  public init(_ raw: String) throws {
+  package init(_ raw: String) throws {
     guard !raw.isEmpty else { throw PolicyError("hostname must not be empty") }
     for scalar in raw.unicodeScalars {
       guard scalar.isASCII, scalar.value >= 0x21, scalar.value <= 0x7E else {
@@ -41,16 +41,16 @@ public struct ExactHostname: Hashable, Sendable, CustomStringConvertible {
     rawValue = lower
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 }
 
-public struct PolicyError: Error, Equatable, CustomStringConvertible {
-  public let message: String
-  public init(_ message: String) { self.message = message }
-  public var description: String { message }
+package struct PolicyError: Error, Equatable, CustomStringConvertible {
+  package let message: String
+  package init(_ message: String) { self.message = message }
+  package var description: String { message }
 }
 
-public enum Denial: String, Sendable {
+package enum Denial: String, Sendable {
   case hostNotAllowed = "HOST_NOT_ALLOWED"
   case portNotAllowed = "PORT_NOT_ALLOWED"
   case addressNotPublic = "ADDRESS_NOT_PUBLIC"
@@ -60,8 +60,8 @@ public enum Denial: String, Sendable {
 
 /// IPv4/IPv6 classification. Transition forms are denied rather than unwrapped
 /// except IPv4-mapped addresses, which are classified as the embedded IPv4.
-public enum AddressPolicy {
-  public static func isPublicIPv4(_ octets: [UInt8]) -> Bool {
+package enum AddressPolicy {
+  package static func isPublicIPv4(_ octets: [UInt8]) -> Bool {
     guard octets.count == 4 else { return false }
     let a = octets[0]
     let b = octets[1]
@@ -78,7 +78,7 @@ public enum AddressPolicy {
     return true
   }
 
-  public static func isPublic(_ address: String, local: Set<String> = []) -> Bool {
+  package static func isPublic(_ address: String, local: Set<String> = []) -> Bool {
     if local.contains(address.lowercased()) { return false }
     if let v4 = ipv4(address) { return isPublicIPv4(v4) }
     return isPublicIPv6(address)
@@ -115,18 +115,18 @@ public enum AddressPolicy {
   }
 }
 
-public struct ConnectRequest: Sendable, Equatable {
-  public let host: ExactHostname
-  public let port: Int
-  public let password: String
+package struct ConnectRequest: Sendable, Equatable {
+  package let host: ExactHostname
+  package let port: Int
+  package let password: String
 }
 
-public enum ConnectParser {
-  public static let username = "iso"
+package enum ConnectParser {
+  package static let username = "iso"
 
   /// Parse one HTTP/1.1 CONNECT head. Authentication is extracted but not
   /// checked here. Rejects framing that would not be a blind tunnel.
-  public static func parse(_ bytes: [UInt8]) throws -> ConnectRequest {
+  package static func parse(_ bytes: [UInt8]) throws -> ConnectRequest {
     guard bytes.count <= EgressBudgets.maxHeadBytes,
       let text = String(bytes: bytes, encoding: .utf8), text.hasSuffix("\r\n\r\n")
     else { throw DenialError(.unsupported) }
@@ -205,7 +205,7 @@ public enum ConnectParser {
     return String(text[text.index(after: colon)...])
   }
 
-  public static func constantTimeEqual(_ left: String, _ right: String) -> Bool {
+  package static func constantTimeEqual(_ left: String, _ right: String) -> Bool {
     let a = Array(left.utf8)
     let b = Array(right.utf8)
     var diff = a.count ^ b.count
@@ -218,26 +218,26 @@ public enum ConnectParser {
   }
 }
 
-public struct DenialError: Error, Equatable {
-  public let denial: Denial
-  public init(_ denial: Denial) { self.denial = denial }
+package struct DenialError: Error, Equatable {
+  package let denial: Denial
+  package init(_ denial: Denial) { self.denial = denial }
 }
 
-public struct EgressAllowlist: Sendable, Equatable {
-  public let hosts: Set<String>
-  public init(_ hosts: [ExactHostname]) { self.hosts = Set(hosts.map(\.rawValue)) }
-  public func allows(_ host: ExactHostname) -> Bool { hosts.contains(host.rawValue) }
+package struct EgressAllowlist: Sendable, Equatable {
+  package let hosts: Set<String>
+  package init(_ hosts: [ExactHostname]) { self.hosts = Set(hosts.map(\.rawValue)) }
+  package func allows(_ host: ExactHostname) -> Bool { hosts.contains(host.rawValue) }
 }
 
 /// Decision before any upstream connection. An unapproved host never becomes
 /// a connect target.
-public enum ConnectDecision: Equatable, Sendable {
+package enum ConnectDecision: Equatable, Sendable {
   case connect(String)
   case deny(Denial)
 }
 
-public enum ConnectGate {
-  public static func decide(_ head: [UInt8], allow: EgressAllowlist, capability: String)
+package enum ConnectGate {
+  package static func decide(_ head: [UInt8], allow: EgressAllowlist, capability: String)
     -> ConnectDecision
   {
     do {
@@ -254,7 +254,7 @@ public enum ConnectGate {
     }
   }
 
-  public static func responseBytes(_ denial: Denial?) -> [UInt8] {
+  package static func responseBytes(_ denial: Denial?) -> [UInt8] {
     let text =
       denial == nil
       ? "HTTP/1.1 200 Connection Established\r\n\r\n"
@@ -263,13 +263,13 @@ public enum ConnectGate {
   }
 
   /// The host to connect, or a denial. The caller connects only on success.
-  public static func connectTarget(_ head: [UInt8], allow: EgressAllowlist, capability: String)
+  package static func connectTarget(_ head: [UInt8], allow: EgressAllowlist, capability: String)
     -> ConnectDecision
   {
     decide(head, allow: allow, capability: capability)
   }
 
-  public static func readHead(
+  package static func readHead(
     _ client: Int32, deadline: Duration = EgressBudgets.head, alive: () -> Bool = { true }
   ) -> [UInt8] {
     readHead(client, deadline: deadline, alive: alive, pollEvents: { poll(&$0, 1, $1) })
@@ -338,7 +338,7 @@ public enum ConnectGate {
   /// Success and refusal writes share the signed-probe writer's deadline,
   /// partial-write handling and SIGPIPE suppression.
   @discardableResult
-  public static func writeResponse(
+  package static func writeResponse(
     _ client: Int32, _ denial: Denial?, alive: () -> Bool = { true }
   ) -> Bool {
     EgressReadiness.write(responseBytes(denial), to: client, alive: alive)
@@ -346,7 +346,7 @@ public enum ConnectGate {
 
   /// Reads one CONNECT. A denial is written and no host is returned, so the
   /// caller cannot connect. An approval returns the host and writes nothing.
-  public static func approvedHost(_ client: Int32, allow: EgressAllowlist, capability: String)
+  package static func approvedHost(_ client: Int32, allow: EgressAllowlist, capability: String)
     -> String?
   {
     switch connectTarget(readHead(client), allow: allow, capability: capability) {

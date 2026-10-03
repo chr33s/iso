@@ -12,9 +12,8 @@ layers are:
 
 - **Swift package tests** (`tests/swift/`) — unit and contract tests for every
   host target, plus replay of the fuzz corpus. CI gate.
-- **Host checks in Python** — configuration migration, compatibility
-  inventory, golden parity against recorded baseline results, and the CLI
-  surface. CI gate.
+- **Host checks in Python** — read/lifecycle contracts, data-root safety, and every
+  registered CLI help path. CI gate.
 - **Fault injection** (`scripts/swift-host-fault-injection.py`) — shows that
   critical tests fail when their protected behavior is removed. Replaces
   mutation testing for the host.
@@ -39,13 +38,11 @@ swift test --sanitize=address --scratch-path .build-asan     # also:
 swift test --sanitize=thread --scratch-path .build-tsan
 swift test --sanitize=undefined --scratch-path .build-ubsan
 
-python3 tests/test-migrate-config.py          # TOML -> JSONC converter (Python 3.11+)
-python3 tests/test-swift-host-inventory.py    # compatibility inventory completeness
 python3 tests/test-release-legal.py           # legal bytes and nested release notices
-python3 tests/test-swift-host-read-parity.py --swift .build/debug/iso
-python3 tests/test-swift-host-lifecycle-parity.py --swift .build/debug/iso
-python3 tests/test-swift-host-data-root-parity.py --swift .build/debug/iso
-python3 tests/test-swift-host-cli-surface.py --swift .build/debug/iso
+python3 tests/test-read-contract.py --swift .build/debug/iso
+python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
+python3 tests/test-data-root-contract.py --swift .build/debug/iso
+python3 tests/test-cli-surface.py --swift .build/debug/iso
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
 python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
 ```
@@ -54,35 +51,23 @@ Use a separate `--scratch-path` per sanitizer so instrumented builds do not
 invalidate `.build`. The package tests use synthetic credentials and isolated
 temporary state; they never touch `~/.iso`.
 
-The parity checks replay results recorded from the former Rust host (baseline
-`e3ba69e`) in `tests/baseline/parity/`; no Rust toolchain is needed. The
-read-parity check runs the Swift host against a synthetic state tree, with a
-stand-in `iso-sandbox` (answering from `tests/fixtures/iso-sandbox`) and a
-stand-in `ssh` on `PATH`, and compares stdout and exit status command by
-command; recorded differences are listed in the script. The lifecycle check
-does the same for `setup`, `resize`, `commit`, `restore`, `stop`, `destroy`,
-`images --delete` and interrupted-journal recovery against the stateful fake
-runtime in `tests/fixtures/fake-runtime/` (also a fake `container` builder),
-and also compares the runtime call sequence, the resulting state files, and
-the captured image build contexts byte for byte. An intended change to the
-guest image changes those contexts and every hash derived from them; record it
-in the golden's `revisions` list as the old→new hash substitutions (the runner
-applies them to the recorded contexts/state/calls, including image-tag prefixes),
-and confirm that reversing them reproduces the previous golden
-exactly, so nothing else changed. The data-root check covers
-the refusal of upstream coop state in the default `~/.iso`. The CLI-surface
-check compares every baseline command path and option in
-`tests/fixtures/baseline-cli/commands.json` with the Swift host's `--help`;
-allowed differences are listed with their decision in the script.
+The read and lifecycle checks use synthetic state and fake runtime/SSH/builder
+processes. Reviewed iso expectations live in `tests/fixtures/contracts/`.
+Read checks cover command output and failures; lifecycle checks also cover
+runtime calls, resulting state, image recipes and interrupted journal recovery.
+JSON output is compared structurally. Update a fixture only after inspecting the
+behavior change; do not regenerate expectations merely to silence a failure.
+The data-root check covers absent, regular, file and symlink roots and missing
+explicit configuration. The CLI surface check discovers and exercises every
+registered help path, including newly added command families.
 
-Configuration parity fixtures live in
-`tests/swift/IsoConfigurationTests/Fixtures/parity/`: each `.toml` has the
-baseline loader's normalized result (`.baseline.json`) and its conversion to
-`.jsonc` by `scripts/migrate-config-to-jsonc.py`; the Swift loader must produce
-the same values, except for enumerated differences (C-01 retired fields and
-the recorded URL spelling difference).
+Configuration fixtures live in
+`tests/swift/IsoConfigurationTests/Fixtures/config/`: each `.jsonc` has an
+`.expected.json` recording its domain values. They exercise defaults, complete
+configuration, GitHub modes, proxy credentials and URL spelling without an
+external implementation oracle.
 
-`python3 scripts/build-release.py --release --test` builds and tests all three
+`python3 scripts/build-release.py --release --test` builds and tests all four
 packages from a staged copy and assembles the release archive; see
 [RELEASING.md](../RELEASING.md).
 
@@ -131,7 +116,7 @@ that exits immediately, checking that both starts fail with the expected reason
 and create no proxy PID records without a fallback implementation.
 
 The controlled-upstream phase passed for both providers on the Apple backend
-using a retained port-443 listener; see the [acceptance map](design/swift-proxy-acceptance.md)
+using a retained port-443 listener; see the [release validation](release-validation.md)
 for its fixture boundaries and remaining acceptance/distribution gates:
 
 ```bash
@@ -168,7 +153,7 @@ The live gates below use their own provider credentials, never everyday ones.
 Create an Anthropic workspace and an OpenAI project for them, each with a low
 spend limit and access to the approved models. Keep them in Keychain items of
 their own. Do not use `iso proxy setup` for this, because it writes the
-`coop-anthropic`/`coop-openai` items your normal install reads.
+`iso-anthropic`/`iso-openai` items your normal install reads.
 
 Do not type or paste a key at the `security add-generic-password ... -w`
 prompt. The prompt keeps only the first 128 characters, so a longer key (OpenAI
@@ -241,7 +226,7 @@ The default token ceiling is 256 per generation request; an approved test may
 select 16–1024 with `--max-output-tokens`. No model is selected implicitly.
 Use `--scheme bearer` for a dedicated Anthropic bearer credential when supported
 by the account. Pass `--binary` to select the built artifact (for example
-`iso-proxy/.build/debug/iso-proxy-swift`, the default, after `swift build --package-path iso-proxy`). It runs under the production Seatbelt profile
+`iso-proxy/.build/debug/iso-proxy`, the default, after `swift build --package-path iso-proxy`). It runs under the production Seatbelt profile
 with an empty child environment and startup JSON over stdin. Core dumps are
 disabled before reading the credential. Output contains phase counts, model,
 binary hash, and secret-audit status, without response bodies or proxy logs.
@@ -254,7 +239,7 @@ for a positive `input_tokens` result. A disconnect result proves client-side
 closure followed by a successful request; it does not prove when provider-side
 generation or billing stopped. This is a host API smoke gate, not the real-VM
 or Claude/Codex tool-use gate. Recorded results are in the H-07 row of
-[`design/swift-host-acceptance.md`](design/swift-host-acceptance.md).
+[release-validation.md](release-validation.md).
 `python3 tests/test-proxy-live.py` exercises the runner offline in CI and makes
 no provider calls.
 
@@ -534,7 +519,7 @@ swift test --package-path iso-proxy --force-resolved-versions
 ```
 
 Ordinary package tests include `IsoProxyProcessE2ETests`, which launches the
-production executable under `Sources/IsoHost/seatbelt-proxy.sb` with an empty
+production executable under `Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb` with an empty
 environment and startup JSON on stdin. It verifies unconfined refusal before
 reading stdin, strict bounded startup, redacted diagnostics, real HTTP admission,
 secret-free argv, signed readiness for both providers, and shutdown/guest EOF.
@@ -545,7 +530,7 @@ To select an exact artifact explicitly (as CI and release preflight do):
 ```bash
 swift build --package-path iso-proxy --force-resolved-versions
 bin_dir="$(swift build --package-path iso-proxy --show-bin-path)"
-ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy-swift" \
+ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy" \
   swift test --package-path iso-proxy --force-resolved-versions
 ```
 
@@ -708,8 +693,8 @@ DNS/candidate admission for the credential proxy has the dedicated tests below.
 protocol, boot, policy, owner, lock and process failures. Network policy tests
 reject forged hashes, noncanonical/invalid hosts and inconsistent modes;
 boot-policy record tests cover bounded no-symlink reads, schema/backend checks,
-owner-only writes and refusal to adopt legacy boot-id files. A lifecycle test
-checks removal of both boot-record formats and the capability on repeated stop.
+owner-only writes and boot identity validation. A lifecycle test checks removal
+of the boot record and capability on repeated stop.
 Malformed or unreadable boot-policy state throws rather than masquerading as
 an absent file. Ten new host faults remove protocol, policy, owner, hash,
 host/mode, record schema/identity/read-error or cleanup checks; the existing
@@ -736,8 +721,8 @@ bounds. Native socketpairs check SIGPIPE protection, restored flags and a paused
 writer's monotonic one-second deadline.
 
 Ten `filtered-readiness-*` host faults remove signature, nonce, boot, policy,
-version, framing, read-error distinction, public-only persistence or current/legacy
-key cleanup. The existing boot-policy
+version, framing, read-error distinction, public-only persistence or verification-key
+cleanup. The existing boot-policy
 cleanup fault is kept synchronized. These tests and the confined process gate
 are not VM evidence. Real-VM checks must separately witness startup, hooks,
 healthy recovery from a paused tunnel, permanent lease expiry after a paused
@@ -1147,7 +1132,7 @@ harness bodies (`IsoFuzzReplayTests`); that is regression coverage, not
 fuzzing. Promote a minimized, synthetic reproducer into
 `fuzz/corpus/<target>/` so it runs in both. Qualification results and
 campaign records are in the
-[acceptance ledger](design/swift-host-acceptance.md#fuzz-toolchain-qualification-section-71).
+[release validation](release-validation.md).
 
 The untrusted-input parsers added later (devcontainer JSON, guest JSON, Codex
 TOML) have unit and sanitizer coverage but no fuzz target yet.

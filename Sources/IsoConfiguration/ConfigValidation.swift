@@ -7,20 +7,20 @@ import Foundation
 /// Environmental checks run at lifecycle boundaries (`validate`, `setup`,
 /// `up`, `start`). Value invariants live in the model types; only filesystem
 /// facts, which can change after loading, are checked here.
-public struct ConfigValidationReport: Sendable, Equatable {
-  public let warnings: [String]
-  public let errors: [String]
+package struct ConfigValidationReport: Sendable, Equatable {
+  package let warnings: [String]
+  package let errors: [String]
 }
 
-public protocol ConfigFileSystem {
+package protocol ConfigFileSystem {
   func exists(_ path: String) -> Bool
   func isDirectory(_ path: String) -> Bool
 }
 
-public struct LocalConfigFileSystem: ConfigFileSystem {
-  public init() {}
-  public func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
-  public func isDirectory(_ path: String) -> Bool {
+package struct LocalConfigFileSystem: ConfigFileSystem {
+  package init() {}
+  package func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
+  package func isDirectory(_ path: String) -> Bool {
     var directory: ObjCBool = false
     // Foundation borrows this initialized output value for the duration of the call.
     return unsafe FileManager.default.fileExists(atPath: path, isDirectory: &directory)
@@ -29,7 +29,7 @@ public struct LocalConfigFileSystem: ConfigFileSystem {
 }
 
 extension IsoConfig {
-  public func validate(fileSystem: some ConfigFileSystem = LocalConfigFileSystem())
+  package func validate(fileSystem: some ConfigFileSystem = LocalConfigFileSystem())
     -> ConfigValidationReport
   {
     var warnings: [String] = []
@@ -57,7 +57,7 @@ extension IsoConfig {
   }
 
   /// Throws the joined errors; returns warnings for the caller to report.
-  public func validated(fileSystem: some ConfigFileSystem = LocalConfigFileSystem())
+  package func validated(fileSystem: some ConfigFileSystem = LocalConfigFileSystem())
     throws(ConfigError) -> [String]
   {
     let report = validate(fileSystem: fileSystem)

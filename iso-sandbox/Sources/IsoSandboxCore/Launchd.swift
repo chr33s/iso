@@ -7,15 +7,15 @@ import Foundation
 /// `~/Library/LaunchAgents`, so nothing starts at login). The job requests
 /// relaunch after abnormal exits; the owner exits 0 on a clean halt and on its
 /// own startup errors, so neither requests a relaunch.
-public enum Launchd {
+package enum Launchd {
   static let launchctl = "/bin/launchctl"
 
   /// The background user domain keeps supervising VMs while the GUI is locked.
-  public static func domain() -> String {
+  package static func domain() -> String {
     "user/\(getuid())"
   }
 
-  public static func plist(label: String, executable: String, arguments: [String], log: URL)
+  package static func plist(label: String, executable: String, arguments: [String], log: URL)
     -> [String: Any]
   {
     [
@@ -36,17 +36,17 @@ public enum Launchd {
     ]
   }
 
-  public static func write(_ plist: [String: Any], to url: URL) throws {
+  package static func write(_ plist: [String: Any], to url: URL) throws {
     let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
     try data.write(to: url, options: .atomic)
     chmod(url.path, 0o600)
   }
 
-  public static func isLoaded(_ label: String, domain: String) -> Bool {
+  package static func isLoaded(_ label: String, domain: String) -> Bool {
     run([launchctl, "print", "\(domain)/\(label)"]).status == 0
   }
 
-  public static func bootstrap(plist url: URL, domain: String, label: String) throws {
+  package static func bootstrap(plist url: URL, domain: String, label: String) throws {
     try bootstrap(plist: url, domain: domain, label: label, request: run)
   }
 
@@ -72,10 +72,10 @@ public enum Launchd {
     }
   }
 
-  /// Also unload GUI jobs created by older runtimes; an unloaded job is harmless.
-  public static func bootout(_ label: String) {
-    let uid = getuid()
-    for domain in ["gui/\(uid)", "user/\(uid)"] where isLoaded(label, domain: domain) {
+  /// Unload the owner job from its background user domain.
+  package static func bootout(_ label: String) {
+    let domain = domain()
+    if isLoaded(label, domain: domain) {
       _ = run([launchctl, "bootout", "\(domain)/\(label)"])
     }
   }

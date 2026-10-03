@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import IsoCore
@@ -140,35 +141,35 @@ func rejectsOtherURLs(_ url: String) {
   #expect(secret.expose() == "SYNTHETIC-SECRET")
 }
 
-@Test func outputJSONMatchesSerdeJSONPretty() {
-  let expected: [(Double, String)] = [
-    (0.0, "0.0"), (1.0, "1.0"), (0.12, "0.12"), (1.5, "1.5"), (100.0, "100.0"),
-    (1e15, "1000000000000000.0"), (1e16, "1e+16"), (1.5e-7, "1.5e-7"), (0.00001, "0.00001"),
-    (0.000012, "0.000012"), (123456789.125, "123456789.125"), (-2.5, "-2.5"), (1e21, "1e+21"),
-    (9.999e15, "9999000000000000.0"), (0.3, "0.3"), (.nan, "null"),
-  ]
-  for (value, text) in expected { #expect(OutputJSON.formatDouble(value) == text, "\(value)") }
-  let document = OutputJSON.array([
-    .object([("name", .string("web")), ("state", .string("running")), ("usage", .null)]),
-    .object([("list", .array([])), ("map", .object([])), ("esc", .string("a\"\\\n\u{01}é/"))]),
+@Test func outputJSONEncodesSemanticValues() throws {
+  let document = OutputJSON.object([
+    ("name", .string("a\"\\\n\u{01}é/")), ("missing", .null),
+    ("max", .uint(UInt64.max)), ("min", .int(Int64.min)),
+    ("numbers", .array([.double(1), .double(0.12), .double(1e16), .double(.nan)])),
+    ("list", .array([])), ("map", .object([])),
   ])
+  struct Document: Decodable {
+    let name: String
+    let max: UInt64
+    let min: Int64
+    let numbers: [Double?]
+    let list: [String]
+    let map: [String: String]
+  }
+  for text in [document.rendered(), document.compactRendered()] {
+    let decoded = try JSONDecoder().decode(Document.self, from: Data(text.utf8))
+    #expect(decoded.name == "a\"\\\n\u{01}é/")
+    #expect(decoded.max == UInt64.max)
+    #expect(decoded.min == Int64.min)
+    #expect(decoded.numbers == [1, 0.12, 1e16, nil])
+    #expect(decoded.list.isEmpty && decoded.map.isEmpty)
+    let object = try #require(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    #expect(object["missing"] is NSNull)
+  }
+  #expect(document.rendered().hasSuffix("\n"))
   #expect(
-    document.rendered() == """
-      [
-        {
-          "name": "web",
-          "state": "running",
-          "usage": null
-        },
-        {
-          "list": [],
-          "map": {},
-          "esc": "a\\"\\\\\\n\\u0001é/"
-        }
-      ]
-
-      """)
-  #expect(OutputJSON.array([]).rendered() == "[]\n")
+    OutputJSON.object([("a", .bool(true)), ("b", .null)])
+      == .object([("b", .null), ("a", .bool(true))]))
 }
 
 @Test func byteCountsParseBinarySuffixes() throws {

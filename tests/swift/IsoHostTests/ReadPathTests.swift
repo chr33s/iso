@@ -173,7 +173,7 @@ private func config(_ text: String) throws -> IsoConfig {
 
 // MARK: - Proxy state (C-04)
 
-@Test func proxyOverridesResolveAndLiteralsAreNotKept() throws {
+@Test func proxyOverridesResolveAndRejectLiteralCredentials() throws {
   let directory = FileManager.default.temporaryDirectory.appending(
     path: "iso-proxy-\(UUID().uuidString)"
   ).path
@@ -183,17 +183,19 @@ private func config(_ text: String) throws -> IsoConfig {
     name: try InstanceName("vm"), index: InstanceIndex(0)!, directory: directory, image: .default)
   #expect(try ProxyState.load(instance) == .empty)
   try Data(
-    #"{"openai": {"credential": "cmd:pass x", "auth": "bearer"}, "anthropic": {"credential": "sk-SYNTHETIC"}, "extra": 1}"#
+    #"{"openai": {"credential": "cmd:pass x", "auth": "bearer"}, "anthropic": {"credential": "cmd:anthropic"}, "extra": 1}"#
       .utf8
   )
   .write(to: URL(fileURLWithPath: instance.proxyStatePath))
   let state = try ProxyState.load(instance)
-  #expect(state.anthropic == StoredUpstream(credential: .literal, auth: .apiKey))
+  #expect(
+    state.anthropic
+      == StoredUpstream(credential: CredentialReference("cmd:anthropic")!, auth: .apiKey))
   #expect(!String(reflecting: state).contains("sk-SYNTHETIC"))
   let c = try config(#"{"proxy": {"anthropic": {"credential": "cmd:default"}}}"#)
   #expect(
     ProxyResolution.resolve(.anthropic, state: state, config: c.proxy).description
-      == "override — api_key, <literal credential, redacted>")
+      == "override — api_key, cmd:anthropic")
   #expect(
     ProxyResolution.resolve(.openai, state: state, config: c.proxy).description
       == "override — bearer, cmd:pass x")
@@ -203,6 +205,9 @@ private func config(_ text: String) throws -> IsoConfig {
   #expect(
     ProxyResolution.resolve(.openai, state: nil, config: c.proxy).description
       == "off (no default, no override)")
+  try Data(#"{"anthropic":{"credential":"sk-SYNTHETIC"}}"#.utf8)
+    .write(to: URL(fileURLWithPath: instance.proxyStatePath))
+  #expect(throws: HostError("Failed to parse proxy.json")) { try ProxyState.load(instance) }
   try Data("{".utf8).write(to: URL(fileURLWithPath: instance.proxyStatePath))
   #expect(throws: HostError("Failed to parse proxy.json")) { try ProxyState.load(instance) }
 }
@@ -313,7 +318,7 @@ private func config(_ text: String) throws -> IsoConfig {
   try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
   let instance = Instance(
     name: try InstanceName("vm"), index: InstanceIndex(0)!, directory: directory, image: .default)
-  let machine = try MachineName("coop-0a1b2c3d-00112233445566ff")
+  let machine = try MachineName("iso-0a1b2c3d-00112233445566ff")
   let ip = try IPv4Address("10.231.2.2")
   do {
     _ = try SSHTarget.pinned(
@@ -330,7 +335,7 @@ private func config(_ text: String) throws -> IsoConfig {
     target.hostKeyOptions == [
       "StrictHostKeyChecking=yes", "UserKnownHostsFile=\"\(directory)/known_hosts\"",
       "GlobalKnownHostsFile=/dev/null",
-      "HostKeyAlias=coop-0a1b2c3d-00112233445566ff.coop", "UpdateHostKeys=no",
+      "HostKeyAlias=iso-0a1b2c3d-00112233445566ff.iso", "UpdateHostKeys=no",
       "ForwardAgent=no", "IdentityAgent=none",
     ])
   #expect(target.sshOptions.suffix(4) == ["-i", c.sshKeyPath.path, "-p", "22"])

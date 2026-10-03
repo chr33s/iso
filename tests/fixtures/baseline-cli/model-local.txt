@@ -1,6 +1,0 @@
-Route this VM's agents at a host-side local model server
-
-Usage: iso model local
-
-Options:
-  -h, --help  Print help

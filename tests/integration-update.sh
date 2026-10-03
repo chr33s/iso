@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Serves a synthetic GitHub-shaped fixture from a local HTTP server and
 # verifies that the update flow downloads, checksums, and atomically
-# replaces the running binary and its proxy companion. Also verifies checksum
+# replaces the running binary and all three companions. Also verifies checksum
 # rollback, `--check` behaviour, and dev-build refusal. The release-kind test
 # binary trusts a throwaway key generated here in place of the compiled-in
 # release signer (see patch_release_signer); SHA256SUMS is signed with it.
@@ -215,6 +215,8 @@ cat > "$TMPDIR/build/${FAKE_DIR}/iso-proxy" << 'EOF'
 echo "MARKER: fake-proxy-binary"
 EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
+printf '#!/bin/sh\necho installed-iso-egress\n' >"$TMPDIR/build/${FAKE_DIR}/iso-egress"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-egress"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso" "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
@@ -273,6 +275,12 @@ if [[ -x "$TMPDIR/bin/iso-proxy" ]] \
     pass "update installs the missing proxy companion"
 else
     fail "update installs the missing proxy companion" "expected release proxy contents"
+fi
+
+if [[ "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress ]]; then
+    pass "update installs the egress companion"
+else
+    fail "update installs the egress companion"
 fi
 
 # Confirm the update-check state file landed inside the test's tempdir,
@@ -403,100 +411,67 @@ else
     fail "update replaces the existing iso and iso-proxy" "$(tail -5 "$TMPDIR/t5.log")"
 fi
 
-# ── Test 6: older packages without a companion remain supported ──────────────
-
-echo "==> Test 6: legacy update without a proxy"
-cp "$RELEASE_BIN" "$ISO_BIN"
-rm "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
-(cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
-write_sums
-ORIG_PROXY_SHA="$(sha_of "$TMPDIR/bin/iso-proxy")"
-if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
-    original_host="$(sha_of "$ISO_BIN")"
-    if ! "$ISO_BIN" update --yes >"$TMPDIR/t6.log" 2>&1 \
-        && [[ "$(sha_of "$ISO_BIN")" == "$original_host" \
-           && "$(sha_of "$TMPDIR/bin/iso-proxy")" == "$ORIG_PROXY_SHA" ]]; then
-        pass "Apple update rejects missing companion before replacement"
-    else
-        fail "Apple update rejects missing companion before replacement"
-    fi
-else
-if "$ISO_BIN" update --yes > "$TMPDIR/t6.log" 2>&1 \
-    && [[ "$("$ISO_BIN")" == "MARKER: fake-replacement-binary" \
-       && "$(sha_of "$TMPDIR/bin/iso-proxy")" == "$ORIG_PROXY_SHA" ]]; then
-    pass "legacy update replaces iso and preserves the existing companion"
-else
-    fail "legacy update replaces iso and preserves the existing companion" "$(tail -5 "$TMPDIR/t6.log")"
-fi
-fi
-
-repack_transition_fixture() {
+repack_release_fixture() {
     (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
     write_sums
 }
 
-echo "==> Test 7: verified Swift-only update installs its proxy"
-cp "$RELEASE_BIN" "$ISO_BIN"
-printf '#!/bin/sh\necho iso-proxy\n' >"$TMPDIR/build/${FAKE_DIR}/iso-proxy"
-if [[ "$TARGET_TRIPLE" == aarch64-apple-darwin ]]; then
-    mv "$TMPDIR/build/${FAKE_DIR}/iso-sandbox" "$TMPDIR/runtime-backup"
-    repack_transition_fixture
+seed_install() {
+    cp "$RELEASE_BIN" "$ISO_BIN"
     original_host="$(sha_of "$ISO_BIN")"
-    printf '%s\n' keep-runtime >"$TMPDIR/bin/iso-sandbox"
-    printf '%s\n' keep-proxy >"$TMPDIR/bin/iso-proxy"
-    if ! "$ISO_BIN" update --yes >"$TMPDIR/missing-runtime.log" 2>&1 \
-        && [[ "$(sha_of "$ISO_BIN")" == "$original_host" \
-           && "$(cat "$TMPDIR/bin/iso-sandbox")" == keep-runtime \
-           && "$(cat "$TMPDIR/bin/iso-proxy")" == keep-proxy ]]; then
-        pass "missing Apple runtime preserves all installed binaries"
+    for artifact in iso-sandbox iso-proxy iso-egress; do
+        printf '%s\n' "keep-$artifact" >"$TMPDIR/bin/$artifact"
+    done
+}
+
+install_unchanged() {
+    [[ "$(sha_of "$ISO_BIN")" == "$original_host" ]] || return 1
+    for artifact in iso-sandbox iso-proxy iso-egress; do
+        [[ "$(cat "$TMPDIR/bin/$artifact")" == "keep-$artifact" ]] || return 1
+    done
+}
+
+echo "==> Test 6: every release binary is required before replacement"
+for missing in iso iso-sandbox iso-proxy iso-egress; do
+    mv "$TMPDIR/build/${FAKE_DIR}/$missing" "$TMPDIR/missing-backup"
+    repack_release_fixture
+    seed_install
+    expected="Release is missing the $missing"
+    [[ "$missing" != iso ]] || expected="Extracted binary not found at"
+    if ! "$ISO_BIN" update --yes >"$TMPDIR/missing-$missing.log" 2>&1 \
+        && grep -q "$expected" "$TMPDIR/missing-$missing.log" \
+        && install_unchanged; then
+        pass "missing $missing preserves all four installed binaries"
     else
-        fail "missing Apple runtime preserves all installed binaries"
+        fail "missing $missing preserves all four installed binaries" "$(tail -5 "$TMPDIR/missing-$missing.log")"
     fi
-    mv "$TMPDIR/runtime-backup" "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
+    mv "$TMPDIR/missing-backup" "$TMPDIR/build/${FAKE_DIR}/$missing"
+done
+
+echo "==> Test 7: symlink artifacts are rejected before replacement"
+mv "$TMPDIR/build/${FAKE_DIR}/iso-egress" "$TMPDIR/egress-backup"
+ln -s iso-proxy "$TMPDIR/build/${FAKE_DIR}/iso-egress"
+repack_release_fixture
+seed_install
+if ! "$ISO_BIN" update --yes >"$TMPDIR/symlink.log" 2>&1 \
+    && grep -q 'Release is missing the iso-egress companion' "$TMPDIR/symlink.log" \
+    && install_unchanged; then
+    pass "symlink companion preserves all four installed binaries"
+else
+    fail "symlink companion preserves all four installed binaries" "$(tail -5 "$TMPDIR/symlink.log")"
 fi
-repack_transition_fixture
-if "$ISO_BIN" update --yes >"$TMPDIR/t7.log" 2>&1 \
+rm "$TMPDIR/build/${FAKE_DIR}/iso-egress"
+mv "$TMPDIR/egress-backup" "$TMPDIR/build/${FAKE_DIR}/iso-egress"
+repack_release_fixture
+if "$ISO_BIN" update --yes >"$TMPDIR/complete.log" 2>&1 \
     && [[ "$("$ISO_BIN")" == "MARKER: fake-replacement-binary" \
-       && "$("$TMPDIR/bin/iso-proxy")" == iso-proxy ]]; then
-    pass "transition update installs the Swift proxy"
+       && "$("$TMPDIR/bin/iso-proxy")" == "MARKER: fake-proxy-binary" \
+       && "$("$TMPDIR/bin/iso-sandbox")" == installed-iso-sandbox \
+       && "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress ]]; then
+    pass "complete release replaces all four binaries"
 else
-    fail "transition update installs the Swift proxy" "$(tail -5 "$TMPDIR/t7.log")"
+    fail "complete release replaces all four binaries" "$(tail -5 "$TMPDIR/complete.log")"
 fi
-
-echo "==> Test 8: obsolete Rust archive preserves the installed generation"
-cp "$RELEASE_BIN" "$ISO_BIN"
-ORIG_SHA="$(sha_of "$ISO_BIN")"
-printf '%s\n' keep-rust >"$TMPDIR/bin/iso-proxy-rs"
-printf '%s\n' keep-swift >"$TMPDIR/bin/iso-proxy-swift"
-rm "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
-printf old-rust >"$TMPDIR/build/${FAKE_DIR}/iso-proxy-rs"
-repack_transition_fixture
-if "$ISO_BIN" update --yes >"$TMPDIR/t8.log" 2>&1; then
-    fail "obsolete Rust update must fail"
-elif grep -q 'obsolete proxy transition artifact' "$TMPDIR/t8.log" \
-    && [[ "$(sha_of "$ISO_BIN")" == "$ORIG_SHA" \
-       && "$(cat "$TMPDIR/bin/iso-proxy-rs")" == keep-rust \
-       && "$(cat "$TMPDIR/bin/iso-proxy-swift")" == keep-swift ]]; then
-    pass "obsolete Rust update preserves host and both proxy siblings"
-else
-    fail "obsolete Rust update preserves host and both proxy siblings" "$(tail -5 "$TMPDIR/t8.log")"
-fi
-
-echo "==> Test 9: legacy update removes stale transition names"
-cp "$RELEASE_BIN" "$ISO_BIN"
-rm "$TMPDIR/build/${FAKE_DIR}/iso-proxy-rs"
-printf '#!/bin/sh\necho legacy-proxy\n' >"$TMPDIR/build/${FAKE_DIR}/iso-proxy"
-repack_transition_fixture
-if "$ISO_BIN" update --yes >"$TMPDIR/t9.log" 2>&1 \
-    && [[ "$("$ISO_BIN")" == "MARKER: fake-replacement-binary" \
-       && "$("$TMPDIR/bin/iso-proxy")" == legacy-proxy \
-       && ! -e "$TMPDIR/bin/iso-proxy-rs" && ! -e "$TMPDIR/bin/iso-proxy-swift" ]]; then
-    pass "legacy update removes stale transition siblings"
-else
-    fail "legacy update removes stale transition siblings" "$(tail -5 "$TMPDIR/t9.log")"
-fi
-
-# ── Summary ──────────────────────────────────────────────────────────────────
 
 echo
 echo "  $pass_count passed, $fail_count failed"

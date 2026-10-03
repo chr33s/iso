@@ -2,10 +2,10 @@ import IsoProxyCore
 import NIOCore
 import NIOHTTP1
 
-public enum InboundPipeline {
+package enum InboundPipeline {
   /// Must be called on the channel's event loop. No pipelining assistance is
   /// installed: the gate bounds one active request per guest connection.
-  public static func configure(
+  package static func configure(
     channel: Channel, config: ProxyConfig,
     connections: Capacity, requests: Capacity
   ) throws {

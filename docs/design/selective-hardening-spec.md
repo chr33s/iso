@@ -274,7 +274,7 @@ iso pull <vm> --discard
 ```
 
 These are new CLI surface: update `docs/commands.md` and the CLI-surface
-baselines (`tests/test-swift-host-cli-surface.py`) with them.
+baselines (`tests/test-cli-surface.py`) with them.
 
 An implementation MAY instead expose explicit stage identifiers:
 
@@ -1007,7 +1007,7 @@ the runtime:
   and refuses an expired instance, so enforcement does not depend solely on the
   owner being alive at the deadline.
 
-**As implemented (step 11):** runtime 0.4.0 / protocol 4 records
+**Current runtime contract:** runtime 0.5.0 / protocol 5 records
 `expiresAt` on `start --expires-at`; the owner re-reads the host clock at least
 every 30 s and halts at the deadline, and refuses to boot past it after a
 crash relaunch; the host passes `now + limits.session_ttl` on every boot and

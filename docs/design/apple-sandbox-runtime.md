@@ -112,7 +112,7 @@ Approved 2026-09-28 (previously open merge items, carried into the Swift
 host):
 
 - The local-model `ssh -R` reverse tunnel that exposes a host-loopback model
-  server to the guest (`Sources/IsoHost/ProxyLifecycle.swift`, model
+  server to the guest (`Sources/IsoHost/Guest/ProxyLifecycle.swift`, model
   tunnels).
 - The digest-pinned Ubuntu base image and apt egress during guest image
   builds (`iso setup`, the maintenance image).

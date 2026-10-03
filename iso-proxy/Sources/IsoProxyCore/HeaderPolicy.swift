@@ -4,22 +4,22 @@
 
 import Foundation
 
-public struct Header: Sendable, Equatable {
-  public let name: String
-  public let value: String
-  public init(_ name: String, _ value: String) {
+package struct Header: Sendable, Equatable {
+  package let name: String
+  package let value: String
+  package init(_ name: String, _ value: String) {
     self.name = name
     self.value = value
   }
 }
 
-public enum HeaderPolicy {
+package enum HeaderPolicy {
   private static let hopByHop: Set<String> = [
     "connection", "proxy-connection", "keep-alive", "transfer-encoding", "te",
     "trailer", "upgrade", "proxy-authenticate", "proxy-authorization",
   ]
 
-  public static func request(_ headers: [Header], provider: Provider, injection: Injection) throws
+  package static func request(_ headers: [Header], provider: Provider, injection: Injection) throws
     -> [Header]
   {
     var result = try filtered(headers).filter {
@@ -33,7 +33,7 @@ public enum HeaderPolicy {
     return result
   }
 
-  public static func response(_ headers: [Header]) throws -> [Header] { try filtered(headers) }
+  package static func response(_ headers: [Header]) throws -> [Header] { try filtered(headers) }
 
   private static func filtered(_ headers: [Header]) throws -> [Header] {
     var removed = hopByHop

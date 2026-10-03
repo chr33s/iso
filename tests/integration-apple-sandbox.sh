@@ -319,7 +319,7 @@ imported="$("$SANDBOX" image import --root "$ROOT" --oci-tar "$WORK/image.tar")"
 check "image imports into the private store" jq -e --arg r "$IMAGE" 'any(.reference == $r)' <<<"$imported"
 rm -f "$WORK/image.tar"
 # A maintenance image equivalent to the one iso builds
-# (BuildContext.maintenanceDockerfile in Sources/IsoHost/ImageBuild.swift):
+# (BuildContext.maintenanceDockerfile in Sources/IsoHost/Guest/ImageBuild.swift):
 # Ubuntu with e2fsprogs.
 mkdir -p "$WORK/maintenance"
 printf '%s\n' 'FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3' \
@@ -632,8 +632,10 @@ if want recovery; then
     check "launchd respawns a killed owner" test "$respawned" = 1
     ready "$r"
     check "synced data survives the crash" test "$(guest "$r" cat /var/lib/iso-test/crash)" = "$m"
+    # The default one-minute timer accuracy can exceed the 20-second stop deadline.
     check "the recovered guest can schedule a clean poweroff" \
-        guest "$r" systemd-run --quiet --unit=iso-test-poweroff --on-active=1 systemctl poweroff
+        guest "$r" systemd-run --quiet --unit=iso-test-poweroff --on-active=1 \
+        --timer-property=AccuracySec=1ms systemctl poweroff
     for _ in $(seq 100); do [[ "$(state "$r")" == stopped ]] && break; sleep 0.2; done
     check "a clean guest poweroff stops its owner" test "$(state "$r")" = stopped
     sleep 12

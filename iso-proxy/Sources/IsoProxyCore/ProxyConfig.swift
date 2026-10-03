@@ -5,19 +5,19 @@
 import Foundation
 
 /// Fixed errors carry no input fragments, decoder diagnostics, or credentials.
-public enum PolicyError: Error, Sendable {
+package enum PolicyError: Error, Sendable {
   case invalidConfig, invalidCapability, invalidTarget, invalidHeader
 }
 
-public struct Injection: Sendable, CustomStringConvertible {
-  public enum Scheme: String, Decodable, Sendable {
+package struct Injection: Sendable, CustomStringConvertible {
+  package enum Scheme: String, Decodable, Sendable {
     case xAPIKey = "x_api_key"
     case bearer
   }
-  public let scheme: Scheme
-  public let credential: Secret
+  package let scheme: Scheme
+  package let credential: Secret
 
-  public init(scheme: Scheme, credential: Secret, provider: Provider) throws {
+  package init(scheme: Scheme, credential: Secret, provider: Provider) throws {
     guard provider != .openai || scheme == .bearer,
       !credential.expose().isEmpty,
       credential.expose().utf8.allSatisfy({ (33...126).contains($0) })
@@ -25,14 +25,14 @@ public struct Injection: Sendable, CustomStringConvertible {
     self.scheme = scheme
     self.credential = credential
   }
-  public var description: String { "Injection(\(scheme.rawValue), <redacted>)" }
+  package var description: String { "Injection(\(scheme.rawValue), <redacted>)" }
 }
 
-public struct LoopbackAddress: Sendable {
-  public let host: String
-  public let port: Int
+package struct LoopbackAddress: Sendable {
+  package let host: String
+  package let port: Int
 
-  public init(_ text: String) throws {
+  package init(_ text: String) throws {
     let host: String
     let portText: Substring
     if text.hasPrefix("[::1]:") {
@@ -59,14 +59,14 @@ public struct LoopbackAddress: Sendable {
   }
 }
 
-public struct ProxyConfig: Sendable {
-  public let listen: LoopbackAddress
-  public let provider: Provider
-  public let capability: Capability
-  public let injection: Injection
-  public let readiness: BrokerReadiness?
+package struct ProxyConfig: Sendable {
+  package let listen: LoopbackAddress
+  package let provider: Provider
+  package let capability: Capability
+  package let injection: Injection
+  package let readiness: BrokerReadiness?
 
-  public init(json: Data) throws {
+  package init(json: Data) throws {
     guard json.count <= Limits.startupBytes else { throw PolicyError.invalidConfig }
     do {
       let wire = try JSONDecoder().decode(Wire.self, from: json)

@@ -29,19 +29,20 @@ private func endpoint(_ url: String, _ model: String = "m", token: String? = nil
   #expect(loaded.mode == .local)
   #expect(loaded.claudeEndpoint?.model == "qwen")
   #expect(loaded.codexEndpoint == nil)
-  // serde_json pretty form of the Rust record, owner-only.
+  // The complete persisted record stays owner-only.
   #expect(
-    readFile(instance.modelStatePath)
-      == """
-      {
-        "mode": "local",
-        "claude_endpoint": {
-          "host_url": "http://localhost:11434/",
-          "model": "qwen",
-          "auth_token": null
+    try canonicalJSON(readFile(instance.modelStatePath))
+      == canonicalJSON(
+        """
+        {
+          "mode": "local",
+          "claude_endpoint": {
+            "host_url": "http://localhost:11434/",
+            "model": "qwen",
+            "auth_token": null
+          }
         }
-      }
-      """)
+        """))
   var status = stat()
   stat(instance.modelStatePath, &status)
   #expect(status.st_mode & 0o777 == 0o600)
@@ -200,8 +201,10 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   try state.save(instance)
   #expect(try GuestEnvState.tryLoad(instance) == state)
   #expect(
-    readFile(instance.guestEnvironmentStatePath)
-      == "{\n  \"entries\": {\n    \"BAR\": \"2\",\n    \"FOO\": \"1\",\n    \"_E\": \"\"\n  }\n}")
+    try canonicalJSON(readFile(instance.guestEnvironmentStatePath))
+      == canonicalJSON(
+        #"{"version":2,"entries":{"BAR":{"kind":"literal","value":"2"},"FOO":{"kind":"literal","value":"1"},"_E":{"kind":"literal","value":""}}}"#
+      ))
   try GuestEnvState().save(instance)
   #expect(!FileManager.default.fileExists(atPath: instance.guestEnvironmentStatePath))
 
@@ -209,7 +212,9 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
     atPath: instance.guestEnvironmentStatePath, withIntermediateDirectories: true)
   #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
   try FileManager.default.removeItem(atPath: instance.guestEnvironmentStatePath)
-  try writeFile(instance.guestEnvironmentStatePath, #"{"entries": {"1FOO": "v"}}"#)
+  try writeFile(
+    instance.guestEnvironmentStatePath,
+    #"{"version":2,"entries":{"1FOO":{"kind":"literal","value":"v"}}}"#)
   #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
 }
 
@@ -237,7 +242,7 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   #expect(throws: (any Error).self) { try GuestEnvState.parseCLIArgument("1X=v") }
 }
 
-@Test func guestEnvStateWritesVersionTwoOnlyForReferences() throws {
+@Test func guestEnvStateRequiresCurrentVersionAndTypedEntries() throws {
   let root = try scratchDirectory("genv2")
   defer { try? FileManager.default.removeItem(atPath: root) }
   let instance = try testInstance(root)
@@ -246,15 +251,23 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   ])
   try state.save(instance)
   let text = try #require(readFile(instance.guestEnvironmentStatePath))
-  #expect(text.contains("\"version\": 2"))
-  #expect(text.contains("\"kind\": \"secret\"") && text.contains("\"name\": \"db\""))
+  #expect(
+    try canonicalJSON(text)
+      == canonicalJSON(
+        #"{"version":2,"entries":{"DB":{"kind":"secret","name":"db"},"MODE":{"kind":"literal","value":"dev"}}}"#
+      ))
   #expect(try GuestEnvState.tryLoad(instance) == state)
-  // A version this binary does not know is refused, not misread.
-  try writeFile(instance.guestEnvironmentStatePath, #"{"version": 3, "entries": {}}"#)
-  #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
-  // The version-1 shape inside version 2 is refused.
-  try writeFile(instance.guestEnvironmentStatePath, #"{"version": 2, "entries": {"A": "x"}}"#)
-  #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
+  for invalid in [
+    #"{"entries":{"A":{"kind":"literal","value":"x"}}}"#,
+    #"{"version":1,"entries":{}}"#,
+    #"{"version":3,"entries":{}}"#,
+    #"{"version":"2","entries":{}}"#,
+    #"{"version":2,"entries":{"A":"x"}}"#,
+    #"{"version":2,"entries":{"A":{"kind":"unknown","value":"x"}}}"#,
+  ] {
+    try writeFile(instance.guestEnvironmentStatePath, invalid)
+    #expect(throws: (any Error).self) { try GuestEnvState.tryLoad(instance) }
+  }
 }
 
 @Test func providerVariableReferencesAreRoutedToTheProxy() throws {
@@ -285,9 +298,11 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   ])
   try state.save(instance)
   let text = try #require(readFile(instance.guestEnvironmentStatePath))
-  #expect(text.contains("\"kind\": \"provider_secret\""))
   #expect(
-    text.contains("\"provider\": \"anthropic\"") && text.contains("\"injection\": \"x_api_key\""))
+    try canonicalJSON(text)
+      == canonicalJSON(
+        #"{"version":2,"entries":{"ANTHROPIC_API_KEY":{"kind":"provider_secret","provider":"anthropic","injection":"x_api_key","name":"anthropic"}}}"#
+      ))
   #expect(try GuestEnvState.tryLoad(instance) == state)
   try writeFile(
     instance.guestEnvironmentStatePath,
@@ -451,18 +466,21 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
 
 // MARK: - Ordered JSON
 
-@Test func orderedJSONKeepsOrderAndPrintsLikeSerdeJSON() throws {
+@Test func orderedJSONPreservesDocumentOrderAndBounds() throws {
   let value = try OrderedJSON.parse(
     #"{"zeta":1,"a":1e16,"b":1.5e-7,"c":-0,"d":18446744073709551616,"f":0.1,"g":1.0,"i":"\u00e9\u2028/","j":1E2,"k":-5,"z":{"y":[]}}"#
   )
-  #expect(
-    value.compact
-      == #"{"zeta":1,"a":1e+16,"b":1.5e-7,"c":-0.0,"d":1.8446744073709552e+19,"f":0.1,"g":1.0,"i":"é\#u{2028}/","j":100.0,"k":-5,"z":{"y":[]}}"#
-  )
-  #expect(
-    try OrderedJSON.parse(#"{"a":{"b":[1,{}],"c":{}},"d":[]}"#).pretty
-      == "{\n  \"a\": {\n    \"b\": [\n      1,\n      {}\n    ],\n    \"c\": {}\n  },\n  \"d\": []\n}"
-  )
+  for text in [value.compact, value.pretty] {
+    let decoded = try OrderedJSON.parse(text)
+    #expect(decoded.objectMembers?.keys == value.objectMembers?.keys)
+    #expect(decoded["i"]?.stringValue == "é\u{2028}/")
+    let numbers = try #require(
+      JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    #expect((numbers["a"] as? NSNumber)?.doubleValue == 1e16)
+    #expect((numbers["b"] as? NSNumber)?.doubleValue == 1.5e-7)
+    #expect((numbers["g"] as? NSNumber)?.doubleValue == 1)
+    #expect((numbers["k"] as? NSNumber)?.intValue == -5)
+  }
   for bad in ["", "[1,]", "{\"a\":1,}", "01", "\"\\ud800\"", "nul", "[1] x", "{'a':1}"] {
     #expect(throws: OrderedJSON.ParseError.self, "\(bad)") { try OrderedJSON.parse(bad) }
   }
@@ -490,13 +508,13 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
   #expect(parsed["values"] == .array([.bool(true), .bool(false), .null, .int(-1), .double(0.25)]))
 }
 
-@Test func orderedJSONRemovalSwapsTheLastMemberIn() {
+@Test func orderedJSONRemovalPreservesRemainingOrder() {
   var members = OrderedJSON.Members([("a", .int(-1)), ("b", .bool(true)), ("c", .null)])
   members.remove("a")
-  #expect(members.keys == ["c", "b"])
+  #expect(members.keys == ["b", "c"])
   members.insert("b", .bool(false))
   members.insert("d", .null)
-  #expect(members.keys == ["c", "b", "d"])
+  #expect(members.keys == ["b", "c", "d"])
 }
 
 // MARK: - Agent update

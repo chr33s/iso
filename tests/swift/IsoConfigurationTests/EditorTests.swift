@@ -4,7 +4,7 @@ import Testing
 @testable import IsoConfiguration
 
 private let reference = CredentialReference(
-  "cmd:security find-generic-password -s coop-openai -a openai -w")!
+  "cmd:security find-generic-password -s iso-openai -a openai -w")!
 
 private func upsert(
   _ text: String?, format: ConfigFormat = .jsonc, provider: ProxyProvider = .openai
@@ -22,7 +22,7 @@ private func upsert(
   let original = """
     // comment is dropped
     {
-      "future_feature": {"nested": [1, 2.5, "x", null, true, {"deep": 9007199254740993}]},
+      "claude": {"future_feature": {"nested": [1, 2.5, "x", null, true, {"deep": 9007199254740993}]}},
       "profiles": {"a.b": {"plugins": ["p"]}, "a": {"apt_packages": []}},
       "proxy": {"anthropic": {"credential": "cmd:a", "auth": "api_key"}, "openai": {"credential": "cmd:old", "extra": 1}},
       "vm": {"vcpu_count": 4}
@@ -31,8 +31,10 @@ private func upsert(
   let result = try upsert(original)
   let before = try ConfigLoader.parse(
     Array(original.utf8), format: .jsonc, path: "c", limits: .configuration)
-  #expect(result["future_feature"] == before["future_feature"])
-  #expect(result["future_feature"]?["nested"] == before["future_feature"]?["nested"])
+  #expect(result["claude"]?["future_feature"] == before["claude"]?["future_feature"])
+  #expect(
+    result["claude"]?["future_feature"]?["nested"] == before["claude"]?["future_feature"]?["nested"]
+  )
   #expect(result["profiles"] == before["profiles"])
   #expect(result["vm"] == before["vm"])
   #expect(result["proxy"]?["anthropic"] == before["proxy"]?["anthropic"])
@@ -40,7 +42,7 @@ private func upsert(
   #expect(result["proxy"]?["openai"]?["credential"] == .string(reference.command.expose()))
   #expect(result["proxy"]?["openai"]?["auth"] == .string("bearer"))
   // Exact integer above 2^53 survives the edit.
-  guard case .array(let nested)? = result["future_feature"]?["nested"],
+  guard case .array(let nested)? = result["claude"]?["future_feature"]?["nested"],
     case .object(let deep) = nested[5]
   else {
     Issue.record("shape")
@@ -67,7 +69,7 @@ private func upsert(
   #expect(throws: ConfigError.self) { try upsert(#"{"proxy": {"openai": "x"}}"#) }
   #expect(throws: ConfigError.self) { try upsert(#"{"a": 1,}"#) }
   // The edit result must itself be a valid configuration.
-  #expect(throws: ConfigError.self) { try upsert(#"{"firecracker_bin": "/x"}"#) }
+  #expect(throws: ConfigError.self) { try upsert(#"{"unknown_setting": "/x"}"#) }
   #expect(throws: ConfigError.self) {
     try upsert(#"{"proxy": {"anthropic": {"credential": "literal"}}}"#)
   }

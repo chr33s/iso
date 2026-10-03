@@ -4,13 +4,13 @@ import Foundation
 
 /// Versioned challenge on the existing listener. The signing key never goes
 /// to the guest; a guest-visible CONNECT capability cannot authenticate replies.
-public struct EgressReadiness: Sendable {
-  public static let requestLine = "GET /__iso/egress-ready HTTP/1.1"
+package struct EgressReadiness: Sendable {
+  package static let requestLine = "GET /__iso/egress-ready HTTP/1.1"
   private let key: Curve25519.Signing.PrivateKey
   private let bootID: String
   private let policyHash: String
 
-  public init(privateKeyHex: String, bootID: String, allow: EgressAllowlist) throws {
+  package init(privateKeyHex: String, bootID: String, allow: EgressAllowlist) throws {
     guard let bytes = Self.hex(privateKeyHex, count: 32), Self.hex(bootID, count: 16) != nil,
       let signingKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: bytes)
     else {
@@ -59,7 +59,7 @@ public struct EgressReadiness: Sendable {
     return hex(nonce, count: 16) != nil ? nonce : nil
   }
 
-  public func response(_ head: [UInt8], capability: String, alive: () -> Bool) -> [UInt8] {
+  package func response(_ head: [UInt8], capability: String, alive: () -> Bool) -> [UInt8] {
     guard let nonce = Self.challenge(head, capability: capability), alive() else {
       return ConnectGate.responseBytes(.authRequired)
     }
@@ -87,7 +87,7 @@ public struct EgressReadiness: Sendable {
 
   /// A bounded, nonblocking write; a paused or disconnected probe cannot
   /// occupy a worker indefinitely or terminate the companion with SIGPIPE.
-  public static func write(_ bytes: [UInt8], to fd: Int32, alive: () -> Bool) -> Bool {
+  package static func write(_ bytes: [UInt8], to fd: Int32, alive: () -> Bool) -> Bool {
     let flags = fcntl(fd, F_GETFL)
     var noSignal: Int32 = 1
     guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }

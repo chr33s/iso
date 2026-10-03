@@ -153,7 +153,7 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--scheme", choices=["bearer", "x_api_key"], default="bearer")
     parser.add_argument("--max-output-tokens", type=int, default=256)
-    parser.add_argument("--binary", type=Path, default=ROOT / "iso-proxy/.build/debug/iso-proxy-swift",
+    parser.add_argument("--binary", type=Path, default=ROOT / "iso-proxy/.build/debug/iso-proxy",
                         help="Swift proxy executable (swift build --package-path iso-proxy)")
     args = parser.parse_args()
     if not 16 <= args.max_output_tokens <= 1024:
@@ -179,7 +179,7 @@ def main():
         port = reservation.getsockname()[1]
     binary = args.binary.resolve(strict=True)
     command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(binary),
-               "-f", str(ROOT / "Sources/IsoHost/seatbelt-proxy.sb"), str(binary)]
+               "-f", str(ROOT / "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb"), str(binary)]
     child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, env={}, start_new_session=True)
     audit = OutputAudit([child.stdout, child.stderr], [credential.encode(), token.encode()])

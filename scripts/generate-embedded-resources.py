@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate Sources/IsoHost/EmbeddedResources.swift from scripts/guest/.
+"""Regenerate Sources/IsoHost/Guest/EmbeddedResources.swift from scripts/guest/.
 
 The Swift host embeds guest scripts in the binary so it needs no resource
 files at run time. `EmbeddedResourcesTests` fails when this file is stale.
@@ -7,11 +7,12 @@ files at run time. `EmbeddedResourcesTests` fails when this file is stale.
     python3 scripts/generate-embedded-resources.py
 """
 
+import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = sorted(p for p in (ROOT / "scripts" / "guest").rglob("*") if p.is_file())
-OUT = ROOT / "Sources" / "IsoHost" / "EmbeddedResources.swift"
+OUT = ROOT / "Sources" / "IsoHost" / "Guest" / "EmbeddedResources.swift"
 
 
 def literal(text):
@@ -29,6 +30,9 @@ def literal(text):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--check", action="store_true", help="fail if the embedded scripts are stale")
+    args = parser.parse_args()
     lines = [
         "// Derived from trailofbits/coop.",
         "// Modified by chr33s: ported/adapted for the Swift implementation.",
@@ -38,16 +42,22 @@ def main():
         "",
         "/// Guest scripts embedded in the binary, keyed by their path under",
         "/// `scripts/guest/`.",
-        "public enum EmbeddedResources {",
-        "  public static let guestScripts: [String: String] = [",
+        "package enum EmbeddedResources {",
+        "  package static let guestScripts: [String: String] = [",
     ]
     for path in SOURCES:
         key = path.relative_to(ROOT / "scripts" / "guest").as_posix()
         text = path.read_text(encoding="utf-8")
         lines.append(f'    "{key}": {literal(text)},')
-    lines += ["  ]", "", "  public static func guestScript(_ path: String) -> String { guestScripts[path]! }", "}", ""]
-    OUT.write_text("\n".join(lines), encoding="utf-8")
-    print(f"wrote {OUT.relative_to(ROOT)} ({len(SOURCES)} scripts)")
+    lines += ["  ]", "", "  package static func guestScript(_ path: String) -> String { guestScripts[path]! }", "}", ""]
+    content = "\n".join(lines)
+    if args.check:
+        if not OUT.exists() or OUT.read_text(encoding="utf-8") != content:
+            raise SystemExit(f"stale {OUT.relative_to(ROOT)}; run scripts/generate-embedded-resources.py")
+        print(f"verified {OUT.relative_to(ROOT)} ({len(SOURCES)} scripts)")
+    else:
+        OUT.write_text(content, encoding="utf-8")
+        print(f"wrote {OUT.relative_to(ROOT)} ({len(SOURCES)} scripts)")
 
 
 if __name__ == "__main__":

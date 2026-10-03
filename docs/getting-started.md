@@ -55,8 +55,6 @@ bundle.
 Run the fork installer to install all matching components. An upstream updater
 continues to target its own repository. Fork releases use the Apple backend
 only; instances created by another backend are not managed by this build.
-Upstream TOML configuration must be converted to JSONC first; see
-[Migrating from TOML](configuration.md#migrating-from-toml).
 
 ## Build from source
 
@@ -94,7 +92,7 @@ isolate reads `~/.iso/config.jsonc` by default: JSON plus `//` and `/* */`
 comments (no trailing commas). Override the path with `--config`; a `.json`
 path is read as strict JSON. If no configuration file exists, isolate uses
 built-in defaults. Run `iso setup --config-only` to write a commented
-starter template (`iso init` remains as a deprecated alias).
+starter template.
 
 A minimal config (an empty object is valid; all fields have defaults):
 
@@ -157,7 +155,6 @@ run `iso codex -- login --device-auth` once.
 
 The steps below are explicit: `iso setup` prepares the image, `iso up`
 brings up an instance, and `iso claude` or `iso codex` launches an agent.
-(The former `iso quickstart` shortcut is removed.)
 
 ### 1. Setup
 
@@ -223,7 +220,7 @@ iso up . --extra-mount ~/data:/data
 Or clone a remote repository directly into `/workspace` inside the guest:
 
 ```
-iso up --git-repo https://github.com/trailofbits/coop.git
+iso up --git-repo https://github.com/chr33s/iso.git
 ```
 
 Tune a project environment at startup (each flag is repeatable where it makes sense, and works on both `iso up` and `iso start`):
@@ -270,7 +267,7 @@ Project creation options belong to `iso up`, not `iso start`:
 ```
 iso up ~/code/my-project --disk 40 --mount
 iso up ~/code/my-project --profile python,node
-iso up --git-repo https://github.com/trailofbits/coop.git
+iso up --git-repo https://github.com/chr33s/iso.git
 ```
 
 Skip Claude Code and Codex credential/config injection:
@@ -419,7 +416,7 @@ iso images --delete python-dev
 | `iso validate` | Check config and prerequisites without changing anything |
 | `iso logs` | Stream VM serial console logs (`-f` to follow) |
 | `iso editor` | Open VS Code or Zed connected to the guest via SSH |
-| `iso ssh-config` | Install a `coop-apple-<name>` SSH alias for ad-hoc `ssh`/`scp`/`rsync` |
+| `iso ssh-config` | Install a `iso-<name>` SSH alias for ad-hoc `ssh`/`scp`/`rsync` |
 | `iso resize --size +20` | Grow a stopped instance's disk by 20 GiB |
 | `iso resize --size 100` | Set a stopped instance's disk to 100 GiB |
 | `iso resize --mem 8192 --vcpus 4` | Change a stopped instance's memory and vCPUs |

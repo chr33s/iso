@@ -2,9 +2,9 @@ import NIOConcurrencyHelpers
 
 /// Shared across event loops. A lease owns one slot until explicitly released
 /// or destroyed; response headers alone never release a request lease.
-public final class Capacity: Sendable {
+package final class Capacity: Sendable {
   private let available: NIOLockedValueBox<Int>
-  public init(_ count: Int) { available = NIOLockedValueBox(count) }
+  package init(_ count: Int) { available = NIOLockedValueBox(count) }
 
   func acquire() -> Lease? {
     let acquired = available.withLockedValue { slots in

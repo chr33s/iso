@@ -1,7 +1,0 @@
-List instances by name and state
-
-Usage: iso list [OPTIONS]
-
-Options:
-      --json  Emit machine-readable JSON instead of the text table
-  -h, --help  Print help

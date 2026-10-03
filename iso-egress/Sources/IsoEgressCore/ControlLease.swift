@@ -3,7 +3,7 @@ import Synchronization
 
 /// A private renewal pipe, shared by the listener and tunnel workers. The
 /// caller owns the descriptor and must keep it open for this lease's lifetime.
-public final class ControlLease: Sendable {
+package final class ControlLease: Sendable {
   private struct State: Sendable {
     var lastRenewal: UInt64
     var revoked = false
@@ -13,7 +13,7 @@ public final class ControlLease: Sendable {
   private let state: Mutex<State>
   private let limit = Monotonic.nanoseconds(EgressBudgets.lease)
 
-  public convenience init(descriptor: Int32) {
+  package convenience init(descriptor: Int32) {
     self.init(descriptor: descriptor, startedAt: Monotonic.now())
   }
 
@@ -22,7 +22,7 @@ public final class ControlLease: Sendable {
     state = Mutex(State(lastRenewal: startedAt))
   }
 
-  public func alive() -> Bool {
+  package func alive() -> Bool {
     state.withLock { probe(at: Monotonic.now(), state: &$0) }
   }
 

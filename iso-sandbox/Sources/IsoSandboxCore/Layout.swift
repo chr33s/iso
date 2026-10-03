@@ -3,20 +3,20 @@ import Foundation
 
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
-public let protocolVersion = 5
-public let runtimeVersion = "0.5.0"
-public let containerizationVersion = "0.45.0"
+package let protocolVersion = 5
+package let runtimeVersion = "0.5.0"
+package let containerizationVersion = "0.45.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns
 /// lives under `root`; nothing is read from or written to Apple Container's
 /// stores.
-public struct SandboxRoot: Sendable {
-  public let root: URL
+package struct SandboxRoot: Sendable {
+  package let root: URL
 
   /// `path` must be absolute. An existing root is canonicalized with
   /// realpath(3), so paths the runtime reports (e.g. the rootfs source in
   /// the effective config) compare exactly with the caller's canonical form.
-  public init(_ path: String) throws {
+  package init(_ path: String) throws {
     guard path.hasPrefix("/") else { throw SandboxError("--root must be an absolute path") }
     root = URL(fileURLWithPath: Self.canonical(path), isDirectory: true)
   }
@@ -35,40 +35,40 @@ public struct SandboxRoot: Sendable {
     return (canonical(parent) as NSString).appendingPathComponent(url.lastPathComponent)
   }
 
-  public var imageStore: URL { root.appendingPathComponent("store", isDirectory: true) }
-  public var kernel: URL { root.appendingPathComponent("vmlinux") }
-  public var initfs: URL { root.appendingPathComponent("initfs.ext4") }
-  public var sandboxes: URL { root.appendingPathComponent("sandboxes", isDirectory: true) }
+  package var imageStore: URL { root.appendingPathComponent("store", isDirectory: true) }
+  package var kernel: URL { root.appendingPathComponent("vmlinux") }
+  package var initfs: URL { root.appendingPathComponent("initfs.ext4") }
+  package var sandboxes: URL { root.appendingPathComponent("sandboxes", isDirectory: true) }
   /// Unpacked image root filesystems, cloned into new sandboxes.
-  public var bases: URL { root.appendingPathComponent("bases", isDirectory: true) }
+  package var bases: URL { root.appendingPathComponent("bases", isDirectory: true) }
   /// Disks saved by `commit`, cloned by `create --from-disk` and `restore`.
-  public var disks: URL { root.appendingPathComponent("disks", isDirectory: true) }
-  public var subnetState: URL { root.appendingPathComponent("subnets.json") }
-  public var allocationLock: URL { root.appendingPathComponent("subnets.lock") }
-  public var operationLock: URL { root.appendingPathComponent("operations.lock") }
+  package var disks: URL { root.appendingPathComponent("disks", isDirectory: true) }
+  package var subnetState: URL { root.appendingPathComponent("subnets.json") }
+  package var allocationLock: URL { root.appendingPathComponent("subnets.lock") }
+  package var operationLock: URL { root.appendingPathComponent("operations.lock") }
   /// Lock files for sandboxes, committed disks, and the maintenance
   /// artifact (see ``FileLock``). They are never removed, so every process
   /// locks the same file for a given name, even across a delete.
-  public var locks: URL { root.appendingPathComponent("locks", isDirectory: true) }
+  package var locks: URL { root.appendingPathComponent("locks", isDirectory: true) }
   /// The installed maintenance artifact (see ``MaintenanceArtifact``).
-  public var maintenance: URL { root.appendingPathComponent("maintenance", isDirectory: true) }
+  package var maintenance: URL { root.appendingPathComponent("maintenance", isDirectory: true) }
 
-  public func sandbox(_ id: SandboxID) -> SandboxPaths {
+  package func sandbox(_ id: SandboxID) -> SandboxPaths {
     SandboxPaths(
       id: id, dir: sandboxes.appendingPathComponent(id.rawValue, isDirectory: true), locks: locks)
   }
 
   /// Guards committed disk `name` and its metadata: exclusive to publish or
   /// delete them, shared to clone them.
-  public func diskLock(_ name: SandboxID) -> URL {
+  package func diskLock(_ name: SandboxID) -> URL {
     locks.appendingPathComponent("disk-\(name.rawValue).lock")
   }
 
-  public func disk(_ name: SandboxID) -> URL {
+  package func disk(_ name: SandboxID) -> URL {
     disks.appendingPathComponent("\(name.rawValue).ext4")
   }
 
-  public func requireInitialized() throws {
+  package func requireInitialized() throws {
     for url in [kernel, initfs, imageStore] where !FileManager.default.fileExists(atPath: url.path)
     {
       throw SandboxError("state root \(root.path) is not initialized; run `iso-sandbox init`")
@@ -81,7 +81,7 @@ public struct SandboxRoot: Sendable {
   /// closed rather than forget a sandbox. A staged disk update is not
   /// applied: it never changes the identity, owner, or subnet these
   /// callers read, and one left unreadable must not hide every sandbox.
-  public func allRecords() throws -> [SandboxRecord] {
+  package func allRecords() throws -> [SandboxRecord] {
     guard FileManager.default.fileExists(atPath: sandboxes.path) else { return [] }
     return try FileManager.default.contentsOfDirectory(atPath: sandboxes.path).sorted().compactMap {
       name in
@@ -96,7 +96,7 @@ public struct SandboxRoot: Sendable {
   /// directory (not a symlink) owned by this user, mode 0700. One that
   /// already existed with a wider mode is narrowed; one owned by another
   /// user, or a symlink, is refused.
-  public func createDirectories() throws {
+  package func createDirectories() throws {
     for dir in [root, sandboxes, bases, disks, locks, maintenance] {
       try FileManager.default.createDirectory(
         at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -116,33 +116,31 @@ public struct SandboxRoot: Sendable {
   }
 }
 
-public struct SandboxPaths: Sendable {
-  public let id: SandboxID
-  public let dir: URL
+package struct SandboxPaths: Sendable {
+  package let id: SandboxID
+  package let dir: URL
   let locks: URL
-  public var record: URL { dir.appendingPathComponent("record.json") }
-  public var live: URL { dir.appendingPathComponent("live.json") }
-  public var rootfs: URL { dir.appendingPathComponent("rootfs.ext4") }
-  public var bootLog: URL { dir.appendingPathComponent("boot.log") }
-  public var ownerLog: URL { dir.appendingPathComponent("owner.log") }
-  public var lock: URL { dir.appendingPathComponent("owner.lock") }
-  public var launchdPlist: URL { dir.appendingPathComponent("launchd.plist") }
+  package var record: URL { dir.appendingPathComponent("record.json") }
+  package var live: URL { dir.appendingPathComponent("live.json") }
+  package var rootfs: URL { dir.appendingPathComponent("rootfs.ext4") }
+  package var bootLog: URL { dir.appendingPathComponent("boot.log") }
+  package var ownerLog: URL { dir.appendingPathComponent("owner.log") }
+  package var lock: URL { dir.appendingPathComponent("owner.lock") }
+  package var launchdPlist: URL { dir.appendingPathComponent("launchd.plist") }
   /// Written by an owner that failed before its VM ran; read by `start`.
-  public var ownerFailed: URL { dir.appendingPathComponent("owner.failed") }
+  package var ownerFailed: URL { dir.appendingPathComponent("owner.failed") }
   /// A staged disk update (see ``DiskUpdate``).
-  public var pendingDiskUpdate: URL { dir.appendingPathComponent("disk-update.pending.json") }
-  /// A staged restore written by runtime 0.1.0, still recovered.
-  var legacyPendingRestore: URL { dir.appendingPathComponent("restore.pending.json") }
+  package var pendingDiskUpdate: URL { dir.appendingPathComponent("disk-update.pending.json") }
   /// Serializes every mutation of this sandbox, and an owner's claim to
   /// it, across processes (see ``Sandboxes/mutating(_:settle:_:)``).
-  public var mutationLock: URL { locks.appendingPathComponent("sandbox-\(id.rawValue).lock") }
+  package var mutationLock: URL { locks.appendingPathComponent("sandbox-\(id.rawValue).lock") }
   /// Held briefly: exclusive while a disk update's record is written,
   /// shared while the record is read, so a reader never pairs a record with
   /// the other side of a publication.
   var recordLock: URL { locks.appendingPathComponent("record-\(id.rawValue).lock") }
   /// Unix socket paths are limited to 104 bytes on macOS, so the control
   /// socket lives in a short per-user directory keyed by a hash of `dir`.
-  public var control: URL {
+  package var control: URL {
     Self.controlDirectory.appendingPathComponent("\(Self.stableHash(dir.path)).sock")
   }
 
@@ -150,7 +148,7 @@ public struct SandboxPaths: Sendable {
   /// the user from boot: in shared `/tmp`, another user could pre-create
   /// the directory and block every sandbox. Read with confstr(3) because
   /// launchd jobs may not inherit `TMPDIR`.
-  public static let controlDirectory: URL = {
+  package static let controlDirectory: URL = {
     var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
     let n = confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count)
     let tmp =
@@ -161,7 +159,7 @@ public struct SandboxPaths: Sendable {
       "iso-sbx", isDirectory: true)
   }()
   /// launchd label, unique per state root and sandbox.
-  public var launchdLabel: String { "dev.coop.sandbox.\(Self.stableHash(dir.path))" }
+  package var launchdLabel: String { "dev.iso.sandbox.\(Self.stableHash(dir.path))" }
 
   static func stableHash(_ s: String) -> String {
     let h = s.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
@@ -174,7 +172,7 @@ public struct SandboxPaths: Sendable {
   /// is committed even if a crash interrupted its record write, so its
   /// staged record is returned. Nothing is written here: only a guarded
   /// mutation settles the update (``DiskUpdate/settle(_:)``).
-  public func loadRecord() throws -> SandboxRecord {
+  package func loadRecord() throws -> SandboxRecord {
     let lock = try FileLock.acquire(recordLock, .shared)
     defer { withExtendedLifetime(lock) {} }
     let record = try readRecordFile()
@@ -188,7 +186,7 @@ public struct SandboxPaths: Sendable {
   }
 
   /// Callers hold the mutation guard, and no disk update is staged.
-  public func save(_ record: SandboxRecord) throws {
+  package func save(_ record: SandboxRecord) throws {
     let lock = try FileLock.acquire(recordLock, .exclusive)
     defer { withExtendedLifetime(lock) {} }
     try writeRecordFile(record)
@@ -199,7 +197,7 @@ public struct SandboxPaths: Sendable {
     try JSONEncoder.pretty.encode(record).write(to: self.record, options: .atomic)
   }
 
-  public func loadLive() -> LiveState? {
+  package func loadLive() -> LiveState? {
     guard let data = try? Data(contentsOf: live) else { return nil }
     return try? JSONDecoder.iso.decode(LiveState.self, from: data)
   }
@@ -212,10 +210,10 @@ public struct SandboxPaths: Sendable {
 
 /// A sandbox or disk identifier: always a safe single path component and a
 /// valid container ID.
-public struct SandboxID: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
-  public let rawValue: String
-  public init?(rawValue: String) { try? self.init(rawValue) }
-  public init(_ raw: String) throws {
+package struct SandboxID: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
+  package let rawValue: String
+  package init?(rawValue: String) { try? self.init(rawValue) }
+  package init(_ raw: String) throws {
     let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
     let ok =
       !raw.isEmpty && raw.count <= 48 && raw.first != "-"
@@ -223,22 +221,22 @@ public struct SandboxID: RawRepresentable, Codable, Hashable, Sendable, CustomSt
     guard ok else { throw SandboxError("invalid identifier \(raw.debugDescription)") }
     rawValue = raw
   }
-  public init(from decoder: Decoder) throws {
+  package init(from decoder: Decoder) throws {
     try self.init(try decoder.singleValueContainer().decode(String.self))
   }
-  public func encode(to encoder: Encoder) throws {
+  package func encode(to encoder: Encoder) throws {
     var c = encoder.singleValueContainer()
     try c.encode(rawValue)
   }
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 }
 
 /// Identifies one `set`, `grow`, or `restore`. Callers pass their own to
 /// correlate the outcome after a crash; otherwise one is generated.
-public struct OperationID: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
-  public let rawValue: String
-  public init?(rawValue: String) { try? self.init(rawValue) }
-  public init(_ raw: String) throws {
+package struct OperationID: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
+  package let rawValue: String
+  package init?(rawValue: String) { try? self.init(rawValue) }
+  package init(_ raw: String) throws {
     let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
     guard !raw.isEmpty, raw.count <= 64, raw.unicodeScalars.allSatisfy({ allowed.contains($0) })
     else {
@@ -246,26 +244,26 @@ public struct OperationID: RawRepresentable, Codable, Hashable, Sendable, Custom
     }
     rawValue = raw
   }
-  public static func random() -> OperationID {
+  package static func random() -> OperationID {
     // A lowercased UUID always satisfies the rule above.
     OperationID(unchecked: UUID().uuidString.lowercased())
   }
   private init(unchecked: String) { rawValue = unchecked }
-  public init(from decoder: Decoder) throws {
+  package init(from decoder: Decoder) throws {
     try self.init(try decoder.singleValueContainer().decode(String.self))
   }
-  public func encode(to encoder: Encoder) throws {
+  package func encode(to encoder: Encoder) throws {
     var c = encoder.singleValueContainer()
     try c.encode(rawValue)
   }
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 }
 
 /// Durable description of a persistent sandbox. Deliberately has no field
 /// for host mounts, socket relays, published ports, or agent forwarding:
 /// those states are not expressible.
 /// How a sandbox's vmnet network reaches beyond the host. Fixed at create.
-public enum NetworkMode: String, Codable, Sendable {
+package enum NetworkMode: String, Codable, Sendable {
   /// NAT to the host's uplinks (vmnet shared mode).
   case shared
   /// No route beyond the host: vmnet host mode with NAT44, NAT66, the DNS
@@ -273,45 +271,43 @@ public enum NetworkMode: String, Codable, Sendable {
   case hostOnly = "host_only"
 }
 
-public struct SandboxRecord: Codable, Sendable {
-  public var id: SandboxID
+package struct SandboxRecord: Codable, Sendable {
+  package var id: SandboxID
   /// Caller-chosen ownership tag; `delete` refuses a mismatch.
-  public var owner: String
-  public var imageReference: String
-  public var imageDigest: String
+  package var owner: String
+  package var imageReference: String
+  package var imageDigest: String
   /// Committed disk this sandbox was cloned from, if any.
-  public var baseDisk: String?
+  package var baseDisk: String?
   /// Init process environment, captured from the image config at create
   /// time so a start never depends on the image store.
-  public var environment: [String]
-  public var cpus: Int
-  public var memoryBytes: UInt64
-  public var diskBytes: UInt64
-  public var subnetIndex: Int
-  public var createdAt: Date
+  package var environment: [String]
+  package var cpus: Int
+  package var memoryBytes: UInt64
+  package var diskBytes: UInt64
+  package var subnetIndex: Int
+  package var createdAt: Date
   /// Incremented each time `restore` replaces the disk, so a caller that
   /// crashed mid-restore can tell whether it applied.
-  public var diskGeneration: Int = 0
+  package var diskGeneration: Int = 0
   /// The last `set`, `grow`, or `restore` committed to this record, so a
   /// caller can tell whether its own operation applied and whether another
   /// has happened since. Absent until the first such operation.
-  public var lastOperation: OperationID?
-  /// Absent (nil) for shared-mode sandboxes, so records stay readable by
-  /// callers that predate the field.
-  public var network: NetworkMode?
+  package var lastOperation: OperationID?
+  /// The network boundary selected when this sandbox was created.
+  package var network: NetworkMode
   /// Host wall-clock end of the current boot's session, set by `start
   /// --expires-at` and cleared by a `start` without it. The owner halts
   /// the VM at this time and refuses to boot past it.
-  public var expiresAt: Date?
+  package var expiresAt: Date?
 
-  public var networkMode: NetworkMode { network ?? .shared }
-  public var subnet: String { Self.subnet(subnetIndex) }
-  public static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
+  package var subnet: String { Self.subnet(subnetIndex) }
+  package static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
 
-  public init(
+  package init(
     id: SandboxID, owner: String, imageReference: String, imageDigest: String, baseDisk: String?,
     environment: [String], cpus: Int, memoryBytes: UInt64, diskBytes: UInt64, subnetIndex: Int,
-    createdAt: Date
+    createdAt: Date, network: NetworkMode = .shared
   ) {
     self.id = id
     self.owner = owner
@@ -324,33 +320,34 @@ public struct SandboxRecord: Codable, Sendable {
     self.diskBytes = diskBytes
     self.subnetIndex = subnetIndex
     self.createdAt = createdAt
+    self.network = network
   }
 }
 
 /// Written by the owner process while the VM runs; removed on clean stop.
-public struct LiveState: Codable, Sendable {
-  public var pid: Int32
-  public var startedAt: Date
-  public var ipv4: String?
-  public var ipv6: String?
-  /// Random identity for this owner process. Absent in a protocol-4 file.
+package struct LiveState: Codable, Sendable {
+  package var pid: Int32
+  package var startedAt: Date
+  package var ipv4: String?
+  package var ipv6: String?
+  /// Random identity for this owner process.
   /// It is not part of the disk record, so a restore does not keep it.
-  public var bootId: String? = nil
+  package var bootId: String
 }
 
-public enum SandboxStatus: String, Codable, Sendable {
+package enum SandboxStatus: String, Codable, Sendable {
   case running, booting, stopped, crashed
 }
 
-public struct SandboxError: Error, CustomStringConvertible {
-  public let description: String
-  public init(_ message: String) { description = message }
+package struct SandboxError: Error, CustomStringConvertible {
+  package let description: String
+  package init(_ message: String) { description = message }
 }
 
 /// Kernels this runtime has been validated with (sha256 of the vmlinux).
 /// `init` refuses any other kernel; there is no override.
-public enum KernelPin {
-  public static let allowed: Set<String> = [
+package enum KernelPin {
+  package static let allowed: Set<String> = [
     // vmlinux-6.18.15-186, installed by Apple `container` 1.4.1 (Kata static build).
     "2fe4a58d2885d623bcb4d705900ac8c1d4f02371152da8126b3b00c8c47fc3a1"
   ]
@@ -360,7 +357,7 @@ public enum KernelPin {
   /// newer kernel installed elsewhere later does not break re-running init;
   /// otherwise `requested` replaces it. `install` is true when the kernel
   /// must be written.
-  public static func select(
+  package static func select(
     root: SandboxRoot, requested: String, allowed: Set<String> = allowed
   ) throws -> (data: Data, sha256: String, install: Bool) {
     func pinned(_ path: String) throws -> (Data, String) {
@@ -392,8 +389,8 @@ public enum KernelPin {
 /// 5. Leaf locks, held briefly with nothing taken inside them:
 ///    `locks/record-<id>.lock` (``SandboxPaths/recordLock``) and
 ///    `locks/maintenance.lock` (``Maintenance``).
-public final class FileLock {
-  public enum Mode: Sendable {
+package final class FileLock {
+  package enum Mode: Sendable {
     case shared, exclusive
     var operation: Int32 { self == .shared ? LOCK_SH : LOCK_EX }
   }
@@ -403,7 +400,7 @@ public final class FileLock {
   private init(fd: Int32) { self.fd = fd }
 
   /// Blocks until the lock is granted.
-  public static func acquire(_ url: URL, _ mode: Mode) throws -> FileLock {
+  package static func acquire(_ url: URL, _ mode: Mode) throws -> FileLock {
     let fd = try openLockFile(url)
     while flock(fd, mode.operation) != 0 {
       let e = errno
@@ -415,7 +412,7 @@ public final class FileLock {
   }
 
   /// Waits without blocking a thread, for callers on Swift concurrency.
-  public static func acquire(_ url: URL, _ mode: Mode, polling interval: Duration) async throws
+  package static func acquire(_ url: URL, _ mode: Mode, polling interval: Duration) async throws
     -> FileLock
   {
     while true {
@@ -425,7 +422,7 @@ public final class FileLock {
   }
 
   /// `nil` while a conflicting holder has it.
-  public static func attempt(_ url: URL, _ mode: Mode) throws -> FileLock? {
+  package static func attempt(_ url: URL, _ mode: Mode) throws -> FileLock? {
     let fd = try openLockFile(url)
     guard flock(fd, mode.operation | LOCK_NB) == 0 else {
       let e = errno
@@ -455,21 +452,21 @@ public final class FileLock {
 /// files and uncommitted creates. Operations hold it shared (distinct
 /// sandboxes run concurrently; ``Sandboxes/mutating(_:settle:_:)``
 /// serializes each one); the sweep needs it exclusively.
-public enum OperationLock {
+package enum OperationLock {
   /// Blocks until no sweep is running.
-  public static func shared(_ root: SandboxRoot) throws -> FileLock {
+  package static func shared(_ root: SandboxRoot) throws -> FileLock {
     try FileLock.acquire(root.operationLock, .shared)
   }
 
   /// `nil` while any operation is in progress.
-  public static func tryExclusive(_ root: SandboxRoot) -> FileLock? {
+  package static func tryExclusive(_ root: SandboxRoot) -> FileLock? {
     (try? FileLock.attempt(root.operationLock, .exclusive)) ?? nil
   }
 }
 
 /// Clones `from` to `to`, owner-only: clonefile(2) copies the source's
 /// mode, which the process umask does not narrow.
-public func clone(_ from: URL, to: URL) throws {
+package func clone(_ from: URL, to: URL) throws {
   guard clonefile(from.path, to.path, 0) == 0 else {
     throw SandboxError(
       "clonefile \(from.lastPathComponent) -> \(to.lastPathComponent): errno \(errno)")
@@ -479,13 +476,13 @@ public func clone(_ from: URL, to: URL) throws {
   }
 }
 
-public func printJSON<T: Encodable>(_ value: T) throws {
+package func printJSON<T: Encodable>(_ value: T) throws {
   FileHandle.standardOutput.write(try JSONEncoder.pretty.encode(value))
   FileHandle.standardOutput.write(Data("\n".utf8))
 }
 
 extension JSONEncoder {
-  public static var pretty: JSONEncoder {
+  package static var pretty: JSONEncoder {
     let e = JSONEncoder()
     e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     e.dateEncodingStrategy = .iso8601
@@ -494,7 +491,7 @@ extension JSONEncoder {
 }
 
 extension JSONDecoder {
-  public static var iso: JSONDecoder {
+  package static var iso: JSONDecoder {
     let d = JSONDecoder()
     d.dateDecodingStrategy = .iso8601
     return d

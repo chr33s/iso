@@ -1,24 +1,27 @@
-# Sandboxy-inspired features for Coop
+# Sandboxy-inspired features for isolate
 
-**Status:** Draft proposal, version 0.2  
-**Date:** 2026-10-01  
-**Target:** `chr33s/coop`, `swift` branch  
-**Suggested repository path:** `docs/design/sandboxy-inspired-features-spec.md`  
-**Coop baseline:** `7cacce6fd92df07a690b8b6774c437e9376cd14e`  
+**Status:** Draft proposal, version 0.2
+**Date:** 2026-10-01
+**Target:** `chr33s/iso`, `main` branch
+**Suggested repository path:** `docs/design/sandboxy-inspired-features-spec.md`
 **Sandboxy reference:** `apple/containerization` at `f24df2ac817df66fe149a80103251dec987c32dc`, `examples/sandboxy/`
 
 This document proposes changes; it does not describe shipped features or certify their security. Existing behavior is identified explicitly and linked to the inspected source. All new commands, configuration fields, state records, budgets, and acceptance criteria below are proposed. No implementation or runtime tests were performed for this specification.
 
-**Revision 0.2:** Promote declarative agent definitions to the second delivery increment, before filtered egress. Use one launch-definition model for built-ins and user-installed agents; allow compatible, reviewed compiled adapters rather than restricting every custom definition to unauthenticated execution. Specify guest working directories, bounded non-sensitive environment defaults, adapter compatibility, independent network authorization, and incremental migration of existing launchers. Image installation and credential policy remain separate. Feature IDs are stable identifiers, not delivery priorities.
+**Revision 0.2:** Promote declarative agent definitions to the second delivery increment, before filtered egress. Use one launch-definition model for built-ins and user-installed agents; allow compatible, reviewed compiled adapters rather than restricting every custom definition to unauthenticated execution. Specify guest working directories, bounded non-sensitive environment defaults, adapter compatibility, independent network authorization, and shared dispatch for existing launchers. Image installation and credential policy remain separate. Feature IDs are stable identifiers, not delivery priorities.
+
+> This design includes planned capabilities. Current supported commands are in
+> the [command reference](../commands.md). Image editing/pruning and full
+> filtered-egress qualification are not implied by the design requirements below.
 
 ## 1. Decision summary
 
-Borrow Sandboxy's low-friction workflow and selected networking ideas, not its host-sharing model. Preserve Coop's separate guest workspace, provider credential broker, isolation gate, and single Apple runtime.
+Borrow Sandboxy's low-friction workflow and selected networking ideas, not its host-sharing model. Preserve isolate's separate guest workspace, provider credential broker, isolation gate, and single Apple runtime.
 
 | ID | Feature | Recommendation | Scope of the actual addition |
 |---|---|---|---|
-| F1 | Destination-filtered egress | Implement after a dedicated security qualification gate | A separate, credential-free CONNECT proxy over a host-only VM network. Compose with, never replace, `coop-proxy`. |
-| F2 | One-command agent sessions | Implement early | `coop run` combines existing project resolution, image preparation, startup, and agent launch. Add explicitly disposable runs without changing existing commands. |
+| F1 | Destination-filtered egress | Implement after a dedicated security qualification gate | A separate, credential-free CONNECT proxy over a host-only VM network. Compose with, never replace, `iso-proxy`. |
+| F2 | One-command agent sessions | Implement early | `iso run` combines existing project resolution, image preparation, startup, and agent launch. Add explicitly disposable runs without changing existing commands. |
 | F3 | Declarative agent definitions and reviewed adapters | Implement immediately after the F2/F5 foundation, before F1 | One launch model for built-in and host-installed definitions; image/profile selection, guest launch metadata, and compatible compiled adapter selection. Definitions request capabilities but cannot grant them. |
 | F4 | Environment inspection and customization | Extend existing image machinery | Explain cache reuse/staleness, safely prune unreferenced caches, and provide an optional clone-edit-publish workflow. Do not build another cache system. |
 | F5 | Effective-policy startup summary | Implement with F2 | Show what this running instance actually permits, what persists, and how to return changes. Include phase timings and a side-effect-free preview. |
@@ -33,11 +36,11 @@ The organizing separation is: **images/profiles determine installed software; de
 
 Sandboxy already offers per-agent JSON definitions, cached environments, an interactive cache editor, named sessions, `--rm`, live virtio-fs workspaces, and a hostname-filtering forward proxy. Its proxy can tunnel HTTPS and forward plain HTTP; its built-in agent definitions can forward provider variables and mount host configuration directories. These are inspiration, not a compatibility contract.[^S1][^S2][^S3]
 
-Coop already has the following facilities; implementations MUST extend them rather than duplicate them:
+isolate already has the following facilities; implementations MUST extend them rather than duplicate them:
 
 | Existing capability | Consequence for this proposal |
 |---|---|
-| `coop up` resolves project affinity and reuses a running or stopped instance | `run` is an orchestration entry point, not a new instance manager.[^C1] |
+| `iso up` resolves project affinity and reuses a running or stopped instance | `run` is an orchestration entry point, not a new instance manager.[^C1] |
 | Profile-derived image preparation, recipe-hash staleness checks, and APFS-cloned instance disks | F4 adds visibility and controlled customization, not basic caching or copy-on-write support.[^C2] |
 | `commit` and `restore` for stopped instances | Image editing reuses these transaction paths.[^C2] |
 | No runtime host mounts, SSH-agent forwarding, socket relays, or published ports; an effective-configuration isolation gate | These invariants remain mandatory. Existing SSH tunnels are a host orchestration mechanism, not a relaxation of runtime exposure checks.[^C3][^C5] |
@@ -64,7 +67,7 @@ There is no claim of complete exfiltration prevention. An approved destination c
 
 **INV-04 — No implicit destructive action.** Reuse of an instance MUST NOT cause a push, restore, recreation, image replacement, or workspace pull. Removing a newly created disposable instance requires explicit `--rm` intent and a matching ownership record.
 
-**INV-05 — Reuse current implementation boundaries.** Configuration parsing belongs in `CoopConfiguration`; validated values in `CoopCore`; side effects in `CoopHost`; argument parsing in `CoopCLI`. Runtime ownership stays in `coop-sandbox`. Host processes use `ProcessRunner`, guest commands use `RemoteCommand`, and state writes use existing locks and atomic-file primitives.[^C8]
+**INV-05 — Reuse current implementation boundaries.** Configuration parsing belongs in `IsoConfiguration`; validated values in `IsoCore`; side effects in `IsoHost`; argument parsing in `IsoCLI`. Runtime ownership stays in `iso-sandbox`. Host processes use `ProcessRunner`, guest commands use `RemoteCommand`, and state writes use existing locks and atomic-file primitives.[^C8]
 
 **INV-06 — Honest reporting.** Distinguish desired policy, recorded boot policy, verified runtime configuration, and live companion health. Never label an instance protected solely because a configuration file requests protection.
 
@@ -76,7 +79,7 @@ There is no claim of complete exfiltration prevention. An approved destination c
 
 Allow a development tool in an otherwise host-only VM to connect to specifically approved public destinations, without granting general NAT access or handing provider keys to a general-purpose proxy.
 
-The bounded contract is: **no direct Internet route through Coop's configured VM network, plus a controlled host-mediated TCP tunnel to approved hostnames on port 443.** CONNECT is a blind tunnel after establishment; this is not HTTP method/path filtering, read-only package access, payload inspection, or proof of the protocol inside the tunnel.[^N1]
+The bounded contract is: **no direct Internet route through isolate's configured VM network, plus a controlled host-mediated TCP tunnel to approved hostnames on port 443.** CONNECT is a blind tunnel after establishment; this is not HTTP method/path filtering, read-only package access, payload inspection, or proof of the protocol inside the tunnel.[^N1]
 
 This feature does not claim that the guest cannot reach host services or use a separately exposed host relay. Display that residual risk in the startup report and document it in the trust model.
 
@@ -99,7 +102,7 @@ Add `EgressMode.filtered` and a top-level `egress_filter` object:
 }
 ```
 
-This example deliberately overrides only the preset's egress default; required provider proxying and staged pulls remain selected. A provider credential must still be provisioned through Coop's existing supported mechanism. The host list is illustrative, not a promise that every package manager, redirect, or project will work with it.
+This example deliberately overrides only the preset's egress default; required provider proxying and staged pulls remain selected. A provider credential must still be provisioned through isolate's existing supported mechanism. The host list is illustrative, not a promise that every package manager, redirect, or project will work with it.
 
 | Setting | Runtime network | General egress companion |
 |---|---|---|
@@ -121,19 +124,19 @@ This example deliberately overrides only the preset's egress default; required p
 
 ### 4.3 Process and transport architecture
 
-Add a separate package and executable, **`coop-egress`**, with no provider-key injection code and no provider credential store access. This adds a fourth distributed executable; that packaging cost is intentional. Do not broaden the request handling or destination selection of credential-bearing `coop-proxy`.
+Add a separate package and executable, **`iso-egress`**, with no provider-key injection code and no provider credential store access. This adds a fourth distributed executable; that packaging cost is intentional. Do not broaden the request handling or destination selection of credential-bearing `iso-proxy`.
 
 ```text
 Guest development tool
   -> guest loopback CONNECT endpoint
   -> dedicated ssh -R tunnel
-  -> host-loopback coop-egress
+  -> host-loopback iso-egress
   -> validated public address for an approved hostname:443
 
 Guest supported coding agent
   -> existing guest-loopback provider endpoint
   -> existing provider ssh -R tunnel
-  -> existing coop-proxy
+  -> existing iso-proxy
   -> fixed provider, using the host-held credential
 ```
 
@@ -145,9 +148,9 @@ Guest supported coding agent
 
 **NET-10.** Deliver managed upper- and lowercase proxy environment variables to guest sessions through the existing controlled environment path. Managed `NO_PROXY` covers loopback provider and local-model endpoints. Do not inherit arbitrary host proxy variables or allow user config to override these managed values on a filtered boot. Plain-HTTP clients routed here receive an explicit unsupported-operation error; there is no NAT fallback.
 
-Guest code can read and use its local capability. This is expected. Coop-generated diagnostics and audit events MUST redact proxy userinfo; arbitrary guest stdout cannot be guaranteed to avoid echoing a guest-visible capability.
+Guest code can read and use its local capability. This is expected. isolate-generated diagnostics and audit events MUST redact proxy userinfo; arbitrary guest stdout cannot be guaranteed to avoid echoing a guest-visible capability.
 
-**NET-11.** Confine `coop-egress` separately: deny host file writes, subprocess execution, and unrelated outbound ports. Permit only the minimum runtime/system reads and name-resolution facilities demonstrated necessary by confined-process tests. Confinement failure aborts startup. Port-scoped confinement is defense in depth; application policy performs hostname and resolved-address enforcement.
+**NET-11.** Confine `iso-egress` separately: deny host file writes, subprocess execution, and unrelated outbound ports. Permit only the minimum runtime/system reads and name-resolution facilities demonstrated necessary by confined-process tests. Confinement failure aborts startup. Port-scoped confinement is defense in depth; application policy performs hostname and resolved-address enforcement.
 
 **NET-12.** Share only reviewed, credential-independent primitives where this reduces duplication. The host must not link a networking companion merely to parse its protocol. Do not copy Sandboxy's proxy wholesale and treat it as qualified production code.
 
@@ -187,15 +190,15 @@ Admission, DNS work, pending connects, and relay queues must all be bounded. Sto
 
 **NET-21.** If proxy or tunnel startup fails, no filtered session launches. If it fails after launch, affected traffic fails, new hand-offs are refused until recovery, and no shared network or direct connection is substituted. The VM may remain running for diagnosis. A live check is not a guarantee that a process cannot fail immediately afterward.
 
-**NET-22.** Stop, destroy, TTL expiry, and owner replacement close egress tunnels, terminate the matching companion, revoke the capability, and record teardown. Persistent mode requires host supervision independent of the short-lived `coop run` process; reuse the project's launchd ownership style. Supervisor loss must not leave indefinitely usable orphan grants: the companion must terminate on loss of its boot-owner liveness channel. Validate PID identity before signalling any recorded process.
+**NET-22.** Stop, destroy, TTL expiry, and owner replacement close egress tunnels, terminate the matching companion, revoke the capability, and record teardown. Persistent mode requires host supervision independent of the short-lived `iso run` process; reuse the project's launchd ownership style. Supervisor loss must not leave indefinitely usable orphan grants: the companion must terminate on loss of its boot-owner liveness channel. Validate PID identity before signalling any recorded process.
 
 **NET-23.** VM network creation remains `shared` or `host-only`; do not add a second NIC. Refactor the host's existing `.none` comparisons into an explicit host-only requirement used by both `none` and `filtered`. The runtime networking protocol need not change merely for this mapping. Any additional boot-identity/supervision protocol change must be versioned and advertised explicitly, not smuggled into the existing contract.
 
 ### 4.6 Preparation versus workload networking
 
-Coop already prepares images separately from workload execution.[^C2] A filtered run MUST NOT silently rebuild an image with open networking after printing a filtered-workload summary.
+isolate already prepares images separately from workload execution.[^C2] A filtered run MUST NOT silently rebuild an image with open networking after printing a filtered-workload summary.
 
-A new `run` path may reuse verified existing images without prompting. When a build or first-boot install requires broader network access, show a separate preparation stage, its network mode, and the fact that no workspace or provider credential will be supplied to that build. Require interactive approval or explicit `--prepare` authorization. Noninteractive runs fail before the build without that authorization. Existing explicit `coop setup` semantics remain unchanged.
+A new `run` path may reuse verified existing images without prompting. When a build or first-boot install requires broader network access, show a separate preparation stage, its network mode, and the fact that no workspace or provider credential will be supplied to that build. Require interactive approval or explicit `--prepare` authorization. Noninteractive runs fail before the build without that authorization. Existing explicit `iso setup` semantics remain unchanged.
 
 Do not temporarily switch a workload VM to open networking for plugins, updates, or package installation. Under `none`, required uncached network installs fail with remediation. Under `filtered`, they use approved hosts or fail. F1 does not promise compatibility with tools that ignore proxy variables, guest Docker daemons without proxy configuration, plain-HTTP mirrors, or git-over-SSH.
 
@@ -204,7 +207,7 @@ Do not temporarily switch a workload VM to open networking for plugins, updates,
 ### 5.1 Command surface
 
 ```text
-coop run <agent> [--workspace DIR] [--name NAME]
+iso run <agent> [--workspace DIR] [--name NAME]
          [--image NAME | --profile LIST]
          [--egress open|none|filtered] [--allow-host HOST ...]
          [--prepare] [--rm] [--ask] [--dry-run] [--json]
@@ -215,19 +218,19 @@ The first increment dispatches the existing Claude and Codex adapters through th
 
 ```sh
 # Ensure the current project's environment, then launch its agent.
-coop run claude
+iso run claude
 
 # Launch in a named project instance without silently pushing host edits.
-coop run codex --name payments
+iso run codex --name payments
 
 # An explicitly new throwaway VM; guest changes will not be pulled automatically.
-coop run claude --rm --workspace ./scratch
+iso run claude --rm --workspace ./scratch
 
 # Add a host for a new filtered boot. This never changes an existing VM's mode.
-coop run claude --egress filtered --allow-host registry.npmjs.org
+iso run claude --egress filtered --allow-host registry.npmjs.org
 
 # Inspect the prospective launch without starting anything.
-coop run codex --workspace ./service --dry-run --json
+iso run codex --workspace ./service --dry-run --json
 ```
 
 ### 5.2 Resolution and persistent behavior
@@ -240,19 +243,19 @@ coop run codex --workspace ./service --dry-run --json
 
 **RUN-04.** Reject creation-time requirements incompatible with an existing instance. Do not ignore a requested image/profile, recreate the VM, or silently change its resources. Explain the mismatch and the explicit recreate workflow.
 
-**RUN-05.** A normal run retains the instance and leaves it running after the agent exits, subject to the existing TTL and explicit stop/destroy commands. It does not automatically copy guest output to the host. Print the instance name, persistence state, and the applicable `coop diff` / `coop pull` guidance. Documentation must explain that keeping a VM also keeps its writable disk and any authority still available during that boot.
+**RUN-05.** A normal run retains the instance and leaves it running after the agent exits, subject to the existing TTL and explicit stop/destroy commands. It does not automatically copy guest output to the host. Print the instance name, persistence state, and the applicable `iso diff` / `iso pull` guidance. Documentation must explain that keeping a VM also keeps its writable disk and any authority still available during that boot.
 
-**RUN-06.** Resolve the selected agent to a typed launch plan, then delegate client-specific launch, permission flags, credential handling, and terminal behavior to its reviewed adapter. Initially these wrap the existing Claude/Codex implementations. `--ask` preserves their existing meanings; a custom definition can use it only when its selected adapter advertises support, otherwise fail before boot or launch rather than ignoring it. Arguments after `--` are forwarded as arguments, without host-shell interpretation. Legacy `coop claude` and `coop codex` retain their command-line behavior. See F3 for the generic launch contract.
+**RUN-06.** Resolve the selected agent to a typed launch plan, then delegate client-specific launch, permission flags, credential handling, and terminal behavior to its reviewed adapter. Initially these wrap the existing Claude/Codex implementations. `--ask` preserves their existing meanings; a custom definition can use it only when its selected adapter advertises support, otherwise fail before boot or launch rather than ignoring it. Arguments after `--` are forwarded as arguments, without host-shell interpretation. `iso claude` and `iso codex` retain their command-line behavior. See F3 for the generic launch contract.
 
 ### 5.3 Disposable behavior
 
-**RUN-07.** `--rm` always creates a new disposable instance. It never attaches cleanup to an existing VM. A supplied name must be unused. Generated names must be collision-resistant and valid under existing name rules. Mark disposable instances as ineligible for ordinary project-affinity reuse so a simultaneous `coop up` cannot adopt one.
+**RUN-07.** `--rm` always creates a new disposable instance. It never attaches cleanup to an existing VM. A supplied name must be unused. Generated names must be collision-resistant and valid under existing name rules. Mark disposable instances as ineligible for ordinary project-affinity reuse so a simultaneous `iso up` cannot adopt one.
 
 **RUN-08.** Write a host-owned session record before creation with a session ID, intended name, owner ID, creation operation ID, and cleanup intent. Record the resulting sandbox identity and boot identity after verification. Cleanup requires matching identities, not a name or PID alone.
 
 **RUN-09.** After a normal agent exit, stop the VM, tear down companions and tunnels, and destroy only the instance owned by that disposable session. No implicit pull, review, commit, or image publication occurs. The pre-launch summary explicitly states that guest changes are discarded.
 
-**RUN-10.** On catchable interruption, forward the signal through existing child-process handling and perform bounded cleanup. On an uncatchable host crash, shutdown, or uncertain operation, do not claim cleanup completed. Add `coop run-cleanup --dry-run` and `coop run-cleanup --session ID` to reconcile abandoned run records using existing lifecycle journals. Never delete a still-active session or an object whose ownership cannot be proven.
+**RUN-10.** On catchable interruption, forward the signal through existing child-process handling and perform bounded cleanup. On an uncatchable host crash, shutdown, or uncertain operation, do not claim cleanup completed. Add `iso run-cleanup --dry-run` and `iso run-cleanup --session ID` to reconcile abandoned run records using existing lifecycle journals. Never delete a still-active session or an object whose ownership cannot be proven.
 
 **RUN-11.** Reject or suspend destruction if a pending staged pull exists, another host operation holds the relevant lock, or state is ambiguous. Stop where safe, retain the instance, and report the reason. Unapplied stages are currently stored under the instance directory, so blindly deleting it would destroy the review artifact.[^C7] Exporting review artifacts independently of an instance is deferred.
 
@@ -264,22 +267,22 @@ coop run codex --workspace ./service --dry-run --json
 
 `--dry-run` is side-effect-free: no VM, image build, network request, credential resolution, config creation, update check, or execution of a `cmd:` reference. Resolve from local metadata only; mark unavailable facts unresolved. A missing image can be reported as requiring preparation without performing it. A preview is not a live readiness proof.
 
-`--json` is accepted only with `--dry-run` in version 1. During actual runs, stdout/stdin belong to the agent; Coop's reports go to stderr. Structured final state is available through recorded session information and the existing status/audit surfaces, rather than mixing control JSON with agent output.
+`--json` is accepted only with `--dry-run` in version 1. During actual runs, stdout/stdin belong to the agent; isolate's reports go to stderr. Structured final state is available through recorded session information and the existing status/audit surfaces, rather than mixing control JSON with agent output.
 
 ## 6. F3 — Declarative agent definitions and reviewed adapters
 
 ### 6.1 Decision and architecture
 
-**Implement this early, before destination-filtered egress.** Borrow Sandboxy's ability to add an agent by describing its launch, without making its definition a document that grants access to host resources. Sandboxy's broader schema also includes installation commands, mounts, and forwarded variables; those responsibilities stay with Coop's existing subsystems.[^S3][^C2][^C6][^C7]
+**Implement this early, before destination-filtered egress.** Borrow Sandboxy's ability to add an agent by describing its launch, without making its definition a document that grants access to host resources. Sandboxy's broader schema also includes installation commands, mounts, and forwarded variables; those responsibilities stay with isolate's existing subsystems.[^S3][^C2][^C6][^C7]
 
-Coop currently has dedicated Claude/Codex command, configuration, and bootstrap paths.[^C6][^C8][^C11] The proposal introduces a shared `AgentDefinition` and launch planner so adding launch variants or compatible tools does not require a new top-level command and another copy of session orchestration. It does **not** require rewriting the provider broker or immediately replacing the existing bootstrap implementations.
+isolate currently has dedicated Claude/Codex command, configuration, and bootstrap paths.[^C6][^C8][^C11] The proposal introduces a shared `AgentDefinition` and launch planner so adding launch variants or compatible tools does not require a new top-level command and another copy of session orchestration. It does **not** require rewriting the provider broker or immediately replacing the existing bootstrap implementations.
 
 | Responsibility | Owning subsystem | What a definition can do |
 |---|---|---|
 | Which software is installed | Existing golden images, profiles, image preparation | Select an image or profile set; never embed a new installation language |
 | How the guest program starts | Validated `AgentDefinition` and shared launch planner | Declare guest argv, working directory, terminal needs, and bounded non-sensitive defaults |
 | How a supported client is configured | Reviewed compiled configuration adapter | Select an already supported adapter contract, not specify arbitrary config-file writes |
-| How provider authentication is supplied | Reviewed compiled credential adapter plus existing `coop-proxy` policy | Request a compatible binding; never select a secret value, host credential command, or injection destination |
+| How provider authentication is supplied | Reviewed compiled credential adapter plus existing `iso-proxy` policy | Request a compatible binding; never select a secret value, host credential command, or injection destination |
 | Which network authority is granted | Effective host security configuration and explicit CLI authorization | Describe destination hints; never turn them into an allowlist automatically |
 | Which files cross the VM boundary | Existing workspace copy/push/pull/stage policy | Use the existing guest workspace; never request live host mounts or automatic return of changes |
 
@@ -310,7 +313,7 @@ A custom tool already installed in a prepared image can be described as follows.
 }
 ```
 
-For profile-derived preparation, replace the top-level `environment` with, for example, `{"profiles": ["node", "repo-helper-tools"]}`. The custom profile must already be defined through Coop's existing host configuration and actually install the tool. Selecting `node` or `python` alone does not imply that an agent has been installed. A definition neither contains install commands nor causes an unapproved preparation step.
+For profile-derived preparation, replace the top-level `environment` with, for example, `{"profiles": ["node", "repo-helper-tools"]}`. The custom profile must already be defined through isolate's existing host configuration and actually install the tool. Selecting `node` or `python` alone does not imply that an agent has been installed. A definition neither contains install commands nor causes an unapproved preparation step.
 
 A second example demonstrates that custom definitions are **not restricted to `auth_adapter: none`**. This launch variant requests the already reviewed Claude adapter while leaving credential selection entirely in host configuration:
 
@@ -328,7 +331,7 @@ A second example demonstrates that custom definitions are **not restricted to `a
 }
 ```
 
-The adapter recognizes the logical `claude` executable and resolves the guest-user-specific binary through the existing launcher. This file does not select an API key, authorize a provider, or enable a proxy. `coop run claude-review --ask` delegates permission behavior to the existing Claude adapter. Adapter compatibility must be validated; selecting `claude` for an unrelated executable is an error, not a generic credential forwarding mechanism.
+The adapter recognizes the logical `claude` executable and resolves the guest-user-specific binary through the existing launcher. This file does not select an API key, authorize a provider, or enable a proxy. `iso run claude-review --ask` delegates permission behavior to the existing Claude adapter. Adapter compatibility must be validated; selecting `claude` for an unrelated executable is an error, not a generic credential forwarding mechanism.
 
 | Field | Contract |
 |---|---|
@@ -343,31 +346,31 @@ The adapter recognizes the logical `claude` executable and resolves the guest-us
 | `auth_adapter` | Required ID of a compiled reviewed binding, including `none`; unknown or incompatible IDs are rejected |
 | `network_hints.suggested_hosts` | Optional exact-host suggestions, individually validated; they confer no permission |
 
-Unknown fields are rejected. In particular, `baseImage`, `installCommands`, `mounts`, raw credential fields, and arbitrary provider/configuration templates are not accepted as a Sandboxy compatibility mode. Migration is a conscious translation into profiles, launch metadata, and host policy.
+Unknown fields are rejected. In particular, `baseImage`, `installCommands`, `mounts`, raw credential fields, and arbitrary provider/configuration templates are not accepted as a Sandboxy compatibility mode. Sandboxy definitions require explicit translation into profiles, launch metadata, and host policy.
 
 ### 6.3 Catalog, installation, and trust
 
 ```text
-coop agent list
-coop agent inspect <id> [--json]
-coop agent add <file> [--replace] [--yes]
-coop run <id> [RUN_OPTIONS] [-- ARGS...]
+iso agent list
+iso agent inspect <id> [--json]
+iso agent add <file> [--replace] [--yes]
+iso run <id> [RUN_OPTIONS] [-- ARGS...]
 ```
 
 ```sh
 # Validate, review, and install a host-owned definition copy.
-coop agent add ./repo-helper.jsonc
-coop agent inspect repo-helper --json
+iso agent add ./repo-helper.jsonc
+iso agent inspect repo-helper --json
 
 # Uses the same environment and session machinery as a built-in agent.
-coop run repo-helper -- --help
+iso run repo-helper -- --help
 
 # A custom launch variant can select an existing reviewed adapter.
-coop agent add ./claude-review.jsonc
-coop run claude-review --ask
+iso agent add ./claude-review.jsonc
+iso run claude-review --ask
 ```
 
-**AGT-01.** Represent built-in and installed agents using the same `AgentDefinition` type. Reserve the built-in `claude` and `codex` definition IDs; files cannot shadow them. Separately reserve every compiled adapter ID so files cannot replace an implementation. A custom definition may refer to a compatible adapter without owning it. Preserve `coop agent update` and all legacy agent commands; definition installation is not a package update.
+**AGT-01.** Represent built-in and installed agents using the same `AgentDefinition` type. Reserve the built-in `claude` and `codex` definition IDs; files cannot shadow them. Separately reserve every compiled adapter ID so files cannot replace an implementation. A custom definition may refer to a compatible adapter without owning it. Preserve `iso agent update` and the dedicated agent commands; definition installation is not a package update.
 
 **AGT-02.** Store each validated custom copy as `<data_dir>/agents/<id>.json` in the installation's private agent catalog. `agent add` shows the canonical source path, ID, full escaped launch metadata, environment requirements, requested adapter, and network hints before confirmation. `--yes` explicitly authorizes installation in automation; replacement additionally requires `--replace`. Validation, review, and writing use the same file snapshot, so changing the input after review cannot change what is installed. Install atomically under a catalog lock. No repository-local discovery, source-file reference, URL fetch, marketplace, or automatic inheritance is supported. An explicitly supplied repository file may be copied only through this same trust action.
 
@@ -381,7 +384,7 @@ coop run claude-review --ask
 
 Each registry entry declares its accepted logical executable/client contract, supported terminal and permission options, configuration adapter, provider binding (or no provider), managed configuration/environment names, supported authentication modes, and compatibility-test evidence. Client-specific path resolution and configuration generation remain code. The registry must not load Swift code, dynamic libraries, scripts, arbitrary file templates, or command hooks from a definition.
 
-The `claude` and `codex` entries preserve their existing supported authentication behavior subject to host policy. A definition cannot enable a direct-auth mode that the configuration disallows. For a brokered binding, the configuration adapter supplies only Coop's local endpoint/capability to the guest; the credential adapter resolves the already host-authorized provider through the existing broker lifecycle. No definition chooses a Keychain item, vault name, `cmd:` command, bearer value, or raw-key destination.
+The `claude` and `codex` entries preserve their existing supported authentication behavior subject to host policy. A definition cannot enable a direct-auth mode that the configuration disallows. For a brokered binding, the configuration adapter supplies only isolate's local endpoint/capability to the guest; the credential adapter resolves the already host-authorized provider through the existing broker lifecycle. No definition chooses a Keychain item, vault name, `cmd:` command, bearer value, or raw-key destination.
 
 A new client/provider pair—such as a future Pi or Aider integration—needs a reviewed registry entry and compatibility tests before it is advertised. Their names here identify possible extensions, not verified support. If a candidate client requires operations outside the broker's current allowlist, it is unsupported until a separate operation-policy change is reviewed; installing JSON cannot widen the broker. Reuse an existing compiled contract where it fits rather than creating another provider transport.
 
@@ -417,31 +420,31 @@ For an already running VM, validate that the selected adapter's existing bootstr
 
 **AGT-15.** Report unsupported capabilities explicitly: unknown adapter, unsupported terminal/permission option, incompatible auth mode, missing image/profile, required preparation, unavailable guest executable, or boot-policy mismatch. Errors must name the relevant requirement without printing secrets. Do not claim file-only support for an authenticated client until its actual configuration and operation requirements have been exercised against a reviewed binding. Failures never choose a different agent, disable filtering, or forward a raw key as a convenience fallback.
 
-### 6.6 Incremental migration and release scope
+### 6.6 Implementation increments and release scope
 
 1. **Common model, existing implementations.** Introduce `AgentDefinition`, `AgentLaunchPlan`, and the reviewed registry. Add immutable descriptors for Claude/Codex. Wrap existing launch/config/auth functions; leave the broker's routes and credential handling intact. F2's initial `run` uses these descriptors.
-2. **Installed files.** Add local catalog list/inspect/add and generic no-auth launch behavior. Permit compatible custom variants to select the shipped reviewed adapters. Keep legacy `coop claude`, `coop codex`, agent updates, and existing configuration sections working through shared services rather than recursively invoking commands.
+2. **Installed files.** Add local catalog list/inspect/add and generic no-auth launch behavior. Permit compatible custom variants to select the shipped reviewed adapters. Keep `iso claude`, `iso codex`, agent updates, and existing configuration sections working through shared services rather than recursively invoking commands.
 3. **Additional authenticated clients.** Qualify and register client-specific bindings incrementally. No new top-level command, provider credential store, automatic network grant, or duplicate image builder is required merely to add one. A definition cannot substitute for missing client compatibility work.
 
-The second delivery increment is complete only when installed definitions, a controlled generic tool, and custom variants using both shipped adapters pass T13, T17, and T18. Additional authenticated clients are not prerequisites for that increment and are not advertised speculatively. No F1 companion, runtime protocol-5 boot ID, wildcard-host support, or four-executable release is required for F3. Security-related validation of the existing broker is still required for adapter-backed launches.
+The second delivery increment is complete only when installed definitions, a controlled generic tool, and custom variants using both shipped adapters pass T13, T17, and T18. Additional authenticated clients are not prerequisites for that increment and are not advertised speculatively. F3 acceptance does not establish filtered-egress qualification. Public distribution still requires all four executables and protocol 5, including live boot identity. Security-related validation of the existing broker is required for adapter-backed launches.
 
 ## 7. F4 — Environment inspection, cache management, and editing
 
 ### 7.1 Extend, do not replace, the image cache
 
-Sandboxy's warm-start experience is useful, but Coop already clones cached image disks and detects recipe changes. It also records that downloaded agent versions are not currently part of its staleness hash.[^C2] This feature makes the distinctions visible and adds controlled editing.
+Sandboxy's warm-start experience is useful, but isolate already clones cached image disks and detects recipe changes. It also records that downloaded agent versions are not currently part of its staleness hash.[^C2] This feature makes the distinctions visible and adds controlled editing.
 
 ```text
-coop images inspect <name> [--json]
-coop images cache status [--json]
-coop images cache prune [--dry-run] [--yes]
-coop images edit <base> --as <new-name> [--network none|filtered|open]
+iso images inspect <name> [--json]
+iso images cache status [--json]
+iso images cache prune [--dry-run] [--yes]
+iso images edit <base> --as <new-name> [--network none|filtered|open]
                  [--allow-host HOST ...]
 ```
 
-Existing `coop images` listing and `--delete` behavior remain compatible. Subcommands must coexist with that surface rather than replacing it silently.
+Existing `iso images` listing and `--delete` behavior remain compatible. Subcommands must coexist with that surface rather than replacing it silently.
 
-**ENV-01.** `inspect` reports source type (recipe-built or manual snapshot), resolved base/image digest, recipe hash, profiles/features, guest user, creation time, runtime/kernel compatibility identity, known installed agent versions, and cache/instance references. Unknown legacy fields are displayed as unknown, not guessed.
+**ENV-01.** `inspect` reports source type (recipe-built or manual snapshot), resolved base/image digest, recipe hash, profiles/features, guest user, creation time, runtime/kernel compatibility identity, known installed agent versions, and cache/instance references. Absent provenance fields are displayed as unknown, not guessed.
 
 **ENV-02.** Report why an environment is reusable or stale: missing artifact, changed recipe, profile/feature change, schema incompatibility, or incompatible runtime preparation. Do not equate a matching recipe hash with current upstream packages or a bit-for-bit reproducible rebuild.
 
@@ -454,7 +457,7 @@ Existing `coop images` listing and `--delete` behavior remain compatible. Subcom
 **ENV-06.** Pruning is limited to unreferenced, rebuildable cache artifacts. Protect artifacts referenced by named images, instance records, in-flight transactions, edit sessions, or an active owner. Recheck reachability under the existing lock discipline immediately before deletion. `--dry-run` prints candidates; mutation requires confirmation or `--yes`. Never delete user instances, named images, credentials, kernel policy, host-key pins, or pending workspace stages as a side effect of cache pruning.
 
 
-Cache inspection and deletion must cross the runtime's supported CLI, not inspect or unlink private runtime files from `CoopHost`. Add versioned `cache inspect` and `cache prune` runtime operations when the existing image/disk commands cannot provide the required information. Inspection returns opaque artifact IDs and a generation token. Prune takes that token plus the host-protected image set over stdin, rejects a stale generation, and recomputes runtime reachability under its own locks. The host holds the relevant image/instance publication locks while supplying its protected set; all concurrent create/build/edit paths must participate in the same documented lock order. If a complete protected set cannot be established, prune refuses. The early inspection increment may report unavailable cache details; safe prune ships only after these operations and concurrency tests exist.
+Cache inspection and deletion must cross the runtime's supported CLI, not inspect or unlink private runtime files from `IsoHost`. Add versioned `cache inspect` and `cache prune` runtime operations when the existing image/disk commands cannot provide the required information. Inspection returns opaque artifact IDs and a generation token. Prune takes that token plus the host-protected image set over stdin, rejects a stale generation, and recomputes runtime reachability under its own locks. The host holds the relevant image/instance publication locks while supplying its protected set; all concurrent create/build/edit paths must participate in the same documented lock order. If a complete protected set cannot be established, prune refuses. The early inspection increment may report unavailable cache details; safe prune ships only after these operations and concurrency tests exist.
 
 ### 7.2 Optional clone-edit-publish workflow
 
@@ -498,11 +501,11 @@ The example is a proposed format, not captured output. Print observed values, no
 
 **UX-05.** Record monotonic durations for resolution, preparation, disk creation/clone, VM boot, SSH readiness, companion readiness, workspace transfer, bootstrap, and agent hand-off. Identify reused/skipped phases explicitly. Keep timing events separate from untrusted agent stdout.
 
-**UX-06.** Do not promise Sandboxy's reported sub-second warm start for Coop. Establish a baseline on supported hardware and separately measure wrapper overhead, full startup, and workspace-copy time. For a warm attach, the acceptance target is no image/build/network mutation and no extra external service request; timing thresholds must be set from that measured baseline, not invented here.
+**UX-06.** Do not promise Sandboxy's reported sub-second warm start for isolate. Establish a baseline on supported hardware and separately measure wrapper overhead, full startup, and workspace-copy time. For a warm attach, the acceptance target is no image/build/network mutation and no extra external service request; timing thresholds must be set from that measured baseline, not invented here.
 
 **UX-07.** After a persistent run, show a single actionable workspace-return command. After a disposable run, show the independently recorded cleanup outcome. Do not imply that an exited agent means a VM was destroyed or that a destroyed VM's unexported changes can be recovered.
 
-## 9. Integration, state, and compatibility
+## 9. Integration, state, and distribution
 
 ### 9.1 Implementation map
 
@@ -510,19 +513,19 @@ Paths marked **new** are proposed files/packages, not existing implementation.
 
 | Area | Reuse / extend | Proposed addition |
 |---|---|---|
-| Validated policy values | `Sources/CoopCore/` | **New:** `EgressPolicy.swift`, `AgentDefinitionID.swift`, `AgentAdapterID.swift`, `AgentLaunchID.swift`, `RunSessionID.swift` |
-| Configuration | `CoopConfig.swift`, `ConfigDecoding.swift`, `ConfigValidation.swift`, JSONC preflight | **New:** `AgentDefinition.swift`, `AgentDefinitionDecoding.swift`, and typed egress-filter decoding; existing preset resolution remains authoritative |
+| Validated policy values | `Sources/IsoCore/` | **New:** `EgressPolicy.swift`, `AgentDefinitionID.swift`, `AgentAdapterID.swift`, `AgentLaunchID.swift`, `RunSessionID.swift` |
+| Configuration | `IsoConfig.swift`, `ConfigDecoding.swift`, `ConfigValidation.swift`, JSONC preflight | **New:** `AgentDefinition.swift`, `AgentDefinitionDecoding.swift`, and typed egress-filter decoding; existing preset resolution remains authoritative |
 | Agent catalog and launch planning | Existing configuration loading, state reads/writes, guest command types | **New:** `AgentCatalog.swift`, `AgentLaunchPlan.swift`, `AgentDefinitionCommands.swift`; immutable shipped descriptors and atomically installed host copies use the same model |
 | Reviewed client adapters | `AgentCommands.swift`, `BootstrapClaude.swift`, `BootstrapCodex.swift`, `GuestSession.swift`, `ProxyLifecycle.swift` | **New:** `AgentAdapterRegistry.swift`; typed wrappers around existing config/auth/launch paths; no JSON-defined credential destinations or host plugins |
 | Session orchestration | `UpCommands.swift`, `AgentCommands.swift`, `AppleLifecycle.swift`, `GuestSession.swift` | **New:** `RunCommands.swift`, `RunSession.swift`, `SessionReadiness.swift`; factor shared operations rather than invoking the CLI recursively |
 | Egress lifecycle | `ProxyLifecycle.swift`, `ProcessRunner.swift`, `SSH.swift`, `SeatbeltProfile.swift` patterns | **New:** `EgressLifecycle.swift`, `EgressSupervisor.swift`, a separate confinement profile; provider policy is not generalized |
-| Network companion | Existing dependency pinning/build conventions | **New:** `coop-egress/` package with policy, transport, executable, and test targets |
+| Network companion | Existing dependency pinning/build conventions | **New:** `iso-egress/` package with policy, transport, executable, and test targets |
 | Runtime verification | `IsolationGate.swift`, `RuntimeProtocol.swift`, `SandboxRuntime.swift` | Explicit `requiresHostOnlyNetwork` mapping and boot identity support |
-| Runtime boot identity | `coop-sandbox/Sources/CoopSandboxCore/Owner.swift` and control/inspection types | Protocol 5: add host-generated `live.boot_id`, renewed for each actual boot/owner replacement |
+| Runtime boot identity | `iso-sandbox/Sources/IsoSandboxCore/Owner.swift` and control/inspection types | Protocol 5: add host-generated `live.bootId`, renewed for each actual boot/owner replacement |
 | Images | `ImageBuild.swift`, `ImageRecords.swift`, runtime disk commit/maintenance paths | Inspection, cache reachability/pruning, isolated edit-session orchestration |
 | State and audit | `StateStore.swift`, `BoundaryAudit.swift`, existing journals | Feature-bearing record schema, boot network policy, run/edit session records, redacted per-launch definition/adapter provenance, bounded egress events |
 | Presentation | Existing diagnostics, read/status commands | **New:** `SessionSummary.swift`, versioned preview output, monotonic phase measurements |
-| Distribution | `scripts/build-release.py`, installer, updater, release preflight/workflows | F3 retains the three-executable layout; F1 adds signing, attestation, verification, and installation of `coop-egress` |
+| Distribution | `scripts/build-release.py`, installer, updater, release preflight/workflows | All four executables are built, signed, verified and installed together |
 
 ### 9.2 Record ownership and authority
 
@@ -545,27 +548,41 @@ Keep redacted completed run summaries and audit outcomes outside deleted instanc
 
 ### 9.3 Boot-bound egress supervision
 
-Protocol 5 adds a random, host-generated `live.boot_id` to runtime inspection. A restored disk does not restore this identity. New-host readers may operate legacy protocol-4 runtimes for existing compatible commands, but filtered egress requires protocol 5; missing capability fails before launch.
+Protocol 5 carries a random, host-generated `live.bootId` in runtime inspection.
+A restored disk does not restore this identity. The host requires protocol 5;
+unknown protocols or missing required boot identity fail closed before launch.
 
 A per-VM host supervisor runs independently of the invoking terminal. It checks the same runtime owner and boot ID at least once per second, and renews a short companion lease only after successful confirmation. The companion receives renewals through a private inherited control pipe, never through guest HTTP. It gets no runtime control socket or permission to execute runtime commands.
 
 The companion closes grants and sockets after two seconds without a valid renewal, on control-pipe EOF, on shutdown, or at the recorded absolute session deadline, whichever applies first. The supervisor closes the pipe immediately when it observes a changed owner/boot, an expired session, or explicit teardown. Use monotonic time for lease intervals and the existing host-clock deadline for TTL. These intervals define the bounded stale-grant window and must be exercised by process tests; they are not a claim of instantaneous revocation.
 
-### 9.4 State migration and downgrade behavior
+### 9.4 State contracts
 
-The baseline host checks explicit state schema versions and currently uses version 2 for instance records, journals, and image manifests.[^C10] Do not hide security-relevant changes in optional fields that an older host can ignore.
+The initial public distribution uses one current machine-sidecar format: schema
+version 2 with a required `lifecycle` of `reusable` or `disposable`. Its owner,
+backend and machine identities must agree. Lifecycle journals require operation
+identities wherever reconciliation relies on them. There are no readers for
+unreleased feature-version records or journals missing those identities.[^C10]
 
-Introduce schema version 3 for records requiring filtered-egress enforcement, disposable/edit ownership, or other new security semantics. New readers explicitly dispatch supported version-2 and version-3 formats. Upgrade related feature-bearing records transactionally before the feature is enabled; preserve unmodified legacy records when no new semantics are needed. Add required-feature names within version 3 for precise diagnostics, not as a replacement for version checking.
+Definition schemas and descriptive launch history are independently versioned;
+they do not grant cleanup, network or credential authority. Unknown schema,
+mode, lifecycle, runtime protocol and capability values fail closed. A future
+security-relevant format change must explicitly version its contract rather
+than hide restrictions in optional fields an older reader could ignore.
 
-Installing definition files or recording descriptive launch provenance alone does not require converting every existing instance to version 3. F3 does not persist a new per-agent isolation policy and does not depend on runtime protocol 5. If an implementation introduces durable credential/boot restrictions beyond existing semantics, those are security-relevant feature-bearing state and must use the explicit versioned migration rather than descriptive launch history.
+### 9.5 Distribution
 
-A baseline host must refuse feature-bearing version-3 records. Verify this against the actual baseline executable. Do not offer a lossy downgrade that turns `filtered` into `open` or adopts a disposable instance as persistent. Supported rollback requires stopping affected instances with a compatible tool and explicitly recreating them under older semantics. Unknown schema, mode, runtime protocol, or capability values fail closed.
+Every public archive contains `iso`, `iso-sandbox`, `iso-proxy`, and `iso-egress`.
+Shipped agent descriptors are compiled or bundled inside the signed host product,
+not downloaded during launch. Resolve companions adjacent to the host executable.
+Verify archive identity, signatures/checksums/attestation policy, companion
+versions and required capabilities before replacement. Test missing companions,
+interrupted replacements, mixed-version diagnostics and clean-machine lifecycle.
 
-### 9.5 Distribution and operational compatibility
-
-The early F2/F3/F5 increments retain the existing three-executable archive; shipped agent descriptors are compiled or bundled inside the signed host product, not downloaded during launch. Only the F1 increment expands the release archive to `coop`, `coop-sandbox`, `coop-proxy`, and `coop-egress`. Resolve companions adjacent to the host executable using the existing distribution model. Verify archive identity, signatures/checksums/attestation policy, companion versions, and required capabilities before replacement. Test upgrades from the current three-executable archive layout, interrupted replacements, and mixed-version failure diagnostics.
-
-A missing `coop-egress` blocks `filtered` boots with a repair instruction; it does not affect compatible existing `open` or `none` paths or trigger fallback. Release preflight must reject an incomplete new archive even though a developer may run non-filtered commands without that companion. No F1 release claim is made until this four-binary transition passes; independently qualified earlier increments are not blocked by it.
+A missing development `iso-egress` blocks filtered boots with a repair instruction
+and never triggers fallback. Public release preflight rejects an incomplete
+four-binary archive. Packaging success does not establish filtered-egress
+qualification; NET-20/F1 remain independent required gates.
 
 ## 10. Acceptance and evidence matrix
 
@@ -573,7 +590,7 @@ Every gate begins **not executed**. Passing evidence must name the tested commit
 
 | Gate | Required evidence / pass condition |
 |---|---|
-| T01 Configuration compatibility | Existing fixtures retain their behavior. Preset precedence, explicit mode overrides, empty host sets, duplicate keys, size limits, and unknown values have deterministic tests. |
+| T01 Configuration parsing | Current contract fixtures cover supported behavior. Preset precedence, explicit mode overrides, empty host sets, duplicate keys, size limits, and unknown values have deterministic tests. |
 | T02 Hostname/authority policy | Exact-match, case, terminal-dot, invalid-label, wildcard, IP-literal, numeric-alias, Unicode, percent-encoding, host/port mismatch, and suffix-confusion cases. All unapproved forms fail before resolution. |
 | T03 Resolved-address policy | Private, loopback, link-local, multicast, special-purpose, mapped IPv6, host-interface addresses, mixed public/private answers, DNS rebinding, and connect-time re-resolution. No forbidden address reaches the production connector. |
 | T04 CONNECT wire correctness | Fragmented/coalesced input, duplicate headers, authentication failures, framing ambiguity, unsupported methods/ports, and success-response framing. A successful tunnel is byte-transparent; proxy authentication never appears upstream. |
@@ -588,9 +605,9 @@ Every gate begins **not executed**. Passing evidence must name the tested commit
 | T13 Definition trust | Unknown/duplicate keys, all schema budgets, symlinks, foreign ownership, reserved definition/adapter IDs, unsupported fields, host hooks, secret/forwarding declarations, and launch-injection strings. Explicit add uses the reviewed snapshot; replacement is atomic and cannot affect active launches. Repo-local files are never auto-discovered, auto-executed, or auto-approved. Literal defaults accept only the compiled non-sensitive variable allowlist; network hints grant nothing. |
 | T14 Environment safety | Recipe changes trigger the existing rebuild path. Unchanged recipes reuse artifacts. Concurrent builds, failed publication, referenced-cache pruning, edit crash, and save/discard protect the original image and user instances. |
 | T15 Output/preview | Preview makes no subprocess/network/credential/config-write/update-check call. Agent stdout is not polluted. Fixtures cover control-character escaping, long fields, redaction, unknown facts, raw-forwarding warnings, and desired/effective-policy drift. |
-| T16 Migration/distribution | Version-2 fixtures read without changing old behavior. Baseline host rejects version-3 feature records. Early F3 catalog/launch tests pass with the three-binary layout and compatible protocol-4 runtime, without enabling F1. Separately qualify protocol-4 filtered refusal and the F1 three-to-four binary upgrade, signatures/provenance, interruption, and clean-machine install/run/update/uninstall. |
+| T16 State/distribution | Require current schema and lifecycle fields; reject unknown schemas and protocols. Verify all four binaries, missing-companion refusal, signatures/provenance, interrupted replacement and clean-machine install/run/update/uninstall. |
 | T17 Reviewed adapter dispatch | Built-in definitions and installed Claude/Codex variants dispatch the same reviewed implementations with the intended permission and terminal semantics. Controlled real-VM broker tests use synthetic provider credentials; configured proxy and required modes keep raw keys out of guest data and launch history. Test `auto`/`required`/`off`, missing authorization, incompatible auth/config modes, unknown adapters, and conflicting managed settings; no silent fallback or route widening. New client/provider bindings need their own pinned-client integration evidence. |
-| T18 Definition resolution and independence | A controlled generic tool exercises argv, passthrough, guest directory, literal-default precedence, and terminal modes. CLI environment selection replaces rather than unions definition selectors. Changed launch metadata leaves image recipe reuse intact; changed profiles use existing preparation checks. Missing requirements cause no unapproved installation/build, implicit push, or recreation; explicitly authorized preparation still uses the existing image path. Definition snapshots/history survive concurrent catalog replacement. Preview remains side-effect-free; F3 works without `coop-egress` or F1, hints remain informational, and `none` does not conceal existing guest authority. |
+| T18 Definition resolution and independence | A controlled generic tool exercises argv, passthrough, guest directory, literal-default precedence, and terminal modes. CLI environment selection replaces rather than unions definition selectors. Changed launch metadata leaves image recipe reuse intact; changed profiles use existing preparation checks. Missing requirements cause no unapproved installation/build, implicit push, or recreation; explicitly authorized preparation still uses the existing image path. Definition snapshots/history survive concurrent catalog replacement. Preview remains side-effect-free; F3 works without `iso-egress` or F1, hints remain informational, and `none` does not conceal existing guest authority. |
 
 Use injected resolvers/connectors for exhaustive policy tests and separate test executables for controlled transport fixtures. A test bypass allowing local/private destinations must not be reachable through release configuration, environment variables, or CLI flags. Real release-process refusal tests must execute the production policy.
 
@@ -601,8 +618,8 @@ Feature IDs are stable reference labels; **F3 ships before F1**. Agent definitio
 | Increment | Deliverable | Prerequisites / release gate |
 |---|---|---|
 | 1 | F5 preview/summary and F2 persistent `run`; F3's common definition/launch-plan types and immutable built-in descriptors | Existing Claude/Codex implementations remain behind registry wrappers; T01, T10, T12, T15 and built-in dispatch regression coverage |
-| 2 | F3 host-installed definitions, catalog commands, generic launch behavior, and compatible selection of shipped reviewed adapters | T13, T17, T18 and applicable T10/T12/T15; early-layout compatibility portion of T16; no F1 or fourth binary required |
-| 3 | F2 explicit disposable runs and cleanup reconciliation | Version-3 ownership records; T11 plus interruption and state-migration coverage |
+| 2 | F3 host-installed definitions, catalog commands, generic launch behavior, and compatible selection of shipped reviewed adapters | T13, T17, T18 and applicable T10/T12/T15; current state/distribution portion of T16; no F1 qualification claim |
+| 3 | F2 explicit disposable runs and cleanup reconciliation | Required lifecycle ownership records; T11 plus interruption and fail-closed decoding coverage |
 | 4 | F4 image inspection/cache diagnostics | Existing image recipes/transactions; T14 inspection fixtures; no new networking |
 | 5 | F1 pure policy, companion, supervisor, runtime boot ID, configuration, and four-binary packaging | T01–T09 and F1 portions of T16; re-run adapter composition under filtered egress; independent security review of the actual candidate |
 | 6 | F4 safe prune and optional clone-edit-publish | Reachability/ownership qualification; T14; filtered editor networking also requires F1 |
@@ -621,7 +638,7 @@ Each increment must work without unfinished later features. Before F1, `network_
 
 **Agent definitions are a first-class extension point, not a host plugin framework.** The shared model removes duplicated launch orchestration and supports useful custom variants immediately. Keep installation in profiles, host authority in policy, and client configuration/auth in reviewed compiled bindings. Custom files may select those bindings; they are not permanently limited to no-auth tools. This deliberately stops short of claiming that a provider label or a Pi/Aider launch recipe alone proves compatibility with the broker's allowed operations.
 
-**Early adapter migration stays incremental.** Claude/Codex wrappers preserve existing code paths and command behavior while metadata moves into one model. Do not turn this into a wholesale rewrite of security-sensitive bootstrap code or removal of existing configuration sections. Such a rewrite is a prerequisite for neither F3 nor F1. New authenticated clients require a small reviewed compatibility addition, not arbitrary JSON instructions for secret delivery.
+**Reviewed adapters share existing services.** Claude/Codex wrappers preserve existing code paths and command behavior while metadata moves into one model. Do not turn this into a wholesale rewrite of security-sensitive bootstrap code or removal of existing configuration sections. Such a rewrite is a prerequisite for neither F3 nor F1. New authenticated clients require a small reviewed compatibility addition, not arbitrary JSON instructions for secret delivery.
 
 **Literal environment defaults are deliberately narrow.** Display/terminal preferences are useful in definitions. Loader variables, provider URLs, raw secrets, arbitrary host forwarding, and shell expansion belong nowhere in this new data surface. Broader supported ordinary variables may be added through review; installation requirements remain image/profile concerns.
 
@@ -638,17 +655,17 @@ Repository links are pinned to the inspected revisions. They support the baselin
 [^S1]: Apple Containerization, [Sandboxy README](https://github.com/apple/containerization/blob/f24df2ac817df66fe149a80103251dec987c32dc/examples/sandboxy/README.md): session workflow, caching, editing, mounts, network filtering, and persistence.
 [^S2]: Apple Containerization, [HostProxy.swift](https://github.com/apple/containerization/blob/f24df2ac817df66fe149a80103251dec987c32dc/examples/sandboxy/Sources/sandboxy/HostProxy.swift): hostname matching and CONNECT/plain-HTTP implementation.
 [^S3]: Apple Containerization, [AgentDefinition.swift](https://github.com/apple/containerization/blob/f24df2ac817df66fe149a80103251dec987c32dc/examples/sandboxy/Sources/sandboxy/AgentDefinition.swift): agent definitions, built-ins, credential-variable forwarding, and mounts.
-[^C1]: Coop, [Command reference](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/docs/commands.md): current `up`, `start`, setup, agent, and image command behavior.
-[^C2]: Coop, [Images and profiles](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/docs/images-and-profiles.md): existing golden images, derived-image reuse, recipe hashes, cloning, commit/restore, and version limitations.
-[^C3]: Coop, [IsolationGate.swift](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/Sources/CoopHost/IsolationGate.swift): enforced host exposure, init, network, and per-hand-off checks.
-[^C4]: Coop, [Credential proxy](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/docs/credential-proxy.md): fixed provider transport, operation policy, credential non-exposure, and limitations. The detailed `proxy.mode` section is used for default semantics rather than the document's older introductory opt-in wording.
-[^C5]: Coop, [Runtime README](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/coop-sandbox/README.md): process ownership, protocol 4, host-only/shared network modes, disk transactions, and launchd behavior. Its introductory opt-in-backend wording is not used to infer current backend selection.
-[^C6]: Coop, [CoopConfig.swift](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/Sources/CoopConfiguration/CoopConfig.swift): egress modes, required/auto/off credential policy, preset precedence, TTL, and workspace pull defaults.
-[^C7]: Coop, [Workspace sync](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/docs/workspaces.md): project copying, explicit return paths, stage placement, validation, and application behavior.
-[^C8]: Coop, [Architecture](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/docs/ARCHITECTURE.md): current package/process boundaries, one concrete backend, subprocess and state invariants.
-[^C9]: Coop, [ProxyLifecycle.swift](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/Sources/CoopHost/ProxyLifecycle.swift): current loopback listeners, reverse tunnels, capability persistence, and startup handling.
-[^C10]: Coop, [StateStore.swift](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/Sources/CoopHost/StateStore.swift): private atomic records and strict schema-version checks.
-[^C11]: Coop, [AgentCommands.swift](https://github.com/chr33s/coop/blob/7cacce6fd92df07a690b8b6774c437e9376cd14e/Sources/CoopCLI/AgentCommands.swift): existing Claude/Codex command wrappers, passthrough handling, permission options, and shared bootstrap/session wiring.
+[^C1]: isolate, [Command reference](../commands.md): supported setup, session, agent and image commands.
+[^C2]: isolate, [Images and profiles](../images-and-profiles.md): golden images, recipe hashes, cloning, commit/restore and version limitations.
+[^C3]: isolate, [IsolationGate.swift](../../Sources/IsoHost/Runtime/IsolationGate.swift): host exposure, init, network and handoff checks.
+[^C4]: isolate, [Credential proxy](../credential-proxy.md): fixed provider transport, operation policy, credential isolation and limitations.
+[^C5]: isolate, [Runtime README](../../iso-sandbox/README.md): protocol 5, process ownership, network modes, disk transactions and launchd behavior.
+[^C6]: isolate, [IsoConfig.swift](../../Sources/IsoConfiguration/IsoConfig.swift): egress modes, provider policy, preset precedence, TTL and workspace defaults.
+[^C7]: isolate, [Workspace sync](../workspaces.md): copying, staged return, validation and application behavior.
+[^C8]: isolate, [Architecture](../ARCHITECTURE.md): package/process boundaries, one backend, subprocess and state invariants.
+[^C9]: isolate, [ProxyLifecycle.swift](../../Sources/IsoHost/Guest/ProxyLifecycle.swift): loopback listeners, reverse tunnels, capabilities and startup handling.
+[^C10]: isolate, [StateStore.swift](../../Sources/IsoHost/State/StateStore.swift): private atomic records and strict schema/lifecycle decoding.
+[^C11]: isolate, [AgentCommands.swift](../../Sources/IsoCLI/Commands/AgentCommands.swift): Claude/Codex wrappers, argument forwarding and permission options.
 [^N1]: IETF, [RFC 9110, section 9.3.6 — CONNECT](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6): tunnel semantics, explicit port, proxy authentication, target restrictions, and successful-response framing.
 [^N2]: IANA, [IPv4 special-purpose address registry](https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry.xhtml), consulted 2026-10-01. An implementation must pin and test its address classification rather than fetch policy dynamically at runtime.
 [^N3]: IANA, [IPv6 special-purpose address registry](https://www.iana.org/assignments/iana-ipv6-special-registry/iana-ipv6-special-registry.xhtml), consulted 2026-10-01. Transition forms and host-local addresses require additional explicit handling in this proposal.

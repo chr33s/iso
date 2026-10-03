@@ -544,7 +544,6 @@ private func stageCodex(
     bakedPlugins: ["p1@a"])
   #expect(m == ["b"] && p == ["p2@b"])
   #expect(CodexChecks.missingGuestCLIMessage.contains("--no-agents"))
-  #expect(CodexChecks.missingGuestCLIMessage.contains("--no-claude"))
   #expect(CodexChecks.missingGuestCLIMessage.contains("iso setup --rebuild"))
   for part in ["keyring", "iso start", "--no-agents", "auth.json"] {
     #expect(CodexChecks.keyringNotConfiguredMessage.contains(part))

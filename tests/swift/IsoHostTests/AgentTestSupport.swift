@@ -64,7 +64,7 @@ struct FakeGuest {
   var target: SSHTarget {
     SSHTarget(
       host: "10.231.1.2", port: 22, user: .default, keyPath: root + "/key",
-      knownHosts: root + "/known_hosts", alias: "coop-test.coop")
+      knownHosts: root + "/known_hosts", alias: "iso-test.iso")
   }
 
   init() throws {

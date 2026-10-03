@@ -6,11 +6,12 @@ import Foundation
 
 /// Structural configuration edits. An edit decodes the whole document into
 /// `JSONValue`, changes only the addressed members, and re-encodes, so
-/// unmodeled and unknown keys survive. Comments and formatting do not.
-public enum ConfigEditor {
+/// unrelated keys in permitted extensible sections survive. Input and output
+/// must satisfy the configuration schema. Comments and formatting do not.
+package enum ConfigEditor {
   /// Set `proxy.<provider>` to `{credential, auth}`, keeping any other
   /// members of that object. `existing` nil means the file does not exist.
-  public static func upsertProxy(
+  package static func upsertProxy(
     existing: [UInt8]?, format: ConfigFormat, path: String, provider: ProxyProvider,
     credential: CredentialReference, auth: ProxyAuthScheme, environment: ConfigEnvironment,
     limits: JSONLimits = .configuration
@@ -62,7 +63,7 @@ public enum ConfigEditor {
     return bytes
   }
 
-  public static func encode(_ value: JSONValue, path: String) throws(ConfigError) -> [UInt8] {
+  package static func encode(_ value: JSONValue, path: String) throws(ConfigError) -> [UInt8] {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     do {
@@ -76,7 +77,7 @@ public enum ConfigEditor {
 extension JSONValue {
   /// Equality of meaning: numbers compare by value, so `1e2` equals `100`
   /// and `1.0` equals `1`; everything else compares structurally.
-  public func semanticallyEquals(_ other: JSONValue) -> Bool {
+  package func semanticallyEquals(_ other: JSONValue) -> Bool {
     switch (self, other) {
     case (.number(let a), .number(let b)): a.decimalValue == b.decimalValue
     case (.array(let a), .array(let b)):
@@ -90,7 +91,7 @@ extension JSONValue {
 }
 
 extension JSONNumber {
-  public var decimalValue: Decimal {
+  package var decimalValue: Decimal {
     switch self {
     case .integer(let value): Decimal(value)
     case .unsigned(let value): Decimal(value)

@@ -111,7 +111,7 @@ private func name(_ text: String) -> SecretName { try! SecretName(text) }
   let duk = SymmetricKey(data: hex(String(repeating: "22", count: 32)))
   let key = KDF.storeKey(passwordKey: password, deviceUnlockKey: duk)
   let expected = HKDF<SHA256>.deriveKey(
-    inputKeyMaterial: password, salt: bytes(duk), info: Data("coop/secrets/store-key/v1".utf8),
+    inputKeyMaterial: password, salt: bytes(duk), info: Data("iso/secrets/store-key/v1".utf8),
     outputByteCount: 32)
   #expect(bytes(key) == bytes(expected))
   #expect(bytes(KDF.storeKey(passwordKey: duk, deviceUnlockKey: password)) != bytes(key))
@@ -148,7 +148,7 @@ private func name(_ text: String) -> SecretName { try! SecretName(text) }
   let envelope = try StoreEnvelope.seal(Data("{}".utf8), key: key, parameters: fast)
   #expect(
     StoreEnvelope.additionalData(fast)
-      == Data("coop-secrets:v1:scrypt:32768:8:1:\(Data(fast.salt).base64EncodedString())".utf8))
+      == Data("iso-secrets:v1:scrypt:32768:8:1:\(Data(fast.salt).base64EncodedString())".utf8))
   #expect(try envelope.open(key: key, parameters: fast) == Data("{}".utf8))
   let other = try ScryptParameters(n: 1 << 16, r: 8, p: 1, salt: fast.salt)
   #expect(throws: EnclaveStoreError.unlockFailed) { try envelope.open(key: key, parameters: other) }

@@ -5,18 +5,18 @@ import Synchronization
 
 /// Choose one numeric address only when every answer is public and none
 /// belongs to this host. A mixed answer is denied entirely.
-public enum AddressChoice {
-  public static func firstPublic(_ addresses: [String], local: Set<String>) -> String? {
+package enum AddressChoice {
+  package static func firstPublic(_ addresses: [String], local: Set<String>) -> String? {
     guard !addresses.isEmpty, addresses.allSatisfy({ AddressPolicy.isPublic($0, local: local) })
     else { return nil }
     return addresses[0]
   }
 }
 
-public enum Deadline {
+package enum Deadline {
   /// Returns nil when `work` has not finished within `limit`. The work may
   /// still complete; its result is discarded.
-  public static func wait<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () -> T)
+  package static func wait<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () -> T)
     -> T?
   {
     let nanoseconds = Int(min(Monotonic.nanoseconds(limit), UInt64(Int.max)))
@@ -61,8 +61,8 @@ final class Box<T: Sendable>: Sendable {
   }
 }
 
-public enum HostAddresses {
-  public static func current() -> Set<String> {
+package enum HostAddresses {
+  package static func current() -> Set<String> {
     var list: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&list) == 0, let list else { return [] }
     defer { freeifaddrs(list) }
@@ -86,9 +86,9 @@ public enum HostAddresses {
   }
 }
 
-public enum Resolver {
+package enum Resolver {
   /// `nil` on admission refusal, timeout, failure, or an empty answer.
-  public static func lookup(
+  package static func lookup(
     _ host: String, admission: Admission, port: String = "443",
     deadline: Duration = EgressBudgets.dns
   ) -> ResolvedAddresses? {
@@ -116,7 +116,7 @@ public enum Resolver {
 }
 
 /// Owns an immutable libc address list, including results arriving after timeout.
-public final class ResolvedAddresses: @unchecked Sendable {
+package final class ResolvedAddresses: @unchecked Sendable {
   private let info: UnsafeMutablePointer<addrinfo>
   private let release: @Sendable (UnsafeMutablePointer<addrinfo>) -> Void
 
@@ -142,14 +142,14 @@ public final class ResolvedAddresses: @unchecked Sendable {
   deinit { release(info) }
 
   /// The list is borrowed for this callback only; do not free or retain pointers.
-  public func withAddressInfo<T>(_ body: (UnsafePointer<addrinfo>) throws -> T) rethrows -> T {
+  package func withAddressInfo<T>(_ body: (UnsafePointer<addrinfo>) throws -> T) rethrows -> T {
     try withExtendedLifetime(self) { try body(UnsafePointer(info)) }
   }
 }
 
-public enum Dial {
+package enum Dial {
   /// Non-blocking connect bounded by `timeout`. Restores the previous flags.
-  public static func connect(
+  package static func connect(
     _ fd: Int32, address: UnsafePointer<sockaddr>, length: socklen_t,
     timeout: Duration = EgressBudgets.connect
   ) -> Bool {
@@ -179,7 +179,7 @@ public enum Dial {
     return error == 0
   }
 
-  public static func peerIsPublic(_ fd: Int32, local: Set<String>) -> Bool {
+  package static func peerIsPublic(_ fd: Int32, local: Set<String>) -> Bool {
     var storage = sockaddr_storage()
     var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
     let ok = withUnsafeMutablePointer(to: &storage) {

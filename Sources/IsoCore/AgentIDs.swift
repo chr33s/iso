@@ -3,14 +3,14 @@
 /// file cannot become a path, a shell word, or a shadow of a compiled adapter.
 
 /// `1`–`64` lowercase ASCII letters, digits, or hyphens, starting with a letter.
-public struct AgentDefinitionID: Hashable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 64
+package struct AgentDefinitionID: Hashable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 64
   /// Built-in definition ids and every compiled adapter id. A catalog file
   /// cannot use one of these, so it cannot shadow an implementation.
-  public static let reserved: Set<String> = ["claude", "codex", "none"]
-  public let rawValue: String
+  package static let reserved: Set<String> = ["claude", "codex", "none"]
+  package let rawValue: String
 
-  public init(_ raw: String) throws(ValidationError) {
+  package init(_ raw: String) throws(ValidationError) {
     guard !raw.isEmpty else { throw ValidationError("agent id must not be empty") }
     guard raw.utf8.count <= Self.maxLength else {
       throw ValidationError(
@@ -28,10 +28,10 @@ public struct AgentDefinitionID: Hashable, Sendable, CustomStringConvertible, Co
     rawValue = raw
   }
 
-  public var isReserved: Bool { Self.reserved.contains(rawValue) }
-  public var description: String { rawValue }
+  package var isReserved: Bool { Self.reserved.contains(rawValue) }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -39,7 +39,7 @@ public struct AgentDefinitionID: Hashable, Sendable, CustomStringConvertible, Co
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
@@ -47,19 +47,19 @@ public struct AgentDefinitionID: Hashable, Sendable, CustomStringConvertible, Co
 
 /// Identifier of a compiled, reviewed adapter binding. The same character
 /// class as a definition id, so it cannot be a path or a plugin reference.
-public struct AgentAdapterID: Hashable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 64
-  public static let none = AgentAdapterID(unchecked: "none")
-  public static let claude = AgentAdapterID(unchecked: "claude")
-  public static let codex = AgentAdapterID(unchecked: "codex")
-  public static let compiled: [AgentAdapterID] = [.none, .claude, .codex]
-  public let rawValue: String
+package struct AgentAdapterID: Hashable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 64
+  package static let none = AgentAdapterID(unchecked: "none")
+  package static let claude = AgentAdapterID(unchecked: "claude")
+  package static let codex = AgentAdapterID(unchecked: "codex")
+  package static let compiled: [AgentAdapterID] = [.none, .claude, .codex]
+  package let rawValue: String
 
   /// Literals above are valid by inspection; the validating initializer is
   /// the only path for untrusted input.
   private init(unchecked raw: String) { rawValue = raw }
 
-  public init(_ raw: String) throws(ValidationError) {
+  package init(_ raw: String) throws(ValidationError) {
     guard !raw.isEmpty else { throw ValidationError("adapter id must not be empty") }
     guard raw.utf8.count <= Self.maxLength else {
       throw ValidationError(
@@ -82,9 +82,9 @@ public struct AgentAdapterID: Hashable, Sendable, CustomStringConvertible, Codab
     rawValue = raw
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -92,7 +92,7 @@ public struct AgentAdapterID: Hashable, Sendable, CustomStringConvertible, Codab
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
@@ -100,11 +100,11 @@ public struct AgentAdapterID: Hashable, Sendable, CustomStringConvertible, Codab
 
 /// 32 lowercase hex characters. Used for run sessions and launch records so
 /// a file name cannot carry a path.
-public struct HexID: Hashable, Sendable, CustomStringConvertible, Codable {
-  public static let length = 32
-  public let rawValue: String
+package struct HexID: Hashable, Sendable, CustomStringConvertible, Codable {
+  package static let length = 32
+  package let rawValue: String
 
-  public init(_ raw: String) throws(ValidationError) {
+  package init(_ raw: String) throws(ValidationError) {
     guard raw.utf8.count == Self.length else {
       throw ValidationError("id must be \(Self.length) lowercase hex characters")
     }
@@ -117,9 +117,9 @@ public struct HexID: Hashable, Sendable, CustomStringConvertible, Codable {
     rawValue = raw
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -127,31 +127,31 @@ public struct HexID: Hashable, Sendable, CustomStringConvertible, Codable {
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
 }
 
-public typealias RunSessionID = HexID
-public typealias AgentLaunchID = HexID
+package typealias RunSessionID = HexID
+package typealias AgentLaunchID = HexID
 
 /// Literal guest defaults a definition may set. Anything else — provider
 /// variables, proxy variables, loaders, SSH — is not representable.
-public enum AgentEnvironmentAllowlist {
-  public static let names: Set<String> = ["TERM", "COLORTERM", "NO_COLOR"]
-  public static let maxEntries = 3
-  public static let maxValueBytes = 128
+package enum AgentEnvironmentAllowlist {
+  package static let names: Set<String> = ["TERM", "COLORTERM", "NO_COLOR"]
+  package static let maxEntries = 3
+  package static let maxValueBytes = 128
 }
 
 /// Exact ASCII DNS name for network hints. Comparison is the canonical
 /// lowercase form with one terminal dot removed. A name does not match its
 /// parent or a sibling; wildcards and address literals are rejected.
-public struct ExactHostname: Hashable, Sendable, CustomStringConvertible, Codable {
-  public static let maxLength = 253
-  public let rawValue: String
+package struct ExactHostname: Hashable, Sendable, CustomStringConvertible, Codable {
+  package static let maxLength = 253
+  package let rawValue: String
 
-  public init(_ raw: String) throws(ValidationError) {
+  package init(_ raw: String) throws(ValidationError) {
     guard !raw.isEmpty else { throw ValidationError("hostname must not be empty") }
     for scalar in raw.unicodeScalars {
       guard scalar.isASCII, scalar.value >= 0x21, scalar.value <= 0x7E else {
@@ -200,9 +200,9 @@ public struct ExactHostname: Hashable, Sendable, CustomStringConvertible, Codabl
     rawValue = lower
   }
 
-  public var description: String { rawValue }
+  package var description: String { rawValue }
 
-  public init(from decoder: any Decoder) throws {
+  package init(from decoder: any Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     do { try self.init(raw) } catch {
       throw DecodingError.dataCorrupted(
@@ -210,7 +210,7 @@ public struct ExactHostname: Hashable, Sendable, CustomStringConvertible, Codabl
     }
   }
 
-  public func encode(to encoder: any Encoder) throws {
+  package func encode(to encoder: any Encoder) throws {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }

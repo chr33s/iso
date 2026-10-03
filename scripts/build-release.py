@@ -9,7 +9,7 @@ Stages, in order, each explicit:
 
 1. source   copy the tracked (and untracked, unignored) files of this checkout
             into a private staging directory and stamp the revision into
-            Sources/IsoHost/BuildRevision.swift there. The working tree is
+            Sources/IsoHost/Update/BuildRevision.swift there. The working tree is
             never modified. `--expected-revision` requires a clean checkout
             of exactly that commit, before and after the build.
 2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`),
@@ -78,8 +78,8 @@ def source_state(expected_revision):
 
 
 def package_version():
-    source = (ROOT / "Sources/IsoHost/UpdateVersion.swift").read_text()
-    marker = 'public static let packageVersion = "'
+    source = (ROOT / "Sources/IsoHost/Update/UpdateVersion.swift").read_text()
+    marker = 'package static let packageVersion = "'
     start = source.index(marker) + len(marker)
     return source[start:source.index('"', start)]
 
@@ -94,12 +94,12 @@ def stage_source(staging, stamp):
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination, follow_symlinks=False)
-    revision_file = staging / "Sources/IsoHost/BuildRevision.swift"
+    revision_file = staging / "Sources/IsoHost/Update/BuildRevision.swift"
     text = revision_file.read_text()
-    stamped = text.replace("public let buildRevision: String? = nil",
-                           f"public let buildRevision: String? = {json.dumps(stamp)}")
+    stamped = text.replace("package let buildRevision: String? = nil",
+                           f"package let buildRevision: String? = {json.dumps(stamp)}")
     if stamped == text:
-        raise SystemExit("Sources/IsoHost/BuildRevision.swift no longer has the stamp anchor")
+        raise SystemExit("Sources/IsoHost/Update/BuildRevision.swift no longer has the stamp anchor")
     revision_file.write_text(stamped)
 
 
@@ -123,7 +123,7 @@ def build(staging, configuration, release, prefix):
     run([staging / "scripts/build-iso-sandbox.sh", prefix], staging)
     return {
         "iso": host / "iso",
-        "iso-proxy": proxy / "iso-proxy-swift",
+        "iso-proxy": proxy / "iso-proxy",
         "iso-egress": egress / "iso-egress",
         "iso-sandbox": prefix / "bin/iso-sandbox",
     }

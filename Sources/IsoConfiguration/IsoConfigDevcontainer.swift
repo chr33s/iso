@@ -8,7 +8,7 @@ extension IsoConfig {
   /// One command's devcontainer translation folded over the loaded values
   /// (Rust `devcontainer::apply_to_config`); the file is never rewritten.
   /// Guest variables replace same-named entries and keep byte order.
-  public func applyingDevcontainer(
+  package func applyingDevcontainer(
     vcpus: UInt8?, memory: VmMemory?, postStart: String?,
     guestEnvironment additions: [(name: EnvVarName, value: String)]
   ) -> IsoConfig {

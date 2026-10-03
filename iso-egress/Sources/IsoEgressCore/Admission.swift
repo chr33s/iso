@@ -2,18 +2,18 @@ import Synchronization
 
 /// Accepted sockets, established tunnels, and in-flight DNS lookups. A full
 /// counter refuses the new work; nothing is queued past the cap.
-public struct AdmissionState: Equatable, Sendable {
-  public var sockets = 0
-  public var tunnels = 0
-  public var dns = 0
+package struct AdmissionState: Equatable, Sendable {
+  package var sockets = 0
+  package var tunnels = 0
+  package var dns = 0
 
-  public func admitSocket() -> AdmissionState? { admit(\.sockets, cap: EgressBudgets.maxSockets) }
-  public func admitTunnel() -> AdmissionState? { admit(\.tunnels, cap: EgressBudgets.maxTunnels) }
-  public func admitDNS() -> AdmissionState? { admit(\.dns, cap: EgressBudgets.maxDNS) }
+  package func admitSocket() -> AdmissionState? { admit(\.sockets, cap: EgressBudgets.maxSockets) }
+  package func admitTunnel() -> AdmissionState? { admit(\.tunnels, cap: EgressBudgets.maxTunnels) }
+  package func admitDNS() -> AdmissionState? { admit(\.dns, cap: EgressBudgets.maxDNS) }
 
-  public func releaseSocket() -> AdmissionState { release(\.sockets) }
-  public func releaseTunnel() -> AdmissionState { release(\.tunnels) }
-  public func releaseDNS() -> AdmissionState { release(\.dns) }
+  package func releaseSocket() -> AdmissionState { release(\.sockets) }
+  package func releaseTunnel() -> AdmissionState { release(\.tunnels) }
+  package func releaseDNS() -> AdmissionState { release(\.dns) }
 
   private func admit(_ key: WritableKeyPath<AdmissionState, Int>, cap: Int) -> AdmissionState? {
     guard self[keyPath: key] < cap else { return nil }
@@ -29,17 +29,17 @@ public struct AdmissionState: Equatable, Sendable {
   }
 }
 
-public final class Admission: Sendable {
+package final class Admission: Sendable {
   private let state = Mutex(AdmissionState())
 
-  public init() {}
+  package init() {}
 
-  public func trySocket() -> Bool { change { $0.admitSocket() } }
-  public func endSocket() { replace { $0.releaseSocket() } }
-  public func tryTunnel() -> Bool { change { $0.admitTunnel() } }
-  public func endTunnel() { replace { $0.releaseTunnel() } }
-  public func tryDNS() -> Bool { change { $0.admitDNS() } }
-  public func endDNS() { replace { $0.releaseDNS() } }
+  package func trySocket() -> Bool { change { $0.admitSocket() } }
+  package func endSocket() { replace { $0.releaseSocket() } }
+  package func tryTunnel() -> Bool { change { $0.admitTunnel() } }
+  package func endTunnel() { replace { $0.releaseTunnel() } }
+  package func tryDNS() -> Bool { change { $0.admitDNS() } }
+  package func endDNS() { replace { $0.releaseDNS() } }
 
   private func change(_ step: (AdmissionState) -> AdmissionState?) -> Bool {
     state.withLock { state in

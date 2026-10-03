@@ -11,10 +11,6 @@ Claude Code and Codex in isolated VMs, with a focused Swift credential proxy
 and an Apple Containerization runtime. **Supported hosts: macOS 27+ on Apple
 Silicon only.** Linux runs inside the guest VMs.
 
-Git history has been pruned to focus on the Swift implementation. Licensing
-and attribution remain in [NOTICE](NOTICE), [PROVENANCE.md](PROVENANCE.md)
-and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
 ## Why this fork?
 
 The use case is running coding agents with broad permissions inside disposable
@@ -26,20 +22,18 @@ dependencies, and platform combinations that need security review and maintenanc
 The aim is a smaller attack surface and fewer places for vulnerabilities to
 arise; it is not a guarantee of fewer vulnerabilities or complete isolation.
 
-The host CLI is Swift too: the root package builds `iso`, and the separate
-[`iso-proxy/`](iso-proxy/) and [`iso-sandbox/`](iso-sandbox/) packages build
-the credential proxy and the VM runtime. No Rust toolchain is needed to build
-or run the host. See the
-[acceptance record](docs/design/swift-host-acceptance.md) for remaining
-validation and distribution gates.
-
-> Renamed from `mews` (originally `coop`). The CLI binary is `iso`.
+The root Swift package builds `iso`. Three separate packages build its
+companions: [`iso-proxy/`](iso-proxy/), [`iso-egress/`](iso-egress/), and
+[`iso-sandbox/`](iso-sandbox/). See the [architecture](docs/ARCHITECTURE.md)
+and [release validation](docs/release-validation.md). Source attribution is
+recorded in [NOTICE](NOTICE), [PROVENANCE.md](PROVENANCE.md), and
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 isolate is a CLI that manages disposable virtual machines where Claude Code and Codex have full tool access: Docker, git, compilers, package managers, with the VM as the isolation boundary. Each VM is isolated, reproducible, and cheap to create and destroy.
 
 ## Setup
 
-Once a verified fork release is published, install `iso`, `iso-proxy`, and
+Once a verified fork release is published, install `iso`, `iso-proxy`, `iso-egress`, and
 `iso-sandbox` together with:
 
 ```shell
@@ -54,7 +48,7 @@ cd iso
 python3 scripts/build-release.py --release
 ```
 
-The archive under `.build/release-archive/` holds all three executables;
+The archive under `.build/release-archive/` holds all four executables;
 install them in the same directory on `PATH`. `swift build` builds only the
 host CLI (`.build/debug/iso`) for development. See
 [Build from source](docs/getting-started.md#build-from-source),
@@ -70,9 +64,6 @@ iso setup
 The release channel targets `chr33s/iso`, with tagged commits from `main`.
 Configuration lives in `~/.iso/config.jsonc` (JSON with comments), with state
 under `~/.iso`. `iso setup --config-only` writes a commented template.
-Upstream TOML configurations are not read; convert one with
-`python3 scripts/migrate-config-to-jsonc.py --input ~/.iso/config.toml --output ~/.iso/config.jsonc`
-(see [Migrating from TOML](docs/configuration.md#migrating-from-toml)).
 See [state](docs/backends.md#state), [release status](RELEASING.md) and
 [`iso update`](docs/commands.md#update).
 

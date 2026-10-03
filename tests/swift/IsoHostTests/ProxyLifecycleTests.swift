@@ -9,12 +9,15 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   .appending(path: "../../..").standardized
 
 @Test func seatbeltProfileIsTheCheckedInFile() throws {
-  let path = repositoryRoot.appending(path: "Sources/IsoHost/seatbelt-proxy.sb").path
+  let path = repositoryRoot.appending(path: "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb")
+    .path
   let text = try #require(readFile(path))
   #expect(SeatbeltProfile.proxy == text)
   #expect(SeatbeltProfile.proxy.contains("(deny default)"))
   #expect(SeatbeltProfile.proxy.contains(#"(allow process-exec* (literal (param "PROXY_BIN")))"#))
-  let egressPath = repositoryRoot.appending(path: "Sources/IsoHost/seatbelt-egress.sb").path
+  let egressPath = repositoryRoot.appending(
+    path: "Sources/IsoHost/Guest/Resources/seatbelt-egress.sb"
+  ).path
   #expect(SeatbeltProfile.egress == (try #require(readFile(egressPath))))
   #expect(SeatbeltProfile.egress.contains("(deny default)"))
 }
@@ -35,9 +38,10 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
     listen: "127.0.0.1:8788", capabilityToken: Secret("cap-tok"), provider: .anthropic,
     auth: .apiKey, credential: Secret("sk-real"))
   #expect(
-    String(decoding: apiKey.expose(), as: UTF8.self)
-      == #"{"listen":"127.0.0.1:8788","capability_token":"cap-tok","version":1,"provider":"anthropic","injection":{"scheme":"x_api_key","credential":"sk-real"}}"#
-  )
+    try canonicalJSON(String(decoding: apiKey.expose(), as: UTF8.self))
+      == canonicalJSON(
+        #"{"listen":"127.0.0.1:8788","capability_token":"cap-tok","version":1,"provider":"anthropic","injection":{"scheme":"x_api_key","credential":"sk-real"}}"#
+      ))
   let bearer = ProxyLauncher.wireConfig(
     listen: "127.0.0.1:9788", capabilityToken: Secret("t"), provider: .openai, auth: .bearer,
     credential: Secret("sk-openai"))
@@ -99,7 +103,7 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   let b = ReverseTunnel(guestPort: 8000, hostAddress: try IPv4Address("127.0.0.2"), hostPort: 8000)
   #expect(
     ProxyLauncher.modelTunnelSpec(guest.target, a)
-      == "ubuntu@10.231.1.2:22 coop-test.coop 8000:127.0.0.1:8000")
+      == "ubuntu@10.231.1.2:22 iso-test.iso 8000:127.0.0.1:8000")
   #expect(
     ProxyLauncher.modelTunnelSpec(guest.target, a) != ProxyLauncher.modelTunnelSpec(guest.target, b)
   )
@@ -322,7 +326,7 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   stat(instance.proxyStatePath, &status)
   #expect(status.st_mode & 0o777 == 0o600)
 
-  // A stored literal is never used, and never lost by a later edit.
+  // Invalid credential state is rejected without rewriting or exposing it.
   try writeFile(
     instance.proxyStatePath,
     #"{"openai": {"credential": "sk-literal", "auth": "bearer"}, "anthropic": {"credential": "cmd:a"}, "extra": 1}"#
@@ -330,14 +334,24 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   let error = try #require(throws: (any Error).self) {
     try ProxyState.effectiveUpstream(instance, .openai, config: config)
   }
-  #expect("\(error)".contains("literal openai credential"))
+  #expect("\(error)".contains("Failed to parse proxy.json"))
   #expect(!"\(error)".contains("sk-literal"))
+  #expect(throws: HostError("Failed to parse proxy.json")) {
+    try ProxyState.setOverride(
+      instance, provider: .anthropic, credential: CredentialReference("cmd:new")!, auth: .bearer)
+  }
+  #expect(readFile(instance.proxyStatePath)?.contains("sk-literal") == true)
+  try writeFile(
+    instance.proxyStatePath,
+    #"{"openai": {"credential": "cmd:openai", "auth": "bearer"}, "anthropic": {"credential": "cmd:a"}, "extra": 1}"#
+  )
   try ProxyState.setOverride(
     instance, provider: .anthropic, credential: CredentialReference("cmd:new")!, auth: .bearer)
   #expect(
-    readFile(instance.proxyStatePath)
-      == "{\n  \"anthropic\": {\n    \"credential\": \"cmd:new\",\n    \"auth\": \"bearer\"\n  },\n  \"openai\": {\n    \"credential\": \"sk-literal\",\n    \"auth\": \"bearer\"\n  }\n}"
-  )
+    try canonicalJSON(readFile(instance.proxyStatePath))
+      == canonicalJSON(
+        "{\n  \"anthropic\": {\n    \"credential\": \"cmd:new\",\n    \"auth\": \"bearer\"\n  },\n  \"openai\": {\n    \"credential\": \"cmd:openai\",\n    \"auth\": \"bearer\"\n  }\n}"
+      ))
   try ProxyState.setOverride(
     instance, provider: .openai, credential: CredentialReference("cmd:fixed")!, auth: .bearer)
   #expect(
@@ -356,20 +370,20 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   defer { try? FileManager.default.removeItem(atPath: root) }
   let tool = root + "/security"
   try writeFile(tool, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(root)/argv\"\n", mode: 0o755)
-  #expect(ProxyProvisioning.service(for: .anthropic, vm: nil) == "coop-anthropic")
-  #expect(ProxyProvisioning.service(for: .openai, vm: try InstanceName("dev")) == "coop-openai-dev")
+  #expect(ProxyProvisioning.service(for: .anthropic, vm: nil) == "iso-anthropic")
+  #expect(ProxyProvisioning.service(for: .openai, vm: try InstanceName("dev")) == "iso-openai-dev")
   #expect(ProxyProvisioning.auth(for: .openai, apiKey: true) == .bearer)
   #expect(ProxyProvisioning.auth(for: .anthropic, apiKey: true) == .apiKey)
   #expect(ProxyProvisioning.auth(for: .anthropic, apiKey: false) == .bearer)
   let reference = try ProxyProvisioning.storeInKeychain(
-    service: "coop-openai-dev", account: "openai", secret: Secret("sk-x"), environment: [:],
+    service: "iso-openai-dev", account: "openai", secret: Secret("sk-x"), environment: [:],
     tool: tool)
   #expect(
     reference.command.expose()
-      == "cmd:security find-generic-password -s coop-openai-dev -a openai -w")
+      == "cmd:security find-generic-password -s iso-openai-dev -a openai -w")
   #expect(
     readFile(root + "/argv")
-      == "add-generic-password\n-U\n-s\ncoop-openai-dev\n-a\nopenai\n-w\nsk-x\n")
+      == "add-generic-password\n-U\n-s\niso-openai-dev\n-a\nopenai\n-w\nsk-x\n")
   #expect(ProxyProvisioning.shellQuote("a b") == "'a b'")
   #expect(ProxyProvisioning.shellQuote("a'b") == "'a'\\''b'")
   #expect(ProxyProvisioning.shellQuote("") == "''")

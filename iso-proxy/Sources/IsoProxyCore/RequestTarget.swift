@@ -1,10 +1,10 @@
 /// Retains the raw target. No Foundation URL parsing or normalization is used
 /// before operation authorization or when preserving the query.
-public struct RequestTarget: Sendable {
-  public let raw: String
-  public let path: String
+package struct RequestTarget: Sendable {
+  package let raw: String
+  package let path: String
 
-  public init(_ raw: String) throws {
+  package init(_ raw: String) throws {
     let bytes = Array(raw.utf8)
     guard bytes.first == 47, !raw.hasPrefix("//"),
       bytes.allSatisfy({ $0 > 32 && $0 < 127 && $0 != 35 && $0 != 92 })

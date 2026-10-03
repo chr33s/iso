@@ -3,22 +3,22 @@ import ContainerizationEXT4
 import ContainerizationOCI
 import Foundation
 
-public struct ImageSummary: Codable, Sendable {
-  public var reference: String
-  public var digest: String
+package struct ImageSummary: Codable, Sendable {
+  package var reference: String
+  package var digest: String
 }
 
-public struct DiskSummary: Codable, Sendable {
-  public var name: String
-  public var logicalBytes: UInt64
-  public var allocatedBytes: UInt64
+package struct DiskSummary: Codable, Sendable {
+  package var name: String
+  package var logicalBytes: UInt64
+  package var allocatedBytes: UInt64
 }
 
 /// OCI images, unpacked base disks, and committed disks.
-public enum Disks {
+package enum Disks {
   /// Load an OCI archive (as written by `container image save`) into the
   /// private image store.
-  public static func importImage(root: SandboxRoot, ociTar: URL) async throws -> [ImageSummary] {
+  package static func importImage(root: SandboxRoot, ociTar: URL) async throws -> [ImageSummary] {
     let layout = root.root.appendingPathComponent(".oci-layout-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: layout, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: layout) }
@@ -37,14 +37,14 @@ public enum Disks {
     }
   }
 
-  public static func listImages(root: SandboxRoot) async throws -> [ImageSummary] {
+  package static func listImages(root: SandboxRoot) async throws -> [ImageSummary] {
     let store = try ImageStore(path: root.imageStore)
     return try await store.list().map { ImageSummary(reference: $0.reference, digest: $0.digest) }
       .sorted { $0.reference < $1.reference }
   }
 
   /// Remove `reference` and every cached base disk unpacked from it.
-  public static func deleteImage(root: SandboxRoot, reference: String) async throws {
+  package static func deleteImage(root: SandboxRoot, reference: String) async throws {
     let store = try ImageStore(path: root.imageStore)
     let image = try await store.get(reference: reference)
     let prefix = image.digest.replacingOccurrences(of: "sha256:", with: "") + "-"
@@ -61,7 +61,7 @@ public enum Disks {
 
   /// An unpacked, journaled ext4 of `image` at `bytes` capacity, created once
   /// and cloned per sandbox (unpacking costs ~0.7 s; a clone is instant).
-  public static func base(root: SandboxRoot, image: Containerization.Image, bytes: UInt64)
+  package static func base(root: SandboxRoot, image: Containerization.Image, bytes: UInt64)
     async throws -> URL
   {
     let url = root.bases.appendingPathComponent(baseName(digest: image.digest, bytes: bytes))
@@ -77,9 +77,9 @@ public enum Disks {
     return url
   }
 
-  public static let initImagePrefix = "ghcr.io/apple/containerization/vminit"
+  package static let initImagePrefix = "ghcr.io/apple/containerization/vminit"
 
-  public static func listDisks(root: SandboxRoot) -> [DiskSummary] {
+  package static func listDisks(root: SandboxRoot) -> [DiskSummary] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: root.disks.path)) ?? []
     return names.filter { $0.hasSuffix(".ext4") && !$0.hasPrefix(".") }.sorted().map { name in
       let (logical, allocated) = sizes(root.disks.appendingPathComponent(name))
@@ -88,7 +88,7 @@ public enum Disks {
     }
   }
 
-  public static func sizes(_ url: URL) -> (logical: UInt64, allocated: UInt64) {
+  package static func sizes(_ url: URL) -> (logical: UInt64, allocated: UInt64) {
     var st = stat()
     guard stat(url.path, &st) == 0 else { return (0, 0) }
     return (UInt64(st.st_size), UInt64(st.st_blocks) * 512)

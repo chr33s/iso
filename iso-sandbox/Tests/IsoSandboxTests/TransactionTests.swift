@@ -434,25 +434,15 @@ import Testing
 
   /// Staged state that contradicts itself or the sandbox is an error.
   @Test func contradictoryStagedStatesAreErrors() throws {
-    struct Legacy: Codable {
-      var inode: UInt64
-      var record: SandboxRecord
-    }
     let r = try root()
-    // Both a current and a legacy staged update.
+    // A staged update for another sandbox.
     let a = try stoppedSandbox(r, "a")
     _ = try interruptedGrow(a, at: .afterStaging)
-    try JSONEncoder.pretty.encode(Legacy(inode: 1, record: try a.readRecordFile())).write(
-      to: a.legacyPendingRestore)
-    #expect(throws: SandboxError.self) { try a.loadRecord() }
-    #expect(throws: SandboxError.self) { try DiskUpdate.settle(a) }
-    #expect(FileManager.default.fileExists(atPath: a.pendingDiskUpdate.path))
-    // A staged update for another sandbox.
     let b = try stoppedSandbox(r, "b")
-    _ = try interruptedGrow(b, at: .afterStaging)
-    try FileManager.default.copyItem(at: a.legacyPendingRestore, to: b.legacyPendingRestore)
-    try FileManager.default.removeItem(at: b.pendingDiskUpdate)
+    try FileManager.default.copyItem(at: a.pendingDiskUpdate, to: b.pendingDiskUpdate)
     #expect(throws: SandboxError.self) { try b.loadRecord() }
+    #expect(throws: SandboxError.self) { try DiskUpdate.settle(b) }
+    #expect(FileManager.default.fileExists(atPath: b.pendingDiskUpdate.path))
     // A staged update without an installed disk.
     let c = try stoppedSandbox(r, "c")
     _ = try interruptedGrow(c, at: .afterStaging)
