@@ -1,13 +1,16 @@
 import Darwin
-import Foundation
+import Synchronization
 
 /// A private renewal pipe, shared by the listener and tunnel workers. The
 /// caller owns the descriptor and must keep it open for this lease's lifetime.
-public final class ControlLease: @unchecked Sendable {
+public final class ControlLease: Sendable {
+  private struct State: Sendable {
+    var lastRenewal: UInt64
+    var revoked = false
+  }
+
   private let descriptor: Int32
-  private let lock = NSLock()
-  private var lastRenewal: UInt64
-  private var revoked = false
+  private let state: Mutex<State>
   private let limit = Monotonic.nanoseconds(EgressBudgets.lease)
 
   public convenience init(descriptor: Int32) {
@@ -16,34 +19,34 @@ public final class ControlLease: @unchecked Sendable {
 
   init(descriptor: Int32, startedAt: UInt64) {
     self.descriptor = descriptor
-    lastRenewal = startedAt
+    state = Mutex(State(lastRenewal: startedAt))
   }
 
   public func alive() -> Bool {
-    lock.withLock { probe(at: Monotonic.now()) }
+    state.withLock { probe(at: Monotonic.now(), state: &$0) }
   }
 
   func alive(at now: UInt64) -> Bool {
-    lock.withLock { probe(at: now) }
+    state.withLock { probe(at: now, state: &$0) }
   }
 
-  private func probe(at now: UInt64) -> Bool {
+  private func probe(at now: UInt64, state: inout State) -> Bool {
     // A queued byte cannot revive an expired grant after a scheduling pause.
-    guard !revoked, descriptor >= 0,
-      Monotonic.within(lastRenewal, now: now, limit: limit)
+    guard !state.revoked, descriptor >= 0,
+      Monotonic.within(state.lastRenewal, now: now, limit: limit)
     else {
-      revoked = true
+      state.revoked = true
       return false
     }
     var events = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
     let ready = poll(&events, 1, 0)
     if ready < 0 {
       if errno == EINTR { return true }
-      revoked = true
+      state.revoked = true
       return false
     }
     if events.revents & (Int16(POLLHUP) | Int16(POLLERR) | Int16(POLLNVAL)) != 0 {
-      revoked = true
+      state.revoked = true
       return false
     }
     if events.revents & Int16(POLLIN) != 0 {
@@ -51,10 +54,10 @@ public final class ControlLease: @unchecked Sendable {
       let count = read(descriptor, &byte, 1)
       if count < 0 && errno == EINTR { return true }
       guard count == 1, byte == 1 else {
-        revoked = true
+        state.revoked = true
         return false
       }
-      lastRenewal = now
+      state.lastRenewal = now
     }
     return true
   }

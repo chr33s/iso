@@ -1,6 +1,7 @@
 import Darwin
 import Dispatch
 import Foundation
+import Synchronization
 
 /// Choose one numeric address only when every answer is public and none
 /// belongs to this host. A mixed answer is denied entirely.
@@ -29,22 +30,21 @@ public enum Deadline {
   }
 }
 
-final class Box<T: Sendable>: @unchecked Sendable {
-  private enum State {
+final class Box<T: Sendable>: Sendable {
+  private enum State: Sendable {
     case waiting
     case finished(T)
     case abandoned
   }
 
-  private let lock = NSLock()
   private let signal = DispatchSemaphore(value: 0)
   private let deadline: DispatchTime
-  private var state = State.waiting
+  private let state = Mutex(State.waiting)
 
   init(deadline: DispatchTime) { self.deadline = deadline }
 
   func finish(_ value: T) {
-    lock.withLock {
+    state.withLock { state in
       guard case .waiting = state else { return }
       state = DispatchTime.now() <= deadline ? .finished(value) : .abandoned
     }
@@ -53,7 +53,7 @@ final class Box<T: Sendable>: @unchecked Sendable {
 
   func value() -> T? {
     let ready = signal.wait(timeout: deadline) == .success
-    return lock.withLock {
+    return state.withLock { state in
       defer { state = .abandoned }
       guard ready, case .finished(let value) = state else { return nil }
       return value

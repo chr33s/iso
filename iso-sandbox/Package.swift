@@ -1,11 +1,11 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 // iso-sandbox: iso's macOS VM runtime, built directly on apple/containerization.
 // Pinned exactly: the package's API changes between minor releases.
 import PackageDescription
 
 let package = Package(
   name: "iso-sandbox",
-  platforms: [.macOS("26.0")],
+  platforms: [.macOS("27.0")],
   products: [
     .executable(name: "iso-sandbox", targets: ["IsoSandbox"])
   ],

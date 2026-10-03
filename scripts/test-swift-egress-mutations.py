@@ -13,6 +13,10 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FAULTS = [
+    ('admission-state-update', 'state = next', '_ = next',
+     'concurrentAdmissionEnforcesAndRefillsEachLimit'),
+    ('relay-budget-reservation', 'used += take', '_ = take',
+     'concurrentRelayReservationsNeverExceedTheAggregateBudget'),
     ('connect-complete-head', 'text.hasSuffix("\\r\\n\\r\\n")', 'true',
      'connectRejectsIncompleteAndAmbiguousFramingBeforeChoosingATarget'),
     ('connect-head-size', 'bytes.count <= EgressBudgets.maxHeadBytes,', 'true,',
@@ -145,7 +149,9 @@ def main():
             return 2
         failures = []
         for ident, original, replacement, test_filter in faults:
-            filename = ('Readiness.swift' if ident.startswith('readiness-') else
+            filename = ('Admission.swift' if ident == 'admission-state-update' else
+                        'RelayQueue.swift' if ident == 'relay-budget-reservation' else
+                        'Readiness.swift' if ident.startswith('readiness-') else
                         'Policy.swift' if ident.startswith('connect-') else
                         'Tunnel.swift' if ident.startswith(('relay-', 'tunnel-open-')) else 'Dial.swift')
             path = package / 'Sources/IsoEgressCore' / filename

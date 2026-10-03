@@ -3,6 +3,7 @@ import ContainerizationExtras
 import ContainerizationOCI
 import Darwin
 import Foundation
+import Synchronization
 import vmnet
 
 /// The process that owns one running sandbox VM. Virtualization.framework
@@ -291,17 +292,7 @@ public enum Owner {
       c.stderr = err
       c.stdin = input
     }
-    try await process.start()
-    let status: ExitStatus
-    do {
-      status = try await process.wait(timeoutInSeconds: timeout)
-    } catch {
-      // A timed-out command must not keep running in the guest.
-      try? await process.kill(.kill)
-      try? await process.delete()
-      throw error
-    }
-    try? await process.delete()
+    let status = try await runGuestProcess(process, timeout: timeout)
     return ControlResponse(ok: true, exitCode: status.exitCode, stdout: out.data, stderr: err.data)
   }
 
@@ -379,15 +370,14 @@ actor Lifecycle {
 
 /// Collects guest output up to `limit` bytes; the rest is dropped, so a
 /// guest cannot exhaust the owner's memory.
-final class BufferWriter: Writer, @unchecked Sendable {
+final class BufferWriter: Writer, Sendable {
   static let limit = 8 * 1024 * 1024
-  private let lock = NSLock()
-  private var buffer = Data()
+  private let buffer = Mutex(Data())
   func write(_ data: Data) throws {
-    lock.withLock { buffer.append(data.prefix(max(0, Self.limit - buffer.count))) }
+    buffer.withLock { $0.append(data.prefix(max(0, Self.limit - $0.count))) }
   }
   func close() throws {}
-  var data: Data { lock.withLock { buffer } }
+  var data: Data { buffer.withLock { $0 } }
 }
 
 struct DataReader: ReaderStream {

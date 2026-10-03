@@ -20,8 +20,11 @@ a bug through.
 
 ## Toolchain and formatting
 
-- Swift 6 language mode (`swiftLanguageModes: [.v6]`), strict concurrency, the
+- Swift 6.4 toolchain, Swift 6 language mode (`swiftLanguageModes: [.v6]`), strict concurrency, the
   pinned Xcode toolchain, macOS 27 deployment target.
+- `IsoConfiguration` enables strict memory safety and treats its diagnostics
+  as errors. Keep `unsafe` acknowledgments on the smallest audited C/Foundation
+  call, with the buffer bounds and pointer lifetime documented.
 - Commit every `Package.resolved`; build and test with
   `--force-resolved-versions` so an unexpected resolution change fails.
   Add a dependency only with a reviewed reason; the host depends only on
@@ -94,6 +97,17 @@ Multi-step operations use explicit scoped cleanup (`defer`, journals,
 `Shutdown` scopes). Never rely on `deinit` to stop a VM, terminate a process,
 release a credential or roll back a step; actors do not replace interprocess
 `FileLock`s.
+
+Use noncopyable values for unique resource ownership (`ChildProcess: ~Copyable`)
+and retain explicit scoped cleanup. In async runtime operations, register an
+awaited `defer` immediately after acquiring the resource; shield necessary
+teardown with `withTaskCancellationShield` so cancellation cannot skip it.
+Preserve kill-on-failure behavior and the original operation error.
+
+Borrow contiguous parser input with `Span` parameters and keep parsed results
+owned. Fixed subprocess scratch buffers use `InlineArray`; only the initialized
+read prefix reaches a sink. Public streaming sinks retain owned slices, so they
+can keep a chunk after the next read.
 
 ## Newtypes that earn their keep
 

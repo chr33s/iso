@@ -373,6 +373,11 @@ if want machine; then
     check "PID 1 is systemd" test "$(jq -r .pid1 <<<"$v")" = systemd
     check "systemd is running with no failed units" test "$(jq -r '"\(.system_state) \(.failed_units|length)"' <<<"$v")" = "running 0"
     check "sshd and Docker stay active after the exec" test "$(guest "$A" systemctl is-active ssh docker | tr '\n' ' ')" = "active active "
+    check "guest exec reports its timeout" refuses sbx exec --timeout 1 "$A" -- sh -c \
+        'touch /var/lib/iso-test/exec-started; sleep 3; touch /var/lib/iso-test/exec-survived'
+    check "the timed-out guest process actually started" guest "$A" test -e /var/lib/iso-test/exec-started
+    sleep 3
+    check "the timed-out guest process cannot finish its work" refuses guest "$A" test -e /var/lib/iso-test/exec-survived
     check "docker runs a container" guest "$A" docker run --rm alpine:3.20 /bin/true
     check "docker builds an image" guest "$A" sh -c 'mkdir -p /tmp/b && printf "FROM alpine:3.20\nRUN echo built > /built\n" > /tmp/b/Dockerfile && docker build -q -t t /tmp/b >/dev/null'
     eff="$(sbx inspect "$A" | jq .effective)"

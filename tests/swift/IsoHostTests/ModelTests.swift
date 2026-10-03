@@ -466,11 +466,28 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   for bad in ["", "[1,]", "{\"a\":1,}", "01", "\"\\ud800\"", "nul", "[1] x", "{'a':1}"] {
     #expect(throws: OrderedJSON.ParseError.self, "\(bad)") { try OrderedJSON.parse(bad) }
   }
-  let deep = String(repeating: "[", count: 129) + String(repeating: "]", count: 129)
-  #expect(throws: OrderedJSON.ParseError.self) { try OrderedJSON.parse(deep) }
-  #expect(throws: Never.self) {
-    try OrderedJSON.parse(String(repeating: "[", count: 128) + String(repeating: "]", count: 128))
+  for (opening, closing) in [("[", "]"), ("{\"x\":", "}")] {
+    let deep = String(repeating: opening, count: 129) + "0" + String(repeating: closing, count: 129)
+    #expect(throws: OrderedJSON.ParseError.self) { try OrderedJSON.parse(deep) }
+    #expect(throws: Never.self) {
+      try OrderedJSON.parse(
+        String(repeating: opening, count: 128) + "0" + String(repeating: closing, count: 128))
+    }
   }
+}
+
+@Test(arguments: [1, 8192])
+func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throws {
+  let payload = String(repeating: "é🐓中", count: repetitions)
+  let parsed = try autoreleasepool {
+    let document: NSString =
+      "{\"text\":\"\(payload)\",\"escaped\":\"\\uD83D\\uDC13\",\"values\":[true,false,null,-1,0.25]}"
+      as NSString
+    return try OrderedJSON.parse(document as String)
+  }
+  #expect(parsed["text"]?.stringValue == payload)
+  #expect(parsed["escaped"]?.stringValue == "🐓")
+  #expect(parsed["values"] == .array([.bool(true), .bool(false), .null, .int(-1), .double(0.25)]))
 }
 
 @Test func orderedJSONRemovalSwapsTheLastMemberIn() {

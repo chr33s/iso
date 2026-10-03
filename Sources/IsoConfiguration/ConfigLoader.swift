@@ -130,16 +130,18 @@ public enum ConfigLoader {
   /// Reads a regular file, at most `limit + 1` bytes (so an oversized file
   /// is detected without reading all of it); nil when it does not exist.
   public static func readSnapshot(_ path: String, limit: Int) throws(ConfigError) -> [UInt8]? {
-    let descriptor = open(path, O_RDONLY | O_CLOEXEC)
+    // The C string is borrowed only for open; the resulting descriptor is owned here.
+    let descriptor = unsafe open(path, O_RDONLY | O_CLOEXEC)
     if descriptor < 0 {
       let code = errno
       if code == ENOENT { return nil }
-      throw .unreadable(path: path, reason: String(cString: strerror(code)))
+      throw .unreadable(path: path, reason: posixMessage(code))
     }
     defer { close(descriptor) }
     var status = stat()
-    guard fstat(descriptor, &status) == 0 else {
-      throw .unreadable(path: path, reason: String(cString: strerror(errno)))
+    // fstat writes exactly one initialized stat value, borrowed for this call.
+    guard unsafe fstat(descriptor, &status) == 0 else {
+      throw .unreadable(path: path, reason: posixMessage(errno))
     }
     guard (status.st_mode & S_IFMT) == S_IFREG else {
       throw .unreadable(path: path, reason: "not a regular file")
@@ -147,14 +149,20 @@ public enum ConfigLoader {
     var bytes: [UInt8] = []
     var chunk = [UInt8](repeating: 0, count: 64 << 10)
     while bytes.count <= limit {
-      let count = chunk.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+      // read cannot exceed the writable buffer; the pointer stays inside this closure.
+      let count = chunk.withUnsafeMutableBytes { unsafe read(descriptor, $0.baseAddress, $0.count) }
       if count < 0 {
         if errno == EINTR { continue }
-        throw .unreadable(path: path, reason: String(cString: strerror(errno)))
+        throw .unreadable(path: path, reason: posixMessage(errno))
       }
       if count == 0 { break }
       bytes.append(contentsOf: chunk[0..<count])
     }
     return bytes
+  }
+
+  private static func posixMessage(_ code: Int32) -> String {
+    // libc supplies a NUL-terminated message; copy it before another libc call.
+    unsafe String(cString: strerror(code))
   }
 }

@@ -19,7 +19,7 @@ public enum Shutdown {
     return Guard(interrupt: previousInterrupt, terminate: previousTerminate)
   }
 
-  public final class Guard: @unchecked Sendable {
+  public final class Guard: Sendable {
     let interrupt: sig_t?
     let terminate: sig_t?
     init(interrupt: sig_t?, terminate: sig_t?) {

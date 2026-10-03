@@ -47,6 +47,38 @@ import Testing
   #expect(none.isEmpty)
 }
 
+@Test func streamRetainedChunksSurviveBufferReuse() throws {
+  let input = (0..<131_072).map { UInt8($0 % 251) }
+  var chunks: [ArraySlice<UInt8>] = []
+  let termination = try ProcessRunner().stream(
+    .init(
+      executable: "/bin/cat", arguments: [], environment: [:], deadline: .seconds(5), input: input),
+    deadline: .seconds(5)
+  ) { (stream, bytes) throws(ProcessRunner.Failure) in
+    #expect(stream == .stdout)
+    chunks.append(bytes)
+  }
+  #expect(termination == .exited(0))
+  #expect(chunks.count > 1)
+  #expect(chunks.flatMap { $0 } == input)
+}
+
+@Test func pipelineDrainsBothStderrStreamsBeyondTheScratchBuffer() throws {
+  let producer = ProcessRunner.Request(
+    executable: "/bin/sh",
+    arguments: ["-c", "head -c 131072 /dev/zero >&2; head -c 300000 /dev/zero"],
+    environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(5))
+  let consumer = ProcessRunner.Request(
+    executable: "/bin/sh",
+    arguments: ["-c", "head -c 196608 /dev/zero >&2; count=$(wc -c); test \"$count\" -eq 300000"],
+    environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(5))
+  let output = try ProcessRunner().pipeline(producer, consumer)
+  #expect(output.producer == .exited(0))
+  #expect(output.consumer == .exited(0))
+  #expect(output.producerStderr == [UInt8](repeating: 0, count: 131_072))
+  #expect(output.consumerStderr == [UInt8](repeating: 0, count: 196_608))
+}
+
 // MARK: - Guest usage
 
 @Test func resourceUsageParsesTypicalOutput() {

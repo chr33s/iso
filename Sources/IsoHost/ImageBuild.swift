@@ -275,7 +275,7 @@ public struct BuildContext: Sendable, Equatable {
 }
 
 /// A private (0700) temporary directory removed by `remove()`.
-public final class TemporaryDirectory: @unchecked Sendable {
+public final class TemporaryDirectory: Sendable {
   public let path: String
 
   public init(prefix: String) throws(HostError) {

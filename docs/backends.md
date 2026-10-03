@@ -25,7 +25,7 @@ Each instance is one Linux VM running systemd from its own ext4 disk, on its own
 
 - Apple Silicon, macOS 27 or later. The runtime’s underlying vmnet API has a
   macOS 26 floor, but this fork’s supported host minimum is macOS 27.
-- `iso-sandbox`, built with `scripts/build-iso-sandbox.sh` (Xcode with Swift 6.2+ required).
+- `iso-sandbox`, built with `scripts/build-iso-sandbox.sh` (Xcode 27 and Swift 6.4 required).
 - Stock Apple `container` 1.4.1 or later, with its service running (`container system start`). isolate uses it only to **build** images (`container build`) and to supply the guest kernel it installs; instances never run on it. isolate never starts, stops, or restarts that service.
 
 Binaries come from `apple_container.binary` (iso-sandbox) and `apple_container.builder` (`container`), or else fixed install locations: `~/.local/opt/iso-sandbox/bin/iso-sandbox`, `/usr/local/bin/iso-sandbox`, `/opt/homebrew/bin/iso-sandbox`, and `/usr/local/bin/container`, `/opt/homebrew/bin/container`. `PATH` and project files are never consulted, and a binary that is group/world-writable or owned by neither you nor root is rejected, as is one under a directory that is owned by neither you nor root, world-writable without the sticky bit, or group-writable without the sticky bit unless its group is `wheel` or `admin` (Homebrew's prefix is `admin`-writable).

@@ -84,7 +84,9 @@ public struct ProcessRunner: Sendable {
         guard request.overflow == .drain else { throw .outputLimitExceeded }
         truncated = true
       }
-      buffers[stream.rawValue].append(contentsOf: bytes.prefix(max(room, 0)))
+      bytes.extracting(first: max(room, 0)).withUnsafeBufferPointer {
+        buffers[stream.rawValue].append(contentsOf: $0)
+      }
     }
     return Output(
       termination: termination, stdout: buffers[0], stderr: buffers[1], truncated: truncated)
@@ -102,14 +104,18 @@ public struct ProcessRunner: Sendable {
     _ request: Request, deadline: Duration?,
     onOutput: (Stream, ArraySlice<UInt8>) throws(Failure) -> Void
   ) throws(Failure) -> Termination {
-    try pump(request, deadline: deadline, sink: onOutput)
+    try pump(request, deadline: deadline) { (stream, bytes) throws(Failure) in
+      // Public sinks receive owned slices that they may retain after this read.
+      let owned = bytes.withUnsafeBufferPointer { Array($0) }
+      try onOutput(stream, owned[...])
+    }
   }
 
   /// Spawn, drain both pipes concurrently until EOF, then reap. The child's
   /// process group is killed on every early exit.
   private func pump(
     _ request: Request, deadline: Duration?,
-    sink: (Stream, ArraySlice<UInt8>) throws(Failure) -> Void
+    sink: (Stream, Span<UInt8>) throws(Failure) -> Void
   ) throws(Failure) -> Termination {
     var stdoutPipe: [Int32] = [-1, -1]
     var stderrPipe: [Int32] = [-1, -1]
@@ -159,7 +165,7 @@ public struct ProcessRunner: Sendable {
     defer { child.killGroupAndReap() }
 
     let start = ContinuousClock.now
-    var chunk = [UInt8](repeating: 0, count: 16 << 10)
+    var chunk = InlineArray<16384, UInt8>(repeating: 0)
     while parentEnds.contains(where: { $0 >= 0 }) {
       if request.isCancelled?() == true { throw .cancelled }
       var timeout: Int32 = -1
@@ -188,7 +194,9 @@ public struct ProcessRunner: Sendable {
         }
       }
       for index in parentEnds.indices where fds[index].fd >= 0 && fds[index].revents != 0 {
-        let count = chunk.withUnsafeMutableBytes { read(fds[index].fd, $0.baseAddress, $0.count) }
+        let count = withUnsafeMutableBytes(of: &chunk) {
+          read(fds[index].fd, $0.baseAddress, $0.count)
+        }
         if count < 0 {
           if errno == EINTR || errno == EAGAIN { continue }
           throw .io(errno: errno)
@@ -198,7 +206,7 @@ public struct ProcessRunner: Sendable {
           parentEnds[index] = -1
           continue
         }
-        try sink(Stream(rawValue: index)!, chunk[0..<count])
+        try sink(Stream(rawValue: index)!, chunk.span.extracting(first: count))
       }
     }
     guard let deadline else { return child.waitIndefinitely() }
@@ -335,7 +343,7 @@ public struct ProcessRunner: Sendable {
 
     var ends = [producerErr[0], consumerErr[0]]
     var buffers: [[UInt8]] = [[], []]
-    var chunk = [UInt8](repeating: 0, count: 16 << 10)
+    var chunk = InlineArray<16384, UInt8>(repeating: 0)
     let isCancelled = producer.isCancelled ?? consumer.isCancelled
     while ends.contains(where: { $0 >= 0 }) {
       if isCancelled?() == true { throw .cancelled }
@@ -345,7 +353,9 @@ public struct ProcessRunner: Sendable {
         throw .io(errno: errno)
       }
       for index in fds.indices where fds[index].fd >= 0 && fds[index].revents != 0 {
-        let count = chunk.withUnsafeMutableBytes { read(fds[index].fd, $0.baseAddress, $0.count) }
+        let count = withUnsafeMutableBytes(of: &chunk) {
+          read(fds[index].fd, $0.baseAddress, $0.count)
+        }
         if count < 0 {
           if errno == EINTR || errno == EAGAIN { continue }
           throw .io(errno: errno)
@@ -357,7 +367,9 @@ public struct ProcessRunner: Sendable {
         }
         let limit = index == 0 ? producer.outputLimit : consumer.outputLimit
         let room = limit - buffers[index].count
-        buffers[index].append(contentsOf: chunk[0..<min(count, max(room, 0))])
+        chunk.span.extracting(first: min(count, max(room, 0))).withUnsafeBufferPointer {
+          buffers[index].append(contentsOf: $0)
+        }
       }
     }
     return PipelineOutput(
@@ -424,7 +436,7 @@ public struct ProcessRunner: Sendable {
 
 /// Reaps a spawned child exactly once. `killGroupAndReap` is the scoped
 /// cleanup: it is a no-op after a successful `wait`.
-struct ChildProcess {
+struct ChildProcess: ~Copyable {
   let pid: pid_t
   /// Whether the child leads its own process group (never the caller's).
   let ownsGroup: Bool

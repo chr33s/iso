@@ -1,4 +1,4 @@
-import Foundation
+import Synchronization
 
 /// Accepted sockets, established tunnels, and in-flight DNS lookups. A full
 /// counter refuses the new work; nothing is queued past the cap.
@@ -29,9 +29,8 @@ public struct AdmissionState: Equatable, Sendable {
   }
 }
 
-public final class Admission: @unchecked Sendable {
-  private let lock = NSLock()
-  private var state = AdmissionState()
+public final class Admission: Sendable {
+  private let state = Mutex(AdmissionState())
 
   public init() {}
 
@@ -43,16 +42,14 @@ public final class Admission: @unchecked Sendable {
   public func endDNS() { replace { $0.releaseDNS() } }
 
   private func change(_ step: (AdmissionState) -> AdmissionState?) -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    guard let next = step(state) else { return false }
-    state = next
-    return true
+    state.withLock { state in
+      guard let next = step(state) else { return false }
+      state = next
+      return true
+    }
   }
 
   private func replace(_ step: (AdmissionState) -> AdmissionState) {
-    lock.lock()
-    state = step(state)
-    lock.unlock()
+    state.withLock { $0 = step($0) }
   }
 }

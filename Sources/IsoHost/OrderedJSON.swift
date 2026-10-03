@@ -151,25 +151,32 @@ indirect enum OrderedJSON: Equatable, Sendable {
   }
 
   private static func parseOnCurrentStack(_ text: String) throws(ParseError) -> OrderedJSON {
-    var parser = Parser(bytes: Array(text.utf8))
-    parser.skipWhitespace()
-    let value = try parser.value(depth: 0)
-    parser.skipWhitespace()
-    guard parser.index == parser.bytes.count else {
+    var contiguous = text
+    contiguous.makeContiguousUTF8()
+    let bytes = contiguous.utf8Span.span
+    var parser = Parser()
+    parser.skipWhitespace(in: bytes)
+    let value = try parser.value(in: bytes, depth: 0)
+    parser.skipWhitespace(in: bytes)
+    guard parser.index == bytes.count else {
       throw parser.error("trailing characters")
     }
     return value
   }
 
   private struct Parser {
-    let bytes: [UInt8]
+    // Keep only the cursor here; each call borrows input from the parse scope.
     var index = 0
 
     func error(_ message: String) -> ParseError {
       ParseError(message: "\(message) at byte \(index)")
     }
 
-    mutating func skipWhitespace() {
+    func text(in range: Range<Int>, bytes: Span<UInt8>) -> String {
+      bytes.extracting(range).withUnsafeBufferPointer { String(decoding: $0, as: UTF8.self) }
+    }
+
+    mutating func skipWhitespace(in bytes: Span<UInt8>) {
       while index < bytes.count,
         [UInt8(ascii: " "), UInt8(ascii: "\t"), UInt8(ascii: "\n"), UInt8(ascii: "\r")].contains(
           bytes[index])
@@ -178,33 +185,33 @@ indirect enum OrderedJSON: Equatable, Sendable {
       }
     }
 
-    mutating func value(depth: Int) throws(ParseError) -> OrderedJSON {
+    mutating func value(in bytes: Span<UInt8>, depth: Int) throws(ParseError) -> OrderedJSON {
       guard index < bytes.count else { throw error("EOF while parsing a value") }
       switch bytes[index] {
       case UInt8(ascii: "{"):
         guard depth < OrderedJSON.maxDepth else { throw error("recursion limit exceeded") }
         index += 1
         var members = Members()
-        skipWhitespace()
-        if peek(UInt8(ascii: "}")) {
+        skipWhitespace(in: bytes)
+        if peek(UInt8(ascii: "}"), in: bytes) {
           index += 1
           return .object(members)
         }
         while true {
-          skipWhitespace()
-          guard peek(UInt8(ascii: "\"")) else { throw error("key must be a string") }
-          let key = try string()
-          skipWhitespace()
-          guard peek(UInt8(ascii: ":")) else { throw error("expected `:`") }
+          skipWhitespace(in: bytes)
+          guard peek(UInt8(ascii: "\""), in: bytes) else { throw error("key must be a string") }
+          let key = try string(in: bytes)
+          skipWhitespace(in: bytes)
+          guard peek(UInt8(ascii: ":"), in: bytes) else { throw error("expected `:`") }
           index += 1
-          skipWhitespace()
-          members[key] = try value(depth: depth + 1)
-          skipWhitespace()
-          if peek(UInt8(ascii: ",")) {
+          skipWhitespace(in: bytes)
+          members[key] = try value(in: bytes, depth: depth + 1)
+          skipWhitespace(in: bytes)
+          if peek(UInt8(ascii: ","), in: bytes) {
             index += 1
             continue
           }
-          guard peek(UInt8(ascii: "}")) else { throw error("expected `,` or `}`") }
+          guard peek(UInt8(ascii: "}"), in: bytes) else { throw error("expected `,` or `}`") }
           index += 1
           return .object(members)
         }
@@ -212,46 +219,52 @@ indirect enum OrderedJSON: Equatable, Sendable {
         guard depth < OrderedJSON.maxDepth else { throw error("recursion limit exceeded") }
         index += 1
         var elements: [OrderedJSON] = []
-        skipWhitespace()
-        if peek(UInt8(ascii: "]")) {
+        skipWhitespace(in: bytes)
+        if peek(UInt8(ascii: "]"), in: bytes) {
           index += 1
           return .array(elements)
         }
         while true {
-          skipWhitespace()
-          elements.append(try value(depth: depth + 1))
-          skipWhitespace()
-          if peek(UInt8(ascii: ",")) {
+          skipWhitespace(in: bytes)
+          elements.append(try value(in: bytes, depth: depth + 1))
+          skipWhitespace(in: bytes)
+          if peek(UInt8(ascii: ","), in: bytes) {
             index += 1
             continue
           }
-          guard peek(UInt8(ascii: "]")) else { throw error("expected `,` or `]`") }
+          guard peek(UInt8(ascii: "]"), in: bytes) else { throw error("expected `,` or `]`") }
           index += 1
           return .array(elements)
         }
-      case UInt8(ascii: "\""): return .string(try string())
-      case UInt8(ascii: "t"): return try literal("true", .bool(true))
-      case UInt8(ascii: "f"): return try literal("false", .bool(false))
-      case UInt8(ascii: "n"): return try literal("null", .null)
-      default: return try number()
+      case UInt8(ascii: "\""): return .string(try string(in: bytes))
+      case UInt8(ascii: "t"): return try literal("true", .bool(true), in: bytes)
+      case UInt8(ascii: "f"): return try literal("false", .bool(false), in: bytes)
+      case UInt8(ascii: "n"): return try literal("null", .null, in: bytes)
+      default: return try number(in: bytes)
       }
     }
 
-    func peek(_ byte: UInt8) -> Bool { index < bytes.count && bytes[index] == byte }
+    func peek(_ byte: UInt8, in bytes: Span<UInt8>) -> Bool {
+      index < bytes.count && bytes[index] == byte
+    }
 
-    mutating func literal(_ word: String, _ result: OrderedJSON) throws(ParseError) -> OrderedJSON {
-      let expected = Array(word.utf8)
+    mutating func literal(_ word: String, _ result: OrderedJSON, in bytes: Span<UInt8>)
+      throws(ParseError) -> OrderedJSON
+    {
+      let expected = word.utf8
       guard bytes.count - index >= expected.count,
-        Array(bytes[index..<index + expected.count]) == expected
+        bytes.extracting(index..<index + expected.count).withUnsafeBufferPointer({
+          $0.elementsEqual(expected)
+        })
       else { throw error("expected value") }
       index += expected.count
       return result
     }
 
-    mutating func number() throws(ParseError) -> OrderedJSON {
+    mutating func number(in bytes: Span<UInt8>) throws(ParseError) -> OrderedJSON {
       let start = index
       func isDigit(_ byte: UInt8) -> Bool { byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9") }
-      if peek(UInt8(ascii: "-")) { index += 1 }
+      if peek(UInt8(ascii: "-"), in: bytes) { index += 1 }
       guard index < bytes.count, isDigit(bytes[index]) else { throw error("expected value") }
       if bytes[index] == UInt8(ascii: "0") {
         index += 1
@@ -259,20 +272,20 @@ indirect enum OrderedJSON: Equatable, Sendable {
         while index < bytes.count, isDigit(bytes[index]) { index += 1 }
       }
       var integral = true
-      if peek(UInt8(ascii: ".")) {
+      if peek(UInt8(ascii: "."), in: bytes) {
         integral = false
         index += 1
         guard index < bytes.count, isDigit(bytes[index]) else { throw error("invalid number") }
         while index < bytes.count, isDigit(bytes[index]) { index += 1 }
       }
-      if peek(UInt8(ascii: "e")) || peek(UInt8(ascii: "E")) {
+      if peek(UInt8(ascii: "e"), in: bytes) || peek(UInt8(ascii: "E"), in: bytes) {
         integral = false
         index += 1
-        if peek(UInt8(ascii: "+")) || peek(UInt8(ascii: "-")) { index += 1 }
+        if peek(UInt8(ascii: "+"), in: bytes) || peek(UInt8(ascii: "-"), in: bytes) { index += 1 }
         guard index < bytes.count, isDigit(bytes[index]) else { throw error("invalid number") }
         while index < bytes.count, isDigit(bytes[index]) { index += 1 }
       }
-      let text = String(decoding: bytes[start..<index], as: UTF8.self)
+      let text = text(in: start..<index, bytes: bytes)
       if integral {
         if text.hasPrefix("-") {
           // serde_json reads `-0` as a float.
@@ -287,12 +300,12 @@ indirect enum OrderedJSON: Equatable, Sendable {
       return .double(value)
     }
 
-    mutating func string() throws(ParseError) -> String {
+    mutating func string(in bytes: Span<UInt8>) throws(ParseError) -> String {
       index += 1  // opening quote
       var scalars = String.UnicodeScalarView()
       var run = index
       func flush(_ end: Int) {
-        scalars.append(contentsOf: String(decoding: bytes[run..<end], as: UTF8.self).unicodeScalars)
+        scalars.append(contentsOf: text(in: run..<end, bytes: bytes).unicodeScalars)
       }
       while index < bytes.count {
         let byte = bytes[index]
@@ -321,13 +334,13 @@ indirect enum OrderedJSON: Equatable, Sendable {
         case UInt8(ascii: "r"): scalars.append("\r")
         case UInt8(ascii: "t"): scalars.append("\t")
         case UInt8(ascii: "u"):
-          var code = try hex4()
+          var code = try hex4(in: bytes)
           if (0xD800...0xDBFF).contains(code) {
-            guard peek(UInt8(ascii: "\\")), index + 1 < bytes.count,
+            guard peek(UInt8(ascii: "\\"), in: bytes), index + 1 < bytes.count,
               bytes[index + 1] == UInt8(ascii: "u")
             else { throw error("lone leading surrogate in hex escape") }
             index += 2
-            let low = try hex4()
+            let low = try hex4(in: bytes)
             guard (0xDC00...0xDFFF).contains(low) else {
               throw error("lone leading surrogate in hex escape")
             }
@@ -344,10 +357,12 @@ indirect enum OrderedJSON: Equatable, Sendable {
       throw error("EOF while parsing a string")
     }
 
-    mutating func hex4() throws(ParseError) -> UInt32 {
+    mutating func hex4(in bytes: Span<UInt8>) throws(ParseError) -> UInt32 {
       guard bytes.count - index >= 4,
-        bytes[index..<index + 4].allSatisfy({ Character(Unicode.Scalar($0)).isHexDigit }),
-        let value = UInt32(String(decoding: bytes[index..<index + 4], as: UTF8.self), radix: 16)
+        bytes.extracting(index..<index + 4).withUnsafeBufferPointer({
+          $0.allSatisfy { Character(Unicode.Scalar($0)).isHexDigit }
+        }),
+        let value = UInt32(text(in: index..<index + 4, bytes: bytes), radix: 16)
       else { throw error("invalid escape") }
       index += 4
       return value

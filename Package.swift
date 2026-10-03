@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 // iso host CLI (Swift port; see docs/design/swift-host-spec.md). The runtime
 // (`iso-sandbox/`) and credential proxy (`iso-proxy/`) remain separate
 // packages and separate processes; this package never links them.
@@ -19,7 +19,9 @@ let package = Package(
   ],
   targets: [
     .target(name: "IsoCore"),
-    .target(name: "IsoConfiguration", dependencies: ["IsoCore"]),
+    .target(
+      name: "IsoConfiguration", dependencies: ["IsoCore"],
+      swiftSettings: [.strictMemorySafety(), .treatWarning("StrictMemorySafety", as: .error)]),
     // The local secret store; must not depend on IsoHost (VM/runtime code).
     .target(
       name: "IsoSecrets",

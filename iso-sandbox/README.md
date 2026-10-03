@@ -29,9 +29,9 @@ swift test --package-path iso-sandbox --no-parallel
 ```
 
 The binary needs only the `com.apple.security.virtualization` entitlement and is
-signed ad hoc. This fork requires macOS 27+ on Apple Silicon and Xcode 27. The package’s
-underlying API/deployment floor remains macOS 26; that is not a supported-host
-claim for the complete fork.
+signed ad hoc. This fork requires macOS 27+ on Apple Silicon, Xcode 27, and Swift 6.4.
+The package deploys to macOS 27 and uses its task cancellation shielding API for
+guest-process cleanup.
 
 ## CLI (protocol 5)
 

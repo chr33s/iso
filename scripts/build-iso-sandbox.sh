@@ -20,7 +20,7 @@ set -euo pipefail
 # iso finds <PREFIX>/bin/iso-sandbox at the default PREFIX; otherwise set
 #   [apple_container]
 #   binary = "<PREFIX>/bin/iso-sandbox"
-# See docs/backends.md. Requires Xcode (Swift 6.2+) on an Apple Silicon Mac.
+# See docs/backends.md. Requires Xcode 27 and Swift 6.4 on an Apple Silicon Mac.
 
 case "${1:-}" in
     -h | --help)

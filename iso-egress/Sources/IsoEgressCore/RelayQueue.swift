@@ -1,4 +1,4 @@
-import Foundation
+import Synchronization
 
 /// Bytes held for one tunnel direction, and the shared ceiling across tunnels.
 public struct RelayRoom: Equatable, Sendable {
@@ -12,31 +12,26 @@ public struct RelayRoom: Equatable, Sendable {
   }
 }
 
-public final class RelayBudget: @unchecked Sendable {
+public final class RelayBudget: Sendable {
   public static let shared = RelayBudget(cap: EgressBudgets.relayAggregate)
-  private let lock = NSLock()
-  private var used = 0
+  private let used = Mutex(0)
   public let cap: Int
 
   public init(cap: Int) { self.cap = cap }
 
   public var available: Int {
-    lock.lock()
-    defer { lock.unlock() }
-    return max(0, cap - used)
+    used.withLock { max(0, cap - $0) }
   }
 
   public func reserve(_ requested: Int) -> Int {
-    lock.lock()
-    defer { lock.unlock() }
-    let take = min(max(0, requested), max(0, cap - used))
-    used += take
-    return take
+    used.withLock { used in
+      let take = min(max(0, requested), max(0, cap - used))
+      used += take
+      return take
+    }
   }
 
   public func release(_ count: Int) {
-    lock.lock()
-    used = max(0, used - count)
-    lock.unlock()
+    used.withLock { $0 = max(0, $0 - count) }
   }
 }

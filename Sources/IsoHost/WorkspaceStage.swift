@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 
 // Staged workspace return (selective-hardening spec §5). Nothing reaches the
 // destination until `StageApplier` applies a reviewed manifest, and the stage
@@ -96,12 +97,15 @@ public struct StageBudgetExceeded: Error, CustomStringConvertible {
 /// host volume before `StageBuilder` enforces the budgets. Passed as a
 /// process `isCancelled` poll; measures at most twice a second, by allocated
 /// bytes so sparse files count for what they cost on the host.
-final class StageGrowthGuard: @unchecked Sendable {
-  private let lock = NSLock()
+final class StageGrowthGuard: Sendable {
+  private struct State: Sendable {
+    var lastCheck = ContinuousClock.now - .seconds(1)
+    var breach: String?
+  }
+
+  private let state = Mutex(State())
   private let tree: String
   private let limits: StageLimits
-  private var lastCheck = ContinuousClock.now - .seconds(1)
-  private var breach: String?
 
   init(tree: String, limits: StageLimits) {
     self.tree = tree
@@ -109,16 +113,16 @@ final class StageGrowthGuard: @unchecked Sendable {
   }
 
   /// Why the transfer was stopped, once it has been.
-  var breachDescription: String? { lock.withLock { breach } }
+  var breachDescription: String? { state.withLock { $0.breach } }
 
   func shouldCancel() -> Bool {
-    lock.withLock {
-      if breach != nil { return true }
+    state.withLock { state in
+      if state.breach != nil { return true }
       let now = ContinuousClock.now
-      guard now - lastCheck >= .milliseconds(500) else { return false }
-      lastCheck = now
-      breach = measure()
-      return breach != nil
+      guard now - state.lastCheck >= .milliseconds(500) else { return false }
+      state.lastCheck = now
+      state.breach = measure()
+      return state.breach != nil
     }
   }
 

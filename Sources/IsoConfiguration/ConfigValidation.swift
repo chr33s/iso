@@ -22,7 +22,8 @@ public struct LocalConfigFileSystem: ConfigFileSystem {
   public func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
   public func isDirectory(_ path: String) -> Bool {
     var directory: ObjCBool = false
-    return FileManager.default.fileExists(atPath: path, isDirectory: &directory)
+    // Foundation borrows this initialized output value for the duration of the call.
+    return unsafe FileManager.default.fileExists(atPath: path, isDirectory: &directory)
       && directory.boolValue
   }
 }

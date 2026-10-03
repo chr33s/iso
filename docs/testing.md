@@ -503,6 +503,23 @@ Entries whose source is under `iso-sandbox/` run that package's tests with
 The runtime owner-demand, non-killing startup, rollback, and failure propagation
 entries target `Launchd.bootstrap`. Other entries retain the host test target.
 
+The `guest-exec-*` faults check awaited deletion, kill-on-timeout, cancellation
+shielding, and avoiding a kill after normal exit. The `guestExec` runtime tests
+also cover partial startup and preservation of the operation error when cleanup
+fails. The `ordered-json-*` faults retain the depth and trailing-input checks
+while parsing borrowed UTF-8. Run those filters directly with:
+
+```bash
+swift test --package-path iso-sandbox --force-resolved-versions --no-parallel --filter guestExec
+swift test --force-resolved-versions --filter orderedJSON
+swift test --package-path iso-egress --force-resolved-versions --filter concurrent
+```
+
+The ordinary host build enforces strict memory safety in `IsoConfiguration`;
+unacknowledged unsafe operations in that target are compiler errors.
+The Apple VM suite's `machine` phase proves an exec reached the guest before
+timing out and cannot complete its delayed work afterward.
+
 The credential proxy has its own policy mutation sweep (Muter) and targeted
 mutation script; see [Swift proxy policy mutation
 sweep](#swift-proxy-policy-mutation-sweep).
