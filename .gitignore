@@ -5,6 +5,7 @@
 *.ext4
 *.img
 .env
+.keys/
 *.swp
 *.swo
 .claude/settings.local.json

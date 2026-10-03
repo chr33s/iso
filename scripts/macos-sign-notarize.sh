@@ -7,7 +7,9 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/macos-sign-notarize.sh DIR
-#     DIR holds iso, iso-proxy and iso-sandbox; each is re-signed in place.
+#     DIR holds iso, iso-proxy, iso-egress and iso-sandbox; each is re-signed in place.
+#   scripts/macos-sign-notarize.sh --check-env
+#     Check required environment variables without signing or contacting Apple.
 #
 # Environment (all required):
 #   MACOS_CERTIFICATE_P12        base64 Developer ID Application .p12
@@ -22,50 +24,104 @@ set -euo pipefail
 
 case "${1:-}" in
     -h | --help)
-        sed -n '4,21p' "$0" | sed -E 's/^# ?//'
+        sed -n '4,23p' "$0" | sed -E 's/^# ?//'
         exit 0
         ;;
     "")
-        echo "usage: $0 DIR" >&2
+        echo "usage: $0 DIR | --check-env" >&2
         exit 1
         ;;
 esac
 dir="$1"
 
+missing=0
 for var in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY \
     NOTARY_API_KEY_P8 NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID; do
     if [[ -z "${!var:-}" ]]; then
         echo "error: ${var} is not set" >&2
-        exit 1
+        missing=1
     fi
 done
+if [[ "$missing" == 1 ]]; then
+    echo "error: configure the required signing and notarization secrets in the release GitHub environment" >&2
+    exit 1
+fi
+if [[ "$dir" == --check-env ]]; then
+    exit 0
+fi
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 keychain="${work}/signing.keychain-db"
 keychain_password="$(uuidgen)"
+# Keep the existing search list for certificate-chain lookup, and restore it
+# even if importing, signing, or notarization fails. Never eval security output.
+original_keychains=()
+search_list_changed=0
 cleanup() {
+    if [[ "$search_list_changed" == 1 ]]; then
+        security list-keychains -d user -s ${original_keychains[@]+"${original_keychains[@]}"} || true
+    fi
     security delete-keychain "${keychain}" 2>/dev/null || true
     rm -rf "${work}"
 }
 trap cleanup EXIT
 
+security list-keychains -d user > "${work}/keychains"
+while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*\"(.*)\"[[:space:]]*$ ]]; then
+        original_keychains+=("${BASH_REMATCH[1]}")
+    else
+        echo "error: cannot parse the user keychain search list" >&2
+        exit 1
+    fi
+done < "${work}/keychains"
+
 printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${work}/cert.p12"
 security create-keychain -p "${keychain_password}" "${keychain}"
 security set-keychain-settings -lut 21600 "${keychain}"
 security unlock-keychain -p "${keychain_password}" "${keychain}"
+# --keychain restricts identity selection, but codesign still uses the user's
+# search list to construct the certificate chain.
+search_list_changed=1
+security list-keychains -d user -s "${keychain}" ${original_keychains[@]+"${original_keychains[@]}"}
 security import "${work}/cert.p12" -k "${keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
     -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain}" > /dev/null
 rm -f "${work}/cert.p12"
 
+# Resolve the configured name or SHA-1 to one valid Developer ID Application
+# identity in this keychain. Do not print certificate names or secret values.
+identities="$(security find-identity -v -p codesigning "${keychain}")"
+signing_hash=""
+identity_pattern='^[[:space:]]*[0-9]+\)[[:space:]]+([[:xdigit:]]{40})[[:space:]]+"(Developer ID Application: .*)"$'
+while IFS= read -r line; do
+    if [[ "$line" =~ $identity_pattern ]]; then
+        hash="${BASH_REMATCH[1]}"
+        name="${BASH_REMATCH[2]}"
+        if [[ "$MACOS_SIGNING_IDENTITY" == "$name" || "$MACOS_SIGNING_IDENTITY" == "$hash" ]]; then
+            if [[ -n "$signing_hash" ]]; then
+                echo "error: MACOS_SIGNING_IDENTITY matches multiple valid Developer ID Application identities" >&2
+                exit 1
+            fi
+            signing_hash="$hash"
+        fi
+    fi
+done <<< "$identities"
+if [[ -z "$signing_hash" ]]; then
+    echo "error: MACOS_SIGNING_IDENTITY does not match a valid Developer ID Application identity in MACOS_CERTIFICATE_P12" >&2
+    echo "error: export the certificate with its private key; check expiry, certificate trust, and the exact identity name or SHA-1" >&2
+    exit 1
+fi
+
 sign() {
     codesign --force --timestamp --options runtime --keychain "${keychain}" \
-        --sign "${MACOS_SIGNING_IDENTITY}" "$@"
+        --sign "${signing_hash}" "$@"
     codesign --verify --strict --verbose=2 "${@: -1}"
 }
 sign "${dir}/iso"
 sign "${dir}/iso-proxy"
+sign "${dir}/iso-egress"
 sign --entitlements "${root}/iso-sandbox/iso-sandbox.entitlements" "${dir}/iso-sandbox"
 
 printf '%s' "${NOTARY_API_KEY_P8}" | base64 --decode > "${work}/notary.p8"
@@ -80,6 +136,6 @@ if [[ "${status}" != Accepted ]]; then
     exit 1
 fi
 
-for binary in iso iso-proxy iso-sandbox; do
+for binary in iso iso-proxy iso-egress iso-sandbox; do
     spctl --assess --type open --context context:primary-signature --verbose=2 "${dir}/${binary}"
 done

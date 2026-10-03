@@ -4,13 +4,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Exercise release preflight dispatch and version gates without building VMs."""
+import importlib.util
 import os
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -200,6 +203,166 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         result = self.run_preflight('--quick', fail='test-lifecycle-contract.py')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('FAIL: Host behavior contracts', result.stdout)
+
+
+class SigningTests(unittest.TestCase):
+    VARIABLES = (
+        'MACOS_CERTIFICATE_P12', 'MACOS_CERTIFICATE_PASSWORD', 'MACOS_SIGNING_IDENTITY',
+        'NOTARY_API_KEY_P8', 'NOTARY_API_KEY_ID', 'NOTARY_API_ISSUER_ID',
+    )
+
+    def environment(self):
+        return {**os.environ, **{name: 'synthetic-value' for name in self.VARIABLES}}
+
+    def test_environment_check_reports_missing_names_without_secret_values(self):
+        for name in self.VARIABLES:
+            for unset in (False, True):
+                with self.subTest(name=name, unset=unset):
+                    env = self.environment()
+                    if unset:
+                        env.pop(name)
+                    else:
+                        env[name] = ''
+                    result = subprocess.run(
+                        ['bash', str(ROOT / 'scripts/macos-sign-notarize.sh'), '--check-env'],
+                        env=env, capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f'{name} is not set', result.stderr)
+                    self.assertNotIn('synthetic-value', result.stdout + result.stderr)
+        result = subprocess.run(
+            ['bash', str(ROOT / 'scripts/macos-sign-notarize.sh'), '--check-env'],
+            env=self.environment(), capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout + result.stderr, '')
+
+    def test_signed_builder_rejects_missing_environment_before_staging(self):
+        spec = importlib.util.spec_from_file_location('release', ROOT / 'scripts/build-release.py')
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        env = self.environment()
+        env['NOTARY_API_KEY_ID'] = ''
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(release.platform, 'system', return_value='Darwin'), \
+                mock.patch.object(release.platform, 'machine', return_value='arm64'), \
+                mock.patch.object(release.platform, 'mac_ver', return_value=('27.0', '', '')), \
+                mock.patch.object(release, 'source_state', return_value=('a' * 40, False)), \
+                mock.patch.object(release, 'stage_source',
+                                  side_effect=AssertionError('staged before checking signing environment')) as stage, \
+                mock.patch.object(release, 'build',
+                                  side_effect=AssertionError('built before checking signing environment')) as build, \
+                mock.patch.object(sys, 'argv', ['build-release.py', '--release', '--sign',
+                                              '--expected-revision', 'a' * 40,
+                                              '--out', str(Path(directory) / 'out')]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                release.main()
+            stage.assert_not_called()
+            build.assert_not_called()
+            self.assertFalse((Path(directory) / 'out').exists())
+
+    def run_signing(self, *, identity='Developer ID Application: Synthetic (TESTTEAM)',
+                    identities=None, failure='', empty_keychains=False):
+        if identities is None:
+            identities = '  1) ' + 'A' * 40 + ' "Developer ID Application: Synthetic (TESTTEAM)"'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / 'tools'
+            tools.mkdir()
+            calls = root / 'calls'
+            stub = '''#!/bin/bash
+printf '%s %s\\n' "${0##*/}" "$*" >> "$SIGNING_CALLS"
+case "${0##*/}" in
+    uuidgen) echo synthetic-password ;;
+    security)
+        case "$1" in
+            list-keychains)
+                if [[ "$*" != *' -s '* && "$SIGNING_EMPTY_KEYCHAINS" != 1 ]]; then
+                    printf '    "%s"\\n' '/test/Original Keychain.keychain-db' '/test/login.keychain-db'
+                fi ;;
+            find-identity) printf '%s\\n' "$SIGNING_IDENTITIES" ;;
+        esac
+        ;;
+    codesign)
+        [[ "$SIGNING_FAILURE" != codesign ]] || exit 1 ;;
+    xcrun) echo '{"status":"Accepted"}' ;;
+    jq) echo Accepted ;;
+esac
+'''
+            for name in ('uuidgen', 'security', 'codesign', 'ditto', 'xcrun', 'jq', 'spctl'):
+                (tools / name).write_text(stub)
+                (tools / name).chmod(0o755)
+            env = {**self.environment(), 'PATH': str(tools) + ':' + os.environ['PATH'],
+                   'SIGNING_CALLS': str(calls), 'MACOS_SIGNING_IDENTITY': identity,
+                   'SIGNING_IDENTITIES': identities, 'SIGNING_FAILURE': failure,
+                   'SIGNING_EMPTY_KEYCHAINS': str(int(empty_keychains))}
+            result = subprocess.run(
+                ['bash', str(ROOT / 'scripts/macos-sign-notarize.sh'), str(root / 'bundle')],
+                env=env, capture_output=True, text=True, timeout=10)
+            return result, calls.read_text().splitlines()
+
+    def assert_keychains_restored(self, recorded):
+        changes = [c for c in recorded if c.startswith('security list-keychains -d user -s')]
+        self.assertEqual(len(changes), 2)
+        self.assertRegex(changes[0], r'signing.keychain-db /test/Original Keychain.keychain-db /test/login.keychain-db$')
+        self.assertEqual(changes[-1], 'security list-keychains -d user -s '
+                         '/test/Original Keychain.keychain-db /test/login.keychain-db')
+        self.assertTrue(recorded[-1].startswith('security delete-keychain '))
+
+    def test_signing_and_gatekeeper_cover_every_archive_binary(self):
+        result, recorded = self.run_signing()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_keychains_restored(recorded)
+        for binary in ('iso', 'iso-proxy', 'iso-egress', 'iso-sandbox'):
+            target = next(c.split()[-1] for c in recorded
+                          if c.startswith('codesign --force ') and c.endswith('/' + binary))
+            self.assertEqual(sum(c.startswith('codesign --force ') and c.endswith(target)
+                                 for c in recorded), 1)
+            self.assertIn(f'codesign --verify --strict --verbose=2 {target}', recorded)
+            self.assertIn('spctl --assess --type open --context '
+                          f'context:primary-signature --verbose=2 {target}', recorded)
+        runtime_sign = next(c for c in recorded if c.startswith('codesign --force ')
+                            and c.endswith('/iso-sandbox'))
+        self.assertIn('--entitlements ' + str(ROOT / 'iso-sandbox/iso-sandbox.entitlements'),
+                      runtime_sign)
+
+    def test_signing_uses_the_resolved_certificate_hash(self):
+        for identity in ('Developer ID Application: Synthetic (TESTTEAM)', 'A' * 40):
+            with self.subTest(identity=identity):
+                result, recorded = self.run_signing(identity=identity)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                signing = [c for c in recorded if c.startswith('codesign --force ')]
+                self.assertEqual(len(signing), 4)
+                self.assertTrue(all('--sign ' + 'A' * 40 + ' ' in c for c in signing))
+
+    def test_invalid_or_mismatched_identity_stops_before_signing(self):
+        valid = '  1) ' + 'A' * 40 + ' "Developer ID Application: Synthetic (TESTTEAM)"'
+        for identities in ('  0 valid identities found', valid.replace('Application:', 'Installer:'),
+                           valid + ' (CSSMERR_TP_CERT_EXPIRED)', valid + '\n' + valid):
+            with self.subTest(identities=identities):
+                result, recorded = self.run_signing(identities=identities)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('MACOS_SIGNING_IDENTITY', result.stderr)
+                self.assertNotIn('Synthetic', result.stdout + result.stderr)
+                self.assertFalse(any(c.startswith(('codesign ', 'xcrun ')) for c in recorded))
+                self.assert_keychains_restored(recorded)
+        result, recorded = self.run_signing(identity='incorrect-secret-value')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('incorrect-secret-value', result.stdout + result.stderr)
+        self.assert_keychains_restored(recorded)
+
+    def test_empty_keychain_search_list_is_supported(self):
+        result, recorded = self.run_signing(empty_keychains=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        changes = [c for c in recorded if c.startswith('security list-keychains -d user -s')]
+        self.assertEqual(len(changes), 2)
+        self.assertTrue(changes[0].endswith('/signing.keychain-db'))
+        self.assertEqual(changes[1], 'security list-keychains -d user -s')
+
+    def test_keychain_search_list_is_restored_when_signing_fails(self):
+        result, recorded = self.run_signing(failure='codesign')
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_keychains_restored(recorded)
+        self.assertFalse(any(c.startswith('xcrun ') for c in recorded))
 
 
 class ReleaseBinaryTests(unittest.TestCase):

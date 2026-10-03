@@ -153,8 +153,11 @@ unless notarization is `Accepted`. A browser-downloaded archive then runs
 without `xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled
 ticket, so Gatekeeper checks notarization online on first launch.
 
-Only the sign stage sees the signing secrets; the builder removes them from
-every other `main` and helper subprocess.
+Only the signing script sees the signing secrets; the builder removes them from
+every other `main` and helper subprocess. With `--sign`, it first calls the
+script's `--check-env` mode before staging or building. This checks that every
+required variable is nonempty; certificate and API key validity are checked
+during signing and notarization.
 
 The signing workflows use the `release` GitHub environment, which must define these
 secrets:
@@ -163,13 +166,27 @@ secrets:
 |--------|-------|
 | `MACOS_CERTIFICATE_P12` | base64 of the Developer ID Application `.p12` (certificate + private key) |
 | `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export password |
-| `MACOS_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `MACOS_SIGNING_IDENTITY` | exact `Developer ID Application: Name (TEAMID)` name or certificate SHA-1 |
 | `NOTARY_API_KEY_P8` | base64 of an App Store Connect API key (`.p8`, Developer role) |
 | `NOTARY_API_KEY_ID` | that key's ID |
 | `NOTARY_API_ISSUER_ID` | the App Store Connect issuer ID |
 
 A missing secret fails the release, which burns the version, so configure the
 environment before tagging.
+
+If a candidate reports `NOTARY_API_KEY_ID is not set`, set that secret in the
+repository's `release` environment to the ID of the key supplied by
+`NOTARY_API_KEY_P8`, then rerun the candidate. The key ID and issuer ID are
+separate values; both must be configured.
+
+If signing reports `no identity found` or an identity mismatch, ensure
+`MACOS_SIGNING_IDENTITY` exactly matches the Developer ID Application certificate
+in the `.p12`, or use its SHA-1 from `security find-identity -v -p codesigning`.
+The export must include its private key and a valid, trusted certificate. The
+script adds its temporary keychain to the user search list for certificate-chain
+lookup, resolves the configured identity to a certificate hash, and restores the
+original search list on exit. It rejects missing, invalid, or ambiguous identities
+before signing any binary, without logging identity names or secret values.
 
 ## Release signing
 

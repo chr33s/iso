@@ -21,7 +21,8 @@ Stages, in order, each explicit:
 3. test     (`--test`) every package's tests in the staging copy.
 4. sign     (`--sign`) Developer ID signing and notarization through
             scripts/macos-sign-notarize.sh. Only this stage sees the
-            MACOS_*/NOTARY_* secrets; every other subprocess has them removed.
+            MACOS_*/NOTARY_* secrets (also checked before staging); every
+            other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
             iso-egress, iso-sandbox, legal notices, BUILD.json), plus a
@@ -219,6 +220,9 @@ def main():
         parser.error(f"--tag {args.tag} does not match the package version {version}")
 
     revision, dirty = source_state(args.expected_revision)
+    if args.sign:
+        phase("Check signing and notarization environment")
+        run([ROOT / "scripts/macos-sign-notarize.sh", "--check-env"], ROOT, signing=True)
     stamp = revision[:7] + ("+dirty" if dirty else "")
     expected_version = f"iso {version} ({stamp})" if args.release else f"iso {version}-dev ({stamp})"
     configuration = "release" if args.release else "debug"
