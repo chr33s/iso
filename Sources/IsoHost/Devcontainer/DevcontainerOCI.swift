@@ -423,7 +423,7 @@ package struct FeatureResolver: Sendable {
       termination = try runner.attached(
         .init(
           executable: path, arguments: arguments, environment: environment,
-          deadline: Self.deadline), inheritStdin: false)
+          deadline: Self.deadline), inheritStdin: false, deadline: nil)
     } catch {
       throw ContextError("Failed to execute \(description)", cause: HostError("\(error)"))
     }

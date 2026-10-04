@@ -347,7 +347,7 @@ private struct FakeInstallation {
   attached.isCancelled = { true }
   let start = ContinuousClock.now
   #expect(throws: ProcessRunner.Failure.cancelled) {
-    try ProcessRunner().attached(attached, inheritStdin: false)
+    try ProcessRunner().attached(attached, inheritStdin: false, deadline: nil)
   }
   var producer = ProcessRunner.Request(
     executable: "/bin/sh", arguments: ["-c", "sleep 30"], environment: [:], deadline: .seconds(60))
@@ -372,7 +372,7 @@ private struct FakeInstallation {
   let started = ContinuousClock.now
   request.isCancelled = { ContinuousClock.now - started > .milliseconds(400) }
   #expect(throws: ProcessRunner.Failure.cancelled) {
-    try ProcessRunner().attached(request, inheritStdin: false)
+    try ProcessRunner().attached(request, inheritStdin: false, deadline: nil)
   }
   Thread.sleep(forTimeInterval: 2.5)
   #expect(!FileManager.default.fileExists(atPath: marker))

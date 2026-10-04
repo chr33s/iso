@@ -19,6 +19,9 @@ enum MachineErrorCode: String, Encodable, Sendable {
 
   case interactionRequired = "INTERACTION_REQUIRED"
 
+  case editorNotFound = "EDITOR_NOT_FOUND"
+  case editorLaunchFailed = "EDITOR_LAUNCH_FAILED"
+
   // The Apple runtime's existing diagnostic classes (docs/backends.md).
   case appleRuntimeUnavailable = "APPLE_RUNTIME_UNAVAILABLE"
   case appleRuntimeUnqualified = "APPLE_RUNTIME_UNQUALIFIED"
@@ -52,12 +55,17 @@ enum MachineErrorDetails: Encodable, Equatable, Sendable {
   case githubPAT(repo: String, acceptedFlags: [String])
   case ambiguous(instances: [String], resolution: String?)
   case instance(name: String)
+  /// `name` and `action` describe the instance the command had already
+  /// created, started or reused; both null when no lifecycle step ran.
+  case editor(providers: [String], name: String?, action: String?)
+  /// A failure after the lifecycle step, with no more specific details.
+  case lifecycle(name: String, action: String)
   /// `destroy --all` failed after removing `destroyed`; the cause's own
   /// details, if any, sit beside it.
   indirect case partialDestroy(destroyed: [MachineRemovedInstance], cause: MachineErrorDetails?)
 
   enum CodingKeys: String, CodingKey {
-    case kind, path, instances, resolution, name, repo, destroyed
+    case kind, path, instances, resolution, name, repo, destroyed, providers, action
     case acceptedFlags = "accepted_flags"
     case descriptorVariable = "descriptor_variable"
   }
@@ -88,6 +96,28 @@ enum MachineErrorDetails: Encodable, Equatable, Sendable {
       try values.encode(resolution, forKey: .resolution)
     case .instance(let name):
       try values.encode(name, forKey: .name)
+    case .editor(let providers, let name, let action):
+      try values.encode(providers, forKey: .providers)
+      try values.encode(name, forKey: .name)
+      try values.encode(action, forKey: .action)
+    case .lifecycle(let name, let action):
+      try values.encode(name, forKey: .name)
+      try values.encode(action, forKey: .action)
+    }
+  }
+}
+
+extension MachineErrorDetails {
+  /// `details` of a failure after `lifecycle`: editor details gain the
+  /// instance and step; a bare instance name or none becomes `.lifecycle`.
+  static func after(_ lifecycle: HostFailure.Lifecycle, _ details: Self?) -> Self? {
+    let name = lifecycle.instance.rawValue
+    let action = lifecycle.action.rawValue
+    switch details {
+    case .editor(let providers, _, _):
+      return .editor(providers: providers, name: name, action: action)
+    case nil, .instance: return .lifecycle(name: name, action: action)
+    default: return details
     }
   }
 }
@@ -115,6 +145,13 @@ struct MachineFailure: Encodable, Sendable {
       self.init(
         code: cause.code, message: cause.message,
         details: .partialDestroy(destroyed: partial.destroyed, cause: cause.details))
+      return
+    }
+    if let after = error as? FailureAfterLifecycle {
+      let cause = MachineFailure(after.cause)
+      self.init(
+        code: cause.code, message: cause.message,
+        details: .after(after.lifecycle, cause.details))
       return
     }
     let message = oneLine(error)
@@ -171,6 +208,10 @@ struct MachineFailure: Encodable, Sendable {
       (.interactionRequired, .githubPAT(repo: neutralizeControls(repo), acceptedFlags: flags))
     case .interactionRequired(.passphrase(let variable)):
       (.interactionRequired, .passphrase(descriptorVariable: variable))
+    case .editorNotFound(let providers):
+      (.editorNotFound, .editor(providers: providers.map(\.rawValue), name: nil, action: nil))
+    case .editorLaunchFailed(let provider):
+      (.editorLaunchFailed, .editor(providers: [provider.rawValue], name: nil, action: nil))
     }
   }
 

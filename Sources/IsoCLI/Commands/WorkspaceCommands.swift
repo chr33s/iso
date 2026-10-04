@@ -199,8 +199,6 @@ struct SSHConfigCommand: MachineCommand {
   }
 }
 
-extension EditorKind: ExpressibleByArgument {}
-
 struct Editor: ParsableCommand {
   static let configuration = CommandConfiguration(
     abstract: "Open an editor (VS Code or Zed) connected to the guest VM")
@@ -210,8 +208,11 @@ struct Editor: ParsableCommand {
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
   @Option(help: "Remote path to open in the editor") var project = "/workspace"
-  @Option(help: "Editor to launch. Omitted: try VS Code first, then Zed") var editor: EditorKind?
+  @Option(help: "Editor to launch. Omitted: try VS Code first, then Zed")
+  var editor: EditorProviderID?
   @Flag(help: "Remove the SSH config entry for this instance and exit") var clean = false
+
+  func validate() throws { _ = try parseProjectGuestPath(project) }
 
   func run() throws {
     try IsoCLI.run {
@@ -223,18 +224,15 @@ struct Editor: ParsableCommand {
         return
       }
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
-      let path: GuestPath
-      do {
-        path = try GuestPath.absolute(project)
-      } catch {
-        throw ContextError(
-          "--project must be an absolute guest path: \(debugQuoted(project))", cause: error)
-      }
+      let path = try parseProjectGuestPath(project)
       try context.sshConfigFile().install(running, stderr: context.output.error)
       try EditorLauncher(
         environment: context.environment.variables, diagnostics: context.diagnostics
       )
-      .launch(running, path: path, editor: editor)
+      .launch(
+        running, SSHConnectionTarget(running, guestPath: path, egress: context.config.egress),
+        choice: editor.map { .only($0.provider) }
+          ?? .firstAvailable(EditorProviderID.allCases.map(\.provider)))
     }
   }
 }

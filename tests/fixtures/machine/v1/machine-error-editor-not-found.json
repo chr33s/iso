@@ -1,0 +1,17 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "code",
+  "ok": false,
+  "error": {
+    "code": "EDITOR_NOT_FOUND",
+    "message": "Could not open an editor.",
+    "retryable": false,
+    "details": {
+      "providers": [
+        "code"
+      ],
+      "name": "my-project",
+      "action": "created"
+    }
+  }
+}

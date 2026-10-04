@@ -8,6 +8,7 @@ human text. It is still the CLI: there is no daemon, socket or RPC service.
 iso capabilities --output json
 iso up ~/code/project --no-devcontainer --output json
 iso ssh-config project --output json
+iso zed ~/code/project --no-launch --output json
 ```
 
 Text output (the default, `--output text`) is unchanged. The command-local
@@ -26,6 +27,7 @@ Text output (the default, `--output text`) is unchanged. The command-local
 | `stop [NAME]` | `{ lifecycle, instance }` |
 | `destroy [NAME]` | `{ lifecycle, instance }`; with `--all`, `{ lifecycle, instances }` |
 | `ssh-config [NAME]` | `{ instance, connection }` |
+| `code [DIR]`, `zed [DIR]` | `{ lifecycle, instance, workspace, connection, editor, warnings }` |
 
 Any other command (including a command group such as `secrets`) given
 `--output json` prints an `UNSUPPORTED_MACHINE_OUTPUT` error document whose
@@ -142,9 +144,15 @@ check.
   "machine_api_versions": ["iso.machine/v1"],
   "backend": "apple-container",
   "commands": {"up": {"machine_output": true}, "...": {}},
-  "editor_providers": [{"id": "code", "display_name": "Visual Studio Code"}, {"id": "zed", "display_name": "Zed"}]
+  "editor_providers": [
+    {"id": "code", "display_name": "Visual Studio Code", "remote_transport": "ssh"},
+    {"id": "zed", "display_name": "Zed", "remote_transport": "ssh"}
+  ]
 }
 ```
+
+Provider ids are lowercase ASCII letters, digits and `-`. Treat the list as
+open-ended rather than hard-coding the current two.
 
 ### list
 
@@ -191,6 +199,39 @@ the same running proof, isolation check, pinned-host-key block and alias
 collision check as in text mode; only the human usage text is omitted. With
 `--clean`: `{"instance": {"name": ...}, "connection": null}`.
 
+### code, zed
+
+```json
+{
+  "lifecycle": {"action": "reused"},
+  "instance": InstanceRef,
+  "workspace": WorkspaceRef|null,
+  "connection": SSHConnectionRef,
+  "editor": {"provider": "zed", "launched": false, "launch_target": "ssh://iso-my-project/workspace"},
+  "warnings": []
+}
+```
+
+`lifecycle`, `instance` and `workspace` are `up`'s. `connection` is the alias
+the editor was (or would be) pointed at, after the same running proof,
+isolation check and pinned-host-key block as `ssh-config`. `launched` is
+`false` with `--no-launch`. `launch_target` is the address the provider opens:
+`ssh://<alias><path>` for Zed and `vscode-remote://ssh-remote+<alias><path>`
+for VS Code, with the path percent-encoded. `warnings` holds advisory provider
+diagnostics (for example Zed's `upload_binary_over_ssh` hint under restricted
+egress). The editor's own output is never included, and neither is an SSH
+command, key material or agent session state.
+
+Any failure after the lifecycle step (`EDITOR_NOT_FOUND`,
+`EDITOR_LAUNCH_FAILED`, an alias conflict in `~/.ssh/config`, an instance that
+stopped before the editor attached, ...) means the instance may already exist
+and be running: its `details` name it (`name`) and the step that ran
+(`action`: `created`, `started` or `reused`). Editor codes keep `providers`
+beside them; a failure with no other details carries just `name` and `action`.
+As with `up`, an `--egress` / `--allow-host` that differs from a running
+instance's boot policy, or a boot policy record that cannot be read, is
+`INSTANCE_INCOMPATIBLE`.
+
 ## Error codes
 
 | Code | Retryable | Meaning | `details` |
@@ -201,9 +242,11 @@ collision check as in text mode; only the human usage text is omitted. With
 | `AMBIGUOUS_INSTANCE` | yes | Several match | `instances`, `resolution`: the argument of this command that picks one (e.g. `<NAME>`), or `null` when none does (`up` with several instances sharing the project) |
 | `INSTANCE_ALREADY_RUNNING` | no | The command needs a stopped instance | `name` |
 | `INSTANCE_NOT_RUNNING` | no | The command needs a running instance | `name`, or `null` when none is named |
-| `INSTANCE_INCOMPATIBLE` | no | The existing instance cannot take the requested creation options or transport | `name` |
+| `INSTANCE_INCOMPATIBLE` | no | The existing instance cannot take the requested creation options, transport, or (when running) egress policy, or its boot policy record cannot be read | `name` |
 | `PROJECT_ALREADY_ASSOCIATED` | no | The project or repository belongs to another instance | `name` (the associated instance) |
 | `INTERACTION_REQUIRED` | yes | A decision is needed; see [Non-interactive](#non-interactive) | `kind`, ... |
+| `EDITOR_NOT_FOUND` | no | No launch strategy of the requested editor reached an editor | `providers`, `name`, `action` (the instance and lifecycle step that already ran; `null` for none) |
+| `EDITOR_LAUNCH_FAILED` | no | The editor was found but failed to start, timed out or exited unsuccessfully | `providers` (the one that failed), `name`, `action` |
 | `APPLE_RUNTIME_UNAVAILABLE`, `APPLE_RUNTIME_UNQUALIFIED`, `APPLE_NETWORK_ISOLATION`, `APPLE_HOST_EXPOSURE`, `APPLE_IDENTITY_CONFLICT`, `APPLE_HOST_KEY_CHANGED`, `APPLE_SESSION_EXPIRED` | no | The runtime diagnostic classes in [backends.md](backends.md) | `null` |
 | `APPLE_BOOT_TIMEOUT`, `APPLE_OPERATION_UNCERTAIN` | yes | The runtime's state had not settled | `null` |
 | `OPERATION_INTERRUPTED` | yes | A signal stopped the command | `null` |

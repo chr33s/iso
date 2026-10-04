@@ -219,9 +219,14 @@ package struct ProcessRunner: Sendable {
   /// Attached mode, for interactive and pass-through commands: stdout and
   /// stderr are the caller's own, stdin is the caller's (`inherit`) or
   /// `input`, and the child stays in the caller's process group so a
-  /// terminal session keeps its TTY and job control. No deadline: `ssh`
-  /// bounds its own connection. Waits for the child to exit.
-  package func attached(_ request: Request, inheritStdin: Bool) throws(Failure) -> Termination {
+  /// terminal session keeps its TTY and job control. `deadline` replaces
+  /// `request.deadline`, which this mode ignores: nil means none, for
+  /// sessions and transfers (`ssh` bounds its own connection). Waits for the
+  /// child to exit; at the deadline it is killed (`timedOut`).
+  package func attached(_ request: Request, inheritStdin: Bool, deadline: Duration?)
+    throws(Failure) -> Termination
+  {
+    let start = ContinuousClock.now
     var stdinPipe: [Int32] = [-1, -1]
     if let input = request.input {
       guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
@@ -252,22 +257,31 @@ package struct ProcessRunner: Sendable {
         offset += count
       }
       close(stdinPipe[1])
-      return child.waitIndefinitely()
+      return try wait(&child, request, deadline: deadline, since: start)
     }
     let pid = try spawn(
       request, stdin: inheritStdin ? .descriptor(0) : .null, stdout: .descriptor(1),
       stderr: .descriptor(2), ownGroup: false)
     var child = ChildProcess(pid: pid, ownsGroup: false)
     defer { child.killGroupAndReap() }
-    guard let isCancelled = request.isCancelled else { return child.waitIndefinitely() }
+    return try wait(&child, request, deadline: deadline, since: start)
+  }
+
+  /// Waits for an attached child, polling `isCancelled` and `deadline`.
+  private func wait(
+    _ child: inout ChildProcess, _ request: Request, deadline: Duration?,
+    since start: ContinuousClock.Instant
+  ) throws(Failure) -> Termination {
+    guard deadline != nil || request.isCancelled != nil else { return child.waitIndefinitely() }
     while true {
       if let termination = child.wait(until: .milliseconds(50)) { return termination }
-      if isCancelled() {
+      let expired = deadline.map { ContinuousClock.now - start >= $0 } ?? false
+      if expired || request.isCancelled?() == true {
         // The child shares our process group (job control), so its own
         // children (rsync's receiver, ssh) are reaped by pid, before their
         // parent's death reparents them out of reach.
         for pid in Self.descendants(of: child.pid).reversed() { kill(pid, SIGKILL) }
-        throw .cancelled
+        throw expired ? .timedOut : .cancelled
       }
     }
   }

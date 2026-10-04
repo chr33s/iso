@@ -45,6 +45,9 @@ Apple backend. The credential proxy is the Swift package
   - [`sandboxy-inspired-features-spec.md`](design/sandboxy-inspired-features-spec.md):
     one-command sessions, declarative agents, image inspection, and
     destination-filtered egress. Filtered-egress qualification remains incomplete.
+  - [`editor-providers-spec.md`](design/editor-providers-spec.md):
+    `iso code` / `iso zed`, compiled-in editor providers, and the boundary
+    between SSH connection targets and managed agent workloads.
 
 ## For users
 

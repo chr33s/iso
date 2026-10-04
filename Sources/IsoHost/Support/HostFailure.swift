@@ -20,6 +20,22 @@ package struct HostFailure: Error, Equatable, Sendable, CustomStringConvertible 
     case projectAlreadyAssociated(InstanceName)
     /// Continuing needs a decision the command may not make on its own.
     case interactionRequired(Interaction)
+    /// No launch strategy of the requested editor providers reached an editor.
+    case editorNotFound([EditorProviderID])
+    /// The provider's editor was found but failed to start, timed out or
+    /// exited unsuccessfully.
+    case editorLaunchFailed(EditorProviderID)
+  }
+
+  /// What a project command did to an instance before it failed.
+  package struct Lifecycle: Equatable, Sendable {
+    package let instance: InstanceName
+    package let action: LifecycleAction
+
+    package init(instance: InstanceName, action: LifecycleAction) {
+      self.instance = instance
+      self.action = action
+    }
   }
 
   package enum Interaction: Equatable, Sendable {
@@ -40,4 +56,18 @@ package struct HostFailure: Error, Equatable, Sendable, CustomStringConvertible 
   }
 
   package var description: String { message }
+}
+
+/// A project command failed after its lifecycle step had run, so the
+/// instance may exist and be running. The text is the cause's own.
+package struct FailureAfterLifecycle: Error, CustomStringConvertible {
+  package let lifecycle: HostFailure.Lifecycle
+  package let cause: any Error
+
+  package init(_ outcome: UpOutcome, cause: any Error) {
+    self.lifecycle = HostFailure.Lifecycle(instance: outcome.instance.name, action: outcome.action)
+    self.cause = cause
+  }
+
+  package var description: String { "\(cause)" }
 }

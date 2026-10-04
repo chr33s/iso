@@ -30,6 +30,12 @@
       "destroy": {
         "machine_output": true
       },
+      "code": {
+        "machine_output": true
+      },
+      "zed": {
+        "machine_output": true
+      },
       "ssh-config": {
         "machine_output": true
       }
@@ -37,11 +43,13 @@
     "editor_providers": [
       {
         "id": "code",
-        "display_name": "Visual Studio Code"
+        "display_name": "Visual Studio Code",
+        "remote_transport": "ssh"
       },
       {
         "id": "zed",
-        "display_name": "Zed"
+        "display_name": "Zed",
+        "remote_transport": "ssh"
       }
     ]
   }

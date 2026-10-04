@@ -219,6 +219,39 @@ struct MachineSSHConfigResult: Encodable {
   }
 }
 
+/// `code` / `zed`: the lifecycle `up` reports plus the managed alias and the
+/// editor launch. Never provider process output, keys or workload state.
+struct MachineEditorResult: Encodable {
+  struct Editor: Encodable {
+    let provider: String
+    let launched: Bool
+    let launchTarget: String
+
+    enum CodingKeys: String, CodingKey {
+      case provider, launched
+      case launchTarget = "launch_target"
+    }
+  }
+
+  let lifecycle: MachineLifecycle
+  let instance: MachineInstance
+  let workspace: Nullable<MachineWorkspace>
+  let connection: MachineConnection
+  let editor: Editor
+  let warnings: [String]
+
+  init(_ outcome: ProjectEditorWorkflow.Outcome, workspace: WorkspaceState?) {
+    lifecycle = MachineLifecycle(outcome.up.action)
+    instance = MachineInstance(outcome.up.instance, .running)
+    self.workspace = Nullable(workspace.map(MachineWorkspace.init))
+    connection = MachineConnection(outcome.alias)
+    editor = Editor(
+      provider: outcome.provider.rawValue, launched: outcome.mode == .launch,
+      launchTarget: outcome.launchTarget)
+    warnings = outcome.warnings.map(neutralizeControls)
+  }
+}
+
 struct MachineCapabilitiesResult: Encodable {
   struct CommandSupport: Encodable {
     let machineOutput = true
@@ -228,9 +261,11 @@ struct MachineCapabilitiesResult: Encodable {
   struct EditorProvider: Encodable {
     let id: String
     let displayName: String
+    let remoteTransport: String
     enum CodingKeys: String, CodingKey {
       case id
       case displayName = "display_name"
+      case remoteTransport = "remote_transport"
     }
   }
 
@@ -239,8 +274,10 @@ struct MachineCapabilitiesResult: Encodable {
   let backend = AppleBackend.name
   let commands = Dictionary(
     uniqueKeysWithValues: MachineCommands.all.map { ($0.machineName, CommandSupport()) })
-  let editorProviders = EditorKind.allCases.map {
-    EditorProvider(id: $0.rawValue, displayName: $0.displayName)
+  let editorProviders = EditorProviderID.allCases.map(\.provider).map {
+    EditorProvider(
+      id: $0.id.rawValue, displayName: $0.displayName,
+      remoteTransport: $0.remoteTransport.rawValue)
   }
 
   enum CodingKeys: String, CodingKey {

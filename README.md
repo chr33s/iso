@@ -62,6 +62,14 @@ iso claude
 iso codex
 ```
 
+Open the project's VM in an editor over the pinned SSH alias (creating or
+starting it first, like `iso up`):
+
+```shell
+iso code .
+iso zed .
+```
+
 ## Security controls
 
 Default VMs have network access. The [credential proxy](docs/credential-proxy.md)

@@ -174,11 +174,12 @@ func rustLinesForTest(_ text: String) -> [String] {
       "up", "/p", "--no-agents", "--profile", "rust,python", "--profile", "go", "--env", "A=b",
       "--forward-port", "3000:3001", "--mem", "2048",
     ]) as? Up)
-  #expect(up.noAgents)
-  #expect(up.profiles == ["rust", "python", "go"])
-  #expect(try Up.profileTarget(up.profiles)?.image.rawValue == "go-python-rust")
-  #expect(up.guestEnvironment.first?.0.rawValue == "A")
-  #expect(up.forwardPort.first?.host == 3001)
+  #expect(up.project.noAgents)
+  #expect(up.project.profiles == ["rust", "python", "go"])
+  #expect(
+    try ProjectArguments.profileTarget(up.project.profiles)?.image.rawValue == "go-python-rust")
+  #expect(up.project.guestEnvironment.first?.0.rawValue == "A")
+  #expect(up.project.forwardPort.first?.host == 3001)
   #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["up", "--new-instance"]) }
   #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["up", "--copy", "--mount"]) }
   #expect(throws: (any Error).self) {
@@ -194,6 +195,66 @@ func rustLinesForTest(_ text: String) -> [String] {
     try IsoCommand.parseAsRoot(["restore", "vm", "--image", "x", "-y"])
   }
   #expect(try IsoCommand.parseAsRoot(["restore", "vm", "--reprovision", "-y"]) is Restore)
+}
+
+@Test func editorCommandsShareUpProjectArguments() throws {
+  let zed = try #require(
+    try IsoCommand.parseAsRoot([
+      "zed", "/p", "--project", "/workspace/frontend", "--no-launch", "--mount", "--egress",
+      "filtered", "--allow-host", "example.com", "--no-devcontainer",
+    ]) as? ZedCommand)
+  #expect(ZedCommand.provider == .zed && CodeCommand.provider == .code)
+  #expect(try zed.launchOptions.guestPath() == GuestPath("/workspace/frontend"))
+  #expect(zed.launchOptions.noLaunch)
+  let request = zed.projectArguments.request(
+    configTarget: ConfigTarget(path: "/c.jsonc", format: .jsonc), command: "zed")
+  #expect(request.dir == "/p" && request.transport == .mount)
+  #expect(request.command == "zed" && request.egressRequested)
+  #expect(zed.projectArguments.egressOptions.allowHost == ["example.com"])
+  let code = try #require(try IsoCommand.parseAsRoot(["code"]) as? CodeCommand)
+  #expect(try code.launchOptions.guestPath() == guestWorkspace)
+  #expect(!code.launchOptions.noLaunch && code.projectArguments.dir == nil)
+  for bad in [
+    ["code", "--project", "workspace"], ["zed", "--copy", "--mount"], ["zed", "--new-instance"],
+    ["code", "/p", "--git-repo", "https://github.com/o/r"], ["zed", "--dry-run"],
+    ["code", "--editor", "zed"],
+  ] {
+    #expect(throws: (any Error).self, "\(bad)") { try IsoCommand.parseAsRoot(bad) }
+  }
+  // A home-directory path given as --project (with no DIR) is refused, not
+  // silently replaced by the current directory; ordinary guest paths that
+  // also exist on macOS are not.
+  // The home is the configuration environment's, checked when the command
+  // runs, not the process's at parse time.
+  let home = FileManager.default.temporaryDirectory.appending(path: "iso-home-\(UUID())").path
+  try FileManager.default.createDirectory(
+    atPath: home + "/project", withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(atPath: home) }
+  let homeProject = try #require(
+    try IsoCommand.parseAsRoot(["zed", "--project", home + "/project"]) as? ZedCommand)
+  #expect(throws: (any Error).self) {
+    try homeProject.rejectHostHomeProject(GuestPath(home + "/project"), home: home)
+  }
+  try homeProject.rejectHostHomeProject(GuestPath(home + "/project"), home: "/elsewhere")
+  let withDir = try #require(
+    try IsoCommand.parseAsRoot(["zed", "/p", "--project", home]) as? ZedCommand)
+  try withDir.rejectHostHomeProject(GuestPath(home), home: home)
+  for guest in ["/tmp", "/opt", "/usr/local"] {
+    let code = try #require(
+      try IsoCommand.parseAsRoot(["code", "--project", guest]) as? CodeCommand)
+    try code.rejectHostHomeProject(GuestPath(guest), home: home)
+  }
+  #expect(throws: (any Error).self) {
+    try IsoCommand.parseAsRoot(["editor", "--project", "workspace"])
+  }
+  let up = try #require(try IsoCommand.parseAsRoot(["up", "/p"]) as? Up)
+  #expect(
+    !up.project.request(
+      configTarget: ConfigTarget(path: "/c.jsonc", format: .jsonc), command: "up"
+    ).egressRequested)
+  let editor = try #require(try IsoCommand.parseAsRoot(["editor", "--editor", "zed"]) as? Editor)
+  #expect(editor.editor == .zed)
+  #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["editor", "--editor", "vim"]) }
 }
 
 @Test func startRefusalsNameTheNextStep() {

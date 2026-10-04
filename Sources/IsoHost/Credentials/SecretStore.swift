@@ -169,7 +169,7 @@ package struct Keychain: Sendable {
         .init(
           executable: security, arguments: visible + [secret.expose()], environment: environment,
           deadline: .seconds(300)),
-        inheritStdin: false)
+        inheritStdin: false, deadline: nil)
     } catch {
       throw ContextError(
         "Failed to write secret to macOS Keychain",

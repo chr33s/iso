@@ -1,0 +1,32 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "zed",
+  "ok": true,
+  "result": {
+    "lifecycle": {
+      "action": "reused"
+    },
+    "instance": {
+      "name": "my-project",
+      "state": "running",
+      "image": "default",
+      "backend": "apple-container"
+    },
+    "workspace": {
+      "guest_path": "/workspace",
+      "host_path": "/Users/me/code/my-project",
+      "transport": "copy"
+    },
+    "connection": {
+      "kind": "ssh",
+      "host_alias": "iso-my-project",
+      "ssh_config_path": "/Users/me/.ssh/config"
+    },
+    "editor": {
+      "provider": "zed",
+      "launched": false,
+      "launch_target": "ssh://iso-my-project/workspace"
+    },
+    "warnings": []
+  }
+}

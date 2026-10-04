@@ -105,7 +105,10 @@ yourself. If a matching project instance already exists, destroy it first to
 recreate it with different creation options. Runtime startup options such as
 `--forward-port`, `--post-start`, and `--env` can be used when `up` creates or
 restarts an instance; if the matching instance is already running, stop it
-first so those options can take effect.
+first so those options can take effect. Likewise, `--egress` or `--allow-host`
+that differs from a running instance's boot policy is refused rather than
+ignored: stop the instance to apply a new allowlist, or destroy it to change
+the egress mode.
 
 When a local `devcontainer.json` was applied while creating the instance, isolate stores
 its path and content hash. Later `iso up` reconnects or restarts warn if that
@@ -707,10 +710,47 @@ added, modified and type-changed paths, then text diffs. Equivalent to
 iso diff [NAME] [--dir <dir>] [--exclude-git] [--stat]
 ```
 
+### `code` / `zed`
+
+Ensure an environment for a project directory exists and is running, then open
+it in VS Code (`iso code`) or Zed (`iso zed`) over the managed `iso-<name>` SSH
+alias.
+
+```
+iso code [DIR] [--project PATH] [--no-launch] [up options]
+iso zed  [DIR] [--project PATH] [--no-launch] [up options]
+```
+
+The project lifecycle is exactly [`iso up`](#up)'s: the same project
+affinity, create/restart/reuse decision, devcontainer discovery and
+translation, and restart-only option checks. Every `iso up` option except
+`--dry-run`/`--json` is accepted. The command then refreshes the pinned SSH
+alias and launches only the named editor; it never falls back to another one.
+
+| Flag | Description |
+|------|-------------|
+| `DIR` | Project directory (default: current directory) |
+| `--project <path>` | Absolute guest path to open (default: `/workspace`). Refused when it is a directory in your home folder and no `DIR` is given |
+| `--no-launch` | Prepare the instance and SSH alias without starting the editor |
+
+```
+iso code .
+iso zed ~/code/project
+iso code . --project /workspace/frontend
+iso zed . --no-launch --output json
+```
+
+If the editor cannot be found, the command fails with `EDITOR_NOT_FOUND` in
+machine mode; if it is found but fails to start or exits unsuccessfully,
+`EDITOR_LAUNCH_FAILED`. Both name the instance and the lifecycle step that
+already ran.
+See [editor integration](editor.md).
+
 ### `editor`
 
-Open an editor (VS Code or Zed) connected to the guest VM over SSH remote.
-`iso vscode` remains as an alias.
+Open an editor (VS Code or Zed) connected to an already-running guest VM over
+SSH remote. To create or start the project's instance first, use
+[`iso code` / `iso zed`](#code--zed).
 
 ```
 iso editor [NAME] [--project PATH] [--editor code|zed] [--clean]

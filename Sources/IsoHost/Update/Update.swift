@@ -476,7 +476,7 @@ struct UpdateTools: Sendable {
     do {
       termination = try runner.attached(
         request(path, arguments, input: input, deadline: Self.captureDeadline),
-        inheritStdin: input == nil)
+        inheritStdin: input == nil, deadline: nil)
     } catch {
       throw ContextError("Failed to execute \(describe)", cause: HostError("\(error)"))
     }

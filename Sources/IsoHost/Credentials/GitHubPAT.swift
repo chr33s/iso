@@ -39,7 +39,7 @@ package struct WizardConsole: Sendable {
         let termination = try? tools.runner.attached(
           .init(
             executable: executable, arguments: [argument], environment: tools.environment,
-            deadline: HostTools.deadline), inheritStdin: true)
+            deadline: HostTools.deadline), inheritStdin: true, deadline: HostTools.deadline)
       else { return false }
       return termination.succeeded
     }

@@ -415,7 +415,8 @@ iso images --delete python-dev
 |---------|-------------|
 | `iso validate` | Check config and prerequisites without changing anything |
 | `iso logs` | Stream VM serial console logs (`-f` to follow) |
-| `iso editor` | Open VS Code or Zed connected to the guest via SSH |
+| `iso code [DIR]` / `iso zed [DIR]` | Ensure the project's VM is running, then open it in VS Code or Zed over SSH |
+| `iso editor` | Open VS Code or Zed connected to an already-running guest via SSH |
 | `iso ssh-config` | Install a `iso-<name>` SSH alias for ad-hoc `ssh`/`scp`/`rsync` |
 | `iso resize --size +20` | Grow a stopped instance's disk by 20 GiB |
 | `iso resize --size 100` | Set a stopped instance's disk to 100 GiB |

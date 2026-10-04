@@ -359,7 +359,9 @@ package struct WorkspaceTransfer: Sendable {
         "--delete", "\(source)/", "\(target.address):\(guest)/",
       ]
     try target.requireHandoff()
-    guard try runner.attached(request(try tool("rsync"), arguments), inheritStdin: true).succeeded
+    guard
+      try runner.attached(request(try tool("rsync"), arguments), inheritStdin: true, deadline: nil)
+        .succeeded
     else { throw HostError("rsync push failed") }
   }
 
@@ -376,7 +378,7 @@ package struct WorkspaceTransfer: Sendable {
     var rsync = request(try tool("rsync"), arguments)
     rsync.isCancelled = cancel
     try target.requireHandoff()
-    guard try runner.attached(rsync, inheritStdin: true).succeeded
+    guard try runner.attached(rsync, inheritStdin: true, deadline: nil).succeeded
     else { throw HostError("rsync pull failed") }
   }
 

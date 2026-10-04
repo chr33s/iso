@@ -121,16 +121,6 @@ private func transfer() -> WorkspaceTransfer {
   #expect(throws: (any Error).self) { try file.update(try target(), try instance(directory)) }
 }
 
-@Test func editorStrategiesEscapeURLPaths() {
-  let code = EditorLauncher.strategies(.code, host: "iso-test", path: guestWorkspace)
-  #expect(code.map(\.command) == ["code", "open"])
-  #expect(code[0].arguments == ["--remote", "ssh-remote+iso-test", "/workspace"])
-  let zed = EditorLauncher.strategies(.zed, host: "iso-test", path: GuestPath("/a#b c%d?e"))
-  #expect(zed[0].arguments == ["ssh://iso-test/a%23b%20c%25d%3Fe"])
-  #expect(zed[1].arguments == ["zed://ssh/iso-test/a%23b%20c%25d%3Fe"])
-  #expect(EditorLauncher.strategies(nil, host: "h", path: guestWorkspace).count == 4)
-}
-
 @Test func tarPipeCopiesTheProjectAndSkipsExcludes() throws {
   let root = try scratch()
   defer { try? FileManager.default.removeItem(atPath: root) }

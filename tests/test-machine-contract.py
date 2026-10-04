@@ -80,7 +80,9 @@ def main():
         cases = [
             # args, expected exit, expected command, ok, result/error check
             (["capabilities"], 0, "capabilities", True,
-             lambda r: r["machine_api_versions"] == [API] and r["commands"]["up"] == {"machine_output": True}),
+             lambda r: r["machine_api_versions"] == [API] and r["commands"]["up"] == {"machine_output": True}
+             and r["commands"]["zed"] == r["commands"]["code"] == {"machine_output": True}
+             and [p["id"] for p in r["editor_providers"]] == ["code", "zed"]),
             (["list"], 0, "list", True,
              lambda r: [(i["name"], i["state"]) for i in r["instances"]] == [
                  ("alpha", "running"), ("beta", "stopped"), ("delta", "unknown"),
@@ -108,6 +110,10 @@ def main():
             (["up", str(project)], 1, "up", False,
              lambda e: e["code"] == "INTERACTION_REQUIRED" and e["details"]["kind"] == "devcontainer"
              and e["details"]["accepted_flags"][-1] == "--no-devcontainer"),
+            (["zed", str(project), "--no-launch"], 1, "zed", False,
+             lambda e: e["code"] == "INTERACTION_REQUIRED" and e["details"]["kind"] == "devcontainer"),
+            (["code", str(repository), "--no-devcontainer", "--no-launch"], 1, "code", False,
+             lambda e: e["code"] == "INTERACTION_REQUIRED" and e["details"]["kind"] == "github-pat"),
             (["up", str(repository), "--no-devcontainer"], 1, "up", False,
              lambda e: e["code"] == "INTERACTION_REQUIRED" and e["details"] == {
                  "kind": "github-pat", "repo": "octo/widget", "accepted_flags": ["--no-prompt", "--no-github"]}),
@@ -169,7 +175,9 @@ def main():
 
         # Usage conflicts fail before any document.
         for args in (["list", "--json", "--output", "json"], ["status", "--quiet"],
-                     ["up", "--dry-run", "--output", "json"]):
+                     ["up", "--dry-run", "--output", "json"],
+                     ["zed", "--project", "workspace", "--output", "json"],
+                     ["code", "--editor", "zed", "--output", "json"]):
             status, stdout, _ = run(binary, args, home)
             check("iso " + " ".join(args) + " is a usage error", status == 2 and stdout == "")
 

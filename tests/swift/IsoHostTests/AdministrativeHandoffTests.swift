@@ -57,7 +57,9 @@ private enum AdministrativeOperation: CaseIterable, Sendable {
         instance: base.instance, sidecar: base.sidecar, ready: base.ready, target: target,
         handoffIdentity: nil)
       try EditorLauncher(environment: guest.environment, diagnostics: guest.sink.diagnostics)
-        .launch(running, path: guestWorkspace, editor: .code)
+        .launch(
+          running, SSHConnectionTarget(running, guestPath: guestWorkspace, egress: .open),
+          choice: .only(VSCodeEditorProvider()))
     }
   }
 }

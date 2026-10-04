@@ -110,7 +110,7 @@ extension SSHClient {
     try target.requireHandoff()
     let termination = try runner.attached(
       request(try ssh(), target.sshOptions + [target.address, command.rendered]),
-      inheritStdin: true)
+      inheritStdin: true, deadline: nil)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
@@ -121,7 +121,7 @@ extension SSHClient {
       request(
         try ssh(), session.sshOptions + [session.target.address, command.rendered],
         environment: session.env.overlay(environment)),
-      inheritStdin: true)
+      inheritStdin: true, deadline: nil)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
@@ -133,7 +133,7 @@ extension SSHClient {
       request(
         try ssh(), session.sshOptions + [session.target.address, command.rendered],
         environment: session.env.overlay(environment), input: stdin),
-      inheritStdin: false)
+      inheritStdin: false, deadline: nil)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
@@ -143,7 +143,7 @@ extension SSHClient {
     let arguments = target.sshOptions + [target.address, command.rendered]
     try target.requireHandoff()
     let termination = try runner.attached(
-      request(ssh, arguments, input: stdin), inheritStdin: false)
+      request(ssh, arguments, input: stdin), inheritStdin: false, deadline: nil)
     guard termination.succeeded else {
       throw ContextError(
         "SSH command failed: \(command)",
@@ -195,7 +195,7 @@ extension SSHClient {
     let termination = try runner.attached(
       request(
         scp, target.scpOptions + (recursive ? ["-r"] : []) + [local, "\(target.address):\(remote)"]),
-      inheritStdin: true)
+      inheritStdin: true, deadline: nil)
     guard termination.succeeded else {
       throw HostError("\(recursive ? "scp -r" : "scp") failed: \(local) -> \(remote)")
     }
@@ -260,7 +260,7 @@ package enum InteractiveSSH {
       : session.sshOptions + [session.target.address, remote]
     try workload.revalidate()
     let termination = try client.runner.attached(
-      client.request(ssh, arguments, environment: environment), inheritStdin: true)
+      client.request(ssh, arguments, environment: environment), inheritStdin: true, deadline: nil)
     if allocatePTY && !termination.succeeded { restoreTerminal(client) }
     return termination
   }
@@ -285,7 +285,7 @@ package enum InteractiveSSH {
     try workload.revalidate()
     let termination = try client.runner.attached(
       client.request(ssh, arguments(session, remote: remote), environment: environment),
-      inheritStdin: true)
+      inheritStdin: true, deadline: nil)
     if !termination.succeeded {
       diagnostics.warn("SSH session exited with status: \(termination)")
       restoreTerminal(client)
@@ -305,7 +305,7 @@ package enum InteractiveSSH {
       client.request(
         ssh, session.sshOptions + [session.target.address, remote],
         environment: session.env.overlay(client.environment)),
-      inheritStdin: true)
+      inheritStdin: true, deadline: nil)
     guard termination.succeeded else {
       throw HostError("Remote command exited with status: \(termination)")
     }
@@ -325,7 +325,7 @@ package enum InteractiveSSH {
       client.request(
         ssh, session.sshOptions + [session.target.address, remote],
         environment: session.env.overlay(client.environment)),
-      inheritStdin: false)
+      inheritStdin: false, deadline: nil)
     guard termination.succeeded else {
       let code: Int32 = if case .exited(let code) = termination { code } else { 1 }
       throw HostError("Remote command exited with status \(code)")
@@ -340,7 +340,7 @@ package enum InteractiveSSH {
     _ = try? client.runner.attached(
       .init(
         executable: "/bin/stty", arguments: ["sane"], environment: client.environment,
-        deadline: .seconds(10)), inheritStdin: true)
+        deadline: .seconds(10)), inheritStdin: true, deadline: nil)
   }
 }
 

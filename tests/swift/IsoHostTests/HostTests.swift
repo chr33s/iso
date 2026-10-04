@@ -86,11 +86,21 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
     .init(
       executable: "/bin/sh", arguments: ["-c", "cat > '\(file)'; exit 5"],
       environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(5), input: Array("token".utf8)),
-    inheritStdin: false)
+    inheritStdin: false, deadline: nil)
   #expect(termination == .exited(5))
   #expect(termination.description == "exit status: 5")
   #expect(ProcessRunner.Termination.signaled(9).description == "signal: 9 (SIGKILL)")
   #expect(try String(contentsOfFile: file, encoding: .utf8) == "token")
+}
+
+@Test func attachedModeKillsAChildAtItsDeadline() throws {
+  let request = ProcessRunner.Request(
+    executable: "/bin/sleep", arguments: ["30"], environment: [:], deadline: .seconds(30))
+  let start = ContinuousClock.now
+  #expect(throws: ProcessRunner.Failure.timedOut) {
+    try ProcessRunner().attached(request, inheritStdin: false, deadline: .milliseconds(200))
+  }
+  #expect(ContinuousClock.now - start < .seconds(10))
 }
 
 @Test func remoteCommandEscapesArgumentsOnce() {

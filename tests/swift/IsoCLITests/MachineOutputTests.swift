@@ -154,6 +154,39 @@ private let copyWorkspace = WorkspaceState(
       body: MachineSSHConfigResult(instance: .removed(name: "my-project"), connection: nil)))
 }
 
+@Test func editorResultsCarryTheAliasAndLaunchTargetNeverKeyMaterial() throws {
+  let one = try instance()
+  let outcome = ProjectEditorWorkflow.Outcome(
+    up: UpOutcome(action: .reused, instance: one),
+    alias: SSHAlias(host: SSHConfigFile.host(one), configPath: "/Users/me/.ssh/config"),
+    provider: .zed, launchTarget: "ssh://iso-my-project/workspace", warnings: [],
+    mode: .prepareOnly)
+  let result = MachineEditorResult(outcome, workspace: copyWorkspace)
+  try expectFixture("zed-no-launch", MachineEnvelope(command: "zed", ok: true, body: result))
+  let rendered = try JSONOutput.render(result, pretty: false)
+  for forbidden in ["IdentityFile", "vm_key", "PRIVATE KEY", "HostName", "ssh_command"] {
+    #expect(!rendered.contains(forbidden))
+  }
+  let created = UpOutcome(action: .created, instance: try instance())
+  let notFound = FailureAfterLifecycle(
+    created, cause: HostFailure(.editorNotFound([.code]), "Could not open an editor."))
+  try expectFixture(
+    "machine-error-editor-not-found",
+    MachineEnvelope(command: "code", ok: false, body: MachineFailure(notFound)))
+  let failed = try encoded(MachineFailure(HostFailure(.editorLaunchFailed(.zed), "x")))
+  #expect(
+    (failed as? NSDictionary)?["details"] as? NSDictionary == [
+      "providers": ["zed"], "name": NSNull(), "action": NSNull(),
+    ])
+  // Any other failure after the lifecycle step still names the instance.
+  let alias = try encoded(MachineFailure(FailureAfterLifecycle(created, cause: HostError("x"))))
+  #expect((alias as? NSDictionary)?["code"] as? String == "OPERATION_FAILED")
+  #expect(
+    (alias as? NSDictionary)?["details"] as? NSDictionary == [
+      "name": "my-project", "action": "created",
+    ])
+}
+
 @Test func capabilitiesMatchTheV1FixtureAndTheRegistry() throws {
   let value = try #require(
     try encoded(
@@ -171,7 +204,10 @@ private let copyWorkspace = WorkspaceState(
 @Test func machineCommandsAreTheV1Set() {
   #expect(
     Set(MachineCommands.all.map { $0.machineName })
-      == ["capabilities", "list", "status", "up", "start", "stop", "destroy", "ssh-config"])
+      == [
+        "capabilities", "list", "status", "up", "start", "stop", "destroy", "code", "zed",
+        "ssh-config",
+      ])
   // Workload streams stay out of v1.
   for command: any ParsableCommand.Type in [
     Shell.self, Exec.self, Logs.self, ClaudeCommand.self, CodexCommand.self, RunCommand.self,

@@ -18,9 +18,11 @@ private struct UnusedWorkflowSecrets: SecretReferenceResolver {
   }
 }
 
-private func workflowFixture(_ root: String) throws -> ProjectLifecycle {
+private func workflowFixture(_ root: String, config body: String = "") throws
+  -> ProjectLifecycle
+{
   let environment = ConfigEnvironment(home: root, variables: [:])
-  let config = try testConfig(home: root)
+  let config = try testConfig(body, home: root)
   let diagnostics = Diagnostics(verbosity: 0) { _ in }
   let backend = AppleBackend(
     config: config, environment: [:], diagnostics: diagnostics,
@@ -123,4 +125,39 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   #expect(Set(candidates) == [project.name, twin.name])
   // No argument of `up` picks one.
   #expect(resolution == nil)
+}
+
+@Test func aRunningInstanceRefusesADifferentRequestedEgressPolicy() throws {
+  let root = try scratchDirectory("workflow-egress")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let open = try workflowFixture(root)
+  let instance = try Instance.allocate(
+    open.config, name: try InstanceName("project"), image: .default, workspacePath: root)
+  try NetworkPolicy.save(open.config, instance)
+  var request = UpRequest(configTarget: ConfigTarget(path: root + "/c.jsonc", format: .jsonc))
+  request.command = "zed"
+
+  // Not requested, or requested and matching: nothing to refuse.
+  try UpWorkflow(request: request, lifecycle: open, target: nil).rejectEgressChange(instance)
+  request.egressRequested = true
+  try UpWorkflow(request: request, lifecycle: open, target: nil).rejectEgressChange(instance)
+
+  let none = try workflowFixture(root, config: #""egress": "none""#)
+  let refusal = try #require(throws: HostFailure.self) {
+    try UpWorkflow(request: request, lifecycle: none, target: nil).rejectEgressChange(instance)
+  }
+  #expect(refusal.reason == .instanceIncompatible(instance.name))
+  #expect(refusal.message.contains("was created with egress open, not none"))
+  // Only an explicit request is refused here; config drift is left to the
+  // running-guest policy check and its own error.
+  request.egressRequested = false
+  try UpWorkflow(request: request, lifecycle: none, target: nil).rejectEgressChange(instance)
+
+  // A record that cannot be read is refused, not taken as a match.
+  request.egressRequested = true
+  try writeFile(NetworkPolicy.path(instance), "{}", mode: 0o600)
+  let unreadable = try #require(throws: HostFailure.self) {
+    try UpWorkflow(request: request, lifecycle: open, target: nil).rejectEgressChange(instance)
+  }
+  #expect(unreadable.reason == .instanceIncompatible(instance.name))
 }

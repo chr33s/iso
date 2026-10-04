@@ -24,6 +24,11 @@ package struct UpRequest {
   package var noAgents = false
   package var noGithub = false
   package var noPrompt = false
+  /// `--egress` or `--allow-host` was given; the effective policy is in the
+  /// lifecycle's configuration.
+  package var egressRequested = false
+  /// The subcommand refusal messages name (`up`, `code`, `zed`).
+  package var command = "up"
   package let configTarget: ConfigTarget
 
   package init(configTarget: ConfigTarget) { self.configTarget = configTarget }
@@ -147,13 +152,13 @@ package struct UpWorkflow {
     if let image = request.image, instance.image != image {
       throw HostFailure(
         .instanceIncompatible(instance.name),
-        "Instance '\(instance.name)' already exists for \(subject) using image '\(instance.image)'. `iso up --image \(image)` only applies when creating a new instance.\nUse `iso destroy \(instance.name)` first to recreate it with a different image."
+        "Instance '\(instance.name)' already exists for \(subject) using image '\(instance.image)'. `iso \(request.command) --image \(image)` only applies when creating a new instance.\nUse `iso destroy \(instance.name)` first to recreate it with a different image."
       )
     }
     if let target, instance.image != target.image {
       throw HostFailure(
         .instanceIncompatible(instance.name),
-        "Instance '\(instance.name)' already exists for \(subject) using image '\(instance.image)'. `iso up --profile \(target.profiles.joined(separator: ","))` would use image '\(target.image)', but profiles only apply when creating a new instance.\nUse `iso destroy \(instance.name)` first to recreate it with those profiles."
+        "Instance '\(instance.name)' already exists for \(subject) using image '\(instance.image)'. `iso \(request.command) --profile \(target.profiles.joined(separator: ","))` would use image '\(target.image)', but profiles only apply when creating a new instance.\nUse `iso destroy \(instance.name)` first to recreate it with those profiles."
       )
     }
     let explicitDevcontainer = if case .explicit = input { true } else { false }
@@ -198,7 +203,25 @@ package struct UpWorkflow {
     {
       throw HostFailure(
         .instanceIncompatible(instance.name),
-        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, and --env-file only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso up` with those options."
+        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, and --env-file only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso \(request.command)` with those options."
+      )
+    }
+    try rejectEgressChange(instance)
+  }
+
+  /// A running instance keeps the egress policy it booted with; a different
+  /// requested mode or allowlist, or a policy record that cannot be read, is
+  /// refused rather than silently ignored. The comparison is the running-guest
+  /// handoff's own (`NetworkPolicy.enforce`). Without a request, the handoff
+  /// checks the configured policy later.
+  package func rejectEgressChange(_ instance: Instance) throws {
+    guard request.egressRequested else { return }
+    do {
+      try NetworkPolicy.enforce(instance, config: lifecycle.config)
+    } catch {
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
+        "Instance '\(instance.name)' is already running, and its boot egress policy does not match the requested --egress / --allow-host: \(error)\n--egress and --allow-host only take effect when an instance starts. Run `iso stop \(instance.name)` first to apply a new allowlist, or `iso destroy \(instance.name)` to change the egress mode."
       )
     }
   }
