@@ -1,0 +1,14 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "status",
+  "ok": true,
+  "result": {
+    "instance": {
+      "name": "my-project",
+      "state": "stopped",
+      "image": "default",
+      "backend": "apple-container"
+    },
+    "usage": null
+  }
+}

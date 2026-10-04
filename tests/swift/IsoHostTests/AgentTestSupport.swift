@@ -244,3 +244,17 @@ struct NoGitHub: GitHubTokenSource {
   func resolvePAT(_ repo: RepoSlug) throws -> Secret<String> { throw HostError("no PAT") }
   func configureGuest(_ client: SSHClient, _ session: SSHSession) throws {}
 }
+
+/// Discards command output.
+struct SilentOutput: OutputStreams {
+  func out(_ line: String) {}
+  func write(_ text: String) {}
+  func error(_ line: String) {}
+}
+
+/// A store with nothing in it.
+struct NoSecrets: SecretReferenceResolver {
+  func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>] {
+    throw HostError("no secrets in this test")
+  }
+}

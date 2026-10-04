@@ -58,6 +58,7 @@ jobs:
           python3 tests/test-read-contract.py --swift .build/debug/iso
           python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
           python3 tests/test-data-root-contract.py --swift .build/debug/iso
+          python3 tests/test-machine-contract.py --swift .build/debug/iso
           python3 tests/test-cli-surface.py --swift .build/debug/iso
 
       - name: VM integration harness regression tests

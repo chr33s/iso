@@ -42,6 +42,7 @@ python3 tests/test-release-legal.py           # legal bytes and nested release n
 python3 tests/test-read-contract.py --swift .build/debug/iso
 python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
 python3 tests/test-data-root-contract.py --swift .build/debug/iso
+python3 tests/test-machine-contract.py --swift .build/debug/iso   # --output json stream purity, codes, no prompts
 python3 tests/test-cli-surface.py --swift .build/debug/iso
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
 python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*

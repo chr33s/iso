@@ -69,20 +69,31 @@ enum InstanceState: String {
 
 // MARK: - list
 
-struct List: ParsableCommand {
+struct List: MachineCommand {
   static let configuration = CommandConfiguration(
     abstract: "List instances by name and state", aliases: ["ls"])
 
   @OptionGroup var global: GlobalOptions
-  @Flag(help: "Emit machine-readable JSON instead of the text table") var json = false
+  @Flag(help: "Emit legacy unversioned JSON instead of the text table") var json = false
 
-  func run() throws { try IsoCLI.run { try Self.run(CommandContext.load(global), json: json) } }
+  func validate() throws { try global.rejectLegacyJSON(json) }
 
-  static func run(_ context: CommandContext, json: Bool) throws {
+  func run() throws {
+    if global.output == .json {
+      return try IsoCLI.run(global, Self.self) {
+        MachineListResult(
+          instances: try Self.rows(CommandContext.load(global)).map { MachineInstance($0, $1) })
+      }
+    }
+    try IsoCLI.run { try Self.run(CommandContext.load(global), json: json) }
+  }
+
+  /// Sorted by name; a state that cannot be probed is `unknown`, with a warning.
+  static func rows(_ context: CommandContext) throws -> [(Instance, InstanceState)] {
     let instances = try context.listInstances().sorted {
       $0.name.rawValue.utf8.lexicographicallyPrecedes($1.name.rawValue.utf8)
     }
-    let rows = instances.map { instance -> (Instance, InstanceState) in
+    return instances.map { instance -> (Instance, InstanceState) in
       do {
         return (instance, try context.backend.probeRunning(instance) ? .running : .stopped)
       } catch {
@@ -91,6 +102,10 @@ struct List: ParsableCommand {
         return (instance, .unknown)
       }
     }
+  }
+
+  static func run(_ context: CommandContext, json: Bool) throws {
+    let rows = try rows(context)
     if json {
       try context.output.writeJSON(
         rows.map {
@@ -111,16 +126,34 @@ struct List: ParsableCommand {
 
 // MARK: - status
 
-struct Status: ParsableCommand {
+struct Status: MachineCommand {
   static let configuration = CommandConfiguration(abstract: "Show VM status")
 
   @OptionGroup var global: GlobalOptions
   @Argument(help: "Instance name (shows all if omitted)", transform: parseInstanceName) var name:
     InstanceName?
-  @Flag(help: "Emit machine-readable JSON instead of the text output") var json = false
+  @Flag(help: "Emit legacy unversioned JSON instead of the text output") var json = false
+
+  func validate() throws { try global.rejectLegacyJSON(json) }
 
   func run() throws {
+    if global.output == .json {
+      return try IsoCLI.run(global, Self.self) {
+        try Self.machine(CommandContext.load(global), name: name)
+      }
+    }
     try IsoCLI.run { try Self.run(CommandContext.load(global), name: name, json: json) }
+  }
+
+  /// The same probes as the text and legacy JSON paths.
+  static func machine(_ context: CommandContext, name: InstanceName?) throws
+    -> MachineStatusResult
+  {
+    if let name {
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      return .one(MachineStatusEntry(try status(context, instance)))
+    }
+    return .all(try context.listInstances().map { MachineStatusEntry(listedStatus(context, $0)) })
   }
 
   static func run(_ context: CommandContext, name: InstanceName?, json: Bool) throws {

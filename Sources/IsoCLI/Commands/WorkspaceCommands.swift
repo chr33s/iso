@@ -163,7 +163,7 @@ extension CommandContext {
   }
 }
 
-struct SSHConfigCommand: ParsableCommand {
+struct SSHConfigCommand: MachineCommand {
   static let configuration = CommandConfiguration(
     commandName: "ssh-config",
     abstract: "Install a `iso-<name>` SSH alias for ad-hoc ssh/scp/rsync")
@@ -175,16 +175,26 @@ struct SSHConfigCommand: ParsableCommand {
   @Flag(help: "Remove the SSH config entry for this instance and exit") var clean = false
 
   func run() throws {
-    try IsoCLI.run {
+    try IsoCLI.run(global, Self.self) {
       let context = try CommandContext.load(global)
       if clean {
         let instance = try InstanceStore.resolve(context.config, name: name)
         try context.sshConfigFile().remove(instance)
         context.diagnostics.log(.info, "Removed SSH config for '\(instance.name)'")
-        return
+        return MachineSSHConfigResult(
+          instance: .removed(name: instance.name.rawValue), connection: nil)
       }
+      // The same running proof, isolation check and pinned-key block either
+      // way; machine mode only skips the human usage text.
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
-      try context.sshConfigFile().install(running, stderr: context.output.error)
+      let file = try context.sshConfigFile()
+      let alias =
+        global.output == .json
+        ? try file.update(running.target, running.instance)
+        : try file.install(running, stderr: context.output.error)
+      return MachineSSHConfigResult(
+        instance: .running(MachineInstance(running.instance, .running)),
+        connection: MachineConnection(alias))
     }
   }
 }

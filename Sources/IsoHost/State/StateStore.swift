@@ -531,18 +531,21 @@ package enum InstanceStore {
         instances.isEmpty
         ? "No instances exist."
         : "Available: " + instances.map(\.name.rawValue).joined(separator: ", ")
-      throw HostError(
+      throw HostFailure(
+        .instanceNotFound,
         "No instance named '\(name)'. \(available)\nCreate one with: iso up . --name \(name)")
     }
     let instances = try list(config)
     switch instances.count {
     case 1: return instances[0]
     case 0:
-      throw HostError(
+      throw HostFailure(
+        .instanceNotFound,
         "No instances found.\nCreate one with: iso up\n(Run `iso setup` first if you haven't built an image yet.)"
       )
     default:
-      throw HostError(
+      throw HostFailure(
+        .ambiguousInstance(candidates: instances.map(\.name), resolution: "<NAME>"),
         "Multiple instances exist. Specify one: "
           + instances.map(\.name.rawValue).joined(separator: ", "))
     }

@@ -81,7 +81,8 @@ package struct UpWorkflow {
       preferencePath: Devcontainer.preferencesPath(lifecycle.config))
   }
 
-  package func run() throws {
+  @discardableResult
+  package func run() throws -> UpOutcome {
     if let url = request.gitRepo { return try runGitRepo(url) }
     let projectDirectory = try Self.projectDirectory(request.dir)
     let projectMount = try Mount(host: projectDirectory, guest: guestWorkspace)
@@ -94,7 +95,8 @@ package struct UpWorkflow {
         })
     {
       if let name = request.name, instance.name != name {
-        throw HostError(
+        throw HostFailure(
+          .projectAlreadyAssociated(instance.name),
           "Project \(projectDirectory) is already associated with instance '\(instance.name)', not '\(name)'."
         )
       }
@@ -105,33 +107,36 @@ package struct UpWorkflow {
         try rejectRestartOnlyInputs(instance)
         diagnostics.log(
           .info, "Instance '\(instance.name)' is already running for \(projectDirectory)")
-        return
+        return UpOutcome(action: .reused, instance: instance)
       }
       try restart(instance)
-      return
+      return UpOutcome(action: .started, instance: instance)
     }
     try ensureProfileImage()
-    try create(
-      projectDirectory: projectDirectory, projectMount: projectMount, discovery: discoveryMounts)
+    return UpOutcome(
+      action: .created,
+      instance: try create(
+        projectDirectory: projectDirectory, projectMount: projectMount, discovery: discoveryMounts))
   }
 
-  package func runGitRepo(_ url: String) throws {
+  package func runGitRepo(_ url: String) throws -> UpOutcome {
     if !request.newInstance, let instance = try lifecycle.gitRepoInstance(url) {
       if let name = request.name, instance.name != name {
-        throw HostError(
+        throw HostFailure(
+          .projectAlreadyAssociated(instance.name),
           "Git repo \(url) is already associated with instance '\(instance.name)', not '\(name)'.")
       }
       try ensureExistingCompatible(instance, subject: "this git repo")
       if lifecycle.backend.isRunning(instance) {
         try rejectRestartOnlyInputs(instance)
         diagnostics.log(.info, "Instance '\(instance.name)' is already running for \(url)")
-        return
+        return UpOutcome(action: .reused, instance: instance)
       }
       try restart(instance)
-      return
+      return UpOutcome(action: .started, instance: instance)
     }
     try ensureProfileImage()
-    try createFromGitRepo(url)
+    return UpOutcome(action: .created, instance: try createFromGitRepo(url))
   }
 
   package static func projectDirectory(_ dir: String?) throws -> String {
@@ -140,12 +145,14 @@ package struct UpWorkflow {
 
   package func ensureExistingCompatible(_ instance: Instance, subject: String) throws {
     if let image = request.image, instance.image != image {
-      throw HostError(
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' already exists for \(subject) using image '\(instance.image)'. `iso up --image \(image)` only applies when creating a new instance.\nUse `iso destroy \(instance.name)` first to recreate it with a different image."
       )
     }
     if let target, instance.image != target.image {
-      throw HostError(
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' already exists for \(subject) using image '\(instance.image)'. `iso up --profile \(target.profiles.joined(separator: ","))` would use image '\(target.image)', but profiles only apply when creating a new instance.\nUse `iso destroy \(instance.name)` first to recreate it with those profiles."
       )
     }
@@ -158,7 +165,8 @@ package struct UpWorkflow {
         isProject
         ? "--vcpus, --mem, --disk, --extra-mount, --exclude-git, and --devcontainer only apply"
         : "--vcpus, --mem, --disk, --extra-mount, and --devcontainer only apply"
-      throw HostError(
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' already exists for \(subject). \(flags) when creating a new instance.\nTo change memory, vCPUs, or disk on the existing instance, stop it and run `iso resize`. Otherwise `iso destroy \(instance.name)` first to recreate it with those options."
       )
     }
@@ -177,7 +185,8 @@ package struct UpWorkflow {
     case .gitRepo: return
     }
     if existing != transport {
-      throw HostError(
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' already exists for this project using \(existing.rawValue) transport, but this command requested \(transport.rawValue).\nRe-run with the original transport, or `iso destroy \(instance.name)` first to recreate it."
       )
     }
@@ -187,7 +196,8 @@ package struct UpWorkflow {
     if request.noAgents || request.noGithub || !request.forwardPort.isEmpty
       || request.postStart != nil || !request.guestEnvironment.isEmpty || request.envFile != nil
     {
-      throw HostError(
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, and --env-file only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso up` with those options."
       )
     }
@@ -244,7 +254,9 @@ package struct UpWorkflow {
     return options
   }
 
-  package func create(projectDirectory: String, projectMount: Mount, discovery: [Mount]) throws {
+  package func create(projectDirectory: String, projectMount: Mount, discovery: [Mount]) throws
+    -> Instance
+  {
     let translation = try resolver.resolve(
       options(dryRun: false, workspace: projectDirectory, mounts: discovery, gitRepo: nil),
       inputs: translatorInputs(), stage: .start)
@@ -257,17 +269,17 @@ package struct UpWorkflow {
       options = try creationOptions(
         translation, rule: .projectMountedOrNone, leading: [projectMount])
     }
-    _ = try lifecycle.allocateAndStart(
+    return try lifecycle.allocateAndStart(
       name: request.name, image: effectiveImage, workspacePath: projectDirectory, options)
   }
 
-  package func createFromGitRepo(_ url: String) throws {
+  package func createFromGitRepo(_ url: String) throws -> Instance {
     let translation = try resolver.resolve(
       options(dryRun: false, workspace: nil, mounts: [], gitRepo: url), inputs: translatorInputs(),
       stage: .start)
     var options = try creationOptions(translation, rule: .gitRepoClone, leading: [])
     options.gitRepo = url
-    _ = try lifecycle.allocateAndStart(
+    return try lifecycle.allocateAndStart(
       name: request.name ?? GitRepoURL.defaultInstanceName(url), image: effectiveImage,
       workspacePath: nil, options)
   }

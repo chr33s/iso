@@ -8,6 +8,14 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **Machine interface**: a global `--output json` emits one versioned
+  `iso.machine/v1` document on stdout for `capabilities` (new), `list`,
+  `status`, `up`, `start`, `stop`, `destroy` and `ssh-config`, with stable
+  error codes and no prompts (a needed decision fails as
+  `INTERACTION_REQUIRED`). `ssh-config` returns the managed alias, never key
+  material. Text output and command-local `--json` are unchanged. See
+  `docs/machine-interface.md`.
+
 ## v0.1.0
 
 ### Agent sessions

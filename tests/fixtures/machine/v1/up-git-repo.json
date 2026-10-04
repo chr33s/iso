@@ -1,0 +1,21 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "up",
+  "ok": true,
+  "result": {
+    "lifecycle": {
+      "action": "created"
+    },
+    "instance": {
+      "name": "my-project",
+      "state": "running",
+      "image": "default",
+      "backend": "apple-container"
+    },
+    "workspace": {
+      "guest_path": "/workspace",
+      "host_path": null,
+      "transport": "git-repo"
+    }
+  }
+}

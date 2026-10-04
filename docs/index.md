@@ -50,6 +50,8 @@ Apple backend. The credential proxy is the Swift package
 
 - [`getting-started.md`](getting-started.md) — install and first VM.
 - [`commands.md`](commands.md) — every `iso` subcommand.
+- [`machine-interface.md`](machine-interface.md) — the versioned `--output json`
+  contract (`iso.machine/v1`) for editors, CI and other integrations.
 - [`configuration.md`](configuration.md) — `config.jsonc` reference.
 - [`backends.md`](backends.md) — the Apple sandbox backend (`iso-sandbox` on `apple/containerization`) and its state layout.
 - [`images-and-profiles.md`](images-and-profiles.md),

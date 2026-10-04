@@ -1,0 +1,48 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "capabilities",
+  "ok": true,
+  "result": {
+    "cli_version": "<CLI_VERSION>",
+    "machine_api_versions": [
+      "iso.machine/v1"
+    ],
+    "backend": "apple-container",
+    "commands": {
+      "capabilities": {
+        "machine_output": true
+      },
+      "list": {
+        "machine_output": true
+      },
+      "status": {
+        "machine_output": true
+      },
+      "up": {
+        "machine_output": true
+      },
+      "start": {
+        "machine_output": true
+      },
+      "stop": {
+        "machine_output": true
+      },
+      "destroy": {
+        "machine_output": true
+      },
+      "ssh-config": {
+        "machine_output": true
+      }
+    },
+    "editor_providers": [
+      {
+        "id": "code",
+        "display_name": "Visual Studio Code"
+      },
+      {
+        "id": "zed",
+        "display_name": "Zed"
+      }
+    ]
+  }
+}

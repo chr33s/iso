@@ -524,7 +524,8 @@ extension AppleBackend {
     switch status {
     case .stopped: return Stopped(instance: instance, sidecar: sidecar)
     case .running:
-      throw HostError(
+      throw HostFailure(
+        .instanceAlreadyRunning(instance.name),
         "Instance '\(instance.name)' is running — stop it first with `iso stop \(instance.name)`")
     default:
       throw RuntimeError.operationUncertain("sandbox \(sidecar.machineID) is \(status.rawValue)")

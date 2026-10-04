@@ -320,7 +320,10 @@ package final class ProjectLifecycle {
   // MARK: Instance lookup
 
   /// The one instance recorded for `canonical` (the project directory).
-  package func workspaceInstance(_ canonical: String, context message: (String, String) -> String)
+  /// `resolution` is the caller's argument that picks one of several matches.
+  package func workspaceInstance(
+    _ canonical: String, resolution: String? = nil, context message: (String, String) -> String
+  )
     throws
     -> Instance?
   {
@@ -334,7 +337,9 @@ package final class ProjectLifecycle {
     case 0: return nil
     case 1: return matching[0]
     default:
-      throw HostError(message(canonical, matching.map(\.name.rawValue).joined(separator: ", ")))
+      throw HostFailure(
+        .ambiguousInstance(candidates: matching.map(\.name), resolution: resolution),
+        message(canonical, matching.map(\.name.rawValue).joined(separator: ", ")))
     }
   }
 
@@ -364,7 +369,8 @@ package final class ProjectLifecycle {
     case 0: return nil
     case 1: return matching[0]
     default:
-      throw HostError(
+      throw HostFailure(
+        .ambiguousInstance(candidates: matching.map(\.name), resolution: nil),
         "Multiple instances share git repo \(url):\n  \(matching.map(\.name.rawValue).joined(separator: ", "))\nPick one explicitly with `iso start <name>` (for a stopped\ninstance) or `iso claude <name>` (for a running one)."
       )
     }
@@ -372,7 +378,9 @@ package final class ProjectLifecycle {
   /// Forwards go down before the VM (their control master exits while SSH
   /// still answers); the credential proxy and model tunnels are stopped on
   /// every path.
-  package func stop(_ instance: Instance) throws {
+  /// `.unchanged` when the instance was already stopped.
+  @discardableResult
+  package func stop(_ instance: Instance) throws -> LifecycleAction {
     context.diagnostics.log(.info, "Stopping instance '\(instance.name)'")
     let running: AppleBackend.Running?
     do {
@@ -385,17 +393,21 @@ package final class ProjectLifecycle {
           cause: probeError)
       }
       BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
-      return
+      return .stopped
     }
+    let action: LifecycleAction
     if let running {
       forwards.teardown(running.instance, running.target)
       try context.backend.stop(running)
       BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
+      action = .stopped
     } else {
+      action = .unchanged
       context.diagnostics.debug("Instance '\(instance.name)' is not running — nothing to stop")
       if let target = try? backend.sshTarget(instance) { forwards.teardown(instance, target) }
     }
     agents.proxies.stopAll(instance)
     context.diagnostics.log(.info, "Instance '\(instance.name)' stopped")
+    return action
   }
 }

@@ -17,9 +17,28 @@ extension ProjectLifecycle {
       context: context, noGitHub: noGitHub, secretResolver: secrets ?? context.secretResolver,
       executable: CommandLine.executablePath,
       prepareGitHub: { config, target, repo, noPrompt in
-        try context.github.maybePrompt(config, target: target, repo: repo, noPrompt: noPrompt)
+        try rejectPATOfferInMachineMode(config, repo: repo, noPrompt: noPrompt, context: context)
+        return try context.github.maybePrompt(
+          config, target: target, repo: repo, noPrompt: noPrompt)
       })
   }
+}
+
+/// Under `--output json` the PAT setup offer a terminal would show is a
+/// decision for the caller, not a silent skip.
+func rejectPATOfferInMachineMode(
+  _ config: IsoConfig, repo: RepoSlug?, noPrompt: Bool, context: CommandContext
+) throws {
+  guard MachineSession.isActive, let repo,
+    PATPromptDecision.resolve(
+      config, repo: repo, isTerminal: true, isCI: context.environment.variables["CI"] != nil,
+      noPrompt: noPrompt) == .prompt
+  else { return }
+  throw HostFailure(
+    .interactionRequired(
+      .githubPAT(repo: "\(repo)", acceptedFlags: ["--no-prompt", "--no-github"])),
+    "No GitHub credential is configured for \(repo), and --output json never offers the PAT setup. Run `iso github setup-pat --repo \(repo)` first, or pass --no-prompt (continue without it) or --no-github."
+  )
 }
 
 /// CLI selection arguments are resolved before constructing a restart request.
@@ -86,7 +105,7 @@ func parseGuestEnvironment(_ text: String) throws -> (EnvVarName, EnvValue) {
 
 // MARK: - up
 
-struct Up: ParsableCommand {
+struct Up: MachineCommand {
   static let configuration = CommandConfiguration(
     abstract: "Ensure an environment for a project directory exists and is running",
     discussion:
@@ -184,6 +203,7 @@ struct Up: ParsableCommand {
     if json && !dryRun {
       throw UsageError("the following required arguments were not provided:\n  --dry-run")
     }
+    try global.rejectDryRun(dryRun)
   }
 
   var profiles: [String] { profile.flatMap { $0.split(separator: ",").map(String.init) } }
@@ -205,7 +225,7 @@ struct Up: ParsableCommand {
   }
 
   func run() throws {
-    try IsoCLI.run {
+    try IsoCLI.run(global, Self.self) { () -> MachineUpResult? in
       let context = try CommandContext.load(global) {
         try applyEgressOverride($0, mode: egressOptions.egress, hosts: egressOptions.allowHost)
       }
@@ -218,7 +238,18 @@ struct Up: ParsableCommand {
       }
       let workflow = try UpWorkflow(
         command: self, lifecycle: ProjectLifecycle(context, noGitHub: noGithub), target: target)
-      if dryRun { try workflow.emitDryRun(json: json) } else { try workflow.run() }
+      if dryRun {
+        try workflow.emitDryRun(json: json)
+        return nil
+      }
+      let outcome = try workflow.run()
+      // Only the machine document reports the recorded workspace.
+      guard global.output == .json else { return nil }
+      return MachineUpResult(
+        outcome,
+        workspace: WorkspaceState.loadOrWarn(
+          outcome.instance, consequence: "the result reports no workspace",
+          diagnostics: context.diagnostics))
     }
   }
 }
@@ -273,7 +304,7 @@ extension UpWorkflow {
 
 // MARK: - start
 
-struct Start: ParsableCommand {
+struct Start: MachineCommand {
   static let configuration = CommandConfiguration(abstract: "Restart a stopped VM")
 
   @OptionGroup var global: GlobalOptions
@@ -336,16 +367,20 @@ struct Start: ParsableCommand {
     if json && !dryRun {
       throw UsageError("the following required arguments were not provided:\n  --dry-run")
     }
+    try global.rejectDryRun(dryRun)
   }
 
   func run() throws {
-    try IsoCLI.run {
+    try IsoCLI.run(global, Self.self) { () -> MachineLifecycleResult? in
       let context = try CommandContext.load(global) {
         try applyEgressOverride($0, mode: egressOptions.egress, hosts: egressOptions.allowHost)
       }
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
       let lifecycle = ProjectLifecycle(context, noGitHub: noGithub)
-      if dryRun { return try dryRunReport(lifecycle) }
+      if dryRun {
+        try dryRunReport(lifecycle)
+        return nil
+      }
       let selection = StoppedInstanceSelection(
         name: name, workspaceDirectory: workspace, devcontainerPath: devcontainer)
       let instance = try Self.stoppedTarget(lifecycle, selection)
@@ -357,6 +392,7 @@ struct Start: ParsableCommand {
       options.boot.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
         cli: guestEnvironment, envFile: envFile, devcontainer: nil)
       try lifecycle.restart(instance, options)
+      return MachineLifecycleResult(.started, instance, state: .running)
     }
   }
 
@@ -391,11 +427,12 @@ struct Start: ParsableCommand {
     -> Instance
   {
     guard let instance = try findStopped(lifecycle, options) else {
-      throw HostError(noStoppedInstanceMessage(options))
+      throw HostFailure(.instanceNotFound, noStoppedInstanceMessage(options))
     }
     let workspaceWasKey = options.name == nil && options.workspaceDirectory != nil
     if options.devcontainerPath != nil || (options.workspaceDirectory != nil && !workspaceWasKey) {
-      throw HostError(
+      throw HostFailure(
+        .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' already exists (stopped). These creation options would be silently ignored on restart.\nTo apply new options, destroy the instance first:\n  iso destroy \(instance.name)\n  iso up [DIR]"
       )
     }
@@ -410,7 +447,8 @@ struct Start: ParsableCommand {
     if let name = options.name {
       guard let instance = instances.first(where: { $0.name == name }) else { return nil }
       if backend.isRunning(instance) {
-        throw HostError(
+        throw HostFailure(
+          .instanceAlreadyRunning(name),
           "Instance '\(name)' is already running.\nUse `iso shell \(name)` to connect, or `iso stop \(name)` first."
         )
       }
@@ -420,13 +458,14 @@ struct Start: ParsableCommand {
       let canonical = try resolveCanonical(directory, "workspace path")
       guard
         let instance = try lifecycle.workspaceInstance(
-          canonical,
+          canonical, resolution: "<NAME>",
           context: { path, names in
             "Multiple instances share workspace \(path):\n  \(names)\nSpecify which to restart: iso start <name>"
           })
       else { return nil }
       if backend.isRunning(instance) {
-        throw HostError(
+        throw HostFailure(
+          .instanceAlreadyRunning(instance.name),
           "Instance '\(instance.name)' is already running with this workspace.\nUse `iso shell \(instance.name)` to connect."
         )
       }
@@ -437,7 +476,8 @@ struct Start: ParsableCommand {
     case 0: return nil
     case 1: return stopped[0]
     default:
-      throw HostError(
+      throw HostFailure(
+        .ambiguousInstance(candidates: stopped.map(\.name), resolution: "<NAME>"),
         "Multiple stopped instances exist: \(stopped.map(\.name.rawValue).joined(separator: ", "))\nSpecify which to restart: iso start <name>"
       )
     }

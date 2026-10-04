@@ -319,10 +319,14 @@ package final class AppleBackend: Sendable {
   package func resolveRunning(_ name: InstanceName?, instances: [Instance]) throws -> Running {
     if let name {
       guard let instance = instances.first(where: { $0.name == name }) else {
-        throw HostError("No instance named '\(name)'.\nCreate one with: iso up . --name \(name)")
+        throw HostFailure(
+          .instanceNotFound,
+          "No instance named '\(name)'.\nCreate one with: iso up . --name \(name)")
       }
       guard let running = try asRunning(instance) else {
-        throw HostError("Instance '\(name)' is not running.\nStart it with: iso start \(name)")
+        throw HostFailure(
+          .instanceNotRunning(name),
+          "Instance '\(name)' is not running.\nStart it with: iso start \(name)")
       }
       return running
     }
@@ -336,18 +340,22 @@ package final class AppleBackend: Sendable {
       return target
     case 0 where stopped.count == 1:
       let name = stopped[0].name
-      throw HostError(
+      throw HostFailure(
+        .instanceNotRunning(name),
         "Instance '\(name)' exists but is stopped.\nStart it with: iso start \(name)")
     case 0 where stopped.isEmpty:
-      throw HostError(
+      throw HostFailure(
+        .instanceNotFound,
         "No instances found.\nCreate one with: iso up\n(Run `iso setup` first if you haven't built an image yet.)"
       )
     case 0:
-      throw HostError(
+      throw HostFailure(
+        .instanceNotRunning(nil),
         "No running instances. Stopped: \(stopped.map(\.name.rawValue).joined(separator: ", "))\nStart one with: iso start <name>"
       )
     default:
-      throw HostError(
+      throw HostFailure(
+        .ambiguousInstance(candidates: running.map(\.name), resolution: "<NAME>"),
         "Multiple running instances. Specify one: \(running.map(\.name.rawValue).joined(separator: ", "))"
       )
     }

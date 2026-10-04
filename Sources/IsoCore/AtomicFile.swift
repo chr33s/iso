@@ -88,7 +88,9 @@ package enum AtomicFile {
     }
   }
 
-  private static func writeAll(_ fd: Int32, _ bytes: [UInt8], _ path: String) throws(HostError) {
+  /// Every byte to `fd`, retrying partial and interrupted writes; `path`
+  /// only labels the error.
+  package static func writeAll(_ fd: Int32, _ bytes: [UInt8], _ path: String) throws(HostError) {
     var offset = 0
     while offset < bytes.count {
       let written = bytes[offset...].withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }

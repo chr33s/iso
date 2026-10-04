@@ -1,0 +1,17 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "stop",
+  "ok": false,
+  "error": {
+    "code": "AMBIGUOUS_INSTANCE",
+    "message": "Multiple instances exist. Specify one: project-a, project-b",
+    "retryable": true,
+    "details": {
+      "instances": [
+        "project-a",
+        "project-b"
+      ],
+      "resolution": "<NAME>"
+    }
+  }
+}

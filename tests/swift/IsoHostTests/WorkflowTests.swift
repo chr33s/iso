@@ -91,3 +91,36 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   }
   #expect(error.message == resolution.blockedReason)
 }
+
+@Test func upAffinityFailuresAreTypedBeforeRuntimeOrSecrets() throws {
+  let root = try scratchDirectory("workflow-up")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(root)
+  let project = try Instance.allocate(
+    lifecycle.config, name: try InstanceName("project"), image: .default, workspacePath: root)
+  try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: root)).save(project)
+  var request = UpRequest(
+    configTarget: ConfigTarget(path: root + "/config.jsonc", format: .jsonc))
+  request.dir = root
+  request.name = try InstanceName("other")
+  let associated = try #require(throws: HostFailure.self) {
+    try UpWorkflow(request: request, lifecycle: lifecycle, target: nil).run()
+  }
+  #expect(associated.reason == .projectAlreadyAssociated(project.name))
+  #expect(associated.message.hasPrefix("Project \(root) is already associated"))
+
+  let twin = try Instance.allocate(
+    lifecycle.config, name: try InstanceName("twin"), image: .default, workspacePath: root)
+  try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: root)).save(twin)
+  request.name = nil
+  let ambiguous = try #require(throws: HostFailure.self) {
+    try UpWorkflow(request: request, lifecycle: lifecycle, target: nil).run()
+  }
+  guard case .ambiguousInstance(let candidates, let resolution) = ambiguous.reason else {
+    Issue.record("expected an ambiguous instance, got \(ambiguous.reason)")
+    return
+  }
+  #expect(Set(candidates) == [project.name, twin.name])
+  // No argument of `up` picks one.
+  #expect(resolution == nil)
+}

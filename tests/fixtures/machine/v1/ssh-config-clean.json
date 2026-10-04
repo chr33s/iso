@@ -1,0 +1,11 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "ssh-config",
+  "ok": true,
+  "result": {
+    "instance": {
+      "name": "my-project"
+    },
+    "connection": null
+  }
+}

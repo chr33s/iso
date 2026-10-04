@@ -170,11 +170,17 @@ package struct DevcontainerResolver: Sendable {
     if options.input == .discover && !options.dryRun {
       guard prompter.isInteractive else {
         if isLocal {
-          throw HostError(
+          throw HostFailure(
+            .interactionRequired(
+              .devcontainer(
+                path: displayPath,
+                acceptedFlags: ["--devcontainer \(displayPath)", "--no-devcontainer"])),
             "Found \(displayPath) but stdin is not a TTY.\nPass --devcontainer \(displayPath) to apply it, or --no-devcontainer to ignore.\niso reads a subset of devcontainer.json — see docs/devcontainer.md for the supported keys."
           )
         }
-        throw HostError(
+        throw HostFailure(
+          .interactionRequired(
+            .devcontainer(path: displayPath, acceptedFlags: ["--no-devcontainer"])),
           "Found \(displayPath) but stdin is not a TTY.\nRun interactively to confirm the remote file, pass --no-devcontainer to ignore it, or pass --devcontainer <local-path> to apply an explicit file.\niso reads a subset of devcontainer.json — see docs/devcontainer.md for the supported keys."
         )
       }

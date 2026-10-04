@@ -21,7 +21,12 @@ def active(sockets, allow_refusal=False):
             assert allow_refusal, "incomplete head was refused before its deadline"
             response = b""
             while True:
-                block = connection.recv(1024)
+                try:
+                    block = connection.recv(1024)
+                except ConnectionResetError:
+                    # Closing with unread slow-head bytes can reset TCP after
+                    # the refusal. The complete response is still required.
+                    break
                 if not block:
                     break
                 response += block

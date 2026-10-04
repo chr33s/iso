@@ -1,0 +1,14 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "destroy",
+  "ok": true,
+  "result": {
+    "lifecycle": {
+      "action": "destroyed"
+    },
+    "instance": {
+      "name": "my-project",
+      "image": "default"
+    }
+  }
+}

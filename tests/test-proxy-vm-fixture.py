@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unprivileged regressions for controlled VM fixture cleanup."""
+"""Unprivileged regressions for controlled VM fixtures and egress pressure."""
 import concurrent.futures
 import http.server
 import importlib.util
@@ -21,6 +21,32 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("fixture", ROOT / "tests/proxy_vm_forwarding.py")
 fixture = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(fixture)
+PRESSURE_SPEC = importlib.util.spec_from_file_location(
+    "pressure", ROOT / "tests/fixtures/credential-proxy/egress-pressure.py")
+pressure = importlib.util.module_from_spec(PRESSURE_SPEC)
+PRESSURE_SPEC.loader.exec_module(pressure)
+
+
+class EgressPressureTests(unittest.TestCase):
+    REFUSAL = (b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+               b"Connection: close\r\n\r\n")
+
+    def test_complete_refusal_accepts_eof_or_reset(self):
+        for ending in (b"", ConnectionResetError()):
+            with self.subTest(ending=ending):
+                connection = mock.Mock()
+                connection.recv.side_effect = [b"H", self.REFUSAL[:20], self.REFUSAL[20:], ending]
+                with mock.patch.object(pressure.select, "select", return_value=([connection], [], [])):
+                    self.assertEqual(pressure.active([connection], allow_refusal=True), [])
+
+    def test_reset_does_not_hide_incomplete_or_invalid_refusal(self):
+        for response in (b"", self.REFUSAL[:-1], self.REFUSAL.replace(b"403", b"200")):
+            with self.subTest(response=response):
+                connection = mock.Mock()
+                connection.recv.side_effect = [b"H", response, ConnectionResetError()]
+                with mock.patch.object(pressure.select, "select", return_value=([connection], [], [])):
+                    with self.assertRaisesRegex(AssertionError, "unexpected head-timeout response"):
+                        pressure.active([connection], allow_refusal=True)
 
 
 class FixtureCleanupTests(unittest.TestCase):

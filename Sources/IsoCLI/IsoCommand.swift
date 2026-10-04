@@ -23,7 +23,7 @@ struct IsoCommand: ParsableCommand {
       List.self, Status.self, AgentCommand.self, ModelCommand.self, Logs.self, Push.self,
       Pull.self, Diff.self, Exec.self, Editor.self, SSHConfigCommand.self, Images.self, Resize.self,
       Commit.self, Restore.self, ProfilesCommand.self, GitHubCommand.self, ProxyCommand.self,
-      SecretsCommand.self, Audit.self,
+      SecretsCommand.self, Audit.self, Capabilities.self,
       Validate.self, Update.self, Uninstall.self, Completions.self,
       EgressLeaseCommand.self,
     ])
@@ -35,6 +35,16 @@ struct IsoCommand: ParsableCommand {
     ChildGroups.installTerminationHandlers()
     do {
       var command = try parseAsRoot()
+      let global = GlobalOptions.parsed(in: command)
+      // A group command carries no options of its own; its argv still asks.
+      if global?.output == .json
+        || (global == nil && GlobalOptions.requestsMachineOutput(CommandLine.arguments))
+      {
+        try MachineSession.begin(quiet: global?.quiet ?? false)
+        guard command is any MachineCommand else {
+          return try rejectUnsupportedMachineOutput(command)
+        }
+      }
       try command.run()
     } catch {
       let code = exitCode(for: error)
@@ -55,6 +65,21 @@ struct GlobalOptions: ParsableArguments {
 
   @Flag(name: .shortAndLong, help: "Increase verbosity")
   var verbose: Int
+
+  @Option(
+    help: ArgumentHelp(
+      "Output format: text, or json for the versioned iso.machine/v1 document (docs/machine-interface.md)",
+      valueName: "FORMAT"))
+  var output: OutputFormat = .text
+
+  @Flag(help: "With --output json, discard all stderr diagnostics")
+  var quiet = false
+
+  func validate() throws {
+    if quiet && output != .json {
+      throw ArgumentParser.ValidationError("--quiet requires --output json")
+    }
+  }
 
   func selection(environment: ConfigEnvironment) throws(ConfigError) -> ConfigSelection {
     try ConfigLoader.select(explicitPath: config, home: environment.home)

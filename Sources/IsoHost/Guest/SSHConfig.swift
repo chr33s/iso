@@ -64,7 +64,8 @@ package struct SSHConfigFile: Sendable {
   }
 
   /// Install or refresh the alias for a running instance.
-  package func update(_ target: SSHTarget, _ instance: Instance) throws {
+  @discardableResult
+  package func update(_ target: SSHTarget, _ instance: Instance) throws -> SSHAlias {
     do {
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -79,6 +80,7 @@ package struct SSHConfigFile: Sendable {
     try target.requireHandoff()
     try write(cleaned.isEmpty ? block + "\n" : cleaned + "\n" + block + "\n")
     diagnostics.log(.info, "Updated SSH config at \(path)")
+    return SSHAlias(host: host, configPath: path)
   }
 
   /// Only rewrites an alias the user already installed.
@@ -108,12 +110,16 @@ package struct SSHConfigFile: Sendable {
 
   /// `iso ssh-config` / `iso editor`: install the alias and print how to
   /// use it (stderr).
-  package func install(_ running: AppleBackend.Running, stderr: (String) -> Void) throws {
-    try update(running.target, running.instance)
+  @discardableResult
+  package func install(_ running: AppleBackend.Running, stderr: (String) -> Void) throws
+    -> SSHAlias
+  {
+    let alias = try update(running.target, running.instance)
     let host = Self.host(running.instance)
     stderr(
       "\nSSH alias '\(host)' is ready:\n\n\(Self.block(running.target, running.instance))\n\nUse it with ssh/scp/rsync, e.g.:\n    ssh \(host)\n    scp ./file \(host):/workspace/\n    rsync -az ./dir/ \(host):/workspace/dir/\n\nThese connections verify the VM's pinned host key; a changed key is refused."
     )
+    return alias
   }
 }
 
@@ -121,6 +127,14 @@ package struct SSHConfigFile: Sendable {
 package enum EditorKind: String, Sendable, CaseIterable {
   case code
   case zed
+
+  /// The application name (`open -a` for VS Code).
+  package var displayName: String {
+    switch self {
+    case .code: "Visual Studio Code"
+    case .zed: "Zed"
+    }
+  }
 }
 
 /// `iso editor`: install the alias, then try each launch strategy.
@@ -162,10 +176,12 @@ package struct EditorLauncher: Sendable {
         editor: .code, nonzeroExit: .editorFailure, name: "code CLI", command: "code",
         arguments: ["--remote", "ssh-remote+\(host)", path.rawValue]),
       Strategy(
-        editor: .code, nonzeroExit: .launcherMiss, name: "macOS open -a 'Visual Studio Code'",
+        editor: .code, nonzeroExit: .launcherMiss,
+        name: "macOS open -a '\(EditorKind.code.displayName)'",
         command: "open",
         arguments: [
-          "-a", "Visual Studio Code", "--args", "--remote", "ssh-remote+\(host)", path.rawValue,
+          "-a", EditorKind.code.displayName, "--args", "--remote", "ssh-remote+\(host)",
+          path.rawValue,
         ]),
     ]
     let encoded = percentEncode(path.rawValue)

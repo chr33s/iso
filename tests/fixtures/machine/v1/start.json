@@ -1,0 +1,16 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "start",
+  "ok": true,
+  "result": {
+    "lifecycle": {
+      "action": "started"
+    },
+    "instance": {
+      "name": "my-project",
+      "state": "running",
+      "image": "default",
+      "backend": "apple-container"
+    }
+  }
+}

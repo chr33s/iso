@@ -493,3 +493,30 @@ private struct FakeInstallation {
   #expect(start.first == "start" && !start.contains("--expires-at"))
   try backend.destroyInstance(instance)
 }
+
+@Test func projectStopReportsWhetherItStoppedAnything() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("stopper"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let environment = ConfigEnvironment(
+    home: install.root,
+    variables: ["HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin"])
+  let diagnostics = Diagnostics(verbosity: 0) { _ in }
+  let lifecycle = ProjectLifecycle(
+    context: CommandContext(
+      environment: environment, config: install.config, backend: backend,
+      output: SilentOutput(), diagnostics: diagnostics,
+      ssh: SSHClient(environment: environment.variables)),
+    noGitHub: true, secretResolver: NoSecrets(), executable: nil,
+    prepareGitHub: { config, _, _, _ in config })
+  #expect(try lifecycle.stop(instance) == .stopped)
+  #expect(try backend.asRunning(instance) == nil)
+  #expect(try lifecycle.stop(instance) == .unchanged)
+  try backend.destroyInstance(instance)
+}

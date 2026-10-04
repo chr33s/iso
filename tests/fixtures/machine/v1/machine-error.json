@@ -1,0 +1,18 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "up",
+  "ok": false,
+  "error": {
+    "code": "INTERACTION_REQUIRED",
+    "message": "Found /repo/.devcontainer/devcontainer.json but stdin is not a TTY.",
+    "retryable": true,
+    "details": {
+      "kind": "devcontainer",
+      "path": "/repo/.devcontainer/devcontainer.json",
+      "accepted_flags": [
+        "--devcontainer /repo/.devcontainer/devcontainer.json",
+        "--no-devcontainer"
+      ]
+    }
+  }
+}

@@ -75,7 +75,7 @@ swift test --package-path iso-proxy --force-resolved-versions   # credential pro
 swift test --package-path iso-egress --force-resolved-versions  # filtered egress
 swift test --package-path iso-sandbox --no-parallel             # Apple runtime
 python3 tests/test-cli-surface.py --swift .build/debug/iso
-python3 tests/test-read-contract.py --swift .build/debug/iso   # also lifecycle, data-root
+python3 tests/test-read-contract.py --swift .build/debug/iso   # also lifecycle, data-root, machine
 python3 scripts/swift-host-fault-injection.py                 # tests catch injected faults
 scripts/fuzz.sh smoke                                         # bounded libFuzzer run, all targets
 python3 scripts/build-release.py [--release --test --tag vX.Y.Z]  # release archive

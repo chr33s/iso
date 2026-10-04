@@ -90,15 +90,25 @@ enum PassphraseInput {
   /// Test seam: forget the cached passphrase.
   static func reset() { cached.withLock { $0 = nil } }
 
+  /// `interactive` is false under `--output json`: `/dev/tty` is a prompt
+  /// even with stdin redirected.
   static func readFresh(
-    prompt: String, confirm: Bool, environment: [String: String]
+    prompt: String, confirm: Bool, environment: [String: String],
+    interactive: Bool = !MachineSession.isActive,
+    hidden: (String) throws -> Secret<[UInt8]> = TerminalInput.hidden
   ) throws -> Secret<[UInt8]> {
     if let raw = environment[descriptorVariable] {
       return try fromDescriptor(raw)
     }
-    let first = try TerminalInput.hidden(prompt)
+    if !interactive {
+      throw HostFailure(
+        .interactionRequired(.passphrase(descriptorVariable: descriptorVariable)),
+        "The secret store needs a passphrase, and --output json never prompts; pass it through \(descriptorVariable)"
+      )
+    }
+    let first = try hidden(prompt)
     if confirm {
-      let second = try TerminalInput.hidden("Repeat passphrase")
+      let second = try hidden("Repeat passphrase")
       guard first.expose() == second.expose() else { throw HostError("Passphrases do not match") }
     }
     guard !first.expose().isEmpty else { throw HostError("Empty passphrase") }
@@ -112,6 +122,10 @@ enum PassphraseInput {
       throw HostError("\(descriptorVariable) must name an open descriptor above 2")
     }
     let fd = Int32(parsed)
+    // Under --output json the lowest free descriptor holds the document.
+    guard !MachineSession.ownsDescriptor(fd) else {
+      throw HostError("\(descriptorVariable) does not name an open descriptor")
+    }
     defer { close(fd) }
     var info = stat()
     guard fstat(fd, &info) == 0 else {

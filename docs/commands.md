@@ -17,6 +17,8 @@ isolate creates isolated VM environments for running Claude Code and Codex. Supp
 |------|-------------|
 | `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.iso/config.jsonc`). The selected file must exist. |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
+| `--output <text\|json>` | `json` prints one versioned `iso.machine/v1` document on stdout and never prompts. Supported by `capabilities`, `list`, `status`, `up`, `start`, `stop`, `destroy` and `ssh-config`; any other command fails with `UNSUPPORTED_MACHINE_OUTPUT`. See [machine-interface.md](machine-interface.md). Default `text`. |
+| `--quiet` | With `--output json`, discard all stderr diagnostics. |
 | `--version` | Print version and exit. |
 
 ## Instance Name Resolution
@@ -110,6 +112,8 @@ its path and content hash. Later `iso up` reconnects or restarts warn if that
 file changed, but the existing VM is not mutated automatically. Destroy and
 recreate the instance to apply creation-time devcontainer changes such as
 `features`, `hostRequirements`, `mounts`, `image`/`build`, or `remoteUser`.
+
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#up).
 
 ### `setup`
 
@@ -241,6 +245,8 @@ iso start --env RUST_LOG=info --env MY_FLAG=1
 iso start --forward-port 3000 --forward-port 8080:18080
 ```
 
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#start).
+
 ### `shell`
 
 Open an interactive shell in the VM, or run a single command non-interactively.
@@ -364,6 +370,8 @@ iso stop
 iso stop my-project
 ```
 
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#stop).
+
 ### `destroy`
 
 Stop the VM and remove its resources: disk, config, and SSH entries. Images are preserved unless you pass `--all`.
@@ -382,6 +390,8 @@ iso destroy my-project
 iso destroy --all
 ```
 
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#destroy).
+
 ### `list`
 
 Print every instance with its state: `running`, `stopped`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`iso-sandbox inspect`). Use `status` instead when you need resource usage or per-instance detail.
@@ -395,7 +405,9 @@ Alias: `ls`.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Emit a JSON array (`[{ "name", "state" }, …]`) instead of the text table |
+| `--json` | Emit the legacy unversioned JSON array (`[{ "name", "state" }, …]`) instead of the text table. Cannot be combined with `--output json` |
+
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#list).
 
 ### `status`
 
@@ -408,7 +420,7 @@ iso status [NAME]
 | Flag | Description |
 |------|-------------|
 | `NAME` | Instance name (shows all if omitted) |
-| `--json` | Emit machine-readable JSON instead of the text output |
+| `--json` | Emit the legacy unversioned JSON instead of the text output. Cannot be combined with `--output json` |
 
 ```
 iso status
@@ -434,6 +446,8 @@ $ iso status my-project --json
              "disk_used_mib": 8192, "disk_total_mib": 20480 }
 }
 ```
+
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#status).
 
 ### `run`
 
@@ -755,6 +769,8 @@ or recreate it.
 
 Use `ssh-config` for ad-hoc copies of arbitrary paths. To sync the tracked
 workspace directory in bulk, use [`push`](#push) / [`pull`](#pull) instead.
+
+With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#ssh-config).
 
 ### `images`
 
@@ -1176,6 +1192,18 @@ iso audit [NAME] [--suggest-config]
 was observed (for example `proxy.mode` `required` when every boot was proxied
 and no raw key was forwarded). Guest network use is not observed, so `egress`
 is suggested only when every boot already ran without it.
+
+### `capabilities`
+
+Print the CLI version, the machine-interface versions this build speaks, the
+backend, the commands that support `--output json`, and the editor providers.
+It reads no configuration, state or credentials, starts no runtime and checks
+for no update, so an integration can call it first.
+
+```
+iso capabilities
+iso capabilities --output json
+```
 
 ### `validate`
 

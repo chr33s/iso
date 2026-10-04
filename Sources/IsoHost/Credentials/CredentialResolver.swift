@@ -47,7 +47,7 @@ package struct CredentialResolver: Sendable {
 
   /// A `vault:<name>` value, as UTF-8 text without NUL. Errors never echo
   /// the text: a mistyped or pasted value may be the secret itself.
-  func resolveStored(_ text: String) throws(HostError) -> Secret<String> {
+  func resolveStored(_ text: String) throws -> Secret<String> {
     let name: SecretName
     do {
       name = try SecretName(text)
@@ -68,6 +68,9 @@ package struct CredentialResolver: Sendable {
       bytes = value.expose()
     } catch let error as HostError {
       throw error
+    } catch let error as HostFailure {
+      // A typed need (a passphrase under --output json) stays typed.
+      throw error
     } catch {
       throw HostError("unable to resolve a `vault:` credential: \(error)")
     }
@@ -80,10 +83,12 @@ package struct CredentialResolver: Sendable {
   /// Resolves every `vault:` value in `values` in one unlock, so the later
   /// per-value resolutions are cache hits. A no-op without a store or names.
   /// One missing name fails the whole batch.
-  package func prefetchStored(_ values: [Secret<String>]) throws(HostError) {
+  package func prefetchStored(_ values: [Secret<String>]) throws {
     let names = Set(values.compactMap { SecretName.vaultReference($0.expose()) })
     guard !names.isEmpty, let secrets else { return }
     do { _ = try secrets.resolve(names) } catch let error as HostError {
+      throw error
+    } catch let error as HostFailure {
       throw error
     } catch {
       throw HostError("unable to resolve a `vault:` credential: \(error)")
@@ -92,7 +97,7 @@ package struct CredentialResolver: Sendable {
 
   /// Resolution for credentials that may come from the secret store:
   /// provider proxy credentials and GitHub PATs.
-  package func resolveAllowingStored(_ value: Secret<String>) throws(HostError) -> Secret<String> {
+  package func resolveAllowingStored(_ value: Secret<String>) throws -> Secret<String> {
     let raw = value.expose()
     if raw.hasPrefix("vault:") { return try resolveStored(String(raw.dropFirst(6))) }
     return try resolve(value)
@@ -149,7 +154,7 @@ package struct CredentialResolver: Sendable {
     return Secret(resolved)
   }
 
-  package func resolve(_ reference: CredentialReference) throws(HostError) -> Secret<String> {
+  package func resolve(_ reference: CredentialReference) throws -> Secret<String> {
     try resolveAllowingStored(reference.command)
   }
 }

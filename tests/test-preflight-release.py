@@ -38,7 +38,8 @@ fi
 
 PYTHON_GATES = [
     'tests/test-read-contract.py', 'tests/test-lifecycle-contract.py',
-    'tests/test-data-root-contract.py', 'tests/test-cli-surface.py',
+    'tests/test-data-root-contract.py', 'tests/test-machine-contract.py',
+    'tests/test-cli-surface.py',
     'tests/test-preflight-release.py', 'tests/test-verify-candidate.py', 'tests/test-accept-release.py',
     'scripts/build-release.py',
     'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
@@ -114,6 +115,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                      'test-read-contract.py --swift .build/debug/iso',
                      'test-lifecycle-contract.py --swift .build/debug/iso',
                      'test-data-root-contract.py --swift .build/debug/iso',
+                     'test-machine-contract.py --swift .build/debug/iso',
                      'test-cli-surface.py --swift .build/debug/iso',
                      'test-preflight-release.py',
                      'test-verify-candidate.py', 'test-accept-release.py',
@@ -200,9 +202,11 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('Preflight FAILED', result.stdout)
 
     def test_baseline_failure_is_fatal(self):
-        result = self.run_preflight('--quick', fail='test-lifecycle-contract.py')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAIL: Host behavior contracts', result.stdout)
+        for gate in ('test-lifecycle-contract.py', 'test-machine-contract.py'):
+            with self.subTest(gate=gate):
+                result = self.run_preflight('--quick', fail=gate)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('FAIL: Host behavior contracts', result.stdout)
 
 
 class SigningTests(unittest.TestCase):

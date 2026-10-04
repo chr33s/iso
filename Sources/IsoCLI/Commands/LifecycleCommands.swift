@@ -159,7 +159,7 @@ func parseDurationArgument(_ text: String) throws -> Duration {
 
 // MARK: - stop
 
-struct Stop: ParsableCommand {
+struct Stop: MachineCommand {
   static let configuration = CommandConfiguration(abstract: "Gracefully stop the VM")
 
   @OptionGroup var global: GlobalOptions
@@ -168,21 +168,18 @@ struct Stop: ParsableCommand {
   var name: InstanceName?
 
   func run() throws {
-    try IsoCLI.run {
+    try IsoCLI.run(global, Self.self) {
       let context = try CommandContext.load(global)
-      try Self.stop(context, try InstanceStore.resolve(context.config, name: name))
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      let action = try ProjectLifecycle(context, noGitHub: false).stop(instance)
+      return MachineLifecycleResult(action, instance, state: .stopped)
     }
   }
-
-  static func stop(_ context: CommandContext, _ instance: Instance) throws {
-    try ProjectLifecycle(context, noGitHub: false).stop(instance)
-  }
-
 }
 
 // MARK: - destroy
 
-struct Destroy: ParsableCommand {
+struct Destroy: MachineCommand {
   static let configuration = CommandConfiguration(
     abstract: "Stop and clean up instance resources (keeps images)")
 
@@ -193,12 +190,20 @@ struct Destroy: ParsableCommand {
   @Flag(help: "Also remove every image and the VM access key") var all = false
 
   func run() throws {
-    try IsoCLI.run {
+    try IsoCLI.run(global, Self.self) { () -> MachineDestroyResult in
       let context = try CommandContext.load(global)
       let shutdown = Shutdown.install()
       defer { shutdown.restore() }
       if all {
-        for instance in try context.listInstances() { try destroy(context, instance) }
+        var destroyed: [MachineRemovedInstance] = []
+        do {
+          for instance in try context.listInstances() {
+            try destroy(context, instance)
+            destroyed.append(MachineRemovedInstance(instance))
+          }
+        } catch  where !destroyed.isEmpty {
+          throw PartialDestroy(destroyed: destroyed, cause: error)
+        }
         context.backend.destroyShared()
         for suffix in ["", ".pub"] {
           try? FileManager.default.removeItem(atPath: context.config.sshKeyPath.path + suffix)
@@ -206,9 +211,11 @@ struct Destroy: ParsableCommand {
         try? FileManager.default.removeItem(atPath: context.config.instancesDirectory.path)
         try context.sshConfigFile().removeAll()
         context.diagnostics.log(.info, "All resources cleaned up")
-        return
+        return .all(destroyed)
       }
-      try destroy(context, try InstanceStore.resolve(context.config, name: name))
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      try destroy(context, instance)
+      return .one(MachineRemovedInstance(instance))
     }
   }
 

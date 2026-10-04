@@ -11,6 +11,7 @@ REQUIRED = {
     "setup", "up", "start", "shell", "exec", "stop", "destroy", "list", "status", "logs",
     "claude", "codex", "agent", "run", "run-cleanup", "images", "diff", "audit", "secrets",
     "github", "proxy", "profiles", "devcontainer", "update", "uninstall", "validate", "completions",
+    "capabilities", "ssh-config",
 }
 
 

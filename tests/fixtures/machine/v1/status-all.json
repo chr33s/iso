@@ -1,0 +1,33 @@
+{
+  "api_version": "iso.machine/v1",
+  "command": "status",
+  "ok": true,
+  "result": {
+    "instances": [
+      {
+        "instance": {
+          "name": "project-a",
+          "state": "running",
+          "image": "default",
+          "backend": "apple-container"
+        },
+        "usage": {
+          "load_1m": 0.42,
+          "mem_used_mib": 1024,
+          "mem_total_mib": 8192,
+          "disk_used_mib": 8192,
+          "disk_total_mib": 65536
+        }
+      },
+      {
+        "instance": {
+          "name": "project-b",
+          "state": "stopped",
+          "image": "default",
+          "backend": "apple-container"
+        },
+        "usage": null
+      }
+    ]
+  }
+}

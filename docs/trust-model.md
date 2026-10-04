@@ -223,6 +223,22 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   with a passphrase (it must be used non-interactively), but do flag any change
   that exposes it or copies it off the host.
 
+## Machine output (`--output json`)
+
+The `iso.machine/v1` document ([machine-interface.md](machine-interface.md))
+is read by other programs, so it is a disclosure boundary like stderr:
+
+- It never carries resolved secrets, `cmd:`/`vault:` values, proxy
+  credentials or key material; `ssh-config` returns the managed alias and the
+  config path only (`Sources/IsoCLI/Support/MachineResponses.swift`).
+- Error messages and details are control-neutralized and bounded
+  (`MachineFailure` in `MachineErrors.swift`); they carry the same text the
+  stderr error already shows.
+- Machine mode is non-interactive (stdin is `/dev/null`, the passphrase prompt
+  is refused) and fails with `INTERACTION_REQUIRED` rather than answering a
+  decision itself. It runs the same isolation gate, running proof and
+  host-key pinning as text mode; flag any machine-only path that skips them.
+
 ## Network
 
 - **Port-forwards bind to `127.0.0.1` only** (`PortForwards.swift`): both the
