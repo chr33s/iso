@@ -9,7 +9,7 @@ set -euo pipefail
 #   scripts/macos-sign-notarize.sh DIR
 #     DIR holds iso, iso-proxy, iso-egress and iso-sandbox; each is re-signed in place.
 #   scripts/macos-sign-notarize.sh --check-env
-#     Check required environment variables without signing or contacting Apple.
+#     Check required variables and the P12 without signing or contacting Apple.
 #
 # Environment (all required):
 #   MACOS_CERTIFICATE_P12        base64 Developer ID Application .p12
@@ -46,27 +46,46 @@ if [[ "$missing" == 1 ]]; then
     echo "error: configure the required signing and notarization secrets in the release GitHub environment" >&2
     exit 1
 fi
-if [[ "$dir" == --check-env ]]; then
-    exit 0
-fi
-
 root="$(cd "$(dirname "$0")/.." && pwd)"
+umask 077
 work="$(mktemp -d)"
 keychain="${work}/signing.keychain-db"
-keychain_password="$(uuidgen)"
 # Keep the existing search list for certificate-chain lookup, and restore it
 # even if importing, signing, or notarization fails. Never eval security output.
 original_keychains=()
 search_list_changed=0
+keychain_created=0
 cleanup() {
     if [[ "$search_list_changed" == 1 ]]; then
         security list-keychains -d user -s ${original_keychains[@]+"${original_keychains[@]}"} || true
     fi
-    security delete-keychain "${keychain}" 2>/dev/null || true
+    if [[ "$keychain_created" == 1 ]]; then
+        security delete-keychain "${keychain}" 2>/dev/null || true
+    fi
     rm -rf "${work}"
 }
 trap cleanup EXIT
 
+# Validate before a release spends time building. Suppress decoder/parser output:
+# diagnostics must name the secret to repair without printing its contents.
+if ! printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${work}/cert.p12" 2>/dev/null \
+    || [[ ! -s "${work}/cert.p12" ]]; then
+    echo "error: MACOS_CERTIFICATE_P12 must be base64 of a nonempty Developer ID Application .p12 file" >&2
+    exit 1
+fi
+if ! openssl pkcs12 -in "${work}/cert.p12" -passin env:MACOS_CERTIFICATE_PASSWORD \
+    -noout > /dev/null 2>&1 \
+    && ! openssl pkcs12 -legacy -in "${work}/cert.p12" -passin env:MACOS_CERTIFICATE_PASSWORD \
+        -noout > /dev/null 2>&1; then
+    echo "error: cannot read MACOS_CERTIFICATE_P12 with MACOS_CERTIFICATE_PASSWORD" >&2
+    echo "error: export the Developer ID Application certificate and private key as .p12 from Keychain Access, then base64-encode the file; an Apple .cer download is not a .p12" >&2
+    exit 1
+fi
+if [[ "$dir" == --check-env ]]; then
+    exit 0
+fi
+
+keychain_password="$(uuidgen)"
 security list-keychains -d user > "${work}/keychains"
 while IFS= read -r line; do
     if [[ "$line" =~ ^[[:space:]]*\"(.*)\"[[:space:]]*$ ]]; then
@@ -77,16 +96,19 @@ while IFS= read -r line; do
     fi
 done < "${work}/keychains"
 
-printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${work}/cert.p12"
 security create-keychain -p "${keychain_password}" "${keychain}"
+keychain_created=1
 security set-keychain-settings -lut 21600 "${keychain}"
 security unlock-keychain -p "${keychain_password}" "${keychain}"
 # --keychain restricts identity selection, but codesign still uses the user's
 # search list to construct the certificate chain.
 search_list_changed=1
 security list-keychains -d user -s "${keychain}" ${original_keychains[@]+"${original_keychains[@]}"}
-security import "${work}/cert.p12" -k "${keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
-    -T /usr/bin/codesign
+if ! security import "${work}/cert.p12" -f pkcs12 -k "${keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+    -T /usr/bin/codesign; then
+    echo "error: macOS cannot import MACOS_CERTIFICATE_P12; re-export the certificate and private key as .p12 from Keychain Access and update its base64 and password in the release environment" >&2
+    exit 1
+fi
 security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain}" > /dev/null
 rm -f "${work}/cert.p12"
 

@@ -5,6 +5,7 @@
 
 """Exercise release preflight dispatch and version gates without building VMs."""
 import importlib.util
+import base64
 import os
 import re
 from pathlib import Path
@@ -215,8 +216,43 @@ class SigningTests(unittest.TestCase):
         'NOTARY_API_KEY_P8', 'NOTARY_API_KEY_ID', 'NOTARY_API_ISSUER_ID',
     )
 
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = tempfile.TemporaryDirectory()
+        root = Path(cls.fixture.name)
+        cls.addClassCleanup(cls.fixture.cleanup)
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                        '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'),
+                        '-days', '1', '-subj', '/CN=iso-synthetic'],
+                       check=True, capture_output=True, timeout=20)
+        subprocess.run(['openssl', 'pkcs12', '-export', '-in', str(root / 'cert.pem'),
+                        '-inkey', str(root / 'key.pem'), '-out', str(root / 'cert.p12'),
+                        '-keypbe', 'PBE-SHA1-3DES', '-certpbe', 'PBE-SHA1-3DES',
+                        '-macalg', 'sha1', '-passout', 'pass:synthetic-value'],
+                       check=True, capture_output=True, timeout=10)
+        cls.certificate = base64.b64encode((root / 'cert.p12').read_bytes()).decode()
+        cls.cer = base64.b64encode((root / 'cert.pem').read_bytes()).decode()
+
     def environment(self):
-        return {**os.environ, **{name: 'synthetic-value' for name in self.VARIABLES}}
+        return {**os.environ, **{name: 'synthetic-value' for name in self.VARIABLES},
+                'MACOS_CERTIFICATE_P12': self.certificate}
+
+    def test_environment_check_rejects_unreadable_certificate(self):
+        for certificate, password in (
+                ('!!!', 'synthetic-value'),
+                (base64.b64encode(b'not a PKCS12 file').decode(), 'synthetic-value'),
+                (self.cer, 'synthetic-value'),
+                (self.certificate, 'incorrect-secret-password')):
+            with self.subTest(certificate=certificate[:8], password=password):
+                env = self.environment()
+                env.update(MACOS_CERTIFICATE_P12=certificate, MACOS_CERTIFICATE_PASSWORD=password)
+                result = subprocess.run(
+                    ['bash', str(ROOT / 'scripts/macos-sign-notarize.sh'), '--check-env'],
+                    env=env, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('MACOS_CERTIFICATE_P12', result.stderr)
+                self.assertNotIn(certificate, result.stdout + result.stderr)
+                self.assertNotIn(password, result.stdout + result.stderr)
 
     def test_environment_check_reports_missing_names_without_secret_values(self):
         for name in self.VARIABLES:
@@ -284,6 +320,7 @@ case "${0##*/}" in
                     printf '    "%s"\\n' '/test/Original Keychain.keychain-db' '/test/login.keychain-db'
                 fi ;;
             find-identity) printf '%s\\n' "$SIGNING_IDENTITIES" ;;
+            import) [[ "$SIGNING_FAILURE" != import ]] || exit 1 ;;
         esac
         ;;
     codesign)
@@ -316,6 +353,8 @@ esac
         result, recorded = self.run_signing()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_keychains_restored(recorded)
+        self.assertTrue(any(c.startswith('security import ') and ' -f pkcs12 ' in c
+                            for c in recorded))
         for binary in ('iso', 'iso-proxy', 'iso-egress', 'iso-sandbox'):
             target = next(c.split()[-1] for c in recorded
                           if c.startswith('codesign --force ') and c.endswith('/' + binary))
@@ -367,6 +406,16 @@ esac
         self.assertNotEqual(result.returncode, 0)
         self.assert_keychains_restored(recorded)
         self.assertFalse(any(c.startswith('xcrun ') for c in recorded))
+
+    def test_import_failure_reports_repair_and_restores_keychains(self):
+        result, recorded = self.run_signing(failure='import')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('macOS cannot import MACOS_CERTIFICATE_P12', result.stderr)
+        self.assertIn('Keychain Access', result.stderr)
+        self.assertNotIn(self.certificate, result.stdout + result.stderr)
+        self.assertNotIn('synthetic-value', result.stdout + result.stderr)
+        self.assert_keychains_restored(recorded)
+        self.assertFalse(any(c.startswith(('codesign ', 'xcrun ')) for c in recorded))
 
 
 class ReleaseBinaryTests(unittest.TestCase):

@@ -156,8 +156,9 @@ ticket, so Gatekeeper checks notarization online on first launch.
 Only the signing script sees the signing secrets; the builder removes them from
 every other `main` and helper subprocess. With `--sign`, it first calls the
 script's `--check-env` mode before staging or building. This checks that every
-required variable is nonempty; certificate and API key validity are checked
-during signing and notarization.
+required variable is nonempty and the base64 certificate decodes to a readable
+PKCS#12 file with the supplied password. Certificate trust, the signing identity,
+and API key validity are checked during signing and notarization.
 
 The signing workflows use the `release` GitHub environment, which must define these
 secrets:
@@ -173,6 +174,24 @@ secrets:
 
 A missing secret fails the release, which burns the version, so configure the
 environment before tagging.
+
+`MACOS_CERTIFICATE_P12` must not be populated from Apple's downloaded `.cer`
+file: that contains no private key. In Keychain Access, open **My Certificates**,
+select the Developer ID Application identity with its private key, and export
+it as a password-protected `.p12`. Populate the certificate secret from that
+export and set `MACOS_CERTIFICATE_PASSWORD` to its export password:
+
+```bash
+base64 -i /path/to/DeveloperID.p12 | gh secret set MACOS_CERTIFICATE_P12 --env release --repo chr33s/iso
+gh secret set MACOS_CERTIFICATE_PASSWORD --env release --repo chr33s/iso
+```
+
+The second command prompts for the password. If the identity has no private
+key in Keychain Access, export it from the Mac that created the certificate
+request, or create a new Developer ID Application identity. Renaming `.cer`
+to `.p12` does not supply the missing key. An `Unknown format in import` error
+requires checking the export and password, then rerunning the candidate after
+updating the secrets.
 
 If a candidate reports `NOTARY_API_KEY_ID is not set`, set that secret in the
 repository's `release` environment to the ID of the key supplied by
