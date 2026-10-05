@@ -821,9 +821,10 @@ fails the renewal write with EPIPE so the lease still closes forwards. Four
 `egress-lease-close-forwards` and `egress-lease-nosigpipe` faults remove the
 cancellation hook, the periodic recheck, the two-failure rule, the filtered
 selection, the lease's loss, startup and miss-limit rules, the forward close
-and the SIGPIPE guard. The filtered VM gate starts an instance
-with a loopback port forward, kills its egress tunnel, and expects the lease
-and companion to exit, the forward master to close and handoffs to be refused.
+and the SIGPIPE guard. The filtered VM gate kills the egress
+tunnel and expects the lease and companion to exit and handoffs to be refused;
+forward closing is unit-tested because the gate's data path is too long for an
+ssh control socket.
 
 ### Signed broker-composition checks
 

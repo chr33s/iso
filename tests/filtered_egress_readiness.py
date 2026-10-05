@@ -203,24 +203,16 @@ def exercise(state, binary, config, run):
     print("PASS supervisor death closes the companion grant; explicit restart recovers", flush=True)
 
     # The lease supervises the companion and egress tunnel it has seen. Losing
-    # the tunnel ends the lease, so the grant expires and loopback-only port
-    # forwards (an existing per-instance feature) are closed too.
-    run(["stop", "brokers"])
-    run(["start", "brokers", "--no-github", "--forward-port", "47124"])
-    healthy()
-    forwards = state / "forwards.sock"
-    assert forwards.exists(), "port-forward master missing"
+    # the tunnel ends the lease, so the grant expires. (Closing port forwards
+    # on exit is unit-tested: this fixture's data path is too long for an
+    # ssh control socket.)
     lease_pid = owned_pid(state / "egress-lease.pid", str(binary / "iso"))
     companion_pid = owned_pid(state / "proxy-egress.pid", str(binary / "iso-egress"))
     os.kill(owned_pid(state / "proxy-egress-fwd.pid", "/usr/bin/ssh"), signal.SIGTERM)
     exited(lease_pid)
     exited(companion_pid)
-    deadline = time.monotonic() + 10
-    while forwards.exists():
-        assert time.monotonic() < deadline, "port-forward master outlived the lost tunnel"
-        time.sleep(.05)
     refused()
     run(["stop", "brokers"])
     run(["start", "brokers", "--no-github"])
     healthy()
-    print("PASS a lost egress tunnel ends the lease, expires the grant and closes port forwards", flush=True)
+    print("PASS a lost egress tunnel ends the lease and expires the companion grant", flush=True)
