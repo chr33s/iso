@@ -132,6 +132,9 @@ SPDX-License-Identifier: Apache-2.0
   defaults for `egress`, `proxy.mode` and `workspace.pull.mode`, and
   **`iso audit [--suggest-config]`** shows the boundary metadata isolate records
   per instance (never values).
+- **Claude Code installer download** bounds each attempt (15-second connect,
+  120-second total) and reports curl's real exit status when retries fail;
+  it previously always reported 0.
 
 ### Swift host
 

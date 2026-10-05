@@ -37,16 +37,20 @@ package enum EmbeddedResources {
         trap 'rm -f "$INSTALLER"' EXIT
 
         # Retry with exponential backoff — transient network errors are common
-        # during cloud-init (DNS not ready, CDN hiccups, etc.).
-        # Uses `if` to suppress set -e for the curl command.
+        # during cloud-init (DNS not ready, CDN hiccups, etc.). Each attempt is
+        # time-bounded so a stalled transfer fails and retries instead of hanging.
+        # The exit status is read in the failed branch: after `fi`, $? is the
+        # `if` statement's own status (0), not curl's.
         echo '  [guest] Downloading Claude Code installer...'
         MAX_RETRIES=4
         RETRY_DELAY=5
         for attempt in $(seq 1 "$MAX_RETRIES"); do
-            if curl -fsSL -o "$INSTALLER" https://claude.ai/install.sh 2>/tmp/claude-curl-err; then
+            if curl -fsSL --connect-timeout 15 --max-time 120 \
+                -o "$INSTALLER" https://claude.ai/install.sh 2>/tmp/claude-curl-err; then
                 break
+            else
+                CURL_EXIT=$?
             fi
-            CURL_EXIT=$?
             CURL_ERR=$(cat /tmp/claude-curl-err 2>/dev/null || true)
             if [ "$attempt" -eq "$MAX_RETRIES" ]; then
                 echo "  [guest] ERROR: Failed to download Claude Code installer" \
