@@ -328,6 +328,21 @@ func egressLeaseRejectsMalformedSessionDeadlines(deadlineJSON: String) throws {
   }
 }
 
+@Test func leaseRenewalFailsWithoutSIGPIPEOnceTheCompanionIsGone() {
+  var fds: [Int32] = [-1, -1]
+  #expect(pipe(&fds) == 0)
+  defer { close(fds[1]) }
+  #expect(EgressLease.prepareRenewal(fds[1]))
+  #expect(EgressLease.renew(fds[1]))
+  close(fds[0])
+  // Without F_SETNOSIGPIPE the next write would kill the test process.
+  guard fcntl(fds[1], F_GETNOSIGPIPE) == 1 else {
+    Issue.record("the renewal pipe can still raise SIGPIPE")
+    return
+  }
+  #expect(!EgressLease.renew(fds[1]))
+}
+
 @Test func closingForwardsExitsTheMasterAndRemovesItsSocket() throws {
   let root = try scratchDirectory("lease-forwards")
   defer { try? FileManager.default.removeItem(atPath: root) }

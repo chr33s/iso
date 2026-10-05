@@ -858,6 +858,12 @@ FAULTS = [
     ("egress-lease-supervision-startup", "Sources/IsoHost/Runtime/EgressLease.swift",
      "      companionSeen = companionSeen || companionAlive\n      tunnelSeen = tunnelSeen || tunnelAlive\n",
      "      companionSeen = true\n      tunnelSeen = true\n", "egressLeaseSupervisesOnlyWhatItHasSeen"),
+    ("egress-lease-nosigpipe", "Sources/IsoHost/Runtime/EgressLease.swift",
+     "    fcntl(fd, F_SETNOSIGPIPE, 1) == 0", "    fd >= 0",
+     "leaseRenewalFailsWithoutSIGPIPEOnceTheCompanionIsGone"),
+    ("session-supervision-two-strikes", "Sources/IsoHost/Guest/GuestSession.swift",
+     "          guard pending != nil else {", "          guard true else {",
+     "supervisedWorkloadEndsWhenItsProofIsLost"),
 ]
 
 

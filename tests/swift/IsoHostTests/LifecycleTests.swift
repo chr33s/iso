@@ -226,6 +226,10 @@ private struct FakeInstallation {
 
   let running = try #require(try backend.asRunning(instance))
   #expect(running.target.hostKeyOptions.contains("HostKeyAlias=\(sidecar.machineID).iso"))
+  guard case .running = try backend.probeHealth(instance) else {
+    Issue.record("an open running instance has no readiness proof to fail")
+    return
+  }
   #expect(throws: (any Error).self) { try backend.createAndStart(instance, diskGiB: nil) }
   #expect(throws: (any Error).self) { try backend.startExisting(instance) }
 
@@ -268,11 +272,10 @@ private struct FakeInstallation {
     install.config.overridingEgress(.filtered, extraHosts: [try ExactHostname("example.com")]))
   #expect(throws: ContextError.self) { try changed.asRunning(instance) }
 
+  // A different egress mode is a policy error for the listing too.
   let unfiltered = backend.reconfigured(install.config.overridingEgress(.open, extraHosts: []))
-  guard case .running = try unfiltered.probeHealth(instance) else {
-    Issue.record("an unfiltered running instance has no readiness proof to fail")
-    return
-  }
+  #expect(throws: HostError.self) { try unfiltered.probeHealth(instance) }
+  #expect(throws: (any Error).self) { try changed.probeHealth(instance) }
   _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
   guard case .stopped = try backend.probeHealth(instance) else {
     Issue.record("a stopped instance lists as stopped")

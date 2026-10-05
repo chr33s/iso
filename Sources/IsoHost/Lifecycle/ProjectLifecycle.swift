@@ -388,7 +388,7 @@ package final class ProjectLifecycle {
     do {
       running = try context.backend.asRunning(instance)
     } catch let probeError {
-      if let target = try? backend.sshTarget(instance) { forwards.teardown(instance, target) }
+      EgressLease.closeForwards(instance)
       agents.proxies.stopAll(instance)
       do { try context.backend.stopUnproven(instance) } catch {
         throw ContextError(

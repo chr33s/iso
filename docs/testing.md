@@ -814,10 +814,14 @@ mid-run kills the 20-second guest command process and reports the readiness
 failure. `onlyFilteredWorkloadsAreSupervised` pins supervision to filtered
 instances, `egressLeaseSupervisesOnlyWhatItHasSeen` the lease's startup,
 miss-limit and loss rules, and `closingForwardsExitsTheMasterAndRemovesItsSocket`
-the `ssh -O exit` argv and socket removal. Three `session-supervision-*`, three
-`egress-lease-supervision-*` and the `egress-lease-close-forwards` faults remove
-the cancellation hook, the periodic recheck, the filtered selection, the
-lease's loss, startup and miss-limit rules, and the forward close. The filtered VM gate starts an instance
+the `ssh -O exit` argv and socket removal, and
+`leaseRenewalFailsWithoutSIGPIPEOnceTheCompanionIsGone` that a dead companion
+fails the renewal write with EPIPE so the lease still closes forwards. Four
+`session-supervision-*`, three `egress-lease-supervision-*`,
+`egress-lease-close-forwards` and `egress-lease-nosigpipe` faults remove the
+cancellation hook, the periodic recheck, the two-failure rule, the filtered
+selection, the lease's loss, startup and miss-limit rules, the forward close
+and the SIGPIPE guard. The filtered VM gate starts an instance
 with a loopback port forward, kills its egress tunnel, and expects the lease
 and companion to exit, the forward master to close and handoffs to be refused.
 

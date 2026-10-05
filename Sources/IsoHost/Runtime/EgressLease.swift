@@ -104,11 +104,25 @@ package enum EgressLease {
     unlink(control)
   }
 
+  /// The renewal pipe fails with EPIPE, not SIGPIPE, once the companion is
+  /// gone, so the lease still returns and closes forwards.
+  package static func prepareRenewal(_ fd: Int32) -> Bool {
+    fcntl(fd, F_SETNOSIGPIPE, 1) == 0
+  }
+
+  /// One renewal byte; false once the companion stopped reading.
+  package static func renew(_ fd: Int32) -> Bool {
+    var byte: UInt8 = 1
+    return write(fd, &byte, 1) == 1
+  }
+
   package static func run(
     directory: String, machineID: String, ownerPID: Int32, bootID: String, livePath: String
   ) {
     let fd: Int32 = 3
-    guard let instance = try? Instance.load(directory: directory) else { return }
+    guard prepareRenewal(fd), let instance = try? Instance.load(directory: directory) else {
+      return
+    }
     var supervision = Supervision()
     defer { closeForwards(instance) }
     while true {
@@ -124,9 +138,7 @@ package enum EgressLease {
           sessionOpen: sessionOpen(recordPath: recordPath, now: Date()),
           ownerAlive: ownerLockHeld(at: directoryURL + "/owner.lock"))
       else { return }
-      var byte: UInt8 = 1
-      if write(fd, &byte, 1) != 1 { return }
-      guard
+      guard renew(fd),
         supervision.holds(
           companionAlive: ProxyLauncher.recordedProcessAlive(
             ProxyLauncher.pidPath(instance, "egress"), expect: .egress),
