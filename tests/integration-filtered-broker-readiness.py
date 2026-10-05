@@ -287,6 +287,24 @@ sys.exit(result.returncode)
         run(["start", "brokers", "--no-github"])
         run(["exec", "brokers", "--", "true"])
         print("PASS no-hook startup still requires every broker; normal no-hook bootstrap restores healthy proof", flush=True)
+        # A local-model reverse tunnel (to a closed host port: no new host listener)
+        # joins the composite proof once started; losing it makes the VM unhealthy.
+        local = json.loads(config.read_text())
+        local.setdefault("claude", {})["local_model"] = {"host_url": "http://127.0.0.1:47123", "model": "fixture"}
+        config.write_text(json.dumps(local))
+        run(["model", "brokers", "local"])
+        run(["exec", "brokers", "--", "true"])
+        tunnel_pid = int((state / "proxy-model-47123-fwd.pid").read_text())
+        assert "ssh" in subprocess.check_output(["/bin/ps", "-ww", "-p", str(tunnel_pid), "-o", "command="], text=True)
+        os.kill(tunnel_pid, signal.SIGTERM)
+        run(["exec", "brokers", "--", "true"], expected=1, contains="FILTERED_MODEL_TUNNEL_NOT_READY")
+        text, _ = run(["status", "brokers"], contains="(unhealthy)")
+        assert "FILTERED_MODEL_TUNNEL_NOT_READY" in text
+        run(["list"], contains="unhealthy")
+        run(["model", "brokers", "remote"])
+        run(["exec", "brokers", "--", "true"])
+        config.write_text(json.dumps(without_hook))
+        print("PASS a started local-model tunnel joins the composite proof; losing it is unhealthy", flush=True)
         if only == "brokers":
             print("PASS selected brokers VM gate (other phases not run)", flush=True)
             return

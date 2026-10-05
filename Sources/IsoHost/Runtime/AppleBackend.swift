@@ -256,6 +256,9 @@ package final class AppleBackend: Sendable {
         try BrokerReadiness.requireAll(
           instance, config: config, scope: scope, environment: environment, policy: bootPolicy)
       }
+      if case .composite = proof {
+        try ModelTunnelReadiness.require(instance, config: config, scope: scope)
+      }
       return .init(policy: bootPolicy, egressKey: egressKey.encoded, brokerKeys: brokerKeys)
     }
   }

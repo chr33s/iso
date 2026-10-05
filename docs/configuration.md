@@ -609,8 +609,10 @@ workspace-transfer targets carry process-local checks of the original composite
 identity; SSH/SCP, tar/rsync, hooks, editor launch and managed alias publication
 check before using those targets. Readiness refusals abort hooks and agent
 updates instead of becoming ordinary guest-command warnings or unknown versions.
-Startup refreshes the managed alias and starts port forwards only after the
-composite proof, and `iso up` proves a running instance before reusing it.
+In local model mode, each local-model reverse tunnel the boot started joins the
+composite proof: its recorded `ssh` process must be alive and recorded for this
+guest and a wanted destination. Startup refreshes the managed alias and starts
+port forwards only after the composite proof, and `iso up` proves a running instance before reusing it.
 These are operation-boundary checks, not ongoing supervision. A failed live
 proof makes `iso status` report the instance `unhealthy` with its reason, and
 `iso list` does the same from the host-side proof alone. Full NET-20 remains

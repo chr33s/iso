@@ -163,6 +163,56 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(ProxyLauncher.recordedModelTunnels(instance).isEmpty)
 }
 
+@Test func filteredProofRequiresEveryStartedModelTunnel() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let config = try testConfig()
+  let launcher = guest.proxies()
+  var model = ModelState()
+  model.mode = .local
+  model.claudeEndpoint = try LocalModel(
+    hostURL: "http://127.0.0.1:11434", model: "m", authToken: nil)
+  try model.save(instance)
+  // `--no-agents` starts no tunnel; none is required.
+  try ModelTunnelReadiness.require(instance, config: config, scope: .guest(guest.target))
+
+  let tunnel = ReverseTunnel(
+    guestPort: 11434, hostAddress: try IPv4Address("127.0.0.1"), hostPort: 11434)
+  try launcher.syncModelTunnels(instance, target: guest.target, wanted: [11434: tunnel])
+  let pid = try #require(launcher.modelTunnelPID(instance, port: 11434))
+  try ModelTunnelReadiness.require(instance, config: config, scope: .guest(guest.target))
+  try ModelTunnelReadiness.require(instance, config: config, scope: .host)
+
+  // A tunnel recorded for another target, or no longer wanted, does not count.
+  let spec = ProxyLauncher.modelSpecPath(instance, 11434)
+  let recorded = try #require(readFile(spec))
+  try writeFile(spec, recorded.replacingOccurrences(of: "iso-test.iso", with: "other.iso"))
+  #expect(throws: HostError.self) {
+    try ModelTunnelReadiness.require(instance, config: config, scope: .guest(guest.target))
+  }
+  try writeFile(spec, recorded)
+  model.mode = .remote
+  try model.save(instance)
+  #expect(throws: HostError.self) {
+    try ModelTunnelReadiness.require(instance, config: config, scope: .host)
+  }
+  model.mode = .local
+  try model.save(instance)
+
+  // A dead tunnel fails both scopes.
+  kill(pid, SIGTERM)
+  var status: Int32 = 0
+  #expect(waitpid(pid, &status, 0) == pid)
+  for scope in [FilteredReadiness.Scope.host, .guest(guest.target)] {
+    let error = try #require(throws: HostError.self) {
+      try ModelTunnelReadiness.require(instance, config: config, scope: scope)
+    }
+    #expect(error.message.hasPrefix("FILTERED_MODEL_TUNNEL_NOT_READY: "))
+  }
+  launcher.stopModelTunnels(instance)
+}
+
 @Test func readinessRequiresAnUnauthorizedHTTPResponse() throws {
   for (reply, ready) in [
     ("HTTP/1.1 401 Unauthorized\r\n", true), ("HTTP/1.1 200 OK\r\n", false),

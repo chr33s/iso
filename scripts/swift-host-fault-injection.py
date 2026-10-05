@@ -819,6 +819,12 @@ FAULTS = [
     ("up-reuse-unproven", "Sources/IsoHost/Lifecycle/UpWorkflow.swift",
      "    return try lifecycle.backend.asRunning(instance) != nil",
      "    return true", "filteredStartSpawnsNoPortForwardBeforeReadiness"),
+    ("model-tunnel-alive", "Sources/IsoHost/Runtime/ModelTunnelReadiness.swift",
+     "        ProxyLauncher.recordedProcessAlive(\n          ProxyLauncher.forwardPIDPath(instance, ProxyLauncher.modelTunnelName(port)),\n          expect: .ssh)",
+     "        true", "filteredProofRequiresEveryStartedModelTunnel"),
+    ("model-tunnel-target", "Sources/IsoHost/Runtime/ModelTunnelReadiness.swift",
+     "case .guest(let target): recorded == ProxyLauncher.modelTunnelSpec(target, tunnel)",
+     "case .guest: true", "filteredProofRequiresEveryStartedModelTunnel"),
 ]
 
 

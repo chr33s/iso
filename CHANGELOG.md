@@ -46,6 +46,11 @@ SPDX-License-Identifier: Apache-2.0
   and starts `--forward-port` forwards only after bootstrap has proved the
   instance (for filtered egress, the composite readiness proof), and `iso up`
   proves a running project instance before reporting it reused.
+- **Local-model tunnels in the filtered proof**: every local-model reverse
+  tunnel a filtered boot started must still be its recorded `ssh` process for
+  this guest and a destination the model configuration wants
+  (`FILTERED_MODEL_TUNNEL_NOT_READY` otherwise), so losing one refuses new
+  handoffs and makes the instance `unhealthy`.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

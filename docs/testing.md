@@ -791,6 +791,15 @@ refuses to report the running, unproven instance as reused. The
 `startup-forwards-before-proof`, `restart-forwards-before-proof` and
 `up-reuse-unproven` faults restore the old order or skip the proof.
 
+`filteredProofRequiresEveryStartedModelTunnel` drives real fake-guest tunnel
+masters: no started tunnel requires nothing, a live current tunnel passes both
+scopes, and a tunnel recorded for another target, no longer wanted, or dead
+fails with `FILTERED_MODEL_TUNNEL_NOT_READY`. The `model-tunnel-alive` and
+`model-tunnel-target` faults remove the process and target checks. The
+filtered VM gate starts a local-model tunnel to a closed host port, kills it,
+and expects refused handoffs, `unhealthy` status and listing, and recovery
+after `iso model NAME remote`.
+
 ### Signed broker-composition checks
 
 Host `BrokerReadinessTests` and proxy transport `ReadinessTests` verify independent
