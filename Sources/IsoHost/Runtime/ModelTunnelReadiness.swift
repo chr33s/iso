@@ -17,9 +17,8 @@ enum ModelTunnelReadiness {
         .flatMap { $0.map { String(decoding: $0, as: UTF8.self) } }
       guard let tunnel = wanted[port], let recorded,
         current(recorded, tunnel: tunnel, scope: scope),
-        ProxyLauncher.recordedProcessAlive(
-          ProxyLauncher.forwardPIDPath(instance, ProxyLauncher.modelTunnelName(port)),
-          expect: .ssh)
+        TunnelIdentity.verify(
+          instance, ProxyLauncher.modelTunnelName(port), address: scope.address)
       else {
         throw HostError(
           "FILTERED_MODEL_TUNNEL_NOT_READY: local model tunnel for guest port \(port) is not running for this boot; restart the instance"

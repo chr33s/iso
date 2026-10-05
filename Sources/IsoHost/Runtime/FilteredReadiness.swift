@@ -104,6 +104,14 @@ enum FilteredReadiness {
   enum Scope {
     case host
     case guest(SSHTarget)
+
+    /// The guest destination a recorded tunnel must name, when known.
+    var address: String? {
+      switch self {
+      case .host: nil
+      case .guest(let target): target.address
+      }
+    }
   }
 
   /// The signed reply on host loopback only; never connects to the guest.

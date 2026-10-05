@@ -294,8 +294,13 @@ is read by other programs, so it is a disclosure boundary like stderr:
   two-second completion deadline and a one-second signed-reply write deadline keep
   this separate from provider forwarding. The existing capability gate, provider
   operation allowlist, confinement and credential persistence are unchanged.
-  Local-model and proxy-off modes need no broker. This authenticates keyed broker
-  reachability, not exact tunnel identity, every late handoff, or full NET-20.
+  Local-model and proxy-off modes need no broker. Each reverse tunnel's recorded
+  identity binds its PID to the unique control path and guest destination it was
+  started with, so a reused PID or another `ssh` never stands in for it. Which
+  sshd session holds the guest-side listener is reported only by the untrusted
+  guest and is not relied on; a signed guest-loopback reply still requires a
+  host-created forward to the signer. This is not every late handoff or full
+  NET-20.
 
 - **Filtered workload sessions cannot reuse a cached readiness decision.**
   Shell, exec and agent launches take an opaque, process-local `WorkloadSession`.

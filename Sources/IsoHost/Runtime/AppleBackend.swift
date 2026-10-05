@@ -230,8 +230,7 @@ package final class AppleBackend: Sendable {
         ownerLockHeld: EgressLease.ownerLockHeld(at: sandboxDir + "/owner.lock"),
         companionAlive: ProxyLauncher.recordedProcessAlive(
           ProxyLauncher.pidPath(instance, "egress"), expect: .egress),
-        tunnelAlive: ProxyLauncher.recordedProcessAlive(
-          ProxyLauncher.forwardPIDPath(instance, "egress"), expect: .ssh),
+        tunnelAlive: TunnelIdentity.verify(instance, "egress", address: scope.address),
         advertisedProtocol: runtime.advertisedProtocol,
         recordedPolicyHash: bootPolicy?.policyHash,
         wantedPolicyHash: NetworkPolicy.make(config).policyHash,

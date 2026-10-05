@@ -213,6 +213,45 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   launcher.stopModelTunnels(instance)
 }
 
+@Test func tunnelIdentityNamesOnlyTheRecordedMaster() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  let launcher = guest.proxies()
+  let a = ReverseTunnel(guestPort: 11434, hostAddress: try IPv4Address("127.0.0.1"), hostPort: 1)
+  let b = ReverseTunnel(guestPort: 11435, hostAddress: try IPv4Address("127.0.0.1"), hostPort: 2)
+  try launcher.syncModelTunnels(instance, target: guest.target, wanted: [11434: a, 11435: b])
+  let name = ProxyLauncher.modelTunnelName(11434)
+  let identity = try #require(TunnelIdentity.load(instance, name))
+  #expect(identity.address == guest.target.address)
+  #expect(identity.forward == "127.0.0.1:11434:127.0.0.1:1")
+  #expect(identity.controlPath.contains("/iso-proxy-"))
+  #expect(TunnelIdentity.verify(instance, name, address: guest.target.address))
+  #expect(TunnelIdentity.verify(instance, name, address: nil))
+  #expect(!TunnelIdentity.verify(instance, name, address: "ubuntu@10.231.9.9"))
+
+  // Another live tunnel master is still not this tunnel.
+  let other = try #require(TunnelIdentity.load(instance, ProxyLauncher.modelTunnelName(11435)))
+  let pidPath = ProxyLauncher.forwardPIDPath(instance, name)
+  let pid = try #require(readFile(pidPath))
+  try writeFile(pidPath, String(other.pid))
+  #expect(!TunnelIdentity.verify(instance, name, address: nil))
+  try writeFile(pidPath, pid)
+  try TunnelIdentity(
+    pid: other.pid, controlPath: identity.controlPath, address: identity.address,
+    forward: identity.forward
+  ).save(instance, name: name)
+  try writeFile(pidPath, String(other.pid))
+  #expect(!TunnelIdentity.verify(instance, name, address: nil))
+  try writeFile(pidPath, pid)
+  try identity.save(instance, name: name)
+  #expect(TunnelIdentity.verify(instance, name, address: nil))
+
+  launcher.stopModelTunnels(instance)
+  #expect(!FileManager.default.fileExists(atPath: TunnelIdentity.path(instance, name)))
+  #expect(!TunnelIdentity.verify(instance, name, address: nil))
+}
+
 @Test func readinessRequiresAnUnauthorizedHTTPResponse() throws {
   for (reply, ready) in [
     ("HTTP/1.1 401 Unauthorized\r\n", true), ("HTTP/1.1 200 OK\r\n", false),

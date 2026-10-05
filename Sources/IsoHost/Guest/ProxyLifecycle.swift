@@ -142,8 +142,7 @@ package struct ProxyLauncher: Sendable {
   /// Best-effort teardown of one provider's proxy, tunnel and token file.
   package func stop(_ instance: Instance, provider: ProxyProvider) {
     killPIDFile(Self.pidPath(instance, provider.rawValue), label: "proxy", expect: .proxy)
-    killPIDFile(
-      Self.forwardPIDPath(instance, provider.rawValue), label: "proxy tunnel", expect: .ssh)
+    stopTunnel(instance, provider.rawValue, label: "proxy tunnel")
     let token = Self.tokenPath(instance, provider.rawValue)
     if unlink(token) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove proxy token file \(token) (non-fatal)")
@@ -255,7 +254,7 @@ package struct ProxyLauncher: Sendable {
   package func stopEgress(_ instance: Instance) {
     killPIDFile(instance.directory + "/egress-lease.pid", label: "egress lease", expect: .lease)
     killPIDFile(Self.pidPath(instance, "egress"), label: "egress", expect: .egress)
-    killPIDFile(Self.forwardPIDPath(instance, "egress"), label: "egress tunnel", expect: .ssh)
+    stopTunnel(instance, "egress", label: "egress tunnel")
     let capability = EgressPorts.capabilityPath(instance)
     if unlink(capability) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove egress capability \(capability) (non-fatal)")
@@ -565,7 +564,7 @@ package struct ProxyLauncher: Sendable {
     _ instance: Instance, name: String, target: SSHTarget, guestPort: UInt16,
     hostAddress: IPv4Address, hostPort: UInt16
   ) throws {
-    killPIDFile(Self.forwardPIDPath(instance, name), label: "stale proxy tunnel", expect: .ssh)
+    stopTunnel(instance, name, label: "stale proxy tunnel")
     let client = SSHClient(environment: environment)
     guard let ssh = client.sshExecutable() else {
       throw HostError("Failed to spawn the reverse SSH tunnel for the credential proxy")
@@ -624,6 +623,10 @@ package struct ProxyLauncher: Sendable {
       }
       try Self.awaitForwardingAck(&request, deadline: deadline)
       do {
+        try TunnelIdentity(
+          pid: master.pid, controlPath: controlPath, address: target.address,
+          forward: "127.0.0.1:\(guestPort):\(hostAddress):\(hostPort)"
+        ).save(instance, name: name)
         try AtomicFile.write(
           Array(String(master.pid).utf8), to: Self.forwardPIDPath(instance, name),
           mode: .atMost(0o644))
@@ -705,6 +708,15 @@ package struct ProxyLauncher: Sendable {
       output.termination.succeeded
     else { return nil }
     return String(decoding: output.stdout, as: UTF8.self).trimmingUnicodeWhitespace()
+  }
+
+  /// A reverse tunnel's master and its recorded identity.
+  func stopTunnel(_ instance: Instance, _ name: String, label: String) {
+    killPIDFile(Self.forwardPIDPath(instance, name), label: label, expect: .ssh)
+    let identity = TunnelIdentity.path(instance, name)
+    if unlink(identity) != 0 && errno != ENOENT {
+      diagnostics.debug("Failed to remove tunnel identity \(identity) (non-fatal)")
+    }
   }
 
   /// SIGTERM the process a PID file names — only while it is still the
@@ -800,6 +812,7 @@ package struct ProxyLauncher: Sendable {
   func stopModelTunnel(_ instance: Instance, port: UInt16) {
     if let pid = modelTunnelPID(instance, port: port) { Darwin.kill(pid, SIGTERM) }
     unlink(Self.forwardPIDPath(instance, Self.modelTunnelName(port)))
+    unlink(TunnelIdentity.path(instance, Self.modelTunnelName(port)))
     unlink(Self.modelSpecPath(instance, port))
   }
 

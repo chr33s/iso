@@ -51,6 +51,12 @@ SPDX-License-Identifier: Apache-2.0
   this guest and a destination the model configuration wants
   (`FILTERED_MODEL_TUNNEL_NOT_READY` otherwise), so losing one refuses new
   handoffs and makes the instance `unhealthy`.
+- **Reverse-tunnel identity**: each credential-proxy, egress and local-model
+  reverse tunnel records its master PID, unique control path, guest
+  destination and forward, and every readiness proof requires the recorded PID
+  to still be that exact `ssh` master for this guest; a reused PID or another
+  `ssh` no longer passes. Filtered instances started by an older `iso` report
+  `unhealthy` until restarted.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

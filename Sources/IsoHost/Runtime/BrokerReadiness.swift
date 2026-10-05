@@ -69,13 +69,13 @@ enum BrokerReadiness {
   /// connects to the guest.
   @discardableResult
   static func requireDirect(
-    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
+    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy,
+    tunnelAddress: String?
   ) throws -> FilteredReadiness.VerificationKey {
     guard
       ProxyLauncher.recordedProcessAlive(
         ProxyLauncher.pidPath(instance, provider.rawValue), expect: .proxy),
-      ProxyLauncher.recordedProcessAlive(
-        ProxyLauncher.forwardPIDPath(instance, provider.rawValue), expect: .ssh)
+      TunnelIdentity.verify(instance, provider.rawValue, address: tunnelAddress)
     else {
       throw HostError(
         "FILTERED_BROKER_NOT_READY: \(provider.rawValue) process or tunnel is not running; restart the instance"
@@ -106,7 +106,8 @@ enum BrokerReadiness {
     _ instance: Instance, target: SSHTarget, environment: [String: String],
     provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
   ) throws -> FilteredReadiness.VerificationKey {
-    let key = try requireDirect(instance, provider: provider, policy: policy)
+    let key = try requireDirect(
+      instance, provider: provider, policy: policy, tunnelAddress: target.address)
     let port = provider.port(instance)
     let guestNonce = randomHex(16)
     let output: ProcessRunner.Output
@@ -139,7 +140,9 @@ enum BrokerReadiness {
     for provider in try requiredProviders(instance, config: config) {
       keys[provider] =
         switch scope {
-        case .host: try requireDirect(instance, provider: provider, policy: policy).encoded
+        case .host:
+          try requireDirect(instance, provider: provider, policy: policy, tunnelAddress: nil)
+            .encoded
         case .guest(let target):
           try require(
             instance, target: target, environment: environment, provider: provider,

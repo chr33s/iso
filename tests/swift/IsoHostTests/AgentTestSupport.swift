@@ -91,7 +91,8 @@ struct FakeGuest {
           printf 'master %s\n' "$*" >> "$S/tunnels.log"
           [ -f "$S/flags/master-exits" ] && exit 255
           : > "$sock"
-          exec "$S/tunnel/ssh" 60 ;;
+          # Like a real master, `ps` shows the control path and destination.
+          exec /bin/bash -c 'exec -a "$1" /bin/bash -c "sleep 60 & wait" -S "$2" "$3"' _ "$S/tunnel/ssh" "$sock" "$last" ;;
         *" -O "*)
           printf 'forward %s\n' "$*" >> "$S/tunnels.log"
           [ -f "$S/flags/forward-fails" ] && exit 1

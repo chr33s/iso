@@ -825,6 +825,18 @@ FAULTS = [
     ("model-tunnel-target", "Sources/IsoHost/Runtime/ModelTunnelReadiness.swift",
      "case .guest(let target): recorded == ProxyLauncher.modelTunnelSpec(target, tunnel)",
      "case .guest: true", "filteredProofRequiresEveryStartedModelTunnel"),
+    ("tunnel-identity-control-path", "Sources/IsoHost/Guest/TunnelIdentity.swift",
+     "&& zip(arguments, arguments.dropFirst()).contains { $0 == \"-S\" && $1 == controlPath }",
+     "", "tunnelIdentityNamesOnlyTheRecordedMaster"),
+    ("tunnel-identity-pid-file", "Sources/IsoHost/Guest/TunnelIdentity.swift",
+     "      Int32(String(decoding: bytes, as: UTF8.self).trimmingUnicodeWhitespace()) == identity.pid,\n",
+     "      !bytes.isEmpty,\n", "tunnelIdentityNamesOnlyTheRecordedMaster"),
+    ("tunnel-identity-address", "Sources/IsoHost/Guest/TunnelIdentity.swift",
+     "address.map({ $0 == identity.address }) ?? true,", "true,",
+     "tunnelIdentityNamesOnlyTheRecordedMaster"),
+    ("tunnel-identity-cleanup", "Sources/IsoHost/Guest/ProxyLifecycle.swift",
+     "    unlink(TunnelIdentity.path(instance, Self.modelTunnelName(port)))\n", "",
+     "tunnelIdentityNamesOnlyTheRecordedMaster"),
 ]
 
 

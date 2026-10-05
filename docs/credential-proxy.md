@@ -198,8 +198,11 @@ and proxy-off modes require none.
 Filtered startup uses protocol version 2 with a readiness identity. Nonfiltered
 startup keeps version 1 without that identity; the HTTP 401 warm-up remains but
 is not filtered-session authentication. Existing filtered sessions must
-stop/restart with matching host and proxy binaries. These checks do not qualify
-every late handoff, exact tunnel identity, or full NET-20/F1.
+stop/restart with matching host and proxy binaries. Each reverse tunnel records
+its identity (`proxy-<name>-fwd.identity.json`: master PID, its unique control
+path, guest destination and forward), and every proof requires the recorded PID
+to still be that exact `ssh` master for this guest. These checks do not qualify
+every late handoff or full NET-20/F1.
 
 ## What it does and does not guarantee
 

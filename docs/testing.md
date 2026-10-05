@@ -800,6 +800,13 @@ filtered VM gate starts a local-model tunnel to a closed host port, kills it,
 and expects refused handoffs, `unhealthy` status and listing, and recovery
 after `iso model NAME remote`.
 
+`tunnelIdentityNamesOnlyTheRecordedMaster` starts two fake tunnel masters
+whose `ps` command lines carry their control paths and destination, as real
+masters do: the recorded identity verifies for its own guest and no other,
+pointing the PID file or identity at the other live master fails, and stopping
+the tunnel removes the identity. Four `tunnel-identity-*` faults remove the
+control-path, PID-file, destination and cleanup checks.
+
 ### Signed broker-composition checks
 
 Host `BrokerReadinessTests` and proxy transport `ReadinessTests` verify independent
