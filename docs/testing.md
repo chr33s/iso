@@ -767,9 +767,8 @@ cleanup. The existing boot-policy
 cleanup fault is kept synchronized. These tests and the confined process gate
 are not VM evidence. Real-VM checks must separately witness startup, hooks,
 healthy recovery from a paused tunnel, permanent lease expiry after a paused
-companion, and rejection of a wrong/missing public verification key. Every late
-handoff, previous-boot capability replay, exhaustion and full NET-20/F1
-qualification remain unverified.
+companion, and rejection of a wrong/missing public verification key; the
+filtered VM gate and live-agent `--filtered` run below witness them.
 
 ### Unhealthy instance state
 

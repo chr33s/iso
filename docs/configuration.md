@@ -616,7 +616,6 @@ Workloads launched by `iso` are re-proved while they run and end when the proof
 fails; sessions opened outside `iso` (the managed alias, editor Remote-SSH)
 are not supervised. A failed proof makes `iso status` and `iso list` report the
 instance `unhealthy`. See [trust model](trust-model.md) for the exact checks.
-Full NET-20 remains incomplete.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.

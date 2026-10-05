@@ -201,8 +201,7 @@ is not filtered-session authentication. Existing filtered sessions must
 stop/restart with matching host and proxy binaries. Each reverse tunnel records
 its identity (`proxy-<name>-fwd.identity.json`: master PID, its unique control
 path and guest destination), and every proof requires the recorded PID
-to still be that exact `ssh` master for this guest. These checks do not qualify
-every late handoff or full NET-20/F1.
+to still be that exact `ssh` master for this guest.
 
 ## What it does and does not guarantee
 

@@ -298,8 +298,7 @@ is read by other programs, so it is a disclosure boundary like stderr:
   started with, so a reused PID or another `ssh` never stands in for it. Which
   sshd session holds the guest-side listener is reported only by the untrusted
   guest and is not relied on; a signed guest-loopback reply still requires a
-  host-created forward to the signer. This does not cover every late handoff
-  or full NET-20.
+  host-created forward to the signer.
 
 - **Filtered workload sessions cannot reuse a cached readiness decision.**
   Shell, exec and agent launches take an opaque, process-local `WorkloadSession`.

@@ -324,7 +324,7 @@ sys.exit(result.returncode)
                     subprocess.run([builder_cli, "image", "delete", image], env=env, check=True)
         shutil.rmtree(work)
         print("cleaned private VM, images, workspace and binary copies", flush=True)
-    print("PASS filtered transport, broker, pressure and network probes; native agents and full NET-20/F1 qualification remain separate", flush=True)
+    print("PASS filtered transport, broker, pressure and network probes; native agents are qualified by integration-proxy-transition.py --live-agents --filtered", flush=True)
 
 
 def main():

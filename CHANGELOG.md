@@ -35,7 +35,7 @@ SPDX-License-Identifier: Apache-2.0
   replacement does not authorize reuse of a prepared session. Bootstrap remains
   transport-only; administrative SSH and workspace-transfer targets now retain
   and recheck the same original identity before guest operations. Readiness
-  refusals propagate through hooks and agent updates. Full NET-20 is unfinished.
+  refusals propagate through hooks and agent updates.
 - **`unhealthy` instance state**: `iso status` reports a running filtered
   instance whose live readiness proof fails as `unhealthy`, with the failed
   proof as its reason, instead of failing; `iso list` checks the host side of
@@ -104,8 +104,7 @@ SPDX-License-Identifier: Apache-2.0
   resolution also requires signed direct and guest-loopback proof from every effective
   remote credential broker, bound to provider, nonce, boot and policy. Broker signing
   keys remain in memory; only public keys persist. Nonfiltered version-1 startup and
-  provider forwarding rules are unchanged. Every late handoff and full NET-20 remain
-  unfinished.
+  provider forwarding rules are unchanged.
 - **Filtered CONNECT** requires a complete, bounded head, rejects malformed headers
   and conflicting or duplicate Host authorities, and leaves coalesced tunnel bytes
   on the socket. Refusals and successful handshakes use lease-aware, SIGPIPE-safe
