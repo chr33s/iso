@@ -532,6 +532,66 @@ private struct FakeInstallation {
   try backend.destroyInstance(instance)
 }
 
+@Test func filteredStartSpawnsNoPortForwardBeforeReadiness() throws {
+  let install = try FakeInstallation(extra: #", "egress": "filtered""#)
+  defer { install.remove() }
+  let log = install.root + "/ssh.log"
+  try Data("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(log)'\nexit 0\n".utf8)
+    .write(to: URL(fileURLWithPath: install.root + "/bin/ssh"))
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("ordered"), image: .default, workspacePath: nil)
+  let environment = ConfigEnvironment(
+    home: install.root,
+    variables: ["HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin"])
+  let lifecycle = ProjectLifecycle(
+    context: CommandContext(
+      environment: environment, config: install.config, backend: backend,
+      output: SilentOutput(), diagnostics: Diagnostics(verbosity: 0) { _ in },
+      ssh: SSHClient(environment: environment.variables)),
+    noGitHub: true, secretResolver: NoSecrets(), executable: nil,
+    prepareGitHub: { config, _, _, _ in config })
+  let port = UInt16.random(in: 40000...49999)
+  let options = BootOptions(
+    noAgents: true, noPrompt: true, forwardPorts: [try PortForward(guest: 8080, host: port)],
+    configTarget: ConfigTarget(path: install.root + "/c.jsonc", format: .jsonc))
+  // No egress companion can start here, so the composite proof never completes.
+  #expect(throws: (any Error).self) {
+    try lifecycle.startInstance(instance, CreationRequest(boot: options))
+  }
+  let calls = (try? String(contentsOfFile: log, encoding: .utf8)) ?? ""
+  #expect(!calls.isEmpty, "the guest was waited on over ssh")
+  #expect(!calls.contains("-L"), "port forwards were spawned before readiness")
+  #expect(try PortForwards.load(instance) == [try PortForward(guest: 8080, host: port)])
+
+  // A restart reuses the saved forwards under the same ordering.
+  _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
+  try FileManager.default.removeItem(atPath: log)
+  #expect(throws: (any Error).self) {
+    try lifecycle.restart(instance, RestartRequest(boot: options))
+  }
+  let restarted = (try? String(contentsOfFile: log, encoding: .utf8)) ?? ""
+  #expect(!restarted.isEmpty, "the restarted guest was waited on over ssh")
+  #expect(!restarted.contains("-L"), "port forwards were spawned before readiness on restart")
+
+  // `up` does not report the running but unproven instance as reused.
+  let project = install.root + "/project"
+  try FileManager.default.createDirectory(atPath: project, withIntermediateDirectories: true)
+  try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: project))
+    .save(instance)
+  var request = UpRequest(configTarget: options.configTarget)
+  request.dir = project
+  request.noPrompt = true
+  #expect(backend.isRunning(instance))
+  #expect(throws: InstanceUnhealthy.self) {
+    try UpWorkflow(request: request, lifecycle: lifecycle, target: nil).run()
+  }
+  try backend.destroyInstance(instance)
+}
+
 @Test func projectStopReportsWhetherItStoppedAnything() throws {
   let install = try FakeInstallation()
   defer { install.remove() }

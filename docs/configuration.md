@@ -609,6 +609,8 @@ workspace-transfer targets carry process-local checks of the original composite
 identity; SSH/SCP, tar/rsync, hooks, editor launch and managed alias publication
 check before using those targets. Readiness refusals abort hooks and agent
 updates instead of becoming ordinary guest-command warnings or unknown versions.
+Startup refreshes the managed alias and starts port forwards only after the
+composite proof, and `iso up` proves a running instance before reusing it.
 These are operation-boundary checks, not ongoing supervision. A failed live
 proof makes `iso status` report the instance `unhealthy` with its reason, and
 `iso list` does the same from the host-side proof alone. Full NET-20 remains

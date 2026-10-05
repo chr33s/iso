@@ -784,6 +784,13 @@ error, the readiness-only wrapping, the listing's host proof and the error code.
 The filtered VM gate expects `status` to report a paused or killed broker or
 companion as `unhealthy`, and `list` and machine `status` a killed broker.
 
+`filteredStartSpawnsNoPortForwardBeforeReadiness` starts and restarts a
+filtered instance whose companion cannot start, with a logging `ssh`: the
+guest is waited on, but no `-L` forward master is launched, and `iso up`
+refuses to report the running, unproven instance as reused. The
+`startup-forwards-before-proof`, `restart-forwards-before-proof` and
+`up-reuse-unproven` faults restore the old order or skip the proof.
+
 ### Signed broker-composition checks
 
 Host `BrokerReadinessTests` and proxy transport `ReadinessTests` verify independent

@@ -199,17 +199,17 @@ package final class ProjectLifecycle {
     try provisionFirstBoot(instance, options, repo: repo, forwardSet: forwardSet)
   }
 
-  /// A guest carrying only its image: forwards, state, agents, then the
-  /// workspace and mounts. Shared by a fresh start and a reprovision.
+  /// A guest carrying only its image: state, agents, forwards, then the
+  /// workspace and mounts. Shared by a fresh start and a reprovision. The
+  /// managed alias and port forwards use the target bootstrap proved, so
+  /// nothing reaches a filtered guest before its composite readiness.
   package func provisionFirstBoot(
     _ instance: Instance, _ options: CreationRequest, repo: RepoSlug?, forwardSet: [PortForward]
   ) throws {
     try Shutdown.check()
     let target = try readyTarget(instance)
     try Shutdown.check()
-    refreshSSHConfig(instance, target)
     try PortForwards.save(forwardSet, instance, diagnostics: diagnostics)
-    try forwards.spawn(instance, target, forwardSet)
     try GuestEnvState(entries: options.boot.persistedGuestEnvironment).save(
       instance, diagnostics: diagnostics)
     if let applied = options.appliedDevcontainer {
@@ -220,6 +220,8 @@ package final class ProjectLifecycle {
       postStartOverride: options.boot.postStartOverride, mode: .firstBoot,
       skipAgentBootstrap: options.boot.skipAgentBootstrap, runtime: try backend.runtime())
     try Shutdown.check()
+    refreshSSHConfig(instance, transferTarget)
+    try forwards.spawn(instance, transferTarget, forwardSet)
 
     let transfer = WorkspaceTransfer(client: context.ssh, diagnostics: diagnostics)
     var recorded = false
@@ -305,14 +307,14 @@ package final class ProjectLifecycle {
     try Shutdown.check()
     let target = try readyTarget(instance)
     try Shutdown.check()
-    refreshSSHConfig(instance, target)
     try PortForwards.save(forwardSet, instance, diagnostics: diagnostics)
-    try forwards.spawn(instance, target, forwardSet)
     try GuestEnvState(entries: guestEnvironment).save(instance, diagnostics: diagnostics)
-    try agents.bootstrapAndPostStart(
+    let proven = try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.noAgents,
       postStartOverride: options.postStartOverride, mode: .restart,
       skipAgentBootstrap: options.skipAgentBootstrap, runtime: try backend.runtime())
+    refreshSSHConfig(instance, proven)
+    try forwards.spawn(instance, proven, forwardSet)
     diagnostics.log(
       .info, "Instance '\(instance.name)' restarted — SSH: \(target.host):\(target.port)")
   }

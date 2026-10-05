@@ -42,6 +42,10 @@ SPDX-License-Identifier: Apache-2.0
   the same proof without connecting to the guest. Machine output adds the
   `unhealthy` state, a nullable `reason` on status entries, and the
   `INSTANCE_UNHEALTHY` error code for commands that need a healthy instance.
+- **Startup order**: a first boot or restart refreshes the managed SSH alias
+  and starts `--forward-port` forwards only after bootstrap has proved the
+  instance (for filtered egress, the composite readiness proof), and `iso up`
+  proves a running project instance before reporting it reused.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

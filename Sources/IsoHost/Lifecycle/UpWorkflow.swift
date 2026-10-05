@@ -107,7 +107,7 @@ package struct UpWorkflow {
       }
       try ensureExistingCompatible(instance, subject: "this project")
       try ensureSameTransport(instance)
-      if lifecycle.backend.isRunning(instance) {
+      if try runningAndProven(instance) {
         DevcontainerState.warnIfChanged(instance, diagnostics: diagnostics)
         try rejectRestartOnlyInputs(instance)
         diagnostics.log(
@@ -132,7 +132,7 @@ package struct UpWorkflow {
           "Git repo \(url) is already associated with instance '\(instance.name)', not '\(name)'.")
       }
       try ensureExistingCompatible(instance, subject: "this git repo")
-      if lifecycle.backend.isRunning(instance) {
+      if try runningAndProven(instance) {
         try rejectRestartOnlyInputs(instance)
         diagnostics.log(.info, "Instance '\(instance.name)' is already running for \(url)")
         return UpOutcome(action: .reused, instance: instance)
@@ -142,6 +142,14 @@ package struct UpWorkflow {
     }
     try ensureProfileImage()
     return UpOutcome(action: .created, instance: try createFromGitRepo(url))
+  }
+
+  /// A running match is reused only after the same proof a guest handoff
+  /// needs: an unhealthy filtered instance fails with `InstanceUnhealthy`
+  /// rather than being reported as reused.
+  private func runningAndProven(_ instance: Instance) throws -> Bool {
+    guard lifecycle.backend.isRunning(instance) else { return false }
+    return try lifecycle.backend.asRunning(instance) != nil
   }
 
   package static func projectDirectory(_ dir: String?) throws -> String {

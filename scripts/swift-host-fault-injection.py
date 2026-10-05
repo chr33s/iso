@@ -808,6 +808,17 @@ FAULTS = [
     ("instance-unhealthy-code", "Sources/IsoCLI/Support/MachineErrors.swift",
      "return (.instanceUnhealthy, .instance(name: unhealthy.instance.rawValue))",
      "return (.operationFailed, nil)", "errorsClassifyAlongTheContextChain"),
+    ("startup-forwards-before-proof", "Sources/IsoHost/Lifecycle/ProjectLifecycle.swift",
+     "    try PortForwards.save(forwardSet, instance, diagnostics: diagnostics)\n    try GuestEnvState(entries: options.boot",
+     "    try forwards.spawn(instance, target, forwardSet)\n    try GuestEnvState(entries: options.boot",
+     "filteredStartSpawnsNoPortForwardBeforeReadiness"),
+    ("restart-forwards-before-proof", "Sources/IsoHost/Lifecycle/ProjectLifecycle.swift",
+     "    try GuestEnvState(entries: guestEnvironment).save(instance, diagnostics: diagnostics)\n    let proven",
+     "    try forwards.spawn(instance, target, forwardSet)\n    try GuestEnvState(entries: guestEnvironment).save(instance, diagnostics: diagnostics)\n    let proven",
+     "filteredStartSpawnsNoPortForwardBeforeReadiness"),
+    ("up-reuse-unproven", "Sources/IsoHost/Lifecycle/UpWorkflow.swift",
+     "    return try lifecycle.backend.asRunning(instance) != nil",
+     "    return true", "filteredStartSpawnsNoPortForwardBeforeReadiness"),
 ]
 
 
