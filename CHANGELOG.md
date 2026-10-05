@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.1.0
+
+### Agent sessions
+
 - **Machine interface**: a global `--output json` emits one versioned
   `iso.machine/v1` document on stdout for `capabilities` (new), `list`,
   `status`, `up`, `start`, `stop`, `destroy` and `ssh-config`, with stable
@@ -15,11 +19,9 @@ SPDX-License-Identifier: Apache-2.0
   `INTERACTION_REQUIRED`). `ssh-config` returns the managed alias, never key
   material. Text output and command-local `--json` are unchanged. See
   `docs/machine-interface.md`.
-
-## v0.1.0
-
-### Agent sessions
-
+- **`iso code` and `iso zed`**: create, restart or reuse a project's
+  instance exactly as `iso up` does, refresh its pinned `iso-<name>` SSH alias,
+  then open it in Visual Studio Code or Zed. Each launches only its own editor.
 - **Filtered address policy** parses IPv6 numerically, rejects unsupported
   transition and special-purpose ranges, and recognizes host-interface addresses
   across equivalent IPv6 spellings. The conservative policy is pinned to the
@@ -52,8 +54,10 @@ SPDX-License-Identifier: Apache-2.0
 - **Filtered egress** starts `iso-egress` for `egress: "filtered"` and renews
   it only while the protocol-5 live `bootId` still matches. A protocol-4
   runtime cannot start that mode. A local real-VM check passed approved HTTPS,
-  unapproved CONNECT denial, and direct Internet TCP denial; full filtered
-  qualification remains open (see `docs/testing.md`). The companion reads
+  unapproved CONNECT denial, and direct Internet TCP denial. Real-VM
+  qualification covers signed brokers, revocation, socket pressure, IPv4/IPv6
+  peer isolation, and live Claude and Codex tool use with no approved CONNECT
+  destinations (see `docs/testing.md`). The companion reads
   renewals from the supervisor's pipe, and a queued renewal cannot revive an
   expired lease. GitHub auth changes and devcontainer overlays preserve the
   configured allowlist. Timed-out DNS waits retain their work slots until
@@ -79,17 +83,16 @@ SPDX-License-Identifier: Apache-2.0
   and conflicting or duplicate Host authorities, and leaves coalesced tunnel bytes
   on the socket. Refusals and successful handshakes use lease-aware, SIGPIPE-safe
   writes with a one-second monotonic deadline. A failed handshake never starts
-  the relay. Local socket, confined-process and mutation gates cover these paths;
-  full filtered-VM qualification remains open.
+  the relay. Local socket, confined-process and mutation gates cover these paths.
 - **Filtered relay** drains queued bytes before forwarding half-closes, permits
   the opposite response direction, and stops on hard I/O errors instead of
   dropping data and continuing. Interrupted I/O is retried; paused hung-up
   sources do not spin under backpressure. Local socket and mutation tests cover
-  these paths; full filtered-VM qualification remains open.
+  these paths.
 - **Filtered lease state** uses typed PID/date decoding and bounded regular
   control-file reads without following symlinks. Invalid identities, malformed
   deadlines, and lock-probe errors stop renewal; only an absent/null deadline
-  permits unlimited TTL. This hardening does not qualify full filtered egress.
+  permits unlimited TTL.
 - **Apple owner startup** explicitly requests the bootstrapped launchd job
   without killing an already-started owner. A loaded but deferred `RunAtLoad`
   job no longer stalls first boot. Failed requests attempt to unload the job
