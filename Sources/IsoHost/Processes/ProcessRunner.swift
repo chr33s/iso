@@ -13,7 +13,6 @@ package struct ProcessRunner: Sendable {
     package var environment: [String: String]
     package var workingDirectory: String?
     package var deadline: Duration
-    /// Bytes kept per stream.
     package var outputLimit: Int
     package var overflow: OverflowPolicy
     /// Polled while the child runs; `true` kills it (`cancelled`). Only long
@@ -42,7 +41,6 @@ package struct ProcessRunner: Sendable {
 
   /// What happens when a stream exceeds `outputLimit`.
   package enum OverflowPolicy: Sendable, Equatable {
-    /// Kill the child and fail with `outputLimitExceeded`.
     case fail
     /// Keep the first `outputLimit` bytes, drain the rest so the child can
     /// finish, and report `truncated`. For runtime calls, whose effect must

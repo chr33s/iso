@@ -7,13 +7,9 @@ import IsoCore
 /// Loud per-key translation report (Rust `devcontainer::Report`).
 package struct DevcontainerReport: Sendable, Equatable, Encodable {
   package enum Status: String, Sendable, Equatable, Encodable {
-    /// The devcontainer value took effect.
     case applied
-    /// A CLI flag or existing config won.
     case overridden
-    /// Not supported by iso; ignored.
     case unsupported
-    /// Could not be parsed; ignored.
     case invalid
   }
 

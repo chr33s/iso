@@ -20,14 +20,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Detach from the controlling terminal's stdin. iso gates interactive prompts
-# (here, `update`'s confirmation) on stdin being a TTY. Every call below passes
-# --yes or --check so no prompt fires today, but a future prompt-bearing case
-# run from an interactive shell (the release preflight) would read real
-# keystrokes and block — under CI stdin is already not a TTY, so it would never
-# be caught there. Redirecting the whole script makes every iso subprocess see
-# a non-TTY stdin regardless of how the suite is invoked. The script itself
-# never reads stdin.
+# iso gates interactive prompts on stdin being a TTY. Detach stdin so a future
+# prompt-bearing case blocks here, not only on an interactive shell (CI already
+# has no TTY). The script itself never reads stdin.
 exec </dev/null
 
 # ── Platform detection (matches install.sh) ─────────────────────────────────
@@ -190,15 +185,11 @@ cp "$(build_iso "$SWIFT_SCRATCH")" "$TMPDIR/bin/iso-dev"
 
 # ── Isolate test invocations from the real user environment ──────────────────
 #
-# `iso update --yes` writes an "update-check" bookkeeping file recording the
-# latest release it learned about. Pointed at our local fixture, that file
-# would record the synthetic v9.9.9 tag — and it lives under
-# `$HOME/Library/Application Support/iso`, so without redirection the file
-# lands in the user's real home and triggers a bogus "newer version available"
-# warning on every later run.
-#
-# Redirecting $HOME (the XDG vars are kept for completeness) is enough: the
-# update path doesn't read from anywhere else under the user's home.
+# `iso update --yes` records the latest release in an "update-check" file under
+# `$HOME/Library/Application Support/iso`. Against our fixture that would write
+# the synthetic v9.9.9 tag into the real home and trigger bogus "newer version"
+# warnings. Redirecting $HOME is enough; the update path reads nothing else
+# under it.
 export HOME="$TMPDIR/home"
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_DATA_HOME="$HOME/.local/share"
@@ -283,12 +274,9 @@ else
     fail "update installs the egress companion"
 fi
 
-# Confirm the update-check state file landed inside the test's tempdir,
-# not somewhere under the developer's real home. Searching $TMPDIR (not
-# $HOME) is deliberate: if a future edit accidentally drops the HOME
-# export above, $HOME would point back at the real home and a leak there
-# would still be "found" — the assertion would silently pass on the leak
-# it was meant to catch. $TMPDIR is the known-isolated boundary.
+# Confirm the update-check file landed in the test tempdir. Search $TMPDIR, not
+# $HOME: if the HOME export were dropped, a leak into the real home would still
+# be "found".
 state_under_tmpdir="$(find "$TMPDIR" -name update-check.json -print -quit 2> /dev/null)"
 if [[ -n "$state_under_tmpdir" ]]; then
     pass "update-check state file confined to tempdir"

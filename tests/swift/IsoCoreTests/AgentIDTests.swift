@@ -24,8 +24,6 @@ import Testing
   ] {
     #expect(throws: ValidationError.self, "\(bad)") { try ExactHostname(bad) }
   }
-  // A trailing dot is normalized, so "example.com." is valid. The list above
-  // includes it only when the implementation rejects a bare terminal dot with
-  // no label; "example.com." is accepted. Re-check the accepted form.
+  // A trailing dot is normalized away.
   #expect(try ExactHostname("example.com.").rawValue == "example.com")
 }

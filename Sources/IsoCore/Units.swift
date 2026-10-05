@@ -95,8 +95,6 @@ package struct ByteCount: Hashable, Comparable, Sendable, CustomStringConvertibl
   package static func < (a: Self, b: Self) -> Bool { a.bytes < b.bytes }
 }
 
-/// A session length: plain seconds or an `s`/`m`/`h` suffix, from one
-/// minute to 30 days.
 /// A duration written as plain seconds or with an `s`/`m`/`h` suffix. Range
 /// checks stay with the caller.
 package enum DurationText: Equatable, Sendable {

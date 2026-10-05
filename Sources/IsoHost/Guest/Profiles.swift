@@ -6,7 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// A profile's effective contents, built-in or from configuration.
 package struct ProfileDefinition: Sendable, Equatable {
   package let name: String
   package let aptPackages: [String]
@@ -19,7 +18,6 @@ package struct ProfileDefinition: Sendable, Equatable {
 package enum Profiles {
   static let claudePluginsOfficial = "https://github.com/anthropics/claude-plugins-official"
 
-  /// Built-in profiles, in their listing order.
   package static let builtin: [ProfileDefinition] = [
     .init(
       name: "python", aptPackages: ["python3", "python3-pip", "python3-venv"], preInstall: nil,

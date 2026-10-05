@@ -5,9 +5,6 @@ import Testing
 
 @testable import IsoHost
 
-// Ports the Rust `devcontainer`, `devcontainer_oci`, `git_repo_devcontainer`
-// and `jsonc` unit tests, plus parity fixtures captured from the Rust host.
-
 private func parse(_ text: String) throws -> ParsedDevcontainer {
   try ParsedDevcontainer(path: "test.json", text: text)
 }

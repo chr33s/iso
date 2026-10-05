@@ -170,11 +170,9 @@ private func failure(_ body: () throws -> [String]) -> LaunchFailure? {
         guest, stubs: ["zed": -1, "open": 1, "code": 0], choice: .only(ZedEditorProvider()))
     })
   #expect(broken.reason == .editorLaunchFailed(.zed))
-  // Zed's own URL fallback still ran; VS Code never did.
   #expect(broken.spawned == ["open zed://ssh/\(alias)/workspace"])
   #expect(!"\(broken.error)".contains("cli: install"))
 
-  // `iso editor` auto-detection keeps treating it as a miss and moves on.
   let all = EditorChoice.firstAvailable(EditorProviderID.allCases.map(\.provider))
   #expect(
     try launch(guest, stubs: ["code": -1, "open": 1, "zed": 0], choice: all).last

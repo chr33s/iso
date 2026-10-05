@@ -161,7 +161,6 @@ package struct BuildContext: Sendable, Equatable {
     return hash.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
-  /// Write into a fresh private (0700) temporary directory.
   package func materialize(prefix: String = "iso-apple-build-") throws -> TemporaryDirectory {
     let directory = try TemporaryDirectory(prefix: prefix)
     for file in files {
@@ -274,7 +273,6 @@ package struct BuildContext: Sendable, Equatable {
     """
 }
 
-/// A private (0700) temporary directory removed by `remove()`.
 package final class TemporaryDirectory: Sendable {
   package let path: String
 
@@ -290,7 +288,6 @@ package final class TemporaryDirectory: Sendable {
   deinit { remove() }
 }
 
-/// The provisioning script run inside the image build.
 package enum Provisioning {
   // Bound stalled repository reads without extending the overall image-build deadline.
   static let aptNetworkOptions =

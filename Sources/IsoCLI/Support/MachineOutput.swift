@@ -15,7 +15,6 @@ enum OutputFormat: String, ExpressibleByArgument, CaseIterable, Sendable {
 protocol MachineCommand: ParsableCommand {}
 
 extension MachineCommand {
-  /// The canonical name the envelope's `command` field carries.
   static var machineName: String { _commandName }
 }
 

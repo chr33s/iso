@@ -63,7 +63,6 @@ package struct SSHConfigFile: Sendable {
     }
   }
 
-  /// Install or refresh the alias for a running instance.
   @discardableResult
   package func update(_ target: SSHTarget, _ instance: Instance) throws -> SSHAlias {
     do {
@@ -83,7 +82,6 @@ package struct SSHConfigFile: Sendable {
     return SSHAlias(host: host, configPath: path)
   }
 
-  /// Only rewrites an alias the user already installed.
   package func refreshIfPresent(_ target: SSHTarget, _ instance: Instance) throws {
     guard let content = try read() else { return }
     let marker = "\(SSHConfigBlocks.markerPrefix) \(Self.host(instance))"

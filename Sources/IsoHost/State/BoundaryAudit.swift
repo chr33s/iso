@@ -97,7 +97,6 @@ package enum BoundaryAudit {
       fd, path: path, limit: maxBytes * 2, tooLarge: "\(path) is too large")
   }
 
-  /// The recorded lines, oldest first.
   package static func lines(_ instance: Instance) throws -> [String] {
     guard FileManager.default.fileExists(atPath: path(instance)) else { return [] }
     return String(decoding: try readAll(path(instance)), as: UTF8.self)

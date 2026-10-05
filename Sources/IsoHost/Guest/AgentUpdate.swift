@@ -68,7 +68,6 @@ package enum AgentUpdate {
     agent == .claude ? user.claudeBinary : GuestBinaries.codex
   }
 
-  /// `<bin> --version` over SSH; nil when absent or unparsable.
   static func installedVersion(_ client: SSHClient, _ session: SSHSession, _ agent: Agent)
     throws -> SemanticVersion?
   {

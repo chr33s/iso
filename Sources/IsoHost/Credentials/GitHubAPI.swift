@@ -182,7 +182,6 @@ package struct GitHubAPI: Sendable {
     return (status, body)
   }
 
-  /// `GET /user` with `token`; the authenticated login.
   package func userLogin(token: Secret<String>) throws -> String {
     let (status, body) = try get("https://api.github.com/user", token: token)
     return try Self.parseUserLogin(status: status, body: body)

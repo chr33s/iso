@@ -23,14 +23,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Detach from the controlling terminal's stdin. iso gates interactive prompts
-# (here, `uninstall`'s confirmation) on stdin being a TTY. The --yes calls skip
-# it and Test 3 pins its own stdin to /dev/null, so nothing blocks today, but a
-# future prompt-bearing case run from an interactive shell (the release
-# preflight) would read real keystrokes and block — under CI stdin is already
-# not a TTY, so it would never be caught there. Redirecting the whole script
-# makes every iso subprocess see a non-TTY stdin regardless of how the suite is
-# invoked. The script itself never reads stdin.
+# iso gates interactive prompts on stdin being a TTY. Detach it so a future
+# prompt-bearing case can't block on real keystrokes in an interactive shell
+# (CI is already non-TTY and would never catch it).
 exec </dev/null
 
 # ── Temp workspace ───────────────────────────────────────────────────────────
@@ -52,10 +47,7 @@ pass() {
 fail() {
     fail_count=$((fail_count + 1))
     echo "  FAIL  $1"
-    # Detail line ($2) is optional. Return 0 explicitly so that calling `fail`
-    # with one argument under `set -e` doesn't abort the whole script — the
-    # short-circuit `[[ -n "" ]] && echo` would otherwise propagate rc=1 out of
-    # the function.
+    # $2 is optional; the `if` keeps a one-argument call from returning 1 under `set -e`.
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
     fi
@@ -64,12 +56,9 @@ fail() {
 
 # ── Build a binary and copy it out of the build tree ────────────────────────
 #
-# The uninstall command refuses to delete binaries under a SwiftPM build tree
-# (`.build/{debug,release}` or `.build/<triple>/{debug,release}` — the
-# dev-build guard). For the success-path tests we need a binary that *isn't*
-# under that pattern, so we stash a copy in $TMPDIR/bin. Test 4 copies it into
-# build-tree-shaped paths to exercise the guard without touching the real one.
-# ISO_SWIFT_SCRATCH_PATH overrides the default `.build` scratch path.
+# The dev-build guard refuses binaries under a SwiftPM build tree, so
+# success-path tests use a copy in $TMPDIR/bin; Test 4 copies it into
+# build-tree-shaped paths. ISO_SWIFT_SCRATCH_PATH overrides `.build`.
 
 echo "==> Building iso..."
 SWIFT_SCRATCH="${ISO_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
@@ -95,7 +84,6 @@ case "$(uname -s)" in
     *)      STATE_FILE="$XDG_STATE_HOME/iso/update-check.json" ;;
 esac
 
-# Pre-populate the state file so we can assert it's wiped by --purge.
 seed_state() {
     mkdir -p "$(dirname "$STATE_FILE")"
     cat > "$STATE_FILE" << 'JSON'
@@ -114,7 +102,6 @@ else
     SSH_PREFIX="iso"
 fi
 
-# Pre-populate ~/.iso with stub files so we can assert it's preserved or wiped.
 seed_data_dir() {
     local data_dir="$DATA_DIR"
     mkdir -p "$data_dir/images" "$data_dir/instances"
@@ -236,8 +223,6 @@ echo "==> Test 3: non-TTY without --yes errors"
 fresh_binary
 seed_data_dir
 
-# stdin is already not a TTY when running under bash via the script harness;
-# redirect from /dev/null to be explicit.
 if "$TMPDIR/bin/iso" uninstall < /dev/null > "$TMPDIR/t3.log" 2>&1; then
     fail "uninstall without --yes succeeded in non-interactive mode"
 elif grep -qi "not a tty" "$TMPDIR/t3.log" && grep -q -- "--yes" "$TMPDIR/t3.log"; then

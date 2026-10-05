@@ -9,7 +9,6 @@ import IsoCore
 /// A guest's ed25519 host public key, read over the runtime's own channel
 /// (never `ssh-keyscan`) and pinned per instance.
 package struct HostPublicKey: Sendable, Equatable {
-  /// Base64 exactly as the guest printed it.
   package let base64: String
   let blob: [UInt8]
 

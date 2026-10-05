@@ -84,7 +84,6 @@ package struct PortForwards: Sendable {
 
   static func suggestion(_ host: UInt16) -> UInt16 { host == .max ? host - 1 : host + 1 }
 
-  /// Fails on the first duplicate or busy host port, before any VM cost.
   package static func checkCollisions(_ forwards: [PortForward]) throws {
     var seen: Set<UInt16> = []
     for forward in forwards {
@@ -103,7 +102,6 @@ package struct PortForwards: Sendable {
     }
   }
 
-  /// Binds `127.0.0.1:port` and releases it; the errno on failure.
   static func probe(_ port: UInt16) -> Int32? {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { return errno }
@@ -158,7 +156,6 @@ package struct PortForwards: Sendable {
     }
   }
 
-  /// Best effort; safe when no forwards were started.
   package func teardown(_ instance: Instance, _ target: SSHTarget) {
     let control = Self.controlPath(instance)
     guard FileManager.default.fileExists(atPath: control) else { return }

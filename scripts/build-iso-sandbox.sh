@@ -2,16 +2,10 @@
 set -euo pipefail
 
 # Build iso-sandbox, the macOS VM runtime that iso's `apple-container`
-# feature build drives, and install it into a directory only you (or root)
-# can write.
-#
-# iso-sandbox (iso-sandbox) runs each iso instance as a persistent
-# Linux VM on apple/containerization, with its own vmnet network and no host
-# mounts, socket relays, published ports, or SSH-agent forwarding. This script
-# builds it in release mode, signs it ad hoc with the hardened runtime and the
-# one entitlement it needs (com.apple.security.virtualization), and copies it
-# into PREFIX/bin, which must be owned by you or root and not writable by
-# other users except the wheel or admin group. It never uses sudo.
+# backend drives, and install it into PREFIX/bin. PREFIX/bin must be owned by
+# you or root and not writable by others except the wheel or admin group.
+# The binary is signed ad hoc with the hardened runtime and the
+# com.apple.security.virtualization entitlement. Never uses sudo.
 #
 # Usage:
 #   scripts/build-iso-sandbox.sh [PREFIX]
@@ -23,7 +17,7 @@ set -euo pipefail
 
 case "${1:-}" in
     -h | --help)
-        sed -n '4,22p' "$0" | sed -E 's/^# ?//'
+        sed -n '4,16p' "$0" | sed -E 's/^# ?//'
         exit 0
         ;;
 esac

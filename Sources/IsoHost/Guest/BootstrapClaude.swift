@@ -338,7 +338,6 @@ enum ClaudeSettings {
     return OrderedJSON.object(root).compact
   }
 
-  /// The normal merge and corrupt-settings recovery share the import step.
   static func withImport(
     _ existing: Result<String, any Error>, localEnv: [String: String],
     imported: ClaudeImport.Preferences, diagnostics: Diagnostics
@@ -374,10 +373,7 @@ func oneLineError(_ error: any Error) -> String {
 }
 
 extension AgentBootstrap {
-  /// Claude Code: customizations and preferences, managed settings (the
-  /// proxy or local-model `env`), onboarding, then — on first boot —
-  /// marketplaces, plugins and MCP servers. A proxy started here is torn
-  /// down if a later step fails.
+  /// A proxy started here is torn down if a later step fails.
   func bootstrapClaude(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
     let claude = config.claude
     let claudeBinary = persistedGuestUser(instance.image).claudeBinary
@@ -446,8 +442,7 @@ extension AgentBootstrap {
     return snapshot
   }
 
-  /// Stage the allowlisted host content and store its preference snapshot
-  /// in the guest; the caller copies the files after settings are written.
+  /// The caller copies the staged files after settings are written.
   func prepareClaudeImport(_ target: SSHTarget) throws -> StagingDirectory? {
     guard
       let source = configSourceDirectory(
@@ -485,8 +480,7 @@ extension AgentBootstrap {
     return staged
   }
 
-  /// Merge (or, for an unusable file, reset) the guest settings, then write
-  /// them atomically through a temporary file.
+  /// Merge (or, for an unusable file, reset) guest settings; written atomically.
   func writeManagedClaudeSettings(_ target: SSHTarget, localEnv: [String: String]) throws {
     try client.exec(target, RemoteCommand().literal("mkdir -p ~/.claude"))
     let imported = try readImportSnapshot(target).preferences

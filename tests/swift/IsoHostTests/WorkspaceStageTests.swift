@@ -85,7 +85,6 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
     try FileManager.default.destinationOfSymbolicLink(atPath: f.destination + "/link") == "a.txt")
   var info = stat()
   #expect(stat(f.destination + "/new/dir/b.sh", &info) == 0 && info.st_mode & 0o777 == 0o755)
-  // Re-staging the applied tree finds nothing to do.
   #expect(try f.build().changes.isEmpty)
 }
 

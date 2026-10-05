@@ -77,7 +77,6 @@ package enum StateStore {
     }
   }
 
-  /// Create `path` (and parents) and restrict it to the owner.
   package static func ensurePrivateDirectory(_ path: String) throws(HostError) {
     do {
       try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
@@ -598,7 +597,6 @@ extension Owner {
 }
 
 extension Instance {
-  /// Encode the current instance record as pretty-printed JSON.
   func save() throws {
     let json = OutputJSON.object([
       ("name", .string(name.rawValue)), ("index", .uint(UInt64(index.value))),

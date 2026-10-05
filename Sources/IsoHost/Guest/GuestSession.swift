@@ -15,7 +15,6 @@ package struct EnvForward: Sendable, CustomStringConvertible {
 
   package init() {}
 
-  /// Insert or overwrite, keeping first-insertion order.
   package mutating func set(_ name: String, _ value: Secret<String>) {
     if values[name] == nil { names.append(name) }
     values[name] = value
@@ -167,7 +166,6 @@ extension SSHClient {
     return output.termination.succeeded
   }
 
-  /// stdout of a successful command; stderr is discarded.
   package func captureChecked(_ target: SSHTarget, _ command: RemoteCommand) throws -> String {
     try target.requireHandoff()
     let output: ProcessRunner.Output
@@ -186,7 +184,6 @@ extension SSHClient {
     return text
   }
 
-  /// `scp` one file (or, `recursive`, a directory) to the guest.
   package func copy(
     _ target: SSHTarget, local: String, remote: GuestPath, recursive: Bool = false
   ) throws {
@@ -292,7 +289,6 @@ package enum InteractiveSSH {
     }
   }
 
-  /// Without a PTY; fails when the remote command does.
   package static func runCommand(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics
   ) throws {

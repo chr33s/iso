@@ -19,7 +19,6 @@ package enum EditorProviderID: String, CaseIterable, Sendable {
 
 /// How an editor reaches the guest.
 package enum EditorRemoteTransport: String, Sendable {
-  /// The editor's own SSH remote development over the managed alias.
   case ssh
 }
 

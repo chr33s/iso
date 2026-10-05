@@ -11,7 +11,6 @@ import IsoCore
 package struct WizardConsole: Sendable {
   /// Raw text to stderr (callers add newlines).
   package var write: @Sendable (String) -> Void
-  /// One line from stdin; nil at end of input.
   package var readLine: @Sendable () -> String?
   /// Turn terminal echo off; false when there is no terminal to change.
   package var echoOff: @Sendable () -> Bool

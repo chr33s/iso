@@ -226,7 +226,6 @@ private func transfer() -> WorkspaceTransfer {
   let root = try scratch()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let log = root + "/ssh.log"
-  // `cat` reads stdin; with /dev/null it ends at once and writes nothing.
   let client = SSHClient(environment: ["PATH": "\(fakeSSH):/usr/bin:/bin", "FAKE_SSH_LOG": log])
   try InteractiveSSH.exec(
     client, WorkloadSession(session: SSHSession(target: try target()), revalidate: {}),
@@ -351,7 +350,6 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
     exec /usr/bin/tar "$@"
     """)
   if viaRsync {
-    // `rsync … <address>:<guest>/ <destination>/`: copy, then linger.
     try shim(
       "rsync",
       """
@@ -384,7 +382,6 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
         instance: inst, target: try! target(), directory: nil, excludeGit: false, limits: limits)
     } catch { outcome.value = error }
   }
-  // Held lock: the pull had not started (no stage directory yet).
   #expect(!held.finished && !held.stageExisted)
   #expect(!location.exists)
   return (ContinuousClock.now - started, outcome.value)
@@ -393,7 +390,6 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
 @Test(arguments: [false, true])
 func stagedTransferWaitsForTheLockAndStopsWhenItOutgrowsTheBudget(viaRsync: Bool) throws {
   let (elapsed, error) = try stagedPullTakes(viaRsync: viaRsync)
-  // The growth watch, not the lingering 6 s tool, ended the pull.
   #expect(elapsed < .seconds(5))
   let breach = try #require(error as? StageBudgetExceeded, "got \(String(describing: error))")
   #expect(breach.description.contains("max_bytes"))

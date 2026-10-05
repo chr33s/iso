@@ -11,7 +11,6 @@ import IsoSecrets
 /// repository an instance works on, the VM's PAT assignment, the token to
 /// forward as `GITHUB_TOKEN`, and the guest `gh` credential helper.
 package protocol GitHubTokenSource: Sendable {
-  /// `detect_instance_repo`: the slug recorded for the instance's workspace.
   func instanceRepo(_ instance: Instance) -> RepoSlug?
   /// `github_assignment::active`: the repo of the VM's active PAT
   /// assignment, if any; fails closed on a broken assignment.
@@ -402,9 +401,7 @@ package struct AgentBootstrap: Sendable {
     noAgents && auth == .chatgpt && !keyringMaterialized()
   }
 
-  /// After a fresh or restarted boot: close the previous boot's model
-  /// tunnels, bootstrap the agents (unless `noAgents`), then run the
-  /// post-start hook. `up`/`start` call this once SSH is ready.
+  /// Close the previous boot's model tunnels, bootstrap agents, run the post-start hook.
   @discardableResult
   package func bootstrapAndPostStart(
     _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
@@ -541,7 +538,6 @@ package struct AgentBootstrap: Sendable {
     }
   }
 
-  /// GitHub auth, local-model tunnels, then Claude and Codex.
   package func bootstrapAgents(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
     if session.env.contains("GITHUB_TOKEN") {
       diagnostics.log(.info, "Configuring GitHub auth in guest")
@@ -560,7 +556,6 @@ package struct AgentBootstrap: Sendable {
     (try? TemplateStore.load(config, image))?.guestUser ?? .default
   }
 
-  /// Wanted minus what the image already has baked in.
   static func pluginDelta(
     wantedMarketplaces: [String], wantedPlugins: [String], bakedMarketplaces: [String],
     bakedPlugins: [String]
@@ -672,7 +667,6 @@ package struct AgentBootstrap: Sendable {
     return remote.rawValue
   }
 
-  /// Every entry of a staging directory into `~/<subdirectory>`.
   func copyStaged(
     _ staging: StagingDirectory, target: SSHTarget, to subdirectory: String, label: String
   ) throws {

@@ -196,10 +196,7 @@ enum CodexConfigFiles {
 }
 
 extension AgentBootstrap {
-  /// Codex: auth consistency, proxy (fail closed), `~/.codex` content and
-  /// managed `config.toml`, keyring bookkeeping, stale `auth.json` cleanup,
-  /// then — on first boot — marketplaces and plugins. A proxy started here
-  /// is torn down if a later step fails.
+  /// Fail-closed proxy start is torn down if a later step fails.
   func bootstrapCodex(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
     var modelState = try ModelState.loadOrDefault(instance)
     try CodexChecks.ensureRemoteAuthConsistent(config, instance: instance, modelState: modelState)

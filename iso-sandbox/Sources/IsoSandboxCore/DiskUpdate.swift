@@ -17,7 +17,6 @@ import Foundation
 /// steps are not synced to disk as a group.
 package enum DiskUpdate {
   struct Pending: Codable {
-    /// Basename of the prepared disk in the sandbox directory.
     var work: String
     var inode: UInt64
     var record: SandboxRecord
@@ -30,7 +29,6 @@ package enum DiskUpdate {
 
   struct InjectedFault: Error {}
 
-  /// The scratch disk an update prepares.
   package static func workDisk(_ paths: SandboxPaths, _ operation: OperationID) -> URL {
     paths.dir.appendingPathComponent(".update-\(operation.rawValue).ext4")
   }
@@ -96,7 +94,6 @@ package enum DiskUpdate {
     }
   }
 
-  /// Whether `pending`'s disk is the installed one.
   static func isPublished(_ pending: Pending, _ paths: SandboxPaths) throws -> Bool {
     guard pending.record.id == paths.id else {
       throw SandboxError("\(paths.id) has a staged disk update for \(pending.record.id)")

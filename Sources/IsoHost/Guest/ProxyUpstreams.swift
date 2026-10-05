@@ -15,7 +15,6 @@ extension ProxyProvider {
     }
   }
 
-  /// Host-loopback listen port: base + instance index.
   func port(_ instance: Instance) -> UInt16 {
     basePort &+ instance.index.value
   }
@@ -25,7 +24,6 @@ extension ProxyProvider {
   /// `settings.json` and stays in memory.
   var persistsToken: Bool { self == .openai }
 
-  /// Keychain service name used by `iso proxy setup`.
   package var keychainService: String {
     switch self {
     case .anthropic: "iso-anthropic"

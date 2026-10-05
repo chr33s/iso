@@ -97,7 +97,6 @@ private func envNames(_ env: EnvForward) -> [String] { env.names }
   try guest.client.exec(session, RemoteCommand().literal("true"))
   #expect(guest.log("env.log").contains("ISO_LOCAL_API_KEY=cap-123"))
 
-  // Local mode: the endpoint's token (or the placeholder) instead.
   var state = ModelState()
   state.mode = .local
   state.codexEndpoint = try LocalModel(hostURL: "http://localhost:1", model: "m", authToken: nil)
@@ -624,7 +623,6 @@ private func stageCodex(
   #expect(guest.log("commands.log").contains("rm -f ~/.codex/auth.json"))
   #expect(try ModelState.tryLoad(instance)?.codexKeyringMaterialized == true)
   #expect(guest.sink.text.contains("Codex bootstrap complete"))
-  // A restart refreshes content but installs nothing.
   try FileManager.default.removeItem(atPath: guest.root + "/guest-calls.log")
   try guest.bootstrap(config).bootstrapAgents(session, instance: instance, mode: .restart)
   #expect(!guest.log("guest-calls.log").contains { $0.contains("plugin") })
@@ -678,7 +676,6 @@ private func stageCodex(
   #expect(log.contains(AgentBootstrap.noAgentsChatGPTWarning))
   #expect(log.contains("post_start hook failed (continuing)"))
   #expect(log.contains("Skipping guest agent bootstrap (--no-agents)"))
-  // The previous boot's model tunnels are closed first.
   #expect(ProxyLauncher.recordedModelTunnels(instance).isEmpty)
   #expect(
     AgentBootstrap.noAgentsSkipsCodexKeyring(noAgents: true, auth: .chatgpt) { true } == false)
@@ -955,7 +952,6 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
   let session = try agents.prepareSession(instance, target: guest.target, repo: nil)
   #expect(!session.env.contains("OPENAI_API_KEY"))
   #expect(session.env.contains("GUEST_VAR"))
-  // Only the generic reference was resolved for the session.
   #expect(secrets.calls == [[try SecretName("db")]])
   #expect(try agents.proxyConfigured(instance, .openai))
   // The provider secret outranks the configured default and resolves via vault:.

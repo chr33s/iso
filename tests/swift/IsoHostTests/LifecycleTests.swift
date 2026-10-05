@@ -105,8 +105,6 @@ private let otherKey =
   #expect(dockerfile.contains("apt-get \(options) install -y --no-install-recommends"))
   #expect(!dockerfile.contains("-qq"))
 
-  // Execute the rendered package block with an argv-recording APT stand-in.
-  // No repository setup, package installation or guest configuration runs here.
   let start = try #require(provision.range(of: "echo '  [guest] Updating package lists...'"))
   let end = try #require(provision[start.lowerBound...].range(of: " < /dev/null\n"))
   let header = provision.components(separatedBy: "\n").prefix(6).joined(separator: "\n")
@@ -226,7 +224,6 @@ private struct FakeInstallation {
   #expect(sidecar.lastObservedOwnerPID == 4242)
   #expect(FileManager.default.fileExists(atPath: instance.knownHostsPath))
 
-  // Running: reachable through the gate; a second create is refused.
   let running = try #require(try backend.asRunning(instance))
   #expect(running.target.hostKeyOptions.contains("HostKeyAlias=\(sidecar.machineID).iso"))
   #expect(throws: (any Error).self) { try backend.createAndStart(instance, diskGiB: nil) }

@@ -1,7 +1,6 @@
 import Containerization
 import Foundation
 
-/// What `create` clones a new sandbox from.
 package enum SandboxSource: Sendable {
   case image(String)
   case disk(SandboxID)
@@ -100,7 +99,6 @@ package enum Sandboxes {
     return try await body()
   }
 
-  /// Runs `body` holding committed disk `name`'s lock.
   static func withDisk<T>(
     _ root: SandboxRoot, _ name: SandboxID, _ mode: FileLock.Mode, _ body: () throws -> T
   ) async throws -> T {

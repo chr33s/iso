@@ -78,7 +78,6 @@ struct TOMLTable: Equatable, Sendable {
 // MARK: - Printing
 
 extension TOMLTable {
-  /// A whole document (`toml::to_string`).
   var document: String {
     var out = ""
     writeBody(&out, path: [])
@@ -369,7 +368,6 @@ struct TOMLParser {
     }
   }
 
-  /// An inline table as a node that can no longer be extended.
   static func frozen(_ table: TOMLTable) -> Node {
     let node = Node(.inline)
     for key in table.sortedKeys {
@@ -522,7 +520,6 @@ struct TOMLParser {
     }
   }
 
-  /// Numbers, `inf`/`nan`, and dates/times.
   mutating func scalar() throws(TOMLParseError) -> TOMLValue {
     let start = index
     func isTokenByte(_ byte: UInt8) -> Bool {
@@ -595,7 +592,6 @@ struct TOMLParser {
     return nil
   }
 
-  /// Integer or float literal.
   static func number(_ token: String) -> TOMLValue? {
     switch token {
     case "inf", "+inf": return .float(.infinity)
@@ -614,7 +610,6 @@ struct TOMLParser {
     if body.first == UInt8(ascii: "+") || body.first == UInt8(ascii: "-") {
       body = body.dropFirst()
     }
-    // Split into integer part, fraction and exponent.
     let fractionStart = body.firstIndex(of: UInt8(ascii: "."))
     let exponentStart = body.firstIndex { $0 == UInt8(ascii: "e") || $0 == UInt8(ascii: "E") }
     let integerEnd = fractionStart ?? exponentStart ?? body.endIndex

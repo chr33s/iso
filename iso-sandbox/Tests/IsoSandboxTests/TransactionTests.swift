@@ -41,7 +41,6 @@ import Testing
     return paths
   }
 
-  /// A committed disk `name` of `bytes` capacity holding `content`.
   func committedDisk(
     _ root: SandboxRoot, _ name: String, bytes: UInt64 = 8 << 30, content: String = "snap"
   ) throws {

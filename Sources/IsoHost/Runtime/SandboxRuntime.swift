@@ -89,7 +89,6 @@ package struct ProcessRuntimeExecutor: RuntimeExecutor {
     self.runner = runner
   }
 
-  /// The binary's file name, for diagnostics.
   var program: String { (binary as NSString).lastPathComponent }
 
   package static func sanitized(_ parent: [String: String]) -> [String: String] {

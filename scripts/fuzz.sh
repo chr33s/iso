@@ -14,10 +14,9 @@
 #
 # Engine: LLVM libFuzzer built from the vendored sources in fuzz/libfuzzer
 # (or `ISO_LIBFUZZER_SRC`), verified against LIBFUZZER_MANIFEST_SHA256, with
-# the pinned Xcode `clang++`. Targets:
-# the pinned Xcode `swiftc` with AddressSanitizer and SanitizerCoverage
-# inline 8-bit counters, PC tables and comparison tracing. Production sources
-# are compiled from this revision; harness bodies live in fuzz/Targets.
+# the pinned Xcode `clang++`. Targets are built with the pinned `swiftc`,
+# AddressSanitizer and SanitizerCoverage. Production sources are compiled from
+# this revision; harness bodies live in fuzz/Targets.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,7 +30,6 @@ LIBFUZZER_MANIFEST_SHA256="0b52df7b0808e66eb5efdd5c3fbcaf72335279ba90e1f26e04f4c
 DEFAULT_LIBFUZZER_SRC="$ROOT/fuzz/libfuzzer"
 LIBFUZZER_SRC="${ISO_LIBFUZZER_SRC:-$DEFAULT_LIBFUZZER_SRC}"
 
-# Per-input and campaign bounds (documented in docs/testing.md).
 MAX_LEN=65536
 TIMEOUT_SECONDS=10
 RSS_LIMIT_MB=2048
@@ -210,7 +208,6 @@ SWIFT
   echo "== 4: replay and minimize the saved crash" >&2
   if "$BUILD/Qualify" "$crash" > "$q/replay.log" 2>&1; then die "qualification: replay did not crash"; fi
   grep -q "heap-use-after-free" "$q/replay.log" || die "qualification: replay lost the fault"
-  # Minimize a padded variant so the shrink is observable.
   printf '{"pad": [1, 2, 3, "%s"], "qz": {"x": [true, null]}, "tail": "%s"}' \
     "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" > "$q/padded"
   if "$BUILD/Qualify" "$q/padded" > /dev/null 2>&1; then die "qualification: padded input does not crash"; fi

@@ -144,11 +144,9 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
     guest.log("tunnels.log").contains {
       $0.contains("-O forward -R 127.0.0.1:11434:127.0.0.1:11434")
     })
-  // Unchanged: kept (no second master).
   try launcher.syncModelTunnels(instance, target: guest.target, wanted: [11434: tunnel])
   #expect(guest.log("tunnels.log").filter { $0.hasPrefix("master") }.count == 1)
   #expect(launcher.modelTunnelPID(instance, port: 11434) == pid)
-  // No longer wanted: closed.
   try launcher.syncModelTunnels(instance, target: guest.target, wanted: [:])
   #expect(ProxyLauncher.recordedModelTunnels(instance).isEmpty)
   var status: Int32 = 0

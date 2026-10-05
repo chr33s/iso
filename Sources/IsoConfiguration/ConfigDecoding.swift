@@ -33,7 +33,6 @@ struct ObjectReader {
 
   func child(_ key: String) -> [JSONPathComponent] { path + [.key(key)] }
 
-  /// Absent or `null` → nil.
   func optional<T>(_ key: String, _ parse: (JSONValue, [JSONPathComponent]) throws(FieldError) -> T)
     throws(FieldError) -> T?
   {

@@ -49,7 +49,7 @@ private func endpoint(_ url: String, _ model: String = "m", token: String? = nil
 
   try ModelState().save(instance)
   #expect(!FileManager.default.fileExists(atPath: instance.modelStatePath))
-  try ModelState().save(instance)  // absent file: still fine
+  try ModelState().save(instance)
 }
 
 @Test func nonDefaultRemoteStatesArePersisted() throws {
@@ -595,7 +595,6 @@ func orderedJSONBorrowsBridgedUTF8AndReturnsOwnedStrings(repetitions: Int) throw
 @Test func aStoredSecretIsEitherAProxyCredentialOrGuestVisible() throws {
   let db = try SecretName("db")
   let anthropic = try SecretName("anthropic")
-  // Distinct names: fine.
   try GuestEnvState.checkCredentialSeparation(
     [
       try EnvVarName("ANTHROPIC_API_KEY"): .secret(anthropic), try EnvVarName("DB"): .secret(db),

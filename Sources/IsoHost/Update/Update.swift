@@ -13,13 +13,10 @@ import IsoCore
 /// a replacement leaves every installed binary untouched.
 package struct Updater: Sendable {
   package struct Options: Sendable, Equatable {
-    /// Probe the release but do not download or install.
     package var checkOnly = false
-    /// Reinstall even if the target is not newer.
     package var force = false
     /// Install this version (with or without a leading `v`).
     package var pinnedVersion: String?
-    /// Skip the confirmation prompt.
     package var skipConfirm = false
     /// Permit installing a release older than the running binary.
     package var allowDowngrade = false

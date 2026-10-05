@@ -22,7 +22,7 @@ package enum RuntimeError: Error, Equatable, Sendable, CustomStringConvertible {
   case sessionExpired(String)
   /// A call timed out, was cancelled, or overflowed: its effect is unknown.
   case operationUncertain(String)
-  /// The runtime ran and reported failure (no diagnostic class, as in Rust).
+  /// The runtime ran and reported failure (no diagnostic class).
   case failed(String)
 
   package var description: String {

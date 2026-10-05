@@ -168,7 +168,6 @@ func normalized(_ c: IsoConfig) -> JSONValue {
 }
 
 extension ConfigLoader {
-  /// Test helper: the full pipeline over an in-memory JSONC document.
   static func load(
     bytes text: String, path: String = "config.jsonc", format: ConfigFormat = .jsonc,
     environment: ConfigEnvironment = fixtureHome

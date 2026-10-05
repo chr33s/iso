@@ -130,7 +130,6 @@ private struct CLIFixture {
       "Claude    local — qwen @ http://localhost:11434/ (via SSH reverse tunnel)",
       "Codex     cloud (no local endpoint configured)",
     ])
-  // Non-interactive with nothing configured: refused before saving.
   let bare = try CLIFixture()
   defer { bare.remove() }
   let bareInstance = try InstanceStore.resolve(bare.context.config, name: nil)

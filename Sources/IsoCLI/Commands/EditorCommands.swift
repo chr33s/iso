@@ -44,11 +44,9 @@ extension ProjectEditorCommand {
 
   func validate() throws { _ = try launchOptions.guestPath() }
 
-  /// `--project` is a guest path. A directory in the user's home (`home`,
-  /// the configuration environment's) almost certainly meant DIR, and
-  /// running on the current directory instead would copy that into the
-  /// guest. Other paths (`/tmp`, `/opt`) are ordinary guest paths even when
-  /// macOS has them too.
+  /// `--project` is a guest path. A directory under the host home almost
+  /// certainly meant DIR, and falling back to the current directory would copy
+  /// it into the guest. Other paths (`/tmp`, `/opt`) are ordinary guest paths.
   func rejectHostHomeProject(_ path: GuestPath, home: String?) throws {
     var isDirectory: ObjCBool = false
     if projectArguments.dir == nil, projectArguments.gitRepo == nil, let home,

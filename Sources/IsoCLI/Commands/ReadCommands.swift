@@ -52,7 +52,6 @@ extension CommandLine {
   }
 }
 
-/// Pad to `width` Unicode scalars.
 func padded(_ text: String, _ width: Int) -> String {
   let count = text.unicodeScalars.count
   return count >= width ? text : text + String(repeating: " ", count: width - count)
@@ -189,7 +188,6 @@ struct Status: MachineCommand {
       return
     }
     for row in rows {
-      // Pad the state column; instance and image names retain their own widths.
       let usage = row.usage.map { "  " + $0.summary } ?? ""
       context.output.out(
         "\(row.instance.name) \(padded(row.state.rawValue, 10)) \(row.instance.image) \(AppleBackend.name)\(usage)"

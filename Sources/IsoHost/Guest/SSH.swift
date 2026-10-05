@@ -92,7 +92,6 @@ package struct SSHTarget: Sendable, Equatable {
   package var address: String { "\(user)@\(host)" }
 }
 
-/// Runs `ssh` for captured, non-interactive guest commands.
 package struct SSHClient: Sendable {
   let environment: [String: String]
   let runner: ProcessRunner
@@ -140,7 +139,6 @@ package struct SSHClient: Sendable {
   }
 }
 
-/// Resource usage gathered from a running guest.
 package struct ResourceUsage: Sendable, Equatable {
   package let load1m: Double
   package let memUsedMiB: UInt64
@@ -153,12 +151,10 @@ package struct ResourceUsage: Sendable, Equatable {
   var memPercent: UInt64 { memTotalMiB > 0 ? memUsedMiB * 100 / memTotalMiB : 0 }
   var diskPercent: UInt64 { diskTotalMiB > 0 ? diskUsedMiB * 100 / diskTotalMiB : 0 }
 
-  /// `status NAME` line.
   package var display: String {
     "Load: \(formatFixed(load1m, 2))  Mem: \(memUsedMiB)/\(memTotalMiB) MiB (\(memPercent)%)  Disk: \(diskUsedMiB)/\(diskTotalMiB) MiB (\(diskPercent)%)"
   }
 
-  /// Compact form for multi-instance listing.
   package var summary: String {
     "load=\(formatFixed(load1m, 2)) mem=\(memPercent)% disk=\(diskPercent)%"
   }
@@ -201,7 +197,6 @@ package struct ResourceUsage: Sendable, Equatable {
       diskTotalMiB: diskTotal)
   }
 
-  /// First whitespace-separated token parsed as an unsigned integer.
   static func firstUnsigned(_ rest: Substring) -> UInt64? {
     rest.split(whereSeparator: \.isWhitespace).first.flatMap {
       parseUnsigned(String($0), as: UInt64.self)

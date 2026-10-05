@@ -9,7 +9,6 @@ import Testing
 
 // MARK: - Helpers
 
-/// Collects diagnostics lines (message part only).
 final class DiagnosticsLog: Sendable {
   private let lines = Mutex<[String]>([])
   var all: [String] { lines.withLock { $0 } }
@@ -314,7 +313,6 @@ private let withoutBundle = Release(
   stat(install + "/iso-proxy", &status)
   #expect(status.st_mode & 0o777 == 0o755)
   #expect(readText(install + "/iso") == "iso-binary")
-  // No staging or probe files are left behind.
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: install).sorted() == ["iso", "iso-proxy"])
 }
@@ -496,7 +494,6 @@ private func updateConfig(_ mode: UpdateMode, hours: UInt64 = 24) throws -> Upda
   try UpdateCheck.writeState(
     UpdateState(lastCheckedAt: 999_000, latestKnownVersion: "v0.6.1"), home: home)
   var spawned: [@Sendable () -> Void] = []
-  // Inside the interval: nothing happens.
   #expect(
     !UpdateCheck.maybeRunBackgroundCheck(
       try updateConfig(.notify, hours: 1), updater: updater, stdinIsTerminal: true
@@ -704,7 +701,6 @@ private let untouched = [
     #expect(log.contains("attestation verification is DISABLED"))
     #expect(log.contains("Downloading iso-v9.9.9-aarch64-apple-darwin.tar.gz"))
     #expect(log.contains("iso updated to 9.9.9"))
-    // Exact argv, in order; metadata then the two downloads.
     #expect(
       fixture.calls == [
         "curl -fsSL -H Accept: application/vnd.github+json http://fixture/repos/chr33s/iso/releases/latest",
@@ -814,7 +810,6 @@ private let untouched = [
     #expect(log.contains("Up to date: iso 0.6.0"))
     try fixture.updater(log: log).run(.init(skipConfirm: true))
     #expect(log.contains("Already on latest: iso 0.6.0"))
-    // Declining the prompt downloads nothing.
     try fixture.publish(fullRelease)
     let asked = Mutex<[String]>([])
     try fixture.updater(log: log) { prompt in

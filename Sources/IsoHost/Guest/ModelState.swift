@@ -6,7 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Whether a VM's agents target the cloud or a host-side local server.
 package enum ModelMode: String, Sendable, Equatable {
   case remote
   case local
@@ -141,7 +140,6 @@ package struct ModelState: Sendable, Equatable {
 }
 
 extension LocalModel {
-  /// The configured token, or the shared placeholder for permissive servers.
   package var authTokenOrDefault: String { authToken?.expose() ?? LocalModel.authFallback }
 }
 
@@ -234,7 +232,6 @@ package struct ReverseTunnel: Sendable, Equatable {
 }
 
 package struct LocalEndpointPlan: Sendable, Equatable {
-  /// Written into the guest agent's configuration.
   package let guestURL: String
   package let tunnel: ReverseTunnel?
 }
@@ -285,7 +282,6 @@ package enum LocalEndpoints {
       tunnel: ReverseTunnel(guestPort: guestPort, hostAddress: hostAddress, hostPort: hostPort))
   }
 
-  /// Gate a resolved endpoint on local mode.
   package static func active(_ state: ModelState, _ resolved: LocalModel?) -> LocalModel? {
     state.mode == .local ? resolved : nil
   }

@@ -175,7 +175,6 @@ extension AppleBackend {
 
   // MARK: Create
 
-  /// A new sandbox for a freshly allocated instance, from its image.
   package func createAndStart(_ instance: Instance, diskGiB explicitDisk: UInt64?) throws {
     _ = try config.validated()
     let runtime = try runtime()

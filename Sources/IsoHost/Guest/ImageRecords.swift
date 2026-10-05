@@ -140,7 +140,6 @@ package struct TemplateConfig: Sendable, Equatable, Codable {
 package struct ImageInfo: Sendable, Equatable {
   package let name: ImageName
   package let directory: String
-  /// Nil when `template-config.json` is missing or unreadable.
   package let config: TemplateConfig?
 }
 
@@ -210,7 +209,6 @@ extension TemplateConfig {
   }
 }
 
-/// `images/<name>/template-config.json` reads and writes.
 package enum TemplateStore {
   static func path(_ config: IsoConfig, _ image: ImageName) -> String {
     config.imagesDirectory.appending(image.rawValue).appending("template-config.json").path

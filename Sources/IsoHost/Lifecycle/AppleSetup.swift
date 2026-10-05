@@ -330,7 +330,6 @@ extension AppleBackend {
   }
 }
 
-/// Lowercase hex SHA-256.
 func sha256Hex(_ bytes: [UInt8]) -> String {
   SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
 }

@@ -30,7 +30,6 @@ package final class AppleBackend: Sendable {
     }
   }
 
-  /// Test seam: a runtime built from a scripted executor.
   init(
     config: IsoConfig, environment: [String: String],
     diagnostics: Diagnostics = Diagnostics(verbosity: 0),
@@ -100,7 +99,6 @@ package final class AppleBackend: Sendable {
     }
   }
 
-  /// Best-effort: every error counts as not running.
   package func isRunning(_ instance: Instance) -> Bool {
     guard let sidecar = try? MachineSidecar.loadIfPresent(instance),
       let inspection = try? runtime().inspect(sidecar.machineID)
@@ -219,8 +217,8 @@ package final class AppleBackend: Sendable {
     }
   }
 
-  /// The pinned target of an instance whatever its state (Rust
-  /// `ssh_target`): qualification and the isolation gate still apply, so a
+  /// The pinned target of an instance whatever its state:
+  /// qualification and the isolation gate still apply, so a
   /// stopped sandbox yields an error rather than a target.
   package func sshTarget(_ instance: Instance) throws -> SSHTarget {
     let sidecar = try ownedSidecar(instance)
@@ -306,7 +304,6 @@ package final class AppleBackend: Sendable {
     try splitter.finish { try emit(decode($0)) }
   }
 
-  /// Rust `Option<i32>` debug text of an exit status.
   static func rustExitCode(_ termination: ProcessRunner.Termination) -> String {
     switch termination {
     case .exited(let code): "Some(\(code))"

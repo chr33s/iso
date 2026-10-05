@@ -21,8 +21,6 @@ set -euo pipefail
 #     tests/run-integration.sh does (these need Apple virtualization hardware and
 #     cannot run in GitHub-hosted CI)
 #
-# The full integration suite runs on this macOS 27+ Apple Silicon host.
-#
 # Usage:
 #   ./scripts/preflight-release.sh [options]
 #
@@ -140,7 +138,6 @@ run_host_tests() {
   git diff --exit-code -- Package.resolved
 }
 
-# The recorded-baseline replays CI runs against the debug build.
 run_contracts() {
   local iso=.build/debug/iso failed=0
   python3 tests/test-read-contract.py --swift "$iso" || failed=1

@@ -10,10 +10,13 @@ package struct JSONLimits: Sendable, Equatable {
   package var maxBytes: Int
   /// Deepest accepted container nesting; the root container is depth 1.
   package var maxDepth: Int
+  /// Most object members accepted across the whole document.
   package var maxKeys: Int
+  /// Most elements accepted in any one array.
   package var maxArrayElements: Int
+  /// Longest accepted number literal, in bytes.
   package var maxNumberLength: Int
-  /// Longest string literal, raw (escapes included), in bytes.
+  /// Longest accepted string literal (raw, escapes included), in bytes.
   package var maxStringBytes: Int
 
   package static let configuration = JSONLimits(
@@ -244,11 +247,13 @@ package enum JSONPreflight {
       if case .object = container { objectKeys.append([]) }
     }
 
+    /// Closes the innermost container and the path component naming it.
     mutating func pop() {
       if case .object = stack.removeLast() { objectKeys.removeLast() }
       finishScalar()
     }
 
+    /// A value is complete: drop the path component that addressed it.
     mutating func finishScalar() {
       if !stack.isEmpty { path.removeLast() }
     }

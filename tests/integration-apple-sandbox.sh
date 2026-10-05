@@ -20,9 +20,9 @@ set -uo pipefail
 # Needs Apple Silicon, macOS 27+, Xcode 27, jq, and stock Apple `container`
 # with its service running (builds the test image, supplies the kernel). It
 # touches nothing but its own state root and image tag, both removed on exit.
-# The iso phase also builds `iso` (into the work
-# directory) and drives it end to end against a data directory there; the
-# images `iso setup` builds in the stock `container` store are deleted too.
+# The iso phase also builds `iso` into the work directory and drives it against
+# a data directory there; images `iso setup` builds in the stock `container`
+# store are deleted too.
 
 if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
     echo "SKIP: iso-sandbox needs an Apple Silicon Mac"

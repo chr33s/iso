@@ -12,9 +12,6 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/install-dev-tools.sh    (`--all` is accepted and does the same)
-#
-# The pre-commit hook runs `mise run pre-commit`: hygiene, swift format lint,
-# swift build and swift test (see mise.toml).
 
 case "${1:-}" in
     "" | --all) ;;

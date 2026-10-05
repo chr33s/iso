@@ -159,7 +159,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   let output = try sh(
     "printf '%s\\n' \"${ISO_TEST_AMBIENT-unset}\"; /bin/ls -d \(paths) 2>/dev/null")
   #expect(String(decoding: output.stdout, as: UTF8.self) == "unset\n")
-  #expect(try sh("cat").stdout.isEmpty)  // stdin is /dev/null
+  #expect(try sh("cat").stdout.isEmpty)
 }
 
 @Test func spawnFailureIsReported() {

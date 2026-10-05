@@ -11,7 +11,6 @@ import IsoCore
 package enum DevcontainerInput: Sendable, Equatable {
   /// Use exactly this file; no discovery or prompt.
   case explicit(String)
-  /// Skip discovery entirely.
   case disabled
   /// Discover a file, then prompt before applying it.
   case discover
@@ -53,9 +52,7 @@ package struct DevcontainerOptions: Sendable {
 /// when stdin is not a terminal.
 package protocol DevcontainerPrompter: Sendable {
   var isInteractive: Bool { get }
-  /// `[y/N]`.
   func confirm(_ prompt: String) throws -> Bool
-  /// `[Y/n]`.
   func confirmDefaultYes(_ prompt: String) throws -> Bool
 }
 

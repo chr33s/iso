@@ -11,7 +11,6 @@ import IsoHost
 // MARK: - Shared wiring
 
 extension CommandContext {
-  /// Bootstrap and session services for this command.
   var agents: AgentBootstrap {
     let resolver = CredentialResolver(environment: environment.variables)
     return AgentBootstrap(
