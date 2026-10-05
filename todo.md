@@ -17,7 +17,10 @@ and [releasing](RELEASING.md).
   `tests/integration-proxy-transition.py --live-agents` with approved model
   arguments; add `--filtered` for F1 native-agent acceptance.
 - [ ] Complete filtered-egress NET-20/F1 qualification against the final
-  candidate, or defer the capability from the first release. Include the full
+  candidate, or defer the capability from the first release. NET-20 is
+  implemented (1907ea5..02f2cf6); the filtered VM gate (38/38) and
+  `--live-agents --filtered` passed at 9c2d632, but not yet on a hosted
+  candidate of the final revision. Include the full
   DNS/connect/relay pressure matrix and native-agent behavior. Follow the
   [transport](docs/testing.md#authenticated-filtered-transport-checks) and
   [broker](docs/testing.md#signed-broker-composition-checks) checklists.
@@ -61,7 +64,7 @@ and [releasing](RELEASING.md).
 
 ## Follow-ups
 
-- [ ] Correct Claude installer retry diagnostics: capture curl's failure status
+- [x] Correct Claude installer retry diagnostics: capture curl's failure status
   inside the failed branch and bound each download attempt. Update
   `scripts/guest/claude-code.sh` and regenerate its embedded copy together.
   The earlier setup timeouts remain unexplained; stage markers distinguish
