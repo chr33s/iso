@@ -223,7 +223,8 @@ sys.exit(result.returncode)
                     os.kill(pid, 0)
                     _, elapsed = run(["exec", "brokers", "--", "true"], expected=1, contains="FILTERED_BROKER_NOT_READY", timeout=20)
                     assert elapsed < 10
-                    run(["status", "brokers"], expected=1, contains="FILTERED_BROKER_NOT_READY", timeout=20)
+                    text, _ = run(["status", "brokers"], contains="(unhealthy)", timeout=20)
+                    assert "FILTERED_BROKER_NOT_READY" in text, "unhealthy status must name the failed proof"
                 finally:
                     os.kill(pid, signal.SIGCONT)
                 run(["exec", "brokers", "--", "true"])
@@ -245,7 +246,13 @@ sys.exit(result.returncode)
         while subprocess.run(["/bin/ps", "-p", str(pid)], stdout=subprocess.DEVNULL).returncode == 0:
             assert time.monotonic() < deadline
             time.sleep(.03)
-        run(["status", "brokers"], expected=1, contains="FILTERED_BROKER_NOT_READY")
+        text, _ = run(["status", "brokers"], contains="(unhealthy)")
+        assert "FILTERED_BROKER_NOT_READY" in text, "unhealthy status must name the failed proof"
+        # The host-side proof alone sees the dead broker: list never connects to the guest.
+        run(["list"], contains="unhealthy")
+        machine, _ = run(["status", "brokers", "--output", "json", "--quiet"])
+        entry = json.loads(machine)["result"]
+        assert entry["instance"]["state"] == "unhealthy" and "FILTERED_BROKER_NOT_READY" in entry["reason"]
         # Existing owner-controlled model state only: no new endpoint/listener or
         # provider request. Future brokers must be prepared under transport proof.
         model_path = state / "model.json"

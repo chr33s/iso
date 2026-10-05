@@ -36,6 +36,12 @@ SPDX-License-Identifier: Apache-2.0
   transport-only; administrative SSH and workspace-transfer targets now retain
   and recheck the same original identity before guest operations. Readiness
   refusals propagate through hooks and agent updates. Full NET-20 is unfinished.
+- **`unhealthy` instance state**: `iso status` reports a running filtered
+  instance whose live readiness proof fails as `unhealthy`, with the failed
+  proof as its reason, instead of failing; `iso list` checks the host side of
+  the same proof without connecting to the guest. Machine output adds the
+  `unhealthy` state, a nullable `reason` on status entries, and the
+  `INSTANCE_UNHEALTHY` error code for commands that need a healthy instance.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

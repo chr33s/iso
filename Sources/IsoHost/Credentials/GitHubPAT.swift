@@ -483,7 +483,7 @@ package struct GitHubHost: Sendable {
         )
       default: break
       }
-      let summary = (error as? ContextError)?.context ?? "\(error)"
+      let summary = error.contextError?.context ?? "\(error)"
       diagnostics.warn("PAT setup failed (\(summary)); falling back to unauthenticated start")
       console.write("continue without GitHub auth? [y/N] ")
       let answer = asciiLowercased((console.readLine() ?? "").trimmingUnicodeWhitespace())

@@ -80,8 +80,8 @@ def exercise(state, binary, config, run):
         _, elapsed = run(["exec", "brokers", "--", "true"], expected=1,
                          contains="FILTERED_EGRESS_NOT_READY", timeout=20)
         assert elapsed < 15, "egress failure exceeded handoff deadline"
-        run(["status", "brokers"], expected=1,
-            contains="FILTERED_EGRESS_NOT_READY", timeout=20)
+        text, _ = run(["status", "brokers"], contains="(unhealthy)", timeout=20)
+        assert "FILTERED_EGRESS_NOT_READY" in text, "unhealthy status must name the failed proof"
 
     def endpoint(instance):
         text, _ = run(["exec", instance, "--", "printenv", "HTTPS_PROXY"], private=True)

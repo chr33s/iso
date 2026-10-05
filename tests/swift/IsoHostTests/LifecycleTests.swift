@@ -239,6 +239,47 @@ private struct FakeInstallation {
   #expect(try backend.runtime().list().isEmpty)
 }
 
+@Test func filteredReadinessFailureIsUnhealthyWhileGateFailuresStayErrors() throws {
+  let install = try FakeInstallation(extra: #", "egress": "filtered""#)
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("health"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+
+  // No companion was started for this boot: the readiness proof fails.
+  let failure = try #require(throws: InstanceUnhealthy.self) { try backend.asRunning(instance) }
+  #expect(failure.instance == instance.name)
+  #expect(failure.reason.hasPrefix("FILTERED_EGRESS_NOT_READY: "))
+  #expect(
+    "\(failure)".hasPrefix(
+      "Instance 'health' is running but cannot be reached safely; `iso stop health`"))
+  guard case .unhealthy(let listed) = try backend.probeHealth(instance) else {
+    Issue.record("a running filtered instance without readiness must list as unhealthy")
+    return
+  }
+  #expect(listed.reason == failure.reason)
+
+  // A changed allowlist is a policy error, not a readiness failure.
+  let changed = backend.reconfigured(
+    install.config.overridingEgress(.filtered, extraHosts: [try ExactHostname("example.com")]))
+  #expect(throws: ContextError.self) { try changed.asRunning(instance) }
+
+  let unfiltered = backend.reconfigured(install.config.overridingEgress(.open, extraHosts: []))
+  guard case .running = try unfiltered.probeHealth(instance) else {
+    Issue.record("an unfiltered running instance has no readiness proof to fail")
+    return
+  }
+  _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
+  guard case .stopped = try backend.probeHealth(instance) else {
+    Issue.record("a stopped instance lists as stopped")
+    return
+  }
+}
+
 @Test func stoppedBootReplacesAllowlistOnlyAfterSuccessfulBoot() throws {
   let install = try FakeInstallation(extra: #", "egress": "filtered""#)
   defer { install.remove() }

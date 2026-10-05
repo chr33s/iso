@@ -127,10 +127,13 @@ struct MachineListResult: Encodable {
 struct MachineStatusEntry: Encodable {
   let instance: MachineInstance
   let usage: Nullable<StatusOutput.Usage>
+  /// The failed readiness proof of an unhealthy instance.
+  let reason: Nullable<String>
 
   init(_ row: Status.Row) {
     instance = MachineInstance(row.instance, row.state)
     usage = Nullable(row.usage.map(StatusOutput.Usage.init))
+    reason = Nullable(row.reason)
   }
 }
 

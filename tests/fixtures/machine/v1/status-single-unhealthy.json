@@ -5,11 +5,11 @@
   "result": {
     "instance": {
       "name": "my-project",
-      "state": "stopped",
+      "state": "unhealthy",
       "image": "default",
       "backend": "apple-container"
     },
     "usage": null,
-    "reason": null
+    "reason": "FILTERED_EGRESS_NOT_READY: egress tunnel is not running for 'my-project'"
   }
 }

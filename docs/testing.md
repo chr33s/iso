@@ -771,6 +771,19 @@ companion, and rejection of a wrong/missing public verification key. Every late
 handoff, previous-boot capability replay, exhaustion and full NET-20/F1
 qualification remain unverified.
 
+### Unhealthy instance state
+
+`filteredReadinessFailureIsUnhealthyWhileGateFailuresStayErrors` boots a
+filtered instance on the fake runtime without a companion: `asRunning` throws
+`InstanceUnhealthy`, `probeHealth` reports the same reason from the host-side
+proof alone, a changed allowlist still fails as an ordinary error, and open
+and stopped instances report `running` and `stopped`. The machine fixtures pin
+the `unhealthy` state and `reason` field, and `errorsClassifyAlongTheContextChain`
+pins `INSTANCE_UNHEALTHY`. Four `instance-*` host faults remove the typed
+error, the readiness-only wrapping, the listing's host proof and the error code.
+The filtered VM gate expects `status` to report a paused or killed broker or
+companion as `unhealthy`, and `list` and machine `status` a killed broker.
+
 ### Signed broker-composition checks
 
 Host `BrokerReadinessTests` and proxy transport `ReadinessTests` verify independent

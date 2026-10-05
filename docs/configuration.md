@@ -609,8 +609,10 @@ workspace-transfer targets carry process-local checks of the original composite
 identity; SSH/SCP, tar/rsync, hooks, editor launch and managed alias publication
 check before using those targets. Readiness refusals abort hooks and agent
 updates instead of becoming ordinary guest-command warnings or unknown versions.
-These are operation-boundary checks, not ongoing supervision. Complete
-unhealthy/listing semantics and full NET-20 remain incomplete.
+These are operation-boundary checks, not ongoing supervision. A failed live
+proof makes `iso status` report the instance `unhealthy` with its reason, and
+`iso list` does the same from the host-side proof alone. Full NET-20 remains
+incomplete.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.

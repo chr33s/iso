@@ -59,11 +59,12 @@ func padded(_ text: String, _ width: Int) -> String {
 
 /// Render the error context chain on one line.
 func oneLine(_ error: any Error) -> String {
-  (error as? ContextError)?.alternate ?? "\(error)"
+  error.contextError?.alternate ?? "\(error)"
 }
 
 enum InstanceState: String {
-  case running, stopped, unknown
+  /// `unhealthy`: the sandbox runs, but its filtered readiness proof failed.
+  case running, stopped, unhealthy, unknown
 }
 
 // MARK: - list
@@ -87,14 +88,21 @@ struct List: MachineCommand {
     try IsoCLI.run { try Self.run(CommandContext.load(global), json: json) }
   }
 
-  /// Sorted by name; a state that cannot be probed is `unknown`, with a warning.
+  /// Sorted by name; a state that cannot be probed is `unknown`, and an
+  /// unhealthy one names its failed proof, each with a warning.
   static func rows(_ context: CommandContext) throws -> [(Instance, InstanceState)] {
     let instances = try context.listInstances().sorted {
       $0.name.rawValue.utf8.lexicographicallyPrecedes($1.name.rawValue.utf8)
     }
     return instances.map { instance -> (Instance, InstanceState) in
       do {
-        return (instance, try context.backend.probeRunning(instance) ? .running : .stopped)
+        switch try context.backend.probeHealth(instance) {
+        case .stopped: return (instance, .stopped)
+        case .running: return (instance, .running)
+        case .unhealthy(let failure):
+          context.diagnostics.warn("'\(instance.name)' is unhealthy: \(failure.reason)")
+          return (instance, .unhealthy)
+        }
       } catch {
         context.diagnostics.warn(
           "Could not determine the state of '\(instance.name)': \(oneLine(error))")
@@ -162,7 +170,16 @@ struct Status: MachineCommand {
         try context.output.writeJSON(StatusOutput(try status(context, instance)))
         return
       }
-      guard let running = try context.backend.asRunning(instance) else {
+      let running: AppleBackend.Running?
+      do {
+        running = try context.backend.asRunning(instance)
+      } catch let failure as InstanceUnhealthy {
+        context.output.out(
+          "Instance '\(instance.name)' (unhealthy)\n  Backend: \(AppleBackend.name)\n  Image: \(instance.image)\n  Reason: \(failure.reason)"
+        )
+        return
+      }
+      guard let running else {
         context.output.out(
           "Instance '\(instance.name)' (stopped)\n  Backend: \(AppleBackend.name)\n  Image: \(instance.image)"
         )
@@ -199,10 +216,18 @@ struct Status: MachineCommand {
     let instance: Instance
     let state: InstanceState
     let usage: ResourceUsage?
+    /// Why an unhealthy instance failed its readiness proof.
+    var reason: String? = nil
   }
 
   static func status(_ context: CommandContext, _ instance: Instance) throws -> Row {
-    if let running = try context.backend.asRunning(instance) {
+    let running: AppleBackend.Running?
+    do {
+      running = try context.backend.asRunning(instance)
+    } catch let failure as InstanceUnhealthy {
+      return Row(instance: instance, state: .unhealthy, usage: nil, reason: failure.reason)
+    }
+    if let running {
       return Row(
         instance: instance, state: .running, usage: ResourceUsage.query(context.ssh, running.target)
       )

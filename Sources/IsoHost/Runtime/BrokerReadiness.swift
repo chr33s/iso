@@ -65,10 +65,11 @@ enum BrokerReadiness {
     return key.value.isValidSignature(signature, for: Data(message.utf8))
   }
 
+  /// Processes, identity and the signed reply on host loopback only; never
+  /// connects to the guest.
   @discardableResult
-  static func require(
-    _ instance: Instance, target: SSHTarget, environment: [String: String],
-    provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
+  static func requireDirect(
+    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
   ) throws -> FilteredReadiness.VerificationKey {
     guard
       ProxyLauncher.recordedProcessAlive(
@@ -88,15 +89,25 @@ enum BrokerReadiness {
         "FILTERED_BROKER_NOT_READY: \(provider.rawValue) readiness identity unavailable",
         cause: error)
     }
-    let port = provider.port(instance)
     let directNonce = randomHex(16)
     guard
-      let response = FilteredReadiness.exchange(port: port, request: request(nonce: directNonce)),
+      let response = FilteredReadiness.exchange(
+        port: provider.port(instance), request: request(nonce: directNonce)),
       verifies(response, nonce: directNonce, provider: provider, policy: policy, key: key)
     else {
       throw HostError(
         "FILTERED_BROKER_NOT_READY: authenticated \(provider.rawValue) companion probe failed")
     }
+    return key
+  }
+
+  @discardableResult
+  static func require(
+    _ instance: Instance, target: SSHTarget, environment: [String: String],
+    provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
+  ) throws -> FilteredReadiness.VerificationKey {
+    let key = try requireDirect(instance, provider: provider, policy: policy)
+    let port = provider.port(instance)
     let guestNonce = randomHex(16)
     let output: ProcessRunner.Output
     do {
@@ -118,16 +129,23 @@ enum BrokerReadiness {
     return key
   }
 
+  /// Every required broker, through guest loopback too for `.guest`.
   @discardableResult
   static func requireAll(
-    _ instance: Instance, config: IsoConfig, target: SSHTarget,
+    _ instance: Instance, config: IsoConfig, scope: FilteredReadiness.Scope,
     environment: [String: String], policy: FilteredHandoff.BootPolicy
   ) throws -> [ProxyProvider: String] {
     var keys: [ProxyProvider: String] = [:]
     for provider in try requiredProviders(instance, config: config) {
-      keys[provider] = try require(
-        instance, target: target, environment: environment, provider: provider, policy: policy
-      ).encoded
+      keys[provider] =
+        switch scope {
+        case .host: try requireDirect(instance, provider: provider, policy: policy).encoded
+        case .guest(let target):
+          try require(
+            instance, target: target, environment: environment, provider: provider,
+            policy: policy
+          ).encoded
+        }
     }
     return keys
   }

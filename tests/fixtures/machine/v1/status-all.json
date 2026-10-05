@@ -17,7 +17,8 @@
           "mem_total_mib": 8192,
           "disk_used_mib": 8192,
           "disk_total_mib": 65536
-        }
+        },
+        "reason": null
       },
       {
         "instance": {
@@ -26,7 +27,18 @@
           "image": "default",
           "backend": "apple-container"
         },
-        "usage": null
+        "usage": null,
+        "reason": null
+      },
+      {
+        "instance": {
+          "name": "project-c",
+          "state": "unhealthy",
+          "image": "default",
+          "backend": "apple-container"
+        },
+        "usage": null,
+        "reason": "FILTERED_EGRESS_NOT_READY: egress tunnel is not running for 'project-c'"
       }
     ]
   }

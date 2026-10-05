@@ -99,6 +99,30 @@ package final class AppleBackend: Sendable {
     }
   }
 
+  /// For listings: `probeRunning` plus, for a running filtered sandbox, the
+  /// host-side half of its readiness proof (boot, policy, owner, companion,
+  /// broker and tunnel processes, and signed direct replies). It never
+  /// connects to the guest; `asRunning` adds the guest-loopback proofs.
+  package func probeHealth(_ instance: Instance) throws -> InstanceHealth {
+    guard try probeRunning(instance) else { return .stopped }
+    guard config.egress == .filtered else { return .running }
+    let sidecar = try ownedSidecar(instance)
+    let runtime = try runtime()
+    let inspection = try runtime.inspect(sidecar.machineID)
+    guard inspection.status == .running else {
+      throw RuntimeError.operationUncertain(
+        "sandbox \(sidecar.machineID) is \(inspection.status.rawValue)")
+    }
+    do {
+      _ = try filteredIdentity(
+        instance, sidecar: sidecar, runtime: runtime, inspection: inspection,
+        scope: .host, proof: .composite)
+      return .running
+    } catch let failure as ReadinessFailure {
+      return .unhealthy(InstanceUnhealthy(instance.name, cause: failure.cause))
+    }
+  }
+
   package func isRunning(_ instance: Instance) -> Bool {
     guard let sidecar = try? MachineSidecar.loadIfPresent(instance),
       let inspection = try? runtime().inspect(sidecar.machineID)
@@ -162,12 +186,45 @@ package final class AppleBackend: Sendable {
       let target = try SSHTarget.pinned(
         config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
         user: sidecar.guestUser)
-      let sandboxDir = "\(runtime.root)/sandboxes/\(sidecar.machineID.rawValue)"
-      let bootPolicy =
-        config.egress == .filtered ? try FilteredHandoff.recordedPolicy(instance) : nil
-      let live = EgressLease.liveIdentity(at: sandboxDir + "/live.json")
+      let handoffIdentity = try filteredIdentity(
+        instance, sidecar: sidecar, runtime: runtime, inspection: inspection,
+        scope: .guest(target), proof: proof)
+      let expected = Running(
+        instance: instance, sidecar: sidecar, ready: ready, target: target,
+        handoffIdentity: handoffIdentity)
+      let checkedTarget = WorkloadHandoff.bind(expected) {
+        try self.asRunning(instance, proof: proof)
+      }
+      return Running(
+        instance: instance, sidecar: sidecar, ready: ready, target: checkedTarget,
+        handoffIdentity: handoffIdentity)
+    } catch let failure as ReadinessFailure {
+      throw InstanceUnhealthy(instance.name, cause: failure.cause)
+    } catch {
+      throw Self.unreachable(instance.name, cause: error)
+    }
+  }
+
+  static func unreachable(_ instance: InstanceName, cause: any Error) -> ContextError {
+    ContextError(
+      "Instance '\(instance)' is running but cannot be reached safely; `iso stop \(instance)` stops it without connecting to the guest",
+      cause: cause)
+  }
+
+  /// The filtered half of the handoff proof; nil for other egress modes.
+  /// Readiness failures are `ReadinessFailure`, so callers can report the
+  /// instance unhealthy; an unreadable boot-policy record is not one.
+  private func filteredIdentity(
+    _ instance: Instance, sidecar: MachineSidecar, runtime: SandboxRuntime,
+    inspection: SandboxInspection, scope: FilteredReadiness.Scope, proof: HandoffProof
+  ) throws -> WorkloadHandoff.Identity? {
+    guard config.egress == .filtered else { return nil }
+    let sandboxDir = "\(runtime.root)/sandboxes/\(sidecar.machineID.rawValue)"
+    let bootPolicy = try FilteredHandoff.recordedPolicy(instance)
+    let live = EgressLease.liveIdentity(at: sandboxDir + "/live.json")
+    return try ReadinessFailure.wrapping {
       if let failure = FilteredHandoff.prove(
-        filtered: config.egress == .filtered,
+        filtered: true,
         recordedBootID: bootPolicy?.bootID,
         liveBootID: inspection.live?.bootId,
         ownerLockHeld: EgressLease.ownerLockHeld(at: sandboxDir + "/owner.lock"),
@@ -185,35 +242,21 @@ package final class AppleBackend: Sendable {
           "FILTERED_EGRESS_NOT_READY: \(failure) for '\(instance.name)'. The VM is still running; `iso stop \(instance.name)` does not connect to the guest."
         )
       }
-      let handoffIdentity: WorkloadHandoff.Identity?
-      if config.egress == .filtered {
-        guard let bootPolicy else {
-          throw HostError("FILTERED_EGRESS_NOT_READY: missing boot policy; restart the instance")
-        }
-        let egressKey = try FilteredReadiness.require(
-          instance, target: target, environment: environment, policy: bootPolicy)
-        let brokerKeys = try proof.brokerKeys {
-          try BrokerReadiness.requireAll(
-            instance, config: config, target: target, environment: environment, policy: bootPolicy)
-        }
-        handoffIdentity = .init(
-          policy: bootPolicy, egressKey: egressKey.encoded, brokerKeys: brokerKeys)
-      } else {
-        handoffIdentity = nil
+      guard let bootPolicy else {
+        throw HostError("FILTERED_EGRESS_NOT_READY: missing boot policy; restart the instance")
       }
-      let expected = Running(
-        instance: instance, sidecar: sidecar, ready: ready, target: target,
-        handoffIdentity: handoffIdentity)
-      let checkedTarget = WorkloadHandoff.bind(expected) {
-        try self.asRunning(instance, proof: proof)
+      let egressKey =
+        switch scope {
+        case .host: try FilteredReadiness.requireDirect(instance, policy: bootPolicy)
+        case .guest(let target):
+          try FilteredReadiness.require(
+            instance, target: target, environment: environment, policy: bootPolicy)
+        }
+      let brokerKeys = try proof.brokerKeys {
+        try BrokerReadiness.requireAll(
+          instance, config: config, scope: scope, environment: environment, policy: bootPolicy)
       }
-      return Running(
-        instance: instance, sidecar: sidecar, ready: ready, target: checkedTarget,
-        handoffIdentity: handoffIdentity)
-    } catch {
-      throw ContextError(
-        "Instance '\(instance.name)' is running but cannot be reached safely; `iso stop \(instance.name)` stops it without connecting to the guest",
-        cause: error)
+      return .init(policy: bootPolicy, egressKey: egressKey.encoded, brokerKeys: brokerKeys)
     }
   }
 
@@ -381,7 +424,7 @@ package struct ContextError: Error, CustomStringConvertible {
     var causes: [String] = []
     var next: (any Error)? = cause
     while let error = next {
-      if let wrapped = error as? ContextError {
+      if let wrapped = error.contextError {
         causes.append(wrapped.context)
         next = wrapped.cause
       } else {
@@ -399,7 +442,7 @@ package struct ContextError: Error, CustomStringConvertible {
     var parts = [context]
     var next: (any Error)? = cause
     while let error = next {
-      if let wrapped = error as? ContextError {
+      if let wrapped = error.contextError {
         parts.append(wrapped.context)
         next = wrapped.cause
       } else {

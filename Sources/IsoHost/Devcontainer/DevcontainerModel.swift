@@ -353,5 +353,5 @@ func ioErrorText(_ code: Int32) -> String {
 
 /// anyhow `to_string()`: the outermost message only.
 func topMessage(_ error: any Error) -> String {
-  (error as? ContextError)?.context ?? "\(error)"
+  error.contextError?.context ?? "\(error)"
 }

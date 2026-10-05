@@ -123,12 +123,12 @@ func brokerReadinessRejectsSignedWrongFieldsAndForgery(change: String) throws {
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
   try BrokerReadiness.requireAll(
-    instance, config: testConfig(""), target: guest.target, environment: [:],
+    instance, config: testConfig(""), scope: .guest(guest.target), environment: [:],
     policy: .init(bootID: boot, policyHash: hash))
   let configured = try testConfig(#""proxy": {"anthropic": {"credential": "cmd:exit 93"}}"#)
   let error = try #require(throws: HostError.self) {
     try BrokerReadiness.requireAll(
-      instance, config: configured, target: guest.target, environment: [:],
+      instance, config: configured, scope: .guest(guest.target), environment: [:],
       policy: .init(bootID: boot, policyHash: hash))
   }
   #expect(error.message.contains("anthropic process or tunnel is not running"))

@@ -107,8 +107,9 @@ in [`tests/fixtures/machine/v1/`](../tests/fixtures/machine/v1/).
 {"name": "my-project", "state": "running", "image": "default", "backend": "apple-container"}
 ```
 
-`state` is `running`, `stopped`, or `unknown` (a state that could not be
-probed; `list` and the bare `status` report it rather than failing).
+`state` is `running`, `stopped`, `unhealthy` (a running `egress: "filtered"`
+sandbox whose live readiness proof failed), or `unknown` (a state that could
+not be probed; `list` and the bare `status` report it rather than failing).
 
 **WorkspaceRef**
 
@@ -157,12 +158,16 @@ open-ended rather than hard-coding the current two.
 ### list
 
 `{"instances": [InstanceRef, ...]}`, sorted by name. The state comes from the
-runtime without connecting to the guest.
+runtime without connecting to the guest; for a running filtered instance,
+`unhealthy` reflects the host side of its readiness proof only.
 
 ### status
 
-With a name: `{"instance": InstanceRef, "usage": Usage|null}`. Without one:
-`{"instances": [{"instance": ..., "usage": ...}, ...]}`. `Usage` is
+With a name: `{"instance": InstanceRef, "usage": Usage|null, "reason": string|null}`.
+Without one: `{"instances": [{"instance": ..., "usage": ..., "reason": ...}, ...]}`.
+`reason` names the failed readiness proof of an `unhealthy` instance (for
+example `FILTERED_EGRESS_NOT_READY: ...`) and is `null` otherwise; `status`
+runs the full proof, including the guest-loopback replies. `Usage` is
 `{"load_1m", "mem_used_mib", "mem_total_mib", "disk_used_mib", "disk_total_mib"}`
 (`load_1m` may be `null`); `usage` is `null` when stopped or unavailable.
 
@@ -242,6 +247,7 @@ instance's boot policy, or a boot policy record that cannot be read, is
 | `AMBIGUOUS_INSTANCE` | yes | Several match | `instances`, `resolution`: the argument of this command that picks one (e.g. `<NAME>`), or `null` when none does (`up` with several instances sharing the project) |
 | `INSTANCE_ALREADY_RUNNING` | no | The command needs a stopped instance | `name` |
 | `INSTANCE_NOT_RUNNING` | no | The command needs a running instance | `name`, or `null` when none is named |
+| `INSTANCE_UNHEALTHY` | no | The instance runs but its filtered readiness proof failed; `iso stop` and a restart re-establish it | `name` |
 | `INSTANCE_INCOMPATIBLE` | no | The existing instance cannot take the requested creation options, transport, or (when running) egress policy, or its boot policy record cannot be read | `name` |
 | `PROJECT_ALREADY_ASSOCIATED` | no | The project or repository belongs to another instance | `name` (the associated instance) |
 | `INTERACTION_REQUIRED` | yes | A decision is needed; see [Non-interactive](#non-interactive) | `kind`, ... |

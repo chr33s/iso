@@ -99,20 +99,38 @@ enum FilteredReadiness {
     return key.value.isValidSignature(signature, for: Data(message.utf8))
   }
 
+  /// How far a readiness proof reaches: host loopback alone, or also the
+  /// guest's loopback through the pinned target.
+  enum Scope {
+    case host
+    case guest(SSHTarget)
+  }
+
+  /// The signed reply on host loopback only; never connects to the guest.
+  @discardableResult
+  static func requireDirect(_ instance: Instance, policy: FilteredHandoff.BootPolicy) throws
+    -> VerificationKey
+  {
+    let key = try readVerificationKey(at: keyPath(instance))
+    let capability = try readIdentity(at: EgressPorts.capabilityPath(instance))
+    let directNonce = randomHex(16)
+    guard
+      let direct = exchange(
+        port: EgressPorts.port(instance),
+        request: request(nonce: directNonce, capability: capability)),
+      verifies(direct, nonce: directNonce, policy: policy, key: key)
+    else { throw HostError("FILTERED_EGRESS_NOT_READY: authenticated companion probe failed") }
+    return key
+  }
+
   @discardableResult
   static func require(
     _ instance: Instance, target: SSHTarget, environment: [String: String],
     policy: FilteredHandoff.BootPolicy
   ) throws -> VerificationKey {
-    let key = try readVerificationKey(at: keyPath(instance))
+    let key = try requireDirect(instance, policy: policy)
     let capability = try readIdentity(at: EgressPorts.capabilityPath(instance))
     let port = EgressPorts.port(instance)
-    let directNonce = randomHex(16)
-    guard
-      let direct = exchange(
-        port: port, request: request(nonce: directNonce, capability: capability)),
-      verifies(direct, nonce: directNonce, policy: policy, key: key)
-    else { throw HostError("FILTERED_EGRESS_NOT_READY: authenticated companion probe failed") }
     let guestNonce = randomHex(16)
     let output: ProcessRunner.Output
     do {

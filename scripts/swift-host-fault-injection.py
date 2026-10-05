@@ -795,6 +795,19 @@ FAULTS = [
      "guard recordedBootID == liveBootID else { return .bootChanged }",
      "if false { return .bootChanged }",
      "filteredHandoffRefusesAChangedBoot"),
+    ("instance-unhealthy-typed", "Sources/IsoHost/Runtime/AppleBackend.swift",
+     "throw InstanceUnhealthy(instance.name, cause: failure.cause)",
+     "throw Self.unreachable(instance.name, cause: failure.cause)",
+     "filteredReadinessFailureIsUnhealthyWhileGateFailuresStayErrors"),
+    ("instance-unhealthy-readiness-only", "Sources/IsoHost/Runtime/InstanceHealth.swift",
+     "do { return try body() } catch { throw ReadinessFailure(cause: error) }",
+     "return try body()", "filteredReadinessFailureIsUnhealthyWhileGateFailuresStayErrors"),
+    ("instance-health-host-proof", "Sources/IsoHost/Runtime/AppleBackend.swift",
+     "guard config.egress == .filtered else { return .running }", "if true { return .running }",
+     "filteredReadinessFailureIsUnhealthyWhileGateFailuresStayErrors"),
+    ("instance-unhealthy-code", "Sources/IsoCLI/Support/MachineErrors.swift",
+     "return (.instanceUnhealthy, .instance(name: unhealthy.instance.rawValue))",
+     "return (.operationFailed, nil)", "errorsClassifyAlongTheContextChain"),
 ]
 
 

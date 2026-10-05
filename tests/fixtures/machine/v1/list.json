@@ -15,6 +15,12 @@
         "state": "stopped",
         "image": "default",
         "backend": "apple-container"
+      },
+      {
+        "name": "project-c",
+        "state": "unhealthy",
+        "image": "default",
+        "backend": "apple-container"
       }
     ]
   }

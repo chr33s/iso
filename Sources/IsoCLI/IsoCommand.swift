@@ -216,7 +216,7 @@ enum ValidateReport {
               let login = try probe.userLogin(token: token)
               output.out("    probe: /user as '\(sanitizeForDisplay(login))'")
             } catch {
-              output.out("    probe: FAILED (\((error as? ContextError)?.context ?? "\(error)"))")
+              output.out("    probe: FAILED (\(error.contextError?.context ?? "\(error)"))")
             }
           }
         } catch {

@@ -99,7 +99,7 @@ package struct ImageManifest: Sendable, Equatable, Codable {
 
 /// anyhow `{:#}`-style single line for any error.
 package func oneLine(_ error: any Error) -> String {
-  (error as? ContextError)?.alternate ?? "\(error)"
+  error.contextError?.alternate ?? "\(error)"
 }
 
 /// The generated build context: only a Dockerfile and reviewed provisioning

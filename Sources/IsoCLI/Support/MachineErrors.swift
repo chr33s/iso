@@ -14,6 +14,7 @@ enum MachineErrorCode: String, Encodable, Sendable {
   case ambiguousInstance = "AMBIGUOUS_INSTANCE"
   case instanceAlreadyRunning = "INSTANCE_ALREADY_RUNNING"
   case instanceNotRunning = "INSTANCE_NOT_RUNNING"
+  case instanceUnhealthy = "INSTANCE_UNHEALTHY"
   case instanceIncompatible = "INSTANCE_INCOMPATIBLE"
   case projectAlreadyAssociated = "PROJECT_ALREADY_ASSOCIATED"
 
@@ -165,7 +166,7 @@ struct MachineFailure: Encodable, Sendable {
         self.init(code: code, message: message, details: details)
         return
       }
-      next = (current as? ContextError)?.cause
+      next = current.contextError?.cause
     }
     self.init(code: .operationFailed, message: message, details: nil)
   }
@@ -176,6 +177,8 @@ struct MachineFailure: Encodable, Sendable {
       return (.invalidArgument, nil)
     case let failure as HostFailure:
       return classify(failure.reason)
+    case let unhealthy as InstanceUnhealthy:
+      return (.instanceUnhealthy, .instance(name: unhealthy.instance.rawValue))
     case let runtime as RuntimeError:
       return classify(runtime).map { ($0, nil) }
     default:

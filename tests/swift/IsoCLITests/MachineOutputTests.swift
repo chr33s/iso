@@ -61,12 +61,14 @@ private let copyWorkspace = WorkspaceState(
 @Test func listAndStatusMatchTheV1Fixtures() throws {
   let a = try instance("project-a")
   let b = try instance("project-b")
+  let c = try instance("project-c")
   try expectFixture(
     "list",
     MachineEnvelope(
       command: "list", ok: true,
       body: MachineListResult(instances: [
         MachineInstance(a, .running), MachineInstance(b, .stopped),
+        MachineInstance(c, .unhealthy),
       ])))
   let one = try instance()
   try expectFixture(
@@ -82,12 +84,25 @@ private let copyWorkspace = WorkspaceState(
       body: MachineStatusResult.one(
         MachineStatusEntry(Status.Row(instance: one, state: .stopped, usage: nil)))))
   try expectFixture(
+    "status-single-unhealthy",
+    MachineEnvelope(
+      command: "status", ok: true,
+      body: MachineStatusResult.one(
+        MachineStatusEntry(
+          Status.Row(
+            instance: one, state: .unhealthy, usage: nil,
+            reason: "FILTERED_EGRESS_NOT_READY: egress tunnel is not running for 'my-project'")))))
+  try expectFixture(
     "status-all",
     MachineEnvelope(
       command: "status", ok: true,
       body: MachineStatusResult.all([
         MachineStatusEntry(Status.Row(instance: a, state: .running, usage: usage)),
         MachineStatusEntry(Status.Row(instance: b, state: .stopped, usage: nil)),
+        MachineStatusEntry(
+          Status.Row(
+            instance: c, state: .unhealthy, usage: nil,
+            reason: "FILTERED_EGRESS_NOT_READY: egress tunnel is not running for 'project-c'")),
       ])))
 }
 
@@ -258,6 +273,11 @@ private let copyWorkspace = WorkspaceState(
       .appleBootTimeout
     ),
     (ContextError("outer", cause: HostFailure(.instanceNotFound, "x")), .instanceNotFound),
+    (InstanceUnhealthy(name, cause: HostError("FILTERED_EGRESS_NOT_READY: x")), .instanceUnhealthy),
+    (
+      ContextError("outer", cause: InstanceUnhealthy(name, cause: HostError("x"))),
+      .instanceUnhealthy
+    ),
     (HostError("untyped"), .operationFailed),
     (IsoCore.ValidationError("bad"), .invalidArgument),
     (ArgumentParser.ValidationError("bad"), .invalidArgument),
@@ -268,6 +288,12 @@ private let copyWorkspace = WorkspaceState(
   let failure = MachineFailure(HostFailure(.instanceNotRunning(name), "x"))
   #expect(failure.details == .instance(name: "a"))
   #expect(MachineFailure(HostFailure(.instanceNotRunning(nil), "x")).details == nil)
+  let unhealthy = MachineFailure(InstanceUnhealthy(name, cause: HostError("why")))
+  #expect(unhealthy.details == .instance(name: "a"))
+  #expect(
+    unhealthy.message
+      == "Instance 'a' is running but cannot be reached safely; `iso stop a` stops it without connecting to the guest: why"
+  )
 }
 
 @Test func errorMessagesAreSanitizedAndBounded() throws {

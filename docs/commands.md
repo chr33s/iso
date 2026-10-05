@@ -397,7 +397,7 @@ With the global `--output json`, prints one `iso.machine/v1` document instead; s
 
 ### `list`
 
-Print every instance with its state: `running`, `stopped`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`iso-sandbox inspect`). Use `status` instead when you need resource usage or per-instance detail.
+Print every instance with its state: `running`, `stopped`, `unhealthy`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`iso-sandbox inspect`). For a running `egress: "filtered"` instance it also checks the host side of the readiness proof (boot, policy, owner, companion, broker and tunnel processes, and their signed host-loopback replies) and lists a failure as `unhealthy` with a warning naming it. Use `status` instead when you need resource usage, per-instance detail, or the guest-loopback proofs.
 
 ```
 iso list
@@ -414,7 +414,7 @@ With the global `--output json`, prints one `iso.machine/v1` document instead; s
 
 ### `status`
 
-Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance.
+Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance. A running filtered instance whose live readiness proof fails, including the guest-loopback proofs, is reported as `unhealthy` with the failed proof as its reason; the command still succeeds, while commands that need the guest refuse it.
 
 ```
 iso status [NAME]
@@ -432,7 +432,7 @@ iso status my-project
 
 With `--json`, a bare `iso status` emits a JSON array and `iso status NAME`
 emits a single object. Each carries the common fields — `name`, `state`
-(`running`/`stopped`, or `unknown` in the bare-`status` array), `image`, `backend`
+(`running`/`stopped`/`unhealthy`, or `unknown` in the bare-`status` array), `image`, `backend`
 (always `apple-container`), and `usage`
 (raw MiB / load, or `null` when stopped or the query fails). The rich
 single-instance text report (guest IP, PID, SSH port, …) is text-only. JSON goes

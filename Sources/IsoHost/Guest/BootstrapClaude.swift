@@ -369,7 +369,7 @@ enum ClaudeSettings {
 
 /// anyhow `{:#}`.
 func oneLineError(_ error: any Error) -> String {
-  (error as? ContextError)?.alternate ?? "\(error)"
+  error.contextError?.alternate ?? "\(error)"
 }
 
 extension AgentBootstrap {
