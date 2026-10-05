@@ -807,6 +807,18 @@ pointing the PID file or identity at the other live master fails, and stopping
 the tunnel removes the identity. Four `tunnel-identity-*` faults remove the
 control-path, PID-file, destination and cleanup checks.
 
+`supervisedWorkloadEndsWhenItsProofIsLost` runs command, exec and reporting
+workloads under a 100 ms supervisor: a healthy workload completes while being
+re-proved, and revoking the proof mid-run kills a 20-second guest command
+before it finishes and reports the readiness failure.
+`onlyFilteredWorkloadsAreSupervised` pins supervision to filtered instances,
+and `egressLeaseSupervisesOnlyWhatItHasSeen` the lease's startup and loss
+rules. Five `session-supervision-*` and `egress-lease-supervision-*` faults
+remove the cancellation hook, the periodic recheck, the filtered selection and
+the lease's loss and startup rules. The filtered VM gate starts an instance
+with a loopback port forward, kills its egress tunnel, and expects the lease
+and companion to exit, the forward master to close and handoffs to be refused.
+
 ### Signed broker-composition checks
 
 Host `BrokerReadinessTests` and proxy transport `ReadinessTests` verify independent

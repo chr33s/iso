@@ -302,6 +302,30 @@ func egressLeaseRejectsMalformedSessionDeadlines(deadlineJSON: String) throws {
   #expect(!EgressLease.sessionOpen(recordPath: root, now: Date()))
 }
 
+@Test func egressLeaseSupervisesOnlyWhatItHasSeen() {
+  var supervision = EgressLease.Supervision()
+  func holds(_ value: inout EgressLease.Supervision, _ companion: Bool, _ tunnel: Bool) -> Bool {
+    value.holds(companionAlive: companion, tunnelAlive: tunnel)
+  }
+  // Startup spawns the lease before the companion and tunnel exist.
+  #expect(holds(&supervision, false, false))
+  #expect(holds(&supervision, true, false))
+  #expect(supervision.companionSeen && !supervision.tunnelSeen)
+  #expect(holds(&supervision, true, true))
+  var lostTunnel = supervision
+  #expect(!holds(&lostTunnel, true, false))
+  var lostCompanion = supervision
+  #expect(!holds(&lostCompanion, false, true))
+  #expect(holds(&supervision, true, true))
+}
+
+@Test func closingForwardsWithoutAMasterIsANoOp() throws {
+  let directory = try scratchDirectory("lease-forwards")
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  EgressLease.closeForwards(directory: directory)
+  #expect(try FileManager.default.contentsOfDirectory(atPath: directory).isEmpty)
+}
+
 @Test func egressLeaseStopsWhenTheRecordedOwnerChanges() {
   #expect(
     EgressLease.stillOwns(directory: "/no/such/instance", machineID: "missing", ownerPID: 1)

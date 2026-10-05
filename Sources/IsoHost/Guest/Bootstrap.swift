@@ -377,7 +377,10 @@ package struct AgentBootstrap: Sendable {
     let revalidate: @Sendable () throws -> Void = {
       try WorkloadHandoff.require(running) { try backend.asRunning(running.instance) }
     }
-    return try WorkloadSession(session: session, revalidate: revalidate)
+    return try WorkloadSession(
+      session: session,
+      supervision: SessionSupervisor.interval(for: running),
+      revalidate: revalidate)
   }
 
   /// Retains the running target's proof across host-side environment preparation.

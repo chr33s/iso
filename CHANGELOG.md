@@ -57,6 +57,11 @@ SPDX-License-Identifier: Apache-2.0
   to still be that exact `ssh` master for this guest; a reused PID or another
   `ssh` no longer passes. Filtered instances started by an older `iso` report
   `unhealthy` until restarted.
+- **Supervised filtered sessions**: while a shell, exec, Claude, Codex or
+  `iso run` workload runs on a filtered instance, `iso` repeats its readiness
+  proof every ten seconds and ends the session when it fails. The per-boot
+  egress lease stops renewing, so the grant expires, and closes the instance's
+  port forwards, once a companion or egress tunnel it has seen is lost.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

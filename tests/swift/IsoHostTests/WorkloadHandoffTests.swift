@@ -158,3 +158,66 @@ func workloadHandoffRequiresFreshUnchangedIdentity(change: String) throws {
     throw HostError("nonfiltered compatibility should not re-probe")
   }
 }
+
+private enum SupervisedLaunch: CaseIterable, Sendable {
+  case command, exec, reporting
+
+  func launch(_ guest: FakeGuest, _ session: WorkloadSession, _ command: [String]) throws {
+    switch self {
+    case .command:
+      try InteractiveSSH.runCommand(
+        guest.client, session, command, diagnostics: guest.sink.diagnostics)
+    case .exec:
+      try InteractiveSSH.exec(guest.client, session, command, diagnostics: guest.sink.diagnostics)
+    case .reporting:
+      _ = try InteractiveSSH.runReporting(
+        guest.client, session, command, workingDirectory: GuestPath("/"),
+        allocatePTY: false, diagnostics: guest.sink.diagnostics)
+    }
+  }
+}
+
+@Test(arguments: SupervisedLaunch.allCases)
+private func supervisedWorkloadEndsWhenItsProofIsLost(launch: SupervisedLaunch) throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let state = Mutex((healthy: true, checks: 0))
+  let session = try WorkloadSession(
+    session: SSHSession(target: guest.target), supervision: .milliseconds(100)
+  ) {
+    let healthy = state.withLock { value in
+      value.checks += 1
+      return value.healthy
+    }
+    guard healthy else { throw HostError("test readiness revoked") }
+  }
+  // A healthy supervised workload runs to completion while being re-proved.
+  try launch.launch(guest, session, ["sleep", "0.5"])
+  #expect(state.withLock { $0.checks } > 2)
+
+  let marker = guest.root + "/survived"
+  Thread.detachNewThread {
+    usleep(300_000)
+    state.withLock { $0.healthy = false }
+  }
+  let started = ContinuousClock.now
+  let error = try #require(throws: (any Error).self) {
+    try launch.launch(guest, session, ["sh", "-c", "sleep 20; touch '\(marker)'"])
+  }
+  #expect(ContinuousClock.now - started < .seconds(10))
+  #expect(
+    "\(error)".contains("Ended the guest session: its instance readiness proof no longer holds"))
+  #expect("\(error)".contains("test readiness revoked"))
+  #expect(!FileManager.default.fileExists(atPath: marker))
+}
+
+@Test func onlyFilteredWorkloadsAreSupervised() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let identity = WorkloadHandoff.Identity(
+    policy: .init(bootID: "boot", policyHash: "policy"), egressKey: "key", brokerKeys: [:])
+  #expect(
+    SessionSupervisor.interval(for: try workloadRunning(guest, identity: identity))
+      == SessionSupervisor.interval)
+  #expect(SessionSupervisor.interval(for: try workloadRunning(guest, identity: nil)) == nil)
+}

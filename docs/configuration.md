@@ -613,7 +613,11 @@ In local model mode, each local-model reverse tunnel the boot started joins the
 composite proof: its recorded `ssh` process must be alive and recorded for this
 guest and a wanted destination. Startup refreshes the managed alias and starts
 port forwards only after the composite proof, and `iso up` proves a running instance before reusing it.
-These are operation-boundary checks, not ongoing supervision. A failed live
+While a filtered workload launched by `iso` runs, the proof is repeated every
+ten seconds and a failure ends the session. The egress lease closes port
+forwards and stops renewing once a companion or egress tunnel it has seen is
+lost. Sessions opened outside `iso` (the managed alias, editor Remote-SSH)
+are not supervised. A failed live
 proof makes `iso status` report the instance `unhealthy` with its reason, and
 `iso list` does the same from the host-side proof alone. Full NET-20 remains
 incomplete.

@@ -319,9 +319,14 @@ is read by other programs, so it is a disclosure boundary like stderr:
   and agent updates propagate it rather than warn-and-continue. Best-effort
   capture/probe APIs return no result/false without launching the operation;
   subsequent transfer fallbacks must recheck. Local control-master cleanup is
-  still permitted after refusal. These checks do not supervise already launched
-  processes or make direct external SSH consumers use host readiness checks;
-  this is not full NET-20.
+  still permitted after refusal. While a filtered workload's `ssh` runs, `iso`
+  repeats the same proof every ten seconds and kills the session (the `ssh` and
+  its descendants) when it no longer holds. The per-boot egress lease also
+  supervises the companion and egress tunnel it has seen: losing either ends
+  the lease, so the grant expires, and closes the instance's `ssh -L` forward
+  master. Direct external SSH through the managed alias, and editor Remote-SSH
+  sessions, do not pass through `iso`; they are not supervised, and `iso status`
+  reports the instance `unhealthy` instead.
 
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in

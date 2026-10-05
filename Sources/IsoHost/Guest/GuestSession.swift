@@ -5,6 +5,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 
 /// Environment variables forwarded to the guest with `SendEnv`: names go
 /// on the ssh argv, values only into ssh's own environment. Every value is
@@ -57,17 +58,97 @@ package struct SSHSession: Sendable {
 package struct WorkloadSession: Sendable {
   fileprivate var session: SSHSession
   fileprivate let revalidate: @Sendable () throws -> Void
+  /// How often a running workload re-proves its instance; nil when there is
+  /// no live proof to supervise (a nonfiltered instance).
+  fileprivate let supervision: Duration?
 
-  init(session: SSHSession, revalidate: @escaping @Sendable () throws -> Void) throws {
+  init(
+    session: SSHSession, supervision: Duration? = nil,
+    revalidate: @escaping @Sendable () throws -> Void
+  ) throws {
     try revalidate()
     self.session = session
+    self.supervision = supervision
     self.revalidate = revalidate
+  }
+
+  /// Spawns the workload's ssh under supervision: while it runs, the proof is
+  /// repeated, and a lost proof kills the ssh and its descendants and fails
+  /// with that readiness error instead of letting the session outlive it.
+  fileprivate func attached(
+    _ client: SSHClient, _ request: ProcessRunner.Request, inheritStdin: Bool
+  ) throws -> ProcessRunner.Termination {
+    guard let supervision else {
+      return try client.runner.attached(request, inheritStdin: inheritStdin, deadline: nil)
+    }
+    let supervisor = SessionSupervisor(revalidate: revalidate, interval: supervision)
+    var supervised = request
+    supervised.isCancelled = { supervisor.lost }
+    do {
+      let termination = try client.runner.attached(
+        supervised, inheritStdin: inheritStdin, deadline: nil)
+      if let failure = supervisor.finish() { throw SessionSupervisor.ended(failure) }
+      return termination
+    } catch let error as GuestHandoffFailure {
+      throw error
+    } catch {
+      if let failure = supervisor.finish() { throw SessionSupervisor.ended(failure) }
+      throw error
+    }
   }
 
   package var target: SSHTarget { session.target }
   package var env: EnvForward {
     get { session.env }
     set { session.env = newValue }
+  }
+}
+
+/// Re-proves a running workload on its own thread until finished.
+final class SessionSupervisor: Sendable {
+  /// The production interval for filtered workloads.
+  static let interval: Duration = .seconds(10)
+
+  /// Only a filtered instance has a live proof to supervise.
+  static func interval(for running: AppleBackend.Running) -> Duration? {
+    running.handoffIdentity == nil ? nil : interval
+  }
+
+  private let state = Mutex<(failure: (any Error)?, finished: Bool)>((nil, false))
+
+  init(revalidate: @escaping @Sendable () throws -> Void, interval: Duration) {
+    Thread.detachNewThread { [self] in
+      while true {
+        let wake = ContinuousClock.now + interval
+        while ContinuousClock.now < wake {
+          if state.withLock({ $0.finished }) { return }
+          usleep(50_000)
+        }
+        if state.withLock({ $0.finished }) { return }
+        do {
+          try revalidate()
+        } catch {
+          state.withLock { $0.failure = $0.failure ?? error }
+          return
+        }
+      }
+    }
+  }
+
+  var lost: Bool { state.withLock { $0.failure != nil } }
+
+  /// Stops supervising; the failure that ended the session, if any.
+  func finish() -> (any Error)? {
+    state.withLock {
+      $0.finished = true
+      return $0.failure
+    }
+  }
+
+  static func ended(_ failure: any Error) -> GuestHandoffFailure {
+    GuestHandoffFailure(
+      cause: ContextError(
+        "Ended the guest session: its instance readiness proof no longer holds", cause: failure))
   }
 }
 
@@ -256,8 +337,14 @@ package enum InteractiveSSH {
       ? session.sshOptions + ["-e", "~", "-t", session.target.address, remote]
       : session.sshOptions + [session.target.address, remote]
     try workload.revalidate()
-    let termination = try client.runner.attached(
-      client.request(ssh, arguments, environment: environment), inheritStdin: true, deadline: nil)
+    let termination: ProcessRunner.Termination
+    do {
+      termination = try workload.attached(
+        client, client.request(ssh, arguments, environment: environment), inheritStdin: true)
+    } catch {
+      if allocatePTY { restoreTerminal(client) }
+      throw error
+    }
     if allocatePTY && !termination.succeeded { restoreTerminal(client) }
     return termination
   }
@@ -280,9 +367,15 @@ package enum InteractiveSSH {
     var environment = session.env.overlay(client.environment)
     environment["TERM"] = guestTerm(client.environment)
     try workload.revalidate()
-    let termination = try client.runner.attached(
-      client.request(ssh, arguments(session, remote: remote), environment: environment),
-      inheritStdin: true, deadline: nil)
+    let termination: ProcessRunner.Termination
+    do {
+      termination = try workload.attached(
+        client, client.request(ssh, arguments(session, remote: remote), environment: environment),
+        inheritStdin: true)
+    } catch {
+      restoreTerminal(client)
+      throw error
+    }
     if !termination.succeeded {
       diagnostics.warn("SSH session exited with status: \(termination)")
       restoreTerminal(client)
@@ -297,11 +390,12 @@ package enum InteractiveSSH {
     diagnostics.log(.info, "Running (non-interactive): \(remote)")
     guard let ssh = client.sshExecutable() else { throw HostError("Failed to launch SSH") }
     try workload.revalidate()
-    let termination = try client.runner.attached(
+    let termination = try workload.attached(
+      client,
       client.request(
         ssh, session.sshOptions + [session.target.address, remote],
         environment: session.env.overlay(client.environment)),
-      inheritStdin: true, deadline: nil)
+      inheritStdin: true)
     guard termination.succeeded else {
       throw HostError("Remote command exited with status: \(termination)")
     }
@@ -317,11 +411,12 @@ package enum InteractiveSSH {
     diagnostics.debug("exec: \(remote)")
     guard let ssh = client.sshExecutable() else { throw HostError("Failed to launch SSH") }
     try workload.revalidate()
-    let termination = try client.runner.attached(
+    let termination = try workload.attached(
+      client,
       client.request(
         ssh, session.sshOptions + [session.target.address, remote],
         environment: session.env.overlay(client.environment)),
-      inheritStdin: false, deadline: nil)
+      inheritStdin: false)
     guard termination.succeeded else {
       let code: Int32 = if case .exited(let code) = termination { code } else { 1 }
       throw HostError("Remote command exited with status \(code)")

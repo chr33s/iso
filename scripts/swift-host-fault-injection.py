@@ -837,6 +837,22 @@ FAULTS = [
     ("tunnel-identity-cleanup", "Sources/IsoHost/Guest/ProxyLifecycle.swift",
      "    unlink(TunnelIdentity.path(instance, Self.modelTunnelName(port)))\n", "",
      "tunnelIdentityNamesOnlyTheRecordedMaster"),
+    ("session-supervision-cancel", "Sources/IsoHost/Guest/GuestSession.swift",
+     "    supervised.isCancelled = { supervisor.lost }\n", "",
+     "supervisedWorkloadEndsWhenItsProofIsLost"),
+    ("session-supervision-recheck", "Sources/IsoHost/Guest/GuestSession.swift",
+     "        do {\n          try revalidate()\n        } catch {",
+     "        do {\n          _ = revalidate\n        } catch {",
+     "supervisedWorkloadEndsWhenItsProofIsLost"),
+    ("session-supervision-filtered", "Sources/IsoHost/Guest/GuestSession.swift",
+     "    running.handoffIdentity == nil ? nil : interval", "    nil",
+     "onlyFilteredWorkloadsAreSupervised"),
+    ("egress-lease-supervision-lost", "Sources/IsoHost/Runtime/EgressLease.swift",
+     "      if (companionSeen && !companionAlive) || (tunnelSeen && !tunnelAlive) { return false }\n",
+     "", "egressLeaseSupervisesOnlyWhatItHasSeen"),
+    ("egress-lease-supervision-startup", "Sources/IsoHost/Runtime/EgressLease.swift",
+     "      companionSeen = companionSeen || companionAlive\n      tunnelSeen = tunnelSeen || tunnelAlive\n",
+     "      companionSeen = true\n      tunnelSeen = true\n", "egressLeaseSupervisesOnlyWhatItHasSeen"),
 ]
 
 
