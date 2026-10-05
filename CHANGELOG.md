@@ -47,21 +47,22 @@ SPDX-License-Identifier: Apache-2.0
   instance (for filtered egress, the composite readiness proof), and `iso up`
   proves a running project instance before reporting it reused.
 - **Local-model tunnels in the filtered proof**: every local-model reverse
-  tunnel a filtered boot started must still be its recorded `ssh` process for
+  tunnel started during the current boot must still be its recorded `ssh` process for
   this guest and a destination the model configuration wants
   (`FILTERED_MODEL_TUNNEL_NOT_READY` otherwise), so losing one refuses new
   handoffs and makes the instance `unhealthy`.
 - **Reverse-tunnel identity**: each credential-proxy, egress and local-model
-  reverse tunnel records its master PID, unique control path, guest
-  destination and forward, and every readiness proof requires the recorded PID
+  reverse tunnel records its master PID, unique control path and guest
+  destination, and every readiness proof requires the recorded PID
   to still be that exact `ssh` master for this guest; a reused PID or another
   `ssh` no longer passes. Filtered instances started by an older `iso` report
   `unhealthy` until restarted.
 - **Supervised filtered sessions**: while a shell, exec, Claude, Codex or
   `iso run` workload runs on a filtered instance, `iso` repeats its readiness
-  proof every ten seconds and ends the session when it fails. The per-boot
-  egress lease stops renewing, so the grant expires, and closes the instance's
-  port forwards, once a companion or egress tunnel it has seen is lost.
+  proof every ten seconds and ends the session after two consecutive
+  failures. The per-boot egress lease stops renewing, so the grant expires,
+  and closes the instance's port forwards, once a companion or egress tunnel
+  it has seen is missing for three consecutive checks.
 - **`iso run`**: one command resolves a project the way `iso up` does, then
   launches Claude, Codex, or an installed agent definition. A warm match is
   not pushed, rebuilt, or bootstrapped again. `--dry-run` does not start a

@@ -199,6 +199,8 @@ package struct ProxyLauncher: Sendable {
         ])
       ),
     ])
+    // The new lease must first see this boot's tunnel, not an unclean boot's.
+    stopTunnel(instance, "egress", label: "stale egress tunnel")
     var leasePipe: [Int32] = [-1, -1]
     guard pipe(&leasePipe) == 0 else { throw HostError("Failed to create the egress lease pipe") }
     defer {
@@ -623,10 +625,8 @@ package struct ProxyLauncher: Sendable {
       }
       try Self.awaitForwardingAck(&request, deadline: deadline)
       do {
-        try TunnelIdentity(
-          pid: master.pid, controlPath: controlPath, address: target.address,
-          forward: "127.0.0.1:\(guestPort):\(hostAddress):\(hostPort)"
-        ).save(instance, name: name)
+        try TunnelIdentity(pid: master.pid, controlPath: controlPath, address: target.address)
+          .save(instance, name: name)
         try AtomicFile.write(
           Array(String(master.pid).utf8), to: Self.forwardPIDPath(instance, name),
           mode: .atMost(0o644))

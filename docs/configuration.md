@@ -609,18 +609,14 @@ workspace-transfer targets carry process-local checks of the original composite
 identity; SSH/SCP, tar/rsync, hooks, editor launch and managed alias publication
 check before using those targets. Readiness refusals abort hooks and agent
 updates instead of becoming ordinary guest-command warnings or unknown versions.
-In local model mode, each local-model reverse tunnel the boot started joins the
-composite proof: its recorded `ssh` process must be alive and recorded for this
-guest and a wanted destination. Startup refreshes the managed alias and starts
-port forwards only after the composite proof, and `iso up` proves a running instance before reusing it.
-While a filtered workload launched by `iso` runs, the proof is repeated every
-ten seconds and a failure ends the session. The egress lease closes port
-forwards and stops renewing once a companion or egress tunnel it has seen is
-lost. Sessions opened outside `iso` (the managed alias, editor Remote-SSH)
-are not supervised. A failed live
-proof makes `iso status` report the instance `unhealthy` with its reason, and
-`iso list` does the same from the host-side proof alone. Full NET-20 remains
-incomplete.
+Each local-model reverse tunnel started during the current boot joins the
+composite proof. The managed alias and port forwards are set up only after the
+composite proof, and `iso up` proves a running instance before reusing it.
+Workloads launched by `iso` are re-proved while they run and end when the proof
+fails; sessions opened outside `iso` (the managed alias, editor Remote-SSH)
+are not supervised. A failed proof makes `iso status` and `iso list` report the
+instance `unhealthy`. See [trust model](trust-model.md) for the exact checks.
+Full NET-20 remains incomplete.
 A local real-VM check passed approved public HTTPS, unapproved CONNECT denial,
 and direct Internet TCP denial ([evidence](testing.md#local-filtered-vm-evidence-partial)).
 This does not qualify lifecycle revocation or the full filtered boundary.

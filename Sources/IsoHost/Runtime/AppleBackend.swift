@@ -106,6 +106,7 @@ package final class AppleBackend: Sendable {
   package func probeHealth(_ instance: Instance) throws -> InstanceHealth {
     guard try probeRunning(instance) else { return .stopped }
     guard config.egress == .filtered else { return .running }
+    try NetworkPolicy.enforce(instance, config: config)
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
     let inspection = try runtime.inspect(sidecar.machineID)

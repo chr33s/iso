@@ -108,7 +108,9 @@ restarts an instance; if the matching instance is already running, stop it
 first so those options can take effect. Likewise, `--egress` or `--allow-host`
 that differs from a running instance's boot policy is refused rather than
 ignored: stop the instance to apply a new allowlist, or destroy it to change
-the egress mode.
+the egress mode. A running filtered instance whose readiness proof fails is
+not reused: `up` fails with the readiness error (`INSTANCE_UNHEALTHY` in
+machine output); `iso stop` then `iso start` re-establishes it.
 
 When a local `devcontainer.json` was applied while creating the instance, isolate stores
 its path and content hash. Later `iso up` reconnects or restarts warn if that
@@ -397,7 +399,7 @@ With the global `--output json`, prints one `iso.machine/v1` document instead; s
 
 ### `list`
 
-Print every instance with its state: `running`, `stopped`, `unhealthy`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it returns quickly even when VMs are unreachable; the state comes from the runtime (`iso-sandbox inspect`). For a running `egress: "filtered"` instance it also checks the host side of the readiness proof (boot, policy, owner, companion, broker and tunnel processes, and their signed host-loopback replies) and lists a failure as `unhealthy` with a warning naming it. Use `status` instead when you need resource usage, per-instance detail, or the guest-loopback proofs.
+Print every instance with its state: `running`, `stopped`, `unhealthy`, or `unknown` when the backend cannot determine it (shown with a warning, for example an Apple sandbox instance with an unfinished operation). It never connects to a guest over SSH, so it does not wait on unreachable VMs; the state comes from the runtime (`iso-sandbox inspect`). For a running `egress: "filtered"` instance it also checks the host side of the readiness proof (boot, policy, owner, companion, broker and tunnel processes, and their signed host-loopback replies) and lists a failure as `unhealthy` with a warning naming it. Use `status` instead when you need resource usage, per-instance detail, or the guest-loopback proofs.
 
 ```
 iso list
@@ -414,7 +416,7 @@ With the global `--output json`, prints one `iso.machine/v1` document instead; s
 
 ### `status`
 
-Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance. A running filtered instance whose live readiness proof fails, including the guest-loopback proofs, is reported as `unhealthy` with the failed proof as its reason; the command still succeeds, while commands that need the guest refuse it.
+Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance. A running filtered instance whose live readiness proof fails, including the guest-loopback proofs, is reported as `unhealthy` (with the failed proof as its reason in the named text report and machine output); the command still succeeds, while commands that need the guest refuse it.
 
 ```
 iso status [NAME]

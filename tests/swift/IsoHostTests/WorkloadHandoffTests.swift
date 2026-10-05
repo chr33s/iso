@@ -35,7 +35,7 @@ private func workloadLaunchRechecksImmediatelyBeforeSpawning(launch: WorkloadLau
   try writeFile(
     guest.root + "/bin/ssh", "#!/bin/sh\nprintf '%s' \"$GUEST_VAR\" > '\(marker)'\n", mode: 0o755)
   let state = Mutex((healthy: true, checks: 0))
-  var session = try WorkloadSession(session: SSHSession(target: guest.target)) {
+  var session = try WorkloadSession(session: SSHSession(target: guest.target), supervision: nil) {
     let healthy = state.withLock { value in
       value.checks += 1
       return value.healthy
@@ -62,7 +62,7 @@ private func workloadLaunchRechecksImmediatelyBeforeSpawning(launch: WorkloadLau
   // Represents a lifecycle change while resolving the prepared environment.
   healthy.withLock { $0 = false }
   #expect(throws: HostError("test changed during preparation")) {
-    _ = try WorkloadSession(session: prepared) {
+    _ = try WorkloadSession(session: prepared, supervision: nil) {
       guard healthy.withLock({ $0 }) else { throw HostError("test changed during preparation") }
     }
   }
@@ -181,34 +181,47 @@ private enum SupervisedLaunch: CaseIterable, Sendable {
 private func supervisedWorkloadEndsWhenItsProofIsLost(launch: SupervisedLaunch) throws {
   let guest = try FakeGuest()
   defer { guest.remove() }
-  let state = Mutex((healthy: true, checks: 0))
+  let state = Mutex((healthy: true, checks: 0, transient: 0))
   let session = try WorkloadSession(
     session: SSHSession(target: guest.target), supervision: .milliseconds(100)
   ) {
     let healthy = state.withLock { value in
       value.checks += 1
+      if value.transient > 0 {
+        value.transient -= 1
+        return false
+      }
       return value.healthy
     }
     guard healthy else { throw HostError("test readiness revoked") }
   }
-  // A healthy supervised workload runs to completion while being re-proved.
-  try launch.launch(guest, session, ["sleep", "0.5"])
-  #expect(state.withLock { $0.checks } > 2)
+  // A healthy supervised workload runs to completion while being re-proved,
+  // and one transient failed proof does not end it.
+  Thread.detachNewThread {
+    usleep(150_000)
+    state.withLock { $0.transient = 1 }
+  }
+  try launch.launch(guest, session, ["sleep", "0.8"])
+  #expect(state.withLock { $0.checks } > 3)
+  #expect(state.withLock { $0.transient } == 0)
 
-  let marker = guest.root + "/survived"
+  let pidFile = guest.root + "/workload.pid"
   Thread.detachNewThread {
     usleep(300_000)
     state.withLock { $0.healthy = false }
   }
   let started = ContinuousClock.now
   let error = try #require(throws: (any Error).self) {
-    try launch.launch(guest, session, ["sh", "-c", "sleep 20; touch '\(marker)'"])
+    try launch.launch(guest, session, ["sh", "-c", "echo $$ > '\(pidFile)'; exec sleep 20"])
   }
   #expect(ContinuousClock.now - started < .seconds(10))
   #expect(
     "\(error)".contains("Ended the guest session: its instance readiness proof no longer holds"))
   #expect("\(error)".contains("test readiness revoked"))
-  #expect(!FileManager.default.fileExists(atPath: marker))
+  // The guest command itself was killed, not left running.
+  let pid = try #require(
+    readFile(pidFile).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
+  #expect(kill(pid, 0) == -1 && errno == ESRCH)
 }
 
 @Test func onlyFilteredWorkloadsAreSupervised() throws {

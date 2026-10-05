@@ -26,7 +26,7 @@ package struct InstanceUnhealthy: Error, Sendable, CustomStringConvertible {
 
   /// The failed proof on one line, without the instance preamble.
   package var reason: String {
-    (cause as? ContextError)?.alternate ?? "\(cause)"
+    cause.contextError?.alternate ?? "\(cause)"
   }
 }
 

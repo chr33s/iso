@@ -281,8 +281,7 @@ is read by other programs, so it is a disclosure boundary like stderr:
   authenticates bounded replies both directly and through pinned SSH plus guest
   loopback. A guest that knows
   the CONNECT capability still cannot forge a reply. This proves reachability
-  of the keyed companion through that path, not exact reverse-tunnel process
-  identity or every late session handoff.
+  of the keyed companion through that path, not every late session handoff.
 
 - **Filtered credential-broker composition uses separate signatures.**
   Each effective remote provider broker must answer fresh direct and pinned-SSH
@@ -299,8 +298,8 @@ is read by other programs, so it is a disclosure boundary like stderr:
   started with, so a reused PID or another `ssh` never stands in for it. Which
   sshd session holds the guest-side listener is reported only by the untrusted
   guest and is not relied on; a signed guest-loopback reply still requires a
-  host-created forward to the signer. This is not every late handoff or full
-  NET-20.
+  host-created forward to the signer. This does not cover every late handoff
+  or full NET-20.
 
 - **Filtered workload sessions cannot reuse a cached readiness decision.**
   Shell, exec and agent launches take an opaque, process-local `WorkloadSession`.
@@ -321,10 +320,10 @@ is read by other programs, so it is a disclosure boundary like stderr:
   subsequent transfer fallbacks must recheck. Local control-master cleanup is
   still permitted after refusal. While a filtered workload's `ssh` runs, `iso`
   repeats the same proof every ten seconds and kills the session (the `ssh` and
-  its descendants) when it no longer holds. The per-boot egress lease also
-  supervises the companion and egress tunnel it has seen: losing either ends
-  the lease, so the grant expires, and closes the instance's `ssh -L` forward
-  master. Direct external SSH through the managed alias, and editor Remote-SSH
+  its descendants) after two consecutive failures. The per-boot egress lease also
+  supervises the companion and egress tunnel it has seen: three consecutive
+  checks without either end the lease, so the grant expires, and close the
+  instance's `ssh -L` forward master. Direct external SSH through the managed alias, and editor Remote-SSH
   sessions, do not pass through `iso`; they are not supervised, and `iso status`
   reports the instance `unhealthy` instead.
 

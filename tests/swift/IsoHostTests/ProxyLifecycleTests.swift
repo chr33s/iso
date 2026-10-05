@@ -73,6 +73,8 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   try writeFile(instance.directory + "/egress-boot-id", "legacy")
   try writeFile(instance.directory + "/egress-readiness-key", "legacy-signing-key")
   try writeFile(EgressPorts.capabilityPath(instance), "synthetic-capability")
+  try TunnelIdentity(pid: 1, controlPath: "/tmp/iso-proxy-x/ssh.sock", address: "a")
+    .save(instance, name: "egress")
   try AtomicFile.write(
     Array(String(repeating: "b", count: 64).utf8), to: FilteredReadiness.keyPath(instance),
     mode: .atMost(0o600))
@@ -84,6 +86,7 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(!FileManager.default.fileExists(atPath: EgressPorts.capabilityPath(instance)))
   #expect(!FileManager.default.fileExists(atPath: FilteredReadiness.keyPath(instance)))
   #expect(!FileManager.default.fileExists(atPath: instance.directory + "/egress-readiness-key"))
+  #expect(!FileManager.default.fileExists(atPath: TunnelIdentity.path(instance, "egress")))
   launcher.stopEgress(instance)
   #expect(try FilteredHandoff.recordedPolicy(instance) == nil)
 }
@@ -224,7 +227,6 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   let name = ProxyLauncher.modelTunnelName(11434)
   let identity = try #require(TunnelIdentity.load(instance, name))
   #expect(identity.address == guest.target.address)
-  #expect(identity.forward == "127.0.0.1:11434:127.0.0.1:1")
   #expect(identity.controlPath.contains("/iso-proxy-"))
   #expect(TunnelIdentity.verify(instance, name, address: guest.target.address))
   #expect(TunnelIdentity.verify(instance, name, address: nil))
@@ -237,10 +239,8 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   try writeFile(pidPath, String(other.pid))
   #expect(!TunnelIdentity.verify(instance, name, address: nil))
   try writeFile(pidPath, pid)
-  try TunnelIdentity(
-    pid: other.pid, controlPath: identity.controlPath, address: identity.address,
-    forward: identity.forward
-  ).save(instance, name: name)
+  try TunnelIdentity(pid: other.pid, controlPath: identity.controlPath, address: identity.address)
+    .save(instance, name: name)
   try writeFile(pidPath, String(other.pid))
   #expect(!TunnelIdentity.verify(instance, name, address: nil))
   try writeFile(pidPath, pid)

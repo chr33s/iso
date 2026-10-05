@@ -308,22 +308,40 @@ func egressLeaseRejectsMalformedSessionDeadlines(deadlineJSON: String) throws {
     value.holds(companionAlive: companion, tunnelAlive: tunnel)
   }
   // Startup spawns the lease before the companion and tunnel exist.
-  #expect(holds(&supervision, false, false))
+  for _ in 0..<5 { #expect(holds(&supervision, false, false)) }
   #expect(holds(&supervision, true, false))
   #expect(supervision.companionSeen && !supervision.tunnelSeen)
   #expect(holds(&supervision, true, true))
-  var lostTunnel = supervision
-  #expect(!holds(&lostTunnel, true, false))
-  var lostCompanion = supervision
-  #expect(!holds(&lostCompanion, false, true))
-  #expect(holds(&supervision, true, true))
+  // A transient probe failure is not loss; consecutive misses are.
+  for (companion, tunnel) in [(true, false), (false, true)] {
+    var lost = supervision
+    for _ in 1..<EgressLease.Supervision.missLimit {
+      #expect(holds(&lost, companion, tunnel))
+    }
+    #expect(!holds(&lost, companion, tunnel))
+    var recovered = supervision
+    for _ in 1..<EgressLease.Supervision.missLimit {
+      #expect(holds(&recovered, companion, tunnel))
+    }
+    #expect(holds(&recovered, true, true))
+    #expect(holds(&recovered, companion, tunnel))
+  }
 }
 
-@Test func closingForwardsWithoutAMasterIsANoOp() throws {
-  let directory = try scratchDirectory("lease-forwards")
-  defer { try? FileManager.default.removeItem(atPath: directory) }
-  EgressLease.closeForwards(directory: directory)
-  #expect(try FileManager.default.contentsOfDirectory(atPath: directory).isEmpty)
+@Test func closingForwardsExitsTheMasterAndRemovesItsSocket() throws {
+  let root = try scratchDirectory("lease-forwards")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let instance = try testInstance(root + "/instance")
+  let ssh = root + "/ssh"
+  try writeFile(ssh, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(root)/ssh.log'\n", mode: 0o755)
+  EgressLease.closeForwards(instance, ssh: ssh)
+  #expect(readFile(root + "/ssh.log") == nil)
+  try writeFile(PortForwards.controlPath(instance), "")
+  EgressLease.closeForwards(instance, ssh: ssh)
+  #expect(
+    readFile(root + "/ssh.log")
+      == "-O exit -o ControlPath=\(PortForwards.controlPath(instance)) iso-forwards\n")
+  #expect(!FileManager.default.fileExists(atPath: PortForwards.controlPath(instance)))
 }
 
 @Test func egressLeaseStopsWhenTheRecordedOwnerChanges() {

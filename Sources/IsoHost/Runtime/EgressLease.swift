@@ -3,7 +3,9 @@ import Foundation
 import IsoCore
 
 /// Renews one filtered-egress companion while the recorded sandbox and the
-/// runtime's live boot id still match. A restored disk does not restore
+/// runtime's live boot id still match, and while the companion and egress
+/// tunnel it has seen stay alive. On exit it closes the instance's port
+/// forwards. A restored disk does not restore
 /// `bootId`; the next owner writes a new one.
 package enum EgressLease {
   package static func stillOwns(directory: String, machineID: String, ownerPID: Int32) -> Bool {
@@ -66,40 +68,49 @@ package enum EgressLease {
   }
 
   /// What the lease has observed of its companion and egress tunnel. Each
-  /// is required only once seen alive: startup spawns the lease first.
+  /// is required only once seen alive: startup spawns the lease first. A
+  /// probe (`ps`) can fail transiently, so only `missLimit` consecutive
+  /// misses count as loss.
   package struct Supervision: Equatable, Sendable {
+    package static let missLimit = 3
     package private(set) var companionSeen = false
     package private(set) var tunnelSeen = false
+    private var companionMisses = 0
+    private var tunnelMisses = 0
 
     package init() {}
 
-    /// False once a component that was seen alive is gone.
+    /// False once a component that was seen alive has been missing for
+    /// `missLimit` consecutive checks.
     package mutating func holds(companionAlive: Bool, tunnelAlive: Bool) -> Bool {
-      if (companionSeen && !companionAlive) || (tunnelSeen && !tunnelAlive) { return false }
+      companionMisses = companionSeen && !companionAlive ? companionMisses + 1 : 0
+      tunnelMisses = tunnelSeen && !tunnelAlive ? tunnelMisses + 1 : 0
       companionSeen = companionSeen || companionAlive
       tunnelSeen = tunnelSeen || tunnelAlive
-      return true
+      return companionMisses < Self.missLimit && tunnelMisses < Self.missLimit
     }
   }
 
   /// Closes the instance's persistent `ssh -L` forward master, if any, so no
   /// host-to-guest forward outlives the boot's readiness.
-  package static func closeForwards(directory: String) {
-    let control = directory + "/forwards.sock"
+  package static func closeForwards(_ instance: Instance, ssh: String = "/usr/bin/ssh") {
+    let control = PortForwards.controlPath(instance)
     guard FileManager.default.fileExists(atPath: control) else { return }
     _ = try? ProcessRunner().capture(
       .init(
-        executable: "/usr/bin/ssh",
+        executable: ssh,
         arguments: ["-O", "exit", "-o", "ControlPath=\(control)", "iso-forwards"],
         environment: [:], deadline: .seconds(5), outputLimit: 64 << 10, overflow: .drain))
+    unlink(control)
   }
 
   package static func run(
     directory: String, machineID: String, ownerPID: Int32, bootID: String, livePath: String
   ) {
     let fd: Int32 = 3
+    guard let instance = try? Instance.load(directory: directory) else { return }
     var supervision = Supervision()
-    defer { closeForwards(directory: directory) }
+    defer { closeForwards(instance) }
     while true {
       let live = liveIdentity(at: livePath)
       let directoryURL = (livePath as NSString).deletingLastPathComponent
@@ -113,16 +124,14 @@ package enum EgressLease {
           sessionOpen: sessionOpen(recordPath: recordPath, now: Date()),
           ownerAlive: ownerLockHeld(at: directoryURL + "/owner.lock"))
       else { return }
-      if let instance = try? Instance.load(directory: directory),
-        !supervision.holds(
+      var byte: UInt8 = 1
+      if write(fd, &byte, 1) != 1 { return }
+      guard
+        supervision.holds(
           companionAlive: ProxyLauncher.recordedProcessAlive(
             ProxyLauncher.pidPath(instance, "egress"), expect: .egress),
           tunnelAlive: TunnelIdentity.verify(instance, "egress", address: nil))
-      {
-        return
-      }
-      var byte: UInt8 = 1
-      if write(fd, &byte, 1) != 1 { return }
+      else { return }
       usleep(1_000_000)
     }
   }

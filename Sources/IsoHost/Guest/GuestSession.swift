@@ -63,7 +63,7 @@ package struct WorkloadSession: Sendable {
   fileprivate let supervision: Duration?
 
   init(
-    session: SSHSession, supervision: Duration? = nil,
+    session: SSHSession, supervision: Duration?,
     revalidate: @escaping @Sendable () throws -> Void
   ) throws {
     try revalidate()
@@ -74,7 +74,8 @@ package struct WorkloadSession: Sendable {
 
   /// Spawns the workload's ssh under supervision: while it runs, the proof is
   /// repeated, and a lost proof kills the ssh and its descendants and fails
-  /// with that readiness error instead of letting the session outlive it.
+  /// with that readiness error instead of letting the session outlive it. A
+  /// session that ended on its own keeps its result.
   fileprivate func attached(
     _ client: SSHClient, _ request: ProcessRunner.Request, inheritStdin: Bool
   ) throws -> ProcessRunner.Termination {
@@ -84,17 +85,14 @@ package struct WorkloadSession: Sendable {
     let supervisor = SessionSupervisor(revalidate: revalidate, interval: supervision)
     var supervised = request
     supervised.isCancelled = { supervisor.lost }
-    do {
-      let termination = try client.runner.attached(
-        supervised, inheritStdin: inheritStdin, deadline: nil)
-      if let failure = supervisor.finish() { throw SessionSupervisor.ended(failure) }
-      return termination
-    } catch let error as GuestHandoffFailure {
-      throw error
-    } catch {
-      if let failure = supervisor.finish() { throw SessionSupervisor.ended(failure) }
-      throw error
+    let result = Result {
+      try client.runner.attached(supervised, inheritStdin: inheritStdin, deadline: nil)
     }
+    let failure = supervisor.finish()
+    if case .failure = result, let failure, !Shutdown.isRequested {
+      throw SessionSupervisor.ended(failure)
+    }
+    return try result.get()
   }
 
   package var target: SSHTarget { session.target }
@@ -104,7 +102,10 @@ package struct WorkloadSession: Sendable {
   }
 }
 
-/// Re-proves a running workload on its own thread until finished.
+/// Re-proves a running workload on its own thread until finished, so a slow
+/// proof never delays reaping the session. Two consecutive failed proofs end
+/// it; one transient probe failure, or a proof briefly in flux while a tunnel
+/// is replaced, does not.
 final class SessionSupervisor: Sendable {
   /// The production interval for filtered workloads.
   static let interval: Duration = .seconds(10)
@@ -118,6 +119,7 @@ final class SessionSupervisor: Sendable {
 
   init(revalidate: @escaping @Sendable () throws -> Void, interval: Duration) {
     Thread.detachNewThread { [self] in
+      var pending: (any Error)?
       while true {
         let wake = ContinuousClock.now + interval
         while ContinuousClock.now < wake {
@@ -127,7 +129,12 @@ final class SessionSupervisor: Sendable {
         if state.withLock({ $0.finished }) { return }
         do {
           try revalidate()
+          pending = nil
         } catch {
+          guard pending != nil else {
+            pending = error
+            continue
+          }
           state.withLock { $0.failure = $0.failure ?? error }
           return
         }

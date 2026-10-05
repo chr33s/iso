@@ -795,7 +795,7 @@ refuses to report the running, unproven instance as reused. The
 masters: no started tunnel requires nothing, a live current tunnel passes both
 scopes, and a tunnel recorded for another target, no longer wanted, or dead
 fails with `FILTERED_MODEL_TUNNEL_NOT_READY`. The `model-tunnel-alive` and
-`model-tunnel-target` faults remove the process and target checks. The
+`model-tunnel-target` faults remove the tunnel identity and target checks. The
 filtered VM gate starts a local-model tunnel to a closed host port, kills it,
 and expects refused handoffs, `unhealthy` status and listing, and recovery
 after `iso model NAME remote`.
@@ -809,13 +809,15 @@ control-path, PID-file, destination and cleanup checks.
 
 `supervisedWorkloadEndsWhenItsProofIsLost` runs command, exec and reporting
 workloads under a 100 ms supervisor: a healthy workload completes while being
-re-proved, and revoking the proof mid-run kills a 20-second guest command
-before it finishes and reports the readiness failure.
-`onlyFilteredWorkloadsAreSupervised` pins supervision to filtered instances,
-and `egressLeaseSupervisesOnlyWhatItHasSeen` the lease's startup and loss
-rules. Five `session-supervision-*` and `egress-lease-supervision-*` faults
-remove the cancellation hook, the periodic recheck, the filtered selection and
-the lease's loss and startup rules. The filtered VM gate starts an instance
+re-proved and survives one transient failed proof, and revoking the proof
+mid-run kills the 20-second guest command process and reports the readiness
+failure. `onlyFilteredWorkloadsAreSupervised` pins supervision to filtered
+instances, `egressLeaseSupervisesOnlyWhatItHasSeen` the lease's startup,
+miss-limit and loss rules, and `closingForwardsExitsTheMasterAndRemovesItsSocket`
+the `ssh -O exit` argv and socket removal. Three `session-supervision-*`, three
+`egress-lease-supervision-*` and the `egress-lease-close-forwards` faults remove
+the cancellation hook, the periodic recheck, the filtered selection, the
+lease's loss, startup and miss-limit rules, and the forward close. The filtered VM gate starts an instance
 with a loopback port forward, kills its egress tunnel, and expects the lease
 and companion to exit, the forward master to close and handoffs to be refused.
 

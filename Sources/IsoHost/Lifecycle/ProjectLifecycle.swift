@@ -202,7 +202,7 @@ package final class ProjectLifecycle {
   /// A guest carrying only its image: state, agents, forwards, then the
   /// workspace and mounts. Shared by a fresh start and a reprovision. The
   /// managed alias and port forwards use the target bootstrap proved, so
-  /// nothing reaches a filtered guest before its composite readiness.
+  /// neither reaches a filtered guest before its composite readiness.
   package func provisionFirstBoot(
     _ instance: Instance, _ options: CreationRequest, repo: RepoSlug?, forwardSet: [PortForward]
   ) throws {
@@ -388,6 +388,7 @@ package final class ProjectLifecycle {
     do {
       running = try context.backend.asRunning(instance)
     } catch let probeError {
+      if let target = try? backend.sshTarget(instance) { forwards.teardown(instance, target) }
       agents.proxies.stopAll(instance)
       do { try context.backend.stopUnproven(instance) } catch {
         throw ContextError(

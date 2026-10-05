@@ -3,22 +3,20 @@ import IsoCore
 
 /// The exact reverse-tunnel `ssh` master a readiness proof relies on: its
 /// PID, the unique control path it was started with (inside a fresh random
-/// directory, so no other process carries it), its guest destination and
-/// the forward requested on it. A live PID that is any other process,
-/// including another `ssh`, is not this tunnel.
+/// directory, so no other process carries it) and its guest destination. A
+/// live PID that is any other process, including another `ssh`, is not this
+/// tunnel.
 struct TunnelIdentity: Codable, Equatable {
   let schemaVersion: UInt32
   let pid: Int32
   let controlPath: String
   let address: String
-  let forward: String
 
-  init(pid: Int32, controlPath: String, address: String, forward: String) {
+  init(pid: Int32, controlPath: String, address: String) {
     schemaVersion = 1
     self.pid = pid
     self.controlPath = controlPath
     self.address = address
-    self.forward = forward
   }
 
   static func path(_ instance: Instance, _ name: String) -> String {
@@ -26,8 +24,7 @@ struct TunnelIdentity: Codable, Equatable {
   }
 
   func save(_ instance: Instance, name: String) throws {
-    try AtomicFile.write(
-      Array(try JSONEncoder().encode(self)), to: Self.path(instance, name), mode: .atMost(0o600))
+    try StateStore.writeControlFile(self, to: Self.path(instance, name))
   }
 
   static func load(_ instance: Instance, _ name: String) -> TunnelIdentity? {
