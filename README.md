@@ -63,7 +63,7 @@ iso codex
 ```
 
 Open the project's VM in an editor over the pinned SSH alias (creating or
-starting it first, like `iso up`):
+starting it first, like `iso up`; see [editor integration](docs/editor.md)):
 
 ```shell
 iso code .
@@ -100,6 +100,8 @@ Read the [trust model](docs/trust-model.md) for the boundaries and their limits.
 
 - [Getting started](docs/getting-started.md), [commands](docs/commands.md) and
   [configuration](docs/configuration.md)
+- [Machine interface](docs/machine-interface.md) for editors, CI and other
+  integrations
 - [Full documentation index](docs/index.md)
 - [Architecture](docs/ARCHITECTURE.md) and [release validation](docs/release-validation.md)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
