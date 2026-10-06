@@ -1,4 +1,5 @@
 import Foundation
+import IsoConfiguration
 import IsoCore
 
 /// `iso code` / `iso zed`: `iso up`'s project lifecycle, then the managed
@@ -21,10 +22,11 @@ package struct ProjectEditorWorkflow {
     package let launchTarget: String
     package let warnings: [String]
     package let mode: EditorLaunchMode
+    package let security: EditorConfig
 
     package init(
       up: UpOutcome, alias: SSHAlias, provider: EditorProviderID, launchTarget: String,
-      warnings: [String], mode: EditorLaunchMode
+      warnings: [String], mode: EditorLaunchMode, security: EditorConfig
     ) {
       self.up = up
       self.alias = alias
@@ -32,6 +34,7 @@ package struct ProjectEditorWorkflow {
       self.launchTarget = launchTarget
       self.warnings = warnings
       self.mode = mode
+      self.security = security
     }
   }
 
@@ -64,17 +67,20 @@ package struct ProjectEditorWorkflow {
     let alias = try up.lifecycle.sshConfig.update(running.target, running.instance)
     let egress = up.lifecycle.config.egress
     let target = SSHConnectionTarget(running, guestPath: guestPath, egress: egress)
-    let warnings = provider.warnings(target)
+    let warnings = provider.warnings(target, security: launcher.security)
     switch mode {
     case .launch:
       up.diagnostics.log(
         .info, "Opening \(guestPath) in \(provider.displayName) via \(alias.host)...")
-      try launcher.launch(running, target, choice: .only(provider))
+      try launcher.launch(
+        running, target, choice: .only(provider),
+        revalidate: up.lifecycle.backend.editorProof(running))
     case .prepareOnly:
       for warning in warnings { up.diagnostics.warn(warning) }
     }
     return Outcome(
       up: outcome, alias: alias, provider: provider.id,
-      launchTarget: provider.launchTarget(target), warnings: warnings, mode: mode)
+      launchTarget: provider.launchTarget(target), warnings: warnings, mode: mode,
+      security: launcher.security)
   }
 }

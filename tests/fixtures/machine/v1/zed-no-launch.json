@@ -25,7 +25,12 @@
     "editor": {
       "provider": "zed",
       "launched": false,
-      "launch_target": "ssh://iso-my-project/workspace"
+      "launch_target": "ssh://iso-my-project/workspace",
+      "security": "sandboxed",
+      "host_capabilities": [],
+      "isolated_profile": true,
+      "ephemeral_ssh_identity": true,
+      "supervised": true
     },
     "warnings": []
   }

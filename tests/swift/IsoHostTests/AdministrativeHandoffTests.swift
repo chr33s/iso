@@ -56,10 +56,13 @@ private enum AdministrativeOperation: CaseIterable, Sendable {
       let running = AppleBackend.Running(
         instance: base.instance, sidecar: base.sidecar, ready: base.ready, target: target,
         handoffIdentity: nil)
-      try EditorLauncher(environment: guest.environment, diagnostics: guest.sink.diagnostics)
-        .launch(
-          running, SSHConnectionTarget(running, guestPath: guestWorkspace, egress: .open),
-          choice: .only(VSCodeEditorProvider()))
+      try EditorLauncher(
+        environment: guest.environment, diagnostics: guest.sink.diagnostics,
+        security: EditorConfig(security: .unsafe, allow: [])
+      )
+      .launch(
+        running, SSHConnectionTarget(running, guestPath: guestWorkspace, egress: .open),
+        choice: .only(VSCodeEditorProvider()), revalidate: {})
     }
   }
 }

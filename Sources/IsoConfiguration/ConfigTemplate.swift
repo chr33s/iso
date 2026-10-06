@@ -134,6 +134,10 @@ package enum ConfigTemplate {
       //   }
       // },
 
+      // Local editor: "sandboxed" (default, Seatbelt-confined) or "unsafe" (the
+      // editor's own CLI). "allow" widens the sandbox: "clipboard", "internet".
+      // "editor": { "security": "sandboxed", "allow": [] },
+
       // "updates": {
       //   "mode": "notify",           // "off" or "notify"
       //   "check_interval_hours": 24

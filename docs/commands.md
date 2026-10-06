@@ -719,8 +719,8 @@ it in VS Code (`iso code`) or Zed (`iso zed`) over the managed `iso-<name>` SSH
 alias.
 
 ```
-iso code [DIR] [--project PATH] [--no-launch] [up options]
-iso zed  [DIR] [--project PATH] [--no-launch] [up options]
+iso code [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso zed  [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
 ```
 
 The project lifecycle is exactly [`iso up`](#up)'s: the same project
@@ -728,12 +728,17 @@ affinity, create/restart/reuse decision, devcontainer discovery and
 translation, and restart-only option checks. Every `iso up` option except
 `--dry-run`/`--json` is accepted. The command then refreshes the pinned SSH
 alias and launches only the named editor; it never falls back to another one.
+By default the editor is a new, sandboxed instance that `iso` supervises: the
+command stays in the foreground until you quit the editor, the instance stops,
+or you press Ctrl-C.
 
 | Flag | Description |
 |------|-------------|
 | `DIR` | Project directory (default: current directory) |
 | `--project <path>` | Absolute guest path to open (default: `/workspace`). Refused when it is a directory in your home folder and no `DIR` is given |
 | `--no-launch` | Prepare the instance and SSH alias without starting the editor |
+| `--editor-security <sandboxed\|unsafe>` | Local editor class (default: config `editor.security`, else `sandboxed`). See [editor security](editor.md#editor-security) |
+| `--editor-allow <clipboard\|internet>` | Widen the sandboxed editor; repeatable, adds to `editor.allow`. Refused with `--editor-security unsafe` |
 
 ```
 iso code .
@@ -755,7 +760,7 @@ SSH remote. To create or start the project's instance first, use
 [`iso code` / `iso zed`](#code--zed).
 
 ```
-iso editor [NAME] [--project PATH] [--editor code|zed] [--clean]
+iso editor [NAME] [--project PATH] [--editor code|zed] [--editor-security MODE] [--editor-allow CAP]... [--clean]
 ```
 
 | Flag | Description |
@@ -763,6 +768,8 @@ iso editor [NAME] [--project PATH] [--editor code|zed] [--clean]
 | `NAME` | Instance name (required if multiple instances exist) |
 | `--project <path>` | Remote path to open in the editor (default: `/workspace`) |
 | `--editor <code\|zed>` | Editor to launch. Omitted: try VS Code first, then Zed. |
+| `--editor-security <sandboxed\|unsafe>` | Local editor class (default: config `editor.security`, else `sandboxed`). See [editor security](editor.md#editor-security) |
+| `--editor-allow <clipboard\|internet>` | Widen the sandboxed editor; repeatable, adds to `editor.allow`. Refused with `--editor-security unsafe` |
 | `--clean` | Remove the SSH config entry for this instance and exit |
 
 ```

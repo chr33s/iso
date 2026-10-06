@@ -80,6 +80,7 @@ package struct IsoConfig: Sendable, Equatable {
   package let limits: LimitsConfig
   /// The preset whose defaults this configuration was decoded with.
   package let securityPreset: SecurityPreset?
+  package let editor: EditorConfig
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -87,7 +88,8 @@ package struct IsoConfig: Sendable, Equatable {
     proxy: ProxyConfig, guestEnvironment: [GuestVariable], profiles: [String: CustomProfile],
     postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
-    egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?
+    egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
+    editor: EditorConfig
   ) {
     self.dataDirectory = dataDirectory
     self.vm = vm
@@ -109,6 +111,7 @@ package struct IsoConfig: Sendable, Equatable {
     self.egressFilter = egressFilter
     self.limits = limits
     self.securityPreset = securityPreset
+    self.editor = editor
   }
 
   /// Subdirectory of `data_dir` owned by the Apple backend.
@@ -418,6 +421,36 @@ package struct LimitsConfig: Sendable, Equatable {
   package static let none = LimitsConfig(sessionTTL: nil)
 }
 
+/// `editor`: how `iso code`, `iso zed` and `iso editor` run the local editor.
+package struct EditorConfig: Sendable, Equatable {
+  package let security: EditorSecurity
+  /// Sorted and unique; empty unless the user widened the sandbox.
+  package let allow: [EditorHostCapability]
+
+  package init(security: EditorSecurity, allow: [EditorHostCapability]) {
+    self.security = security
+    self.allow = Array(Set(allow)).sorted { $0.rawValue < $1.rawValue }
+  }
+
+  package static let defaults = EditorConfig(security: .sandboxed, allow: [])
+}
+
+/// The local editor's security class.
+package enum EditorSecurity: String, Sendable, Equatable, CaseIterable {
+  /// A new, isolated editor instance under Seatbelt, supervised by iso.
+  case sandboxed
+  /// The editor's own CLI, which may reach an already running editor.
+  case unsafe
+}
+
+/// A widening of the `sandboxed` profile; the guest gains it too.
+package enum EditorHostCapability: String, Sendable, Equatable, Hashable, CaseIterable {
+  /// Read and replace the host pasteboard.
+  case clipboard
+  /// HTTPS (port 443) to any destination.
+  case internet
+}
+
 /// How `iso pull` returns guest files: straight into the destination
 /// (`direct`, the historical behavior) or through a reviewed stage.
 package enum WorkspacePullMode: String, Sendable, Equatable {
@@ -472,8 +505,8 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
-      egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset
-    )
+      egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
+      editor: editor)
   }
 
   /// This command's egress override. Does not rewrite the config file.
@@ -485,6 +518,6 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
-      securityPreset: securityPreset)
+      securityPreset: securityPreset, editor: editor)
   }
 }

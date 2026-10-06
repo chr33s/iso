@@ -20,3 +20,5 @@ __pycache__/
 /fuzz/artifacts/
 
 /target/
+/experiments/
+/spikes/

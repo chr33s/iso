@@ -481,6 +481,18 @@ struct FakeFileSystem: ConfigFileSystem {
   #expect(fieldError(#"{"limits": {"max_log_bytes": 1}}"#)?.field == "limits.max_log_bytes")
 }
 
+@Test func editorSecurityDefaultsToSandboxedWithNoGrants() throws {
+  #expect(try load("{}").editor == .defaults)
+  #expect(EditorConfig.defaults == EditorConfig(security: .sandboxed, allow: []))
+  let widened = try load(#"{"editor": {"allow": ["internet", "clipboard", "internet"]}}"#).editor
+  #expect(widened == EditorConfig(security: .sandboxed, allow: [.clipboard, .internet]))
+  #expect(widened.allow == [.clipboard, .internet])
+  #expect(try load(#"{"editor": {"security": "unsafe"}}"#).editor.security == .unsafe)
+  #expect(fieldError(#"{"editor": {"security": "strict"}}"#)?.field == "editor.security")
+  #expect(fieldError(#"{"editor": {"allow": ["keychain"]}}"#)?.field == "editor.allow[0]")
+  #expect(fieldError(#"{"editor": {"reuse_profile": true}}"#)?.field == "editor.reuse_profile")
+}
+
 @Test func securityPresetsSupplyDefaultsThatExplicitFieldsOverride() throws {
   let plain = try load("{}")
   #expect(plain.securityPreset == nil && plain.egress == .open && plain.proxy.mode == .auto)

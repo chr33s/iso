@@ -249,7 +249,7 @@ enum ConfigDecoder {
     try r.rejectUnknown(allowing: [
       "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
       "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
-      "workspace", "egress", "egress_filter", "limits", "security",
+      "workspace", "egress", "egress_filter", "limits", "security", "editor",
     ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
@@ -345,7 +345,24 @@ enum ConfigDecoder {
             }
           })
       },
-      securityPreset: preset)
+      securityPreset: preset,
+      editor: try r.defaulted("editor", .defaults, editor))
+  }
+
+  static func editor(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> EditorConfig
+  {
+    let r = try ObjectReader(value, at: path)
+    try r.rejectUnknown(allowing: ["security", "allow"])
+    return EditorConfig(
+      security: try r.defaulted("security", .sandboxed) { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, EditorSecurity.allCases)
+      },
+      allow: try r.defaulted("allow", []) { v, p throws(FieldError) in
+        try Parse.array(v, p) { v, p throws(FieldError) in
+          try Parse.stringEnum(v, p, EditorHostCapability.allCases)
+        }
+      })
   }
 
   static func workspacePull(

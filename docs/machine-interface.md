@@ -212,7 +212,11 @@ collision check as in text mode; only the human usage text is omitted. With
   "instance": InstanceRef,
   "workspace": WorkspaceRef|null,
   "connection": SSHConnectionRef,
-  "editor": {"provider": "zed", "launched": false, "launch_target": "ssh://iso-my-project/workspace"},
+  "editor": {
+    "provider": "zed", "launched": false, "launch_target": "ssh://iso-my-project/workspace",
+    "security": "sandboxed", "host_capabilities": [],
+    "isolated_profile": true, "ephemeral_ssh_identity": true, "supervised": true
+  },
   "warnings": []
 }
 ```
@@ -222,7 +226,14 @@ the editor was (or would be) pointed at, after the same running proof,
 isolation check and pinned-host-key block as `ssh-config`. `launched` is
 `false` with `--no-launch`. `launch_target` is the address the provider opens:
 `ssh://<alias><path>` for Zed and `vscode-remote://ssh-remote+<alias><path>`
-for VS Code, with the path percent-encoded. `warnings` holds advisory provider
+for VS Code, with the path percent-encoded; a `sandboxed` session opens the
+same guest path through its own per-session alias instead. `security` is the
+effective [editor security class](editor.md#editor-security) (`sandboxed` or
+`unsafe`) and `host_capabilities` the sandbox widenings granted (`clipboard`,
+`internet`), sorted; `isolated_profile`, `ephemeral_ssh_identity` and
+`supervised` are `true` exactly when `security` is `sandboxed`. Without
+`--no-launch`, a sandboxed launch returns its document when the editor session
+ends. `warnings` holds advisory provider
 diagnostics (for example Zed's `upload_binary_over_ssh` hint under restricted
 egress). The editor's own output is never included, and neither is an SSH
 command, key material or agent session state.

@@ -48,6 +48,9 @@ Apple backend. The credential proxy is the Swift package
   - [`editor-providers-spec.md`](design/editor-providers-spec.md):
     `iso code` / `iso zed`, compiled-in editor providers, and the boundary
     between SSH connection targets and managed agent workloads.
+  - [`editor-hardening.md`](design/editor-hardening.md): the sandboxed
+    local editor (Seatbelt enclave, ephemeral SSH identity, supervision), its
+    threat model, and where the implementation departs from the design.
 
 ## For users
 

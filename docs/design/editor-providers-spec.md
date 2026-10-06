@@ -62,6 +62,12 @@ UpWorkflow -> AppleBackend.Running
 
 ## 3. Editor launch invariants
 
+These invariants describe `unsafe` launches. Since the
+[editor hardening](editor-hardening.md) work, the default `sandboxed` launch
+runs the verified application in a supervised Seatbelt enclave with its own
+SSH identity and writes provider settings into that throwaway profile only.
+
+
 1. The running instance comes from the backend's qualified running path.
 2. `SSHConfigFile.update` checks the handoff before publishing the alias.
 3. `EditorLauncher` checks the handoff again immediately before each spawn.

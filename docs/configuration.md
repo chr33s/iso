@@ -37,6 +37,7 @@ after hand edits.
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline"}`: defaults for the hardening settings. See [security presets](#security-presets). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `egress` | string | `"open"` | Guest network reach beyond the host: `"open"`, `"none"`, or `"filtered"`. See [egress](#egress). |
+| `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
 
 ## GitHub auth
@@ -678,6 +679,21 @@ begins a new session. Unknown `limits` members are rejected.
 
 Host-side logs are already bounded without a setting: the guest console log
 restarts after 8 MiB, and the owner log holds only the runtime's own lines.
+
+## `editor`
+
+```jsonc
+{ "editor": { "security": "sandboxed", "allow": [] } }
+```
+
+`security` is `"sandboxed"` (default: a new, isolated editor instance under a
+deny-by-default Seatbelt profile, supervised by isolate) or `"unsafe"` (the
+editor's own CLI, which can reach an editor already running with your full
+authority). `allow` widens a sandboxed editor: `"clipboard"` (read and replace
+the host clipboard) and `"internet"` (HTTPS to any host). `--editor-security`
+overrides `security` for one command, and `--editor-allow` adds to `allow`.
+Unknown members and values are rejected. See
+[editor security](editor.md#editor-security).
 
 ## `workspace` section
 

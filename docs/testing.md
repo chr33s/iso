@@ -881,6 +881,19 @@ Key-replacement decision fixtures
 are not real-VM broker-restart or capability-replay evidence.
 The additional egress probes explicitly approve `api.github.com` and assert:
 
+`EditorSandboxTests` cover the sandboxed editor: the caller environment never
+reaches an editor (sandboxed or unsafe), applications come only from
+ownership-checked, signature-verified bundles, enclaves are private and
+removed, and the generated Seatbelt profile is deny-by-default and widens only
+for granted capabilities. One test runs the profile under the real kernel
+with `/bin` standing in for the editor bundle and checks file, exec and
+loopback confinement. Session tests drive a fake guest and fake
+`sandbox-exec` through key authorization and revocation, a lost readiness
+proof, a failing editor and a closed tunnel. Twelve `editor-*` faults remove
+those checks. Real-editor qualification (VS Code and Zed connecting to a VM
+from inside the profile) is manual; see
+[`design/editor-hardening.md`](design/editor-hardening.md#22-implementation-record).
+
 - Valid capabilities establish CONNECT tunnels; foreign-VM and previous-boot
   capabilities fail against that same approved destination. Readiness-route
   authentication has separate positive and negative controls.

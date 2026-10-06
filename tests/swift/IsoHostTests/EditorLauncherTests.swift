@@ -30,15 +30,18 @@ private func launch(
   do {
     try EditorLauncher(
       environment: ["PATH": guest.root + "/editors"], diagnostics: guest.sink.diagnostics,
-      deadline: deadline
+      security: unsafeEditor, deadline: deadline
     )
     .launch(
-      running, SSHConnectionTarget(running, guestPath: path, egress: .open), choice: choice)
+      running, SSHConnectionTarget(running, guestPath: path, egress: .open), choice: choice,
+      revalidate: {})
   } catch {
     throw LaunchFailure(error: error, spawned: rustLines(readFile(log) ?? ""))
   }
   return rustLines(readFile(log) ?? "")
 }
+
+private let unsafeEditor = EditorConfig(security: .unsafe, allow: [])
 
 private struct LaunchFailure: Error {
   let error: any Error
@@ -150,13 +153,26 @@ private func failure(_ body: () throws -> [String]) -> LaunchFailure? {
 @Test func zedWarnsUnderRestrictedEgressWithoutChangingIt() throws {
   let open = SSHConnectionTarget(
     instance: try InstanceName("test"), guestPath: guestWorkspace, egress: .open)
-  #expect(ZedEditorProvider().warnings(open).isEmpty)
+  #expect(ZedEditorProvider().warnings(open, security: unsafeEditor).isEmpty)
+  #expect(VSCodeEditorProvider().warnings(open, security: .defaults).isEmpty)
+  // A sandboxed Zed may not reach zed.dev for its remote server's location.
+  #expect(
+    ZedEditorProvider().warnings(open, security: .defaults).first?.contains(
+      "--editor-allow internet") == true)
+  #expect(
+    ZedEditorProvider().warnings(
+      open, security: EditorConfig(security: .sandboxed, allow: [.internet])
+    )
+    .isEmpty)
   for egress in [EgressMode.none, .filtered] {
     let target = SSHConnectionTarget(
       instance: open.instance, guestPath: guestWorkspace, egress: egress)
-    let warnings = ZedEditorProvider().warnings(target)
+    let warnings = ZedEditorProvider().warnings(target, security: unsafeEditor)
     #expect(warnings.count == 1 && warnings[0].contains("upload_binary_over_ssh"))
-    #expect(VSCodeEditorProvider().warnings(target).isEmpty)
+    #expect(VSCodeEditorProvider().warnings(target, security: unsafeEditor).isEmpty)
+    #expect(
+      VSCodeEditorProvider().warnings(target, security: .defaults).first?.contains(
+        "--editor-allow internet") == true)
   }
 }
 
@@ -226,7 +242,8 @@ private func editorWorkflow(_ guest: FakeGuest) throws -> ProjectEditorWorkflow 
       request: UpRequest(configTarget: ConfigTarget(path: home + "/c.jsonc", format: .jsonc)),
       lifecycle: lifecycle, target: nil),
     launcher: EditorLauncher(
-      environment: ["PATH": guest.root + "/editors"], diagnostics: diagnostics))
+      environment: ["PATH": guest.root + "/editors"], diagnostics: diagnostics,
+      security: unsafeEditor))
 }
 
 @Test func projectEditorCommandsLaunchOnlyTheirProviderAndReportTheLifecycleStep() throws {

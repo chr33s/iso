@@ -175,13 +175,26 @@ private let copyWorkspace = WorkspaceState(
     up: UpOutcome(action: .reused, instance: one),
     alias: SSHAlias(host: SSHConfigFile.host(one), configPath: "/Users/me/.ssh/config"),
     provider: .zed, launchTarget: "ssh://iso-my-project/workspace", warnings: [],
-    mode: .prepareOnly)
+    mode: .prepareOnly, security: .defaults)
   let result = MachineEditorResult(outcome, workspace: copyWorkspace)
   try expectFixture("zed-no-launch", MachineEnvelope(command: "zed", ok: true, body: result))
   let rendered = try JSONOutput.render(result, pretty: false)
   for forbidden in ["IdentityFile", "vm_key", "PRIVATE KEY", "HostName", "ssh_command"] {
     #expect(!rendered.contains(forbidden))
   }
+  let unsafeResult = try encoded(
+    MachineEditorResult(
+      ProjectEditorWorkflow.Outcome(
+        up: outcome.up, alias: outcome.alias, provider: .code, launchTarget: "x", warnings: [],
+        mode: .launch, security: EditorConfig(security: .unsafe, allow: [])),
+      workspace: nil))
+  #expect(
+    ((unsafeResult as? NSDictionary)?["editor"] as? NSDictionary)?.dictionaryWithValues(forKeys: [
+      "security", "host_capabilities", "isolated_profile", "ephemeral_ssh_identity", "supervised",
+    ]) as NSDictionary? == [
+      "security": "unsafe", "host_capabilities": [String](), "isolated_profile": false,
+      "ephemeral_ssh_identity": false, "supervised": false,
+    ])
   let created = UpOutcome(action: .created, instance: try instance())
   let notFound = FailureAfterLifecycle(
     created, cause: HostFailure(.editorNotFound([.code]), "Could not open an editor."))

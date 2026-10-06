@@ -62,8 +62,9 @@ iso claude
 iso codex
 ```
 
-Open the project's VM in an editor over the pinned SSH alias (creating or
-starting it first, like `iso up`; see [editor integration](docs/editor.md)):
+Open the project's VM in an editor (creating or starting it first, like
+`iso up`). The editor runs as a new, sandboxed instance that cannot reach your
+files, keychain or clipboard; see [editor integration](docs/editor.md):
 
 ```shell
 iso code .

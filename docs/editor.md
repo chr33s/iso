@@ -22,7 +22,74 @@ Each command:
 1. Creates, restarts or reuses the project's instance exactly as
    [`iso up`](commands.md#up) does.
 2. Writes or refreshes the pinned `iso-{name}` block in `~/.ssh/config`.
-3. Launches only the named editor on `/workspace` through that alias.
+3. Launches only the named editor on `/workspace`, by default as a new,
+   sandboxed instance (see [Editor security](#editor-security)) that `iso`
+   supervises until you quit it.
+
+## Editor security
+
+The guest is untrusted, and so is the editor server running in it: a guest
+with root can replace VS Code Server or `zed-remote-server` and send the local
+editor anything its protocol allows. isolate therefore treats a compromised
+local editor as the expected case and confines it.
+
+```
+iso code . --editor-security sandboxed   # default
+iso code . --editor-security unsafe
+iso zed . --editor-allow clipboard
+```
+
+or in `~/.iso/config.jsonc`:
+
+```jsonc
+"editor": { "security": "sandboxed", "allow": [] }
+```
+
+**`sandboxed`** (default) runs the signed application from `/Applications`
+(or `~/Applications`) directly, never its CLI, as a new instance with:
+
+- a throwaway profile, HOME and temporary directory in
+  `/private/tmp/iso-editor-<uid>/`, deleted when the session ends. Your normal
+  editor settings, extensions, sign-ins and running windows are never used;
+- none of your shell environment (no API keys, `SSH_AUTH_SOCK`, proxies or
+  `NODE_OPTIONS`);
+- a fresh SSH key, authorized in the guest for this session only and usable
+  only through a loopback tunnel `iso` runs; isolate's own VM key never
+  reaches the editor;
+- a deny-by-default macOS Seatbelt profile: no access to your files, the
+  keychain, the clipboard, other apps (no opening URLs or documents), other
+  local services or the internet;
+- supervision: `iso` stays in the foreground and ends the session (editor,
+  tunnel, key and profile) when you quit the editor, press Ctrl-C, or the
+  instance stops or fails its readiness proof.
+
+The editor is verified before launch: owned by root or you, writable by no
+one else, and signed by the expected developer (Microsoft for VS Code, Zed
+Industries for Zed). A copy that fails these checks is refused.
+
+What you give up in a sandboxed editor: copy and paste with other apps,
+opening links in your browser, local terminals, extensions beyond Remote-SSH,
+the Ports panel (use [`--forward-port`](#port-forwarding) instead), settings
+sync, and AI features signed in on the host. Settings you change last only for
+the session.
+
+`editor.allow` / `--editor-allow` widen the sandbox, each one a capability the
+guest then has too:
+
+| Capability | Grants |
+|---|---|
+| `clipboard` | Read and replace your clipboard |
+| `internet` | HTTPS to any host (port 443, including LAN and local services on that port), for downloading editor server binaries on the host |
+
+**`unsafe`** is the previous behavior: the editor's own CLI (`code`, `zed`),
+falling back to its URL scheme, which can open the remote in an editor you
+already have running, with your full authority. A compromised guest can then
+act through that editor on your machine. `iso` prints a warning, passes the
+CLI only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SHELL` and the locale,
+and returns once the editor has opened.
+
+The full boundary and its residual risks are in the
+[trust model](trust-model.md#local-editors).
 
 ## Project-aware commands vs. instance attach
 
@@ -32,9 +99,9 @@ Each command:
 | `iso editor [NAME]` | Attach an editor to an instance that is already running |
 
 ```
-iso code [DIR] [--project PATH] [--no-launch] [up options]
-iso zed  [DIR] [--project PATH] [--no-launch] [up options]
-iso editor [NAME] [--project PATH] [--editor code|zed] [--clean]
+iso code [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso zed  [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso editor [NAME] [--project PATH] [--editor code|zed] [--editor-security MODE] [--editor-allow CAP]... [--clean]
 ```
 
 `iso code` and `iso zed` accept every `iso up` creation and restart option
@@ -52,10 +119,12 @@ These commands never fall back to a different editor: if Zed is not
 installed, `iso zed` fails rather than opening VS Code.
 
 `iso editor` keeps its auto-detection: with no `--editor`, it tries VS Code,
-then Zed. A strategy that cannot be launched at all (binary missing, or
-present but not executable) counts as a miss, so the chain continues. If an
-editor starts but exits unsuccessfully or does not return within five
-minutes (it is then killed), isolate tries only that editor's
+then Zed. In sandboxed mode it opens the first one installed in
+`/Applications` or `~/Applications`; a copy that fails verification stops
+the launch. In unsafe mode a strategy that cannot be launched at all (binary
+missing, or present but not executable) counts as a miss, so the chain
+continues. If an editor starts but exits unsuccessfully or does not return
+within five minutes (it is then killed), isolate tries only that editor's
 remaining strategies and reports the failure instead of opening a different
 editor. `iso editor` also prints the SSH config entry to stderr for manual use;
 `iso code` / `iso zed` do not. `--clean` removes the instance's SSH config
@@ -68,12 +137,14 @@ iso editor my-instance --editor zed
 
 ## SSH boundary
 
-Editors connect only through the managed `iso-{name}` alias, written after the
-instance has passed the runtime's qualification and isolation checks. The
-block pins the guest host key and disables agent forwarding
-(`ForwardAgent no`, `IdentityAgent none`). isolate re-checks the instance's
-readiness immediately before each editor launch; a changed host key or a
-failed isolation check stops the launch.
+An `unsafe` editor connects through the managed `iso-{name}` alias, written
+after the instance has passed the runtime's qualification and isolation
+checks. The block pins the guest host key and disables agent forwarding
+(`ForwardAgent no`, `IdentityAgent none`). A `sandboxed` editor reads only its
+session's own SSH config, which pins the same host key and reaches the guest
+through `iso`'s loopback tunnel with the session key. isolate re-checks the
+instance's readiness immediately before each editor launch; a changed host
+key or a failed isolation check stops the launch.
 
 The alias is a connection target, not an agent session. `iso claude` and
 `iso codex` prepare credentials and their environment immediately before
@@ -81,8 +152,18 @@ launch, so `ssh iso-{name} claude` is not equivalent to them.
 
 ## VS Code
 
-VS Code opens with `code --remote ssh-remote+iso-{name} /workspace`. If the
-`code` CLI is not on `PATH`, isolate opens a
+A sandboxed VS Code needs the **Remote - SSH** extension
+(`ms-vscode-remote.remote-ssh`) installed in your normal VS Code; isolate
+copies the newest installed version into each session and nothing else.
+Remote-SSH there uses one fixed local port and runs `ssh` in a hidden
+terminal. Workspace Trust is off in the session profile: Remote-SSH's hidden
+terminal needs the remote folder trusted before it can connect, so the prompt
+would only be a mandatory click, and the sandbox, not Workspace Trust, is the
+boundary.
+
+In unsafe mode VS Code opens with
+`code --remote ssh-remote+iso-{name} /workspace`. If the `code` CLI is not on
+`PATH`, isolate opens a
 `vscode://vscode-remote/ssh-remote+iso-{name}/workspace` URL instead (path
 percent-encoded), which reaches a VS Code that is already running. To install
 the CLI, open VS Code and run:
@@ -91,7 +172,13 @@ the CLI, open VS Code and run:
 
 ## Zed
 
-Zed opens with `zed ssh://iso-{name}/workspace` (fallback: an
+A sandboxed Zed asks zed.dev from the host where to download
+`zed-remote-server` before the guest fetches it. Without `internet`, that fails
+the first time a guest meets a new Zed version; run that once with
+`--editor-allow internet` (the server then stays in the guest's
+`~/.zed_server`). AI features are disabled in the session profile.
+
+In unsafe mode Zed opens with `zed ssh://iso-{name}/workspace` (fallback: an
 `open zed://ssh/...` URL when the `zed` CLI is not on `PATH`). Guest paths are
 percent-encoded in the URL. Zed shells out to the system `ssh`, so it picks up
 the alias with no extra setup. To install the `zed` CLI, open Zed and run:
@@ -107,11 +194,11 @@ proxy…"). Keep guest rc files quiet for non-interactive shells.
 isolate never widens egress for an editor. Both editors install a remote
 server inside the guest on first connect, which needs network access:
 
-- **Zed** downloads `zed-remote-server` from zed.dev. When egress is `none` or
-  `filtered`, `iso zed` (and `iso editor` before it tries Zed) prints a
-  warning recommending
-  `upload_binary_over_ssh` for the alias in Zed's settings; isolate does not
-  edit them:
+- **Zed** downloads `zed-remote-server` from zed.dev. A sandboxed Zed with
+  `--editor-allow internet` uploads it over SSH itself when egress is `none`
+  or `filtered`. In unsafe mode, `iso zed` (and `iso editor` before it tries
+  Zed) prints a warning recommending `upload_binary_over_ssh` for the alias
+  in Zed's settings; isolate does not edit them:
 
   ```json
   {
@@ -120,16 +207,19 @@ server inside the guest on first connect, which needs network access:
     ]
   }
   ```
-- **VS Code** downloads VS Code Server. Under restricted egress, set
-  Remote-SSH's `remote.SSH.localServerDownload` to `always` so the
-  server is transferred over SSH.
+- **VS Code** downloads VS Code Server. A sandboxed VS Code with
+  `--editor-allow internet` transfers it over SSH under restricted egress. In
+  unsafe mode, set Remote-SSH's `remote.SSH.localServerDownload` to `always`
+  so the server is transferred over SSH.
 
 ## Adding a provider
 
 Editor providers are compiled in (`Sources/IsoHost/Editor/`); there is no
 plugin interface. A new provider is an `EditorProviderID` case, an
-`EditorProvider` that turns the alias and guest path into launch strategies,
-a top-level command, tests and docs. It needs no change to the lifecycle, runtime, SSH
+`EditorProvider` with the signed bundle's identity, a sandboxed plan (argv and
+the settings it writes into the session profile) and unsafe launch
+strategies, a top-level command, tests and docs. Its Seatbelt needs must be
+derived on real hardware and security-reviewed. It needs no change to the lifecycle, runtime, SSH
 config, workspace, credential proxy or isolation code.
 
 ## SSH config management

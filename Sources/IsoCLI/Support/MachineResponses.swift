@@ -229,10 +229,20 @@ struct MachineEditorResult: Encodable {
     let provider: String
     let launched: Bool
     let launchTarget: String
+    let security: String
+    let hostCapabilities: [String]
+    /// True exactly when `sandboxed`.
+    let isolatedProfile: Bool
+    let ephemeralSSHIdentity: Bool
+    let supervised: Bool
 
     enum CodingKeys: String, CodingKey {
-      case provider, launched
+      case provider, launched, security
       case launchTarget = "launch_target"
+      case hostCapabilities = "host_capabilities"
+      case isolatedProfile = "isolated_profile"
+      case ephemeralSSHIdentity = "ephemeral_ssh_identity"
+      case supervised
     }
   }
 
@@ -248,9 +258,12 @@ struct MachineEditorResult: Encodable {
     instance = MachineInstance(outcome.up.instance, .running)
     self.workspace = Nullable(workspace.map(MachineWorkspace.init))
     connection = MachineConnection(outcome.alias)
+    let sandboxed = outcome.security.security == .sandboxed
     editor = Editor(
       provider: outcome.provider.rawValue, launched: outcome.mode == .launch,
-      launchTarget: outcome.launchTarget)
+      launchTarget: outcome.launchTarget, security: outcome.security.security.rawValue,
+      hostCapabilities: outcome.security.allow.map(\.rawValue), isolatedProfile: sandboxed,
+      ephemeralSSHIdentity: sandboxed, supervised: sandboxed)
     warnings = outcome.warnings.map(neutralizeControls)
   }
 }

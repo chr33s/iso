@@ -223,6 +223,80 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   with a passphrase (it must be used non-interactively), but do flag any change
   that exposes it or copies it off the host.
 
+## Local editors
+
+A remote-development editor (VS Code Remote-SSH, Zed) talks to a server the
+guest controls. Assume a guest with root can replace that server, emit any
+editor-protocol message, and so run code in the **local editor process**. SSH
+authentication and host-key pinning identify the peer; they do not limit what
+an authenticated peer asks the editor to do. Design record:
+[`design/editor-hardening.md`](design/editor-hardening.md).
+
+`editor.security` (and `--editor-security`) selects the local editor's class:
+
+- **`sandboxed` (default).** `EditorLauncher` runs the editor as a new,
+  iso-owned process tree (`Sources/IsoHost/Editor/`):
+  - The application is found only at `/Applications/<App>.app` or
+    `~/Applications/<App>.app`, never from `PATH`. Its executable and bundle
+    must be owned by root or the user and writable by no one else, and its
+    signature must pass strict validation against the compiled-in bundle
+    identifier and Developer ID team (`TrustedEditorApp`, Security.framework).
+    A bundle that fails a check stops the launch; nothing falls back to
+    another editor, the editor CLI or a URL scheme.
+  - A per-session **enclave** under `/private/tmp/iso-editor-<uid>/` (a
+    directory that must be the user's own with mode `0700`) holds HOME,
+    `TMPDIR`, the editor's `--user-data-dir`, its extensions and its SSH
+    files. The editor's environment is HOME, TMPDIR, a fixed system `PATH`,
+    USER/LOGNAME and the locale; nothing else from the caller.
+  - A fresh Ed25519 key is generated in the enclave and appended to the guest
+    user's `authorized_keys` as `restrict,from="127.0.0.1,::1"` (VS Code
+    re-enables port forwarding to guest loopback only). The editor reaches
+    the guest only through a loopback `ssh -L` tunnel that `iso` runs outside
+    the sandbox with the pinned transport, so `vm_key` never enters the
+    enclave and the enclave's key authenticates to no other instance. The
+    editor reads only the enclave's SSH config (`ssh -F`), which pins the
+    host key with the instance's `HostKeyAlias`.
+  - The editor runs under `sandbox-exec` with a deny-by-default profile
+    (`EditorSandboxProfile.swift`): reads limited to the signed bundle, system
+    frameworks and fonts, and the enclave; writes to the enclave only;
+    execution of the bundle and `/usr/bin/ssh` only (VS Code's Remote-SSH
+    also gets `/bin/sh` and the ptys it allocates itself, because it runs ssh
+    in a hidden terminal); network to the tunnel port and, for VS Code, one
+    fixed loopback forward port only, with no DNS. The Mach allowlist omits
+    the pasteboard, LaunchServices' database (so the editor cannot open apps,
+    URLs or documents), Apple Events, the keychain and Security services,
+    and TCC. Chromium's own sandbox cannot nest inside Seatbelt, so VS Code
+    runs with `--disable-chromium-sandbox`; the outer profile confines every
+    helper.
+  - `iso` stays in the foreground: every ten seconds it re-proves the
+    instance (running, same isolation-gate result, pinned target and filtered
+    handoff identity), and two consecutive failures, a closed tunnel, Ctrl-C
+    or the editor quitting end the session. Ending kills the editor's process
+    tree, closes the tunnel, removes the key from `authorized_keys` (best
+    effort: the guest may keep the line, but the private key is gone) and
+    deletes the enclave.
+  - `editor.allow` / `--editor-allow` widen the profile explicitly:
+    `clipboard` adds the pasteboard service; `internet` adds outbound TCP 443
+    to any host, name resolution and TLS trust evaluation. Machine output
+    reports the grants.
+- **`unsafe`.** The editor's own CLI (`code`, `zed`) and URL fallbacks, which
+  can reach an editor already running with the user's full authority. The
+  CLI inherits only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SHELL` and
+  the locale. This mode crosses the VM boundary and prints a warning.
+
+Residual risks in `sandboxed` mode, recorded rather than fixed:
+
+- File metadata (`stat`) is readable everywhere; contents are not.
+- The editor can check in with LaunchServices (`launchservicesd`), which
+  AppKit requires to show a window; opening apps and URLs still fails
+  without the LaunchServices database.
+- The global and accessibility preference domains are readable.
+- `internet` allows any HTTPS destination, including LAN and loopback
+  services on port 443; Seatbelt cannot filter by host.
+- The Mach allowlist and filesystem paths were derived on macOS 27 with
+  VS Code 1.140 and Zed 1.22; a new OS or editor release can need more and
+  then fails closed (the editor does not start or cannot connect).
+
 ## Machine output (`--output json`)
 
 The `iso.machine/v1` document ([machine-interface.md](machine-interface.md))
@@ -322,9 +396,10 @@ is read by other programs, so it is a disclosure boundary like stderr:
   its descendants) after two consecutive failures. The per-boot egress lease also
   supervises the companion and egress tunnel it has seen: three consecutive
   checks without either end the lease, so the grant expires, and close the
-  instance's `ssh -L` forward master. Direct external SSH through the managed alias, and editor Remote-SSH
-  sessions, do not pass through `iso`; they are not supervised, and `iso status`
-  reports the instance `unhealthy` instead.
+  instance's `ssh -L` forward master. Direct external SSH through the managed
+  alias and `unsafe` editor sessions do not pass through `iso`; they are not
+  supervised, and `iso status` reports the instance `unhealthy` instead. A
+  `sandboxed` editor session is supervised (see [Local editors](#local-editors)).
 
 - **The credential proxy is jailed.** The macOS 27+ Swift executable holds the
   real credential and accepts untrusted guest HTTP. The host wraps it in

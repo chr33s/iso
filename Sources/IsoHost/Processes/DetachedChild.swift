@@ -18,7 +18,7 @@ struct DetachedChild {
 
   static func spawn(
     executable: String, arguments: [String], environment: [String: String], stdin: Input,
-    stderr: Int32, inherit: [(Int32, Int32)] = []
+    stderr: Int32, inherit: [(Int32, Int32)] = [], workingDirectory: String? = nil
   ) throws -> DetachedChild {
     var pipeFDs: [Int32] = [-1, -1]
     if stdin == .pipe {
@@ -41,6 +41,9 @@ struct DetachedChild {
     posix_spawn_file_actions_adddup2(&actions, stderr, 2)
     for (source, target) in inherit {
       posix_spawn_file_actions_adddup2(&actions, source, target)
+    }
+    if let workingDirectory {
+      posix_spawn_file_actions_addchdir(&actions, workingDirectory)
     }
     var attributes: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attributes)
@@ -104,6 +107,13 @@ struct DetachedChild {
     guard result == pid else { return nil }
     reaped = true
     return ChildProcess.decode(status)
+  }
+
+  /// Exited but unreaped: its pid and group stay reserved for signalling.
+  func hasExited() -> Bool {
+    guard !reaped else { return true }
+    var info = siginfo_t()
+    return waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == pid
   }
 
   mutating func kill() {

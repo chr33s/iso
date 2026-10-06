@@ -211,6 +211,7 @@ struct Editor: ParsableCommand {
   @Option(help: "Editor to launch. Omitted: try VS Code first, then Zed")
   var editor: EditorProviderID?
   @Flag(help: "Remove the SSH config entry for this instance and exit") var clean = false
+  @OptionGroup var securityOptions: EditorSecurityOptions
 
   func validate() throws { _ = try parseProjectGuestPath(project) }
 
@@ -227,12 +228,14 @@ struct Editor: ParsableCommand {
       let path = try parseProjectGuestPath(project)
       try context.sshConfigFile().install(running, stderr: context.output.error)
       try EditorLauncher(
-        environment: context.environment.variables, diagnostics: context.diagnostics
+        environment: context.environment.variables, diagnostics: context.diagnostics,
+        security: securityOptions.resolve(context.config.editor), home: context.environment.home
       )
       .launch(
         running, SSHConnectionTarget(running, guestPath: path, egress: context.config.egress),
         choice: editor.map { .only($0.provider) }
-          ?? .firstAvailable(EditorProviderID.allCases.map(\.provider)))
+          ?? .firstAvailable(EditorProviderID.allCases.map(\.provider)),
+        revalidate: context.backend.editorProof(running))
     }
   }
 }

@@ -5,6 +5,35 @@ import IsoCore
 import IsoHost
 
 extension EditorProviderID: ExpressibleByArgument {}
+extension EditorSecurity: ExpressibleByArgument {}
+extension EditorHostCapability: ExpressibleByArgument {}
+
+/// `--editor-security` and `--editor-allow`, over the config's `editor`.
+struct EditorSecurityOptions: ParsableArguments {
+  @Option(
+    help:
+      "Local editor security: 'sandboxed' (default) runs a new, isolated editor instance; 'unsafe' uses the editor's own CLI, which can reach an editor already running with your full authority"
+  )
+  var editorSecurity: EditorSecurity?
+  @Option(
+    help:
+      "Widen the sandboxed editor (repeatable): 'clipboard' lets the guest read and replace your clipboard; 'internet' allows HTTPS to any host"
+  )
+  var editorAllow: [EditorHostCapability] = []
+
+  func validate() throws {
+    if editorSecurity == .unsafe, !editorAllow.isEmpty {
+      throw UsageError("--editor-allow applies only to --editor-security sandboxed")
+    }
+  }
+
+  /// The flags win over the config; `--editor-allow` adds to `editor.allow`.
+  func resolve(_ config: EditorConfig) -> EditorConfig {
+    let security = editorSecurity ?? config.security
+    guard security == .sandboxed else { return EditorConfig(security: .unsafe, allow: []) }
+    return EditorConfig(security: security, allow: config.allow + editorAllow)
+  }
+}
 
 /// The options every project-aware editor command adds to `ProjectArguments`.
 struct EditorLaunchOptions: ParsableArguments {
@@ -29,6 +58,7 @@ protocol ProjectEditorCommand: MachineCommand {
   var global: GlobalOptions { get }
   var projectArguments: ProjectArguments { get }
   var launchOptions: EditorLaunchOptions { get }
+  var securityOptions: EditorSecurityOptions { get }
 }
 
 extension ProjectEditorCommand {
@@ -69,7 +99,9 @@ extension ProjectEditorCommand {
       let workflow = ProjectEditorWorkflow(
         up: try projectArguments.workflow(context, global: global, command: Self.machineName),
         launcher: EditorLauncher(
-          environment: context.environment.variables, diagnostics: context.diagnostics))
+          environment: context.environment.variables, diagnostics: context.diagnostics,
+          security: securityOptions.resolve(context.config.editor), home: context.environment.home
+        ))
       let outcome = try workflow.run(
         provider, guestPath: guestPath, mode: launchOptions.noLaunch ? .prepareOnly : .launch)
       guard global.output == .json else { return nil }
@@ -89,6 +121,7 @@ struct CodeCommand: ProjectEditorCommand {
   @OptionGroup var global: GlobalOptions
   @OptionGroup var projectArguments: ProjectArguments
   @OptionGroup var launchOptions: EditorLaunchOptions
+  @OptionGroup var securityOptions: EditorSecurityOptions
 }
 
 struct ZedCommand: ProjectEditorCommand {
@@ -98,4 +131,5 @@ struct ZedCommand: ProjectEditorCommand {
   @OptionGroup var global: GlobalOptions
   @OptionGroup var projectArguments: ProjectArguments
   @OptionGroup var launchOptions: EditorLaunchOptions
+  @OptionGroup var securityOptions: EditorSecurityOptions
 }

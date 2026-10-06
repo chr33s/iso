@@ -8,6 +8,20 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **Sandboxed editors by default**: `iso code`, `iso zed` and `iso editor` run
+  the verified, signed editor application as a new instance in a
+  deny-by-default Seatbelt enclave with a throwaway profile, none of the
+  caller's environment, a per-session SSH key reached through an `iso`-owned
+  loopback tunnel, and no access to host files, the keychain, the clipboard,
+  other apps, local services or the internet. `iso` supervises the session and
+  ends it when the editor quits, on Ctrl-C, or when the instance stops or loses
+  its readiness proof. `editor.allow` / `--editor-allow` grant `clipboard` or
+  `internet`; `editor.security` / `--editor-security unsafe` restores the
+  editor CLI launch (now with a scrubbed environment and a boundary warning).
+  Machine output reports the editor's security class and grants. A sandboxed
+  VS Code needs the Remote - SSH extension installed in VS Code. See
+  `docs/editor.md` and `docs/trust-model.md`.
+
 ## v0.1.0
 
 ### Agent sessions
