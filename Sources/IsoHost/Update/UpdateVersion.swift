@@ -26,7 +26,7 @@ package struct IsoBuild: Sendable, Equatable {
     self.versionString = versionString
   }
 
-  package static let packageVersion = "0.1.0"
+  package static let packageVersion = "0.2.0"
 
   /// `0.1.0 (abc1234)` for a release, `0.1.0-dev (abc1234+dirty)` for a
   /// development build (Rust `ISO_VERSION_STR`).

@@ -8,6 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.2.0
+
 - **Sandboxed editors by default**: `iso code`, `iso zed` and `iso editor` run
   the verified, signed editor application as a new instance in a
   deny-by-default Seatbelt enclave with a throwaway profile, none of the
