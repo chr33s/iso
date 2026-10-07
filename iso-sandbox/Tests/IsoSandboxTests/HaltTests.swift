@@ -27,6 +27,19 @@ private final class ExitFlag: @unchecked Sendable {
   var fired: Int { lock.withLock { count } }
 }
 
+/// Polls `condition` until it holds or `timeout` passes; the halt sequence
+/// runs on unstructured tasks, so a loaded host delays it unpredictably.
+private func eventually(
+  timeout: Duration = .seconds(10), _ condition: () async -> Bool
+) async throws -> Bool {
+  let deadline = ContinuousClock.now + timeout
+  while ContinuousClock.now < deadline {
+    if await condition() { return true }
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  return await condition()
+}
+
 @Test func aWedgedGuestAgentEndsTheOwnerAfterTheGracePeriods() async throws {
   let container = FakeContainer(wedged: true)
   let exit = ExitFlag()
@@ -35,7 +48,8 @@ private final class ExitFlag: @unchecked Sendable {
   ) { exit.fire() }
   await lifecycle.requestHalt()
   await lifecycle.requestHalt()  // only the first request starts the sequence
-  try await Task.sleep(for: .milliseconds(600))
+  #expect(try await eventually { exit.fired > 0 })
+  try await Task.sleep(for: .milliseconds(200))
   #expect(exit.fired == 1)
   // The halt request, then the forced kill.
   #expect(container.received == [Owner.systemdHalt.rawValue, Signal.kill.rawValue])
@@ -58,12 +72,12 @@ private final class ExitFlag: @unchecked Sendable {
   let container = FakeContainer(wedged: false)
   let exit = ExitFlag()
   let lifecycle = Lifecycle(
-    container: container, haltGrace: .milliseconds(100), killGrace: .milliseconds(400)
+    container: container, haltGrace: .milliseconds(100), killGrace: .seconds(2)
   ) { exit.fire() }
   await lifecycle.requestHalt()
-  try await Task.sleep(for: .milliseconds(250))
+  #expect(try await eventually { container.received.count == 2 })
   await lifecycle.markStopped()
-  try await Task.sleep(for: .milliseconds(500))
+  try await Task.sleep(for: .milliseconds(2500))
   #expect(exit.fired == 0)
   #expect(container.received == [Owner.systemdHalt.rawValue, Signal.kill.rawValue])
 }
