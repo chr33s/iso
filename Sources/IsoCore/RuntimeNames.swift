@@ -112,6 +112,12 @@ package struct OperationID: Hashable, Sendable, CustomStringConvertible, Codable
   }
 }
 
+/// The guest operating system of an image and the instances made from it.
+package enum GuestOS: String, Sendable, Codable, CaseIterable {
+  case linux
+  case macos
+}
+
 /// The unprivileged uid-1000 guest account: `[a-z_][a-z0-9_-]*`, at most 32
 /// characters, never `root`.
 package struct GuestUser: Hashable, Sendable, CustomStringConvertible, Codable {

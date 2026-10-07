@@ -83,6 +83,7 @@ jobs:
           fi
           test -x "$dir/iso-proxy"
           test -x "$dir/iso-sandbox"
+          test -x "$dir/iso-macos-helper"
           "$dir/iso-sandbox" version
           echo "TARBALL=$RUNNER_TEMP/dist/${name}.tar.gz" >> "$GITHUB_ENV"
 
@@ -136,7 +137,7 @@ jobs:
           scripts/macos-sign-notarize.sh "staging/${name}"
           # BUILD.json records the unsigned binaries; describe the signed ones.
           manifest="staging/${name}/BUILD.json"
-          for binary in iso iso-proxy iso-egress iso-sandbox; do
+          for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
             sha="$(shasum -a 256 "staging/${name}/${binary}" | cut -d' ' -f1)"
             jq --arg b "$binary" --arg s "$sha" '.binaries[$b] = $s' "$manifest" > "$manifest.new"
             mv "$manifest.new" "$manifest"

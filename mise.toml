@@ -34,7 +34,7 @@ run = "python3 scripts/hygiene.py"
 
 [tasks.lint]
 description = "swift format lint --strict over every Swift package"
-run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift spikes/macos-computer-use-q0/Package.swift spikes/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
 
 [tasks.build]
 description = "Build the Swift host"

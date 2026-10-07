@@ -55,6 +55,8 @@ package struct RuntimeVersion: Sendable, Equatable, Codable {
   package let version: String
   package let `protocol`: UInt32
   package let containerization: String
+  /// Optional capabilities; absent from runtimes that predate them.
+  package var features: [String]? = nil
 }
 
 package struct SandboxRecord: Sendable, Equatable, Codable {

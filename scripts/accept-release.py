@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox")
+BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper")
 
 
 def version(value):
@@ -81,7 +81,7 @@ def accept(work, initial, target):
         raise ValueError("uninstall retained the CLI executable")
     return {"installed": initial, "updated": target,
             "update_kind": "same-version replacement" if initial == target else "cross-version upgrade",
-            "credential_free_install": True, "all_four_binaries_replaced": True,
+            "credential_free_install": True, "all_binaries_replaced": True,
             "uninstall": "CLI removed", "vm_and_provider_acceptance": "not exercised"}
 
 

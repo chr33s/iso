@@ -6,6 +6,7 @@ is appended to `calls.log` beside this script. Answers only what iso asks.
 import hashlib
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -15,6 +16,18 @@ PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINiqkOnkRV06x+SuorkF+O3KdBTVFznIV0
 MOUNTS = [("proc", "proc", "/proc"), ("sysfs", "sysfs", "/sys"), ("devtmpfs", "none", "/dev"),
           ("mqueue", "mqueue", "/dev/mqueue"), ("tmpfs", "tmpfs", "/dev/shm"),
           ("cgroup2", "none", "/sys/fs/cgroup"), ("devpts", "devpts", "/dev/pts")]
+
+
+def mode():
+    """Test knobs for macOS states, from fake-mode.json beside this script."""
+    path = os.path.join(HERE, "fake-mode.json")
+    return json.load(open(path)) if os.path.exists(path) else {}
+
+
+def set_mode(**changes):
+    current = mode()
+    current.update(changes)
+    json.dump(current, open(os.path.join(HERE, "fake-mode.json"), "w"))
 
 
 def log(argv):
@@ -39,7 +52,10 @@ def main():
     argv = sys.argv[1:]
     log(argv)
     if argv[:1] == ["version"]:
-        return out({"name": "iso-sandbox", "version": "0.5.0", "protocol": 5, "containerization": "0.45.0"})
+        version = {"name": "iso-sandbox", "version": "0.5.0", "protocol": 5, "containerization": "0.45.0"}
+        if not mode().get("noMacFeature"):
+            version["features"] = ["macos-guests"]
+        return out(version)
     words = []
     rest = list(argv)
     while rest and rest[0] != "--root":
@@ -50,6 +66,9 @@ def main():
     state = json.load(open(path)) if os.path.exists(path) else {
         "sandboxes": {}, "images": [], "disks": [], "maintenance": None, "subnet": 1}
     result = handle(words, args, root, state)
+    for key in ("macTemplates", "macSandboxes"):
+        if not state.get(key, True):
+            del state[key]
     os.makedirs(root, exist_ok=True)
     json.dump(state, open(path, "w"), indent=2)
     if result is NULL:
@@ -94,9 +113,117 @@ def write_disk(root, sandbox_id, size):
         handle.truncate(size)
 
 
+def mac_inspect(root, sandbox):
+    record = {k: sandbox[k] for k in ["id", "owner", "template", "templateBuild", "cpus", "memoryBytes",
+                                       "macAddress", "subnetIndex", "network", "enrollment", "authorizedKey",
+                                       "createdAt"]}
+    if sandbox.get("expiresAt"):
+        record["expiresAt"] = sandbox["expiresAt"]
+    result = {"record": record, "status": sandbox["status"]}
+    knobs = mode()
+    pending = sandbox["status"] == "running" and knobs.get("pendingInspects", 0) > 0
+    if pending:
+        set_mode(pendingInspects=knobs["pendingInspects"] - 1)
+    if sandbox["enrollment"] == "enrolled" and not pending:
+        result["sshHostKey"] = PUBKEY
+    if sandbox["status"] == "running":
+        address = f"10.231.{sandbox['subnetIndex']}.2"
+        result["live"] = {"pid": 4343, "startedAt": "2026-10-06T00:00:00Z", "bootId": "mac-boot", "ipv4": address}
+        result["effective"] = {
+            "id": sandbox["id"], "template": sandbox["template"], "cpus": sandbox["cpus"],
+            "memoryBytes": sandbox["memoryBytes"], "displays": ["1920x1200@80ppi"],
+            "pointingDevices": ["VZMacTrackpadConfiguration"], "keyboards": ["VZMacKeyboardConfiguration"],
+            "storage": [os.path.join(root, "macos", "sandboxes", sandbox["id"], "disk.img")],
+            "network": ("vmnet-host" if sandbox["network"] == "host_only" else "vmnet-shared")
+            + f":10.231.{sandbox['subnetIndex']}.0/24",
+            "macAddress": sandbox["macAddress"], "vsockPorts": [7801], "directoryShares": 0, "audioDevices": 0,
+            "serialPorts": 0, "usbControllers": 0, "clipboard": False, "ownerTopology": "user/501 Background"}
+        result["runtime"] = {
+            "vmState": "running", "vmInstance": "vm-1", "bootId": "mac-boot",
+            "enrollment": "pending" if pending else sandbox["enrollment"], "helperConnected": not pending,
+            "guestBoot": "guest-boot", "guestBuild": "26A434", "helperGeneration": 1,
+            "sshHostKey": knobs.get("confirmedKey", PUBKEY), "sshHostKeyConfirmed": not pending, "ipv4": address,
+            "topology": "user/501 Background"}
+    return result
+
+
+def handle_macos(words, args, root, state):
+    templates = state.setdefault("macTemplates", {})
+    sandboxes = state.setdefault("macSandboxes", {})
+    key = " ".join(words)
+    if key == "template build":
+        name = option(args, "--name")
+        provision = open(option(args, "--provision"), "rb").read()
+        templates[name] = {
+            "name": name, "productVersion": "27.0.1", "build": "26A434",
+            "ipswSha256": hashlib.sha256(open(option(args, "--ipsw"), "rb").read()).hexdigest(),
+            "helperSha256": "b" * 64,
+            "provisionSha256": mode().get("provisionSha", hashlib.sha256(provision).hexdigest()),
+            "diskBytes": int(option(args, "--disk-gib")) << 30, "minimumCPUs": 2,
+            "minimumMemoryBytes": 4 << 30, "createdAt": "2026-10-06T00:00:00Z"}
+        return templates[name]
+    if key == "template list":
+        return sorted(templates.values(), key=lambda t: t["name"])
+    if key == "template delete":
+        if any(s["template"] == args[0] for s in sandboxes.values()):
+            fail(f"template {args[0]} is in use")
+        templates.pop(args[0])
+        return None
+    if key == "list":
+        return [{"id": s["id"], "status": s["status"], "owner": s["owner"], "template": s["template"],
+                 "enrollment": s["enrollment"]} for s in sandboxes.values()]
+    if key == "reconcile":
+        return []
+    sandbox_id = args[0]
+    if key == "create":
+        if sandbox_id in sandboxes or sandbox_id in state["sandboxes"]:
+            fail("exists")
+        template = templates[option(args, "--template")]
+        state["subnet"] += 1
+        sandboxes[sandbox_id] = {
+            "id": sandbox_id, "owner": option(args, "--owner"), "template": template["name"],
+            "templateBuild": template["build"], "cpus": int(option(args, "--cpus")),
+            "memoryBytes": int(option(args, "--memory-mib")) << 20, "macAddress": "1e:00:00:00:00:01",
+            "subnetIndex": state["subnet"],
+            "network": "host_only" if option(args, "--network") == "host-only" else "shared",
+            "enrollment": "pending", "authorizedKey": option(args, "--authorized-key"),
+            "createdAt": "2026-10-06T00:00:00Z", "status": "stopped"}
+        os.makedirs(os.path.join(root, "macos", "sandboxes", sandbox_id), exist_ok=True)
+        return {k: v for k, v in sandboxes[sandbox_id].items() if k != "status"}
+    sandbox = sandboxes.get(sandbox_id)
+    if sandbox is None:
+        fail(f"no macOS sandbox {sandbox_id}")
+    if key == "inspect":
+        return mac_inspect(root, sandbox)
+    if key == "start":
+        expires = option(args, "--expires-at")
+        sandbox["expiresAt"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expires))) if expires else None)
+        if mode().get("stopDuringBoot"):
+            return {"pid": 4343, "startedAt": "2026-10-06T00:00:00Z", "bootId": "mac-boot",
+                    "ipv4": f"10.231.{sandbox['subnetIndex']}.2"}
+        sandbox["status"] = "running"
+        sandbox["enrollment"] = "enrolled"
+        return mac_inspect(root, sandbox)["live"]
+    if key == "stop":
+        sandbox["status"] = "stopped"
+        return {"stopPath": "guest_helper_shutdown"}
+    if key == "delete":
+        if option(args, "--owner") != sandbox["owner"]:
+            fail("owner mismatch")
+        if sandbox["status"] != "stopped":
+            fail(f"{sandbox_id} is {sandbox['status']}; stop it first")
+        del sandboxes[sandbox_id]
+        shutil.rmtree(os.path.join(root, "macos", "sandboxes", sandbox_id), ignore_errors=True)
+        return None
+    fail(f"unexpected: macos {key}", 64)
+
+
 def handle(words, args, root, state):
     sandboxes = state["sandboxes"]
     key = " ".join(words)
+    if words[:1] == ["macos"]:
+        return handle_macos(words[1:], args, root, state)
     if key == "init":
         os.makedirs(root, exist_ok=True)
         return {"kernelSha256": "0" * 64, "initImage": "init", "root": root}

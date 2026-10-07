@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Electron Fixture</title></head>
+<body style="font: 16px -apple-system; padding: 20px">
+<p><input id="el_field" placeholder="EL Field" style="font-size:16px"></p>
+<p><button id="el_button" style="font-size:16px">EL Button</button></p>
+<p><label><input id="el_check" type="checkbox"> EL Check</label></p>
+<p><select id="el_select" style="font-size:16px"><option>One</option><option>Two</option><option>Three</option></select></p>
+<script>
+el_field.addEventListener('input', e => iso.event('field', 'text', e.target.value));
+el_button.addEventListener('click', () => iso.event('button', 'pressed', null));
+el_check.addEventListener('change', e => iso.event('check', 'set', e.target.checked));
+el_select.addEventListener('change', e => iso.event('select', 'selected', e.target.value));
+function rects() {
+  const out = {};
+  for (const id of ['el_field', 'el_button', 'el_check', 'el_select']) {
+    const r = document.getElementById(id).getBoundingClientRect();
+    out[id] = [r.left, r.top, r.width, r.height];
+  }
+  iso.layout(out);
+}
+window.addEventListener('load', rects);
+setInterval(rects, 1000);
+iso.event('app', 'launched', null);
+</script></body></html>

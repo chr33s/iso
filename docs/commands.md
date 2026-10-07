@@ -154,12 +154,15 @@ iso setup [FLAGS]
 | `--devcontainer <path>` | Explicit path to a `devcontainer.json` to use (skips discovery and prompt). |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation. |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any setup work. |
+| `--guest <OS>` | `linux` (default) or `macos`. See [macOS guests](images-and-profiles.md#macos-guests). |
+| `--ipsw <path>` | macOS restore image to install; required with `--guest macos`. |
 
 ```
 iso setup -y --profile python,node --template-size 12
 iso setup --config-only
 iso setup --image ml-dev --profile python
 iso setup -y --workspace . --devcontainer .devcontainer/devcontainer.json
+iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --image mac
 ```
 
 See [docs/devcontainer.md](devcontainer.md) for the subset of `devcontainer.json` isolate reads.
@@ -1021,8 +1024,8 @@ iso profiles show rust
 Replace the running isolate binary with a release from `github.com/chr33s/iso`.
 Release tags come from `main`. The updater verifies the platform tarball's
 SHA-256 and, when `gh` is installed, its repository build-provenance attestation.
-The updater installs the bundled `iso-sandbox` and `iso-proxy` before replacing
-the host. Each file replacement is atomic; the set of files is not a single
+The updater installs the bundled `iso-sandbox`, `iso-proxy`, `iso-egress` and
+`iso-macos-helper` before replacing the host. Each file replacement is atomic; the set of files is not a single
 transaction. If a later replacement fails, rerun the installer for the same
 release to restore a matching set. Missing companions are rejected before replacement.
 Until a fork release is published and verified, rebuild from source.

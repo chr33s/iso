@@ -290,7 +290,8 @@ python3 scripts/build-release.py --release --test # optimized, with every packag
 The SwiftPM product is named `iso-proxy`; the archive installs it under
 the stable `iso-proxy` name understood by existing updaters. The archive
 `iso-<tag|revision>-aarch64-apple-darwin.tar.gz` holds `iso`, `iso-proxy`,
-`iso-egress`, the ad-hoc signed `iso-sandbox`, LICENSE and BUILD.json (source revision and
+`iso-egress`, the ad-hoc signed `iso-sandbox`, the macOS guest helper
+`iso-macos-helper`, LICENSE and BUILD.json (source revision and
 binary digests), with a `SHA256SUMS` beside it. Local checksums do not
 establish release provenance. Signing and notarization are a separate,
 explicit `--sign` stage used by the **Release candidate** workflow, which
@@ -298,9 +299,9 @@ requires a clean exact revision, verifies binary signatures, and attests its
 candidate archive.
 
 The `chr33s/iso` release workflow requires tagged commits from `main` and
-packages the host, credential proxy, egress companion, and signed runtime together on macOS. Only
+packages the host, credential proxy, egress companion, signed runtime and macOS guest helper together on macOS. Only
 macOS 27+ Apple Silicon hosts are supported. Installer and updater provenance
-checks pin `chr33s/iso`. Archives must include all three companions; missing companions are rejected
+checks pin `chr33s/iso`. Archives must include every companion; missing companions are rejected
 before replacement. Verification precedes installation; companion
 replacements precede the host replacement. A changed candidate requires its own hosted verification; see
 [release validation](release-validation.md).

@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Build iso-sandbox, the macOS VM runtime that iso's `apple-container`
-# backend drives, and install it into PREFIX/bin. PREFIX/bin must be owned by
+# backend drives, and iso-macos-helper, the agent it installs in macOS guest
+# templates, and install both into PREFIX/bin. PREFIX/bin must be owned by
 # you or root and not writable by others except the wheel or admin group.
-# The binary is signed ad hoc with the hardened runtime and the
+# Both are signed ad hoc with the hardened runtime; iso-sandbox also gets the
 # com.apple.security.virtualization entitlement. Never uses sudo.
 #
 # Usage:
@@ -17,7 +18,7 @@ set -euo pipefail
 
 case "${1:-}" in
     -h | --help)
-        sed -n '4,16p' "$0" | sed -E 's/^# ?//'
+        sed -n '4,17p' "$0" | sed -E 's/^# ?//'
         exit 0
         ;;
 esac
@@ -34,7 +35,7 @@ fi
 
 pkg="$(cd "$(dirname "$0")/../iso-sandbox" && pwd)"
 swift build --package-path "${pkg}" -c release --force-resolved-versions
-built="$(swift build --package-path "${pkg}" -c release --show-bin-path)/iso-sandbox"
+bin="$(swift build --package-path "${pkg}" -c release --show-bin-path)"
 
 # Another user who can write here could swap the binary iso runs. Checked
 # before `install -d`, which would silently reset an existing directory's mode.
@@ -54,13 +55,20 @@ if [[ -e "${prefix}/bin" ]]; then
 else
     install -d -m 0755 "${prefix}/bin"
 fi
-tmp="$(mktemp "${prefix}/bin/.iso-sandbox.XXXXXX")"
-trap 'rm -f "${tmp}"' EXIT
-cp "${built}" "${tmp}"
-codesign --force --sign - --options runtime --entitlements "${pkg}/iso-sandbox.entitlements" "${tmp}"
-chmod 0755 "${tmp}"
-mv -f "${tmp}" "${prefix}/bin/iso-sandbox"
-trap - EXIT
+# install_signed NAME [CODESIGN-ARGS...]: stage, sign and rename into place.
+install_signed() {
+    local name="$1"
+    shift
+    tmp="$(mktemp "${prefix}/bin/.${name}.XXXXXX")"
+    trap 'rm -f "${tmp}"' EXIT
+    cp "${bin}/${name}" "${tmp}"
+    codesign --force --sign - --options runtime "$@" "${tmp}"
+    chmod 0755 "${tmp}"
+    mv -f "${tmp}" "${prefix}/bin/${name}"
+    trap - EXIT
+}
+install_signed iso-macos-helper
+install_signed iso-sandbox --entitlements "${pkg}/iso-sandbox.entitlements"
 
 "${prefix}/bin/iso-sandbox" version
-echo "Installed ${prefix}/bin/iso-sandbox"
+echo "Installed ${prefix}/bin/iso-sandbox and ${prefix}/bin/iso-macos-helper"

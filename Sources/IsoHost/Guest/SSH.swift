@@ -146,22 +146,36 @@ package struct ResourceUsage: Sendable, Equatable {
   package let diskUsedMiB: UInt64
   package let diskTotalMiB: UInt64
 
-  package static let command = "cat /proc/loadavg; cat /proc/meminfo; df -m /"
+  /// Linux reads /proc; a macOS guest prints the same line formats from
+  /// sysctl and vm_stat, and the data volume (the system volume is sealed).
+  package static let command =
+    "if [ -r /proc/loadavg ]; then cat /proc/loadavg; cat /proc/meminfo; df -m /; else "
+    + "/usr/sbin/sysctl -n vm.loadavg | /usr/bin/tr -d '{}'; "
+    + "echo \"MemTotal: $(( $(/usr/sbin/sysctl -n hw.memsize) / 1024 )) kB\"; "
+    + "/usr/bin/vm_stat | /usr/bin/awk '/page size of/ {ps=$8} /^Pages (free|inactive|speculative):/ "
+    + "{gsub(/\\./,\"\",$NF); n+=$NF} END {print \"MemAvailable: \" int(n*ps/1024) \" kB\"}'; "
+    + "/bin/df -m /System/Volumes/Data; fi"
 
   var memPercent: UInt64 { memTotalMiB > 0 ? memUsedMiB * 100 / memTotalMiB : 0 }
   var diskPercent: UInt64 { diskTotalMiB > 0 ? diskUsedMiB * 100 / diskTotalMiB : 0 }
 
+  /// Memory is `unavailable` when the guest reported no `MemTotal`.
   package var display: String {
-    "Load: \(formatFixed(load1m, 2))  Mem: \(memUsedMiB)/\(memTotalMiB) MiB (\(memPercent)%)  Disk: \(diskUsedMiB)/\(diskTotalMiB) MiB (\(diskPercent)%)"
+    let memory =
+      memTotalMiB > 0 ? "\(memUsedMiB)/\(memTotalMiB) MiB (\(memPercent)%)" : "unavailable"
+    return
+      "Load: \(formatFixed(load1m, 2))  Mem: \(memory)  Disk: \(diskUsedMiB)/\(diskTotalMiB) MiB (\(diskPercent)%)"
   }
 
   package var summary: String {
     "load=\(formatFixed(load1m, 2)) mem=\(memPercent)% disk=\(diskPercent)%"
   }
 
-  /// Parses `/proc/loadavg`, `/proc/meminfo` and `df -m /` output. Values
-  /// that are absent stay zero (baseline behavior, including its quirk of
-  /// trying later lines for the load while it is still `0.0`).
+  /// Parses `/proc/loadavg`, `/proc/meminfo` and `df -m /` output, or the
+  /// same line formats a macOS guest prints from sysctl, vm_stat and
+  /// `df -m /System/Volumes/Data`. Values that are absent stay zero
+  /// (baseline behavior, including its quirk of trying later lines for the
+  /// load while it is still `0.0`).
   package static func parse(_ output: String) -> ResourceUsage {
     var load = 0.0
     var memTotalKiB: UInt64 = 0

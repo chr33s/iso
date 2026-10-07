@@ -28,9 +28,9 @@ cd iso
 python3 scripts/build-release.py --release
 ```
 
-Install all four executables from the archive in `.build/release-archive/`
-into the same directory on `PATH`: `iso`, `iso-proxy`, `iso-egress` and
-`iso-sandbox`. See [prerequisites](docs/getting-started.md#prerequisites),
+Install all five executables from the archive in `.build/release-archive/`
+into the same directory on `PATH`: `iso`, `iso-proxy`, `iso-egress`,
+`iso-sandbox` and `iso-macos-helper`. See [prerequisites](docs/getting-started.md#prerequisites),
 [build instructions](docs/getting-started.md#build-from-source) and
 [Apple backend setup](docs/backends.md#macos--apple-sandbox).
 

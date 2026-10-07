@@ -355,7 +355,7 @@ esac
         self.assert_keychains_restored(recorded)
         self.assertTrue(any(c.startswith('security import ') and ' -f pkcs12 ' in c
                             for c in recorded))
-        for binary in ('iso', 'iso-proxy', 'iso-egress', 'iso-sandbox'):
+        for binary in ('iso', 'iso-proxy', 'iso-egress', 'iso-sandbox', 'iso-macos-helper'):
             target = next(c.split()[-1] for c in recorded
                           if c.startswith('codesign --force ') and c.endswith('/' + binary))
             self.assertEqual(sum(c.startswith('codesign --force ') and c.endswith(target)
@@ -374,7 +374,7 @@ esac
                 result, recorded = self.run_signing(identity=identity)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 signing = [c for c in recorded if c.startswith('codesign --force ')]
-                self.assertEqual(len(signing), 4)
+                self.assertEqual(len(signing), 5)
                 self.assertTrue(all('--sign ' + 'A' * 40 + ' ' in c for c in signing))
 
     def test_invalid_or_mismatched_identity_stops_before_signing(self):

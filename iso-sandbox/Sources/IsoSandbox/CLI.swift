@@ -3,7 +3,6 @@ import Containerization
 import Foundation
 import IsoSandboxCore
 
-@main
 struct IsoSandbox: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "iso-sandbox",
@@ -13,16 +12,9 @@ struct IsoSandbox: AsyncParsableCommand {
       Exec.self,
       Inspect.self, List.self, Set.self, Grow.self, Commit.self, Restore.self, DiskCommand.self,
       MaintenanceCommand.self,
-      Logs.self, Delete.self, Reconcile.self,
+      Logs.self, Delete.self, Reconcile.self, MacOSCommand.self,
     ]
   )
-
-  /// Everything this binary writes (records, disks, logs, the owner it
-  /// runs under launchd) is for this user alone.
-  static func main() async {
-    umask(0o077)
-    await Self.main(nil)
-  }
 }
 
 struct RootOptions: ParsableArguments {
@@ -43,6 +35,8 @@ struct Version: ParsableCommand {
     let version = runtimeVersion
     let `protocol` = protocolVersion
     let containerization = containerizationVersion
+    /// Optional capabilities beyond the Linux sandbox protocol.
+    let features = [macGuestsFeature]
   }
 
   func run() throws { try printJSON(Info()) }

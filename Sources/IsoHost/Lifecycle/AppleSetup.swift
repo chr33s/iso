@@ -15,11 +15,15 @@ package struct SetupOptions: Sendable {
   /// `iso run` sets this so a stale or missing image is not rebuilt without
   /// `--prepare`. `iso setup` leaves it false.
   package var refuseRebuild: Bool
+  /// macOS restore image for `--guest macos`; nil builds a Linux image.
+  package var macOSRestoreImage: String?
 
   package init(
     rebuild: Bool, profiles: [ProfileDefinition], image: ImageName, guestUser: GuestUser,
-    builderTimeout: Duration?, ociFeatures: [ResolvedFeature] = [], refuseRebuild: Bool = false
+    builderTimeout: Duration?, ociFeatures: [ResolvedFeature] = [], refuseRebuild: Bool = false,
+    macOSRestoreImage: String? = nil
   ) {
+    self.macOSRestoreImage = macOSRestoreImage
     self.rebuild = rebuild
     self.profiles = profiles
     self.image = image
@@ -162,6 +166,10 @@ extension AppleBackend {
     diagnostics.log(.info, "Sandbox runtime: \(identity)")
     let owner = try Owner.loadOrInit(config)
     try ensureSSHKey()
+    if let ipsw = options.macOSRestoreImage {
+      try setupMac(options, ipsw: ipsw, runtime: runtime, owner: owner)
+      return
+    }
     try initializeRuntime(runtime)
     try ensureMaintenance(runtime, owner: owner, options: options)
 
@@ -182,6 +190,11 @@ extension AppleBackend {
     let manifestID = context.manifestID(
       guestUser: options.guestUser, publicKeyFingerprint: fingerprint)
     let previous = ImageManifest.loadLenient(config, options.image, diagnostics: diagnostics)
+    if let previous, previous.guestOS == .macos, !options.rebuild {
+      throw HostError(
+        "Image '\(options.image)' is a macOS image; choose another name with --image, or replace it with --rebuild"
+      )
+    }
     if !options.rebuild, let previous, previous.manifestID == manifestID,
       (try? runtime.verifyImage(previous)) != nil
     {
@@ -270,8 +283,9 @@ extension AppleBackend {
     }
     do {
       if try runtime.exists(machine) {
-        if try runtime.inspect(machine).status != .stopped { try stopAndConfirm(runtime, machine) }
-        try deleteSandbox(runtime, machine, owner: owner.id)
+        let linux = runtime.namespace(.linux)
+        if try linux.status(machine) != .stopped { try linux.stopAndConfirm(machine) }
+        try linux.delete(machine, owner: owner.id)
       }
     } catch {
       diagnostics.warn("Failed to clean up verification sandbox \(machine): \(oneLine(error))")
@@ -332,4 +346,17 @@ extension AppleBackend {
 
 func sha256Hex(_ bytes: [UInt8]) -> String {
   SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+}
+
+/// SHA-256 of a file's contents, read in chunks (restore images are many GiB).
+func sha256Hex(fileAt path: String) throws -> String {
+  guard let handle = FileHandle(forReadingAtPath: path) else {
+    throw HostError("Failed to read \(path)")
+  }
+  defer { try? handle.close() }
+  var hasher = SHA256()
+  while let chunk = try handle.read(upToCount: 8 << 20), !chunk.isEmpty {
+    hasher.update(data: chunk)
+  }
+  return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }

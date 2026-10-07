@@ -65,13 +65,23 @@ package enum IsolationGate {
     throws(RuntimeError)
   {
     let record = inspection.record
-    guard record.id == expected.sandbox.rawValue, record.owner == expected.owner.rawValue else {
+    try verifyRecorded(
+      id: record.id, owner: record.owner, network: record.network,
+      resources: Resources(cpus: record.cpus, memoryBytes: record.memoryBytes), expected)
+  }
+
+  /// The record checks shared by Linux and macOS sandboxes: identity,
+  /// owner, the network mode egress requires, and resources.
+  static func verifyRecorded(
+    id: String, owner: String, network: String, resources recorded: Resources, _ expected: Expected
+  ) throws(RuntimeError) {
+    guard id == expected.sandbox.rawValue, owner == expected.owner.rawValue else {
       throw .identityConflict(
-        "sandbox \(expected.sandbox) is recorded for owner \(debugQuoted(sanitizeForDisplay(record.owner))), not this installation"
+        "sandbox \(expected.sandbox) is recorded for owner \(debugQuoted(sanitizeForDisplay(owner))), not this installation"
       )
     }
     let hostOnly: Bool
-    switch record.network {
+    switch network {
     case "shared": hostOnly = false
     case "host_only": hostOnly = true
     case let other:
@@ -84,10 +94,26 @@ package enum IsolationGate {
         "sandbox \(expected.sandbox) was created with \(hostOnly ? "host-only" : "shared") networking but the configuration says egress \(expected.egress.rawValue); egress is fixed when an instance is created — recreate it (iso destroy, then iso up) or change `egress` back"
       )
     }
-    let recorded = Resources(cpus: record.cpus, memoryBytes: record.memoryBytes)
     guard recorded == expected.resources else {
       throw .identityConflict(
         "sandbox \(expected.sandbox) records \(recorded), expected \(expected.resources)")
+    }
+  }
+
+  /// Independent of the owner's own timer: a hung owner past its deadline
+  /// is not handed out.
+  static func verifySessionOpen(_ name: MachineName, expiresAt: String?, deadline: Date?)
+    throws(RuntimeError)
+  {
+    guard let expiresAt else { return }
+    guard let deadline else {
+      throw .unqualified(
+        "sandbox \(name) records an unreadable session deadline \(debugQuoted(expiresAt))")
+    }
+    if deadline <= Date() {
+      throw .sessionExpired(
+        "sandbox \(name)'s session ended at \(ISO8601DateFormatter().string(from: deadline)); `iso stop` then `iso start` begins a new one"
+      )
     }
   }
 
@@ -105,19 +131,8 @@ package enum IsolationGate {
       throw .unqualified("running sandbox \(name) reports no live state or effective configuration")
     }
     guard let ip = live.ipv4 else { throw .networkIsolation("sandbox \(name) reports no address") }
-    // Independent of the owner's own timer: a hung owner past its deadline
-    // is not handed out.
-    if let recorded = inspection.record.expiresAt {
-      guard let deadline = inspection.record.sessionDeadline else {
-        throw .unqualified(
-          "sandbox \(name) records an unreadable session deadline \(debugQuoted(recorded))")
-      }
-      if deadline <= Date() {
-        throw .sessionExpired(
-          "sandbox \(name)'s session ended at \(ISO8601DateFormatter().string(from: deadline)); `iso stop` then `iso start` begins a new one"
-        )
-      }
-    }
+    try verifySessionOpen(
+      name, expiresAt: inspection.record.expiresAt, deadline: inspection.record.sessionDeadline)
     let running = Resources(cpus: effective.cpus, memoryBytes: effective.memoryBytes)
     guard running == expected.resources else {
       throw .identityConflict(
@@ -197,5 +212,138 @@ package enum IsolationGate {
         "sandbox \(name) interface \(sanitizeForDisplay(interface.ipv4)) on \(sanitizeForDisplay(interface.network)) does not match its dedicated network address \(ip)"
       )
     }
+  }
+}
+
+// MARK: - macOS guests
+
+extension IsolationGate {
+  /// The guest helper's vsock port, `HelperProtocol.port` in iso-sandbox
+  /// (a separate package): the only port a macOS guest may have.
+  static let macVsockPorts: [UInt32] = [7801]
+
+  package static func macDiskPath(runtimeRoot: String, sandbox: MachineName) -> String {
+    SandboxNamespace.directory(root: runtimeRoot, sandbox, .macos) + "/disk.img"
+  }
+
+  /// Pre-boot check of a macOS sandbox's persisted record.
+  package static func verifyMacRecord(
+    _ inspection: MacInspection, _ expected: Expected, template: MachineName
+  ) throws(RuntimeError) {
+    let record = inspection.record
+    try verifyRecorded(
+      id: record.id, owner: record.owner, network: record.network,
+      resources: Resources(cpus: record.cpus, memoryBytes: record.memoryBytes), expected)
+    guard record.template == template.rawValue else {
+      throw .identityConflict(
+        "sandbox \(expected.sandbox) was cloned from \(debugQuoted(sanitizeForDisplay(record.template))), expected \(template)"
+      )
+    }
+    switch record.enrollment {
+    case "pending", "enrolled": break
+    case "identity_mismatch":
+      throw .hostKeyChanged(
+        "guest of sandbox \(expected.sandbox) reported a different SSH host key over its authenticated helper channel; destroy and recreate the instance"
+      )
+    case let other:
+      throw .unqualified(
+        "sandbox \(expected.sandbox) records unknown enrollment \(debugQuoted(sanitizeForDisplay(other)))"
+      )
+    }
+  }
+
+  /// Why a booting macOS sandbox is not ready to gate yet, or nil once its
+  /// helper has enrolled and confirmed the pinned host key on this boot.
+  package static func macPending(_ inspection: MacInspection) -> String? {
+    guard inspection.status == .running else { return "sandbox is \(inspection.status.rawValue)" }
+    guard inspection.live != nil, inspection.effective != nil, let runtime = inspection.runtime
+    else { return "owner has not reported its configuration" }
+    guard runtime.helperConnected else { return "guest helper not connected" }
+    guard runtime.enrollment == "enrolled", inspection.sshHostKey != nil else {
+      return "guest not enrolled"
+    }
+    guard runtime.sshHostKeyConfirmed else { return "guest has not confirmed its SSH host key" }
+    return nil
+  }
+
+  /// How much of the guest helper a macOS boot needs to pass the gate.
+  package enum MacHelperCheck: Sendable {
+    /// A boot: the helper has enrolled and confirmed the pinned host key on
+    /// this boot.
+    case confirmedThisBoot
+    /// A later handoff: the pin is enforced by the instance's known_hosts,
+    /// so a helper that is slow or reconnecting does not block it. Whatever
+    /// the helper does report must still agree with the boot.
+    case pinned
+  }
+
+  /// Post-boot check of a macOS guest: the effective configuration the
+  /// owner reports and, as `helper` requires, the helper's authenticated
+  /// confirmation of the pinned SSH host key on this boot.
+  package static func verifyMacEffective(
+    _ inspection: MacInspection, _ expected: Expected, template: MachineName,
+    helper: MacHelperCheck
+  ) throws(RuntimeError) -> Ready {
+    try verifyMacRecord(inspection, expected, template: template)
+    let name = expected.sandbox
+    guard inspection.status == .running else {
+      throw .operationUncertain("sandbox \(name) is \(inspection.status.rawValue), not running")
+    }
+    guard let live = inspection.live, let effective = inspection.effective else {
+      throw .unqualified("running sandbox \(name) reports no live state or effective configuration")
+    }
+    guard inspection.record.enrollment == "enrolled", inspection.sshHostKey != nil else {
+      throw .operationUncertain("sandbox \(name) is not ready: guest not enrolled")
+    }
+    try verifySessionOpen(
+      name, expiresAt: inspection.record.expiresAt, deadline: inspection.record.sessionDeadline)
+    if let runtime = inspection.runtime {
+      guard runtime.enrollment != "identity_mismatch" else {
+        throw .hostKeyChanged(
+          "guest of sandbox \(name) reported a different SSH host key over its authenticated helper channel; destroy and recreate the instance"
+        )
+      }
+      guard runtime.bootId == live.bootId, runtime.vmState == "running",
+        runtime.ipv4 == live.ipv4
+      else {
+        throw .operationUncertain("sandbox \(name) reports a different boot than its live state")
+      }
+    }
+    let running = Resources(cpus: effective.cpus, memoryBytes: effective.memoryBytes)
+    guard running == expected.resources, effective.template == inspection.record.template else {
+      throw .identityConflict(
+        "sandbox \(name) runs \(debugQuoted(sanitizeForDisplay(effective.template))) with \(running), expected \(inspection.record.template) with \(expected.resources)"
+      )
+    }
+    let disk = macDiskPath(runtimeRoot: expected.runtimeRoot, sandbox: name)
+    guard effective.storage == [disk] else {
+      throw .hostExposure(
+        "sandbox \(name) attaches \(effective.storage.map { sanitizeForDisplay($0) }), not only its own disk \(disk)"
+      )
+    }
+    guard effective.directoryShares == 0, effective.audioDevices == 0, effective.serialPorts == 0,
+      effective.usbControllers == 0, !effective.clipboard, effective.displays.count == 1,
+      effective.vsockPorts == macVsockPorts
+    else {
+      throw .hostExposure(
+        "sandbox \(name) has \(effective.directoryShares) shares, \(effective.audioDevices) audio, \(effective.serialPorts) serial, \(effective.usbControllers) USB, clipboard \(effective.clipboard), \(effective.displays.count) displays, vsock \(effective.vsockPorts); expected none, one display and vsock \(macVsockPorts)"
+      )
+    }
+    guard let ip = try? IPv4Address(live.ipv4) else {
+      throw .networkIsolation("sandbox \(name) reports no usable address")
+    }
+    let prefix = expected.egress.requiresHostOnlyNetwork ? "vmnet-host:" : "vmnet-shared:"
+    let index = inspection.record.subnetIndex
+    guard (1...250).contains(index), effective.network == "\(prefix)10.231.\(index).0/24",
+      ip.octets == [10, 231, UInt8(index), 2], effective.macAddress == inspection.record.macAddress
+    else {
+      throw .networkIsolation(
+        "sandbox \(name) address \(ip) on \(sanitizeForDisplay(effective.network)) does not match its dedicated network"
+      )
+    }
+    if case .confirmedThisBoot = helper, let pending = macPending(inspection) {
+      throw .operationUncertain("sandbox \(name) is not ready: \(pending)")
+    }
+    return Ready(sandbox: name, ownerPID: live.pid, ipv4: ip)
   }
 }

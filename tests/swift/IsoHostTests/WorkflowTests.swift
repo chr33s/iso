@@ -161,3 +161,32 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   }
   #expect(unreadable.reason == .instanceIncompatible(instance.name))
 }
+
+@Test func aDevcontainerDiskHintIsIgnoredForAMacOSImageButAnExplicitDiskIsKept() throws {
+  let root = try scratchDirectory("workflow-macdisk")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(root)
+  let mac = try ImageName("mac")
+  try ImageManifest(
+    schemaVersion: StateSchema.version, backend: StateSchema.backend,
+    imageRef: "iso-0a1b2c3d-0011223344556677", digest: "macos:26A434:helper-b", disk: nil,
+    manifestID: "macos-provision-p", baseImage: "macOS 27.0.1", platform: ImageManifest.macPlatform,
+    guestUser: MacProvision.guestUser, created: "t"
+  ).save(lifecycle.config, mac)
+  var translation = DevcontainerTranslation()
+  translation.disk = GiB(100)
+  var request = UpRequest(configTarget: ConfigTarget(path: root + "/c.jsonc", format: .jsonc))
+  request.image = mac
+  let hinted = try UpWorkflow(request: request, lifecycle: lifecycle, target: nil)
+    .creationOptions(translation, rule: .copyProject, leading: [])
+  #expect(hinted.disk == nil)
+  request.disk = GiB(80)
+  let explicit = try UpWorkflow(request: request, lifecycle: lifecycle, target: nil)
+    .creationOptions(translation, rule: .copyProject, leading: [])
+  #expect(explicit.disk == GiB(80))
+  request.disk = nil
+  request.image = .default
+  let linux = try UpWorkflow(request: request, lifecycle: lifecycle, target: nil)
+    .creationOptions(translation, rule: .copyProject, leading: [])
+  #expect(linux.disk == GiB(100))
+}

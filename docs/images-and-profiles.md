@@ -249,3 +249,51 @@ iso up . --image py-dev --disk 100
 Shrinking below the image size is not supported. Each instance gets its own
 disk clone. Changes in one instance do not affect the template or other
 instances.
+
+## macOS guests
+
+An image can also be macOS. `iso setup --guest macos --ipsw <restore image>`
+installs macOS from an Apple restore image (`.ipsw`) that you supply, as a
+template of the runtime (`iso-sandbox macos template build`), and records it
+under the image name:
+
+```bash
+iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --image mac
+iso up . --image mac
+```
+
+The build installs macOS, then runs a provisioning script that iso supplies
+(it is kept as `images/<name>/macos-provision.sh`). The script gives the
+guest the layout iso's guest commands expect on Linux: the guest user `iso`
+with passwordless `sudo`, `/workspace` (a link to `/Users/iso/workspace`),
+`/home/iso`, a group named `iso`, a `timeout` command, and `AcceptEnv *` for
+forwarded variables. It installs the Command Line Tools (for `git`), a
+checksum-pinned GitHub CLI, Claude Code and Codex. The build VM reaches the
+network through a vmnet network of its own; no project files or host
+credentials are given to it. A build takes about half an hour.
+
+Instances made from a macOS image are clones of the template's disk, each
+with its own machine identity, SSH host key and network. They take
+`vm.vcpu_count` and `vm.mem_size_mib`, which must meet the restore image's
+minimum (typically 4 vCPUs and 8192 MiB for current macOS). `up`, `start`,
+`stop`, `destroy`, `shell`, `exec`, `status`, `claude` and `codex` work as for
+Linux guests. These do not apply to macOS guests and are refused:
+
+- `--profile`, `--guest-user`, `--extra-packages`, `--post-install` and the
+  devcontainer options of `iso setup` (they build Linux images)
+- `--disk`, `resize`, `commit` and `restore`
+- `iso logs` (macOS guests have no serial console; use
+  `iso exec <name> -- log show --last 10m`)
+- Codex ChatGPT account auth (`"codex": {"auth": "chatgpt"}`), which needs
+  the Linux Secret Service
+
+With `egress: "filtered"`, command-line tools in the guest reach approved
+hosts through the proxy variables iso forwards, as on Linux. GUI applications
+do not read those variables and have no route, so they fail closed.
+
+An image keeps its guest OS: building macOS into a Linux image's name (or
+the reverse) needs `--rebuild`. The next `iso setup --guest macos` rebuilds
+the image when the restore image or iso's provisioning script has changed.
+A replaced template is deleted once no instance uses it (each boot reads
+its hardware model); `iso images --delete <name>` deletes the template the
+same way. `--template-size` sets the template disk, at least 64 GiB.

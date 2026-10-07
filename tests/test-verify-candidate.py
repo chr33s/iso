@@ -113,9 +113,9 @@ class CandidateTests(unittest.TestCase):
         self.assertIn("chr33s/iso/.github/workflows/candidate.yml", attestation)
         self.assertIn("refs/heads/main", attestation)
         self.assertEqual(attestation[attestation.index("--source-digest") + 1], REVISION)
-        self.assertEqual([Path(event[1]).name for event in events[1:5]], list(candidate.BINARIES))
-        self.assertEqual(events[5][1], "--version")
-        self.assertEqual(events[6][1], "version")
+        self.assertEqual([Path(event[1]).name for event in events[1:1 + len(candidate.BINARIES)]], list(candidate.BINARIES))
+        self.assertEqual(events[1 + len(candidate.BINARIES)][1], "--version")
+        self.assertEqual(events[2 + len(candidate.BINARIES)][1], "version")
 
     def test_failed_attestation_or_signing_prevents_execution(self):
         self.archive()

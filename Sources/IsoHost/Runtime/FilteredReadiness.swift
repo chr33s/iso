@@ -170,11 +170,10 @@ enum FilteredReadiness {
   static func guestExchangeRequest(
     _ target: SSHTarget, client: SSHClient, port: UInt16, request: [UInt8]
   ) throws -> ProcessRunner.Request {
-    let command = RemoteCommand().literal("/usr/bin/timeout 2 /bin/bash -c ").arg(guestProbe)
     let input = Array("\(port)\n".utf8) + request
     return .init(
       executable: try client.ssh(),
-      arguments: target.sshOptions + [target.address, command.rendered],
+      arguments: target.sshOptions + [target.address, guestProbeCommand.rendered],
       environment: client.environment, deadline: .seconds(5), outputLimit: 1024,
       input: input)
   }
@@ -193,6 +192,13 @@ enum FilteredReadiness {
     return Secret(text)
   }
 
+  /// perl's alarm survives exec, so it bounds the probe on Linux and macOS
+  /// guests alike (macOS has no timeout(1)).
+  static var guestProbeCommand: RemoteCommand {
+    RemoteCommand().literal("/usr/bin/perl -e 'alarm 2; exec @ARGV or exit 127' ")
+      .literal("/bin/bash -c ").arg(guestProbe)
+  }
+
   // Only a public challenge and the already guest-visible capability go to
   // the guest. Untrusted stdout is authenticated, never executed or logged.
   static let guestProbe = """
@@ -200,8 +206,8 @@ enum FilteredReadiness {
     IFS= read -r port
     [[ "$port" =~ ^[0-9]{1,5}$ ]] || exit 1
     exec 3<>/dev/tcp/127.0.0.1/"$port"
-    /usr/bin/cat >&3
-    /usr/bin/head -c 1025 <&3
+    /bin/cat >&3
+    exec /usr/bin/head -c 1025 <&3
     """
 
   static func exchange(port: UInt16, request: [UInt8]) -> [UInt8]? {

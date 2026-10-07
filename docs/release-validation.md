@@ -1,7 +1,8 @@
 # Release validation
 
-A release is qualified against its exact source revision and the four binaries
-in its archive: `iso`, `iso-sandbox`, `iso-proxy`, and `iso-egress`. Results
+A release is qualified against its exact source revision and the five binaries
+in its archive: `iso`, `iso-sandbox`, `iso-proxy`, `iso-egress`, and
+`iso-macos-helper`. Results
 from earlier revisions do not qualify a changed candidate. This document lists
 required evidence; it does not claim that any unexecuted gate has passed.
 
@@ -25,7 +26,7 @@ Before publication, record the revision, toolchain, commands and results for:
 - Filtered-egress qualification, including NET-20/F1 and the adversarial cases
   in [testing](testing.md). Partial local observations do not qualify this
   mode for a release claim.
-- A same-revision hosted candidate: archive checksum, all four binary digests,
+- A same-revision hosted candidate: archive checksum, all five binary digests,
   clean source metadata, Developer ID signatures, notarization, and pinned
   workflow attestation. Validate clean-machine install, run, update and
   uninstall. Local ad-hoc signing is not hosted distribution evidence.

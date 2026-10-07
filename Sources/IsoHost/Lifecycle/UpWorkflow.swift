@@ -277,6 +277,17 @@ package struct UpWorkflow {
       devcontainer: translation?.guestEnvironment)
     options.disk = Devcontainer.effectiveDisk(
       cli: request.disk, translation ?? DevcontainerTranslation())
+    // A macOS guest clones its template's disk: an explicit --disk is
+    // refused when the instance is created, but a devcontainer's storage
+    // requirement is only a hint.
+    if request.disk == nil, options.disk != nil,
+      (try? ImageManifest.loadIfPresent(lifecycle.config, effectiveImage))??.guestOS == .macos
+    {
+      diagnostics.warn(
+        "Ignoring the devcontainer's storage requirement: macOS guests use their template's disk size"
+      )
+      options.disk = nil
+    }
     options.boot.postStartOverride = request.postStart ?? translation?.postStart
     options.mounts =
       try ValidatedMounts(rule, leading + (translation?.mounts ?? []) + request.extraMount).mounts

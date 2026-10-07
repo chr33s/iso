@@ -4,6 +4,8 @@ import Foundation
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.
 package let protocolVersion = 5
+/// `version` capability: `macos …` commands (the host's `RuntimeProtocol.macFeature`).
+package let macGuestsFeature = "macos-guests"
 package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.45.0"
 
@@ -384,7 +386,9 @@ package enum KernelPin {
 ///    (``SandboxPaths/mutationLock``). An owner holds it only while it
 ///    claims ownership; a mutation never waits for `owner.lock`, it only
 ///    probes it.
-/// 3. `locks/disk-<name>.lock`, one committed disk (``SandboxRoot/diskLock(_:)``).
+/// 3. `locks/disk-<name>.lock`, one committed disk (``SandboxRoot/diskLock(_:)``),
+///    or `locks/macos-template-<name>.lock`, one macOS template
+///    (``SandboxRoot/macTemplateLock(_:)``).
 /// 4. `subnets.lock`, the subnet allocator.
 /// 5. Leaf locks, held briefly with nothing taken inside them:
 ///    `locks/record-<id>.lock` (``SandboxPaths/recordLock``) and
@@ -485,6 +489,16 @@ extension JSONEncoder {
   package static var pretty: JSONEncoder {
     let e = JSONEncoder()
     e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    e.dateEncodingStrategy = .iso8601
+    return e
+  }
+}
+
+extension JSONEncoder {
+  /// Single-line JSON with ISO 8601 dates, for socket replies.
+  package static var wire: JSONEncoder {
+    let e = JSONEncoder()
+    e.outputFormatting = [.sortedKeys]
     e.dateEncodingStrategy = .iso8601
     return e
   }

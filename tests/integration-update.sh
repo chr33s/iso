@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Serves a synthetic GitHub-shaped fixture from a local HTTP server and
 # verifies that the update flow downloads, checksums, and atomically
-# replaces the running binary and all three companions. Also verifies checksum
+# replaces the running binary and every companion. Also verifies checksum
 # rollback, `--check` behaviour, and dev-build refusal. The release-kind test
 # binary trusts a throwaway key generated here in place of the compiled-in
 # release signer (see patch_release_signer); SHA256SUMS is signed with it.
@@ -208,6 +208,8 @@ EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 printf '#!/bin/sh\necho installed-iso-egress\n' >"$TMPDIR/build/${FAKE_DIR}/iso-egress"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-egress"
+printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso" "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
@@ -407,20 +409,20 @@ repack_release_fixture() {
 seed_install() {
     cp "$RELEASE_BIN" "$ISO_BIN"
     original_host="$(sha_of "$ISO_BIN")"
-    for artifact in iso-sandbox iso-proxy iso-egress; do
+    for artifact in iso-sandbox iso-proxy iso-egress iso-macos-helper; do
         printf '%s\n' "keep-$artifact" >"$TMPDIR/bin/$artifact"
     done
 }
 
 install_unchanged() {
     [[ "$(sha_of "$ISO_BIN")" == "$original_host" ]] || return 1
-    for artifact in iso-sandbox iso-proxy iso-egress; do
+    for artifact in iso-sandbox iso-proxy iso-egress iso-macos-helper; do
         [[ "$(cat "$TMPDIR/bin/$artifact")" == "keep-$artifact" ]] || return 1
     done
 }
 
 echo "==> Test 6: every release binary is required before replacement"
-for missing in iso iso-sandbox iso-proxy iso-egress; do
+for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
     mv "$TMPDIR/build/${FAKE_DIR}/$missing" "$TMPDIR/missing-backup"
     repack_release_fixture
     seed_install
@@ -429,9 +431,9 @@ for missing in iso iso-sandbox iso-proxy iso-egress; do
     if ! "$ISO_BIN" update --yes >"$TMPDIR/missing-$missing.log" 2>&1 \
         && grep -q "$expected" "$TMPDIR/missing-$missing.log" \
         && install_unchanged; then
-        pass "missing $missing preserves all four installed binaries"
+        pass "missing $missing preserves every installed binary"
     else
-        fail "missing $missing preserves all four installed binaries" "$(tail -5 "$TMPDIR/missing-$missing.log")"
+        fail "missing $missing preserves every installed binary" "$(tail -5 "$TMPDIR/missing-$missing.log")"
     fi
     mv "$TMPDIR/missing-backup" "$TMPDIR/build/${FAKE_DIR}/$missing"
 done
@@ -444,9 +446,9 @@ seed_install
 if ! "$ISO_BIN" update --yes >"$TMPDIR/symlink.log" 2>&1 \
     && grep -q 'Release is missing the iso-egress companion' "$TMPDIR/symlink.log" \
     && install_unchanged; then
-    pass "symlink companion preserves all four installed binaries"
+    pass "symlink companion preserves every installed binary"
 else
-    fail "symlink companion preserves all four installed binaries" "$(tail -5 "$TMPDIR/symlink.log")"
+    fail "symlink companion preserves every installed binary" "$(tail -5 "$TMPDIR/symlink.log")"
 fi
 rm "$TMPDIR/build/${FAKE_DIR}/iso-egress"
 mv "$TMPDIR/egress-backup" "$TMPDIR/build/${FAKE_DIR}/iso-egress"
@@ -455,10 +457,11 @@ if "$ISO_BIN" update --yes >"$TMPDIR/complete.log" 2>&1 \
     && [[ "$("$ISO_BIN")" == "MARKER: fake-replacement-binary" \
        && "$("$TMPDIR/bin/iso-proxy")" == "MARKER: fake-proxy-binary" \
        && "$("$TMPDIR/bin/iso-sandbox")" == installed-iso-sandbox \
-       && "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress ]]; then
-    pass "complete release replaces all four binaries"
+       && "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress \
+       && "$("$TMPDIR/bin/iso-macos-helper")" == installed-iso-macos-helper ]]; then
+    pass "complete release replaces every binary"
 else
-    fail "complete release replaces all four binaries" "$(tail -5 "$TMPDIR/complete.log")"
+    fail "complete release replaces every binary" "$(tail -5 "$TMPDIR/complete.log")"
 fi
 
 echo

@@ -103,6 +103,15 @@ package enum ControlSocket {
   package static func serve(
     at path: URL, handler: @escaping @Sendable (ControlRequest) async -> ControlResponse
   ) throws {
+    try serveJSON(at: path, handler: handler) { ControlResponse(ok: false, error: $0) }
+  }
+
+  /// `serve` for any request/response pair; `failure` builds the reply to a
+  /// request that could not be read.
+  package static func serveJSON<Request: Decodable & Sendable, Response: Encodable & Sendable>(
+    at path: URL, handler: @escaping @Sendable (Request) async -> Response,
+    failure: @escaping @Sendable (String) -> Response
+  ) throws {
     try prepareDirectory(for: path)
     unlink(path.path)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -143,20 +152,20 @@ package enum ControlSocket {
         }
         let handle = FileHandle(fileDescriptor: conn, closeOnDealloc: true)
         Task.detached {
-          let response: ControlResponse
+          let response: Response
           switch readLine(handle, limit: maxRequestBytes) {
           case .line(let line):
-            if let request = try? JSONDecoder().decode(ControlRequest.self, from: line) {
+            if let request = try? JSONDecoder().decode(Request.self, from: line) {
               response = await handler(request)
             } else {
-              response = ControlResponse(ok: false, error: "malformed request")
+              response = failure("malformed request")
             }
           case .tooLong:
-            response = ControlResponse(ok: false, error: "request exceeds \(maxRequestBytes) bytes")
+            response = failure("request exceeds \(maxRequestBytes) bytes")
           case .closed:
-            response = ControlResponse(ok: false, error: "malformed request")
+            response = failure("malformed request")
           }
-          var out = (try? JSONEncoder().encode(response)) ?? Data()
+          var out = (try? JSONEncoder.wire.encode(response)) ?? Data()
           out.append(0x0A)
           try? handle.write(contentsOf: out)
           try? handle.close()
@@ -170,6 +179,13 @@ package enum ControlSocket {
   package static func call(_ path: URL, _ request: ControlRequest, timeout: TimeInterval? = 30)
     throws -> ControlResponse
   {
+    try callJSON(path, request, as: ControlResponse.self, timeout: timeout)
+  }
+
+  /// `call` for any request/response pair.
+  package static func callJSON<Request: Encodable, Response: Decodable>(
+    _ path: URL, _ request: Request, as: Response.Type, timeout: TimeInterval? = 30
+  ) throws -> Response {
     try verifyDirectory(for: path)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw SandboxError("socket: \(errno)") }
@@ -198,7 +214,7 @@ package enum ControlSocket {
     guard case .line(let line) = readLine(handle, limit: nil) else {
       throw SandboxError("owner closed the connection or did not reply in time")
     }
-    return try JSONDecoder().decode(ControlResponse.self, from: line)
+    return try JSONDecoder.iso.decode(Response.self, from: line)
   }
 
   enum ReadResult: Equatable {

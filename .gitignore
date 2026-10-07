@@ -17,6 +17,10 @@ __pycache__/
 /.swiftpm/
 /*/.build/
 /*/.swiftpm/
+/spikes/*/.build/
+/spikes/*/.swiftpm/
+/experiments/*/.build/
+/experiments/*/.swiftpm/
 /fuzz/artifacts/
 
 /target/

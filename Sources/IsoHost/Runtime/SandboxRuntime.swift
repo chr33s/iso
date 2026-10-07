@@ -185,6 +185,8 @@ package struct SandboxRuntime: Sendable {
   package let qualification: Result<String, RuntimeError>
   /// Protocol from a successful version probe, otherwise 0.
   package let advertisedProtocol: UInt32
+  /// Optional capabilities from the version probe (`macos-guests`).
+  package let features: Set<String>
 
   package init(executor: any RuntimeExecutor, root: String, settings: AppleContainerConfig) {
     self.executor = executor
@@ -198,9 +200,11 @@ package struct SandboxRuntime: Sendable {
     switch probed {
     case .success(let version):
       advertisedProtocol = version.protocol
+      features = Set(version.features ?? [])
       qualification = Result { () throws(RuntimeError) in try Self.qualify(version) }
     case .failure(let error):
       advertisedProtocol = 0
+      features = []
       qualification = .failure(error)
     }
   }
@@ -281,12 +285,14 @@ package struct SandboxRuntime: Sendable {
   }
 
   /// Require a live boot identity before filtered egress can start.
-  package func requireFilteredBoot(_ name: MachineName) throws(RuntimeError) -> FilteredBoot {
+  package func requireFilteredBoot(_ name: MachineName, _ kind: GuestOS)
+    throws(RuntimeError) -> FilteredBoot
+  {
     _ = try requireQualified()
-    let inspection = try inspect(name)
-    let bootID = inspection.live?.bootId
+    let live = try namespace(kind).live(name)
+    let bootID = live?.bootID
     guard RuntimeProtocol.filteredBootAllowed(advertised: advertisedProtocol, bootID: bootID),
-      let live = inspection.live, let bootID
+      let live, let bootID
     else {
       throw .unqualified(
         "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity) and a live boot id for \(name); this runtime is protocol \(advertisedProtocol)"
@@ -294,7 +300,7 @@ package struct SandboxRuntime: Sendable {
     }
     return FilteredBoot(
       bootID: bootID, ownerPID: live.pid,
-      livePath: "\(root)/sandboxes/\(name.rawValue)/live.json")
+      livePath: namespace(kind).directory(name) + "/live.json")
   }
 
   package func images() throws(RuntimeError) -> [RuntimeImage] {

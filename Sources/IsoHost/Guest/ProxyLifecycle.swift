@@ -177,7 +177,7 @@ package struct ProxyLauncher: Sendable {
       throw HostError(
         "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity)")
     }
-    let boot = try runtime.requireFilteredBoot(sidecar.machineID)
+    let boot = try runtime.requireFilteredBoot(sidecar.machineID, sidecar.kind)
     guard boot.ownerPID == ownerPID else {
       throw HostError(
         "filtered egress boot id does not match the recorded sandbox owner for '\(instance.name)'")
@@ -235,7 +235,7 @@ package struct ProxyLauncher: Sendable {
         hostAddress: try IPv4Address("127.0.0.1"), hostPort: port)
       // Brokers are established during intentional preparation, after this
       // transport-only check. Do not mint a full Running session proof here.
-      let currentBoot = try runtime.requireFilteredBoot(sidecar.machineID)
+      let currentBoot = try runtime.requireFilteredBoot(sidecar.machineID, sidecar.kind)
       guard currentBoot.bootID == boot.bootID, currentBoot.ownerPID == ownerPID,
         EgressLease.ownerLockHeld(
           at: (boot.livePath as NSString).deletingLastPathComponent + "/owner.lock")

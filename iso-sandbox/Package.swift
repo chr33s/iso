@@ -7,7 +7,9 @@ let package = Package(
   name: "iso-sandbox",
   platforms: [.macOS("27.0")],
   products: [
-    .executable(name: "iso-sandbox", targets: ["IsoSandbox"])
+    .executable(name: "iso-sandbox", targets: ["IsoSandbox"]),
+    // Installed into macOS guest templates; see docs/design/macos-guest-computer-use.md.
+    .executable(name: "iso-macos-helper", targets: ["IsoMacHelper"]),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/containerization.git", exact: "0.45.0"),
@@ -16,9 +18,13 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
   ],
   targets: [
+    // The macOS-guest helper protocol, shared by the runtime and the guest helper.
+    .target(name: "IsoMacProtocol"),
+    .executableTarget(name: "IsoMacHelper", dependencies: ["IsoMacProtocol"]),
     .target(
       name: "IsoSandboxCore",
       dependencies: [
+        "IsoMacProtocol",
         .product(name: "Containerization", package: "containerization"),
         .product(name: "ContainerizationExtras", package: "containerization"),
         .product(name: "ContainerizationOCI", package: "containerization"),
@@ -39,6 +45,7 @@ let package = Package(
       name: "IsoSandboxTests",
       dependencies: [
         "IsoSandboxCore",
+        "IsoMacProtocol",
         .product(name: "ContainerizationEXT4", package: "containerization"),
         .product(name: "SystemPackage", package: "swift-system"),
       ]

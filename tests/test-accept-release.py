@@ -39,8 +39,8 @@ class AcceptanceTests(unittest.TestCase):
 
             with patch.object(acceptance, "command", side_effect=command):
                 acceptance.check_bundle(work, "v0.7.0", {})
-            self.assertEqual(sum(call[0] == "/usr/bin/codesign" for call in calls), 4)
-            self.assertEqual(sum(call[0] == "/usr/sbin/spctl" for call in calls), 4)
+            self.assertEqual(sum(call[0] == "/usr/bin/codesign" for call in calls), len(acceptance.BINARIES))
+            self.assertEqual(sum(call[0] == "/usr/sbin/spctl" for call in calls), len(acceptance.BINARIES))
             self.assertEqual(calls[-2][1], "version")
             self.assertEqual(calls[-1][1], "--help")
 
@@ -108,7 +108,7 @@ class AcceptanceTests(unittest.TestCase):
             self.assertIn("--force", calls[1])
             self.assertIn("--keep-data", calls[2])
 
-    def test_first_release_replaces_all_four_binaries(self):
+    def test_first_release_replaces_all_binaries(self):
         self.exercise()
 
     def test_missing_provenance_marker_fails(self):

@@ -256,12 +256,12 @@ tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}"
 info "Installing to ${INSTALL_DIR}..."
 EXTRACTED_DIR="${TMPDIR}/${BINARY}-${VERSION}-${TRIPLE}"
 # A release is one complete set. Check every member before changing the install.
-for artifact in "$BINARY" iso-sandbox iso-proxy iso-egress; do
+for artifact in "$BINARY" iso-sandbox iso-macos-helper iso-proxy iso-egress; do
     [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ] \
         || die "Release is missing a regular ${artifact} binary"
 done
 mkdir -p "$INSTALL_DIR"
-for artifact in iso-sandbox iso-proxy iso-egress "$BINARY"; do
+for artifact in iso-sandbox iso-macos-helper iso-proxy iso-egress "$BINARY"; do
     mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
     chmod +x "${INSTALL_DIR}/${artifact}"
 done

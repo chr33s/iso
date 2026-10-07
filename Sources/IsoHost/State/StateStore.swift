@@ -204,8 +204,11 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   package var createdAt: String
   package var runtimeIdentity: String
   package var lifecycle: InstanceLifecycle = .reusable
+  /// Absent for Linux guests, so their records are unchanged.
+  package var guestOS: GuestOS? = nil
 
   package var isDisposableRun: Bool { lifecycle == .disposable }
+  package var kind: GuestOS { guestOS ?? .linux }
 
   package static func path(_ instance: Instance) -> String {
     instance.directory + "/apple-machine.json"
@@ -254,6 +257,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     case createdAt = "created_at"
     case runtimeIdentity = "runtime_identity"
     case lifecycle
+    case guestOS = "guest_os"
   }
 
   /// Persist explicit nulls for optional observations.
@@ -276,6 +280,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     try c.encode(createdAt, forKey: .createdAt)
     try c.encode(runtimeIdentity, forKey: .runtimeIdentity)
     try c.encode(lifecycle, forKey: .lifecycle)
+    try c.encodeIfPresent(guestOS, forKey: .guestOS)
   }
 }
 

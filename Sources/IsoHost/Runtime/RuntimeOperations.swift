@@ -193,6 +193,22 @@ extension SandboxRuntime {
   /// The image (or committed disk) a manifest names still exists with the
   /// digest it was verified as.
   package func verifyImage(_ manifest: ImageManifest) throws(RuntimeError) {
+    if manifest.guestOS == .macos {
+      try requireMacGuests()
+      guard let found = try macTemplates().first(where: { $0.name == manifest.imageRef }) else {
+        throw .identityConflict(
+          "macOS template \(manifest.imageRef) is missing from the runtime; run `iso setup --guest macos --rebuild`"
+        )
+      }
+      guard ImageManifest.macDigest(found) == manifest.digest,
+        ImageManifest.macManifestID(found) == manifest.manifestID
+      else {
+        throw .identityConflict(
+          "macOS template \(manifest.imageRef) no longer matches the build it was recorded as; run `iso setup --guest macos --rebuild`"
+        )
+      }
+      return
+    }
     if let disk = manifest.disk {
       guard try disks().contains(where: { $0.name == disk.name.rawValue }) else {
         throw .identityConflict(

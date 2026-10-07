@@ -47,6 +47,27 @@ package struct ImageManifest: Sendable, Equatable, Codable {
     try c.encode(created, forKey: .created)
   }
 
+  /// macOS images are runtime templates: `imageRef` names the template,
+  /// `digest` is ``macDigest(_:)``, `manifestID` is ``macManifestID(_:)``,
+  /// and `platform` is ``macPlatform``.
+  package static let macPlatform = "darwin/arm64"
+
+  package var guestOS: GuestOS { platform == Self.macPlatform ? .macos : .linux }
+
+  /// A macOS template's build and guest helper.
+  package static func macDigest(_ template: MacTemplateInfo) -> String {
+    "macos:\(template.build):helper-\(template.helperSha256)"
+  }
+
+  /// The provisioning script a macOS template was built with.
+  package static func macManifestID(_ template: MacTemplateInfo) -> String {
+    macManifestID(provisionSHA256: template.provisionSha256 ?? "none")
+  }
+
+  package static func macManifestID(provisionSHA256: String) -> String {
+    "macos-provision-\(provisionSHA256)"
+  }
+
   package struct CommittedDisk: Sendable, Equatable, Codable {
     package let name: MachineName
     package let bytes: UInt64

@@ -86,14 +86,18 @@ let qualifiedVersion =
         args == ["version"] ? ScriptedRuntime.ok(version) : ScriptedRuntime.ok(text)
       }, root: "/state/runtime", settings: .defaults)
   }
-  #expect(throws: RuntimeError.self) { try runtime(protocol4, object).requireFilteredBoot(name) }
+  #expect(throws: RuntimeError.self) {
+    try runtime(protocol4, object).requireFilteredBoot(name, .linux)
+  }
   var live = object["live"] as! [String: Any]
   live["bootId"] = ""
   object["live"] = live
-  #expect(throws: RuntimeError.self) { try runtime(protocol5, object).requireFilteredBoot(name) }
+  #expect(throws: RuntimeError.self) {
+    try runtime(protocol5, object).requireFilteredBoot(name, .linux)
+  }
   live["bootId"] = "abc"
   object["live"] = live
-  let boot = try runtime(protocol5, object).requireFilteredBoot(name)
+  let boot = try runtime(protocol5, object).requireFilteredBoot(name, .linux)
   #expect(boot.bootID == "abc")
   #expect(boot.ownerPID == 81564)
   #expect(boot.livePath == "/state/runtime/sandboxes/\(name.rawValue)/live.json")

@@ -584,6 +584,96 @@ exposure, and isolate verifies the effective configuration anyway
   or guessing at unreadable staged state) is a
   finding.
 
+## macOS guests
+
+`iso-sandbox macos …` runs macOS guests with computer use
+([design](design/macos-guest-computer-use.md)), and `iso` drives them for
+images built with `iso setup --guest macos`. The same rule holds: the guest
+is untrusted, and the whole VM is the boundary.
+
+- **VM shape.** The configuration is built in one place (`MacConfig.make`):
+  one display, one absolute pointer, one keyboard, one entropy device, one
+  vsock device, the clone's own disk, and one network device on a vmnet
+  network of the runtime's own. For a clone that is the sandbox's
+  `10.231.N.0/24`; for a template build it is a network used by that build
+  alone. It refuses to boot with directory shares, audio, serial or console
+  ports, a memory balloon, USB controllers, or any other network attachment.
+  `inspect` reports the effective configuration.
+- **Helper channel (guest → host).** The guest helper's messages are tainted.
+  They are line-bounded (64 KiB), limited to a closed message set, checked by
+  `HelperMessage.parse`, and authenticated by an HMAC over a host nonce and
+  the guest boot ID, using a per-clone key that only root can read in the
+  guest.
+  - At most 4 unauthenticated connections are held at once. A hello must
+    arrive within 10 s of wall-clock time, and rejections are logged at most
+    20 a minute.
+  - The key is readable only by root in the guest. The guest user has
+    passwordless sudo, so the HMAC keeps out non-root processes, not the
+    agent. An agent acting as the helper can affect only its own sandbox.
+  - Guest-authored strings are logged with control characters replaced.
+  - An unauthenticated claim never changes host state.
+  - Only an authenticated SSH host key that differs from the pin marks a
+    sandbox `identity_mismatch`.
+  - Guest-reported boot IDs only ever invalidate sessions.
+  - The host sends the guest exactly five message types: `challenge`,
+    `enroll` (helper key, authorized key, nothing secret from the host),
+    `network`, `status` and `shutdown`. The helper runs fixed tools with an
+    argv and no shell.
+- **SSH pin.** Each clone generates its own host keys at first-boot
+  enrollment. The runtime pins the key that arrives over the vsock channel,
+  re-checks it over the authenticated channel on `inspect` and on every
+  computer-use session, and exposes it as `inspect.sshHostKey`. Consumers
+  must connect with `StrictHostKeyChecking=yes` against that pin, as the
+  qualification driver does. There is no `ssh-keyscan` and no TOFU.
+- **Template build (accepted trade-off).** Building a template uses one SSH
+  session that trusts the guest's host key on first use, authenticated by a
+  random password held in memory only. The password reaches ssh through an
+  askpass child's environment and sudo through stdin, never argv or logs. The
+  session runs on a vmnet network created for that build alone, so no other
+  VM can answer for the guest. It uses no user ssh configuration
+  (`-F /dev/null`), no agent and no forwarding. The guest was installed from
+  the operator's IPSW moments earlier by the same process. The template ships
+  no host keys and has password authentication off.
+- **Frames (guest → host).** A frame is guest-rendered pixels. The owner
+  re-encodes it from the view's bitmap at a fixed geometry and never parses
+  guest-provided image formats. Uniform frames are refused.
+- **Input (host → guest).** Actions are a closed, validated set (bounded
+  coordinates, paths, key codes, ASCII text). They are synthesized into the
+  view in-process and never posted to the host event system. The owner needs
+  no Screen Recording or Accessibility permission.
+- **Control socket.** It sits in the per-user `iso-sbx` directory, mode 0600,
+  and accepts only the owning uid (`getpeereid`), as for Linux owners.
+- **Host CLI.** `iso` hands out a macOS guest only after
+  `IsolationGate.verifyMacEffective` accepts the owner's report: the record's
+  owner, template, network mode and resources; one display; no shares,
+  audio, serial, USB or console devices (a clipboard needs one); only the
+  clone's own disk; only the helper's vsock listener; and the dedicated
+  `10.231.N.0/24` network and address. The owner reads these from the
+  configuration the VM booted with and the listeners it registered. Unknown
+  effective fields fail closed. At boot the guest helper must also have
+  confirmed the pinned host key; later handoffs rely on that pin, which the
+  instance's `known_hosts` enforces, so a slow or reconnecting helper does
+  not block them, though anything it reports must still match the boot. The
+  SSH pin comes from the runtime (`inspect.sshHostKey`), never from the
+  network, and later boots require the same key. The one installation public
+  key (`vm_key.pub`) is the authorized key given at create; no host secret is
+  given to the guest.
+- **Template provisioning (accepted trade-off).** `iso setup --guest macos`
+  gives the build a root script (`MacProvision`) that fetches the Command
+  Line Tools through `softwareupdate`, a GitHub CLI release pinned by
+  checksum, and the Claude Code and Codex installers from the same URLs the
+  Linux image uses. It runs on the build's own vmnet network before the
+  template is sealed; the template records the script's SHA-256 and iso
+  refuses a template whose recorded script differs. The script sets
+  `AcceptEnv *`, as the Linux image does, so forwarded variables reach the
+  guest.
+- **Filtered egress.** As on Linux: a host-only network with no route, the
+  `iso-egress` companion behind an `ssh -R` tunnel on guest loopback, and
+  the signed readiness proofs, read from the macOS sandbox's own runtime
+  directory. The guest probe uses `/usr/bin/perl`'s alarm and `/bin/cat`,
+  which both guest systems have. Command-line tools use the forwarded proxy
+  variables; GUI applications do not read them and fail closed.
+
 ## `iso update` trust chain
 
 Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:

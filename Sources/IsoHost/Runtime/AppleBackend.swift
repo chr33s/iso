@@ -92,7 +92,7 @@ package final class AppleBackend: Sendable {
         "instance '\(instance.name)' has an unfinished \(journal.op.describe)")
     }
     guard let sidecar = try MachineSidecar.loadIfPresent(instance) else { return false }
-    switch try runtime().inspect(sidecar.machineID).status {
+    switch try runtime().namespace(sidecar.kind).status(sidecar.machineID) {
     case .running: return true
     case .stopped, .crashed: return false
     case .booting: throw RuntimeError.operationUncertain("sandbox \(sidecar.machineID) is booting")
@@ -109,14 +109,14 @@ package final class AppleBackend: Sendable {
     guard config.egress == .filtered else { return .running }
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
-    let inspection = try runtime.inspect(sidecar.machineID)
-    guard inspection.status == .running else {
+    let observed = try observe(runtime, sidecar)
+    guard observed.status == .running else {
       throw RuntimeError.operationUncertain(
-        "sandbox \(sidecar.machineID) is \(inspection.status.rawValue)")
+        "sandbox \(sidecar.machineID) is \(observed.status.rawValue)")
     }
     do {
       _ = try filteredIdentity(
-        instance, sidecar: sidecar, runtime: runtime, inspection: inspection,
+        instance, sidecar: sidecar, runtime: runtime, observed: observed,
         scope: .host, proof: .composite)
       return .running
     } catch let failure as ReadinessFailure {
@@ -126,9 +126,10 @@ package final class AppleBackend: Sendable {
 
   package func isRunning(_ instance: Instance) -> Bool {
     guard let sidecar = try? MachineSidecar.loadIfPresent(instance),
-      let inspection = try? runtime().inspect(sidecar.machineID)
+      let runtime = try? runtime(),
+      let status = try? runtime.namespace(sidecar.kind).status(sidecar.machineID)
     else { return false }
-    return inspection.status == .running
+    return status == .running
   }
 
   /// Nil when stopped; a running sandbox must pass qualification and the
@@ -168,27 +169,23 @@ package final class AppleBackend: Sendable {
   private func asRunning(_ instance: Instance, proof: HandoffProof) throws -> Running? {
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
-    let inspection = try runtime.inspect(sidecar.machineID)
-    switch inspection.status {
+    let observed = try observe(runtime, sidecar)
+    switch observed.status {
     case .stopped: return nil
     case .crashed, .booting:
       throw RuntimeError.operationUncertain(
-        "sandbox \(sidecar.machineID) is \(inspection.status.rawValue)")
+        "sandbox \(sidecar.machineID) is \(observed.status.rawValue)")
     case .running: break
     }
     do {
       try NetworkPolicy.enforce(instance, config: config)
       _ = try runtime.requireQualified()
-      let ready = try IsolationGate.verifyEffective(
-        inspection,
-        .init(
-          sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-          resources: sidecar.resources, egress: config.egress))
+      let ready = try observed.gate(expected(sidecar, runtime))
       let target = try SSHTarget.pinned(
         config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
         user: sidecar.guestUser)
       let handoffIdentity = try filteredIdentity(
-        instance, sidecar: sidecar, runtime: runtime, inspection: inspection,
+        instance, sidecar: sidecar, runtime: runtime, observed: observed,
         scope: .guest(target), proof: proof)
       let expected = Running(
         instance: instance, sidecar: sidecar, ready: ready, target: target,
@@ -217,17 +214,17 @@ package final class AppleBackend: Sendable {
   /// instance unhealthy; an unreadable boot-policy record is not one.
   private func filteredIdentity(
     _ instance: Instance, sidecar: MachineSidecar, runtime: SandboxRuntime,
-    inspection: SandboxInspection, scope: FilteredReadiness.Scope, proof: HandoffProof
+    observed: Observed, scope: FilteredReadiness.Scope, proof: HandoffProof
   ) throws -> WorkloadHandoff.Identity? {
     guard config.egress == .filtered else { return nil }
-    let sandboxDir = "\(runtime.root)/sandboxes/\(sidecar.machineID.rawValue)"
+    let sandboxDir = runtime.namespace(sidecar.kind).directory(sidecar.machineID)
     let bootPolicy = try FilteredHandoff.recordedPolicy(instance)
     let live = EgressLease.liveIdentity(at: sandboxDir + "/live.json")
     return try ReadinessFailure.wrapping {
       if let failure = FilteredHandoff.prove(
         filtered: true,
         recordedBootID: bootPolicy?.bootID,
-        liveBootID: inspection.live?.bootId,
+        liveBootID: observed.bootID,
         ownerLockHeld: EgressLease.ownerLockHeld(at: sandboxDir + "/owner.lock"),
         companionAlive: ProxyLauncher.recordedProcessAlive(
           ProxyLauncher.pidPath(instance, "egress"), expect: .egress),
@@ -235,8 +232,8 @@ package final class AppleBackend: Sendable {
         advertisedProtocol: runtime.advertisedProtocol,
         recordedPolicyHash: bootPolicy?.policyHash,
         wantedPolicyHash: NetworkPolicy.make(config).policyHash,
-        ownerMatches: live?.bootID == inspection.live?.bootId
-          && live?.pid == sidecar.lastObservedOwnerPID && live?.pid == inspection.live?.pid
+        ownerMatches: live?.bootID == observed.bootID
+          && live?.pid == sidecar.lastObservedOwnerPID && live?.pid == observed.ownerPID
       ) {
         throw HostError(
           "FILTERED_EGRESS_NOT_READY: \(failure) for '\(instance.name)'. The VM is still running; `iso stop \(instance.name)` does not connect to the guest."
@@ -269,13 +266,9 @@ package final class AppleBackend: Sendable {
   package func sshTarget(_ instance: Instance) throws -> SSHTarget {
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
-    let inspection = try runtime.inspect(sidecar.machineID)
+    let observed = try observe(runtime, sidecar)
     _ = try runtime.requireQualified()
-    let ready = try IsolationGate.verifyEffective(
-      inspection,
-      .init(
-        sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-        resources: sidecar.resources, egress: config.egress))
+    let ready = try observed.gate(expected(sidecar, runtime))
     return try SSHTarget.pinned(
       config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
       user: sidecar.guestUser)
@@ -285,12 +278,15 @@ package final class AppleBackend: Sendable {
   package func describe(_ running: Running) throws -> String {
     let sidecar = try ownedSidecar(running.instance)
     let runtime = try runtime()
-    let inspection = try runtime.inspect(sidecar.machineID)
     let identity: String
     switch runtime.qualification {
     case .success(let value): identity = value
     case .failure(let error): identity = "unqualified (\(error))"
     }
+    if sidecar.kind == .macos {
+      return try macDescribe(running, runtime: runtime, identity: identity)
+    }
+    let inspection = try runtime.inspect(sidecar.machineID)
     let ip = inspection.ipv4?.description ?? "unavailable"
     let network =
       inspection.effective?.interfaces.first.map { sanitizeForDisplay($0.network) } ?? "unavailable"
@@ -318,6 +314,11 @@ package final class AppleBackend: Sendable {
     _ running: Running, follow: Bool, line emit: (String) throws -> Void, stderr: (String) -> Void
   ) throws {
     let sidecar = try ownedSidecar(running.instance)
+    guard sidecar.kind == .linux else {
+      throw HostError(
+        "`iso logs` reads the Linux guest console; macOS guests have none. Use `iso exec \(running.instance.name) -- log show --last 10m` instead"
+      )
+    }
     let runtime = try runtime()
     let decode = { (bytes: [UInt8]) in sanitizeForDisplay(String(decoding: bytes, as: UTF8.self)) }
     try running.target.requireHandoff()

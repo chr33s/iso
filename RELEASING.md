@@ -94,7 +94,7 @@ full commit SHA from the workflow run, then verify before extracting:
 
 The automated equivalent, run from the repository checkout, verifies the pinned
 attestation before extraction, rejects unsafe archive members, checks clean build
-metadata and all four executable hashes, and requires Developer ID signatures and
+metadata and all five executable hashes, and requires Developer ID signatures and
 notarized Gatekeeper assessments before running either version command:
 
 ```bash
@@ -137,7 +137,7 @@ cat BUILD.json
 `BUILD.json` must name the expected commit in `source_revision`, with
 `source_dirty: false`, `release_build: true`, `tested: true`, and
 `developer_id_signed: true`, and its `binaries` digests must match the
-extracted files. All four binaries stay
+extracted files. All five binaries stay
 together. Earlier downloads retain their original archive layout and signer
 workflow identity; use those original identities when verifying old artifacts.
 
@@ -375,7 +375,7 @@ Apple Silicon machine.
    download, so confirm the asset on the release page (step 10's first bullet)
    before concluding it is missing.
 
-   For a repeatable isolated install, four-binary replacement, version/signing
+   For a repeatable isolated install, five-binary replacement, version/signing
    check, and CLI uninstall, run:
 
    ```bash

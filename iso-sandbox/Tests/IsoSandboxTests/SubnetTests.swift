@@ -23,6 +23,31 @@ import Testing
         memoryBytes: 1, diskBytes: 1, subnetIndex: index, createdAt: Date()))
   }
 
+  func commitMacRecord(_ root: SandboxRoot, _ name: String, _ index: Int) throws {
+    let id = try SandboxID(name)
+    let paths = root.macSandbox(id)
+    try FileManager.default.createDirectory(at: paths.dir, withIntermediateDirectories: true)
+    try paths.save(
+      MacSandboxRecord(
+        id: id, owner: "o", template: try SandboxID("t"), templateBuild: "b", cpus: 4,
+        memoryBytes: 1, macAddress: "1e:00:00:00:00:01", subnetIndex: index, network: .shared,
+        enrollment: .pending, authorizedKey: "k", createdAt: Date(), expiresAt: nil))
+  }
+
+  @Test func linuxAndMacOSSandboxesNeverShareASubnet() throws {
+    let root = try tempRoot()
+    try commitMacRecord(root, "m", 1)
+    try commitRecord(root, "a", 2)
+    var got = 0
+    try SubnetAllocator(root: root).allocate(for: try SandboxID("b")) { got = $0 }
+    #expect(got == 3)
+    // An unreadable macOS record fails closed rather than freeing its subnet.
+    try Data("{".utf8).write(to: root.macSandbox(try SandboxID("m")).record)
+    #expect(throws: (any Error).self) {
+      try SubnetAllocator(root: root).allocate(for: try SandboxID("c")) { _ in }
+    }
+  }
+
   @Test func allocatesLowestFreeIndex() throws {
     let root = try tempRoot()
     try commitRecord(root, "a", 1)

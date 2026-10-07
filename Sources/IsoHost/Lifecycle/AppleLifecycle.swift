@@ -137,27 +137,10 @@ extension AppleBackend {
 
   // MARK: Stop and delete
 
-  func stopAndConfirm(_ runtime: SandboxRuntime, _ name: MachineName) throws {
-    let output = try runtime.stop(name)
-    let status = try runtime.inspect(name).status
-    guard status == .stopped else {
-      throw RuntimeError.operationUncertain(
-        "sandbox \(name) did not confirm it stopped (now \(status.rawValue); \(sanitizeForDisplay(String(decoding: output.stderr, as: UTF8.self)))); leaving it untouched"
-      )
-    }
-  }
-
   /// After a failed start: stop, keep the disk.
-  func stopAfterFailure(_ runtime: SandboxRuntime, _ name: MachineName) {
-    do { try stopAndConfirm(runtime, name) } catch {
+  func stopAfterFailure(_ sandboxes: SandboxNamespace, _ name: MachineName) {
+    do { try sandboxes.stopAndConfirm(name) } catch {
       diagnostics.warn("Failed to stop sandbox \(name) after a failed start: \(oneLine(error))")
-    }
-  }
-
-  func deleteSandbox(_ runtime: SandboxRuntime, _ name: MachineName, owner: OwnerID) throws {
-    try runtime.delete(name, owner: owner)
-    guard try !runtime.exists(name) else {
-      throw RuntimeError.operationUncertain("sandbox \(name) still exists after delete")
     }
   }
 
@@ -182,6 +165,13 @@ extension AppleBackend {
     let owner = try Owner.load(config)
     let manifest = try ImageManifest.load(config, instance.image)
     try runtime.verifyImage(manifest)
+    if manifest.guestOS == .macos {
+      guard explicitDisk == nil else {
+        throw HostError("macOS guests clone their template's disk; --disk is not supported")
+      }
+      try createAndStartMac(instance, runtime: runtime, owner: owner, manifest: manifest)
+      return
+    }
     let diskGiB: UInt64
     if let explicitDisk {
       diskGiB = explicitDisk
@@ -214,7 +204,39 @@ extension AppleBackend {
         diskGiB: diskGiB, journal: &journal)
     } catch {
       if case .create(let stage) = journal.op, stage >= .creatingMachine {
-        stopAfterFailure(runtime, machine)
+        stopAfterFailure(runtime.namespace(.linux), machine)
+      }
+      throw error
+    }
+    try Journal.complete(instance)
+  }
+
+  private func createAndStartMac(
+    _ instance: Instance, runtime: SandboxRuntime, owner: Owner, manifest: ImageManifest
+  ) throws {
+    // Checks of the configuration alone, before any state is written.
+    try runtime.requireMacGuests()
+    try requireMacSupportedConfig()
+    let authorizedKey = try Self.authorizedKey(config)
+    let lock = try InstanceStore.lock(instance)
+    defer { lock.release() }
+    if try MachineSidecar.loadIfPresent(instance) != nil || Journal.loadIfPresent(instance) != nil {
+      throw RuntimeError.operationUncertain(
+        "instance '\(instance.name)' already has sandbox state; destroy it before recreating")
+    }
+    let machine = try MachineName.generate(for: owner.id, randomHex: randomHex(8))
+    if try runtime.exists(machine) || runtime.macListed(machine) != nil {
+      throw RuntimeError.identityConflict("generated name \(machine) is already in use; retry")
+    }
+    var journal = try Journal.begin(
+      instance, owner: owner, op: .create(stage: .reserved), machine: machine)
+    do {
+      try macProvisionSandbox(
+        instance, runtime: runtime, owner: owner, manifest: manifest, machine: machine,
+        authorizedKey: authorizedKey, journal: &journal)
+    } catch {
+      if case .create(let stage) = journal.op, stage >= .creatingMachine {
+        stopAfterFailure(runtime.namespace(.macos), machine)
       }
       throw error
     }
@@ -272,6 +294,14 @@ extension AppleBackend {
     defer { lock.release() }
     try recoverJournal(runtime, instance)
     var sidecar = try ownedSidecar(instance)
+    if sidecar.kind == .macos {
+      let ready = try macStartExisting(instance, runtime: runtime, sidecar: &sidecar)
+      sidecar.lastObservedOwnerPID = ready.ownerPID
+      sidecar.lastObservedIP = ready.ipv4
+      sidecar.runtimeIdentity = identity
+      try sidecar.save(instance)
+      return
+    }
     let inspection = try runtime.inspect(sidecar.machineID)
     switch inspection.status {
     case .stopped: break
@@ -308,7 +338,7 @@ extension AppleBackend {
       // a separately authenticated companion bound to this boot and policy.
       try NetworkPolicy.save(config, instance)
     } catch {
-      stopAfterFailure(runtime, sidecar.machineID)
+      stopAfterFailure(runtime.namespace(.linux), sidecar.machineID)
       throw error
     }
     sidecar.lastObservedOwnerPID = ready.ownerPID
@@ -372,7 +402,7 @@ extension AppleBackend {
     let lock = try InstanceStore.lock(running.instance)
     defer { lock.release() }
     let sidecar = try ownedSidecar(running.instance)
-    try stopAndConfirm(runtime, sidecar.machineID)
+    try runtime.namespace(sidecar.kind).stopAndConfirm(sidecar.machineID)
   }
 
   /// Stop without proving the guest is reachable (the state probe failed).
@@ -383,8 +413,9 @@ extension AppleBackend {
     let runtime = try runtime()
     let lock = try InstanceStore.lock(instance)
     defer { lock.release() }
-    if try runtime.inspect(sidecar.machineID).status != .stopped {
-      try stopAndConfirm(runtime, sidecar.machineID)
+    let sandboxes = runtime.namespace(sidecar.kind)
+    if try sandboxes.status(sidecar.machineID) != .stopped {
+      try sandboxes.stopAndConfirm(sidecar.machineID)
     }
     diagnostics.log(.info, "Instance '\(instance.name)' stopped")
   }
@@ -414,18 +445,23 @@ extension AppleBackend {
         )
       }
       let runtime = try runtime()
-      // `list`, not `inspect`: inspect refuses an unreadable staged update.
-      if let listed = try runtime.listed(machine) {
-        if listed != .stopped { try stopAndConfirm(runtime, machine) }
-        if journal == nil {
-          journal = try Journal.begin(
-            instance, owner: owner, op: .destroy(stage: .reserved), machine: machine)
+      // A create interrupted before its sidecar was written may have made a
+      // sandbox of either kind; the generated name is unique across both.
+      let kinds: [GuestOS] =
+        if let sidecar { [sidecar.kind] } else {
+          FileManager.default.fileExists(atPath: runtime.namespace(.macos).directory(machine))
+            ? [.linux, .macos] : [.linux]
         }
-        try journal!.advance(instance, .destroy(stage: .deletingMachine))
-        try deleteSandbox(runtime, machine, owner: owner.id)
-        try journal!.advance(instance, .destroy(stage: .machineDeleted))
+      for kind in kinds {
+        try deleteListedSandbox(
+          runtime.namespace(kind), instance, machine: machine, owner: owner, journal: &journal)
       }
-      runtime.reconcileBestEffort(diagnostics: diagnostics)
+      // A rebuilt image leaves its previous template to its last instance.
+      if let sidecar, sidecar.kind == .macos {
+        releaseMacTemplate(
+          runtime, owner: owner, template: sidecar.imageRef, exceptImage: nil,
+          exceptInstance: instance)
+      }
     }
     do { try FileManager.default.removeItem(atPath: instance.directory) } catch {
       throw ContextError("Failed to remove \(instance.directory)", cause: error)
@@ -469,6 +505,12 @@ extension AppleBackend {
   func releaseManifest(
     _ runtime: SandboxRuntime, owner: Owner, manifest: ImageManifest, except: ImageName?
   ) {
+    if manifest.guestOS == .macos {
+      releaseMacTemplate(
+        runtime, owner: owner, template: manifest.imageRef, exceptImage: except,
+        exceptInstance: nil)
+      return
+    }
     var references = Set<String>()
     var disks = Set<String>()
     do {
@@ -500,6 +542,34 @@ extension AppleBackend {
     }
   }
 
+  /// Delete a macOS template that no image or instance records any more,
+  /// apart from the ones being removed. Owners re-read the template at every
+  /// boot, so any doubt keeps it.
+  func releaseMacTemplate(
+    _ runtime: SandboxRuntime, owner: Owner, template reference: String, exceptImage: ImageName?,
+    exceptInstance: Instance?
+  ) {
+    guard let template = try? MachineName(reference), template.belongs(to: owner.id) else {
+      return
+    }
+    do {
+      for image in try ImageStore.list(config) where image.name != exceptImage {
+        if try ImageManifest.loadIfPresent(config, image.name)?.imageRef == reference { return }
+      }
+      var unreadable: String?
+      let instances = try InstanceStore.list(config, skipped: { name, _ in unreadable = name })
+      if let unreadable {
+        throw HostError("the instance at \(unreadable) is unreadable and may use it")
+      }
+      for instance in instances where instance.directory != exceptInstance?.directory {
+        if try MachineSidecar.loadIfPresent(instance)?.imageRef == reference { return }
+      }
+      try runtime.macDeleteTemplate(template)
+    } catch {
+      diagnostics.warn("Keeping macOS template \(template): \(oneLine(error))")
+    }
+  }
+
   /// A manifest exists and the runtime still holds what it names.
   package func imageIsBuilt(_ image: ImageName) -> Bool {
     guard let manifest = try? ImageManifest.loadIfPresent(config, image),
@@ -519,6 +589,11 @@ extension AppleBackend {
 
   package func asStopped(_ instance: Instance) throws -> Stopped {
     let sidecar = try MachineSidecar.load(instance)
+    guard sidecar.kind == .linux else {
+      throw HostError(
+        "Instance '\(instance.name)' is a macOS guest: resize, commit and restore are not supported for macOS guests"
+      )
+    }
     let status = try runtime().inspect(sidecar.machineID).status
     switch status {
     case .stopped: return Stopped(instance: instance, sidecar: sidecar)
@@ -707,6 +782,9 @@ extension AppleBackend {
     _ = try runtime.requireQualified()
     let owner = try Owner.load(config)
     let manifest = try ImageManifest.load(config, image)
+    guard manifest.guestOS == .linux else {
+      throw HostError("Image '\(image)' is a macOS image; it cannot replace a Linux disk")
+    }
     try runtime.verifyImage(manifest)
     let lock = try InstanceStore.lock(instance)
     defer { lock.release() }

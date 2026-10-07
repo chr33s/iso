@@ -45,8 +45,29 @@ struct Setup: ParsableCommand {
   var devcontainer: String?
   @Flag(help: "Ignore any discovered devcontainer.json") var noDevcontainer = false
   @Flag(help: "Translate devcontainer.json and print the report, then exit") var dryRun = false
+  @Option(help: ArgumentHelp("Guest operating system: linux or macos", valueName: "OS"))
+  var guest: GuestOS = .linux
+  @Option(
+    help: ArgumentHelp(
+      "macOS restore image to install (required with --guest macos)", valueName: "IPSW"))
+  var ipsw: String?
 
   func validate() throws {
+    switch (guest, ipsw) {
+    case (.macos, nil): throw UsageError("--guest macos needs --ipsw <restore image>")
+    case (.linux, .some): throw UsageError("--ipsw is only used with --guest macos")
+    default: break
+    }
+    if guest == .macos {
+      let linuxOnly =
+        !profile.isEmpty || !extraPackages.isEmpty || postInstall != nil || guestUser != nil
+        || workspace != nil || devcontainer != nil || noDevcontainer || dryRun
+      if linuxOnly {
+        throw UsageError(
+          "--profile, --extra-packages, --post-install, --guest-user and the devcontainer options build Linux images; they cannot be combined with --guest macos"
+        )
+      }
+    }
     if devcontainer != nil && noDevcontainer {
       throw UsageError("--devcontainer cannot be used with --no-devcontainer")
     }
@@ -55,7 +76,7 @@ struct Setup: ParsableCommand {
         yes || vcpus != nil || mem != nil || rebuild || !profile.isEmpty || !extraPackages.isEmpty
         || postInstall != nil || templateSize != nil || image != .default || guestUser != nil
         || builderTimeout != nil || workspace != nil || devcontainer != nil || noDevcontainer
-        || dryRun
+        || dryRun || guest != .linux
       if imageFlags {
         throw UsageError(
           "--config-only only creates the configuration file; image options cannot be combined with it"
@@ -77,6 +98,15 @@ struct Setup: ParsableCommand {
       }
       if vcpus == 0 { throw HostError("--vcpus must be > 0") }
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
+      if guest == .macos, let ipsw {
+        let shutdown = Shutdown.install()
+        defer { shutdown.restore() }
+        try context.backend.setup(
+          SetupOptions(
+            rebuild: rebuild, profiles: [], image: image, guestUser: .default,
+            builderTimeout: builderTimeout, macOSRestoreImage: ipsw))
+        return
+      }
       var names = profile.flatMap { $0 }
       let translation = try DevcontainerResolver(
         environment: context.environment.variables, diagnostics: context.diagnostics
@@ -391,3 +421,5 @@ struct Restore: ParsableCommand {
     }
   }
 }
+
+extension GuestOS: ExpressibleByArgument {}

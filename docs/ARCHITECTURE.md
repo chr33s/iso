@@ -22,19 +22,22 @@ and the architectural invariants. For the security view of the same system, see
 
 ## Executables and packages
 
-A distribution holds four executables, each its own process:
+A distribution holds five executables. The first four are host processes;
+`iso-macos-helper` runs inside macOS guests:
 
 | Executable | Package | Responsibility |
 |---|---|---|
 | `iso` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
-| `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations |
+| `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations; macOS guests (`iso-sandbox macos …`) on Virtualization.framework directly |
 | `iso-proxy` | [`iso-proxy/`](../iso-proxy) | Confined, credential-bearing provider transport |
 | `iso-egress` | [`iso-egress/`](../iso-egress) | Confined CONNECT companion for filtered egress; no provider credentials |
+| `iso-macos-helper` | [`iso-sandbox/`](../iso-sandbox) | Guest agent that `iso-sandbox macos template build` installs in macOS templates; never runs on the host |
 
 The host drives the runtime over its JSON CLI and starts companions through
 their startup protocols; it never links those packages. `iso` resolves
-`iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable. A
-missing `iso-egress` blocks only filtered boots.
+`iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable, and
+`iso-sandbox` finds `iso-macos-helper` beside itself. A missing `iso-egress`
+blocks only filtered boots.
 
 ## Layout
 
@@ -63,7 +66,8 @@ iso/
 ├── tests/swift/             # Swift test targets (one per module + fuzz corpus replay)
 ├── tests/                   # integration and command contract scripts; fixtures
 ├── fuzz/                    # libFuzzer harnesses (Targets/, Entrypoints/), corpus, vendored libFuzzer
-├── iso-sandbox/            # Swift Apple Containerization VM runtime
+├── iso-sandbox/            # Swift VM runtime: Linux sandboxes on Apple Containerization;
+│                            #   macOS guests (IsoSandboxCore/MacOS, IsoMacProtocol, iso-macos-helper)
 ├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
 ├── iso-egress/             # Swift filtered-egress companion: destination policy, leases, CONNECT
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)

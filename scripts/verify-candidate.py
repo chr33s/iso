@@ -15,7 +15,7 @@ import subprocess
 import tarfile
 import tempfile
 
-BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox")
+BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper")
 MAX_BYTES = 2 * 1024 ** 3
 MAX_MEMBERS = 4096
 REPO = "chr33s/iso"
@@ -99,7 +99,7 @@ def manifest(bundle, revision):
                          data["version"]), "invalid candidate version")
     hashes = data.get("binaries")
     require(isinstance(hashes, dict) and set(hashes) == set(BINARIES),
-            "BUILD.json must describe all four binaries")
+            "BUILD.json must describe every binary")
     for binary in BINARIES:
         path = bundle / binary
         require(path.is_file() and not path.is_symlink() and path.stat().st_mode & 0o111,
@@ -149,7 +149,7 @@ def verify(directory, revision):
         # Execution is allowed only after every binary passes verification.
         run(str(bundle / "iso"), "--version")
         run(str(bundle / "iso-sandbox"), "version")
-        print(f"PASS hosted candidate {revision}, version {data['version']}, all four binaries")
+        print(f"PASS hosted candidate {revision}, version {data['version']}, all binaries")
 
 
 def main():

@@ -298,6 +298,23 @@ private let withoutBundle = Release(
   #expect(readText(install + "/iso-egress") == "companion")
 }
 
+@Test func guestHelperReplacementRequiresAndInstallsIt() throws {
+  let extract = try temporaryDirectory("extract")
+  let install = try temporaryDirectory("install")
+  defer {
+    try? FileManager.default.removeItem(atPath: extract)
+    try? FileManager.default.removeItem(atPath: install)
+  }
+  try writeUpdateFile(install + "/iso", "iso-binary")
+  #expect(throws: HostError("Release is missing the iso-macos-helper guest agent")) {
+    try SelfReplace.replaceSiblingGuestHelper(extract, currentExecutable: install + "/iso")
+  }
+  #expect(!pathExists(install + "/iso-macos-helper"))
+  try writeUpdateFile(extract + "/iso-macos-helper", "helper")
+  try SelfReplace.replaceSiblingGuestHelper(extract, currentExecutable: install + "/iso")
+  #expect(readText(install + "/iso-macos-helper") == "helper")
+}
+
 @Test func proxyReplacementSwapsTheSibling() throws {
   let extract = try temporaryDirectory("extract")
   let install = try temporaryDirectory("install")
@@ -347,6 +364,11 @@ private let withoutBundle = Release(
   }
   #expect(!pathExists(install + "/iso-sandbox"))
   try writeUpdateFile(extract + "/iso-egress", "egress")
+  #expect(throws: HostError("Release is missing the iso-macos-helper guest agent")) {
+    try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
+  }
+  #expect(!pathExists(install + "/iso-sandbox"))
+  try writeUpdateFile(extract + "/iso-macos-helper", "helper")
   try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
   #expect(readText(install + "/iso-sandbox") == "runtime")
 }
@@ -573,6 +595,7 @@ private struct UpdateFixture {
     for (name, text) in [
       ("iso", "installed-iso"), ("iso-proxy", "installed-proxy"),
       ("iso-sandbox", "installed-runtime"), ("iso-egress", "installed-egress"),
+      ("iso-macos-helper", "installed-helper"),
     ] {
       try writeUpdateFile(install + "/" + name, text, mode: 0o755)
     }
@@ -678,17 +701,17 @@ enum FixtureSignature { case trusted, untrusted, missing }
 
 private let fullRelease = [
   "iso": "new-iso", "iso-proxy": "new-proxy", "iso-sandbox": "new-runtime",
-  "iso-egress": "new-egress",
+  "iso-egress": "new-egress", "iso-macos-helper": "new-helper",
 ]
 private let untouched = [
   "iso": "installed-iso", "iso-proxy": "installed-proxy", "iso-sandbox": "installed-runtime",
-  "iso-egress": "installed-egress",
+  "iso-egress": "installed-egress", "iso-macos-helper": "installed-helper",
 ]
 
 /// Serialized: these spawn many short-lived processes, and the process-wide
 /// descriptor-leak check in HostTests tolerates only a little concurrency.
 @Suite(.serialized) struct UpdateEndToEnd {
-  @Test func updateReplacesAllFourBinariesAndRecordsTheTag() throws {
+  @Test func updateReplacesEveryBinaryAndRecordsTheTag() throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
     try fixture.publish(fullRelease)
@@ -765,6 +788,7 @@ private let untouched = [
       ("iso-sandbox", "Release is missing the iso-sandbox runtime"),
       ("iso-proxy", "Release is missing the iso-proxy companion"),
       ("iso-egress", "Release is missing the iso-egress companion"),
+      ("iso-macos-helper", "Release is missing the iso-macos-helper guest agent"),
       ("iso", "Extracted binary not found at"),
     ] {
       var members = fullRelease
@@ -780,7 +804,8 @@ private let untouched = [
     }
   }
 
-  @Test(arguments: ["iso", "iso-sandbox", "iso-proxy", "iso-egress"], [false, true])
+  @Test(
+    arguments: ["iso", "iso-sandbox", "iso-proxy", "iso-egress", "iso-macos-helper"], [false, true])
   func nonRegularReleaseMembersPreserveTheInstall(_ artifact: String, _ symlink: Bool) throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }

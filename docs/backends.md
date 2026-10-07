@@ -86,7 +86,8 @@ Backend state remains under `<data_dir>/backends/apple-container-v1/`:
 - `owner.json` (installation owner ID) and `vm_key`
 - `images/<name>/`: `template-config.json`, `apple-image.json`, and `build.log`
 - `instances/<name>/`: `apple-machine.json`, `known_hosts`, `operation.json` while a mutation is pending, `audit.jsonl` (boundary audit), and the shared sidecars
-- `runtime/`, the iso-sandbox state root: kernel, init filesystem, private OCI store, cached base disks, committed disks, the maintenance boot disk (`maintenance/`), lock files (`locks/`), and one directory per sandbox (disk, record, console and owner logs, launchd plist)
+- `runtime/`, the iso-sandbox state root: kernel, init filesystem, private OCI store, cached base disks, committed disks, the maintenance boot disk (`maintenance/`), lock files (`locks/`), and one directory per sandbox (disk, record, console and owner logs, launchd plist); macOS templates and sandboxes under `macos/templates/` and `macos/sandboxes/`
+- `images/<name>/macos-provision.sh` for a macOS image: the provisioning script its template was built with
 
 Control files are `0600`, directories `0700`. `uninstall --purge` destroys
 owned instances and removes only `backends/apple-container-v1/`; config files,
@@ -96,7 +97,8 @@ user aliases with the same name are refused. Paths may contain spaces but not qu
 
 Host records require the current schema and backend identity. Machine sidecars
 also require an explicit `lifecycle` (`reusable` or `disposable`); unknown or
-missing values are refused. A fresh installation does not adopt older state.
+missing values are refused. A macOS instance's sidecar adds
+`guest_os: "macos"`; Linux sidecars omit it. A fresh installation does not adopt older state.
 
 Fork macOS releases use this backend and include `iso-sandbox` beside `iso`.
 The host prefers that adjacent runtime, then the manual install locations; an

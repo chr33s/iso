@@ -56,6 +56,12 @@ package struct SubnetAllocator: Sendable {
     }
   }
 
+  /// Subnets held by every other sandbox, Linux and macOS alike.
+  func usedIndices(excluding id: SandboxID) throws -> Set<Int> {
+    Set(try root.allRecords().filter { $0.id != id }.map(\.subnetIndex))
+      .union(try root.allMacRecords().filter { $0.id != id }.map(\.subnetIndex))
+  }
+
   static func pick(used: Set<Int>, state: State) -> Int? {
     range.first { !used.contains($0) && state.quarantined[$0] == nil }
   }
@@ -67,7 +73,7 @@ package struct SubnetAllocator: Sendable {
   {
     try locked { state in
       Self.prune(&state, now: now)
-      let used = Set(try root.allRecords().filter { $0.id != id }.map(\.subnetIndex))
+      let used = try usedIndices(excluding: id)
       guard let index = Self.pick(used: used, state: state) else {
         throw SandboxError(
           "no free sandbox subnet (\(used.count) in use, \(state.quarantined.count) quarantined)")
@@ -84,7 +90,7 @@ package struct SubnetAllocator: Sendable {
     try locked { state in
       state.quarantined[index] = now
       Self.prune(&state, now: now)
-      let used = Set(try root.allRecords().filter { $0.id != id }.map(\.subnetIndex))
+      let used = try usedIndices(excluding: id)
       guard let next = Self.pick(used: used, state: state) else {
         throw SandboxError("no free sandbox subnet after quarantining \(index)")
       }

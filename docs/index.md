@@ -45,6 +45,23 @@ Apple backend. The credential proxy is the Swift package
   - [`sandboxy-inspired-features-spec.md`](design/sandboxy-inspired-features-spec.md):
     one-command sessions, declarative agents, image inspection, and
     destination-filtered egress. Filtered-egress qualification remains incomplete.
+  - [`macos-computer-use-qualification-plan.md`](design/macos-computer-use-qualification-plan.md):
+    the release gates (A–T) for macOS-guest computer use;
+  - [`macos-vz-context-headless-experiment-spec.md`](design/macos-vz-context-headless-experiment-spec.md):
+    the experiment spec for which host context a macOS VM owner needs;
+  - [`macos-computer-use-q0-spike.md`](design/macos-computer-use-q0-spike.md):
+    go/no-go spike results for macOS-guest computer use (display, input,
+    boot identity) and the owner-topology constraints they set;
+  - [`macos-guest-computer-use.md`](design/macos-guest-computer-use.md):
+    macOS guests in `iso-sandbox` (templates, clones, helper channel,
+    computer use) and their qualification status;
+  - [`macos-vz-context-experiment.md`](design/macos-vz-context-experiment.md):
+    which host process/session context a macOS VM owner and its view need
+    (headless runtime in `user/$UID`; computer use needs a window, not a
+    visible one);
+  - [`linux-computer-use-sketch.md`](design/linux-computer-use-sketch.md):
+    proposal for computer use in Ubuntu guests (Xvfb + XTEST, in-guest loop
+    first, bounded host frame channel for qualification);
   - [`editor-providers-spec.md`](design/editor-providers-spec.md):
     `iso code` / `iso zed`, compiled-in editor providers, and the boundary
     between SSH connection targets and managed agent workloads.

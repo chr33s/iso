@@ -43,6 +43,8 @@ EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
 printf '#!/bin/sh\necho installed-iso-egress\n' >"$FIXTURE/$ARCHIVE_DIR/iso-egress"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-egress"
+printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$FIXTURE/$ARCHIVE_DIR/iso-macos-helper"
+chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-macos-helper"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso" "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
@@ -183,7 +185,7 @@ else
 fi
 unset ISO_TEST_GH_REQUIRE_BUNDLE
 
-for artifact in iso iso-proxy iso-sandbox iso-egress; do
+for artifact in iso iso-proxy iso-sandbox iso-egress iso-macos-helper; do
     if [[ "$("$INSTALL_DIR/$artifact")" == "installed-$artifact" ]]; then
         pass "installer installs $artifact"
     else
@@ -303,28 +305,28 @@ repack_fixture() {
 }
 
 seed_install() {
-    for artifact in iso iso-sandbox iso-proxy iso-egress; do
+    for artifact in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
         printf '%s\n' "keep-$artifact" >"$INSTALL_DIR/$artifact"
     done
 }
 
 install_unchanged() {
-    for artifact in iso iso-sandbox iso-proxy iso-egress; do
+    for artifact in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
         [[ "$(cat "$INSTALL_DIR/$artifact")" == "keep-$artifact" ]] || return 1
     done
 }
 
 echo "==> Test 6: every release binary is required before replacement"
-for missing in iso iso-sandbox iso-proxy iso-egress; do
+for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
     mv "$FIXTURE/$ARCHIVE_DIR/$missing" "$FIXTURE/missing-backup"
     repack_fixture
     seed_install
     if ! run_installer >"$TEST_ROOT/missing-$missing.log" 2>&1 \
         && grep -q "Release is missing a regular $missing binary" "$TEST_ROOT/missing-$missing.log" \
         && install_unchanged; then
-        pass "missing $missing preserves all four installed binaries"
+        pass "missing $missing preserves every installed binary"
     else
-        fail "missing $missing preserves all four installed binaries" "$(tail -10 "$TEST_ROOT/missing-$missing.log")"
+        fail "missing $missing preserves every installed binary" "$(tail -10 "$TEST_ROOT/missing-$missing.log")"
     fi
     mv "$FIXTURE/missing-backup" "$FIXTURE/$ARCHIVE_DIR/$missing"
 done
@@ -337,15 +339,15 @@ seed_install
 if ! run_installer >"$TEST_ROOT/symlink.log" 2>&1 \
     && grep -q "Release is missing a regular iso-egress binary" "$TEST_ROOT/symlink.log" \
     && install_unchanged; then
-    pass "symlink companion preserves all four installed binaries"
+    pass "symlink companion preserves every installed binary"
 else
-    fail "symlink companion preserves all four installed binaries" "$(tail -10 "$TEST_ROOT/symlink.log")"
+    fail "symlink companion preserves every installed binary" "$(tail -10 "$TEST_ROOT/symlink.log")"
 fi
 rm "$FIXTURE/$ARCHIVE_DIR/iso-egress"
 mv "$FIXTURE/egress-backup" "$FIXTURE/$ARCHIVE_DIR/iso-egress"
 repack_fixture
 if run_installer >"$TEST_ROOT/complete.log" 2>&1; then
-    for artifact in iso iso-sandbox iso-proxy iso-egress; do
+    for artifact in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
         if [[ "$("$INSTALL_DIR/$artifact")" == "installed-$artifact" ]]; then
             pass "complete release replaces $artifact"
         else

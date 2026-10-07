@@ -568,7 +568,8 @@ package struct WorkspaceTransfer: Sendable {
       try client.exec(
         target,
         RemoteCommand().literal("sudo mkdir -p ").arg(mount.guestPath.rawValue)
-          .literal(" && sudo chown ubuntu:ubuntu ").arg(mount.guestPath.rawValue))
+          .literal(" && sudo chown ").arg("\(target.user):\(target.user)").literal(" ")
+          .arg(mount.guestPath.rawValue))
       diagnostics.log(.info, "Syncing \(mount.hostPath) -> guest:\(mount.guestPath)")
       if try guestHasRsync(target) {
         try rsyncPush(target, source: mount.hostPath, to: mount.guestPath, excludeGit: excludeGit)

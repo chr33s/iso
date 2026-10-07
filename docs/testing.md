@@ -96,6 +96,43 @@ packages from a staged copy and assembles the release archive; see
 ./tests/run-integration.sh --only isolation,snapshots --keep
 ```
 
+macOS guests have their own real-hardware qualification
+([design](design/macos-guest-computer-use.md)). It needs a published template
+and the experiment fixture (`experiments/macos-vz-context-probe/build.sh`),
+and covers gates B, L, I, J, O, C, D, E, G, P, H, K, Q, R and S of the macOS
+computer-use plan (`--gates`; `SCALE` adds the one- and two-VM scaling run).
+The Gate Q, D and O fixtures live in `tests/fixtures/macos-guest/` and are
+built by the driver with `xcrun`; Gate Q also downloads a pinned,
+checksum-verified Electron release on the host and copies it in. At most two
+macOS guests can run on a host at once, a template build included, so run
+one driver at a time and keep other macOS guests stopped:
+
+`scripts/build-iso-sandbox.sh <prefix>` builds and signs both products into
+`<prefix>/bin`; `template build` installs the `iso-macos-helper` beside
+`iso-sandbox` unless `--helper` names another:
+
+```bash
+scripts/build-iso-sandbox.sh <prefix>
+<prefix>/bin/iso-sandbox macos template build --root ~/.iso-macos-dev --ipsw <file.ipsw> \
+  --name macos27
+python3 tests/macos-guest-qualify.py --sandbox <iso-sandbox> --template macos27 \
+  [--gates C,E,G] [--captures N] [--clicks N]
+python3 tests/macos-guest-soak.py --sandbox <iso-sandbox> --template macos27 \
+  [--hours 8] [--vms 2]                          # Gate T
+```
+
+Gate R changes its guest's login policy (a known password, no automatic
+login), so the driver runs it last, on a VM of its own. The soak writes
+`soak.json` as it runs; it passes only after the full duration with every
+count target met and zero wrong clicks, cross-VM events, stale-boot
+acceptances and stale or foreign frames. `tests/macos-iso-e2e.py --ipsw
+<file>` checks `iso` itself on macOS guests in its own data directory: setup
+(a no-op once the image is current), up, exec, status, list, logs refusal,
+stop, start and destroy, and the filtered-egress boundary.
+`tests/macos-guest-sleepwake.py --sandbox <iso-sandbox> --template <name>`
+sleeps the host for about a minute (it asks for `sudo` once, to schedule the
+wake) and checks input, frames, SSH and the session binding before and after.
+
 CI additionally runs the fast, host-only `tests/integration-install.sh`,
 `tests/integration-update.sh`, and `tests/integration-uninstall.sh` suites.
 

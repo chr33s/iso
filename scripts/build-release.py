@@ -15,7 +15,8 @@ Stages, in order, each explicit:
 2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`),
             the filtered-egress companion (`iso-egress`), and the Apple
             runtime (`iso-sandbox`, ad-hoc signed with its entitlement by
-            scripts/build-iso-sandbox.sh). `--release` builds
+            scripts/build-iso-sandbox.sh, with the macOS guest agent
+            `iso-macos-helper`). `--release` builds
             with optimizations and `-D ISO_RELEASE_BUILD`, which makes
             `iso update` treat the binary as a release.
 3. test     (`--test`) every package's tests in the staging copy.
@@ -25,7 +26,8 @@ Stages, in order, each explicit:
             other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
-            iso-egress, iso-sandbox, legal notices, BUILD.json), plus a
+            iso-egress, iso-sandbox, iso-macos-helper, legal notices,
+            BUILD.json), plus a
             `SHA256SUMS` listing
             the archive, next to it in `--out`. `<name>` is `--tag`, else the
             revision. This is the layout `iso update` and install.sh expect.
@@ -48,7 +50,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIPLE = "aarch64-apple-darwin"
-BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox"]
+BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]
 SIGNING_ENV = frozenset({
     "MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY",
     "NOTARY_API_KEY_P8", "NOTARY_API_KEY_ID", "NOTARY_API_ISSUER_ID",
@@ -120,13 +122,14 @@ def build(staging, configuration, release, prefix):
     run(["swift", "build", "--package-path", egress_package, *common], staging)
     egress = Path(run(["swift", "build", "--package-path", egress_package, *common, "--show-bin-path"],
                       staging, capture=True).strip())
-    phase("Build and ad-hoc sign iso-sandbox")
+    phase("Build and ad-hoc sign iso-sandbox and iso-macos-helper")
     run([staging / "scripts/build-iso-sandbox.sh", prefix], staging)
     return {
         "iso": host / "iso",
         "iso-proxy": proxy / "iso-proxy",
         "iso-egress": egress / "iso-egress",
         "iso-sandbox": prefix / "bin/iso-sandbox",
+        "iso-macos-helper": prefix / "bin/iso-macos-helper",
     }
 
 

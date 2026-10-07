@@ -9,7 +9,8 @@ import IsoCore
 /// platform archive, `SHA256SUMS` and its signature, verify the signature
 /// against the compiled-in release signers, the checksum and (with `gh`) the
 /// Sigstore attestation, extract into a private temporary directory, then
-/// replace the runtime, proxy, egress companion and finally this binary. Any failure before
+/// replace the runtime, macOS guest helper, proxy, egress companion and finally this binary.
+/// Any failure before
 /// a replacement leaves every installed binary untouched.
 package struct Updater: Sendable {
   package struct Options: Sendable, Equatable {
@@ -182,9 +183,11 @@ package struct Updater: Sendable {
     guard SelfReplace.isRegularArtifact(extracted) else {
       throw HostError("Extracted binary not found at \(extracted)")
     }
-    // Validate the complete four-binary archive before replacing its runtime.
-    // Companions are replaced first; the running host is replaced last.
+    // Validate the complete archive before replacing its runtime. Companions
+    // are replaced first; the running host is replaced last.
     try SelfReplace.replaceSiblingRuntime(extractDirectory, currentExecutable: currentExecutable)
+    try SelfReplace.replaceSiblingGuestHelper(
+      extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingProxy(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingEgress(extractDirectory, currentExecutable: currentExecutable)
     guard let currentExecutable else {
@@ -516,6 +519,7 @@ package enum SelfReplace {
   static let proxyName = "iso-proxy"
   static let egressName = "iso-egress"
   static let runtimeName = "iso-sandbox"
+  static let guestHelperName = "iso-macos-helper"
 
   static func join(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : directory + "/" + name
@@ -627,7 +631,7 @@ package enum SelfReplace {
     return directory
   }
 
-  /// Validate all three companions before replacing the runtime.
+  /// Validate every companion before replacing the runtime.
   package static func replaceSiblingRuntime(_ extractDirectory: String, currentExecutable: String?)
     throws
   {
@@ -641,8 +645,23 @@ package enum SelfReplace {
     guard isRegularArtifact(extractDirectory + "/" + egressName) else {
       throw HostError("Release is missing the iso-egress companion")
     }
+    guard isRegularArtifact(extractDirectory + "/" + guestHelperName) else {
+      throw HostError("Release is missing the iso-macos-helper guest agent")
+    }
     let directory = try installDirectory(currentExecutable)
     try atomicReplace(runtime, over: join(directory, runtimeName))
+  }
+
+  /// Replace the macOS guest helper that `iso-sandbox` installs in templates.
+  package static func replaceSiblingGuestHelper(
+    _ extractDirectory: String, currentExecutable: String?
+  ) throws {
+    let helper = extractDirectory + "/" + guestHelperName
+    guard isRegularArtifact(helper) else {
+      throw HostError("Release is missing the iso-macos-helper guest agent")
+    }
+    let directory = try installDirectory(currentExecutable)
+    try atomicReplace(helper, over: join(directory, guestHelperName))
   }
 
   /// Replace the required proxy sibling from the same verified archive.

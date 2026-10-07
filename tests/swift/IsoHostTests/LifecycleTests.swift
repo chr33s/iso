@@ -621,3 +621,367 @@ private struct FakeInstallation {
   #expect(try lifecycle.stop(instance) == .unchanged)
   try backend.destroyInstance(instance)
 }
+
+// MARK: - macOS guests
+
+private func macSetup(_ install: FakeInstallation, image: ImageName) throws {
+  let ipsw = install.root + "/restore.ipsw"
+  FileManager.default.createFile(atPath: ipsw, contents: Data("ipsw".utf8))
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
+      macOSRestoreImage: ipsw))
+}
+
+@Test func macOSSetupRecordsATemplateAndSkipsLinuxPreparation() throws {
+  let install = try FakeInstallation(extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#)
+  defer { install.remove() }
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let calls = install.calls()
+  #expect(calls.contains { $0.starts(with: ["macos", "template", "build"]) })
+  #expect(!calls.contains { $0.first == "init" || $0.first == "maintenance" })
+  let build = try #require(calls.first { $0.starts(with: ["macos", "template", "build"]) })
+  let script = try String(
+    contentsOfFile: build[build.firstIndex(of: "--provision")! + 1], encoding: .utf8)
+  #expect(script == MacProvision.script())
+  let manifest = try ImageManifest.load(install.config, image)
+  #expect(manifest.guestOS == .macos)
+  #expect(manifest.guestUser == MacProvision.guestUser)
+  try install.backend.runtime().verifyImage(manifest)
+  // Unchanged inputs: no second build.
+  try macSetup(install, image: image)
+  #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "build"]) })
+  // A different restore image: rebuilt.
+  let other = install.root + "/other.ipsw"
+  FileManager.default.createFile(atPath: other, contents: Data("other".utf8))
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
+      macOSRestoreImage: other))
+  #expect(install.calls().contains { $0.starts(with: ["macos", "template", "build"]) })
+}
+
+@Test func macOSInstancesRunThroughTheMacRuntimeAndTheMacGate() throws {
+  let install = try FakeInstallation(extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  _ = install.calls()
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("mac1"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let calls = install.calls()
+  let create = try #require(calls.first { $0.starts(with: ["macos", "create"]) })
+  let publicKey = try String(
+    contentsOfFile: install.config.sshKeyPath.path + ".pub", encoding: .utf8)
+  #expect(
+    create[create.firstIndex(of: "--authorized-key")! + 1]
+      == publicKey.split(separator: " ").prefix(2).joined(separator: " "))
+  #expect(create[create.firstIndex(of: "--network")! + 1] == "shared")
+  #expect(!calls.contains { $0.first == "create" || $0.first == "exec" })
+  let sidecar = try MachineSidecar.load(instance)
+  #expect(sidecar.kind == .macos)
+  #expect(sidecar.guestUser == MacProvision.guestUser)
+  #expect(sidecar.hostKeyFingerprint == "SHA256:10O2vYbKkmA/sBuRrfwbSNiR5pAFM/qtkqldbUJESvk")
+  #expect(sidecar.lastObservedOwnerPID == 4343)
+
+  let running = try #require(try backend.asRunning(instance))
+  #expect(running.target.user == MacProvision.guestUser)
+  #expect(try backend.describe(running).contains("macOS guest"))
+  #expect(throws: HostError.self) {
+    try backend.streamLogs(running, follow: false, line: { _ in }, stderr: { _ in })
+  }
+  #expect(throws: HostError.self) { _ = try backend.asStopped(instance) }
+  try backend.stop(running)
+  #expect(try backend.asRunning(instance) == nil)
+  try backend.startExisting(instance)
+  #expect(try backend.asRunning(instance) != nil)
+  try backend.destroyInstance(instance)
+  #expect(try backend.runtime().macList().isEmpty)
+  try backend.destroyImage(image)
+  #expect(try backend.runtime().macTemplates().isEmpty)
+}
+
+@Test func macOSStartRefusesAChangedPinnedHostKey() throws {
+  let install = try FakeInstallation(extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("mac2"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  try backend.stop(try #require(try backend.asRunning(instance)))
+  let sidecar = try MachineSidecar.load(instance)
+  let pinned = Data(
+    "\(sidecar.machineID).iso ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDifferentKeyDifferentKeyDifferentKey00\n"
+      .utf8)
+  try pinned.write(to: URL(fileURLWithPath: instance.knownHostsPath))
+  do {
+    try backend.startExisting(instance)
+    Issue.record("started with a changed host key")
+  } catch RuntimeError.hostKeyChanged {
+  } catch {
+    Issue.record("unexpected error: \(error)")
+  }
+  #expect(FileManager.default.contents(atPath: instance.knownHostsPath) == pinned)
+  #expect(try backend.runtime().macInspect(sidecar.machineID).status == .stopped)
+}
+
+@Test func destroyRemovesAMacOSSandboxLeftByAnInterruptedCreate() throws {
+  let install = try FakeInstallation(extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("mac3"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let sidecar = try MachineSidecar.load(instance)
+  // As if the create had stopped before writing the sidecar.
+  _ = try Journal.begin(
+    instance, owner: try Owner.load(install.config), op: .create(stage: .machineCreated),
+    machine: sidecar.machineID)
+  try FileManager.default.removeItem(atPath: MachineSidecar.path(instance))
+  try backend.destroyInstance(instance)
+  #expect(try backend.runtime().macList().isEmpty)
+}
+
+@Test func macOSProvisioningScriptIsValidBash() throws {
+  let script = MacProvision.script()
+  #expect(!script.contains("\\("))
+  #expect(script.contains("gh_\(MacProvision.ghVersion)_macOS_arm64.zip"))
+  let path = FileManager.default.temporaryDirectory.appending(path: "provision-\(UUID()).sh").path
+  try Data(script.utf8).write(to: URL(fileURLWithPath: path))
+  defer { try? FileManager.default.removeItem(atPath: path) }
+  let check = try ProcessRunner().capture(
+    .init(
+      executable: "/bin/bash", arguments: ["-n", path], environment: [:], deadline: .seconds(10)))
+  #expect(check.termination == .exited(0))
+}
+
+@Test func filteredMacOSInstancesUseTheMacRuntimePathsAndRequireReadiness() throws {
+  let install = try FakeInstallation(
+    extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}, "egress": "filtered""#)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  _ = install.calls()
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("macf"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let create = try #require(install.calls().first { $0.starts(with: ["macos", "create"]) })
+  #expect(create[create.firstIndex(of: "--network")! + 1] == "host-only")
+  let runtime = try backend.runtime()
+  let sidecar = try MachineSidecar.load(instance)
+  let boot = try runtime.requireFilteredBoot(sidecar.machineID, .macos)
+  #expect(boot.bootID == "mac-boot" && boot.ownerPID == 4343)
+  #expect(boot.livePath.hasSuffix("/macos/sandboxes/\(sidecar.machineID)/live.json"))
+  // No companion was started for this boot: the readiness proof fails.
+  let failure = try #require(throws: InstanceUnhealthy.self) { try backend.asRunning(instance) }
+  #expect(failure.reason.hasPrefix("FILTERED_EGRESS_NOT_READY: "))
+}
+
+private func macMode(_ install: FakeInstallation, _ knobs: [String: Any]) throws {
+  try JSONSerialization.data(withJSONObject: knobs).write(
+    to: URL(fileURLWithPath: install.root + "/bin/fake-mode.json"))
+}
+
+private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
+
+@Test func macOSBootWaitsForTheHelperAndRefusesAStopOrAKeyMismatch() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  // Pending for a few inspects, then enrolled: the boot waits for it.
+  try macMode(install, ["pendingInspects": 3])
+  let waited = try Instance.allocate(
+    install.config, name: InstanceName("macw"), image: image, workspacePath: nil)
+  try backend.createAndStart(waited, diskGiB: nil)
+  #expect(try backend.asRunning(waited) != nil)
+  // A guest that stops during boot fails the create.
+  try macMode(install, ["stopDuringBoot": true])
+  let stopped = try Instance.allocate(
+    install.config, name: InstanceName("macs"), image: image, workspacePath: nil)
+  let bootError = try #require(throws: RuntimeError.self) {
+    try backend.createAndStart(stopped, diskGiB: nil)
+  }
+  guard case .bootTimeout = bootError else {
+    Issue.record("expected a boot failure, got \(bootError)")
+    return
+  }
+  // A confirmed key that differs from the runtime's pin is refused.
+  try macMode(
+    install,
+    [
+      "confirmedKey":
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyOt"
+    ])
+  let mismatched = try Instance.allocate(
+    install.config, name: InstanceName("mack"), image: image, workspacePath: nil)
+  let keyError = try #require(throws: RuntimeError.self) {
+    try backend.createAndStart(mismatched, diskGiB: nil)
+  }
+  guard case .hostKeyChanged = keyError else {
+    Issue.record("expected a host-key refusal, got \(keyError)")
+    return
+  }
+  #expect(!FileManager.default.fileExists(atPath: mismatched.knownHostsPath))
+}
+
+@Test func macOSSetupRefusesWhatItCannotBuild() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  let ipsw = install.root + "/restore.ipsw"
+  FileManager.default.createFile(atPath: ipsw, contents: Data("ipsw".utf8))
+  func setup(_ image: ImageName, user: GuestUser = .default, restore: String? = nil) throws {
+    try backend.setup(
+      SetupOptions(
+        rebuild: false, profiles: [], image: image, guestUser: user, builderTimeout: nil,
+        macOSRestoreImage: restore ?? ipsw))
+  }
+  #expect(throws: HostError.self) { try setup(image, user: try GuestUser("vscode")) }
+  #expect(throws: HostError.self) { try setup(image, restore: install.root + "/missing.ipsw") }
+  // A template recording another script than iso supplied is refused and removed.
+  try macMode(install, ["provisionSha": String(repeating: "0", count: 64)])
+  #expect(throws: RuntimeError.self) { try setup(image) }
+  #expect(try backend.runtime().macTemplates().isEmpty)
+  #expect(try ImageManifest.loadIfPresent(install.config, image) == nil)
+  // A runtime without macOS support is refused before anything is built.
+  try macMode(install, ["noMacFeature": true])
+  let unsupported = AppleBackend(
+    config: install.config,
+    environment: [
+      "HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin",
+      "TMPDIR": NSTemporaryDirectory(),
+    ], executable: nil)
+  #expect(throws: RuntimeError.self) {
+    try unsupported.setup(
+      SetupOptions(
+        rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
+        macOSRestoreImage: ipsw))
+  }
+  // An image keeps its guest OS unless replaced with --rebuild.
+  try macMode(install, [:])
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  #expect(throws: HostError.self) { try setup(.default) }
+  try setup(image)
+  #expect(throws: HostError.self) {
+    try backend.setup(
+      SetupOptions(
+        rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil))
+  }
+}
+
+@Test func aRebuiltMacOSImageKeepsItsOldTemplateForItsInstances() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let first = try ImageManifest.load(install.config, image).imageRef
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("macr"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let ipsw = install.root + "/restore.ipsw"
+  _ = install.calls()
+  try backend.setup(
+    SetupOptions(
+      rebuild: true, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
+      macOSRestoreImage: ipsw))
+  // iso itself keeps the template: it never asks the runtime to delete it.
+  #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "delete"]) })
+  let templates = try backend.runtime().macTemplates().map(\.name)
+  #expect(templates.count == 2 && templates.contains(first))
+  try backend.stop(try #require(try backend.asRunning(instance)))
+  try backend.startExisting(instance)
+  try backend.destroyInstance(instance)
+  #expect(
+    try backend.runtime().macTemplates().map(\.name) == [
+      try ImageManifest.load(install.config, image).imageRef
+    ])
+}
+
+@Test func macOSInstancesRefuseADiskSizeAndCodexAccountAuth() throws {
+  let install = try FakeInstallation(extra: macVM + #", "codex": {"auth": "chatgpt"}"#)
+  defer { install.remove() }
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("macd"), image: image, workspacePath: nil)
+  #expect(throws: HostError.self) { try install.backend.createAndStart(instance, diskGiB: 100) }
+  let error = try #require(throws: HostError.self) {
+    try install.backend.createAndStart(instance, diskGiB: nil)
+  }
+  #expect("\(error)".contains("Secret Service"))
+  #expect(try install.backend.runtime().macList().isEmpty)
+  // Refused before any state: nothing blocks a retry once fixed.
+  #expect(try Journal.loadIfPresent(instance) == nil)
+  #expect(try MachineSidecar.loadIfPresent(instance) == nil)
+}
+
+@Test func aMacOSImageMissingFromTheRuntimeIsRefused() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let runtime = try install.backend.runtime()
+  try runtime.macDeleteTemplate(try MachineName(ImageManifest.load(install.config, image).imageRef))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("macm"), image: image, workspacePath: nil)
+  #expect(throws: RuntimeError.self) { try install.backend.createAndStart(instance, diskGiB: nil) }
+}
+
+@Test func macOSBootsCarryTheSessionDeadline() throws {
+  let install = try FakeInstallation(extra: macVM + #", "limits": {"session_ttl": "2h"}"#)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  _ = install.calls()
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("macttl"), image: image, workspacePath: nil)
+  let before = Int64(Date().timeIntervalSince1970)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let start = try #require(install.calls().first { $0.starts(with: ["macos", "start"]) })
+  let index = try #require(start.firstIndex(of: "--expires-at"))
+  let expires = try #require(Int64(start[index + 1]))
+  #expect(expires >= before + 7200 && expires <= before + 7200 + 60)
+  // A restart begins a new window too.
+  try backend.stop(try #require(try backend.asRunning(instance)))
+  _ = install.calls()
+  let restarted = Int64(Date().timeIntervalSince1970)
+  try backend.startExisting(instance)
+  let restart = try #require(install.calls().first { $0.starts(with: ["macos", "start"]) })
+  let restartIndex = try #require(restart.firstIndex(of: "--expires-at"))
+  let renewed = try #require(Int64(restart[restartIndex + 1]))
+  #expect(renewed >= restarted + 7200 && renewed <= restarted + 7200 + 60)
+}
+
+@Test func anUnreadableInstanceKeepsTheMacOSTemplateItMayUse() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("macu"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  try backend.stop(try #require(try backend.asRunning(instance)))
+  try Data("{".utf8).write(to: URL(fileURLWithPath: instance.directory + "/instance.json"))
+  _ = install.calls()
+  try backend.setup(
+    SetupOptions(
+      rebuild: true, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
+      macOSRestoreImage: install.root + "/restore.ipsw"))
+  #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "delete"]) })
+}

@@ -122,6 +122,11 @@ package enum Sandboxes {
     }
     let paths = root.sandbox(id)
     return try await mutating(paths, settle: false) {
+      // One identifier namespace across Linux and macOS sandboxes; both
+      // kinds' creates hold this same mutation lock.
+      guard !FileManager.default.fileExists(atPath: root.macSandbox(id).dir.path) else {
+        throw SandboxError("\(id) already exists")
+      }
       // No record yet means an uncommitted create; reconcile removes those.
       try FileManager.default.createDirectory(
         at: paths.dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
