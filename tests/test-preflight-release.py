@@ -449,14 +449,16 @@ class ReleaseBinaryTests(unittest.TestCase):
             workflow, re.S)[1]
         script = "\n".join(line[10:] for line in block.splitlines())
         name = 'iso-v9.8.7-aarch64-apple-darwin'
-        for version, has_proxy, has_runtime, expected in [
-                ('iso 9.8.7 (abc1234)', True, True, 0),
-                ('iso 9.8.7-dev (abc1234+dirty)', True, True, 1),
-                ('iso 9.8.6 (abc1234)', True, True, 1),
-                ('iso 9.8.7 (abc1235)', True, True, 1),
-                ('iso 9.8.7 (abc1234)', False, True, 1),
-                ('iso 9.8.7 (abc1234)', True, False, 1)]:
-            with self.subTest(version=version, proxy=has_proxy, runtime=has_runtime), \
+        for version, has_proxy, has_runtime, has_helper, expected in [
+                ('iso 9.8.7 (abc1234)', True, True, True, 0),
+                ('iso 9.8.7-dev (abc1234+dirty)', True, True, True, 1),
+                ('iso 9.8.6 (abc1234)', True, True, True, 1),
+                ('iso 9.8.7 (abc1235)', True, True, True, 1),
+                ('iso 9.8.7 (abc1234)', False, True, True, 1),
+                ('iso 9.8.7 (abc1234)', True, False, True, 1),
+                ('iso 9.8.7 (abc1234)', True, True, False, 1)]:
+            with self.subTest(version=version, proxy=has_proxy, runtime=has_runtime,
+                              helper=has_helper), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 bundle = root / 'bundle' / name
@@ -466,6 +468,8 @@ class ReleaseBinaryTests(unittest.TestCase):
                     binaries['iso-proxy'] = '#!/bin/sh\nexit 0\n'
                 if has_runtime:
                     binaries['iso-sandbox'] = '#!/bin/sh\nexit 0\n'
+                if has_helper:
+                    binaries['iso-macos-helper'] = '#!/bin/sh\nexit 0\n'
                 for binary, text in binaries.items():
                     (bundle / binary).write_text(text)
                     (bundle / binary).chmod(0o755)
