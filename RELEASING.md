@@ -74,6 +74,10 @@ that runs it. It requires Apple Silicon macOS 27+.
   attests build provenance, extracts the `## vX.Y.Z` section from
   `CHANGELOG.md` as the release notes, and creates a **draft** GitHub
   release. **A missing CHANGELOG section fails it.**
+- **`release-signatures.yml`** runs when a release is published, daily and on
+  demand: [`scripts/check-release-signatures.py`](scripts/check-release-signatures.py)
+  fails if any published release lacks a `SHA256SUMS.sig` that verifies
+  against [`.github/release-signers`](.github/release-signers).
 
 Pushing the tag builds the release; a maintainer's signature over its
 `SHA256SUMS` publishes it (see [Release signing](#release-signing)). Everything

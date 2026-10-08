@@ -223,6 +223,7 @@ step "Workflow audit (zizmor)" run_zizmor
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
 step "Hosted candidate verifier regression tests" python3 tests/test-verify-candidate.py
 step "Published release acceptance regression tests" python3 tests/test-accept-release.py
+step "Release signature check regression tests" python3 tests/test-check-release-signatures.py
 step "Integration — installer provenance" ./tests/integration-install.sh
 step "Integration — iso update" ./tests/integration-update.sh
 step "Integration — iso uninstall" ./tests/integration-uninstall.sh

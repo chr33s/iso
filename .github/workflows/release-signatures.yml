@@ -1,0 +1,30 @@
+name: Release signatures
+
+# Fails when a published release lacks a valid SHA256SUMS.sig, i.e. a draft was
+# published without scripts/sign-release.py. install.sh and `iso update`
+# refuse such a release.
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: github.repository == 'chr33s/iso'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify every published release's SHA256SUMS.sig
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-release-signatures.py

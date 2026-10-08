@@ -42,6 +42,7 @@ PYTHON_GATES = [
     'tests/test-data-root-contract.py', 'tests/test-machine-contract.py',
     'tests/test-cli-surface.py',
     'tests/test-preflight-release.py', 'tests/test-verify-candidate.py', 'tests/test-accept-release.py',
+    'tests/test-check-release-signatures.py',
     'scripts/build-release.py',
     'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
     'scripts/test-swift-egress-pressure.py',
@@ -120,6 +121,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                      'test-cli-surface.py --swift .build/debug/iso',
                      'test-preflight-release.py',
                      'test-verify-candidate.py', 'test-accept-release.py',
+                     'test-check-release-signatures.py',
                      'zizmor .github/workflows/', 'integration-install.sh ',
                      'integration-update.sh ', 'integration-uninstall.sh '):
             self.assertIn(call, calls)

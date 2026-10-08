@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./install.sh                          # latest version, uses gh or GITHUB_TOKEN
-#   VERSION=v0.2.1 ./install.sh           # specific version
+#   VERSION=v0.3.0 ./install.sh           # specific version (v0.3.0 or later)
 #   INSTALL_DIR=/usr/local/bin ./install.sh
 
 REPO="chr33s/iso"
@@ -228,6 +228,14 @@ detect_platform
 
 VERSION="${VERSION:-$(latest_version)}"
 [ -n "$VERSION" ] || die "Could not determine latest version. Set VERSION= explicitly."
+# v0.1.0 and v0.2.0 predate iso-macos-helper, which this installer requires.
+# The install.sh at their own tag installs them.
+case "$VERSION" in
+    v0.[0-2].*)
+        die "${VERSION} predates this installer; use the one from its tag:
+  curl -fsSL https://raw.githubusercontent.com/${REPO}/${VERSION}/install.sh | VERSION=${VERSION} bash"
+        ;;
+esac
 
 TRIPLE="$(target_triple)"
 TARBALL="${BINARY}-${VERSION}-${TRIPLE}.tar.gz"

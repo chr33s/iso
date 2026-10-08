@@ -358,6 +358,17 @@ else
     fail "complete release installs successfully" "$(tail -10 "$TEST_ROOT/complete.log")"
 fi
 
+echo "==> Test 8: releases before iso-macos-helper point to their own installer"
+seed_install
+: >"$GH_LOG"
+if ! VERSION="v0.2.0" run_installer >"$TEST_ROOT/old.log" 2>&1 \
+    && grep -q "raw.githubusercontent.com/chr33s/iso/v0.2.0/install.sh" "$TEST_ROOT/old.log" \
+    && [[ ! -s "$GH_LOG" ]] && install_unchanged; then
+    pass "v0.2.0 is refused before any download"
+else
+    fail "v0.2.0 is refused before any download" "$(tail -10 "$TEST_ROOT/old.log")"
+fi
+
 echo
 echo "  $pass_count passed, $fail_count failed"
 [[ $fail_count -eq 0 ]]

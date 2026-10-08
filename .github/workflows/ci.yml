@@ -69,6 +69,7 @@ jobs:
           python3 tests/test-preflight-release.py
           python3 tests/test-verify-candidate.py
           python3 tests/test-accept-release.py
+          python3 tests/test-check-release-signatures.py
 
       - name: Proxy runner and fixture regression tests
         run: |
