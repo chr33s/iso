@@ -8,6 +8,21 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.3.0
+
+- **macOS guests**: `iso setup --guest macos --ipsw <restore image>` builds a
+  macOS image from an Apple restore image you supply, provisioned with the
+  `iso` guest user, `/workspace`, the Command Line Tools, a checksum-pinned
+  GitHub CLI, Claude Code and Codex. Instances are per-instance clones with
+  their own machine identity, SSH host key and network; `up`, `start`, `stop`,
+  `destroy`, `shell`, `exec`, `status`, `claude` and `codex` work as for Linux
+  guests. Linux-only options, disk resizing, snapshots, `iso logs` and Codex
+  ChatGPT auth are refused for macOS guests. See
+  `docs/images-and-profiles.md#macos-guests`.
+- **Release archive**: adds the `iso-macos-helper` companion. `install.sh`
+  and `iso update` install it with the other companions and refuse an archive
+  without it, so `install.sh` from `main` needs this release or later.
+
 ## v0.2.0
 
 - **Sandboxed editors by default**: `iso code`, `iso zed` and `iso editor` run
