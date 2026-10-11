@@ -7,7 +7,7 @@
 
 > This record has the results of the plan's "minimal go/no-go spike" (Q0.1–Q0.5)
 > and the design constraints they set. It does not qualify any gate (A–T). The
-> harness is in [`spikes/macos-computer-use-q0/`](../../spikes/macos-computer-use-q0/);
+> harness is in [`experiments/macos-computer-use-q0/`](../../experiments/macos-computer-use-q0/);
 > it is not part of the shipped product or the package gates.
 
 ## Verdict
@@ -48,7 +48,7 @@ Run it on a macOS 27 Apple Silicon host. VM state goes in `$Q0_STATE`
 (default `~/.iso-q0`):
 
 ```sh
-cd spikes/macos-computer-use-q0
+cd experiments/macos-computer-use-q0
 ./build.sh            # owner, guest fixture app and helper into .build/q0
 ./q0.py fetch         # newest restore image from Apple's public catalog
 ./q0.py install       # install, provisioning first boot, guest bootstrap
