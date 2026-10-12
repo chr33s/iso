@@ -93,6 +93,45 @@ import Testing
     #expect(state.quarantined[1] == nil)
   }
 
+  @Test func openTriesPastMoreRefusalsThanTheQuarantineHolds() throws {
+    let root = try tempRoot()
+    try commitRecord(root, "other", 2)
+    struct Refused: Error {}
+    let held = 1...(SubnetAllocator.maxQuarantined + 40)
+    var opened: [Int] = []
+    var committed: [Int] = []
+    var moves = 0
+    let got = try SubnetAllocator(root: root).open(
+      from: 1, for: try SandboxID("a"),
+      attempt: { index in
+        opened.append(index)
+        if held.contains(index) { throw Refused() }
+        return index
+      },
+      commit: { committed.append($0) }, refused: { _, _, _ in moves += 1 })
+    #expect(got == held.upperBound + 1)
+    #expect(Set(opened).count == opened.count, "no subnet is tried twice")
+    #expect(!opened.contains(2), "another sandbox's subnet is never tried")
+    #expect(committed.last == got)
+    #expect(moves == held.count - 1)
+  }
+
+  @Test func openFailsOnceEverySubnetIsRefused() throws {
+    let root = try tempRoot()
+    struct Refused: Error {}
+    var attempts = 0
+    #expect(throws: SandboxError.self) {
+      try SubnetAllocator(root: root).open(
+        from: 1, for: try SandboxID("a"),
+        attempt: { (_: Int) -> Int in
+          attempts += 1
+          throw Refused()
+        },
+        commit: { _ in }, refused: { _, _, _ in })
+    }
+    #expect(attempts == SubnetAllocator.range.count)
+  }
+
   @Test func failedCommitAllocatesNothing() throws {
     let root = try tempRoot()
     struct Boom: Error {}

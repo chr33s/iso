@@ -83,18 +83,49 @@ package struct SubnetAllocator: Sendable {
   }
 
   /// Quarantines `index` (vmnet refused it), then allocates a replacement
-  /// the same way as ``allocate(for:now:commit:)``.
+  /// the same way as ``allocate(for:now:commit:)``, never one in `avoiding`.
   package func quarantineAndReallocate(
-    _ index: Int, for id: SandboxID, now: Date = Date(), commit: (Int) throws -> Void
+    _ index: Int, for id: SandboxID, avoiding: Set<Int> = [], now: Date = Date(),
+    commit: (Int) throws -> Void
   ) throws {
     try locked { state in
       state.quarantined[index] = now
       Self.prune(&state, now: now)
-      let used = try usedIndices(excluding: id)
+      let used = try usedIndices(excluding: id).union(avoiding)
       guard let next = Self.pick(used: used, state: state) else {
         throw SandboxError("no free sandbox subnet after quarantining \(index)")
       }
       try commit(next)
+    }
+  }
+
+  /// Calls `attempt` with `index`, then with a replacement each time it throws.
+  /// vmnet refuses a subnet it still holds for a dead owner, and a host can
+  /// hold dozens after crashes, so this tries every free subnet in the range:
+  /// each refused one is quarantined and never offered to this call again,
+  /// even after the bounded quarantine evicts it. `commit` persists each
+  /// replacement before the lock is released; `refused` reports each move.
+  package func open<Opened>(
+    from index: Int, for id: SandboxID,
+    attempt open: (_ index: Int) throws -> Opened,
+    commit: (_ next: Int) throws -> Void,
+    refused: (_ failed: Int, _ next: Int, _ error: any Error) -> Void
+  ) throws -> Opened {
+    var index = index
+    var tried: Set<Int> = []
+    while true {
+      do {
+        return try open(index)
+      } catch {
+        guard tried.insert(index).inserted else { throw error }
+        var next = index
+        try quarantineAndReallocate(index, for: id, avoiding: tried) { replacement in
+          try commit(replacement)
+          next = replacement
+        }
+        refused(index, next, error)
+        index = next
+      }
     }
   }
 }

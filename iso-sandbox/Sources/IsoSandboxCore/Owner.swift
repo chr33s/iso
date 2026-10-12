@@ -179,34 +179,31 @@ package enum Owner {
   /// uncleanly, so a restarted sandbox may not get its old subnet back, and
   /// several neighbours may be taken the same way. Quarantine each refused
   /// subnet and move on (the address changes; the identity does not).
-  static let maxNetworkAttempts = 32
-
   static func makeNetwork(root: SandboxRoot, paths: SandboxPaths, record: inout SandboxRecord)
     throws -> any Network
   {
-    var attempts = 0
-    while true {
-      do {
-        let subnet = try CIDRv4(record.subnet)
-        switch record.network {
+    var current = record
+    defer { record = current }
+    return try SubnetAllocator(root: root).open(
+      from: current.subnetIndex, for: current.id,
+      attempt: { index -> any Network in
+        let subnet = try CIDRv4(SandboxRecord.subnet(index))
+        switch current.network {
         case .shared: return try VmnetNetwork(subnet: subnet)
         case .hostOnly: return try HostOnlyNetwork(subnet: subnet)
         }
-      } catch {
-        attempts += 1
-        guard attempts < maxNetworkAttempts else { throw error }
-        let failed = record.subnetIndex
-        var updated = record
-        try SubnetAllocator(root: root).quarantineAndReallocate(failed, for: record.id) { next in
-          updated.subnetIndex = next
-          try paths.save(updated)
-        }
-        record = updated
+      },
+      commit: { next in
+        var updated = current
+        updated.subnetIndex = next
+        try paths.save(updated)
+        current = updated
+      },
+      refused: { failed, next, error in
         log(
-          "subnet \(SandboxRecord.subnet(failed)) unavailable (\(error)); moved to \(record.subnet)"
+          "subnet \(SandboxRecord.subnet(failed)) unavailable (\(error)); moved to \(SandboxRecord.subnet(next))"
         )
-      }
-    }
+      })
   }
 
   static func machineConfiguration(
