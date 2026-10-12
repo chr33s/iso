@@ -130,6 +130,17 @@
   // editor's own CLI). "allow" widens the sandbox: "clipboard", "internet".
   // "editor": { "security": "sandboxed", "allow": [] },
 
+  // Execution hosts: run new VMs on an enrolled remote Mac with
+  // `iso --host NAME ...`. "local" is implicit and cannot be redefined.
+  // Enroll with `iso host add NAME --ssh ALIAS --agent-path PATH`.
+  // "execution": {
+  //   "default_host": "local",
+  //   "hosts": {
+  //     "build-mac": { "transport": "ssh", "ssh_alias": "build-mac", "agent_path": "/usr/local/bin/iso" }
+  //   },
+  //   "remote": { "broker": "client", "default_session_ttl": "8h" }
+  // },
+
   // "updates": {
   //   "mode": "notify",           // "off" or "notify"
   //   "check_interval_hours": 24

@@ -139,7 +139,7 @@ private let fakes = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 
 /// A private installation driven by `tests/fixtures/fake-runtime` and a
 /// no-op `ssh`, with its own key and owner.
-private struct FakeInstallation {
+struct FakeInstallation {
   let root: String
   let config: IsoConfig
   let backend: AppleBackend

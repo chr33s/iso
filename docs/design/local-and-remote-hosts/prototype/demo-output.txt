@@ -1,0 +1,44 @@
+SIMULATED runtime only. Two local stdio worker processes; no SSH or VM is launched.
+{
+  "placement": "local",
+  "host_id": "c34393e8-b1ce-4442-802e-499be70aa6bc",
+  "instance": {
+    "boot_id": "d3ab0a15-d4a3-4a87-a83f-76e8065a0dd9",
+    "deadline": 60,
+    "generation": 1,
+    "guest_address": "192.0.2.10",
+    "name": "my-project",
+    "observed_at": 0,
+    "policy_hash": "simulated-policy-v1",
+    "ref": {
+      "host_id": "c34393e8-b1ce-4442-802e-499be70aa6bc",
+      "instance_id": "4286c450-a044-45f6-9d08-346ce1e3a8c4"
+    },
+    "runtime": "simulated",
+    "state": "running",
+    "stop_reason": null
+  }
+}
+{
+  "placement": "remote-model",
+  "host_id": "4e8a01cd-33b8-4f92-977f-118b8d3c8706",
+  "instance": {
+    "boot_id": "d31a8847-9250-42ce-aa5b-9c4cef0b4d18",
+    "deadline": 60,
+    "generation": 1,
+    "guest_address": "192.0.2.10",
+    "name": "my-project",
+    "observed_at": 0,
+    "policy_hash": "simulated-policy-v1",
+    "ref": {
+      "host_id": "4e8a01cd-33b8-4f92-977f-118b8d3c8706",
+      "instance_id": "2b9fe8a0-57cd-47dc-ac5b-e331f4059210"
+    },
+    "runtime": "simulated",
+    "state": "running",
+    "stop_reason": null
+  }
+}
+OPERATION_UNCERTAIN: Query or retry the SAME operation_id: demo-create-with-lost-reply
+Recovered committed instance: 5293ea68-0502-4e93-b794-61fe6d84c34e
+After explicit MODEL time advance: {"boot_id": "d31a8847-9250-42ce-aa5b-9c4cef0b4d18", "deadline": 60, "generation": 2, "guest_address": "192.0.2.10", "name": "my-project", "observed_at": 60, "policy_hash": "simulated-policy-v1", "ref": {"host_id": "4e8a01cd-33b8-4f92-977f-118b8d3c8706", "instance_id": "2b9fe8a0-57cd-47dc-ac5b-e331f4059210"}, "runtime": "simulated", "state": "stopped", "stop_reason": "modeled_ttl_expired", "reachability": "reachable"}

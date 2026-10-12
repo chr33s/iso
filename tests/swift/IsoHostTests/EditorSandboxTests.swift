@@ -375,7 +375,7 @@ private struct SessionFixture {
     var caller = guest.environment
     caller.merge(callerSecrets) { $1 }
     var session = SandboxedEditorSession(
-      provider: ZedEditorProvider(), app: app, running: running,
+      provider: ZedEditorProvider(), app: app, guest: running.target,
       target: SSHConnectionTarget(running, guestPath: guestWorkspace, egress: .open),
       capabilities: [], ssh: guest.client, callerEnvironment: caller, hostHome: nil,
       diagnostics: guest.sink.diagnostics, revalidate: revalidate)

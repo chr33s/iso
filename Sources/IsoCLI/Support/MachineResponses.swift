@@ -48,11 +48,83 @@ struct MachineInstance: Encodable {
   let state: String
   let image: String
   let backend = AppleBackend.name
+  /// Additive host fields; present only in all-host listings.
+  var remote: Remote?
+
+  struct Remote: Encodable {
+    let host: String
+    let hostID: String?
+    let ownerID: String?
+    let instanceID: String?
+    let guestOS: String?
+    let reachability: String
+    let observedAt: UInt64?
+    let lastObservedAt: UInt64?
+  }
 
   init(_ instance: Instance, _ state: InstanceState) {
     name = instance.name.rawValue
     self.state = state.rawValue
     image = instance.image.rawValue
+  }
+
+  init(local instance: Instance, _ state: InstanceState) {
+    self.init(instance, state)
+    remote = Remote(
+      host: HostAlias.local.rawValue, hostID: nil, ownerID: nil, instanceID: nil, guestOS: nil,
+      reachability: "reachable", observedAt: nil, lastObservedAt: nil)
+  }
+
+  /// `destroyed` is a host-control state; machine v1 keeps its four states.
+  init(_ row: RemoteListingRow) {
+    switch row {
+    case .observed(let host, let observation):
+      name = observation.name.rawValue
+      state = observation.state == .destroyed ? "unknown" : observation.state.rawValue
+      image = observation.image?.rawValue ?? ""
+      remote = Remote(
+        host: host.rawValue, hostID: observation.instance.hostID.rawValue,
+        ownerID: observation.instance.ownerID.rawValue,
+        instanceID: observation.instance.instanceID.rawValue,
+        guestOS: observation.instance.guestOS.rawValue, reachability: "reachable",
+        observedAt: observation.observedAt.seconds, lastObservedAt: nil)
+    case .unreachable(let binding):
+      name = binding.name.rawValue
+      state = "unknown"
+      image = ""
+      remote = Remote(
+        host: binding.host.rawValue, hostID: binding.hostID.rawValue,
+        ownerID: binding.ownerID.rawValue, instanceID: binding.instanceID.rawValue,
+        guestOS: binding.guestOS.rawValue, reachability: "unreachable", observedAt: nil,
+        lastObservedAt: binding.lastObservedAt)
+    }
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case name, state, image, backend, host, reachability
+    case hostID = "host_id"
+    case ownerID = "owner_id"
+    case instanceID = "instance_id"
+    case guestOS = "guest_os"
+    case observedAt = "observed_at"
+    case lastObservedAt = "last_observed_at"
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(name, forKey: .name)
+    try c.encode(state, forKey: .state)
+    try c.encode(image, forKey: .image)
+    try c.encode(backend, forKey: .backend)
+    guard let remote else { return }
+    try c.encode(remote.host, forKey: .host)
+    try c.encode(remote.reachability, forKey: .reachability)
+    try c.encodeIfPresent(remote.hostID, forKey: .hostID)
+    try c.encodeIfPresent(remote.ownerID, forKey: .ownerID)
+    try c.encodeIfPresent(remote.instanceID, forKey: .instanceID)
+    try c.encodeIfPresent(remote.guestOS, forKey: .guestOS)
+    try c.encodeIfPresent(remote.observedAt, forKey: .observedAt)
+    try c.encodeIfPresent(remote.lastObservedAt, forKey: .lastObservedAt)
   }
 }
 
@@ -122,6 +194,19 @@ struct MachineLifecycle: Encodable {
 
 struct MachineListResult: Encodable {
   let instances: [MachineInstance]
+  /// Hosts an all-host listing could not reach; absent otherwise.
+  var hostFailures: [HostFailure]?
+
+  struct HostFailure: Encodable {
+    let host: String
+    let code: String
+    let message: String
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case instances
+    case hostFailures = "host_failures"
+  }
 }
 
 struct MachineStatusEntry: Encodable {
@@ -290,6 +375,19 @@ struct MachineCapabilitiesResult: Encodable {
   let backend = AppleBackend.name
   let commands = Dictionary(
     uniqueKeysWithValues: MachineCommands.all.map { ($0.machineName, CommandSupport()) })
+  /// Compile-time host-control support; reading it touches no host or state.
+  let hostControl = HostControlSupport()
+
+  struct HostControlSupport: Encodable {
+    let protocols = HostProtocol.supported
+    let transports = ["local", "ssh"]
+    let remoteGuestOS = ["linux"]
+    enum CodingKeys: String, CodingKey {
+      case protocols, transports
+      case remoteGuestOS = "remote_guest_os"
+    }
+  }
+
   let editorProviders = EditorProviderID.allCases.map(\.provider).map {
     EditorProvider(
       id: $0.id.rawValue, displayName: $0.displayName,
@@ -301,5 +399,6 @@ struct MachineCapabilitiesResult: Encodable {
     case cliVersion = "cli_version"
     case machineAPIVersions = "machine_api_versions"
     case editorProviders = "editor_providers"
+    case hostControl = "host_control"
   }
 }

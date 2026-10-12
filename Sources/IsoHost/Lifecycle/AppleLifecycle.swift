@@ -105,16 +105,14 @@ extension AppleBackend {
     }
   }
 
-  /// `sessionTTL` starts a new session window for this boot.
+  /// `expiresAt` bounds this boot's session (the runtime owner halts it then).
   func bootValidated(
     _ runtime: SandboxRuntime, _ expected: IsolationGate.Expected,
-    until deadline: ContinuousClock.Instant, sessionTTL: SessionTTL? = nil
+    until deadline: ContinuousClock.Instant, expiresAt: Date?
   )
     throws -> (IsolationGate.Ready, HostPublicKey)
   {
-    try boot(
-      runtime, expected.sandbox,
-      expiresAt: sessionTTL.map { Date().addingTimeInterval(TimeInterval($0.seconds)) })
+    try boot(runtime, expected.sandbox, expiresAt: expiresAt)
     let ready = try waitReady(runtime, expected, until: deadline)
     return (ready, try readHostKey(runtime, ready, until: deadline))
   }
@@ -158,7 +156,18 @@ extension AppleBackend {
 
   // MARK: Create
 
-  package func createAndStart(_ instance: Instance, diskGiB explicitDisk: UInt64?) throws {
+  /// A new session window from `limits.session_ttl`, starting now.
+  func sessionExpiry() -> Date? {
+    config.limits.sessionTTL.map { Date().addingTimeInterval(TimeInterval($0.seconds)) }
+  }
+
+  /// `machine` is a runtime name the caller already reserved and recorded
+  /// (host control); nil generates one. `expiresAt` fixes this boot's
+  /// deadline instead of starting a `session_ttl` window.
+  package func createAndStart(
+    _ instance: Instance, diskGiB explicitDisk: UInt64?, machine reserved: MachineName? = nil,
+    expiresAt: Date? = nil
+  ) throws {
     _ = try config.validated()
     let runtime = try runtime()
     _ = try runtime.requireQualified()
@@ -192,16 +201,20 @@ extension AppleBackend {
       throw RuntimeError.operationUncertain(
         "instance '\(instance.name)' already has sandbox state; destroy it before recreating")
     }
-    let machine = try MachineName.generate(for: owner.id, randomHex: randomHex(8))
+    let machine = try reserved ?? MachineName.generate(for: owner.id, randomHex: randomHex(8))
+    guard machine.belongs(to: owner.id) else {
+      throw RuntimeError.identityConflict(
+        "runtime name \(machine) is not owned by this installation")
+    }
     if try runtime.exists(machine) {
-      throw RuntimeError.identityConflict("generated name \(machine) is already in use; retry")
+      throw RuntimeError.identityConflict("runtime name \(machine) is already in use")
     }
     var journal = try Journal.begin(
       instance, owner: owner, op: .create(stage: .reserved), machine: machine)
     do {
       try provisionSandbox(
         instance, runtime: runtime, owner: owner, manifest: manifest, machine: machine,
-        diskGiB: diskGiB, journal: &journal)
+        diskGiB: diskGiB, expiresAt: expiresAt, journal: &journal)
     } catch {
       if case .create(let stage) = journal.op, stage >= .creatingMachine {
         stopAfterFailure(runtime.namespace(.linux), machine)
@@ -246,7 +259,7 @@ extension AppleBackend {
   func provisionSandbox(
     _ instance: Instance, runtime: SandboxRuntime, owner: Owner, manifest: ImageManifest,
     machine: MachineName,
-    diskGiB: UInt64, journal: inout Journal
+    diskGiB: UInt64, expiresAt: Date? = nil, journal: inout Journal
   ) throws {
     let cpus = UInt32(config.vm.vcpuCount)
     let memoryMiB = UInt64(config.vm.memory.mib.value)
@@ -271,7 +284,8 @@ extension AppleBackend {
     try IsolationGate.verifyRecord(try runtime.inspect(machine), expected(sidecar, runtime))
     let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
     let (ready, key) = try bootValidated(
-      runtime, expected(sidecar, runtime), until: deadline, sessionTTL: config.limits.sessionTTL)
+      runtime, expected(sidecar, runtime), until: deadline,
+      expiresAt: expiresAt ?? sessionExpiry())
     try HostKeyPin.apply(.enroll, instance: instance, machine: machine, key: key)
     try waitForSSH(instance, ready, user: manifest.guestUser, until: deadline)
     sidecar.hostKeyFingerprint = key.fingerprint
@@ -285,7 +299,8 @@ extension AppleBackend {
   /// Boot a stopped instance, finishing an interrupted resource change or
   /// restore first. The host key must match its pin (or, after `restore`,
   /// is re-enrolled).
-  package func startExisting(_ instance: Instance) throws {
+  package func startExisting(_ instance: Instance, expiresAt: Date? = nil) throws {
+    try requireWriter(instance)
     _ = try config.validated()
     try NetworkPolicy.enforceMode(instance, config: config)
     let runtime = try runtime()
@@ -320,7 +335,8 @@ extension AppleBackend {
     let ready: IsolationGate.Ready
     do {
       let (booted, key) = try bootValidated(
-        runtime, expected(sidecar, runtime), until: deadline, sessionTTL: config.limits.sessionTTL)
+        runtime, expected(sidecar, runtime), until: deadline,
+        expiresAt: expiresAt ?? sessionExpiry())
       ready = booted
       try HostKeyPin.apply(trust, instance: instance, machine: sidecar.machineID, key: key)
       if case .reenrollAfterRestore = trust {
@@ -398,6 +414,7 @@ extension AppleBackend {
   // MARK: Stop
 
   package func stop(_ running: Running) throws {
+    try requireWriter(running.instance)
     let runtime = try runtime()
     let lock = try InstanceStore.lock(running.instance)
     defer { lock.release() }
@@ -407,6 +424,7 @@ extension AppleBackend {
 
   /// Stop without proving the guest is reachable (the state probe failed).
   package func stopUnproven(_ instance: Instance) throws {
+    try requireWriter(instance)
     let owner = try Owner.load(config)
     let sidecar = try MachineSidecar.load(instance)
     try sidecar.checkOwner(owner)
@@ -423,6 +441,7 @@ extension AppleBackend {
   // MARK: Destroy
 
   package func destroyInstance(_ instance: Instance) throws {
+    try requireWriter(instance)
     var status = stat()
     guard lstat(instance.directory, &status) == 0 else { return }
     let lock = try InstanceStore.lock(instance)
@@ -588,6 +607,7 @@ extension AppleBackend {
   }
 
   package func asStopped(_ instance: Instance) throws -> Stopped {
+    try requireWriter(instance)
     let sidecar = try MachineSidecar.load(instance)
     guard sidecar.kind == .linux else {
       throw HostError(

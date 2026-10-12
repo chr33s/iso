@@ -1,0 +1,28 @@
+{
+  "format": "iso.host.prototype.mutation-evidence/v0",
+  "generated_at": "2026-10-09T03:27:19.366305+00:00",
+  "purpose": "Verify the assertions detect removal of a promised operation payload-conflict check",
+  "mutation": {
+    "file": "prototype.py",
+    "scope": "isolated temporary copy only",
+    "original_guard": "require(old[\"payload_hash\"] == identity, \"OPERATION_CONFLICT\", \"Operation ID reused with different payload\")",
+    "replacement": "pass  # DELIBERATE MUTATION: accept reuse with a differing payload."
+  },
+  "mutated_suite_exit_code": 1,
+  "caught_scenario": {
+    "name": "operation_payload_conflict",
+    "status": "failed",
+    "error": "AssertionError: Expected failure OPERATION_CONFLICT",
+    "checks": 0,
+    "duration_seconds": 0.12953
+  },
+  "other_scenarios_passed": 16,
+  "scenarios_total": 17,
+  "falsification_check_passed": true,
+  "final_source_unchanged": true,
+  "final_source_sha256": "cea13063cd71930e442e734ddfe1e6afe18c918e9f9dd83d14f42ee7f470b145",
+  "limitations": [
+    "One deliberate mutation checks one asserted behavior; this is not comprehensive mutation coverage",
+    "Only simulated runtime state was exercised; no actual SSH or VM was launched"
+  ]
+}

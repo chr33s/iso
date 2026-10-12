@@ -1,4 +1,5 @@
 import Foundation
+import IsoCore
 
 /// The one subprocess launcher (S-03). Every child is spawned from an
 /// explicit argv (no shell interpolation by this layer), in its own process
@@ -263,6 +264,91 @@ package struct ProcessRunner: Sendable {
     var child = ChildProcess(pid: pid, ownsGroup: false)
     defer { child.killGroupAndReap() }
     return try wait(&child, request, deadline: deadline, since: start)
+  }
+
+  /// A child in its own process group whose stdin and stdout are pipes held
+  /// by the caller, for byte streams that live as long as a connection. The
+  /// caller owns the descriptors and must `terminate` the child.
+  package struct PipedChild: Sendable {
+    package let pid: pid_t
+    /// Write end of the child's stdin.
+    package let input: Int32
+    /// Read end of the child's stdout.
+    package let output: Int32
+
+    /// Kills the child's process group and reaps it; closes both pipes.
+    package func terminate() {
+      kill(-pid, SIGKILL)
+      var status: Int32 = 0
+      while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+      close(input)
+      close(output)
+    }
+  }
+
+  package func piped(_ request: Request) throws(Failure) -> PipedChild {
+    var stdinPipe: [Int32] = [-1, -1]
+    var stdoutPipe: [Int32] = [-1, -1]
+    guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
+    guard pipe(&stdoutPipe) == 0 else {
+      close(stdinPipe[0])
+      close(stdinPipe[1])
+      throw .spawn(errno: errno)
+    }
+    for fd in [stdinPipe[1], stdoutPipe[0]] { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+    _ = fcntl(stdinPipe[1], F_SETNOSIGPIPE, 1)
+    defer {
+      close(stdinPipe[0])
+      close(stdoutPipe[1])
+    }
+    do {
+      let pid = try spawn(
+        request, stdin: .descriptor(stdinPipe[0]), stdout: .descriptor(stdoutPipe[1]),
+        stderr: .null, ownGroup: true)
+      return PipedChild(pid: pid, input: stdinPipe[1], output: stdoutPipe[0])
+    } catch {
+      close(stdinPipe[1])
+      close(stdoutPipe[0])
+      throw error
+    }
+  }
+
+  /// Like `attached`, but the child's stdin is a pipe that first receives
+  /// `preamble` (a secret-bearing first line, never argv) and then this
+  /// process's own stdin until EOF. stdout and stderr are inherited. Used by
+  /// the host relay helper that `ssh` runs as its ProxyCommand.
+  package func relayed(_ request: Request, preamble: [UInt8]) throws(Failure) -> Termination {
+    var stdinPipe: [Int32] = [-1, -1]
+    guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
+    _ = fcntl(stdinPipe[1], F_SETFD, FD_CLOEXEC)
+    _ = fcntl(stdinPipe[1], F_SETNOSIGPIPE, 1)
+    let pid: pid_t
+    do {
+      defer { close(stdinPipe[0]) }
+      pid = try spawn(
+        request, stdin: .descriptor(stdinPipe[0]), stdout: .descriptor(1), stderr: .descriptor(2),
+        ownGroup: false)
+    } catch {
+      close(stdinPipe[1])
+      throw error
+    }
+    var child = ChildProcess(pid: pid, ownsGroup: false)
+    defer { child.killGroupAndReap() }
+    let writer = stdinPipe[1]
+    let pump = Thread {
+      defer { close(writer) }
+      guard (try? AtomicFile.writeAll(writer, preamble, "relay preamble")) != nil else { return }
+      var buffer = [UInt8](repeating: 0, count: 64 << 10)
+      while true {
+        let count = buffer.withUnsafeMutableBytes { read(0, $0.baseAddress, $0.count) }
+        if count < 0 && errno == EINTR { continue }
+        guard count > 0,
+          (try? AtomicFile.writeAll(writer, Array(buffer[0..<count]), "relay stdin")) != nil
+        else { return }
+      }
+    }
+    pump.start()
+    return child.waitIndefinitely()
   }
 
   /// Waits for an attached child, polling `isCancelled` and `deadline`.

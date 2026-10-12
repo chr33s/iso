@@ -1,0 +1,92 @@
+{
+  "gate": "Q1 native slice (local host service)",
+  "started_at": 1791682575.027978,
+  "environment": {
+    "client_os": "27.0.1",
+    "client_arch": "arm64",
+    "swift": "Apple Swift version 6.4 (swift-6.4-RELEASE)\nTarget: arm64-apple-macosx27.0.0",
+    "source_revision": "47d17ba2524b145b229abcf42c85f8b5f0071e65",
+    "source_dirty": true,
+    "iso_binary": "/Users/chr33s/Developer/code/chr33s/iso/.build/debug/iso",
+    "iso_sha256": "1c66dcef26286cdd6eb1aa8d5ade28f19104aad4eb9e431374f54b5142d38bd1"
+  },
+  "remote": {
+    "alias": null,
+    "agent_path": null,
+    "identity": {
+      "Installation": "1d369f9d-5419-47a5-8791-8293133465cb",
+      "Owner": "7a4d70ce48dcbf326e7e32da78f151e8",
+      "Service epoch": "05327465-91fb-4f15-8cb9-aafe45182cd8",
+      "Runtime": "qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+    }
+  },
+  "cases": [
+    {
+      "case": "preparation",
+      "status": "pass",
+      "elapsed_seconds": 0.0
+    },
+    {
+      "case": "enroll",
+      "status": "pass",
+      "elapsed_seconds": 84.854,
+      "output": "Installation: not yet created\nNothing blocks activation.\nPrepared: 0 instance(s) to adopt; starting the host service\nActive: manage adopted instances with `iso host vm ... local NAME`"
+    },
+    {
+      "case": "inspect",
+      "status": "pass",
+      "elapsed_seconds": 0.04,
+      "identity": {
+        "Installation": "1d369f9d-5419-47a5-8791-8293133465cb",
+        "Owner": "7a4d70ce48dcbf326e7e32da78f151e8",
+        "Service epoch": "05327465-91fb-4f15-8cb9-aafe45182cd8",
+        "Runtime": "qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+      }
+    },
+    {
+      "case": "control-latency",
+      "status": "pass",
+      "elapsed_seconds": 0.017,
+      "hello_p50": 0.017,
+      "hello_p95": 0.017,
+      "ssh_setup_p50": null,
+      "samples": 1
+    },
+    {
+      "case": "create",
+      "status": "pass",
+      "elapsed_seconds": 3.581,
+      "receipt": "operation ecb8445b-786d-4e09-89cf-436755f872e2 vm.create: succeeded (existing)"
+    },
+    {
+      "case": "start",
+      "status": "pass",
+      "elapsed_seconds": 1.091,
+      "receipt": "operation 6c073d02-5b29-4a43-af15-56cc13d33bc2 vm.start: succeeded (existing)\nDeadline: 2026-10-11 02:07:43 +0000"
+    },
+    {
+      "case": "sleep-wake",
+      "status": "pass",
+      "elapsed_seconds": 23.454,
+      "slept_seconds": 586.5,
+      "host_slept_seconds": 571.3,
+      "access_before_sleep": true,
+      "access_refused_after_wake": true,
+      "deadline_passed_during_sleep": true,
+      "vm_stopped_after_wake": true
+    },
+    {
+      "case": "stop",
+      "status": "pass",
+      "elapsed_seconds": 0.12,
+      "reason": null
+    },
+    {
+      "case": "destroy",
+      "status": "pass",
+      "elapsed_seconds": 0.617,
+      "reason": null
+    }
+  ],
+  "result": "pass"
+}

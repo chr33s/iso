@@ -1,0 +1,36 @@
+{
+  "baseline_commit": "47d17ba2524b145b229abcf42c85f8b5f0071e65",
+  "not_tested": [
+    "iso_binary_availability",
+    "iso_sandbox_binary_availability_or_qualification",
+    "builder_availability_or_service_readiness",
+    "kernel_and_init_image_pins",
+    "AppleIsolation",
+    "VM_creation_or_boot",
+    "headless_operation_or_reboot_recovery",
+    "management_or_guest_SSH_identity",
+    "guest_routing",
+    "controller_disconnect_behavior",
+    "host_TTL_enforcement"
+  ],
+  "observed_at": "2026-10-09T03:23:53.417084+00:00",
+  "platform": {
+    "process_architecture": "x86_64",
+    "system": "Linux"
+  },
+  "python_version": "3.12.14",
+  "reason": "This source baseline supports macOS Apple Silicon hosts only.",
+  "requirements_from_baseline": {
+    "build_tools": "Xcode 27+, Swift 6.4+ (exact build still needs qualification)",
+    "containerization": "0.45.0",
+    "hardware": "Apple Silicon",
+    "host_os": "macOS 27+",
+    "image_builder": "Apple container 1.4.1+ with its service running",
+    "iso_sandbox_protocol": 5
+  },
+  "result": "unsupported_platform",
+  "schema": "iso.mac-validation.preflight/v1",
+  "scope": "OS and developer-tool observations only; no network or VM actions",
+  "stage_claim": "workspace",
+  "stage_verified": false
+}

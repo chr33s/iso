@@ -722,6 +722,32 @@ How `iso pull` returns guest files. See [staged pulls](workspaces.md#staged-pull
 Byte fields take an integer or a string with a `KiB`, `MiB` or `GiB` suffix.
 Unknown members of `workspace` and `workspace.pull` are rejected.
 
+## `execution` section
+
+Selects where new VMs run. Omitted, everything stays on the implicit `local`
+host, exactly as before. Only this global file may set it.
+
+```jsonc
+"execution": {
+  "default_host": "local",
+  "hosts": {
+    "build-mac": { "transport": "ssh", "ssh_alias": "build-mac", "agent_path": "/usr/local/bin/iso" }
+  },
+  "remote": { "broker": "client", "default_session_ttl": "8h" }
+}
+```
+
+- `hosts` keys are host names for `iso host …`; `local` is reserved.
+- `ssh_alias` is an `ssh_config` host the user already trusts (its host-key pin
+  is ssh's). `agent_path` is the absolute path of `iso` on that Mac.
+- `default_session_ttl` is the boot lifetime for remote starts without
+  `--ttl`; 1m–24h. Remote boots always have a deadline.
+- `broker` is `client` only: provider credentials stay on the client.
+
+Enrollment identities live in host state (`iso host add`), not here. See
+[commands](commands.md#host) and the
+[design](design/local-and-remote-hosts-spec.md).
+
 ## `updates` section
 
 Background update-check behavior for `iso update`. The fork channel targets

@@ -16,6 +16,8 @@ package final class AppleBackend: Sendable {
   /// cached, so the next call retries.
   private let cachedRuntime = Mutex<SandboxRuntime?>(nil)
   private let runtimeFactory: @Sendable () throws(RuntimeError) -> SandboxRuntime
+  /// Set only for the host service: the sole writer of service-managed instances.
+  let serviceWriter: Bool
 
   package init(
     config: IsoConfig, environment: [String: String], executable: String?,
@@ -25,6 +27,7 @@ package final class AppleBackend: Sendable {
     self.environment = environment
     self.diagnostics = diagnostics
     self.executable = executable
+    serviceWriter = false
     runtimeFactory = { () throws(RuntimeError) in
       try SandboxRuntime.open(config, environment: environment, executable: executable)
     }
@@ -32,14 +35,32 @@ package final class AppleBackend: Sendable {
 
   init(
     config: IsoConfig, environment: [String: String],
-    diagnostics: Diagnostics = Diagnostics(verbosity: 0),
+    diagnostics: Diagnostics = Diagnostics(verbosity: 0), serviceWriter: Bool = false,
     runtime: @escaping @Sendable () throws(RuntimeError) -> SandboxRuntime
   ) {
     self.config = config
     self.environment = environment
     self.diagnostics = diagnostics
     executable = nil
+    self.serviceWriter = serviceWriter
     runtimeFactory = runtime
+  }
+
+  /// This backend as the host service's: the only writer allowed to mutate
+  /// instances the service has adopted.
+  package func asServiceWriter() -> AppleBackend {
+    let base = self
+    return AppleBackend(
+      config: config, environment: environment, diagnostics: diagnostics, serviceWriter: true,
+      runtime: { () throws(RuntimeError) in try base.runtime() })
+  }
+
+  /// Refuses a direct mutation of a service-managed instance.
+  func requireWriter(_ instance: Instance) throws {
+    guard !serviceWriter, let adopted = ServiceAdoption.load(instance) else { return }
+    throw HostError(
+      "Instance '\(instance.name)' is managed by the host service (instance \(adopted)); use `iso host vm <start|stop|destroy|resize|commit|restore> local \(instance.name)`"
+    )
   }
 
   /// The same runtime (resolved and qualified at most once per process)
@@ -48,7 +69,7 @@ package final class AppleBackend: Sendable {
     let base = self
     return AppleBackend(
       config: config, environment: environment, diagnostics: diagnostics,
-      runtime: { () throws(RuntimeError) in try base.runtime() })
+      serviceWriter: serviceWriter, runtime: { () throws(RuntimeError) in try base.runtime() })
   }
 
   package func runtime() throws(RuntimeError) -> SandboxRuntime {

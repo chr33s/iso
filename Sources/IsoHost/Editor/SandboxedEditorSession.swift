@@ -7,7 +7,8 @@ import IsoCore
 package struct SandboxedEditorSession {
   let provider: any EditorProvider
   let app: TrustedEditorApp
-  let running: AppleBackend.Running
+  /// The pinned guest route the outer tunnel uses (local or relayed).
+  let guest: SSHTarget
   let target: SSHConnectionTarget
   let capabilities: [EditorHostCapability]
   let ssh: SSHClient
@@ -35,7 +36,7 @@ package struct SandboxedEditorSession {
     EditorEnclave.removeStale(in: parent)
     let enclave = try EditorEnclave.create(in: parent)
     defer { enclave.remove() }
-    try enclave.pinHostKey(from: running.target.knownHosts)
+    try enclave.pinHostKey(from: guest.knownHosts)
     let publicKey = try enclave.generateIdentity(runner: ssh.runner)
     let tunnelPort = try Self.freeLoopbackPort()
     var forwardPort = try Self.freeLoopbackPort()
@@ -46,7 +47,7 @@ package struct SandboxedEditorSession {
         forwardPort: forwardPort, hostHome: hostHome))
     try enclave.write(
       try enclave.sshConfigText(
-        tunnelPort: tunnelPort, user: running.target.user, hostKeyAlias: running.target.alias),
+        tunnelPort: tunnelPort, user: guest.user, hostKeyAlias: guest.alias),
       to: enclave.sshConfig)
 
     try authorize(EditorEnclave.authorizedKey(publicKey, options: plan.keyOptions))
@@ -62,7 +63,7 @@ package struct SandboxedEditorSession {
       tunnelPort: tunnelPort, forwardPort: plan.usesForwardPort ? forwardPort : nil,
       terminal: plan.terminal, machServicePrefix: plan.machServicePrefix,
       capabilities: capabilities)
-    try running.target.requireHandoff()
+    try guest.requireHandoff()
     try revalidate()
     let arguments =
       ["-p", policy.profile]
@@ -158,7 +159,7 @@ package struct SandboxedEditorSession {
       "umask 077 && mkdir -p ~/.ssh && IFS= read -r line && printf '%s\\n' \"$line\" >> ~/.ssh/authorized_keys"
     )
     do {
-      try ssh.exec(running.target, command, stdin: Array((line + "\n").utf8))
+      try ssh.exec(guest, command, stdin: Array((line + "\n").utf8))
     } catch {
       throw ContextError(
         "Failed to authorize the editor session's SSH key in the guest", cause: error)
@@ -173,7 +174,7 @@ package struct SandboxedEditorSession {
       .literal(
         " \"$f\" || true; } > \"$f.iso-editor\" && chmod 600 \"$f.iso-editor\" && mv \"$f.iso-editor\" \"$f\""
       )
-    if !ssh.succeeds(running.target, command) {
+    if !ssh.succeeds(guest, command) {
       diagnostics.debug("Could not remove the editor session key from the guest")
     }
   }
@@ -183,12 +184,12 @@ package struct SandboxedEditorSession {
     guard let executable = ssh.sshExecutable() else {
       throw HostError("Failed to run SSH command: ssh not found on PATH")
     }
-    try running.target.requireHandoff()
+    try guest.requireHandoff()
     var tunnel = try DetachedChild.spawn(
       executable: executable,
-      arguments: running.target.sshOptions + [
+      arguments: guest.sshOptions + [
         "-N", "-o", "ExitOnForwardFailure=yes", "-L", "127.0.0.1:\(port):127.0.0.1:22",
-        running.target.address,
+        guest.address,
       ],
       environment: ssh.environment, stdin: .null, stderr: log)
     let start = ContinuousClock.now

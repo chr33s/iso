@@ -1,0 +1,56 @@
+{
+  "gate": "Q2 live client-broker failure (two physical Macs)",
+  "model": "claude-opus-5-5",
+  "egress": "none",
+  "cases": [
+    {
+      "case": "live-success",
+      "status": "pass",
+      "rc": 0,
+      "elapsed": 28.3,
+      "stdout_tail": "pong",
+      "stderr_tail": "2026-10-11T14:18:40.628Z  INFO iso: Started anthropic credential proxy on 127.0.0.1:9040 (guest \u2192 127.0.0.1:9040)\n2026-10-11T14:18:59.405Z  INFO iso: Copied Claude config into guest\n2026-10-11T14:18:59.406Z  INFO iso: Claude Code bootstrap complete"
+    },
+    {
+      "case": "broker-killed",
+      "status": "pass",
+      "proxy": "iso-proxy"
+    },
+    {
+      "case": "agent-observes-failure",
+      "status": "pass",
+      "rc": 1,
+      "seconds_after_kill": 215.1,
+      "stdout_tail": "API Error: Connection dropped (ECONNRESET)",
+      "stderr_tail": "2026-10-11T14:19:08.327Z  INFO iso: Started anthropic credential proxy on 127.0.0.1:9040 (guest \u2192 127.0.0.1:9040)\n2026-10-11T14:19:27.201Z  INFO iso: Copied Claude config into guest\n2026-10-11T14:19:27.202Z  INFO iso: Claude Code bootstrap complete"
+    },
+    {
+      "case": "no-direct-egress",
+      "status": "pass",
+      "output": "rc=6\ncurl: (6) Could not resolve host: api.anthropic.com"
+    },
+    {
+      "case": "no-key-in-guest",
+      "status": "pass",
+      "output": "matches=0"
+    },
+    {
+      "case": "recovery",
+      "status": "pass",
+      "rc": 0,
+      "stdout_tail": "pong",
+      "stderr_tail": "2026-10-11T14:23:19.643Z  INFO iso: Started anthropic credential proxy on 127.0.0.1:9040 (guest \u2192 127.0.0.1:9040)\n2026-10-11T14:23:39.257Z  INFO iso: Copied Claude config into guest\n2026-10-11T14:23:39.258Z  INFO iso: Claude Code bootstrap complete"
+    },
+    {
+      "case": "cleanup",
+      "status": "pass",
+      "output": "operation ef13fd8d-f06e-49e3-81ab-459a2ee0444a vm.destroy: succeeded"
+    }
+  ],
+  "result": "pass",
+  "worker": {
+    "alias": "mba",
+    "image": "default (real agents) sha256:6789cc30ff75912ed982dd387983418a3b18bb8075f9f2b232df0a1c6a76b2d5"
+  },
+  "credential": "dedicated Keychain item iso-live-anthropic, resolved on the client by cmd:; never read by the harness"
+}

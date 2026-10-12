@@ -99,6 +99,9 @@ package enum StateSchema {
   package static let version: UInt32 = 2
   /// Current owner record contract.
   package static let ownerVersion: UInt32 = 1
+  /// The owner record after host-service activation. Builds that predate the
+  /// host service reject it, so an old binary cannot write an activated root.
+  package static let fencedOwnerVersion: UInt32 = 2
 
   struct Header: Decodable {
     let schemaVersion: UInt32
@@ -160,8 +163,24 @@ package struct Owner: Sendable, Equatable, Codable {
       throw HostError(
         "No Apple sandbox backend state at \(config.stateRoot). Run `iso setup` first.")
     }
-    return try StateSchema.decode(Owner.self, bytes, path: path, want: StateSchema.ownerVersion)
+    let header = try StateStore.decode(StateSchema.Header.self, bytes, path: path)
+    let want =
+      header.schemaVersion == StateSchema.fencedOwnerVersion
+      ? StateSchema.fencedOwnerVersion : StateSchema.ownerVersion
+    return try StateSchema.decode(Owner.self, bytes, path: path, want: want)
   }
+
+  /// Rewrites the owner record's schema: `fencedOwnerVersion` on activation,
+  /// `ownerVersion` on rollback. Identity is unchanged.
+  package static func setFence(_ config: IsoConfig, fenced: Bool) throws {
+    let owner = try load(config)
+    let record = Owner(
+      schemaVersion: fenced ? StateSchema.fencedOwnerVersion : StateSchema.ownerVersion,
+      backend: owner.backend, ownerID: owner.ownerID)
+    try StateStore.writeControlFile(record, to: path(config))
+  }
+
+  package var isFenced: Bool { schemaVersion == StateSchema.fencedOwnerVersion }
 
   /// Load when present; nil for an installation that has never run setup.
   package static func loadIfPresent(_ config: IsoConfig) throws -> Owner? {
@@ -672,7 +691,7 @@ extension Instance {
   }
 
   /// `[A-Za-z0-9_-]` kept, anything else `-`, at most 60 bytes.
-  static func sanitizedBasename(_ name: String) -> String {
+  package static func sanitizedBasename(_ name: String) -> String {
     var out = ""
     for scalar in name.unicodeScalars {
       let keep =

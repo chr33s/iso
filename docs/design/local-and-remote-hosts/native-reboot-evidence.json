@@ -1,0 +1,59 @@
+{
+  "gate": "Q4 reboot (two physical Macs)",
+  "worker": {
+    "alias": "mba",
+    "os": "macOS 27.0.1",
+    "root": "~/iso-qualification",
+    "installation": "e6a362ef-92f4-4b80-982c-951e3f194ac4"
+  },
+  "staged": {
+    "vm": "reboot-check",
+    "instance": "219a90b1-4bc9-45f4-8d37-c53c0e602db2",
+    "generation": 2,
+    "state": "running",
+    "guest_boot": "b5d1064906a06b50ff1c2a9507e3ddc2",
+    "deadline": "2026-10-11T03:50:27Z",
+    "service_epoch": "d07bcacf-2c6f-45e0-be57-4b4101f7d9e9",
+    "session_check": "guest reached through the detached session"
+  },
+  "reboot": {
+    "worker_boot_time": "2026-10-11T02:15:54+00:00",
+    "console_login_after_boot": "2026-10-11T13:57Z",
+    "unreachable_until_login": true,
+    "note": "The worker stayed off the network (Tailscale offline) from the reboot until a console login; FileVault keeps the disk locked, so no user-session network or SSH is available before that."
+  },
+  "cases": [
+    {
+      "case": "service-restart",
+      "status": "pass",
+      "detail": "the per-user service is not loaded at boot; the first SSH control connection started it (service.log 2026-10-11T14:07:24Z) with a new epoch",
+      "new_epoch": "10433b93-4bdf-45ce-9cf1-3db3e4670362"
+    },
+    {
+      "case": "no-auto-restart",
+      "status": "pass",
+      "detail": "host vm inspect after reboot: reboot-check stopped (generation 2); reconciliation observed it stopped at 14:07:25Z"
+    },
+    {
+      "case": "old-session-refused",
+      "status": "pass",
+      "detail": "the client coordinator removed the detached session's ssh_config after its lease lapsed; the session was issued under epoch d07bcacf, and access sessions are volatile, so none survive the new epoch"
+    },
+    {
+      "case": "stop",
+      "status": "pass",
+      "detail": "vm.stop succeeded (unchanged): already stopped"
+    },
+    {
+      "case": "destroy",
+      "status": "pass",
+      "detail": "vm.destroy succeeded; vm list empty"
+    },
+    {
+      "case": "old-session-refused-direct",
+      "status": "pass",
+      "detail": "a saved copy of a live detached session's ssh config and descriptor (epoch 50bf423d...) connected before a service restart; after launchctl kickstart -k of the host service the same copy was refused by the host: 'relay refused: SESSION_EXPIRED: daemon epoch changed; open a new session after a fresh hello'. A new session reached the guest."
+    }
+  ],
+  "result": "pass"
+}

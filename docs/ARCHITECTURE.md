@@ -135,6 +135,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit`) |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (real-directory guard) |
 | Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `WorkloadHandoff` (filtered prepared-session and guest-operation identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
+| Host control | `HostControl/`: the `iso.host/v1` wire (`HostWire`, `HostProtocol`, `HostControlError`), the per-user `HostSupervisor` (durable `OperationStore` ledger with physical cleanup reservations, reconciliation, cancellation, deadline sweep, disposable `HostRuns`/`RunStore`), the volatile `AccessSessions` registry, the revocable `GuestRelay`, `ArtifactStore`/`ArchiveValidator`, the `NativeHost` seam (`AppleNativeHost` reuses `AppleBackend`), `LocalHostControl` (private sockets, client), `SSHHostControl` (fixed-entrypoint transport, enrollment registry), `HostService` (daemon, stdio frontends, launchd user service), `ClientBindings` (host-qualified bindings, session coordinator) and `HostMigration`. See [design/local-and-remote-hosts-spec.md](design/local-and-remote-hosts-spec.md) |
 | Support | `CommandContext` (validated config and injected host services), `Diagnostics` (stderr), `Prompt`, bounded guest JSON parsing/editing, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 
 ### `IsoCLI`
@@ -265,3 +266,7 @@ Hold these when changing the code; the review lenses check for their violation:
    fragments only).
 7. **State is transparent JSON** written through `StateStore`/`AtomicFile`
    under the resource's `FileLock`, without widening permissions.
+8. **Host control selects an execution host, not a backend.** Remote and
+   service-owned work goes through `HostSupervisor` around the same
+   `AppleBackend`; accepted operations are durable, retried by their original
+   `HostOperationID`, and never relabeled stopped or failed on a lost reply.

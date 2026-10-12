@@ -81,6 +81,8 @@ package struct IsoConfig: Sendable, Equatable {
   /// The preset whose defaults this configuration was decoded with.
   package let securityPreset: SecurityPreset?
   package let editor: EditorConfig
+  /// Execution-host selection; global configuration only.
+  package let execution: ExecutionConfig
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -89,8 +91,9 @@ package struct IsoConfig: Sendable, Equatable {
     postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
-    editor: EditorConfig
+    editor: EditorConfig, execution: ExecutionConfig = .defaults
   ) {
+    self.execution = execution
     self.dataDirectory = dataDirectory
     self.vm = vm
     self.sshPort = sshPort
@@ -506,7 +509,7 @@ extension IsoConfig {
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
-      editor: editor)
+      editor: editor, execution: execution)
   }
 
   /// This command's egress override. Does not rewrite the config file.
@@ -518,6 +521,6 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
-      securityPreset: securityPreset, editor: editor)
+      securityPreset: securityPreset, editor: editor, execution: execution)
   }
 }

@@ -155,9 +155,20 @@ check.
 Provider ids are lowercase ASCII letters, digits and `-`. Treat the list as
 open-ended rather than hard-coding the current two.
 
+`host_control` (additive) names the compiled-in host-control protocol
+(`iso.host/v1`), its transports and the guest OS remote hosts accept. It is
+static: reading it contacts no host and starts no service.
+
 ### list
 
-`{"instances": [InstanceRef, ...]}`, sorted by name. The state comes from the
+`{"instances": [InstanceRef, ...]}`, sorted by name.
+
+With `--all-hosts`, local rows and every enrolled remote host's rows are
+returned. Each row adds `host` and `reachability` (`reachable` or
+`unreachable`); remote rows also carry `host_id`, `owner_id`, `instance_id`,
+`guest_os` and `observed_at`, or `last_observed_at` when the host did not
+answer, in which case `state` is `unknown` (never `stopped`). Hosts that could
+not be listed appear in `host_failures` (`host`, `code`, `message`). The state comes from the
 runtime without connecting to the guest; for a running filtered instance,
 `unhealthy` reflects the host side of its readiness proof only.
 

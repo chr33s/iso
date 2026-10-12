@@ -278,7 +278,7 @@ extension AppleBackend {
         owner: owner.id, egress: .open)
       try IsolationGate.verifyRecord(try runtime.inspect(machine), expected)
       let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
-      _ = try bootValidated(runtime, expected, until: deadline)
+      _ = try bootValidated(runtime, expected, until: deadline, expiresAt: nil)
       try checkImageContents(runtime, machine, guestUser: guestUser)
     }
     do {

@@ -38,6 +38,31 @@ package final class FileLock: Sendable {
     descriptor = Mutex(fd)
   }
 
+  private init(descriptor fd: Int32) { descriptor = Mutex(fd) }
+
+  /// Locks `path` without waiting; nil when another descriptor holds it.
+  /// For process-lifetime ownership, where a second owner must fail fast.
+  package static func attempt(path: String) throws(HostError) -> FileLock? {
+    let parent = (path as NSString).deletingLastPathComponent
+    if !parent.isEmpty {
+      do {
+        try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
+      } catch {
+        throw HostError("Failed to create directory \(parent)")
+      }
+    }
+    let fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o600)
+    guard fd >= 0 else { throw .posix("Failed to create lock file", path) }
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+      let code = errno
+      if code == EINTR { continue }
+      close(fd)
+      if code == EWOULDBLOCK { return nil }
+      throw .posix("Failed to acquire lock on", path, code)
+    }
+    return FileLock(descriptor: fd)
+  }
+
   /// `.<name>.lock` beside `target`, shared by all writers of that file.
   package static func sibling(of target: String) throws(HostError) -> FileLock {
     let parent = (target as NSString).deletingLastPathComponent

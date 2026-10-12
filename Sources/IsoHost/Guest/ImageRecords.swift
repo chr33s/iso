@@ -6,35 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// 64 hex characters (either case, as the Rust `hex` crate accepts).
-package struct SHA256Hex: Hashable, Sendable, Codable {
-  package let rawValue: String
-
-  package init(_ value: String) throws(ValidationError) {
-    let bytes = Array(value.utf8)
-    guard bytes.count == 64 else {
-      throw ValidationError("expected 64 hex characters, got \(bytes.count)")
-    }
-    guard bytes.allSatisfy(isASCIIHexDigit) else {
-      throw ValidationError("invalid hex in sha256 digest: \(debugQuoted(value))")
-    }
-    rawValue = value.lowercased()
-  }
-
-  package init(from decoder: any Decoder) throws {
-    let raw = try decoder.singleValueContainer().decode(String.self)
-    do { try self.init(raw) } catch {
-      throw DecodingError.dataCorrupted(
-        .init(codingPath: decoder.codingPath, debugDescription: error.message))
-    }
-  }
-
-  package func encode(to encoder: any Encoder) throws {
-    var container = encoder.singleValueContainer()
-    try container.encode(rawValue)
-  }
-}
-
 /// `sha256:<64 hex>` OCI content digest.
 package struct OCIDigest: Hashable, Sendable, Codable {
   package let hash: SHA256Hex

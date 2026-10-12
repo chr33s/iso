@@ -22,5 +22,10 @@ package struct SSHConnectionTarget: Sendable, Equatable {
     self.init(instance: running.instance.name, guestPath: guestPath, egress: egress)
   }
 
+  /// A remote guest's target; its connection comes from a live host session.
+  package static func remote(name: InstanceName, guestPath: GuestPath, egress: EgressMode) -> Self {
+    Self(instance: name, guestPath: guestPath, egress: egress)
+  }
+
   package var sshHostAlias: String { SSHConfigBlocks.host(for: instance) }
 }

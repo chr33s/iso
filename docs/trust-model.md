@@ -223,6 +223,66 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   with a passphrase (it must be used non-interactively), but do flag any change
   that exposes it or copies it off the host.
 
+## Execution hosts (host control)
+
+Design and status: [design/local-and-remote-hosts-spec.md](design/local-and-remote-hosts-spec.md).
+
+- **Service boundary.** The per-user host-control service listens only on two
+  Unix sockets in a private (`0700`, owner-checked) per-user temporary
+  directory; every connection's peer uid must equal the service's. There is no
+  TCP listener. A non-blocking `service.lock` gives one service per data root.
+- **Remote frontend.** A client reaches a remote Mac only as
+  `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no
+  -o ClearAllForwardings=yes -- ALIAS 'AGENT_PATH' host-agent serve|relay --stdio`.
+  `AGENT_PATH` is the user's enrollment choice (`AgentPath`: absolute,
+  `[A-Za-z0-9/._-]`), never a project value. Request frames, relay preambles and
+  bearers travel on stdin only. A changed management host key is
+  `HOST_IDENTITY_CHANGED` with `layer: management`; a changed installation or
+  owner reported by hello is the same code with `layer: application`. Neither
+  re-enrolls automatically.
+- **Untrusted frames.** Every frame is bounded (64 KiB request, 1 MiB
+  response, depth 32), UTF-8 checked, duplicate-key checked and decoded into
+  closed typed structures; unknown fields and versions are refused before
+  dispatch. Error messages are sanitized, bounded and never quote frame bytes.
+- **Durable operations.** Mutations are deduplicated by `HostOperationID` and
+  a canonical typed digest *before* any dynamic check, so a retry can never
+  allocate twice; a reused id with a different payload is refused with no
+  effect. Admission writes fixed-size reservation files for each instance's
+  stop and destroy, so cleanup succeeds when the ordinary ledger is full.
+  A lost reply is `OPERATION_UNCERTAIN`, never stopped or failed.
+- **Access grants are volatile.** The client generates a 256-bit bearer; the
+  worker keeps only its SHA-256 in memory, bound to host, owner, instance,
+  boot, policy, generation, client key fingerprint, purpose and the daemon
+  epoch. A restart creates a new epoch and invalidates every grant. Issued
+  session ids are never evicted within an epoch (cap 65,536). Leases last 30
+  seconds and never outlive the VM's deadline; one client key controls a boot.
+- **Relay, not jump host.** Guest streams go through a worker-owned byte relay
+  to the endpoint taken from current native proof; the client cannot name a
+  destination. Revocation, expiry, stop and destroy shut down the relay's
+  sockets. Removing the session key from the guest is hygiene only. The guest
+  host key is pinned end to end by the client's ssh (per-session
+  `known_hosts`, `GlobalKnownHostsFile /dev/null`, `UpdateHostKeys no`).
+- **Realms.** Client paths, `cmd:`/`vault:` references and provider
+  credentials never enter a host-control request; only `execution` in the
+  global configuration selects a host, and `local` cannot be redefined. Remote
+  boots always have a finite deadline (default 8 h, at most 24 h) enforced by
+  the worker's runtime owner and its own sweep.
+- **Client broker.** Remote agents resolve provider credentials on the
+  client into the confined `iso-proxy`, exposed to the guest only by a
+  reverse tunnel inside the relayed route; no credential is sent to the host.
+  For filtered-egress VMs the grant carries the worker's natively proven boot
+  policy and the client binds its signed guest-path readiness check to it;
+  renewal re-checks the worker's proof and closes the session (and its
+  relays) when it fails. There is no unproven fallback.
+- **One writer per instance.** After `iso host migrate local`, adopted
+  instances carry a marker and only the service's backend may mutate them;
+  the owner record moves to schema 2, so builds that predate the host service
+  refuse the data root rather than writing beside the service.
+- **Artifacts.** Upload handles are random, owner-bound and expire after one
+  hour unless an accepted operation retains them. Archives are refused for
+  absolute or traversing members, links that escape or are written through,
+  duplicates, special files and truncation, before publication.
+
 ## Local editors
 
 A remote-development editor (VS Code Remote-SSH, Zed) talks to a server the
@@ -807,4 +867,7 @@ Stop and get explicit human confirmation before merging a change that:
   traversal first;
 - logs or traces tainted or secret content — that channel becomes an
   exfiltration path;
-- softens any step of the `iso update` verification chain.
+- softens any step of the `iso update` verification chain;
+- widens the host-control boundary — a new host-agent entrypoint or argument,
+  a frame field that names a path or command, a durable grant or bearer, or a
+  relay destination not taken from native proof.

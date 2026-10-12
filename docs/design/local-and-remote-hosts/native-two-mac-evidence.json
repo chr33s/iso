@@ -1,0 +1,118 @@
+{
+  "gate": "Q1 native slice (remote Mac)",
+  "started_at": 1791682312.969475,
+  "environment": {
+    "client_os": "27.0.1",
+    "client_arch": "arm64",
+    "swift": "Apple Swift version 6.4 (swift-6.4-RELEASE)\nTarget: arm64-apple-macosx27.0.0",
+    "source_revision": "47d17ba2524b145b229abcf42c85f8b5f0071e65",
+    "source_dirty": true,
+    "iso_binary": "/Users/chr33s/Developer/code/chr33s/iso/.build/debug/iso",
+    "iso_sha256": "1c66dcef26286cdd6eb1aa8d5ade28f19104aad4eb9e431374f54b5142d38bd1"
+  },
+  "remote": {
+    "alias": "mba",
+    "agent_path": "/Users/chr33s/iso-qualification/agent",
+    "identity": {
+      "Installation": "e6a362ef-92f4-4b80-982c-951e3f194ac4",
+      "Owner": "5a17fcd1f420626ed1bf6f40518bc98c",
+      "Service epoch": "d07bcacf-2c6f-45e0-be57-4b4101f7d9e9",
+      "Runtime": "qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+    }
+  },
+  "cases": [
+    {
+      "case": "preparation",
+      "status": "pass",
+      "elapsed_seconds": 0.0
+    },
+    {
+      "case": "enroll",
+      "status": "pass",
+      "elapsed_seconds": 0.852,
+      "output": "Enrolled mba: installation e6a362ef-92f4-4b80-982c-951e3f194ac4, owner 5a17fcd1f420626ed1bf6f40518bc98c\nRuntime: qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+    },
+    {
+      "case": "inspect",
+      "status": "pass",
+      "elapsed_seconds": 0.723,
+      "identity": {
+        "Installation": "e6a362ef-92f4-4b80-982c-951e3f194ac4",
+        "Owner": "5a17fcd1f420626ed1bf6f40518bc98c",
+        "Service epoch": "d07bcacf-2c6f-45e0-be57-4b4101f7d9e9",
+        "Runtime": "qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+      }
+    },
+    {
+      "case": "control-latency",
+      "status": "pass",
+      "elapsed_seconds": 9.782,
+      "hello_p50": 0.664,
+      "hello_p95": 0.724,
+      "ssh_setup_p50": 0.61,
+      "samples": 10
+    },
+    {
+      "case": "create",
+      "status": "pass",
+      "elapsed_seconds": 5.804,
+      "receipt": "operation f86c04fe-7422-4e22-8569-c494e1fc31cd vm.create: succeeded (existing)"
+    },
+    {
+      "case": "start",
+      "status": "pass",
+      "elapsed_seconds": 4.196,
+      "receipt": "operation 2e8019ae-b69f-43d0-89a0-441c3cebb92b vm.start: succeeded (existing)\nDeadline: 2026-10-11 02:02:11 +0000"
+    },
+    {
+      "case": "relay-round-trip",
+      "status": "pass",
+      "elapsed_seconds": 4.648
+    },
+    {
+      "case": "session-revocation",
+      "status": "pass",
+      "elapsed_seconds": 1.014
+    },
+    {
+      "case": "workspace-push",
+      "status": "pass",
+      "elapsed_seconds": 7.831
+    },
+    {
+      "case": "staged-pull",
+      "status": "pass",
+      "elapsed_seconds": 9.331,
+      "reason": null
+    },
+    {
+      "case": "ttl-offline-client",
+      "status": "pass",
+      "elapsed_seconds": 67.064,
+      "ttl_seconds": 60,
+      "observed_stop_seconds": 58.8,
+      "bound_seconds": 180
+    },
+    {
+      "case": "ttl-wedged-guest",
+      "status": "pass",
+      "elapsed_seconds": 126.585,
+      "ttl_seconds": 60,
+      "observed_stop_seconds": 121.0,
+      "bound_seconds": 180
+    },
+    {
+      "case": "stop",
+      "status": "pass",
+      "elapsed_seconds": 1.504,
+      "reason": null
+    },
+    {
+      "case": "destroy",
+      "status": "pass",
+      "elapsed_seconds": 3.395,
+      "reason": null
+    }
+  ],
+  "result": "pass"
+}

@@ -512,6 +512,40 @@ records why this runtime was chosen;
 [`design/apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md)
 lists the mutation invariants these tests defend and what is still untested.
 
+### Host control
+
+The host-control suites run with the ordinary package tests against a fake
+`NativeHost` and a manual clock, plus real Unix sockets for the service and relay:
+
+```bash
+swift test --force-resolved-versions --filter 'HostControl|RemoteRunOwnership|LocalHostControl'
+swift test --force-resolved-versions --filter ExecutionHostConfigTests
+```
+
+They cover the closed wire decoder, retry identity and payload conflicts, cleanup
+under ledger exhaustion, reconciliation without a second allocation or boot,
+cancellation before the first effect, volatile grants (epoch, bearer verifier,
+issued-ID cap, lease), relay revocation, hostile archives, and disposable-run
+retention. They do **not** qualify a real VM, launchd, SSH pinning across hosts,
+or timing; that is the two-Mac gate:
+
+```bash
+python3 tests/integration-remote-host.py --remote MAC_ALIAS --agent-path /usr/local/bin/iso \
+  --output remote-host-evidence.json
+```
+
+`--local --sandbox PATH` runs the same cases through this Mac's own host
+service on a scratch data root (real `iso-sandbox`, real VMs, stub agents),
+plus a push and a staged pull applied offline; it needs a Mac that can create
+vmnet networks and records `blocked` otherwise.
+
+It enrolls the remote host, measures hello and SSH setup latency, creates and
+starts a dedicated VM, round-trips a sentinel through the owned relay with the
+guest key pinned end to end, checks that a closed session refuses new streams,
+then stops and destroys the VM and verifies its absence. Cases it cannot run
+(no remote, unqualified runtime) are recorded as `blocked` and exit 2; a blocked
+case never counts as a pass.
+
 ## Fault injection
 
 Fault injection replaces mutation testing for the host. It shows that a

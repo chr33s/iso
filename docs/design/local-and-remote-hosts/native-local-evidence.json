@@ -1,0 +1,102 @@
+{
+  "gate": "Q1 native slice (local host service)",
+  "started_at": 1791606698.796085,
+  "environment": {
+    "client_os": "27.0.1",
+    "client_arch": "arm64",
+    "swift": "Apple Swift version 6.4 (swift-6.4-RELEASE)\nTarget: arm64-apple-macosx27.0.0",
+    "source_revision": "47d17ba2524b145b229abcf42c85f8b5f0071e65",
+    "source_dirty": true,
+    "iso_binary": "/Users/chr33s/Developer/code/chr33s/iso/.build/debug/iso",
+    "iso_sha256": "1c66dcef26286cdd6eb1aa8d5ade28f19104aad4eb9e431374f54b5142d38bd1"
+  },
+  "remote": {
+    "alias": null,
+    "agent_path": null,
+    "identity": {
+      "Installation": "ea63ab23-8a40-46d4-92f3-ad9a3280a5ca",
+      "Owner": "fa8af0bcc73fbb6f9611e2944db246e6",
+      "Service epoch": "51b493cc-4b65-4a61-b775-a02bcd00be62",
+      "Runtime": "qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+    }
+  },
+  "cases": [
+    {
+      "case": "preparation",
+      "status": "pass",
+      "elapsed_seconds": 0.0
+    },
+    {
+      "case": "enroll",
+      "status": "pass",
+      "elapsed_seconds": 85.615,
+      "output": "Installation: not yet created\nNothing blocks activation.\nPrepared: 0 instance(s) to adopt; starting the host service\nActive: manage adopted instances with `iso host vm ... local NAME`"
+    },
+    {
+      "case": "inspect",
+      "status": "pass",
+      "elapsed_seconds": 0.051,
+      "identity": {
+        "Installation": "ea63ab23-8a40-46d4-92f3-ad9a3280a5ca",
+        "Owner": "fa8af0bcc73fbb6f9611e2944db246e6",
+        "Service epoch": "51b493cc-4b65-4a61-b775-a02bcd00be62",
+        "Runtime": "qualified (iso-sandbox 0.1.0 (containerization 0.45.0, protocol 5))"
+      }
+    },
+    {
+      "case": "control-latency",
+      "status": "pass",
+      "elapsed_seconds": 0.09,
+      "hello_p50": 0.017,
+      "hello_p95": 0.019,
+      "ssh_setup_p50": null,
+      "samples": 5
+    },
+    {
+      "case": "create",
+      "status": "pass",
+      "elapsed_seconds": 4.134,
+      "receipt": "operation bd6d3f26-54e0-4994-9b6a-1984364132bd vm.create: succeeded (existing)"
+    },
+    {
+      "case": "start",
+      "status": "pass",
+      "elapsed_seconds": 1.144,
+      "receipt": "operation 8766b78b-b922-4cd7-82da-61c591902740 vm.start: succeeded (existing)\nDeadline: 2026-10-10 05:03:08 +0000"
+    },
+    {
+      "case": "relay-round-trip",
+      "status": "pass",
+      "elapsed_seconds": 0.914
+    },
+    {
+      "case": "session-revocation",
+      "status": "pass",
+      "elapsed_seconds": 0.487
+    },
+    {
+      "case": "workspace-push",
+      "status": "pass",
+      "elapsed_seconds": 1.72
+    },
+    {
+      "case": "staged-pull",
+      "status": "pass",
+      "elapsed_seconds": 1.772,
+      "reason": null
+    },
+    {
+      "case": "stop",
+      "status": "pass",
+      "elapsed_seconds": 1.113,
+      "reason": "accepted operation f34673a3-51b5-44f9-bc78-1879adf0ecf5 vm.stop: accepted"
+    },
+    {
+      "case": "destroy",
+      "status": "pass",
+      "elapsed_seconds": 0.686,
+      "reason": null
+    }
+  ],
+  "result": "pass"
+}

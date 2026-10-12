@@ -79,6 +79,31 @@ package struct EditorLauncher: Sendable {
     }
   }
 
+  /// A sandboxed editor for a guest on a remote host, through the relayed
+  /// route. Only the sandboxed mode is offered remotely: the outer transport
+  /// (and the session's relay helper) stays outside the enclave.
+  package func launchRemote(
+    guest: SSHTarget, _ target: SSHConnectionTarget, choice: EditorChoice,
+    revalidate: @escaping @Sendable () throws -> Void
+  ) throws {
+    guard security.security == .sandboxed else {
+      throw HostError("remote editors run only in the sandboxed editor mode")
+    }
+    for provider in choice.providers {
+      guard let app = try locateApp(provider, home) else { continue }
+      for warning in provider.warnings(target, security: security) { diagnostics.warn(warning) }
+      try SandboxedEditorSession(
+        provider: provider, app: app, guest: guest, target: target,
+        capabilities: security.allow, ssh: SSHClient(environment: environment, runner: runner),
+        callerEnvironment: environment, hostHome: home, diagnostics: diagnostics,
+        revalidate: revalidate
+      ).run()
+      return
+    }
+    throw HostFailure(
+      .editorNotFound(choice.providers.map(\.id)), "Could not find an editor application")
+  }
+
   /// Runs the first installed provider. A bundle that fails verification
   /// stops the launch; there is no fallback.
   func launchSandboxed(
@@ -94,7 +119,7 @@ package struct EditorLauncher: Sendable {
       for warning in provider.warnings(target, security: security) { diagnostics.warn(warning) }
       try running.target.requireHandoff()
       try SandboxedEditorSession(
-        provider: provider, app: app, running: running, target: target,
+        provider: provider, app: app, guest: running.target, target: target,
         capabilities: security.allow, ssh: SSHClient(environment: environment, runner: runner),
         callerEnvironment: environment, hostHome: home, diagnostics: diagnostics,
         revalidate: revalidate

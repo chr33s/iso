@@ -15,6 +15,10 @@ package struct SSHTarget: Sendable, Equatable {
   package let keyPath: String
   package let knownHosts: String
   package let alias: String
+  /// Set only for a guest on a remote execution host: the client's relay
+  /// helper, which carries the bytes through the host's owned relay. The
+  /// host-key pin above still applies end to end.
+  package var proxyCommand: String? = nil
   var handoffCheck: (@Sendable () throws -> Void)? = nil
 
   /// Connection identity excludes the process-local validator. Boot/policy and
@@ -22,6 +26,7 @@ package struct SSHTarget: Sendable, Equatable {
   package static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.host == rhs.host && lhs.port == rhs.port && lhs.user == rhs.user
       && lhs.keyPath == rhs.keyPath && lhs.knownHosts == rhs.knownHosts && lhs.alias == rhs.alias
+      && lhs.proxyCommand == rhs.proxyCommand
   }
 
   func validating(_ check: @escaping @Sendable () throws -> Void) -> Self {
@@ -74,7 +79,7 @@ package struct SSHTarget: Sendable, Equatable {
       "ForwardAgent=no",
       // Authentication uses iso's key file only, never the host agent.
       "IdentityAgent=none",
-    ]
+    ] + (proxyCommand.map { ["ProxyCommand=\($0)"] } ?? [])
   }
 
   /// Options every transport shares, up to the port flag. `BatchMode`

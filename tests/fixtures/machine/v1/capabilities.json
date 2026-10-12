@@ -51,6 +51,18 @@
         "display_name": "Zed",
         "remote_transport": "ssh"
       }
-    ]
+    ],
+    "host_control": {
+      "protocols": [
+        "iso.host/v1"
+      ],
+      "transports": [
+        "local",
+        "ssh"
+      ],
+      "remote_guest_os": [
+        "linux"
+      ]
+    }
   }
 }

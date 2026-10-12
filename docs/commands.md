@@ -1019,6 +1019,37 @@ iso profiles show rust
 
 `iso profiles list --json` emits `{ "builtin": [...], "custom": [...] }`, each entry `{ "name", "summary" }`.
 
+### `host`
+
+Remote execution hosts (trusted Apple Silicon Macs running Linux guests). `HOST`
+may also be `local`, this machine's own host service. The
+remote Mac needs `iso setup` and the same `iso` build at the enrolled path.
+
+| Command | Effect |
+| --- | --- |
+| `iso host add NAME [--ssh ALIAS] [--agent-path PATH]` | Contact the host's fixed `host-agent` entrypoint over pinned SSH, verify its installation identity, and enroll it |
+| `iso host list` / `inspect NAME` | List enrollments (no network) / contact the host and show identity, epoch and runtime qualification |
+| `iso host disable NAME` / `enable NAME` / `remove NAME` | Refuse new work (observation and cleanup still work) / allow it / forget the enrollment (remote VMs untouched) |
+| `iso host image HOST [--image NAME] [--profile P]… [--rebuild]` | Build or confirm a Linux image on the host from the host's own build context and profile definitions; `vm create` requires it |
+| `iso host vm create HOST NAME [--image --cpus --memory-mib --disk-gib --egress]` | Create a stopped Linux VM; prints the durable operation id |
+| `iso host vm start HOST NAME [--ttl 8h]` / `stop` / `destroy` | Lifecycle with verified native state; `--operation-id ID` retries the same operation after a lost reply |
+| `iso host vm list HOST` / `inspect HOST NAME` | Fresh observations; an unreachable host reports `unknown`, never `stopped` |
+| `iso host shell HOST NAME [-- CMD…]` | Open an access session and ssh through the host's owned relay with the guest key pinned |
+| `iso host session HOST NAME [--detach\|--stop]` | Hold a renewed session and print an `ssh -F …` line; `--detach` keeps a coordinator after the command exits, which other `iso host` commands reuse |
+| `iso host up HOST [PATH] [--name --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project |
+| `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir] [--apply]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host) |
+| `iso host agent HOST NAME claude\|codex [-- ARGS]` | Run an agent in the VM; provider credentials stay in this client's confined proxy, reached through the relay |
+| `iso host editor HOST NAME code\|zed` | A sandboxed editor through the relay |
+| `iso host forward HOST NAME LOCAL[:GUEST]…` | Client-loopback forwards that end with the session |
+| `iso host run HOST [--dir] -- CMD…` / `run-results HOST RUN [--recover\|--discard]` | A disposable run: export `~/iso-results` before stop, download and verify, then acknowledge |
+| `iso host vm resize\|commit\|restore local NAME …` | Stopped-VM maintenance through the local service (refused for remote hosts) |
+| `iso host operation HOST ID [--cancel]` | Show an accepted operation's receipt, or cancel it before its first effect |
+| `iso host migrate local [--activate\|--rollback]` | Preview; with `--activate`, hand stopped Linux instances to the host service (it completes activation; nothing is stopped). Adopted instances are then managed as `iso host vm … local NAME`; older iso builds refuse the activated root. `--rollback` undoes a migration that has not completed |
+
+`iso host-agent` (hidden) holds the service's internal entrypoints: `daemon`,
+`serve --stdio`, `relay --stdio` and `connect --descriptor`. They accept no
+guest command or path; requests arrive on stdin.
+
 ### `update`
 
 Replace the running isolate binary with a release from `github.com/chr33s/iso`.

@@ -37,6 +37,9 @@ Apple backend. The credential proxy is the Swift package
   - [`apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
     its mutation invariants, disk-update recovery, per-sandbox locking, and
     maintenance image.
+  - [`local-and-remote-hosts-spec.md`](design/local-and-remote-hosts-spec.md):
+    host control — the per-user service, durable operations, access grants,
+    owned relays, remote execution hosts — and its implementation status;
   - [`embedded-secrets-spec.md`](design/embedded-secrets-spec.md): the
     Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
     references;

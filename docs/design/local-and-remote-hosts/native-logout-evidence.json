@@ -1,0 +1,119 @@
+{
+  "gate": "Q4 logout (two physical Macs)",
+  "worker": {
+    "alias": "mba",
+    "os": "macOS 27.0.1",
+    "root": "~/iso-qualification",
+    "installation": "4780aee5-e786-4a62-bc2a-37160ca13e21"
+  },
+  "staged": {
+    "vm": "logout-check",
+    "instance": "d7aff058-d939-42f2-8fc3-daa00d68f050",
+    "egress": "none",
+    "boot": "860f6bb6ad895d6b1c5f471771434b11",
+    "service_epoch": "7d2af3b0-902a-4964-aa0e-cb6638160993",
+    "service_pid": 7393,
+    "vm_owner_pid": 7497,
+    "session_check": "guest reached through the detached session before logout"
+  },
+  "logout": {
+    "at": "2026-10-11T14:46:03Z",
+    "method": "loginwindow logout event for chr33s's console session over SSH; another user's console session stayed",
+    "completed_within_seconds": 5
+  },
+  "cases": [
+    {
+      "case": "service-survives",
+      "status": "pass",
+      "detail": "same daemon pid 7393 and epoch 7d2af3b0 after logout; launchd user/501 job still running"
+    },
+    {
+      "case": "vm-survives",
+      "status": "pass",
+      "detail": "iso-sandbox owner pid 7497 still running; host vm inspect: running, same boot; runtime inspect: running at 10.231.1.2"
+    },
+    {
+      "case": "guest-access-after-logout",
+      "status": "fail",
+      "detail": "relay refused: HOST_UNREACHABLE (the service's /usr/bin/nc probe to 10.231.1.2:22 failed) on every attempt"
+    },
+    {
+      "case": "guest-access-after-service-restart",
+      "status": "fail",
+      "detail": "after launchctl kickstart -k (new epoch 078a1caa), access.open failed: the client key could not be authorized (the service's ssh to the guest failed)"
+    },
+    {
+      "case": "root-cause-isolation",
+      "status": "measured",
+      "detail": "While the worker's console user was logged out, the guest stayed reachable from an SSH login and from background launchd jobs (same session type, ProcessType and environment as the service) whose main program was /bin/sh, Homebrew python3 (whose own connect() got EHOSTUNREACH), or small ad-hoc-signed C programs, including copies signed with iso's own signing identifier. Those jobs reached the guest with nc and with ssh using iso's exact pinned options, key and known_hosts, with or without an empty environment, CLOEXEC_DEFAULT, an own process group, or responsibility disclaimed. Only ssh/nc started by an iso process failed ('No route to host'): the running service, a restarted service, a background `iso exec`, and the service run from a re-signed copy of iso (new identifier and code hash), which also could not create a VM (SSH readiness never succeeded). Before the logout the same service reached guests. The cause is not identified; it is specific to iso processes and consistent with a per-process network policy (such as Local Network privacy) applied to them."
+    },
+    {
+      "case": "create-while-logged-out",
+      "status": "fail",
+      "detail": "vm.create failed: 'Guest booted but SSH is not accepting connections' after the 120 s readiness bound (twice, including from the re-signed service binary)"
+    },
+    {
+      "case": "ssh-login-does-not-restore",
+      "status": "fail",
+      "detail": "with chr33s logged in over SSH (tty, no console session), vm.create still failed SSH readiness after 120 s; the partial VM was destroyed"
+    },
+    {
+      "case": "console-login-does-not-restore",
+      "status": "fail",
+      "detail": "with chr33s back on the console (stat /dev/console = chr33s) and the service restarted (launchctl kickstart -k user/501/...), vm.create still failed SSH readiness after ~118 s three times; during the same boot window an SSH login shell on the worker pinged 10.231.2.2 and connected to port 22. Partial VMs destroyed."
+    },
+    {
+      "case": "root-cause",
+      "status": "identified",
+      "detail": "/Library/Preferences/com.apple.networkextension.plist on the worker holds Local Network privacy rules for both ad-hoc identities of /Users/chr33s/iso-qualification/bin/iso (iso-555549442f1b..., iso-55554944fbba...) with MulticastPreferenceSet=true, DenyMulticast=true: an explicit deny, the same state as 7 other denied apps (19 allowed, 69 undecided). The rule applies to processes whose responsible program is iso, so ssh/nc spawned by iso get EHOSTUNREACH while sshd sessions and other launchd jobs are unaffected. The decision persists across logout, login and service restart. An ad-hoc signature changes with every build, so each new binary is a new identity."
+    },
+    {
+      "case": "local-network-allowed-restores",
+      "status": "pass",
+      "detail": "after the console user turned iso on under Privacy & Security > Local Network (rule for iso-555549442f1b... now DenyMulticast=false), vm.create relogin-check succeeded and a guest shell answered within 10 s, with the already-running service and no restart"
+    },
+    {
+      "case": "stop",
+      "status": "pass",
+      "detail": "vm.stop succeeded through the runtime without guest access"
+    },
+    {
+      "case": "destroy",
+      "status": "pass",
+      "detail": "vm.destroy succeeded; vm list empty"
+    }
+  ],
+  "result": "pass",
+  "consequence": "A remote worker keeps its service, VMs and guest access across a console logout, provided iso is allowed under Local Network privacy. Without that permission, iso-spawned ssh/nc get EHOSTUNREACH to the vmnet guest (first run). The permission is tied to the binary's signing identity, so an ad-hoc build needs a new grant after each rebuild.",
+  "first_run_result": "fail",
+  "rerun": {
+    "precondition": "iso allowed under Privacy & Security > Local Network on the worker (granted at the console)",
+    "cases": [
+      {
+        "case": "existing-session-after-logout",
+        "status": "pass",
+        "detail": "chr33s logged out at the console (console owner root; another user's session stayed); a detached session opened before the logout still reached relogin-check"
+      },
+      {
+        "case": "new-session-after-logout",
+        "status": "pass",
+        "detail": "host shell relogin-check answered while logged out"
+      },
+      {
+        "case": "create-while-logged-out",
+        "status": "pass",
+        "detail": "vm.create logout-create succeeded and its guest shell answered, about 12 s end to end"
+      },
+      {
+        "case": "guest-access-after-service-restart",
+        "status": "pass",
+        "detail": "launchctl kickstart -k of the host service while logged out; host shell relogin-check answered afterwards"
+      },
+      {
+        "case": "stop-destroy",
+        "status": "pass",
+        "detail": "both VMs stopped and destroyed"
+      }
+    ]
+  }
+}

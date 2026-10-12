@@ -1,0 +1,235 @@
+{
+  "format": "iso.host.prototype.evidence/v0",
+  "protocol": "iso.host.prototype/v0",
+  "generated_at": "2026-10-09T03:25:12.473750+00:00",
+  "runtime": "simulated",
+  "environment": {
+    "python": "3.12.14",
+    "os": "Linux",
+    "machine": "x86_64"
+  },
+  "passed": true,
+  "scenarios_passed": 17,
+  "scenarios_total": 17,
+  "assertions_passed": 89,
+  "duration_seconds": 4.007557,
+  "scenarios": [
+    {
+      "name": "happy_lifecycle",
+      "status": "passed",
+      "details": {
+        "runtime": "simulated",
+        "deadline": 60,
+        "final_state": "destroyed"
+      },
+      "checks": 7,
+      "duration_seconds": 0.422682
+    },
+    {
+      "name": "same_name_two_hosts",
+      "status": "passed",
+      "details": {
+        "host_ids": [
+          "1b49535d-f74b-43db-9313-07ad1d22927d",
+          "31f3bcd0-fe92-4ce6-908e-0714bcc0ff80"
+        ],
+        "same_guest_address": "192.0.2.10"
+      },
+      "checks": 4,
+      "duration_seconds": 0.405618
+    },
+    {
+      "name": "wrong_host_rejected",
+      "status": "passed",
+      "details": {
+        "vm_state_after_refusals": "running"
+      },
+      "checks": 3,
+      "duration_seconds": 0.282189
+    },
+    {
+      "name": "lost_committed_create_reply",
+      "status": "passed",
+      "details": {
+        "operation_id": "lost-create-reply",
+        "instances_after_retry": 1,
+        "frontend_fault_exit_code": 70
+      },
+      "checks": 5,
+      "duration_seconds": 0.194397
+    },
+    {
+      "name": "operation_payload_conflict",
+      "status": "passed",
+      "details": {
+        "conflicts_checked": [
+          "params",
+          "method_and_target"
+        ]
+      },
+      "checks": 3,
+      "duration_seconds": 0.166474
+    },
+    {
+      "name": "frontend_restart_persists_identity",
+      "status": "passed",
+      "details": {
+        "frontend_model": "A new child process serves every local request",
+        "host_id": "05530d62-f49f-49e4-915f-9d3478b92646"
+      },
+      "checks": 7,
+      "duration_seconds": 0.187842
+    },
+    {
+      "name": "unreachable_maps_to_unknown",
+      "status": "passed",
+      "details": {
+        "listing": {
+          "ref": {
+            "host_id": "bc3f00c8-d8b0-452c-b901-a7d4c7b3a492",
+            "instance_id": "064bf8bb-78a5-4759-97d8-ee7fc5a9ede4"
+          },
+          "state": "unknown",
+          "reachability": "unreachable",
+          "last_observed_at": 0,
+          "error": "HOST_UNREACHABLE"
+        },
+        "methods_attempted": [
+          "vm.inspect"
+        ]
+      },
+      "checks": 4,
+      "duration_seconds": 0.189865
+    },
+    {
+      "name": "changed_boot_invalidates_session",
+      "status": "passed",
+      "details": {
+        "old_boot_id": "33ec0687-ceb0-4cb6-940c-340edef1d69c",
+        "new_boot_id": "056c312f-738e-4b28-a62e-1c61313a0e93"
+      },
+      "checks": 3,
+      "duration_seconds": 0.286573
+    },
+    {
+      "name": "wrong_session_key_rejected",
+      "status": "passed",
+      "details": {
+        "keys_used": "Fake fingerprint strings only; no cryptographic verification"
+      },
+      "checks": 3,
+      "duration_seconds": 0.23965
+    },
+    {
+      "name": "modeled_lease_expiration",
+      "status": "passed",
+      "details": {
+        "model_seconds_advanced": 15,
+        "live_relay_revocation_tested": false
+      },
+      "checks": 4,
+      "duration_seconds": 0.2518
+    },
+    {
+      "name": "modeled_ttl_expiration",
+      "status": "passed",
+      "details": {
+        "model_seconds_advanced": 10,
+        "deadline_after_retry": 10,
+        "physical_ttl_tested": false
+      },
+      "checks": 5,
+      "duration_seconds": 0.32484
+    },
+    {
+      "name": "delayed_create_retry_after_destroy",
+      "status": "passed",
+      "details": {
+        "historical_receipt_state": "stopped",
+        "fresh_state": "destroyed",
+        "total_records": 2
+      },
+      "checks": 4,
+      "duration_seconds": 0.244423
+    },
+    {
+      "name": "strict_worker_protocol_inputs",
+      "status": "passed",
+      "details": {
+        "fixtures": [
+          "duplicate_key",
+          "malformed_json",
+          "malformed_utf8",
+          "missing_newline",
+          "oversized",
+          "unknown_envelope_key",
+          "protocol_mismatch",
+          "nonfinite_NaN",
+          "nonfinite_Infinity",
+          "nonfinite_-Infinity",
+          "nonfinite_1e9999"
+        ],
+        "max_frame_bytes_including_newline": 65536
+      },
+      "checks": 12,
+      "duration_seconds": 0.499685
+    },
+    {
+      "name": "strict_client_protocol_responses",
+      "status": "passed",
+      "details": {
+        "rejected_response_fixtures": [
+          "envelope_protocol",
+          "advertised_protocol",
+          "unexpected_request_id",
+          "unknown_response_key",
+          "oversized_response",
+          "duplicate_response_key"
+        ],
+        "changed_application_host_identity_rejected": true
+      },
+      "checks": 13,
+      "duration_seconds": 0.000397
+    },
+    {
+      "name": "concurrent_operation_retry",
+      "status": "passed",
+      "details": {
+        "concurrent_frontends": 2,
+        "instances": 1,
+        "expected_generation_cas_tested": false
+      },
+      "checks": 2,
+      "duration_seconds": 0.110778
+    },
+    {
+      "name": "changed_policy_invalidates_session",
+      "status": "passed",
+      "details": {
+        "fault": "Test-only local state fixture; no policy mutation wire method"
+      },
+      "checks": 2,
+      "duration_seconds": 0.199354
+    },
+    {
+      "name": "ssh_argument_construction_only",
+      "status": "passed",
+      "details": {
+        "ssh_process_executed": false,
+        "host_key_verification_tested": false,
+        "checks": "Argument construction only"
+      },
+      "checks": 8,
+      "duration_seconds": 0.000314
+    }
+  ],
+  "limits": [
+    "No real VM, Apple runtime, image, native isolation, broker, guest, editor, or file transfer",
+    "No actual SSH connection or cryptographic host/guest key verification",
+    "Explicit model time only; no live TTL timer, persistent supervisor, or relay revocation",
+    "No daemon epoch invalidation or expected-generation compare-and-swap",
+    "Fingerprint-only modeled sessions persist receipts; production secret session grants must not use this ledger",
+    "Atomic JSON side effects only; no crash recovery across an external VM side effect",
+    "Fixed prototype owner namespace; no production authorization validation"
+  ]
+}

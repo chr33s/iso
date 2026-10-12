@@ -75,17 +75,55 @@ struct List: MachineCommand {
 
   @OptionGroup var global: GlobalOptions
   @Flag(help: "Emit legacy unversioned JSON instead of the text table") var json = false
+  @Flag(
+    name: .customLong("all-hosts"),
+    help: "Also list every enrolled remote host; unreachable hosts are reported, not hidden")
+  var allHosts = false
 
-  func validate() throws { try global.rejectLegacyJSON(json) }
+  func validate() throws {
+    try global.rejectLegacyJSON(json)
+    if allHosts && json {
+      throw ArgumentParser.ValidationError("--all-hosts needs --output json or text")
+    }
+  }
 
   func run() throws {
     if global.output == .json {
       return try IsoCLI.run(global, Self.self) {
-        MachineListResult(
-          instances: try Self.rows(CommandContext.load(global)).map { MachineInstance($0, $1) })
+        let context = try CommandContext.load(global)
+        let local = try Self.rows(context)
+        guard allHosts else {
+          return MachineListResult(instances: local.map { MachineInstance($0, $1) })
+        }
+        let remote = try RemoteListing.collect(
+          config: context.config, environment: ProcessInfo.processInfo.environment)
+        return MachineListResult(
+          instances: local.map { MachineInstance(local: $0, $1) }
+            + remote.rows.map(MachineInstance.init),
+          hostFailures: remote.failures.map {
+            .init(host: $0.host.rawValue, code: $0.error.code.rawValue, message: $0.error.message)
+          })
       }
     }
-    try IsoCLI.run { try Self.run(CommandContext.load(global), json: json) }
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      try Self.run(context, json: json)
+      if allHosts { try Self.runRemote(context) }
+    }
+  }
+
+  static func runRemote(_ context: CommandContext) throws {
+    let remote = try RemoteListing.collect(
+      config: context.config, environment: ProcessInfo.processInfo.environment)
+    for row in remote.rows {
+      let instance = MachineInstance(row)
+      let host = instance.remote?.host ?? ""
+      let suffix = instance.remote?.reachability == "unreachable" ? " (host unreachable)" : ""
+      context.output.out(padded(instance.name, 16) + " " + instance.state + "  @" + host + suffix)
+    }
+    for failure in remote.failures {
+      context.diagnostics.warn("host '\(failure.host)': \(failure.error.message)")
+    }
   }
 
   /// Sorted by name; a state that cannot be probed is `unknown`, and an
