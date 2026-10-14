@@ -23,9 +23,10 @@ SPDX-License-Identifier: Apache-2.0
   boots always have a deadline (`--ttl`, default 8h). Provider credentials stay
   in the client's proxy. The remote Mac needs `iso setup` and the same `iso`
   build. Remote agents reach provider credentials only through this client's
-  proxy and do not get MCP servers whose headers iso resolves; header values
-  written to a remote VM by an earlier build are removed when Codex's config
-  is next rewritten. Configure hosts under the new global `execution` section. See
+  proxy and do not get MCP servers whose headers iso resolves, nor servers in
+  the client's own `~/.codex/config.toml` that set `http_headers`; every remote
+  agent run rewrites the guest's Codex config, removing header values an
+  earlier build wrote there. Configure hosts under the new global `execution` section. See
   `docs/commands.md#host`, `docs/configuration.md#execution-section` and
   `docs/trust-model.md`.
 - **Local host service**: `iso host migrate local --activate` hands stopped

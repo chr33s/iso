@@ -176,8 +176,11 @@ package enum HostService {
     throw HostError("the host-control service did not start; see \(log)")
   }
 
-  /// Unloads the service (used by `iso host migrate` rollback and tests).
-  package static func stop(config: IsoConfig) throws {
+  /// Unloads the service (used by `iso host migrate`) and waits until its
+  /// process has released the ownership lock: until then it still answers
+  /// its socket, and a following ``ensureRunning(config:configPath:)`` would
+  /// reach the exiting service instead of starting a new one.
+  package static func stop(config: IsoConfig, waitingForExit: Duration = .seconds(10)) throws {
     let owner = try Owner.load(config)
     let store = try OperationStore(root: root(config))
     guard let installation = try store.loadInstallation(), installation.ownerID == owner.id else {
@@ -188,6 +191,18 @@ package enum HostService {
         executable: "/bin/launchctl",
         arguments: ["bootout", "user/\(getuid())/\(label(installation.hostID))"],
         environment: [:], deadline: .seconds(30), outputLimit: 64 << 10, overflow: .drain))
+    let deadline = ContinuousClock.now + waitingForExit
+    while true {
+      if let probe = try FileLock.attempt(path: store.serviceLockPath) {
+        probe.release()
+        return
+      }
+      guard ContinuousClock.now < deadline else {
+        throw HostError(
+          "the host service did not exit after it was stopped; see \(store.root)/service.log")
+      }
+      Thread.sleep(forTimeInterval: 0.1)
+    }
   }
 }
 

@@ -45,6 +45,8 @@ final class FakeNativeHost: NativeHost {
     var unhealthyAfterCreate = false
     var createdRunning = false
     var unhealthy: Set<MachineName> = []
+    /// Runs once inside the named call, before its effect (an interleaving).
+    var during: [String: @Sendable () -> Void] = [:]
   }
 
   let state = Mutex(State())
@@ -60,10 +62,11 @@ final class FakeNativeHost: NativeHost {
   func set(_ body: (inout State) -> Void) { state.withLock { body(&$0) } }
 
   private func enter(_ call: String) throws(NativeFailure) {
-    let fault: NativeFailure? = state.withLock { state in
+    let (fault, during) = state.withLock { state in
       state.calls.append(call)
-      return state.faults.removeValue(forKey: call)
+      return (state.faults.removeValue(forKey: call), state.during.removeValue(forKey: call))
     }
+    during?()
     if let fault { throw fault }
   }
 

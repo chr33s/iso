@@ -100,12 +100,36 @@ enum CodexConfigFiles {
 
   /// Whether this boot rewrites the guest `config.toml` (and so must first
   /// read the guest's plugin tables to carry them over).
+  /// A remote guest is always rewritten, so values an earlier build staged
+  /// there do not outlive the next agent run.
   static func needsRewrite(
     source: String?, mcpServers: [String: MCPServer], local: TOMLTable?, managesLocal: Bool,
-    auth: CodexAuthMode, keyringMaterialized: Bool
+    auth: CodexAuthMode, keyringMaterialized: Bool, placement: AgentPlacement
   ) -> Bool {
     (source.map { HostFiles.isFile($0 + "/" + configFile) } ?? false) || !mcpServers.isEmpty
       || local != nil || managesLocal || auth == .chatgpt || keyringMaterialized
+      || placement == .remote
+  }
+
+  /// `config` without `[mcp_servers]` entries that set `http_headers`: the
+  /// client's own literal header values stay off a remote guest, as iso's
+  /// header-bearing servers do.
+  static func droppingLiteralHeaders(_ config: TOMLTable, diagnostics: Diagnostics) -> TOMLTable {
+    guard var servers = config["mcp_servers"]?.tableValue else { return config }
+    for name in servers.sortedKeys
+    where servers[name]?.tableValue?.contains("http_headers") ?? false {
+      _ = servers.remove(name)
+      diagnostics.warn(
+        "MCP server '\(name)' in Codex \(configFile) sets http_headers; it is not configured on the remote VM"
+      )
+    }
+    var updated = config
+    if servers.isEmpty {
+      _ = updated.remove("mcp_servers")
+    } else {
+      updated["mcp_servers"] = .table(servers)
+    }
+    return updated
   }
 
   /// The guest's own plugin/project tables; nil when there are none, an
@@ -131,7 +155,7 @@ enum CodexConfigFiles {
     preserved: TOMLTable?, proxyActive: Bool, proxyMode: ProxyMode, egress: EgressMode,
     auth: CodexAuthMode,
     keyringMaterialized: Bool,
-    hasMCPServers: Bool, diagnostics: Diagnostics
+    hasMCPServers: Bool, placement: AgentPlacement, diagnostics: Diagnostics
   ) throws -> StagingDirectory {
     let staging = try StagingDirectory()
     do {
@@ -154,6 +178,9 @@ enum CodexConfigFiles {
           do { config = try TOMLTable.parse(text) } catch {
             throw ContextError("Failed to parse Codex \(configFile)", cause: error)
           }
+          if placement == .remote {
+            config = droppingLiteralHeaders(config, diagnostics: diagnostics)
+          }
         }
       }
       if !mcpServers.isEmpty {
@@ -174,6 +201,7 @@ enum CodexConfigFiles {
       let rewrite =
         (source.map { HostFiles.isFile($0 + "/" + configFile) } ?? false) || hasMCPServers
         || local != nil || managesLocal || auth == .chatgpt || keyringMaterialized
+        || placement == .remote
       if rewrite {
         var serialized = config.document
         if auth == .chatgpt {
@@ -319,7 +347,7 @@ extension AgentBootstrap {
     let codex = config.codex
     let rewrite = CodexConfigFiles.needsRewrite(
       source: source, mcpServers: codex.mcpServers, local: local, managesLocal: managesLocal,
-      auth: config.codexAuth, keyringMaterialized: keyringMaterialized)
+      auth: config.codexAuth, keyringMaterialized: keyringMaterialized, placement: placement)
     let preserved = rewrite ? readCodexPluginState(target) : nil
     let staging: StagingDirectory
     do {
@@ -329,7 +357,7 @@ extension AgentBootstrap {
         egress: config.egress,
         auth: config.codexAuth,
         keyringMaterialized: keyringMaterialized, hasMCPServers: !codex.mcpServers.isEmpty,
-        diagnostics: diagnostics)
+        placement: placement, diagnostics: diagnostics)
     } catch {
       throw ContextError("Failed to stage Codex config files", cause: error)
     }

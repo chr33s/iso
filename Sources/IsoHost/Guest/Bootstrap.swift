@@ -42,6 +42,13 @@ extension GuestUser {
   package var claudeBinary: GuestPath { GuestPath("/home/\(rawValue)/.local/bin/claude") }
 }
 
+/// Where the guest runs. A remote guest's disk is on the execution host, so
+/// it is not given MCP header values from the client's own Codex config.
+package enum AgentPlacement: Sendable, Equatable {
+  case local
+  case remote
+}
+
 /// Agent bootstrap, guest sessions and post-start hooks for one command.
 package struct AgentBootstrap: Sendable {
   package let config: IsoConfig
@@ -56,13 +63,16 @@ package struct AgentBootstrap: Sendable {
   let diagnostics: Diagnostics
   /// For `{vault:}` entries in `guest_env.json`; nil refuses them.
   let secrets: (any SecretReferenceResolver)?
+  let placement: AgentPlacement
 
   package init(
     config: IsoConfig, client: SSHClient, environment: [String: String], home: String?,
     resolver: CredentialResolver, proxies: ProxyLauncher, github: any GitHubTokenSource,
-    diagnostics: Diagnostics, secrets: (any SecretReferenceResolver)? = nil
+    diagnostics: Diagnostics, secrets: (any SecretReferenceResolver)? = nil,
+    placement: AgentPlacement = .local
   ) {
     self.secrets = secrets
+    self.placement = placement
     self.config = config
     self.client = client
     self.environment = environment

@@ -643,7 +643,7 @@ package enum RemoteAgent: String, Sendable {
         isoExecutable: Bundle.main.executablePath),
       github: HostGitHubTokens(
         config: config, environment: environment, diagnostics: diagnostics, githubDisabled: true),
-      diagnostics: diagnostics)
+      diagnostics: diagnostics, placement: .remote)
     let target = try session.guestTarget(config: config)
     let guest = SSHSession(target: target)
     defer { bootstrap.proxies.stopAll(shadow) }

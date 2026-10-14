@@ -275,8 +275,10 @@ Design and status: [design/local-and-remote-hosts-spec.md](design/local-and-remo
   provider variable and no Codex `auth.json` is staged into the remote guest,
   and `proxy.mode = "off"` refuses them. MCP servers iso configures with
   headers (values resolved on the client) are not configured on a remote
-  guest; a client's own `~/.codex/config.toml`, including any literal values
-  in it, is copied as it is for a local VM. Remote Codex
+  guest, and neither are servers in the client's own `~/.codex/config.toml`
+  that set literal `http_headers`; the rest of that file is copied as it is
+  for a local VM. Every remote agent run rewrites the guest's Codex config.
+  Remote Codex
   reaches the client proxy with its capability token in `ISO_LOCAL_API_KEY`,
   which opens only that proxy, through the relay. For filtered-egress VMs the grant carries the worker's natively proven boot
   policy and the client binds its signed guest-path readiness check to it;

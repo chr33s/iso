@@ -545,7 +545,17 @@ again for Local Network permission for the service (see
 It enrolls the remote host, measures hello and SSH setup latency, creates and
 starts a dedicated VM, round-trips a sentinel through the owned relay with the
 guest key pinned end to end, checks that a closed session refuses new streams,
-then stops and destroys the VM and verifies its absence. Cases it cannot run
+runs `iso host agent` for Claude and Codex through the relay (each starts
+with the client proxy required; the guest gets the proxy endpoint, no provider
+credential and no Codex `auth.json`), then stops and destroys the VM and
+verifies its absence. The agent case needs `iso-proxy` beside the client
+`iso` (an installed release has it; for a debug build, copy
+`iso-proxy/.build/debug/iso-proxy` into `.build/debug/`) and is `blocked`
+otherwise. `--local` also checks migration recovery before activating: with
+another `iso` process running, activation stays prepared, `--rollback` stops
+the service and undoes it, a later `--activate` restarts the still-prepared
+service and completes, and `--rollback` then refuses the active migration
+without stopping the service. Cases it cannot run
 (no remote, unqualified runtime) are recorded as `blocked` and exit 2; a blocked
 case never counts as a pass.
 

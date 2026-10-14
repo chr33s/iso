@@ -370,13 +370,70 @@ private func stageCodex(
   source: String? = nil, mcp: [String: TOMLValue] = [:], local: TOMLTable? = nil,
   managesLocal: Bool = false, preserved: TOMLTable? = nil, proxy: Bool = false,
   proxyMode: ProxyMode = .auto, egress: EgressMode = .open, auth: CodexAuthMode = .apiKey,
-  keyring: Bool = false
+  keyring: Bool = false, placement: AgentPlacement = .local, sink: LogSink = LogSink()
 ) throws -> StagingDirectory {
   try CodexConfigFiles.stage(
     source: source, mcpServers: mcp, local: local, managesLocal: managesLocal,
     preserved: preserved, proxyActive: proxy, proxyMode: proxyMode, egress: egress, auth: auth,
     keyringMaterialized: keyring,
-    hasMCPServers: !mcp.isEmpty, diagnostics: LogSink().diagnostics)
+    hasMCPServers: !mcp.isEmpty, placement: placement, diagnostics: sink.diagnostics)
+}
+
+@Test func remoteCodexStagingDropsLiteralMCPHeaders() throws {
+  let source = try scratchDirectory("codex")
+  defer { try? FileManager.default.removeItem(atPath: source) }
+  try writeFile(
+    source + "/config.toml",
+    """
+    model = "gpt-5"
+
+    [mcp_servers.private]
+    url = "https://mcp.example.com/"
+    http_headers = { Authorization = "Bearer literal-secret" }
+
+    [mcp_servers.byenv]
+    url = "https://env.example.com/"
+    env_http_headers = { Authorization = "TOKEN_VAR" }
+
+    [mcp_servers.tool]
+    command = "/usr/bin/mcp"
+
+    """)
+  // A local VM gets the client's file as it is.
+  var staged = try stageCodex(source: source)
+  #expect(try #require(readFile(staged.path + "/config.toml")).contains("literal-secret"))
+  staged.remove()
+
+  let sink = LogSink()
+  staged = try stageCodex(source: source, placement: .remote, sink: sink)
+  let config = try #require(readFile(staged.path + "/config.toml"))
+  staged.remove()
+  #expect(!config.contains("literal-secret"))
+  #expect(!config.contains("[mcp_servers.private]"))
+  #expect(config.contains("[mcp_servers.byenv]"))
+  #expect(config.contains("[mcp_servers.tool]"))
+  #expect(config.contains("model = \"gpt-5\""))
+  #expect(sink.text.contains("MCP server 'private'"))
+
+  // With only header-bearing servers, the table is gone entirely.
+  try writeFile(
+    source + "/config.toml",
+    "[mcp_servers.private]\nurl = \"https://mcp.example.com/\"\nhttp_headers = { A = \"b\" }\n")
+  staged = try stageCodex(source: source, placement: .remote)
+  #expect(!(try #require(readFile(staged.path + "/config.toml"))).contains("mcp_servers"))
+  staged.remove()
+}
+
+@Test func remoteCodexConfigIsAlwaysRewritten() throws {
+  // An earlier build may have staged values a remote guest must not keep;
+  // every remote agent run replaces its config.toml.
+  #expect(
+    CodexConfigFiles.needsRewrite(
+      source: nil, mcpServers: [:], local: nil, managesLocal: false, auth: .apiKey,
+      keyringMaterialized: false, placement: .remote))
+  let staged = try stageCodex(placement: .remote)
+  defer { staged.remove() }
+  #expect(readFile(staged.path + "/config.toml") != nil)
 }
 
 @Test func codexStagingMergesManagedKeys() throws {
@@ -463,11 +520,11 @@ private func stageCodex(
   #expect(
     !CodexConfigFiles.needsRewrite(
       source: nil, mcpServers: [:], local: nil, managesLocal: false, auth: .apiKey,
-      keyringMaterialized: false))
+      keyringMaterialized: false, placement: .local))
   #expect(
     CodexConfigFiles.needsRewrite(
       source: nil, mcpServers: [:], local: nil, managesLocal: false, auth: .apiKey,
-      keyringMaterialized: true))
+      keyringMaterialized: true, placement: .local))
 
   try writeFile(
     source + "/config.toml", "cli_auth_credentials_store = \"keyring\"\nmodel = \"gpt-5\"\n")

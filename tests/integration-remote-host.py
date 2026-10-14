@@ -35,6 +35,8 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# Scratch-root proxy credentials; never real, and never expected in a guest.
+FAKE_CREDENTIALS = {"openai": "sk-iso-hc-fake-openai-7f3a", "anthropic": "sk-ant-iso-hc-fake-2c9e"}
 
 
 class Runner:
@@ -261,6 +263,9 @@ class Runner:
             "profiles": {"boundary-fixture": {"post_install": stubs}},
             "vm": {"vcpu_count": 2, "mem_size_mib": 2048, "template_size_gib": 8},
             "apple_container": {"binary": sandbox, "builder": container, "kernel": str(kernel.resolve())},
+            # Synthetic values: the stub agents never call a provider.
+            "proxy": {provider: {"credential": f"cmd:printf %s {fake}", "auth": "bearer"}
+                      for provider, fake in FAKE_CREDENTIALS.items()},
         }
         (work / "iso.jsonc").write_text(json.dumps(config))
         if self.args.quarantine_subnets:
@@ -284,12 +289,81 @@ class Runner:
                                reason="this Mac cannot create vmnet networks for VMs: " + tail(setup.stderr, 300))
         if setup.returncode != 0:
             return self.record("enroll", "fail", started, reason="iso setup: " + tail(setup.stderr + setup.stdout))
-        activate = self.iso_cmd("host", "migrate", "local", "--activate", timeout=120)
-        if activate.returncode != 0:
-            return self.record("enroll", "fail", started, reason=tail(activate.stderr + activate.stdout))
+        # Migration recovery ends with the root activated.
+        recovered = record and self.migration_recovery()
+        if record and not recovered and self.cases[-1]["status"] == "fail":
+            return self.record("enroll", "fail", started, reason="migration recovery failed")
+        activate = None
+        if not recovered:
+            activate = self.iso_cmd("host", "migrate", "local", "--activate", timeout=120)
+            if activate.returncode != 0:
+                return self.record("enroll", "fail", started, reason=tail(activate.stderr + activate.stdout))
+        if record:
+            # Rollback refuses an active migration and leaves the service up.
+            started_rollback = time.monotonic()
+            rollback = self.iso_cmd("host", "migrate", "local", "--rollback", timeout=120)
+            inspect = self.iso_cmd("host", "inspect", self.args.name, timeout=120)
+            ok = rollback.returncode != 0 and "active" in rollback.stderr and inspect.returncode == 0
+            self.record("migrate-rollback-active-refused", "pass" if ok else "fail", started_rollback,
+                        reason=None if ok else tail(rollback.stderr + rollback.stdout + inspect.stderr))
         if not record:
             return True
-        return self.record("enroll", "pass", started, output=tail(activate.stdout))
+        return self.record("enroll", "pass", started, output=tail(activate.stdout) if activate else None)
+
+    def migration_recovery(self):
+        """An activation the service cannot complete leaves the migration
+        prepared with the service up; rollback stops that service and undoes
+        it, and a later --activate restarts the still-prepared service so it
+        completes. The service refuses to complete while another process
+        named `iso` runs; the CLI ignores its own parent, so a stand-in named
+        `iso` runs the command as its child and only the service counts it."""
+        started = time.monotonic()
+        blocker_dir = self.work / "blocker"
+        blocker_dir.mkdir()
+        (blocker_dir / "iso.c").write_text(
+            "#include <sys/wait.h>\n#include <unistd.h>\n"
+            "int main(int argc, char **argv) {\n"
+            "  if (argc < 2) return 2;\n"
+            "  pid_t child = fork();\n"
+            "  if (child == 0) { execl(\"/bin/sh\", \"sh\", argv[1], (char *)0); _exit(127); }\n"
+            "  int status = 0;\n"
+            "  if (child < 0 || waitpid(child, &status, 0) < 0) return 2;\n"
+            "  return WIFEXITED(status) ? WEXITSTATUS(status) : 1;\n"
+            "}\n")
+        build = subprocess.run(["cc", "-o", str(blocker_dir / "iso"), str(blocker_dir / "iso.c")],
+                               capture_output=True, text=True, timeout=120)
+        if build.returncode != 0:
+            return self.record("migrate-recovery", "blocked", started,
+                               reason="cc could not build the iso stand-in: " + tail(build.stderr, 200))
+
+        # The command is in a script, not the stand-in's argv: the service
+        # skips processes whose arguments name `host migrate`.
+        script = blocker_dir / "activate.sh"
+        script.write_text(
+            f"exec '{self.iso}' --config '{self.args.config}' host migrate local --activate\n")
+
+        def blocked_activate():
+            return subprocess.run(
+                [str(blocker_dir / "iso"), str(script)],
+                capture_output=True, text=True, timeout=180, env=self.environment)
+
+        first = blocked_activate()
+        if first.returncode == 0 or "could not complete activation" not in first.stderr:
+            return self.record("migrate-recovery", "fail", started,
+                               reason="first activation: " + tail(first.stderr + first.stdout))
+        rollback = self.iso_cmd("host", "migrate", "local", "--rollback", timeout=180)
+        if rollback.returncode != 0:
+            return self.record("migrate-recovery", "fail", started,
+                               reason="rollback of a pending activation: " + tail(rollback.stderr))
+        again = blocked_activate()
+        if again.returncode == 0 or "could not complete activation" not in again.stderr:
+            return self.record("migrate-recovery", "fail", started,
+                               reason="second activation: " + tail(again.stderr + again.stdout))
+        # The service from the refused attempt is still running and prepared.
+        resumed = self.iso_cmd("host", "migrate", "local", "--activate", timeout=180)
+        ok = resumed.returncode == 0 and "Active:" in resumed.stdout
+        return self.record("migrate-recovery", "pass" if ok else "fail", started,
+                           reason=None if ok else tail(resumed.stderr + resumed.stdout))
 
     def cleanup_local(self):
         """Stop the scratch service and delete what the scratch root created."""
@@ -337,6 +411,42 @@ class Runner:
             return self.record(
                 "staged-pull", "pass" if ok else "fail", started,
                 reason=None if ok else tail(shell.stderr + stage.stderr + apply.stderr + stage.stdout))
+
+    def remote_agent(self):
+        """`iso host agent` through the relay: each agent starts with the
+        client proxy required, and the guest gets the proxy endpoint, no
+        provider credential and no Codex auth.json."""
+        started = time.monotonic()
+        proxy = Path(self.iso).parent / "iso-proxy"
+        if not proxy.is_file():
+            return self.blocked("remote-agent", f"iso-proxy is not beside iso ({proxy}); build iso-proxy and copy it there")
+        outcomes = {}
+        for agent in ("claude", "codex"):
+            result = subprocess.run(
+                [self.iso] + (["--config", self.args.config] if self.args.config else [])
+                + ["host", "agent", self.args.name, self.instance, agent, "--", "--version"],
+                capture_output=True, text=True, timeout=600, env=self.environment,
+                stdin=subprocess.DEVNULL)
+            # The stub agents of a scratch root exit 125 once launched.
+            launched = result.returncode == 0 or (
+                result.returncode == 125 and "agent execution is not supported" in result.stderr)
+            if not launched:
+                return self.record("remote-agent", "fail", started, agent=agent,
+                                   reason=tail(result.stderr + result.stdout))
+            outcomes[agent] = result.returncode
+        probe = self.iso_cmd(
+            "host", "shell", self.args.name, self.instance, "--", "sh", "-c",
+            "cat ~/.codex/config.toml; echo ---; test -e ~/.codex/auth.json && echo AUTH_JSON; "
+            "cat ~/.claude/settings.json 2>/dev/null; echo ---; env", timeout=300)
+        text = probe.stdout
+        checks = {
+            "codex_proxy_endpoint": "http://127.0.0.1:" in text.split("---")[0],
+            "no_codex_auth_json": "AUTH_JSON" not in text,
+            "no_provider_credential": all(fake not in text for fake in FAKE_CREDENTIALS.values()),
+        }
+        ok = probe.returncode == 0 and all(checks.values())
+        return self.record("remote-agent", "pass" if ok else "fail", started, exits=outcomes,
+                           reason=None if ok else tail(probe.stderr) or "guest checks failed", **checks)
 
     def inspect(self):
         started = time.monotonic()
@@ -444,6 +554,13 @@ class Runner:
     # -- driver -----------------------------------------------------------
 
     def run(self):
+        try:
+            self.run_cases()
+        finally:
+            if self.args.local or self.args.loopback:
+                self.cleanup_local()
+
+    def run_cases(self):
         self.instance = f"q1-{uuid.uuid4().hex[:8]}"
         if not self.preparation():
             for case in ("enroll", "inspect", "control-latency", "create", "start", "relay-round-trip", "session-revocation"):
@@ -463,14 +580,13 @@ class Runner:
                     return
                 self.relay_round_trip()
                 self.push_and_stage()
+                self.remote_agent()
                 self.ttl_enforcement()
                 self.ttl_wedged_guest()
             else:
                 self.blocked("relay-round-trip", "the VM did not start")
         finally:
             self.teardown()
-            if self.args.local or self.args.loopback:
-                self.cleanup_local()
 
 
 def tail(text, limit=600):

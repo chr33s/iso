@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 import Testing
 
 @testable import IsoHost
@@ -624,6 +625,33 @@ import Testing
     #expect(chmod(path, 0o600) == 0)
     #expect(try f.supervisor.store.loadInstance(instance.instanceID) != nil)
     #expect(f.supervisor.store.hasReservation(.destroy(instance.instanceID)))
+  }
+
+  @Test func repairLeavesTheInstanceOfAnExecutingOperation() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let (instance, observation) = try f.running()
+    let stop = try f.receipt(.vmStop(instance, expectedGeneration: observation.generation))
+    let store = f.supervisor.store
+    let supervisor = f.supervisor
+    let seen = Mutex<HostOperationID?>(nil)
+    f.native.set {
+      $0.during["stop"] = {
+        // A repair that reads the executing operation as terminal (a racing
+        // writer) must still leave its instance to the executor.
+        guard var record = try? store.loadOperation(stop.operationID) else { return }
+        let running = record
+        record.state = .failed
+        try? store.saveOperation(record)
+        supervisor.repairUnacceptedAdmissions()
+        seen.withLock { $0 = try? store.loadInstance(instance.instanceID)?.activeOperation }
+        try? store.saveOperation(running)
+      }
+    }
+    f.supervisor.runPending()
+    #expect(seen.withLock { $0 } == stop.operationID)
+    #expect(try f.operation(stop.operationID).state == .succeeded)
+    #expect(try store.loadInstance(instance.instanceID)?.activeOperation == nil)
   }
 
   @Test func uncertainStopStaysReconcilingUntilVerified() throws {
