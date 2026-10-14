@@ -6,13 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # isolate
 
-isolate is a Swift fork of [Trail of Bits’ coop](https://github.com/trailofbits/coop)
-for running Claude Code and Codex in disposable Linux VMs on **macOS 27+ Apple
-Silicon**. It replaces the Rust host and credential proxy with Swift and uses a
-purpose-built runtime on Apple Containerization. Focusing on one host platform
-and removing the former Rust networking and TLS dependency tree reduces what
-needs maintenance and security review. The aim is a smaller attack surface;
-Swift alone does not guarantee fewer vulnerabilities or complete isolation.
+isolate is a native Swift reimplementation of
+[coop](https://github.com/trailofbits/coop) from Trail of Bits, for running
+Claude Code and Codex in disposable Linux VMs on **macOS 27+ Apple Silicon**. It
+replaces the Rust host and credential proxy with Swift and uses a purpose-built
+runtime on Apple Containerization. Focusing on one host platform and removing
+the former Rust networking and TLS dependency tree reduces what needs
+maintenance and security review. The aim is a smaller attack surface; Swift
+alone does not guarantee fewer vulnerabilities or complete isolation.
 
 Agents get full tool access inside the VM: Docker, git, compilers and package
 managers. The VM is the isolation boundary. A host credential proxy can keep
@@ -20,7 +21,16 @@ provider API keys out of the guest.
 
 ## Setup
 
-Build from source with Xcode 27 until a verified fork release is published:
+Install the latest release. The installer verifies the release's signed
+`SHA256SUMS` and, when `gh` is installed, its build attestation:
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
+```
+
+It installs all five executables into one directory on `PATH`: `iso`,
+`iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper`. To build from
+source instead, with Xcode 27:
 
 ```shell
 git clone https://github.com/chr33s/iso.git
@@ -28,17 +38,11 @@ cd iso
 python3 scripts/build-release.py --release
 ```
 
-Install all five executables from the archive in `.build/release-archive/`
-into the same directory on `PATH`: `iso`, `iso-proxy`, `iso-egress`,
-`iso-sandbox` and `iso-macos-helper`. See [prerequisites](docs/getting-started.md#prerequisites),
+and install the same five executables from the archive in
+`.build/release-archive/` into one directory on `PATH`. See
+[prerequisites](docs/getting-started.md#prerequisites),
 [build instructions](docs/getting-started.md#build-from-source) and
 [Apple backend setup](docs/backends.md#macos--apple-sandbox).
-
-Once a verified release is available, you can install the bundle with:
-
-```shell
-curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
-```
 
 Create the configuration and build the VM template:
 
@@ -48,7 +52,7 @@ iso setup
 
 Configuration lives in `~/.iso/config.jsonc`; state lives under `~/.iso`.
 Use `iso setup --config-only` to write just the commented configuration template.
-See [release status](RELEASING.md) and [`iso update`](docs/commands.md#update).
+[`iso update`](docs/commands.md#update) installs newer releases.
 
 ## Usage
 
@@ -69,6 +73,26 @@ files, keychain or clipboard; see [editor integration](docs/editor.md):
 ```shell
 iso code .
 iso zed .
+```
+
+### macOS guests
+
+Build a macOS image from an Apple restore image you supply, then use it like a
+Linux image; see [macOS guests](docs/images-and-profiles.md#macos-guests):
+
+```shell
+iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --image mac
+iso up . --image mac
+```
+
+### Remote Macs
+
+Enroll another trusted Apple Silicon Mac over SSH and run a project's VM there.
+Provider credentials stay in this Mac's proxy; see [`iso host`](docs/commands.md#host):
+
+```shell
+iso host add build-mac --ssh build-mac --agent-path /usr/local/bin/iso
+iso host up build-mac .
 ```
 
 ## Security controls
