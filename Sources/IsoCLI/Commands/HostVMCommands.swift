@@ -79,7 +79,7 @@ struct HostVMCreate: ParsableCommand {
       let instanceName = try InstanceName(name)
       let store = ClientBindingStore(config: env.config)
       if let existing = try store.load(remote.enrollment.hostID, instanceName),
-        existing.lastState != ObservedState.destroyed.rawValue, operation.operationID == nil
+        existing.lastState != .destroyed, operation.operationID == nil
       {
         throw HostError("'\(instanceName)' is already bound on \(remote.enrollment.alias)")
       }
@@ -98,8 +98,10 @@ struct HostVMCreate: ParsableCommand {
             host: remote.enrollment.alias, hostID: instance.hostID, ownerID: instance.ownerID,
             instanceID: instance.instanceID, runtimeID: instance.runtimeID,
             guestOS: instance.guestOS, name: instanceName, policyHash: spec.policyHash,
-            createdBy: id, lastState: receipt.state.rawValue,
-            lastObservedAt: receipt.completedAt?.seconds))
+            // A successful create leaves the VM stopped; any other outcome
+            // is not an observation.
+            createdBy: id, lastState: receipt.state == .succeeded ? .stopped : nil,
+            lastObservedAt: receipt.state == .succeeded ? receipt.completedAt?.seconds : nil))
       }
       env.output.out(describe(receipt))
       guard receipt.state == .succeeded else { throw ExitCode.failure }
@@ -201,7 +203,7 @@ struct HostVMDestroy: ParsableCommand {
       if observation.state == .destroyed {
         RemoteWorkspace.releasePorts(env.config, binding)
         var updated = binding
-        updated.lastState = ObservedState.destroyed.rawValue
+        updated.lastState = .destroyed
         updated.lastObservedAt = observation.observedAt.seconds
         try ClientBindingStore(config: env.config).save(updated)
       }
@@ -224,7 +226,7 @@ struct HostVMInspect: ParsableCommand {
       var binding = try env.binding(remote, name)
       do {
         let observation = try observe(remote, binding)
-        binding.lastState = observation.state.rawValue
+        binding.lastState = observation.state
         binding.lastObservedAt = observation.observedAt.seconds
         try ClientBindingStore(config: env.config).save(binding)
         env.output.out("\(binding.name) on \(binding.host): \(observation.state.rawValue)")
@@ -239,7 +241,7 @@ struct HostVMInspect: ParsableCommand {
         env.output.out("\(binding.name) on \(binding.host): unknown (host unreachable)")
         if let last = binding.lastState, let at = binding.lastObservedAt {
           env.output.out(
-            "  last observed \(last) at \(Date(timeIntervalSince1970: TimeInterval(at)))")
+            "  last observed \(last.rawValue) at \(Date(timeIntervalSince1970: TimeInterval(at)))")
         }
       }
     }

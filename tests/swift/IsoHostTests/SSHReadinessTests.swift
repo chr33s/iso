@@ -23,11 +23,12 @@ private func hangingSSH(_ guest: FakeGuest, hangs: Int) throws {
   let guest = try FakeGuest()
   defer { guest.remove() }
   try hangingSSH(guest, hangs: 1)
-  let started = ContinuousClock.now
+  // The per-attempt deadline is generous enough that only the hung attempt
+  // ever reaches it, even on a loaded machine; the overall timeout is larger
+  // still, so success needs the cut-off.
   try guest.client.waitUntilReady(
-    guest.target, timeout: .seconds(10), diagnostics: guest.sink.diagnostics,
-    attemptDeadline: .milliseconds(500))
-  #expect(ContinuousClock.now - started < .seconds(5))
+    guest.target, timeout: .seconds(12), diagnostics: guest.sink.diagnostics,
+    attemptDeadline: .seconds(3))
   #expect(
     readFile(guest.root + "/attempts")?.trimmingCharacters(in: .whitespacesAndNewlines) == "2")
   #expect(guest.sink.text.contains("SSH is ready"))
@@ -55,7 +56,7 @@ private func hangingSSH(_ guest: FakeGuest, hangs: Int) throws {
   let error = #expect(throws: HostError.self) {
     try guest.client.waitUntilReady(
       guest.target, timeout: .milliseconds(300), diagnostics: guest.sink.diagnostics,
-      attemptDeadline: .milliseconds(300))
+      attemptDeadline: .seconds(5))
   }
   #expect(error?.description.contains("sshd may not be running") == true)
   // ssh's own output is guest-influenced and never reaches the error.

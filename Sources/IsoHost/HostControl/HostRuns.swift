@@ -49,13 +49,61 @@ extension HostSupervisor {
     record.instanceID = created.instance?.instanceID
     record.runtimeID = created.instance?.runtimeID
     let parent = record
-    try persist { () throws(HostError) in
-      try store.reserve(.run(run))
-      try store.reserve(.finalize(parent.operationID))
-      try runs.save(runRecord)
-      try store.saveOperation(parent)
+    do {
+      try persist { () throws(HostError) in
+        try store.reserve(.run(run))
+        try store.reserve(.finalize(parent.operationID))
+        try runs.save(runRecord)
+        // The parent is the commit point; it is written last.
+        try store.saveOperation(parent)
+      }
+    } catch {
+      // The child create is never executed without its run; undo it.
+      discardUnacceptedRun(run, child: createID, instance: created.instance?.instanceID)
+      try? store.consume(.finalize(parent.operationID))
+      throw error
     }
     return record.receipt(disposition: .accepted, instance: created.instance)
+  }
+
+  /// Removes a run whose creation was never accepted and its child create,
+  /// which never executed (a run child executes only from its run).
+  func discardUnacceptedRun(_ run: RunID, child: HostOperationID, instance: InstanceID?) {
+    try? store.removeOperation(child)
+    try? store.consume(.finalize(child))
+    if let instance {
+      try? store.removeInstance(instance)
+      try? store.consume(.destroy(instance))
+    }
+    try? runs.remove(run)
+    try? store.consume(.run(run))
+  }
+
+  /// Run admissions that a crash left half-written: a run whose parent
+  /// operation is missing, or a never-started run child with no run record.
+  /// Called under the admission lock.
+  func repairUnacceptedRuns() {
+    for id in runs.runIDs() {
+      guard let run = try? runs.load(id), run.phase == .reserved,
+        let parent = run.activeOperation, parent == run.createdBy
+      else { continue }
+      let missing: Bool
+      do { missing = try store.loadOperation(parent) == nil } catch { continue }
+      guard missing else { continue }
+      discardUnacceptedRun(id, child: run.createOperation, instance: run.instanceID)
+      try? store.consume(.finalize(parent))
+    }
+    for id in store.operationIDs() {
+      guard let child = try? store.loadOperation(id), let run = child.runID,
+        child.method == HostMethod.vmCreate.rawValue, child.state == .accepted,
+        child.substep == nil, let instance = child.instanceID,
+        (try? store.loadInstance(instance))?.lifecycle == .creating
+      else { continue }
+      let missing: Bool
+      do { missing = try runs.load(run) == nil } catch { continue }
+      guard missing else { continue }
+      discardUnacceptedRun(run, child: id, instance: child.instanceID)
+    }
   }
 
   func admitRunTransition(
@@ -263,8 +311,7 @@ extension HostSupervisor {
     {
       committed = commitResults(&run, bytes)
     }
-    stopRunVM(&run)
-    guard run.phase == .stopping else { return }
+    guard stopRunVM(&run) else { return }
     if committed {
       run.phase = .resultsPending
     } else {
@@ -300,15 +347,25 @@ extension HostSupervisor {
 
   /// Stops through the runtime; records the first verified stop and the
   /// fixed retention deadline that never moves afterwards.
-  private func stopRunVM(_ run: inout RunStore.Record) {
-    guard let instanceID = run.instanceID, let runtime = run.runtimeID else { return }
+  /// Stops the run's VM. True only once the stop is observed; otherwise the
+  /// run stays `.stopping` and the next reconcile pass retries it.
+  @discardableResult
+  private func stopRunVM(_ run: inout RunStore.Record) -> Bool {
+    guard let instanceID = run.instanceID, let runtime = run.runtimeID else { return false }
     run.phase = .stopping
+    // A stop that is never verified (a crashed VM refusing it) must not hold
+    // the run's retention slot forever: retention also bounds `.stopping`.
+    if run.retentionDeadline == nil {
+      run.retentionDeadline = now.seconds + RunStore.retentionSeconds
+    }
     saveRun(&run, bump: false)
     sessions.revoke(instance: instanceID)
     if (try? native.observe(instanceID, runtime: runtime)) != .stopped {
       try? native.stop(instanceID, runtime: runtime)
     }
-    guard (try? native.observe(instanceID, runtime: runtime)) == .stopped else { return }
+    // An absent VM can no longer run, so it counts as stopped.
+    let observed = try? native.observe(instanceID, runtime: runtime)
+    guard observed == .stopped || observed == .absent else { return false }
     // Re-checked under the admission lock so a concurrent deadline sweep
     // cannot commit the same transition twice.
     state.withLock { _ in
@@ -324,6 +381,7 @@ extension HostSupervisor {
       run.firstStopAt = now.seconds
       run.retentionDeadline = now.seconds + RunStore.retentionSeconds
     }
+    return true
   }
 
   private func recover(_ run: inout RunStore.Record) {
@@ -334,9 +392,8 @@ extension HostSupervisor {
       do {
         try native.start(instanceID, runtime: runtime, expiresAt: WireTime(seconds: deadline).date)
       } catch {
-        stopRunVM(&run)
-        run.phase = .stoppedDiskPendingExport
         run.disposition = "recovery_boot_failed"
+        if stopRunVM(&run) { run.phase = .stoppedDiskPendingExport }
         return saveRun(&run, bump: true)
       }
     }
@@ -390,7 +447,9 @@ extension HostSupervisor {
     sessions.revoke(instance: id)
     do {
       switch try native.observe(id, runtime: runtime) {
-      case .running, .unhealthy: try native.stop(id, runtime: runtime)
+      case .running: try native.stop(id, runtime: runtime)
+      // A crashed VM may refuse a stop; deleting it removes it regardless.
+      case .unhealthy: try? native.stop(id, runtime: runtime)
       case .stopped, .absent: break
       }
       try native.delete(id, runtime: runtime, owner: ownerID)
@@ -432,17 +491,17 @@ extension HostSupervisor {
       let observed = run.runtimeID.flatMap { try? native.observe(instanceID, runtime: $0) }
       if !controlled || expired || observed == .stopped {
         // Lease or deadline lost: stop now; no implicit stopped-disk export.
-        stopRunVM(&run)
-        if run.phase == .stopping {
+        if stopRunVM(&run) {
           run.phase = run.artifact == nil ? .stoppedDiskPendingExport : .resultsPending
           saveRun(&run, bump: true)
         }
       }
     case .stopping:
-      stopRunVM(&run)
-      if run.phase == .stopping {
+      if stopRunVM(&run) {
         run.phase = run.artifact == nil ? .stoppedDiskPendingExport : .resultsPending
         saveRun(&run, bump: true)
+      } else if let deadline = run.retentionDeadline, now.seconds >= deadline {
+        destroyRun(&run, disposition: "retention_expired", by: run.createdBy)
       }
     case .resultsPending, .stoppedDiskPendingExport, .recovering, .failedWithResources:
       let deadline =
@@ -452,8 +511,7 @@ extension HostSupervisor {
       } else if run.phase == .recovering,
         let recovery = run.recoveryDeadline, now.seconds >= recovery
       {
-        stopRunVM(&run)
-        if run.phase == .stopping {
+        if stopRunVM(&run) {
           run.phase = .stoppedDiskPendingExport
           run.disposition = "export_failed"
           saveRun(&run, bump: true)

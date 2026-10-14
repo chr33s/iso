@@ -13,11 +13,16 @@ package enum ServiceAdoption {
 
   static func path(_ instance: Instance) -> String { instance.directory + "/host-control.json" }
 
-  /// The service identity of an adopted instance, or nil.
-  package static func load(_ instance: Instance) -> InstanceID? {
-    guard let bytes = try? StateStore.readControlFile(path(instance)),
-      let marker = try? JSONDecoder().decode(Marker.self, from: Data(bytes)), marker.schema == 1
-    else { return nil }
+  /// The service identity of an adopted instance, or nil when there is no
+  /// marker. A marker that cannot be read or decoded is an error, never nil:
+  /// nil would let a direct `iso` command mutate a service-managed instance.
+  package static func load(_ instance: Instance) throws(HostError) -> InstanceID? {
+    guard let bytes = try StateStore.readControlFile(path(instance)) else { return nil }
+    let marker = try StateStore.decode(Marker.self, bytes, path: path(instance))
+    guard marker.schema == 1 else {
+      throw HostError(
+        "unsupported host-control marker schema \(marker.schema) at \(path(instance))")
+    }
     return marker.instanceID
   }
 
@@ -96,7 +101,7 @@ package enum HostMigration {
       diagnostics.warn("Skipping unreadable instance \(path): \(error)")
     }
     for instance in instances
-    where !instance.name.rawValue.hasPrefix("hc-") && ServiceAdoption.load(instance) == nil {
+    where try !instance.name.rawValue.hasPrefix("hc-") && ServiceAdoption.load(instance) == nil {
       let journal = try? Journal.loadIfPresent(instance)
       let sidecar = try? MachineSidecar.loadIfPresent(instance)
       legacy.append(
@@ -213,7 +218,7 @@ package enum HostMigration {
       guard let instance = instances.first(where: { $0.name == adoption.name }) else {
         throw HostControlError(.migrationRequired, "instance '\(adoption.name)' disappeared")
       }
-      if let existing = ServiceAdoption.load(instance) {
+      if let existing = try ServiceAdoption.load(instance) {
         guard existing == adoption.instanceID else {
           throw HostControlError(
             .migrationRequired, "instance '\(adoption.name)' was adopted under another identity")
@@ -279,7 +284,7 @@ package enum HostMigration {
         host: .local, hostID: installation.hostID, ownerID: installation.ownerID,
         instanceID: adoption.instanceID, runtimeID: adoption.runtimeID, guestOS: .linux,
         name: instance.name, policyHash: spec.policyHash, createdBy: operation,
-        lastState: ObservedState.stopped.rawValue, lastObservedAt: nil))
+        lastState: .stopped, lastObservedAt: nil))
     // The marker is written last: until then the legacy path still owns it.
     try ServiceAdoption.write(instance, adoption.instanceID)
   }
@@ -288,7 +293,16 @@ package enum HostMigration {
 
   /// Undoes a prepared, not yet active migration under the same locks.
   /// After activation there is no automatic rewind (forward-fix only).
-  package static func rollback(config: IsoConfig) throws {
+  /// `waitingForService` bounds the wait for a just-stopped service to
+  /// release its ownership lock.
+  /// Whether rollback should remove `instance`'s marker: it names this
+  /// adoption, or it is unreadable on a name the prepared record lists (left
+  /// in place, it would fence an instance no service manages).
+  static func markerIsOurs(_ instance: Instance, _ id: InstanceID) -> Bool {
+    do { return try ServiceAdoption.load(instance) == id } catch { return true }
+  }
+
+  package static func rollback(config: IsoConfig, waitingForService: Duration = .zero) throws {
     guard var record = try loadRecord(config) else {
       throw HostError("no host-control migration is prepared")
     }
@@ -298,7 +312,13 @@ package enum HostMigration {
       )
     }
     let store = try OperationStore(root: HostService.root(config))
-    guard let probe = try FileLock.attempt(path: store.serviceLockPath) else {
+    let deadline = ContinuousClock.now + waitingForService
+    var acquired = try FileLock.attempt(path: store.serviceLockPath)
+    while acquired == nil, ContinuousClock.now < deadline {
+      Thread.sleep(forTimeInterval: 0.1)
+      acquired = try FileLock.attempt(path: store.serviceLockPath)
+    }
+    guard let probe = acquired else {
       throw HostError("stop the host service before rolling back")
     }
     defer { probe.release() }
@@ -307,7 +327,7 @@ package enum HostMigration {
     let instances = try InstanceStore.list(config, skipped: { _, _ in })
     for adoption in record.adoptions {
       if let instance = instances.first(where: { $0.name == adoption.name }),
-        ServiceAdoption.load(instance) == adoption.instanceID
+        Self.markerIsOurs(instance, adoption.instanceID)
       {
         ServiceAdoption.remove(instance)
       }

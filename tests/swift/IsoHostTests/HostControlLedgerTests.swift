@@ -344,6 +344,288 @@ import Testing
     #expect(try VMObservation(wire: f.call(.vmInspect(instance)).get()).state == .stopped)
   }
 
+  @Test func aFailedBootIsNeverHandedOutByALaterReconcile() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    // The boot happens but fails its checks, and the VM will not stop yet.
+    f.native.injectAfterEffect("start", .failed("isolation gate refused"))
+    f.native.set { $0.stopRefused = true }
+    let start = try f.receipt(
+      .vmStart(instance, expectedGeneration: 1, ttlSeconds: 600, policy: try f.spec().policyHash))
+    f.supervisor.runPending()
+    #expect(try f.operation(start.operationID).state == .reconciling)
+    // A restarted supervisor reconciles the still-running boot: it is
+    // stopped and the start fails, never committed as succeeded.
+    f.native.set { $0.stopRefused = false }
+    let restarted = try f.restarted()
+    restarted.supervisor.runPending()
+    #expect(try restarted.operation(start.operationID).state == .failed)
+    #expect(f.native.calls("start") == 1)
+    #expect(f.native.vm(instance.runtimeID) == .stopped)
+  }
+
+  @Test func aRefusedCreateIsNeverCommittedByALaterReconcile() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    f.native.inject("create", .uncertain("reply lost"))
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    // The record says the create was refused (the cleanup was interrupted),
+    // and a partial VM exists.
+    var record = try #require(try f.supervisor.store.loadOperation(created.operationID))
+    record.substep = "create_failed"
+    try f.supervisor.store.saveOperation(record)
+    f.native.set { $0.vms[instance.runtimeID] = .stopped }
+    f.supervisor.runPending()
+    #expect(try f.operation(created.operationID).state == .failed)
+    #expect(f.native.calls("create") == 1)
+  }
+
+  @Test func anUnhealthyBootIsAFailedStartNotAWait() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    f.native.set { $0.unhealthyAfterBoot = true }
+    let start = try f.receipt(
+      .vmStart(instance, expectedGeneration: 1, ttlSeconds: 600, policy: try f.spec().policyHash))
+    f.supervisor.runPending()
+    #expect(try f.operation(start.operationID).state == .failed)
+    #expect(f.native.vm(instance.runtimeID) == .stopped)
+    #expect(try VMObservation(wire: f.call(.vmInspect(instance)).get()).state == .stopped)
+  }
+
+  @Test func destroySupersedesAnOperationStuckOnACrashedVM() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    // A crashed boot that the runtime cannot stop keeps the start reconciling.
+    f.native.set {
+      $0.unhealthyAfterBoot = true
+      $0.stopRefused = true
+    }
+    let start = try f.receipt(
+      .vmStart(instance, expectedGeneration: 1, ttlSeconds: 600, policy: try f.spec().policyHash))
+    f.supervisor.runPending()
+    #expect(try f.operation(start.operationID).state == .reconciling)
+    // A stop still waits behind it; a stale destroy changes nothing.
+    #expect(throws: HostControlError.self) {
+      try f.receipt(.vmStop(instance, expectedGeneration: 1))
+    }
+    #expect(throws: HostControlError.self) {
+      try f.receipt(.vmDestroy(instance, expectedGeneration: 7))
+    }
+    #expect(try f.operation(start.operationID).state == .reconciling)
+    // A current destroy supersedes the stuck start and removes the VM.
+    let destroy = try f.receipt(.vmDestroy(instance, expectedGeneration: 1))
+    #expect(destroy.disposition == .accepted)
+    #expect(try f.operation(start.operationID).state == .failed)
+    // The superseded operation's ledger slot is released with it.
+    #expect(!f.supervisor.store.hasReservation(.finalize(start.operationID)))
+    f.supervisor.runPending()
+    #expect(try f.operation(destroy.operationID).state == .succeeded)
+    #expect(f.native.vm(instance.runtimeID) == nil)
+    #expect(try VMObservation(wire: f.call(.vmInspect(instance)).get()).state == .destroyed)
+  }
+
+  @Test func anAdmissionWhoseOperationWasNotWrittenNeverReportsSuccess() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    let start = HostRequestBody.vmStart(
+      instance, expectedGeneration: 1, ttlSeconds: 600, policy: try f.spec().policyHash)
+    let op = HostOperationID.generate()
+    // The instance write succeeds, then the operation write fails.
+    let operations = f.supervisor.store.operationsDirectory
+    #expect(chmod(operations, 0o500) == 0)
+    #expect(throws: HostControlError.self) { try f.receipt(start, operation: op) }
+    #expect(chmod(operations, 0o700) == 0)
+    #expect(try f.supervisor.store.loadOperation(op) == nil)
+    f.supervisor.runPending()
+    #expect(f.native.calls("start") == 0)
+    // The unaccepted start holds nothing: the same id is admitted afresh.
+    #expect(try f.supervisor.store.loadInstance(instance.instanceID)?.activeOperation == nil)
+    let retried = try f.receipt(start, operation: op)
+    #expect(retried.disposition == .accepted)
+    f.supervisor.runPending()
+    #expect(try f.operation(op).state == .succeeded)
+    #expect(f.native.calls("start") == 1)
+  }
+
+  @Test func aFailedInstanceWriteLeavesNoAcceptedOperation() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    let op = HostOperationID.generate()
+    let instances = f.supervisor.store.instancesDirectory
+    #expect(chmod(instances, 0o500) == 0)
+    #expect(throws: HostControlError.self) {
+      try f.receipt(
+        .vmStart(instance, expectedGeneration: 1, ttlSeconds: 600, policy: try f.spec().policyHash),
+        operation: op)
+    }
+    #expect(chmod(instances, 0o700) == 0)
+    // The operation is the commit point: it was never written, so nothing
+    // can later report this start as succeeded without booting.
+    #expect(try f.supervisor.store.loadOperation(op) == nil)
+    f.supervisor.runPending()
+    #expect(f.native.calls("start") == 0)
+  }
+
+  @Test func aCreateWhoseOperationWasNotWrittenLeavesNoInstance() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let operations = f.supervisor.store.operationsDirectory
+    try FileManager.default.createDirectory(atPath: operations, withIntermediateDirectories: true)
+    #expect(chmod(operations, 0o500) == 0)
+    #expect(throws: HostControlError.self) { try f.receipt(.vmCreate(f.spec())) }
+    #expect(chmod(operations, 0o700) == 0)
+    #expect(!f.supervisor.store.instanceIDs().isEmpty)
+    f.supervisor.runPending()
+    #expect(f.supervisor.store.instanceIDs().isEmpty)
+    #expect(f.native.calls("create") == 0)
+  }
+
+  @Test func aPointerToATerminalOperationHoldsNothing() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    // A crash inside a supersede: the old operation is terminal, the
+    // instance still points at it.
+    let old = try #require(try f.supervisor.store.loadOperation(created.operationID))
+    var record = try #require(try f.supervisor.store.loadInstance(instance.instanceID))
+    record.activeOperation = old.operationID
+    try f.supervisor.store.saveInstance(record)
+    let start = try f.receipt(
+      .vmStart(instance, expectedGeneration: 1, ttlSeconds: 600, policy: try f.spec().policyHash))
+    #expect(start.disposition == .accepted)
+    f.supervisor.runPending()
+    #expect(try f.operation(start.operationID).state == .succeeded)
+  }
+
+  @Test func aRetriedCreateReplacesItsHalfWrittenAttempt() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let op = HostOperationID.generate()
+    let operations = f.supervisor.store.operationsDirectory
+    try FileManager.default.createDirectory(atPath: operations, withIntermediateDirectories: true)
+    #expect(chmod(operations, 0o500) == 0)
+    #expect(throws: HostControlError.self) { try f.receipt(.vmCreate(f.spec()), operation: op) }
+    #expect(chmod(operations, 0o700) == 0)
+    #expect(f.supervisor.store.instanceIDs().count == 1)
+    // Retried with the same id before any repair pass: one instance remains.
+    let retried = try f.receipt(.vmCreate(f.spec()), operation: op)
+    #expect(retried.disposition == .accepted)
+    #expect(f.supervisor.store.instanceIDs() == [try #require(retried.instance).instanceID])
+  }
+
+  @Test(arguments: ["stop", "destroy", "maintenance"])
+  func aFailedInstanceWriteAdmitsNoCleanupOrMaintenance(kind: String) throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let transport: HostTransportKind = kind == "maintenance" ? .local : .ssh
+    let instance: QualifiedInstance
+    let generation: UInt64
+    if kind == "stop" {
+      let (running, observation) = try f.running()
+      instance = running
+      generation = observation.generation
+    } else {
+      let created = try f.receipt(.vmCreate(f.spec()), transport: transport)
+      f.supervisor.runPending()
+      instance = try #require(created.instance)
+      generation = 1
+    }
+    let body: HostRequestBody =
+      switch kind {
+      case "stop": .vmStop(instance, expectedGeneration: generation)
+      case "destroy": .vmDestroy(instance, expectedGeneration: generation)
+      default:
+        .maintenance(
+          instance, expectedGeneration: generation, .resize(cpus: 4, memoryMiB: nil, diskGiB: 32))
+      }
+    let op = HostOperationID.generate()
+    let calls = ["stop": "stop", "destroy": "delete", "maintenance": "maintain"][kind]!
+    let before = f.native.calls(calls)
+    let instances = f.supervisor.store.instancesDirectory
+    #expect(chmod(instances, 0o500) == 0)
+    #expect(throws: HostControlError.self) {
+      try f.receipt(body, operation: op, transport: transport)
+    }
+    #expect(chmod(instances, 0o700) == 0)
+    // The operation is the commit point: never written, so nothing later
+    // reports it done without acting.
+    #expect(try f.supervisor.store.loadOperation(op) == nil)
+    f.supervisor.runPending()
+    #expect(f.native.calls(calls) == before)
+    #expect(f.native.vm(instance.runtimeID) != nil)
+  }
+
+  @Test func anUnhealthyCreatedVMIsAFailedCreateAndDestroyable() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    f.native.set { $0.unhealthyAfterCreate = true }
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    #expect(try f.operation(created.operationID).state == .failed)
+    #expect(f.native.vm(instance.runtimeID) == .stopped)
+    let destroy = try f.receipt(.vmDestroy(instance, expectedGeneration: 1))
+    f.supervisor.runPending()
+    #expect(try f.operation(destroy.operationID).state == .succeeded)
+    #expect(f.native.vm(instance.runtimeID) == nil)
+  }
+
+  @Test func aCreateRefusedAfterItsEffectIsFailedByTheReconcile() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    // The runtime made a running VM but reported failure, and it will not
+    // stop yet: the create must stay reconciling, then fail.
+    f.native.set {
+      $0.createdRunning = true
+      $0.stopRefused = true
+    }
+    f.native.injectAfterEffect("create", .failed("create refused"))
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    #expect(try f.operation(created.operationID).state == .reconciling)
+    f.native.set { $0.stopRefused = false }
+    let restarted = try f.restarted()
+    restarted.supervisor.runPending()
+    #expect(try restarted.operation(created.operationID).state == .failed)
+    #expect(f.native.calls("create") == 1)
+    #expect(f.native.vm(try #require(created.instance).runtimeID) == .stopped)
+  }
+
+  @Test func repairLeavesAnInstanceWhoseOperationCannotBeRead() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    f.native.inject("create", .uncertain("reply lost"))
+    let created = try f.receipt(.vmCreate(f.spec()))
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    // Unreadable is not missing: a live create must never be discarded.
+    let path = f.supervisor.store.operationPath(created.operationID)
+    #expect(chmod(path, 0o000) == 0)
+    f.supervisor.repairUnacceptedAdmissions()
+    #expect(chmod(path, 0o600) == 0)
+    #expect(try f.supervisor.store.loadInstance(instance.instanceID) != nil)
+    #expect(f.supervisor.store.hasReservation(.destroy(instance.instanceID)))
+  }
+
   @Test func uncertainStopStaysReconcilingUntilVerified() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }

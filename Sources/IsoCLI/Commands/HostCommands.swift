@@ -82,7 +82,7 @@ struct HostAdd: ParsableCommand {
     commandName: "add", abstract: "Enroll a remote host after verifying its identity")
 
   @OptionGroup var global: GlobalOptions
-  @Argument(help: "Host name used with --host") var name: String
+  @Argument(help: "Host name for later `iso host` commands") var name: String
   @Option(help: "ssh_config alias of the host (default: execution.hosts or NAME)") var ssh: String?
   @Option(name: .customLong("agent-path"), help: "Absolute path of iso on the host")
   var agentPath: String?
@@ -323,7 +323,14 @@ struct HostMigrate: ParsableCommand {
       guard target == "local" else { throw HostError("only `iso host migrate local` is supported") }
       let context = try CommandContext.load(global)
       if rollback {
-        try HostMigration.rollback(config: context.config)
+        // A service that could not complete activation holds the lock
+        // rollback needs; while activation is pending it serves no work. Any
+        // other state is refused by rollback itself, with the service left
+        // running.
+        let pending = try HostMigration.loadRecord(context.config)?.state == .prepared
+        if pending { try HostService.stop(config: context.config) }
+        try HostMigration.rollback(
+          config: context.config, waitingForService: pending ? .seconds(10) : .zero)
         context.output.out("Rolled back the prepared migration")
         return
       }
@@ -359,8 +366,14 @@ struct HostMigrate: ParsableCommand {
       }
       output.out(
         "Prepared: \(prepared.adoptions.count) instance(s) to adopt; starting the host service")
-      // The service completes activation under its own ownership lock.
+      // The service completes activation under its own ownership lock, once,
+      // at startup; a service already running when activation failed is
+      // restarted once so the retry runs.
       _ = try HostService.ensureRunning(config: context.config, configPath: global.config)
+      if try HostMigration.loadRecord(context.config)?.state == .prepared {
+        try HostService.stop(config: context.config)
+        _ = try HostService.ensureRunning(config: context.config, configPath: global.config)
+      }
       guard let record = try HostMigration.loadRecord(context.config), record.state == .active
       else {
         throw HostControlError(

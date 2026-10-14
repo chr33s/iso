@@ -79,6 +79,11 @@ package struct RunStore: Sendable {
     try StateStore.writeControlFile(record, to: path(record.runID))
   }
 
+  /// Only for a run whose creation was never accepted (no parent operation).
+  package func remove(_ id: RunID) throws(HostError) {
+    try StateStore.removeIfPresent(path(id))
+  }
+
   package func runIDs() -> [RunID] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
     return names.compactMap { name in

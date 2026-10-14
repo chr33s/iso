@@ -1,8 +1,9 @@
 import IsoCore
 
-/// `execution`: which host runs new VMs (spec 5.1). Only the global
-/// configuration file may set it; `local` is the implicit host and cannot be
-/// redirected. Enrollment identity lives in host state, never here.
+/// `execution`: enrolled remote hosts for `iso host` commands, which each name
+/// their host (spec 5.1). Only the global configuration file may set it;
+/// `local` is the implicit host and cannot be redirected. Enrollment identity
+/// lives in host state, never here.
 package struct ExecutionConfig: Sendable, Equatable {
   package let defaultHost: HostAlias
   package let hosts: [HostAlias: RemoteHostConfig]

@@ -57,7 +57,14 @@ package final class AppleBackend: Sendable {
 
   /// Refuses a direct mutation of a service-managed instance.
   func requireWriter(_ instance: Instance) throws {
-    guard !serviceWriter, let adopted = ServiceAdoption.load(instance) else { return }
+    guard !serviceWriter else { return }
+    let adopted: InstanceID?
+    do { adopted = try ServiceAdoption.load(instance) } catch {
+      throw ContextError(
+        "Instance '\(instance.name)' has an unreadable host-control marker; refusing to change it outside the host service",
+        cause: error)
+    }
+    guard let adopted else { return }
     throw HostError(
       "Instance '\(instance.name)' is managed by the host service (instance \(adopted)); use `iso host vm <start|stop|destroy|resize|commit|restore> local \(instance.name)`"
     )

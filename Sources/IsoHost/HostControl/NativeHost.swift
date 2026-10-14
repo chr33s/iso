@@ -97,7 +97,7 @@ package struct AppleNativeHost: NativeHost {
     let name = Self.instanceName(id)
     do {
       let all = try InstanceStore.list(backend.config, skipped: { _, _ in })
-      return all.first { $0.name == name } ?? all.first { ServiceAdoption.load($0) == id }
+      return all.first { $0.name == name } ?? all.first { (try? ServiceAdoption.load($0)) == id }
     } catch { throw .unavailable("worker instance records are unreadable") }
   }
 

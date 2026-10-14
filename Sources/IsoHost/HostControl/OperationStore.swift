@@ -190,6 +190,12 @@ package struct OperationStore: Sendable {
     try StateStore.removeIfPresent(instancePath(id))
   }
 
+  /// Only for a run child whose run was never accepted: it never executed,
+  /// since a run child executes only from its run's operation.
+  package func removeOperation(_ id: HostOperationID) throws(HostError) {
+    try StateStore.removeIfPresent(operationPath(id))
+  }
+
   // MARK: - Tombstones
 
   package struct Tombstone: Codable, Sendable, Equatable {

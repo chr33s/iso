@@ -24,7 +24,7 @@ package enum NativeState: Sendable, Equatable {
 
 /// The public state vocabulary: `running`/`stopped`/`unhealthy`/`unknown`
 /// keep their `iso.machine/v1` meanings; `destroyed` is a host-control state.
-package enum ObservedState: String, Sendable, CaseIterable {
+package enum ObservedState: String, Codable, Sendable, CaseIterable {
   case running
   case stopped
   case unhealthy

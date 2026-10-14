@@ -37,6 +37,14 @@ final class FakeNativeHost: NativeHost {
     var preparedImages: Set<ImageName> = [.default]
     var builds = 0
     var lastExpiry: Date?
+    /// Every stop fails with no effect until cleared (a VM that will not stop).
+    var stopRefused = false
+    /// The next boot comes up crashed; observed as unhealthy until stopped.
+    var unhealthyAfterBoot = false
+    /// The next create leaves its VM crashed (unhealthy) or running.
+    var unhealthyAfterCreate = false
+    var createdRunning = false
+    var unhealthy: Set<MachineName> = []
   }
 
   let state = Mutex(State())
@@ -70,6 +78,7 @@ final class FakeNativeHost: NativeHost {
 
   func observe(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) -> NativeState {
     try enter("observe")
+    if state.withLock({ $0.unhealthy.contains(runtime) }) { return .unhealthy("fake crashed") }
     switch vm(runtime) {
     case nil: return .absent
     case .stopped?: return .stopped
@@ -81,7 +90,18 @@ final class FakeNativeHost: NativeHost {
     throws(NativeFailure)
   {
     try enter("create")
-    state.withLock { $0.vms[runtime] = .stopped }
+    state.withLock { state in
+      state.vms[runtime] = .stopped
+      if state.unhealthyAfterCreate {
+        state.unhealthyAfterCreate = false
+        state.unhealthy.insert(runtime)
+      }
+      if state.createdRunning {
+        state.createdRunning = false
+        state.bootCounter += 1
+        state.vms[runtime] = .running(try! BootID("boot-\(state.bootCounter)"))
+      }
+    }
     try leave("create")
   }
 
@@ -91,21 +111,30 @@ final class FakeNativeHost: NativeHost {
       state.bootCounter += 1
       state.vms[runtime] = .running(try! BootID("boot-\(state.bootCounter)"))
       state.lastExpiry = expiresAt
+      if state.unhealthyAfterBoot {
+        state.unhealthyAfterBoot = false
+        state.unhealthy.insert(runtime)
+      }
     }
     try leave("start")
   }
 
   func stop(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) {
     try enter("stop")
+    if state.withLock({ $0.stopRefused }) { throw .failed("stop refused") }
     state.withLock { state in
       if state.vms[runtime] != nil { state.vms[runtime] = .stopped }
+      state.unhealthy.remove(runtime)
     }
     try leave("stop")
   }
 
   func delete(_ instance: InstanceID, runtime: MachineName, owner: OwnerID) throws(NativeFailure) {
     try enter("delete")
-    _ = state.withLock { $0.vms.removeValue(forKey: runtime) }
+    _ = state.withLock { state in
+      state.unhealthy.remove(runtime)
+      return state.vms.removeValue(forKey: runtime)
+    }
     try leave("delete")
   }
 

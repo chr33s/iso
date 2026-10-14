@@ -81,7 +81,7 @@ package struct IsoConfig: Sendable, Equatable {
   /// The preset whose defaults this configuration was decoded with.
   package let securityPreset: SecurityPreset?
   package let editor: EditorConfig
-  /// Execution-host selection; global configuration only.
+  /// Remote execution hosts for `iso host`; global configuration only.
   package let execution: ExecutionConfig
 
   package init(
@@ -510,6 +510,59 @@ extension IsoConfig {
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
       editor: editor, execution: execution)
+  }
+
+  /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
+  /// with any header), which a remote guest must not receive. Sorted names.
+  package var headeredMCPServerNames: [String] {
+    func headered(_ servers: [String: MCPServer]) -> Set<String> {
+      Set(
+        servers.filter { _, server in
+          switch server {
+          case .stdio: false
+          case .http(_, let headers), .sse(_, let headers): !headers.isEmpty
+          }
+        }.keys)
+    }
+    return headered(claude.mcpServers).union(headered(codex.mcpServers)).sorted()
+  }
+
+  /// This command's agents without header-bearing MCP servers (see
+  /// ``headeredMCPServerNames``). Does not rewrite the config file.
+  package func droppingHeaderedMCPServers() -> IsoConfig {
+    func keep(_ servers: [String: MCPServer]) -> [String: MCPServer] {
+      servers.filter { _, server in
+        switch server {
+        case .stdio: true
+        case .http(_, let headers), .sse(_, let headers): headers.isEmpty
+        }
+      }
+    }
+    func agent(_ a: AgentConfig) -> AgentConfig {
+      AgentConfig(
+        apiKey: a.apiKey, envForward: a.envForward, marketplaces: a.marketplaces,
+        plugins: a.plugins, mcpServers: keep(a.mcpServers), configDirectory: a.configDirectory,
+        localModel: a.localModel)
+    }
+    return IsoConfig(
+      dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
+      claude: agent(claude), codex: agent(codex), codexAuth: codexAuth, proxy: proxy,
+      guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
+      securityPreset: securityPreset, editor: editor, execution: execution)
+  }
+
+  /// This command's `proxy.mode` override. Does not rewrite the config file.
+  package func overridingProxyMode(_ mode: ProxyMode) -> IsoConfig {
+    IsoConfig(
+      dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
+      claude: claude, codex: codex, codexAuth: codexAuth,
+      proxy: ProxyConfig(anthropic: proxy.anthropic, openai: proxy.openai, mode: mode),
+      guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
+      securityPreset: securityPreset, editor: editor, execution: execution)
   }
 
   /// This command's egress override. Does not rewrite the config file.

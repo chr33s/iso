@@ -263,14 +263,22 @@ Design and status: [design/local-and-remote-hosts-spec.md](design/local-and-remo
   host key is pinned end to end by the client's ssh (per-session
   `known_hosts`, `GlobalKnownHostsFile /dev/null`, `UpdateHostKeys no`).
 - **Realms.** Client paths, `cmd:`/`vault:` references and provider
-  credentials never enter a host-control request; only `execution` in the
-  global configuration selects a host, and `local` cannot be redefined. Remote
+  credentials never enter a host-control request; each `iso host` command
+  names its host explicitly (`execution` only supplies enrollment defaults),
+  and `local` cannot be redefined. Remote
   boots always have a finite deadline (default 8 h, at most 24 h) enforced by
   the worker's runtime owner and its own sweep.
 - **Client broker.** Remote agents resolve provider credentials on the
   client into the confined `iso-proxy`, exposed to the guest only by a
   reverse tunnel inside the relayed route; no credential is sent to the host.
-  For filtered-egress VMs the grant carries the worker's natively proven boot
+  Remote agents always run as `proxy.mode = "required"`, so no recognized
+  provider variable and no Codex `auth.json` is staged into the remote guest,
+  and `proxy.mode = "off"` refuses them. MCP servers iso configures with
+  headers (values resolved on the client) are not configured on a remote
+  guest; a client's own `~/.codex/config.toml`, including any literal values
+  in it, is copied as it is for a local VM. Remote Codex
+  reaches the client proxy with its capability token in `ISO_LOCAL_API_KEY`,
+  which opens only that proxy, through the relay. For filtered-egress VMs the grant carries the worker's natively proven boot
   policy and the client binds its signed guest-path readiness check to it;
   renewal re-checks the worker's proof and closes the session (and its
   relays) when it fails. There is no unproven fallback.

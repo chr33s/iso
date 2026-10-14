@@ -130,7 +130,7 @@ struct HostUp: ParsableCommand {
         ?? InstanceName(Instance.sanitizedBasename((project as NSString).lastPathComponent))
       let store = ClientBindingStore(config: env.config)
       var binding = try store.load(remote.enrollment.hostID, instanceName)
-      if binding == nil || binding?.lastState == ObservedState.destroyed.rawValue {
+      if binding == nil || binding?.lastState == .destroyed {
         binding = try create(env, remote, instanceName, store)
       }
       guard let binding else { throw HostError("no binding for \(instanceName)") }
@@ -191,7 +191,7 @@ struct HostUp: ParsableCommand {
       host: remote.enrollment.alias, hostID: instance.hostID, ownerID: instance.ownerID,
       instanceID: instance.instanceID, runtimeID: instance.runtimeID, guestOS: instance.guestOS,
       name: instanceName, policyHash: spec.policyHash, createdBy: id,
-      lastState: ObservedState.stopped.rawValue, lastObservedAt: receipt.completedAt?.seconds)
+      lastState: .stopped, lastObservedAt: receipt.completedAt?.seconds)
     try store.save(created)
     env.output.out("Created \(instanceName) on \(remote.enrollment.alias)")
     return created

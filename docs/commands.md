@@ -1032,13 +1032,13 @@ remote Mac needs `iso setup` and the same `iso` build at the enrolled path.
 | `iso host disable NAME` / `enable NAME` / `remove NAME` | Refuse new work (observation and cleanup still work) / allow it / forget the enrollment (remote VMs untouched) |
 | `iso host image HOST [--image NAME] [--profile P]… [--rebuild]` | Build or confirm a Linux image on the host from the host's own build context and profile definitions; `vm create` requires it |
 | `iso host vm create HOST NAME [--image --cpus --memory-mib --disk-gib --egress]` | Create a stopped Linux VM; prints the durable operation id |
-| `iso host vm start HOST NAME [--ttl 8h]` / `stop` / `destroy` | Lifecycle with verified native state; `--operation-id ID` retries the same operation after a lost reply |
+| `iso host vm start HOST NAME [--ttl 8h]` / `stop` / `destroy` | Lifecycle with verified native state; `--operation-id ID` retries the same operation after a lost reply. A start whose boot is unhealthy fails and is stopped; `destroy` also ends an operation left reconciling (for example on a crashed VM) |
 | `iso host vm list HOST` / `inspect HOST NAME` | Fresh observations; an unreachable host reports `unknown`, never `stopped` |
 | `iso host shell HOST NAME [-- CMD…]` | Open an access session and ssh through the host's owned relay with the guest key pinned |
 | `iso host session HOST NAME [--detach\|--stop]` | Hold a renewed session and print an `ssh -F …` line; `--detach` keeps a coordinator after the command exits, which other `iso host` commands reuse |
 | `iso host up HOST [PATH] [--name --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project |
 | `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir] [--apply]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host) |
-| `iso host agent HOST NAME claude\|codex [-- ARGS]` | Run an agent in the VM; provider credentials stay in this client's confined proxy, reached through the relay |
+| `iso host agent HOST NAME claude\|codex [-- ARGS]` | Run an agent in the VM; provider credentials stay in this client's confined proxy, reached through the relay. The agent always runs as `proxy.mode = "required"` (recognized provider variables are withheld and Codex `auth.json` is not staged), is refused under `proxy.mode = "off"`, and does not get MCP servers whose headers are resolved on this client |
 | `iso host editor HOST NAME code\|zed` | A sandboxed editor through the relay |
 | `iso host forward HOST NAME LOCAL[:GUEST]…` | Client-loopback forwards that end with the session |
 | `iso host run HOST [--dir] -- CMD…` / `run-results HOST RUN [--recover\|--discard]` | A disposable run: export `~/iso-results` before stop, download and verify, then acknowledge |
@@ -1060,13 +1060,14 @@ guest command or path; requests arrive on stdin.
 ### `update`
 
 Replace the running isolate binary with a release from `github.com/chr33s/iso`.
-Release tags come from `main`. The updater verifies the platform tarball's
-SHA-256 and, when `gh` is installed, its repository build-provenance attestation.
+Release tags come from `main`. The updater requires a maintainer signature on
+the release's `SHA256SUMS` (`SHA256SUMS.sig`), verifies the platform tarball's
+SHA-256 against it and, when `gh` is installed, its repository build-provenance
+attestation.
 The updater installs the bundled `iso-sandbox`, `iso-proxy`, `iso-egress` and
 `iso-macos-helper` before replacing the host. Each file replacement is atomic; the set of files is not a single
 transaction. If a later replacement fails, rerun the installer for the same
 release to restore a matching set. Missing companions are rejected before replacement.
-Until a fork release is published and verified, rebuild from source.
 
 No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `iso update` uses it, which helps avoid GitHub API rate limits.
 

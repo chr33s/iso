@@ -17,7 +17,7 @@ import Testing
       ownerID: try OwnerID(String(repeating: "ab", count: 16)), instanceID: .generate(),
       runtimeID: try MachineName("iso-abababab-0011223344556677"), guestOS: .linux,
       name: try InstanceName("proj"), policyHash: HostWire.sha256([]), createdBy: .generate(),
-      lastState: "running", lastObservedAt: 1_800_000_000)
+      lastState: .running, lastObservedAt: 1_800_000_000)
     let row = try object(MachineInstance(.unreachable(binding)))
     #expect(row["name"] as? String == "proj")
     #expect(row["state"] as? String == "unknown")

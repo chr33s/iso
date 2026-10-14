@@ -198,6 +198,105 @@ import Testing
     try RunObservation(wire: f.call(.runInspect(run)).get())
   }
 
+  @Test func resultsArePublishedOnlyAfterAVerifiedStop() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let run = try create(f)
+    var state = try inspect(f, run)
+    let instance = try #require(state.instanceID)
+    let runtime = try #require(try f.supervisor.store.loadInstance(instance)?.runtimeID)
+    // The stop fails and the VM keeps running: nothing may be published.
+    f.native.set { $0.stopRefused = true }
+    _ = try f.receipt(.runComplete(run: run, expectedGeneration: state.generation, exitStatus: 0))
+    f.supervisor.runPending()
+    state = try inspect(f, run)
+    #expect(state.phase == .stopping)
+    #expect(state.artifact != nil)
+    #expect(f.native.vm(runtime) != .stopped)
+    // Once the stop works, the next pass publishes with a retention deadline.
+    f.native.set { $0.stopRefused = false }
+    f.supervisor.runPending()
+    state = try inspect(f, run)
+    #expect(state.phase == .resultsPending)
+    #expect(state.retentionDeadline != nil)
+    #expect(f.native.vm(runtime) == .stopped)
+  }
+
+  @Test func aRunWhoseVMNeverStopsIsDestroyedWhenRetentionExpires() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let run = try create(f)
+    var state = try inspect(f, run)
+    let instance = try #require(state.instanceID)
+    let runtime = try #require(try f.supervisor.store.loadInstance(instance)?.runtimeID)
+    // The VM crashed and refuses every stop: the run cannot leave .stopping.
+    f.native.set {
+      $0.unhealthy.insert(runtime)
+      $0.stopRefused = true
+    }
+    _ = try f.receipt(.runComplete(run: run, expectedGeneration: state.generation, exitStatus: 0))
+    f.supervisor.runPending()
+    state = try inspect(f, run)
+    #expect(state.phase == .stopping)
+    // Retention still bounds it: the run and its VM are destroyed, freeing the slot.
+    f.clock.advance(.seconds(Int64(RunStore.retentionSeconds) + 1))
+    f.supervisor.runPending()
+    state = try inspect(f, run)
+    #expect(state.phase == .destroyed)
+    #expect(f.native.vm(runtime) == nil)
+  }
+
+  func runCreate(_ f: SupervisorFixture, _ run: RunID) throws -> OperationReceipt {
+    try f.receipt(
+      .runCreate(
+        run: run, spec: try f.spec(name: "run", egress: .none), outputLimitBytes: 1 << 20,
+        ttlSeconds: 600))
+  }
+
+  @Test func aRunCreateWhoseRunCannotBeWrittenLeavesNothing() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let runsRoot = f.supervisor.runs.root
+    #expect(chmod(runsRoot, 0o500) == 0)
+    #expect(throws: HostControlError.self) { try runCreate(f, RunID.generate()) }
+    #expect(chmod(runsRoot, 0o700) == 0)
+    // The child create was undone with it, and no ledger slot is held.
+    #expect(f.supervisor.store.operationIDs().isEmpty)
+    #expect(f.supervisor.store.usedSlots() == 0)
+    #expect(f.supervisor.store.instanceIDs().isEmpty)
+    #expect(f.supervisor.runs.runIDs().isEmpty)
+  }
+
+  @Test func repairDiscardsARunWhoseParentWasNeverWritten() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let run = RunID.generate()
+    let parent = try runCreate(f, run)
+    // A crash before the parent operation reached disk.
+    unlink(f.supervisor.store.operationPath(parent.operationID))
+    f.supervisor.repairUnacceptedAdmissions()
+    #expect(try f.supervisor.runs.load(run) == nil)
+    #expect(f.supervisor.store.operationIDs().isEmpty)
+    #expect(f.supervisor.store.instanceIDs().isEmpty)
+    #expect(f.native.calls("create") == 0)
+    // The run id is free again.
+    #expect(try runCreate(f, run).disposition == .accepted)
+  }
+
+  @Test func repairDiscardsARunChildWithoutItsRun() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let run = RunID.generate()
+    let parent = try runCreate(f, run)
+    // A crash after the child create, before the run record.
+    unlink(f.supervisor.store.operationPath(parent.operationID))
+    try f.supervisor.runs.remove(run)
+    #expect(f.supervisor.store.operationIDs().count == 1)
+    f.supervisor.repairUnacceptedAdmissions()
+    #expect(f.supervisor.store.operationIDs().isEmpty)
+    #expect(f.supervisor.store.instanceIDs().isEmpty)
+  }
+
   @Test func normalCompletionExportsBeforeStopAndAckDestroys() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }

@@ -124,7 +124,7 @@ import Testing
     }
     #expect(try Owner.load(install.config).isFenced)
     // The legacy path can no longer mutate it; the service can.
-    let adopted = try #require(ServiceAdoption.load(instance))
+    let adopted = try #require(try ServiceAdoption.load(instance))
     #expect(throws: HostError.self) { try install.backend.stopUnproven(instance) }
     let s = try supervisor(install)
     let binding = try #require(
@@ -145,6 +145,29 @@ import Testing
       try OperationReceipt(wire: call(s, .operationGet(start.operationID)).get()).state
         == .succeeded)
     #expect(try VMObservation(wire: call(s, .vmInspect(binding.instance)).get()).state == .running)
+  }
+
+  @Test func anUnreadableAdoptionMarkerStillFencesTheInstance() throws {
+    let install = try FakeInstallation()
+    defer { install.remove() }
+    let instance = try legacy(install, "old")
+    let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
+    let preview = try HostMigration.preview(
+      config: install.config, backend: install.backend, diagnostics: diagnostics)
+    _ = try HostMigration.prepare(config: install.config, preview: preview)
+    try HostMigration.complete(
+      config: install.config, backend: install.backend, diagnostics: diagnostics)
+    #expect(try ServiceAdoption.load(instance) != nil)
+    // A corrupt marker is an error, not "not adopted": the fence holds.
+    let marker = ServiceAdoption.path(instance)
+    try Data("{".utf8).write(to: URL(fileURLWithPath: marker))
+    #expect(chmod(marker, 0o600) == 0)
+    #expect(throws: HostError.self) { try ServiceAdoption.load(instance) }
+    let refusal = #expect(throws: (any Error).self) { try install.backend.stopUnproven(instance) }
+    #expect("\(refusal.map { "\($0)" } ?? "")".contains("unreadable host-control marker"))
+    // Only an absent marker reads as not adopted.
+    ServiceAdoption.remove(instance)
+    #expect(try ServiceAdoption.load(instance) == nil)
   }
 
   @Test func runningOrJournaledInstancesBlockAndRollbackRestores() throws {
@@ -171,10 +194,29 @@ import Testing
       try HostMigration.complete(
         config: install.config, backend: install.backend, diagnostics: diagnostics)
     }
-    #expect(ServiceAdoption.load(instance) == nil)
+    #expect(try ServiceAdoption.load(instance) == nil)
     try HostMigration.rollback(config: install.config)
     #expect(try HostMigration.loadRecord(install.config)?.state == .rolledBack)
     #expect(try !Owner.load(install.config).isFenced)
     try install.backend.stopUnproven(instance)
+  }
+
+  @Test func rollbackWaitsForAStoppingServiceToReleaseItsLock() throws {
+    let install = try FakeInstallation()
+    defer { install.remove() }
+    _ = try legacy(install, "idle")
+    let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
+    let ready = try HostMigration.preview(
+      config: install.config, backend: install.backend, diagnostics: diagnostics)
+    _ = try HostMigration.prepare(config: install.config, preview: ready)
+    // A service that could not complete activation still holds its lock.
+    let store = try OperationStore(root: HostService.root(install.config))
+    let service = try #require(try FileLock.attempt(path: store.serviceLockPath))
+    #expect(throws: HostError.self) { try HostMigration.rollback(config: install.config) }
+    #expect(try HostMigration.loadRecord(install.config)?.state == .prepared)
+    // It exits shortly after being stopped; the rollback waits for that.
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { service.release() }
+    try HostMigration.rollback(config: install.config, waitingForService: .seconds(5))
+    #expect(try HostMigration.loadRecord(install.config)?.state == .rolledBack)
   }
 }

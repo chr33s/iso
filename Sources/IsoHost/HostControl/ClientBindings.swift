@@ -17,13 +17,14 @@ package struct ClientBinding: Codable, Sendable, Equatable {
   package let name: InstanceName
   package let policyHash: SHA256Hex
   package let createdBy: HostOperationID
-  package var lastState: String?
+  /// The last observed VM state; never an operation's state.
+  package var lastState: ObservedState?
   package var lastObservedAt: UInt64?
 
   package init(
     host: HostAlias, hostID: HostID, ownerID: OwnerID, instanceID: InstanceID,
     runtimeID: MachineName, guestOS: GuestOS, name: InstanceName, policyHash: SHA256Hex,
-    createdBy: HostOperationID, lastState: String?, lastObservedAt: UInt64?
+    createdBy: HostOperationID, lastState: ObservedState?, lastObservedAt: UInt64?
   ) {
     self.host = host
     self.hostID = hostID
@@ -42,6 +43,25 @@ package struct ClientBinding: Codable, Sendable, Equatable {
     QualifiedInstance(
       hostID: hostID, ownerID: ownerID, instanceID: instanceID, runtimeID: runtimeID,
       guestOS: guestOS)
+  }
+
+  /// Earlier builds could record an operation state ("succeeded") here; such
+  /// a value is not an observation and reads as none.
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    host = try c.decode(HostAlias.self, forKey: .host)
+    hostID = try c.decode(HostID.self, forKey: .hostID)
+    ownerID = try c.decode(OwnerID.self, forKey: .ownerID)
+    instanceID = try c.decode(InstanceID.self, forKey: .instanceID)
+    runtimeID = try c.decode(MachineName.self, forKey: .runtimeID)
+    guestOS = try c.decode(GuestOS.self, forKey: .guestOS)
+    name = try c.decode(InstanceName.self, forKey: .name)
+    policyHash = try c.decode(SHA256Hex.self, forKey: .policyHash)
+    createdBy = try c.decode(HostOperationID.self, forKey: .createdBy)
+    lastState = try c.decodeIfPresent(String.self, forKey: .lastState).flatMap {
+      ObservedState(rawValue: $0)
+    }
+    lastObservedAt = try c.decodeIfPresent(UInt64.self, forKey: .lastObservedAt)
   }
 }
 
@@ -541,6 +561,54 @@ package enum RemoteAgent: String, Sendable {
 
   /// Prepares the agent through the relayed route and runs it attached;
   /// returns the remote command's status. Proxies stop when it ends.
+  /// A remote guest reaches provider credentials only through this client's
+  /// proxy: `required` withholds every provider variable and Codex's
+  /// `auth.json`, which `auto` copies when a provider has no proxy. `off`
+  /// starts no proxy, so a remote agent would have no credential path.
+  package static func brokeredConfig(_ config: IsoConfig) throws -> IsoConfig {
+    guard config.proxy.mode != .off else {
+      throw HostError(
+        "proxy.mode = \"off\" starts no credential proxy; remote agents reach provider credentials only through one (set proxy.mode to \"auto\" or \"required\" and run `iso proxy setup`)"
+      )
+    }
+    // MCP header values are resolved on this client; a remote guest never
+    // receives them, so header-bearing servers are not configured there.
+    return config.overridingProxyMode(.required).droppingHeaderedMCPServers()
+  }
+
+  /// What the agent's session forwards: Codex reads the client proxy's
+  /// capability token from `ISO_LOCAL_API_KEY` (its provider's `env_key`), as
+  /// the local session sets it. The token opens only this client's proxy,
+  /// reached through the relay; it is guest-visible by design.
+  func agentEnvironment(_ shadow: Instance) -> EnvForward {
+    var env = EnvForward()
+    if self == .codex, let token = ProxyLauncher.capabilityToken(shadow, provider: .openai) {
+      env.set(ModelRouting.codexLocalEnvKey, token)
+    }
+    return env
+  }
+
+  /// The configuration a remote agent's broker and bootstrap run under: the
+  /// proxy rule of ``brokeredConfig(_:)`` plus the VM's own egress. For a
+  /// filtered VM the worker's proven boot policy (from the grant) binds the
+  /// broker's signed readiness check, which runs through the relayed guest
+  /// path; without that policy the agent is refused rather than started
+  /// unproven.
+  package static func agentConfig(
+    _ config: IsoConfig, filteredPolicy: FilteredGrantPolicy?, vmEgress: EgressMode?
+  ) throws -> IsoConfig {
+    let brokered = try brokeredConfig(config)
+    if filteredPolicy != nil { return brokered.overridingEgress(.filtered) }
+    guard vmEgress != .filtered else {
+      throw HostError(
+        "FILTERED_BROKER_NOT_READY: the host did not prove filtered egress for this boot")
+    }
+    guard let vmEgress else {
+      throw HostError("the host did not report this VM's egress; refusing to start an agent broker")
+    }
+    return brokered.overridingEgress(vmEgress)
+  }
+
   package func run(
     session: ClientSessionCoordinator, binding: ClientBinding, config: IsoConfig,
     vmEgress: EgressMode?, environment: [String: String], home: String?, diagnostics: Diagnostics,
@@ -552,27 +620,20 @@ package enum RemoteAgent: String, Sendable {
       )
     }
     let shadow = try RemoteWorkspace.shadow(config, binding, ports: true)
-    // The client broker follows the VM's own egress. For a filtered VM the
-    // worker's proven boot policy (from the grant) binds the broker's signed
-    // readiness check, which runs through the relayed guest path; without
-    // that policy the agent is refused rather than started unproven.
-    var effective = config
     unlink(FilteredHandoff.policyPath(shadow))
+    for name in config.headeredMCPServerNames {
+      diagnostics.warn(
+        "MCP server '\(name)' sends headers resolved on this client; it is not configured on the remote VM"
+      )
+    }
+    let config = try Self.agentConfig(
+      config, filteredPolicy: session.grant.filteredPolicy, vmEgress: vmEgress)
     if let policy = session.grant.filteredPolicy {
       try StateStore.writeControlFile(
         FilteredHandoff.BootPolicy(
           bootID: policy.bootID.rawValue, policyHash: policy.policyHash.rawValue),
         to: FilteredHandoff.policyPath(shadow))
-      effective = config.overridingEgress(.filtered)
-    } else if vmEgress == .filtered {
-      throw HostError(
-        "FILTERED_BROKER_NOT_READY: the host did not prove filtered egress for this boot")
-    } else if let vmEgress {
-      effective = config.overridingEgress(vmEgress)
-    } else {
-      throw HostError("the host did not report this VM's egress; refusing to start an agent broker")
     }
-    let config = effective
     let client = SSHClient(environment: environment)
     let resolver = CredentialResolver(environment: environment)
     let bootstrap = AgentBootstrap(
@@ -597,12 +658,15 @@ package enum RemoteAgent: String, Sendable {
     }
     if let failure = session.failure { throw failure }
     guard let ssh = client.sshExecutable() else { throw HostError("ssh is not installed") }
+    let agentEnv = agentEnvironment(shadow)
     let termination = try ProcessRunner().attached(
       .init(
         executable: ssh,
         arguments: InteractiveSSH.arguments(
-          guest, remote: InteractiveSSH.render([binary.rawValue] + arguments)),
-        environment: SSHClient.transportEnvironment(environment), deadline: .seconds(0)),
+          SSHSession(target: target, env: agentEnv),
+          remote: InteractiveSSH.render([binary.rawValue] + arguments)),
+        environment: agentEnv.overlay(SSHClient.transportEnvironment(environment)),
+        deadline: .seconds(0)),
       inheritStdin: true, deadline: nil)
     if case .exited(let code) = termination { return code }
     return 1

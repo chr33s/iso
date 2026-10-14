@@ -95,6 +95,7 @@ package final class HostSupervisor: Sendable {
 
   /// Startup reconciliation (spec 8.3 steps 4–6) and the periodic loops.
   package func start() {
+    repairUnacceptedAdmissions()
     for id in store.operationIDs() {
       guard let record = try? store.loadOperation(id), !record.state.isTerminal else { continue }
       if record.state == .running {
@@ -130,6 +131,7 @@ package final class HostSupervisor: Sendable {
 
   /// Runs queued and nonterminal work synchronously (manual dispatch).
   package func runPending() {
+    repairUnacceptedAdmissions()
     for id in store.operationIDs() {
       guard let record = try? store.loadOperation(id), !record.state.isTerminal else { continue }
       execute(id)
@@ -137,7 +139,79 @@ package final class HostSupervisor: Sendable {
     for id in runs.runIDs() { reconcileRun(id) }
   }
 
+  /// The instance's active operation, or nil when that pointer is stale.
+  /// Admissions write the instance before the operation (the commit point),
+  /// so a crash or failed write between them leaves a pointer to an
+  /// operation that was never accepted, and a crash inside a supersede
+  /// leaves one to a terminal operation; neither holds anything.
+  func liveActiveOperation(_ instance: OperationStore.InstanceRecord) throws(HostControlError)
+    -> HostOperationID?
+  {
+    guard let active = instance.activeOperation, let current = try loadOperation(active),
+      !current.state.isTerminal
+    else { return nil }
+    return active
+  }
+
+  /// Clears stale active-operation pointers (see ``liveActiveOperation(_:)``).
+  /// A `.creating` instance whose create was never accepted is removed: no
+  /// runtime call can have been made, since execution starts only from an
+  /// operation. An operation file that cannot be read is not "missing": that
+  /// instance is left alone.
+  func repairUnacceptedAdmissions() {
+    state.withLock { locked in
+      repairUnacceptedRuns()
+      for id in store.instanceIDs() {
+        guard let snapshot = try? store.loadInstance(id), let active = snapshot.activeOperation,
+          // Executors commit without this lock; an executing operation's
+          // instance is theirs to write.
+          !locked.executing.contains(active)
+        else { continue }
+        let current: OperationStore.OperationRecord?
+        do { current = try store.loadOperation(active) } catch { continue }
+        if let current {
+          // A terminal operation's own commit clears the pointer, except
+          // after a superseded one; a live operation is left to execute.
+          guard current.state.isTerminal else { continue }
+          // Reloaded after the terminal read: executors write the instance
+          // before finishing, so this sees any commit the snapshot missed.
+          guard var instance = try? store.loadInstance(id), instance.activeOperation == active,
+            instance.lifecycle != .creating
+          else { continue }
+          instance.activeOperation = nil
+          try? store.saveInstance(instance)
+          try? store.consume(.finalize(active))
+        } else {
+          // Never accepted: no executor can be writing this instance.
+          var instance = snapshot
+          if instance.lifecycle == .creating, instance.createdBy == active {
+            try? store.removeInstance(id)
+            try? store.consume(.destroy(id))
+          } else {
+            instance.activeOperation = nil
+            try? store.saveInstance(instance)
+          }
+          try? store.consume(.finalize(active))
+        }
+      }
+    }
+  }
+
+  /// Removes a `.creating` instance created by `operation` when that
+  /// operation was never written. Called under the admission lock.
+  private func discardUnacceptedCreate(_ operation: HostOperationID) {
+    for id in store.instanceIDs() {
+      guard let instance = try? store.loadInstance(id), instance.lifecycle == .creating,
+        instance.createdBy == operation, instance.activeOperation == operation
+      else { continue }
+      try? store.removeInstance(id)
+      try? store.consume(.destroy(id))
+      try? store.consume(.finalize(operation))
+    }
+  }
+
   func reconcileAll() {
+    repairUnacceptedAdmissions()
     for id in store.operationIDs() {
       guard let record = try? store.loadOperation(id), !record.state.isTerminal else { continue }
       dispatch(id)
@@ -344,6 +418,9 @@ package final class HostSupervisor: Sendable {
         }
         return raced.receipt(disposition: .existing, instance: qualified(raced))
       }
+      // A retry of an attempt whose operation was never written: its
+      // half-written create, if any, is discarded before this one allocates.
+      discardUnacceptedCreate(operation)
       var record = OperationStore.OperationRecord(
         operationID: operation, method: method.rawValue, digest: digest, params: params,
         transport: transport.rawValue, acceptedAt: now.seconds, state: .accepted, substep: nil,
@@ -363,9 +440,11 @@ package final class HostSupervisor: Sendable {
           &record, instance, generation: generation, ttl: ttl, policy: policy, transport: transport,
           qualification: qualification)
       case .vmStop(let instance, let generation):
-        return try admitCleanup(&record, instance, generation: generation, kind: .stop)
+        return try admitCleanup(
+          &record, instance, generation: generation, kind: .stop, executing: locked.executing)
       case .vmDestroy(let instance, let generation):
-        return try admitCleanup(&record, instance, generation: generation, kind: .destroy)
+        return try admitCleanup(
+          &record, instance, generation: generation, kind: .destroy, executing: locked.executing)
       case .runCreate(let run, let spec, let output, let ttl):
         guard imageReady else { throw imageNotPrepared(spec.image) }
         return try admitRunCreate(
@@ -390,7 +469,7 @@ package final class HostSupervisor: Sendable {
     _ change: Maintenance
   ) throws(HostControlError) -> OperationReceipt {
     var instance = try authoritative(target)
-    if let active = instance.activeOperation { throw busy(active) }
+    if let active = try liveActiveOperation(instance) { throw busy(active) }
     guard instance.generation == generation else { throw generationConflict(instance) }
     guard instance.lifecycle == .stopped else {
       throw HostControlError(
@@ -405,8 +484,9 @@ package final class HostSupervisor: Sendable {
     let updated = instance
     try persist { () throws(HostError) in
       try store.reserve(.finalize(accepted.operationID))
-      try store.saveOperation(accepted)
       try store.saveInstance(updated)
+      // The accepted intent is the commit point; it is written last.
+      try store.saveOperation(accepted)
     }
     return record.receipt(disposition: .accepted, instance: instance.qualified)
   }
@@ -575,7 +655,7 @@ package final class HostSupervisor: Sendable {
     qualification: RuntimeQualification
   ) throws(HostControlError) -> OperationReceipt {
     var instance = try authoritative(target)
-    if let active = instance.activeOperation {
+    if let active = try liveActiveOperation(instance) {
       throw busy(active)
     }
     guard instance.generation == generation else { throw generationConflict(instance) }
@@ -615,8 +695,9 @@ package final class HostSupervisor: Sendable {
     try persist { () throws(HostError) in
       try store.reserve(.stop(updated.instanceID))
       try store.reserve(.finalize(accepted.operationID))
-      try store.saveOperation(accepted)
       try store.saveInstance(updated)
+      // The accepted intent is the commit point; it is written last.
+      try store.saveOperation(accepted)
     }
     return record.receipt(disposition: .accepted, instance: instance.qualified)
   }
@@ -628,20 +709,44 @@ package final class HostSupervisor: Sendable {
 
   /// Stop and destroy use the reservations made when the instance and its
   /// boot were admitted, so they succeed with the ordinary ledger full.
+  /// Called under the admission lock; `executing` is that lock's set.
   private func admitCleanup(
     _ record: inout OperationStore.OperationRecord, _ target: QualifiedInstance, generation: UInt64,
-    kind: CleanupKind
+    kind: CleanupKind, executing: Set<HostOperationID>
   ) throws(HostControlError) -> OperationReceipt {
     if (try? store.loadTombstone(target.instanceID)) != nil, kind == .destroy {
       return try unchanged(record, target)
     }
     var instance = try authoritative(target)
-    if let active = instance.activeOperation, let current = try loadOperation(active) {
+    var superseded: OperationStore.OperationRecord?
+    if let active = instance.activeOperation, let current = try loadOperation(active),
+      !current.state.isTerminal
+    {
       let method = HostMethod(rawValue: current.method)
       let coalesces =
         method == .vmDestroy || (method == .vmStop && kind == .stop)
-      guard coalesces else { throw busy(active) }
-      return current.receipt(disposition: .existingCleanup, instance: instance.qualified)
+      if coalesces {
+        return current.receipt(disposition: .existingCleanup, instance: instance.qualified)
+      }
+      // A destroy supersedes an operation left reconciling (a crashed VM can
+      // keep one there indefinitely), unless it is executing right now: an
+      // execution claims `executing` under this lock before loading its
+      // record, so a later one finds the record terminal. A run's child
+      // operation is governed by its run.
+      guard kind == .destroy, current.state == .reconciling, !executing.contains(active),
+        current.runID == nil
+      else { throw busy(active) }
+      // Checked before superseding, so a refused destroy changes nothing.
+      guard instance.generation == generation else { throw generationConflict(instance) }
+      // Written first inside the destroy's own persist below: if that write
+      // fails nothing changes, and a crash after it leaves a pointer to a
+      // terminal operation, which holds nothing.
+      var failed = current
+      failed.state = .failed
+      failed.outcome = "superseded by vm.destroy \(record.operationID)"
+      failed.completedAt = now.seconds
+      superseded = failed
+      instance.activeOperation = nil
     }
     guard instance.generation == generation else { throw generationConflict(instance) }
     if kind == .stop {
@@ -661,17 +766,26 @@ package final class HostSupervisor: Sendable {
     let updated = instance
     if store.hasReservation(reservation) {
       try persist { () throws(HostError) in
+        if let superseded {
+          try store.saveOperation(superseded)
+          try store.consume(.finalize(superseded.operationID))
+        }
         try store.consume(reservation)
         try store.reserve(.finalize(accepted.operationID))
-        try store.saveOperation(accepted)
         try store.saveInstance(updated)
+        // The accepted intent is the commit point; it is written last.
+        try store.saveOperation(accepted)
       }
     } else {
       try requireCapacity(2)
       try persist { () throws(HostError) in
+        if let superseded {
+          try store.saveOperation(superseded)
+          try store.consume(.finalize(superseded.operationID))
+        }
         try store.reserve(.finalize(accepted.operationID))
-        try store.saveOperation(accepted)
         try store.saveInstance(updated)
+        try store.saveOperation(accepted)
       }
     }
     return record.receipt(disposition: .accepted, instance: instance.qualified)
@@ -789,10 +903,13 @@ package final class HostSupervisor: Sendable {
     }
     guard var record = beginEffect(accepted.operationID, substep: "creating") else { return }
     // Only a persisted "create_requested" means the runtime may have been asked.
-    let requested = record.substep == "create_requested"
+    // "create_failed" records a refused create before any cleanup, so a
+    // reconciling pass can only fail it, never commit it as created.
+    let requested = record.substep == "create_requested" || record.substep == "create_failed"
     do {
       var observed = try native.observe(instanceID, runtime: runtime)
-      var createError: NativeFailure?
+      var createError: NativeFailure? =
+        record.substep == "create_failed" ? .failed("an earlier create attempt failed") : nil
       if observed == .absent && !requested {
         record = markSubstep(record, "create_requested")
         do { try native.create(instanceID, runtime: runtime, spec: spec, owner: ownerID) } catch {
@@ -802,6 +919,7 @@ package final class HostSupervisor: Sendable {
             return reconcileLater(markSubstep(record, "creating"), reason)
           }
           createError = error
+          record = markSubstep(record, "create_failed")
         }
         observed = try native.observe(instanceID, runtime: runtime)
       }
@@ -838,7 +956,15 @@ package final class HostSupervisor: Sendable {
           commitCreated(record, instance, outcome: nil, state: .succeeded)
         }
       case .unhealthy(let reason):
-        reconcileLater(record, reason)
+        // Stopped and committed as failed, so the partial VM can be destroyed.
+        try native.stop(instanceID, runtime: runtime)
+        guard try native.observe(instanceID, runtime: runtime) == .stopped else {
+          return reconcileLater(record, "an unhealthy created VM is not yet stopped: \(reason)")
+        }
+        commitCreated(
+          record, instance,
+          outcome: "create failed; the unhealthy VM (\(reason)) remains for destroy",
+          state: .failed)
       }
     } catch {
       reconcileLater(record, "\(error)")
@@ -882,7 +1008,9 @@ package final class HostSupervisor: Sendable {
         accepted, .succeeded, outcome: nil, generation: instance.generation, boot: instance.bootID)
     }
     guard var record = beginEffect(accepted.operationID, substep: "starting") else { return }
-    let firstAttempt = record.substep != "boot_requested"
+    // "boot_failed" records a refused boot before any cleanup, so a
+    // reconciling pass can only stop and fail it, never hand it out.
+    let firstAttempt = record.substep != "boot_requested" && record.substep != "boot_failed"
     let deadline = record.deadline.map { WireTime(seconds: $0) }
     if let deadline, now >= deadline, firstAttempt {
       instance.activeOperation = nil
@@ -890,7 +1018,8 @@ package final class HostSupervisor: Sendable {
       return finish(record, .failed, outcome: "the boot deadline passed before the VM started")
     }
     do {
-      var startError: NativeFailure?
+      var startError: NativeFailure? =
+        record.substep == "boot_failed" ? .failed("an earlier start attempt failed") : nil
       if firstAttempt {
         record = markSubstep(record, "boot_requested")
         do { try native.start(instanceID, runtime: runtime, expiresAt: deadline?.date) } catch {
@@ -898,6 +1027,7 @@ package final class HostSupervisor: Sendable {
             return reconcileLater(markSubstep(record, "starting"), reason)
           }
           startError = error
+          record = markSubstep(record, "boot_failed")
         }
       }
       // A reconciling start observes; it never boots a second time.
@@ -934,7 +1064,14 @@ package final class HostSupervisor: Sendable {
         try? store.saveInstance(instance)
         finish(record, .failed, outcome: "the runtime object is missing")
       case .unhealthy(let reason):
-        reconcileLater(record, reason)
+        // A crashed or unidentified boot is a failed start, never awaited.
+        try native.stop(instanceID, runtime: runtime)
+        guard try native.observe(instanceID, runtime: runtime) == .stopped else {
+          return reconcileLater(record, "an unhealthy boot is not yet verified stopped: \(reason)")
+        }
+        instance.activeOperation = nil
+        try? store.saveInstance(instance)
+        finish(record, .failed, outcome: "start failed: the boot was unhealthy (\(reason))")
       }
     } catch {
       reconcileLater(record, "\(error)")
