@@ -90,14 +90,15 @@ swift_module() { # name, sources...
 
 link_target() { # target, entrypoint
   xcrun swiftc "${SWIFT_FLAGS[@]}" -I "$BUILD" "$2" \
-    "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoConfiguration.a" "$BUILD/libIsoCore.a" \
-    "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
+    "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoConfiguration.a" "$BUILD/libIsoPolicy.a" \
+    "$BUILD/libIsoCore.a" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
 }
 
 cmd_build() {
   mkdir -p "$BUILD"
   build_libfuzzer
   swift_module IsoCore "$ROOT"/Sources/IsoCore/*.swift
+  swift_module IsoPolicy "$ROOT"/iso-policy/Sources/IsoPolicy/*.swift
   swift_module IsoConfiguration "$ROOT"/Sources/IsoConfiguration/*.swift
   swift_module IsoFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
   local t

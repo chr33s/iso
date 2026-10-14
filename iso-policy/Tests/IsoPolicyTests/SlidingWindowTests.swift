@@ -162,9 +162,11 @@ private func admissions(
     #expect(next >= previous)
     previous = next
   }
-  // Since boot, sleep-inclusive time is never behind awake-only time.
-  #expect(
-    clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) >= clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+  // Since boot, sleep-inclusive time is never behind awake-only time. Awake
+  // time is read first: without sleep the two clocks advance together, so the
+  // later read must be the sleep-inclusive one.
+  let awake = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+  #expect(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) >= awake)
 }
 
 @Test func wallClockIsNotAnInput() throws {
