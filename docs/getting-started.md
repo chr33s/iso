@@ -21,24 +21,23 @@ Linux hosts and macOS 26 are outside this fork’s support scope.
 
 ## Install
 
-Until a verified fork release is published, follow [Build from source](#build-from-source).
-The configured release channel is `chr33s/iso`, built from tagged commits on
-`main`. Its macOS archives install `iso`, `iso-proxy`, `iso-egress`, and
-`iso-sandbox` together; see [Apple prerequisites](backends.md).
-Once the macOS channel has a verified release:
+The release channel is `chr33s/iso`, built from tagged commits on `main`. Its
+macOS archives install `iso`, `iso-proxy`, `iso-egress`, `iso-sandbox` and
+`iso-macos-helper` together; see [Apple prerequisites](backends.md). Install the
+latest release:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 ```
 
-`install.sh` verifies the downloaded tarball's SHA-256 against the release's
-`SHA256SUMS` and, when the [GitHub CLI](https://cli.github.com/) is installed,
-also verifies its Sigstore build-provenance attestation. `iso update` runs the
+`install.sh` verifies the maintainer signature on the release's `SHA256SUMS`
+(`SHA256SUMS.sig`), the downloaded tarball's SHA-256 against it and, when the
+[GitHub CLI](https://cli.github.com/) is installed, its Sigstore
+build-provenance attestation. `iso update` runs the
 same verification, except that it treats the checksum as mandatory and refuses
 to install without it. To verify a tarball by hand, download
 `attestations.jsonl` from the same release and pass `--bundle` (this needs no
-GitHub credential — releases up to v0.5.4 predate the bundle asset and do
-not publish it):
+GitHub credential):
 
 ```sh
 gh attestation verify iso-<version>-<triple>.tar.gz --repo chr33s/iso \
@@ -67,8 +66,8 @@ python3 scripts/build-release.py --release
 ```
 
 This is the one release build entrypoint. It builds `iso` (this package),
-`iso-proxy`, `iso-egress`, and `iso-sandbox` (ad-hoc signed with its
-entitlement) from a staged copy of the checkout and writes
+`iso-proxy`, `iso-egress`, `iso-sandbox` (ad-hoc signed with its entitlement)
+and `iso-macos-helper` from a staged copy of the checkout and writes
 `iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
 `.build/release-archive/`. Add `--test` to run every package's tests first.
 Extract the archive and install its executables in the same directory on
@@ -83,8 +82,8 @@ swift build --force-resolved-versions   # .build/debug/iso
 `iso-sandbox` must still be built and installed with
 `./scripts/build-iso-sandbox.sh`; see
 [Apple backend setup](backends.md#macos--apple-sandbox) for prerequisites.
-Until a verified fork release exists, update by pulling and rebuilding.
-The configured `iso update` channel is `chr33s/iso`.
+A source build updates by pulling and rebuilding; an installed release
+updates with [`iso update`](commands.md#update) from `chr33s/iso`.
 
 ## Configuration
 

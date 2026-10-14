@@ -88,10 +88,11 @@ iso up . --image mac
 ### Remote Macs
 
 Enroll another trusted Apple Silicon Mac over SSH and run a project's VM there.
-Provider credentials stay in this Mac's proxy; see [`iso host`](docs/commands.md#host):
+`--agent-path` is where `iso` is installed on that Mac (`~/.local/bin/iso` with
+the installer); see [`iso host`](docs/commands.md#host):
 
 ```shell
-iso host add build-mac --ssh build-mac --agent-path /usr/local/bin/iso
+iso host add build-mac --ssh build-mac --agent-path /Users/me/.local/bin/iso
 iso host up build-mac .
 ```
 
