@@ -1046,6 +1046,13 @@ remote Mac needs `iso setup` and the same `iso` build at the enrolled path.
 | `iso host operation HOST ID [--cancel]` | Show an accepted operation's receipt, or cancel it before its first effect |
 | `iso host migrate local [--activate\|--rollback]` | Preview; with `--activate`, hand stopped Linux instances to the host service (it completes activation; nothing is stopped). Adopted instances are then managed as `iso host vm … local NAME`; older iso builds refuse the activated root. `--rollback` undoes a migration that has not completed |
 
+The host service runs under launchd with no parent app, so macOS asks for
+Local Network permission for the `iso` binary itself the first time it
+connects to a VM. Until that is allowed (System Settings → Privacy & Security
+→ Local Network), its connections to guests are held back and VM operations
+fail with `no connection attempt completed`. Each locally built binary has its
+own code identity and asks again.
+
 `iso host-agent` (hidden) holds the service's internal entrypoints: `daemon`,
 `serve --stdio`, `relay --stdio` and `connect --descriptor`. They accept no
 guest command or path; requests arrive on stdin.

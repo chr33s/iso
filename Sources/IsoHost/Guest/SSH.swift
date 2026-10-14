@@ -275,11 +275,17 @@ extension SSHClient {
     return directory.hasSuffix("/") ? directory + name : directory + "/" + name
   }
 
+  /// One readiness attempt: `ConnectTimeout` plus authentication headroom.
+  /// A connection the OS holds back never reaches ssh's own timeout, so
+  /// each attempt is cut off here and the next one retried.
+  package static let readinessAttemptDeadline: Duration = .seconds(20)
+
   /// Probe `true` over SSH until it succeeds, backing off 250 ms → 4 s, then
   /// close the multiplexing master so later sessions start clean.
-  package func waitUntilReady(_ target: SSHTarget, timeout: Duration, diagnostics: Diagnostics)
-    throws
-  {
+  package func waitUntilReady(
+    _ target: SSHTarget, timeout: Duration, diagnostics: Diagnostics,
+    attemptDeadline: Duration = Self.readinessAttemptDeadline
+  ) throws {
     guard let ssh = sshExecutable() else {
       throw HostError("Failed to run SSH command: ssh not found on PATH")
     }
@@ -300,18 +306,33 @@ extension SSHClient {
           overflow: .drain))
     }
     defer { closeMaster() }
+    // Whether any attempt ran to completion. ssh's output is guest-influenced
+    // (a server disconnect message), so only this classification is reported.
+    var anyAttemptCompleted = false
     while true {
-      let remaining = timeout - (ContinuousClock.now - start)
       try target.requireHandoff()
-      let probe = try? runner.capture(
-        .init(
-          executable: ssh, arguments: options + [target.address, "true"], environment: environment,
-          deadline: max(remaining, .seconds(15)), outputLimit: 64 << 10, overflow: .drain))
-      if probe?.termination == .exited(0) {
-        diagnostics.log(.info, "SSH is ready")
-        return
+      do {
+        let probe = try runner.capture(
+          .init(
+            executable: ssh, arguments: options + [target.address, "true"],
+            environment: environment, deadline: attemptDeadline, outputLimit: 64 << 10,
+            overflow: .drain))
+        if probe.termination == .exited(0) {
+          diagnostics.log(.info, "SSH is ready")
+          return
+        }
+        anyAttemptCompleted = true
+      } catch .timedOut {
+        // Held back before completing; the next attempt retries.
+      } catch {
+        anyAttemptCompleted = true
       }
       guard ContinuousClock.now - start < timeout else {
+        guard anyAttemptCompleted else {
+          throw HostError(
+            "SSH not ready after \(rustDuration(timeout)): no connection attempt completed within \(rustDuration(attemptDeadline)). If this runs as the iso host service, macOS Local Network privacy may be holding this iso binary's connections; allow it under System Settings → Privacy & Security → Local Network"
+          )
+        }
         throw HostError(
           "SSH not ready after \(rustDuration(timeout)) — sshd may not be running in the guest")
       }

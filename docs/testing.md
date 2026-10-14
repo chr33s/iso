@@ -537,7 +537,10 @@ python3 tests/integration-remote-host.py --remote MAC_ALIAS --agent-path /usr/lo
 `--local --sandbox PATH` runs the same cases through this Mac's own host
 service on a scratch data root (real `iso-sandbox`, real VMs, stub agents),
 plus a push and a staged pull applied offline; it needs a Mac that can create
-vmnet networks and records `blocked` otherwise.
+vmnet networks and records `blocked` otherwise. Every rebuild of `iso` asks
+again for Local Network permission for the service (see
+[commands](commands.md#host)); answer the prompt, or `create` fails with
+`no connection attempt completed`.
 
 It enrolls the remote host, measures hello and SSH setup latency, creates and
 starts a dedicated VM, round-trips a sentinel through the owned relay with the
