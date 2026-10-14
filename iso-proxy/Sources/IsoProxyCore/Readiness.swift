@@ -7,19 +7,35 @@ package struct BrokerReadiness: Sendable {
   package static let path = "/__iso/broker-ready"
   private let key: Curve25519.Signing.PrivateKey
   private let provider: Provider
+  /// The filtered-egress network identity; empty for an open-network v3 boot.
   private let bootID: String
   private let policyHash: String
+  private let authorization: ProxyAuthorization?
 
-  package init(privateKeyHex: String, provider: Provider, bootID: String, policyHash: String) throws
-  {
-    guard let seed = Self.hex(privateKeyHex, count: 32), Self.hex(bootID, count: 16) != nil,
-      policyHash.hasPrefix("sha256:"), Self.hex(String(policyHash.dropFirst(7)), count: 32) != nil
-    else { throw PolicyError.invalidConfig }
+  /// Without `authorization` (version 2) the network identity is required.
+  package init(
+    privateKeyHex: String, provider: Provider, bootID: String?, policyHash: String?,
+    authorization: ProxyAuthorization? = nil
+  ) throws {
+    guard let seed = Self.hex(privateKeyHex, count: 32) else { throw PolicyError.invalidConfig }
+    if let bootID, let policyHash {
+      guard Self.hex(bootID, count: 16) != nil, policyHash.hasPrefix("sha256:"),
+        Self.hex(String(policyHash.dropFirst(7)), count: 32) != nil
+      else { throw PolicyError.invalidConfig }
+    } else {
+      guard authorization != nil, bootID == nil, policyHash == nil else {
+        throw PolicyError.invalidConfig
+      }
+    }
     key = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
     self.provider = provider
-    self.bootID = bootID
-    self.policyHash = policyHash
+    self.bootID = bootID ?? ""
+    self.policyHash = policyHash ?? ""
+    self.authorization = authorization
   }
+
+  /// The largest reply body either version produces.
+  package static let maxReplyBytes = 1024
 
   static func hex(_ text: String, count: Int) -> [UInt8]? {
     let bytes = Array(text.utf8)
@@ -54,6 +70,20 @@ package struct BrokerReadiness: Sendable {
 
   package func response(nonce: String) throws -> Data {
     guard Self.hex(nonce, count: 16) != nil else { throw PolicyError.invalidHeader }
+    if let authorization {
+      // Version 3 binds the protocol, boot, epoch, digest, provider and
+      // generation; the network policy hash stays a separate field.
+      let message =
+        "iso-broker-readiness-v3\n\(nonce)\n\(provider.rawValue)\n\(bootID)\n\(policyHash)\n\(authorization.instanceID)\n\(authorization.bootID)\n\(authorization.policyEpoch)\n\(authorization.policy.digest)\n\(authorization.proxyGenerationID)\n"
+      return try JSONEncoder().encode(
+        ReplyV3(
+          version: 3, nonce: nonce, provider: provider.rawValue, bootID: bootID,
+          policyHash: policyHash, instanceID: authorization.instanceID,
+          policyBootID: authorization.bootID, policyEpoch: authorization.policyEpoch,
+          policyDigest: authorization.policy.digest,
+          proxyGenerationID: authorization.proxyGenerationID,
+          signature: try key.signature(for: Data(message.utf8)).base64EncodedString()))
+    }
     let message =
       "iso-broker-readiness-v1\n\(nonce)\n\(provider.rawValue)\n\(bootID)\n\(policyHash)\n"
     return try JSONEncoder().encode(
@@ -61,6 +91,20 @@ package struct BrokerReadiness: Sendable {
         version: 1, nonce: nonce, provider: provider.rawValue, bootID: bootID,
         policyHash: policyHash,
         signature: try key.signature(for: Data(message.utf8)).base64EncodedString()))
+  }
+
+  private struct ReplyV3: Encodable {
+    let version: Int
+    let nonce: String
+    let provider: String
+    let bootID: String
+    let policyHash: String
+    let instanceID: String
+    let policyBootID: String
+    let policyEpoch: String
+    let policyDigest: String
+    let proxyGenerationID: String
+    let signature: String
   }
 
   private struct Reply: Encodable {

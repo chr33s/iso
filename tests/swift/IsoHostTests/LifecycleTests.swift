@@ -985,3 +985,27 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
       macOSRestoreImage: install.root + "/restore.ipsw"))
   #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "delete"]) })
 }
+
+@Test func aRefusedStartNeverReplacesTheLiveBootsPolicyBinding() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let directory = install.config.instancesDirectory.appending("live").path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let instance = Instance(
+    name: try InstanceName("live"), index: InstanceIndex(0)!, directory: directory, image: .default)
+  try instance.save()
+  try backend.createAndStart(instance, diskGiB: nil)
+  let booted = try #require(try PolicyBinding.load(instance))
+  // Starting a running instance is refused, and its boot keeps its epoch.
+  #expect(throws: (any Error).self) { try backend.startExisting(instance) }
+  #expect(try PolicyBinding.load(instance) == booted)
+  // A real restart records a new epoch.
+  let running = try #require(try backend.asRunning(instance))
+  try backend.stop(running)
+  try backend.startExisting(instance)
+  #expect(try PolicyBinding.load(instance)?.policyEpoch != booted.policyEpoch)
+}

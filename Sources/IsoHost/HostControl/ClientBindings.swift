@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoPolicy
 import Synchronization
 
 /// Client-local association of a display name with one qualified remote
@@ -532,6 +533,7 @@ package enum RemoteWorkspace {
     _ target: SSHTarget, config: IsoConfig, binding: ClientBinding, directory: String?,
     excludeGit: Bool, environment: [String: String], diagnostics: Diagnostics
   ) throws -> StageManifest {
+    try refuseEnforcedWorkspacePolicy(config)
     let transfer = WorkspaceTransfer(
       client: SSHClient(environment: environment), diagnostics: diagnostics)
     return try transfer.stage(
@@ -544,9 +546,19 @@ package enum RemoteWorkspace {
     config: IsoConfig, binding: ClientBinding, stageID: String?, force: Bool,
     environment: [String: String], diagnostics: Diagnostics
   ) throws -> (manifest: StageManifest, applied: [String]) {
+    try refuseEnforcedWorkspacePolicy(config)
     let transfer = WorkspaceTransfer(
       client: SSHClient(environment: environment), diagnostics: diagnostics)
     return try transfer.applyStage(try shadow(config, binding), stageID: stageID, force: force)
+  }
+
+  /// A remote-host binding has no boot-bound policy state on this client.
+  static func refuseEnforcedWorkspacePolicy(_ config: IsoConfig) throws {
+    guard config.policy?.enforces(.workspacePullApply) != true else {
+      throw HostError(
+        "unsupported_path: an enforcing workspace.pull.apply policy cannot govern a remote-host workspace return; use a local instance or set policy.mode to \"shadow\" or \"off\""
+      )
+    }
   }
 }
 
@@ -618,6 +630,16 @@ package enum RemoteAgent: String, Sendable {
       throw HostError(
         "Codex ChatGPT account auth keeps its token in the guest; remote hosts support only client-held credentials"
       )
+    }
+    // A client broker is relaunched per run, which would reset an enforcing
+    // boot's quota; it has no boot-bound policy state to claim.
+    if config.policy?.enforcesProviderActions == true {
+      throw HostError(
+        "unsupported_path: an enforcing provider policy cannot govern a remote-host client broker; use a local instance or set policy.mode to \"shadow\" or \"off\""
+      )
+    }
+    if config.policy?.governsProviderActions == true {
+      diagnostics.warn("policy shadow_unavailable:unsupported_path for a remote-host client broker")
     }
     let shadow = try RemoteWorkspace.shadow(config, binding, ports: true)
     unlink(FilteredHandoff.policyPath(shadow))

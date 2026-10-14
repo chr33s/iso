@@ -136,6 +136,8 @@ def build(staging, configuration, release, prefix):
 def test(staging):
     phase("Test iso (Swift host)")
     run(["swift", "test", "--force-resolved-versions"], staging)
+    phase("Test iso-policy")
+    run(["swift", "test", "--package-path", staging / "iso-policy", "--force-resolved-versions"], staging)
     phase("Test iso-proxy")
     run(["swift", "test", "--package-path", staging / "iso-proxy", "--force-resolved-versions"], staging)
     phase("Test iso-egress")

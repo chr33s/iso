@@ -134,6 +134,30 @@ package enum ConfigTemplate {
       //   }
       // },
 
+      // Default-deny authorization over provider credential use, proxied requests
+      // and staged workspace applies (docs/policy.md). "off", "shadow" (report
+      // only) or "enforce". Fixed per VM boot: edits apply at the next boot.
+      // Enforcing provider actions requires proxy.mode "required"; enforcing
+      // workspace.pull.apply requires workspace.pull.mode "stage". Quotas count
+      // admitted proxy requests and reset at each new boot; approvals are an
+      // inline confirmation at `iso pull --apply`.
+      // "policy": {
+      //   "version": 1,
+      //   "mode": "enforce",
+      //   "actions": ["credential.use", "proxy.request", "workspace.pull.apply"],
+      //   "rules": [
+      //     { "id": "use-anthropic", "effect": "permit", "action": "credential.use", "resources": ["provider:anthropic"] },
+      //     { "id": "request-anthropic", "effect": "permit", "action": "proxy.request", "resources": ["provider:anthropic"] },
+      //     { "id": "apply-attached-workspace", "effect": "permit", "action": "workspace.pull.apply", "resources": ["workspace:attached"] }
+      //   ],
+      //   "guards": [
+      //     { "id": "anthropic-admission-limit", "action": "proxy.request", "resources": ["provider:anthropic"],
+      //       "require": { "rate_limit": { "max_requests": 100, "within_seconds": 60 } } },
+      //     { "id": "review-before-apply", "action": "workspace.pull.apply", "resources": ["workspace:attached"],
+      //       "require": { "approval_within": { "seconds": 900 } } }
+      //   ]
+      // },
+
       // Local editor: "sandboxed" (default, Seatbelt-confined) or "unsafe" (the
       // editor's own CLI). "allow" widens the sandbox: "clipboard", "internet".
       // "editor": { "security": "sandboxed", "allow": [] },

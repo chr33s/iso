@@ -7,7 +7,7 @@ package enum InboundPipeline {
   /// installed: the gate bounds one active request per guest connection.
   package static func configure(
     channel: Channel, config: ProxyConfig,
-    connections: Capacity, requests: Capacity
+    connections: Capacity, requests: Capacity, authorizer: ProviderAuthorizer? = nil
   ) throws {
     var limits = NIOHTTPDecoderLimitConfiguration()
     limits.maxHeaderFieldSize = Limits.headerFieldBytes
@@ -20,7 +20,8 @@ package enum InboundPipeline {
       ByteToMessageHandler(
         HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes, limitConfiguration: limits)),
       InboundGate(
-        config: config, connections: connections, requests: requests, wireBudget: wireBudget),
+        config: config, connections: connections, requests: requests, wireBudget: wireBudget,
+        authorizer: authorizer),
     ])
   }
 }

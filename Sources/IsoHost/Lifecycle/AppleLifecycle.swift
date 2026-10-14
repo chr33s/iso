@@ -179,6 +179,7 @@ extension AppleBackend {
         throw HostError("macOS guests clone their template's disk; --disk is not supported")
       }
       try createAndStartMac(instance, runtime: runtime, owner: owner, manifest: manifest)
+      try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)
       return
     }
     let diskGiB: UInt64
@@ -201,6 +202,9 @@ extension AppleBackend {
       throw RuntimeError.operationUncertain(
         "instance '\(instance.name)' already has sandbox state; destroy it before recreating")
     }
+    // A new boot's immutable policy snapshot and epoch, recorded under the
+    // instance lock once nothing can already be running.
+    try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)
     let machine = try reserved ?? MachineName.generate(for: owner.id, randomHex: randomHex(8))
     guard machine.belongs(to: owner.id) else {
       throw RuntimeError.identityConflict(
@@ -311,6 +315,8 @@ extension AppleBackend {
     var sidecar = try ownedSidecar(instance)
     if sidecar.kind == .macos {
       let ready = try macStartExisting(instance, runtime: runtime, sidecar: &sidecar)
+      // Recorded only for a boot that actually started, never over a live one.
+      try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)
       sidecar.lastObservedOwnerPID = ready.ownerPID
       sidecar.lastObservedIP = ready.ipv4
       sidecar.runtimeIdentity = identity
@@ -329,6 +335,11 @@ extension AppleBackend {
       throw RuntimeError.operationUncertain(
         "sandbox \(sidecar.machineID) is booting; wait for it to settle")
     }
+    // Every start path (start, restart, resize --start, reprovision, host
+    // service) records a new immutable policy snapshot and epoch here: under
+    // the instance lock, after the runtime confirmed nothing is running, so a
+    // refused start never replaces a live boot's binding or proxy claims.
+    try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)
     try IsolationGate.verifyRecord(inspection, expected(sidecar, runtime))
     let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
     let trust: HostKeyTrust = sidecar.reenrollHostKey ? .reenrollAfterRestore : .requirePin

@@ -8,6 +8,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **Authorization policy**: an optional top-level `policy` (mode `off`,
+  `shadow` or `enforce`) adds default-deny permit/forbid rules for
+  `credential.use`, `proxy.request` and `workspace.pull.apply`, plus two
+  guards: a sliding-window limit on requests admitted by the credential proxy
+  (`429` with `Retry-After` when exhausted) and an inline, single-use approval
+  of the exact stage at `iso pull --apply`. The policy is fixed per VM boot;
+  `iso policy show` reports the active snapshot. An enforcing boot never
+  relaunches its proxy, so quotas cannot be reset mid-boot. The shared
+  evaluator is the new `iso-policy/` library package; policy-enabled proxies
+  use startup protocol version 3 with signed readiness. See `docs/policy.md`.
+
 ## v0.4.0
 
 - **Remote execution hosts**: `iso host` runs Linux VMs on another trusted

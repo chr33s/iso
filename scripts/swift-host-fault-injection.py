@@ -529,8 +529,8 @@ FAULTS = [
      "environment: environment, deadline: timeout, outputLimit: 64 << 10,",
      "aHeldBackReadinessAttemptIsCutOffAndRetried"),
     ("session-ttl-on-restart", "Sources/IsoHost/Lifecycle/AppleLifecycle.swift",
-     "        expiresAt: expiresAt ?? sessionExpiry())\n      ready = booted",
-     "        expiresAt: expiresAt)\n      ready = booted",
+     "until: deadline,\n        expiresAt: expiresAt ?? sessionExpiry())\n      ready = booted",
+     "until: deadline,\n        expiresAt: expiresAt)\n      ready = booted",
      "sessionTTLPassesAnExpiryToEveryBoot"),
     ("egress-record-mode", "Sources/IsoHost/Runtime/IsolationGate.swift",
      "guard hostOnly == expected.egress.requiresHostOnlyNetwork else {", "guard hostOnly || !hostOnly else {",
@@ -667,12 +667,12 @@ FAULTS = [
      "marker.lifecycle == .reusable",
      "disposableMarkerIsNotAnAffinityCandidateAndCleanupRequiresProof"),
     ("filtered-github-replacement", "Sources/IsoConfiguration/GitHubConfigEdits.swift",
-     "egressFilter: egressFilter, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution)\n  }\n\n  /// `up`",
-     "egressFilter: .empty, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution)\n  }\n\n  /// `up`",
+     "egressFilter: egressFilter, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)\n  }\n\n  /// `up`",
+     "egressFilter: .empty, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)\n  }\n\n  /// `up`",
      "configurationOverlaysPreserveFilteredDestinations"),
     ("filtered-github-disabled", "Sources/IsoConfiguration/GitHubConfigEdits.swift",
-     "egressFilter: egressFilter, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution)\n  }\n}\n\n/// A verified",
-     "egressFilter: .empty, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution)\n  }\n}\n\n/// A verified",
+     "egressFilter: egressFilter, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)\n  }\n}\n\n/// A verified",
+     "egressFilter: .empty, limits: limits,\n      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)\n  }\n}\n\n/// A verified",
      "configurationOverlaysPreserveFilteredDestinations"),
     ("filtered-devcontainer-overlay", "Sources/IsoConfiguration/IsoConfigDevcontainer.swift",
      "egress: egress, egressFilter: egressFilter, limits: limits",
@@ -954,9 +954,9 @@ FAULTS = [
     ("broker-readiness-provider", "Sources/IsoHost/Runtime/BrokerReadiness.swift",
      'reply.provider == provider.rawValue,', 'true,', "brokerReadinessRejectsSignedWrongFieldsAndForgery"),
     ("broker-readiness-boot", "Sources/IsoHost/Runtime/BrokerReadiness.swift",
-     'reply.bootID == policy.bootID,', 'true,', "brokerReadinessRejectsSignedWrongFieldsAndForgery"),
+     'reply.bootID == (policy?.bootID ?? ""),', 'true,', "brokerReadinessRejectsSignedWrongFieldsAndForgery"),
     ("broker-readiness-policy", "Sources/IsoHost/Runtime/BrokerReadiness.swift",
-     'reply.policyHash == policy.policyHash,', 'true,', "brokerReadinessRejectsSignedWrongFieldsAndForgery"),
+     'reply.policyHash == (policy?.policyHash ?? ""),', 'true,', "brokerReadinessRejectsSignedWrongFieldsAndForgery"),
     ("broker-readiness-version", "Sources/IsoHost/Runtime/BrokerReadiness.swift",
      'reply.version == 1,', 'true,', "brokerReadinessRejectsSignedWrongFieldsAndForgery"),
     ("broker-readiness-framing", "Sources/IsoHost/Runtime/BrokerReadiness.swift",
@@ -1190,6 +1190,64 @@ FAULTS = [
     ("host-local-not-redirected", "Sources/IsoConfiguration/ExecutionHostConfig.swift",
      "        guard !alias.isLocal else {", "        guard true else {",
      "localCannotBeRedirected"),
+    # IsoPolicy (docs/design/iso-policy.md): host enforcement adapters.
+    ("policy-proxy-claim-once", "Sources/IsoHost/Policy/PolicyState.swift",
+     "      guard policy.mode == .shadow else {", "      guard true else {",
+     "enforcingBootClaimsOneProxyLaunchPerProvider"),
+    ("policy-binding-verified", "Sources/IsoHost/Policy/PolicyState.swift",
+     "compiled.mode == policyMode,", "true,",
+     "corruptOrTamperedBindingsFailClosed"),
+    ("policy-config-copy", "Sources/IsoConfiguration/IsoConfigDevcontainer.swift",
+     "execution: execution, policy: policy)", "execution: execution, policy: nil)",
+     "everyConfigurationCopyKeepsThePolicy"),
+    ("policy-lost-binding", "Sources/IsoHost/Policy/PolicyState.swift",
+     "guard try PolicyInstanceIdentity.load(instance) == nil else {", "guard true else {",
+     "aLostBindingAfterPolicyBootsFailsClosed"),
+    ("policy-boot-after-status", "Sources/IsoHost/Lifecycle/AppleLifecycle.swift",
+     "    try NetworkPolicy.enforceMode(instance, config: config)\n    let runtime",
+     "    try NetworkPolicy.enforceMode(instance, config: config)\n    try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)\n    let runtime",
+     "aRefusedStartNeverReplacesTheLiveBootsPolicyBinding"),
+    ("policy-raw-key-withholding", "Sources/IsoHost/Guest/Bootstrap.swift",
+     "let required = config.proxy.mode == .required || policyEnforced",
+     "let required = config.proxy.mode == .required",
+     "anEnforcingBootWithholdsRawKeysWhateverTheConfigSays"),
+    # Trusting the reply's own identity fields instead of the stored binding.
+    ("policy-readiness-binding", "Sources/IsoHost/Runtime/BrokerReadiness.swift",
+     "        reply.policyEpoch == authorization.policyEpoch,\n        reply.policyDigest == authorization.policyDigest,\n        reply.proxyGenerationID == authorization.proxyGenerationID\n      else { return false }\n      message = messageV3(\n        nonce: reply.nonce, provider: reply.provider, bootID: reply.bootID,\n        policyHash: reply.policyHash, instanceID: authorization.instanceID,\n        policyBootID: authorization.bootID, policyEpoch: authorization.policyEpoch,\n        policyDigest: authorization.policyDigest,\n        proxyGenerationID: authorization.proxyGenerationID)",
+     "        true\n      else { return false }\n      message = messageV3(\n        nonce: reply.nonce, provider: reply.provider, bootID: reply.bootID,\n        policyHash: reply.policyHash, instanceID: authorization.instanceID,\n        policyBootID: authorization.bootID, policyEpoch: reply.policyEpoch ?? \"\",\n        policyDigest: authorization.policyDigest,\n        proxyGenerationID: reply.proxyGenerationID ?? \"\")",
+     "version3ReadinessVerifiesOnlyTheBoundIdentity"),
+    ("policy-required-proxy-mode", "Sources/IsoConfiguration/PolicyConfig.swift",
+     "      guard config.proxy.mode == .required else {", "      guard true else {",
+     "enforcingCombinationsAreRefusedNotRewritten"),
+    ("policy-workspace-lock-root", "Sources/IsoHost/Policy/WorkspacePolicy.swift",
+     'if FileManager.default.fileExists(atPath: (directory as String) + "/owner.json") {',
+     "if false {",
+     "localAndRemoteReturnsShareTheStateRootsLockDirectory"),
+    ("policy-stage-epoch", "Sources/IsoHost/Policy/WorkspacePolicy.swift",
+     "staged.bootID == binding.bootID, staged.policyEpoch == binding.policyEpoch,", "true,",
+     "aNewBootSupersedesTheStage"),
+    ("policy-direct-pull", "Sources/IsoHost/Policy/WorkspacePolicy.swift",
+     "    if policy.mode == .shadow {", "    if true {",
+     "directPullIsRefusedUnderEnforcementAndUnevaluatedInShadow"),
+    ("policy-approval-prompt", "Sources/IsoHost/Policy/WorkspacePolicy.swift",
+     "    if needsApproval {", "    if false {",
+     "confirmedExactStageAppliesOnceThroughTheVerifiedDirectory"),
+    # IsoPolicy library: decision, quota and approval semantics.
+    ("policy-window-boundary", "iso-policy/Sources/IsoPolicy/SlidingWindow.swift",
+     "now - slots[head] >= window", "now - slots[head] > window",
+     "windowBoundaryIsExclusive"),
+    ("policy-forbid-precedence", "iso-policy/Sources/IsoPolicy/PolicyEvaluator.swift",
+     "!forbids.isEmpty ? .denied(.explicitForbid)", "false ? .denied(.explicitForbid)",
+     "defaultDenyPermitAndForbidPrecedence"),
+    ("policy-approval-binding", "iso-policy/Sources/IsoPolicy/ApprovalFact.swift",
+     "guard current.binding == expected,", "guard true,",
+     "anyBindingChangeIsAMismatch"),
+    ("policy-approval-expiry", "iso-policy/Sources/IsoPolicy/ApprovalFact.swift",
+     "age >= UInt64($0.1) * 1_000_000_000", "age > UInt64($0.1) * 1_000_000_000",
+     "everyFreshnessBoundApplies"),
+    ("policy-canonical-roundtrip", "iso-policy/Sources/IsoPolicy/PolicyCompiler.swift",
+     "guard compiled.canonicalBytes == bytes else {", "guard true else {",
+     "canonicalDecodeRefusesAlternativeSpellings"),
 ]
 
 
@@ -1197,7 +1255,7 @@ TOP_LEVEL_SKIPS = {".git", ".build", "target", "iso-proxy", "iso-egress"}
 
 
 def skip_top_level(directory, names):
-    if Path(directory) == ROOT / "iso-sandbox":
+    if Path(directory) in (ROOT / "iso-sandbox", ROOT / "iso-policy"):
         return set(names) & {".build", ".swiftpm"}
     if Path(directory) != ROOT:
         return set()
@@ -1205,7 +1263,10 @@ def skip_top_level(directory, names):
 
 
 def test_package(relative):
-    return "iso-sandbox" if relative.startswith("iso-sandbox/") else "."
+    for package in ("iso-sandbox", "iso-policy"):
+        if relative.startswith(package + "/"):
+            return package
+    return "."
 
 
 def run_tests(scratch, test_filter, package="."):

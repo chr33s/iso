@@ -75,11 +75,14 @@ package struct StageManifest: Sendable, Equatable, Codable {
   package let changes: [StageChange]
   /// Reasons the stage cannot be applied. Empty for an applicable stage.
   package let issues: [String]
+  /// The boot and policy this stage was built under, when a policy governs
+  /// `workspace.pull.apply`. Absent in stages built without one.
+  package var policy: StagePolicyBinding? = nil
 
   package var applicable: Bool { issues.isEmpty }
 
   enum CodingKeys: String, CodingKey {
-    case version, id, instance, destination
+    case version, id, instance, destination, policy
     case excludeGit = "exclude_git"
     case issues, changes
     case createdAt = "created_at"
@@ -171,6 +174,13 @@ package struct StageLocation: Sendable {
     try FileLock(path: (root as NSString).deletingLastPathComponent + "/.stage.lock")
   }
 
+  /// Runs `body` under the stage lock.
+  func locked<T>(_ body: () throws(HostError) -> T) throws(HostError) -> T {
+    let lock = try lock()
+    defer { lock.release() }
+    return try body()
+  }
+
   /// Removes the stage. Guest-authored directory modes may deny the owner
   /// access, so each directory is opened up before removal.
   package func remove() throws(HostError) {
@@ -252,7 +262,8 @@ struct StageBuilder {
   }
 
   mutating func build(
-    id: String, instance: String, excludeGit: Bool, now: Date = Date()
+    id: String, instance: String, excludeGit: Bool, policy: StagePolicyBinding? = nil,
+    now: Date = Date()
   ) throws -> StageManifest {
     let root = open(tree, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     guard root >= 0 else { throw HostError.posix("Failed to open stage", tree) }
@@ -264,7 +275,7 @@ struct StageBuilder {
       version: StageManifest.currentVersion, id: id, instance: instance,
       destination: destination, createdAt: ISO8601DateFormatter().string(from: now),
       excludeGit: excludeGit, stagedEntries: entries, stagedBytes: bytes, changes: changes,
-      issues: issues)
+      issues: issues, policy: policy)
   }
 
   mutating func issue(_ message: String) {

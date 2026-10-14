@@ -11,9 +11,12 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.36.1"),
     .package(url: "https://github.com/swift-server/async-http-client.git", exact: "1.36.2"),
+    // The policy evaluator shared with the host CLI; a library, not a process.
+    .package(path: "../iso-policy"),
   ],
   targets: [
-    .target(name: "IsoProxyCore"),
+    .target(
+      name: "IsoProxyCore", dependencies: [.product(name: "IsoPolicy", package: "iso-policy")]),
     .executableTarget(
       name: "IsoProxy",
       dependencies: [
@@ -32,16 +35,20 @@ let package = Package(
         .product(name: "AsyncHTTPClient", package: "async-http-client"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+        .product(name: "IsoPolicy", package: "iso-policy"),
       ]),
     .testTarget(
       name: "IsoProxyTransportTests",
       dependencies: [
         "IsoProxyTransport", "IsoProxyTestSupport",
         .product(name: "NIOEmbedded", package: "swift-nio"),
+        .product(name: "IsoPolicy", package: "iso-policy"),
       ], resources: [.copy("Fixtures")]),
     .target(name: "IsoProxyTestSupport", path: "Tests/IsoProxyTestSupport"),
     .testTarget(name: "IsoProxyE2ETests", dependencies: ["IsoProxyTestSupport"]),
-    .testTarget(name: "IsoProxyCoreTests", dependencies: ["IsoProxyCore"]),
+    .testTarget(
+      name: "IsoProxyCoreTests",
+      dependencies: ["IsoProxyCore", .product(name: "IsoPolicy", package: "iso-policy")]),
   ],
   swiftLanguageModes: [.v6]
 )

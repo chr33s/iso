@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoPolicy
 
 /// Host-owned metadata about what crossed an instance's boundary
 /// (selective-hardening spec §9): which host capabilities a boot granted and
@@ -21,6 +22,46 @@ package enum BoundaryAudit {
     case pullStage(changes: Int, bytes: UInt64, applicable: Bool)
     case pullApply(applied: Int)
     case pullDirect
+    /// The immutable policy binding recorded for a new VM boot.
+    case policyBoot(mode: PolicyMode, digest: String?, epoch: String, actions: [PolicyAction])
+    /// A proxy launch slot claimed, refused, or (shadow) re-simulated.
+    case policyProxyClaim(provider: ProxyProvider, generation: String, outcome: ClaimOutcome)
+    /// A host-side policy decision on a governed operation (or a shadow report).
+    case policyDecision(
+      action: PolicyAction, outcome: DecisionOutcome, decisionID: String, digest: String?,
+      shadow: Bool)
+    case approvalIssued(approvalID: String, stageID: String)
+    case approvalConsumed(approvalID: String, reason: PolicyReason)
+    /// A stage apply that stopped partway; the receipt stays consumed.
+    case pullApplyPartial(applied: Int)
+
+    package enum ClaimOutcome: String, Sendable, Equatable {
+      case claimed, refused, shadow
+    }
+
+    /// Why shadow mode could not evaluate an operation.
+    package enum ShadowUnavailable: String, Sendable, Equatable {
+      case notStaged = "not_staged"
+      case unsupportedPath = "unsupported_path"
+    }
+
+    package enum DecisionOutcome: Sendable, Equatable {
+      case decided(PolicyVerdict, PolicyReason)
+      case shadowUnavailable(ShadowUnavailable)
+
+      var verdict: String {
+        switch self {
+        case .decided(let verdict, _): verdict.rawValue
+        case .shadowUnavailable: "shadow_unavailable"
+        }
+      }
+      var reason: String {
+        switch self {
+        case .decided(_, let reason): reason.rawValue
+        case .shadowUnavailable(let why): why.rawValue
+        }
+      }
+    }
 
     var kind: String {
       switch self {
@@ -30,6 +71,12 @@ package enum BoundaryAudit {
       case .pullStage: "pull_stage"
       case .pullApply: "pull_apply"
       case .pullDirect: "pull_direct"
+      case .policyBoot: "policy_boot"
+      case .policyProxyClaim: "policy_proxy_claim"
+      case .policyDecision: "policy_decision"
+      case .approvalIssued: "approval_issued"
+      case .approvalConsumed: "approval_consumed"
+      case .pullApplyPartial: "pull_apply_partial"
       }
     }
 
@@ -54,7 +101,28 @@ package enum BoundaryAudit {
           ("changes", .uint(UInt64(changes))), ("staged_bytes", .uint(bytes)),
           ("applicable", .bool(applicable)),
         ]
-      case .pullApply(let applied): members.append(("applied", .uint(UInt64(applied))))
+      case .pullApply(let applied), .pullApplyPartial(let applied):
+        members.append(("applied", .uint(UInt64(applied))))
+      case .policyBoot(let mode, let digest, let epoch, let actions):
+        members += [
+          ("mode", .string(mode.rawValue)), ("digest", digest.map(OutputJSON.string) ?? .null),
+          ("epoch", .string(epoch)), ("actions", .array(actions.map { .string($0.rawValue) })),
+        ]
+      case .policyProxyClaim(let provider, let generation, let outcome):
+        members += [
+          ("provider", .string(provider.rawValue)), ("generation", .string(generation)),
+          ("outcome", .string(outcome.rawValue)),
+        ]
+      case .policyDecision(let action, let outcome, let decisionID, let digest, let shadow):
+        members += [
+          ("action", .string(action.rawValue)), ("verdict", .string(outcome.verdict)),
+          ("reason", .string(outcome.reason)), ("decision_id", .string(decisionID)),
+          ("digest", digest.map(OutputJSON.string) ?? .null), ("shadow", .bool(shadow)),
+        ]
+      case .approvalIssued(let approvalID, let stageID):
+        members += [("approval_id", .string(approvalID)), ("stage_id", .string(stageID))]
+      case .approvalConsumed(let approvalID, let reason):
+        members += [("approval_id", .string(approvalID)), ("reason", .string(reason.rawValue))]
       }
       return .object(members)
     }

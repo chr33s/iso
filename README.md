@@ -117,6 +117,10 @@ opt-in.
   stages guest files for inspection before you apply or discard them.
 - [Session limits](docs/configuration.md#limits):
   `"limits": {"session_ttl": "8h"}` stops each boot at a host-clock deadline.
+- [Authorization policy](docs/policy.md): an optional default-deny `policy`
+  permits provider credential use, proxied requests and `iso pull --apply`, with
+  request rate limits and a single-use approval of the reviewed stage.
+  `iso policy show` reports the active snapshot.
 - [Audit records](docs/commands.md#audit): `iso audit` reports boundary events and
   forwarded variable names, never their values.
 

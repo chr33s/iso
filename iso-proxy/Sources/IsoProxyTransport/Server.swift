@@ -25,6 +25,8 @@ package enum Server {
   ) -> EventLoopFuture<Channel> {
     let connections = Capacity(Limits.connections)
     let requests = Capacity(Limits.requests)
+    // One limiter per process for its bound provider, never per connection.
+    let authorizer = ProviderAuthorizer(config: config)
     return ServerBootstrap(group: group)
       .serverChannelOption(ChannelOptions.backlog, value: Int32(Limits.connections))
       .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -38,7 +40,7 @@ package enum Server {
         do {
           try InboundPipeline.configure(
             channel: channel, config: config,
-            connections: connections, requests: requests)
+            connections: connections, requests: requests, authorizer: authorizer)
           return application(channel)
         } catch {
           return channel.eventLoop.makeFailedFuture(error)

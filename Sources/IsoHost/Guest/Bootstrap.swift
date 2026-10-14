@@ -5,6 +5,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoPolicy
 import IsoSecrets
 
 /// GitHub token handling, ported separately. Bootstrap consults it for the
@@ -112,9 +113,13 @@ package struct AgentBootstrap: Sendable {
   /// Recognized provider variables withheld from the guest. A proxied
   /// provider withholds all of its variables; `proxy.mode = "required"` and
   /// `egress = "none"` withhold every provider's; ChatGPT account auth
-  /// withholds `OPENAI_API_KEY`.
-  func withheldVariables(proxyAnthropic: Bool, proxyOpenAI: Bool) -> [String: WithholdReason] {
-    let required = config.proxy.mode == .required
+  /// withholds `OPENAI_API_KEY`. `policyEnforced` (the boot's stored policy
+  /// enforces a provider action) withholds as `required` does, whatever the
+  /// configuration now says.
+  func withheldVariables(proxyAnthropic: Bool, proxyOpenAI: Bool, policyEnforced: Bool = false)
+    -> [String: WithholdReason]
+  {
+    let required = config.proxy.mode == .required || policyEnforced
     let noEgress = config.egress == .none
     var out: [String: WithholdReason] = [:]
     for (provider, proxied) in [(ProxyProvider.anthropic, proxyAnthropic), (.openai, proxyOpenAI)] {
@@ -148,10 +153,12 @@ package struct AgentBootstrap: Sendable {
   /// withheld per `withheldVariables`; `cmd:` keys are resolved here, when a
   /// session needs them.
   package func prepareEnvForwarding(
-    repo: RepoSlug?, suppressAnthropicKey: Bool, suppressOpenAIKey: Bool
+    repo: RepoSlug?, suppressAnthropicKey: Bool, suppressOpenAIKey: Bool,
+    policyEnforced: Bool = false
   ) throws -> EnvForward {
     let withheld = withheldVariables(
-      proxyAnthropic: suppressAnthropicKey, proxyOpenAI: suppressOpenAIKey)
+      proxyAnthropic: suppressAnthropicKey, proxyOpenAI: suppressOpenAIKey,
+      policyEnforced: policyEnforced)
     var env = EnvForward()
 
     if let reason = withheld["ANTHROPIC_API_KEY"] {
@@ -280,18 +287,29 @@ package struct AgentBootstrap: Sendable {
     }
     let codexAccount = config.codexAuth == .chatgpt
     if codexAccount && proxyOpenAI { diagnostics.warn(CodexChecks.chatgptProxyConflictMessage) }
+    // The running boot's stored policy, not the current configuration,
+    // decides whether raw provider keys may enter the guest.
+    let policyEnforced =
+      try instance.map { try ActivePolicy.load($0).policy?.enforcesProviderActions ?? false }
+      ?? false
+    if policyEnforced && codexAccount {
+      throw HostError(
+        "this boot enforces a provider policy, which codex.auth \"chatgpt\" would bypass; restore the policy's configuration or start a new boot"
+      )
+    }
 
     let assigned = try instance.flatMap { try github.activeAssignment($0) }
     try prefetchSessionSecrets(instance, repo: assigned ?? repo)
     var env = try prepareEnvForwarding(
       repo: assigned ?? repo, suppressAnthropicKey: proxyAnthropic,
-      suppressOpenAIKey: proxyOpenAI)
+      suppressOpenAIKey: proxyOpenAI, policyEnforced: policyEnforced)
     if let instance {
       if let state = try GuestEnvState.tryLoad(instance) {
         let proxyNames = try ProxyState.storedCredentialNames(config.proxy, instance: instance)
         try GuestEnvState.checkCredentialSeparation(state.entries, proxyCredentialNames: proxyNames)
         let routed = Set(try state.providerSecrets().values.map(\.variable))
-        let withheld = withheldVariables(proxyAnthropic: proxyAnthropic, proxyOpenAI: proxyOpenAI)
+        let withheld = withheldVariables(
+          proxyAnthropic: proxyAnthropic, proxyOpenAI: proxyOpenAI, policyEnforced: policyEnforced)
         let resolved = try resolveReferences(state, excluding: routed)
         for (name, value) in state.sortedEntries {
           // A provider secret feeds that provider's proxy, never the guest.
@@ -647,8 +665,11 @@ package struct AgentBootstrap: Sendable {
     } else {
       policy = nil
     }
+    let authorization = try PolicyBoot.claimProxyLaunch(
+      instance, provider: provider, configured: config.policy, diagnostics: diagnostics)
     return try proxies.start(
-      instance, provider: provider, upstream: upstream, target: target, readinessPolicy: policy)
+      instance, provider: provider, upstream: upstream, target: target, readinessPolicy: policy,
+      authorization: authorization)
   }
 
   /// Copy a local marketplace directory into the guest; other sources pass

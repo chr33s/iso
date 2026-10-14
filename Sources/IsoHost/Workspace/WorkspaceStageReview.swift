@@ -84,20 +84,36 @@ package struct StageReview {
   }
 
   /// Unified-style diffs for small UTF-8 text files.
-  package func textDiffs() -> [String] {
+  /// With `markOmitted`, every changed file whose diff is not shown gets an
+  /// explicit line saying so, so an approval never covers content silently.
+  package func textDiffs(markOmitted: Bool = false) -> [String] {
     var lines: [String] = []
     for change in manifest.changes {
-      guard case .file(let newSize, _, _) = change.new, newSize <= Self.textLimit else { continue }
+      guard case .file(let newSize, _, _) = change.new else { continue }
+      let shown = neutralizeControls(change.path)
+      let omitted =
+        "(diff omitted for \(shown): binary, not UTF-8, or larger than \(Self.textLimit >> 10) KiB)"
+      guard newSize <= Self.textLimit else {
+        if markOmitted { lines.append(omitted) }
+        continue
+      }
       let old: [String]
       switch change.old {
       case .absent: old = []
       case .file(let size, _, _) where size <= Self.textLimit:
-        guard let text = Self.text(at: manifest.destination + "/" + change.path) else { continue }
+        guard let text = Self.text(at: manifest.destination + "/" + change.path) else {
+          if markOmitted { lines.append(omitted) }
+          continue
+        }
         old = text
-      default: continue
+      default:
+        if markOmitted { lines.append(omitted) }
+        continue
       }
-      guard let new = Self.text(at: tree + "/" + change.path) else { continue }
-      let shown = neutralizeControls(change.path)
+      guard let new = Self.text(at: tree + "/" + change.path) else {
+        if markOmitted { lines.append(omitted) }
+        continue
+      }
       lines.append("--- a/\(shown)")
       lines.append("+++ b/\(shown)")
       lines += Self.hunks(old: old, new: new)

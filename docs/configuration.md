@@ -36,6 +36,7 @@ after hand edits.
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline"}`: defaults for the hardening settings. See [security presets](#security-presets). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
+| `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"open"` | Guest network reach beyond the host: `"open"`, `"none"`, or `"filtered"`. See [egress](#egress). |
 | `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |

@@ -850,12 +850,33 @@ attestation; the release signature is still required, so that server must serve
 attestation provide Sigstore provenance. Flag any change that widens where that override
 is honored, or that softens any step above.
 
+## Authorization policy
+
+`policy` ([`policy.md`](policy.md), [`design/iso-policy.md`](design/iso-policy.md))
+only narrows existing permissions. Its trusted inputs are the host operator,
+the configuration, host-owned state (`policy-binding.json`,
+`policy-instance.json`, stage manifests after bounded parsing), and the
+proxy startup document on stdin. The principal is the instance and VM boot,
+bound by the host at launch: guest headers, timestamps, claimed approvals and
+claimed identities are never inputs. The proxy re-validates the policy it
+receives and checks its digest; the host verifies a version 3 signed
+readiness reply binding boot, epoch, digest and proxy generation before the
+guest gets a capability. Missing or corrupt enforcing state fails closed;
+nothing downgrades an enforcing launch to an older protocol or a raw-key
+path. Approvals are an in-process receipt from an explicit answer at the
+controlling terminal — never a file, token, flag, environment variable or
+guest callback. The policy digest identifies content; it is not a signature,
+and this feature does not defend against the host administrator.
+
 ## Documented, accepted trade-offs
 
 These are deliberate and documented in [`AGENTS.md`](../AGENTS.md) /
 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md). Don't "fix" them without
 understanding the rationale; do flag a change that *widens* them:
 
+- **Enforcing quotas trade proxy recovery for no cross-boot state.** An
+  enforcing boot never relaunches its proxy (that would reset its quota);
+  provider access is lost until the next boot. Quotas reset at every boot.
 - **Native agent installers are trusted build inputs.** Provisioning fetches
   Claude's installer from `claude.ai` and Codex's from
   `https://chatgpt.com/codex/install.sh` over HTTPS, then runs them as the

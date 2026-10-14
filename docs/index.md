@@ -18,6 +18,11 @@ Apple backend. The credential proxy is the Swift package
 [source installation](getting-started.md#build-from-source), and
 [release validation](release-validation.md).
 
+## Authorization policy
+
+- [`policy.md`](policy.md) — the optional default-deny `policy`: governed
+  actions, quotas on proxied requests, inline approvals for staged applies.
+
 ## For contributors (engineering)
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — Swift module map, the Apple backend,
@@ -45,6 +50,9 @@ Apple backend. The credential proxy is the Swift package
     references;
   - [`selective-hardening-spec.md`](design/selective-hardening-spec.md):
     staged workspace return, `proxy.mode`, egress modes, budgets, and audit;
+  - [`iso-policy.md`](design/iso-policy.md): the IsoPolicy v1 contract —
+    permit/forbid evaluation, admission quotas, single-use staged approvals,
+    boot binding and proxy startup version 3;
   - [`sandboxy-inspired-features-spec.md`](design/sandboxy-inspired-features-spec.md):
     one-command sessions, declarative agents, image inspection, and
     destination-filtered egress. Filtered-egress qualification remains incomplete.

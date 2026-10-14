@@ -34,7 +34,11 @@ A distribution holds five executables. The first four are host processes;
 | `iso-macos-helper` | [`iso-sandbox/`](../iso-sandbox) | Guest agent that `iso-sandbox macos template build` installs in macOS templates; never runs on the host |
 
 The host drives the runtime over its JSON CLI and starts companions through
-their startup protocols; it never links those packages. `iso` resolves
+their startup protocols; it never links those packages. The one shared code
+is the [`iso-policy/`](../iso-policy) library (`IsoPolicy`): the default-deny
+policy evaluator, sliding-window admissions and single-use approvals, linked
+by both `iso` and `iso-proxy` but never a process of its own
+([`policy.md`](policy.md), [`design/iso-policy.md`](design/iso-policy.md)). `iso` resolves
 `iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable, and
 `iso-sandbox` finds `iso-macos-helper` beside itself. A missing `iso-egress`
 blocks only filtered boots.
@@ -270,3 +274,8 @@ Hold these when changing the code; the review lenses check for their violation:
    service-owned work goes through `HostSupervisor` around the same
    `AppleBackend`; accepted operations are durable, retried by their original
    `HostOperationID`, and never relabeled stopped or failed on a lost reply.
+9. **Policy only narrows.** An `IsoPolicy` allow never replaces an existing
+   check; the trusted mediator (proxy `InboundGate`, host staged apply) runs
+   its hard checks first and fails closed on missing or corrupt policy state.
+   A boot's policy is immutable; quota state is never reset within an
+   enforcing boot, so its proxy is never relaunched.

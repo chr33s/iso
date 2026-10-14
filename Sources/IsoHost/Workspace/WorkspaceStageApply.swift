@@ -61,10 +61,43 @@ struct StageApplier {
     }
   }
 
+  /// Re-hashes the staged tree against the manifest, so the content that
+  /// was rendered for review is the content that will be applied. Nothing
+  /// is written.
+  func verifyStage() throws {
+    let stageRoot = open(tree, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    guard stageRoot >= 0 else { throw HostError.posix("Failed to open stage", tree) }
+    defer { close(stageRoot) }
+    for change in manifest.changes {
+      var components = change.path.split(separator: "/").map(String.init)
+      let name = components.removeLast()
+      let parent = try Self.openDirectory(stageRoot, components, label: "stage")
+      defer { if parent != stageRoot { close(parent) } }
+      // Modes come from the manifest at apply time; the builder may have
+      // widened the staged copy's owner bits to read it.
+      let matches =
+        switch (try StageBuilder.object(at: parent, name, path: change.path), change.new) {
+        case (.file(let size, let digest, _), .file(let wantSize, let wantDigest, _)):
+          size == wantSize && digest == wantDigest
+        case (.directory, .directory): true
+        case (.symlink(let target), .symlink(let wanted)): target == wanted
+        default: false
+        }
+      guard matches else {
+        throw HostError(
+          "staged content changed since stage \(manifest.id) was built (\(neutralizeControls(change.path))); re-stage with `iso pull --review`"
+        )
+      }
+    }
+  }
+
   /// Applies every change in path order and returns the applied paths.
-  func apply() throws -> [String] {
+  /// With `destination`, writes go through that already-verified directory
+  /// descriptor instead of reopening the path.
+  func apply(destination verified: Int32? = nil) throws -> [String] {
     try preflight()
-    let root = open(manifest.destination, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    let root =
+      verified.map { dup($0) } ?? open(manifest.destination, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
     guard root >= 0 else { throw HostError.posix("Failed to open", manifest.destination) }
     defer { close(root) }
     let stageRoot = open(tree, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)

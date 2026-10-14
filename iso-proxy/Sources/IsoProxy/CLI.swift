@@ -4,6 +4,7 @@
 
 import Darwin
 import Foundation
+import IsoPolicy
 import IsoProxyCore
 import IsoProxyTransport
 import NIOCore
@@ -36,6 +37,11 @@ struct ProxyMain {
         let server = try await Server.bind(
           config: config, group: group, upstream: upstream, registry: connections
         ).get()
+        if let authorization = config.authorization {
+          log(
+            "iso-proxy policy: mode=\(authorization.policy.mode.rawValue) digest=\(authorization.policy.digest) epoch=\(authorization.policyEpoch) generation=\(authorization.proxyGenerationID)"
+          )
+        }
         log("iso-proxy ready")
         for await _ in signals.stream { break }
         try await server.close().get()
@@ -65,11 +71,13 @@ struct ProxyMain {
     let input = FileHandle.standardInput
     defer { try? input.close() }
     var data = Data()
-    while let chunk = try input.read(upToCount: min(4096, Limits.startupBytes + 1 - data.count)),
+    // Version-specific limits are enforced by ProxyConfig; this bounds the read.
+    while let chunk = try input.read(
+      upToCount: min(4096, Limits.startupBytesV3 + 1 - data.count)),
       !chunk.isEmpty
     {
       data.append(chunk)
-      guard data.count <= Limits.startupBytes else { throw Startup.oversizedConfig }
+      guard data.count <= Limits.startupBytesV3 else { throw Startup.oversizedConfig }
     }
     return try ProxyConfig(json: data)
   }

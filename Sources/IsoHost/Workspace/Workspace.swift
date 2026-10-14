@@ -5,6 +5,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoPolicy
 
 /// Guest `/workspace`: where a copied, cloned or mounted project lands.
 package let guestWorkspace = GuestPath("/workspace")
@@ -435,10 +436,15 @@ package struct WorkspaceTransfer: Sendable {
 
   /// `iso pull`.
   package func pull(
-    _ running: AppleBackend.Running, directory: String?, force: Bool, excludeGit: Bool
+    _ running: AppleBackend.Running, directory: String?, force: Bool, excludeGit: Bool,
+    configuredPolicy: CompiledPolicy? = nil
   )
     throws
   {
+    // The host API refuses a direct write under an enforcing workspace
+    // policy, whatever route the caller took to get here.
+    try WorkspacePolicy.checkDirectPull(
+      running.instance, configured: configuredPolicy, diagnostics: diagnostics)
     let state = try Self.stateOrDefault(running.instance, directory: directory, command: "pull")
     let destination = try Self.hostDirectory(directory, state, command: "pull")
     if !force && FileManager.default.fileExists(atPath: destination) {
@@ -450,6 +456,11 @@ package struct WorkspaceTransfer: Sendable {
     } catch {
       throw ContextError("Failed to create \(destination)", cause: error)
     }
+    guard let identity = WorkspacePolicy.identity(path: destination) else {
+      throw HostError("Failed to open \(destination)")
+    }
+    let workspaceLock = try WorkspacePolicy.workspaceLock(running.instance, identity: identity)
+    defer { workspaceLock.release() }
     diagnostics.log(.info, "Pulling guest:\(state.guestPath) -> \(destination)")
     if try guestHasRsync(running.target) {
       try rsyncPull(running.target, guest: state.guestPath, to: destination, excludeGit: excludeGit)
@@ -465,16 +476,17 @@ package struct WorkspaceTransfer: Sendable {
   /// into a fresh stage (never the destination) and describe it. A budget
   /// overrun or transfer failure discards the stage.
   package func stage(
-    _ running: AppleBackend.Running, directory: String?, excludeGit: Bool, limits: StageLimits
+    _ running: AppleBackend.Running, directory: String?, excludeGit: Bool, limits: StageLimits,
+    configuredPolicy: CompiledPolicy? = nil
   ) throws -> StageManifest {
     try stage(
       instance: running.instance, target: running.target, directory: directory,
-      excludeGit: excludeGit, limits: limits)
+      excludeGit: excludeGit, limits: limits, configuredPolicy: configuredPolicy)
   }
 
   func stage(
     instance: Instance, target: SSHTarget, directory: String?, excludeGit: Bool,
-    limits: StageLimits
+    limits: StageLimits, configuredPolicy: CompiledPolicy? = nil
   ) throws -> StageManifest {
     let state = try Self.stateOrDefault(instance, directory: directory, command: "pull")
     let requested = try Self.hostDirectory(directory, state, command: "pull")
@@ -483,6 +495,9 @@ package struct WorkspaceTransfer: Sendable {
       requested.hasPrefix("/")
       ? requested : FileManager.default.currentDirectoryPath + "/" + requested
     let destination = canonicalPath(absolute) ?? (absolute as NSString).standardizingPath
+    let binding = try WorkspacePolicy.bindStage(
+      instance, destination: destination, explicitDirectory: directory != nil,
+      configured: configuredPolicy, diagnostics: diagnostics)
     let location = StageLocation(instance)
     let lock = try location.lock()
     defer { lock.release() }
@@ -510,7 +525,8 @@ package struct WorkspaceTransfer: Sendable {
       _ = chmod(location.tree, 0o700)
       var builder = StageBuilder(tree: location.tree, destination: destination, limits: limits)
       let manifest = try builder.build(
-        id: randomHex(4), instance: instance.name.rawValue, excludeGit: excludeGit)
+        id: randomHex(4), instance: instance.name.rawValue, excludeGit: excludeGit,
+        policy: binding)
       try location.saveManifest(manifest)
       BoundaryAudit.record(
         instance,
@@ -524,18 +540,57 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// `iso pull --apply`: applies the reviewed stage, then removes it.
-  package func applyStage(_ instance: Instance, stageID: String?, force: Bool) throws
-    -> (manifest: StageManifest, applied: [String])
-  {
+  /// `iso pull --apply`: applies the reviewed stage, then removes it. Under
+  /// a policy governing `workspace.pull.apply` the governed path runs
+  /// instead (`applyGovernedStage`); `confirm` is the trusted host-terminal
+  /// confirmation, nil when none is available.
+  package func applyStage(
+    _ instance: Instance, stageID: String?, force: Bool, configuredPolicy: CompiledPolicy? = nil,
+    confirm: StageConfirmation? = nil
+  ) throws -> (manifest: StageManifest, applied: [String]) {
+    // One load decides both the path and the epoch it was decided under.
+    let active = try ActivePolicy.requireBoundIfRequested(
+      instance, configured: configuredPolicy, .workspacePullApply)
+    let governing = WorkspacePolicy.governing(active)
+    if let (binding, policy) = governing, policy.mode == .enforce {
+      return try applyGovernedStage(
+        instance, stageID: stageID, force: force, binding: binding, policy: policy,
+        confirm: confirm)
+    }
+    let shadow = governing
+    let epoch = active.binding?.policyEpoch
     let location = StageLocation(instance)
+    // Lock order: policy, workspace, stage. The destination is read first
+    // to find the workspace lock, then re-checked under the stage lock.
+    let policyLock = try PolicyBinding.lock(instance)
+    defer { policyLock.release() }
+    // A boot that started since that load may now govern this apply; an
+    // unchanged epoch means an unchanged (immutable) policy.
+    guard try ActivePolicy.load(instance).binding?.policyEpoch == epoch else {
+      throw PolicyDenied(
+        reason: .policyEpochMismatch,
+        detail: "'\(instance.name)' started a new boot while preparing the apply; run it again")
+    }
+    // Manifests are replaced atomically, so this unlocked read only finds the
+    // destination; it is re-checked under the stage lock below.
+    let peeked = try location.loadManifest()
+    let workspaceLock = try WorkspacePolicy.identity(path: peeked.destination).map {
+      try WorkspacePolicy.workspaceLock(instance, identity: $0)
+    }
+    defer { workspaceLock?.release() }
     let lock = try location.lock()
     defer { lock.release() }
     let manifest = try location.loadManifest()
+    guard manifest.destination == peeked.destination else {
+      throw HostError("The stage changed while waiting to apply it; review it again")
+    }
     if let stageID, stageID != manifest.id {
       throw HostError(
         "The current stage is \(manifest.id), not \(stageID); review it with `iso diff` before applying"
       )
+    }
+    if let (binding, policy) = shadow {
+      reportShadowApply(instance, manifest: manifest, binding: binding, policy: policy)
     }
     if !force && FileManager.default.fileExists(atPath: manifest.destination) {
       try checkLocalClean(manifest.destination)
@@ -550,6 +605,44 @@ package struct WorkspaceTransfer: Sendable {
     BoundaryAudit.record(instance, .pullApply(applied: applied.count), diagnostics: diagnostics)
     try location.remove()
     return (manifest, applied)
+  }
+
+  /// Shadow mode: the hypothetical decision, without prompting, minting or
+  /// consuming an approval, or changing the apply.
+  /// Applies the same stage-binding checks the enforcing path would, so a
+  /// stage enforcement would refuse is never reported as allowed.
+  func reportShadowApply(
+    _ instance: Instance, manifest: StageManifest, binding: PolicyBinding, policy: CompiledPolicy
+  ) {
+    let evaluation = ApprovalCheck.evaluate(policy, instance: instance.name.rawValue)
+    let staged = manifest.policy
+    let attached = (try? WorkspacePolicy.attachedWorkspace(instance)) ?? nil
+    let reason: PolicyReason
+    if staged == nil || staged?.policyEpoch != binding.policyEpoch
+      || staged?.instanceID != binding.instanceID || staged?.policyDigest != policy.digest
+    {
+      reason = attached == manifest.destination ? .policyEpochMismatch : .unsupportedPath
+    } else if attached != manifest.destination
+      || WorkspacePolicy.identity(path: manifest.destination) != staged?.destinationIdentity
+    {
+      reason = .unsupportedPath
+    } else {
+      switch evaluation.outcome {
+      case .denied(let denied): reason = denied
+      case .notGoverned: reason = .notGoverned
+      case .permitted: reason = evaluation.requiresApproval ? .approvalRequired : .allowed
+      }
+    }
+    let verdict: PolicyVerdict = reason == .allowed ? .allow : .deny
+    BoundaryAudit.record(
+      instance,
+      .policyDecision(
+        action: .workspacePullApply, outcome: .decided(verdict, reason),
+        decisionID: UUID().uuidString.lowercased(), digest: policy.digest, shadow: true),
+      diagnostics: diagnostics)
+    diagnostics.log(
+      .info,
+      "policy shadow: stage \(manifest.id) apply would be \(verdict.rawValue) (\(reason.rawValue))")
   }
 
   /// `iso pull --discard`. Returns whether a stage existed.
@@ -625,8 +718,11 @@ package struct WorkspaceTransfer: Sendable {
     let output: ProcessRunner.Output
     do {
       output = try runner.capture(
-        request(try tool("git"), ["-C", destination, "status", "--porcelain"])
-          .with(overflow: .drain))
+        request(
+          // A read-only check: never refresh `.git/index` in the destination.
+          try tool("git"), ["--no-optional-locks", "-C", destination, "status", "--porcelain"]
+        )
+        .with(overflow: .drain))
     } catch {
       throw ContextError("Failed to check local git status", cause: error)
     }

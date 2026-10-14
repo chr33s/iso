@@ -34,7 +34,7 @@ run = "python3 scripts/hygiene.py"
 
 [tasks.lint]
 description = "swift format lint --strict over every Swift package"
-run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift experiments/macos-computer-use-q0/Package.swift experiments/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift experiments/macos-computer-use-q0/Package.swift experiments/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
 
 [tasks.build]
 description = "Build the Swift host"
@@ -77,6 +77,10 @@ python3 scripts/test-swift-egress-lease.py
 python3 scripts/test-swift-egress-mutations.py
 """
 
+[tasks.check-policy]
+description = "IsoPolicy library tests (shared by the host and the credential proxy)"
+run = "swift test --package-path iso-policy --force-resolved-versions"
+
 [tasks.check-all]
-description = "Local checks for all four packages; VM integration is a separate gate"
-depends = ["check", "check-runtime", "check-proxy", "check-egress"]
+description = "Local checks for every package; VM integration is a separate gate"
+depends = ["check", "check-policy", "check-runtime", "check-proxy", "check-egress"]

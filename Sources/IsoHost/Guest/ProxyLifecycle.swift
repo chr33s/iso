@@ -85,7 +85,8 @@ package struct ProxyLauncher: Sendable {
   /// leaves no proxy, tunnel or token behind.
   package func start(
     _ instance: Instance, provider: ProxyProvider, upstream: EffectiveUpstream, target: SSHTarget,
-    readinessPolicy: FilteredHandoff.BootPolicy? = nil
+    readinessPolicy: FilteredHandoff.BootPolicy? = nil,
+    authorization: ProxyAuthorizationStartup? = nil
   ) throws -> ProxyHandle {
     let credential: Secret<String>
     do {
@@ -97,9 +98,12 @@ package struct ProxyLauncher: Sendable {
     }
     let token = Secret(randomHex(32))
     let port = provider.port(instance)
-    let readiness = readinessPolicy.map {
-      BrokerReadiness.Startup(identity: .init(), policy: $0)
-    }
+    // A policy-bound launch (startup version 3) always proves readiness, so
+    // the guest never receives a capability for an unverified proxy.
+    let readiness =
+      readinessPolicy != nil || authorization != nil
+      ? BrokerReadiness.Startup(
+        identity: .init(), policy: readinessPolicy, authorization: authorization) : nil
     let startup = Self.wireConfig(
       listen: "127.0.0.1:\(port)", capabilityToken: token, provider: provider, auth: upstream.auth,
       credential: credential, readiness: readiness)
@@ -127,6 +131,12 @@ package struct ProxyLauncher: Sendable {
         try BrokerReadiness.require(
           instance, target: target, environment: environment, provider: provider,
           policy: readiness.policy)
+      }
+      if let authorization {
+        diagnostics.log(
+          .info,
+          "\(provider.rawValue) proxy enforces policy \(authorization.policyDigest) (epoch \(authorization.policyEpoch), generation \(authorization.proxyGenerationID))"
+        )
       }
     } catch {
       stop(instance, provider: provider)

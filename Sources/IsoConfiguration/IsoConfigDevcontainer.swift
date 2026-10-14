@@ -32,6 +32,6 @@ extension IsoConfig {
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
-      editor: editor, execution: execution)
+      editor: editor, execution: execution, policy: policy)
   }
 }

@@ -52,6 +52,8 @@ def main():
     live = parser.add_argument_group("live agent tool use (H-07; real credentials, billed)")
     live.add_argument("--live-agents", action="store_true",
                       help="run only the in-guest agent tool-use check with dedicated credentials")
+    live.add_argument("--enforce-policy", action="store_true",
+                      help="boot under an enforcing IsoPolicy that permits only the selected providers (docs/policy.md)")
     live.add_argument("--filtered", action="store_true",
                       help="qualify live guest agents under filtered egress with no approved CONNECT destinations")
     live.add_argument("--claude-model", action="append", default=[], metavar="MODEL",
@@ -66,6 +68,8 @@ def main():
     args = parser.parse_args()
     if args.filtered and not args.live_agents:
         parser.error("--filtered requires --live-agents")
+    if args.enforce_policy and not args.live_agents:
+        parser.error("--enforce-policy requires --live-agents")
     if args.live_agents:
         if args.controlled_upstream or args.controlled_upstream_preflight:
             parser.error("--live-agents runs on its own; run --controlled-upstream separately")
@@ -175,6 +179,10 @@ def main():
             assert actual == expected, f"{provider_name}: proxy binary changed"
             record = {"provider": provider_name, "guest_endpoint": endpoint, "proxy_sha256": actual,
                       "egress": "filtered" if args.filtered else "open"}
+            if args.enforce_policy:
+                proxy_log = (instance / f"proxy-{provider_name}.log").read_text()
+                assert "iso-proxy policy: mode=enforce" in proxy_log, f"{provider_name}: proxy is not policy-bound"
+                record["policy"] = "enforce"
             print(json.dumps(record), flush=True)
             log.write(json.dumps(record) + "\n")
         install_agent_probe(name)
@@ -259,6 +267,18 @@ def main():
                                 "kernel": str(kernel)},
             "proxy": proxies,
         }
+        if args.enforce_policy:
+            selected = sorted(proxies)
+            configuration["proxy"] = {"mode": "required", **proxies}
+            configuration["policy"] = {
+                "version": 1, "mode": "enforce", "actions": ["credential.use", "proxy.request"],
+                "rules": [{"id": f"{action.split('.')[1]}-{name}", "effect": "permit", "action": action,
+                           "resources": [f"provider:{name}"]}
+                          for name in selected for action in ["credential.use", "proxy.request"]],
+                "guards": [{"id": "live-limit", "action": "proxy.request",
+                            "resources": [f"provider:{name}" for name in selected],
+                            "require": {"rate_limit": {"max_requests": 1000, "within_seconds": 60}}}],
+            }
         if args.filtered:
             configuration.update(egress="filtered", egress_filter={"allowed_hosts": []},
                                  profiles={"proxy-filtered-acceptance": {"apt_packages": ["python3"]}})

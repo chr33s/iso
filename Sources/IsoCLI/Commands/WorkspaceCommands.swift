@@ -98,8 +98,11 @@ struct Pull: ParsableCommand {
       }
       if apply {
         let instance = try InstanceStore.resolve(context.config, name: name)
+        // --force skips only the local git cleanliness check; it never
+        // stands in for a policy approval.
         let (manifest, applied) = try context.transfer.applyStage(
-          instance, stageID: stageId, force: force)
+          instance, stageID: stageId, force: force, configuredPolicy: context.config.policy,
+          confirm: TerminalStageConfirmation.make(global: global, instance: instance))
         context.diagnostics.log(
           .info,
           "Applied \(applied.count) changes from stage \(manifest.id) to \(neutralizeControls(manifest.destination))"
@@ -109,12 +112,14 @@ struct Pull: ParsableCommand {
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
       guard Self.stages(review: review, mode: context.config.workspacePull.mode) else {
         if stat { throw UsageError("--stat requires --review or workspace.pull.mode \"stage\"") }
-        try context.transfer.pull(running, directory: dir, force: force, excludeGit: excludeGit)
+        try context.transfer.pull(
+          running, directory: dir, force: force, excludeGit: excludeGit,
+          configuredPolicy: context.config.policy)
         return
       }
       let manifest = try context.transfer.stage(
-        running, directory: dir, excludeGit: excludeGit, limits: context.config.workspacePull.limits
-      )
+        running, directory: dir, excludeGit: excludeGit,
+        limits: context.config.workspacePull.limits, configuredPolicy: context.config.policy)
       context.printStage(manifest, instance: running.instance, diffs: !stat)
     }
   }
@@ -138,8 +143,8 @@ struct Diff: ParsableCommand {
       let context = try CommandContext.load(global)
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
       let manifest = try context.transfer.stage(
-        running, directory: dir, excludeGit: excludeGit, limits: context.config.workspacePull.limits
-      )
+        running, directory: dir, excludeGit: excludeGit,
+        limits: context.config.workspacePull.limits, configuredPolicy: context.config.policy)
       context.printStage(manifest, instance: running.instance, diffs: !stat)
     }
   }

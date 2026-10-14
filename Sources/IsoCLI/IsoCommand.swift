@@ -24,7 +24,7 @@ struct IsoCommand: ParsableCommand {
       Pull.self, Diff.self, Exec.self, CodeCommand.self, ZedCommand.self, Editor.self,
       SSHConfigCommand.self, Images.self, Resize.self,
       Commit.self, Restore.self, ProfilesCommand.self, GitHubCommand.self, ProxyCommand.self,
-      SecretsCommand.self, Audit.self, Capabilities.self,
+      SecretsCommand.self, Audit.self, PolicyCommand.self, Capabilities.self,
       Validate.self, Update.self, Uninstall.self, Completions.self,
       EgressLeaseCommand.self, HostCommand.self, HostAgentCommand.self,
     ])

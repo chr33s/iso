@@ -696,7 +696,13 @@ iso pull [NAME] [FLAGS]
 
 With `workspace.pull.mode = "stage"` ([configuration](configuration.md#workspace-section)),
 a plain `iso pull` behaves like `--review`. See
-[staged pulls](workspaces.md#staged-pulls).
+[staged pulls](workspaces.md#staged-pulls). Under an enforcing
+`workspace.pull.apply` policy with an approval guard, `--apply` re-renders
+the stage on the host terminal and applies it only after you type its stage
+ID; `--force` does not waive this, and without a terminal (or with
+`--output json`) it fails with `approval_required` before writing anything.
+Direct pulls and `--dir` naming another directory are refused. See
+[`policy.md`](policy.md#approving-a-staged-apply).
 
 ```
 iso pull
@@ -1264,6 +1270,19 @@ config `guest_env` is passed as literal text (with a warning for
 `containerEnv`). Every nonempty `guest_env.json` uses version 2 with typed
 literal, secret-reference and provider-reference entries. Missing or unsupported
 versions are rejected; resolved secrets are never written to the snapshot.
+
+### `policy show`
+
+Show the policy snapshot the instance's current (or latest) boot runs under:
+mode, epoch, digest, governed actions, and each proxy launch slot claimed in
+that boot with whether its process is observed now (not a health check). Also
+reports whether the configured `policy` differs and is pending the next boot.
+Read-only: it never reads proxy counters, resolves credentials or mints an
+approval. See [`policy.md`](policy.md).
+
+```
+iso policy show [NAME] [--json]
+```
 
 ### `audit`
 

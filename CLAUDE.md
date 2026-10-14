@@ -75,6 +75,7 @@ swift build                                                   # debug build → 
 swift test --force-resolved-versions                          # host package tests
 swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
 swift test --sanitize=address --scratch-path .build-address   # also thread, undefined
+swift test --package-path iso-policy --force-resolved-versions  # shared policy library
 swift test --package-path iso-proxy --force-resolved-versions   # credential proxy
 swift test --package-path iso-egress --force-resolved-versions  # filtered egress
 swift test --package-path iso-sandbox --no-parallel             # Apple runtime
@@ -84,7 +85,7 @@ python3 scripts/swift-host-fault-injection.py                 # tests catch inje
 scripts/fuzz.sh smoke                                         # bounded libFuzzer run, all targets
 python3 scripts/build-release.py [--release --test --tag vX.Y.Z]  # release archive
 mise run check                                                # host gates (mise.toml)
-mise run check-all                                            # all four packages
+mise run check-all                                            # every package
 ```
 
 The host contract scripts check reviewed expectations in `tests/fixtures/contracts/`.

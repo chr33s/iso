@@ -15,11 +15,14 @@ let package = Package(
     // scrypt only (CryptoExtras); every other primitive comes from CryptoKit.
     // See docs/design/embedded-secrets-spec.md section 7.
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.0"),
+    // Shared policy evaluator, also linked by iso-proxy; a library, not a process.
+    .package(path: "iso-policy"),
   ],
   targets: [
     .target(name: "IsoCore"),
     .target(
-      name: "IsoConfiguration", dependencies: ["IsoCore"],
+      name: "IsoConfiguration",
+      dependencies: ["IsoCore", .product(name: "IsoPolicy", package: "iso-policy")],
       swiftSettings: [.strictMemorySafety(), .treatWarning("StrictMemorySafety", as: .error)]),
     // The local secret store; must not depend on IsoHost (VM/runtime code).
     .target(
@@ -28,13 +31,18 @@ let package = Package(
     // The .sb files are canonical copies of the embedded profiles
     // (SeatbeltProfile.swift); companion test scripts pass them to sandbox-exec.
     .target(
-      name: "IsoHost", dependencies: ["IsoCore", "IsoConfiguration", "IsoSecrets"],
+      name: "IsoHost",
+      dependencies: [
+        "IsoCore", "IsoConfiguration", "IsoSecrets",
+        .product(name: "IsoPolicy", package: "iso-policy"),
+      ],
       exclude: ["Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb"]),
     .executableTarget(
       name: "IsoCLI",
       dependencies: [
         "IsoCore", "IsoConfiguration", "IsoHost", "IsoSecrets",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        .product(name: "IsoPolicy", package: "iso-policy"),
       ]),
     // tests/ also holds the integration scripts; Swift tests live under
     // tests/swift (a separate Tests/ would alias it on case-insensitive disks).
@@ -50,10 +58,13 @@ let package = Package(
     .testTarget(
       name: "IsoCoreTests", dependencies: ["IsoCore"], path: "tests/swift/IsoCoreTests"),
     .testTarget(
-      name: "IsoConfigurationTests", dependencies: ["IsoConfiguration"],
+      name: "IsoConfigurationTests",
+      dependencies: ["IsoConfiguration", .product(name: "IsoPolicy", package: "iso-policy")],
       path: "tests/swift/IsoConfigurationTests", resources: [.copy("Fixtures")]),
     .testTarget(
-      name: "IsoHostTests", dependencies: ["IsoHost"], path: "tests/swift/IsoHostTests"),
+      name: "IsoHostTests",
+      dependencies: ["IsoHost", .product(name: "IsoPolicy", package: "iso-policy")],
+      path: "tests/swift/IsoHostTests"),
     .testTarget(
       name: "IsoSecretsTests", dependencies: ["IsoSecrets"], path: "tests/swift/IsoSecretsTests"),
     .testTarget(name: "IsoCLITests", dependencies: ["IsoCLI"], path: "tests/swift/IsoCLITests"),

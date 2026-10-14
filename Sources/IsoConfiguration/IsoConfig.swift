@@ -4,6 +4,7 @@
 
 import Foundation
 import IsoCore
+import IsoPolicy
 
 /// A host filesystem path from configuration with a leading `~` component
 /// expanded at construction, so every path field is expanded on every load.
@@ -83,6 +84,9 @@ package struct IsoConfig: Sendable, Equatable {
   package let editor: EditorConfig
   /// Remote execution hosts for `iso host`; global configuration only.
   package let execution: ExecutionConfig
+  /// The compiled `policy` object; nil when absent. A running boot uses its
+  /// stored snapshot, never this value (docs/design/iso-policy.md §5.2).
+  package let policy: CompiledPolicy?
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -91,9 +95,10 @@ package struct IsoConfig: Sendable, Equatable {
     postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
-    editor: EditorConfig, execution: ExecutionConfig = .defaults
+    editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?
   ) {
     self.execution = execution
+    self.policy = policy
     self.dataDirectory = dataDirectory
     self.vm = vm
     self.sshPort = sshPort
@@ -230,7 +235,7 @@ package enum ProxyAuthScheme: String, Sendable, Equatable {
   package var wireName: String { self == .apiKey ? "x_api_key" : "bearer" }
 }
 
-package enum ProxyProvider: String, Sendable, CaseIterable {
+package enum ProxyProvider: String, Sendable, CaseIterable, Codable {
   case anthropic
   case openai
 
@@ -509,7 +514,7 @@ extension IsoConfig {
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
-      editor: editor, execution: execution)
+      editor: editor, execution: execution, policy: policy)
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -550,7 +555,7 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
-      securityPreset: securityPreset, editor: editor, execution: execution)
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)
   }
 
   /// This command's `proxy.mode` override. Does not rewrite the config file.
@@ -562,7 +567,7 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
-      securityPreset: securityPreset, editor: editor, execution: execution)
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)
   }
 
   /// This command's egress override. Does not rewrite the config file.
@@ -574,6 +579,6 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
-      securityPreset: securityPreset, editor: editor, execution: execution)
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)
   }
 }

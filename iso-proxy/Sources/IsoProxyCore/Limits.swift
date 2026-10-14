@@ -10,4 +10,6 @@ package enum Limits {
   package static let initialHeaderSeconds = 10
   package static let bodyIdleSeconds = 30
   package static let startupBytes = 64 * 1024
+  /// Startup version 3 carries the policy (itself at most 64 KiB).
+  package static let startupBytesV3 = 128 * 1024
 }

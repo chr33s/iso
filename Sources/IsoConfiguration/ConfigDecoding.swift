@@ -250,6 +250,7 @@ enum ConfigDecoder {
       "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
       "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
       "workspace", "egress", "egress_filter", "limits", "security", "editor", "execution",
+      "policy",
     ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
@@ -263,7 +264,7 @@ enum ConfigDecoder {
       }
     }
     let presetDefaults = preset ?? .networked
-    return IsoConfig(
+    let config = IsoConfig(
       dataDirectory: dataDir,
       vm: try r.defaulted("vm", .defaults, vm),
       sshPort: try r.defaulted("ssh_port", 22) { v, p throws(FieldError) in
@@ -347,7 +348,10 @@ enum ConfigDecoder {
       },
       securityPreset: preset,
       editor: try r.defaulted("editor", .defaults, editor),
-      execution: try r.defaulted("execution", .defaults, execution))
+      execution: try r.defaulted("execution", .defaults, execution),
+      policy: try policy(r))
+    try requirePolicyCombinations(config)
+    return config
   }
 
   static func editor(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)

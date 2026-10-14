@@ -17,6 +17,8 @@ final class InboundGate: ChannelDuplexHandler {
   private let connections: Capacity
   private let requests: Capacity
   private let wireBudget: HeaderWireBudget
+  /// Shared by every connection; required for a version 3 startup.
+  private let authorizer: ProviderAuthorizer?
   private var connectionLease: Capacity.Lease?
   private var requestLease: Capacity.Lease?
   private var deadline: Scheduled<Void>?
@@ -24,12 +26,15 @@ final class InboundGate: ChannelDuplexHandler {
   private var responseStarted = false
   private var readinessNonce: String?
 
-  init(config: ProxyConfig, connections: Capacity, requests: Capacity, wireBudget: HeaderWireBudget)
-  {
+  init(
+    config: ProxyConfig, connections: Capacity, requests: Capacity, wireBudget: HeaderWireBudget,
+    authorizer: ProviderAuthorizer? = nil
+  ) {
     self.config = config
     self.connections = connections
     self.requests = requests
     self.wireBudget = wireBudget
+    self.authorizer = authorizer
   }
 
   func handlerAdded(context: ChannelHandlerContext) {
@@ -95,6 +100,19 @@ final class InboundGate: ChannelDuplexHandler {
         hasBody = count > 0
       }
       guard let lease = requests.acquire() else { return refuse(context, .serviceUnavailable) }
+      // Policy narrows what the checks above admitted; it never widens them.
+      // A denial charges no quota and forwards nothing. An admitted request
+      // stays charged whatever happens to it afterwards.
+      if config.authorization != nil {
+        guard let authorizer else {
+          lease.release()
+          return refuse(context, .serviceUnavailable)
+        }
+        if case .refuse(let status, let retryAfter) = authorizer.authorize() {
+          lease.release()
+          return refuse(context, status, retryAfter: retryAfter)
+        }
+      }
       requestLease = lease
       bodyBytes = 0
       state = .body
@@ -121,7 +139,8 @@ final class InboundGate: ChannelDuplexHandler {
     case .end(let trailers):
       guard state == .body, trailers == nil else { return refuse(context, .badRequest) }
       if let nonce = readinessNonce {
-        guard let body = try? config.readiness?.response(nonce: nonce), body.count <= 768
+        guard let body = try? config.readiness?.response(nonce: nonce),
+          body.count <= (config.authorization == nil ? 768 : BrokerReadiness.maxReplyBytes)
         else { return refuse(context, .internalServerError) }
         state = .closed
         deadline?.cancel()
@@ -222,7 +241,9 @@ final class InboundGate: ChannelDuplexHandler {
     }
   }
 
-  private func refuse(_ context: ChannelHandlerContext, _ status: HTTPResponseStatus) {
+  private func refuse(
+    _ context: ChannelHandlerContext, _ status: HTTPResponseStatus, retryAfter: Int? = nil
+  ) {
     guard state != .closed else { return }
     state = .closed
     deadline?.cancel()
@@ -231,7 +252,8 @@ final class InboundGate: ChannelDuplexHandler {
       context.close(promise: nil)
       return
     }
-    let headers = HTTPHeaders([("content-length", "0"), ("connection", "close")])
+    var headers = HTTPHeaders([("content-length", "0"), ("connection", "close")])
+    if let retryAfter { headers.add(name: "retry-after", value: String(retryAfter)) }
     context.write(
       wrapOutboundOut(.head(HTTPResponseHead(version: .http1_1, status: status, headers: headers))),
       promise: nil)

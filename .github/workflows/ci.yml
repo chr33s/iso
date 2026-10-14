@@ -47,6 +47,9 @@ jobs:
           mise run test
           git diff --exit-code -- Package.resolved
 
+      - name: IsoPolicy library tests
+        run: mise run check-policy
+
       - name: Workflow lint
         run: actionlint
 

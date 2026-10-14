@@ -38,6 +38,8 @@ swift test --sanitize=address --scratch-path .build-asan     # also:
 swift test --sanitize=thread --scratch-path .build-tsan
 swift test --sanitize=undefined --scratch-path .build-ubsan
 
+swift test --package-path iso-policy --force-resolved-versions  # IsoPolicy: compiler, evaluator, windows, approvals
+
 python3 tests/test-release-legal.py           # legal bytes and nested release notices
 python3 tests/test-read-contract.py --swift .build/debug/iso
 python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
@@ -559,6 +561,49 @@ without stopping the service. Cases it cannot run
 (no remote, unqualified runtime) are recorded as `blocked` and exit 2; a blocked
 case never counts as a pass.
 
+## Authorization policy (`iso-policy`)
+
+The library's tests are table-driven over the canonicalization fixtures in
+`iso-policy/Tests/IsoPolicyTests/Fixtures/` (shared byte-for-byte with the
+host's `PolicyConfigTests`): default deny, forbid precedence, rule-order
+independence, strict structural and numeric parsing, every v1 bound, the
+exclusive window boundary on an integer fake clock, all-or-nothing batch
+admission, exactly-capacity admission under 1,000 concurrent callers,
+bounded memory under a denial flood, and approval binding, expiry and
+single use. Host tests (`PolicyStateTests`, `WorkspacePolicyTests`) cover
+boot bindings, launch claims, version 3 startup and readiness, and the
+governed apply with zero destination writes on every denial. Proxy tests
+(`PolicyGateTests`) cover 403/429/503, `Retry-After`, `Expect: 100-continue`,
+readiness probes, and that nothing is forwarded on denial.
+The VM gate `python3 tests/integration-policy.py` boots one instance under an
+enforcing policy with synthetic credentials and never admits a provider
+request: it checks the boot snapshot and proxy claims, a policy `403` for the
+unpermitted provider (logged as `no_permit`), refusal of a mid-boot proxy
+relaunch, `approval_required` without a terminal, with `--force` and with
+`--output json`, an apply approved at a pseudo-terminal, and a new epoch that
+supersedes the previous boot's stage.
+
+`tests/integration-proxy-transition.py --live-agents --enforce-policy` runs
+the live agent check (dedicated credentials, approved models) with both
+proxies bound to an enforcing policy that permits only the selected
+providers, and asserts each proxy logged `mode=enforce`.
+
+`swift run -c release --package-path iso-policy IsoPolicyBench` measures
+static evaluation and check-and-admit apart from transport, on the largest
+v1 policy (128 rules, 16 guards, 4 rate guards × 10,000 = 40,000 slots,
+about 23 KiB canonical). Recorded on 2026-10-13, Mac17,7 (Apple M5 Max),
+macOS 27.0.1, Swift 6.4.0, release build:
+
+| Measurement | Result |
+|---|---|
+| Static evaluation, provider pair | 5.6 µs per batch (once per proxy, at startup) |
+| Check-and-admit, uncontended | 0.46 µs per request |
+| Check-and-admit, 8 threads on one lock | 0.93 µs per request (wall clock / requests) |
+| Admitted at capacity 10,000 | exactly 10,000 of 200,000 in both runs |
+
+These numbers hold only for that machine, toolchain, policy and contention;
+re-run the benchmark before relying on them elsewhere.
+
 ## Fault injection
 
 Fault injection replaces mutation testing for the host. It shows that a
@@ -589,8 +634,13 @@ update the fault's original text so it still applies (a stale entry fails the
 run). The [`mutation-check`](../.agents/skills/mutation-check/SKILL.md) skill
 walks this workflow.
 
-Entries whose source is under `iso-sandbox/` run that package's tests with
-`--force-resolved-versions --no-parallel`; controls are grouped by package.
+Entries whose source is under `iso-sandbox/` or `iso-policy/` run that
+package's tests with `--force-resolved-versions --no-parallel`; controls are
+grouped by package. The `policy-*` faults remove a policy guarantee: the
+single proxy launch per enforcing boot, snapshot verification, stage epoch
+binding, direct-pull refusal, the approval prompt, the exclusive window
+boundary, forbid precedence, approval binding and expiry, and the canonical
+round trip.
 The runtime owner-demand, non-killing startup, rollback, and failure propagation
 entries target `Launchd.bootstrap`. Other entries retain the host test target.
 

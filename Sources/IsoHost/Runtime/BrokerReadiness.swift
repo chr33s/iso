@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoPolicy
 
 /// Required remote brokers compose with the filtered transport proof. Local
 /// models and off mode do not authorize or require a provider broker.
@@ -17,9 +18,13 @@ enum BrokerReadiness {
     instance.directory + "/proxy-\(provider.rawValue)-readiness-public-key"
   }
 
+  /// A version 2 proxy carries only `policy` (the network boot policy); a
+  /// version 3 proxy always carries `authorization` and, for a filtered
+  /// boot, `policy` too.
   struct Startup: Sendable {
     let identity: FilteredReadiness.SigningIdentity
-    let policy: FilteredHandoff.BootPolicy
+    let policy: FilteredHandoff.BootPolicy?
+    var authorization: ProxyAuthorizationStartup? = nil
 
     func persistVerificationKey(_ instance: Instance, provider: ProxyProvider) throws {
       try AtomicFile.write(
@@ -41,13 +46,33 @@ enum BrokerReadiness {
     let bootID: String
     let policyHash: String
     let signature: String
+    // Version 3 only.
+    let instanceID: String?
+    let policyBootID: String?
+    let policyEpoch: String?
+    let policyDigest: String?
+    let proxyGenerationID: String?
   }
 
+  /// The signed text of a version 3 reply. Absent network fields are empty.
+  static func messageV3(
+    nonce: String, provider: String, bootID: String, policyHash: String, instanceID: String,
+    policyBootID: String, policyEpoch: String, policyDigest: String, proxyGenerationID: String
+  ) -> String {
+    "iso-broker-readiness-v3\n\(nonce)\n\(provider)\n\(bootID)\n\(policyHash)\n\(instanceID)\n\(policyBootID)\n\(policyEpoch)\n\(policyDigest)\n\(proxyGenerationID)\n"
+  }
+
+  /// A legacy reply must match `policy`; with `authorization`, only a
+  /// version 3 reply binding that boot, epoch, digest and proxy generation
+  /// verifies. The two identities never substitute for each other.
   static func verifies(
     _ response: [UInt8], nonce: String, provider: ProxyProvider,
-    policy: FilteredHandoff.BootPolicy, key: FilteredReadiness.VerificationKey
+    policy: FilteredHandoff.BootPolicy?, authorization: ProxyAuthorizationStartup? = nil,
+    key: FilteredReadiness.VerificationKey
   ) -> Bool {
-    guard response.count <= 1024, let text = String(bytes: response, encoding: .utf8),
+    guard policy != nil || authorization != nil,
+      response.count <= 1024,
+      let text = String(bytes: response, encoding: .utf8),
       let split = text.range(of: "\r\n\r\n")
     else { return false }
     let headers = text[..<split.lowerBound].components(separatedBy: "\r\n")
@@ -56,12 +81,31 @@ enum BrokerReadiness {
       headers[1].lowercased() == "content-length: \(body.count)",
       headers[2].lowercased() == "connection: close",
       let reply = try? JSONDecoder().decode(Reply.self, from: body),
-      reply.version == 1, reply.nonce == nonce, reply.provider == provider.rawValue,
-      reply.bootID == policy.bootID, reply.policyHash == policy.policyHash,
+      reply.nonce == nonce, reply.provider == provider.rawValue,
+      reply.bootID == (policy?.bootID ?? ""), reply.policyHash == (policy?.policyHash ?? ""),
       let signature = Data(base64Encoded: reply.signature), signature.count == 64
     else { return false }
-    let message =
-      "iso-broker-readiness-v1\n\(reply.nonce)\n\(reply.provider)\n\(reply.bootID)\n\(reply.policyHash)\n"
+    let message: String
+    if let authorization {
+      guard reply.version == 3, reply.instanceID == authorization.instanceID,
+        reply.policyBootID == authorization.bootID,
+        reply.policyEpoch == authorization.policyEpoch,
+        reply.policyDigest == authorization.policyDigest,
+        reply.proxyGenerationID == authorization.proxyGenerationID
+      else { return false }
+      message = messageV3(
+        nonce: reply.nonce, provider: reply.provider, bootID: reply.bootID,
+        policyHash: reply.policyHash, instanceID: authorization.instanceID,
+        policyBootID: authorization.bootID, policyEpoch: authorization.policyEpoch,
+        policyDigest: authorization.policyDigest,
+        proxyGenerationID: authorization.proxyGenerationID)
+    } else {
+      guard reply.version == 1, reply.instanceID == nil, reply.policyEpoch == nil else {
+        return false
+      }
+      message =
+        "iso-broker-readiness-v1\n\(reply.nonce)\n\(reply.provider)\n\(reply.bootID)\n\(reply.policyHash)\n"
+    }
     return key.value.isValidSignature(signature, for: Data(message.utf8))
   }
 
@@ -69,8 +113,18 @@ enum BrokerReadiness {
   /// connects to the guest.
   @discardableResult
   static func requireDirect(
-    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy,
+    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy?,
     tunnelAddress: String?
+  ) throws -> FilteredReadiness.VerificationKey {
+    // A policy-bound proxy must prove the stored binding; corrupt state fails.
+    try requireDirect(
+      instance, provider: provider, policy: policy, tunnelAddress: tunnelAddress,
+      authorization: try ProxyAuthorizationStartup.expected(instance, provider: provider))
+  }
+
+  private static func requireDirect(
+    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy?,
+    tunnelAddress: String?, authorization: ProxyAuthorizationStartup?
   ) throws -> FilteredReadiness.VerificationKey {
     guard
       ProxyLauncher.recordedProcessAlive(
@@ -93,7 +147,9 @@ enum BrokerReadiness {
     guard
       let response = FilteredReadiness.exchange(
         port: provider.port(instance), request: request(nonce: directNonce)),
-      verifies(response, nonce: directNonce, provider: provider, policy: policy, key: key)
+      verifies(
+        response, nonce: directNonce, provider: provider, policy: policy,
+        authorization: authorization, key: key)
     else {
       throw HostError(
         "FILTERED_BROKER_NOT_READY: authenticated \(provider.rawValue) companion probe failed")
@@ -104,10 +160,13 @@ enum BrokerReadiness {
   @discardableResult
   static func require(
     _ instance: Instance, target: SSHTarget, environment: [String: String],
-    provider: ProxyProvider, policy: FilteredHandoff.BootPolicy
+    provider: ProxyProvider, policy: FilteredHandoff.BootPolicy?
   ) throws -> FilteredReadiness.VerificationKey {
+    // One load of the expected identity serves both probes.
+    let authorization = try ProxyAuthorizationStartup.expected(instance, provider: provider)
     let key = try requireDirect(
-      instance, provider: provider, policy: policy, tunnelAddress: target.address)
+      instance, provider: provider, policy: policy, tunnelAddress: target.address,
+      authorization: authorization)
     let port = provider.port(instance)
     let guestNonce = randomHex(16)
     let output: ProcessRunner.Output
@@ -122,7 +181,9 @@ enum BrokerReadiness {
         cause: error)
     }
     guard output.termination.succeeded,
-      verifies(output.stdout, nonce: guestNonce, provider: provider, policy: policy, key: key)
+      verifies(
+        output.stdout, nonce: guestNonce, provider: provider, policy: policy,
+        authorization: authorization, key: key)
     else {
       throw HostError(
         "FILTERED_BROKER_NOT_READY: authenticated \(provider.rawValue) guest-loopback probe failed")
