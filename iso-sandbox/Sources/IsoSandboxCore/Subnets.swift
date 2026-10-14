@@ -119,9 +119,14 @@ package struct SubnetAllocator: Sendable {
       } catch {
         guard tried.insert(index).inserted else { throw error }
         var next = index
-        try quarantineAndReallocate(index, for: id, avoiding: tried) { replacement in
-          try commit(replacement)
-          next = replacement
+        do {
+          try quarantineAndReallocate(index, for: id, avoiding: tried) { replacement in
+            try commit(replacement)
+            next = replacement
+          }
+        } catch let exhausted {
+          // Keep the refusal itself: it, not the exhaustion, is the cause.
+          throw SandboxError("\(error) (\(exhausted))")
         }
         refused(index, next, error)
         index = next

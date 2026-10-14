@@ -120,7 +120,7 @@ import Testing
     let root = try tempRoot()
     struct Refused: Error {}
     var attempts = 0
-    #expect(throws: SandboxError.self) {
+    let error = #expect(throws: SandboxError.self) {
       try SubnetAllocator(root: root).open(
         from: 1, for: try SandboxID("a"),
         attempt: { (_: Int) -> Int in
@@ -130,6 +130,9 @@ import Testing
         commit: { _ in }, refused: { _, _, _ in })
     }
     #expect(attempts == SubnetAllocator.range.count)
+    // The last refusal is reported, not only the exhausted range.
+    #expect(error.map { "\($0)" }?.contains("Refused") == true)
+    #expect(error.map { "\($0)" }?.contains("no free sandbox subnet") == true)
   }
 
   @Test func failedCommitAllocatesNothing() throws {
