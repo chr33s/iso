@@ -390,6 +390,8 @@ Apple Silicon machine.
    credentials, GitHub tokens, proxy variables, and update-origin overrides
    stripped. The first-release path forces a same-version replacement; later
    releases can use `--from-version vA.B.C` for cross-version upgrade acceptance.
+   The install and update steps each download a full release and may take up
+   to `--download-timeout` seconds (default 1800); other steps keep 300.
    It creates no VM and performs no provider calls. Run it on a clean supported
    Mac for clean-machine evidence; a private HOME on a development Mac alone
    does not establish that evidence. Uninstall checks the current CLI-removal

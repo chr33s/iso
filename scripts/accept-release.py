@@ -59,18 +59,19 @@ def check_bundle(work, tag, env):
     command([work / "bin/iso", "--help"], env)
 
 
-def accept(work, initial, target):
+def accept(work, initial, target, download_timeout):
     for name in ("home", "gh", "bin"):
         (work / name).mkdir(mode=0o700)
     env = environment(work, initial)
-    installed = command(["/bin/bash", ROOT / "install.sh"], env)
+    installed = command(["/bin/bash", ROOT / "install.sh"], env, timeout=download_timeout)
     for marker in ("SHA256SUMS signature verified.", "Attestation verified against attestations.jsonl"):
         if marker not in installed:
             raise ValueError("installer did not confirm credential-free bundled verification")
     check_bundle(work, initial, env)
     executable = work / "bin/iso"
     before = {name: (work / "bin" / name).stat().st_ino for name in BINARIES}
-    command([executable, "update", "--version", target, "--force", "--yes"], env)
+    command([executable, "update", "--version", target, "--force", "--yes"], env,
+            timeout=download_timeout)
     check_bundle(work, target, env)
     if any((work / "bin" / name).stat().st_ino == inode for name, inode in before.items()):
         raise ValueError("update did not replace every installed binary")
@@ -89,10 +90,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", type=version, required=True, help="published target release")
     parser.add_argument("--from-version", type=version, help="published starting release; defaults to target")
+    parser.add_argument("--download-timeout", type=int, default=1800, metavar="SECONDS",
+                        help="limit for the install and update steps, which download the release (default 1800)")
     args = parser.parse_args()
     try:
         with tempfile.TemporaryDirectory(prefix="iso-release-acceptance-") as temporary:
-            report = accept(Path(temporary), args.from_version or args.version, args.version)
+            report = accept(Path(temporary), args.from_version or args.version, args.version,
+                            args.download_timeout)
         print(json.dumps(report, indent=2))
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(1, f"release acceptance failed: {error}\n")

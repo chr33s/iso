@@ -81,9 +81,11 @@ class AcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             calls = []
+            timeouts = []
 
-            def command(args, env):
+            def command(args, env, timeout=300):
                 calls.append([str(arg) for arg in args])
+                timeouts.append(timeout)
                 self.assertEqual(env["HOME"], str(root / "home"))
                 if args[0] == "/bin/bash":
                     for name in acceptance.BINARIES:
@@ -102,11 +104,13 @@ class AcceptanceTests(unittest.TestCase):
 
             with patch.object(acceptance, "command", side_effect=command), \
                     patch.object(acceptance, "check_bundle") as check:
-                report = acceptance.accept(root, "v0.7.0", "v0.7.0")
+                report = acceptance.accept(root, "v0.7.0", "v0.7.0", 1234)
             self.assertEqual(check.call_count, 2)
             self.assertEqual(report["update_kind"], "same-version replacement")
             self.assertIn("--force", calls[1])
             self.assertIn("--keep-data", calls[2])
+            # Only the two steps that download a release get the longer limit.
+            self.assertEqual(timeouts, [1234, 1234, 300])
 
     def test_first_release_replaces_all_binaries(self):
         self.exercise()
