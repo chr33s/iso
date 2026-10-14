@@ -8,7 +8,7 @@ required evidence; it does not claim that any unexecuted gate has passed.
 
 Before publication, record the revision, toolchain, commands and results for:
 
-- Package format, build and test checks for all four Swift packages, the host
+- Package format, build and test checks for all five Swift packages, the host
   behavior/CLI contracts, and the host-only install/update/uninstall suites.
 - Relevant fault-injection tests, parser corpus replay, fuzz smoke, and
   sanitizer checks. A mutation must fail a running test; compile failures are

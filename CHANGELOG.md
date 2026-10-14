@@ -8,6 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.5.0
+
 - **Authorization policy**: an optional top-level `policy` (mode `off`,
   `shadow` or `enforce`) adds default-deny permit/forbid rules for
   `credential.use`, `proxy.request` and `workspace.pull.apply`, plus two
@@ -18,6 +20,16 @@ SPDX-License-Identifier: Apache-2.0
   relaunches its proxy, so quotas cannot be reset mid-boot. The shared
   evaluator is the new `iso-policy/` library package; policy-enabled proxies
   use startup protocol version 3 with signed readiness. See `docs/policy.md`.
+- **Remote agent MCP headers**: `iso host agent` no longer stages MCP
+  servers from the client's own `~/.codex/config.toml` that set
+  `http_headers`, and every remote agent run rewrites the guest's Codex
+  config, so header values an earlier build wrote there are removed on the
+  next run rather than only when the config otherwise changed. See
+  `docs/commands.md#host`.
+- **Host service migration**: stopping the local host service (as
+  `iso host migrate` does) now waits until the service process has released
+  its lock, so a following start reaches a new service instead of the exiting
+  one.
 
 ## v0.4.0
 
@@ -34,10 +46,9 @@ SPDX-License-Identifier: Apache-2.0
   boots always have a deadline (`--ttl`, default 8h). Provider credentials stay
   in the client's proxy. The remote Mac needs `iso setup` and the same `iso`
   build. Remote agents reach provider credentials only through this client's
-  proxy and do not get MCP servers whose headers iso resolves, nor servers in
-  the client's own `~/.codex/config.toml` that set `http_headers`; every remote
-  agent run rewrites the guest's Codex config, removing header values an
-  earlier build wrote there. Configure hosts under the new global `execution` section. See
+  proxy and do not get MCP servers whose headers iso resolves; header values
+  written to a remote VM by an earlier build are removed when Codex's config
+  is next rewritten. Configure hosts under the new global `execution` section. See
   `docs/commands.md#host`, `docs/configuration.md#execution-section` and
   `docs/trust-model.md`.
 - **Local host service**: `iso host migrate local --activate` hands stopped

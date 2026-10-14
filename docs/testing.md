@@ -83,7 +83,7 @@ Configuration fixtures live in
 configuration, GitHub modes, proxy credentials and URL spelling without an
 external implementation oracle.
 
-`python3 scripts/build-release.py --release --test` builds and tests all four
+`python3 scripts/build-release.py --release --test` builds and tests all five
 packages from a staged copy and assembles the release archive; see
 [RELEASING.md](../RELEASING.md).
 
