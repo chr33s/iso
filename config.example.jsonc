@@ -130,8 +130,8 @@
   // editor's own CLI). "allow" widens the sandbox: "clipboard", "internet".
   // "editor": { "security": "sandboxed", "allow": [] },
 
-  // Execution hosts: run new VMs on an enrolled remote Mac with
-  // `iso --host NAME ...`. "local" is implicit and cannot be redefined.
+  // Execution hosts: remote Macs that `iso host` commands name explicitly
+  // (`iso host up NAME`). "local" is implicit and cannot be redefined.
   // Enroll with `iso host add NAME --ssh ALIAS --agent-path PATH`.
   // "execution": {
   //   "default_host": "local",

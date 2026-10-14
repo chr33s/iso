@@ -724,8 +724,9 @@ Unknown members of `workspace` and `workspace.pull` are rejected.
 
 ## `execution` section
 
-Selects where new VMs run. Omitted, everything stays on the implicit `local`
-host, exactly as before. Only this global file may set it.
+Configures the remote Macs that `iso host …` commands run VMs on; each command
+names its host (`iso host up build-mac`). Omitted, only the implicit `local`
+host exists and nothing else changes. Only this global file may set it.
 
 ```jsonc
 "execution": {
@@ -737,7 +738,10 @@ host, exactly as before. Only this global file may set it.
 }
 ```
 
-- `hosts` keys are host names for `iso host …`; `local` is reserved.
+- `hosts` keys are host names for `iso host …`; `local` is reserved. An entry
+  supplies the `--ssh` and `--agent-path` defaults for `iso host add`.
+- `default_host` (`local` or a `hosts` key) is marked `default` in
+  `iso host list`; it does not select a host for any command.
 - `ssh_alias` is an `ssh_config` host the user already trusts (its host-key pin
   is ssh's). `agent_path` is the absolute path of `iso` on that Mac.
 - `default_session_ttl` is the boot lifetime for remote starts without
