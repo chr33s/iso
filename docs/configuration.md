@@ -279,7 +279,7 @@ Claude Code configuration injected into the guest VM at start time. Every field 
 | `marketplaces` | array of strings | `[]` | Plugin marketplace sources. Each entry is a GitHub repo URL or an absolute local directory path. Local directories are copied into the guest before registration. |
 | `plugins` | array of strings | `[]` | Plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
 | `mcp_servers` | object | `{}` | MCP servers to register in the guest. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
-| `local_model` | object | unset | Host-side model endpoint to route Claude Code at when the VM is in local mode (`iso model <vm> local`). See [Local-model routing](#local-model-routing). |
+| `local_model` | object | unset | Host-side model endpoint to route Claude Code at when the VM is in local mode (`iso model set local <vm>`). See [Local-model routing](#local-model-routing). |
 
 ### MCP servers
 
@@ -359,7 +359,7 @@ Codex configuration injected into the guest VM at start time. Every field is opt
 | `marketplaces` | array of strings | `[]` | Codex plugin marketplace sources. Each entry is a `owner/repo`[`@ref`] shorthand, a git URL, or an absolute local directory path. Local directories are copied into the guest before registration. Baked into the golden image and delta-installed on first boot. |
 | `plugins` | array of strings | `[]` | Codex plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
 | `mcp_servers` | object | `{}` | MCP servers to merge into the guest `~/.codex/config.toml`. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
-| `local_model` | object | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`iso model <vm> local`). See [Local-model routing](#local-model-routing). |
+| `local_model` | object | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`iso model set local <vm>`). See [Local-model routing](#local-model-routing). |
 
 isolate preserves any other settings already present in the staged `config.toml`, but the `mcp_servers` table is owned by isolate when `codex.mcp_servers` is configured. With `auth` `"chatgpt"`, isolate also writes `cli_auth_credentials_store = "keyring"` so Codex caches account credentials in the guest OS credential store instead of `auth.json`.
 
@@ -367,8 +367,8 @@ isolate preserves any other settings already present in the staged `config.toml`
 
 `claude.local_model` and `codex.local_model` declare a host-side model
 endpoint to route an agent at instead of the cloud. They are inert until the VM
-is switched to local mode with [`iso model <vm> local`](commands.md#model);
-`iso model <vm> remote` restores the cloud defaults. The two tools are
+is switched to local mode with [`iso model set local <vm>`](commands.md#model);
+`iso model set remote <vm>` restores the cloud defaults. The two tools are
 independent — configure one, both, or neither.
 
 Each object takes the same fields:
@@ -397,7 +397,7 @@ Each object takes the same fields:
 ```
 
 An endpoint set here takes precedence over one entered interactively and saved
-in the instance's `model.json` by `iso model … local`. See the local-model
+in the instance's `model.json` by `iso model set local …`. See the local-model
 sections of [docs/claude-integration.md](claude-integration.md) and
 [docs/codex-integration.md](codex-integration.md) for how each endpoint is
 materialized into guest config.
@@ -426,7 +426,7 @@ serve it.
 for an OpenAI API key, or ChatGPT auth for account/workspace access.
 
 Proxy mode applies only in remote model mode
-([`iso model <vm> remote`](commands.md#model)); local mode takes precedence.
+([`iso model set remote <vm>`](commands.md#model)); local mode takes precedence.
 Each provider is an optional default, and a VM can override its own credential
 per provider with [`iso proxy setup --vm <name>`](commands.md#proxy) (stored in
 the instance's `proxy.json`, not in the config file).

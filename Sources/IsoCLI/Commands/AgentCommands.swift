@@ -183,22 +183,54 @@ struct CodexCommand: ParsableCommand {
 
 // MARK: - model
 
+extension ModelMode: ExpressibleByArgument {}
+
 struct ModelCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "model", abstract: "Show or switch a VM's model backend (cloud vs. local)",
-    usage: "iso model [NAME] [COMMAND]",
     discussion: """
-      Commands:
+      Modes:
         local   Route this VM's agents at a host-side local model server
         remote  Restore cloud defaults (Anthropic / `OpenAI`)
-      """)
 
-  @OptionGroup var global: GlobalOptions
-  @Argument(
-    help: ArgumentHelp(
-      "Instance name (required if multiple instances exist), then `local` or `remote`",
-      valueName: "NAME"))
-  var words: [String] = []
+      The older form `iso model [NAME] [local|remote]` still works and prints a
+      deprecation note; use `iso model show [NAME]` or `iso model set MODE [NAME]`.
+      """,
+    subcommands: [ModelShow.self, ModelSet.self, ModelLegacy.self],
+    defaultSubcommand: ModelLegacy.self)
+
+  static let legacyDeprecation =
+    "note: `iso model [NAME] [local|remote]` is deprecated; use `iso model show [NAME]` or `iso model set local|remote [NAME]`."
+
+  /// The canonical keywords were legal instance names before `show` and
+  /// `set` existed. When such an instance exists, an invocation the older
+  /// grammar would have read differently is refused rather than retargeted.
+  static func refuseAmbiguousKeyword(
+    _ keyword: String, rest: [String], context: CommandContext
+  ) throws {
+    // Only an invocation the older grammar could read needs the instance list.
+    guard legacyReading(keyword, rest: rest) else { return }
+    if let refusal = ambiguity(
+      keyword, rest: rest, instances: try context.listInstances().map(\.name))
+    {
+      throw HostError(refusal)
+    }
+  }
+
+  /// Whether `iso model KEYWORD REST...` is also valid older grammar:
+  /// instance KEYWORD, then at most a mode.
+  static func legacyReading(_ keyword: String, rest: [String]) -> Bool {
+    rest.isEmpty || (rest.count == 1 && ModelMode(rawValue: rest[0]) != nil)
+  }
+
+  static func ambiguity(_ keyword: String, rest: [String], instances: [InstanceName]) -> String? {
+    guard legacyReading(keyword, rest: rest),
+      instances.contains(where: { $0.rawValue == keyword })
+    else { return nil }
+    let invocation = ([keyword] + rest).joined(separator: " ")
+    return
+      "`iso model \(invocation)` is ambiguous: an instance named '\(keyword)' exists, and older iso read this as a command for it. Name the instance explicitly: `iso model show \(keyword)` or `iso model set local|remote \(keyword)`."
+  }
 
   /// `[NAME] [local|remote]`; a leading `local`/`remote` is the command.
   static func parse(_ words: [String]) throws -> (InstanceName?, ModelMode?) {
@@ -220,21 +252,6 @@ struct ModelCommand: ParsableCommand {
     }
     if let extra = rest.first { throw UsageError("unexpected argument '\(extra)' found") }
     return (name, mode)
-  }
-
-  func validate() throws { _ = try Self.parse(words) }
-
-  func run() throws {
-    let (name, mode) = try Self.parse(words)
-    try IsoCLI.run {
-      let context = try CommandContext.load(global)
-      let instance = try InstanceStore.resolve(context.config, name: name)
-      switch mode {
-      case nil: try Self.status(context, instance)
-      case .local?: try Self.setLocal(context, instance)
-      case .remote?: try Self.setRemote(context, instance)
-      }
-    }
   }
 
   static func status(_ context: CommandContext, _ instance: Instance) throws {
@@ -274,7 +291,7 @@ struct ModelCommand: ParsableCommand {
     guard state.resolvedClaude(config.claude) != nil || state.resolvedCodex(config.codex) != nil
     else {
       throw HostError(
-        "No local model endpoint configured for '\(instance.name)'.\nSet claude.local_model or codex.local_model in the configuration file, or run `iso model \(instance.name) local` in an interactive terminal to enter one."
+        "No local model endpoint configured for '\(instance.name)'.\nSet claude.local_model or codex.local_model in the configuration file, or run `iso model set local \(instance.name)` in an interactive terminal to enter one."
       )
     }
     if state.resolvedCodex(config.codex) != nil { state.codexMaterialized = true }
@@ -328,7 +345,7 @@ struct ModelCommand: ParsableCommand {
       )
       for (label, key, isLocal) in tools where !isLocal {
         lines.append(
-          "  warning: \(label) stays on cloud — no local endpoint configured; set \(key) in the configuration file or re-run `iso model \(name) local` in an interactive terminal."
+          "  warning: \(label) stays on cloud — no local endpoint configured; set \(key) in the configuration file or re-run `iso model set local \(name)` in an interactive terminal."
         )
       }
     }
@@ -352,6 +369,83 @@ struct ModelCommand: ParsableCommand {
       return try LocalModel(hostURL: url, model: model, authToken: token.map(Secret.init))
     } catch {
       throw HostError("invalid \(tool) host URL '\(url)': \(error.message)")
+    }
+  }
+}
+
+/// The pre-`show`/`set` grammar, `iso model [NAME] [local|remote]`, kept as
+/// a hidden default until it is retired. Bare `iso model` is not deprecated.
+/// Its name reads as the usage placeholder in Argument Parser hints and is
+/// not a valid instance name, so no instance can select it.
+struct ModelLegacy: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "[NAME]", abstract: "iso model [NAME] [local|remote]",
+    usage: "iso model [NAME] [local|remote]", shouldDisplay: false)
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(help: ArgumentHelp("Instance name, then `local` or `remote`", valueName: "NAME"))
+  var words: [String] = []
+
+  func validate() throws { _ = try ModelCommand.parse(words) }
+
+  func run() throws {
+    let (name, mode) = try ModelCommand.parse(words)
+    if !words.isEmpty {
+      FileHandle.standardError.write(Data((ModelCommand.legacyDeprecation + "\n").utf8))
+    }
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      switch mode {
+      case nil: try ModelCommand.status(context, instance)
+      case .local?: try ModelCommand.setLocal(context, instance)
+      case .remote?: try ModelCommand.setRemote(context, instance)
+      }
+    }
+  }
+}
+
+struct ModelShow: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "show", abstract: "Show a VM's model mode and endpoints")
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(
+    help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
+  var name: InstanceName?
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      // Older iso read `show` as an instance and `show local|remote` as a switch.
+      try ModelCommand.refuseAmbiguousKeyword(
+        "show", rest: name.map { [$0.rawValue] } ?? [], context: context)
+      try ModelCommand.status(context, try InstanceStore.resolve(context.config, name: name))
+    }
+  }
+}
+
+struct ModelSet: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "set", abstract: "Switch a VM's agents to local or cloud (remote) models")
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(help: "local or remote (see `iso model --help`)") var mode: ModelMode
+  @Argument(
+    help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
+  var name: InstanceName?
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      // Older iso read `set local|remote` as a switch of an instance named `set`.
+      try ModelCommand.refuseAmbiguousKeyword(
+        "set", rest: [mode.rawValue] + (name.map { [$0.rawValue] } ?? []), context: context)
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      switch mode {
+      case .local: try ModelCommand.setLocal(context, instance)
+      case .remote: try ModelCommand.setRemote(context, instance)
+      }
     }
   }
 }

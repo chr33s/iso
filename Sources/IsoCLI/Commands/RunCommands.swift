@@ -15,6 +15,9 @@ struct RunCommand: ParsableCommand {
 
       Filtered egress is not part of this build: network hints on a definition
       are reported and never granted.
+
+      `iso host run` is different: it runs a plain command (not an agent) in a
+      disposable VM on an enrolled host and collects ~/iso-results.
       """)
 
   @OptionGroup var global: GlobalOptions
@@ -25,7 +28,10 @@ struct RunCommand: ParsableCommand {
   @Option(
     help: "Named image when creating a new instance", transform: parseImageName)
   var image: ImageName?
-  @Option(help: "Profile list when creating a new instance") var profile: [String] = []
+  @Option(
+    help: "Profile list when creating a new instance (repeatable or comma-separated)",
+    transform: parseProfileList)
+  var profile: [[String]] = []
   @Flag(
     name: .customLong("rm"),
     help: "Create a disposable instance and destroy it after the agent exits")
@@ -38,12 +44,10 @@ struct RunCommand: ParsableCommand {
   @Flag(help: "With --dry-run, emit versioned preview JSON on stdout") var json = false
   @Flag(help: "Authorize image preparation, which uses the host network and no project credentials")
   var prepare = false
-  @Option(help: "Egress mode when creating an instance: open, none, or filtered") var egress:
-    String?
-  @Option(help: "Exact host to add for a new filtered boot") var allowHost: [String] = []
+  @OptionGroup var egressOptions: EgressOptions
   @Argument(
     parsing: .postTerminator,
-    help: "Arguments forwarded to the agent. Put them after `--`."
+    help: "Arguments forwarded to the agent, unchanged. Put them after `--`."
   )
   var args: [String] = []
 
@@ -57,29 +61,30 @@ struct RunCommand: ParsableCommand {
     _ = try AgentDefinitionID(agent)
   }
 
-  var profiles: [String] { profile.flatMap { $0.split(separator: ",").map(String.init) } }
+  var profiles: [String] { profile.flatMap { $0 } }
+
+  var loadIntent: LoadIntent { dryRun ? .preview : .normal }
+
+  /// iso's own `--ask`, and the agent's arguments: exactly `args`, never
+  /// re-read for iso flags.
+  var launch: (ask: Bool, forwarded: [String]) { (ask, args) }
 
   func run() throws {
     try IsoCLI.run {
-      let (ask, forwarded) = splitAsk(ask, args)
       let context = try CommandContext.load(
         global,
-        override: { try applyEgressOverride($0, mode: egress, hosts: allowHost) },
-        backgroundWork: !dryRun)
+        override: { try applyEgressOverride($0, egressOptions) },
+        intent: loadIntent)
       let flow = RunWorkflow(
         lifecycle: ProjectLifecycle(context, noGitHub: false),
         agent: try AgentDefinitionID(self.agent), workspace: workspace,
         name: name,
-        image: image, profiles: profiles, remove: remove, ask: ask, prepare: prepare,
-        forwarded: forwarded, configPath: global.config)
+        image: image, profiles: profiles, remove: remove, ask: launch.ask, prepare: prepare,
+        forwarded: launch.forwarded, configPath: global.config)
       if dryRun {
         try flow.preview(json: json)
       } else {
-        do {
-          try flow.execute(confirmPreparation: TerminalPrompt.confirm, report: flow.render)
-        } catch let error as RunWorkflow.AgentExit {
-          throw ExitCode(error.code)
-        }
+        try flow.execute(confirmPreparation: TerminalPrompt.confirm, report: flow.render)
       }
     }
   }
@@ -121,7 +126,7 @@ struct RunCleanup: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global, backgroundWork: false)
+      let context = try CommandContext.load(global, intent: .preview)
       if dryRun && session == nil {
         let records = try RunSessionStore.list(context.config)
         if records.isEmpty { context.output.out("No run sessions.") }

@@ -9,19 +9,39 @@ import IsoCore
 import IsoHost
 import IsoSecrets
 
+/// Why a command loads its context. Anything but `normal` shows no update
+/// notice and schedules no update check.
+enum LoadIntent {
+  case normal
+  /// Commands that resolve no `vault:` reference (dry runs of `run`, agent
+  /// and image catalog commands, `run-cleanup`): no secret store either.
+  case preview
+  /// `setup`, `up` and `start --dry-run`. Translating a devcontainer may fetch
+  /// it from a private git repository with that repository's `github.pat`
+  /// entry, so the secret store stays attached; it unlocks only if that
+  /// entry is a `vault:` reference.
+  case devcontainerPreview
+
+  static func dryRun(_ dryRun: Bool) -> Self { dryRun ? .devcontainerPreview : .normal }
+
+  var checksForUpdates: Bool { self == .normal }
+  var attachesSecretStore: Bool { self != .preview }
+}
+
 extension CommandContext {
   static func load(
     _ global: GlobalOptions, override: (IsoConfig) throws -> IsoConfig = { $0 },
-    backgroundWork: Bool = true
+    intent: LoadIntent = .normal
   ) throws -> CommandContext {
     let environment = ConfigEnvironment.process
     try checkDataRoot(global, environment)
     let config = try override(
       ConfigLoader.load(global.selection(environment: environment), environment: environment))
     let diagnostics = Diagnostics(verbosity: global.verbose)
-    // Dry-run must not check for updates or attach a credential resolver.
-    if backgroundWork {
+    if intent.checksForUpdates {
       AdminSupport.updateNotice(config, environment: environment, diagnostics: diagnostics)
+    }
+    if intent.attachesSecretStore {
       // Every credential resolver in this process reads `vault:` references
       // through the one store.
       CredentialResolver.processSecrets = StoreSecretResolver.shared(
@@ -184,70 +204,68 @@ struct Status: MachineCommand {
   func run() throws {
     if global.output == .json {
       return try IsoCLI.run(global, Self.self) {
-        try Self.machine(CommandContext.load(global), name: name)
+        MachineStatusResult(try Self.collect(CommandContext.load(global), name: name))
       }
     }
-    try IsoCLI.run { try Self.run(CommandContext.load(global), name: name, json: json) }
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      // Only the text report of one instance shows the runtime description.
+      let report = try Self.collect(context, name: name, depth: json ? .summary : .detailed)
+      if json {
+        try context.output.writeJSON(report.legacyJSON)
+      } else {
+        report.text.forEach(context.output.out)
+      }
+    }
   }
 
-  /// The same probes as the text and legacy JSON paths.
-  static func machine(_ context: CommandContext, name: InstanceName?) throws
-    -> MachineStatusResult
+  /// How much one named instance is probed: the text report also describes
+  /// a running instance and reports a stopped one without re-probing it.
+  enum Depth { case summary, detailed }
+
+  /// One collection per invocation; every renderer reads the same rows.
+  enum Report {
+    case one(Row)
+    case all([Row])
+
+    var legacyJSON: LegacyStatusJSON {
+      switch self {
+      case .one(let row): .one(StatusOutput(row))
+      case .all(let rows): .all(rows.map(StatusOutput.init))
+      }
+    }
+
+    var text: [String] {
+      switch self {
+      case .one(let row):
+        let header = "Instance '\(row.instance.name)' (\(row.state.rawValue))"
+        let identity = "\n  Backend: \(AppleBackend.name)\n  Image: \(row.instance.image)"
+        switch row.state {
+        case .unhealthy: return [header + identity + "\n  Reason: \(row.reason ?? "")"]
+        case .running:
+          let usage = row.usage.map(\.display) ?? "Guest usage: unavailable"
+          return [(row.detail ?? header) + "\n  " + usage]
+        case .stopped, .unknown: return [header + identity]
+        }
+      case .all(let rows):
+        guard !rows.isEmpty else { return ["No instances found"] }
+        return rows.map { row in
+          let usage = row.usage.map { "  " + $0.summary } ?? ""
+          return
+            "\(row.instance.name) \(padded(row.state.rawValue, 10)) \(row.instance.image) \(AppleBackend.name)\(usage)"
+        }
+      }
+    }
+  }
+
+  static func collect(_ context: CommandContext, name: InstanceName?, depth: Depth = .summary)
+    throws -> Report
   {
     if let name {
       let instance = try InstanceStore.resolve(context.config, name: name)
-      return .one(MachineStatusEntry(try status(context, instance)))
+      return .one(try status(context, instance, depth: depth))
     }
-    return .all(try context.listInstances().map { MachineStatusEntry(listedStatus(context, $0)) })
-  }
-
-  static func run(_ context: CommandContext, name: InstanceName?, json: Bool) throws {
-    if let name {
-      let instance = try InstanceStore.resolve(context.config, name: name)
-      if json {
-        try context.output.writeJSON(StatusOutput(try status(context, instance)))
-        return
-      }
-      let running: AppleBackend.Running?
-      do {
-        running = try context.backend.asRunning(instance)
-      } catch let failure as InstanceUnhealthy {
-        context.output.out(
-          "Instance '\(instance.name)' (unhealthy)\n  Backend: \(AppleBackend.name)\n  Image: \(instance.image)\n  Reason: \(failure.reason)"
-        )
-        return
-      }
-      guard let running else {
-        context.output.out(
-          "Instance '\(instance.name)' (stopped)\n  Backend: \(AppleBackend.name)\n  Image: \(instance.image)"
-        )
-        return
-      }
-      var report = try context.backend.describe(running)
-      if let usage = ResourceUsage.query(context.ssh, running.target) {
-        report += "\n  \(usage.display)"
-      } else {
-        report += "\n  Guest usage: unavailable"
-      }
-      context.output.out(report)
-      return
-    }
-    let instances = try context.listInstances()
-    let rows = instances.map { listedStatus(context, $0) }
-    if json {
-      try context.output.writeJSON(rows.map(StatusOutput.init))
-      return
-    }
-    guard !rows.isEmpty else {
-      context.output.out("No instances found")
-      return
-    }
-    for row in rows {
-      let usage = row.usage.map { "  " + $0.summary } ?? ""
-      context.output.out(
-        "\(row.instance.name) \(padded(row.state.rawValue, 10)) \(row.instance.image) \(AppleBackend.name)\(usage)"
-      )
-    }
+    return .all(try context.listInstances().map { listedStatus(context, $0) })
   }
 
   struct Row {
@@ -256,9 +274,13 @@ struct Status: MachineCommand {
     let usage: ResourceUsage?
     /// Why an unhealthy instance failed its readiness proof.
     var reason: String? = nil
+    /// The runtime's description of a running instance (detailed depth only).
+    var detail: String? = nil
   }
 
-  static func status(_ context: CommandContext, _ instance: Instance) throws -> Row {
+  static func status(_ context: CommandContext, _ instance: Instance, depth: Depth = .summary)
+    throws -> Row
+  {
     let running: AppleBackend.Running?
     do {
       running = try context.backend.asRunning(instance)
@@ -266,12 +288,13 @@ struct Status: MachineCommand {
       return Row(instance: instance, state: .unhealthy, usage: nil, reason: failure.reason)
     }
     if let running {
+      let detail = depth == .detailed ? try context.backend.describe(running) : nil
       return Row(
-        instance: instance, state: .running, usage: ResourceUsage.query(context.ssh, running.target)
-      )
+        instance: instance, state: .running,
+        usage: ResourceUsage.query(context.ssh, running.target), detail: detail)
     }
     // Stopped: re-probe only for its error side (journal, booting).
-    _ = try context.backend.probeRunning(instance)
+    if depth == .summary { _ = try context.backend.probeRunning(instance) }
     return Row(instance: instance, state: .stopped, usage: nil)
   }
 
@@ -284,7 +307,19 @@ struct Status: MachineCommand {
       return Row(instance: instance, state: .unknown, usage: nil)
     }
   }
+}
 
+/// `status --json`: one object for a named instance, an array otherwise.
+enum LegacyStatusJSON: Encodable {
+  case one(StatusOutput)
+  case all([StatusOutput])
+
+  func encode(to encoder: any Encoder) throws {
+    switch self {
+    case .one(let value): try value.encode(to: encoder)
+    case .all(let values): try values.encode(to: encoder)
+    }
+  }
 }
 
 func parseInstanceName(_ text: String) throws -> InstanceName {
@@ -301,6 +336,13 @@ struct Images: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Option(help: "Delete a named image", transform: parseImageName) var delete: ImageName?
   @Flag(help: "Emit machine-readable JSON instead of the text table") var json = false
+
+  /// The listing's JSON shape does not describe a deletion.
+  func validate() throws {
+    if delete != nil && json {
+      throw UsageError("the argument '--delete <DELETE>' cannot be used with '--json'")
+    }
+  }
 
   func run() throws {
     try IsoCLI.run {
@@ -352,7 +394,7 @@ struct ImagesInspect: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global, backgroundWork: false)
+      let context = try CommandContext.load(global, intent: .preview)
       let report = try ImageInspectionReport.inspect(context.config, name)
       if json {
         try context.output.writeJSON(report)
@@ -379,7 +421,7 @@ struct ImagesCacheStatus: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global, backgroundWork: false)
+      let context = try CommandContext.load(global, intent: .preview)
       let report = try ImageInspectionReport.cacheStatus(context.config)
       if json {
         try context.output.writeJSON(report)

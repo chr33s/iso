@@ -45,7 +45,7 @@ python3 tests/test-read-contract.py --swift .build/debug/iso
 python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
 python3 tests/test-data-root-contract.py --swift .build/debug/iso
 python3 tests/test-machine-contract.py --swift .build/debug/iso   # --output json stream purity, codes, no prompts
-python3 tests/test-cli-surface.py --swift .build/debug/iso
+python3 tests/test-cli-surface.py --swift .build/debug/iso   # help, inventory, machine list, completions
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
 python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
 ```
@@ -66,6 +66,15 @@ swift test --sanitize=undefined --scratch-path .build-ubsan --force-resolved-ver
 
 Record the original link failure and the retry result separately; a build
 failure does not qualify as a sanitizer pass.
+
+`test-cli-surface.py` also compares every public command path and each
+accepted spelling (aliases included) with the reviewed inventory in
+`tests/fixtures/contracts/cli-inventory.json`, checks that `iso capabilities`
+advertises exactly the commands documented in `docs/machine-interface.md`, and
+that every public command appears in the bash, zsh and fish completions. After
+an intended flag or command change, review the diff and rerun it with
+`--update-inventory`. Parser contracts (refused combinations, forwarding,
+compatibility spellings) live in `tests/swift/IsoCLITests/ArgumentContractTests.swift`.
 
 The read and lifecycle checks use synthetic state and fake runtime/SSH/builder
 processes. Reviewed iso expectations live in `tests/fixtures/contracts/`.
@@ -931,7 +940,7 @@ fails with `FILTERED_MODEL_TUNNEL_NOT_READY`. The `model-tunnel-alive` and
 `model-tunnel-target` faults remove the tunnel identity and target checks. The
 filtered VM gate starts a local-model tunnel to a closed host port, kills it,
 and expects refused handoffs, `unhealthy` status and listing, and recovery
-after `iso model NAME remote`.
+after `iso model set remote NAME`.
 
 `tunnelIdentityNamesOnlyTheRecordedMaster` starts two fake tunnel masters
 whose `ps` command lines carry their control paths and destination, as real

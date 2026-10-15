@@ -113,7 +113,7 @@ package struct ReprovisionWorkflow {
   package static func partialMessage(_ name: InstanceName, _ image: ImageName, _ disk: UInt64)
     -> String
   {
-    "Instance '\(name)' was reset but not fully provisioned. Re-run `iso restore \(name) --image \(image) --reprovision` to finish.\nIts disk was \(disk) GiB before the reset. Nothing persists that, and a re-run measures the replaced (template-sized) disk, so check `iso status \(name)` and run `iso resize \(name) --size \(disk)` if the re-grow did not complete."
+    "Instance '\(name)' was reset but not fully provisioned. Re-run `iso restore \(name) --image \(image) --reprovision` to finish.\nIts disk was \(disk) GiB before the reset. Nothing persists that, and a re-run measures the replaced (template-sized) disk, so check `iso status \(name)` and run `iso resize \(name) --disk \(disk)` if the re-grow did not complete."
   }
 
 }

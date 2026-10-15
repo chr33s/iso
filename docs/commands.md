@@ -17,9 +17,43 @@ isolate creates isolated VM environments for running Claude Code and Codex. Supp
 |------|-------------|
 | `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.iso/config.jsonc`). The selected file must exist. |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
-| `--output <text\|json>` | `json` prints one versioned `iso.machine/v1` document on stdout and never prompts. Supported by `capabilities`, `list`, `status`, `up`, `start`, `stop`, `destroy` and `ssh-config`; any other command fails with `UNSUPPORTED_MACHINE_OUTPUT`. See [machine-interface.md](machine-interface.md). Default `text`. |
+| `--output <text\|json>` | `json` prints one versioned `iso.machine/v1` document on stdout and never prompts. Supported by `capabilities`, `list`, `status`, `up`, `start`, `stop`, `destroy`, `ssh-config`, `code` and `zed` (`iso capabilities` lists them); any other command fails with `UNSUPPORTED_MACHINE_OUTPUT`. See [machine-interface.md](machine-interface.md). Default `text`. |
 | `--quiet` | With `--output json`, discard all stderr diagnostics. |
 | `--version` | Print version and exit. |
+
+## Exit Status
+
+| Outcome | Status |
+|---------|--------|
+| Success | 0 |
+| Operational failure, a requested check or probe that failed (`validate`), or a host receipt that is not `succeeded` | 1 |
+| Invalid syntax, incompatible flags, or a malformed value. Most are refused while parsing, before any configuration, network or VM work; a value that is well-formed but out of range for the host (such as a `--ttl` above 24h) is refused later with 1 | 2 |
+| A guest command run by `exec`, `shell [NAME] -- COMMAND`, an interactive `shell`/`claude`/`claude-agents`/`codex` session, `run`, `host shell`, `host agent` or `host run` that exits non-zero | That command's status |
+| Such a command (or the `ssh` behind `host forward`) ended by a signal, or a session whose readiness proof was lost | 1 (never 0) |
+
+A forwarded status can itself be 1 or 2; for these commands read it as the
+guest command's result, not as iso's own error class. `ssh` reports its own
+transport failures (for example a refused pinned host key) as 255, so 255 from
+these commands may come from `ssh` rather than the guest; its stderr says which.
+
+## Compatibility Spellings and Deprecations
+
+Older spellings keep working with the same meaning, units and limits as
+before, with one exception: a host VM's `--disk-gib +20` used to mean 20 GiB
+and is now refused, as `--disk +20` is. They are retired only in a release that announces it here first.
+
+| Canonical | Older spelling (still accepted) | Commands | Notes |
+|-----------|---------------------------------|----------|-------|
+| `--vcpus` | `--cpus` | `host vm create`, `host vm resize` | |
+| `--mem` (MiB) | `--memory-mib` | `host vm create`, `host vm resize` | Plain MiB, as before |
+| `--disk` (GiB) | `--disk-gib` | `host vm create`, `host vm resize` | Absolute only on a host; `+20` is refused there |
+| `--disk` | `--size` | `resize` | Absolute or relative (`+20`) |
+| `--guest-path` | `--project` | `code`, `zed`, `editor` | Always a path inside the guest |
+| `--guest-path` | `--path` | `host editor` | Always a path inside the guest |
+| `--forward-port GUEST[:HOST]` | positional `LOCAL[:GUEST]` | `host forward` | Reversed order; the forms cannot be mixed |
+| `--image IMAGE` | positional `IMAGE` | `host vm commit`, `host vm restore` | Giving both is refused |
+| `model show [NAME]`, `model set MODE [NAME]` | `model [NAME] [local\|remote]` | `model` | Deprecated; prints a note on stderr |
+| (none) | `setup -y`/`--yes` | `setup` | Deprecated; has no effect and prints a warning |
 
 ## Instance Name Resolution
 
@@ -72,7 +106,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
 | `--image <name>` | Named image to use when creating a new instance (default: `default`) |
-| `--profile <list>` | Build or reuse a profile-derived image when creating a new instance, named from the sorted profiles (for example `node-python`) |
+| `--profile <list>` | Build or reuse a profile-derived image when creating a new instance, named from the sorted profiles (for example `node-python`). Repeatable or comma-separated; an empty name (`a,,b`) is refused |
 | `--exclude-git` | Skip `.git/` when copying/syncing local directories; does not strip `.git` from a `--git-repo` clone |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable) |
@@ -139,11 +173,11 @@ iso setup [FLAGS]
 | Flag | Description |
 |------|-------------|
 | `--config-only` | Only create the JSONC configuration template, then exit |
-| `-y`, `--yes` | Skip confirmation prompts (accept all) |
+| `-y`, `--yes` | Deprecated; has no effect and prints a warning. It never trusts a discovered `devcontainer.json`: pass `--devcontainer PATH` to use one or `--no-devcontainer` to ignore it |
 | `--vcpus <N>` | Number of vCPUs (overrides config) |
 | `--mem <MiB>` | Memory in MiB (overrides config) |
 | `--rebuild` | Force rebuild of template rootfs |
-| `--profile <list>` | Comma-separated install profiles: `python`, `node`, `c`, `fuzz`, `rust`, `go` |
+| `--profile <list>` | Install profiles, repeatable or comma-separated: `python`, `node`, `c`, `fuzz`, `rust`, `go`. An empty name (`a,,b`) is refused |
 | `--extra-packages <list>` | Accepted for compatibility; the Apple backend ignores it with a warning (use a [custom profile](configuration.md#profiles-section)) |
 | `--post-install <path>` | Accepted for compatibility; the Apple backend ignores it with a warning (use a custom profile's `post_install`) |
 | `--template-size <GiB>` | Template rootfs size in GiB (default: 8) |
@@ -158,10 +192,10 @@ iso setup [FLAGS]
 | `--ipsw <path>` | macOS restore image to install; required with `--guest macos`. |
 
 ```
-iso setup -y --profile python,node --template-size 12
+iso setup --profile python,node --template-size 12
 iso setup --config-only
 iso setup --image ml-dev --profile python
-iso setup -y --workspace . --devcontainer .devcontainer/devcontainer.json
+iso setup --workspace . --devcontainer .devcontainer/devcontainer.json
 iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --image mac
 ```
 
@@ -343,7 +377,7 @@ iso codex my-project -- login --device-auth
 
 ### `exec`
 
-Run a command in the VM and print its output. No PTY is allocated and stdin is not forwarded; use `shell` for interactive work.
+Run a command in the VM and print its output. No PTY is allocated and stdin is not forwarded (`shell NAME -- COMMAND` forwards it); use `shell` for interactive work. `exec` exits with the command's status.
 
 The command and its arguments must follow `--` so they are not mistaken for the instance name.
 
@@ -391,7 +425,7 @@ iso destroy [NAME] [FLAGS]
 | Flag | Description |
 |------|-------------|
 | `NAME` | Instance name (required if multiple instances exist) |
-| `--all` | Also remove every image and the VM access key |
+| `--all` | Destroy every instance, then remove every image and the VM access key. Cannot be combined with `NAME` |
 
 ```
 iso destroy my-project
@@ -476,13 +510,13 @@ iso run <agent> [--workspace DIR] [--name NAME]
 | `--workspace <dir>` | Project directory (default: current directory) |
 | `--name <name>` | Instance name. Must match the recorded workspace when both are set |
 | `--image <name>` | Image for a new instance. Mutually exclusive with `--profile` |
-| `--profile <list>` | Profile set for a new instance. Replaces a definition's environment selector |
+| `--profile <list>` | Profile set for a new instance, repeatable or comma-separated. Replaces a definition's environment selector |
 | `--prepare` | Authorize image preparation. Preparation uses the host network and receives neither the workspace nor provider credentials |
 | `--rm` | Create a new disposable instance and destroy it after the agent exits. Never attaches cleanup to an existing VM |
 | `--ask` | Use the adapter's permission prompts instead of its default bypass |
 | `--dry-run` | Print the prospective launch. Does not start a VM, build an image, resolve a credential, or check for updates |
 | `--json` | With `--dry-run`, emit a versioned preview on stdout |
-| `-- AGENT_ARGS` | Arguments forwarded to the agent. They are not interpreted by a host shell |
+| `-- AGENT_ARGS` | Arguments forwarded to the agent, unchanged: every token after the first `--` (including `--ask` or another `--`) belongs to the agent. They are not interpreted by a host shell |
 
 Filtered egress has partial local VM evidence, not full qualification (see [testing](testing.md#local-filtered-vm-evidence-partial)). Definition network hints are shown and are not grants. `iso claude` and `iso codex` keep their existing behavior. A disposable instance is not adopted by a later `iso up`.
 
@@ -520,7 +554,7 @@ iso agent inspect <id> [--json]
 
 ### `agent add`
 
-Validate a `.json` or `.jsonc` definition, show the canonical copy, and install it under `<data_dir>/agents/<id>.json`. Repository files are not discovered or approved automatically. `--yes` confirms installation; replacement also requires `--replace`.
+Validate a `.json` or `.jsonc` definition, show the canonical copy, and install it under `<data_dir>/agents/<id>.json`. Repository files are not discovered or approved automatically. `-y`/`--yes` confirms installation; replacement also requires `--replace`.
 
 ```
 iso agent add ./repo-helper.jsonc
@@ -584,7 +618,8 @@ restarts. Switching rewrites the guest agent config; it never rebuilds or
 restarts the VM.
 
 ```
-iso model [NAME] [local|remote]
+iso model show [NAME]
+iso model set local|remote [NAME]
 ```
 
 | Argument | Description |
@@ -593,18 +628,18 @@ iso model [NAME] [local|remote]
 | `local` | Route this VM's agents at a host-side local model server |
 | `remote` | Restore cloud defaults (Anthropic / OpenAI) |
 
-With no subcommand, `model` prints the current mode and the endpoint each tool
-(Claude, Codex) resolves to:
+`model show` (or bare `iso model`) prints the current mode and the endpoint each
+tool (Claude, Codex) resolves to:
 
 ```
-$ iso model my-project
+$ iso model show my-project
 Instance: my-project
 Mode:     local
 Claude   local — qwen2.5-coder:32b @ http://localhost:11434
 Codex    cloud (no local endpoint configured)
 ```
 
-`iso model NAME local` switches the VM to local mode. Each tool routes locally
+`iso model set local NAME` switches the VM to local mode. Each tool routes locally
 only if it resolves an endpoint — from `claude.local_model` /
 `codex.local_model` in the configuration, or from one saved earlier. For any tool
 that has neither, and only in an interactive terminal, isolate prompts for a host
@@ -613,7 +648,7 @@ instance. (A non-interactive run declines the prompt.) If no tool ends up with
 an endpoint, the command fails. Claude and Codex are independent: you can put
 one on a local model and leave the other on cloud.
 
-`iso model NAME remote` switches back to cloud defaults for both tools. Saved
+`iso model set remote NAME` switches back to cloud defaults for both tools. Saved
 endpoints are kept, so a later `local` does not re-prompt.
 
 Switching never requires a VM restart — isolate rewrites the guest config live over
@@ -623,10 +658,17 @@ agent (for example `iso claude NAME`) to pick up the change.
 
 ```
 iso model
-iso model my-project
-iso model my-project local
-iso model my-project remote
+iso model show my-project
+iso model set local my-project
+iso model set remote my-project
 ```
+
+The older form `iso model [NAME] [local|remote]` still works and prints a
+deprecation note on stderr. Because `show` and `set` were valid instance names
+under that form, `iso model show`, `iso model show local|remote` and
+`iso model set local|remote` (no NAME) are refused as ambiguous when an
+instance named `show` or `set` exists; name the instance explicitly
+(`iso model show show`, `iso model set local set`).
 
 See the [`local_model`](configuration.md#local-model-routing) configuration
 reference and the local-model sections of
@@ -728,8 +770,8 @@ it in VS Code (`iso code`) or Zed (`iso zed`) over the managed `iso-<name>` SSH
 alias.
 
 ```
-iso code [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
-iso zed  [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso code [DIR] [--guest-path PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso zed  [DIR] [--guest-path PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
 ```
 
 The project lifecycle is exactly [`iso up`](#up)'s: the same project
@@ -744,7 +786,7 @@ or you press Ctrl-C.
 | Flag | Description |
 |------|-------------|
 | `DIR` | Project directory (default: current directory) |
-| `--project <path>` | Absolute guest path to open (default: `/workspace`). Refused when it is a directory in your home folder and no `DIR` is given |
+| `--guest-path <path>` | Absolute guest path to open (default: `/workspace`). Refused when it is a directory in your home folder and no `DIR` is given. `--project` is the older spelling and is still accepted |
 | `--no-launch` | Prepare the instance and SSH alias without starting the editor |
 | `--editor-security <sandboxed\|unsafe>` | Local editor class (default: config `editor.security`, else `sandboxed`). See [editor security](editor.md#editor-security) |
 | `--editor-allow <clipboard\|internet>` | Widen the sandboxed editor; repeatable, adds to `editor.allow`. Refused with `--editor-security unsafe` |
@@ -752,7 +794,7 @@ or you press Ctrl-C.
 ```
 iso code .
 iso zed ~/code/project
-iso code . --project /workspace/frontend
+iso code . --guest-path /workspace/frontend
 iso zed . --no-launch --output json
 ```
 
@@ -769,13 +811,13 @@ SSH remote. To create or start the project's instance first, use
 [`iso code` / `iso zed`](#code--zed).
 
 ```
-iso editor [NAME] [--project PATH] [--editor code|zed] [--editor-security MODE] [--editor-allow CAP]... [--clean]
+iso editor [NAME] [--guest-path PATH] [--editor code|zed] [--editor-security MODE] [--editor-allow CAP]... [--clean]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `NAME` | Instance name (required if multiple instances exist) |
-| `--project <path>` | Remote path to open in the editor (default: `/workspace`) |
+| `--guest-path <path>` | Absolute guest path to open in the editor (default: `/workspace`). `--project` is the older spelling and is still accepted |
 | `--editor <code\|zed>` | Editor to launch. Omitted: try VS Code first, then Zed. |
 | `--editor-security <sandboxed\|unsafe>` | Local editor class (default: config `editor.security`, else `sandboxed`). See [editor security](editor.md#editor-security) |
 | `--editor-allow <clipboard\|internet>` | Widen the sandboxed editor; repeatable, adds to `editor.allow`. Refused with `--editor-security unsafe` |
@@ -783,7 +825,7 @@ iso editor [NAME] [--project PATH] [--editor code|zed] [--editor-security MODE] 
 
 ```
 iso editor
-iso editor my-project --project /workspace/subdir
+iso editor my-project --guest-path /workspace/subdir
 iso editor my-project --editor zed
 iso editor my-project --clean
 ```
@@ -841,7 +883,7 @@ iso images [FLAGS]
 | Flag | Description |
 |------|-------------|
 | `--delete <name>` | Delete a named image |
-| `--json` | Emit a JSON array instead of the text table |
+| `--json` | Emit a JSON array instead of the text table. Cannot be combined with `--delete` |
 
 ```
 iso images
@@ -862,17 +904,17 @@ directory.
 ### `resize`
 
 Change a stopped instance's disk size, memory, or vCPU count. The VM must
-be stopped first. At least one of `--size`, `--mem`, or `--vcpus` is required;
+be stopped first. At least one of `--disk`, `--mem`, or `--vcpus` is required;
 they can be combined in a single command.
 
 ```
-iso resize [NAME] [--size <SIZE>] [--mem <MIB>] [--vcpus <N>] [--start]
+iso resize [NAME] [--disk <SIZE>] [--mem <MIB>] [--vcpus <N>] [--start]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `NAME` | Instance name (required if multiple instances exist) |
-| `--size <size>` | New disk size. Absolute: `150` or `150G`. Relative: `+20` or `+20G`. |
+| `--disk <size>` | New disk size. Absolute: `150` or `150G`. Relative: `+20` or `+20G`. `--size` is the older spelling and is still accepted. |
 | `--mem <mib>` | New memory in MiB (minimum 128). |
 | `--vcpus <n>` | New vCPU count (> 0). |
 | `--start` | Start the instance after applying the change instead of leaving it stopped. |
@@ -888,14 +930,14 @@ By default the instance is left stopped and the change takes effect on the next
 journaled, so an interrupted change is recovered by the next command that
 touches the instance.
 
-Combining `--size` with `--mem`/`--vcpus` applies the disk change first, then the
+Combining `--disk` with `--mem`/`--vcpus` applies the disk change first, then the
 machine-resource change; the two are separate artifacts and are not applied
 transactionally, so if the second step fails the disk change has already taken
 effect.
 
 ```
-iso resize my-project --size 150G
-iso resize --size +20
+iso resize my-project --disk 150G
+iso resize --disk +20
 iso resize my-project --mem 8192 --vcpus 4
 iso resize my-project --mem 4096 --start
 ```
@@ -1037,20 +1079,20 @@ remote Mac needs `iso setup` and the same `iso` build at the enrolled path.
 | `iso host list` / `inspect NAME` | List enrollments (no network) / contact the host and show identity, epoch and runtime qualification |
 | `iso host disable NAME` / `enable NAME` / `remove NAME` | Refuse new work (observation and cleanup still work) / allow it / forget the enrollment (remote VMs untouched) |
 | `iso host image HOST [--image NAME] [--profile P]… [--rebuild]` | Build or confirm a Linux image on the host from the host's own build context and profile definitions; `vm create` requires it |
-| `iso host vm create HOST NAME [--image --cpus --memory-mib --disk-gib --egress]` | Create a stopped Linux VM; prints the durable operation id |
+| `iso host vm create HOST NAME [--image --vcpus --mem --disk --egress]` | Create a stopped Linux VM (`--mem` in MiB, `--disk` in GiB); prints the durable operation id. Fixed defaults (2 vCPUs, 4096 MiB, 16 GiB) do not follow the configuration file. `--cpus`, `--memory-mib` and `--disk-gib` are the older spellings and are still accepted |
 | `iso host vm start HOST NAME [--ttl 8h]` / `stop` / `destroy` | Lifecycle with verified native state; `--operation-id ID` retries the same operation after a lost reply. A start whose boot is unhealthy fails and is stopped; `destroy` also ends an operation left reconciling (for example on a crashed VM) |
 | `iso host vm list HOST` / `inspect HOST NAME` | Fresh observations; an unreachable host reports `unknown`, never `stopped` |
-| `iso host shell HOST NAME [-- CMD…]` | Open an access session and ssh through the host's owned relay with the guest key pinned |
-| `iso host session HOST NAME [--detach\|--stop]` | Hold a renewed session and print an `ssh -F …` line; `--detach` keeps a coordinator after the command exits, which other `iso host` commands reuse |
-| `iso host up HOST [PATH] [--name --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project |
-| `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir] [--apply]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host) |
+| `iso host shell HOST NAME [-- CMD…]` | Open an access session and ssh through the host's owned relay with the guest key pinned. Exits with the session's status; a session ended by a signal exits 1 |
+| `iso host session HOST NAME [--detach\|--stop]` (not both) | Hold a renewed session and print an `ssh -F …` line; `--detach` keeps a coordinator after the command exits, which other `iso host` commands reuse |
+| `iso host up HOST [PATH] [--name --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project. Unlike local `iso up`, every run pushes PATH, including onto a reused VM. On a reused VM an explicit `--egress` must match the egress the VM was created with; a mismatch (or a host that does not report it) is refused, never applied by recreating the VM |
+| `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir --exclude-git] [--apply [--stage-id ID] [--force]]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host). Staging flags and apply flags cannot be mixed: `--stage-id` and `--force` need `--apply`, and `--dir` and `--exclude-git` are refused with it because a stage's destination is fixed when it is staged |
 | `iso host agent HOST NAME claude\|codex [-- ARGS]` | Run an agent in the VM; provider credentials stay in this client's confined proxy, reached through the relay. The agent always runs as `proxy.mode = "required"` (recognized provider variables are withheld and Codex `auth.json` is not staged), is refused under `proxy.mode = "off"`, and does not get MCP servers whose headers are resolved on this client or servers in this client's `~/.codex/config.toml` that set `http_headers` |
-| `iso host editor HOST NAME code\|zed` | A sandboxed editor through the relay |
-| `iso host forward HOST NAME LOCAL[:GUEST]…` | Client-loopback forwards that end with the session |
-| `iso host run HOST [--dir] -- CMD…` / `run-results HOST RUN [--recover\|--discard]` | A disposable run: export `~/iso-results` before stop, download and verify, then acknowledge |
-| `iso host vm resize\|commit\|restore local NAME …` | Stopped-VM maintenance through the local service (refused for remote hosts) |
+| `iso host editor HOST NAME code\|zed [--guest-path PATH]` | A sandboxed editor through the relay; `--path` is the older spelling of `--guest-path` |
+| `iso host forward HOST NAME --forward-port GUEST[:HOST]…` | Client-loopback forwards (127.0.0.1 only) that end with the session. `--forward-port 3000:13000` forwards guest port 3000 to client port 13000, as `iso up --forward-port` does. The older positional form `LOCAL[:GUEST]` (note the reversed order: `13000:3000`) is still accepted; the two forms cannot be mixed |
+| `iso host run HOST [--dir] -- CMD…` / `run-results HOST RUN [--recover\|--discard]` | A disposable run: export `~/iso-results` before stop, download and verify, then acknowledge. A host receipt that is not `succeeded` (a failed acknowledgement, recovery or discard) exits 1 even though the request reached the host |
+| `iso host vm resize local NAME [--vcpus --mem --disk]` / `commit\|restore local NAME --image IMAGE` | Stopped-VM maintenance through the local service (refused for remote hosts). `resize --disk` is an absolute size in GiB; relative sizes (`+20`) are only for local `iso resize`. The older positional IMAGE is still accepted; giving both is refused |
 | `iso host operation HOST ID [--cancel]` | Show an accepted operation's receipt, or cancel it before its first effect |
-| `iso host migrate local [--activate\|--rollback]` | Preview; with `--activate`, hand stopped Linux instances to the host service (it completes activation; nothing is stopped). Adopted instances are then managed as `iso host vm … local NAME`; older iso builds refuse the activated root. `--rollback` undoes a migration that has not completed |
+| `iso host migrate local [--activate\|--rollback]` (not both) | Preview; with `--activate`, hand stopped Linux instances to the host service (it completes activation; nothing is stopped). Adopted instances are then managed as `iso host vm … local NAME`; older iso builds refuse the activated root. `--rollback` undoes a migration that has not completed |
 
 The host service runs under launchd with no parent app, so macOS asks for
 Local Network permission for the `iso` binary itself the first time it
@@ -1193,7 +1235,7 @@ upstream is configured, isolate runs a `iso-proxy` process on the host for the
 lifetime of each remote-mode VM: the guest is pointed at the proxy and holds
 only a per-instance capability token, while the real API key stays on the host
 and is injected onto outbound requests the guest never sees. Applies only in
-remote model mode (`iso model <vm> remote`); local mode takes precedence. See
+remote model mode (`iso model set remote <vm>`); local mode takes precedence. See
 the [credential proxy guide](credential-proxy.md) and the
 [`proxy` configuration reference](configuration.md#proxy-section) for the data
 model.
@@ -1317,7 +1359,7 @@ iso capabilities --output json
 
 ### `validate`
 
-Check the configuration file and prerequisites. Prints warnings and confirms the config loads correctly. A `github.pat` entry stored with `vault:` is reported as `stored secret, not resolved` and never unlocks the secret store. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live; `vault:` entries are resolved in one unlock.
+Check the configuration file and prerequisites. Prints warnings, then a summary of what was actually checked: `Config OK`; `Config OK (N stored secrets not checked; run with --probe)`; or `Config loads, but N requested checks failed`, which exits 1. A `github.pat` entry that does not resolve, or (with `--probe`) does not authenticate, is a failed check. A `github.pat` entry stored with `vault:` is reported as `stored secret, not resolved`, counts as not checked (not as a failure), and never unlocks the secret store. With `--probe`, also exercises each `github.pat` entry against `api.github.com` to confirm the token is still live; `vault:` entries are resolved in one unlock.
 
 ```
 iso validate

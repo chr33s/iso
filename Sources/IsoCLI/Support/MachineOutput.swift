@@ -15,13 +15,25 @@ enum OutputFormat: String, ExpressibleByArgument, CaseIterable, Sendable {
 protocol MachineCommand: ParsableCommand {}
 
 extension MachineCommand {
-  static var machineName: String { _commandName }
+  /// The full command path (`up`, or `secrets list` for a nested command),
+  /// which the envelope's `command` names.
+  static var machineName: String {
+    (commandPath(Self.self, under: IsoCommand.self) ?? [_commandName]).joined(separator: " ")
+  }
 }
 
 enum MachineCommands {
-  /// Every registered command `capabilities` advertises, in registration order.
-  static var all: [any MachineCommand.Type] {
-    IsoCommand.configuration.subcommands.compactMap { $0 as? any MachineCommand.Type }
+  /// Every registered command `capabilities` advertises: the whole command
+  /// tree, depth-first in registration order. A hidden command and
+  /// everything under it is internal and never advertised.
+  static var all: [any MachineCommand.Type] { collect(IsoCommand.configuration.subcommands) }
+
+  static func collect(_ commands: [any ParsableCommand.Type]) -> [any MachineCommand.Type] {
+    commands.flatMap { command -> [any MachineCommand.Type] in
+      guard command.configuration.shouldDisplay else { return [] }
+      let own = (command as? any MachineCommand.Type).map { [$0] } ?? []
+      return own + collect(command.configuration.subcommands)
+    }
   }
 }
 
@@ -138,7 +150,14 @@ func commandPath(_ target: any ParsableCommand.Type, under root: any ParsableCom
 {
   if ObjectIdentifier(target) == ObjectIdentifier(root) { return [] }
   for child in root.configuration.subcommands {
-    if let rest = commandPath(target, under: child) { return [child._commandName] + rest }
+    guard let rest = commandPath(target, under: child) else { continue }
+    // A hidden default subcommand (the legacy `model` grammar) is reached
+    // without naming it; its parent's path is the public one.
+    let implicit =
+      !child.configuration.shouldDisplay
+      && root.configuration.defaultSubcommand.map { ObjectIdentifier($0) }
+        == ObjectIdentifier(child)
+    return (implicit ? [] : [child._commandName]) + rest
   }
   return nil
 }

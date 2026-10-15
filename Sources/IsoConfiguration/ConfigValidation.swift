@@ -7,7 +7,7 @@ import Foundation
 /// Environmental checks run at lifecycle boundaries (`validate`, `setup`,
 /// `up`, `start`). Value invariants live in the model types; only filesystem
 /// facts, which can change after loading, are checked here.
-package struct ConfigValidationReport: Sendable, Equatable {
+package struct ConfigValidateOutcome: Sendable, Equatable {
   package let warnings: [String]
   package let errors: [String]
 }
@@ -30,7 +30,7 @@ package struct LocalConfigFileSystem: ConfigFileSystem {
 
 extension IsoConfig {
   package func validate(fileSystem: some ConfigFileSystem = LocalConfigFileSystem())
-    -> ConfigValidationReport
+    -> ConfigValidateOutcome
   {
     var warnings: [String] = []
     var errors: [String] = []
@@ -53,7 +53,7 @@ extension IsoConfig {
           "\(name).marketplaces entry '\(entry)' looks like a local path but does not exist")
       }
     }
-    return ConfigValidationReport(warnings: warnings, errors: errors)
+    return ConfigValidateOutcome(warnings: warnings, errors: errors)
   }
 
   /// Throws the joined errors; returns warnings for the caller to report.

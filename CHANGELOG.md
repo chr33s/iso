@@ -8,6 +8,65 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **Shared option parsing**: `up`, `code`, `zed` and `start` share one
+  definition of the boot options (`--no-agents`, `--no-github`,
+  `--no-prompt`, `--forward-port`, `--post-start`, `--env`, `--env-file`) and
+  of `--devcontainer`/`--no-devcontainer`; `setup` uses the same devcontainer
+  group. `--egress` (also on `run`, `host up`, `host run` and
+  `host vm create`), `--allow-host` (`up`, `code`, `zed`, `start`, `run`) and
+  `--ttl` (`host up`, `host run`, `host vm start`) are now checked when the
+  command line is parsed, so a malformed value is a usage error (exit 2)
+  before any configuration, network or VM work. The 24h ceiling on `--ttl` is
+  still enforced by the host. `--profile` accepts repeated or comma-separated names on
+  `setup`, `up`, `code`, `zed`, `run` and `host image` alike, and an empty
+  name (`--profile a,,b`) is refused everywhere instead of being dropped by
+  some commands.
+- **Refused flag combinations**: these now fail with a usage error (exit 2)
+  before any work, where one flag used to win silently: `destroy NAME --all`,
+  `host migrate local --activate --rollback`, `host session --detach --stop`,
+  `host run-results --recover --discard`, and `images --delete NAME --json`.
+  `host pull` refuses flags of the other mode: `--stage-id` and `--force`
+  need `--apply`, and `--dir` and `--exclude-git` cannot be used with it.
+  `host vm create` and `host vm resize` refuse `--disk +20` (and
+  `--disk-gib +20`) instead of reading it as 20 GiB.
+- **`iso run` forwarding**: every token after the first `--` reaches the
+  agent unchanged. `iso run claude -- --ask` no longer turns on iso's own
+  `--ask`, and a second `--` is forwarded rather than dropped.
+- **`host up --egress` on reuse**: an explicit `--egress` is compared with the
+  egress of the VM being reused; a mismatch, or a host that does not report
+  it, is refused instead of ignored. The VM is never recreated for it.
+- **Exit status**: `exec`, `shell [NAME] -- COMMAND` and interactive
+  `shell`/`claude`/`claude-agents`/`codex` sessions exit with the guest
+  command's status instead of 1 (or 0 for an interactive session). A command
+  ended by a signal exits 1; `host shell` and `host forward` no longer report
+  success after a signal. `ssh`'s own failures (such as a refused pinned host
+  key) now surface as its status 255 rather than 1. See
+  `docs/commands.md#exit-status`.
+- **Host receipts**: `host run-results` (with or without `--discard` or
+  `--recover`) and `host run` exit 1 when a host receipt they wait on (discard,
+  recovery, or the results acknowledgement) is not `succeeded`, even though
+  the request was delivered. A lost reply only
+  suggests `--operation-id` on commands that accept it.
+- **`validate`**: the last line summarizes what was checked. A PAT that does
+  not resolve, or a failed `--probe`, makes `validate` print
+  `Config loads, but N requested checks failed` and exit 1 (it printed
+  `Config OK` and exited 0). Unresolved `vault:` entries without `--probe`
+  are reported as not checked, not as failures.
+- **Dry runs**: `setup`, `up` and `start --dry-run` no longer show an update
+  notice or schedule an update check (`run --dry-run` already did not).
+- **Confirmation flags**: `agent add` accepts `-y`. `setup --yes`, which
+  never did anything, is deprecated and warns that it does not accept a
+  discovered devcontainer: answer the prompt, or pass `--devcontainer PATH`
+  or `--no-devcontainer`.
+- **Canonical spellings**: `--vcpus`, `--mem` and `--disk` on `host vm create`
+  and `host vm resize`; `--disk` on `resize`; `--guest-path` on `code`,
+  `zed`, `editor` and `host editor`; `--forward-port GUEST[:HOST]` on
+  `host forward`; `--image` on `host vm commit`/`restore`;
+  `model show [NAME]` and `model set local|remote [NAME]`. Every older
+  spelling keeps working; see `docs/commands.md#compatibility-spellings-and-deprecations`.
+- **Machine interface**: command discovery walks the whole command tree and
+  names nested commands by their full path; the advertised set is unchanged.
+
 ## v0.5.0
 
 - **Authorization policy**: an optional top-level `policy` (mode `off`,

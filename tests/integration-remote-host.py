@@ -281,7 +281,7 @@ class Runner:
                 json.dumps({"quarantined": {str(n): now for n in range(low, high + 1)}}))
         self.args.config = str(work / "iso.jsonc")
         self.args.name = "local"
-        setup = self.iso_cmd("setup", "-y", "--profile", "boundary-fixture", timeout=3_600)
+        setup = self.iso_cmd("setup", "--profile", "boundary-fixture", timeout=3_600)
         if setup.returncode != 0 and "failed to create vmnet network" in setup.stderr + setup.stdout:
             # The host cannot create VM networks (no GUI session, missing
             # entitlement or a sandboxed parent): a prerequisite, not a result.

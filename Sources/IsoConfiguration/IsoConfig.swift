@@ -360,7 +360,7 @@ package struct AppleContainerConfig: Sendable, Equatable {
 
 /// Guest network reach beyond the host (selective-hardening spec §6). Fixed
 /// per instance when its sandbox is created.
-package enum EgressMode: String, Sendable, Equatable {
+package enum EgressMode: String, Sendable, Equatable, CaseIterable {
   /// NAT to the host's uplinks, as before.
   case open
   /// vmnet host mode: no route beyond the host and no DNS. Host→guest SSH

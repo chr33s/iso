@@ -21,8 +21,9 @@ struct OperationOption: ParsableArguments {
     help: "Retry a previously submitted operation with its original id")
   var operationID: String?
 
-  func resolve() throws -> HostOperationID {
-    try operationID.map { try HostOperationID($0) } ?? .generate()
+  func resolve() throws -> SubmittedOperation {
+    SubmittedOperation(
+      id: try operationID.map { try HostOperationID($0) } ?? .generate(), resendable: true)
   }
 }
 
@@ -65,10 +66,15 @@ struct HostVMCreate: ParsableCommand {
   @Argument var host: String
   @Argument(help: "Display name, unique per host on this client") var name: String
   @Option var image: String = ImageName.default.rawValue
-  @Option var cpus: UInt32 = 2
-  @Option(name: .customLong("memory-mib")) var memoryMiB: UInt64 = 4_096
-  @Option(name: .customLong("disk-gib")) var diskGiB: UInt64 = 16
-  @Option(help: "open, none or filtered") var egress: String = "open"
+  @Option(name: [.customLong("vcpus"), .customLong("cpus")], help: "Number of vCPUs")
+  var cpus: UInt32 = 2
+  @Option(name: [.customLong("mem"), .customLong("memory-mib")], help: "Memory in MiB")
+  var memoryMiB: UInt64 = 4_096
+  @Option(
+    name: [.customLong("disk"), .customLong("disk-gib")], help: "Disk size in GiB",
+    transform: parseAbsoluteDiskGiB)
+  var diskGiB: UInt64 = 16
+  @Option(help: "open, none or filtered") var egress: EgressMode = .open
   @OptionGroup var operation: OperationOption
 
   func run() throws {
@@ -83,12 +89,9 @@ struct HostVMCreate: ParsableCommand {
       {
         throw HostError("'\(instanceName)' is already bound on \(remote.enrollment.alias)")
       }
-      guard let mode = EgressMode(rawValue: egress) else {
-        throw HostError("--egress must be open, none or filtered")
-      }
       let spec = try VMSpec.make(
         name: instanceName, image: ImageName(image), imageDigest: nil, cpus: cpus,
-        memoryMiB: memoryMiB, diskGiB: diskGiB, guestOS: .linux, egress: mode)
+        memoryMiB: memoryMiB, diskGiB: diskGiB, guestOS: .linux, egress: egress)
       let id = try operation.resolve()
       let receipt = try submit(
         remote, .vmCreate(spec), operation: id, wait: .seconds(1_800), output: env.output)
@@ -100,11 +103,10 @@ struct HostVMCreate: ParsableCommand {
             guestOS: instance.guestOS, name: instanceName, policyHash: spec.policyHash,
             // A successful create leaves the VM stopped; any other outcome
             // is not an observation.
-            createdBy: id, lastState: receipt.state == .succeeded ? .stopped : nil,
-            lastObservedAt: receipt.state == .succeeded ? receipt.completedAt?.seconds : nil))
+            createdBy: id.id, lastState: succeeded(receipt) ? .stopped : nil,
+            lastObservedAt: succeeded(receipt) ? receipt.completedAt?.seconds : nil))
       }
-      env.output.out(describe(receipt))
-      guard receipt.state == .succeeded else { throw ExitCode.failure }
+      try requireSucceeded(receipt, output: env.output)
     }
   }
 }
@@ -121,7 +123,9 @@ struct HostVMStart: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Option(help: "Boot lifetime (\"30m\", \"8h\"; at most 24h)") var ttl: String?
+  @Option(
+    help: "Boot lifetime (\"30m\", \"8h\"; at most 24h)", transform: parseDurationArgument)
+  var ttl: Duration?
   @OptionGroup var operation: OperationOption
 
   func run() throws {
@@ -130,15 +134,7 @@ struct HostVMStart: ParsableCommand {
       let remote = try env.resolve(host)
       try remote.requireEnabled()
       let binding = try env.binding(remote, name)
-      let seconds: UInt64
-      if let ttl {
-        guard case .seconds(let parsed) = DurationText(parsing: ttl) else {
-          throw HostError("--ttl expects a duration such as 30m or 8h")
-        }
-        seconds = parsed
-      } else {
-        seconds = env.config.execution.remote.defaultSessionTTL
-      }
+      let seconds = ttlSeconds(ttl, default: env.config.execution.remote.defaultSessionTTL)
       let current = try observe(remote, binding)
       let receipt = try submit(
         remote,
@@ -148,7 +144,7 @@ struct HostVMStart: ParsableCommand {
         output: env.output)
       env.output.out(describe(receipt))
       if let expiry = receipt.expiresAt { env.output.out("Deadline: \(expiry.date)") }
-      guard receipt.state == .succeeded else { throw ExitCode.failure }
+      guard succeeded(receipt) else { throw ExitCode.failure }
     }
   }
 }
@@ -170,9 +166,9 @@ struct HostVMStop: ParsableCommand {
       let current = try observe(remote, binding)
       let receipt = try submit(
         remote, .vmStop(binding.instance, expectedGeneration: current.generation),
-        operation: try operation.resolve(), wait: .seconds(600), output: env.output)
-      env.output.out(describe(receipt))
-      guard receipt.state == .succeeded else { throw ExitCode.failure }
+        operation: try operation.resolve(), wait: .seconds(600), output: env.output
+      )
+      try requireSucceeded(receipt, output: env.output)
     }
   }
 }
@@ -194,9 +190,9 @@ struct HostVMDestroy: ParsableCommand {
       let current = try observe(remote, binding)
       let receipt = try submit(
         remote, .vmDestroy(binding.instance, expectedGeneration: current.generation),
-        operation: try operation.resolve(), wait: .seconds(600), output: env.output)
-      env.output.out(describe(receipt))
-      guard receipt.state == .succeeded else { throw ExitCode.failure }
+        operation: try operation.resolve(), wait: .seconds(600), output: env.output
+      )
+      try requireSucceeded(receipt, output: env.output)
       // Only a verified destroy releases the name. The binding is kept, marked
       // destroyed, so its completed stages stay reviewable and applicable.
       let observation = try observe(remote, binding)
@@ -283,7 +279,7 @@ struct HostShell: ParsableCommand {
           environment: SSHClient.transportEnvironment(env.environment), deadline: .seconds(0)),
         inheritStdin: true, deadline: nil)
       if let failure = session.failure { env.output.error("session ended: \(failure.message)") }
-      if case .exited(let code) = termination, code != 0 { throw ExitCode(code) }
+      if !termination.succeeded { throw ExitCode(termination.exitStatus) }
     }
   }
 }
@@ -301,6 +297,10 @@ struct HostSession: ParsableCommand {
   @Argument var name: String
   @Flag(help: "Run the coordinator in the background") var detach = false
   @Flag(help: "End this binding's background coordinator") var stop = false
+
+  func validate() throws {
+    if detach && stop { throw UsageError("the argument '--detach' cannot be used with '--stop'") }
+  }
 
   func run() throws {
     try IsoCLI.run {
@@ -363,8 +363,11 @@ struct HostImage: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Option var image: String = ImageName.default.rawValue
-  @Option(name: .customLong("profile"), help: "Profile resolved on the host (repeatable)")
-  var profiles: [String] = []
+  @Option(
+    name: .customLong("profile"),
+    help: "Profile resolved on the host (repeatable or comma-separated)",
+    transform: parseProfileList)
+  var profiles: [[String]] = []
   @Option(name: .customLong("guest-user")) var guestUser: String = GuestUser.default.rawValue
   @Flag(help: "Rebuild even when the image is current") var rebuild = false
   @OptionGroup var operation: OperationOption
@@ -375,14 +378,13 @@ struct HostImage: ParsableCommand {
       let remote = try env.resolve(host)
       try remote.requireEnabled()
       let request = try ImageRequest(
-        image: ImageName(image), guestOS: .linux, profiles: profiles,
+        image: ImageName(image), guestOS: .linux, profiles: profiles.flatMap { $0 },
         guestUser: GuestUser(guestUser), rebuild: rebuild)
       // Builds keep their own deadline; this only bounds how long we watch.
       let receipt = try submit(
         remote, .imageEnsure(request), operation: try operation.resolve(), wait: .seconds(7_200),
         output: env.output)
-      env.output.out(describe(receipt))
-      guard receipt.state == .succeeded else { throw ExitCode.failure }
+      try requireSucceeded(receipt, output: env.output)
     }
   }
 }
@@ -399,8 +401,7 @@ private func maintain(
   let receipt = try submit(
     remote, .maintenance(binding.instance, expectedGeneration: current.generation, change),
     operation: try operation.resolve(), wait: .seconds(1_800), output: env.output)
-  env.output.out(describe(receipt))
-  guard receipt.state == .succeeded else { throw ExitCode.failure }
+  try requireSucceeded(receipt, output: env.output)
 }
 
 struct HostVMResize: ParsableCommand {
@@ -410,9 +411,15 @@ struct HostVMResize: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Option var cpus: UInt32?
-  @Option(name: .customLong("memory-mib")) var memoryMiB: UInt64?
-  @Option(name: .customLong("disk-gib"), help: "Grow the disk to this size") var diskGiB: UInt64?
+  @Option(name: [.customLong("vcpus"), .customLong("cpus")], help: "New number of vCPUs")
+  var cpus: UInt32?
+  @Option(name: [.customLong("mem"), .customLong("memory-mib")], help: "New memory in MiB")
+  var memoryMiB: UInt64?
+  @Option(
+    name: [.customLong("disk"), .customLong("disk-gib")],
+    help: "Grow the disk to this absolute size in GiB (relative sizes are local `iso resize` only)",
+    transform: parseAbsoluteDiskGiB)
+  var diskGiB: UInt64?
   @OptionGroup var operation: OperationOption
 
   func run() throws {
@@ -424,6 +431,43 @@ struct HostVMResize: ParsableCommand {
   }
 }
 
+/// `--image IMAGE`, with the older positional IMAGE kept as a compatibility
+/// spelling; giving both is refused.
+struct MaintenanceImageArguments: ParsableArguments {
+  @Argument(
+    help: ArgumentHelp("Older positional form of --image", visibility: .hidden),
+    transform: parseImageName)
+  var positional: ImageName?
+  @Option(help: "Image name", transform: parseImageName) var image: ImageName?
+
+  func validate() throws {
+    switch (positional, image) {
+    case (nil, nil):
+      throw UsageError("the following required arguments were not provided:\n  --image <IMAGE>")
+    case (.some, .some):
+      throw UsageError("give the image once: --image IMAGE, not also as a positional")
+    default: break
+    }
+  }
+
+  /// Present once `validate` has run.
+  var resolved: ImageName? { image ?? positional }
+}
+
+/// The service resizes to an absolute size; `+20` would otherwise parse as
+/// 20 GiB, not as the relative growth local `iso resize --disk +20` means.
+func parseAbsoluteDiskGiB(_ text: String) throws -> UInt64 {
+  guard !text.hasPrefix("+") else {
+    throw UsageError(
+      "--disk on a host VM is an absolute size in GiB; relative sizes such as \(text) are only for local `iso resize`"
+    )
+  }
+  guard let value = UInt64(text) else {
+    throw UsageError("--disk expects whole GiB, got \(debugQuoted(text))")
+  }
+  return value
+}
+
 struct HostVMCommit: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "commit", abstract: "Save a stopped VM's disk as an image (local only)")
@@ -431,11 +475,14 @@ struct HostVMCommit: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Argument var image: String
+  @OptionGroup var imageArguments: MaintenanceImageArguments
   @OptionGroup var operation: OperationOption
 
   func run() throws {
-    try IsoCLI.run { try maintain(global, host, name, operation, .commit(try ImageName(image))) }
+    try IsoCLI.run {
+      guard let image = imageArguments.resolved else { throw UsageError("--image is required") }
+      try maintain(global, host, name, operation, .commit(image))
+    }
   }
 }
 
@@ -446,10 +493,13 @@ struct HostVMRestore: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Argument var image: String
+  @OptionGroup var imageArguments: MaintenanceImageArguments
   @OptionGroup var operation: OperationOption
 
   func run() throws {
-    try IsoCLI.run { try maintain(global, host, name, operation, .restore(try ImageName(image))) }
+    try IsoCLI.run {
+      guard let image = imageArguments.resolved else { throw UsageError("--image is required") }
+      try maintain(global, host, name, operation, .restore(image))
+    }
   }
 }

@@ -248,13 +248,13 @@ package struct AgentBootstrap: Sendable {
     guard !configured else { return }
     if config.proxy.mode == .off {
       throw HostError(
-        "egress = \"none\" with proxy.mode = \"off\" leaves a remote model unreachable in '\(instance.name)'; use a local model (`iso model \(instance.name) local`) or pass --no-agents"
+        "egress = \"none\" with proxy.mode = \"off\" leaves a remote model unreachable in '\(instance.name)'; use a local model (`iso model set local \(instance.name)`) or pass --no-agents"
       )
     }
     throw HostError(
       config.proxy.mode == .required
         ? "proxy.mode = \"required\" but no provider proxy is configured for '\(instance.name)'; run `iso proxy setup` (or set proxy.mode to \"auto\")"
-        : "egress = \"none\" leaves a remote model reachable only through the credential proxy, and none is configured for '\(instance.name)'; run `iso proxy setup`, or `iso model \(instance.name) local`"
+        : "egress = \"none\" leaves a remote model reachable only through the credential proxy, and none is configured for '\(instance.name)'; run `iso proxy setup`, or `iso model set local \(instance.name)`"
     )
   }
 

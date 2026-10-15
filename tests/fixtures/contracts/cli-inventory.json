@@ -1,0 +1,540 @@
+{
+  "agent": [],
+  "agent add": [
+    "<file>",
+    "--replace",
+    "--yes -y"
+  ],
+  "agent inspect": [
+    "<id>",
+    "--json"
+  ],
+  "agent list": [],
+  "agent update": [
+    "<name>",
+    "--claude",
+    "--codex",
+    "--check",
+    "--yes -y"
+  ],
+  "audit": [
+    "<name>",
+    "--suggest-config"
+  ],
+  "capabilities": [],
+  "claude": [
+    "--ask",
+    "<name>",
+    "<args>"
+  ],
+  "claude-agents": [
+    "<name>",
+    "<args>"
+  ],
+  "code": [
+    "<dir>",
+    "--name",
+    "--new-instance",
+    "--copy",
+    "--mount",
+    "--extra-mount",
+    "--git-repo",
+    "--vcpus",
+    "--mem",
+    "--disk",
+    "--image",
+    "--profile",
+    "--exclude-git",
+    "--no-agents",
+    "--no-github",
+    "--no-prompt",
+    "--forward-port",
+    "--post-start",
+    "--env",
+    "--env-file",
+    "--devcontainer",
+    "--no-devcontainer",
+    "--egress",
+    "--allow-host",
+    "--guest-path --project",
+    "--no-launch",
+    "--editor-security",
+    "--editor-allow"
+  ],
+  "codex": [
+    "--ask",
+    "<name>",
+    "<args>"
+  ],
+  "commit": [
+    "<name>",
+    "--image",
+    "--force"
+  ],
+  "completions": [
+    "<shell>"
+  ],
+  "destroy": [
+    "<name>",
+    "--all"
+  ],
+  "devcontainer": [],
+  "devcontainer check": [
+    "<path>",
+    "--stage",
+    "--json"
+  ],
+  "devcontainer clear": [
+    "<project>"
+  ],
+  "devcontainer ignore": [
+    "<project>"
+  ],
+  "devcontainer status": [
+    "<project>"
+  ],
+  "diff": [
+    "<name>",
+    "--dir",
+    "--exclude-git",
+    "--stat"
+  ],
+  "editor": [
+    "<name>",
+    "--guest-path --project",
+    "--editor",
+    "--clean",
+    "--editor-security",
+    "--editor-allow"
+  ],
+  "exec": [
+    "<name>",
+    "<command>"
+  ],
+  "github": [],
+  "github assign-pat": [
+    "--vm",
+    "--repo"
+  ],
+  "github forget-pat": [
+    "--repo"
+  ],
+  "github rotate-pat": [
+    "--repo"
+  ],
+  "github setup-pat": [
+    "--repo"
+  ],
+  "github status": [
+    "--vm",
+    "--probe",
+    "--json"
+  ],
+  "github unassign-pat": [
+    "--vm"
+  ],
+  "help": [
+    "<subcommands>"
+  ],
+  "host": [],
+  "host add": [
+    "<name>",
+    "--ssh",
+    "--agent-path"
+  ],
+  "host agent": [
+    "<host>",
+    "<name>",
+    "<agent>",
+    "--ask",
+    "<args>"
+  ],
+  "host disable": [
+    "<name>"
+  ],
+  "host editor": [
+    "<host>",
+    "<name>",
+    "<editor>",
+    "--guest-path --path"
+  ],
+  "host enable": [
+    "<name>"
+  ],
+  "host forward": [
+    "<host>",
+    "<name>",
+    "--forward-port",
+    "<ports>"
+  ],
+  "host image": [
+    "<host>",
+    "--image",
+    "--profile",
+    "--guest-user",
+    "--rebuild",
+    "--operation-id"
+  ],
+  "host inspect": [
+    "<name>"
+  ],
+  "host list": [],
+  "host migrate": [
+    "<target>",
+    "--activate",
+    "--rollback"
+  ],
+  "host operation": [
+    "<host>",
+    "<operation>",
+    "--cancel"
+  ],
+  "host pull": [
+    "<host>",
+    "<name>",
+    "--dir",
+    "--apply",
+    "--force",
+    "--stage-id",
+    "--exclude-git"
+  ],
+  "host push": [
+    "<host>",
+    "<name>",
+    "--dir",
+    "--force",
+    "--exclude-git"
+  ],
+  "host remove": [
+    "<name>"
+  ],
+  "host run": [
+    "<host>",
+    "--dir",
+    "--image",
+    "--ttl",
+    "--output-limit-mib",
+    "--egress",
+    "<command>"
+  ],
+  "host run-results": [
+    "<host>",
+    "<run-id>",
+    "--recover",
+    "--discard",
+    "--output-limit-mib"
+  ],
+  "host session": [
+    "<host>",
+    "<name>",
+    "--detach",
+    "--stop"
+  ],
+  "host shell": [
+    "<host>",
+    "<name>",
+    "<command>"
+  ],
+  "host up": [
+    "<host>",
+    "<path>",
+    "--name",
+    "--image",
+    "--ttl",
+    "--egress"
+  ],
+  "host vm": [],
+  "host vm commit": [
+    "<host>",
+    "<name>",
+    "<positional> (hidden)",
+    "--image",
+    "--operation-id"
+  ],
+  "host vm create": [
+    "<host>",
+    "<name>",
+    "--image",
+    "--vcpus --cpus",
+    "--mem --memory-mib",
+    "--disk --disk-gib",
+    "--egress",
+    "--operation-id"
+  ],
+  "host vm destroy": [
+    "<host>",
+    "<name>",
+    "--operation-id"
+  ],
+  "host vm inspect": [
+    "<host>",
+    "<name>"
+  ],
+  "host vm list": [
+    "<host>"
+  ],
+  "host vm resize": [
+    "<host>",
+    "<name>",
+    "--vcpus --cpus",
+    "--mem --memory-mib",
+    "--disk --disk-gib",
+    "--operation-id"
+  ],
+  "host vm restore": [
+    "<host>",
+    "<name>",
+    "<positional> (hidden)",
+    "--image",
+    "--operation-id"
+  ],
+  "host vm start": [
+    "<host>",
+    "<name>",
+    "--ttl",
+    "--operation-id"
+  ],
+  "host vm stop": [
+    "<host>",
+    "<name>",
+    "--operation-id"
+  ],
+  "images": [
+    "--delete",
+    "--json"
+  ],
+  "images cache": [],
+  "images cache status": [
+    "--json"
+  ],
+  "images inspect": [
+    "<name>",
+    "--json"
+  ],
+  "list": [
+    "--json",
+    "--all-hosts"
+  ],
+  "logs": [
+    "<name>",
+    "--follow -f"
+  ],
+  "model": [],
+  "model set": [
+    "<mode>",
+    "<name>"
+  ],
+  "model show": [
+    "<name>"
+  ],
+  "policy": [],
+  "policy show": [
+    "<name>",
+    "--json"
+  ],
+  "profiles": [],
+  "profiles list": [
+    "--json"
+  ],
+  "profiles show": [
+    "<name>"
+  ],
+  "proxy": [],
+  "proxy setup": [
+    "--openai",
+    "--anthropic",
+    "--vm",
+    "--api-key"
+  ],
+  "proxy status": [
+    "--vm"
+  ],
+  "pull": [
+    "<name>",
+    "--dir",
+    "--force",
+    "--exclude-git",
+    "--review",
+    "--apply",
+    "--discard",
+    "--stage-id",
+    "--stat"
+  ],
+  "push": [
+    "<name>",
+    "--dir",
+    "--force",
+    "--exclude-git"
+  ],
+  "resize": [
+    "<name>",
+    "--disk --size",
+    "--mem",
+    "--vcpus",
+    "--start"
+  ],
+  "restore": [
+    "<name>",
+    "--image",
+    "--reprovision",
+    "--yes -y",
+    "--no-agents",
+    "--no-prompt"
+  ],
+  "run": [
+    "<agent>",
+    "--workspace",
+    "--name",
+    "--image",
+    "--profile",
+    "--rm",
+    "--ask",
+    "--dry-run",
+    "--json",
+    "--prepare",
+    "--egress",
+    "--allow-host",
+    "<args>"
+  ],
+  "run-cleanup": [
+    "--dry-run",
+    "--session"
+  ],
+  "secrets": [],
+  "secrets init": [
+    "--accept-no-recovery"
+  ],
+  "secrets list": [],
+  "secrets rm": [
+    "<name>"
+  ],
+  "secrets set": [
+    "<name>",
+    "--stdin"
+  ],
+  "secrets status": [],
+  "setup": [
+    "--config-only",
+    "--yes -y",
+    "--vcpus",
+    "--mem",
+    "--rebuild",
+    "--profile",
+    "--extra-packages",
+    "--post-install",
+    "--template-size",
+    "--image",
+    "--guest-user",
+    "--builder-timeout",
+    "--workspace",
+    "--devcontainer",
+    "--no-devcontainer",
+    "--dry-run",
+    "--guest",
+    "--ipsw"
+  ],
+  "shell": [
+    "<name>",
+    "<command>"
+  ],
+  "ssh-config": [
+    "<name>",
+    "--clean"
+  ],
+  "start": [
+    "<name>",
+    "--workspace",
+    "--no-agents",
+    "--no-github",
+    "--no-prompt",
+    "--forward-port",
+    "--post-start",
+    "--env",
+    "--env-file",
+    "--devcontainer",
+    "--no-devcontainer",
+    "--dry-run",
+    "--json",
+    "--egress",
+    "--allow-host"
+  ],
+  "status": [
+    "<name>",
+    "--json"
+  ],
+  "stop": [
+    "<name>"
+  ],
+  "uninstall": [
+    "--yes -y",
+    "--keep-data",
+    "--purge"
+  ],
+  "up": [
+    "<dir>",
+    "--name",
+    "--new-instance",
+    "--copy",
+    "--mount",
+    "--extra-mount",
+    "--git-repo",
+    "--vcpus",
+    "--mem",
+    "--disk",
+    "--image",
+    "--profile",
+    "--exclude-git",
+    "--no-agents",
+    "--no-github",
+    "--no-prompt",
+    "--forward-port",
+    "--post-start",
+    "--env",
+    "--env-file",
+    "--devcontainer",
+    "--no-devcontainer",
+    "--egress",
+    "--allow-host",
+    "--dry-run",
+    "--json"
+  ],
+  "update": [
+    "--check",
+    "--force",
+    "--yes -y",
+    "--allow-downgrade"
+  ],
+  "validate": [
+    "--probe"
+  ],
+  "zed": [
+    "<dir>",
+    "--name",
+    "--new-instance",
+    "--copy",
+    "--mount",
+    "--extra-mount",
+    "--git-repo",
+    "--vcpus",
+    "--mem",
+    "--disk",
+    "--image",
+    "--profile",
+    "--exclude-git",
+    "--no-agents",
+    "--no-github",
+    "--no-prompt",
+    "--forward-port",
+    "--post-start",
+    "--env",
+    "--env-file",
+    "--devcontainer",
+    "--no-devcontainer",
+    "--egress",
+    "--allow-host",
+    "--guest-path --project",
+    "--no-launch",
+    "--editor-security",
+    "--editor-allow"
+  ]
+}

@@ -37,51 +37,18 @@ struct ProjectArguments: ParsableArguments {
   @Option(
     help: "Instance disk size in GiB (only used when creating a new instance)", transform: parseGiB)
   var disk: GiB?
-  @Flag(
-    name: .customLong("no-agents"),
-    help: "Skip injecting Claude Code and Codex credentials/config into the VM")
-  var noAgents = false
-  @Flag(help: "Use github = \"off\" for this invocation and skip the GitHub PAT prompt")
-  var noGithub = false
   @Option(
     help: "Named image to use when creating a new instance (default: \"default\")",
     transform: parseImageName)
   var image: ImageName?
-  @Option(help: "Build or reuse a profile-derived image when creating a new instance")
-  var profile: [String] = []
-  @Flag(help: "Skip `.git/` when copying/syncing local directories") var excludeGit = false
-  @Flag(
+  @Option(
     help:
-      "Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo"
-  )
-  var noPrompt = false
-  @Option(
-    help: "Forward a guest port to the host (`GUEST[:HOST]`, repeatable)",
-    transform: parsePortForward)
-  var forwardPort: [PortForward] = []
-  @Option(
-    help: ArgumentHelp(
-      "Shell command to run inside the guest after boot (overrides `post_start` from the config). Failure is logged but does not fail the start",
-      valueName: "CMD"))
-  var postStart: String?
-  @Option(
-    name: .customLong("env"),
-    help: ArgumentHelp(
-      "Env var to set in the guest (`KEY=VALUE`, repeatable). A whole value `{vault:NAME}` is resolved from `iso secrets` for each session. Overrides `--env-file`, `guest_env` entries from config and any forwarded values with the same name",
-      valueName: "KEY=VALUE"),
-    transform: parseGuestEnvironment)
-  var guestEnvironment: [(EnvVarName, EnvValue)] = []
-  @Option(
-    help: ArgumentHelp(
-      "A `.env` file of guest env vars (`KEY=value`, `{vault:NAME}` references). Parsed strictly; never run by a shell",
-      valueName: "PATH"))
-  var envFile: String?
-  @Option(
-    help: ArgumentHelp(
-      "Explicit path to a `devcontainer.json` to use (skips discovery)", valueName: "PATH"))
-  var devcontainer: String?
-  @Flag(help: "Ignore any discovered `devcontainer.json` (escape hatch for CI)")
-  var noDevcontainer = false
+      "Build or reuse a profile-derived image when creating a new instance (repeatable or comma-separated)",
+    transform: parseProfileList)
+  var profile: [[String]] = []
+  @Flag(help: "Skip `.git/` when copying/syncing local directories") var excludeGit = false
+  @OptionGroup var boot: BootArguments
+  @OptionGroup var devcontainerArguments: DevcontainerArguments
   @OptionGroup var egressOptions: EgressOptions
 
   func validate() throws {
@@ -93,13 +60,9 @@ struct ProjectArguments: ParsableArguments {
       throw UsageError(
         "the argument '--git-repo <GIT_REPO>' cannot be used with '[DIR]', '--copy' or '--mount'")
     }
-    if devcontainer != nil && noDevcontainer {
-      throw UsageError(
-        "the argument '--devcontainer <PATH>' cannot be used with '--no-devcontainer'")
-    }
   }
 
-  var profiles: [String] { profile.flatMap { $0.split(separator: ",").map(String.init) } }
+  var profiles: [String] { profile.flatMap { $0 } }
 
   /// Sorted, deduplicated profile list and the image named after it.
   static func profileTarget(_ profiles: [String]) throws -> (profiles: [String], image: ImageName)?
@@ -118,10 +81,9 @@ struct ProjectArguments: ParsableArguments {
   }
 
   /// The configuration snapshot with this invocation's egress override.
-  func loadContext(_ global: GlobalOptions) throws -> CommandContext {
-    let context = try CommandContext.load(global) {
-      try applyEgressOverride($0, mode: egressOptions.egress, hosts: egressOptions.allowHost)
-    }
+  func loadContext(_ global: GlobalOptions, intent: LoadIntent = .normal) throws -> CommandContext {
+    let context = try CommandContext.load(
+      global, override: { try applyEgressOverride($0, egressOptions) }, intent: intent)
     for warning in try context.config.validated() { context.diagnostics.warn(warning) }
     return context
   }
@@ -139,13 +101,13 @@ struct ProjectArguments: ParsableArguments {
     return UpWorkflow(
       request: request(
         configTarget: try global.configTarget(context.environment), command: command),
-      lifecycle: ProjectLifecycle(context, noGitHub: noGithub), target: target)
+      lifecycle: ProjectLifecycle(context, noGitHub: boot.noGithub), target: target)
   }
 
   func request(configTarget: ConfigTarget, command: String) -> UpRequest {
     var request = UpRequest(configTarget: configTarget)
     request.command = command
-    request.egressRequested = egressOptions.egress != nil || !egressOptions.allowHost.isEmpty
+    request.egressRequested = egressOptions.isSet
     request.dir = dir
     request.gitRepo = gitRepo
     request.name = name
@@ -154,17 +116,17 @@ struct ProjectArguments: ParsableArguments {
     request.vcpus = vcpus
     request.mem = mem
     request.disk = disk
-    request.postStart = postStart
-    request.guestEnvironment = guestEnvironment
-    request.envFile = envFile
-    request.forwardPort = forwardPort
+    request.postStart = boot.postStart
+    request.guestEnvironment = boot.guestEnvironment
+    request.envFile = boot.envFile
+    request.forwardPort = boot.forwardPort
     request.extraMount = extraMount
     request.excludeGit = excludeGit
-    request.noAgents = noAgents
-    request.noGithub = noGithub
-    request.noPrompt = noPrompt
+    request.noAgents = boot.noAgents
+    request.noGithub = boot.noGithub
+    request.noPrompt = boot.noPrompt
     request.transport = mount ? .mount : .copy
-    request.devcontainerInput = .fromFlags(path: devcontainer, noDevcontainer: noDevcontainer)
+    request.devcontainerInput = devcontainerArguments.input
     return request
   }
 }

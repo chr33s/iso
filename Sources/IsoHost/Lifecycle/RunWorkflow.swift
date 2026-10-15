@@ -42,10 +42,6 @@ package struct RunWorkflow {
     case cleanupFailed(any Error)
   }
 
-  package struct AgentExit: Error {
-    package let code: Int32
-  }
-
   package var diagnostics: Diagnostics { context.diagnostics }
 
   package func execute(
@@ -278,11 +274,11 @@ package struct RunWorkflow {
     } else {
       report(.retained(termination, running.instance.name))
     }
-    switch termination {
-    case .exited(0): break
-    case .exited(let code): throw AgentExit(code: code)
-    case .signaled:
-      throw HostError("agent status unknown after signal; cleanup outcome is recorded separately")
+    // The retained or cleanup report already named an exit code; a signal
+    // is reported by the error itself.
+    guard termination.succeeded else {
+      let exited = if case .exited = termination { true } else { false }
+      throw WorkloadExit(termination, reported: exited)
     }
   }
 

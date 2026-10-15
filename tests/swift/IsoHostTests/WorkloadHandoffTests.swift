@@ -7,7 +7,7 @@ import Testing
 @testable import IsoHost
 
 private enum WorkloadLaunch: CaseIterable, Sendable {
-  case shell, command, exec, reporting
+  case shell, command, exec, reporting, reportingPTY
 
   func launch(_ guest: FakeGuest, _ session: WorkloadSession) throws {
     switch self {
@@ -18,10 +18,10 @@ private enum WorkloadLaunch: CaseIterable, Sendable {
         guest.client, session, ["true"], diagnostics: guest.sink.diagnostics)
     case .exec:
       try InteractiveSSH.exec(guest.client, session, ["true"], diagnostics: guest.sink.diagnostics)
-    case .reporting:
+    case .reporting, .reportingPTY:
       let result = try InteractiveSSH.runReporting(
         guest.client, session, ["true"], workingDirectory: GuestPath("/workspace"),
-        allocatePTY: false, diagnostics: guest.sink.diagnostics)
+        allocatePTY: self == .reportingPTY, diagnostics: guest.sink.diagnostics)
       #expect(result.succeeded)
     }
   }
@@ -52,6 +52,82 @@ private func workloadLaunchRechecksImmediatelyBeforeSpawning(launch: WorkloadLau
   #expect(throws: HostError("test readiness revoked")) { try launch.launch(guest, session) }
   #expect(state.withLock { $0.checks } == 3)
   #expect(!FileManager.default.fileExists(atPath: marker))
+}
+
+/// The shared launch path keeps each wrapper's PTY choice: only the
+/// interactive shell (and a reporting launch that asks) gets `-t` and a TERM.
+@Test(arguments: WorkloadLaunch.allCases)
+private func workloadLaunchesKeepTheirPTYPolicy(launch: WorkloadLaunch) throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let argv = guest.root + "/argv"
+  try writeFile(
+    guest.root + "/bin/ssh",
+    "#!/bin/sh\nprintf '%s\\n' \"TERM=${TERM-unset}\" \"$@\" > '\(argv)'\n", mode: 0o755)
+  let session = try WorkloadSession(session: SSHSession(target: guest.target), supervision: nil) {}
+  try launch.launch(guest, session)
+  let lines = (readFile(argv) ?? "").split(separator: "\n").map(String.init)
+  let interactive = launch == .shell || launch == .reportingPTY
+  #expect(lines.contains("-t") == interactive)
+  // Only a PTY launch chooses a guest TERM; any other value is the stub
+  // shell's own default, which differs between shells.
+  #expect((lines.first == "TERM=xterm-256color") == interactive)
+  let workingDirectory = interactive || launch == .reporting
+  #expect(lines.last?.hasPrefix(workingDirectory ? "cd " : "'true'") == true)
+}
+
+/// A failed workload carries its own status; only `iso run`'s reporting
+/// launch returns it instead of throwing.
+@Test(arguments: WorkloadLaunch.allCases)
+private func workloadFailuresCarryTheWorkloadStatus(launch: WorkloadLaunch) throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  try writeFile(guest.root + "/bin/ssh", "#!/bin/sh\nexit 7\n", mode: 0o755)
+  let session = try WorkloadSession(session: SSHSession(target: guest.target), supervision: nil) {}
+  if launch == .reporting || launch == .reportingPTY {
+    let result = try InteractiveSSH.runReporting(
+      guest.client, session, ["true"], workingDirectory: GuestPath("/workspace"),
+      allocatePTY: launch == .reportingPTY, diagnostics: guest.sink.diagnostics)
+    #expect(result == .exited(7))
+    return
+  }
+  #expect(throws: WorkloadExit(.exited(7), reported: launch == .shell)) {
+    try launch.launch(guest, session)
+  }
+}
+
+/// Only `exec` closes stdin (`/dev/null`); every other launch hands the
+/// guest command this process's own stdin. When the runner's stdin is itself
+/// `/dev/null` the inherited case cannot be told apart, but `exec` still is.
+@Test(arguments: WorkloadLaunch.allCases)
+private func workloadLaunchesKeepTheirStdinPolicy(launch: WorkloadLaunch) throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let seen = guest.root + "/stdin"
+  try writeFile(
+    guest.root + "/bin/ssh",
+    "#!/bin/sh\nif [ /dev/stdin -ef /dev/null ]; then echo null; else echo other; fi > '\(seen)'\n",
+    mode: 0o755)
+  let session = try WorkloadSession(session: SSHSession(target: guest.target), supervision: nil) {}
+  try launch.launch(guest, session)
+  var own = stat()
+  var null = stat()
+  #expect(fstat(0, &own) == 0 && stat("/dev/null", &null) == 0)
+  let ownIsNull = (own.st_mode & S_IFMT) == S_IFCHR && own.st_rdev == null.st_rdev
+  let expected = launch == .exec || ownIsNull ? "null\n" : "other\n"
+  #expect(readFile(seen) == expected)
+}
+
+@Test func workloadExitStatusNeverFallsThroughToSuccess() {
+  #expect(WorkloadExit(.exited(7)).status == 7)
+  #expect(WorkloadExit(.exited(2)).description == "Remote command exited with status 2")
+  #expect(WorkloadExit(.signaled(9)).status == 1)
+  #expect(WorkloadExit(.signaled(9)).description.contains("signal 9"))
+  #expect(WorkloadExit(.exited(0)).status == 1)
+  // The shared rule `iso run`, `host shell`, `host forward` and `host run` use.
+  #expect(ProcessRunner.Termination.exited(0).exitStatus == 0)
+  #expect(ProcessRunner.Termination.exited(5).exitStatus == 5)
+  #expect(ProcessRunner.Termination.signaled(9).exitStatus == 1)
 }
 
 @Test func workloadConstructionRefusesPreparationInvalidatedReadiness() throws {

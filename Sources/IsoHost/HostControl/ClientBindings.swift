@@ -109,6 +109,11 @@ package struct RemoteHost: Sendable {
   package let enrollment: HostEnrollment
   package let client: HostControlClient
 
+  package init(enrollment: HostEnrollment, client: HostControlClient) {
+    self.enrollment = enrollment
+    self.client = client
+  }
+
   /// Resolves `alias` through the registry. A disabled host is returned for
   /// observation and cleanup; `requireEnabled` gates new work.
   package static func resolve(

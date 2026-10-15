@@ -37,18 +37,21 @@ struct EditorSecurityOptions: ParsableArguments {
 
 /// The options every project-aware editor command adds to `ProjectArguments`.
 struct EditorLaunchOptions: ParsableArguments {
-  @Option(help: "Remote path to open in the editor") var project = "/workspace"
+  @Option(
+    name: [.customLong("guest-path"), .customLong("project")],
+    help: "Guest path to open in the editor (inside the VM, never a host path)")
+  var guestPath = "/workspace"
   @Flag(help: "Prepare the instance and SSH alias without starting the editor") var noLaunch = false
 
-  func guestPath() throws -> GuestPath { try parseProjectGuestPath(project) }
+  func parsedGuestPath() throws -> GuestPath { try parseGuestPath(guestPath) }
 }
 
-/// `--project` of `iso code`, `iso zed` and `iso editor`.
-func parseProjectGuestPath(_ project: String) throws -> GuestPath {
+/// `--guest-path` (formerly `--project`) of `iso code`, `iso zed` and `iso editor`.
+func parseGuestPath(_ text: String) throws -> GuestPath {
   do {
-    return try GuestPath.absolute(project)
+    return try GuestPath.absolute(text)
   } catch {
-    throw UsageError("--project must be an absolute guest path: \(debugQuoted(project))")
+    throw UsageError("--guest-path must be an absolute guest path: \(debugQuoted(text))")
   }
 }
 
@@ -72,7 +75,7 @@ extension ProjectEditorCommand {
     )
   }
 
-  func validate() throws { _ = try launchOptions.guestPath() }
+  func validate() throws { _ = try launchOptions.parsedGuestPath() }
 
   /// `--project` is a guest path. A directory under the host home almost
   /// certainly meant DIR, and falling back to the current directory would copy
@@ -85,7 +88,7 @@ extension ProjectEditorCommand {
       isDirectory.boolValue
     {
       throw UsageError(
-        "--project is the guest path to open, but \(debugQuoted(path.rawValue)) is a directory in your home folder. Pass the project directory as DIR (`iso \(Self.machineName) \(path.rawValue)`), or give DIR as well to open that guest path."
+        "--guest-path is the guest path to open, but \(debugQuoted(path.rawValue)) is a directory in your home folder. Pass the project directory as DIR (`iso \(Self.machineName) \(path.rawValue)`), or give DIR as well to open that guest path."
       )
     }
   }
@@ -93,7 +96,7 @@ extension ProjectEditorCommand {
   func run() throws {
     try IsoCLI.run(global, Self.self) { () -> MachineEditorResult? in
       let provider = Self.provider.provider
-      let guestPath = try launchOptions.guestPath()
+      let guestPath = try launchOptions.parsedGuestPath()
       let context = try projectArguments.loadContext(global)
       try rejectHostHomeProject(guestPath, home: context.environment.home)
       let workflow = ProjectEditorWorkflow(

@@ -18,12 +18,18 @@ struct Setup: ParsableCommand {
 
   @OptionGroup var global: GlobalOptions
   @Flag(help: "Only create the JSONC configuration template, then exit") var configOnly = false
-  @Flag(name: .shortAndLong, help: "Skip confirmation prompts (accept all)") var yes = false
+  @Flag(
+    name: .shortAndLong,
+    help:
+      "Deprecated; has no effect and never accepts a discovered devcontainer.json (answer the prompt, or pass --devcontainer PATH or --no-devcontainer)"
+  )
+  var yes = false
   @Option(help: "Number of vCPUs (overrides config)") var vcpus: UInt8?
   @Option(help: "Memory in MiB (overrides config)", transform: parseMemory) var mem: VmMemory?
   @Flag(help: "Force rebuild of the machine image") var rebuild = false
   @Option(
-    help: "Install profiles (comma-separated: python,node,c,fuzz,rust,go)", transform: splitCommas)
+    help: "Install profiles (repeatable or comma-separated: python,node,c,fuzz,rust,go)",
+    transform: parseProfileList)
   var profile: [[String]] = []
   @Option(help: "Extra apt packages (not used by the Apple backend)", transform: splitCommas)
   var extraPackages: [[String]] = []
@@ -41,9 +47,7 @@ struct Setup: ParsableCommand {
     transform: parseDurationArgument) var builderTimeout: Duration?
   @Option(help: "Workspace directory to scan for .devcontainer/devcontainer.json") var workspace:
     String?
-  @Option(help: ArgumentHelp("Explicit path to a devcontainer.json", valueName: "PATH"))
-  var devcontainer: String?
-  @Flag(help: "Ignore any discovered devcontainer.json") var noDevcontainer = false
+  @OptionGroup var devcontainerArguments: DevcontainerArguments
   @Flag(help: "Translate devcontainer.json and print the report, then exit") var dryRun = false
   @Option(help: ArgumentHelp("Guest operating system: linux or macos", valueName: "OS"))
   var guest: GuestOS = .linux
@@ -61,21 +65,18 @@ struct Setup: ParsableCommand {
     if guest == .macos {
       let linuxOnly =
         !profile.isEmpty || !extraPackages.isEmpty || postInstall != nil || guestUser != nil
-        || workspace != nil || devcontainer != nil || noDevcontainer || dryRun
+        || workspace != nil || devcontainerArguments.isSet || dryRun
       if linuxOnly {
         throw UsageError(
           "--profile, --extra-packages, --post-install, --guest-user and the devcontainer options build Linux images; they cannot be combined with --guest macos"
         )
       }
     }
-    if devcontainer != nil && noDevcontainer {
-      throw UsageError("--devcontainer cannot be used with --no-devcontainer")
-    }
     if configOnly {
       let imageFlags =
         yes || vcpus != nil || mem != nil || rebuild || !profile.isEmpty || !extraPackages.isEmpty
         || postInstall != nil || templateSize != nil || image != .default || guestUser != nil
-        || builderTimeout != nil || workspace != nil || devcontainer != nil || noDevcontainer
+        || builderTimeout != nil || workspace != nil || devcontainerArguments.isSet
         || dryRun || guest != .linux
       if imageFlags {
         throw UsageError(
@@ -93,9 +94,11 @@ struct Setup: ParsableCommand {
         try SetupConfigOnly.run(target.path, format: target.format, output: StandardStreams())
         return
       }
-      let context = try CommandContext.load(global) {
-        $0.overridingVM(vcpus: vcpus, memory: mem, templateSize: templateSize)
-      }
+      for note in deprecationNotes { FileHandle.standardError.write(Data((note + "\n").utf8)) }
+      let context = try CommandContext.load(
+        global,
+        override: { $0.overridingVM(vcpus: vcpus, memory: mem, templateSize: templateSize) },
+        intent: loadIntent)
       if vcpus == 0 { throw HostError("--vcpus must be > 0") }
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
       if guest == .macos, let ipsw {
@@ -112,7 +115,7 @@ struct Setup: ParsableCommand {
         environment: context.environment.variables, diagnostics: context.diagnostics
       ).resolve(
         DevcontainerOptions(
-          input: .fromFlags(path: devcontainer, noDevcontainer: noDevcontainer), dryRun: dryRun,
+          input: devcontainerArguments.input, dryRun: dryRun,
           workspace: workspace, githubAuth: context.config.github,
           preferencePath: Devcontainer.preferencesPath(context.config)),
         inputs: DevcontainerTranslatorInputs(
@@ -142,6 +145,15 @@ struct Setup: ParsableCommand {
           builderTimeout: builderTimeout, ociFeatures: translation?.ociFeatures ?? []))
     }
   }
+}
+
+extension Setup {
+  var loadIntent: LoadIntent { .dryRun(dryRun) }
+  var deprecationNotes: [String] { yes ? [Self.yesDeprecation] : [] }
+
+  /// `--yes` does not trust a discovered devcontainer.json on the user's behalf.
+  static let yesDeprecation =
+    "warning: `iso setup --yes` is deprecated and has no effect; it does not accept a discovered devcontainer.json. Answer the prompt, or pass --devcontainer PATH to use one or --no-devcontainer to ignore it."
 }
 
 func splitCommas(_ text: String) -> [String] {
@@ -217,7 +229,16 @@ struct Destroy: MachineCommand {
   @Argument(
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
-  @Flag(help: "Also remove every image and the VM access key") var all = false
+  @Flag(help: "Destroy every instance, then remove every image and the VM access key")
+  var all = false
+
+  func validate() throws {
+    if all, let name {
+      throw UsageError(
+        "the argument '--all' cannot be used with an instance name ('\(name)'); use `iso destroy \(name)` or `iso destroy --all`"
+      )
+    }
+  }
 
   func run() throws {
     try IsoCLI.run(global, Self.self) { () -> MachineDestroyResult in
@@ -270,17 +291,18 @@ struct Resize: ParsableCommand {
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
   @Option(
+    name: [.customLong("disk"), .customLong("size")],
     help: "New disk size: absolute GiB (e.g. 150, 150G) or relative (e.g. +20, +20G)",
     transform: parseDiskSize)
-  var size: DiskSize?
+  var disk: DiskSize?
   @Option(help: "New memory in MiB (minimum 128)", transform: parseMemory) var mem: VmMemory?
   @Option(help: "New vCPU count") var vcpus: UInt8?
   @Flag(help: "Start the instance after applying the change instead of leaving it stopped")
   var start = false
 
   func validate() throws {
-    if size == nil && mem == nil && vcpus == nil {
-      throw UsageError("at least one of --size, --mem or --vcpus is required")
+    if disk == nil && mem == nil && vcpus == nil {
+      throw UsageError("at least one of --disk, --mem or --vcpus is required")
     }
     if vcpus == 0 { throw UsageError("--vcpus must be > 0") }
   }
@@ -290,10 +312,10 @@ struct Resize: ParsableCommand {
       let context = try CommandContext.load(global)
       let instance = try InstanceStore.resolve(context.config, name: name)
       let stopped = try context.backend.asStopped(instance)
-      if let size {
+      if let disk {
         let current = try context.backend.currentDiskGiB(stopped)
         let newSize: GiB
-        do { newSize = try size.resolve(current: GiB(UInt32(clamping: current))!) } catch {
+        do { newSize = try disk.resolve(current: GiB(UInt32(clamping: current))!) } catch {
           throw HostError("\(error)")
         }
         try context.backend.resizeDisk(stopped, toGiB: UInt64(newSize.value))

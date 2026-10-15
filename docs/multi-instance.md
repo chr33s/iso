@@ -134,11 +134,11 @@ The instance disk grows from the template size when the requested size is larger
 
 ```
 # Absolute disk size
-iso resize --size 150
-iso resize my-project --size 150
+iso resize --disk 150
+iso resize my-project --disk 150
 
 # Relative disk size (grow by 20 GiB)
-iso resize my-project --size +20
+iso resize my-project --disk +20
 
 # Memory and/or vCPUs (combine with disk if you like)
 iso resize my-project --mem 8192 --vcpus 4

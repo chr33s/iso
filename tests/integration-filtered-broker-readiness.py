@@ -261,7 +261,7 @@ sys.exit(result.returncode)
         model_path.write_text(json.dumps(model))
         model_path.chmod(0o600)
         before_transition = [key(provider).read_bytes() for provider in ["anthropic", "openai"]]
-        run(["model", "brokers", "remote"])
+        run(["model", "set", "remote", "brokers"])
         run(["exec", "brokers", "--", "true"])
         after_model = json.loads(model_path.read_text()) if model_path.exists() else {}
         assert after_model.get("mode", "remote") == "remote"
@@ -292,7 +292,7 @@ sys.exit(result.returncode)
         local = json.loads(config.read_text())
         local.setdefault("claude", {})["local_model"] = {"host_url": "http://127.0.0.1:47123", "model": "fixture"}
         config.write_text(json.dumps(local))
-        run(["model", "brokers", "local"])
+        run(["model", "set", "local", "brokers"])
         run(["exec", "brokers", "--", "true"])
         tunnel_pid = int((state / "proxy-model-47123-fwd.pid").read_text())
         assert "ssh" in subprocess.check_output(["/bin/ps", "-ww", "-p", str(tunnel_pid), "-o", "command="], text=True)
@@ -301,7 +301,7 @@ sys.exit(result.returncode)
         text, _ = run(["status", "brokers"], contains="(unhealthy)")
         assert "FILTERED_MODEL_TUNNEL_NOT_READY" in text
         run(["list"], contains="unhealthy")
-        run(["model", "brokers", "remote"])
+        run(["model", "set", "remote", "brokers"])
         run(["exec", "brokers", "--", "true"])
         config.write_text(json.dumps(without_hook))
         print("PASS a started local-model tunnel joins the composite proof; losing it is unhealthy", flush=True)

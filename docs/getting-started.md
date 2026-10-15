@@ -180,10 +180,11 @@ iso up --profile python,node
 This creates or refreshes an image named from the sorted profile list
 (`node-python` here), then creates the project instance from it.
 
-Skip confirmation prompts with `-y`:
+When the project has a `devcontainer.json`, `setup` asks before using it; to
+decide up front, pass `--devcontainer PATH` or `--no-devcontainer`:
 
 ```
-iso setup -y --profile python
+iso setup --profile python --no-devcontainer
 ```
 
 Setup is idempotent. Rerunning with the same profiles skips completed work. Pass `--rebuild` to force a fresh template build.
@@ -417,8 +418,8 @@ iso images --delete python-dev
 | `iso code [DIR]` / `iso zed [DIR]` | Ensure the project's VM is running, then open it in VS Code or Zed over SSH |
 | `iso editor` | Open VS Code or Zed connected to an already-running guest via SSH |
 | `iso ssh-config` | Install a `iso-<name>` SSH alias for ad-hoc `ssh`/`scp`/`rsync` |
-| `iso resize --size +20` | Grow a stopped instance's disk by 20 GiB |
-| `iso resize --size 100` | Set a stopped instance's disk to 100 GiB |
+| `iso resize --disk +20` | Grow a stopped instance's disk by 20 GiB |
+| `iso resize --disk 100` | Set a stopped instance's disk to 100 GiB |
 | `iso resize --mem 8192 --vcpus 4` | Change a stopped instance's memory and vCPUs |
 
 ## Further reading

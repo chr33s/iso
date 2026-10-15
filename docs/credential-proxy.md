@@ -172,7 +172,7 @@ capability token are unchanged, so there is no new attack surface.
 status --vm <name>` shows one VM's effective resolution. Credentials are shown
 as their `cmd:` reference (a command, not the secret).
 
-Proxy mode applies only in **remote** model mode. `iso model <vm> local` takes
+Proxy mode applies only in **remote** model mode. `iso model set local <vm>` takes
 precedence (the VM routes at your local model server and the proxy is torn
 down). If credential resolution fails at start, the VM **fails closed** — it
 does not come up on a path where the agent silently has no or the wrong key.

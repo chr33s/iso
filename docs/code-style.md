@@ -165,6 +165,29 @@ If a primitive appears in one place and crosses no boundary, leave it alone.
 - **Recursive parsers** for untrusted documents cap nesting and run on
   `ParserStack`'s fixed stack.
 
+## CLI options and contracts
+
+- **Reuse the shared option groups and parsers** (`BootArguments`,
+  `DevcontainerArguments`, `EgressOptions`, `parseProfileList`,
+  `parseDurationArgument`, `parseInstanceName`) instead of redeclaring a flag.
+  Add a flag to a group only if it applies to every command in it.
+- **Parse, then decide.** A malformed value or a conflicting combination is a
+  usage error from a transform or `validate()`; never let one flag silently win
+  over another, and never accept an option the selected mode ignores.
+- **Keep meanings distinct.** `--yes` confirms an ordinary prompt; `--force`
+  overrides a check; neither approves a governed stage, unlocks the secret
+  store or trusts a discovered devcontainer. `--no-prompt` only suppresses the
+  GitHub PAT offer. `--quiet` only applies with `--output json`.
+- **Forwarded arguments are the child's.** Everything after `--` reaches the
+  guest command unchanged; do not reparse it for iso flags.
+- **Status codes.** iso's own failures exit 1 and usage errors 2; a forwarded
+  workload's non-zero status passes through, and a signal or lost proof is
+  never 0. A host receipt that is not `succeeded` fails the command.
+- **Renaming a flag** adds the new name next to the old one (same units,
+  limits and defaults), updates the compatibility table in `docs/commands.md`
+  and the CLI inventory (`tests/test-cli-surface.py --update-inventory`), and
+  pins both spellings in a test.
+
 ## Review checklist (in priority order)
 
 Before reviewing, sync to latest remote (`git fetch origin`).

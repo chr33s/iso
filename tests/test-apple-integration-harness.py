@@ -143,7 +143,7 @@ cleanup
                 self.assertEqual(result.returncode, 125)
                 self.assertIn('agent execution is not supported', result.stderr)
                 self.assertEqual(result.stdout, '')
-        self.assertIn('iso setup -y --profile boundary-fixture', SUITE)
+        self.assertIn('iso setup --profile boundary-fixture', SUITE)
         self.assertIn('--rawfile stubs "$FIXTURES/stub-agents.sh"', SUITE)
 
 

@@ -99,15 +99,15 @@ The full boundary and its residual risks are in the
 | `iso editor [NAME]` | Attach an editor to an instance that is already running |
 
 ```
-iso code [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
-iso zed  [DIR] [--project PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
-iso editor [NAME] [--project PATH] [--editor code|zed] [--editor-security MODE] [--editor-allow CAP]... [--clean]
+iso code [DIR] [--guest-path PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso zed  [DIR] [--guest-path PATH] [--no-launch] [--editor-security MODE] [--editor-allow CAP]... [up options]
+iso editor [NAME] [--guest-path PATH] [--editor code|zed] [--editor-security MODE] [--editor-allow CAP]... [--clean]
 ```
 
 `iso code` and `iso zed` accept every `iso up` creation and restart option
 (`--name`, `--mount`, `--image`, `--devcontainer`, `--egress`, ...) and apply
-them with the same rules; devcontainer handling is identical. `--project` sets
-the absolute guest directory to open (default `/workspace`); it is refused
+them with the same rules; devcontainer handling is identical. `--guest-path` (formerly `--project`,
+still accepted) sets the absolute guest directory to open (default `/workspace`); it is refused
 when it names a directory in your home folder and no `DIR` is given, since
 that path was almost certainly meant as `DIR` (guest paths such as `/opt` or
 `/tmp` are fine). `--no-launch`
@@ -131,7 +131,7 @@ editor. `iso editor` also prints the SSH config entry to stderr for manual use;
 entry and exits.
 
 ```bash
-iso editor my-instance --project /workspace/frontend
+iso editor my-instance --guest-path /workspace/frontend
 iso editor my-instance --editor zed
 ```
 

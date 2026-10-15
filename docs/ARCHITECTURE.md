@@ -152,6 +152,42 @@ services and validated configuration live in `IsoHost/Support/CommandContext`.
 `Support/JSONResponses.swift` defines owned `Encodable` response models; dynamic
 JSON is reserved for guest/configuration documents whose keys are not owned by iso.
 
+Shared pieces keep commands consistent without one universal option set:
+
+- **Argument groups** in `Support/SharedArguments.swift` cover only the
+  commands they apply to: `BootArguments` (`up`, `code`, `zed`, `start`),
+  `DevcontainerArguments` (those plus `setup`) and `EgressOptions`.
+  `ProjectArguments` owns project identity and creation-only options, so
+  `start` never accepts `--disk` or `--image`.
+- **Two kinds of checks.** Malformed values and conflicting flags are refused
+  while parsing (transforms and `validate()`), before configuration, network
+  or VM work, and exit 2. Whether a valid value may change an existing boot
+  is decided when the command runs (for example `host up --egress` against a
+  reused VM).
+- **Collect once, render many.** `status` builds one `Status.Report` and
+  renders text, legacy `--json` and `--output json` from it; a different
+  renderer never probes again. Legacy `--json` shapes are separate adapters,
+  never aliases of `--output json`.
+- **One launch path.** `InteractiveSSH`'s wrappers (`run`, `runReporting`,
+  `runCommand`, `exec`) differ only in rendering, stdin and PTY policy; all go
+  through one `attach` that revalidates the `WorkloadSession` immediately
+  before spawning. A failed workload carries its own status as `WorkloadExit`.
+- **Host receipts.** Accepted, running, succeeded, failed and uncertain are
+  distinct; only `succeeded(_:)` counts as success, and only an id from
+  `OperationOption` (`--operation-id`) is offered for a same-id retry.
+- **Load intent.** `CommandContext.load(intent:)` says whether a command
+  shows the update notice and attaches the secret store; previews and dry
+  runs do neither, except that a devcontainer dry run keeps the store for a
+  private repository's PAT.
+- **Compatibility spellings** are extra names on the canonical option (or a
+  hidden default subcommand for the older `model` grammar), listed in
+  [commands.md](commands.md#compatibility-spellings-and-deprecations) and the
+  reviewed inventory `tests/fixtures/contracts/cli-inventory.json`. An old
+  spelling keeps its units and limits and is retired only in an announced
+  release; an ambiguous old form is refused, never retargeted.
+- **Machine commands** are found by walking the registered command tree;
+  `capabilities`, dispatch and `docs/machine-interface.md` must agree.
+
 ## The backend
 
 There is one concrete backend, `AppleBackend`. There is no backend
@@ -183,7 +219,9 @@ guard, one validated `IsoConfig` snapshot with explicit CLI overrides applied,
 `Diagnostics`, the background update notice, the `AppleBackend`, and the SSH
 client. Handlers receive immutable values; credentials are resolved separately
 and only when an operation needs them. `IsoCLI.run` maps failures to a
-sanitized `Error: …` line on stderr and exit status 1.
+sanitized `Error: …` line on stderr and exit status 1; a usage error exits 2,
+and a guest command that exits non-zero passes its own status through (see
+[commands.md](commands.md#exit-status)).
 
 ## Data flow: host → guest
 

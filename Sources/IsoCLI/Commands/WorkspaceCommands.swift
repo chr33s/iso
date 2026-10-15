@@ -117,10 +117,7 @@ struct Pull: ParsableCommand {
           configuredPolicy: context.config.policy)
         return
       }
-      let manifest = try context.transfer.stage(
-        running, directory: dir, excludeGit: excludeGit,
-        limits: context.config.workspacePull.limits, configuredPolicy: context.config.policy)
-      context.printStage(manifest, instance: running.instance, diffs: !stat)
+      try context.reviewStage(running, directory: dir, excludeGit: excludeGit, diffs: !stat)
     }
   }
 }
@@ -142,15 +139,24 @@ struct Diff: ParsableCommand {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
-      let manifest = try context.transfer.stage(
-        running, directory: dir, excludeGit: excludeGit,
-        limits: context.config.workspacePull.limits, configuredPolicy: context.config.policy)
-      context.printStage(manifest, instance: running.instance, diffs: !stat)
+      try context.reviewStage(running, directory: dir, excludeGit: excludeGit, diffs: !stat)
     }
   }
 }
 
 extension CommandContext {
+  /// A staged `pull` (`--review` or `workspace.pull.mode "stage"`) and `diff`:
+  /// stage the running guest's workspace, then print it for review. Applying
+  /// and discarding stay separate operations.
+  func reviewStage(
+    _ running: AppleBackend.Running, directory: String?, excludeGit: Bool, diffs: Bool
+  ) throws {
+    let manifest = try transfer.stage(
+      running, directory: directory, excludeGit: excludeGit,
+      limits: config.workspacePull.limits, configuredPolicy: config.policy)
+    printStage(manifest, instance: running.instance, diffs: diffs)
+  }
+
   /// The review goes to stdout; the next-step hint to stderr.
   func printStage(_ manifest: StageManifest, instance: Instance, diffs: Bool) {
     let review = StageReview(manifest: manifest, location: StageLocation(instance))
@@ -206,19 +212,25 @@ struct SSHConfigCommand: MachineCommand {
 
 struct Editor: ParsableCommand {
   static let configuration = CommandConfiguration(
-    abstract: "Open an editor (VS Code or Zed) connected to the guest VM")
+    abstract: "Open an editor (VS Code or Zed) connected to the guest VM",
+    discussion:
+      "Opens an instance that is already running, trying VS Code and then Zed unless --editor names one. `iso code` and `iso zed` instead create, restart or reuse the project's instance as `iso up` does and open only that editor."
+  )
 
   @OptionGroup var global: GlobalOptions
   @Argument(
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
-  @Option(help: "Remote path to open in the editor") var project = "/workspace"
+  @Option(
+    name: [.customLong("guest-path"), .customLong("project")],
+    help: "Guest path to open in the editor (inside the VM, never a host path)")
+  var guestPath = "/workspace"
   @Option(help: "Editor to launch. Omitted: try VS Code first, then Zed")
   var editor: EditorProviderID?
   @Flag(help: "Remove the SSH config entry for this instance and exit") var clean = false
   @OptionGroup var securityOptions: EditorSecurityOptions
 
-  func validate() throws { _ = try parseProjectGuestPath(project) }
+  func validate() throws { _ = try parseGuestPath(guestPath) }
 
   func run() throws {
     try IsoCLI.run {
@@ -230,7 +242,7 @@ struct Editor: ParsableCommand {
         return
       }
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
-      let path = try parseProjectGuestPath(project)
+      let path = try parseGuestPath(guestPath)
       try context.sshConfigFile().install(running, stderr: context.output.error)
       try EditorLauncher(
         environment: context.environment.variables, diagnostics: context.diagnostics,

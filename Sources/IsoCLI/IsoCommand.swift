@@ -103,6 +103,10 @@ func run(_ body: () throws -> Void) throws {
     try body()
   } catch let error as ExitCode {
     throw error
+  } catch let exit as WorkloadExit {
+    // The workload's own status, not iso's generic failure.
+    if !exit.reported { FileHandle.standardError.write(Data("Error: \(exit)\n".utf8)) }
+    throw ExitCode(exit.status)
   } catch let error as IsoCore.ValidationError {
     throw ArgumentParser.ValidationError(error.message)
   } catch {
@@ -149,7 +153,7 @@ struct Validate: ParsableCommand {
         probe
         ? StoreSecretResolver.shared(
           EnclaveStore(directory: config.dataDirectory.appending("secrets").path)) : nil
-      try ValidateReport.run(
+      let report = try ValidateReport.run(
         config: config,
         resolver: CredentialResolver(environment: environment.variables, secrets: store),
         fileSystem: LocalConfigFileSystem(), output: StandardStreams(),
@@ -157,6 +161,7 @@ struct Validate: ParsableCommand {
           ? GitHubAPI(
             tools: HostTools(environment: environment.variables),
             diagnostics: Diagnostics(verbosity: global.verbose)) : nil)
+      try report.requireSucceeded()
     }
   }
 }
@@ -168,16 +173,47 @@ protocol GitHubUserProbe {
 
 extension GitHubAPI: GitHubUserProbe {}
 
+/// What `validate` found. A configuration that fails to load throws before
+/// a report exists; a stored secret left alone without `--probe` is not
+/// checked, which is neither a pass nor a failure.
+struct ValidateOutcome: Equatable {
+  /// Requested checks that failed: a PAT that does not resolve, or a probe
+  /// that did not authenticate.
+  var failed = 0
+  /// `vault:` entries deliberately left unresolved.
+  var notChecked = 0
+
+  var succeeded: Bool { failed == 0 }
+
+  /// A failed requested check fails the command (exit 1), after the report.
+  func requireSucceeded() throws {
+    if !succeeded { throw ExitCode.failure }
+  }
+
+  var summary: String {
+    if failed > 0 {
+      return "Config loads, but \(failed) requested check\(failed == 1 ? "" : "s") failed"
+    }
+    if notChecked > 0 {
+      return
+        "Config OK (\(notChecked) stored secret\(notChecked == 1 ? "" : "s") not checked; run with --probe)"
+    }
+    return "Config OK"
+  }
+}
+
 enum ValidateReport {
   /// Environmental checks, then each PAT entry resolved explicitly (the one
   /// place `validate` runs `cmd:` references). A
   /// `vault:` entry is left unresolved unless `probe` is set, which unlocks
   /// the secret store once for all of them and checks each resolved token
   /// against `GET /user`.
+  @discardableResult
   static func run(
     config: IsoConfig, resolver: CredentialResolver, fileSystem: some ConfigFileSystem,
     output: some OutputStreams, probe: (any GitHubUserProbe)? = nil
-  ) throws {
+  ) throws -> ValidateOutcome {
+    var report = ValidateOutcome()
     output.out("Validating config (backend: apple-container)...")
     for warning in try config.validated(fileSystem: fileSystem) {
       output.out("  warning: \(warning)")
@@ -195,10 +231,12 @@ enum ValidateReport {
             output.out(
               "  github.pat.\"\(repo)\": stored secret, not resolved (run with --probe to check it)"
             )
+            report.notChecked += 1
             continue
           }
           if let batchFailure {
             output.out("  github.pat.\"\(repo)\": FAILED to resolve token (\(batchFailure))")
+            report.failed += 1
             continue
           }
         }
@@ -217,14 +255,17 @@ enum ValidateReport {
               output.out("    probe: /user as '\(sanitizeForDisplay(login))'")
             } catch {
               output.out("    probe: FAILED (\(error.contextError?.context ?? "\(error)"))")
+              report.failed += 1
             }
           }
         } catch {
           output.out("  github.pat.\"\(repo)\": FAILED to resolve token (\(error))")
+          report.failed += 1
         }
       }
     }
-    output.out("Config OK")
+    output.out(report.summary)
+    return report
   }
 }
 

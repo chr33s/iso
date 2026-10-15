@@ -227,6 +227,13 @@ enum MachineStatusResult: Encodable {
   case one(MachineStatusEntry)
   case all([MachineStatusEntry])
 
+  init(_ report: Status.Report) {
+    switch report {
+    case .one(let row): self = .one(MachineStatusEntry(row))
+    case .all(let rows): self = .all(rows.map(MachineStatusEntry.init))
+    }
+  }
+
   enum CodingKeys: String, CodingKey { case instances }
 
   func encode(to encoder: any Encoder) throws {

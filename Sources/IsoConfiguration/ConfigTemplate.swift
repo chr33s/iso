@@ -64,7 +64,7 @@ package enum ConfigTemplate {
       //     }
       //   },
       //   // Route Claude Code at a host-side model; enable per VM with
-      //   // `iso model <vm> local`. A localhost host is rewritten to the
+      //   // `iso model set local <vm>`. A localhost host is rewritten to the
       //   // guest's view of the host.
       //   "local_model": {
       //     "host_url": "http://localhost:11434",

@@ -28,14 +28,6 @@ private func withSession<T>(
   return try body(try session.guestTarget(config: env.config))
 }
 
-private func parseTTL(_ ttl: String?, default fallback: UInt64) throws -> UInt64 {
-  guard let ttl else { return fallback }
-  guard case .seconds(let seconds) = DurationText(parsing: ttl) else {
-    throw HostError("--ttl expects a duration such as 30m or 8h")
-  }
-  return seconds
-}
-
 struct HostPush: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "push", abstract: "Copy a client directory into a remote VM's /workspace")
@@ -72,11 +64,33 @@ struct HostPull: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Option(help: "Client destination (default: the recorded source directory)") var dir: String?
+  @Option(
+    help: "Client destination when staging (default: the recorded source directory)")
+  var dir: String?
   @Flag(help: "Apply the completed stage; needs no host connection") var apply = false
   @Flag(help: "With --apply: apply even when the destination drifted") var force = false
-  @Option(name: .customLong("stage-id")) var stageID: String?
-  @Flag(name: .customLong("exclude-git")) var excludeGit = false
+  @Option(name: .customLong("stage-id"), help: "With --apply: the stage to apply")
+  var stageID: String?
+  @Flag(name: .customLong("exclude-git"), help: "When staging: skip the `.git` directory")
+  var excludeGit = false
+
+  /// Each flag belongs to one mode; one that cannot affect the selected mode
+  /// is refused rather than ignored. A stage's destination is fixed when it
+  /// is created.
+  func validate() throws {
+    if apply {
+      if dir != nil {
+        throw UsageError(
+          "--dir is fixed when the stage is created; it cannot be used with --apply")
+      }
+      if excludeGit {
+        throw UsageError("--exclude-git applies only when staging, not with --apply")
+      }
+    } else {
+      if stageID != nil { throw UsageError("--stage-id requires --apply") }
+      if force { throw UsageError("--force requires --apply") }
+    }
+  }
 
   func run() throws {
     try IsoCLI.run {
@@ -110,50 +124,27 @@ struct HostPull: ParsableCommand {
 struct HostUp: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "up",
-    abstract: "Create or reuse a project VM on a remote host, start it, and push the project")
+    abstract: "Create or reuse a project VM on a remote host, start it, and push the project",
+    discussion:
+      "Every run pushes PATH into /workspace, including onto a VM it reuses. An explicit --egress must match the egress of a VM it reuses; it never recreates the VM or changes its policy."
+  )
 
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument(help: "Client project directory") var path: String = "."
   @Option(help: "Instance name (default: the directory name)") var name: String?
   @Option var image: String = ImageName.default.rawValue
-  @Option(help: "Boot lifetime (\"30m\", \"8h\"; at most 24h)") var ttl: String?
-  @Option(help: "open, none or filtered (default: the configured egress)") var egress: String?
+  @Option(
+    help: "Boot lifetime (\"30m\", \"8h\"; at most 24h)", transform: parseDurationArgument)
+  var ttl: Duration?
+  @Option(help: "open, none or filtered (default: the configured egress)")
+  var egress: EgressMode?
 
   func run() throws {
     try IsoCLI.run {
       let env = try HostCommandEnvironment(global)
       let remote = try env.resolve(host)
-      guard let project = canonicalPath(path) else { throw HostError("\(path) does not exist") }
-      let instanceName =
-        try name.map { try InstanceName($0) }
-        ?? InstanceName(Instance.sanitizedBasename((project as NSString).lastPathComponent))
-      let store = ClientBindingStore(config: env.config)
-      var binding = try store.load(remote.enrollment.hostID, instanceName)
-      if binding == nil || binding?.lastState == .destroyed {
-        binding = try create(env, remote, instanceName, store)
-      }
-      guard let binding else { throw HostError("no binding for \(instanceName)") }
-      let current = try VMObservation(wire: try remote.client.call(.vmInspect(binding.instance)))
-      switch current.state {
-      case .running:
-        env.output.out("Reusing running \(binding.name)")
-      case .stopped:
-        try remote.requireEnabled()
-        let seconds = try parseTTL(ttl, default: env.config.execution.remote.defaultSessionTTL)
-        let receipt = try submit(
-          remote,
-          .vmStart(
-            binding.instance, expectedGeneration: current.generation, ttlSeconds: seconds,
-            policy: binding.policyHash), operation: .generate(), wait: .seconds(600),
-          output: env.output)
-        guard receipt.state == .succeeded else { throw HostError(describe(receipt)) }
-      case .unknown, .unhealthy, .destroyed:
-        // An unknown or broken instance never triggers recreation or a restart.
-        throw HostError(
-          "\(binding.name) on \(binding.host) is \(current.state.rawValue); inspect it before continuing"
-        )
-      }
+      let (binding, project) = try prepare(env, remote)
       try withSession(env, remote, binding) { target in
         try RemoteWorkspace.push(
           target, source: project, config: env.config, binding: binding, force: false,
@@ -163,34 +154,87 @@ struct HostUp: ParsableCommand {
     }
   }
 
+  /// Everything before the push: create or reuse the binding, check an
+  /// explicit --egress against a reused VM, and start a stopped one. A
+  /// refusal here happens before any start or push.
+  func prepare(_ env: HostCommandEnvironment, _ remote: RemoteHost) throws -> (
+    ClientBinding, String
+  ) {
+    guard let project = canonicalPath(path) else { throw HostError("\(path) does not exist") }
+    let instanceName =
+      try name.map { try InstanceName($0) }
+      ?? InstanceName(Instance.sanitizedBasename((project as NSString).lastPathComponent))
+    let store = ClientBindingStore(config: env.config)
+    var binding = try store.load(remote.enrollment.hostID, instanceName)
+    let reused = !(binding == nil || binding?.lastState == .destroyed)
+    if !reused { binding = try create(env, remote, instanceName, store) }
+    guard let binding else { throw HostError("no binding for \(instanceName)") }
+    let current = try VMObservation(wire: try remote.client.call(.vmInspect(binding.instance)))
+    // A destroyed or unknown VM is reported by the state switch below.
+    if reused, let egress, current.state == .running || current.state == .stopped,
+      let refusal = Self.reusedEgressRefusal(
+        requested: egress, observed: current.egress, name: binding.name, host: host)
+    {
+      throw HostError(refusal)
+    }
+    switch current.state {
+    case .running:
+      env.output.out("Reusing running \(binding.name)")
+    case .stopped:
+      try remote.requireEnabled()
+      let seconds = ttlSeconds(ttl, default: env.config.execution.remote.defaultSessionTTL)
+      let receipt = try submit(
+        remote,
+        .vmStart(
+          binding.instance, expectedGeneration: current.generation, ttlSeconds: seconds,
+          policy: binding.policyHash), operation: .fresh(), wait: .seconds(600),
+        output: env.output)
+      guard succeeded(receipt) else { throw HostError(describe(receipt)) }
+    case .unknown, .unhealthy, .destroyed:
+      // An unknown or broken instance never triggers recreation or a restart.
+      throw HostError(
+        "\(binding.name) on \(binding.host) is \(current.state.rawValue); inspect it before continuing"
+      )
+    }
+    return (binding, project)
+  }
+
+  /// Why an explicit `--egress` cannot apply to an existing VM: it differs
+  /// from the VM's fixed egress, or the host did not report that egress.
+  static func reusedEgressRefusal(
+    requested: EgressMode, observed: EgressMode?, name: InstanceName, host: String
+  ) -> String? {
+    let next =
+      "Omit --egress to reuse it, or destroy it (`iso host vm destroy \(host) \(name)`) and run `iso host up` again."
+    guard let observed else {
+      return
+        "\(name) on \(host) did not report its egress, so --egress \(requested.rawValue) cannot be confirmed. \(next)"
+    }
+    guard observed != requested else { return nil }
+    return
+      "\(name) on \(host) was created with egress \(observed.rawValue); --egress \(requested.rawValue) does not change an existing VM. \(next)"
+  }
+
   private func create(
     _ env: HostCommandEnvironment, _ remote: RemoteHost, _ instanceName: InstanceName,
     _ store: ClientBindingStore
   ) throws -> ClientBinding {
     try remote.requireEnabled()
-    let mode: EgressMode
-    if let egress {
-      guard let parsed = EgressMode(rawValue: egress) else {
-        throw HostError("--egress must be open, none or filtered")
-      }
-      mode = parsed
-    } else {
-      mode = env.config.egress
-    }
+    let mode = egress ?? env.config.egress
     let spec = try VMSpec.make(
       name: instanceName, image: ImageName(image), imageDigest: nil,
       cpus: UInt32(env.config.vm.vcpuCount), memoryMiB: UInt64(env.config.vm.memory.mib.value),
       diskGiB: UInt64(env.config.vm.templateSize.value), guestOS: .linux, egress: mode)
-    let id = HostOperationID.generate()
+    let id = SubmittedOperation.fresh()
     let receipt = try submit(
       remote, .vmCreate(spec), operation: id, wait: .seconds(1_800), output: env.output)
-    guard receipt.state == .succeeded, let instance = receipt.instance else {
+    guard succeeded(receipt), let instance = receipt.instance else {
       throw HostError(describe(receipt))
     }
     let created = ClientBinding(
       host: remote.enrollment.alias, hostID: instance.hostID, ownerID: instance.ownerID,
       instanceID: instance.instanceID, runtimeID: instance.runtimeID, guestOS: instance.guestOS,
-      name: instanceName, policyHash: spec.policyHash, createdBy: id,
+      name: instanceName, policyHash: spec.policyHash, createdBy: id.id,
       lastState: .stopped, lastObservedAt: receipt.completedAt?.seconds)
     try store.save(created)
     env.output.out("Created \(instanceName) on \(remote.enrollment.alias)")
@@ -206,21 +250,39 @@ struct HostForward: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Argument(help: "LOCAL[:GUEST] port pairs; the listener binds 127.0.0.1 only")
-  var ports: [String]
+  @Option(
+    help:
+      "Forward a guest port to client loopback (`GUEST[:HOST]`, repeatable), as `iso up --forward-port`",
+    transform: parsePortForward)
+  var forwardPort: [PortForward] = []
+  @Argument(
+    help:
+      "Older form: LOCAL[:GUEST] port pairs (note the reversed order); cannot be mixed with --forward-port"
+  )
+  var ports: [String] = []
 
   func validate() throws {
-    guard !ports.isEmpty else { throw ArgumentParser.ValidationError("give at least one port") }
+    if !ports.isEmpty && !forwardPort.isEmpty {
+      throw UsageError(
+        "give ports either as --forward-port GUEST[:HOST] or as positional LOCAL[:GUEST], not both")
+    }
+    guard !ports.isEmpty || !forwardPort.isEmpty else {
+      throw UsageError("give at least one port (--forward-port GUEST[:HOST])")
+    }
     _ = try parsed()
   }
 
-  func parsed() throws -> [(UInt16, UInt16)] {
-    try ports.map { spec in
+  /// Every forward as `PortForward(guest:host:)`; the older grammar's
+  /// reversed `LOCAL[:GUEST]` is turned around here and nowhere else. Every
+  /// listener binds 127.0.0.1 on the client, whichever grammar named it.
+  func parsed() throws -> [PortForward] {
+    if !forwardPort.isEmpty { return forwardPort }
+    return try ports.map { spec in
       let parts = spec.split(separator: ":", omittingEmptySubsequences: false)
       guard (1...2).contains(parts.count), let local = UInt16(parts[0]), local > 0,
         let guest = UInt16(parts.count == 2 ? parts[1] : parts[0]), guest > 0
       else { throw ArgumentParser.ValidationError("invalid port spec '\(spec)'") }
-      return (local, guest)
+      return try PortForward(guest: guest, host: local)
     }
   }
 
@@ -238,15 +300,17 @@ struct HostForward: ParsableCommand {
         // so revocation or expiry closes it.
         let arguments =
           target.sshOptions + ["-N", "-o", "ExitOnForwardFailure=yes"]
-          + forwards.flatMap { ["-L", "127.0.0.1:\($0.0):127.0.0.1:\($0.1)"] } + [target.address]
+          + forwards.flatMap { ["-L", "127.0.0.1:\($0.host):127.0.0.1:\($0.guest)"] }
+          + [target.address]
         env.output.out(
-          forwards.map { "127.0.0.1:\($0.0) -> \(binding.name):\($0.1)" }.joined(separator: ", "))
+          forwards.map { "127.0.0.1:\($0.host) -> \(binding.name):\($0.guest)" }.joined(
+            separator: ", "))
         let termination = try ProcessRunner().attached(
           .init(
             executable: ssh, arguments: arguments,
             environment: SSHClient.transportEnvironment(env.environment), deadline: .seconds(0)),
           inheritStdin: false, deadline: nil)
-        if case .exited(let code) = termination, code != 0 { throw ExitCode(code) }
+        if !termination.succeeded { throw ExitCode(termination.exitStatus) }
       }
     }
   }
@@ -261,7 +325,10 @@ struct HostEditor: ParsableCommand {
   @Argument var host: String
   @Argument var name: String
   @Argument(help: "code or zed") var editor: String
-  @Option(help: "Guest directory to open") var path: String = guestWorkspace.rawValue
+  @Option(
+    name: [.customLong("guest-path"), .customLong("path")],
+    help: "Guest directory to open (an absolute path inside the VM, never a host path)")
+  var guestPath: String = guestWorkspace.rawValue
 
   func run() throws {
     try IsoCLI.run {
@@ -271,7 +338,7 @@ struct HostEditor: ParsableCommand {
       let env = try HostCommandEnvironment(global)
       let remote = try env.resolve(host)
       let binding = try env.binding(remote, name)
-      let guestPath = try GuestPath.absolute(path)
+      let guestPath = try GuestPath.absolute(self.guestPath)
       let observation = try VMObservation(
         wire: try remote.client.call(.vmInspect(binding.instance)))
       guard let egress = observation.egress else {
@@ -346,17 +413,18 @@ struct HostRun: ParsableCommand {
     commandName: "run",
     abstract: "Run a command in a disposable remote VM and collect ~/iso-results",
     discussion:
-      "The run is attached: if this client goes away, the host stops the VM and keeps what it can for one hour (`iso host run-results`)."
+      "The run is attached: if this client goes away, the host stops the VM and keeps what it can for one hour (`iso host run-results`). Unlike `iso run`, which launches an agent in a local project environment, this runs a plain command and always uses a new VM."
   )
 
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Option(help: "Client project directory to push") var dir: String = "."
   @Option var image: String = ImageName.default.rawValue
-  @Option(help: "VM lifetime (at most 24h)") var ttl: String = "1h"
+  @Option(help: "VM lifetime (default: 1h; at most 24h)", transform: parseDurationArgument)
+  var ttl: Duration?
   @Option(name: .customLong("output-limit-mib")) var outputLimitMiB: UInt64 = 64
   @Option(help: "none or filtered keeps one recovery boot possible; open does not")
-  var egress: String = "none"
+  var egress: EgressMode = .none
   @Argument(parsing: .postTerminator, help: "Command to run in /workspace") var command: [String]
 
   func run() throws {
@@ -366,21 +434,18 @@ struct HostRun: ParsableCommand {
       let remote = try env.resolve(host)
       try remote.requireEnabled()
       guard let project = canonicalPath(dir) else { throw HostError("\(dir) does not exist") }
-      guard let mode = EgressMode(rawValue: egress) else {
-        throw HostError("--egress must be open, none or filtered")
-      }
-      let seconds = try parseTTL(ttl, default: 3_600)
+      let seconds = ttlSeconds(ttl, default: 3_600)
       let runID = RunID.generate()
       let spec = try VMSpec.make(
         name: InstanceName("run-" + runID.rawValue.prefix(8)), image: ImageName(image),
         imageDigest: nil, cpus: UInt32(env.config.vm.vcpuCount),
         memoryMiB: UInt64(env.config.vm.memory.mib.value),
-        diskGiB: UInt64(env.config.vm.templateSize.value), guestOS: .linux, egress: mode)
+        diskGiB: UInt64(env.config.vm.templateSize.value), guestOS: .linux, egress: egress)
       let limit = outputLimitMiB << 20
       let created = try submit(
         remote, .runCreate(run: runID, spec: spec, outputLimitBytes: limit, ttlSeconds: seconds),
-        operation: .generate(), wait: .seconds(1_800), output: env.output)
-      guard created.state == .succeeded else { throw HostError(describe(created)) }
+        operation: .fresh(), wait: .seconds(1_800), output: env.output)
+      guard succeeded(created) else { throw HostError(describe(created)) }
       env.output.error("run \(runID) is running")
       var run = try RunObservation(wire: try remote.client.call(.runInspect(runID)))
       guard let instanceID = run.instanceID, let runtime = run.runtimeID else {
@@ -410,8 +475,7 @@ struct HostRun: ParsableCommand {
             ],
             environment: SSHClient.transportEnvironment(env.environment), deadline: .seconds(0)),
           inheritStdin: true, deadline: nil)
-        let code: Int32
-        if case .exited(let exited) = termination { code = exited } else { code = 1 }
+        let code = termination.exitStatus
         // Complete while the session still holds the run's lease, so the
         // host exports before it stops rather than treating this as a loss.
         let current = try RunObservation(wire: try remote.client.call(.runInspect(runID)))
@@ -427,28 +491,31 @@ struct HostRun: ParsableCommand {
           "\(describe(completed)); results were not exported (\(run.phase.rawValue)). Recover or discard with `iso host run-results \(host) \(runID)`"
         )
       }
-      try finishResults(env, remote, run, limit: limit)
+      let acknowledged = try finishResults(env, remote, run, limit: limit)
       // The run's client workspace record and port slot are not reused.
       RemoteWorkspace.removeRunState(env.config, binding)
       if status != 0 { throw ExitCode(status) }
+      if !acknowledged { throw ExitCode.failure }
     }
   }
 }
 
-/// Downloads, stages and acknowledges a run's committed results.
+/// Downloads, stages and acknowledges a run's committed results; false when
+/// the host's acknowledgement receipt did not succeed (the local stage stays).
 private func finishResults(
   _ env: HostCommandEnvironment, _ remote: RemoteHost, _ run: RunObservation, limit: UInt64
-) throws {
+) throws -> Bool {
   let stage = try RemoteRunResults.download(
     remote.client, run: run, config: env.config, host: remote.enrollment.hostID, limit: limit)
   env.output.out("Results: \(stage.path)")
-  guard let digest = run.artifactDigest else { return }
+  guard let digest = run.artifactDigest else { return true }
   let ack = try submit(
     remote,
     .runResultsAck(
       run: run.runID, expectedGeneration: run.generation, digest: digest, stage: stage.id),
-    operation: .generate(), wait: .seconds(600), output: env.output)
+    operation: .fresh(), wait: .seconds(600), output: env.output)
   env.output.error(describe(ack))
+  return succeeded(ack)
 }
 
 struct HostRunResults: ParsableCommand {
@@ -463,32 +530,47 @@ struct HostRunResults: ParsableCommand {
   @Flag(help: "Delete the run's VM and results without downloading") var discard = false
   @Option(name: .customLong("output-limit-mib")) var outputLimitMiB: UInt64 = 256
 
+  func validate() throws {
+    if recover && discard {
+      throw UsageError("the argument '--recover' cannot be used with '--discard'")
+    }
+  }
+
   func run() throws {
     try IsoCLI.run {
       let env = try HostCommandEnvironment(global)
-      let remote = try env.resolve(host)
-      let id = try RunID(runID)
-      var observation = try RunObservation(wire: try remote.client.call(.runInspect(id)))
-      env.output.out(
-        "run \(id): \(observation.phase.rawValue)"
-          + (observation.disposition.map { " (\($0))" } ?? ""))
-      if discard {
-        let receipt = try submit(
-          remote, .runResultsDiscard(run: id, expectedGeneration: observation.generation),
-          operation: .generate(), wait: .seconds(600), output: env.output)
-        env.output.out(describe(receipt))
-        return
-      }
-      if recover {
-        let receipt = try submit(
-          remote, .runResultsRecover(run: id, expectedGeneration: observation.generation),
-          operation: .generate(), wait: .seconds(900), output: env.output)
-        env.output.out(describe(receipt))
-        observation = try RunObservation(wire: try remote.client.call(.runInspect(id)))
-      }
-      if observation.phase == .resultsPending {
-        try finishResults(env, remote, observation, limit: outputLimitMiB << 20)
-      }
+      try perform(env, try env.resolve(host))
     }
+  }
+
+  func perform(_ env: HostCommandEnvironment, _ remote: RemoteHost) throws {
+    let id = try RunID(runID)
+    var observation = try RunObservation(wire: try remote.client.call(.runInspect(id)))
+    env.output.out(
+      "run \(id): \(observation.phase.rawValue)"
+        + (observation.disposition.map { " (\($0))" } ?? ""))
+    if discard {
+      let receipt = try submit(
+        remote, .runResultsDiscard(run: id, expectedGeneration: observation.generation),
+        operation: .fresh(), wait: .seconds(600), output: env.output)
+      try requireSucceeded(receipt, output: env.output)
+      return
+    }
+    // A failed recovery still downloads results that are already pending,
+    // then fails the command.
+    var recovered = true
+    if recover {
+      let receipt = try submit(
+        remote, .runResultsRecover(run: id, expectedGeneration: observation.generation),
+        operation: .fresh(), wait: .seconds(900), output: env.output)
+      env.output.out(describe(receipt))
+      recovered = succeeded(receipt)
+      observation = try RunObservation(wire: try remote.client.call(.runInspect(id)))
+    }
+    var acknowledged = true
+    if observation.phase == .resultsPending {
+      acknowledged = try finishResults(env, remote, observation, limit: outputLimitMiB << 20)
+    }
+    if !recovered || !acknowledged { throw ExitCode.failure }
   }
 }

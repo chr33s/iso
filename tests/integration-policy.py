@@ -9,7 +9,7 @@ VM under an enforcing policy with synthetic `cmd:` credentials, and checks:
 - a request for the provider the policy does not permit is refused by the
   proxy (403, logged as `no_permit`) and never forwarded — no request in this
   gate is ever admitted, so nothing reaches a real provider;
-- re-applying agent configuration to the running boot (`iso model … remote`)
+- re-applying agent configuration to the running boot (`iso model set remote …`)
   is refused rather than relaunching a proxy with empty counters;
 - a governed `iso pull --apply` without a terminal, with `--force`, or with
   `--output json` fails with `approval_required` and writes nothing;
@@ -183,7 +183,7 @@ def main():
         assert all(fake not in proxy_log for fake in FAKES.values())
 
         phase("Re-applying agent configuration mid-boot is refused")
-        refused = iso("model", "policy-gate", "remote", capture=True, check=False)
+        refused = iso("model", "set", "remote", "policy-gate", capture=True, check=False)
         assert refused.returncode != 0 and "policy_state_unavailable" in refused.stderr, refused.stderr
         assert show()["active"]["epoch"] == active["epoch"]
 

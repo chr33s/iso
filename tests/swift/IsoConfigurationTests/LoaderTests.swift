@@ -396,7 +396,7 @@ struct FakeFileSystem: ConfigFileSystem {
     report.warnings == ["data_dir parent '/home/fixture' does not exist (will be created on setup)"]
   )
   let ok = try load("{}").validate(fileSystem: FakeFileSystem(directories: ["/home/fixture"]))
-  #expect(ok == ConfigValidationReport(warnings: [], errors: []))
+  #expect(ok == ConfigValidateOutcome(warnings: [], errors: []))
 }
 
 // MARK: - workspace.pull

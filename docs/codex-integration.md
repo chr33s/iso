@@ -312,10 +312,10 @@ Updates affect that VM. To refresh the golden image for new VMs, run
 A VM can route Codex at a host-side local model server (Ollama / LM Studio /
 vLLM / llama.cpp) instead of OpenAI's cloud. The endpoint must serve the
 Responses API — the only wire API Codex currently supports. Switch a VM with
-[`iso model <vm> local`](commands.md#model) and back with
-`iso model <vm> remote`; configure the endpoint under
+[`iso model set local <vm>`](commands.md#model) and back with
+`iso model set remote <vm>`; configure the endpoint under
 [`codex.local_model`](configuration.md#local-model-routing) or interactively
-at the `iso model … local` prompt.
+at the `iso model set local …` prompt.
 
 The selection is per VM and independent of Claude — Codex can run on a local
 model while Claude stays on cloud, or the reverse. The endpoint Codex resolves

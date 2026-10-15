@@ -87,7 +87,7 @@ import Testing
     value, path: "c", environment: ConfigEnvironment(home: "/nohome", variables: [:]))
   let streams = RecordingStreams()
   let environment = ["PATH": bin + ":/usr/bin:/bin"]
-  try ValidateReport.run(
+  let report = try ValidateReport.run(
     config: config, resolver: CredentialResolver(environment: environment),
     fileSystem: NoDirectories(), output: streams,
     probe: GitHubAPI(
@@ -103,7 +103,9 @@ import Testing
       == "    probe: FAILED (GET /user returned HTTP 401 (token may be invalid or revoked))")
   // A token that does not resolve is not probed.
   let broken = try #require(lines.firstIndex { $0.hasPrefix("  github.pat.\"c/broken\": FAILED") })
-  #expect(lines[broken + 1] == "Config OK")
+  // The failed probe and the unresolvable token are both failed checks.
+  #expect(lines[broken + 1] == "Config loads, but 2 requested checks failed")
+  #expect(report == ValidateOutcome(failed: 2, notChecked: 0))
   #expect(!lines.joined().contains("SYNTHETIC"))
   let argv = try String(contentsOfFile: bin + "/argv", encoding: .utf8)
   #expect(!argv.contains("SYNTHETIC"))

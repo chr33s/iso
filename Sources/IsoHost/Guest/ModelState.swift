@@ -6,7 +6,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-package enum ModelMode: String, Sendable, Equatable {
+package enum ModelMode: String, Sendable, Equatable, CaseIterable {
   case remote
   case local
 }

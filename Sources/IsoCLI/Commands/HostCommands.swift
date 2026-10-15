@@ -26,6 +26,17 @@ struct HostCommandEnvironment {
   let output: StandardStreams
   let configPath: String?
 
+  init(
+    config: IsoConfig, environment: [String: String], diagnostics: Diagnostics,
+    configPath: String? = nil
+  ) {
+    self.config = config
+    self.environment = environment
+    self.diagnostics = diagnostics
+    self.configPath = configPath
+    output = StandardStreams()
+  }
+
   init(_ global: GlobalOptions) throws {
     configPath = global.config
     let configEnvironment = ConfigEnvironment.process
@@ -262,19 +273,42 @@ func describe(_ receipt: OperationReceipt) -> String {
   return text
 }
 
+/// Prints a terminal receipt. Only `succeeded` lets the command succeed: a
+/// transport-level success with a failed or cancelled receipt exits 1.
+func requireSucceeded(_ receipt: OperationReceipt, output: StandardStreams) throws {
+  output.out(describe(receipt))
+  guard succeeded(receipt) else { throw ExitCode.failure }
+}
+
+/// The one rule every receipt check uses: accepted, running, reconciling,
+/// failed and cancelled are all not success.
+func succeeded(_ receipt: OperationReceipt) -> Bool { receipt.state == .succeeded }
+
+/// The id a mutation is submitted under, and whether this command lets the
+/// user resend it with `--operation-id`. Only `OperationOption` makes a
+/// resendable one, so no command can promise a retry flag it lacks.
+struct SubmittedOperation {
+  let id: HostOperationID
+  let resendable: Bool
+
+  /// A new id the command gives no way to resend.
+  static func fresh() -> Self { Self(id: .generate(), resendable: false) }
+}
+
 /// Submits a durable mutation and waits for its terminal receipt. A lost
 /// reply leaves the operation id printed for an explicit same-id retry.
 func submit(
-  _ host: RemoteHost, _ body: HostRequestBody, operation: HostOperationID, wait timeout: Duration,
-  output: StandardStreams
+  _ host: RemoteHost, _ body: HostRequestBody, operation submitted: SubmittedOperation,
+  wait timeout: Duration, output: StandardStreams
 ) throws -> OperationReceipt {
+  let operation = submitted.id
   let accepted: OperationReceipt
   do {
     accepted = try OperationReceipt(wire: try host.client.call(body, operation: operation))
   } catch  where error.code == .operationUncertain {
     throw HostError(
-      "\(error.message). Retry with --operation-id \(operation), or check `iso host operation \(host.enrollment.alias) \(operation)`"
-    )
+      uncertainMessage(
+        error.message, host: host.enrollment.alias, operation, retryable: submitted.resendable))
   }
   if accepted.disposition == .unchanged || accepted.state.isTerminal { return accepted }
   output.error("accepted \(describe(accepted))")
@@ -285,6 +319,17 @@ func submit(
     )
   }
   return receipt
+}
+
+/// An uncertain submission names its operation id; only a command with
+/// `--operation-id` can retry it under the same id, so no other is told to.
+func uncertainMessage(
+  _ message: String, host: HostAlias, _ operation: HostOperationID, retryable: Bool
+) -> String {
+  let check = "`iso host operation \(host) \(operation)`"
+  return retryable
+    ? "\(message). Retry with --operation-id \(operation), or check \(check)"
+    : "\(message). Check \(check) before running this command again; a new run submits a new operation"
 }
 
 struct HostOperation: ParsableCommand {
@@ -317,6 +362,12 @@ struct HostMigrate: ParsableCommand {
   @Flag(help: "Prepare the handoff and let the host service complete it (never stops a VM)")
   var activate = false
   @Flag(help: "Undo a prepared migration that has not completed") var rollback = false
+
+  func validate() throws {
+    if activate && rollback {
+      throw UsageError("the argument '--activate' cannot be used with '--rollback'")
+    }
+  }
 
   func run() throws {
     try IsoCLI.run {

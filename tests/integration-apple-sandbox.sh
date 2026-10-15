@@ -867,9 +867,15 @@ if want iso; then
     write_cfg '{"boot_timeout_seconds": 15}' >"$CCFG_FAIL"
     mkdir -p "$WORK/project"
     echo "$RUN" >"$WORK/project/marker"
+    # The setup phase already pulled vminit and checked its digest. Seeding
+    # its init filesystem lets `iso-sandbox init` skip a second 69 MB pull,
+    # which can outlast setup's deadline on a slow route to GitHub's CDN.
+    if [[ -f "$ROOT/initfs.ext4" ]]; then
+        mkdir -p "$CROOT" && cp "$ROOT/initfs.ext4" "$CROOT/initfs.ext4"
+    fi
     if swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
         >"$WORK/iso-build.log" 2>&1 &&
-        iso setup -y --profile boundary-fixture >"$WORK/iso-setup.log" 2>&1; then
+        iso setup --profile boundary-fixture >"$WORK/iso-setup.log" 2>&1; then
         pass "iso setup builds, verifies, and publishes the boundary fixture image"
     else
         fail "iso setup builds, verifies, and publishes the boundary fixture image" "see $WORK/iso-build.log, $WORK/iso-setup.log"
@@ -893,6 +899,17 @@ if want iso; then
     # shellcheck disable=SC2016 # Expand in the guest.
     check "--env-file values reach guest sessions, --env wins" \
         test "$(iso exec e2e -- sh -c 'echo "$FROM_ENV_FILE/$OVERRIDDEN"')" = "from file/cli"
+    # The guest command's own status is the CLI's status; exec closes stdin
+    # and `shell -- CMD` passes it through.
+    rc=0; iso exec e2e -- sh -c 'exit 7' >/dev/null 2>&1 || rc=$?
+    check "iso exec exits with the guest command's status" test "$rc" = 7
+    rc=0; iso shell e2e -- sh -c 'exit 9' </dev/null >/dev/null 2>&1 || rc=$?
+    check "iso shell -- CMD exits with the guest command's status" test "$rc" = 9
+    # The `iso` wrapper closes stdin; these call the binary with a real one.
+    check "iso exec gives the guest no stdin" \
+        test "$(echo host-input | "$ISO" --config "$CCFG" exec e2e -- sh -c 'cat; echo end')" = end
+    check "iso shell -- CMD forwards stdin" \
+        test "$(echo host-input | "$ISO" --config "$CCFG" shell e2e -- cat)" = host-input
     iso exec e2e -- sh -c 'echo before > ~/snap-before' >/dev/null
     check "iso stop stops the sandbox" iso stop e2e
     check "status reports stopped" test "$(cstate e2e)" = stopped

@@ -80,7 +80,7 @@ private struct Directories: ConfigFileSystem {
   let config = try ConfigLoader.decode(
     value, path: "c", environment: ConfigEnvironment(home: "/nohome", variables: [:]))
   let streams = RecordingStreams()
-  try ValidateReport.run(
+  let report = try ValidateReport.run(
     config: config, resolver: CredentialResolver(environment: ["PATH": "/usr/bin:/bin"]),
     fileSystem: Directories(existing: []), output: streams)
   #expect(streams.stdout.first == "Validating config (backend: apple-container)...")
@@ -95,7 +95,9 @@ private struct Directories: ConfigFileSystem {
       $0.hasPrefix(
         "  github.pat.\"c/broken\": FAILED to resolve token (Secret command failed (exit 3)")
     })
-  #expect(streams.stdout.last == "Config OK")
+  // The broken entry is a failed check: the summary and status say so.
+  #expect(report == ValidateOutcome(failed: 1, notChecked: 0))
+  #expect(streams.stdout.last == "Config loads, but 1 requested check failed")
   #expect(!streams.stdout.joined().contains("SYNTHETIC"))
 }
 
@@ -115,22 +117,25 @@ private func vaultPATConfig() throws -> IsoConfig {
 @Test func validateLeavesStoredPATsAloneWithoutProbe() throws {
   let secrets = CountingSecrets(["one": "github_pat_1", "two": "github_pat_2"])
   let streams = RecordingStreams()
-  try ValidateReport.run(
+  let report = try ValidateReport.run(
     config: try vaultPATConfig(),
     resolver: CredentialResolver(environment: [:], secrets: secrets),
     fileSystem: Directories(existing: []), output: streams)
   #expect(secrets.calls.isEmpty)
   #expect(streams.stdout.filter { $0.contains("not resolved") }.count == 2)
-  #expect(streams.stdout.last == "Config OK")
+  // Not checked is neither a pass nor a failure.
+  #expect(report == ValidateOutcome(failed: 0, notChecked: 2) && report.succeeded)
+  #expect(streams.stdout.last == "Config OK (2 stored secrets not checked; run with --probe)")
 }
 
 @Test func validateResolvesStoredPATsInOneUnlockWhenAsked() throws {
   let secrets = CountingSecrets(["one": "github_pat_1", "two": "classic"])
   let streams = RecordingStreams()
-  try ValidateReport.run(
+  let resolved = try ValidateReport.run(
     config: try vaultPATConfig(),
     resolver: CredentialResolver(environment: [:], secrets: secrets),
     fileSystem: Directories(existing: []), output: streams, probe: FixedLogin())
+  #expect(resolved.succeeded && streams.stdout.last == "Config OK")
   #expect(secrets.calls.count == 1)
   #expect(
     streams.stdout.contains("  github.pat.\"a/one\": ok (resolves, fine-grained PAT format)"))
@@ -138,12 +143,13 @@ private func vaultPATConfig() throws -> IsoConfig {
 
   let missing = CountingSecrets(["one": "github_pat_1"])
   let failed = RecordingStreams()
-  try ValidateReport.run(
+  let report = try ValidateReport.run(
     config: try vaultPATConfig(),
     resolver: CredentialResolver(environment: [:], secrets: missing),
     fileSystem: Directories(existing: []), output: failed, probe: FixedLogin())
   #expect(missing.calls.count == 1)
   #expect(failed.stdout.filter { $0.contains("FAILED to resolve token") }.count == 2)
+  #expect(report.failed == 2 && !report.succeeded)
 }
 
 @Test func validateFailsOnEnvironmentalErrors() throws {
@@ -174,12 +180,12 @@ func rustLinesForTest(_ text: String) -> [String] {
       "up", "/p", "--no-agents", "--profile", "rust,python", "--profile", "go", "--env", "A=b",
       "--forward-port", "3000:3001", "--mem", "2048",
     ]) as? Up)
-  #expect(up.project.noAgents)
+  #expect(up.project.boot.noAgents)
   #expect(up.project.profiles == ["rust", "python", "go"])
   #expect(
     try ProjectArguments.profileTarget(up.project.profiles)?.image.rawValue == "go-python-rust")
-  #expect(up.project.guestEnvironment.first?.0.rawValue == "A")
-  #expect(up.project.forwardPort.first?.host == 3001)
+  #expect(up.project.boot.guestEnvironment.first?.0.rawValue == "A")
+  #expect(up.project.boot.forwardPort.first?.host == 3001)
   #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["up", "--new-instance"]) }
   #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["up", "--copy", "--mount"]) }
   #expect(throws: (any Error).self) {
@@ -204,15 +210,15 @@ func rustLinesForTest(_ text: String) -> [String] {
       "filtered", "--allow-host", "example.com", "--no-devcontainer",
     ]) as? ZedCommand)
   #expect(ZedCommand.provider == .zed && CodeCommand.provider == .code)
-  #expect(try zed.launchOptions.guestPath() == GuestPath("/workspace/frontend"))
+  #expect(try zed.launchOptions.parsedGuestPath() == GuestPath("/workspace/frontend"))
   #expect(zed.launchOptions.noLaunch)
   let request = zed.projectArguments.request(
     configTarget: ConfigTarget(path: "/c.jsonc", format: .jsonc), command: "zed")
   #expect(request.dir == "/p" && request.transport == .mount)
   #expect(request.command == "zed" && request.egressRequested)
-  #expect(zed.projectArguments.egressOptions.allowHost == ["example.com"])
+  #expect(zed.projectArguments.egressOptions.allowHost.map(\.rawValue) == ["example.com"])
   let code = try #require(try IsoCommand.parseAsRoot(["code"]) as? CodeCommand)
-  #expect(try code.launchOptions.guestPath() == guestWorkspace)
+  #expect(try code.launchOptions.parsedGuestPath() == guestWorkspace)
   #expect(!code.launchOptions.noLaunch && code.projectArguments.dir == nil)
   for bad in [
     ["code", "--project", "workspace"], ["zed", "--copy", "--mount"], ["zed", "--new-instance"],

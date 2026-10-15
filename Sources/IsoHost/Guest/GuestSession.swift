@@ -296,7 +296,43 @@ extension SSHClient {
   }
 }
 
-/// `iso shell`, `claude`, `codex` and `exec`: the user's own sessions.
+extension ProcessRunner.Termination {
+  /// The one exit-status rule for a forwarded workload: its own code, or 1
+  /// after a signal, whose code is unknown.
+  package var exitStatus: Int32 {
+    switch self {
+    case .exited(let code): code
+    case .signaled: 1
+    }
+  }
+}
+
+/// A guest workload that did not succeed. The CLI exits with `status`: the
+/// workload's own code, or 1 after a signal, whose code is unknown.
+package struct WorkloadExit: Error, Equatable, CustomStringConvertible {
+  package let termination: ProcessRunner.Termination
+  /// An interactive session already warned about its status on stderr.
+  package let reported: Bool
+
+  package init(_ termination: ProcessRunner.Termination, reported: Bool = false) {
+    self.termination = termination
+    self.reported = reported
+  }
+
+  /// Never 0: a `WorkloadExit` is a failure.
+  package var status: Int32 { termination.succeeded ? 1 : termination.exitStatus }
+
+  package var description: String {
+    switch termination {
+    case .exited(let code): "Remote command exited with status \(code)"
+    case .signaled(let signal): "Remote command ended by signal \(signal); its status is unknown"
+    }
+  }
+}
+
+/// `iso shell`, `claude`, `codex` and `exec`: the user's own sessions. A
+/// session that does not succeed throws `WorkloadExit`, except
+/// `runReporting`, which returns the termination to `iso run`.
 package enum InteractiveSSH {
   /// Empty `command` opens a login shell at `/workspace`.
   package static func render(_ command: [String]) -> String {
@@ -324,34 +360,45 @@ package enum InteractiveSSH {
       + command.map(shellEscape).joined(separator: " ")
   }
 
+  /// The one launch path behind every wrapper: revalidates the workload,
+  /// then runs ssh under its supervision. With a PTY the guest gets a TERM it
+  /// has terminfo for, and a launch that throws restores the terminal.
+  private static func attach(
+    _ client: SSHClient, _ workload: WorkloadSession, remote: String, inheritStdin: Bool,
+    allocatePTY: Bool, missingSSH: String
+  ) throws -> ProcessRunner.Termination {
+    let session = workload.session
+    guard let ssh = client.sshExecutable() else { throw HostError(missingSSH) }
+    var environment = session.env.overlay(client.environment)
+    if allocatePTY { environment["TERM"] = guestTerm(client.environment) }
+    let arguments =
+      allocatePTY
+      ? arguments(session, remote: remote) : session.sshOptions + [session.target.address, remote]
+    try workload.revalidate()
+    do {
+      return try workload.attached(
+        client, client.request(ssh, arguments, environment: environment),
+        inheritStdin: inheritStdin)
+    } catch {
+      if allocatePTY { restoreTerminal(client) }
+      throw error
+    }
+  }
+
+  private static let missingInteractiveSSH = "Failed to launch SSH — is the ssh client installed?"
+
   /// Like `run`, but returns the ssh status and can skip the PTY. Used by
   /// `iso run` so agent and cleanup outcomes stay distinguishable.
   package static func runReporting(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String],
     workingDirectory: GuestPath, allocatePTY: Bool, diagnostics: Diagnostics
   ) throws -> ProcessRunner.Termination {
-    let session = workload.session
+    let target = workload.session.target
     let remote = Self.remote(command, workingDirectory: workingDirectory)
-    diagnostics.log(
-      .info, "Connecting via SSH to \(session.target.host):\(session.target.port) (\(remote))")
-    guard let ssh = client.sshExecutable() else {
-      throw HostError("Failed to launch SSH — is the ssh client installed?")
-    }
-    var environment = session.env.overlay(client.environment)
-    if allocatePTY { environment["TERM"] = guestTerm(client.environment) }
-    let arguments =
-      allocatePTY
-      ? session.sshOptions + ["-e", "~", "-t", session.target.address, remote]
-      : session.sshOptions + [session.target.address, remote]
-    try workload.revalidate()
-    let termination: ProcessRunner.Termination
-    do {
-      termination = try workload.attached(
-        client, client.request(ssh, arguments, environment: environment), inheritStdin: true)
-    } catch {
-      if allocatePTY { restoreTerminal(client) }
-      throw error
-    }
+    diagnostics.log(.info, "Connecting via SSH to \(target.host):\(target.port) (\(remote))")
+    let termination = try attach(
+      client, workload, remote: remote, inheritStdin: true, allocatePTY: allocatePTY,
+      missingSSH: missingInteractiveSSH)
     if allocatePTY && !termination.succeeded { restoreTerminal(client) }
     return termination
   }
@@ -360,74 +407,45 @@ package enum InteractiveSSH {
   package static func run(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics
   ) throws {
-    let session = workload.session
+    let target = workload.session.target
     let remote = render(command)
-    diagnostics.log(
-      .info, "Connecting via SSH to \(session.target.host):\(session.target.port) (\(remote))")
+    diagnostics.log(.info, "Connecting via SSH to \(target.host):\(target.port) (\(remote))")
     diagnostics.log(
       .info,
       "If the remote session stops responding, type Enter, then ~. to disconnect; run `stty sane` if your terminal remains broken."
     )
-    guard let ssh = client.sshExecutable() else {
-      throw HostError("Failed to launch SSH — is the ssh client installed?")
-    }
-    var environment = session.env.overlay(client.environment)
-    environment["TERM"] = guestTerm(client.environment)
-    try workload.revalidate()
-    let termination: ProcessRunner.Termination
-    do {
-      termination = try workload.attached(
-        client, client.request(ssh, arguments(session, remote: remote), environment: environment),
-        inheritStdin: true)
-    } catch {
-      restoreTerminal(client)
-      throw error
-    }
+    let termination = try attach(
+      client, workload, remote: remote, inheritStdin: true, allocatePTY: true,
+      missingSSH: missingInteractiveSSH)
     if !termination.succeeded {
       diagnostics.warn("SSH session exited with status: \(termination)")
       restoreTerminal(client)
+      throw WorkloadExit(termination, reported: true)
     }
   }
 
   package static func runCommand(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics
   ) throws {
-    let session = workload.session
     let remote = command.map(shellEscape).joined(separator: " ")
     diagnostics.log(.info, "Running (non-interactive): \(remote)")
-    guard let ssh = client.sshExecutable() else { throw HostError("Failed to launch SSH") }
-    try workload.revalidate()
-    let termination = try workload.attached(
-      client,
-      client.request(
-        ssh, session.sshOptions + [session.target.address, remote],
-        environment: session.env.overlay(client.environment)),
-      inheritStdin: true)
-    guard termination.succeeded else {
-      throw HostError("Remote command exited with status: \(termination)")
-    }
+    let termination = try attach(
+      client, workload, remote: remote, inheritStdin: true, allocatePTY: false,
+      missingSSH: "Failed to launch SSH")
+    guard termination.succeeded else { throw WorkloadExit(termination) }
   }
 
   /// `iso exec`: output passes through; stdin is `/dev/null` (a loop reading
-  /// its own input keeps it); a failure reports the remote code.
+  /// its own input keeps it); a failure carries the remote code.
   package static func exec(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics
   ) throws {
-    let session = workload.session
     let remote = command.map(shellEscape).joined(separator: " ")
     diagnostics.debug("exec: \(remote)")
-    guard let ssh = client.sshExecutable() else { throw HostError("Failed to launch SSH") }
-    try workload.revalidate()
-    let termination = try workload.attached(
-      client,
-      client.request(
-        ssh, session.sshOptions + [session.target.address, remote],
-        environment: session.env.overlay(client.environment)),
-      inheritStdin: false)
-    guard termination.succeeded else {
-      let code: Int32 = if case .exited(let code) = termination { code } else { 1 }
-      throw HostError("Remote command exited with status \(code)")
-    }
+    let termination = try attach(
+      client, workload, remote: remote, inheritStdin: false, allocatePTY: false,
+      missingSSH: "Failed to launch SSH")
+    guard termination.succeeded else { throw WorkloadExit(termination) }
   }
 
   /// A remote TUI killed mid-session leaves raw mode and the alternate

@@ -68,35 +68,15 @@ func parsePortForward(_ text: String) throws -> PortForward {
   do { return try PortForward.parse(text) } catch { throw UsageError(oneLine(error)) }
 }
 
-struct EgressOptions: ParsableArguments {
-  @Option(help: "Egress mode when creating an instance: open, none, or filtered") var egress:
-    String?
-  @Option(
-    name: .customLong("allow-host"),
-    help: "Exact host to approve for a filtered boot. Does not change none or open to filtered"
-  )
-  var allowHost: [String] = []
-}
-
-func applyEgressOverride(_ config: IsoConfig, mode: String?, hosts: [String]) throws -> IsoConfig {
-  guard mode != nil || !hosts.isEmpty else { return config }
-  let resolved: EgressMode
-  if let mode {
-    guard let parsed = EgressMode(rawValue: mode) else {
-      throw HostError("--egress must be open, none, or filtered")
-    }
-    resolved = parsed
-  } else {
-    resolved = config.egress
-  }
-  if !hosts.isEmpty, resolved != .filtered {
+func applyEgressOverride(_ config: IsoConfig, _ options: EgressOptions) throws -> IsoConfig {
+  guard options.isSet else { return config }
+  let resolved = options.egress ?? config.egress
+  if !options.allowHost.isEmpty, resolved != .filtered {
     throw HostError(
       "--allow-host requires an effective filtered egress; it does not change none or open to filtered"
     )
   }
-  var extra: [ExactHostname] = []
-  for host in hosts { extra.append(try ExactHostname(host)) }
-  return config.overridingEgress(resolved, extraHosts: extra)
+  return config.overridingEgress(resolved, extraHosts: options.allowHost)
 }
 
 func parseGuestEnvironment(_ text: String) throws -> (EnvVarName, EnvValue) {
@@ -109,7 +89,7 @@ struct Up: MachineCommand {
   static let configuration = CommandConfiguration(
     abstract: "Ensure an environment for a project directory exists and is running",
     discussion:
-      "Re-runnable: if an instance already exists for DIR it is reused (running) or restarted (stopped) instead of being recreated."
+      "Re-runnable: if an instance already exists for DIR it is reused (running) or restarted (stopped) instead of being recreated. `iso start` restarts a stopped instance by name and takes no creation options."
   )
 
   @OptionGroup var global: GlobalOptions
@@ -127,7 +107,7 @@ struct Up: MachineCommand {
 
   func run() throws {
     try IsoCLI.run(global, Self.self) { () -> MachineUpResult? in
-      let context = try project.loadContext(global)
+      let context = try project.loadContext(global, intent: loadIntent)
       let workflow = try project.workflow(context, global: global, command: Self.machineName)
       if dryRun {
         try workflow.emitDryRun(json: json)
@@ -145,22 +125,43 @@ struct Up: MachineCommand {
   }
 }
 
+extension Up {
+  var loadIntent: LoadIntent { .dryRun(dryRun) }
+}
+
+extension Start {
+  var loadIntent: LoadIntent { .dryRun(dryRun) }
+}
+
 extension UpWorkflow {
   func emitDryRun(json: Bool) throws {
-    let options = try previewOptions()
-    if !json {
-      _ = try resolver.resolve(options, inputs: translatorInputs(), stage: .start)
-      return
-    }
-    let translation = try resolver.collect(options, inputs: translatorInputs(), stage: .start)
     // Profile-mapped features are baked at setup; a start-stage translation
     // contributes none, so the effective set is the CLI list.
-    var plan = DevcontainerDryRunPlan(
-      report: translation?.report, profiles: target?.profiles ?? [],
-      guestUser: Devcontainer.persistedGuestUser(lifecycle.config, image: effectiveImage),
-      vcpus: request.vcpus, memory: request.mem?.mib, disk: request.disk)
-    plan.security = lifecycle.config.securitySummary
-    try context.output.writeJSON(plan)
+    try resolver.dryRun(
+      try previewOptions(), inputs: translatorInputs(), json: json, output: context.output
+    ) {
+      var plan = DevcontainerDryRunPlan(
+        report: $0, profiles: target?.profiles ?? [],
+        guestUser: Devcontainer.persistedGuestUser(lifecycle.config, image: effectiveImage),
+        vcpus: request.vcpus, memory: request.mem?.mib, disk: request.disk)
+      plan.security = lifecycle.config.securitySummary
+      return plan
+    }
+  }
+}
+
+extension DevcontainerResolver {
+  /// A dry run's one start-stage translation, rendered once: the report on
+  /// stderr, or with `json` the plan `plan` builds from it on stdout.
+  func dryRun(
+    _ options: DevcontainerOptions, inputs: DevcontainerTranslatorInputs, json: Bool,
+    output: some OutputStreams, plan: (DevcontainerReport?) -> DevcontainerDryRunPlan
+  ) throws {
+    guard json else {
+      _ = try resolve(options, inputs: inputs, stage: .start)
+      return
+    }
+    try output.writeJSON(plan(try collect(options, inputs: inputs, stage: .start)?.report))
   }
 
 }
@@ -168,7 +169,11 @@ extension UpWorkflow {
 // MARK: - start
 
 struct Start: MachineCommand {
-  static let configuration = CommandConfiguration(abstract: "Restart a stopped VM")
+  static let configuration = CommandConfiguration(
+    abstract: "Restart a stopped VM",
+    discussion:
+      "Restarts an existing instance with the settings it was created with; it takes boot options only. To create, restart or reuse the instance for a project directory, use `iso up`."
+  )
 
   @OptionGroup var global: GlobalOptions
   @Argument(
@@ -177,45 +182,8 @@ struct Start: MachineCommand {
   var name: InstanceName?
   @Option(help: "Project directory used to select an associated stopped instance")
   var workspace: String?
-  @Flag(
-    name: .customLong("no-agents"),
-    help: "Skip injecting Claude Code and Codex credentials/config into the VM")
-  var noAgents = false
-  @Flag(help: "Use github = \"off\" for this invocation and skip the GitHub PAT prompt")
-  var noGithub = false
-  @Option(
-    help:
-      "Forward a guest port to the host (`GUEST[:HOST]`, repeatable). `--forward-port 3000` forwards guest 3000 to host 3000; `--forward-port 3000:3001` forwards guest 3000 to host 3001",
-    transform: parsePortForward)
-  var forwardPort: [PortForward] = []
-  @Flag(
-    help:
-      "Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo"
-  )
-  var noPrompt = false
-  @Option(
-    help: ArgumentHelp(
-      "Shell command to run inside the guest after boot (overrides `post_start` from the config). Failure is logged but does not fail the start",
-      valueName: "CMD"))
-  var postStart: String?
-  @Option(
-    name: .customLong("env"),
-    help: ArgumentHelp(
-      "Env var to set in the guest (`KEY=VALUE`, repeatable). A whole value `{vault:NAME}` is resolved from `iso secrets` for each session. Overrides `--env-file`, `guest_env` entries from config and any forwarded values with the same name",
-      valueName: "KEY=VALUE"),
-    transform: parseGuestEnvironment)
-  var guestEnvironment: [(EnvVarName, EnvValue)] = []
-  @Option(
-    help: ArgumentHelp(
-      "A `.env` file of guest env vars (`KEY=value`, `{vault:NAME}` references). Parsed strictly; never run by a shell",
-      valueName: "PATH"))
-  var envFile: String?
-  @Option(
-    help: ArgumentHelp(
-      "Explicit path to a `devcontainer.json` to use (skips discovery)", valueName: "PATH"))
-  var devcontainer: String?
-  @Flag(help: "Ignore any discovered `devcontainer.json` (escape hatch for CI)")
-  var noDevcontainer = false
+  @OptionGroup var boot: BootArguments
+  @OptionGroup var devcontainerArguments: DevcontainerArguments
   @Flag(
     help: "Translate `devcontainer.json` and print the report, then exit before doing any VM work")
   var dryRun = false
@@ -223,10 +191,6 @@ struct Start: MachineCommand {
   @OptionGroup var egressOptions: EgressOptions
 
   func validate() throws {
-    if devcontainer != nil && noDevcontainer {
-      throw UsageError(
-        "the argument '--devcontainer <PATH>' cannot be used with '--no-devcontainer'")
-    }
     if json && !dryRun {
       throw UsageError("the following required arguments were not provided:\n  --dry-run")
     }
@@ -235,25 +199,27 @@ struct Start: MachineCommand {
 
   func run() throws {
     try IsoCLI.run(global, Self.self) { () -> MachineLifecycleResult? in
-      let context = try CommandContext.load(global) {
-        try applyEgressOverride($0, mode: egressOptions.egress, hosts: egressOptions.allowHost)
-      }
+      let context = try CommandContext.load(
+        global, override: { try applyEgressOverride($0, egressOptions) },
+        intent: loadIntent)
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
-      let lifecycle = ProjectLifecycle(context, noGitHub: noGithub)
+      let lifecycle = ProjectLifecycle(context, noGitHub: boot.noGithub)
       if dryRun {
         try dryRunReport(lifecycle)
         return nil
       }
       let selection = StoppedInstanceSelection(
-        name: name, workspaceDirectory: workspace, devcontainerPath: devcontainer)
+        name: name, workspaceDirectory: workspace,
+        devcontainerPath: devcontainerArguments.devcontainer)
       let instance = try Self.stoppedTarget(lifecycle, selection)
       var options = RestartRequest(
         boot: BootOptions(
-          noAgents: noAgents, noPrompt: noPrompt,
-          forwardPorts: forwardPort, configTarget: try global.configTarget(context.environment),
-          postStartOverride: postStart))
+          noAgents: boot.noAgents, noPrompt: boot.noPrompt,
+          forwardPorts: boot.forwardPort,
+          configTarget: try global.configTarget(context.environment),
+          postStartOverride: boot.postStart))
       options.boot.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
-        cli: guestEnvironment, envFile: envFile, devcontainer: nil)
+        cli: boot.guestEnvironment, envFile: boot.envFile, devcontainer: nil)
       try lifecycle.restart(instance, options)
       return MachineLifecycleResult(.started, instance, state: .running)
     }
@@ -262,25 +228,21 @@ struct Start: MachineCommand {
   func dryRunReport(_ lifecycle: ProjectLifecycle) throws {
     let guestUser = Devcontainer.persistedGuestUser(lifecycle.config, image: .default)
     let inputs = DevcontainerTranslatorInputs(
-      cliPostStart: postStart, cliGuestEnvKeys: guestEnvironment.map(\.0),
-      cliForwardPorts: forwardPort, persistedGuestUser: guestUser,
+      cliPostStart: boot.postStart, cliGuestEnvKeys: boot.guestEnvironment.map(\.0),
+      cliForwardPorts: boot.forwardPort, persistedGuestUser: guestUser,
       cliWorkspaceOrGitRepo: workspace != nil)
     let options = DevcontainerOptions(
-      input: .fromFlags(path: devcontainer, noDevcontainer: noDevcontainer), dryRun: true,
-      workspace: workspace, githubAuth: lifecycle.config.github,
+      input: devcontainerArguments.input, dryRun: true, workspace: workspace,
+      githubAuth: lifecycle.config.github,
       preferencePath: Devcontainer.preferencesPath(lifecycle.config))
     let resolver = DevcontainerResolver(
       environment: lifecycle.context.environment.variables, diagnostics: lifecycle.diagnostics)
-    guard json else {
-      _ = try resolver.resolve(options, inputs: inputs, stage: .start)
-      return
+    try resolver.dryRun(options, inputs: inputs, json: json, output: lifecycle.context.output) {
+      var plan = DevcontainerDryRunPlan(
+        report: $0, profiles: [], guestUser: guestUser, vcpus: nil, memory: nil, disk: nil)
+      plan.security = lifecycle.config.securitySummary
+      return plan
     }
-    let translation = try resolver.collect(options, inputs: inputs, stage: .start)
-    var plan = DevcontainerDryRunPlan(
-      report: translation?.report, profiles: [], guestUser: guestUser, vcpus: nil, memory: nil,
-      disk: nil)
-    plan.security = lifecycle.config.securitySummary
-    try lifecycle.context.output.writeJSON(plan)
   }
 
   /// The stopped instance `start` restarts: by name, by recorded

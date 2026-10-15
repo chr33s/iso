@@ -12,7 +12,7 @@ struct AgentListCommand: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global, backgroundWork: false)
+      let context = try CommandContext.load(global, intent: .preview)
       for entry in AgentCatalog.list(context.config) {
         switch entry {
         case .builtin(let definition, let hash):
@@ -41,7 +41,7 @@ struct AgentInspectCommand: ParsableCommand {
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global, backgroundWork: false)
+      let context = try CommandContext.load(global, intent: .preview)
       let identifier = try AgentDefinitionID(id)
       if let builtin = AgentCatalog.builtin(identifier) {
         emit(
@@ -104,12 +104,11 @@ struct AgentAddCommand: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument(help: "Path to a .json or .jsonc definition") var file: String
   @Flag(help: "Replace an installed definition with the same id") var replace = false
-  @Flag(name: .customLong("yes"), help: "Install without an interactive confirmation") var yes =
-    false
+  @Flag(name: .shortAndLong, help: "Install without an interactive confirmation") var yes = false
 
   func run() throws {
     try IsoCLI.run {
-      let context = try CommandContext.load(global, backgroundWork: false)
+      let context = try CommandContext.load(global, intent: .preview)
       let (definition, _) = try AgentCatalog.review(sourcePath: file)
       let canonical = String(
         AgentDefinitionDecoder.canonical(definition).rendered().dropLast())
