@@ -13,7 +13,7 @@ swift test --package-path iso-proxy --force-resolved-versions
 ```
 
 SwiftPM produces `iso-proxy`. Install it beside `iso`;
-see [source installation](../docs/getting-started.md#build-from-source).
+see [source installation](../docs/installation.md#build-from-source).
 The Apple runtime is the separate [`iso-sandbox/`](../iso-sandbox/) package.
 
 See [proxy configuration and contract](../docs/credential-proxy.md),

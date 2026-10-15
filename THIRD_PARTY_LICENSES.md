@@ -12,6 +12,12 @@ not replace the licenses or exceptions of third-party components.
   `third-party/<package>/<dependency>/`, with each pin in `SOURCE.json`.
   The root CLI package is named `host` in this directory.
 
+- `www/public/hairline/kernel.js`: unmodified Hairline skill engine at revision
+  `37d2e78dcb333ab30c3338e28ed4a690364ea014` of `lucasmarkes/hairline`.
+  `style.css` is its unmodified `HL.css()` output. Both are MIT licensed;
+  the original notice is retained in `www/public/hairline/LICENSE`.
+  The six feature drawings and their page adapter are isolate artwork.
+
 Source distributions retain the libFuzzer license in its original location.
 SwiftPM fetches the other dependencies with their own legal files at build
 time. Binary distributions include those files from the staged build inputs.

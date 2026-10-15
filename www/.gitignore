@@ -1,0 +1,7 @@
+# Generated from ../README.md and ../docs/ by scripts/sync-docs.mjs.
+/content/
+/node_modules/
+/.blume/
+/.blume-verify/
+/dist/
+/.wrangler/

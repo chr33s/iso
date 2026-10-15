@@ -259,7 +259,7 @@ under the image name:
 
 ```bash
 iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --image mac
-iso up . --image mac
+iso up . --image mac --vcpus 4 --mem 8192
 ```
 
 The build installs macOS, then runs a provisioning script that iso supplies

@@ -41,7 +41,7 @@ python3 scripts/build-release.py --release
 and install the same five executables from the archive in
 `.build/release-archive/` into one directory on `PATH`. See
 [prerequisites](docs/getting-started.md#prerequisites),
-[build instructions](docs/getting-started.md#build-from-source) and
+[build instructions](docs/installation.md#build-from-source) and
 [Apple backend setup](docs/backends.md#macos--apple-sandbox).
 
 Create the configuration and build the VM template:
@@ -77,12 +77,13 @@ iso zed .
 
 ### macOS guests
 
-Build a macOS image from an Apple restore image you supply, then use it like a
-Linux image; see [macOS guests](docs/images-and-profiles.md#macos-guests):
+Build a macOS image from an Apple restore image you supply, then start an instance
+with at least the restore image’s required CPU and memory (typically 4 vCPUs
+and 8192 MiB); see [macOS guests](docs/images-and-profiles.md#macos-guests):
 
 ```shell
 iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --image mac
-iso up . --image mac
+iso up . --image mac --vcpus 4 --mem 8192
 ```
 
 ### Remote Macs

@@ -1,0 +1,26 @@
+{
+  "name": "iso-www",
+  "private": true,
+  "type": "module",
+  "description": "isolate landing page and documentation, built from index.html and the repository Markdown.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "sync": "node scripts/sync-docs.js",
+    "dev": "npm run sync && blume dev",
+    "build": "npm run sync && blume build",
+    "preview": "blume preview",
+    "preview:cloudflare": "wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:dry-run": "npm run build && wrangler deploy --dry-run",
+    "test": "node --test scripts/sync-docs.test.js",
+    "check": "npm test && npm run sync && blume validate --strict && blume check && blume build && python3 scripts/check-built-site.py"
+  },
+  "devDependencies": {
+    "blume": "2.2.3",
+    "github-slugger": "2.0.0",
+    "wrangler": "4.151.0"
+  }
+}

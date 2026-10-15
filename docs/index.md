@@ -14,8 +14,8 @@ This is the `chr33s/iso` fork of Trail of Bits’ isolate. Supported hosts are
 (root [`Package.swift`](../Package.swift), [`Sources/`](../Sources/)) with one
 Apple backend. The credential proxy is the Swift package
 [`iso-proxy/`](../iso-proxy/); the Apple runtime is
-[`iso-sandbox/`](../iso-sandbox/). See the [project motivation](../README.md#why-this-fork),
-[source installation](getting-started.md#build-from-source), and
+[`iso-sandbox/`](../iso-sandbox/). See the [project motivation](../README.md),
+[source installation](installation.md#build-from-source), and
 [release validation](release-validation.md).
 
 ## Authorization policy
@@ -36,7 +36,7 @@ Apple backend. The credential proxy is the Swift package
   contracts, fault injection, libFuzzer fuzzing, integration suites.
 - [`platform-notes.md`](platform-notes.md) — Docker networking, scp `~`
   caveat, diagnostics on stderr.
-- [`design/`](design/) — decision records:
+- [`design/`](design/index.md) — decision records:
   - [`apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md): why the
     Apple backend runs its own runtime;
   - [`apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
@@ -83,6 +83,7 @@ Apple backend. The credential proxy is the Swift package
 ## For users
 
 - [`getting-started.md`](getting-started.md) — install and first VM.
+- [`installation.md`](installation.md) — release verification and source builds.
 - [`commands.md`](commands.md) — every `iso` subcommand.
 - [`machine-interface.md`](machine-interface.md) — the versioned `--output json`
   contract (`iso.machine/v1`) for editors, CI and other integrations.
@@ -92,6 +93,7 @@ Apple backend. The credential proxy is the Swift package
   [`workspaces.md`](workspaces.md), [`multi-instance.md`](multi-instance.md),
   [`devcontainer.md`](devcontainer.md), [`editor.md`](editor.md),
   [`shell-completion.md`](shell-completion.md).
+- [`remote-hosts.md`](remote-hosts.md) — project VMs on trusted remote Macs.
 - [`claude-integration.md`](claude-integration.md),
   [`codex-integration.md`](codex-integration.md) — agent integration.
 - [`credential-proxy.md`](credential-proxy.md) — the opt-in `proxy`
