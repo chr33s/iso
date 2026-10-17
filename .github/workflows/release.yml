@@ -49,7 +49,7 @@ jobs:
 
       # Pinned mise.toml tools (Swift, Python). No cache: a cache written by
       # another workflow run must not feed a release build.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           version: 2026.8.3
           cache: false
@@ -89,7 +89,7 @@ jobs:
 
       # The unsigned archive goes to `sign-macos`; only `dist-*` is published.
       - name: Upload unsigned archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-${{ env.TARGET }}
           path: ${{ env.TARBALL }}
@@ -116,7 +116,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download unsigned archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsigned-${{ env.TARGET }}
 
@@ -150,7 +150,7 @@ jobs:
           echo "TARBALL=${name}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Upload signed archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ env.TARGET }}
           path: ${{ env.TARBALL }}
@@ -169,7 +169,7 @@ jobs:
           persist-credentials: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: dist-*
           merge-multiple: true
