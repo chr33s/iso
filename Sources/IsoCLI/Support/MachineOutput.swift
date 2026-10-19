@@ -4,11 +4,16 @@ import IsoCore
 import IsoHost
 import Synchronization
 
-/// `--output`: human text (the default) or the versioned machine contract.
+/// `--output`: human text (the default), the versioned machine contract,
+/// or the `iso.audit.stream/v1` line protocol (`StreamCommand`s only).
 enum OutputFormat: String, ExpressibleByArgument, CaseIterable, Sendable {
   case text
   case json
+  case jsonl
 }
+
+/// A command that implements `--output jsonl`; any other command refuses it.
+protocol StreamCommand: ParsableCommand {}
 
 /// A command that implements `--output json`. Any other command given
 /// `--output json` fails with `UNSUPPORTED_MACHINE_OUTPUT`.
@@ -46,11 +51,13 @@ extension GlobalOptions {
     }.first
   }
 
-  /// `--output json` (or `--output=json`) before any `--`.
-  static func requestsMachineOutput(_ arguments: [String]) -> Bool {
+  /// `--output FORMAT` (or `--output=FORMAT`) before any `--`.
+  static func requests(_ format: OutputFormat, _ arguments: [String]) -> Bool {
     let options = arguments.dropFirst().prefix { $0 != "--" }
-    return options.contains("--output=json")
-      || zip(options, options.dropFirst()).contains { $0 == "--output" && $1 == "json" }
+    return options.contains("--output=\(format.rawValue)")
+      || zip(options, options.dropFirst()).contains {
+        $0 == "--output" && $1 == format.rawValue
+      }
   }
 
   /// Command-local `--json` keeps its legacy shape and cannot be mixed with
@@ -106,6 +113,12 @@ enum MachineSession {
   static func emit(_ value: some Encodable) throws {
     let bytes = Array((try JSONOutput.render(value, pretty: false) + "\n").utf8)
     try AtomicFile.writeAll(document.withLock { $0 } ?? 1, bytes, "the --output json document")
+  }
+
+  /// One complete protocol line, written at once and unbuffered, so a pipe
+  /// sees it promptly and never a partial record before it.
+  static func emitLine(_ bytes: [UInt8]) throws {
+    try AtomicFile.writeAll(document.withLock { $0 } ?? 1, bytes, "the --output jsonl stream")
   }
 }
 

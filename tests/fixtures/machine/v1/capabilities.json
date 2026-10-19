@@ -38,7 +38,21 @@
       },
       "ssh-config": {
         "machine_output": true
+      },
+      "audit": {
+        "machine_output": true
       }
+    },
+    "audit": {
+      "event_schema": "iso.audit/v1",
+      "stream_schema": "iso.audit.stream/v1",
+      "finite_selections": [
+        "runs",
+        "run"
+      ],
+      "follow_selections": [
+        "run"
+      ]
     },
     "editor_providers": [
       {

@@ -599,6 +599,18 @@ exposure, and isolate verifies the effective configuration anyway
   by the host from host-side state only (configuration modes, proxied
   providers, variable names, counts); nothing guest-authored or secret is
   recorded, and the file is owner-only and bounded.
+- **Run history.** The `iso.audit/v1` store
+  (`<stateRoot>/audit/v1/`, [audit.md](audit.md)) holds typed host records:
+  invocation requests, the effective environment from host records, the
+  handoff's forwarded variable *names*, the observed transport status and
+  cleanup, and the boundary events above. No argv, prompt, value, terminal
+  output, request body or hash of one enters it, and no guest report is
+  recorded in this release. Files are owner-only, opened without following
+  symlinks and parsed with size bounds; text rendering replaces control
+  characters, and JSON escapes them. A recording failure only warns, and a
+  refused capture is shown as a gap. Reads take no lock and never repair
+  state; `--export` creates a new 0600 file and never overwrites. The local
+  host user can edit this history; it is evidence, not a tamper-proof log.
 - **Session TTL.** `limits.session_ttl` is enforced outside the guest: the
   runtime records the deadline (`record.expiresAt`, host wall clock) at
   `start`, the owner halts the VM when it passes and exits cleanly (so launchd

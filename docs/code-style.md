@@ -177,7 +177,7 @@ If a primitive appears in one place and crosses no boundary, leave it alone.
 - **Keep meanings distinct.** `--yes` confirms an ordinary prompt; `--force`
   overrides a check; neither approves a governed stage, unlocks the secret
   store or trusts a discovered devcontainer. `--no-prompt` only suppresses the
-  GitHub PAT offer. `--quiet` only applies with `--output json`.
+  GitHub PAT offer. `--quiet` only applies with `--output json` or `jsonl`.
 - **Forwarded arguments are the child's.** Everything after `--` reaches the
   guest command unchanged; do not reparse it for iso flags.
 - **Status codes.** iso's own failures exit 1 and usage errors 2; a forwarded

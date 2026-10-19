@@ -34,6 +34,12 @@ enum MachineErrorCode: String, Encodable, Sendable {
   case appleSessionExpired = "APPLE_SESSION_EXPIRED"
   case appleOperationUncertain = "APPLE_OPERATION_UNCERTAIN"
 
+  case auditRunNotFound = "AUDIT_RUN_NOT_FOUND"
+  case auditCursorExpired = "AUDIT_CURSOR_EXPIRED"
+  case auditResetRequired = "AUDIT_RESET_REQUIRED"
+  case auditRecordTooLarge = "AUDIT_RECORD_TOO_LARGE"
+  case auditUnavailable = "AUDIT_UNAVAILABLE"
+
   case operationInterrupted = "OPERATION_INTERRUPTED"
   case operationFailed = "OPERATION_FAILED"
 
@@ -181,6 +187,8 @@ struct MachineFailure: Encodable, Sendable {
       return (.instanceUnhealthy, .instance(name: unhealthy.instance.rawValue))
     case let runtime as RuntimeError:
       return classify(runtime).map { ($0, nil) }
+    case let audit as AuditReadError:
+      return (classify(audit), nil)
     default:
       return nil
     }
@@ -231,6 +239,17 @@ struct MachineFailure: Encodable, Sendable {
     case .sessionExpired: .appleSessionExpired
     case .operationUncertain: .appleOperationUncertain
     case .failed: nil
+    }
+  }
+
+  static func classify(_ error: AuditReadError) -> MachineErrorCode {
+    switch error {
+    case .runNotFound: .auditRunNotFound
+    case .invalidCursor: .invalidArgument
+    case .cursorExpired: .auditCursorExpired
+    case .resetRequired: .auditResetRequired
+    case .recordTooLarge: .auditRecordTooLarge
+    case .unavailable: .auditUnavailable
     }
   }
 

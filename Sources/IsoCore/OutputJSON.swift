@@ -76,3 +76,42 @@ package enum JSONOutput {
     return String(decoding: try encoder.encode(value), as: UTF8.self)
   }
 }
+
+extension OutputJSON: Decodable {
+  /// Object members come back sorted by key; encoding sorts them anyway.
+  package init(from decoder: any Decoder) throws {
+    if let object = try? decoder.container(keyedBy: Key.self) {
+      self = .object(
+        try object.allKeys.sorted { $0.stringValue < $1.stringValue }.map {
+          ($0.stringValue, try object.decode(OutputJSON.self, forKey: $0))
+        })
+      return
+    }
+    if var array = try? decoder.unkeyedContainer() {
+      var values: [OutputJSON] = []
+      while !array.isAtEnd { values.append(try array.decode(OutputJSON.self)) }
+      self = .array(values)
+      return
+    }
+    let value = try decoder.singleValueContainer()
+    if value.decodeNil() {
+      self = .null
+    } else if let bool = try? value.decode(Bool.self) {
+      self = .bool(bool)
+    } else if let int = try? value.decode(Int64.self) {
+      self = .int(int)
+    } else if let uint = try? value.decode(UInt64.self) {
+      self = .uint(uint)
+    } else if let double = try? value.decode(Double.self) {
+      self = .double(double)
+    } else {
+      self = .string(try value.decode(String.self))
+    }
+  }
+
+  /// The member named `key` of an object; nil otherwise.
+  package subscript(key: String) -> OutputJSON? {
+    guard case .object(let members) = self else { return nil }
+    return members.first { $0.0 == key }?.1
+  }
+}

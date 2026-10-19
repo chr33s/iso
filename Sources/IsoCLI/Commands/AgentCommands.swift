@@ -25,6 +25,45 @@ extension CommandContext {
   }
 }
 
+extension CommandContext {
+  /// Starts recording one invocation and names its run on stderr.
+  func beginAudit(_ request: AuditFacts.Request) -> AuditInvocation {
+    AuditInvocation.begin(
+      store: AuditStore(config: config), request: request, diagnostics: diagnostics,
+      notice: output.error)
+  }
+
+  /// `iso claude`, `iso codex` and `iso claude-agents`: records the request,
+  /// the environment of the running instance once connected, then the
+  /// handoff `launch` makes. A failure before the handoff is recorded at
+  /// `connect`.
+  func auditedAttach(
+    _ command: AuditFacts.Command, role: AuditFacts.Role = .managed,
+    lifecycle: AuditFacts.Lifecycle = .existing, agent: String, name: InstanceName?,
+    permissionMode: AuditFacts.PermissionMode?,
+    _ launch: (AppleBackend.Running, WorkloadSession, AuditInvocation) throws -> Void
+  ) throws {
+    let audit = beginAudit(
+      .init(
+        command: command, role: role, lifecycle: lifecycle, requestedAgent: agent,
+        requestedInstance: name?.rawValue, permissionMode: permissionMode,
+        isoVersion: IsoVersion.string))
+    try audit.during(.connect) {
+      let agents = self.agents
+      let (running, session) = try agents.openSession(
+        backend, name: name, instances: listInstances())
+      audit.environment(
+        agents.auditEnvironment(
+          running, action: .attached,
+          agent: AuditFacts.Agent(
+            definitionID: agent, source: .builtin, definitionHash: nil, adapterID: agent,
+            adapterContractVersion: nil),
+          session: nil))
+      try launch(running, session, audit)
+    }
+  }
+}
+
 /// Interactive prompts on stderr; a non-TTY stdin declines.
 enum TerminalPrompt {
   static func readReply() -> String? {
@@ -102,14 +141,16 @@ struct ClaudeCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
-      let (_, session) = try context.agents.openSession(
-        context.backend, name: name, instances: context.listInstances())
       // The managed settings default to bypass mode; --ask overrides it.
       let (ask, args) = splitAsk(ask, args)
-      let extra = ask ? ["--permission-mode", "default"] + args : args
-      try InteractiveSSH.run(
-        context.ssh, session, [session.target.user.claudeBinary.rawValue] + extra,
-        diagnostics: context.diagnostics)
+      try context.auditedAttach(
+        .claude, agent: "claude", name: name, permissionMode: ask ? .ask : .bypass
+      ) { _, session, audit in
+        let extra = ask ? ["--permission-mode", "default"] + args : args
+        try InteractiveSSH.run(
+          context.ssh, session, [session.target.user.claudeBinary.rawValue] + extra,
+          diagnostics: context.diagnostics, audit: audit)
+      }
     }
   }
 }
@@ -132,12 +173,17 @@ struct ClaudeAgentsCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
-      let (_, session) = try context.agents.openSession(
-        context.backend, name: name, instances: context.listInstances())
-      try InteractiveSSH.run(
-        context.ssh, session,
-        [session.target.user.claudeBinary.rawValue, "agents"] + passthrough(args),
-        diagnostics: context.diagnostics)
+      // An attachment to the guest's agent view; iso does not own the
+      // background sessions it shows.
+      try context.auditedAttach(
+        .claudeAgents, role: .administrative, lifecycle: .attachment, agent: "claude", name: name,
+        permissionMode: nil
+      ) { _, session, audit in
+        try InteractiveSSH.run(
+          context.ssh, session,
+          [session.target.user.claudeBinary.rawValue, "agents"] + passthrough(args),
+          diagnostics: context.diagnostics, audit: audit)
+      }
     }
   }
 }
@@ -159,24 +205,26 @@ struct CodexCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
-      let (running, session) = try context.agents.openSession(
-        context.backend, name: name, instances: context.listInstances())
       let (ask, args) = splitAsk(ask, args)
-      var binary = GuestBinaries.codex
-      if context.config.codexAuth == .chatgpt {
-        let state = try ModelState.loadOrDefault(running.instance)
-        try CodexChecks.ensureRemoteAuthConsistent(
-          context.config, instance: running.instance, modelState: state)
-        try CodexChecks.ensureAccountGuestSupport(context.ssh, session.target)
-        // Without the keyring setting the wrapper would pass through and
-        // `codex login` would write a plaintext token.
-        try CodexChecks.ensureKeyringConfigured(context.ssh, session.target)
-        binary = GuestBinaries.codexAccount
+      try context.auditedAttach(
+        .codex, agent: "codex", name: name, permissionMode: ask ? .ask : .bypass
+      ) { running, session, audit in
+        var binary = GuestBinaries.codex
+        if context.config.codexAuth == .chatgpt {
+          let state = try ModelState.loadOrDefault(running.instance)
+          try CodexChecks.ensureRemoteAuthConsistent(
+            context.config, instance: running.instance, modelState: state)
+          try CodexChecks.ensureAccountGuestSupport(context.ssh, session.target)
+          // Without the keyring setting the wrapper would pass through and
+          // `codex login` would write a plaintext token.
+          try CodexChecks.ensureKeyringConfigured(context.ssh, session.target)
+          binary = GuestBinaries.codexAccount
+        }
+        try InteractiveSSH.run(
+          context.ssh, session,
+          [binary.rawValue] + CodexChecks.launchArguments(ask: ask, args),
+          diagnostics: context.diagnostics, audit: audit)
       }
-      try InteractiveSSH.run(
-        context.ssh, session,
-        [binary.rawValue] + CodexChecks.launchArguments(ask: ask, args),
-        diagnostics: context.diagnostics)
     }
   }
 }

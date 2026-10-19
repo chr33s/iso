@@ -38,8 +38,16 @@ struct IsoCommand: ParsableCommand {
       var command = try parseAsRoot()
       let global = GlobalOptions.parsed(in: command)
       // A group command carries no options of its own; its argv still asks.
+      if global?.output == .jsonl
+        || (global == nil && GlobalOptions.requests(.jsonl, CommandLine.arguments))
+      {
+        guard command is any StreamCommand else {
+          throw ArgumentParser.ValidationError("--output jsonl is supported only by `iso audit`")
+        }
+        try MachineSession.begin(quiet: global?.quiet ?? false)
+      }
       if global?.output == .json
-        || (global == nil && GlobalOptions.requestsMachineOutput(CommandLine.arguments))
+        || (global == nil && GlobalOptions.requests(.json, CommandLine.arguments))
       {
         try MachineSession.begin(quiet: global?.quiet ?? false)
         guard command is any MachineCommand else {
@@ -69,16 +77,16 @@ struct GlobalOptions: ParsableArguments {
 
   @Option(
     help: ArgumentHelp(
-      "Output format: text, or json for the versioned iso.machine/v1 document (docs/machine-interface.md)",
+      "Output format: text, json for the versioned iso.machine/v1 document (docs/machine-interface.md), or jsonl for the iso.audit.stream/v1 lines of `iso audit` (docs/audit.md)",
       valueName: "FORMAT"))
   var output: OutputFormat = .text
 
-  @Flag(help: "With --output json, discard all stderr diagnostics")
+  @Flag(help: "With --output json or jsonl, discard all stderr diagnostics")
   var quiet = false
 
   func validate() throws {
-    if quiet && output != .json {
-      throw ArgumentParser.ValidationError("--quiet requires --output json")
+    if quiet && output == .text {
+      throw ArgumentParser.ValidationError("--quiet requires --output json or jsonl")
     }
   }
 

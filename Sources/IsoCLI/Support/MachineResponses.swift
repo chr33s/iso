@@ -507,6 +507,23 @@ struct MachineCapabilitiesResult: Encodable {
     }
   }
 
+  /// The audit history formats (docs/audit.md): `--output json` pages and
+  /// the `--output jsonl` line protocol, finite or followed.
+  let audit = AuditSupport()
+
+  struct AuditSupport: Encodable {
+    let eventSchema = AuditStore.schema
+    let streamSchema = AuditJSONL.schema
+    let finiteSelections = ["runs", "run"]
+    let followSelections = ["run"]
+    enum CodingKeys: String, CodingKey {
+      case eventSchema = "event_schema"
+      case streamSchema = "stream_schema"
+      case finiteSelections = "finite_selections"
+      case followSelections = "follow_selections"
+    }
+  }
+
   let editorProviders = EditorProviderID.allCases.map(\.provider).map {
     EditorProvider(
       id: $0.id.rawValue, displayName: $0.displayName,
@@ -514,7 +531,7 @@ struct MachineCapabilitiesResult: Encodable {
   }
 
   enum CodingKeys: String, CodingKey {
-    case backend, commands
+    case backend, commands, audit
     case cliVersion = "cli_version"
     case machineAPIVersions = "machine_api_versions"
     case editorProviders = "editor_providers"

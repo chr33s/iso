@@ -63,6 +63,29 @@ package final class FileLock: Sendable {
     return FileLock(descriptor: fd)
   }
 
+  /// Locks an owner-only `path` opened without following a symlink, waiting
+  /// at most `timeout`; nil when another holder keeps it that long. For
+  /// best-effort writers that must not stall the operation they describe.
+  package static func bounded(path: String, timeout: Duration) throws(HostError) -> FileLock? {
+    guard let fd = try openRegularFile(path, O_WRONLY | O_CREAT) else {
+      throw .posix("Failed to open lock file", path, ENOENT)
+    }
+    let deadline = ContinuousClock.now + timeout
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+      let code = errno
+      guard code == EINTR || code == EWOULDBLOCK else {
+        close(fd)
+        throw .posix("Failed to acquire lock on", path, code)
+      }
+      guard ContinuousClock.now < deadline else {
+        close(fd)
+        return nil
+      }
+      usleep(5_000)
+    }
+    return FileLock(descriptor: fd)
+  }
+
   /// `.<name>.lock` beside `target`, shared by all writers of that file.
   package static func sibling(of target: String) throws(HostError) -> FileLock {
     let parent = (target as NSString).deletingLastPathComponent
@@ -80,6 +103,24 @@ package final class FileLock: Sendable {
   }
 
   deinit { release() }
+}
+
+/// `open(2)` without following a symlink, refusing anything but a regular
+/// file (`O_CLOEXEC` and owner-only creation implied). Nil only when the file
+/// is absent and `flags` does not create it.
+package func openRegularFile(_ path: String, _ flags: Int32) throws(HostError) -> Int32? {
+  let fd = open(path, flags | O_NOFOLLOW | O_CLOEXEC, 0o600)
+  if fd < 0 {
+    let code = errno
+    if code == ENOENT && flags & O_CREAT == 0 { return nil }
+    throw .posix("Failed to open", path, code)
+  }
+  var status = stat()
+  guard fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+    close(fd)
+    throw HostError("\(path) is not a regular file")
+  }
+  return fd
 }
 
 /// Runs `body` while holding the sibling lock of `target`.

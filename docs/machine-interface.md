@@ -28,6 +28,7 @@ Text output (the default, `--output text`) is unchanged. The command-local
 | `destroy [NAME]` | `{ lifecycle, instance }`; with `--all`, `{ lifecycle, instances }` |
 | `ssh-config [NAME]` | `{ instance, connection }` |
 | `code [DIR]`, `zed [DIR]` | `{ lifecycle, instance, workspace, connection, editor, warnings }` |
+| `audit` (with `--runs` or `--run ID`) | One bounded page: `{ selection, as_of, coverage, runs \| run + events, next_cursor }` ([audit.md](audit.md)) |
 
 Any other command (including a command group such as `secrets`) given
 `--output json` prints an `UNSUPPORTED_MACHINE_OUTPUT` error document whose
@@ -35,7 +36,12 @@ Any other command (including a command group such as `secrets`) given
 `--version` still print their text and exit 0. That includes the workload streams (`shell`,
 `exec`, `logs`, `claude`, `codex`, `run`), whose stdout belongs to the guest.
 `up --dry-run` and `start --dry-run` keep their own `--json` preview and refuse
-`--output json`.
+`--output json`. `iso audit` accepts `--output json` only with `--runs` or
+`--run`; its instance view stays text.
+
+`--output jsonl` is a separate line protocol, `iso.audit.stream/v1`, that only
+`iso audit` speaks ([audit.md](audit.md#--output-jsonl-isoauditstreamv1)). Any
+other command given it fails with a usage error on stderr and exit 2.
 
 ## Wire format
 
@@ -60,7 +66,7 @@ control characters replaced and a 4 KiB bound; never branch on it.
   and nothing else. In machine mode everything else that would reach fd 1
   (progress, child processes, warnings) is sent to stderr.
 - **stderr** carries diagnostics only and is outside the protocol. `--quiet`
-  (only valid with `--output json`) discards it entirely.
+  (only valid with `--output json` or `jsonl`) discards it entirely.
 - Exit status: `0` success, `1` operational failure (after the error
   document), `2` usage failure. A usage error that Argument Parser reports
   before the command runs (an unknown flag, `--json` with `--output json`,
@@ -158,6 +164,11 @@ open-ended rather than hard-coding the current two.
 `host_control` (additive) names the compiled-in host-control protocol
 (`iso.host/v1`), its transports and the guest OS remote hosts accept. It is
 static: reading it contacts no host and starts no service.
+
+`audit` (additive) is `{"event_schema": "iso.audit/v1", "stream_schema":
+"iso.audit.stream/v1", "finite_selections": ["runs", "run"],
+"follow_selections": ["run"]}`: the audit history schemas and the selections
+`--output jsonl` supports without and with `--follow`.
 
 `network_transports` (additive) is `{"transports": ["vmnet", "brokered"],
 "brokered_guest_os": ["linux"], "brokered_runtime_feature": "brokered-transport"}`:
@@ -302,6 +313,11 @@ instance's boot policy, or a boot policy record that cannot be read, is
 | `EDITOR_LAUNCH_FAILED` | no | The editor was found but failed to start, timed out or exited unsuccessfully | `providers` (the one that failed), `name`, `action` |
 | `APPLE_RUNTIME_UNAVAILABLE`, `APPLE_RUNTIME_UNQUALIFIED`, `APPLE_NETWORK_ISOLATION`, `APPLE_HOST_EXPOSURE`, `APPLE_IDENTITY_CONFLICT`, `APPLE_HOST_KEY_CHANGED`, `APPLE_SESSION_EXPIRED` | no | The runtime diagnostic classes in [backends.md](backends.md) | `null` |
 | `APPLE_BOOT_TIMEOUT`, `APPLE_OPERATION_UNCERTAIN` | yes | The runtime's state had not settled | `null` |
+| `AUDIT_RUN_NOT_FOUND` | no | No retained audit run has that ID | `null` |
+| `AUDIT_CURSOR_EXPIRED` | no | Retention or a new journal overtook `--after`; read again without it | `null` |
+| `AUDIT_RESET_REQUIRED` | no | Earlier records became relevant to the run; read again without `--after` | `null` |
+| `AUDIT_RECORD_TOO_LARGE` | no | A record exceeds the 64 KiB line bound | `null` |
+| `AUDIT_UNAVAILABLE` | no | The audit history cannot be read trustworthily | `null` |
 | `OPERATION_INTERRUPTED` | yes | A signal stopped the command | `null` |
 | `OPERATION_FAILED` | no | Any other failure | `null` |
 

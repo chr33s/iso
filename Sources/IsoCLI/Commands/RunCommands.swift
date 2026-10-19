@@ -75,12 +75,21 @@ struct RunCommand: ParsableCommand {
         global,
         override: { try applyEgressOverride($0, egressOptions) },
         intent: loadIntent)
+      // A dry run creates no audit state.
+      let audit =
+        dryRun
+        ? nil
+        : context.beginAudit(
+          .init(
+            command: .run, role: .managed, lifecycle: remove ? .disposable : .persistent,
+            requestedAgent: self.agent, requestedInstance: name?.rawValue,
+            permissionMode: launch.ask ? .ask : .bypass, isoVersion: IsoVersion.string))
       let flow = RunWorkflow(
         lifecycle: ProjectLifecycle(context, noGitHub: false),
         agent: try AgentDefinitionID(self.agent), workspace: workspace,
         name: name,
         image: image, profiles: profiles, remove: remove, ask: launch.ask, prepare: prepare,
-        forwarded: launch.forwarded, configPath: global.config)
+        forwarded: launch.forwarded, configPath: global.config, audit: audit)
       if dryRun {
         try flow.preview(json: json)
       } else {
@@ -146,6 +155,8 @@ struct RunCleanup: ParsableCommand {
         record.state = .cleanupPending
       }
       let decision = try RunSessionStore.reconcile(context.config, session: record, dryRun: dryRun)
+      // Linked to the original run through its recorded session id.
+      let audit = AuditStore(config: context.config)
       switch decision {
       case .leave(let message):
         context.output.error(message)
@@ -153,15 +164,28 @@ struct RunCleanup: ParsableCommand {
           record.cleanupOutcome = message
           if message.contains("pending staged pull") { record.state = .retained }
           try RunSessionStore.save(record, config: context.config)
+          audit.recordOrWarn(
+            .cleanupReconciled(.init(sessionID: record.sessionID, outcome: .deferred)),
+            diagnostics: context.diagnostics)
         }
       case .destroy(let name):
         guard !dryRun else { return }
         let instance = try InstanceStore.resolve(context.config, name: name)
         context.agents.proxies.stopAll(instance)
-        try context.backend.destroyInstance(instance)
+        do {
+          try context.backend.destroyInstance(instance)
+        } catch {
+          audit.recordOrWarn(
+            .cleanupReconciled(.init(sessionID: record.sessionID, outcome: .destroyFailed)),
+            diagnostics: context.diagnostics)
+          throw error
+        }
         record.state = .completed
         record.cleanupOutcome = "destroyed"
         try RunSessionStore.save(record, config: context.config)
+        audit.recordOrWarn(
+          .cleanupReconciled(.init(sessionID: record.sessionID, outcome: .destroyed)),
+          diagnostics: context.diagnostics)
         context.output.error("Destroyed disposable instance '\(name)'.")
       }
     }

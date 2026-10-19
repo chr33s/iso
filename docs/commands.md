@@ -17,8 +17,8 @@ isolate creates isolated VM environments for running Claude Code and Codex. Supp
 |------|-------------|
 | `--config <path>` | Path to config file, `.jsonc` or strict `.json` (default: `~/.iso/config.jsonc`). The selected file must exist. |
 | `-v`, `--verbose` | Increase log verbosity. Once for debug, twice for trace. |
-| `--output <text\|json>` | `json` prints one versioned `iso.machine/v1` document on stdout and never prompts. Supported by `capabilities`, `list`, `status`, `up`, `start`, `stop`, `destroy`, `ssh-config`, `code` and `zed` (`iso capabilities` lists them); any other command fails with `UNSUPPORTED_MACHINE_OUTPUT`. See [machine-interface.md](machine-interface.md). Default `text`. |
-| `--quiet` | With `--output json`, discard all stderr diagnostics. |
+| `--output <text\|json\|jsonl>` | `json` prints one versioned `iso.machine/v1` document on stdout and never prompts. Supported by `capabilities`, `list`, `status`, `up`, `start`, `stop`, `destroy`, `ssh-config`, `code`, `zed` and `audit` (`iso capabilities` lists them); any other command fails with `UNSUPPORTED_MACHINE_OUTPUT`. See [machine-interface.md](machine-interface.md). `jsonl` is the `iso.audit.stream/v1` line protocol of `iso audit` ([audit.md](audit.md)); any other command refuses it with exit 2. Default `text`. |
+| `--quiet` | With `--output json` or `jsonl`, discard all stderr diagnostics. |
 | `--version` | Print version and exit. |
 
 ## Exit Status
@@ -1338,6 +1338,10 @@ dropped first).
 
 ```
 iso audit [NAME] [--suggest-config]
+iso audit [NAME] --runs [--limit N] [--after CURSOR] [--output json|jsonl]
+iso audit --run ID [--limit N] [--after CURSOR] [--output json|jsonl]
+iso audit --run ID --follow [--output jsonl] [--after CURSOR] [--limit N]
+iso audit --run ID --export PATH
 ```
 
 `--suggest-config` prints an advisory JSONC fragment that only narrows what
@@ -1345,10 +1349,28 @@ was observed (for example `proxy.mode` `required` when every boot was proxied
 and no raw key was forwarded). Guest network use is not observed, so `egress`
 is suggested only when every boot already ran without it.
 
+`--runs` and `--run` read the run history: each `iso run`, `claude`, `codex`
+and `claude-agents` invocation prints its audit run ID on stderr, and the
+history (kept outside instance directories, 7 days / 128 MiB) records its
+request, effective environment, handoff, observed transport status and
+cleanup, plus the boundary events of its exact boot. See
+[`audit.md`](audit.md) for the event model, retention, cursors and the
+`iso.audit.stream/v1` JSONL protocol.
+
+| Flag | Description |
+|------|-------------|
+| `--runs` | List recorded invocations, newest first; `NAME` filters by recorded instance name, deleted instances included |
+| `--run ID` | One invocation's summary and timeline |
+| `--follow` | With `--run`, keep reading new records (text or `--output jsonl`) until interrupted |
+| `--after CURSOR` | Continue from an earlier page's or stream's cursor |
+| `--limit N` | Records per page (default 100, at most 1000) |
+| `--export PATH` | With `--run`, write the full retained snapshot to a new file; never overwrites |
+
 ### `capabilities`
 
 Print the CLI version, the machine-interface versions this build speaks, the
 backend, the commands that support `--output json`, and the editor providers.
+The JSON document also names the audit schemas and `--output jsonl` selections.
 It reads no configuration, state or credentials, starts no runtime and checks
 for no update, so an integration can call it first.
 

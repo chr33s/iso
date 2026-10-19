@@ -363,9 +363,11 @@ package enum InteractiveSSH {
   /// The one launch path behind every wrapper: revalidates the workload,
   /// then runs ssh under its supervision. With a PTY the guest gets a TERM it
   /// has terminfo for, and a launch that throws restores the terminal.
+  /// With `audit`, the handoff and the observed transport outcome are
+  /// recorded for that invocation (names only, never values or argv).
   private static func attach(
     _ client: SSHClient, _ workload: WorkloadSession, remote: String, inheritStdin: Bool,
-    allocatePTY: Bool, missingSSH: String
+    allocatePTY: Bool, missingSSH: String, audit: AuditInvocation? = nil
   ) throws -> ProcessRunner.Termination {
     let session = workload.session
     guard let ssh = client.sshExecutable() else { throw HostError(missingSSH) }
@@ -374,12 +376,19 @@ package enum InteractiveSSH {
     let arguments =
       allocatePTY
       ? arguments(session, remote: remote) : session.sshOptions + [session.target.address, remote]
-    try workload.revalidate()
+    do { try workload.revalidate() } catch {
+      audit?.revalidationFailed()
+      throw error
+    }
+    audit?.handoff(pty: allocatePTY, forwarded: session.env.names)
     do {
-      return try workload.attached(
+      let termination = try workload.attached(
         client, client.request(ssh, arguments, environment: environment),
         inheritStdin: inheritStdin)
+      audit?.transportEnded(termination)
+      return termination
     } catch {
+      audit?.transportFailed(.sessionError)
       if allocatePTY { restoreTerminal(client) }
       throw error
     }
@@ -391,21 +400,23 @@ package enum InteractiveSSH {
   /// `iso run` so agent and cleanup outcomes stay distinguishable.
   package static func runReporting(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String],
-    workingDirectory: GuestPath, allocatePTY: Bool, diagnostics: Diagnostics
+    workingDirectory: GuestPath, allocatePTY: Bool, diagnostics: Diagnostics,
+    audit: AuditInvocation? = nil
   ) throws -> ProcessRunner.Termination {
     let target = workload.session.target
     let remote = Self.remote(command, workingDirectory: workingDirectory)
     diagnostics.log(.info, "Connecting via SSH to \(target.endpointDescription) (\(remote))")
     let termination = try attach(
       client, workload, remote: remote, inheritStdin: true, allocatePTY: allocatePTY,
-      missingSSH: missingInteractiveSSH)
+      missingSSH: missingInteractiveSSH, audit: audit)
     if allocatePTY && !termination.succeeded { restoreTerminal(client) }
     return termination
   }
 
   /// With a PTY; a failed session leaves the terminal restored.
   package static func run(
-    _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics
+    _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics,
+    audit: AuditInvocation? = nil
   ) throws {
     let target = workload.session.target
     let remote = render(command)
@@ -416,7 +427,7 @@ package enum InteractiveSSH {
     )
     let termination = try attach(
       client, workload, remote: remote, inheritStdin: true, allocatePTY: true,
-      missingSSH: missingInteractiveSSH)
+      missingSSH: missingInteractiveSSH, audit: audit)
     if !termination.succeeded {
       diagnostics.warn("SSH session exited with status: \(termination)")
       restoreTerminal(client)

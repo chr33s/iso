@@ -91,6 +91,8 @@ Apple backend. The credential proxy is the Swift package
 - [`commands.md`](commands.md) — every `iso` subcommand.
 - [`machine-interface.md`](machine-interface.md) — the versioned `--output json`
   contract (`iso.machine/v1`) for editors, CI and other integrations.
+- [`audit.md`](audit.md) — `iso audit` run history: the `iso.audit/v1` event
+  model, retention, cursors and the `iso.audit.stream/v1` JSONL protocol.
 - [`configuration.md`](configuration.md) — `config.jsonc` reference.
 - [`backends.md`](backends.md) — the Apple sandbox backend (`iso-sandbox` on `apple/containerization`) and its state layout.
 - [`images-and-profiles.md`](images-and-profiles.md),

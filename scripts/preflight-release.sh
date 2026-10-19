@@ -144,6 +144,7 @@ run_contracts() {
   python3 tests/test-lifecycle-contract.py --swift "$iso" || failed=1
   python3 tests/test-data-root-contract.py --swift "$iso" || failed=1
   python3 tests/test-machine-contract.py --swift "$iso" || failed=1
+  python3 tests/test-audit-contract.py --swift "$iso" || failed=1
   python3 tests/test-cli-surface.py --swift "$iso" || failed=1
   return "$failed"
 }

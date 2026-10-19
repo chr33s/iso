@@ -19,7 +19,13 @@
   ],
   "audit": [
     "<name>",
-    "--suggest-config"
+    "--suggest-config",
+    "--runs",
+    "--run",
+    "--follow",
+    "--after",
+    "--limit",
+    "--export"
   ],
   "capabilities": [],
   "claude": [

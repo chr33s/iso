@@ -1102,6 +1102,45 @@ if want iso; then
     check "iso exec exits with the guest command's status" test "$rc" = 7
     rc=0; iso shell e2e -- sh -c 'exit 9' </dev/null >/dev/null 2>&1 || rc=$?
     check "iso shell -- CMD exits with the guest command's status" test "$rc" = 9
+    # Run history (docs/audit.md): an `iso run` on this VM records its request,
+    # environment, handoff and the observed status, joins the boot's boundary
+    # events, and never records the forwarded value.
+    printf '{"schema_version":1,"id":"audit-probe","display_name":"Audit probe","launch":{"argv":["sh","-c","exit 3"],"terminal":"never"},"auth_adapter":"none"}\n' \
+        >"$WORK/audit-probe.json"
+    if iso agent add "$WORK/audit-probe.json" --yes >"$WORK/audit-agent.log" 2>&1; then
+        rc=0
+        ANTHROPIC_API_KEY="canary-$RUN" "$ISO" --config "$CCFG" run audit-probe --name e2e \
+            </dev/null >"$WORK/audit-run.out" 2>"$WORK/audit-run.err" || rc=$?
+        check "iso run exits with the agent's status" test "$rc" = 3
+        audit_run="$(grep -o 'run_[0-9a-f]\{32\}' "$WORK/audit-run.err" | head -1)"
+        check "iso run names its audit run on stderr" test -n "$audit_run"
+        check "iso run keeps the run notice off stdout" test ! -s "$WORK/audit-run.out"
+        iso audit --run "$audit_run" --output jsonl >"$WORK/audit-run.jsonl" 2>/dev/null
+        check "the run's JSONL page is state, records, progress" \
+            test "$(jq -sr 'map(.type) | "\(first) \(last)"' "$WORK/audit-run.jsonl")" = "state progress"
+        check "the run records the observed transport status" \
+            test "$(jq -r 'select(.type == "state") | .run.outcome.termination.status' "$WORK/audit-run.jsonl")" = 3
+        check "the run's environment carries the boot identity" \
+            test "$(jq -r 'select(.type == "state") | .coverage.vm_context' "$WORK/audit-run.jsonl")" = joined
+        check "the run joins its boot's boundary events" \
+            grep -q '"relationship":"vm_context"' "$WORK/audit-run.jsonl"
+        # FROM_ENV_FILE (from --env-file at `up`) is forwarded into the session:
+        # its name is recorded and its value is not.
+        check "the run records forwarded variable names" \
+            test "$(jq -r 'select(.type == "event" and .event.kind == "launch.handoff") | .event.data.forwarded_variables | index("FROM_ENV_FILE") != null' "$WORK/audit-run.jsonl")" = true
+        check "the audit store never holds a forwarded value" \
+            refuses grep -rqe "canary-$RUN" -e "from file" "$CSTATE/audit"
+        check "iso audit --runs lists the run" \
+            grep -q "$audit_run" <<<"$(iso audit --runs 2>/dev/null)"
+        check "iso audit --export writes the full snapshot" \
+            iso audit --run "$audit_run" --export "$WORK/audit-export.json"
+        check "the export is complete and owner-only" \
+            test "$(jq -r .snapshot_exhausted "$WORK/audit-export.json") $(stat -f %Lp "$WORK/audit-export.json")" = "true 600"
+        check "iso audit --export never overwrites" \
+            refuses iso audit --run "$audit_run" --export "$WORK/audit-export.json"
+    else
+        fail "iso agent add installs the audit probe" "see $WORK/audit-agent.log"
+    fi
     # The `iso` wrapper closes stdin; these call the binary with a real one.
     check "iso exec gives the guest no stdin" \
         test "$(echo host-input | "$ISO" --config "$CCFG" exec e2e -- sh -c 'cat; echo end')" = end

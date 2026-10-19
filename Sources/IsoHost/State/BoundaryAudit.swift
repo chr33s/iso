@@ -7,7 +7,8 @@ import IsoPolicy
 /// (selective-hardening spec §9): which host capabilities a boot granted and
 /// what workspace returns happened. Never values, request bodies, file
 /// contents or tokens — only names, counts, modes and times. One JSON object
-/// per line in `<instance>/audit.jsonl` (owner-only), bounded in size.
+/// per line in `<instance>/audit.jsonl` (owner-only), bounded in size; each
+/// event also goes to the instance-independent `AuditStore`.
 package enum BoundaryAudit {
   package static let maxBytes = 1 << 20
 
@@ -155,6 +156,7 @@ package enum BoundaryAudit {
     } catch {
       diagnostics?.debug("boundary audit write failed (non-fatal): \(error)")
     }
+    recordAudit(instance, event, now: now, diagnostics: diagnostics)
   }
 
   static func readAll(_ path: String) throws -> [UInt8] {

@@ -15,11 +15,13 @@ package struct RunWorkflow {
   package let prepare: Bool
   package let forwarded: [String]
   package let configPath: String?
+  /// Records this invocation's evidence; nil records nothing (dry runs).
+  package let audit: AuditInvocation?
 
   package init(
     lifecycle: ProjectLifecycle, agent: AgentDefinitionID, workspace: String?, name: InstanceName?,
     image: ImageName?, profiles: [String], remove: Bool, ask: Bool, prepare: Bool,
-    forwarded: [String], configPath: String?
+    forwarded: [String], configPath: String?, audit: AuditInvocation? = nil
   ) {
     self.lifecycle = lifecycle
     self.agent = agent
@@ -32,6 +34,7 @@ package struct RunWorkflow {
     self.prepare = prepare
     self.forwarded = forwarded
     self.configPath = configPath
+    self.audit = audit
   }
 
   package enum Event {
@@ -47,25 +50,43 @@ package struct RunWorkflow {
   package func execute(
     confirmPreparation: (String) -> Bool, report: (Event) -> Void
   ) throws {
+    var stage = AuditFacts.Stage.resolve
+    do {
+      try execute(stage: &stage, confirmPreparation: confirmPreparation, report: report)
+    } catch {
+      if let audit, !audit.launchObserved { audit.preparationFailed(stage) }
+      throw error
+    }
+  }
+
+  /// `stage` tracks where a failure before the handoff happened.
+  func execute(
+    stage: inout AuditFacts.Stage, confirmPreparation: (String) -> Bool,
+    report: (Event) -> Void
+  ) throws {
     let started = ContinuousClock.now
     let planned = try plan()
     let resolution = try resolve(planned)
     if let reason = resolution.blockedReason { throw HostError(reason) }
     let instance: Instance
-    let created: Bool
+    let action: AuditFacts.StartAction
     var sessionRecord: RunSessionRecord?
     switch try executionTarget(resolution) {
     case .attach(let existing):
       instance = existing
-      created = false
+      action = .attached
     case .restart(let existing):
       try ensureCompatible(existing, planned)
       let options = RestartRequest(boot: try bootOptions())
+      stage = .start
       try lifecycle.restart(existing, options)
       instance = existing
-      created = false
+      action = .restarted
     case .create(let directory, let requestedName):
+      stage = .prepare
       try authorizePreparation(planned, confirm: confirmPreparation)
+      stage = .start
+      action = .created
       if remove {
         let owner = try Owner.loadOrInit(context.config)
         let record = try RunSessionStore.create(
@@ -99,6 +120,7 @@ package struct RunWorkflow {
           creating.state = .cleanupPending
           creating.cleanupOutcome = "start failed"
           try? RunSessionStore.save(creating, config: context.config)
+          audit?.cleanup(creating.sessionID, .startFailed)
           throw error
         }
         instance = allocated
@@ -109,14 +131,14 @@ package struct RunWorkflow {
         instance = try lifecycle.allocateAndStart(
           name: requestedName, image: planned.environment.image, workspacePath: directory, options)
       }
-      created = true
     }
+    stage = .connect
     let running = try context.backend.asRunning(instance)
     guard let running else {
       throw HostError("Instance '\(instance.name)' is not running after start")
     }
     try launch(
-      planned, running: running, created: created, session: &sessionRecord, started: started,
+      planned, running: running, action: action, session: &sessionRecord, started: started,
       report: report)
   }
 
@@ -233,7 +255,7 @@ package struct RunWorkflow {
   }
 
   package func launch(
-    _ planned: AgentLaunchPlan, running: AppleBackend.Running, created: Bool,
+    _ planned: AgentLaunchPlan, running: AppleBackend.Running, action: AuditFacts.StartAction,
     session record: inout RunSessionRecord?, started: ContinuousClock.Instant,
     report: (Event) -> Void
   ) throws {
@@ -246,13 +268,29 @@ package struct RunWorkflow {
         context.config, instance: running.instance, modelState: state)
     }
     var ssh = try lifecycle.agents.workloadSession(for: running, backend: context.backend)
+    var defaults: [String] = []
     for item in planned.defaults where !ssh.env.contains(item.name.rawValue) {
       ssh.env.set(item.name.rawValue, Secret(item.value))
+      defaults.append(item.name.rawValue)
+    }
+    if let audit {
+      audit.exclude(variables: defaults)
+      audit.environment(
+        lifecycle.agents.auditEnvironment(
+          running, action: action,
+          agent: AuditFacts.Agent(
+            definitionID: planned.definition.id.rawValue,
+            source: planned.source == .builtin ? .builtin : .installed,
+            definitionHash: planned.definitionHash, adapterID: planned.adapter.id.rawValue,
+            adapterContractVersion: planned.adapter.contractVersion),
+          session: record?.sessionID))
     }
     let invocation = try AgentDispatch.invocation(
       plan: planned, passthrough: forwarded, guestUser: running.sidecar.guestUser,
       codexAccount: codexAccount, stdinIsTerminal: isatty(0) == 1, stdoutIsTerminal: isatty(1) == 1)
-    report(.handoff(planned, running, created: created, elapsed: ContinuousClock.now - started))
+    report(
+      .handoff(
+        planned, running, created: action == .created, elapsed: ContinuousClock.now - started))
     if var record {
       record.state = .running
       try RunSessionStore.save(record, config: context.config)
@@ -263,7 +301,7 @@ package struct RunWorkflow {
     do {
       termination = try InteractiveSSH.runReporting(
         context.ssh, ssh, invocation.argv, workingDirectory: invocation.workingDirectory,
-        allocatePTY: invocation.allocatePTY, diagnostics: diagnostics)
+        allocatePTY: invocation.allocatePTY, diagnostics: diagnostics, audit: audit)
     } catch {
       try finishCleanup(&record, agent: "unknown", report: report)
       throw error
@@ -295,6 +333,7 @@ package struct RunWorkflow {
       record.state = message.contains("pending staged pull") ? .retained : .cleanupPending
       record.cleanupOutcome = message
       try RunSessionStore.save(record, config: context.config)
+      audit?.cleanup(record.sessionID, .deferred)
       report(.cleanupDeferred(message))
       if agent == "exited 0" {
         throw HostError("agent succeeded but cleanup did not destroy the instance: \(message)")
@@ -307,11 +346,13 @@ package struct RunWorkflow {
         record.state = .completed
         record.cleanupOutcome = "destroyed"
         try RunSessionStore.save(record, config: context.config)
+        audit?.cleanup(record.sessionID, .destroyed)
         report(.destroyed(name))
       } catch {
         record.state = .cleanupPending
         record.cleanupOutcome = "destroy failed"
         try RunSessionStore.save(record, config: context.config)
+        audit?.cleanup(record.sessionID, .destroyFailed)
         report(.cleanupFailed(error))
         throw HostError("agent \(agent); cleanup failed")
       }

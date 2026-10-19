@@ -190,3 +190,27 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
     .creationOptions(translation, rule: .copyProject, leading: [])
   #expect(linux.disk == GiB(100))
 }
+
+@Test func aRunThatFailsToResolveRecordsItsStageAndNoHandoff() throws {
+  let root = try scratchDirectory("workflow-audit")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(root)
+  let store = AuditStore(config: lifecycle.config)
+  let audit = AuditInvocation.begin(
+    store: store,
+    request: .init(
+      command: .run, role: .managed, lifecycle: .persistent, requestedAgent: "missing-agent",
+      requestedInstance: nil, permissionMode: .bypass, isoVersion: "iso test"),
+    diagnostics: Diagnostics(verbosity: 0) { _ in }, notice: { _ in })
+  let workflow = RunWorkflow(
+    lifecycle: lifecycle, agent: try AgentDefinitionID("missing-agent"), workspace: root,
+    name: nil, image: nil, profiles: [], remove: false, ask: false, prepare: false,
+    forwarded: [], configPath: nil, audit: audit)
+  #expect(throws: (any Error).self) {
+    try workflow.execute(confirmPreparation: { _ in false }, report: { _ in })
+  }
+  let summary = try #require(
+    try AuditReader(store: store).page(.run(audit.runID), after: nil).run?.summary)
+  #expect(summary.outcome == .preparationFailed(.resolve))
+  #expect(summary.handoff == nil && summary.environment == nil)
+}

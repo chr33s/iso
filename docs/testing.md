@@ -45,6 +45,7 @@ python3 tests/test-read-contract.py --swift .build/debug/iso
 python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
 python3 tests/test-data-root-contract.py --swift .build/debug/iso
 python3 tests/test-machine-contract.py --swift .build/debug/iso   # --output json stream purity, codes, no prompts
+python3 tests/test-audit-contract.py --swift .build/debug/iso     # audit JSONL over real pipes, locks, hostile records
 python3 tests/test-cli-surface.py --swift .build/debug/iso   # help, inventory, machine list, completions
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
 python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
@@ -497,6 +498,24 @@ one side alone fails. The `brokered-*` entries in the fault list remove each
 gate, policy-record, configuration, connector, image and admission check in
 turn; the owner's live-device check needs a VM and is covered by the
 integration `brokered` phase instead.
+
+The run history ([audit.md](audit.md)) is covered by
+`tests/swift/IsoHostTests/AuditStoreTests.swift` (ordering, owner-only files,
+torn and unparseable records, degraded capture, VM-context attribution by
+exact boot, linked cleanup, paging at one snapshot, cursor binding and
+expiry, `reset_required`, retention behind one checkpoint and crash
+recovery, the recorder's names-only handoff) and
+`tests/swift/IsoCLITests/AuditCommandTests.swift` (view selection, the JSONL
+line protocol and follow batches, broken pipes, error records, export and
+text neutralization). `tests/test-audit-contract.py` drives the real binary
+over pipes against a hand-written store: prompt flushing of follow batches,
+idle polls, no store lock while a viewer runs or is blocked on a full pipe,
+broken pipes, rolling-cursor resume, hostile stored records, and the unchanged
+instance view. The integration `iso` phase runs a probe agent with `iso run`
+on a live VM and checks its recorded status, boot join, export and that a
+forwarded value never reaches the store. The `audit-*` entries in the fault list remove the
+exact-boot join, the default-name exclusion, checkpoint publication, torn-tail
+sealing, fixed-cursor expiry and text neutralization.
 
 ### Apple runtime real-hardware checks
 

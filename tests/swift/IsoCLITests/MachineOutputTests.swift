@@ -234,7 +234,7 @@ private let copyWorkspace = WorkspaceState(
     Set(MachineCommands.all.map { $0.machineName })
       == [
         "capabilities", "list", "status", "up", "start", "stop", "destroy", "code", "zed",
-        "ssh-config",
+        "ssh-config", "audit",
       ])
   // Workload streams stay out of v1.
   for command: any ParsableCommand.Type in [
@@ -400,10 +400,10 @@ private let copyWorkspace = WorkspaceState(
   #expect(commandPath(SecretsList.self, under: IsoCommand.self) == ["secrets", "list"])
   #expect(commandPath(List.self, under: IsoCommand.self) == ["list"])
   #expect(commandPath(IsoCommand.self, under: IsoCommand.self) == [])
-  #expect(GlobalOptions.requestsMachineOutput(["iso", "secrets", "--output", "json"]))
-  #expect(GlobalOptions.requestsMachineOutput(["iso", "--output=json", "github"]))
-  #expect(!GlobalOptions.requestsMachineOutput(["iso", "exec", "--", "x", "--output", "json"]))
-  #expect(!GlobalOptions.requestsMachineOutput(["iso", "secrets", "--output", "text"]))
+  #expect(GlobalOptions.requests(.json, ["iso", "secrets", "--output", "json"]))
+  #expect(GlobalOptions.requests(.json, ["iso", "--output=json", "github"]))
+  #expect(!GlobalOptions.requests(.json, ["iso", "exec", "--", "x", "--output", "json"]))
+  #expect(!GlobalOptions.requests(.json, ["iso", "secrets", "--output", "text"]))
 }
 
 private struct PassphraseRequired: SecretReferenceResolver {

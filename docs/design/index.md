@@ -24,6 +24,9 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Selective hardening](selective-hardening-spec.md): workspace return,
   egress, resource budgets, and audit.
 - [Authorization policy](iso-policy.md): evaluation and approval contracts.
+- [`iso audit` run history](iso-audit.md): the design review behind the
+  `iso.audit/v1` store, reader and JSONL stream, implementation notes, and the
+  evidence for each essential check.
 - [Credential proxy proposal](issue-411-injecting-proxy.md) and
   [proxy jail compatibility](proxy-jail-graceful-degradation.md).
 - [Sandboxy-inspired features](sandboxy-inspired-features-spec.md): proposal
