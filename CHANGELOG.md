@@ -8,6 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.6.0
+
 - **Brokered network isolation** (opt-in, Linux guests): `"network":
   {"transport": "brokered"}` creates new instances whose VM has **no network
   device**, proven from the live VM before the guest's init runs and again by
