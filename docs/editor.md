@@ -196,7 +196,8 @@ server inside the guest on first connect, which needs network access:
 
 - **Zed** downloads `zed-remote-server` from zed.dev. A sandboxed Zed with
   `--editor-allow internet` uploads it over SSH itself when egress is `none`
-  or `filtered`. In unsafe mode, `iso zed` (and `iso editor` before it tries
+  or `filtered`; for that session only, its profile also lets it run
+  OpenSSH's `sftp` and `scp` (still confined, through the tunnel). In unsafe mode, `iso zed` (and `iso editor` before it tries
   Zed) prints a warning recommending `upload_binary_over_ssh` for the alias
   in Zed's settings; isolate does not edit them:
 

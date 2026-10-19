@@ -17,9 +17,15 @@ package protocol RuntimeExecutor: Sendable {
     _ arguments: [String], deadline: Duration?, cancellable: Bool,
     onOutput: (ProcessRunner.Stream, ArraySlice<UInt8>) throws -> Void
   ) throws -> ProcessRunner.Termination
+
+  /// The runtime executable ssh may run as a brokered ProxyCommand; nil for
+  /// an executor that is not a real binary.
+  var connectorExecutable: String? { get }
 }
 
 extension RuntimeExecutor {
+  package var connectorExecutable: String? { nil }
+
   /// stdout and stderr appended to `log` (image builds).
   package func runLogged(_ arguments: [String], log: String, deadline: Duration, cancellable: Bool)
     throws
@@ -90,6 +96,8 @@ package struct ProcessRuntimeExecutor: RuntimeExecutor {
   }
 
   var program: String { (binary as NSString).lastPathComponent }
+
+  package var connectorExecutable: String? { binary }
 
   package static func sanitized(_ parent: [String: String]) -> [String: String] {
     var out = parent.filter { inheritedVariables.contains($0.key) }

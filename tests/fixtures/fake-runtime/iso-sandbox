@@ -13,6 +13,12 @@ import time
 NULL = object()
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINiqkOnkRV06x+SuorkF+O3KdBTVFznIV0+b58cidW1N root@guest"
+# The runtime's ChannelPolicy.current and its digest (iso-sandbox Brokered.swift).
+CHANNEL_POLICY = {"schema": "iso.channels/v1",
+                  "endpoints": [{"purpose": "ssh", "guestPort": 2222, "direction": "host-to-guest"}],
+                  "maxStreams": 64, "maxOpensPerWindow": 64, "windowSeconds": 10, "requestBytes": 4096,
+                  "setupTimeoutSeconds": 10, "chunkBytes": 65536}
+CHANNEL_DIGEST = "1beae82700a50cad9663c46faaea554ae4a815f5330c82cdcaa412b5c6a59301"
 MOUNTS = [("proc", "proc", "/proc"), ("sysfs", "sysfs", "/sys"), ("devtmpfs", "none", "/dev"),
           ("mqueue", "mqueue", "/dev/mqueue"), ("tmpfs", "tmpfs", "/dev/shm"),
           ("cgroup2", "none", "/sys/fs/cgroup"), ("devpts", "devpts", "/dev/pts")]
@@ -53,8 +59,11 @@ def main():
     log(argv)
     if argv[:1] == ["version"]:
         version = {"name": "iso-sandbox", "version": "0.5.0", "protocol": 5, "containerization": "0.45.0"}
-        if not mode().get("noMacFeature"):
-            version["features"] = ["macos-guests"]
+        features = [] if mode().get("noMacFeature") else ["macos-guests"]
+        if not mode().get("noBrokeredFeature"):
+            features.append("brokered-transport")
+        if features:
+            version["features"] = features
         return out(version)
     words = []
     rest = list(argv)
@@ -91,7 +100,21 @@ def inspect(root, sandbox):
         record["lastOperation"] = sandbox["lastOperation"]
     result = {"record": record, "status": sandbox["status"],
               "disk": {"logicalBytes": sandbox["diskBytes"], "allocatedBytes": 1 << 20}}
-    if sandbox["status"] == "running":
+    if sandbox["status"] == "running" and sandbox.get("network") == "brokered":
+        # No interface or address; the owner reports its live-device reading.
+        result["live"] = {"pid": 4242, "bootId": f"fixture-boot-{sandbox.get('boots', 0)}"}
+        result["effective"] = {
+            "id": sandbox["id"], "imageReference": sandbox["imageReference"], "imageDigest": sandbox["imageDigest"],
+            "cpus": sandbox["cpus"], "memoryBytes": sandbox["memoryBytes"],
+            "rootfs": {"type": "ext4", "source": rootfs(root, sandbox["id"]), "destination": "/", "options": []},
+            "mounts": [{"type": t, "source": s, "destination": d, "options": []} for t, s, d in MOUNTS],
+            "interfaces": [], "socketRelays": 0, "publishedPorts": 0, "sshAgentForwarding": False,
+            "maskedPaths": [], "readonlyPaths": [], "initArgv": ["/sbin/init"], "virtualization": False,
+            "transport": "brokered", "networkDevices": 0, "socketDevices": 1,
+            "channelPolicy": CHANNEL_POLICY, "channelPolicyDigest": CHANNEL_DIGEST}
+        if sandbox.get("networkPolicy"):
+            result["effective"]["networkPolicy"] = sandbox["networkPolicy"]
+    elif sandbox["status"] == "running":
         address = f"10.231.{sandbox['subnet']}.2"
         result["live"] = {"pid": 4242, "ipv4": address, "bootId": "fixture-boot"}
         result["effective"] = {
@@ -281,6 +304,8 @@ def handle(words, args, root, state):
             "diskBytes": size, "diskGeneration": 0, "status": "stopped", "subnet": state["subnet"]}
         if option(args, "--network") == "host-only":
             sandboxes[sandbox_id]["network"] = "host_only"
+        elif option(args, "--network") == "brokered":
+            sandboxes[sandbox_id]["network"] = "brokered"
         write_disk(root, sandbox_id, size)
         return sandboxes[sandbox_id]
     sandbox = sandboxes.get(sandbox_id)
@@ -288,7 +313,15 @@ def handle(words, args, root, state):
         fail(f"no sandbox {sandbox_id}")
     if key == "inspect":
         return inspect(root, sandbox)
+    if key in ("streams list", "streams close"):
+        return []
     if key == "start":
+        policy = option(args, "--network-policy")
+        if sandbox.get("network") == "brokered":
+            sandbox["networkPolicy"] = policy
+            sandbox["boots"] = sandbox.get("boots", 0) + 1
+        elif policy:
+            fail("--network-policy applies only to brokered sandboxes")
         expires = option(args, "--expires-at")
         sandbox["expiresAt"] = (
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expires))) if expires else None)

@@ -6,6 +6,10 @@ containerization 0.45.0, used by host runtime-boundary tests.
 - `version.json` — runtime version and qualified protocol/dependency.
 - `inspect-stopped.json` — a created, stopped sandbox.
 - `inspect-running.json` — a running sandbox, live owner and effective VM configuration.
+- `inspect-brokered-running.json` — a running `--network brokered` sandbox, captured
+  from a real boot (identifiers and paths rewritten to the values below): no
+  interface or address, the owner's live device counts, and the runtime's
+  channel policy and digest, which the host recomputes and must match.
 
 The record has an explicit `network` mode, and running live state has a
 nonempty `bootId`. Missing required fields must fail decoding. Optional operation

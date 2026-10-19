@@ -45,6 +45,10 @@ Apple backend. The credential proxy is the Swift package
   - [`local-and-remote-hosts-spec.md`](design/local-and-remote-hosts-spec.md):
     host control — the per-user service, durable operations, access grants,
     owned relays, remote execution hosts — and its implementation status;
+  - [`brokered-network-isolation.md`](design/brokered-network-isolation.md):
+    the NIC-less brokered transport (SSH over a runtime-owned vsock stream),
+    its specification (ISO-NET-001), requirement mapping, native evidence
+    and open qualification items;
   - [`embedded-secrets-spec.md`](design/embedded-secrets-spec.md): the
     Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
     references;

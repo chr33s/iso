@@ -10,8 +10,8 @@ set -uo pipefail
 # recovery and interrupted mutations, concurrency).
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
-#   Phases: setup disks machine isolation exposure identity persistence
-#           resources growth snapshots recovery concurrency iso
+#   Phases: setup disks machine isolation exposure identity brokered
+#           persistence resources growth snapshots recovery concurrency iso
 #   CYCLES=5 stop/start cycles; CONCURRENCY="1 4 8" sandboxes per round;
 #   KILL_FRACTIONS="50 75 90 95 100 105 110": an interrupted mutation is
 #   killed at these percentages of the time an uninterrupted one took;
@@ -310,6 +310,12 @@ else
     summary
 fi
 kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
+# ISO_TEST_INITFS: a previously pulled vminit initfs to seed, so `init`
+# skips its download when the registry is unreachable. The seed is not
+# re-verified; use only a file a successful `iso-sandbox init` produced.
+if [[ -n "${ISO_TEST_INITFS:-}" ]]; then
+    mkdir -p "$ROOT" && cp "$ISO_TEST_INITFS" "$ROOT/initfs.ext4"
+fi
 check "init accepts the pinned kernel" sbx init --kernel "$kernel"
 check "init refuses an unpinned kernel" refuses "$SANDBOX" init --root "$WORK/other" --kernel "$FIXTURES/image/Dockerfile"
 imported="$("$SANDBOX" image import --root "$ROOT" --oci-tar "$WORK/image.tar")"
@@ -470,6 +476,197 @@ if want identity; then
     guest "$A" sh -c 'rm -f /etc/ssh/ssh_host_* && ssh-keygen -A >/dev/null && systemctl restart ssh'
     check "a replaced host key is rejected" refuses pinned "$A" true
     enroll "$A"
+fi
+
+if want brokered; then
+    echo ""
+    echo "=== Phase: brokered ==="
+    # The brokered transport (docs/design/brokered-network-isolation.md): a
+    # sandbox with no network device, reached only through the owner's vsock
+    # stream. Every observation here is host-side; the guest runs as root and
+    # is treated as hostile.
+    BR="$(name br)"
+    BKEY="$WORK/brokered-id"
+    BKNOWN="$WORK/brokered-known"
+    NETPOL="$(printf 'brokered-policy-%s' "$RUN" | shasum -a 256 | cut -d' ' -f1)"
+    sbx create "$BR" --image "$IMAGE" --cpus 2 --memory-mib 2048 --disk-gib 8 --owner "$RUN" --network brokered >/dev/null
+    check "create records the brokered mode and no subnet" \
+        test "$(sbx inspect "$BR" | jq -r '"\(.record.network) \(.record | has("subnetIndex"))"')" = "brokered false"
+    check "start --network-policy refuses a malformed digest" refuses sbx start "$BR" --network-policy nothex
+    sbx start "$BR" --network-policy "$NETPOL" >/dev/null && ready "$BR"
+    beff="$(sbx inspect "$BR")"
+    check "N-T01: the live VM has no network device and one socket device" \
+        jq -e '.effective.networkDevices == 0 and .effective.socketDevices == 1 and .effective.transport == "brokered"' <<<"$beff"
+    check "N-T01: no interface, address, or gateway is reported" \
+        jq -e '(.effective.interfaces | length) == 0 and .live.ipv4 == null and .live.ipv6 == null' <<<"$beff"
+    check "N-T15: the boot carries the host's network-policy digest" \
+        test "$(jq -r .effective.networkPolicy <<<"$beff")" = "$NETPOL"
+    check "the guest sees only loopback and its own Docker bridge" \
+        test "$(guest "$BR" sh -c "ip -o link | awk -F': ' '{print \$2}' | grep -v -e '^lo\$' -e '^docker0\$' | wc -l" | xargs)" = 0
+    # shellcheck disable=SC2016 # Expand in the guest.
+    check "the guest has no IPv4 or IPv6 default route" \
+        test "$(guest "$BR" sh -c 'echo "routes:$(ip route show default)$(ip -6 route show default)"')" = "routes:"
+    BOOT1="$(jq -r .live.bootId <<<"$beff")"
+    CHANNEL="$(jq -r .effective.channelPolicyDigest <<<"$beff")"
+    connect_cmd() { echo "$SANDBOX connect --root $ROOT $BR --boot ${1:-$BOOT1} --channel-policy $CHANNEL --network-policy ${2:-$NETPOL}"; }
+    ssh-keygen -q -t ed25519 -N '' -C "iso-brokered-$RUN" -f "$BKEY"
+    guest_in "$BR" sh -c 'umask 077; mkdir -p /root/.ssh; cat > /root/.ssh/authorized_keys' <"$BKEY.pub"
+    echo "$BR.iso $(guest "$BR" cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub)" >"$BKNOWN"
+    # bssh PROXYCOMMAND ARGS...: pinned SSH through the given connector line.
+    bssh() {
+        local proxy="$1"
+        shift
+        ssh -F /dev/null -i "$BKEY" -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$BKNOWN" -o GlobalKnownHostsFile=/dev/null \
+            -o HostKeyAlias="$BR.iso" -o ConnectTimeout=10 -o ForwardAgent=no -o LogLevel=ERROR \
+            -o ProxyCommand="$proxy" "root@$BR.iso" "$@"
+    }
+    check "N-T07: pinned SSH runs a command through the connector" test "$(bssh "$(connect_cmd)" echo ok)" = ok
+    head -c 8388608 /dev/urandom >"$WORK/brokered.blob"
+    bssh "$(connect_cmd)" 'cat > /tmp/blob' <"$WORK/brokered.blob"
+    bssh "$(connect_cmd)" 'cat /tmp/blob' >"$WORK/brokered.back"
+    check "N-T07: an 8 MiB binary transfer round-trips intact" cmp -s "$WORK/brokered.blob" "$WORK/brokered.back"
+    check "N-T07: stdin EOF reaches the guest and its reply returns" test "$(printf abc | bssh "$(connect_cmd)" 'wc -c' | xargs)" = 3
+    rc=0; bssh "$(connect_cmd)" 'exit 7' || rc=$?
+    check "N-T07: the guest command's exit status passes through" test "$rc" = 7
+    # Port forwarding to a guest-loopback service rides the same stream.
+    guest "$BR" systemd-run --quiet --unit=iso-test-preview socat TCP-LISTEN:7790,bind=127.0.0.1,fork,reuseaddr SYSTEM:"echo preview" >/dev/null
+    bssh "$(connect_cmd)" -N -o ExitOnForwardFailure=yes -L 127.0.0.1:47790:127.0.0.1:7790 &
+    fwd=$!
+    sleep 2
+    check "N-T09: a loopback preview forward reaches the guest service" \
+        test "$(nc -w 3 127.0.0.1 47790 </dev/null)" = preview
+    kill "$fwd" 2>/dev/null; wait "$fwd" 2>/dev/null
+    check "N-T06: a stale boot id is refused before any guest connection" \
+        refuses bssh "$(connect_cmd deadbeefdeadbeefdeadbeefdeadbeef)" true
+    check "N-T06: another network-policy digest is refused" \
+        refuses bssh "$(connect_cmd "$BOOT1" "$(printf other | shasum -a 256 | cut -d' ' -f1)")" true
+    check "N-T04: an unknown purpose is refused" \
+        refuses "$SANDBOX" connect --root "$ROOT" "$BR" --boot "$BOOT1" --channel-policy "$CHANNEL" --network-policy "$NETPOL" --purpose agent </dev/null
+    check "N-T04: a forged channel-policy digest is refused" \
+        refuses bssh "$SANDBOX connect --root $ROOT $BR --boot $BOOT1 --channel-policy $(printf x | shasum -a 256 | cut -d' ' -f1) --network-policy $NETPOL" true
+
+    # N-T02: host canaries on every host address family the Mac has, each
+    # with a positive control from the host itself.
+    lan4="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+    canary_port=47791
+    python3 -c '
+import socket, sys, threading
+hits = open(sys.argv[1], "a")
+def serve(family, addr):
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((addr, int(sys.argv[2])))
+    s.listen(16)
+    while True:
+        c, peer = s.accept()
+        hits.write(f"{peer[0]}\n"); hits.flush()
+        c.sendall(b"canary\n"); c.close()
+threading.Thread(target=serve, args=(socket.AF_INET, "0.0.0.0"), daemon=True).start()
+threading.Thread(target=serve, args=(socket.AF_INET6, "::"), daemon=True).start()
+threading.Event().wait()
+' "$WORK/canary.hits" "$canary_port" &
+    canary=$!
+    sleep 1
+    targets="127.0.0.1 10.231.1.1 10.231.2.1 192.168.64.1 100.100.100.100 1.1.1.1 ::1 2606:4700:4700::1111 fd00::1"
+    [[ -n "$lan4" ]] && targets="$targets $lan4"
+    controls=""
+    for t in 127.0.0.1 ${lan4:-} ::1; do
+        [[ -z "$t" ]] && continue
+        [[ "$(nc -w 2 "$t" "$canary_port" </dev/null 2>/dev/null)" == canary ]] || controls+=" $t"
+    done
+    check "N-T02: host positive controls reach every canary listener" test -z "$controls"
+    : >"$WORK/canary.hits"
+    # shellcheck disable=SC2016 # Expand in the guest.
+    reached="$(guest "$BR" sh -c 'for t in '"$targets"'; do
+        timeout 2 socat -u /dev/null "TCP:$t:'"$canary_port"',connect-timeout=1" 2>/dev/null && echo "tcp $t"
+        done
+        ping -c1 -W1 1.1.1.1 >/dev/null 2>&1 && echo icmp
+        getent hosts example.com >/dev/null 2>&1 && echo dns; echo probes-done')"
+    sleep 1
+    check "N-T02: the guest reaches no host, LAN, tailnet, or Internet address" test "$reached" = probes-done
+    check "N-T02: no canary listener saw a guest connection" test ! -s "$WORK/canary.hits"
+    # N-T03: guest root adds devices, addresses, routes and raw traffic; there
+    # is still no device that leaves the VM.
+    # shellcheck disable=SC2016 # Expand in the guest.
+    escaped="$(guest "$BR" sh -c 'ip link add iso0 type dummy 2>/dev/null; ip link set iso0 up 2>/dev/null
+        ip addr add 192.168.64.9/24 dev iso0 2>/dev/null; ip route add default via 192.168.64.1 dev iso0 2>/dev/null
+        ip addr add 10.231.2.9/24 dev lo 2>/dev/null
+        for t in 192.168.64.1 '"${lan4:-127.0.0.2}"' 1.1.1.1; do
+            timeout 2 socat -u /dev/null "TCP:$t:'"$canary_port"',connect-timeout=1" 2>/dev/null && echo "$t"; done
+        ping -c1 -W1 -I iso0 192.168.64.1 >/dev/null 2>&1 && echo icmp; echo probes-done')"
+    sleep 1
+    check "N-T03: guest-made devices, addresses, and routes create no uplink" test "$escaped" = probes-done
+    check "N-T03: no canary saw those attempts either" test ! -s "$WORK/canary.hits"
+    kill "$canary" 2>/dev/null; wait "$canary" 2>/dev/null
+    # N-T04: the guest cannot open any host vsock port or another VM's. The
+    # guest's own dial-backs for `exec` stdio are the positive control that
+    # guest-to-host vsock works; socat must support it for the probe to mean
+    # anything.
+    check "N-T04: the guest's socat supports vsock" guest "$BR" sh -c 'socat -V | grep -q "WITH_VSOCK 1"'
+    # shellcheck disable=SC2016 # Expand in the guest.
+    vsock="$(guest "$BR" sh -c 'for p in $(seq 1 1024) 2222 2375 5000 8080 268435456 268435457; do timeout 1 socat -u /dev/null VSOCK-CONNECT:2:$p 2>/dev/null && echo host:$p; done
+        for c in 3 4 5 6; do for p in 22 1024 2222; do timeout 1 socat -u /dev/null VSOCK-CONNECT:$c:$p 2>/dev/null && echo cid$c:$p; done; done; echo probes-done')"
+    check "N-T04: no host vsock listener or sibling VM endpoint is reachable from the guest" test "$vsock" = probes-done
+    sockdir="$(getconf DARWIN_USER_TEMP_DIR)iso-sbx"
+    modes="$(stat -f '%Lp' "$sockdir"; stat -f '%Lp' "$sockdir"/*.streams.sock | sort -u)"
+    check "N-T04: the owner's stream socket is owner-only in a private directory" \
+        test "$(tr '\n' ' ' <<<"$modes")" = "700 600 "
+
+    # Revocation: closing the streams ends a live session at once.
+    bssh "$(connect_cmd)" 'sleep 60' &
+    sleeper=$!
+    sleep 2
+    check "streams list shows the live stream" test "$("$SANDBOX" streams list --root "$ROOT" "$BR" | jq length)" -ge 1
+    closed="$("$SANDBOX" streams close --root "$ROOT" "$BR" | jq length)"
+    t0="$(now_ms)"
+    wait "$sleeper"; rc=$?
+    check "N-T15: streams close revokes the live session (closed $closed, ${rc} exit)" \
+        test "${closed:-0}" -ge 1 -a "$rc" -ne 0 -a $(($(now_ms) - t0)) -lt 5000
+
+    # N-T13: a flood beyond the stream table is refused and stop still works.
+    flood_pids=""
+    for _ in $(seq 72); do
+        (sleep 30 | "$SANDBOX" connect --root "$ROOT" "$BR" --boot "$BOOT1" --channel-policy "$CHANNEL" --network-policy "$NETPOL" >/dev/null 2>>"$WORK/flood.log") &
+        flood_pids+=" $!"
+    done
+    # Requests past the stream table are refused at once; those past the
+    # admission rate wait up to the 10 s setup deadline before refusal.
+    sleep 12
+    check "N-T13: streams beyond the owner's limits are refused" grep -Eq 'too many open streams|retry shortly' "$WORK/flood.log"
+    t0="$(now_ms)"
+    sbx stop "$BR" --timeout-seconds 60 >/dev/null
+    stop_ms=$(($(now_ms) - t0))
+    check "N-T13: stop completes during the flood (${stop_ms} ms)" \
+        test "$(state "$BR")" = stopped -a "$stop_ms" -lt 30000
+    # shellcheck disable=SC2086 # One pid per word.
+    kill $flood_pids 2>/dev/null; wait 2>/dev/null
+    check "a stopped sandbox admits no stream" refuses bssh "$(connect_cmd)" true
+
+    # N-T06: a restart is a new boot; the old connector line cannot reach it.
+    sbx start "$BR" --network-policy "$NETPOL" >/dev/null && ready "$BR"
+    BOOT2="$(sbx inspect "$BR" | jq -r .live.bootId)"
+    check "N-T06: the restart has a new boot id" test -n "$BOOT2" -a "$BOOT2" != "$BOOT1"
+    check "N-T01: the restart has no network device either" \
+        test "$(sbx inspect "$BR" | jq -r '.effective.networkDevices')" = 0
+    check "N-T06: the previous boot's connector line is refused" refuses bssh "$(connect_cmd "$BOOT1")" true
+    check "pinned SSH works for the new boot" test "$(bssh "$(connect_cmd "$BOOT2")" echo ok)" = ok
+    # NET-09: a guest that stops its adapter loses SSH; nothing falls back.
+    guest "$BR" systemctl stop iso-ssh-vsock.socket >/dev/null 2>&1
+    check "NET-09: with the guest adapter stopped, SSH is unavailable" refuses bssh "$(connect_cmd "$BOOT2")" true
+    check "NET-09: and the VM still has no network device" \
+        test "$(sbx inspect "$BR" | jq -r '.effective.networkDevices')" = 0
+    # N-T14: guest root wedges its own shutdown (a unit systemd waits on
+    # forever); the owner's forced stop still ends the VM within its grace.
+    guest "$BR" systemd-run --quiet --unit=iso-test-wedge -p TimeoutStopSec=infinity \
+        -p KillSignal=SIGCONT -p SendSIGKILL=no sleep infinity >/dev/null
+    t0="$(now_ms)"
+    sbx stop "$BR" --timeout-seconds 120 >/dev/null 2>&1
+    wedge_ms=$(($(now_ms) - t0))
+    check "N-T14: a guest refusing to halt is stopped within the bounded grace (${wedge_ms} ms)" \
+        test "$(state "$BR")" = stopped -a "$wedge_ms" -ge 55000 -a "$wedge_ms" -lt 80000
+    check "a brokered sandbox can be deleted" sbx delete "$BR" --owner "$RUN"
+    rm -f "$WORK/brokered.blob" "$WORK/brokered.back"
 fi
 
 if want persistence; then
@@ -1113,6 +1310,152 @@ if want iso; then
         none destroy e2e-none >/dev/null 2>&1
     else
         fail "egress none: iso up creates and boots a host-only instance" "see $WORK/iso-up-none.log"
+    fi
+
+    # Brokered transport end to end through iso itself: no network device,
+    # SSH and workspace transfer over the runtime connector, effective state
+    # in machine output, and the refusals that keep it from widening.
+    jq '. + {egress: "none", network: {transport: "brokered"}}' "$CCFG" >"$WORK/iso-brokered.jsonc"
+    brk() { "$ISO" --config "$WORK/iso-brokered.jsonc" "$@" </dev/null; }
+    jq '. + {egress: "open", network: {transport: "brokered"}}' "$CCFG" >"$WORK/iso-brokered-open.jsonc"
+    check "brokered: egress open is refused by configuration" \
+        refuses "$ISO" --config "$WORK/iso-brokered-open.jsonc" status
+    mkdir -p "$WORK/project-brokered"
+    echo "brokered-$RUN" >"$WORK/project-brokered/marker"
+    if brk up "$WORK/project-brokered" --name e2e-brk --no-agents --no-github >"$WORK/iso-up-brokered.log" 2>&1; then
+        pass "brokered: iso up creates and boots a NIC-less instance"
+        bmid="$(machine_id e2e-brk)"
+        check "brokered: the runtime records the brokered mode" \
+            test "$(csbx inspect "$bmid" | jq -r .record.network)" = brokered
+        check "brokered: the live VM has no network device" \
+            test "$(csbx inspect "$bmid" | jq -r .effective.networkDevices)" = 0
+        check "brokered: the workspace is copied in over the stream" \
+            test "$(brk exec e2e-brk -- cat /workspace/marker)" = "brokered-$RUN"
+        check "brokered: no TCP to the Internet" \
+            refuses brk exec e2e-brk -- timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
+        bstatus="$(brk status e2e-brk --output json)"
+        check "brokered: machine status reports zero NICs and the boot's digest" \
+            jq -e '.result.network.effective.external_nic_count == 0 and .result.network.transport == "brokered" and (.result.network.effective.network_policy_digest | length) == 64' <<<"$bstatus"
+        check "brokered: the boot's digest is the one the runtime enforces" \
+            test "$(jq -r .result.network.effective.network_policy_digest <<<"$bstatus")" = "$(csbx inspect "$bmid" | jq -r .effective.networkPolicy)"
+        check "brokered: text status names the transport" grep -q 'Network: brokered' <<<"$(brk status e2e-brk)"
+        brk exec e2e-brk -- sh -c 'echo from-guest > /workspace/marker' >/dev/null
+        check "brokered: iso pull returns guest changes over the stream" brk pull e2e-brk
+        check "brokered: the pulled change reached the project" test "$(cat "$WORK/project-brokered/marker")" = from-guest
+        # The same egress under vmnet, so the transport check (not egress) refuses it.
+        vmnet_refusal="$(none exec e2e-brk -- true 2>&1)"
+        check "brokered: a vmnet configuration refuses the instance" \
+            grep -q 'created with network.transport brokered' <<<"$vmnet_refusal"
+        check "brokered: iso stop stops it" brk stop e2e-brk
+        check "brokered: iso start boots it again" brk start e2e-brk --no-agents --no-github
+        check "brokered: the restarted VM still has no network device" \
+            test "$(csbx inspect "$bmid" | jq -r .effective.networkDevices)" = 0
+        check "brokered: pinned SSH works after restart" test "$(brk exec e2e-brk -- echo ok)" = ok
+        # N-T09: the managed alias editors use carries the connector, and the
+        # sandboxed editor's transport (a tunnel to guest-loopback sshd, then a
+        # pinned login through it) works over the stream.
+        mkdir -p "$WORK/edhome"
+        HOME="$WORK/edhome" brk ssh-config e2e-brk >/dev/null 2>&1
+        edcfg="$WORK/edhome/.ssh/config"
+        check "N-T09: the managed alias is the runtime connector, not an address" \
+            grep -q "ProxyCommand .*iso-sandbox connect " "$edcfg"
+        check "N-T09: ssh through the managed alias reaches the guest" \
+            test "$(ssh -F "$edcfg" iso-e2e-brk echo ok </dev/null)" = ok
+        ssh -F "$edcfg" -N -o ExitOnForwardFailure=yes -L 127.0.0.1:47795:127.0.0.1:22 iso-e2e-brk </dev/null &
+        edtun=$!
+        sleep 2
+        check "N-T09: the editor tunnel reaches guest sshd over the stream" \
+            test "$(ssh -F "$edcfg" -o HostName=127.0.0.1 -o Port=47795 -o ProxyCommand=none iso-e2e-brk echo ok </dev/null)" = ok
+        kill "$edtun" 2>/dev/null
+        wait "$edtun" 2>/dev/null
+        brk destroy e2e-brk >/dev/null 2>&1
+    else
+        fail "brokered: iso up creates and boots a NIC-less instance" "see $WORK/iso-up-brokered.log"
+    fi
+
+    # Brokered with filtered egress: the guest's only way out is the CONNECT
+    # companion over its reverse tunnel, for the approved host only.
+    if swift build --package-path iso-egress --product iso-egress --force-resolved-versions \
+        --scratch-path "$WORK/egress-build" >"$WORK/egress-build.log" 2>&1 &&
+        cp "$WORK/egress-build/debug/iso-egress" "$(dirname "$ISO")/iso-egress"; then
+        jq '. + {egress: "filtered", egress_filter: {allowed_hosts: ["github.com", "ghcr.io", "pkg-containers.githubusercontent.com"]}, network: {transport: "brokered"}}' \
+            "$CCFG" >"$WORK/iso-brokered-filtered.jsonc"
+        bf() { "$ISO" --config "$WORK/iso-brokered-filtered.jsonc" "$@" </dev/null; }
+        mkdir -p "$WORK/project-bf"
+        if bf up "$WORK/project-bf" --name e2e-bf --no-agents --no-github >"$WORK/iso-up-bf.log" 2>&1; then
+            pass "brokered filtered: iso up boots a NIC-less instance with the CONNECT companion"
+            check "brokered filtered: the live VM has no network device" \
+                test "$(csbx inspect "$(machine_id e2e-bf)" | jq -r .effective.networkDevices)" = 0
+            # Positive witness: guest sessions carry the companion as their proxy,
+            # so the refusals below come from the companion, not from a missing proxy.
+            # shellcheck disable=SC2016 # Expand in the guest.
+            check "brokered filtered: guest sessions carry the companion proxy" \
+                test "$(bf exec e2e-bf -- sh -c 'echo "${https_proxy%%@*}" | cut -d: -f1-2')" = "http://iso"
+            # curl_rc ARGS...: curl's stderr and exit status in the guest.
+            # shellcheck disable=SC2016 # Expand in the guest.
+            curl_rc() { bf exec e2e-bf -- sh -c 'curl -sS -o /dev/null --max-time 30 "$@" 2>&1; echo "rc=$?"' sh "$@"; }
+            approved="$(curl_rc https://github.com/)"
+            if [[ "$approved" == "rc=0" ]]; then
+                pass "N-T10: the approved host is reachable through the companion"
+            else
+                fail "N-T10: the approved host is reachable through the companion" "$approved"
+            fi
+            # 56: the CONNECT was answered with a refusal by the companion.
+            check "N-T10: an unapproved host is refused by the companion" \
+                grep -q 'rc=56$' <<<"$(curl_rc https://www.apple.com/)"
+            check "N-T10: an IP literal is refused by the companion" \
+                grep -q 'rc=56$' <<<"$(curl_rc https://1.1.1.1/)"
+            check "N-T10: bypassing the proxy has no route" \
+                refuses grep -q 'rc=0$' <<<"$(curl_rc --noproxy '*' https://github.com/)"
+            check "brokered filtered: machine status shows the filtered profile" \
+                test "$(bf status e2e-bf --output json | jq -r '.result.network.effective.public_egress.allowed_hosts | join(",")')" = ghcr.io,github.com,pkg-containers.githubusercontent.com
+            # N-T11: named tools through the companion, and nothing else.
+            check "N-T11: git over HTTPS reaches an approved host" \
+                bf exec e2e-bf -- git ls-remote https://github.com/apple/containerization HEAD
+            check "N-T11: git to an unapproved host is refused" \
+                refuses bf exec e2e-bf -- git ls-remote https://gitlab.com/gitlab-org/gitlab HEAD
+            check "N-T11: the Docker daemon is configured with the companion" \
+                bf exec e2e-bf -- sh -c 'systemctl show docker -p Environment | grep -q "HTTPS_PROXY=http://iso:.*@127.0.0.1:"'
+            check "N-T11: the Docker daemon pulls an image from an approved registry" \
+                bf exec e2e-bf -- sudo docker pull -q ghcr.io/containerd/busybox:1.36
+            check "N-T11: a pull from an unapproved registry fails" \
+                refuses bf exec e2e-bf -- sudo docker pull -q registry-1.docker.io/library/busybox:1.36
+            # A container reaches the companion through the guest bridge on the
+            # Docker gateway; its CONNECT is admitted only for approved hosts.
+            # shellcheck disable=SC2016 # Expand in the container.
+            # busybox base64 wraps at 76 columns and its nc quits at stdin EOF,
+            # so unwrap the credential and hold stdin open for the reply.
+            connect_from_container='u=${HTTPS_PROXY#http://}; c=${u%@*}; a=${u#*@}
+                (printf "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\nProxy-Authorization: Basic %s\r\n\r\n" "$1" "$1" "$(printf %s "$c" | base64 | tr -d "\n")"; sleep 5) |
+                timeout 15 nc "${a%:*}" "${a#*:}" | head -1'
+            check "N-T11: containers get the bridge proxy and reach an approved host" \
+                grep -q " 200 " <<<"$(bf exec e2e-bf -- docker run --rm ghcr.io/containerd/busybox:1.36 sh -c "$connect_from_container" sh github.com 2>&1)"
+            check "N-T11: a container's CONNECT to an unapproved host is refused" \
+                grep -q " 403 " <<<"$(bf exec e2e-bf -- docker run --rm ghcr.io/containerd/busybox:1.36 sh -c "$connect_from_container" sh www.apple.com 2>&1)"
+            check "N-T11: a container has no direct route out" \
+                refuses bf exec e2e-bf -- docker run --rm ghcr.io/containerd/busybox:1.36 timeout 5 nc -z 1.1.1.1 443
+            # N-T03: a privileged host-network container is guest root with the
+            # guest's own network stack; it finds no uplink and cannot make one.
+            check "N-T03: a privileged host-network container runs (control)" \
+                bf exec e2e-bf -- sudo docker run --rm --privileged --network host ghcr.io/containerd/busybox:1.36 true
+            # shellcheck disable=SC2016 # Expand in the container.
+            check "N-T03: a privileged host-network container sees only loopback and the Docker bridge" \
+                test "$(bf exec e2e-bf -- sudo docker run --rm --privileged --network host ghcr.io/containerd/busybox:1.36 sh -c 'ip -o link | grep -v -e " lo:" -e " docker0:" | wc -l' | xargs)" = 0
+            # The guest kernel has no dummy or veth support, so the container
+            # gives the bridge an extra address and a default route through it.
+            uplink="$(bf exec e2e-bf -- sudo docker run --rm --privileged --network host ghcr.io/containerd/busybox:1.36 \
+                sh -c 'ip addr add 10.99.0.2/24 dev docker0 && ip route add default via 10.99.0.1 dev docker0 && echo route-made
+                    timeout 5 nc -z 1.1.1.1 443 && echo reached
+                    ip route del default via 10.99.0.1 dev docker0; ip addr del 10.99.0.2/24 dev docker0' 2>&1)"
+            check "N-T03: a privileged container's own address and default route reach nothing" \
+                test "$(grep -c -e route-made -e reached <<<"$uplink")" = 1
+            bf destroy e2e-bf >/dev/null 2>&1
+        else
+            fail "brokered filtered: iso up boots a NIC-less instance with the CONNECT companion" "see $WORK/iso-up-bf.log"
+        fi
+        rm -f "$(dirname "$ISO")/iso-egress"
+    else
+        fail "brokered filtered: iso-egress builds" "see $WORK/egress-build.log"
     fi
 
     # Session TTL: the owner halts the VM at the deadline on its own.

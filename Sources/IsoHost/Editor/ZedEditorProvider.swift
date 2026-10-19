@@ -71,6 +71,6 @@ package struct ZedEditorProvider: EditorProvider {
         "ssh://\(enclave.alias)\(percentEncodeGuestPath(context.target.guestPath))",
       ],
       keyOptions: [], usesForwardPort: false, terminal: false,
-      machServicePrefix: bundleIdentity.identifier + ".")
+      machServicePrefix: bundleIdentity.identifier + ".", fileTransfer: upload)
   }
 }

@@ -19,6 +19,20 @@ package enum IsolationGate {
     ("cgroup2", "none", "/sys/fs/cgroup"), ("devpts", "devpts", "/dev/pts"),
   ]
 
+  /// The network a sandbox must have been created with. A brokered boot is
+  /// always gated against the network-policy digest it was started with.
+  package enum ExpectedNetwork: Sendable, Equatable {
+    case vmnet
+    case brokered(networkPolicy: SHA256Hex)
+
+    package var transport: NetworkTransport {
+      switch self {
+      case .vmnet: .vmnet
+      case .brokered: .brokered
+      }
+    }
+  }
+
   /// What the gate compares the runtime's report against.
   package struct Expected: Sendable {
     package let sandbox: MachineName
@@ -27,17 +41,21 @@ package enum IsolationGate {
     package let resources: Resources
     /// The configured egress policy the sandbox must have been created with.
     package let egress: EgressMode
+    package let network: ExpectedNetwork
 
     package init(
       sandbox: MachineName, owner: OwnerID, runtimeRoot: String, resources: Resources,
-      egress: EgressMode
+      egress: EgressMode, network: ExpectedNetwork = .vmnet
     ) {
       self.sandbox = sandbox
       self.owner = owner
       self.runtimeRoot = runtimeRoot
       self.resources = resources
       self.egress = egress
+      self.network = network
     }
+
+    package var transport: NetworkTransport { network.transport }
   }
 
   /// Process-local proof that a sandbox's current boot passed the gate. Not
@@ -47,12 +65,17 @@ package enum IsolationGate {
     package let sandbox: MachineName
     /// PID of the owner process; a different PID later means a restart.
     package let ownerPID: Int32
-    package let ipv4: IPv4Address
-    fileprivate init(sandbox: MachineName, ownerPID: Int32, ipv4: IPv4Address) {
+    /// How this boot is reached: its vmnet address, or the brokered
+    /// connector bound to this boot and its verified digests.
+    package let route: GuestRoute
+    fileprivate init(sandbox: MachineName, ownerPID: Int32, route: GuestRoute) {
       self.sandbox = sandbox
       self.ownerPID = ownerPID
-      self.ipv4 = ipv4
+      self.route = route
     }
+
+    /// Nil for a brokered boot, which has no address.
+    package var ipv4: IPv4Address? { route.ipv4 }
   }
 
   package static func rootfsPath(runtimeRoot: String, sandbox: MachineName) -> String {
@@ -81,17 +104,26 @@ package enum IsolationGate {
       )
     }
     let hostOnly: Bool
+    let transport: NetworkTransport
     switch network {
-    case "shared": hostOnly = false
-    case "host_only": hostOnly = true
+    case "shared": (hostOnly, transport) = (false, .vmnet)
+    case "host_only": (hostOnly, transport) = (true, .vmnet)
+    case "brokered": (hostOnly, transport) = (true, .brokered)
     case let other:
       throw .unqualified(
         "sandbox \(expected.sandbox) records unknown network mode \(debugQuoted(sanitizeForDisplay(other)))"
       )
     }
+    guard transport == expected.transport else {
+      throw .networkIsolation(
+        "sandbox \(expected.sandbox) was created with the \(transport.rawValue) transport but the configuration says network.transport \(expected.transport.rawValue); the transport is fixed when an instance is created — recreate it (iso destroy, then iso up) or change `network.transport` back"
+      )
+    }
     guard hostOnly == expected.egress.requiresHostOnlyNetwork else {
       throw .networkIsolation(
-        "sandbox \(expected.sandbox) was created with \(hostOnly ? "host-only" : "shared") networking but the configuration says egress \(expected.egress.rawValue); egress is fixed when an instance is created — recreate it (iso destroy, then iso up) or change `egress` back"
+        transport == .brokered
+          ? "sandbox \(expected.sandbox) is brokered but the configuration says egress \(expected.egress.rawValue); a brokered VM supports egress none or filtered only"
+          : "sandbox \(expected.sandbox) was created with \(hostOnly ? "host-only" : "shared") networking but the configuration says egress \(expected.egress.rawValue); egress is fixed when an instance is created — recreate it (iso destroy, then iso up) or change `egress` back"
       )
     }
     guard recorded == expected.resources else {
@@ -130,7 +162,19 @@ package enum IsolationGate {
     guard let live = inspection.live, let effective = inspection.effective else {
       throw .unqualified("running sandbox \(name) reports no live state or effective configuration")
     }
-    guard let ip = live.ipv4 else { throw .networkIsolation("sandbox \(name) reports no address") }
+    let route: GuestRoute
+    switch expected.network {
+    case .vmnet:
+      guard effective.brokered == nil else {
+        throw .unqualified("vmnet sandbox \(name) reports brokered transport fields")
+      }
+      guard let ip = live.ipv4 else {
+        throw .networkIsolation("sandbox \(name) reports no address")
+      }
+      route = .vmnet(ip)
+    case .brokered(let networkPolicy):
+      route = .brokered(try verifyBrokered(name, live, effective, networkPolicy: networkPolicy))
+    }
     try verifySessionOpen(
       name, expiresAt: inspection.record.expiresAt, deadline: inspection.record.sessionDeadline)
     let running = Resources(cpus: effective.cpus, memoryBytes: effective.memoryBytes)
@@ -144,14 +188,61 @@ package enum IsolationGate {
       )
     }
     try verifyHostExposure(name, effective, runtimeRoot: expected.runtimeRoot)
-    try verifyNetwork(name, effective, ip, egress: expected.egress)
+    if case .vmnet(let ip) = route {
+      try verifyNetwork(name, effective, ip, egress: expected.egress)
+    }
     guard effective.initArgv == ["/sbin/init"], !effective.virtualization else {
       let argv = "[" + effective.initArgv.map(debugQuoted).joined(separator: ", ") + "]"
       throw .hostExposure(
         "sandbox \(name) runs \(argv) with nested virtualization \(effective.virtualization); expected /sbin/init without it"
       )
     }
-    return Ready(sandbox: name, ownerPID: live.pid, ipv4: ip)
+    return Ready(sandbox: name, ownerPID: live.pid, route: route)
+  }
+
+  /// The brokered half of the gate (NET-01, NET-02): the owner's reading of
+  /// the live VM shows no network device and one socket device, no address
+  /// or interface is reported, the channel policy is exactly iso's, and the
+  /// boot carries the network-policy digest iso started it with.
+  static func verifyBrokered(
+    _ name: MachineName, _ live: LiveState, _ effective: Effective, networkPolicy wanted: SHA256Hex
+  ) throws(RuntimeError) -> BrokeredRoute {
+    guard let brokered = effective.brokered,
+      brokered.transport == NetworkTransport.brokered.rawValue
+    else {
+      throw .networkIsolation(
+        "sandbox \(name) does not report the brokered transport (reports \(debugQuoted(sanitizeForDisplay(effective.brokered?.transport ?? "none"))))"
+      )
+    }
+    guard live.ipv4 == nil, effective.interfaces.isEmpty else {
+      throw .networkIsolation(
+        "brokered sandbox \(name) reports \(effective.interfaces.count) network interfaces and address \(live.ipv4?.description ?? "none"); expected none"
+      )
+    }
+    guard brokered.networkDevices == 0, brokered.socketDevices == 1 else {
+      throw .networkIsolation(
+        "brokered sandbox \(name)'s VM has \(brokered.networkDevices) network and \(brokered.socketDevices) socket devices; expected 0 and 1"
+      )
+    }
+    let channel = BrokeredChannel.digest
+    guard brokered.channelPolicy == BrokeredChannel.expected,
+      brokered.channelPolicyDigest == channel.rawValue
+    else {
+      throw .hostExposure(
+        "brokered sandbox \(name) reports a channel policy other than iso's (digest \(debugQuoted(sanitizeForDisplay(brokered.channelPolicyDigest))), expected \(channel))"
+      )
+    }
+    guard brokered.networkPolicy == wanted.rawValue else {
+      throw .networkIsolation(
+        "brokered sandbox \(name) was started with network policy \(debugQuoted(sanitizeForDisplay(brokered.networkPolicy ?? "none"))), not the recorded \(wanted)"
+      )
+    }
+    guard let boot = try? BootID(live.bootId) else {
+      throw .unqualified("brokered sandbox \(name) reports an invalid boot id")
+    }
+    return BrokeredRoute(
+      bootID: boot, channelPolicy: channel, networkPolicy: wanted,
+      networkDevices: brokered.networkDevices)
   }
 
   static func verifyHostExposure(_ name: MachineName, _ effective: Effective, runtimeRoot: String)
@@ -344,6 +435,6 @@ extension IsolationGate {
     if case .confirmedThisBoot = helper, let pending = macPending(inspection) {
       throw .operationUncertain("sandbox \(name) is not ready: \(pending)")
     }
-    return Ready(sandbox: name, ownerPID: live.pid, ipv4: ip)
+    return Ready(sandbox: name, ownerPID: live.pid, route: .vmnet(ip))
   }
 }

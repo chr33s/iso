@@ -62,7 +62,7 @@ package struct SandboxedEditorSession {
     let policy = EditorSandboxPolicy(
       tunnelPort: tunnelPort, forwardPort: plan.usesForwardPort ? forwardPort : nil,
       terminal: plan.terminal, machServicePrefix: plan.machServicePrefix,
-      capabilities: capabilities)
+      capabilities: capabilities, fileTransfer: plan.fileTransfer)
     try guest.requireHandoff()
     try revalidate()
     let arguments =

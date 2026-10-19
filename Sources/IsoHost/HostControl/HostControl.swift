@@ -47,14 +47,19 @@ package struct VMObservation: Sendable, Equatable {
   package let image: ImageName?
   /// The VM's network policy (absent once destroyed).
   package let egress: EgressMode?
+  /// The gate-approved network proof of a running brokered boot; absent for
+  /// vmnet VMs and whenever the VM is not running.
+  package let network: NetworkProof?
 
   package init(
     instance: QualifiedInstance, name: InstanceName, generation: UInt64, state: ObservedState,
     bootID: BootID?, policyHash: SHA256Hex?, expiresAt: WireTime?, observedAt: WireTime,
-    activeOperation: HostOperationID?, image: ImageName? = nil, egress: EgressMode? = nil
+    activeOperation: HostOperationID?, image: ImageName? = nil, egress: EgressMode? = nil,
+    network: NetworkProof? = nil
   ) {
     self.image = image
     self.egress = egress
+    self.network = network
     self.instance = instance
     self.name = name
     self.generation = generation
@@ -79,6 +84,7 @@ package struct VMObservation: Sendable, Equatable {
     b.setIfPresent("active_operation", activeOperation)
     b.setIfPresent("image", image)
     if let egress { b.set("egress", egress.rawValue) }
+    if let network { b.set("network", network.wire) }
     return b.value
   }
 
@@ -106,6 +112,57 @@ package struct VMObservation: Sendable, Equatable {
     } else {
       egress = nil
     }
+    network = try r.raw("network").map { value throws(HostControlError) in
+      try NetworkProof(wire: value)
+    }
+    try r.finish()
+    // A proof is only for the running boot it names.
+    if let network, state != .running || network.bootID != bootID {
+      throw .invalidRequest("observation.network does not match the running boot")
+    }
+  }
+}
+
+/// Spec 6.2's network fields for a brokered boot, read from a fresh gate pass
+/// on the worker. An observation, never a credential: access handoff gates the
+/// boot again. Every member is required and the shape is closed, so a client
+/// refuses a proof it does not fully understand.
+package struct NetworkProof: Sendable, Equatable {
+  package static let transport = "brokered"
+  package let bootID: BootID
+  package let networkPolicy: SHA256Hex
+  package let channelPolicy: SHA256Hex
+
+  package init(bootID: BootID, networkPolicy: SHA256Hex, channelPolicy: SHA256Hex) {
+    self.bootID = bootID
+    self.networkPolicy = networkPolicy
+    self.channelPolicy = channelPolicy
+  }
+
+  /// The gate admits only a NIC-less boot, so the count is a constant.
+  package var externalNICCount: UInt64 { 0 }
+
+  package var wire: JSONValue {
+    var b = WireBuilder()
+    b.set("transport", Self.transport)
+    b.set("boot_id", bootID)
+    b.set("external_nic_count", externalNICCount)
+    b.set("network_policy_digest", networkPolicy)
+    b.set("channel_policy_digest", channelPolicy)
+    return b.value
+  }
+
+  package init(wire value: JSONValue) throws(HostControlError) {
+    var r = try WireObject(value, field: "observation.network")
+    guard try r.string("transport") == Self.transport else {
+      throw .invalidRequest("unsupported observation.network.transport")
+    }
+    bootID = try r.parsed("boot_id", BootID.init)
+    guard try r.unsigned("external_nic_count", as: UInt64.self) == 0 else {
+      throw .invalidRequest("observation.network reports an external network device")
+    }
+    networkPolicy = try r.parsed("network_policy_digest", SHA256Hex.init)
+    channelPolicy = try r.parsed("channel_policy_digest", SHA256Hex.init)
     try r.finish()
   }
 }

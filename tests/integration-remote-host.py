@@ -46,6 +46,7 @@ class Runner:
         self.cases = []
         self.environment = dict(os.environ)
         self.cleanup = []
+        self.work = None  # Scratch root (--local/--loopback only).
 
     # -- evidence ---------------------------------------------------------
 
@@ -100,6 +101,16 @@ class Runner:
                 "enroll", "no --remote host given (use --local for this Mac, or two prepared Macs)")
         if not self.args.agent_path:
             return self.blocked("enroll", "no --agent-path given")
+        if not self.args.loopback:
+            # A client-side ssh that refuses every hop while `management-cut`
+            # exists, as a lost client network would (management-disconnect).
+            self.cut_dir = Path(tempfile.mkdtemp(prefix="iso-hc-remote-"))
+            wrapper = self.cut_dir / "ssh"
+            wrapper.write_text(
+                f"#!/bin/sh\n[ -e '{self.cut_dir / 'management-cut'}' ] && "
+                "{ echo 'ssh: Network is unreachable' >&2; exit 255; }\nexec /usr/bin/ssh \"$@\"\n")
+            wrapper.chmod(0o755)
+            self.environment["PATH"] = f"{self.cut_dir}:{self.environment.get('PATH', '/usr/bin:/bin')}"
         result = self.iso_cmd(
             "host", "add", self.args.name, "--ssh", self.args.remote, "--agent-path", self.args.agent_path,
             timeout=120)
@@ -125,17 +136,28 @@ class Runner:
         bin_dir.mkdir()
         wrapper = bin_dir / "ssh"
         # Only the management hop gets the scratch pin; guest hops carry their own.
+        # --loopback-key: a dedicated login key for the management hop, for a
+        # Mac whose own keys only unlock through the agent.
+        identity = (f" -i '{self.args.loopback_key}' -o IdentitiesOnly=yes"
+                    if self.args.loopback_key else "")
+        # A `management-cut` file in the work directory refuses the management
+        # hop, as a lost network would (management-disconnect).
         wrapper.write_text(
             "#!/bin/sh\ncase \"$1 $*\" in *UserKnownHostsFile=*|-F*) exec /usr/bin/ssh \"$@\" ;; esac\n"
+            f"[ -e '{work / 'management-cut'}' ] && {{ echo 'ssh: connect to host 127.0.0.1: Network is unreachable' >&2; exit 255; }}\n"
             "exec /usr/bin/ssh -o UserKnownHostsFile=" + str(work / "known_hosts")
-            + " -o GlobalKnownHostsFile=/dev/null \"$@\"\n")
+            + " -o GlobalKnownHostsFile=/dev/null" + identity + " \"$@\"\n")
         wrapper.chmod(0o755)
         self.environment["PATH"] = f"{bin_dir}:{self.environment.get('PATH', '/usr/bin:/bin')}"
+        # iso's management ssh runs without the caller's agent socket, so the
+        # probe does too: a key that only the agent can unlock cannot enroll.
+        probe_env = {k: v for k, v in self.environment.items() if k != "SSH_AUTH_SOCK"}
         probe = subprocess.run(["ssh", "-o", "BatchMode=yes", "127.0.0.1", "true"],
-                               capture_output=True, text=True, timeout=30, env=self.environment)
+                               capture_output=True, text=True, timeout=30, env=probe_env)
         if probe.returncode != 0:
             return self.record("enroll", "blocked", started,
-                               reason="non-interactive ssh to 127.0.0.1 failed: " + tail(probe.stderr, 200))
+                               reason="non-interactive ssh to 127.0.0.1 without an agent failed "
+                               "(iso's management ssh uses no agent): " + tail(probe.stderr, 200))
         client = json.loads(Path(worker_config).read_text())
         client["data_dir"] = str(work / "client-data")
         (work / "client.jsonc").write_text(json.dumps(client))
@@ -202,7 +224,7 @@ class Runner:
         """Q4 (sleep/wake): a session lease lapses across host sleep, and a
         deadline that passed during sleep is enforced on wake."""
         started = time.monotonic()
-        ttl = 240
+        ttl = self.args.sleep_ttl
         self.iso_cmd("host", "vm", "stop", self.args.name, self.instance, timeout=600)
         start = self.iso_cmd("host", "vm", "start", self.args.name, self.instance, "--ttl", f"{ttl}s", timeout=600)
         if start.returncode != 0:
@@ -267,6 +289,12 @@ class Runner:
             "proxy": {provider: {"credential": f"cmd:printf %s {fake}", "auth": "bearer"}
                       for provider, fake in FAKE_CREDENTIALS.items()},
         }
+        if self.args.brokered:
+            # The worker's own configuration selects the transport: its VMs have
+            # no network device and the relay's last hop is the runtime connector.
+            # A brokered worker refuses the default `egress: "open"`.
+            config["network"] = {"transport": "brokered"}
+            config["egress"] = "none"
         (work / "iso.jsonc").write_text(json.dumps(config))
         if self.args.quarantine_subnets:
             # vmnet keeps subnets of uncleanly ended VMs reserved for hours, and
@@ -281,6 +309,7 @@ class Runner:
                 json.dumps({"quarantined": {str(n): now for n in range(low, high + 1)}}))
         self.args.config = str(work / "iso.jsonc")
         self.args.name = "local"
+        seed_initfs(work / "data/backends/apple-container-v1")
         setup = self.iso_cmd("setup", "--profile", "boundary-fixture", timeout=3_600)
         if setup.returncode != 0 and "failed to create vmnet network" in setup.stderr + setup.stdout:
             # The host cannot create VM networks (no GUI session, missing
@@ -495,7 +524,50 @@ class Runner:
         result = self.iso_cmd("host", "vm", "start", self.args.name, name, "--ttl", "30m", timeout=900)
         if result.returncode != 0:
             return self.record("start", "fail", started, reason=tail(result.stderr + result.stdout))
-        return self.record("start", "pass", started, receipt=tail(result.stdout))
+        self.record("start", "pass", started, receipt=tail(result.stdout))
+        if self.args.brokered and (self.work or self.args.remote_sandbox):
+            return self.brokered_shape()
+        return True
+
+    def brokered_shape(self):
+        """The worker's running VM has no network device: the relay below can
+        only have reached it through the runtime connector."""
+        started = time.monotonic()
+        if self.args.remote_sandbox:
+            # A remote worker's runtime, read over the management ssh alias.
+            sandbox, root = self.args.remote_sandbox.split(":", 1)
+
+            def runtime(*argv):
+                return subprocess.run(["ssh", "-o", "BatchMode=yes", self.args.remote, "--", sandbox, *argv],
+                                      capture_output=True, text=True, timeout=60, env=self.environment)
+        else:
+            root = str(self.work / "data/backends/apple-container-v1/runtime")
+
+            def runtime(*argv):
+                return subprocess.run([self.args.sandbox, *argv], capture_output=True, text=True, timeout=60)
+        listed = runtime("list", "--root", root)
+        shapes, digests = [], []
+        for entry in json.loads(listed.stdout or "[]"):
+            if entry.get("status") != "running":
+                continue
+            inspect = runtime("inspect", "--root", root, entry["id"])
+            data = json.loads(inspect.stdout)
+            shapes.append((data["record"]["network"], (data.get("effective") or {}).get("networkDevices"),
+                           (data.get("live") or {}).get("ipv4")))
+            digests.append((data.get("effective") or {}).get("networkPolicy"))
+        ok = shapes and all(s == ("brokered", 0, None) for s in shapes)
+        self.record("brokered-shape", "pass" if ok else "fail", started, shapes=shapes)
+        # The client sees the same proof over iso.host/v1 (spec 6.2).
+        started = time.monotonic()
+        inspect = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120)
+        lines = inspect.stdout.splitlines()
+        proof = (inspect.returncode == 0 and ": running" in (lines[0] if lines else "")
+                 and "  network brokered (0 external network devices)" in lines
+                 and len(digests) == 1 and f"  network policy {digests[0]}" in lines
+                 and any(line.startswith("  channel policy ") for line in lines))
+        self.record("brokered-remote-proof", "pass" if proof else "fail", started,
+                    output=tail(inspect.stdout + inspect.stderr), runtime_digests=digests)
+        return ok and proof
 
     def relay_round_trip(self):
         started = time.monotonic()
@@ -534,6 +606,212 @@ class Runner:
         finally:
             if session.poll() is None:
                 session.kill()
+
+    def open_session(self):
+        """`iso host session` in the background; (process, ssh config, alias)."""
+        command = [self.iso] + (["--config", self.args.config] if self.args.config else []) + [
+            "host", "session", self.args.name, self.instance]
+        session = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.environment)
+        parts = session.stdout.readline().strip().split()
+        if len(parts) != 4 or parts[0] != "ssh":
+            session.kill()
+            return None
+        return session, parts[2], parts[3]
+
+    def worker(self, *argv, timeout=60):
+        """A command on the worker: this Mac, or the remote over ssh."""
+        if self.args.remote and not self.args.loopback:
+            return subprocess.run(["/usr/bin/ssh", "-o", "BatchMode=yes", self.args.remote, "--", *argv],
+                                  capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout)
+
+    def service_label(self):
+        if self.args.remote_sandbox and not self.work:
+            runtime = self.args.remote_sandbox.split(":", 1)[1]
+            installation = self.worker("cat", str(Path(runtime).parent / "host-control/installation.json")).stdout
+        else:
+            installation = (self.work / "data/backends/apple-container-v1/host-control/installation.json").read_text()
+        host_id = json.loads(installation)["hostID"]
+        return "dev.iso.host-control." + host_id.replace("-", "")[:12]
+
+    def restart_worker_service(self):
+        uid = self.worker("id", "-u").stdout.strip()
+        return self.worker("launchctl", "kickstart", "-k", f"user/{uid}/{self.service_label()}")
+
+    def management_disconnect(self):
+        """N-T12 (disconnect): the management link to the worker is down for
+        longer than the access lease. The lapsed grant stays dead when the
+        link returns, the VM keeps its boot and transport, nothing falls back
+        to an address route, and a new session works."""
+        started = time.monotonic()
+        cut = (self.work if self.work else self.cut_dir) / "management-cut"
+        before = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120).stdout
+        opened = self.open_session()
+        if not opened:
+            return self.record("management-disconnect", "fail", started, reason="could not open a session")
+        session, config, alias = opened
+        try:
+            pre = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, timeout=60,
+                                 env=self.environment).returncode
+            cut.touch()  # The PATH ssh wrapper now refuses every management hop.
+            during = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, timeout=60,
+                                    env=self.environment).returncode
+            time.sleep(45)  # Past the 30 s lease and several renewals.
+            cut.unlink()
+            stale = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, timeout=60,
+                                   env=self.environment).returncode
+            try:
+                session.wait(timeout=30)
+                coordinator = f"exited {session.returncode}"
+            except subprocess.TimeoutExpired:
+                coordinator = "still running"
+        finally:
+            cut.unlink(missing_ok=True)
+            if session.poll() is None:
+                session.kill()
+        after = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120).stdout
+        fresh = self.open_session()
+        fresh_rc = None
+        if fresh:
+            fresh_rc = subprocess.run(["ssh", "-F", fresh[1], fresh[2], "true"], capture_output=True,
+                                      timeout=60, env=self.environment).returncode
+            fresh[0].send_signal(signal.SIGTERM)
+            fresh[0].wait(timeout=30)
+
+        def boot(text):
+            return next((line.split()[-1] for line in text.splitlines() if line.startswith("  boot ")), None)
+        evidence = {
+            "pre_disconnect_ssh": pre, "during_disconnect_ssh": during, "lapsed_grant_ssh": stale,
+            "coordinator": coordinator, "new_session_ssh": fresh_rc,
+            "boot_before": boot(before), "boot_after": boot(after),
+            "brokered_after": "  network brokered (0 external network devices)" in after.splitlines(),
+        }
+        ok = (pre == 0 and during != 0 and stale != 0 and fresh_rc == 0
+              and evidence["boot_before"] is not None and evidence["boot_before"] == evidence["boot_after"]
+              and (evidence["brokered_after"] or not self.args.brokered))
+        return self.record("management-disconnect", "pass" if ok else "fail", started, **evidence)
+
+    def worker_reboot(self):
+        """N-T12 (worker reboot): with a brokered VM running and a client
+        session lost, the worker Mac restarts. Afterwards the old grant is
+        refused, the VM has not come back on its own, and a fresh start boots
+        a new brokered VM that a new session reaches."""
+        started = time.monotonic()
+
+        def boot(text):
+            return next((line.split()[-1] for line in text.splitlines() if line.startswith("  boot ")), None)
+
+        def boottime():
+            result = self.worker("sysctl", "-n", "kern.boottime")
+            return result.stdout.strip() if result.returncode == 0 else None
+
+        before = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120).stdout
+        opened = self.open_session()
+        if not opened:
+            return self.record("worker-reboot", "fail", started, reason="could not open a session")
+        session, config, alias = opened
+        pre = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, timeout=60,
+                             env=self.environment).returncode
+        session.kill()
+        session.wait(timeout=30)
+        booted = boottime()
+        # No sudo: ask the console session to restart. FileVault keeps the
+        # Mac offline until someone unlocks it at its screen.
+        self.worker("osascript", "-e", 'tell application "System Events" to restart', timeout=60)
+        print("worker-reboot: restart sent; unlock FileVault at the worker when it asks "
+              "(waiting up to 30 minutes)", flush=True)
+        deadline = time.monotonic() + 1800
+        rebooted = None
+        while time.monotonic() < deadline:
+            time.sleep(15)
+            try:
+                now = boottime()
+            except subprocess.TimeoutExpired:
+                now = None
+            if now and now != booted:
+                rebooted = now
+                break
+        if not rebooted:
+            return self.record("worker-reboot", "blocked", started,
+                               reason="the worker did not come back with a new boot within 30 minutes")
+        # The worker's service answers once its login session is up again.
+        ready_after = None
+        back = time.monotonic()
+        while time.monotonic() - back < 300:
+            if self.iso_cmd("host", "inspect", self.args.name, timeout=120).returncode == 0:
+                ready_after = round(time.monotonic() - back, 1)
+                break
+            time.sleep(10)
+        stale = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, timeout=60,
+                               env=self.environment).returncode
+        after = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=300).stdout
+        state = (after.splitlines() or [""])[0].rsplit(": ", 1)[-1]
+        start = self.iso_cmd("host", "vm", "start", self.args.name, self.instance, "--ttl", "30m", timeout=900)
+        restarted = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120).stdout
+        fresh = self.open_session()
+        fresh_rc = None
+        if fresh:
+            fresh_rc = subprocess.run(["ssh", "-F", fresh[1], fresh[2], "true"], capture_output=True,
+                                      timeout=60, env=self.environment).returncode
+            fresh[0].send_signal(signal.SIGTERM)
+            fresh[0].wait(timeout=30)
+        evidence = {
+            "pre_reboot_ssh": pre, "stale_grant_ssh": stale, "state_after_reboot": state,
+            "boot_before": boot(before), "boot_after_reboot": boot(after), "start": start.returncode,
+            "boot_after_start": boot(restarted), "new_session_ssh": fresh_rc,
+            "service_ready_after_seconds": ready_after,
+            "start_error": tail(start.stderr) if start.returncode else None,
+            "brokered_after_start": "  network brokered (0 external network devices)" in restarted.splitlines(),
+        }
+        ok = (pre == 0 and stale != 0 and state != "running" and evidence["boot_after_reboot"] is None
+              and start.returncode == 0 and evidence["boot_after_start"] not in (None, evidence["boot_before"])
+              and fresh_rc == 0 and (evidence["brokered_after_start"] or not self.args.brokered))
+        return self.record("worker-reboot", "pass" if ok else "fail", started, **evidence)
+
+    def worker_restart(self):
+        """N-T12 (worker-service restart): a grant from before a restart is
+        fenced, the restarted service serves new sessions, and the VM keeps
+        its brokered boot (no fallback to an address route)."""
+        started = time.monotonic()
+        before = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120).stdout
+        opened = self.open_session()
+        if not opened:
+            return self.record("worker-restart", "fail", started, reason="could not open a session")
+        session, config, alias = opened
+        try:
+            pre = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, timeout=60,
+                                 env=self.environment).returncode
+            # A lost client: no clean close reaches the service.
+            session.kill()
+            session.wait(timeout=30)
+            restart = self.restart_worker_service()
+            time.sleep(3)
+            stale = subprocess.run(["ssh", "-F", config, alias, "true"], capture_output=True, text=True,
+                                   timeout=60, env=self.environment)
+        finally:
+            if session.poll() is None:
+                session.kill()
+        after = self.iso_cmd("host", "vm", "inspect", self.args.name, self.instance, timeout=120).stdout
+        fresh = self.open_session()
+        fresh_rc = None
+        if fresh:
+            fresh_rc = subprocess.run(["ssh", "-F", fresh[1], fresh[2], "true"], capture_output=True,
+                                      timeout=60, env=self.environment).returncode
+            fresh[0].send_signal(signal.SIGTERM)
+            fresh[0].wait(timeout=30)
+
+        def boot(text):
+            return next((line.split()[-1] for line in text.splitlines() if line.startswith("  boot ")), None)
+        evidence = {
+            "pre_restart_ssh": pre, "restart": restart.returncode, "stale_grant_ssh": stale.returncode,
+            "new_session_ssh": fresh_rc, "boot_before": boot(before), "boot_after": boot(after),
+            "brokered_after": "  network brokered (0 external network devices)" in after.splitlines(),
+        }
+        ok = (pre == 0 and restart.returncode == 0 and stale.returncode != 0 and fresh_rc == 0
+              and evidence["boot_before"] is not None and evidence["boot_before"] == evidence["boot_after"]
+              and (evidence["brokered_after"] or not self.args.brokered))
+        return self.record("worker-restart", "pass" if ok else "fail", started, **evidence)
 
     def teardown(self):
         ok = True
@@ -578,9 +856,16 @@ class Runner:
                 if self.args.sleep_wake:
                     self.sleep_wake()
                     return
+                if self.args.reboot_worker:
+                    self.worker_reboot()
+                    return
                 self.relay_round_trip()
                 self.push_and_stage()
                 self.remote_agent()
+                if self.args.remote:
+                    self.management_disconnect()
+                if self.args.local or self.args.loopback or self.args.remote_sandbox:
+                    self.worker_restart()
                 self.ttl_enforcement()
                 self.ttl_wedged_guest()
             else:
@@ -588,6 +873,17 @@ class Runner:
         finally:
             self.teardown()
 
+
+
+def seed_initfs(state):
+    """ISO_TEST_INITFS: seed the runtime root with an init filesystem a
+    previous successful `iso-sandbox init` pulled, so `iso setup` does not
+    depend on reaching ghcr.io. The seed is not re-verified."""
+    seed = os.environ.get("ISO_TEST_INITFS")
+    if seed:
+        runtime = Path(state) / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copyfile(seed, runtime / "initfs.ext4")
 
 def tail(text, limit=600):
     text = (text or "").strip()
@@ -624,10 +920,22 @@ def main():
     parser.add_argument("--local", action="store_true", help="qualify through this Mac's own host service")
     parser.add_argument("--loopback", action="store_true",
                         help="this Mac as an SSH worker for itself (scratch roots only)")
+    parser.add_argument("--remote-sandbox", metavar="SANDBOX:ROOT",
+                        help="--remote --brokered: the worker's iso-sandbox and runtime root, read over "
+                        "ssh to check its VMs have no network device")
+    parser.add_argument("--loopback-key", help="--loopback: private key for the management ssh hop "
+                        "(its public key must be in ~/.ssh/authorized_keys)")
     parser.add_argument("--sandbox", help="iso-sandbox binary for --local/--loopback (scripts/build-iso-sandbox.sh)")
     parser.add_argument("--keep", action="store_true", help="keep the --local work directory")
+    parser.add_argument("--brokered", action="store_true",
+                        help="--local: create the worker's VMs with network.transport \"brokered\"")
     parser.add_argument("--sleep-wake", action="store_true",
                         help="run only the Q4 sleep/wake case (puts this Mac to sleep)")
+    parser.add_argument("--reboot-worker", action="store_true",
+                        help="--remote: run only the worker-reboot case (restarts the remote Mac)")
+    parser.add_argument("--sleep-ttl", type=int, default=240,
+                        help="--sleep-wake: VM deadline in seconds; shorter than the sleep to "
+                        "check a deadline that passes during it")
     parser.add_argument("--quarantine-subnets", metavar="LOW-HIGH",
                         help="--local: skip 10.231.LOW..HIGH (subnets vmnet still holds)")
     parser.add_argument("--samples", type=int, default=20)

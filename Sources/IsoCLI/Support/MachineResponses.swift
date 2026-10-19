@@ -1,4 +1,5 @@
 import Foundation
+import IsoConfiguration
 import IsoCore
 import IsoHost
 
@@ -214,11 +215,106 @@ struct MachineStatusEntry: Encodable {
   let usage: Nullable<StatusOutput.Usage>
   /// The failed readiness proof of an unhealthy instance.
   let reason: Nullable<String>
+  /// Additive; present only for a brokered instance.
+  let network: MachineBrokeredNetwork?
 
   init(_ row: Status.Row) {
     instance = MachineInstance(row.instance, row.state)
     usage = Nullable(row.usage.map(StatusOutput.Usage.init))
     reason = Nullable(row.reason)
+    network = row.brokered.map(MachineBrokeredNetwork.init)
+  }
+
+  enum CodingKeys: String, CodingKey { case instance, usage, reason, network }
+
+  func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(instance, forKey: .instance)
+    try values.encode(usage, forKey: .usage)
+    try values.encode(reason, forKey: .reason)
+    try values.encodeIfPresent(network, forKey: .network)
+  }
+}
+
+/// A brokered instance's transport: what it was created with, what the
+/// configuration requests now, and the effective boot (null unless running
+/// and gate-approved). An observation, never a credential.
+struct MachineBrokeredNetwork: Encodable {
+  let transport = NetworkTransport.brokered.rawValue
+  let requestedTransport: String
+  let effective: Nullable<Effective>
+
+  struct Effective: Encodable {
+    let bootID: String
+    let externalNICCount: UInt32
+    let networkPolicyDigest: String
+    let channelPolicyDigest: String
+    let publicEgress: Nullable<PublicEgress>
+    let providerGrants: [String]
+    let localServices: [LocalService]
+    let fallback = "forbidden"
+
+    enum CodingKeys: String, CodingKey {
+      case bootID = "boot_id"
+      case externalNICCount = "external_nic_count"
+      case networkPolicyDigest = "network_policy_digest"
+      case channelPolicyDigest = "channel_policy_digest"
+      case publicEgress = "public_egress"
+      case providerGrants = "provider_grants"
+      case localServices = "local_services"
+      case fallback
+    }
+  }
+
+  struct PublicEgress: Encodable {
+    let profile: String
+    let allowedHosts: [String]
+
+    enum CodingKeys: String, CodingKey {
+      case profile
+      case allowedHosts = "allowed_hosts"
+    }
+  }
+
+  struct LocalService: Encodable {
+    let name: String
+    let guestPort: UInt16
+    let hostAddress: String
+    let hostPort: UInt16
+
+    enum CodingKeys: String, CodingKey {
+      case name
+      case guestPort = "guest_port"
+      case hostAddress = "host_address"
+      case hostPort = "host_port"
+    }
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case transport
+    case requestedTransport = "requested_transport"
+    case effective
+  }
+
+  init(_ status: Status.BrokeredStatus) {
+    requestedTransport = status.requestedTransport.rawValue
+    effective = Nullable(
+      status.effective.map { view in
+        Effective(
+          bootID: view.bootID.rawValue, externalNICCount: view.externalNICCount,
+          networkPolicyDigest: view.networkPolicy.rawValue,
+          channelPolicyDigest: view.channelPolicy.rawValue,
+          publicEgress: Nullable(
+            view.policy.publicEgress.map {
+              PublicEgress(profile: $0.profile, allowedHosts: $0.allowedHosts)
+            }),
+          providerGrants: view.policy.providerGrants,
+          localServices: view.policy.localServices.map {
+            LocalService(
+              name: $0.name, guestPort: $0.guestPort, hostAddress: $0.hostAddress,
+              hostPort: $0.hostPort)
+          })
+      })
   }
 }
 
@@ -395,6 +491,22 @@ struct MachineCapabilitiesResult: Encodable {
     }
   }
 
+  /// Compiled-in VM transports (`network.transport`). Static: whether the
+  /// installed runtime supports `brokered` is checked, and refused
+  /// explicitly, when an instance is created.
+  let networkTransports = NetworkTransports()
+
+  struct NetworkTransports: Encodable {
+    let transports = NetworkTransport.allCases.map(\.rawValue)
+    let brokeredGuestOS = ["linux"]
+    let brokeredRuntimeFeature = RuntimeProtocol.brokeredFeature
+    enum CodingKeys: String, CodingKey {
+      case transports
+      case brokeredGuestOS = "brokered_guest_os"
+      case brokeredRuntimeFeature = "brokered_runtime_feature"
+    }
+  }
+
   let editorProviders = EditorProviderID.allCases.map(\.provider).map {
     EditorProvider(
       id: $0.id.rawValue, displayName: $0.displayName,
@@ -407,5 +519,6 @@ struct MachineCapabilitiesResult: Encodable {
     case machineAPIVersions = "machine_api_versions"
     case editorProviders = "editor_providers"
     case hostControl = "host_control"
+    case networkTransports = "network_transports"
   }
 }

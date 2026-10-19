@@ -7,7 +7,7 @@ below; see [`docs/backends.md`](../docs/backends.md) for the isolate side and
 [`docs/trust-model.md`](../docs/trust-model.md) for the isolation contract.
 
 Each sandbox is one Linux VM running systemd from its own ext4 disk, on its own
-vmnet network, with no host mounts, socket relays, published ports, or SSH-agent
+vmnet network (or, `--network brokered`, with no network device), with no host mounts, socket relays, published ports, or SSH-agent
 forwarding. The sandbox record has no field for any of those, so they cannot be
 configured. A running sandbox is owned by one `iso-sandbox run` process, which
 holds the VM (Virtualization.framework runs it in-process) and serves a
@@ -46,10 +46,17 @@ version                                   {name, version, protocol, containeriza
 init --kernel K                           pinned kernel (sha256 allowlist) + vminit 0.45.0 initfs
 image import --oci-tar T | image list | image delete REF
 create ID (--image REF | --from-disk NAME) --cpus N --memory-mib M --disk-gib G --owner O
-       [--network shared|host-only]      host-only: vmnet host mode, no route beyond the host
-start ID [--wait-seconds S] [--expires-at UNIX]
+       [--network shared|host-only|brokered]
+                                          host-only: vmnet host mode, no route beyond the host;
+                                          brokered: no network device, vsock streams only
+start ID [--wait-seconds S] [--expires-at UNIX] [--network-policy DIGEST]
                                           launchd job; returns once the owner answers;
-                                          the owner halts the VM at the deadline
+                                          the owner halts the VM at the deadline; a brokered
+                                          boot's streams must present DIGEST
+connect ID --boot B --channel-policy D [--network-policy D] [--session S] [--purpose ssh]
+                                          ssh ProxyCommand: one owner-admitted guest stream
+streams list ID | streams close ID [--session S]
+                                          a brokered sandbox's open streams
 stop ID [--timeout-seconds S]             systemd halt (SIGRTMIN+3), then unload the job
 exec [-i] [--timeout S] ID -- ARGV        root, over vsock; exit code is passed through
 inspect ID                                {record, status, live, effective, disk}
@@ -86,7 +93,8 @@ never overwrites a newer one.
 
 ## Behaviour worth knowing
 
-- **Subnets.** Each sandbox gets `10.231.N.0/24` from an allocator shared by
+- **Subnets.** Each vmnet sandbox gets `10.231.N.0/24` (a brokered one gets
+  none; its record has no `subnetIndex`) from an allocator shared by
   every sandbox in the root. vmnet keeps a subnet reserved for hours after its
   owning process dies uncleanly and refuses to recreate it. The owner then
   quarantines that subnet (24 h, at most 64 entries) and moves the sandbox to

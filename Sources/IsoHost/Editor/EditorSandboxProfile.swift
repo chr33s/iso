@@ -11,11 +11,14 @@ package struct EditorSandboxPolicy: Sendable, Equatable {
   /// Prefix of the Mach service names the editor registers for itself.
   package let machServicePrefix: String
   package let capabilities: [EditorHostCapability]
+  /// OpenSSH's `sftp` and `scp` may run (still confined, over the tunnel).
+  package let fileTransfer: Bool
 
   package init(
     tunnelPort: UInt16, forwardPort: UInt16?, terminal: Bool, machServicePrefix: String,
-    capabilities: [EditorHostCapability]
+    capabilities: [EditorHostCapability], fileTransfer: Bool = false
   ) {
+    self.fileTransfer = fileTransfer
     self.tunnelPort = tunnelPort
     self.forwardPort = forwardPort
     self.terminal = terminal
@@ -43,6 +46,10 @@ package struct EditorSandboxPolicy: Sendable, Equatable {
       )
     }
     if terminal { rules.append(Self.terminalRules) }
+    if fileTransfer {
+      rules.append(
+        #"(allow process-exec* file-read* (literal "/usr/bin/sftp") (literal "/usr/bin/scp"))"#)
+    }
     for capability in capabilities {
       switch capability {
       case .clipboard:

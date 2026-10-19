@@ -12,7 +12,7 @@ struct IsoSandbox: AsyncParsableCommand {
       Exec.self,
       Inspect.self, List.self, Set.self, Grow.self, Commit.self, Restore.self, DiskCommand.self,
       MaintenanceCommand.self,
-      Logs.self, Delete.self, Reconcile.self, MacOSCommand.self,
+      Logs.self, Delete.self, Reconcile.self, MacOSCommand.self, Connect.self, Streams.self,
     ]
   )
 }
@@ -36,7 +36,7 @@ struct Version: ParsableCommand {
     let `protocol` = protocolVersion
     let containerization = containerizationVersion
     /// Optional capabilities beyond the Linux sandbox protocol.
-    let features = [macGuestsFeature]
+    let features = [macGuestsFeature, brokeredTransportFeature]
   }
 
   func run() throws { try printJSON(Info()) }
@@ -123,15 +123,27 @@ struct Create: AsyncParsableCommand {
   @Option var memoryMib: UInt64
   @Option var diskGib: UInt64
   @Option(help: "Ownership tag; `delete` requires it to match") var owner: String
-  @Option(help: "shared (NAT to the host's uplinks) or host-only (no route beyond the host)")
+  @Option(
+    help:
+      "shared (NAT to the host's uplinks), host-only (no route beyond the host) or brokered (no network device)"
+  )
   var network = "shared"
+
+  var mode: NetworkMode? {
+    switch network {
+    case "shared": .shared
+    case "host-only": .hostOnly
+    case "brokered": .brokered
+    default: nil
+    }
+  }
 
   func validate() throws {
     guard (image == nil) != (fromDisk == nil) else {
       throw ValidationError("pass exactly one of --image or --from-disk")
     }
-    guard ["shared", "host-only"].contains(network) else {
-      throw ValidationError("--network must be shared or host-only")
+    guard mode != nil else {
+      throw ValidationError("--network must be shared, host-only or brokered")
     }
   }
 
@@ -141,7 +153,7 @@ struct Create: AsyncParsableCommand {
     let record = try await Sandboxes.create(
       root: try root.resolve(), id: try SandboxID(id), owner: owner, source: source, cpus: cpus,
       memoryBytes: memoryMib * mib, diskBytes: diskGib * gib,
-      network: network == "host-only" ? .hostOnly : .shared)
+      network: mode ?? .shared)
     try printJSON(record)
   }
 }
@@ -154,13 +166,16 @@ struct Start: AsyncParsableCommand {
   @Option var waitSeconds = 120
   @Option(help: "End the session at this host time (Unix seconds); the owner halts the VM then")
   var expiresAt: Int64?
+  @Option(help: "Brokered sandboxes: the host's network-policy digest every stream must present")
+  var networkPolicy: String?
 
   func run() async throws {
     let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let live = try await Sandboxes.start(
       root: try root.resolve(), id: try SandboxID(id), executable: exe,
       wait: TimeInterval(waitSeconds),
-      expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) })
+      expiresAt: expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+      networkPolicy: networkPolicy)
     try printJSON(live)
   }
 }
@@ -424,4 +439,58 @@ struct Reconcile: AsyncParsableCommand {
     abstract: "Clear crashed owners and finish interrupted creates, deletes, and disk updates.")
   @OptionGroup var root: RootOptions
   func run() async throws { try printJSON(try Sandboxes.reconcile(root: try root.resolve())) }
+}
+
+struct Connect: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    abstract:
+      "ssh ProxyCommand for a brokered sandbox: carry stdin/stdout through one owner-admitted guest stream."
+  )
+  @OptionGroup var root: RootOptions
+  @Argument var id: String
+  @Option(help: "The boot (live bootId) the stream must reach") var boot: String
+  @Option(help: "The channel-policy digest the caller verified") var channelPolicy: String
+  @Option(help: "The boot's network-policy digest, when it was started with one")
+  var networkPolicy: String?
+  @Option(help: "Access-session label, for `streams close --session`") var session: String?
+  @Option(help: "Guest endpoint purpose") var purpose = "ssh"
+
+  func run() throws {
+    let paths = try root.resolve().sandbox(try SandboxID(id))
+    let code = StreamConnector.run(
+      paths: paths,
+      request: StreamRequest(
+        purpose: purpose, bootId: boot, channelPolicy: channelPolicy,
+        networkPolicy: networkPolicy, session: session))
+    if code != 0 { throw ExitCode(code) }
+  }
+}
+
+struct Streams: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    abstract: "List, or close, a brokered sandbox's open guest streams.",
+    subcommands: [ListStreams.self, CloseStreams.self])
+
+  struct ListStreams: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "list")
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    func run() throws {
+      try printJSON(
+        try Sandboxes.streams(root: try root.resolve(), id: try SandboxID(id), .list))
+    }
+  }
+
+  struct CloseStreams: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "close", abstract: "Close the streams (of one session) and print what was open.")
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    @Option var session: String?
+    func run() throws {
+      try printJSON(
+        try Sandboxes.streams(
+          root: try root.resolve(), id: try SandboxID(id), .close(session: session)))
+    }
+  }
 }

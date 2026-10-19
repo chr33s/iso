@@ -58,7 +58,7 @@ package struct SubnetAllocator: Sendable {
 
   /// Subnets held by every other sandbox, Linux and macOS alike.
   func usedIndices(excluding id: SandboxID) throws -> Set<Int> {
-    Set(try root.allRecords().filter { $0.id != id }.map(\.subnetIndex))
+    Set(try root.allRecords().filter { $0.id != id }.compactMap(\.subnetIndex))
       .union(try root.allMacRecords().filter { $0.id != id }.map(\.subnetIndex))
   }
 

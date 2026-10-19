@@ -83,6 +83,7 @@ private let otherKey =
   #expect(
     a.files.map(\.name) == [
       "Dockerfile", "provision.sh", "machine-setup.sh", "iso-ssh-hostkeys.service", "10-iso.conf",
+      "iso-ssh-vsock.socket", "iso-ssh-vsock@.service",
     ])
   let provision = a.files[1].content
   #expect(provision.contains("echo '\(key)' > \"/home/ubuntu/.ssh/authorized_keys\""))

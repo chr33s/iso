@@ -23,6 +23,9 @@ package struct ImageManifest: Sendable, Equatable, Codable {
   package let platform: String
   package let guestUser: GuestUser
   package let created: String
+  /// Guest-side transport adapters the image was built with
+  /// (``vsockSSHAdapter``); absent for images that predate them.
+  package var guestAdapters: [String]? = nil
 
   enum CodingKeys: String, CodingKey {
     case backend, digest, disk, platform, created
@@ -31,6 +34,7 @@ package struct ImageManifest: Sendable, Equatable, Codable {
     case manifestID = "manifest_id"
     case baseImage = "base_image"
     case guestUser = "guest_user"
+    case guestAdapters = "guest_adapters"
   }
 
   package func encode(to encoder: any Encoder) throws {
@@ -45,6 +49,7 @@ package struct ImageManifest: Sendable, Equatable, Codable {
     try c.encode(platform, forKey: .platform)
     try c.encode(guestUser, forKey: .guestUser)
     try c.encode(created, forKey: .created)
+    try c.encodeIfPresent(guestAdapters, forKey: .guestAdapters)
   }
 
   /// macOS images are runtime templates: `imageRef` names the template,
@@ -158,8 +163,13 @@ package struct BuildContext: Sendable, Equatable {
       ("machine-setup.sh", machineSetup, 0o644),
       ("iso-ssh-hostkeys.service", hostKeyUnit, 0o644),
       ("10-iso.conf", sshdDropIn, 0o644),
+      ("iso-ssh-vsock.socket", vsockSocketUnit, 0o644),
+      ("iso-ssh-vsock@.service", vsockServiceUnit, 0o644),
     ])
   }
+
+  /// Adapters every image built from this context carries.
+  package static let guestAdapters = [ImageManifest.vsockSSHAdapter]
 
   /// Stable hash of the context plus identity inputs not in file contents.
   package func manifestID(guestUser: GuestUser, publicKeyFingerprint: String) -> String {
@@ -254,8 +264,10 @@ package struct BuildContext: Sendable, Equatable {
     install -m 0644 \(contextDirectory)/iso-ssh-hostkeys.service /etc/systemd/system/iso-ssh-hostkeys.service
     install -d -m 0755 /etc/ssh/sshd_config.d
     install -m 0644 \(contextDirectory)/10-iso.conf /etc/ssh/sshd_config.d/10-iso.conf
+    install -m 0644 \(contextDirectory)/iso-ssh-vsock.socket /etc/systemd/system/iso-ssh-vsock.socket
+    install -m 0644 \(contextDirectory)/iso-ssh-vsock@.service /etc/systemd/system/iso-ssh-vsock@.service
     systemctl disable ssh.socket 2>/dev/null || true
-    systemctl enable iso-ssh-hostkeys.service ssh.service docker.service
+    systemctl enable iso-ssh-hostkeys.service ssh.service docker.service iso-ssh-vsock.socket
 
     rm -f /etc/ssh/ssh_host_*
     : > /etc/machine-id
@@ -275,6 +287,39 @@ package struct BuildContext: Sendable, Equatable {
 
     [Install]
     WantedBy=multi-user.target
+
+    """
+
+  /// The brokered transport's guest adapter: one `sshd -i` per vsock
+  /// stream the runtime owner opens on port 2222 (``BrokeredChannel/sshPort``).
+  /// It is convenience, not enforcement: guest root can replace it, and the
+  /// host still pins the SSH host key. A vmnet guest has it too, unused.
+  static let vsockSocketUnit = """
+    [Unit]
+    Description=iso brokered SSH streams (vsock port \(BrokeredChannel.sshPort))
+
+    [Socket]
+    ListenStream=vsock::\(BrokeredChannel.sshPort)
+    Accept=yes
+    MaxConnections=64
+
+    [Install]
+    WantedBy=sockets.target
+
+    """
+
+  /// stderr goes to the journal: nothing but sshd's protocol reaches the stream.
+  static let vsockServiceUnit = """
+    [Unit]
+    Description=iso brokered SSH stream
+    After=iso-ssh-hostkeys.service
+
+    [Service]
+    ExecStartPre=/bin/mkdir -p -m 0755 /run/sshd
+    ExecStart=-/usr/sbin/sshd -i
+    StandardInput=socket
+    StandardOutput=socket
+    StandardError=journal
 
     """
 

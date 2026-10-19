@@ -228,6 +228,12 @@ struct HostVMInspect: ParsableCommand {
         env.output.out("\(binding.name) on \(binding.host): \(observation.state.rawValue)")
         env.output.out("  instance \(binding.instanceID) generation \(observation.generation)")
         if let boot = observation.bootID { env.output.out("  boot \(boot)") }
+        if let network = observation.network {
+          env.output.out(
+            "  network brokered (\(network.externalNICCount) external network devices)")
+          env.output.out("  network policy \(network.networkPolicy)")
+          env.output.out("  channel policy \(network.channelPolicy)")
+        }
         if let expiry = observation.expiresAt { env.output.out("  deadline \(expiry.date)") }
         if let active = observation.activeOperation {
           env.output.out("  active operation \(active)")

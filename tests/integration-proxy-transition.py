@@ -41,8 +41,22 @@ LIVE_CREDENTIALS = {
 FAKES = ["proxy-vm-test-openai", "proxy-vm-test-anthropic", "proxy-vm-host-openai", "proxy-vm-host-anthropic"]
 
 
+
+def seed_initfs(state):
+    """ISO_TEST_INITFS: seed the runtime root with an init filesystem a
+    previous successful `iso-sandbox init` pulled, so `iso setup` does not
+    depend on reaching ghcr.io. The seed is not re-verified."""
+    seed = os.environ.get("ISO_TEST_INITFS")
+    if seed:
+        runtime = Path(state) / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copyfile(seed, runtime / "initfs.ext4")
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--brokered", action="store_true",
+                        help='create the VMs with network.transport "brokered" (no network device; '
+                             'egress "none" unless --filtered)')
     parser.add_argument("--controlled-upstream", action="store_true",
                         help="also test admitted streaming through local TLS; reserves port 443 before setup (may prompt for sudo)")
     parser.add_argument("--controlled-upstream-preflight", action="store_true",
@@ -282,11 +296,18 @@ def main():
         if args.filtered:
             configuration.update(egress="filtered", egress_filter={"allowed_hosts": []},
                                  profiles={"proxy-filtered-acceptance": {"apt_packages": ["python3"]}})
+        if args.brokered:
+            # No network device: the brokers are the guest's only way to a provider.
+            configuration["network"] = {"transport": "brokered"}
+            configuration.setdefault("egress", "none")
+            configuration["profiles"] = {"proxy-filtered-acceptance": {"apt_packages": ["python3"]}}
         config.write_text(json.dumps(configuration, indent=2) + "\n")
         (work / "project").mkdir()
         (work / "peer-project").mkdir()
         phase("Build VM images")
-        iso("setup", "-y", *(["--profile", "proxy-filtered-acceptance"] if args.filtered else []))
+        seed_initfs(state)
+        iso("setup", "-y", *(["--profile", "proxy-filtered-acceptance"]
+                             if args.filtered or args.brokered else []))
         if args.live_agents:
             live_agents(args)
             succeeded = True
@@ -294,9 +315,10 @@ def main():
         phase(f"Boot and bootstrap with Swift")
         iso("up", work / "project", "--name", "proxy-gate", "--no-github", "--no-devcontainer")
         iso("up", work / "peer-project", "--name", "proxy-peer", "--no-github", "--no-devcontainer")
-        phase("Install guest scanner dependency")
-        iso("exec", "proxy-gate", "--", "sudo", "apt-get", "update")
-        iso("exec", "proxy-gate", "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
+        if not args.brokered:
+            phase("Install guest scanner dependency")
+            iso("exec", "proxy-gate", "--", "sudo", "apt-get", "update")
+            iso("exec", "proxy-gate", "--", "sudo", "apt-get", "install", "-y", "--no-install-recommends", "python3")
         endpoint, token = guest_proxy("proxy-gate")
         peer_endpoint, peer_token = guest_proxy("proxy-peer")
         assert token != peer_token, "VMs share a capability"

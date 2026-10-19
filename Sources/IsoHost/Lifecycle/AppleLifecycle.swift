@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoSecrets
 
 /// Lifecycle mutations of the Apple backend. Each takes the per-instance
 /// lock, journals its runtime calls where an interruption could leave the
@@ -12,10 +13,39 @@ extension AppleBackend {
     Thread.sleep(forTimeInterval: Double(seconds) + Double(attoseconds) / 1e18)
   }
 
-  func expected(_ sidecar: MachineSidecar, _ runtime: SandboxRuntime) -> IsolationGate.Expected {
-    .init(
+  /// `networkPolicy` is the brokered digest of the boot being gated: the
+  /// one a boot is started with, or the recorded one at a later handoff. A
+  /// brokered configuration without one has nothing to gate against.
+  func expected(
+    _ sidecar: MachineSidecar, _ runtime: SandboxRuntime,
+    networkPolicy: SHA256Hex? = nil
+  ) throws(RuntimeError) -> IsolationGate.Expected {
+    let network: IsolationGate.ExpectedNetwork
+    switch config.network.transport {
+    case .vmnet: network = .vmnet
+    case .brokered:
+      guard let networkPolicy else {
+        throw .unqualified(
+          "no network policy is recorded for brokered sandbox \(sidecar.machineID); stop it and start it again"
+        )
+      }
+      network = .brokered(networkPolicy: networkPolicy)
+    }
+    return .init(
       sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-      resources: sidecar.resources, egress: config.egress)
+      resources: sidecar.resources, egress: config.egress, network: network)
+  }
+
+  /// The pinned target for a gate-approved boot; a brokered one goes
+  /// through this runtime's stream connector.
+  func pinnedTarget(
+    _ instance: Instance, _ ready: IsolationGate.Ready, user: GuestUser, runtime: SandboxRuntime
+  ) throws -> SSHTarget {
+    let connector: BrokeredConnector? =
+      ready.route.transport == .brokered ? try runtime.brokeredConnector() : nil
+    return try SSHTarget.pinned(
+      config: config, instance: instance, machine: ready.sandbox, route: ready.route, user: user,
+      connector: connector)
   }
 
   // MARK: Boot
@@ -27,8 +57,11 @@ extension AppleBackend {
     return "\n(Console log unavailable; try `iso logs`.) [\(name)]"
   }
 
-  func boot(_ runtime: SandboxRuntime, _ name: MachineName, expiresAt: Date?) throws {
-    do { try runtime.start(name, expiresAt: expiresAt) } catch {
+  func boot(
+    _ runtime: SandboxRuntime, _ name: MachineName, expiresAt: Date?,
+    networkPolicy: SHA256Hex? = nil
+  ) throws {
+    do { try runtime.start(name, expiresAt: expiresAt, networkPolicy: networkPolicy) } catch {
       throw RuntimeError.bootTimeout(
         "sandbox \(name) failed to boot: \(error)\(bootLogTail(runtime, name))")
     }
@@ -112,20 +145,21 @@ extension AppleBackend {
   )
     throws -> (IsolationGate.Ready, HostPublicKey)
   {
-    try boot(runtime, expected.sandbox, expiresAt: expiresAt)
+    let networkPolicy: SHA256Hex? =
+      if case .brokered(let digest) = expected.network { digest } else { nil }
+    try boot(runtime, expected.sandbox, expiresAt: expiresAt, networkPolicy: networkPolicy)
     let ready = try waitReady(runtime, expected, until: deadline)
     return (ready, try readHostKey(runtime, ready, until: deadline))
   }
 
   func waitForSSH(
     _ instance: Instance, _ ready: IsolationGate.Ready, user: GuestUser,
-    until deadline: ContinuousClock.Instant
+    runtime: SandboxRuntime, until deadline: ContinuousClock.Instant
   )
     throws
   {
     do {
-      let target = try SSHTarget.pinned(
-        config: config, instance: instance, machine: ready.sandbox, ip: ready.ipv4, user: user)
+      let target = try pinnedTarget(instance, ready, user: user, runtime: runtime)
       try SSHClient(environment: environment).waitUntilReady(
         target, timeout: max(deadline - ContinuousClock.now, .seconds(5)), diagnostics: diagnostics)
     } catch {
@@ -164,9 +198,11 @@ extension AppleBackend {
   /// `machine` is a runtime name the caller already reserved and recorded
   /// (host control); nil generates one. `expiresAt` fixes this boot's
   /// deadline instead of starting a `session_ttl` window.
+  /// `guestEnvironment` is the environment the caller records for this
+  /// first boot; it decides a brokered boot's provider grants.
   package func createAndStart(
     _ instance: Instance, diskGiB explicitDisk: UInt64?, machine reserved: MachineName? = nil,
-    expiresAt: Date? = nil
+    expiresAt: Date? = nil, guestEnvironment: [EnvVarName: EnvValue]? = nil
   ) throws {
     _ = try config.validated()
     let runtime = try runtime()
@@ -174,6 +210,15 @@ extension AppleBackend {
     let owner = try Owner.load(config)
     let manifest = try ImageManifest.load(config, instance.image)
     try runtime.verifyImage(manifest)
+    if config.network.transport == .brokered {
+      // Refused before any record or VM exists: never a downgraded start.
+      if let conflict = config.transportConflict { throw HostError(conflict) }
+      try manifest.requireBrokeredAdapter(instance.image)
+      // Requires the runtime's brokered feature as well as safe paths.
+      try runtime.brokeredConnector().requireRouteSafe()
+    }
+    let brokered = try NetworkPolicy.resolveBrokered(
+      config, instance, guestEnvironment: guestEnvironment)
     if manifest.guestOS == .macos {
       guard explicitDisk == nil else {
         throw HostError("macOS guests clone their template's disk; --disk is not supported")
@@ -218,7 +263,7 @@ extension AppleBackend {
     do {
       try provisionSandbox(
         instance, runtime: runtime, owner: owner, manifest: manifest, machine: machine,
-        diskGiB: diskGiB, expiresAt: expiresAt, journal: &journal)
+        diskGiB: diskGiB, expiresAt: expiresAt, brokered: brokered, journal: &journal)
     } catch {
       if case .create(let stage) = journal.op, stage >= .creatingMachine {
         stopAfterFailure(runtime.namespace(.linux), machine)
@@ -263,17 +308,18 @@ extension AppleBackend {
   func provisionSandbox(
     _ instance: Instance, runtime: SandboxRuntime, owner: Owner, manifest: ImageManifest,
     machine: MachineName,
-    diskGiB: UInt64, expiresAt: Date? = nil, journal: inout Journal
+    diskGiB: UInt64, expiresAt: Date? = nil, brokered: BrokeredNetworkPolicy?,
+    journal: inout Journal
   ) throws {
     let cpus = UInt32(config.vm.vcpuCount)
     let memoryMiB = UInt64(config.vm.memory.mib.value)
     let source: SandboxRuntime.Source =
       manifest.disk.map { .disk($0.name) } ?? .image(manifest.imageRef)
-    try NetworkPolicy.save(config, instance)
+    try NetworkPolicy.save(config, instance, brokered: brokered)
     try journal.advance(instance, .create(stage: .creatingMachine))
     try runtime.create(
       machine, source: source, cpus: cpus, memoryMiB: memoryMiB, diskGiB: diskGiB, owner: owner.id,
-      egress: config.egress)
+      egress: config.egress, transport: config.network.transport)
     try journal.advance(instance, .create(stage: .machineCreated))
     var sidecar = MachineSidecar(
       schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: owner.id,
@@ -285,13 +331,14 @@ extension AppleBackend {
       hostKeyFingerprint: "", lastObservedOwnerPID: nil, lastObservedIP: nil,
       reenrollHostKey: false,
       createdAt: utcTimestamp(), runtimeIdentity: try runtime.requireQualified())
-    try IsolationGate.verifyRecord(try runtime.inspect(machine), expected(sidecar, runtime))
+    try IsolationGate.verifyRecord(
+      try runtime.inspect(machine), try expected(sidecar, runtime, networkPolicy: brokered?.digest))
     let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
     let (ready, key) = try bootValidated(
-      runtime, expected(sidecar, runtime), until: deadline,
+      runtime, try expected(sidecar, runtime, networkPolicy: brokered?.digest), until: deadline,
       expiresAt: expiresAt ?? sessionExpiry())
     try HostKeyPin.apply(.enroll, instance: instance, machine: machine, key: key)
-    try waitForSSH(instance, ready, user: manifest.guestUser, until: deadline)
+    try waitForSSH(instance, ready, user: manifest.guestUser, runtime: runtime, until: deadline)
     sidecar.hostKeyFingerprint = key.fingerprint
     sidecar.lastObservedOwnerPID = ready.ownerPID
     sidecar.lastObservedIP = ready.ipv4
@@ -303,7 +350,11 @@ extension AppleBackend {
   /// Boot a stopped instance, finishing an interrupted resource change or
   /// restore first. The host key must match its pin (or, after `restore`,
   /// is re-enrolled).
-  package func startExisting(_ instance: Instance, expiresAt: Date? = nil) throws {
+  /// `guestEnvironment` is the environment the caller records for this
+  /// boot; nil keeps the recorded one.
+  package func startExisting(
+    _ instance: Instance, expiresAt: Date? = nil, guestEnvironment: [EnvVarName: EnvValue]? = nil
+  ) throws {
     try requireWriter(instance)
     _ = try config.validated()
     try NetworkPolicy.enforceMode(instance, config: config)
@@ -340,13 +391,19 @@ extension AppleBackend {
     // the instance lock, after the runtime confirmed nothing is running, so a
     // refused start never replaces a live boot's binding or proxy claims.
     try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)
-    try IsolationGate.verifyRecord(inspection, expected(sidecar, runtime))
+    // The new boot's policy, resolved before it starts so the runtime binds
+    // its streams to the digest; recorded only once the boot is approved.
+    let brokered = try NetworkPolicy.resolveBrokered(
+      config, instance, guestEnvironment: guestEnvironment)
+    if brokered != nil { try runtime.requireBrokered() }
+    try IsolationGate.verifyRecord(
+      inspection, try expected(sidecar, runtime, networkPolicy: brokered?.digest))
     let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
     let trust: HostKeyTrust = sidecar.reenrollHostKey ? .reenrollAfterRestore : .requirePin
     let ready: IsolationGate.Ready
     do {
       let (booted, key) = try bootValidated(
-        runtime, expected(sidecar, runtime), until: deadline,
+        runtime, try expected(sidecar, runtime, networkPolicy: brokered?.digest), until: deadline,
         expiresAt: expiresAt ?? sessionExpiry())
       ready = booted
       try HostKeyPin.apply(trust, instance: instance, machine: sidecar.machineID, key: key)
@@ -359,11 +416,12 @@ extension AppleBackend {
         sidecar.hostKeyFingerprint = key.fingerprint
         try sidecar.save(instance)
       }
-      try waitForSSH(instance, ready, user: sidecar.guestUser, until: deadline)
+      try waitForSSH(
+        instance, ready, user: sidecar.guestUser, runtime: runtime, until: deadline)
       // Commit only after the new boot has passed isolation and host-key checks.
       // A failed boot leaves the previous policy intact; later handoffs require
       // a separately authenticated companion bound to this boot and policy.
-      try NetworkPolicy.save(config, instance)
+      try NetworkPolicy.save(config, instance, brokered: brokered)
     } catch {
       stopAfterFailure(runtime.namespace(.linux), sidecar.machineID)
       throw error
@@ -791,13 +849,18 @@ extension AppleBackend {
         cause: error)
     }
     let previous = ImageManifest.loadLenient(config, image, diagnostics: diagnostics)
+    // A committed disk keeps the adapters of the image its instance booted;
+    // guest root may since have removed them, which a brokered boot reports
+    // as an SSH failure, never as a network fallback.
+    let source = ImageManifest.loadLenient(config, instance.image, diagnostics: diagnostics)
     let manifest = ImageManifest(
       schemaVersion: StateSchema.version, backend: StateSchema.backend,
       imageRef: inspection.record.imageReference,
       digest: inspection.record.imageDigest, disk: .init(name: disk, bytes: committed.logicalBytes),
       manifestID: "commit-\(disk)", baseImage: BuildContext.baseImage,
       platform: BuildContext.platform,
-      guestUser: sidecar.guestUser, created: utcTimestamp())
+      guestUser: sidecar.guestUser, created: utcTimestamp(),
+      guestAdapters: source?.digest == inspection.record.imageDigest ? source?.guestAdapters : nil)
     do { try manifest.save(config, image) } catch {
       runtime.deleteDiskBestEffort(disk.rawValue, diagnostics: diagnostics)
       throw error
@@ -815,6 +878,11 @@ extension AppleBackend {
     let manifest = try ImageManifest.load(config, image)
     guard manifest.guestOS == .linux else {
       throw HostError("Image '\(image)' is a macOS image; it cannot replace a Linux disk")
+    }
+    // A brokered VM's only route is the guest adapter; a disk without it
+    // would boot unreachable.
+    if try NetworkPolicy.load(instance)?.recordedTransport == .brokered {
+      try manifest.requireBrokeredAdapter(image)
     }
     try runtime.verifyImage(manifest)
     let lock = try InstanceStore.lock(instance)

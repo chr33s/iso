@@ -159,6 +159,13 @@ open-ended rather than hard-coding the current two.
 (`iso.host/v1`), its transports and the guest OS remote hosts accept. It is
 static: reading it contacts no host and starts no service.
 
+`network_transports` (additive) is `{"transports": ["vmnet", "brokered"],
+"brokered_guest_os": ["linux"], "brokered_runtime_feature": "brokered-transport"}`:
+the compiled-in `network.transport` values, the guest OS the brokered
+transport supports and the runtime feature it needs. It is
+static too: whether the installed runtime and image support a brokered
+instance is checked, and refused with an explicit error, when one is created.
+
 ### list
 
 `{"instances": [InstanceRef, ...]}`, sorted by name.
@@ -181,6 +188,24 @@ example `FILTERED_EGRESS_NOT_READY: ...`) and is `null` otherwise; `status`
 runs the full proof, including the guest-loopback replies. `Usage` is
 `{"load_1m", "mem_used_mib", "mem_total_mib", "disk_used_mib", "disk_total_mib"}`
 (`load_1m` may be `null`); `usage` is `null` when stopped or unavailable.
+
+A [brokered](configuration.md#network) instance's entry also has `network`
+(absent for vmnet instances):
+
+```json
+{"transport": "brokered", "requested_transport": "brokered",
+ "effective": {"boot_id": "...", "external_nic_count": 0,
+   "network_policy_digest": "<64 hex>", "channel_policy_digest": "<64 hex>",
+   "public_egress": {"profile": "filtered", "allowed_hosts": ["api.example.com"]},
+   "provider_grants": ["anthropic"], "local_services": [], "fallback": "forbidden"}}
+```
+
+`transport` is what the instance was created with; `requested_transport` is
+what the configuration asks for now (a mismatch is refused, never converted).
+`effective` is `null` unless the instance is running and passed the gate on
+this call; it is an observation of that boot, not a credential, and the next
+handoff re-verifies it. `public_egress` is `null` for `egress: "none"`.
+`local_services` entries are `{"name", "guest_port", "host_address", "host_port"}`.
 
 ### up
 

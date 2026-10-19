@@ -138,7 +138,7 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
 | Boundary audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit`) |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (real-directory guard) |
-| Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out), `WorkloadHandoff` (filtered prepared-session and guest-operation identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
+| Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out; its `Ready` proof carries a `GuestRoute`: a vmnet address or a brokered connector route), `BrokeredTransport` (the NIC-less transport: expected channel policy and digest, per-boot `BrokeredNetworkPolicy`, `BrokeredConnector` ProxyCommand, `BrokeredView` status), `NetworkPolicy` (creation-time egress and transport, per-boot brokered policy record), `WorkloadHandoff` (filtered and brokered prepared-session and guest-operation identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
 | Host control | `HostControl/`: the `iso.host/v1` wire (`HostWire`, `HostProtocol`, `HostControlError`), the per-user `HostSupervisor` (durable `OperationStore` ledger with physical cleanup reservations, reconciliation, cancellation, deadline sweep, disposable `HostRuns`/`RunStore`), the volatile `AccessSessions` registry, the revocable `GuestRelay`, `ArtifactStore`/`ArchiveValidator`, the `NativeHost` seam (`AppleNativeHost` reuses `AppleBackend`), `LocalHostControl` (private sockets, client), `SSHHostControl` (fixed-entrypoint transport, enrollment registry), `HostService` (daemon, stdio frontends, launchd user service), `ClientBindings` (host-qualified bindings, session coordinator) and `HostMigration`. See [design/local-and-remote-hosts-spec.md](design/local-and-remote-hosts-spec.md) |
 | Support | `CommandContext` (validated config and injected host services), `Diagnostics` (stderr), `Prompt`, bounded guest JSON parsing/editing, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
 
@@ -207,6 +207,19 @@ initializers are internal to `IsoHost`; commands obtain them only through
 `asRunning` / `resolveRunning` / `asStopped`. Operations that need a live or
 stopped VM take the proof, so the precondition is checked once and then
 witnessed by the type.
+
+### Brokered transport
+
+`network.transport: "brokered"` ([design](design/brokered-network-isolation.md))
+changes only how the host reaches a guest. The runtime builds the VM with no
+network device and proves it from the live `VZVirtualMachine`; its owner
+process serves a stream socket and opens vsock streams to the guest's SSH
+adapter for admitted requests (`IsoSandboxCore/Brokered.swift`:
+`ChannelPolicy`, `StreamBroker`, `StreamConnector`). On the host, the gate
+returns a `.brokered(BrokeredRoute)` route and `SSHTarget` gets the runtime
+connector as its `ProxyCommand`; every SSH-based feature (exec, transfer,
+tunnels, brokers, editors, the remote relay's last hop) is unchanged above
+that seam.
 
 ## Command dispatch
 
@@ -312,7 +325,10 @@ Hold these when changing the code; the review lenses check for their violation:
    service-owned work goes through `HostSupervisor` around the same
    `AppleBackend`; accepted operations are durable, retried by their original
    `HostOperationID`, and never relabeled stopped or failed on a lost reply.
-9. **Policy only narrows.** An `IsoPolicy` allow never replaces an existing
+9. **No fallback transport.** A brokered instance never gains a network device:
+   unsupported runtimes, images and guest OSes are refused before a VM is
+   created, and adapter, broker or relay failures leave the session unavailable.
+10. **Policy only narrows.** An `IsoPolicy` allow never replaces an existing
    check; the trusted mediator (proxy `InboundGate`, host staged apply) runs
    its hard checks first and fails closed on missing or corrupt policy state.
    A boot's policy is immutable; quota state is never reset within an

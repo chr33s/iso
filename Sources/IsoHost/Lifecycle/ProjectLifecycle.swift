@@ -195,7 +195,9 @@ package final class ProjectLifecycle {
     try agents.requireProviderProxy(
       instance, noAgents: options.boot.noAgents,
       guestEnvironment: options.boot.persistedGuestEnvironment)
-    try backend.createAndStart(instance, diskGiB: options.disk.map { UInt64($0.value) })
+    try backend.createAndStart(
+      instance, diskGiB: options.disk.map { UInt64($0.value) },
+      guestEnvironment: options.boot.persistedGuestEnvironment)
     try provisionFirstBoot(instance, options, repo: repo, forwardSet: forwardSet)
   }
 
@@ -260,7 +262,7 @@ package final class ProjectLifecycle {
       )
     }
     diagnostics.log(
-      .info, "Instance '\(instance.name)' started — SSH: \(target.host):\(target.port)")
+      .info, "Instance '\(instance.name)' started — SSH: \(target.endpointDescription)")
   }
 
   package func readyTarget(_ instance: Instance) throws -> SSHTarget {
@@ -303,7 +305,7 @@ package final class ProjectLifecycle {
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
     try agents.requireProviderProxy(
       instance, noAgents: options.noAgents, guestEnvironment: guestEnvironment)
-    try backend.startExisting(instance)
+    try backend.startExisting(instance, guestEnvironment: guestEnvironment)
     try Shutdown.check()
     let target = try readyTarget(instance)
     try Shutdown.check()
@@ -316,7 +318,7 @@ package final class ProjectLifecycle {
     refreshSSHConfig(instance, proven)
     try forwards.spawn(instance, proven, forwardSet)
     diagnostics.log(
-      .info, "Instance '\(instance.name)' restarted — SSH: \(target.host):\(target.port)")
+      .info, "Instance '\(instance.name)' restarted — SSH: \(target.endpointDescription)")
   }
 
   // MARK: Instance lookup

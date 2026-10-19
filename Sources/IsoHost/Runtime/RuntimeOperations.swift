@@ -35,10 +35,19 @@ extension SandboxRuntime {
     case disk(MachineName)
   }
 
+  /// `transport` brokered creates a sandbox with no network device; the
+  /// runtime must advertise ``RuntimeProtocol/brokeredFeature``.
   package func create(
     _ name: MachineName, source: Source, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
-    owner: OwnerID, egress: EgressMode
+    owner: OwnerID, egress: EgressMode, transport: NetworkTransport = .vmnet
   ) throws(RuntimeError) {
+    let network: [String]
+    switch transport {
+    case .vmnet: network = egress.requiresHostOnlyNetwork ? ["--network", "host-only"] : []
+    case .brokered:
+      try requireBrokered()
+      network = ["--network", "brokered"]
+    }
     let from: [String] =
       switch source {
       case .image(let reference): ["--image", reference]
@@ -50,17 +59,22 @@ extension SandboxRuntime {
         "--cpus", String(cpus), "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
         "--owner",
         owner.rawValue,
-      ] + (egress.requiresHostOnlyNetwork ? ["--network", "host-only"] : []),
+      ] + network,
       deadline: createDeadline,
       limit: Self.jsonLimit, cancellable: true)
   }
 
   /// `expiresAt` bounds this boot's session (the owner halts the VM then).
-  package func start(_ name: MachineName, expiresAt: Date? = nil) throws(RuntimeError) {
+  /// `networkPolicy`, for a brokered sandbox, is the digest every stream of
+  /// this boot must present.
+  package func start(
+    _ name: MachineName, expiresAt: Date? = nil, networkPolicy: SHA256Hex? = nil
+  ) throws(RuntimeError) {
     _ = try checked(
       ["start"],
       [name.rawValue, "--wait-seconds", String(settings.bootTimeout.seconds)]
-        + (expiresAt.map { ["--expires-at", String(Int64($0.timeIntervalSince1970))] } ?? []),
+        + (expiresAt.map { ["--expires-at", String(Int64($0.timeIntervalSince1970))] } ?? [])
+        + (networkPolicy.map { ["--network-policy", $0.rawValue] } ?? []),
       deadline: bootDeadline + .seconds(10), limit: Self.jsonLimit, cancellable: true)
   }
 

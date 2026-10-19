@@ -14,6 +14,9 @@ and [trust model](../trust-model.md) for supported behavior.
   locking, and recovery.
 - [Local and remote execution hosts](local-and-remote-hosts-spec.md):
   implementation status and qualification evidence.
+- [Brokered network isolation](brokered-network-isolation.md) (ISO-NET-001):
+  the specification for the NIC-less `network.transport: "brokered"`, its
+  implementation, native evidence and open qualification items.
 
 ## Security and credentials
 

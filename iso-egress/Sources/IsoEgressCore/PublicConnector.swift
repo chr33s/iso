@@ -1,7 +1,10 @@
 import Darwin
 
 /// Resolve afresh for every connection, validate the entire answer, and dial
-/// the selected numeric address without a second hostname lookup.
+/// its numeric addresses in answer order without a second hostname lookup.
+/// An answer with any non-public address is refused whole; a validated
+/// address that does not connect (an IPv6 answer on a host without an IPv6
+/// route) falls through to the next validated one.
 package enum PublicConnector {
   package static func connect(_ host: String, admission: Admission) -> Int32? {
     connect(
@@ -26,7 +29,12 @@ package enum PublicConnector {
         cursor = node.pointee.ai_next.map { UnsafePointer($0) }
       }
       guard AddressChoice.firstPublic(addresses, local: local) != nil else { return nil }
-      return dial(info, local)
+      var candidate: UnsafePointer<addrinfo>? = info
+      while let node = candidate {
+        if let fd = dial(node, local) { return fd }
+        candidate = node.pointee.ai_next.map { UnsafePointer($0) }
+      }
+      return nil
     }
   }
 

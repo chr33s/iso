@@ -43,10 +43,17 @@ package enum Owner {
       initialFilesystem: .block(
         format: "ext4", source: root.initfs.path, destination: "/", options: ["ro"])
     )
-    // One vmnet network per sandbox: the sandbox is the only peer on it.
-    var network = try makeNetwork(root: root, paths: paths, record: &record)
-    guard let interface = try network.createInterface(id.rawValue) else {
-      throw SandboxError("vmnet returned no interface")
+    // One vmnet network per sandbox: the sandbox is the only peer on it. A
+    // brokered sandbox gets none, and no network device at all.
+    var network: (any Network)?
+    var interface: (any Interface)?
+    if record.network.usesSubnet {
+      var opened = try makeNetwork(root: root, paths: paths, record: &record)
+      guard let created = try opened.createInterface(id.rawValue) else {
+        throw SandboxError("vmnet returned no interface")
+      }
+      network = opened
+      interface = created
     }
 
     let rootfs = Containerization.Mount.block(
@@ -55,26 +62,52 @@ package enum Owner {
     let config = machineConfiguration(
       record: record, interface: interface, bootLog: .fileHandle(console.writer))
     let container = try LinuxContainer(id.rawValue, rootfs: rootfs, vmm: vmm, configuration: config)
+    // `create` boots the VM into the framework's init; the guest's own
+    // init runs only at `start`, so the device check below precedes any
+    // guest-authored code.
     try await container.create()
+    var devices: VMDevices?
+    if record.network == .brokered {
+      let observed = try await VMDevices.read(container)
+      guard observed.network == 0, observed.socket == 1 else {
+        try? await container.stop()
+        throw SandboxError(
+          "brokered sandbox \(id) was created with \(observed.network) network and \(observed.socket) socket devices; expected 0 and 1"
+        )
+      }
+      devices = observed
+    }
     try await container.start()
 
     let live = LiveState(
       pid: getpid(), startedAt: Date(),
-      ipv4: interface.ipv4Address.address.description,
-      ipv6: interface.ipv6Address?.address.description,
+      ipv4: interface?.ipv4Address.address.description,
+      ipv6: interface?.ipv6Address?.address.description,
       bootId: makeBootID())
+    let broker: StreamBroker? =
+      record.network == .brokered
+      ? StreamBroker(bootID: live.bootId, networkPolicy: record.networkPolicy) { port in
+        try await container.dialVsock(port: port)
+      } : nil
+    // Bound before live.json is written: `start` reports a brokered
+    // sandbox ready only once its streams can be requested.
+    try broker?.serve(at: paths.streams)
     try JSONEncoder.pretty.encode(live).write(to: paths.live, options: .atomic)
-    log("started pid=\(live.pid) ipv4=\(live.ipv4 ?? "-") ipv6=\(live.ipv6 ?? "-")")
+    log(
+      "started pid=\(live.pid) ipv4=\(live.ipv4 ?? "-") ipv6=\(live.ipv6 ?? "-") network=\(record.network.rawValue)"
+    )
 
     // The last resort: both kills below are guest-agent RPCs, which a root
     // guest can wedge. The VM runs inside this process, so exiting ends it;
     // a clean exit is not restarted by launchd.
     let liveFile = paths.live
     let controlSocket = paths.control
-    let lifecycle = Lifecycle(container: container) {
+    let streamSocket = paths.streams
+    let lifecycle = Lifecycle(container: container, streams: broker) {
       log("guest did not stop: exiting the owner to end the VM")
       try? FileManager.default.removeItem(at: liveFile)
       unlink(controlSocket.path)
+      unlink(streamSocket.path)
       // No atexit handlers: a crash in one would exit non-zero and
       // launchd would relaunch the owner.
       _exit(0)
@@ -91,7 +124,7 @@ package enum Owner {
       }
     }
     let effective = effectiveConfig(
-      record: record, config: config, rootfs: rootfs, interface: interface)
+      record: record, config: config, rootfs: rootfs, devices: devices)
     try ControlSocket.serve(at: paths.control) { request in
       switch request.op {
       case .ping:
@@ -112,6 +145,15 @@ package enum Owner {
         await lifecycle.requestHalt()
         await lifecycle.waitStopped()
         return ControlResponse(ok: true)
+      case .streams:
+        guard let broker else { return ControlResponse(ok: false, error: "not brokered") }
+        return ControlResponse(ok: true, streams: broker.open)
+      case .closeStreams:
+        guard let broker else { return ControlResponse(ok: false, error: "not brokered") }
+        if let session = request.session, !validStreamLabel(session) {
+          return ControlResponse(ok: false, error: "invalid session label")
+        }
+        return ControlResponse(ok: true, streams: broker.close(session: request.session))
       }
     }
 
@@ -135,10 +177,12 @@ package enum Owner {
     } catch {
       log("stop error: \(error)")
     }
-    try? network.releaseInterface(id.rawValue)
+    broker?.shutdownAll()
+    try? network?.releaseInterface(id.rawValue)
     try? FileManager.default.removeItem(at: paths.live)
     await lifecycle.markStopped()
     unlink(paths.control.path)
+    if broker != nil { unlink(paths.streams.path) }
     _ = signalSources
     // Let in-flight `stop` responses flush.
     try? await Task.sleep(for: .milliseconds(200))
@@ -184,13 +228,17 @@ package enum Owner {
   {
     var current = record
     defer { record = current }
+    guard let index = current.subnetIndex else {
+      throw SandboxError("\(current.id) records no subnet")
+    }
     return try SubnetAllocator(root: root).open(
-      from: current.subnetIndex, for: current.id,
+      from: index, for: current.id,
       attempt: { index -> any Network in
         let subnet = try CIDRv4(SandboxRecord.subnet(index))
         switch current.network {
         case .shared: return try VmnetNetwork(subnet: subnet)
         case .hostOnly: return try HostOnlyNetwork(subnet: subnet)
+        case .brokered: throw SandboxError("a brokered sandbox has no network")
         }
       },
       commit: { next in
@@ -206,8 +254,9 @@ package enum Owner {
       })
   }
 
+  /// `interface` is nil exactly for a brokered sandbox.
   static func machineConfiguration(
-    record: SandboxRecord, interface: any Interface, bootLog: BootLog
+    record: SandboxRecord, interface: (any Interface)?, bootLog: BootLog
   ) -> LinuxContainer.Configuration {
     var config = LinuxContainer.Configuration()
     var process = LinuxProcessConfiguration()
@@ -221,14 +270,17 @@ package enum Owner {
     config.cpus = record.cpus
     config.memoryInBytes = record.memoryBytes
     config.hostname = record.id.rawValue
-    config.interfaces = [interface]
-    // Host-only sandboxes get no resolver: the vmnet DNS proxy is off.
-    if record.network == .shared, let gateway = interface.ipv4Gateway {
+    config.interfaces = interface.map { [$0] } ?? []
+    // Host-only and brokered sandboxes get no resolver: the vmnet DNS
+    // proxy is off, or there is no network.
+    if record.network == .shared, let gateway = interface?.ipv4Gateway {
       config.dns = DNS(nameservers: [gateway.description])
     }
     var hosts = Hosts.default
     hosts.entries.append(
-      .init(ipAddress: interface.ipv4Address.address.description, hostnames: [record.id.rawValue]))
+      .init(
+        ipAddress: interface?.ipv4Address.address.description ?? "127.0.1.1",
+        hostnames: [record.id.rawValue]))
     config.hosts = hosts
     // Kernel pseudo-filesystems only; no host shares, no socket relays.
     config.mounts = LinuxContainer.defaultMounts()
@@ -241,14 +293,15 @@ package enum Owner {
     return config
   }
 
+  /// `devices` is the live inventory of a brokered sandbox, nil otherwise.
   static func effectiveConfig(
     record: SandboxRecord, config: LinuxContainer.Configuration, rootfs: Containerization.Mount,
-    interface: any Interface
+    devices: VMDevices?
   ) -> EffectiveConfig {
     func view(_ m: Containerization.Mount) -> EffectiveConfig.MountView {
       .init(type: m.type, source: m.source, destination: m.destination, options: m.options)
     }
-    return EffectiveConfig(
+    var effective = EffectiveConfig(
       id: record.id.rawValue,
       imageReference: record.imageReference,
       imageDigest: record.imageDigest,
@@ -261,7 +314,8 @@ package enum Owner {
           ipv4: $0.ipv4Address.description, ipv4Gateway: $0.ipv4Gateway?.description,
           ipv6: $0.ipv6Address?.description,
           network:
-            "\(record.network == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet)")
+            "\(record.network == .shared ? "vmnet-shared" : "vmnet-host"):\(record.subnet ?? "none")"
+        )
       },
       socketRelays: config.sockets.count,
       publishedPorts: 0,
@@ -271,6 +325,16 @@ package enum Owner {
       initArgv: config.process.arguments,
       virtualization: config.virtualization
     )
+    if record.network == .brokered {
+      let policy = ChannelPolicy.current
+      effective.transport = NetworkMode.brokered.rawValue
+      effective.networkDevices = devices?.network
+      effective.socketDevices = devices?.socket
+      effective.channelPolicy = policy
+      effective.channelPolicyDigest = policy.digest
+      effective.networkPolicy = record.networkPolicy
+    }
+    return effective
   }
 
   static func exec(_ container: LinuxContainer, _ argv: [String], stdin: Data?, timeout: Int64?)
@@ -309,6 +373,8 @@ extension LinuxContainer: HaltableContainer {}
 
 actor Lifecycle {
   private let container: any HaltableContainer
+  /// Closed when a halt begins: no stream outlives a stop request.
+  private let streams: StreamBroker?
   private var halting = false
   private var stopped = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -318,11 +384,13 @@ actor Lifecycle {
 
   init(
     container: any HaltableContainer,
+    streams: StreamBroker? = nil,
     haltGrace: Duration = .seconds(Owner.haltGraceSeconds),
     killGrace: Duration = .seconds(Owner.killGraceSeconds),
     forceExit: @escaping @Sendable () -> Void
   ) {
     self.container = container
+    self.streams = streams
     self.haltGrace = haltGrace
     self.killGrace = killGrace
     self.forceExit = forceExit
@@ -339,6 +407,7 @@ actor Lifecycle {
     guard !halting else { return }
     halting = true
     Owner.log("halt requested")
+    streams?.shutdownAll()
     let container = self.container
     let forceExit = self.forceExit
     Task {

@@ -47,6 +47,10 @@ final class FakeNativeHost: NativeHost {
     var unhealthy: Set<MachineName> = []
     /// Runs once inside the named call, before its effect (an interleaving).
     var during: [String: @Sendable () -> Void] = [:]
+    /// Brokered VMs get a network proof of their current boot (or of
+    /// `proofBoot`, a stale gate reading); others report none.
+    var brokered = false
+    var proofBoot: BootID?
   }
 
   let state = Mutex(State())
@@ -139,6 +143,19 @@ final class FakeNativeHost: NativeHost {
       return state.vms.removeValue(forKey: runtime)
     }
     try leave("delete")
+  }
+
+  func networkProof(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
+    -> NetworkProof?
+  {
+    try enter("proof")
+    guard state.withLock({ $0.brokered }), case .running(let boot)? = vm(runtime) else {
+      return nil
+    }
+    let digest = try! SHA256Hex(String(repeating: "a", count: 64))
+    return NetworkProof(
+      bootID: state.withLock { $0.proofBoot } ?? boot, networkPolicy: digest,
+      channelPolicy: try! SHA256Hex(String(repeating: "b", count: 64)))
   }
 
   func guestEndpoint(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)

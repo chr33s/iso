@@ -408,6 +408,8 @@ package enum MacOwner {
         switch current.network {
         case .shared: return try VmnetNetwork(subnet: subnet)
         case .hostOnly: return try HostOnlyNetwork(subnet: subnet)
+        // The brokered transport is qualified for Linux guests only.
+        case .brokered: throw SandboxError("macOS sandboxes cannot use the brokered transport")
         }
       },
       commit: { next in

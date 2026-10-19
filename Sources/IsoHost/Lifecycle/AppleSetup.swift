@@ -233,7 +233,7 @@ extension AppleBackend {
       schemaVersion: StateSchema.version, backend: StateSchema.backend, imageRef: reference,
       digest: digest, disk: nil,
       manifestID: manifestID, baseImage: BuildContext.baseImage, platform: BuildContext.platform,
-      guestUser: options.guestUser, created: created
+      guestUser: options.guestUser, created: created, guestAdapters: BuildContext.guestAdapters
     ).save(config, options.image)
     try saveTemplateRecord(options, manifestID: manifestID, created: created)
     if let previous { releaseManifest(runtime, owner: owner, manifest: previous, except: nil) }
@@ -302,9 +302,17 @@ extension AppleBackend {
       "/usr/local/bin/codex-account", "/usr/bin/dbus-run-session", "/usr/bin/gnome-keyring-daemon",
       "/usr/bin/secret-tool",
     ]
+    // The brokered transport's guest adapter (not executables, checked apart).
+    let adapter = [
+      "/etc/systemd/system/iso-ssh-vsock.socket", "/etc/systemd/system/iso-ssh-vsock@.service",
+    ]
     let probe = try runtime.exec(
       machine, timeout: 60,
-      ["/bin/sh", "-c", #"for p; do test -x "$p" || printf '%s\n' "$p"; done"#, "sh"] + required,
+      [
+        "/bin/sh", "-c",
+        #"for p; do case "$p" in /etc/*) test -f "$p" ;; *) test -x "$p" ;; esac || printf '%s\n' "$p"; done"#,
+        "sh",
+      ] + required + adapter,
       limit: SandboxRuntime.textLimit)
     guard probe.termination == .exited(0) else {
       throw HostError(

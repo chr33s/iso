@@ -276,6 +276,30 @@ struct Status: MachineCommand {
     var reason: String? = nil
     /// The runtime's description of a running instance (detailed depth only).
     var detail: String? = nil
+    /// Set only for a brokered instance: its creation-time transport and,
+    /// when running and gate-approved, the effective boot's state.
+    var brokered: BrokeredStatus? = nil
+  }
+
+  struct BrokeredStatus {
+    let requestedTransport: NetworkTransport
+    let effective: BrokeredView?
+  }
+
+  /// Nil for a vmnet instance (its records say nothing of a transport).
+  static func brokeredStatus(
+    _ context: CommandContext, _ instance: Instance, running: AppleBackend.Running?
+  ) -> BrokeredStatus? {
+    let recorded: NetworkPolicy?
+    do { recorded = try NetworkPolicy.load(instance) } catch {
+      context.diagnostics.warn(
+        "Could not read the network policy record of '\(instance.name)': \(oneLine(error))")
+      return nil
+    }
+    guard recorded?.recordedTransport == .brokered else { return nil }
+    return BrokeredStatus(
+      requestedTransport: context.config.network.transport,
+      effective: running.flatMap { try? context.backend.brokeredView($0) })
   }
 
   static func status(_ context: CommandContext, _ instance: Instance, depth: Depth = .summary)
@@ -285,17 +309,22 @@ struct Status: MachineCommand {
     do {
       running = try context.backend.asRunning(instance)
     } catch let failure as InstanceUnhealthy {
-      return Row(instance: instance, state: .unhealthy, usage: nil, reason: failure.reason)
+      return Row(
+        instance: instance, state: .unhealthy, usage: nil, reason: failure.reason,
+        brokered: brokeredStatus(context, instance, running: nil))
     }
     if let running {
       let detail = depth == .detailed ? try context.backend.describe(running) : nil
       return Row(
         instance: instance, state: .running,
-        usage: ResourceUsage.query(context.ssh, running.target), detail: detail)
+        usage: ResourceUsage.query(context.ssh, running.target), detail: detail,
+        brokered: brokeredStatus(context, instance, running: running))
     }
     // Stopped: re-probe only for its error side (journal, booting).
     if depth == .summary { _ = try context.backend.probeRunning(instance) }
-    return Row(instance: instance, state: .stopped, usage: nil)
+    return Row(
+      instance: instance, state: .stopped, usage: nil,
+      brokered: brokeredStatus(context, instance, running: nil))
   }
 
   static func listedStatus(_ context: CommandContext, _ instance: Instance) -> Row {

@@ -88,7 +88,8 @@ package struct ReprovisionWorkflow {
       }
       try Shutdown.check()
       lifecycle.foldGuestEnvironment(savedEnvironment)
-      try lifecycle.backend.startExisting(restored)
+      try lifecycle.backend.startExisting(
+        restored, guestEnvironment: options.boot.persistedGuestEnvironment)
       try lifecycle.provisionFirstBoot(restored, options, repo: repo, forwardSet: forwardSet)
     } catch {
       throw ContextError(partial, cause: error)

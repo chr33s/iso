@@ -261,6 +261,7 @@ package struct ProxyLauncher: Sendable {
       .info,
       "Started filtered egress companion on 127.0.0.1:\(port) (guest loopback, port 443 only)"
     )
+    configureEgressClients(target, port: port, capability: capability, user: sidecar.guestUser)
   }
 
   package func stopEgress(_ instance: Instance) {

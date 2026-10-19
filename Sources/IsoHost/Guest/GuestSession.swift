@@ -59,7 +59,7 @@ package struct WorkloadSession: Sendable {
   fileprivate var session: SSHSession
   fileprivate let revalidate: @Sendable () throws -> Void
   /// How often a running workload re-proves its instance; nil when there is
-  /// no live proof to supervise (a nonfiltered instance).
+  /// no live proof to supervise (a vmnet instance without filtered egress).
   fileprivate let supervision: Duration?
 
   init(
@@ -107,12 +107,12 @@ package struct WorkloadSession: Sendable {
 /// it; one transient probe failure, or a proof briefly in flux while a tunnel
 /// is replaced, does not.
 final class SessionSupervisor: Sendable {
-  /// The production interval for filtered workloads.
+  /// The production interval for filtered and brokered workloads.
   static let interval: Duration = .seconds(10)
 
-  /// Only a filtered instance has a live proof to supervise.
+  /// Only a filtered or brokered instance has a live proof to supervise.
   static func interval(for running: AppleBackend.Running) -> Duration? {
-    running.handoffIdentity == nil ? nil : interval
+    running.hasLiveProof ? interval : nil
   }
 
   private let state = Mutex<(failure: (any Error)?, finished: Bool)>((nil, false))
@@ -395,7 +395,7 @@ package enum InteractiveSSH {
   ) throws -> ProcessRunner.Termination {
     let target = workload.session.target
     let remote = Self.remote(command, workingDirectory: workingDirectory)
-    diagnostics.log(.info, "Connecting via SSH to \(target.host):\(target.port) (\(remote))")
+    diagnostics.log(.info, "Connecting via SSH to \(target.endpointDescription) (\(remote))")
     let termination = try attach(
       client, workload, remote: remote, inheritStdin: true, allocatePTY: allocatePTY,
       missingSSH: missingInteractiveSSH)
@@ -409,7 +409,7 @@ package enum InteractiveSSH {
   ) throws {
     let target = workload.session.target
     let remote = render(command)
-    diagnostics.log(.info, "Connecting via SSH to \(target.host):\(target.port) (\(remote))")
+    diagnostics.log(.info, "Connecting via SSH to \(target.endpointDescription) (\(remote))")
     diagnostics.log(
       .info,
       "If the remote session stops responding, type Enter, then ~. to disconnect; run `stty sane` if your terminal remains broken."

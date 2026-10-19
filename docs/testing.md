@@ -268,6 +268,27 @@ For the guest gate, point a private config at these items. Give it its own
 }
 ```
 
+#### Credentials from the checkout's `.env`
+
+A maintainer checkout may instead keep the dedicated keys in its gitignored
+`.env` as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`.
+`scripts/env-credential.py NAME` writes one of them to stdout with nothing
+else, so it can feed a runner's stdin or a `cmd:` reference without the value
+reaching argv, a file or a log. The approved models for these keys are
+`claude-sonnet-5-5` (Claude Sonnet 5.5; the dotted `claude-sonnet-5.5` is not
+an API model ID and returns 404) and `gpt-6-luna`:
+
+```bash
+python3 -I scripts/env-credential.py ANTHROPIC_API_KEY | python3 scripts/test-proxy-live.py \
+  --provider anthropic --scheme x_api_key --model claude-sonnet-5-5
+python3 -I scripts/env-credential.py OPENAI_API_KEY | python3 scripts/test-proxy-live.py \
+  --provider openai --model gpt-6-luna
+python3 tests/integration-proxy-transition.py --live-agents [--brokered] \
+  --claude-model claude-sonnet-5-5 --codex-model gpt-6-luna --anthropic-auth api_key \
+  --anthropic-credential "cmd:python3 -I $PWD/scripts/env-credential.py ANTHROPIC_API_KEY" \
+  --openai-credential "cmd:python3 -I $PWD/scripts/env-credential.py OPENAI_API_KEY"
+```
+
 ### Live proxy API smoke
 
 After the controlled-upstream VM gate passes, use dedicated provider credentials
@@ -460,6 +481,23 @@ still held. Serial runs have not shown it. The cause is not yet identified
 Parser fixtures in `tests/fixtures/iso-sandbox/` are real `iso-sandbox`
 output; the directory's README says how they were captured.
 
+The brokered transport has unit coverage on both sides of the seam:
+`iso-sandbox/Tests/IsoSandboxTests/BrokeredTests.swift` (stream admission by
+boot, policy digests, purpose and session; concurrency and rate limits;
+shutdown; byte relay with half-close; per-session close; subnet allocation)
+`tests/swift/IsoCLITests/BrokeredMachineOutputTests.swift` (the machine
+`network` object and capabilities), and
+`tests/swift/IsoHostTests/BrokeredTransportTests.swift` (the gate against
+the captured `inspect-brokered-running.json` and every weakening of it,
+transport crossing, configuration refusals, the schema-4 policy record,
+restart-required grant changes, the connector `ProxyCommand`, image adapter
+checks, supervision of brokered handoffs, and the relay's connector last
+hop). Both pin the same channel-policy digest, so a change to the policy on
+one side alone fails. The `brokered-*` entries in the fault list remove each
+gate, policy-record, configuration, connector, image and admission check in
+turn; the owner's live-device check needs a VM and is covered by the
+integration `brokered` phase instead.
+
 ### Apple runtime real-hardware checks
 
 `tests/integration-apple-sandbox.sh` boots real `iso-sandbox` VMs and checks
@@ -483,6 +521,19 @@ what unit tests cannot:
   in parallel;
 - the maintenance image (install, and survival after its store image is
   deleted) and same-sandbox races (concurrent grows, start against grow);
+- the brokered transport (the `brokered` phase): a `--network brokered`
+  sandbox's live VM has no network device; host canary listeners on
+  loopback, the LAN address and IPv6 (each with a host positive control) and
+  vmnet, tailnet and Internet addresses get no guest traffic, including after
+  guest root adds devices, addresses and routes; no host vsock port or
+  sibling CID is reachable from the guest; pinned SSH, an 8 MiB binary round
+  trip, EOF, exit status and a loopback preview forward work through
+  `iso-sandbox connect`; stale boot ids, other policy digests, forged channel
+  digests and unknown purposes are refused; `streams close` revokes a live
+  session; a 72-stream flood is refused past the limit while stop still
+  completes; a restart fences the previous boot's connector; a guest that
+  stops its adapter loses SSH with no network fallback; and a guest wedging
+  its own shutdown is stopped within the owner's bounded grace;
 - `iso` itself end to end (the `iso` phase): `setup`, `up`, `status`,
   `exec`, `stop`/`start`, `resize --mem/--vcpus/--size`, rollback of a
   `resize --start` whose boot fails, `commit`, `restore` with host-key
@@ -511,8 +562,41 @@ agent-stub regressions (also in CI):
 ./tests/integration-apple-sandbox.sh --only isolation,snapshots
 ```
 
-Phases: `setup disks machine isolation exposure identity persistence
-resources growth snapshots recovery concurrency iso`. It needs Apple Silicon,
+Further brokered qualification harnesses:
+
+- `python3 tests/brokered_malicious_ssh.py` (needs paramiko; reports blocked
+  without it) — N-T05: a hostile SSH server cannot turn iso's static reverse
+  forward into other host connections or open agent, X11 or direct-tcpip
+  channels; a positive control proves the granted forward works.
+- `python3 tests/integration-remote-host.py --local --brokered --sandbox PATH`
+  — the host-service relay against brokered VMs, including checks that the
+  worker's VM has no network device, that `iso host vm inspect` shows the
+  same network proof, and (with `--local`) that a worker-service restart
+  fences grants issued before it while the VM keeps its brokered boot.
+  `--loopback` runs this Mac as its own SSH worker and adds a cut of the
+  management link past the access lease. iso's management ssh does not use
+  the agent, so a Mac whose keys only unlock there needs
+  `--loopback-key PATH`: a dedicated key whose public half is in
+  `~/.ssh/authorized_keys` (for example with
+  `from="127.0.0.1,::1",restrict`).
+  `--sleep-wake --sleep-ttl 60` puts the Mac to sleep with a VM deadline
+  that passes during the sleep; wake it after more than a minute.
+- `python3 tests/integration-proxy-transition.py --brokered` — the credential
+  proxy gate, guest secret scan and broker-death transport failures on
+  brokered VMs, with synthetic credentials.
+
+`ISO_TEST_INITFS=<path>` seeds the state root with an init filesystem a
+previous successful `iso-sandbox init` pulled, so the run does not depend on
+reaching ghcr.io; the seed is not re-verified.
+
+Phases: `setup disks machine isolation exposure identity brokered persistence
+resources growth snapshots recovery concurrency iso`. The `iso` phase also
+creates a brokered instance (`network.transport: "brokered"`, `egress:
+"none"`) and checks its NIC-less record, workspace copy and pull over the
+stream, machine-status network digest, refusal under a vmnet configuration,
+and stop/start; then a brokered `egress: "filtered"` instance (with
+`iso-egress` built beside `iso`) whose approved host is reachable through the
+companion while an unapproved host, an IP literal and a proxy bypass fail. It needs Apple Silicon,
 macOS 27+, Xcode 27, `jq`, and stock Apple `container` with its service
 running.
 

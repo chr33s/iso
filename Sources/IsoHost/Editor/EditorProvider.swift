@@ -77,6 +77,9 @@ package struct SandboxedEditorPlan: Sendable, Equatable {
   package let usesForwardPort: Bool
   package let terminal: Bool
   package let machServicePrefix: String
+  /// The editor copies files to the guest with OpenSSH's `sftp`/`scp`
+  /// (Zed uploading its remote server).
+  package var fileTransfer = false
 }
 
 /// Adapts an `SSHConnectionTarget` into an external editor launch. Lifecycle,

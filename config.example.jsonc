@@ -115,6 +115,12 @@
   // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
   // "egress": "open",
 
+  // "brokered" creates new instances with no network device: SSH and every
+  // iso tunnel run over a fixed vsock stream, and egress is "none" or
+  // "filtered" only ("open" is refused). Fixed per instance at creation;
+  // "vmnet" (default) is one vmnet network device. See docs/configuration.md.
+  // "network": { "transport": "brokered" },
+
   // `iso pull` return path. "stage" pulls into a host-side stage for review;
   // nothing reaches the local directory until `iso pull --apply`.
   // "workspace": {

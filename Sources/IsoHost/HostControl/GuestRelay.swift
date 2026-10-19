@@ -162,8 +162,24 @@ package enum GuestConnector {
   package static func open(_ endpoint: GuestEndpoint) throws(HostControlError)
     -> ProcessRunner.PipedChild
   {
-    let address = endpoint.address.description
-    let port = String(endpoint.port)
+    let address: String
+    let port: String
+    switch endpoint.route {
+    case .tcp(let host, let number):
+      address = host.description
+      port = String(number)
+    case .brokered(let connector):
+      // The runtime connector refuses a stale boot or policy itself; its
+      // stderr is discarded, so nothing but guest SSH bytes reach the relay.
+      do {
+        return try ProcessRunner().piped(
+          .init(
+            executable: connector.executable, arguments: connector.arguments, environment: [:],
+            deadline: .seconds(0)))
+      } catch {
+        throw HostControlError(.hostUnreachable, "the guest connector could not start")
+      }
+    }
     // Probe first so an unreachable guest is a typed refusal, not a silent EOF.
     let probe = try? ProcessRunner().capture(
       .init(

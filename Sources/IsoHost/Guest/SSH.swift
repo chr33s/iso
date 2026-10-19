@@ -15,9 +15,10 @@ package struct SSHTarget: Sendable, Equatable {
   package let keyPath: String
   package let knownHosts: String
   package let alias: String
-  /// Set only for a guest on a remote execution host: the client's relay
-  /// helper, which carries the bytes through the host's owned relay. The
-  /// host-key pin above still applies end to end.
+  /// Set for a guest on a remote execution host (the client's relay helper,
+  /// which carries the bytes through the host's owned relay) and for a
+  /// brokered guest (the runtime's stream connector). The host-key pin
+  /// above still applies end to end.
   package var proxyCommand: String? = nil
   var handoffCheck: (@Sendable () throws -> Void)? = nil
 
@@ -44,6 +45,19 @@ package struct SSHTarget: Sendable, Equatable {
   package static func pinned(
     config: IsoConfig, instance: Instance, machine: MachineName, ip: IPv4Address, user: GuestUser
   ) throws -> SSHTarget {
+    try pinned(
+      config: config, instance: instance, machine: machine, route: .vmnet(ip), user: user,
+      connector: nil)
+  }
+
+  /// The pinned target for a gate-approved route. A brokered route has no
+  /// address: ssh reaches it only through `connector`, the runtime's fixed
+  /// stream connector, bound to the approved boot and digests. The pinned
+  /// alias is then also the host name, so nothing resolves or dials it.
+  package static func pinned(
+    config: IsoConfig, instance: Instance, machine: MachineName, route: GuestRoute,
+    user: GuestUser, connector: BrokeredConnector?
+  ) throws -> SSHTarget {
     let knownHosts = instance.knownHostsPath
     // The path is passed as a (possibly quoted) option value and written
     // into ~/.ssh/config; a quote or control character could change parsing.
@@ -59,10 +73,23 @@ package struct SSHTarget: Sendable, Equatable {
         "instance '\(instance.name)' has no pinned host key at \(knownHosts); recreate the instance"
       )
     }
-    return SSHTarget(
-      host: ip.description, port: 22, user: user, keyPath: config.sshKeyPath.path,
-      knownHosts: knownHosts,
-      alias: "\(machine).iso")
+    let alias = "\(machine).iso"
+    switch route {
+    case .vmnet(let ip):
+      return SSHTarget(
+        host: ip.description, port: 22, user: user, keyPath: config.sshKeyPath.path,
+        knownHosts: knownHosts, alias: alias)
+    case .brokered(let brokered):
+      guard let connector else {
+        throw RuntimeError.unavailable(
+          "brokered instance '\(instance.name)' needs the runtime's stream connector")
+      }
+      var target = SSHTarget(
+        host: alias, port: 22, user: user, keyPath: config.sshKeyPath.path,
+        knownHosts: knownHosts, alias: alias)
+      target.proxyCommand = try connector.proxyCommand(machine: machine, route: brokered)
+      return target
+    }
   }
 
   /// OpenSSH splits some option values on whitespace; quoting keeps a path
@@ -95,6 +122,11 @@ package struct SSHTarget: Sendable, Equatable {
 
   package var sshOptions: [String] { transportOptions + ["-p", String(port)] }
   package var address: String { "\(user)@\(host)" }
+  /// For logs: the address ssh dials, or the pinned alias when a
+  /// ProxyCommand carries the connection (no address is dialed).
+  package var endpointDescription: String {
+    proxyCommand == nil ? "\(host):\(port)" : "\(alias) (proxied stream)"
+  }
 }
 
 package struct SSHClient: Sendable {

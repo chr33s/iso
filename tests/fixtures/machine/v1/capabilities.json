@@ -63,6 +63,16 @@
       "remote_guest_os": [
         "linux"
       ]
+    },
+    "network_transports": {
+      "transports": [
+        "vmnet",
+        "brokered"
+      ],
+      "brokered_guest_os": [
+        "linux"
+      ],
+      "brokered_runtime_feature": "brokered-transport"
     }
   }
 }

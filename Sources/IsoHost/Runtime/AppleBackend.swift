@@ -206,12 +206,11 @@ package final class AppleBackend: Sendable {
     case .running: break
     }
     do {
-      try NetworkPolicy.enforce(instance, config: config)
+      let policy = try NetworkPolicy.enforce(instance, config: config)
       _ = try runtime.requireQualified()
-      let ready = try observed.gate(expected(sidecar, runtime))
-      let target = try SSHTarget.pinned(
-        config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
-        user: sidecar.guestUser)
+      let ready = try observed.gate(
+        try expected(sidecar, runtime, networkPolicy: policy.brokeredDigest))
+      let target = try pinnedTarget(instance, ready, user: sidecar.guestUser, runtime: runtime)
       let handoffIdentity = try filteredIdentity(
         instance, sidecar: sidecar, runtime: runtime, observed: observed,
         scope: .guest(target), proof: proof)
@@ -296,10 +295,10 @@ package final class AppleBackend: Sendable {
     let runtime = try runtime()
     let observed = try observe(runtime, sidecar)
     _ = try runtime.requireQualified()
-    let ready = try observed.gate(expected(sidecar, runtime))
-    return try SSHTarget.pinned(
-      config: config, instance: instance, machine: sidecar.machineID, ip: ready.ipv4,
-      user: sidecar.guestUser)
+    let recorded = try NetworkPolicy.load(instance)
+    let ready = try observed.gate(
+      try expected(sidecar, runtime, networkPolicy: recorded?.brokeredDigest))
+    return try pinnedTarget(instance, ready, user: sidecar.guestUser, runtime: runtime)
   }
 
   /// `iso status NAME` text for a running instance, without the usage line.
@@ -315,6 +314,26 @@ package final class AppleBackend: Sendable {
       return try macDescribe(running, runtime: runtime, identity: identity)
     }
     let inspection = try runtime.inspect(sidecar.machineID)
+    if case .brokered(let route) = running.ready.route {
+      let view = try brokeredView(running)
+      let policy = view?.policy
+      return """
+        Instance '\(running.instance.name)' (\(inspection.status.rawValue))
+          Backend: apple-container (iso-sandbox)
+          Runtime: \(identity)
+          Sandbox: \(sidecar.machineID)
+          Network: brokered (\(route.networkDevices) network devices; host reaches the guest only over its vsock SSH stream)
+          Network policy: \(route.networkPolicy) (channel \(route.channelPolicy))
+          Egress: \(policy.map { $0.publicEgress.map { "\($0.profile) to \($0.allowedHosts.count) approved hosts on port 443" } ?? "none" } ?? "unavailable")
+          Provider brokers: \(policy.map { $0.providerGrants.isEmpty ? "none" : $0.providerGrants.joined(separator: ", ") } ?? "unavailable")
+          Local services: \(policy.map { $0.localServices.isEmpty ? "none" : $0.localServices.map { "\($0.name) (guest 127.0.0.1:\($0.guestPort) -> host \($0.hostAddress):\($0.hostPort))" }.joined(separator: ", ") } ?? "unavailable")
+          vCPUs: \(inspection.record.cpus)
+          Memory: \(inspection.record.memoryBytes / (1 << 20)) MiB
+          Disk: \(Self.gib(inspection.disk.logicalBytes)) GiB (\(Self.gib(inspection.disk.allocatedBytes)) GiB allocated)
+          Address: none (host key \(sidecar.hostKeyFingerprint))
+          Workspace: copied (no live mounts)
+        """
+    }
     let ip = inspection.ipv4?.description ?? "unavailable"
     let network =
       inspection.effective?.interfaces.first.map { sanitizeForDisplay($0.network) } ?? "unavailable"

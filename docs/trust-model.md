@@ -391,9 +391,13 @@ is read by other programs, so it is a disclosure boundary like stderr:
   bind loopback explicitly.
 - **Guest VMs cannot reach each other by IP.** Each sandbox has its own vmnet
   network; see [Apple sandbox backend](#apple-sandbox-backend) for how that is
-  demonstrated. **Accepted by design:** guests *can* reach the host — that path
-  carries the local-model tunnels and the credential proxy's `ssh -R` tunnel. A
-  change that widens guest egress or adds inbound reachability is a finding.
+  demonstrated. **Accepted by design:** vmnet guests *can* reach the host's
+  addresses. iso's local-model and credential-proxy tunnels are `ssh -R`
+  forwards over the host-initiated SSH connection and do not depend on that
+  path. A
+  [brokered](#brokered-transport) guest has no network device and reaches the
+  host only through iso's tunnels. A change that widens guest egress or adds
+  inbound reachability is a finding.
 - A loopback local-model endpoint reaches the guest over a per-instance
   `ssh -R` reverse tunnel onto the guest's own loopback (`LocalEndpoints` in
   `ModelState.swift`); non-loopback URLs pass through unchanged.
@@ -489,6 +493,86 @@ is read by other programs, so it is a disclosure boundary like stderr:
     stderr descriptors remain writable; no request/credential content is logged.
   - `sandbox-exec` is deprecated but remains the confinement primitive.
 
+### Brokered transport
+
+`network.transport: "brokered"` ([configuration](configuration.md#network),
+[design](design/brokered-network-isolation.md)) removes the vmnet exception
+above for the instances that select it. **Promised:** untrusted guest code
+cannot create a direct IP path to services on the Mac, sibling VMs, the LAN,
+the tailnet or the Internet, because the VM has no network device; host
+interaction and egress happen only through iso's fixed, host-enforced
+channels. **Not promised:** that the hypervisor, runtime or brokers have no
+vulnerabilities, that guest output is trustworthy, or that an approved remote
+service (an allowlisted host, a provider API, a configured local model)
+cannot receive data. A configured loopback local model is an explicit,
+visible exception, not general host access.
+
+- **No device, proven host-side.** The runtime owner builds the VM with no
+  interface and reads the live `VZVirtualMachine` after `create` (before the
+  guest's own init runs): any network device, or other than one socket
+  device, stops it unbooted. The host gate independently requires the
+  owner's reading of `0`/`1`, no interface or address, `transport:
+  brokered`, and refuses any unknown effective field. A requested mode
+  string or guest report never stands in for this observation.
+- **Fixed stream endpoints.** The owner opens host-to-guest vsock streams to
+  one fixed purpose (`ssh` → guest port 2222) and nothing else. A stream
+  request names a purpose, never a port; it must present the live boot id,
+  the runtime's channel-policy digest (which the host recomputes from its own
+  copy and compares) and the boot's network-policy digest. Refused requests
+  never dial the guest. The stream socket is a `0600` Unix socket in the
+  per-user `0700` runtime directory, checked with `getpeereid`; the guest has
+  no path to it. Host-side vsock listeners exist only transiently for
+  framework process stdio and file copies (`exec`, host-key read); no
+  listener routes to a host command, file, socket or another VM, and the
+  integration suite probes host CID ports and sibling CIDs from guest root.
+- **The adapter is convenience, not enforcement.** The guest's
+  `iso-ssh-vsock.socket` runs `sshd -i` per stream with stderr to the journal.
+  Guest root can stop or replace it; the result is an unavailable session,
+  never another network path, and the host still pins the SSH host key and
+  treats every returned byte as untrusted.
+- **Connector inputs are host-chosen.** ssh's `ProxyCommand` is the resolved,
+  ownership-checked runtime executable with the runtime root, machine name,
+  boot id and digests — validated identifiers, never a bearer or secret, and
+  refused when a path would need shell quoting. Diagnostics go to stderr only.
+  Repository or guest data cannot select the executable or any argument. For a
+  remote host, the worker's relay spawns the same connector as argv from a
+  fresh gate pass in place of `/usr/bin/nc` to a guest address; client-side
+  fencing (session, bearer, epoch, lease) is unchanged.
+- **Bounded, revocable streams.** The owner enforces at most 64 open streams,
+  128 connections being handled (including ones still sending their request),
+  64 admissions per 10 s (a request past the rate waits within its setup
+  deadline), a 4 KiB request line read within 10 s, a 10 s guest
+  dial, and one 64 KiB buffer per direction, outside the guest. An admitted
+  stream has no byte cap or idle timeout of its own: it ends with the session
+  (EOF), a halt, the session deadline or `streams close`. Stop and cleanup use the
+  separate control socket, so a full stream table never blocks them. A halt
+  closes every stream and refuses new ones; `iso-sandbox streams close`
+  revokes open streams; a restart is a new boot id, so old connector lines
+  are refused.
+- **Policy is fixed per boot.** The boot's network policy is resolved on the
+  host from configuration, the instance's records and the environment the
+  boot records, bound to the boot by digest at the runtime, saved in
+  `network-policy.json` (schema 4) before create and, on a restart, only after
+  the new boot passes the gate, and compared again at every iso handoff. Any
+  change requires a stop and start; the managed SSH alias, which presents the
+  boot's original digest, keeps working until then. No failure — adapter,
+  broker, controller or relay — attaches a network device or relaxes the
+  policy; unsupported runtimes, images and guest OSes are refused before a
+  VM is created.
+- **Guest egress clients are convenience.** On a filtered boot iso writes the
+  companion's proxy URL into the guest's Docker daemon drop-in and a
+  guest-internal `systemd-socket-proxyd` bridge on Docker's default gateway, so
+  pulls, containers and builds can use the approved path. The URL travels on
+  stdin, never argv. Guest root can remove or rewrite these; the companion's
+  allowlist is the only enforcement.
+- **Brokers keep their meaning.** The credential proxy, filtered-egress
+  companion and local-model tunnels are the same processes and reverse
+  tunnels as on vmnet, reached by the guest only on its own loopback through
+  the SSH connection. Provider credentials stay in the provider broker;
+  `egress: open` is invalid. A blind CONNECT to an approved host can still
+  relay data to that host's operator; this is destination enforcement, not
+  information-flow control.
+
 ## Apple sandbox backend
 
 The same VM boundary applies. The backend drives iso-sandbox
@@ -498,13 +582,15 @@ exposure, and isolate verifies the effective configuration anyway
 (`AppleBackend`, `SandboxRuntime`, `IsolationGate` in `Sources/IsoHost/`).
 
 - **Runtime shape.** Each instance is its own VM on its own vmnet network
-  (`10.231.N.0/24`). The runtime's `SandboxRecord` has no field for a host
+  (`10.231.N.0/24`), or with no network device at all for `network: brokered`
+  (no subnet; see [Brokered transport](#brokered-transport)). The runtime's `SandboxRecord` has no field for a host
   mount, socket relay, published port, or agent forwarding, and its VM
   configuration is built in one function (`Owner.machineConfiguration`) with
   kernel pseudo-filesystems only. Its one network field, `network`, can only
   narrow reach: absent means vmnet shared (NAT) mode, `host_only` (from
   `egress: "none"`) means vmnet host mode with NAT44/NAT66, the DNS proxy,
-  router advertisements and DHCP disabled. The gate checks the record against
+  router advertisements and DHCP disabled, and `brokered` means no network
+  device. The gate checks the record against
   the configured `egress` and the interface label (`vmnet-shared:` /
   `vmnet-host:`) against the record. Adding any other such field, a widening
   network mode (bridged, shared-network, a published port), or a `create` flag
@@ -540,7 +626,8 @@ exposure, and isolate verifies the effective configuration anyway
     and destination;
   - zero socket relays and published ports, and no agent forwarding;
   - exactly one interface on a per-sandbox vmnet subnet, carrying the reported
-    address;
+    address (for a brokered sandbox: no interface or address, and the checks in
+    [Brokered transport](#brokered-transport));
   - CPUs, memory, owner, and image digest matching the record.
 
   The address must lie inside the reported subnet. The published-port count,

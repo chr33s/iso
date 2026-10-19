@@ -136,13 +136,13 @@ extension AppleBackend {
       lastObservedOwnerPID: nil, lastObservedIP: nil, reenrollHostKey: false,
       createdAt: utcTimestamp(), runtimeIdentity: try runtime.requireQualified(), guestOS: .macos)
     try IsolationGate.verifyMacRecord(
-      try runtime.macInspect(machine), expected(sidecar, runtime), template: template)
+      try runtime.macInspect(machine), try expected(sidecar, runtime), template: template)
     let deadline = macBootDeadline(runtime)
     let (ready, key) = try macBootValidated(
-      runtime, expected(sidecar, runtime), template: template, until: deadline,
+      runtime, try expected(sidecar, runtime), template: template, until: deadline,
       sessionTTL: config.limits.sessionTTL)
     try HostKeyPin.apply(.enroll, instance: instance, machine: machine, key: key)
-    try waitForSSH(instance, ready, user: manifest.guestUser, until: deadline)
+    try waitForSSH(instance, ready, user: manifest.guestUser, runtime: runtime, until: deadline)
     sidecar.hostKeyFingerprint = key.fingerprint
     sidecar.lastObservedOwnerPID = ready.ownerPID
     sidecar.lastObservedIP = ready.ipv4
@@ -186,14 +186,16 @@ extension AppleBackend {
       throw RuntimeError.operationUncertain(
         "sandbox \(sidecar.machineID) is booting; wait for it to settle")
     }
-    try IsolationGate.verifyMacRecord(inspection, expected(sidecar, runtime), template: template)
+    try IsolationGate.verifyMacRecord(
+      inspection, try expected(sidecar, runtime), template: template)
     let deadline = macBootDeadline(runtime)
     do {
       let (ready, key) = try macBootValidated(
-        runtime, expected(sidecar, runtime), template: template, until: deadline,
+        runtime, try expected(sidecar, runtime), template: template, until: deadline,
         sessionTTL: config.limits.sessionTTL)
       try HostKeyPin.apply(.requirePin, instance: instance, machine: sidecar.machineID, key: key)
-      try waitForSSH(instance, ready, user: sidecar.guestUser, until: deadline)
+      try waitForSSH(
+        instance, ready, user: sidecar.guestUser, runtime: runtime, until: deadline)
       try NetworkPolicy.save(config, instance)
       return ready
     } catch {
@@ -236,7 +238,7 @@ extension AppleBackend {
         Network: \(network) (dedicated)
         vCPUs: \(inspection.record.cpus)
         Memory: \(inspection.record.memoryBytes / (1 << 20)) MiB
-        Address: \(running.ready.ipv4) (host key \(running.sidecar.hostKeyFingerprint))
+        Address: \(running.ready.ipv4?.description ?? "none") (host key \(running.sidecar.hostKeyFingerprint))
         Workspace: copied (no live mounts)
       """
   }

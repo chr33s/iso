@@ -38,6 +38,7 @@ after hand edits.
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"open"` | Guest network reach beyond the host: `"open"`, `"none"`, or `"filtered"`. See [egress](#egress). |
+| `network` | object | `{"transport": "vmnet"}` | How new instances' VMs are connected: `"vmnet"` or `"brokered"` (no network device). See [network](#network). |
 | `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
 
@@ -543,6 +544,10 @@ Each timeout must be between 1 and 86400 seconds.
 
 ## `egress`
 
+With [`network.transport: "brokered"`](#network) there is no vmnet network at
+all and only `"none"` and `"filtered"` are valid; the paragraphs below describe
+the default vmnet transport.
+
 `"none"` creates each new instance's sandbox in vmnet host mode with NAT
 (IPv4 and IPv6), the vmnet DNS proxy, router advertisements and DHCP all
 disabled, so the guest has no route beyond the Mac and no resolver. Host→guest
@@ -565,7 +570,16 @@ renewal stops. A missing companion or boot id fails the boot; there is no NAT fa
 CONNECT is denied before a target is chosen. An approved name is relayed byte for byte, without the proxy header, in a
 socket fixture. A slow request head is abandoned after five seconds, DNS after five,
 a connect after ten, and an idle tunnel after 300, all on a monotonic
-clock. A mixed or host-local answer is not dialed. Accepted sockets stop at
+clock. A mixed or host-local answer is not dialed; a fully public answer's
+addresses are dialed in answer order until one connects, so an IPv6 answer on
+a Mac without an IPv6 route falls through to the IPv4 one. Each boot also points
+the guest's Docker daemon at the companion (a systemd drop-in) and gives
+containers and builds on Docker's default bridge a guest-internal bridge to it
+on `172.17.0.1` (in the guest user's `~/.docker/config.json`); these carry the
+same per-boot capability as session proxy variables and change nothing about
+what is approved. git is set (`/etc/gitconfig`) to send its proxy credentials
+up front, since the companion answers a credential-less probe with 403, not 407.
+Accepted sockets stop at
 128 and tunnels at 64. The 16 DNS slots belong to resolver work, not waiting
 clients: a timed-out libc lookup keeps its slot until it returns. New lookups
 are refused while all slots remain occupied. A relay direction stops
@@ -646,6 +660,72 @@ inside a `"none"` guest fail; bake them
 into the image (`iso setup --profile …`) instead. Combine with
 `"proxy": {"mode": "required"}` for a guest whose only way out is the
 credential proxy.
+
+## `network`
+
+```jsonc
+{ "network": { "transport": "brokered" }, "egress": "filtered" }
+```
+
+`transport` is `"vmnet"` (the default: one dedicated vmnet network device,
+shared or host-only by `egress`, exactly as described above) or
+`"brokered"`. Unknown `network` members are rejected.
+
+A **brokered** instance's VM is created with **no network device**. The
+runtime reads the live `VZVirtualMachine` after creating it and before the
+guest's own init runs, and refuses to boot one with any network device; iso's
+isolation gate requires the same reading (`0` network devices, one Virtio
+socket device, no interface or address) before handing the guest out. iso's
+SSH — shell, exec, workspace transfer, staged pulls, agents, port forwards,
+editor tunnels, the credential proxy's and filtered egress's reverse tunnels
+and local-model tunnels — runs unchanged over a pinned-host-key SSH
+connection whose `ProxyCommand` is the runtime's fixed stream connector
+(`iso-sandbox connect`). The connector carries one byte stream to the
+guest's SSH adapter on vsock port 2222 (`iso-ssh-vsock.socket`, installed by
+`iso setup`), never to a caller-chosen host, port, file or socket.
+
+- `egress` must be `"none"` or `"filtered"`; `"open"` (configured or from
+  `--egress`) is refused, because a brokered VM has no route that could mean
+  unrestricted networking. `"none"` gives the guest no general egress;
+  `"filtered"` keeps the approved-host CONNECT companion, reached only
+  through its reverse tunnel. Provider brokers (`proxy`) and loopback local
+  models remain separately configured and are listed in the boot's policy.
+- Each boot is started with the **digest of its resolved network policy**:
+  transport, the egress profile and allowlist, the providers with an
+  effective credential broker, the local-model services iso tunnels in, the
+  runtime's channel policy, and `fallback: forbidden`. The runtime refuses a
+  stream that does not present that digest and the current boot id, so an
+  SSH alias or descriptor from an earlier boot or policy reaches nothing. A
+  configuration that now resolves to a different policy — a new allowlist
+  host, provider override or local model — is refused at the next handoff
+  with `POLICY_CHANGE_REQUIRES_RESTART`; stop and start the instance to apply it.
+- A local model must be served on the host's loopback (`127.0.0.1` or
+  `localhost`), which iso tunnels in; any other endpoint is refused with
+  `BROKERED_UNSUPPORTED`, since the guest cannot reach it directly.
+- Linux guests only. The image must carry the guest adapter: images built by
+  this version of `iso setup` do (`guest_adapters: ["vsock-ssh-v1"]` in the
+  image manifest); older images are refused before any VM is created —
+  rebuild with `iso setup --rebuild`. The runtime must advertise the
+  `brokered-transport` feature.
+- The transport is fixed when an instance is created. An existing instance is
+  never converted, and a configuration naming the other transport refuses it
+  (`POLICY_CHANGE_REQUIRES_RESTART`) rather than starting it differently. To
+  move a project to the brokered transport, create a new instance and transfer
+  its workspace with `iso push`/`iso pull`. A downgraded `iso` that predates the
+  transport refuses a brokered instance's records instead of reading them as vmnet.
+- Inside the guest, loopback services and containers from images already in
+  the guest can run, but nothing leaves the VM except through iso's tunnels:
+  package installs, image pulls and Git over SSH fail unless they go through
+  an approved filtered-egress path the tool is configured to use. Bake what the
+  workload needs into the image (`iso setup --profile …`).
+- `iso status NAME` names the transport, the boot's policy digest, its egress
+  profile, provider brokers and local services; `iso status --output json`
+  adds a `network` object for brokered instances
+  ([machine interface](machine-interface.md#status)).
+
+The vmnet transport keeps its documented behavior, including guest reach to
+services on the Mac (see the [trust model](trust-model.md#brokered-transport)
+for what the brokered transport does and does not promise).
 
 ## Security presets
 

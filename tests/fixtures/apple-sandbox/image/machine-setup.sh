@@ -38,8 +38,38 @@ ExecStart=/usr/bin/ssh-keygen -A
 WantedBy=multi-user.target
 UNIT
 
+# The brokered transport's guest adapter, as iso's image recipe installs it
+# (BuildContext in Sources/IsoHost/Guest/ImageBuild.swift): one `sshd -i`
+# per host-opened vsock stream on port 2222. A brokered sandbox has no
+# network device, so this is its only SSH route.
+cat > /etc/systemd/system/iso-ssh-vsock.socket <<'UNIT'
+[Unit]
+Description=iso brokered SSH streams (vsock port 2222)
+
+[Socket]
+ListenStream=vsock::2222
+Accept=yes
+MaxConnections=64
+
+[Install]
+WantedBy=sockets.target
+UNIT
+cat > /etc/systemd/system/iso-ssh-vsock@.service <<'UNIT'
+[Unit]
+Description=iso brokered SSH stream
+After=iso-test-hostkeys.service
+
+[Service]
+ExecStartPre=/bin/mkdir -p -m 0755 /run/sshd
+ExecStart=-/usr/sbin/sshd -i
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+UNIT
+
 systemctl set-default multi-user.target
-systemctl enable iso-test-hostkeys.service ssh.service docker.service containerd.service
+systemctl enable iso-test-hostkeys.service ssh.service docker.service containerd.service \
+    iso-ssh-vsock.socket
 systemctl disable ssh.socket 2>/dev/null || true
 # Units that cannot work inside a VM-backed container workload.
 systemctl mask \

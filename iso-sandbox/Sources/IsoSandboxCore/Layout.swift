@@ -6,6 +6,9 @@ import Foundation
 package let protocolVersion = 5
 /// `version` capability: `macos …` commands (the host's `RuntimeProtocol.macFeature`).
 package let macGuestsFeature = "macos-guests"
+/// `version` capability: `create --network brokered`, `start --network-policy`,
+/// `connect` and `streams` (docs/design/brokered-network-isolation.md).
+package let brokeredTransportFeature = "brokered-transport"
 package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.45.0"
 
@@ -145,6 +148,11 @@ package struct SandboxPaths: Sendable {
   package var control: URL {
     Self.controlDirectory.appendingPathComponent("\(Self.stableHash(dir.path)).sock")
   }
+  /// A brokered sandbox's stream socket (``StreamBroker``), beside the
+  /// control socket and served by the same owner.
+  package var streams: URL {
+    Self.controlDirectory.appendingPathComponent("\(Self.stableHash(dir.path)).streams.sock")
+  }
 
   /// `iso-sbx` in the per-user temporary directory, which is private to
   /// the user from boot: in shared `/tmp`, another user could pre-create
@@ -261,18 +269,24 @@ package struct OperationID: RawRepresentable, Codable, Hashable, Sendable, Custo
   package var description: String { rawValue }
 }
 
-/// Durable description of a persistent sandbox. Deliberately has no field
-/// for host mounts, socket relays, published ports, or agent forwarding:
-/// those states are not expressible.
-/// How a sandbox's vmnet network reaches beyond the host. Fixed at create.
+/// How a sandbox reaches beyond its VM. Fixed at create.
 package enum NetworkMode: String, Codable, Sendable {
   /// NAT to the host's uplinks (vmnet shared mode).
   case shared
   /// No route beyond the host: vmnet host mode with NAT44, NAT66, the DNS
   /// proxy, router advertisements and DHCP disabled.
   case hostOnly = "host_only"
+  /// No network device at all. The host reaches the guest only through the
+  /// owner's fixed vsock streams (``ChannelPolicy``). Linux sandboxes only.
+  case brokered
+
+  /// Brokered sandboxes hold no subnet (``SandboxRecord/subnetIndex`` is nil).
+  package var usesSubnet: Bool { self != .brokered }
 }
 
+/// Durable description of a persistent sandbox. Deliberately has no field
+/// for host mounts, socket relays, published ports, or agent forwarding:
+/// those states are not expressible.
 package struct SandboxRecord: Codable, Sendable {
   package var id: SandboxID
   /// Caller-chosen ownership tag; `delete` refuses a mismatch.
@@ -287,7 +301,9 @@ package struct SandboxRecord: Codable, Sendable {
   package var cpus: Int
   package var memoryBytes: UInt64
   package var diskBytes: UInt64
-  package var subnetIndex: Int
+  /// `10.231.N.0/24`; nil (absent from the record) for a brokered sandbox,
+  /// which has no network.
+  package var subnetIndex: Int?
   package var createdAt: Date
   /// Incremented each time `restore` replaces the disk, so a caller that
   /// crashed mid-restore can tell whether it applied.
@@ -302,13 +318,17 @@ package struct SandboxRecord: Codable, Sendable {
   /// --expires-at` and cleared by a `start` without it. The owner halts
   /// the VM at this time and refuses to boot past it.
   package var expiresAt: Date?
+  /// Brokered sandboxes: the host's digest of the current boot's network
+  /// policy, set by `start --network-policy` and cleared by a `start`
+  /// without it. A stream request must present it (``StreamBroker``).
+  package var networkPolicy: String?
 
-  package var subnet: String { Self.subnet(subnetIndex) }
+  package var subnet: String? { subnetIndex.map(Self.subnet) }
   package static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
 
   package init(
     id: SandboxID, owner: String, imageReference: String, imageDigest: String, baseDisk: String?,
-    environment: [String], cpus: Int, memoryBytes: UInt64, diskBytes: UInt64, subnetIndex: Int,
+    environment: [String], cpus: Int, memoryBytes: UInt64, diskBytes: UInt64, subnetIndex: Int?,
     createdAt: Date, network: NetworkMode = .shared
   ) {
     self.id = id
@@ -335,6 +355,11 @@ package struct LiveState: Codable, Sendable {
   /// Random identity for this owner process.
   /// It is not part of the disk record, so a restore does not keep it.
   package var bootId: String
+}
+
+/// Lowercase hex sha256, the form of every digest this runtime reports.
+package func sha256Hex(_ data: Data) -> String {
+  SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 package enum SandboxStatus: String, Codable, Sendable {

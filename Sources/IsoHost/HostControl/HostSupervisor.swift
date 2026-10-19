@@ -107,6 +107,9 @@ package final class HostSupervisor: Sendable {
     }
     for id in runs.runIDs() { reconcileRun(id) }
     guard settings.dispatch == .background else { return }
+    // After a worker restart or reboot, commit boots that ended while the
+    // service was down before the first request is admitted.
+    enforceDeadlines(observe: true)
     let sweep = settings.sweepInterval
     let reconcile = settings.reconcileInterval
     Thread.detachNewThread { [self] in
@@ -659,6 +662,9 @@ package final class HostSupervisor: Sendable {
       throw busy(active)
     }
     guard instance.generation == generation else { throw generationConflict(instance) }
+    // A boot that ended outside this service (a worker reboot, a crashed
+    // owner) is committed as stopped before the sweep gets to it.
+    if instance.lifecycle == .running { commitObservedStop(&instance) }
     switch instance.lifecycle {
     case .running: throw HostControlError(.instanceAlreadyRunning, "instance is already running")
     case .creating: throw busy(instance.createdBy)
@@ -700,6 +706,22 @@ package final class HostSupervisor: Sendable {
       try store.saveOperation(accepted)
     }
     return record.receipt(disposition: .accepted, instance: instance.qualified)
+  }
+
+  /// Commits a runtime-observed stop of a ledger-running instance, as the
+  /// deadline sweep does. Called under the admission lock.
+  private func commitObservedStop(_ instance: inout OperationStore.InstanceRecord) {
+    guard (try? native.observe(instance.instanceID, runtime: instance.runtimeID)) == .stopped
+    else { return }
+    var stopped = instance
+    stopped.lifecycle = .stopped
+    stopped.bootID = nil
+    stopped.expiresAt = nil
+    stopped.generation += 1
+    stopped.lastObservedAt = now.seconds
+    guard (try? store.saveInstance(stopped)) != nil else { return }
+    sessions.revoke(instance: stopped.instanceID)
+    instance = stopped
   }
 
   enum CleanupKind {
@@ -1249,7 +1271,7 @@ package final class HostSupervisor: Sendable {
 
   func observation(_ instance: OperationStore.InstanceRecord) -> VMObservation {
     let spec = decodeSpec(instance.spec)
-    let state: ObservedState
+    var state: ObservedState
     var boot = instance.bootID
     switch try? native.observe(instance.instanceID, runtime: instance.runtimeID) {
     case .running(let observed, _, _)?:
@@ -1260,11 +1282,26 @@ package final class HostSupervisor: Sendable {
     case .absent?: state = instance.lifecycle == .creating ? .unknown : .unhealthy
     case nil: state = .unknown
     }
+    // A brokered boot that fails a fresh gate pass, or whose proof names
+    // another boot, is not reported as running.
+    var network: NetworkProof?
+    if state == .running {
+      do {
+        network = try native.networkProof(instance.instanceID, runtime: instance.runtimeID)
+        if let proof = network, proof.bootID != boot {
+          state = .unhealthy
+          network = nil
+        }
+      } catch {
+        state = .unhealthy
+      }
+    }
     return VMObservation(
       instance: instance.qualified, name: instance.name, generation: instance.generation,
       state: state, bootID: state == .running ? boot : nil, policyHash: instance.policyHash,
       expiresAt: instance.expiresAt.map(WireTime.init(seconds:)), observedAt: now,
-      activeOperation: instance.activeOperation, image: spec?.image, egress: spec?.egress)
+      activeOperation: instance.activeOperation, image: spec?.image, egress: spec?.egress,
+      network: network)
   }
 
   private func list(cursor: InstanceID?, limit: UInt32) -> JSONValue {

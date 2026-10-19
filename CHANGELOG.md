@@ -8,6 +8,40 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **Brokered network isolation** (opt-in, Linux guests): `"network":
+  {"transport": "brokered"}` creates new instances whose VM has **no network
+  device**, proven from the live VM before the guest's init runs and again by
+  the host gate. Everything iso does over SSH keeps working through the
+  runtime's fixed vsock stream connector (`iso-sandbox connect`) as ssh's
+  `ProxyCommand`. Each boot is bound to a digest of its resolved network
+  policy; a stale boot or policy is refused and any change needs a restart.
+  `egress: "open"`, macOS guests, old runtimes and images without the guest
+  adapter are refused before a VM is created, never started on vmnet
+  instead. Rebuild images with `iso setup --rebuild` to use it. vmnet stays the
+  default and is unchanged. See [configuration](docs/configuration.md#network)
+  and the [design record](docs/design/brokered-network-isolation.md).
+- **Remote brokered proof**: `vm.inspect`/`vm.list` on `iso.host/v1` add a
+  `network` object for a running brokered VM (zero external network devices,
+  the boot's network- and channel-policy digests) from a fresh check on the
+  worker, shown by `iso host vm inspect`. A brokered VM failing that check is
+  `unhealthy`; vmnet observations are unchanged.
+- **Filtered egress**: `iso-egress` tries each validated answer for an
+  approved host in turn until one connects (the whole answer must still be
+  public), so a dual-stack host works on a Mac without an IPv6 route. Filtered
+  boots also point the guest's Docker daemon, the guest user's Docker client
+  config and containers on Docker's default bridge at the companion, so
+  approved registries work from Docker.
+- **Host service after a worker reboot**: `vm.start` refused a VM that had
+  stopped while the service was down (a reboot or a crashed runtime owner) as
+  already running, until the periodic sweep caught up. Start admission and
+  service startup now commit a stop the runtime reports.
+- **Sandboxed Zed upload**: a sandboxed Zed with `--editor-allow internet`
+  could not upload `zed-remote-server` to a guest without open egress, because
+  its profile denied `sftp`/`scp`. That session's profile now allows those two
+  OpenSSH tools, still confined.
+- **iso-sandbox**: `create --network brokered`, `start --network-policy`,
+  `connect`, and `streams list|close`, advertised as the `brokered-transport`
+  feature on protocol 5. Output for vmnet sandboxes is unchanged.
 - **Shared option parsing**: `up`, `code`, `zed` and `start` share one
   definition of the boot options (`--no-agents`, `--no-github`,
   `--no-prompt`, `--forward-port`, `--post-start`, `--env`, `--env-file`) and

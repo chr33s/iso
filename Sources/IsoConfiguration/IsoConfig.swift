@@ -87,6 +87,8 @@ package struct IsoConfig: Sendable, Equatable {
   /// The compiled `policy` object; nil when absent. A running boot uses its
   /// stored snapshot, never this value (docs/design/iso-policy.md §5.2).
   package let policy: CompiledPolicy?
+  /// `network`: the VM transport new instances are created with.
+  package let network: NetworkConfig
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -95,10 +97,12 @@ package struct IsoConfig: Sendable, Equatable {
     postStart: String?, forwardPorts: [PortForward], updates: UpdateConfig,
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
-    editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?
+    editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?,
+    network: NetworkConfig = .defaults
   ) {
     self.execution = execution
     self.policy = policy
+    self.network = network
     self.dataDirectory = dataDirectory
     self.vm = vm
     self.sshPort = sshPort
@@ -375,6 +379,24 @@ package enum EgressMode: String, Sendable, Equatable, CaseIterable {
   package var requiresHostOnlyNetwork: Bool { self != .open }
 }
 
+/// How a new instance's VM is connected (docs/design/brokered-network-isolation.md).
+/// Fixed per instance when its sandbox is created.
+package enum NetworkTransport: String, Sendable, Equatable, CaseIterable, Codable {
+  /// One dedicated vmnet network device, shared or host-only by `egress`.
+  case vmnet
+  /// No network device: the host reaches the guest only through the
+  /// runtime's fixed vsock SSH stream, and egress only through brokers.
+  case brokered
+}
+
+package struct NetworkConfig: Sendable, Equatable {
+  package let transport: NetworkTransport
+
+  package init(transport: NetworkTransport) { self.transport = transport }
+
+  package static let defaults = NetworkConfig(transport: .vmnet)
+}
+
 /// Approved exact hostnames for `egress: filtered`. Empty means no general
 /// destinations. Hints from an agent definition are not part of this set.
 package struct EgressFilter: Sendable, Equatable {
@@ -514,7 +536,7 @@ extension IsoConfig {
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
-      editor: editor, execution: execution, policy: policy)
+      editor: editor, execution: execution, policy: policy, network: network)
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -555,7 +577,8 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
-      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
+      network: network)
   }
 
   /// This command's `proxy.mode` override. Does not rewrite the config file.
@@ -567,7 +590,29 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
-      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
+      network: network)
+  }
+
+  /// The configuration under an instance's recorded transport.
+  package func overridingTransport(_ transport: NetworkTransport) -> IsoConfig {
+    IsoConfig(
+      dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
+      claude: claude, codex: codex, codexAuth: codexAuth, proxy: proxy,
+      guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
+      network: NetworkConfig(transport: transport))
+  }
+
+  /// Why `egress` cannot run over `network.transport`, or nil. The brokered
+  /// transport has no route for unrestricted egress, so `open` would have
+  /// to mean something weaker than it says.
+  package var transportConflict: String? {
+    guard network.transport == .brokered, egress == .open else { return nil }
+    return
+      "egress \"open\" is invalid with network.transport \"brokered\": a brokered VM has no network device; use egress \"none\" or \"filtered\""
   }
 
   /// This command's egress override. Does not rewrite the config file.
@@ -579,6 +624,7 @@ extension IsoConfig {
       guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
-      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy)
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
+      network: network)
   }
 }

@@ -1,0 +1,147 @@
+{
+  "disk": {
+    "allocatedBytes": 764084224,
+    "logicalBytes": 8724152320,
+    "name": "rootfs"
+  },
+  "effective": {
+    "channelPolicy": {
+      "chunkBytes": 65536,
+      "endpoints": [
+        {
+          "direction": "host-to-guest",
+          "guestPort": 2222,
+          "purpose": "ssh"
+        }
+      ],
+      "maxOpensPerWindow": 64,
+      "maxStreams": 64,
+      "requestBytes": 4096,
+      "schema": "iso.channels/v1",
+      "setupTimeoutSeconds": 10,
+      "windowSeconds": 10
+    },
+    "channelPolicyDigest": "1beae82700a50cad9663c46faaea554ae4a815f5330c82cdcaa412b5c6a59301",
+    "cpus": 2,
+    "id": "iso-0a1b2c3d-00112233445566ff",
+    "imageDigest": "sha256:3c8ada4041838a362f1d3c0805e487beff8ef85383044efeb07844cdd7c1e0b3",
+    "imageReference": "local/iso-exp:fx",
+    "initArgv": [
+      "/sbin/init"
+    ],
+    "interfaces": [],
+    "maskedPaths": [],
+    "memoryBytes": 2147483648,
+    "mounts": [
+      {
+        "destination": "/proc",
+        "options": [],
+        "source": "proc",
+        "type": "proc"
+      },
+      {
+        "destination": "/sys",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev"
+        ],
+        "source": "sysfs",
+        "type": "sysfs"
+      },
+      {
+        "destination": "/dev",
+        "options": [
+          "nosuid",
+          "mode=755"
+        ],
+        "source": "none",
+        "type": "devtmpfs"
+      },
+      {
+        "destination": "/dev/mqueue",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev"
+        ],
+        "source": "mqueue",
+        "type": "mqueue"
+      },
+      {
+        "destination": "/dev/shm",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev",
+          "mode=1777",
+          "size=65536k"
+        ],
+        "source": "tmpfs",
+        "type": "tmpfs"
+      },
+      {
+        "destination": "/sys/fs/cgroup",
+        "options": [
+          "nosuid",
+          "noexec",
+          "nodev"
+        ],
+        "source": "none",
+        "type": "cgroup2"
+      },
+      {
+        "destination": "/dev/pts",
+        "options": [
+          "nosuid",
+          "noexec",
+          "newinstance",
+          "gid=5",
+          "mode=0620",
+          "ptmxmode=0666"
+        ],
+        "source": "devpts",
+        "type": "devpts"
+      }
+    ],
+    "networkDevices": 0,
+    "networkPolicy": "fa482a1dda592f86ddcf7b3dfe98577d9f849c046cc5914d81312cdd39a05e73",
+    "publishedPorts": 0,
+    "readonlyPaths": [],
+    "rootfs": {
+      "destination": "/",
+      "options": [],
+      "source": "/Users/me/.iso/backends/apple-container-v1/runtime/sandboxes/iso-0a1b2c3d-00112233445566ff/rootfs.ext4",
+      "type": "ext4"
+    },
+    "socketDevices": 1,
+    "socketRelays": 0,
+    "sshAgentForwarding": false,
+    "transport": "brokered",
+    "virtualization": false
+  },
+  "live": {
+    "bootId": "b7ad1194a3cc79a7720b4f169833bb62",
+    "pid": 81564,
+    "startedAt": "2026-10-16T10:43:40Z"
+  },
+  "record": {
+    "cpus": 2,
+    "createdAt": "2026-10-16T10:43:40Z",
+    "diskBytes": 8589934592,
+    "diskGeneration": 0,
+    "environment": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "container=container",
+      "DEBIAN_FRONTEND=noninteractive"
+    ],
+    "id": "iso-0a1b2c3d-00112233445566ff",
+    "imageDigest": "sha256:3c8ada4041838a362f1d3c0805e487beff8ef85383044efeb07844cdd7c1e0b3",
+    "imageReference": "local/iso-exp:fx",
+    "memoryBytes": 2147483648,
+    "network": "brokered",
+    "networkPolicy": "fa482a1dda592f86ddcf7b3dfe98577d9f849c046cc5914d81312cdd39a05e73",
+    "owner": "0a1b2c3d00112233445566778899aabb"
+  },
+  "status": "running"
+}

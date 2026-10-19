@@ -235,7 +235,7 @@ private func policy(
     "com.apple.pasteboard.1", "com.apple.lsd.mapdb", "com.apple.lsd.modifydb",
     "com.apple.coreservices.appleevents", "com.apple.SecurityServer", "com.apple.securityd.xpc",
     "com.apple.tccd", "com.apple.trustd.agent", "com.apple.mDNSResponder", "*:443", "/bin/sh",
-    "/private/var/run/mDNSResponder", "pseudo-tty",
+    "/private/var/run/mDNSResponder", "pseudo-tty", "/usr/bin/sftp", "/usr/bin/scp",
   ] {
     #expect(!profile.contains(service))
   }
@@ -247,6 +247,14 @@ private func policy(
   #expect(
     internet.contains(#"(remote tcp "*:443")"#) && internet.contains("com.apple.trustd.agent"))
   #expect(!internet.contains("pasteboard"))
+  let transfer = EditorSandboxPolicy(
+    tunnelPort: 41000, forwardPort: nil, terminal: false, machServicePrefix: "dev.zed.Zed.",
+    capabilities: [], fileTransfer: true
+  ).profile
+  #expect(
+    transfer.contains(
+      #"(allow process-exec* file-read* (literal "/usr/bin/sftp") (literal "/usr/bin/scp"))"#))
+  #expect(!transfer.contains("/bin/sh") && !transfer.contains("*:443"))
   let terminal = policy(forward: 41001, terminal: true).profile
   #expect(terminal.contains(#"(literal "/bin/sh")"#))
   #expect(terminal.contains(#"(extension "com.apple.sandbox.pty")"#))
@@ -477,4 +485,25 @@ private struct SessionFixture {
   }
   #expect(!fixture.editorAlive())
   #expect(fixture.enclaves.isEmpty)
+}
+
+@Test func aSandboxedZedMayRunSFTPOnlyWhenItUploadsItsServer() throws {
+  let root = try scratchDirectory("zed-plan")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let app = TrustedEditorApp(
+    bundle: root + "/Zed.app", executable: root + "/Zed.app/Contents/MacOS/zed", version: "1.0")
+  func plan(_ capabilities: [EditorHostCapability], egress: EgressMode) throws
+    -> SandboxedEditorPlan
+  {
+    let enclave = try EditorEnclave.create(in: root)
+    return try ZedEditorProvider().prepareSandboxed(
+      SandboxedEditorContext(
+        enclave: enclave, app: app,
+        target: SSHConnectionTarget(
+          instance: try InstanceName("z"), guestPath: guestWorkspace, egress: egress),
+        capabilities: capabilities, forwardPort: 41001, hostHome: nil))
+  }
+  #expect(try plan([.internet], egress: .none).fileTransfer)
+  #expect(try !plan([], egress: .none).fileTransfer)
+  #expect(try !plan([.internet], egress: .open).fileTransfer)
 }

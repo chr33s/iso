@@ -123,6 +123,84 @@ package struct EffectiveInterface: Sendable, Equatable, Decodable {
   }
 }
 
+/// `channelPolicy` in a brokered sandbox's effective configuration: the only
+/// host-to-guest streams its owner opens (runtime `ChannelPolicy`).
+package struct EffectiveChannelPolicy: Sendable, Equatable, Codable {
+  package struct Endpoint: Sendable, Equatable, Codable {
+    package let purpose: String
+    package let guestPort: UInt32
+    package let direction: String
+
+    enum CodingKeys: String, CodingKey, CaseIterable { case purpose, guestPort, direction }
+
+    package init(purpose: String, guestPort: UInt32, direction: String) {
+      self.purpose = purpose
+      self.guestPort = guestPort
+      self.direction = direction
+    }
+
+    package init(from decoder: any Decoder) throws {
+      let c = try StrictKeys.container(decoder, CodingKeys.self)
+      purpose = try c.decode(String.self, forKey: .purpose)
+      guestPort = try c.decode(UInt32.self, forKey: .guestPort)
+      direction = try c.decode(String.self, forKey: .direction)
+    }
+  }
+
+  package let schema: String
+  package let endpoints: [Endpoint]
+  package let maxStreams: Int
+  package let maxOpensPerWindow: Int
+  package let windowSeconds: Int
+  package let requestBytes: Int
+  package let setupTimeoutSeconds: Int
+  package let chunkBytes: Int
+
+  enum CodingKeys: String, CodingKey, CaseIterable {
+    case schema, endpoints, maxStreams, maxOpensPerWindow, windowSeconds, requestBytes
+    case setupTimeoutSeconds, chunkBytes
+  }
+
+  package init(
+    schema: String, endpoints: [Endpoint], maxStreams: Int, maxOpensPerWindow: Int,
+    windowSeconds: Int, requestBytes: Int, setupTimeoutSeconds: Int, chunkBytes: Int
+  ) {
+    self.schema = schema
+    self.endpoints = endpoints
+    self.maxStreams = maxStreams
+    self.maxOpensPerWindow = maxOpensPerWindow
+    self.windowSeconds = windowSeconds
+    self.requestBytes = requestBytes
+    self.setupTimeoutSeconds = setupTimeoutSeconds
+    self.chunkBytes = chunkBytes
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try StrictKeys.container(decoder, CodingKeys.self)
+    schema = try c.decode(String.self, forKey: .schema)
+    endpoints = try c.decode([Endpoint].self, forKey: .endpoints)
+    maxStreams = try c.decode(Int.self, forKey: .maxStreams)
+    maxOpensPerWindow = try c.decode(Int.self, forKey: .maxOpensPerWindow)
+    windowSeconds = try c.decode(Int.self, forKey: .windowSeconds)
+    requestBytes = try c.decode(Int.self, forKey: .requestBytes)
+    setupTimeoutSeconds = try c.decode(Int.self, forKey: .setupTimeoutSeconds)
+    chunkBytes = try c.decode(Int.self, forKey: .chunkBytes)
+  }
+}
+
+/// A brokered sandbox's transport report: every member is required once
+/// any is present, so a partial report fails to decode.
+package struct EffectiveBrokered: Sendable, Equatable {
+  package let transport: String
+  /// The owner's reading of the live VM.
+  package let networkDevices: UInt32
+  package let socketDevices: UInt32
+  package let channelPolicy: EffectiveChannelPolicy
+  package let channelPolicyDigest: String
+  /// Absent for a boot started without `--network-policy`.
+  package let networkPolicy: String?
+}
+
 /// What the running VM was configured with, reported by its owner process.
 package struct Effective: Sendable, Equatable, Decodable {
   package let id: String
@@ -140,11 +218,15 @@ package struct Effective: Sendable, Equatable, Decodable {
   package let readonlyPaths: [String]
   package let initArgv: [String]
   package let virtualization: Bool
+  /// Nil exactly when none of the brokered members is reported (vmnet).
+  package let brokered: EffectiveBrokered?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, imageReference, imageDigest, cpus, memoryBytes, rootfs, mounts, interfaces
     case socketRelays, publishedPorts, sshAgentForwarding, maskedPaths, readonlyPaths, initArgv
     case virtualization
+    case transport, networkDevices, socketDevices, channelPolicy, channelPolicyDigest
+    case networkPolicy
   }
 
   package init(from decoder: any Decoder) throws {
@@ -164,6 +246,21 @@ package struct Effective: Sendable, Equatable, Decodable {
     readonlyPaths = try c.decode([String].self, forKey: .readonlyPaths)
     initArgv = try c.decode([String].self, forKey: .initArgv)
     virtualization = try c.decode(Bool.self, forKey: .virtualization)
+    let group: [CodingKeys] = [
+      .transport, .networkDevices, .socketDevices, .channelPolicy, .channelPolicyDigest,
+      .networkPolicy,
+    ]
+    if group.contains(where: c.contains) {
+      brokered = EffectiveBrokered(
+        transport: try c.decode(String.self, forKey: .transport),
+        networkDevices: try c.decode(UInt32.self, forKey: .networkDevices),
+        socketDevices: try c.decode(UInt32.self, forKey: .socketDevices),
+        channelPolicy: try c.decode(EffectiveChannelPolicy.self, forKey: .channelPolicy),
+        channelPolicyDigest: try c.decode(String.self, forKey: .channelPolicyDigest),
+        networkPolicy: try c.decodeIfPresent(String.self, forKey: .networkPolicy))
+    } else {
+      brokered = nil
+    }
   }
 }
 
@@ -208,6 +305,9 @@ package enum RuntimeProtocol {
   /// Protocol advertised by this checkout's runtime.
   package static let version: UInt32 = 5
   package static let bootIdentity: UInt32 = 5
+  /// `version` capability for `create --network brokered` and its stream
+  /// connector, on protocol 5 (vmnet output is unchanged by it).
+  package static let brokeredFeature = "brokered-transport"
 
   /// Filtered egress needs the current protocol and a non-empty live boot id.
   package static func filteredBootAllowed(advertised: UInt32, bootID: String?) -> Bool {

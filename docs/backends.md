@@ -19,7 +19,7 @@ The host CLI is built from the root Swift package (`swift build`, or
 [`containerization`](https://github.com/apple/containerization) package
 ([`iso-sandbox`](../iso-sandbox)).
 
-Each instance is one Linux VM running systemd from its own ext4 disk, on its own vmnet network, with no host mounts, socket relays, published ports, or host SSH-agent forwarding. The runtime's sandbox record has no field for any of those, and isolate verifies the running VM's effective configuration before every hand-out. [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md) records why this replaced the earlier `container machine` fork.
+Each instance is one Linux VM running systemd from its own ext4 disk, on its own vmnet network (or, with [`network.transport: "brokered"`](configuration.md#network), with no network device), with no host mounts, socket relays, published ports, or host SSH-agent forwarding. The runtime's sandbox record has no field for any of those, and isolate verifies the running VM's effective configuration before every hand-out. [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md) records why this replaced the earlier `container machine` fork.
 
 ### Prerequisites
 
@@ -143,6 +143,34 @@ Every later `ssh_target` (shell, exec, agent launch, push/pull, editor) re-inspe
 
 Workspaces are always copied. `--mount` directories are synced once; use `iso push`/`iso pull`.
 
+**Brokered instances** ([`network.transport: "brokered"`](configuration.md#network))
+differ in steps 2, 4, 5 and 7:
+
+- `iso-sandbox create --network brokered` records the mode and allocates no subnet.
+- `iso-sandbox start --network-policy <digest>` records the boot's network-policy
+  digest. The owner builds the VM with no interface, reads the live
+  `VZVirtualMachine` after `create` and before the guest's init runs, and stops
+  it unbooted unless it has no network device and exactly one socket device.
+  It then serves a `0600` stream socket beside its control socket.
+- The gate requires `transport: brokered`, `networkDevices: 0`,
+  `socketDevices: 1`, no interface and no address, the runtime's channel
+  policy equal to iso's own copy (and its digest equal to iso's recomputed
+  digest), and the boot's network-policy digest equal to the one iso started
+  it with. A vmnet sandbox reporting any of these fields is refused.
+- SSH uses `ProxyCommand=<iso-sandbox> connect --root <root> <id> --boot <boot>
+  --channel-policy <digest> --network-policy <digest>` and the pinned alias as
+  its host name. The connector asks the owner for one `ssh` stream; the owner
+  admits it only for the live boot and those digests, within its stream
+  limits, and dials guest vsock port 2222 itself. The managed
+  `~/.ssh/config` alias carries the same `ProxyCommand`, so an alias from an
+  earlier boot is refused until `iso up`/`iso start` refreshes it.
+- `iso-sandbox streams list --root <root> <id>` reports, and `streams close
+  --root <root> <id> [--session S]` revokes, a running brokered sandbox's open
+  streams.
+
+The runtime advertises this as the `brokered-transport` feature on protocol 5;
+vmnet output is unchanged.
+
 Local model servers on host loopback reach the guest over a per-instance `ssh -R 127.0.0.1:<guest-port>:<host-addr>:<host-port>` tunnel. The forward goes to the exact loopback address the URL names. The guest port is the same as the host port, except that a privileged port (below 1024) moves to port + 40000, so `https://localhost` becomes `https://localhost:40443` in the guest. `localhost` and `127.0.0.1` URLs keep their host, so TLS names still verify. Other `127.x` addresses are rewritten to `127.0.0.1` for plain HTTP only. IPv6-loopback endpoints are rejected. Every boot first closes the tunnels recorded for the previous boot. Each bootstrap then reconciles the tunnels for both agents: live tunnels are kept, tunnels the config no longer needs are closed, and two endpoints that need the same guest port with different destinations are an error.
 
 ### Resize, commit, restore
@@ -170,8 +198,8 @@ All three need the instance stopped.
 |---|---|
 | `APPLE_RUNTIME_UNAVAILABLE` | No usable iso-sandbox or builder, builder service not running, kernel not accepted, or unsupported platform. |
 | `APPLE_RUNTIME_UNQUALIFIED` | Unknown runtime, protocol, `containerization` version, or output schema (including an unknown field in the effective configuration). |
-| `APPLE_NETWORK_ISOLATION` | Missing, extra, or foreign network interface, or an address that does not match. |
-| `APPLE_HOST_EXPOSURE` | A host mount, socket relay, published port, agent forwarding, foreign root disk, or non-systemd init. |
+| `APPLE_NETWORK_ISOLATION` | Missing, extra, or foreign network interface, or an address that does not match; for a brokered sandbox, any network device, interface or address, or a boot started with another network policy. |
+| `APPLE_HOST_EXPOSURE` | A host mount, socket relay, published port, agent forwarding, foreign root disk, or non-systemd init; for a brokered sandbox, a channel policy other than iso's. |
 | `APPLE_IDENTITY_CONFLICT` | Ownership, name, image, resource, or boot identity mismatch. |
 | `APPLE_HOST_KEY_CHANGED` | Missing or changed pinned host key. |
 | `APPLE_SESSION_EXPIRED` | The instance's `limits.session_ttl` has passed. The owner halts the VM at the deadline; the host also refuses to hand out a sandbox whose deadline has passed. `iso stop` then `iso start` begins a new session. |

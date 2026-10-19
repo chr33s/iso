@@ -182,7 +182,7 @@ package enum Sandboxes {
     }
 
     var record: SandboxRecord?
-    try SubnetAllocator(root: root).allocate(for: id) { index in
+    let commit = { (index: Int?) throws in
       let r = SandboxRecord(
         id: id, owner: owner, imageReference: imageReference, imageDigest: imageDigest,
         baseDisk: baseDisk,
@@ -192,6 +192,11 @@ package enum Sandboxes {
       // Writing the record commits the create.
       try paths.save(r)
       record = r
+    }
+    if network.usesSubnet {
+      try SubnetAllocator(root: root).allocate(for: id, commit: commit)
+    } else {
+      try commit(nil)
     }
     guard let record else { throw SandboxError("allocation did not commit") }
     return record
@@ -212,9 +217,14 @@ package enum Sandboxes {
   // MARK: start / stop
 
   package static func start(
-    root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval, expiresAt: Date? = nil
+    root: SandboxRoot, id: SandboxID, executable: String, wait: TimeInterval,
+    expiresAt: Date? = nil,
+    networkPolicy: String? = nil
   ) async throws -> LiveState {
     if let expiresAt, expiresAt <= Date() { throw SandboxError("--expires-at is in the past") }
+    if let networkPolicy, !isPolicyDigest(networkPolicy) {
+      throw SandboxError("--network-policy must be 64 lowercase hex digits")
+    }
     try root.requireInitialized()
     let paths = root.sandbox(id)
     // Guarded up to the bootstrap only: the owner takes the guard to
@@ -227,8 +237,12 @@ package enum Sandboxes {
         try? FileManager.default.removeItem(at: paths.live)
       }
       try requireStopped(paths, id)
-      if record.expiresAt != expiresAt {
+      if networkPolicy != nil, record.network != .brokered {
+        throw SandboxError("--network-policy applies only to brokered sandboxes")
+      }
+      if record.expiresAt != expiresAt || record.networkPolicy != networkPolicy {
         record.expiresAt = expiresAt
+        record.networkPolicy = networkPolicy
         try paths.save(record)
       }
       Launchd.bootout(paths.launchdLabel)
@@ -257,6 +271,40 @@ package enum Sandboxes {
     let tail = logTail(paths.ownerLog, lines: 20)
     Launchd.bootout(paths.launchdLabel)
     throw SandboxError("\(id) did not become ready within \(Int(wait))s; owner log:\n\(tail)")
+  }
+
+  static func isPolicyDigest(_ value: String) -> Bool {
+    value.utf8.count == 64
+      && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+  }
+
+  package enum StreamsAction: Sendable, Equatable {
+    case list
+    /// Every stream, or only `session`'s.
+    case close(session: String?)
+  }
+
+  /// List, or close, a running brokered sandbox's guest streams through
+  /// its owner. Closing returns the streams that were open.
+  package static func streams(root: SandboxRoot, id: SandboxID, _ action: StreamsAction)
+    throws -> [StreamSummary]
+  {
+    let paths = root.sandbox(id)
+    let record = try paths.loadRecord()
+    guard record.network == .brokered else { throw SandboxError("\(id) is not brokered") }
+    let request: ControlRequest
+    switch action {
+    case .list: request = .init(op: .streams)
+    case .close(let session):
+      if let session, !validStreamLabel(session) { throw SandboxError("invalid session label") }
+      request = .init(op: .closeStreams, session: session)
+    }
+    guard status(paths) == .running else { return [] }
+    let response = try ControlSocket.call(paths.control, request, timeout: 10)
+    guard response.ok, let streams = response.streams else {
+      throw SandboxError(response.error ?? "streams request failed")
+    }
+    return streams
   }
 
   /// Remove the previous owner's failure marker, so `start` never reports

@@ -19,6 +19,19 @@ iso host add build-mac --ssh build-mac --agent-path /Users/me/.local/bin/iso
 Replace the agent path with the absolute path to the installed remote `iso`.
 Enrollment verifies the host's installation identity over pinned SSH.
 
+The remote Mac's own configuration decides how its VMs are connected. With
+[`"network": {"transport": "brokered"}`](configuration.md#network) there, new
+VMs it creates have no network device, and its relay reaches each guest
+through the runtime's stream connector instead of the guest's address; the
+client's pinned SSH, session leases and revocation are unchanged. Requests
+for `--egress open` are then refused. Existing VMs keep the transport they
+were created with. `iso host vm inspect` shows a running brokered VM's
+network proof from a fresh check on the remote Mac: zero external network
+devices and the boot's network-policy and channel-policy digests. A brokered
+VM that fails that check is reported `unhealthy`, and a client refuses a proof
+that is malformed, names another boot or reports a network device. The proof is
+an observation; every access is checked again on the remote Mac.
+
 ## Start a project
 
 ```sh

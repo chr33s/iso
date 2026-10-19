@@ -4,17 +4,27 @@ import Foundation
 /// process: one newline-terminated JSON request, one JSON response, over a
 /// Unix socket in a 0700 per-user directory.
 package struct ControlRequest: Codable, Sendable {
-  package enum Op: String, Codable, Sendable { case ping, exec, stop, inspect }
+  package enum Op: String, Codable, Sendable {
+    case ping, exec, stop, inspect
+    /// Brokered sandboxes: list, or close, the owner's open guest streams.
+    case streams, closeStreams
+  }
   package var op: Op
   package var argv: [String]? = nil
   package var stdin: Data? = nil
   package var timeoutSeconds: Int64? = nil
+  /// `closeStreams`: only this session's streams; nil closes every stream.
+  package var session: String? = nil
 
-  package init(op: Op, argv: [String]? = nil, stdin: Data? = nil, timeoutSeconds: Int64? = nil) {
+  package init(
+    op: Op, argv: [String]? = nil, stdin: Data? = nil, timeoutSeconds: Int64? = nil,
+    session: String? = nil
+  ) {
     self.op = op
     self.argv = argv
     self.stdin = stdin
     self.timeoutSeconds = timeoutSeconds
+    self.session = session
   }
 }
 
@@ -25,6 +35,8 @@ package struct ControlResponse: Codable, Sendable {
   package var stdout: Data? = nil
   package var stderr: Data? = nil
   package var inspect: EffectiveConfig? = nil
+  /// `streams` and `closeStreams`: the streams open before the call.
+  package var streams: [StreamSummary]? = nil
 }
 
 /// What the running VM was actually configured with, read back from the
@@ -57,6 +69,19 @@ package struct EffectiveConfig: Codable, Sendable {
   package var readonlyPaths: [String]
   package var initArgv: [String]
   package var virtualization: Bool
+  /// Present only for brokered sandboxes, so a vmnet sandbox's report is
+  /// unchanged and an older reader refuses a brokered one.
+  package var transport: String? = nil
+  /// Network devices on the live `VZVirtualMachine`, read back from the
+  /// framework after the VM was created and before the guest's init ran.
+  package var networkDevices: Int? = nil
+  /// Virtio socket devices on the live VM.
+  package var socketDevices: Int? = nil
+  /// The only host-to-guest streams the owner opens.
+  package var channelPolicy: ChannelPolicy? = nil
+  package var channelPolicyDigest: String? = nil
+  /// The host's network-policy digest this boot was started with.
+  package var networkPolicy: String? = nil
 }
 
 package enum ControlSocket {
@@ -112,6 +137,34 @@ package enum ControlSocket {
     at path: URL, handler: @escaping @Sendable (Request) async -> Response,
     failure: @escaping @Sendable (String) -> Response
   ) throws {
+    let fd = try listen(at: path)
+    acceptLoop(fd) { conn in
+      let handle = FileHandle(fileDescriptor: conn, closeOnDealloc: true)
+      Task.detached {
+        let response: Response
+        switch readLine(handle, limit: maxRequestBytes) {
+        case .line(let line):
+          if let request = try? JSONDecoder().decode(Request.self, from: line) {
+            response = await handler(request)
+          } else {
+            response = failure("malformed request")
+          }
+        case .tooLong:
+          response = failure("request exceeds \(maxRequestBytes) bytes")
+        case .closed:
+          response = failure("malformed request")
+        }
+        var out = (try? JSONEncoder.wire.encode(response)) ?? Data()
+        out.append(0x0A)
+        try? handle.write(contentsOf: out)
+        try? handle.close()
+      }
+    }
+  }
+
+  /// A listening Unix socket at `path`, mode 0600 inside the private
+  /// control directory, kept fresh against the temp-directory cleaner.
+  static func listen(at path: URL) throws -> Int32 {
     try prepareDirectory(for: path)
     unlink(path.path)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -124,10 +177,10 @@ package enum ControlSocket {
     }
     guard rc == 0 else { throw SandboxError("bind \(path.path): \(errno)") }
     chmod(path.path, 0o600)
-    guard listen(fd, 16) == 0 else { throw SandboxError("listen: \(errno)") }
-    // macOS deletes items in the per-user temp directory that go unused
+    guard Darwin.listen(fd, 16) == 0 else { throw SandboxError("listen: \(errno)") }
+    // macOS deletes items in the per-user temporary directory that go unused
     // for days; touch the socket and its directory so a long-running
-    // sandbox keeps its control channel.
+    // sandbox keeps its channel.
     Thread.detachNewThread {
       while true {
         Thread.sleep(forTimeInterval: 3600)
@@ -135,6 +188,12 @@ package enum ControlSocket {
         utimes(path.deletingLastPathComponent().path, nil)
       }
     }
+    return fd
+  }
+
+  /// Accepts forever on a detached thread, passing each connection from the
+  /// owning user to `handle`; any other peer is closed unread.
+  static func acceptLoop(_ fd: Int32, handle: @escaping @Sendable (Int32) -> Void) {
     Thread.detachNewThread {
       while true {
         let conn = accept(fd, nil, nil)
@@ -150,28 +209,37 @@ package enum ControlSocket {
           close(conn)
           continue
         }
-        let handle = FileHandle(fileDescriptor: conn, closeOnDealloc: true)
-        Task.detached {
-          let response: Response
-          switch readLine(handle, limit: maxRequestBytes) {
-          case .line(let line):
-            if let request = try? JSONDecoder().decode(Request.self, from: line) {
-              response = await handler(request)
-            } else {
-              response = failure("malformed request")
-            }
-          case .tooLong:
-            response = failure("request exceeds \(maxRequestBytes) bytes")
-          case .closed:
-            response = failure("malformed request")
-          }
-          var out = (try? JSONEncoder.wire.encode(response)) ?? Data()
-          out.append(0x0A)
-          try? handle.write(contentsOf: out)
-          try? handle.close()
-        }
+        handle(conn)
       }
     }
+  }
+
+  /// A connected client socket to `path`, after checking its directory.
+  static func connectClient(_ path: URL, timeout: TimeInterval?) throws -> Int32 {
+    try verifyDirectory(for: path)
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { throw SandboxError("socket: \(errno)") }
+    var one: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+    if let timeout { setReceiveTimeout(fd, timeout) }
+    var addr = try address(path)
+    let rc = withUnsafePointer(to: &addr) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+      }
+    }
+    guard rc == 0 else {
+      let e = errno
+      close(fd)
+      throw SandboxError("not running (connect \(path.path): errno \(e))")
+    }
+    return fd
+  }
+
+  /// Zero clears the timeout.
+  static func setReceiveTimeout(_ fd: Int32, _ seconds: TimeInterval) {
+    var tv = timeval(tv_sec: Int(seconds), tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
   }
 
   /// Sends one request. `timeout` bounds the wait for the reply (nil waits
@@ -186,23 +254,8 @@ package enum ControlSocket {
   package static func callJSON<Request: Encodable, Response: Decodable>(
     _ path: URL, _ request: Request, as: Response.Type, timeout: TimeInterval? = 30
   ) throws -> Response {
-    try verifyDirectory(for: path)
-    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard fd >= 0 else { throw SandboxError("socket: \(errno)") }
-    var one: Int32 = 1
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-    if let timeout {
-      var tv = timeval(tv_sec: Int(timeout), tv_usec: 0)
-      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-    }
-    var addr = try address(path)
-    let rc = withUnsafePointer(to: &addr) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-      }
-    }
+    let fd = try connectClient(path, timeout: timeout)
     let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-    guard rc == 0 else { throw SandboxError("not running (connect \(path.path): errno \(errno))") }
     var data = try JSONEncoder().encode(request)
     guard data.count <= maxRequestBytes else {
       throw SandboxError(

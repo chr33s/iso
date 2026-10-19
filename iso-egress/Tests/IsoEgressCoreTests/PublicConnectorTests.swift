@@ -71,19 +71,24 @@ private func answers(_ values: [String?]) -> ResolvedAddresses? {
   #expect(lookups == sequence.count && localReads == sequence.count)
 }
 
-@Test func publicConnectorPinsFirstNumericAnswerAndPropagatesDialFailure() {
-  var dialed: [String] = []
-  for result: Int32? in [123, nil] {
+@Test func publicConnectorDialsValidatedAnswersInOrderUntilOneConnects() {
+  // Each attempt sees only its own validated answer, in answer order; the
+  // first that connects wins and later answers are never dialed.
+  for (reachable, expected, dials): (Set<String>, Int32?, [String]) in [
+    (["8.8.8.8", "9.9.9.9"], 123, ["8.8.8.8"]),
+    (["9.9.9.9"], 123, ["8.8.8.8", "9.9.9.9"]),
+    ([], nil, ["8.8.8.8", "9.9.9.9"]),
+  ] {
+    var dialed: [String] = []
     let fd = PublicConnector.connect(
       "approved.example", local: { [] },
-      resolve: { _ in
-        answers(["8.8.8.8", "9.9.9.9"])
-      },
+      resolve: { _ in answers(["8.8.8.8", "9.9.9.9"]) },
       dial: { info, _ in
-        if let address = PublicConnector.numeric(info) { dialed.append(address) }
-        return result
+        guard let address = PublicConnector.numeric(info) else { return nil }
+        dialed.append(address)
+        return reachable.contains(address) ? 123 : nil
       })
-    #expect(fd == result)
+    #expect(fd == expected)
+    #expect(dialed == dials)
   }
-  #expect(dialed == ["8.8.8.8", "8.8.8.8"])
 }

@@ -14,13 +14,21 @@ package enum NativeFailure: Error, Sendable, Equatable {
 
 /// The guest SSH endpoint chosen from current native proof.
 package struct GuestEndpoint: Sendable, Equatable {
-  package let address: IPv4Address
-  package let port: UInt16
+  package enum Route: Sendable, Equatable {
+    /// The guest's vmnet address.
+    case tcp(address: IPv4Address, port: UInt16)
+    /// A brokered guest: the runtime's stream connector, bound to the
+    /// gate-approved boot and digests. It has no address to dial.
+    case brokered(ConnectorCommand)
+  }
+
+  package let route: Route
 
   package init(address: IPv4Address, port: UInt16) {
-    self.address = address
-    self.port = port
+    route = .tcp(address: address, port: port)
   }
+
+  package init(brokered connector: ConnectorCommand) { route = .brokered(connector) }
 }
 
 /// The native lifecycle seam under `HostSupervisor`. Production uses
@@ -42,6 +50,11 @@ package protocol NativeHost: Sendable {
   func delete(_ instance: InstanceID, runtime: MachineName, owner: OwnerID) throws(NativeFailure)
   func guestEndpoint(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
     -> GuestEndpoint
+  /// For a running brokered VM: the network proof of a fresh gate pass of
+  /// its current boot (spec 6.2). Nil for vmnet VMs; throws when a brokered
+  /// boot fails the gate.
+  func networkProof(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
+    -> NetworkProof?
   /// Whether `image` is prepared on this worker (its own manifest, verified
   /// against the runtime); a client-side record never counts.
   func imageReady(_ image: ImageName) -> Bool
@@ -121,7 +134,8 @@ package struct AppleNativeHost: NativeHost {
     guard let recorded, let mode = EgressMode(rawValue: recorded.mode) else {
       throw .failed("the VM has no recorded network policy; destroy and recreate it")
     }
-    return backend.reconfigured(backend.config.overridingEgress(mode))
+    return backend.reconfigured(
+      backend.config.overridingEgress(mode).overridingTransport(recorded.recordedTransport))
   }
 
   private func runtime() throws(NativeFailure) -> SandboxRuntime {
@@ -385,9 +399,37 @@ package struct AppleNativeHost: NativeHost {
     }
   }
 
+  package func networkProof(_ id: InstanceID, runtime _: MachineName) throws(NativeFailure)
+    -> NetworkProof?
+  {
+    guard let instance = try instance(id) else { return nil }
+    let backend = try scoped(instance)
+    guard backend.config.network.transport == .brokered else { return nil }
+    do {
+      let route = try backend.brokeredRoute(instance)
+      return NetworkProof(
+        bootID: route.bootID, networkPolicy: route.networkPolicy,
+        channelPolicy: route.channelPolicy)
+    } catch {
+      throw .failed(HostControlError.sanitize("\(error)"))
+    }
+  }
+
   package func guestEndpoint(_ id: InstanceID, runtime name: MachineName) throws(NativeFailure)
     -> GuestEndpoint
   {
+    // A brokered VM's last hop is the runtime connector, chosen from a fresh
+    // gate pass, never an address (spec 4.2).
+    if let instance = try instance(id) {
+      let backend = try scoped(instance)
+      if backend.config.network.transport == .brokered {
+        do {
+          return GuestEndpoint(brokered: try backend.brokeredRelayCommand(instance))
+        } catch {
+          throw .failed(HostControlError.sanitize("\(error)"))
+        }
+      }
+    }
     let runtime = try runtime()
     do {
       let inspection = try runtime.inspect(name)

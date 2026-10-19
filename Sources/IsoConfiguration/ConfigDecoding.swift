@@ -250,7 +250,7 @@ enum ConfigDecoder {
       "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
       "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
       "workspace", "egress", "egress_filter", "limits", "security", "editor", "execution",
-      "policy",
+      "policy", "network",
     ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
@@ -349,8 +349,19 @@ enum ConfigDecoder {
       securityPreset: preset,
       editor: try r.defaulted("editor", .defaults, editor),
       execution: try r.defaulted("execution", .defaults, execution),
-      policy: try policy(r))
+      policy: try policy(r),
+      network: try r.defaulted("network", .defaults) { v, p throws(FieldError) in
+        let n = try ObjectReader(v, at: p)
+        try n.rejectUnknown(allowing: ["transport"])
+        return NetworkConfig(
+          transport: try n.defaulted("transport", .vmnet) { v, p throws(FieldError) in
+            try Parse.stringEnum(v, p, NetworkTransport.allCases)
+          })
+      })
     try requirePolicyCombinations(config)
+    if let conflict = config.transportConflict {
+      throw FieldError([.key("network"), .key("transport")], conflict)
+    }
     return config
   }
 
