@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="isolate">
+  <rect width="512" height="512" rx="112" fill="#000"/>
+  <rect x="120" y="120" width="272" height="272" rx="64" fill="none" stroke="#ededed" stroke-width="24"/>
+  <rect x="196" y="196" width="120" height="120" rx="28" fill="#ededed"/>
+</svg>

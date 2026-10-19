@@ -169,6 +169,7 @@ export const references = [
                 sections: [
                     "proxy-section",
                     "egress",
+                    "network",
                     "security-presets",
                     "limits",
                 ],

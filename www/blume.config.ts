@@ -27,6 +27,7 @@ const design = [
 export default defineConfig({
     basePath: "/docs",
     title: "isolate",
+    logo: "/icon.svg",
     description:
         "Run Claude Code and Codex in disposable Linux VMs on macOS 27+ Apple Silicon, with the VM as the isolation boundary.",
     content: { root: "content", pages: "pages" },

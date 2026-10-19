@@ -8,6 +8,9 @@ A single [Blume](https://useblume.dev/docs/) build serves the landing page at
   and production.
 - [`../docs/`](../docs/), [`../README.md`](../README.md), and
   [`../CONTRIBUTING.md`](../CONTRIBUTING.md) remain the documentation sources.
+- [`../icon.svg`](../icon.svg) is the shared brand icon source. The
+  `public/icon.svg` symlink exposes it to the landing page and documentation
+  as `/icon.svg`, including their favicons.
 
 `scripts/sync-docs.js` copies Markdown into the gitignored
 `content/` directory before each run, moving each page's `# Heading` into
