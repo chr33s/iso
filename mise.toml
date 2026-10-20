@@ -34,7 +34,7 @@ run = "python3 scripts/hygiene.py"
 
 [tasks.lint]
 description = "swift format lint --strict over every Swift package"
-run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift experiments/macos-computer-use-q0/Package.swift experiments/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-ci/Package.swift iso-ci/Sources iso-ci/Tests scripts/verify-egress-readiness.swift experiments/macos-computer-use-q0/Package.swift experiments/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
 
 [tasks.build]
 description = "Build the Swift host"
@@ -81,6 +81,15 @@ python3 scripts/test-swift-egress-mutations.py
 description = "IsoPolicy library tests (shared by the host and the credential proxy)"
 run = "swift test --package-path iso-policy --force-resolved-versions"
 
+[tasks.check-ci]
+description = "iso-ci build, unit/fixture tests and the confined data-plane child (no live GitHub or VM)"
+run = """
+swift build --package-path iso-ci --force-resolved-versions
+bin="$(cd "$(swift build --package-path iso-ci --force-resolved-versions --show-bin-path)" && pwd -P)/iso-ci"
+ISO_CI_E2E_BINARY="$bin" swift test --package-path iso-ci --force-resolved-versions
+sh iso-ci/scripts/test-dataplane-jail.sh "$bin"
+"""
+
 [tasks.check-all]
 description = "Local checks for every package; VM integration is a separate gate"
-depends = ["check", "check-policy", "check-runtime", "check-proxy", "check-egress"]
+depends = ["check", "check-policy", "check-runtime", "check-proxy", "check-egress", "check-ci"]

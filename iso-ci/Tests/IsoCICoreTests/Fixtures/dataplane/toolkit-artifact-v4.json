@@ -1,0 +1,10 @@
+{
+  "description": "@actions/artifact v2 twirp (github.actions.results.api.v1.ArtifactService) with proto field names, Azure BlockBlob stageBlock/commitBlockList uploads, and the signed-URL download. Derived by reading actions/toolkit packages/artifact (MIT) at commit 7e25f67e8fd17369aa21e6e816ac99654106e0dc (@actions/artifact 6.3.1): generated/results/api/v1/artifact.ts, internal/upload/upload-artifact.ts, internal/upload/blob-upload.ts, internal/download/download-artifact.ts, internal/shared/util.ts (backend ids from the runtime token's scp claim). Not captured from a live client.",
+  "source": "https://github.com/actions/toolkit/tree/7e25f67e8fd17369aa21e6e816ac99654106e0dc/packages/artifact",
+  "create": {"workflow_run_backend_id": "${PLAN_ID}", "workflow_job_run_backend_id": "${JOB_ID}", "name": "dist", "version": 7},
+  "blocks": [{"id": "YmxvY2stMDAwMDA=", "data": "PK\u0003\u0004first-"}, {"id": "YmxvY2stMDAwMDE=", "data": "second"}],
+  "blocklist": "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList><Latest>YmxvY2stMDAwMDA=</Latest><Latest>YmxvY2stMDAwMDE=</Latest></BlockList>",
+  "finalize": {"workflow_run_backend_id": "${PLAN_ID}", "workflow_job_run_backend_id": "${JOB_ID}", "name": "dist", "size": "${SIZE}", "hash": "sha256:${SHA256}"},
+  "list": {"workflow_run_backend_id": "${PLAN_ID}", "workflow_job_run_backend_id": "${JOB_ID}", "name_filter": "dist"},
+  "signed_url": {"workflow_run_backend_id": "${PLAN_ID}", "workflow_job_run_backend_id": "${JOB_ID}", "name": "dist"}
+}

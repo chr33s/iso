@@ -63,6 +63,9 @@ def main():
                         help="test both local confined TLS streams on port 443 without building or booting VMs")
     parser.add_argument("--iso", "--swift-host", dest="iso", type=Path,
                         help="use this prebuilt iso host instead of building it with swift build")
+    parser.add_argument("--prebuilt", type=Path, metavar="DIR",
+                        help="use iso, iso-proxy, iso-egress, iso-sandbox and iso-macos-helper from "
+                             "this release bundle instead of building them (a worker Mac without Xcode)")
     live = parser.add_argument_group("live agent tool use (H-07; real credentials, billed)")
     live.add_argument("--live-agents", action="store_true",
                       help="run only the in-guest agent tool-use check with dedicated credentials")
@@ -242,26 +245,32 @@ def main():
                 phase("PASS controlled TLS preflight (no VM coverage)")
                 succeeded = True
                 return
-        phase("Build private runtime")
-        run([ROOT / "scripts/build-iso-sandbox.sh", work])
-        phase("Build iso and iso-proxy")
-        if args.iso:
-            iso_binary = args.iso
+        if args.prebuilt:
+            phase(f"Use the prebuilt bundle {args.prebuilt}")
+            (work / "bin").mkdir(parents=True, exist_ok=True)
+            for name in ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]:
+                shutil.copy2(args.prebuilt / name, work / "bin" / name)
         else:
-            run(["swift", "build", "--product", "iso", "--force-resolved-versions"])
-            iso_binary = Path(run(["swift", "build", "--show-bin-path"], capture=True).strip()) / "iso"
-        proxy_package = ROOT / "iso-proxy"
-        run(["swift", "build", "--package-path", proxy_package, "--force-resolved-versions"])
-        proxy_bin = Path(run(["swift", "build", "--package-path", proxy_package, "--show-bin-path"],
-                             capture=True).strip())
-        shutil.copy2(iso_binary, work / "bin/iso")
-        shutil.copy2(proxy_bin / "iso-proxy", work / "bin/iso-proxy")
-        if args.filtered:
-            egress_package = ROOT / "iso-egress"
-            run(["swift", "build", "--package-path", egress_package, "--force-resolved-versions"])
-            egress_bin = Path(run(["swift", "build", "--package-path", egress_package, "--show-bin-path"],
-                                  capture=True).strip())
-            shutil.copy2(egress_bin / "iso-egress", work / "bin/iso-egress")
+            phase("Build private runtime")
+            run([ROOT / "scripts/build-iso-sandbox.sh", work])
+            phase("Build iso and iso-proxy")
+            if args.iso:
+                iso_binary = args.iso
+            else:
+                run(["swift", "build", "--product", "iso", "--force-resolved-versions"])
+                iso_binary = Path(run(["swift", "build", "--show-bin-path"], capture=True).strip()) / "iso"
+            proxy_package = ROOT / "iso-proxy"
+            run(["swift", "build", "--package-path", proxy_package, "--force-resolved-versions"])
+            proxy_bin = Path(run(["swift", "build", "--package-path", proxy_package, "--show-bin-path"],
+                                 capture=True).strip())
+            shutil.copy2(iso_binary, work / "bin/iso")
+            shutil.copy2(proxy_bin / "iso-proxy", work / "bin/iso-proxy")
+            if args.filtered:
+                egress_package = ROOT / "iso-egress"
+                run(["swift", "build", "--package-path", egress_package, "--force-resolved-versions"])
+                egress_bin = Path(run(["swift", "build", "--package-path", egress_package, "--show-bin-path"],
+                                      capture=True).strip())
+                shutil.copy2(egress_bin / "iso-egress", work / "bin/iso-egress")
         kernel = (Path.home() / "Library/Application Support/com.apple.container/kernels/default.kernel-arm64").resolve(strict=True)
         # Proxy credentials are `cmd:` references; outside --live-agents the
         # values stay synthetic.

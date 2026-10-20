@@ -397,15 +397,16 @@ package struct NetworkConfig: Sendable, Equatable {
   package static let defaults = NetworkConfig(transport: .vmnet)
 }
 
-/// Approved exact hostnames for `egress: filtered`. Empty means no general
-/// destinations. Hints from an agent definition are not part of this set.
+/// Approved hosts for `egress: filtered`: exact hostnames and reviewed
+/// `*.<suffix>` rules (`HostRule`). Empty means no general destinations.
+/// Hints from an agent definition are not part of this set.
 package struct EgressFilter: Sendable, Equatable {
   package static let maxHosts = 256
-  package let allowedHosts: [ExactHostname]
+  package let allowedHosts: [HostRule]
 
-  package init(allowedHosts: [ExactHostname]) {
+  package init(allowedHosts: [HostRule]) {
     var seen: Set<String> = []
-    var ordered: [ExactHostname] = []
+    var ordered: [HostRule] = []
     for host in allowedHosts where seen.insert(host.rawValue).inserted {
       ordered.append(host)
     }
@@ -415,7 +416,7 @@ package struct EgressFilter: Sendable, Equatable {
   package static let empty = EgressFilter(allowedHosts: [])
 
   package func allowing(_ extra: [ExactHostname]) -> EgressFilter {
-    EgressFilter(allowedHosts: allowedHosts + extra)
+    EgressFilter(allowedHosts: allowedHosts + extra.map(HostRule.exact))
   }
 }
 

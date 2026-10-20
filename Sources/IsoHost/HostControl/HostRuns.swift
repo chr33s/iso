@@ -151,9 +151,9 @@ extension HostSupervisor {
       }
       run.deliveredStage = stage
     case .runResultsDiscard:
-      switch run.phase {
-      case .resultsPending, .stoppedDiskPendingExport, .failedWithResources: break
-      default: throw wrongPhase(run)
+      // A live-retained run is released explicitly: verified destroy.
+      guard run.phase.holdsResources || (run.phase == .running && isLiveRetained(run)) else {
+        throw wrongPhase(run)
       }
     default:
       throw .invalidRequest("not a run transition")
@@ -171,6 +171,91 @@ extension HostSupervisor {
       try runs.save(updated)
     }
     return record.receipt(disposition: .accepted, instance: qualified(record))
+  }
+
+  /// `run.retain`: host-owned retention. It draws on ordinary ledger
+  /// capacity (one operation record and its finalize rewrite), not on the
+  /// run's own transition reservation, so it never starves complete or
+  /// cleanup.
+  func admitRunRetain(
+    _ record: inout OperationStore.OperationRecord, run id: RunID, generation: UInt64,
+    mode: RetentionMode
+  ) throws(HostControlError) -> OperationReceipt {
+    guard var run = try? runs.load(id) else {
+      throw HostControlError(.resultsUnavailable, "unknown run", details: ["run_id": id.rawValue])
+    }
+    if let active = run.activeOperation { throw busy(active) }
+    guard run.generation == generation else {
+      throw HostControlError(
+        .generationConflict, "expected run generation is stale",
+        details: ["generation": String(run.generation)])
+    }
+    // A window that already ended is cleanup that is due, not something to
+    // extend.
+    switch mode {
+    case .live:
+      guard run.phase == .running else { throw wrongPhase(run) }
+      if run.liveRetentionUntil != nil, !isLiveRetained(run) {
+        throw HostControlError(.resultsUnavailable, "the run's live retention already ended")
+      }
+    case .stopped:
+      guard run.phase.holdsResources else { throw wrongPhase(run) }
+      if let deadline = run.retentionDeadline, now.seconds >= deadline {
+        throw HostControlError(.resultsUnavailable, "the run's retention already expired")
+      }
+    }
+    try requireCapacity(2)
+    record.runID = id
+    record.instanceID = run.instanceID
+    record.runtimeID = run.runtimeID
+    run.activeOperation = record.operationID
+    let accepted = record
+    let updated = run
+    try persist { () throws(HostError) in
+      try store.reserve(.finalize(accepted.operationID))
+      try store.saveOperation(accepted)
+      try runs.save(updated)
+    }
+    return record.receipt(disposition: .accepted, instance: qualified(record))
+  }
+
+  /// Whether `run` is inside a live retention window now.
+  func isLiveRetained(_ run: RunStore.Record) -> Bool {
+    run.liveRetentionUntil.map { now.seconds < $0 } ?? false
+  }
+
+  /// Applies an admitted `run.retain`. Live retention ends at the earliest of
+  /// the request, the cap counted from the first live retention, and the VM's
+  /// own deadline (never later). It revokes the run's access grants (SSH
+  /// sessions and their relayed streams), so a debugger opens a new explicit
+  /// grant; the boot's immutable network policy (egress, provider and
+  /// local-service grants) and whatever is already in the guest stay until
+  /// the VM stops. Stopped retention only ever moves the deadline later, up
+  /// to its fixed cap.
+  private func applyRetention(
+    _ run: inout RunStore.Record, mode: RetentionMode, seconds: UInt64
+  ) -> String {
+    switch mode {
+    case .live:
+      guard run.phase == .running, let instanceID = run.instanceID else {
+        return run.phase.rawValue
+      }
+      let started = run.liveRetentionStartedAt ?? now.seconds
+      run.liveRetentionStartedAt = started
+      var until = min(now.seconds + seconds, started + RunStore.maxLiveRetentionSeconds)
+      if let expires = (try? store.loadInstance(instanceID))?.expiresAt {
+        until = min(until, expires)
+      }
+      run.liveRetentionUntil = max(run.liveRetentionUntil ?? 0, until)
+      sessions.revoke(instance: instanceID)
+      return "live_retained"
+    case .stopped:
+      let first = run.firstStopAt ?? now.seconds
+      let cap = first + RunStore.maxStoppedRetentionSeconds
+      let requested = min(now.seconds + seconds, cap)
+      run.retentionDeadline = max(run.retentionDeadline ?? requested, requested)
+      return "stopped_retained"
+    }
   }
 
   private func wrongPhase(_ run: RunStore.Record) -> HostControlError {
@@ -204,6 +289,21 @@ extension HostSupervisor {
       run.activeOperation = nil
       saveRun(&run, bump: false)
       finish(record, .succeeded, outcome: run.phase.rawValue)
+    case .runRetain:
+      guard
+        let value = try? HostWire.parse(
+          Array(accepted.params.utf8), limits: HostWire.requestLimits),
+        case .runRetain(_, _, let mode, let seconds)? = try? HostRequestBody(
+          method: .runRetain, params: value)
+      else {
+        run.activeOperation = nil
+        saveRun(&run, bump: false)
+        return finish(record, .failed, outcome: "retention request is unreadable")
+      }
+      let outcome = applyRetention(&run, mode: mode, seconds: seconds)
+      run.activeOperation = nil
+      saveRun(&run, bump: true)
+      finish(record, .succeeded, outcome: outcome)
     case .runResultsAck, .runResultsDiscard:
       let disposition = method == .runResultsAck ? "delivered" : "discarded"
       if destroyRun(&run, disposition: disposition, by: record.operationID) {
@@ -483,9 +583,14 @@ extension HostSupervisor {
     switch run.phase {
     case .running:
       guard let instanceID = run.instanceID, let started = run.startedAt else { return }
+      // Live retention is a ceiling as well as a lease: once it passes the
+      // VM stops, even with a debug session open.
+      let retentionEnded = run.liveRetentionUntil.map { now.seconds >= $0 } ?? false
       let controlled =
-        now.seconds < started + RunStore.controllerGraceSeconds
-        || sessions.hasLiveSession(instance: instanceID)
+        isLiveRetained(run)
+        || (!retentionEnded
+          && (now.seconds < started + RunStore.controllerGraceSeconds
+            || sessions.hasLiveSession(instance: instanceID)))
       let instance = try? store.loadInstance(instanceID)
       let expired = instance?.expiresAt.map { now.seconds >= $0 } ?? false
       let observed = run.runtimeID.flatMap { try? native.observe(instanceID, runtime: $0) }

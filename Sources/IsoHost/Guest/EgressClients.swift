@@ -6,7 +6,10 @@ import IsoCore
 /// this boot's filtered-egress companion: the Docker daemon (image pulls),
 /// and containers and builds on Docker's default bridge (through a guest
 /// bridge on its gateway, since a container's loopback is not the guest's).
-/// git is set to send its proxy credentials up front.
+/// git is set to send its proxy credentials up front. `/etc/environment`
+/// (read by every PAM session, including non-interactive ssh commands)
+/// carries the same proxy variables, so sessions opened through host
+/// control — whose client cannot read the worker's capability — use it too.
 /// Convenience only, as on every filtered guest: the companion enforces the
 /// allowlist, and a guest that ignores or rewrites this gains nothing.
 enum EgressClients {
@@ -38,6 +41,15 @@ enum EgressClients {
     systemctl daemon-reload
     systemctl restart iso-egress-bridge.socket
     if [ -n "$changed" ]; then systemctl try-restart docker; fi
+    # Managed proxy lines in /etc/environment; other lines are kept.
+    envfile=/etc/environment
+    touch "$envfile"
+    { grep -v -E '^(http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|no_proxy|NO_PROXY)=' "$envfile" || true
+      for k in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; do printf '%s="%s"\n' "$k" "$url"; done
+      printf '%s\n' 'no_proxy="localhost,127.0.0.1"' 'NO_PROXY="localhost,127.0.0.1"'
+    } > "$envfile.iso"
+    chmod 644 "$envfile.iso"
+    mv "$envfile.iso" "$envfile"
     # git's default proxy auth probes without credentials and expects a 407;
     # the companion answers every denial with 403.
     if command -v git >/dev/null 2>&1; then

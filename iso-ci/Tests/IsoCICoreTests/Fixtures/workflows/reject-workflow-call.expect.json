@@ -1,0 +1,6 @@
+{
+  "event": "workflow_call",
+  "reject": [
+    "reusable workflows are not supported"
+  ]
+}

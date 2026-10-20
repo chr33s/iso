@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "LFS checkouts are not supported"
+  ]
+}

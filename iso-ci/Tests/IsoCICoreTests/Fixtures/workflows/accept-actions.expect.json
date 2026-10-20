@@ -1,0 +1,12 @@
+{
+  "accept": true,
+  "actions": [
+    "actions/cache@v4.2.0",
+    "actions/download-artifact@v4",
+    "actions/upload-artifact@v4"
+  ],
+  "event": "push",
+  "jobs": [
+    "build"
+  ]
+}

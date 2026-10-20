@@ -1,0 +1,12 @@
+{
+  "accept": true,
+  "event": "pull_request",
+  "jobs": [
+    "integration"
+  ],
+  "secrets": {
+    "integration": [
+      "DB_PASSWORD"
+    ]
+  }
+}

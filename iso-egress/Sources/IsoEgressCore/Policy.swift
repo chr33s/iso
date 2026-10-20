@@ -55,6 +55,10 @@ package enum Denial: String, Sendable {
   case portNotAllowed = "PORT_NOT_ALLOWED"
   case addressNotPublic = "ADDRESS_NOT_PUBLIC"
   case authRequired = "AUTH_REQUIRED"
+  /// A CONNECT without the capability, or with a different one: answered
+  /// with a 407 challenge so clients that send proxy credentials only after
+  /// a challenge (.NET, including the GitHub Actions runner) can retry.
+  case credentialsRequired = "CREDENTIALS_REQUIRED"
   case unsupported = "UNSUPPORTED"
 }
 
@@ -186,7 +190,7 @@ package enum ConnectParser {
       default: break
       }
     }
-    guard let password else { throw DenialError(.authRequired) }
+    guard let password else { throw DenialError(.credentialsRequired) }
     return ConnectRequest(host: host, port: port, password: password)
   }
 
@@ -238,10 +242,57 @@ package struct DenialError: Error, Equatable {
   package init(_ denial: Denial) { self.denial = denial }
 }
 
+/// One allowlist entry, as iso configures it: an exact name, or `*.<suffix>`
+/// for names one or more whole labels below a suffix of at least three
+/// labels (never the suffix itself). Mirrors `HostRule` in IsoCore.
+package enum HostRule: Hashable, Sendable {
+  case exact(ExactHostname)
+  case subdomains(of: ExactHostname)
+
+  package static let minimumSuffixLabels = 3
+
+  package init(_ raw: String) throws {
+    guard raw.hasPrefix("*.") else {
+      self = .exact(try ExactHostname(raw))
+      return
+    }
+    let suffix = try ExactHostname(String(raw.dropFirst(2)))
+    guard suffix.rawValue.split(separator: ".").count >= Self.minimumSuffixLabels else {
+      throw PolicyError("a wildcard host needs at least three labels after '*.'")
+    }
+    self = .subdomains(of: suffix)
+  }
+
+  package var rawValue: String {
+    switch self {
+    case .exact(let host): host.rawValue
+    case .subdomains(let suffix): "*." + suffix.rawValue
+    }
+  }
+}
+
 package struct EgressAllowlist: Sendable, Equatable {
+  /// Every rule's canonical text (exact names and `*.<suffix>` rules); the
+  /// readiness policy hash is computed over this set.
   package let hosts: Set<String>
-  package init(_ hosts: [ExactHostname]) { self.hosts = Set(hosts.map(\.rawValue)) }
-  package func allows(_ host: ExactHostname) -> Bool { hosts.contains(host.rawValue) }
+  /// `.<suffix>` for each wildcard rule.
+  private let suffixes: [String]
+
+  package init(_ hosts: [ExactHostname]) { self.init(rules: hosts.map(HostRule.exact)) }
+
+  package init(rules: [HostRule]) {
+    hosts = Set(rules.map(\.rawValue))
+    suffixes = rules.compactMap {
+      if case .subdomains(let suffix) = $0 { return "." + suffix.rawValue }
+      return nil
+    }.sorted()
+  }
+
+  /// An exact name matches only itself; a wildcard rule matches names whole
+  /// labels below its suffix. A requested name can never contain `*`.
+  package func allows(_ host: ExactHostname) -> Bool {
+    hosts.contains(host.rawValue) || suffixes.contains { host.rawValue.hasSuffix($0) }
+  }
 }
 
 /// Decision before any upstream connection. An unapproved host never becomes
@@ -258,7 +309,7 @@ package enum ConnectGate {
     do {
       let request = try ConnectParser.parse(head)
       guard ConnectParser.constantTimeEqual(request.password, capability) else {
-        return .deny(.authRequired)
+        return .deny(.credentialsRequired)
       }
       guard allow.allows(request.host) else { return .deny(.hostNotAllowed) }
       return .connect(request.host.rawValue)
@@ -271,9 +322,12 @@ package enum ConnectGate {
 
   package static func responseBytes(_ denial: Denial?) -> [UInt8] {
     let text =
-      denial == nil
-      ? "HTTP/1.1 200 Connection Established\r\n\r\n"
-      : "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      switch denial {
+      case nil: "HTTP/1.1 200 Connection Established\r\n\r\n"
+      case .credentialsRequired?:
+        "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"iso-egress\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      case _?: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      }
     return Array(text.utf8)
   }
 

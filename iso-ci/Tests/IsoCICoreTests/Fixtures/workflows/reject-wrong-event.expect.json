@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "does not run on the 'push' event"
+  ]
+}

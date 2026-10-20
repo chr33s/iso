@@ -292,3 +292,73 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: directory + "/coordinator.json"))
   }
 }
+
+@Test func theClientBridgeCarriesTheRelayPreambleOnStdinNeverArgv() throws {
+  let root = FileManager.default.temporaryDirectory.appending(path: "iso-bridge-\(UUID())").path
+  try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  // A fake ssh: records its argv, then echoes its stdin back.
+  let ssh = root + "/ssh"
+  try Data(
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(root)/argv\"\nexec cat\n".utf8
+  ).write(to: URL(fileURLWithPath: ssh))
+  chmod(ssh, 0o755)
+  var inPipe: [Int32] = [-1, -1]
+  var outPipe: [Int32] = [-1, -1]
+  #expect(pipe(&inPipe) == 0 && pipe(&outPipe) == 0)
+  let bearer = String(repeating: "f", count: 64)
+  let preamble = Array(#"{"bearer":"\#(bearer)"}"#.utf8) + [10]
+  _ = preamble.withUnsafeBytes { write(inPipe[1], $0.baseAddress, $0.count) }
+  _ = Array("ssh-bytes".utf8).withUnsafeBytes { write(inPipe[1], $0.baseAddress, $0.count) }
+  close(inPipe[1])
+  let code = try HostService.bridgeRemote(
+    ssh: ssh, alias: try HostAlias("build-mac"), agent: try AgentPath("/usr/local/bin/iso"),
+    entry: .relay, environment: ["PATH": "/usr/bin:/bin"], input: inPipe[0], output: outPipe[1])
+  close(outPipe[1])
+  #expect(code == 0)
+  var received: [UInt8] = []
+  var buffer = [UInt8](repeating: 0, count: 4_096)
+  while true {
+    let count = buffer.withUnsafeMutableBytes { read(outPipe[0], $0.baseAddress, $0.count) }
+    if count <= 0 { break }
+    received += buffer[0..<count]
+  }
+  close(inPipe[0])
+  close(outPipe[0])
+  // The preamble goes first on ssh's stdin, then the stream; argv is fixed.
+  #expect(String(decoding: received, as: UTF8.self) == #"{"bearer":"\#(bearer)"}"# + "\nssh-bytes")
+  let argv = try String(contentsOfFile: root + "/argv", encoding: .utf8)
+  #expect(!argv.contains(bearer))
+  #expect(argv.hasSuffix("'/usr/local/bin/iso' host-agent relay --stdio\n"))
+  #expect(argv.contains("StrictHostKeyChecking=yes"))
+}
+
+@Test func aFailedRemoteRelayReturnsSSHStatusWithOneBoundedDiagnostic() throws {
+  let root = FileManager.default.temporaryDirectory.appending(path: "iso-bridge-\(UUID())").path
+  try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let ssh = root + "/ssh"
+  // Floods stderr, then fails like a changed management host key.
+  try Data(
+    "#!/bin/sh\ncat >/dev/null\nhead -c 100000 /dev/zero | tr '\\0' x >&2\necho 'Host key verification failed.' >&2\nexit 255\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: ssh))
+  chmod(ssh, 0o755)
+  var inPipe: [Int32] = [-1, -1]
+  var outPipe: [Int32] = [-1, -1]
+  #expect(pipe(&inPipe) == 0 && pipe(&outPipe) == 0)
+  _ = Array("{}\n".utf8).withUnsafeBytes { write(inPipe[1], $0.baseAddress, $0.count) }
+  close(inPipe[1])
+  var messages: [String] = []
+  let code = try HostService.bridgeRemote(
+    ssh: ssh, alias: try HostAlias("build-mac"), agent: try AgentPath("/usr/local/bin/iso"),
+    entry: .relay, environment: ["PATH": "/usr/bin:/bin"], input: inPipe[0], output: outPipe[1],
+    diagnostics: { messages.append($0) })
+  close(outPipe[1])
+  close(inPipe[0])
+  close(outPipe[0])
+  #expect(code == 255)
+  #expect(messages.count == 1)
+  #expect(messages.first?.contains("does not match its pin") == true)
+  #expect((messages.first?.utf8.count ?? .max) < 1_024)
+}

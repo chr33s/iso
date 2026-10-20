@@ -13,7 +13,9 @@ This is the `chr33s/iso` fork, supporting **macOS 27+ on Apple Silicon hosts
 only**. Linux guests remain supported; Linux hosts are outside this fork's
 scope. The host CLI is Swift (root `Package.swift`); the credential proxy
 (`iso-proxy/`), filtered-egress companion (`iso-egress/`), and Apple VM runtime
-(`iso-sandbox/`) remain separate Swift packages and separate processes. See [README.md](README.md) for motivation and
+(`iso-sandbox/`) remain separate Swift packages and separate processes. The
+GitHub Actions companion (`iso-ci/`, [`docs/ci.md`](docs/ci.md)) is a separately
+installed package that base iso never requires. See [README.md](README.md) for motivation and
 fork installation guidance.
 
 ## Agent entrypoint
@@ -75,6 +77,7 @@ swift test --package-path iso-policy --force-resolved-versions  # shared policy 
 swift test --package-path iso-proxy --force-resolved-versions   # credential proxy
 swift test --package-path iso-egress --force-resolved-versions  # filtered egress
 swift test --package-path iso-sandbox --no-parallel             # Apple runtime
+swift test --package-path iso-ci --force-resolved-versions       # iso-ci companion (fixtures only)
 python3 tests/test-cli-surface.py --swift .build/debug/iso
 python3 tests/test-read-contract.py --swift .build/debug/iso   # also lifecycle, data-root, machine, audit
 python3 scripts/swift-host-fault-injection.py                 # tests catch injected faults

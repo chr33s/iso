@@ -1,0 +1,8 @@
+on: push
+jobs:
+  a:
+    runs-on:
+      group: big
+      labels: [ubuntu-latest]
+    steps:
+      - run: echo

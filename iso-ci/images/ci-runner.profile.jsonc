@@ -1,0 +1,24 @@
+// iso image profile for iso-ci runner images (docs/ci.md "Runner image").
+// Add this object under "profiles" in ~/.iso/config.jsonc on every CI host,
+// then build the approved image there:
+//
+//   iso setup --profile ci-runner --name ci-runner
+//
+// The profile pins the official GitHub Actions runner for Linux ARM64 by
+// version and SHA-256 and installs it under /opt/actions-runner. It bakes in
+// no runner registration, project state, caches, App material or provider
+// credentials. iso's base image supplies openssh-server (the SSH adapter) and
+// the guest-local Docker daemon; per-job proxy settings for the runner,
+// Docker daemon and containers are written at bootstrap from the brokered
+// boot's proxy environment, never baked in.
+//
+// Update policy: GitHub requires self-hosted runners to update within its
+// published window. Bump RUNNER_VERSION and RUNNER_SHA256 together, rebuild,
+// re-approve the image descriptor (runner_version in iso-ci config), and rerun
+// the connected and preflight compatibility suites before activating pools.
+{
+  "ci-runner": {
+    "apt_packages": ["ca-certificates", "curl", "jq", "tar", "gzip", "libicu74", "libssl3", "libkrb5-3", "zlib1g"],
+    "post_install": "set -eu\nRUNNER_VERSION=2.338.0\nRUNNER_SHA256=628b4a7258487b80c1d3c221095a7ded349f5ae0175fd3dfab708d07428f041b\nurl=\"https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz\"\ncurl -fsSL --proto '=https' --tlsv1.2 -o /tmp/actions-runner.tar.gz \"$url\"\necho \"${RUNNER_SHA256}  /tmp/actions-runner.tar.gz\" | sha256sum -c -\nmkdir -p /opt/actions-runner\ntar -xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner\nrm -f /tmp/actions-runner.tar.gz\n/opt/actions-runner/bin/installdependencies.sh\nprintf '%s\\n' \"$RUNNER_VERSION\" > /opt/actions-runner/.iso-ci-runner-version\nchown -R ubuntu:ubuntu /opt/actions-runner\n"
+  }
+}

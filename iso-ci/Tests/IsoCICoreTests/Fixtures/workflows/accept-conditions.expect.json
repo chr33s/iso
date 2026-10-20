@@ -1,0 +1,16 @@
+{
+  "accept": true,
+  "conditions": {
+    "lint": [
+      "success()",
+      "success()",
+      "failure()",
+      "success() && (github.event_name == 'push')"
+    ]
+  },
+  "event": "push",
+  "jobs": [
+    "lint"
+  ],
+  "warnings": 1
+}

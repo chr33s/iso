@@ -337,6 +337,51 @@ N6 publishes **NET-HANDOFF-1**, containing:
 7. Native qualification results keyed by build/platform/image tuple, including N-T01–N-T16.
 8. Operator installation, upgrade, migration, and recovery documentation.
 
+**Discovery (implemented).** A client asks `host.capabilities` on `iso.host/v1`
+(local or remote). `net-handoff-1` is listed only while all of these hold, and
+is otherwise absent (fail closed): `network.transport` is `brokered`, the
+runtime is qualified and advertises `brokered-transport`, and the
+qualification report is `qualified`. The result also carries
+`network_handoff.run_policies`: per egress mode (`none`, `filtered`), the
+brokered policy a fresh `vm.create`/`run.create` VM boots with — its digest
+(the `network_policy_digest` a running boot's `vm.inspect` proof reports),
+public egress, provider grants, local services and channel digest. A
+`filtered` run VM's every boot starts and proves the worker's `iso-egress`
+companion before the start succeeds (otherwise the VM is stopped), so the
+advertised `filtered` policy is usable through host control. A fresh
+host-control VM has no per-VM proxy override, recorded environment or model
+choice, so its grants come from the worker's configuration (`proxy`
+upstreams, configured local models); a client that needs no grants checks the
+published lists and refuses otherwise. The runtime gate still proves every
+boot; the advertised policy is not a substitute for that proof.
+
+The qualification report reads an operator-installed evidence manifest,
+`<data_dir>/backends/apple-container-v1/host-control/qualification/net-handoff-1.json`
+(schema `iso.qualification/v1`, a regular file owned by the service user and
+writable by no one else). It names the tuple — `host_os`, `iso_version`,
+`runtime`, `transport`, `image` (`<name>@<image manifest digest>`),
+`guest_kernel`, `broker` — and N-T01–N-T16, each of which must be `passed`
+(no case may be `not-applicable`: a skipped or unavailable case is blocked).
+Status is `missing` (absent, unreadable, malformed or incomplete), `mismatch`
+(the host's live `host_os`, `iso_version`, `runtime` or `transport`, or the
+named image's current manifest digest, differ), `expired` (`expires_at`
+passed) or `qualified`. `guest_kernel` and `broker` are recorded but
+operator-attested: the host does not re-derive them per call. `tuple.image` must be
+`<image name>@sha256:<64 lowercase hex>`, the image manifest digest. A manifest
+whose `expires_at` is more than 365 days after `recorded_at`, or whose
+`recorded_at` is more than 300 seconds ahead of the host clock, is invalid
+(`missing`), as is any path that is not a regular file (a FIFO is refused
+without blocking). The evidence covers that one image only: while
+`net-handoff-1` is listed, `network_handoff.qualified_image`
+(`{"name": ..., "digest": "sha256:<hex>"}`) names it, and a client binds a VM
+to it by sending that name and `image_digest` (bare hex) in `run.create`;
+admission refuses a digest the worker image does not have. Other images on the
+same host are not covered by this evidence. Record evidence
+with `scripts/record-net-handoff-evidence.py --results RESULTS.json`, which
+refuses incomplete results and installs the manifest (default 90 days, at most
+365). Rebuilding the qualified image, updating iso or the runtime, or changing
+the macOS version makes the report `mismatch` until new evidence is recorded.
+
 Spec 02 may add workload-neutral execution receipts or a public client-only package. It MUST NOT bypass this proof, implement its own network stack, or weaken a failed request into a networked VM. CI-specific endpoint profiles and runner conformance belong to Spec 02.
 
 ## 13. Risks and decision gates

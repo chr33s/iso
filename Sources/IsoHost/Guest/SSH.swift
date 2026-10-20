@@ -140,9 +140,21 @@ package struct SSHClient: Sendable {
   /// `AcceptEnv *`) would otherwise carry any host variable — a raw
   /// provider key in proxy mode — into the guest; values iso forwards on
   /// purpose are added back by `EnvForward`.
+  ///
+  /// `SSH_AUTH_SOCK` (an absolute path only) is kept for SSH to an enrolled
+  /// execution host, whose key may be usable only through the agent, and
+  /// for guest sessions whose ProxyCommand opens that connection. Guest SSH
+  /// never uses it (`IdentityAgent none`) and nothing forwards the agent; it
+  /// is never in `SendEnv`.
   package static func transportEnvironment(_ environment: [String: String]) -> [String: String] {
     let names: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "TERM", "LANG"]
-    return environment.filter { names.contains($0.key) || $0.key.hasPrefix("LC_") }
+    var out = environment.filter { names.contains($0.key) || $0.key.hasPrefix("LC_") }
+    if let socket = environment["SSH_AUTH_SOCK"], socket.hasPrefix("/"),
+      !socket.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
+    {
+      out["SSH_AUTH_SOCK"] = socket
+    }
+    return out
   }
 
   package init(environment: [String: String], runner: ProcessRunner = ProcessRunner()) {

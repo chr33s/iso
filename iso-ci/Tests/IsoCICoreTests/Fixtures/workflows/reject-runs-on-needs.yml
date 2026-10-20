@@ -1,0 +1,13 @@
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    outputs:
+      os: x
+    steps:
+      - run: echo
+  b:
+    needs: a
+    runs-on: ${{ needs.a.outputs.os }}
+    steps:
+      - run: echo

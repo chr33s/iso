@@ -191,3 +191,109 @@ private func option(_ call: [String], _ name: String) -> String? {
     return
   }
 }
+
+@Test func theAdvertisedRunPolicyIsTheDigestAFreshHostRunBootsUnder() throws {
+  let install = try installed()
+  defer { install.remove() }
+  let native = AppleNativeHost(backend: install.backend)
+  let capability = native.networkCapability()
+  #expect(capability.transport == .brokered)
+  #expect(capability.runtimeBrokered)
+  #expect(capability.liveTuple["transport"] == "brokered")
+  let advertised = try #require(capability.runPolicies[.none])
+  #expect(advertised.providerGrants.isEmpty && advertised.localServices.isEmpty)
+  // A host-control VM: the reserved `hc-<id>` record, created and booted the
+  // way `vm.create`/`run.create` do it, then proven through the gate.
+  let id = InstanceID.generate()
+  let instance = try Instance.allocate(
+    install.config, name: AppleNativeHost.instanceName(id), image: .default, workspacePath: nil)
+  try install.backend.createAndStart(instance, diskGiB: nil)
+  let machine = try install.backend.ownedSidecar(instance).machineID
+  let proof = try #require(try native.networkProof(id, runtime: machine))
+  #expect(proof.networkPolicy == advertised.digest)
+  #expect(native.imageDigest(.default) == (try ImageManifest.load(install.config, .default)).digest)
+
+  // A vmnet worker advertises no run policy.
+  let vmnet = try installed("")
+  defer { vmnet.remove() }
+  let plain = AppleNativeHost(backend: vmnet.backend).networkCapability()
+  #expect(plain.transport == .vmnet)
+  #expect(plain.runPolicies.isEmpty)
+}
+
+/// Records filtered-egress companion calls; `failure` makes `start` throw.
+private final class RecordingEgress: FilteredEgressCompanion, @unchecked Sendable {
+  private let lock = NSLock()
+  private var events: [String] = []
+  let failure: Bool
+  init(failure: Bool = false) { self.failure = failure }
+  func start(_ instance: Instance, backend: AppleBackend) throws {
+    lock.withLock { events.append("start \(instance.name) \(backend.config.egress.rawValue)") }
+    if failure { throw HostError("companion refused") }
+  }
+  func stop(_ instance: Instance) { lock.withLock { events.append("stop \(instance.name)") } }
+  var calls: [String] { lock.withLock { events } }
+}
+
+private let brokeredFiltered =
+  #", "network": {"transport": "brokered"}, "egress": "filtered", "egress_filter": {"allowed_hosts": ["api.github.com"]}"#
+
+private func hostVM(_ install: FakeInstallation, _ native: AppleNativeHost, egress: EgressMode)
+  throws -> (InstanceID, MachineName)
+{
+  let owner = try Owner.load(install.config).id
+  let id = InstanceID.generate()
+  let machine = try MachineName.generate(for: owner, randomHex: "0123456789abcdef")
+  let spec = try VMSpec.make(
+    name: InstanceName("ci"), image: .default, imageDigest: nil, cpus: 2, memoryMiB: 4096,
+    diskGiB: 8, guestOS: .linux, egress: egress)
+  try native.create(id, runtime: machine, spec: spec, owner: owner)
+  return (id, machine)
+}
+
+@Test func aFilteredHostControlBootStartsItsEgressCompanionAndStopsItWithTheVM() throws {
+  let install = try installed(brokeredFiltered)
+  defer { install.remove() }
+  let egress = RecordingEgress()
+  let native = AppleNativeHost(backend: install.backend, egress: egress)
+  let (id, machine) = try hostVM(install, native, egress: .filtered)
+  // The enrollment boot inside create needs no companion.
+  #expect(egress.calls.isEmpty)
+  try native.start(id, runtime: machine, expiresAt: nil)
+  let name = AppleNativeHost.instanceName(id)
+  #expect(egress.calls == ["start \(name) filtered"])
+  try native.stop(id, runtime: machine)
+  #expect(egress.calls.last == "stop \(name)")
+  try native.delete(id, runtime: machine, owner: try Owner.load(install.config).id)
+  #expect(egress.calls.last == "stop \(name)")
+}
+
+@Test func aFilteredBootWhoseCompanionFailsIsStoppedNotLeftRunning() throws {
+  let install = try installed(brokeredFiltered)
+  defer { install.remove() }
+  let egress = RecordingEgress(failure: true)
+  let native = AppleNativeHost(backend: install.backend, egress: egress)
+  let (id, machine) = try hostVM(install, native, egress: .filtered)
+  do {
+    try native.start(id, runtime: machine, expiresAt: nil)
+    Issue.record("a filtered boot without its companion was reported started")
+  } catch {
+    guard case .failed(let reason) = error else {
+      Issue.record("unexpected failure \(error)")
+      return
+    }
+    #expect(reason.hasPrefix("FILTERED_EGRESS_NOT_READY"))
+  }
+  #expect(try native.observe(id, runtime: machine) == .stopped)
+  #expect(egress.calls.last == "stop \(AppleNativeHost.instanceName(id))")
+}
+
+@Test func anUnfilteredHostControlBootNeedsNoCompanion() throws {
+  let install = try installed()
+  defer { install.remove() }
+  let egress = RecordingEgress(failure: true)
+  let native = AppleNativeHost(backend: install.backend, egress: egress)
+  let (id, machine) = try hostVM(install, native, egress: .none)
+  try native.start(id, runtime: machine, expiresAt: nil)
+  #expect(!egress.calls.contains { $0.hasPrefix("start") })
+}

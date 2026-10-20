@@ -17,7 +17,10 @@ iso host add build-mac --ssh build-mac --agent-path /Users/me/.local/bin/iso
 ```
 
 Replace the agent path with the absolute path to the installed remote `iso`.
-Enrollment verifies the host's installation identity over pinned SSH.
+Enrollment verifies the host's installation identity over pinned SSH. Your
+SSH key for the remote Mac may live in your SSH agent (a passphrase-protected
+key, 1Password or Secretive); iso uses the agent only to authenticate to that
+Mac and never forwards it, and VM sessions never use it.
 
 The remote Mac's own configuration decides how its VMs are connected. With
 [`"network": {"transport": "brokered"}`](configuration.md#network) there, new
@@ -31,6 +34,30 @@ devices and the boot's network-policy and channel-policy digests. A brokered
 VM that fails that check is reported `unhealthy`, and a client refuses a proof
 that is malformed, names another boot or reports a network device. The proof is
 an observation; every access is checked again on the remote Mac.
+
+### Brokered handoff evidence
+
+A companion that needs a brokered VM (for example a CI runner pool) asks the
+host's `host.capabilities` and requires `net-handoff-1`. A brokered host lists
+it only with current qualification evidence for its exact tuple. After running
+the brokered qualification suite (N-T01–N-T16) on that Mac, record its
+results there:
+
+```sh
+python3 scripts/record-net-handoff-evidence.py --results results.json
+```
+
+The script refuses results with any case not `passed` and installs a private
+manifest that expires (90 days by default, at most 365). The evidence covers
+the one image it names (`tuple.image`, `<name>@sha256:<hex>`); a companion
+binds its VMs to that image by requesting its digest, which the host
+enforces. Updating iso, the runtime or macOS, or rebuilding the qualified
+image, withdraws the capability until new evidence is recorded. Details:
+[NET-HANDOFF-1](design/brokered-network-isolation.md).
+
+Companions reach a host through `iso host-agent client --host ALIAS --stdio`
+(and `--relay` for one guest stream) rather than reading iso's files. Against
+`local` it applies the same restrictions as a remote client.
 
 ## Start a project
 

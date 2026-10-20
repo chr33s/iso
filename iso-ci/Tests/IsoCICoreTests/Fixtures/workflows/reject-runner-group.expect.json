@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "runner groups are not supported"
+  ]
+}

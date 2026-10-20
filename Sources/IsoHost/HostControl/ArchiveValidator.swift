@@ -99,6 +99,9 @@ package enum ArchiveValidator {
 
       members += 1
       guard members <= limits.maxMembers else { throw reject("too many archive members") }
+      // GNU and BSD tar name the archive root (`./`) as an empty directory
+      // member; it carries nothing to extract, so only that is skipped.
+      if type == "5", size == 0, namesRoot(name) { continue }
       let normalized = fold(try normalize(name, limits: limits))
       let kind: Character =
         switch type {
@@ -170,6 +173,12 @@ package enum ArchiveValidator {
     guard magic == Array("ustar".utf8) else { return name }
     let prefix = try utf8(Array(header[345..<500].prefix { $0 != 0 }))
     return prefix.isEmpty ? name : prefix + "/" + name
+  }
+
+  /// A relative name made only of `.` components (`.`, `./`, `././`).
+  static func namesRoot(_ path: String) -> Bool {
+    !path.isEmpty && !path.hasPrefix("/")
+      && path.split(separator: "/", omittingEmptySubsequences: true).allSatisfy { $0 == "." }
   }
 
   /// Lexical normal form: relative, no empty, `.` or `..` components.

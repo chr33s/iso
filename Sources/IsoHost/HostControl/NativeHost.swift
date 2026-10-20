@@ -81,6 +81,46 @@ package protocol NativeHost: Sendable {
   /// pinned bootstrap route, at most `limit` bytes. The bytes are untrusted.
   func exportResults(_ instance: InstanceID, runtime: MachineName, limit: UInt64)
     throws(NativeFailure) -> [UInt8]
+  /// The configured transport, brokered runtime support, the policy a fresh
+  /// run VM would boot with per egress mode, and the live tuple values.
+  func networkCapability() -> NetworkCapability
+  /// The current manifest digest of a prepared worker image, if any.
+  func imageDigest(_ image: ImageName) -> String?
+}
+
+/// The worker-side filtered-egress companion of a host-control VM: the same
+/// `iso-egress` process, owner lease, Seatbelt confinement, guest-path
+/// readiness proof and recorded boot policy as `iso up --egress filtered`.
+/// `start` runs after every boot of a filtered VM; without it no access grant
+/// can pass the filtered handoff.
+package protocol FilteredEgressCompanion: Sendable {
+  func start(_ instance: Instance, backend: AppleBackend) throws
+  func stop(_ instance: Instance)
+}
+
+/// The production companion, through ``ProxyLauncher``.
+package struct ProcessEgressCompanion: FilteredEgressCompanion {
+  let launcher: ProxyLauncher
+  let environment: [String: String]
+  let diagnostics: Diagnostics
+
+  package init(environment: [String: String], diagnostics: Diagnostics, isoExecutable: String?) {
+    self.environment = environment
+    self.diagnostics = diagnostics
+    launcher = ProxyLauncher(
+      environment: environment, resolver: CredentialResolver(environment: environment),
+      diagnostics: diagnostics, isoExecutable: isoExecutable)
+  }
+
+  package func start(_ instance: Instance, backend: AppleBackend) throws {
+    let target = try backend.sshTarget(instance)
+    try SSHClient(environment: environment).waitUntilReady(
+      target, timeout: .seconds(30), diagnostics: diagnostics)
+    try launcher.startEgress(
+      instance, config: backend.config, target: target, runtime: try backend.runtime())
+  }
+
+  package func stop(_ instance: Instance) { launcher.stopEgress(instance) }
 }
 
 /// The guest directory a disposable run's results are collected from,
@@ -95,9 +135,17 @@ package struct AppleNativeHost: NativeHost {
   static let creationBootSeconds: TimeInterval = 15 * 60
 
   let backend: AppleBackend
+  let egress: any FilteredEgressCompanion
 
   /// The service's backend is the sole writer of adopted instances.
-  package init(backend: AppleBackend) { self.backend = backend.asServiceWriter() }
+  package init(backend: AppleBackend, egress: (any FilteredEgressCompanion)? = nil) {
+    self.backend = backend.asServiceWriter()
+    self.egress =
+      egress
+      ?? ProcessEgressCompanion(
+        environment: backend.environment, diagnostics: backend.diagnostics,
+        isoExecutable: Bundle.main.executablePath)
+  }
 
   static func instanceName(_ id: InstanceID) -> InstanceName {
     // Cannot fail: "hc-" plus a canonical UUID is 39 characters of [a-z0-9-].
@@ -203,8 +251,18 @@ package struct AppleNativeHost: NativeHost {
     throws(NativeFailure)
   {
     let instance = try require(id)
-    do { try scoped(instance).startExisting(instance, expiresAt: expiresAt) } catch {
+    let backend = try scoped(instance)
+    do { try backend.startExisting(instance, expiresAt: expiresAt) } catch {
       throw .failed(HostControlError.sanitize("\(error)"))
+    }
+    // A filtered boot needs a proven egress companion; on failure stop the
+    // VM (no fallback route).
+    guard backend.config.egress == .filtered else { return }
+    do { try egress.start(instance, backend: backend) } catch {
+      egress.stop(instance)
+      try? backend.stopUnproven(instance)
+      throw .failed(
+        "FILTERED_EGRESS_NOT_READY: " + HostControlError.sanitize("\(error)"))
     }
   }
 
@@ -213,6 +271,8 @@ package struct AppleNativeHost: NativeHost {
       do { try scoped(instance).stopUnproven(instance) } catch {
         throw .uncertain(HostControlError.sanitize("\(error)"))
       }
+      // After the stop: the companion's lease also ends with the owner.
+      egress.stop(instance)
       return
     }
     // No worker record: stop the owned runtime object directly.
@@ -227,6 +287,7 @@ package struct AppleNativeHost: NativeHost {
   {
     guard name.belongs(to: owner) else { throw .failed("runtime object is not owned") }
     if let instance = try instance(id) {
+      egress.stop(instance)
       do { try backend.destroyInstance(instance) } catch {
         throw .uncertain(HostControlError.sanitize("\(error)"))
       }
@@ -309,7 +370,7 @@ package struct AppleNativeHost: NativeHost {
         let policy = try FilteredHandoff.recordedPolicy(instance)
       else { throw NativeFailure.failed("FILTERED_EGRESS_NOT_READY: the VM is not running") }
       return FilteredGrantPolicy(
-        bootID: try BootID(policy.bootID), policyHash: try BootID(policy.policyHash))
+        bootID: try BootID(policy.bootID), policyHash: try FilteredPolicyHash(policy.policyHash))
     } catch let error as NativeFailure {
       throw error
     } catch {
@@ -397,6 +458,35 @@ package struct AppleNativeHost: NativeHost {
     } catch {
       throw .failed(HostControlError.sanitize("\(error)"))
     }
+  }
+
+  package func networkCapability() -> NetworkCapability {
+    let config = backend.config
+    let runtime = try? backend.runtime()
+    let identity = try? runtime?.requireQualified()
+    let brokered =
+      identity != nil && runtime?.features.contains(RuntimeProtocol.brokeredFeature) == true
+    var policies: [EgressMode: BrokeredNetworkPolicy] = [:]
+    if config.network.transport == .brokered {
+      // `open` cannot be brokered; a mode the configuration refuses is absent.
+      for mode in [EgressMode.none, .filtered] {
+        if let policy = try? BrokeredNetworkPolicy.freshRun(config.overridingEgress(mode)) {
+          policies[mode] = policy
+        }
+      }
+    }
+    var tuple = [
+      "host_os": hostOSVersion(), "iso_version": IsoBuild.packageVersion,
+      "transport": config.network.transport.rawValue,
+    ]
+    if let identity { tuple["runtime"] = identity }
+    return NetworkCapability(
+      transport: config.network.transport, runtimeBrokered: brokered, runPolicies: policies,
+      liveTuple: tuple)
+  }
+
+  package func imageDigest(_ image: ImageName) -> String? {
+    (try? ImageManifest.load(backend.config, image))?.digest
   }
 
   package func networkProof(_ id: InstanceID, runtime _: MachineName) throws(NativeFailure)

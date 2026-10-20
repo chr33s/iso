@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "the 'steps' context is not available in this field"
+  ]
+}

@@ -23,9 +23,9 @@ enum EgressMain {
       startup.listen.hasPrefix("127.0.0.1:"),
       let port = UInt16(portText)
     else { throw PolicyError("listener must be 127.0.0.1:<port>") }
-    var hosts: [ExactHostname] = []
-    for raw in startup.allowedHosts { hosts.append(try ExactHostname(raw)) }
-    let allow = EgressAllowlist(hosts)
+    var rules: [HostRule] = []
+    for raw in startup.allowedHosts { rules.append(try HostRule(raw)) }
+    let allow = EgressAllowlist(rules: rules)
     let readiness: EgressReadiness?
     if let identity = startup.readiness {
       guard identity.version == 2 else { throw PolicyError("unsupported readiness version") }

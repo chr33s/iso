@@ -1,0 +1,21 @@
+{
+  "accept": true,
+  "event": "push",
+  "jobs": [
+    "build"
+  ],
+  "steps": {
+    "build": [
+      "__actions_checkout",
+      "__iso_ci_overlay",
+      "test"
+    ]
+  },
+  "synthetic": {
+    "build": [
+      true,
+      true,
+      false
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [main]
+env:
+  GLOBAL: "1"
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MODE: release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test ${{ github.sha }}
+        id: test
+        run: |
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+        working-directory: .

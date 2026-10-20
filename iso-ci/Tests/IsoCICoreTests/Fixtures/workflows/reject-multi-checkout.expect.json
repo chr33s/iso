@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "multiple checkouts are not supported"
+  ]
+}

@@ -577,8 +577,11 @@ the guest's Docker daemon at the companion (a systemd drop-in) and gives
 containers and builds on Docker's default bridge a guest-internal bridge to it
 on `172.17.0.1` (in the guest user's `~/.docker/config.json`); these carry the
 same per-boot capability as session proxy variables and change nothing about
-what is approved. git is set (`/etc/gitconfig`) to send its proxy credentials
-up front, since the companion answers a credential-less probe with 403, not 407.
+what is approved. A CONNECT without the capability, or with a different one,
+gets a `407` Basic challenge, so clients that send proxy credentials only
+when challenged (.NET, including the GitHub Actions runner) retry with them;
+every other refusal is a `403`. git is also set (`/etc/gitconfig`) to send
+its proxy credentials up front.
 Accepted sockets stop at
 128 and tunnels at 64. The 16 DNS slots belong to resolver work, not waiting
 clients: a timed-out libc lookup keeps its slot until it returns. New lookups
@@ -640,8 +643,17 @@ Network forwarding remains blind CONNECT for the recorded allowlist on port
 which cannot select an upstream destination. It is not credential protection:
 `proxy.mode` still decides whether raw provider keys are forwarded.
 `egress_filter.allowed_hosts` is valid only with `"filtered"`; an empty list
-approves nothing. Agent definition hints are not added to that list. An
-existing instance cannot change its creation-time mode through `--egress`.
+approves nothing. Entries are exact hostnames, or `*.<suffix>` for names one
+or more whole labels below a suffix of at least three labels (never the
+suffix itself): `*.actions.githubusercontent.com` admits
+`run-actions-1-azure-eastus.actions.githubusercontent.com` but not
+`actions.githubusercontent.com` or `evilactions.githubusercontent.com`, and
+`*.com`, `*.github.io` or `*.githubusercontent.com` are refused. Use a
+wildcard only for a service that assigns hosts under a domain it alone
+operates, such as GitHub Actions' per-job shards ([trust
+model](trust-model.md)). Agent definition hints are not added to that list.
+An existing instance cannot change its creation-time mode through
+`--egress`.
 The allowlist is frozen for each running boot. After `iso stop`, `iso start`
 may use a new validated allowlist without recreating the VM. The new policy
 is recorded only after boot isolation and pinned-host-key checks succeed;

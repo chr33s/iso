@@ -1,0 +1,6 @@
+on: push
+jobs:
+  x:
+    runs-on: [self-hosted, linux, X64]
+    steps:
+      - run: echo

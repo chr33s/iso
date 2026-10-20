@@ -51,6 +51,10 @@ final class FakeNativeHost: NativeHost {
     /// `proofBoot`, a stale gate reading); others report none.
     var brokered = false
     var proofBoot: BootID?
+    /// What `host.capabilities` reads from the native layer.
+    var capability = NetworkCapability(
+      transport: .vmnet, runtimeBrokered: false, runPolicies: [:], liveTuple: [:])
+    var imageDigests: [ImageName: String] = [:]
   }
 
   let state = Mutex(State())
@@ -178,7 +182,11 @@ final class FakeNativeHost: NativeHost {
   {
     try enter("filtered")
     guard case .running(let boot)? = vm(runtime) else { throw .failed("not running") }
-    return FilteredGrantPolicy(bootID: boot, policyHash: try! BootID("fake-policy"))
+    // The format `NetworkPolicy` records (`sha256:<hex>`), as the worker's
+    // own proof reports it.
+    return FilteredGrantPolicy(
+      bootID: boot,
+      policyHash: try! FilteredPolicyHash("sha256:" + String(repeating: "e", count: 64)))
   }
 
   func imageReady(_ image: ImageName) -> Bool {
@@ -221,6 +229,10 @@ final class FakeNativeHost: NativeHost {
     guard case .running? = vm(runtime) else { throw .failed("not running") }
     return state.withLock { $0.results }
   }
+
+  func networkCapability() -> NetworkCapability { state.withLock { $0.capability } }
+
+  func imageDigest(_ image: ImageName) -> String? { state.withLock { $0.imageDigests[image] } }
 }
 
 /// A syntactically valid ed25519 public key line for tests.

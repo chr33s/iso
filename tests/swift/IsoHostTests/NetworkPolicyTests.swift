@@ -46,7 +46,7 @@ private func withPolicyFixture(_ body: (Instance, IsoConfig) throws -> Void) thr
     let original = NetworkPolicy.make(config)
     for hosts in [
       ["example.com", "api.example.com"], ["example.com", "example.com"],
-      ["EXAMPLE.COM"], ["127.0.0.1"], ["*.example.com"],
+      ["EXAMPLE.COM"], ["127.0.0.1"], ["*.example.com"], ["*.com"], ["*.A.example.com"],
     ] {
       var changed = original
       changed.allowedHosts = hosts

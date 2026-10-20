@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "the needs graph has a cycle"
+  ]
+}

@@ -1,0 +1,29 @@
+on: push
+jobs:
+  test:
+    runs-on: [self-hosted, linux, ARM64]
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [a, b]
+        node: [18, 20]
+        exclude:
+          - os: b
+            node: 18
+        include:
+          - os: a
+            experimental: true
+          - os: c
+            node: 22
+    outputs:
+      result: ${{ steps.r.outputs.value }}
+    steps:
+      - id: r
+        run: echo "value=${{ matrix.os }}-${{ matrix.node }}" >> "$GITHUB_OUTPUT"
+  report:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ needs.test.result }} ${{ needs.test.outputs.result }}"

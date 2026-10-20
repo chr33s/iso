@@ -1,0 +1,23 @@
+on: [push, pull_request]
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+      env:
+        NODE_ENV: test
+      ports: [8080]
+      volumes: [/tmp/data:/data]
+      options: --cpus 1
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://alpine:3.20
+        with:
+          args: echo hello
+      - run: npm test

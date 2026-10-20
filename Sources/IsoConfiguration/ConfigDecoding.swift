@@ -209,11 +209,11 @@ func egressFilter(_ reader: ObjectReader) throws(FieldError) -> EgressFilter {
   let filter = try reader.optional("egress_filter") { value, path throws(FieldError) in
     let object = try ObjectReader(value, at: path)
     try object.rejectUnknown(allowing: ["allowed_hosts"])
-    let hosts = try object.defaulted("allowed_hosts", [ExactHostname]()) {
+    let hosts = try object.defaulted("allowed_hosts", [HostRule]()) {
       value, path throws(FieldError) in
       try Parse.array(value, path) { item, itemPath throws(FieldError) in
         let raw = try Parse.string(item, itemPath)
-        return try Parse.domain(itemPath) { () throws(ValidationError) in try ExactHostname(raw) }
+        return try Parse.domain(itemPath) { () throws(ValidationError) in try HostRule(raw) }
       }
     }
     guard hosts.count <= EgressFilter.maxHosts else {

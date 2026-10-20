@@ -107,6 +107,10 @@ jobs:
           python3 scripts/test-swift-egress-pressure.py
           python3 scripts/test-swift-egress-mutations.py
 
+      # Fixture and unit tests only: no live GitHub, VM or runner qualification.
+      - name: iso-ci companion build and tests
+        run: mise run check-ci
+
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke
         shell: bash

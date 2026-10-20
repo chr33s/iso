@@ -19,6 +19,7 @@ package enum HostTransportKind: String, Sendable, Equatable {
 
 package enum HostMethod: String, CaseIterable, Sendable {
   case hello
+  case hostCapabilities = "host.capabilities"
   case vmList = "vm.list"
   case vmInspect = "vm.inspect"
   case imageEnsure = "image.ensure"
@@ -37,6 +38,7 @@ package enum HostMethod: String, CaseIterable, Sendable {
   case runResultsRecover = "run.results.recover"
   case runResultsAck = "run.results.ack"
   case runResultsDiscard = "run.results.discard"
+  case runRetain = "run.retain"
   case artifactBegin = "artifact.begin"
   case artifactWrite = "artifact.write"
   case artifactCommit = "artifact.commit"
@@ -52,8 +54,8 @@ package enum HostMethod: String, CaseIterable, Sendable {
   package var isDurableMutation: Bool {
     switch self {
     case .imageEnsure, .vmCreate, .vmStart, .vmStop, .vmDestroy, .runCreate, .runComplete,
-      .runResultsRecover, .runResultsAck, .runResultsDiscard, .vmResize, .imageCommit, .vmRestore,
-      .macosComputerUseInput:
+      .runResultsRecover, .runResultsAck, .runResultsDiscard, .runRetain, .vmResize, .imageCommit,
+      .vmRestore, .macosComputerUseInput:
       true
     default: false
     }
@@ -277,6 +279,15 @@ package enum Maintenance: Sendable, Equatable {
   }
 }
 
+/// Host-owned retention requested through `run.retain`.
+package enum RetentionMode: String, Sendable, CaseIterable, Codable {
+  /// Keep the run's VM running (no controlling session needed) until a
+  /// finite deadline that never passes the VM's own hard deadline.
+  case live
+  /// Keep the stopped disk and staged results longer, up to a fixed cap.
+  case stopped
+}
+
 /// Purpose a live access session is admitted for.
 package enum AccessPurpose: String, Sendable, CaseIterable {
   case ssh
@@ -333,6 +344,8 @@ package struct ClientPublicKey: Sendable, Equatable {
 /// Typed request parameters, one case per method.
 package enum HostRequestBody: Sendable, Equatable {
   case hello(protocols: [String], clientBuild: String)
+  /// What this host can do now and the evidence behind it; params are `{}`.
+  case hostCapabilities
   case vmList(cursor: InstanceID?, limit: UInt32)
   case vmInspect(QualifiedInstance)
   case imageEnsure(ImageRequest)
@@ -353,6 +366,7 @@ package enum HostRequestBody: Sendable, Equatable {
   case runResultsRecover(run: RunID, expectedGeneration: UInt64)
   case runResultsAck(run: RunID, expectedGeneration: UInt64, digest: SHA256Hex, stage: StageID)
   case runResultsDiscard(run: RunID, expectedGeneration: UInt64)
+  case runRetain(run: RunID, expectedGeneration: UInt64, mode: RetentionMode, seconds: UInt64)
   case artifactBegin(kind: ArtifactKind, size: UInt64, digest: SHA256Hex)
   case artifactWrite(handle: ArtifactHandle, offset: UInt64, bytes: [UInt8])
   case artifactCommit(handle: ArtifactHandle)
@@ -368,6 +382,7 @@ package enum HostRequestBody: Sendable, Equatable {
   package var method: HostMethod {
     switch self {
     case .hello: .hello
+    case .hostCapabilities: .hostCapabilities
     case .vmList: .vmList
     case .vmInspect: .vmInspect
     case .imageEnsure: .imageEnsure
@@ -386,6 +401,7 @@ package enum HostRequestBody: Sendable, Equatable {
     case .runResultsRecover: .runResultsRecover
     case .runResultsAck: .runResultsAck
     case .runResultsDiscard: .runResultsDiscard
+    case .runRetain: .runRetain
     case .artifactBegin: .artifactBegin
     case .artifactWrite: .artifactWrite
     case .artifactCommit: .artifactCommit
@@ -414,6 +430,8 @@ package enum HostRequestBody: Sendable, Equatable {
     case .hello(let protocols, let build):
       b.set("protocols", .array(protocols.map { .string($0) }))
       b.set("client_build", build)
+    case .hostCapabilities:
+      break
     case .vmList(let cursor, let limit):
       b.setIfPresent("cursor", cursor)
       b.set("limit", UInt64(limit))
@@ -477,6 +495,11 @@ package enum HostRequestBody: Sendable, Equatable {
     case .runResultsRecover(let run, let generation), .runResultsDiscard(let run, let generation):
       b.set("run_id", run)
       b.set("expected_generation", generation)
+    case .runRetain(let run, let generation, let mode, let seconds):
+      b.set("run_id", run)
+      b.set("expected_generation", generation)
+      b.set("mode", mode.rawValue)
+      b.set("seconds", seconds)
     case .runResultsAck(let run, let generation, let digest, let stage):
       b.set("run_id", run)
       b.set("expected_generation", generation)
@@ -517,6 +540,8 @@ package enum HostRequestBody: Sendable, Equatable {
       let build = try r.string("client_build")
       guard build.utf8.count <= 128 else { throw .invalidRequest("params.client_build too long") }
       self = .hello(protocols: names, clientBuild: build)
+    case .hostCapabilities:
+      self = .hostCapabilities
     case .vmList:
       let cursor = try r.optionalParsed("cursor", InstanceID.init)
       let limit = try r.unsigned("limit", as: UInt32.self)
@@ -619,6 +644,18 @@ package enum HostRequestBody: Sendable, Equatable {
       self = .runResultsDiscard(
         run: try r.parsed("run_id", RunID.init),
         expectedGeneration: try r.unsigned("expected_generation"))
+    case .runRetain:
+      let run = try r.parsed("run_id", RunID.init)
+      let generation = try r.unsigned("expected_generation", as: UInt64.self)
+      guard let mode = RetentionMode(rawValue: try r.string("mode")) else {
+        throw .invalidRequest("params.mode must be live or stopped")
+      }
+      let seconds = try r.unsigned("seconds", as: UInt64.self)
+      guard seconds > 0, seconds <= RunStore.maxRetentionSeconds(mode) else {
+        throw .invalidRequest(
+          "params.seconds must be 1-\(RunStore.maxRetentionSeconds(mode)) for \(mode.rawValue)")
+      }
+      self = .runRetain(run: run, expectedGeneration: generation, mode: mode, seconds: seconds)
     case .runResultsAck:
       let run = try r.parsed("run_id", RunID.init)
       let generation = try r.unsigned("expected_generation", as: UInt64.self)

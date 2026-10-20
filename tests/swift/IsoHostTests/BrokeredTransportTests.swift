@@ -587,6 +587,11 @@ private func brokeredRunning(_ guest: FakeGuest, boot: String? = nil) throws -> 
   #expect(script.contains("getent passwd dev"))
   #expect(script.contains("systemctl try-restart docker"))
   #expect(script.contains("git config --system http.proxyAuthMethod basic"))
+  // Every guest session (host-control ones included) gets the proxy from
+  // /etc/environment; the URL still arrives only on stdin.
+  #expect(script.contains("envfile=/etc/environment"))
+  #expect(script.contains(#"for k in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY"#))
+  #expect(!script.contains("c0ffee"))
   let rendered = EgressClients.command(port: 10789, user: user).rendered
   #expect(rendered.hasPrefix("sudo sh -c '"))
   #expect(

@@ -57,7 +57,9 @@ func theAgentConfigKeepsTheProxyRequiredOnEveryEgress(egress: EgressMode) throws
   let config = try testConfig(#""proxy": {"mode": "auto"}"#)
   let policy =
     egress == .filtered
-    ? FilteredGrantPolicy(bootID: try BootID("boot-1"), policyHash: try BootID("policy-1")) : nil
+    ? FilteredGrantPolicy(
+      bootID: try BootID("boot-1"),
+      policyHash: try FilteredPolicyHash("sha256:" + String(repeating: "a", count: 64))) : nil
   let effective = try RemoteAgent.agentConfig(config, filteredPolicy: policy, vmEgress: egress)
   // The egress choice must not replace the brokered proxy mode.
   #expect(effective.proxy.mode == .required)

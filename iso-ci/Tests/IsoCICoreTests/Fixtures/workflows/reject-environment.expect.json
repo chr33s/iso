@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "environments are not supported"
+  ]
+}

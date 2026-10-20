@@ -1,0 +1,6 @@
+on: push
+jobs:
+  call:
+    uses: org/repo/.github/workflows/build.yml@main
+    with:
+      x: 1

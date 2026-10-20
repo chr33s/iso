@@ -1,0 +1,16 @@
+on: push
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: exit 1
+        continue-on-error: true
+        timeout-minutes: 5
+      - if: failure()
+        run: echo failed
+      - if: ${{ github.event_name == 'push' }}
+        run: echo pushed

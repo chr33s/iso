@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 
 /// Process entrypoints behind `iso host-agent` (spec 3.3) and the launchd
 /// user service that keeps the supervisor alive independently of frontends.
@@ -207,18 +208,36 @@ package enum HostService {
 }
 
 extension Socket {
-  /// Splices a socket with this process's stdin/stdout.
-  static func splice(_ socket: Int32, stdio: (Int32, Int32)) {
-    let done = DispatchGroup()
-    done.enter()
+  /// Splices a socket with this process's stdin/stdout and returns when
+  /// either side ends. The relay runs as an ssh ProxyCommand: stdin EOF means
+  /// ssh is gone, so the guest side gets a short grace to finish rather than
+  /// an unbounded wait (an orphaned relay would otherwise keep its caller's
+  /// inherited stderr open).
+  static func splice(
+    _ socket: Int32, stdio: (Int32, Int32), grace: DispatchTimeInterval = .seconds(5)
+  ) {
+    let inbound = DispatchSemaphore(value: 0)
+    let outbound = DispatchSemaphore(value: 0)
     Thread.detachNewThread {
       copy(from: stdio.0, to: socket)
       shutdown(socket, SHUT_WR)
-      done.leave()
+      inbound.signal()
     }
-    copy(from: socket, to: stdio.1)
-    // The guest side ended: stop waiting for stdin.
-    _ = done.wait(timeout: .now() + 1)
+    Thread.detachNewThread {
+      copy(from: socket, to: stdio.1)
+      outbound.signal()
+    }
+    while true {
+      if outbound.wait(timeout: .now() + .milliseconds(100)) == .success {
+        // The guest side ended: stop waiting for stdin.
+        _ = inbound.wait(timeout: .now() + 1)
+        return
+      }
+      if inbound.wait(timeout: .now()) == .success {
+        _ = outbound.wait(timeout: .now() + grace)
+        return
+      }
+    }
   }
 }
 
@@ -300,4 +319,47 @@ package struct SessionDescriptor: Codable, Sendable {
     if case .exited(let code) = termination { return code }
     return 1
   }
+}
+
+extension HostService {
+  /// `iso host-agent client` to an enrolled host: the pinned management SSH
+  /// to its fixed entrypoint, carrying this process's stdio. For a relay the
+  /// preamble line is read from stdin and written to ssh first; nothing from
+  /// stdin reaches argv.
+  package static func bridgeRemote(
+    ssh: String, alias: HostAlias, agent: AgentPath, entry: HostAgentEntrypoint,
+    environment: [String: String], input: Int32 = 0, output: Int32 = 1,
+    diagnostics: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+  ) throws -> Int32 {
+    let request = ProcessRunner.Request(
+      executable: ssh, arguments: managementSSHArguments(alias: alias, agent: agent, entry),
+      environment: SSHClient.transportEnvironment(environment), deadline: .seconds(0))
+    switch entry {
+    case .serve:
+      // ssh inherits stdio (and stderr, for its own diagnostics).
+      return try ProcessRunner().attached(request, inheritStdin: true, deadline: nil).exitStatus
+    case .relay:
+      guard let preamble = Socket.readLine(input, limit: RelayPreamble.maxBytes) else {
+        throw HostError("missing relay preamble")
+      }
+      // ssh's stderr is collected (bounded) rather than passed through, so a
+      // failure is reported once, sanitized, with ssh's own exit status.
+      let (termination, stderr) = try ProcessRunner().relayed(
+        request, preamble: preamble + [UInt8(ascii: "\n")], input: input, output: output,
+        stderrLimit: Self.bridgeDiagnosticBytes)
+      let code: Int32 = if case .exited(let status) = termination { status } else { 1 }
+      if code != 0 {
+        let reason =
+          code == 255
+          ? SSHHostTransport.classify(stderr, alias: alias).message
+          : HostControlError.sanitize(String(decoding: stderr, as: UTF8.self))
+        diagnostics(
+          "host-agent client: relay to \(alias) ended with status \(code): \(reason)")
+      }
+      return code
+    }
+  }
+
+  /// Bound on the ssh stderr a relay bridge keeps for its diagnostic.
+  package static let bridgeDiagnosticBytes = 2_048
 }

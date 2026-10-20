@@ -1,0 +1,9 @@
+{
+  "description": "@actions/cache v1 REST as cacheHttpClient.ts sends it (getCacheEntry, reserveCache, uploadChunk with Content-Range 'bytes start-end/*', commitCache {size}). Derived by reading actions/toolkit packages/cache (MIT) at commit 7e25f67e8fd17369aa21e6e816ac99654106e0dc (@actions/cache 6.3.0). Not captured from a live client.",
+  "source": "https://github.com/actions/toolkit/blob/7e25f67e8fd17369aa21e6e816ac99654106e0dc/packages/cache/src/internal/cacheHttpClient.ts",
+  "accept": "application/json;api-version=6.0-preview.1",
+  "reserve": {"key": "Linux-npm-abc", "version": "a1b2", "cacheSize": 11},
+  "chunks": [{"range": "bytes 0-4/*", "data": "hello"}, {"range": "bytes 5-10/*", "data": " world"}],
+  "commit": {"size": 11},
+  "lookup": {"keys": "Linux-npm-abc,Linux-npm-", "version": "a1b2"}
+}

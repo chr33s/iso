@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "write-all includes id-token"
+  ]
+}

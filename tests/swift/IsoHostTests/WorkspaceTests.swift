@@ -256,6 +256,21 @@ private func transfer() -> WorkspaceTransfer {
   #expect(child["OPENAI_API_KEY"] == "capability")
 }
 
+/// An enrolled host's key may be usable only through the agent: its socket
+/// path is kept (absolute only) for management SSH and ProxyCommands, while
+/// every guest SSH option set refuses the agent.
+@Test func transportKeepsOnlyAnAbsoluteAgentSocketAndGuestsRefuseTheAgent() throws {
+  let kept = SSHClient(environment: ["HOME": "/h", "SSH_AUTH_SOCK": "/private/tmp/agent.sock"])
+  #expect(kept.environment == ["HOME": "/h", "SSH_AUTH_SOCK": "/private/tmp/agent.sock"])
+  for bad in ["relative.sock", "/tmp/a\nb", ""] {
+    #expect(SSHClient(environment: ["SSH_AUTH_SOCK": bad]).environment["SSH_AUTH_SOCK"] == nil)
+  }
+  let target = SSHTarget(
+    host: "127.0.0.1", port: 22, user: .default, keyPath: "/k", knownHosts: "/kh", alias: "g")
+  #expect(target.hostKeyOptions.contains("IdentityAgent=none"))
+  #expect(target.hostKeyOptions.contains("ForwardAgent=no"))
+}
+
 // MARK: - Staged pulls: transfer cap and stage lock
 
 private final class Flag: @unchecked Sendable {

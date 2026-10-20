@@ -17,6 +17,10 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Brokered network isolation](brokered-network-isolation.md) (ISO-NET-001):
   the specification for the NIC-less `network.transport: "brokered"`, its
   implementation, native evidence and open qualification items.
+- [iso-ci](iso-ci-specification.md) (ISO-CI): the GitHub Actions companion's
+  implementation contract and implementation status, with its
+  [qualification record](iso-ci-qualification.md) (evidence and defects
+  found). Operator guide: [`docs/ci.md`](../ci.md).
 
 ## Security and credentials
 

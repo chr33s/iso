@@ -1,0 +1,20 @@
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        type: choice
+        options: [low, high]
+        default: low
+      dry:
+        type: boolean
+        default: true
+      count:
+        type: number
+        required: true
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dry }}
+    timeout-minutes: ${{ inputs.count }}
+    steps:
+      - run: echo "${{ inputs.level }}"

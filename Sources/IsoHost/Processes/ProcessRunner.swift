@@ -1,5 +1,6 @@
 import Foundation
 import IsoCore
+import Synchronization
 
 /// The one subprocess launcher (S-03). Every child is spawned from an
 /// explicit argv (no shell interpolation by this layer), in its own process
@@ -313,11 +314,51 @@ package struct ProcessRunner: Sendable {
     }
   }
 
+  /// `relayed`, with the child's stderr collected instead of passed
+  /// through: returns its termination and the last `stderrLimit` bytes, so a
+  /// failure can be reported once and sanitized.
+  package func relayed(
+    _ request: Request, preamble: [UInt8], input: Int32 = 0, output: Int32 = 1,
+    stderrLimit: Int
+  ) throws(Failure) -> (termination: Termination, stderr: [UInt8]) {
+    var errors: [Int32] = [-1, -1]
+    guard pipe(&errors) == 0 else { throw .spawn(errno: errno) }
+    _ = fcntl(errors[0], F_SETFD, FD_CLOEXEC)
+    let collected = Mutex<[UInt8]>([])
+    let drained = DispatchSemaphore(value: 0)
+    let reader = errors[0]
+    Thread.detachNewThread {
+      defer {
+        close(reader)
+        drained.signal()
+      }
+      var buffer = [UInt8](repeating: 0, count: 4_096)
+      while true {
+        let count = buffer.withUnsafeMutableBytes { read(reader, $0.baseAddress, $0.count) }
+        if count < 0 && errno == EINTR { continue }
+        guard count > 0 else { return }
+        collected.withLock { $0 = Array(($0 + buffer[0..<count]).suffix(stderrLimit)) }
+      }
+    }
+    let termination: Termination
+    do {
+      defer { close(errors[1]) }
+      termination = try relayed(
+        request, preamble: preamble, input: input, output: output, errorOutput: errors[1])
+    }
+    drained.wait()
+    return (termination, collected.withLock { $0 })
+  }
+
   /// Like `attached`, but the child's stdin is a pipe that first receives
   /// `preamble` (a secret-bearing first line, never argv) and then this
   /// process's own stdin until EOF. stdout and stderr are inherited. Used by
-  /// the host relay helper that `ssh` runs as its ProxyCommand.
-  package func relayed(_ request: Request, preamble: [UInt8]) throws(Failure) -> Termination {
+  /// the host relay helper that `ssh` runs as its ProxyCommand. `input`,
+  /// `output` and `errorOutput` replace this process's stdio.
+  package func relayed(
+    _ request: Request, preamble: [UInt8], input: Int32 = 0, output: Int32 = 1,
+    errorOutput: Int32 = 2
+  ) throws(Failure) -> Termination {
     var stdinPipe: [Int32] = [-1, -1]
     guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
     _ = fcntl(stdinPipe[1], F_SETFD, FD_CLOEXEC)
@@ -326,8 +367,8 @@ package struct ProcessRunner: Sendable {
     do {
       defer { close(stdinPipe[0]) }
       pid = try spawn(
-        request, stdin: .descriptor(stdinPipe[0]), stdout: .descriptor(1), stderr: .descriptor(2),
-        ownGroup: false)
+        request, stdin: .descriptor(stdinPipe[0]), stdout: .descriptor(output),
+        stderr: .descriptor(errorOutput), ownGroup: false)
     } catch {
       close(stdinPipe[1])
       throw error
@@ -340,7 +381,7 @@ package struct ProcessRunner: Sendable {
       guard (try? AtomicFile.writeAll(writer, preamble, "relay preamble")) != nil else { return }
       var buffer = [UInt8](repeating: 0, count: 64 << 10)
       while true {
-        let count = buffer.withUnsafeMutableBytes { read(0, $0.baseAddress, $0.count) }
+        let count = buffer.withUnsafeMutableBytes { read(input, $0.baseAddress, $0.count) }
         if count < 0 && errno == EINTR { continue }
         guard count > 0,
           (try? AtomicFile.writeAll(writer, Array(buffer[0..<count]), "relay stdin")) != nil

@@ -14,6 +14,17 @@ package struct RunStore: Sendable {
   /// How long a running run may lack a live controlling session before the
   /// worker stops it.
   package static let controllerGraceSeconds: UInt64 = 60
+  /// `run.retain` caps: a live VM never outlives these (nor its own hard
+  /// deadline); a stopped disk is kept at most this long after its first stop.
+  package static let maxLiveRetentionSeconds: UInt64 = 14_400
+  package static let maxStoppedRetentionSeconds: UInt64 = 604_800
+
+  package static func maxRetentionSeconds(_ mode: RetentionMode) -> UInt64 {
+    switch mode {
+    case .live: maxLiveRetentionSeconds
+    case .stopped: maxStoppedRetentionSeconds
+    }
+  }
 
   package enum Phase: String, Codable, Sendable, CaseIterable {
     case reserved
@@ -29,6 +40,11 @@ package struct RunStore: Sendable {
 
     /// Phases that still hold a retention slot.
     package var holdsSlot: Bool { self != .destroyed }
+
+    /// Stopped phases whose disk or results remain for retention or release.
+    package var holdsResources: Bool {
+      self == .resultsPending || self == .stoppedDiskPendingExport || self == .failedWithResources
+    }
   }
 
   package struct Record: Codable, Sendable, Equatable {
@@ -53,6 +69,12 @@ package struct RunStore: Sendable {
     package var exitStatus: Int32?
     package var disposition: String?
     package var deliveredStage: StageID?
+    /// Set by `run.retain` live: the run stays running without a controlling
+    /// session until this time, then stops without an implicit export.
+    package var liveRetentionUntil: UInt64?
+    /// The first live retention; later requests never extend past it plus
+    /// ``RunStore/maxLiveRetentionSeconds``.
+    package var liveRetentionStartedAt: UInt64?
     /// The run transition currently executing, if any.
     package var activeOperation: HostOperationID?
   }
@@ -130,6 +152,7 @@ package struct RunObservation: Sendable, Equatable {
   package let artifact: ArtifactHandle?
   package let artifactDigest: SHA256Hex?
   package let retentionDeadline: WireTime?
+  package let liveRetentionUntil: WireTime?
   package let recoveryUsed: Bool
   package let disposition: String?
 
@@ -142,6 +165,7 @@ package struct RunObservation: Sendable, Equatable {
     artifact = record.artifact
     artifactDigest = record.artifactDigest
     retentionDeadline = record.retentionDeadline.map(WireTime.init(seconds:))
+    liveRetentionUntil = record.liveRetentionUntil.map(WireTime.init(seconds:))
     recoveryUsed = record.recoveryUsed
     disposition = record.disposition
   }
@@ -156,6 +180,8 @@ package struct RunObservation: Sendable, Equatable {
     b.setIfPresent("artifact", artifact)
     b.setIfPresent("artifact_digest", artifactDigest)
     b.setIfPresent("retention_deadline", retentionDeadline?.seconds)
+    // Only present after `run.retain` live, so earlier clients never see it.
+    b.setIfPresent("live_retention_until", liveRetentionUntil?.seconds)
     b.set("recovery_used", recoveryUsed)
     if let disposition { b.set("disposition", disposition) }
     return b.value
@@ -174,6 +200,8 @@ package struct RunObservation: Sendable, Equatable {
     artifact = try r.optionalParsed("artifact", ArtifactHandle.init)
     artifactDigest = try r.optionalParsed("artifact_digest", SHA256Hex.init)
     retentionDeadline = try r.optionalUnsigned("retention_deadline", as: UInt64.self).map(
+      WireTime.init(seconds:))
+    liveRetentionUntil = try r.optionalUnsigned("live_retention_until", as: UInt64.self).map(
       WireTime.init(seconds:))
     recoveryUsed = try r.bool("recovery_used")
     disposition = try r.optionalString("disposition")

@@ -469,6 +469,19 @@ struct FakeFileSystem: ConfigFileSystem {
     fieldError(#"{"egress": "none", "egress_filter": {"allowed_hosts": []}}"#)?.field
       == "egress_filter")
   #expect(fieldError(#"{"egress": "provider-only"}"#)?.field == "egress")
+  // A reviewed wildcard covers whole labels below a suffix of three or more
+  // labels; public suffixes and shared hosting domains are refused.
+  let rules = try load(
+    #"{"egress": "filtered", "egress_filter": {"allowed_hosts": ["*.Actions.GitHubUserContent.com", "github.com"]}}"#
+  ).egressFilter.allowedHosts
+  #expect(rules.map(\.rawValue) == ["*.actions.githubusercontent.com", "github.com"])
+  for bad in [
+    "*.com", "*.github.io", "*.githubusercontent.com", "*", "*.*.example.com", "a.*.example.com",
+  ] {
+    #expect(
+      fieldError(#"{"egress": "filtered", "egress_filter": {"allowed_hosts": ["\#(bad)"]}}"#)?.field
+        == "egress_filter.allowed_hosts[0]")
+  }
   // Network policy uses the explicit top-level egress field.
   #expect(throws: (any Error).self) { try load(#"{"network": {"egress": "none"}}"#) }
 }

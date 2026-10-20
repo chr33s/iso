@@ -533,6 +533,7 @@ Every response includes protocol, request_id, host_id, owner_id, daemon_epoch, a
 | Method | Essential input | Result and behavior |
 | --- | --- | --- |
 | hello | Supported protocol versions; client build metadata | Host/owner/epoch, selected protocol, runtime qualification summary, supported guest operations |
+| host.capabilities | Params exactly `{}` | Capability names (`run-retention-1`; `net-handoff-1` only while the transport is brokered, the runtime is brokered-capable and NET-HANDOFF-1 evidence is current), the run network policies, the qualification report, retention caps and limits. Read-only; recomputed per call |
 | vm.list | Cursor; limit 1–200 | Authoritative records plus observations, deterministic order within a snapshot |
 | vm.inspect | Full qualified instance ref | Current snapshot or typed failure; no guest credentials |
 | image.ensure | Immutable image input/digest; staged artifact handles | Durable image operation |
@@ -550,7 +551,8 @@ Every response includes protocol, request_id, host_id, owner_id, daemon_epoch, a
 | run.complete | Qualified RunID, expected run generation, command outcome, operation ID | Capture results before verified stop; retain committed artifact or explicit unexported disk state |
 | run.results.recover | Qualified RunID, expected run generation, operation ID | One bounded, restricted recovery boot when stopped results still require export |
 | run.results.ack | Qualified RunID, expected run generation, artifact digest, StageID, completion acknowledgment, operation ID | Delete exact retained resources after verified client stage completion |
-| run.results.discard | Qualified RunID, expected run generation, operation ID | Explicitly delete retained owned resources without claiming successful result delivery |
+| run.results.discard | Qualified RunID, expected run generation, operation ID | Explicitly delete retained owned resources without claiming successful result delivery; also releases a running run inside live retention |
+| run.retain | Qualified RunID, expected run generation, `live` or `stopped`, seconds, operation ID | Host-owned retention (section 12.3); finite, capped, never past the VM deadline |
 | artifact.begin/commit | Kind, expected size/digest, bounded metadata | Host-owned staging handle and verified completion |
 | artifact.read | Owned handle, bounded offset/chunk | Bytes through dedicated stream |
 | diagnostics.read | Qualified ref/operation ID, cursor, bounded limit | Sanitized bounded records |
@@ -820,6 +822,20 @@ Client-broker mode does not support laptop-independent model work. Worker-broker
 
 Keep iso-egress, its renewal pipe, owner lock checks, and native network enforcement on the worker. A WAN heartbeat must not replace the one-second/two-second local safety loop.
 
+**Implemented:** every boot of a `filtered` host-control VM (`vm.start`, the
+start inside `run.create`, a recovery boot) brings up the worker's `iso-egress`
+companion the way `iso up --egress filtered` does: the owner lease, the
+Seatbelt-confined companion, the guest-loopback reverse forward, the signed
+guest-path readiness check and the recorded boot policy that `access.open`
+proves. If the companion cannot be started and proven, the start fails with
+`FILTERED_EGRESS_NOT_READY` and the VM is stopped, never left running without
+it. `vm.stop` and `vm.destroy` stop the companion. The boot also writes the
+proxy variables (with the per-boot capability, guest-visible by design) to the
+guest's `/etc/environment`, because a host-control client cannot read the
+worker's capability to set them per session; the companion still enforces the
+allowlist. A refused `access.open` reports
+`FILTERED_EGRESS_NOT_READY on the host: <failing proof component>`.
+
 For a policy requiring client-broker readiness, losing that dependency must revoke its handoff/session composition and any grants whose readiness depends on it. Preserve the configured network policy; do not forward credentials or open general egress as recovery.
 
 The existing host-only caveat remains: guest access to services on the execution host requires the same attention as on the local Mac. A remote target relocates that exposure; it does not remove it.
@@ -931,6 +947,43 @@ run.results.ack identifies RunID, expected run generation, exact artifact digest
 Disk and metadata quota are checked before allocation. v1 provides four result-retention slots per installation. Reserve a slot during run.create, before VM allocation, and hold it across creating/running/exporting/recovering/pending states until exact cleanup. This limits disposable-run concurrency to four by default and prevents simultaneous completions from exceeding retention capacity; reusable VMs do not consume these slots. Refuse new runs before allocation when no slot remains. Reserve result-artifact budget according to the validated output policy; the artifact transfer's total-size limit is enforced while capturing bytes.
 
 Do not use the existence of a client stage path as a worker-side deletion condition. Do not declare the run destroyed until runtime absence is verified.
+
+**Implemented: `run.retain`.** A client that wants a run kept (for example to
+debug a failure) asks the host; it never keeps a VM alive by holding a session
+or bypasses the lifecycle. Advertised as `run-retention-1` by
+`host.capabilities`, with the caps below.
+
+- `live` (run phase `running`): the run stays running without a controlling
+  session until `min(now + seconds, first live request + 4 h, VM deadline)`,
+  recorded as the run's `live_retention_until` (present in `run.inspect` only
+  once set). It revokes the run's access grants (SSH sessions and their
+  relayed streams), so a debugger must open a new explicit grant. The boot's
+  immutable network policy (egress, provider and local-service grants) and
+  everything already in the guest remain until the VM stops; stop or discard
+  the run to end them. The window is a ceiling: at its end the worker stops the VM even if a
+  session is open, without an implicit export, and the run takes the ordinary
+  `stopped_disk_pending_export` path and fixed retention. `run.complete`
+  remains allowed inside the window, and `run.results.discard` releases the
+  running run (verified destroy). An ended window cannot be extended.
+- `stopped` (`results_pending`, `stopped_disk_pending_export` or
+  `failed_with_resources`): moves the retention deadline to
+  `min(now + seconds, first stop + 7 days)`; it never shortens the deadline
+  and an expired deadline is not extended.
+- It draws on ordinary ledger capacity (one operation record and its finalize
+  rewrite), not on the run's own transition reservation, and holds no extra
+  retention slot.
+
+**Run TTL bounds.** Requests on the service's remote socket (every SSH client
+and `iso host-agent client`, including against `local`) must give
+`run.create` a TTL of 1 s–24 h. Requests on the local control socket, which
+only the iso CLI on that Mac uses, have no host maximum (as local `iso up`
+boots follow `limits.session_ttl`); `host.capabilities` omits
+`limits.max_ttl_seconds` there.
+
+**Implemented: image digest binding.** When `vm.create` or `run.create`
+carries `image_digest`, admission refuses it (`INSTANCE_INCOMPATIBLE`)
+unless the worker's prepared image of that name has exactly that manifest
+digest. Without the field, behavior is unchanged.
 
 ## 13. Host registration and machine output
 

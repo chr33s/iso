@@ -18,6 +18,11 @@ Apple backend. The credential proxy is the Swift package
 [source installation](installation.md#build-from-source), and
 [release validation](release-validation.md).
 
+## CI companion
+
+- [`ci.md`](ci.md) — `iso-ci`: GitHub-connected runner pools and local
+  workflow preflight in brokered VMs (separately installed; [`iso-ci/`](../iso-ci/)).
+
 ## Authorization policy
 
 - [`policy.md`](policy.md) — the optional default-deny `policy`: governed
@@ -49,6 +54,11 @@ Apple backend. The credential proxy is the Swift package
     the NIC-less brokered transport (SSH over a runtime-owned vsock stream),
     its specification (ISO-NET-001), requirement mapping, native evidence
     and open qualification items;
+  - [`iso-ci-specification.md`](design/iso-ci-specification.md): the
+    separately installed GitHub Actions companion (connected runner pools and
+    local preflight) and its implementation status;
+  - [`iso-ci-qualification.md`](design/iso-ci-qualification.md): the
+    companion's recorded live evidence and the defects it exposed;
   - [`embedded-secrets-spec.md`](design/embedded-secrets-spec.md): the
     Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
     references;

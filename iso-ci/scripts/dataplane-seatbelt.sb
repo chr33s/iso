@@ -1,0 +1,33 @@
+;; Generated from Sources/IsoCICore/Preflight/DataPlane/DataPlaneSeatbelt.swift (the canonical copy).
+;; sandbox-exec -f dataplane-seatbelt.sb -D EXE=<iso-ci> -D STAGING=<dir> -D SOCKETS=<dir> <iso-ci> _dataplane ...
+(version 1)
+(deny default)
+(allow process-exec (literal (param "EXE")))
+(allow file-read* (literal (param "EXE")))
+(allow file-read-metadata)
+(allow file-read-data (literal "/"))
+(allow file-read*
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/private/var/db/dyld")
+  (subpath "/private/var/db/timezone")
+  (subpath "/Library/Apple/System/Library")
+  (literal "/private/etc/localtime")
+  (literal "/dev/urandom")
+  (literal "/dev/random")
+  (literal "/dev/null"))
+(allow file-write-data (literal "/dev/null"))
+(allow file-read* file-write* (subpath (param "STAGING")))
+(allow file-read* file-write* (subpath (param "SOCKETS")))
+(allow network-bind (local unix-socket (subpath (param "SOCKETS"))))
+(allow network-inbound (local unix-socket (subpath (param "SOCKETS"))))
+(allow sysctl-read)
+(allow process-info* (target self))
+(allow signal (target self))
+(allow mach-lookup
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.system.notification_center"))
+(deny file-write-create (vnode-type SYMLINK))
+(deny file-link)
+

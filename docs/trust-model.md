@@ -209,7 +209,12 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   `GlobalKnownHostsFile=/dev/null`, `HostKeyAlias=<machine>.iso`,
   `UpdateHostKeys=no`, `ForwardAgent=no`, `IdentityAgent=none`, and
   `IdentitiesOnly=yes`, so isolate's guest-facing SSH authenticates with its own
-  key file and never consults the host agent. isolate's own transports add
+  key file and never consults the host agent. The SSH processes' environment
+  keeps `SSH_AUTH_SOCK` (an absolute path only, never in `SendEnv`) for one
+  purpose: SSH to an enrolled execution host, whose key may be usable only
+  through the operator's agent, including a guest session's ProxyCommand
+  that opens that connection. That management connection pins the host key
+  and sets `ForwardAgent=no`; guest SSH still refuses the agent. isolate's own transports add
   `BatchMode=yes`, so a rejected key fails instead of falling back to a
   password prompt; the block written for the user's own `ssh iso-<name>`
   deliberately does not.
@@ -240,6 +245,27 @@ Design and status: [design/local-and-remote-hosts-spec.md](design/local-and-remo
   `HOST_IDENTITY_CHANGED` with `layer: management`; a changed installation or
   owner reported by hello is the same code with `layer: application`. Neither
   re-enrolls automatically.
+- **Client bridge.** `iso host-agent client --host ALIAS --stdio [--relay]`
+  lets a separately installed companion speak `iso.host/v1` without reading
+  iso's state: `local` goes through the service's remote socket, so every
+  remote-v1 restriction applies (no local-only maintenance), and an enrolled
+  host through the same pinned management SSH. Frames and relay preambles are
+  read from stdin only; a disabled host is refused outright.
+- **Capability evidence.** `host.capabilities` advertises `net-handoff-1`
+  only while the transport is brokered, the runtime is brokered-capable and a
+  private, unexpired evidence manifest names the running tuple with
+  N-T01–N-T16 passed. The manifest is operator input, not a guest or client
+  value; it never widens a boot policy.
+- **Run retention.** `run.retain` keeps a disposable run only under host
+  deadlines: live retention lasts at most 4 h from the first live request and
+  never passes the VM's own deadline, and stops the VM at its end even with a
+  session open; stopped retention never shortens and is capped at 7 days from
+  the first stop. Live retention revokes the run's access grants (SSH
+  sessions and their relayed streams); it does **not** change the boot. The
+  VM keeps its immutable network policy — filtered egress and any provider or
+  local-service grants it booted with — and everything already delivered into
+  the guest (files, environment, memory, credentials) until it stops. Network
+  revocation is not secret erasure; to end those, stop or discard the run.
 - **Untrusted frames.** Every frame is bounded (64 KiB request, 1 MiB
   response, depth 32), UTF-8 checked, duplicate-key checked and decoded into
   closed typed structures; unknown fields and versions are refused before
@@ -572,6 +598,15 @@ visible exception, not general host access.
   `egress: open` is invalid. A blind CONNECT to an approved host can still
   relay data to that host's operator; this is destination enforcement, not
   information-flow control.
+- **A wildcard approves an operator's domain, not a name.** An allowlist
+  entry `*.<suffix>` ([rule](configuration.md#egress)) admits every name
+  below that suffix, so it trusts whoever controls that domain to place
+  only their own services under it. It is meant for services that assign
+  per-job hosts (GitHub Actions under `actions.githubusercontent.com`);
+  shared hosting domains where tenants pick names (`*.github.io`,
+  `*.githubusercontent.com`, cloud storage roots) must stay exact. The
+  address checks, port 443 and the absence of DNS in the guest are
+  unchanged.
 
 ## Apple sandbox backend
 

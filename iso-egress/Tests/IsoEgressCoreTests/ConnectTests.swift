@@ -93,7 +93,22 @@ private let connectHead =
       == .deny(.authRequired))
   #expect(
     ConnectGate.connectTarget(Array(connectHead.utf8), allow: allow, capability: "different")
-      == .deny(.authRequired))
+      == .deny(.credentialsRequired))
+  // No credentials at all: challenged, so challenge-driven clients retry.
+  let anonymous = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+  #expect(
+    ConnectGate.connectTarget(Array(anonymous.utf8), allow: allow, capability: "secret")
+      == .deny(.credentialsRequired))
+  let challenge = String(decoding: ConnectGate.responseBytes(.credentialsRequired), as: UTF8.self)
+  #expect(challenge.hasPrefix("HTTP/1.1 407 Proxy Authentication Required\r\n"))
+  #expect(challenge.contains("\r\nProxy-Authenticate: Basic realm=\"iso-egress\"\r\n"))
+  #expect(!challenge.contains("secret"))
+  // Every other refusal stays a plain 403.
+  for denial: Denial in [.hostNotAllowed, .portNotAllowed, .addressNotPublic, .authRequired] {
+    #expect(
+      ConnectGate.responseBytes(denial)
+        == Array("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8))
+  }
 }
 
 @Test func connectHeadRetriesWaitsAndInterruptionsWithoutConsumingTunnelBytes() throws {

@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "is not an approved version"
+  ]
+}

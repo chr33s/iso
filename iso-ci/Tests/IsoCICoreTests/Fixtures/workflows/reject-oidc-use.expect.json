@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "OIDC token requests are not available"
+  ]
+}

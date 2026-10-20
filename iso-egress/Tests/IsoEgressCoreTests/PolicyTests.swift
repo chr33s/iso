@@ -314,3 +314,31 @@ private final class TunnelFlag: @unchecked Sendable {
       .utf8)
   #expect(throws: DenialError.self) { try ConnectParser.parse(body) }
 }
+
+@Test func wildcardRulesMatchWholeLabelsBelowAReviewedSuffixOnly() throws {
+  let allow = EgressAllowlist(rules: [
+    try HostRule("*.actions.githubusercontent.com"), try HostRule("github.com"),
+  ])
+  #expect(
+    allow.allows(try ExactHostname("run-actions-3-azure-eastus.actions.githubusercontent.com")))
+  #expect(allow.allows(try ExactHostname("a.b.actions.githubusercontent.com")))
+  // Never the suffix itself, a sibling, or a name that only ends with the text.
+  #expect(!allow.allows(try ExactHostname("actions.githubusercontent.com")))
+  #expect(!allow.allows(try ExactHostname("evilactions.githubusercontent.com")))
+  #expect(!allow.allows(try ExactHostname("raw.githubusercontent.com")))
+  #expect(!allow.allows(try ExactHostname("api.github.com")))
+  #expect(allow.allows(try ExactHostname("github.com")))
+  #expect(allow.hosts == ["*.actions.githubusercontent.com", "github.com"])
+  // Public suffixes and shared hosting domains cannot be wildcarded.
+  for raw in [
+    "*.com", "*.github.io", "*.githubusercontent.com", "*", "*.*.example.com", "a.*.example.com",
+  ] {
+    #expect(throws: PolicyError.self) { try HostRule(raw) }
+  }
+  let head = Array(
+    "CONNECT pipelines7.actions.githubusercontent.com:443 HTTP/1.1\r\nProxy-Authorization: Basic aXNvOnNlY3JldA==\r\n\r\n"
+      .utf8)
+  #expect(
+    ConnectGate.connectTarget(head, allow: allow, capability: "secret")
+      == .connect("pipelines7.actions.githubusercontent.com"))
+}

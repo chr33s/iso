@@ -89,7 +89,7 @@ package struct NetworkPolicy: Sendable, Equatable {
     guard let mode = EgressMode(rawValue: record.mode),
       mode == .filtered || record.allowedHosts.isEmpty,
       record.allowedHosts == Set(record.allowedHosts).sorted(),
-      record.allowedHosts.allSatisfy({ (try? ExactHostname($0))?.rawValue == $0 }),
+      record.allowedHosts.allSatisfy({ (try? HostRule($0))?.rawValue == $0 }),
       record.policyHash == hash(mode: record.mode, hosts: record.allowedHosts),
       record.brokeredConsistent(mode)
     else { throw HostError("\(path) has an invalid or inconsistent network policy") }

@@ -1,0 +1,6 @@
+{
+  "event": "push",
+  "reject": [
+    "no operator-approved mapping to linux/arm64"
+  ]
+}

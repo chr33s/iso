@@ -1,0 +1,7 @@
+{
+  "event": "push",
+  "reject": [
+    "unknown or unsupported job key",
+    "unknown or unsupported step key"
+  ]
+}

@@ -25,6 +25,21 @@ extension SupervisorFixture {
 }
 
 @Suite struct HostControlAccessTests {
+  /// The relay is an ssh ProxyCommand: once ssh closes stdin, a guest side
+  /// that never closes gets only the grace, not an unbounded wait.
+  @Test func relaySpliceReturnsAfterStdinEOFWhenTheGuestSideStaysOpen() throws {
+    var pair: [Int32] = [-1, -1]
+    var input: [Int32] = [-1, -1]
+    var output: [Int32] = [-1, -1]
+    #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+    #expect(pipe(&input) == 0 && pipe(&output) == 0)
+    defer { for fd in pair + [input[0], output[0], output[1]] { close(fd) } }
+    close(input[1])
+    let started = ContinuousClock.now
+    Socket.splice(pair[0], stdio: (input[0], output[1]), grace: .milliseconds(300))
+    #expect(ContinuousClock.now - started < .seconds(3))
+  }
+
   @Test func openIsIdempotentForTheSameBearerOnly() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }
@@ -293,12 +308,36 @@ final class EchoServer: @unchecked Sendable {
     #expect(plain.filteredPolicy == nil)
   }
 
+  @Test func theRecordedFilteredPolicyHashIsAValidGrantPolicy() throws {
+    // Regression: the hash `NetworkPolicy` records is `sha256:<hex>`; the
+    // grant once typed it as a boot id and refused every filtered grant.
+    let config = try testConfig(
+      #""egress": "filtered", "egress_filter": {"allowed_hosts": ["api.github.com"]}"#)
+    let recorded = NetworkPolicy.make(config).policyHash
+    let parsed = try FilteredPolicyHash(recorded)
+    #expect(parsed.rawValue == recorded)
+    // It survives the grant wire.
+    var b = WireBuilder()
+    b.set("boot_id", "boot-1")
+    b.set("policy_hash", recorded)
+    var reader = try WireObject(b.value, field: "filtered_policy")
+    #expect(try reader.parsed("policy_hash", FilteredPolicyHash.init).rawValue == recorded)
+    for bad in ["policy-1", "sha256:" + String(repeating: "A", count: 64), "sha256:abc"] {
+      #expect(throws: ValidationError.self) { try FilteredPolicyHash(bad) }
+    }
+  }
+
   @Test func lostWorkerEgressProofRefusesAndRevokes() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }
     let (instance, observation) = try f.running(egress: .filtered)
     f.native.inject("filtered", .failed("companion gone"))
-    #expect(failure(f.open(try f.openRequest(instance, observation))) == .sessionExpired)
+    let refused = f.open(try f.openRequest(instance, observation))
+    #expect(failure(refused) == .sessionExpired)
+    // The failing proof component reaches the client (bounded and sanitized).
+    if case .failure(let error) = refused {
+      #expect(error.message == "FILTERED_EGRESS_NOT_READY on the host: companion gone")
+    }
     let request = try f.openRequest(instance, observation)
     _ = try f.open(request).get()
     f.native.inject("filtered", .failed("companion gone"))

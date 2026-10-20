@@ -8,6 +8,76 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **iso-ci** (new, separately installed companion in `iso-ci/`; release
+  qualification not yet recorded): isolated GitHub Actions execution in
+  NIC-less iso VMs. GitHub-connected pools keep fresh single-use official
+  runners ready (GitHub App via manifest flow, JIT registration, exact-owned
+  cleanup, uncertain-registration resolution, pause/drain/remove). Local
+  preflight compiles a declared workflow subset, runs it against an immutable
+  working-tree snapshot through a confined local data plane, and supports
+  debug, patch and fresh whole-job retry. Admission requires the host's
+  `net-handoff-1` capability; there is no networked fallback. See
+  [`docs/ci.md`](docs/ci.md), the
+  [specification](docs/design/iso-ci-specification.md) and the [qualification
+  record](docs/design/iso-ci-qualification.md).
+- **Host run results:** a run's results archive no longer fails validation
+  because guest `tar` (GNU or BSD) names the archive root `./`; only an empty
+  root directory member is skipped, and every other check is unchanged.
+- **Remote hosts with agent-held keys:** SSH to an enrolled remote Mac now
+  uses your SSH agent (`SSH_AUTH_SOCK`), so a passphrase-protected key held by
+  the agent, 1Password or Secretive works. The agent is never forwarded, and
+  VM sessions still refuse it.
+- **Filtered egress wildcards:** `egress_filter.allowed_hosts` accepts
+  `*.<suffix>` for names one or more whole labels below a suffix of at least
+  three labels (never the suffix itself), so services that assign per-job
+  hosts, such as GitHub Actions under `actions.githubusercontent.com`, can be
+  allowed without listing every shard. `*.com`, `*.github.io` and similar
+  short suffixes are refused.
+- **Filtered egress:** a CONNECT without the per-boot capability, or with a
+  different one, now gets `407 Proxy Authentication Required` with a Basic
+  challenge instead of `403`. Clients that send proxy credentials only when
+  challenged (.NET, including the GitHub Actions runner) previously could not
+  connect. Every other refusal is still `403`.
+- **Host capabilities** (`iso.host/v1`): `host.capabilities` reports what a
+  host can do now. `net-handoff-1` (the brokered execution handoff) is listed
+  only while `network.transport` is brokered, the runtime is brokered-capable
+  and an operator-installed NET-HANDOFF-1 evidence manifest names the running
+  tuple with N-T01–N-T16 passed and has not expired; the result includes the
+  brokered policy (digest, egress, provider grants, local services) a fresh
+  run VM boots with. `scripts/record-net-handoff-evidence.py` installs the
+  manifest from qualification results and refuses incomplete ones. See
+  [brokered network isolation](docs/design/brokered-network-isolation.md).
+- **Run retention**: `run.retain` keeps a disposable run under host deadlines:
+  `live` (up to 4 h from the first live request, never past the VM's
+  deadline; revokes the run's SSH access grants but not its boot network
+  policy or guest state; stops without export at its end) or `stopped` (extends result retention up
+  to 7 days from the first stop, never shortening it). `run.inspect` adds
+  `live_retention_until` once live retention is set, and
+  `run.results.discard` releases a live-retained run.
+- **Filtered host-control VMs**: `vm.start` and `run.create` on a host now
+  bring up the worker's `iso-egress` companion (lease, confinement, guest-path
+  readiness and recorded boot policy, as `iso up --egress filtered` does) for
+  a VM created with `egress: "filtered"`. Previously no companion ran, so
+  every `access.open` to such a VM failed with `FILTERED_EGRESS_NOT_READY`. A
+  companion that cannot start fails the start and stops the VM; stop and
+  destroy stop it. Filtered `access.open` also failed because the worker's
+  boot-policy hash (`sha256:<hex>`) was parsed as a boot id; it is now its own
+  type. A refused filtered `access.open` names the failing proof component
+  (sanitized) in its error and the service log. Filtered boots now also write
+  the proxy variables to the guest's `/etc/environment`, so sessions opened
+  through host control (whose client cannot read the worker's capability) use
+  the companion.
+- **Image digest binding**: `vm.create` and `run.create` with `image_digest`
+  are refused unless the worker's prepared image of that name has exactly that
+  manifest digest (it was previously only part of the policy hash).
+  `host.capabilities` names the one qualified image as
+  `network_handoff.qualified_image` while `net-handoff-1` is listed.
+- **Client bridge**: `iso host-agent client --host ALIAS --stdio [--relay]`
+  carries `iso.host/v1` frames or one relay stream for a companion process,
+  through the local service's remote socket (remote-v1 restrictions apply) or
+  an enrolled host's pinned management SSH. A remote relay returns ssh's exit
+  status with one bounded, sanitized diagnostic. Disabled hosts are refused.
+
 ## v0.6.0
 
 - **Brokered network isolation** (opt-in, Linux guests): `"network":

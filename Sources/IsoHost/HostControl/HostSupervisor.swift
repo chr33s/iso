@@ -271,6 +271,8 @@ package final class HostSupervisor: Sendable {
       return try admit(request, operation: operation, transport: transport).wire
     }
     switch request.body {
+    case .hostCapabilities:
+      return capabilities(transport: transport).wire
     case .vmList(let cursor, let limit):
       return list(cursor: cursor, limit: limit)
     case .vmInspect(let instance):
@@ -404,12 +406,20 @@ package final class HostSupervisor: Sendable {
     case .vmCreate, .vmStart, .runCreate, .imageEnsure: qualification = native.qualification()
     default: qualification = .qualified("not required")
     }
-    // Only the worker's own verified image records satisfy a create.
+    // Only the worker's own verified image records satisfy a create, and a
+    // requested image digest must be the one the worker has under that name.
     let imageReady: Bool
+    let imageMatches: Bool
     switch request.body {
     case .vmCreate(let spec), .runCreate(_, let spec, _, _):
       imageReady = native.imageReady(spec.image)
-    default: imageReady = true
+      imageMatches =
+        spec.imageDigest.map { requested in
+          native.imageDigest(spec.image) == "sha256:" + requested.rawValue
+        } ?? true
+    default:
+      imageReady = true
+      imageMatches = true
     }
     let receipt: OperationReceipt = try state.withLock {
       (locked) throws(HostControlError) -> OperationReceipt in
@@ -431,6 +441,7 @@ package final class HostSupervisor: Sendable {
       switch request.body {
       case .vmCreate(let spec):
         guard imageReady else { throw imageNotPrepared(spec.image) }
+        guard imageMatches else { throw imageDigestDiffers(spec.image) }
         return try admitCreateLocked(
           &record, spec: spec, transport: transport, qualification: qualification)
       case .maintenance(let instance, let generation, let change):
@@ -450,6 +461,7 @@ package final class HostSupervisor: Sendable {
           &record, instance, generation: generation, kind: .destroy, executing: locked.executing)
       case .runCreate(let run, let spec, let output, let ttl):
         guard imageReady else { throw imageNotPrepared(spec.image) }
+        guard imageMatches else { throw imageDigestDiffers(spec.image) }
         return try admitRunCreate(
           &record, run: run, spec: spec, outputLimit: output, ttl: ttl, transport: transport,
           qualification: qualification)
@@ -459,6 +471,11 @@ package final class HostSupervisor: Sendable {
           throw HostControlError(.instanceBusy, "the run is being reconciled; retry shortly")
         }
         return try admitRunTransition(&record, run: run, generation: generation, body: request.body)
+      case .runRetain(let run, let generation, let mode, _):
+        guard !locked.runsBusy.contains(run) else {
+          throw HostControlError(.instanceBusy, "the run is being reconciled; retry shortly")
+        }
+        return try admitRunRetain(&record, run: run, generation: generation, mode: mode)
       default:
         throw .unsupported(method.rawValue)
       }
@@ -549,6 +566,13 @@ package final class HostSupervisor: Sendable {
     HostControlError(
       .instanceIncompatible,
       "image '\(image)' is not prepared on this host; run image.ensure there first",
+      retry: .refreshObservationThenNewOperation)
+  }
+
+  func imageDigestDiffers(_ image: ImageName) -> HostControlError {
+    HostControlError(
+      .instanceIncompatible,
+      "image '\(image)' on this host is not the requested image_digest",
       retry: .refreshObservationThenNewOperation)
   }
 
@@ -845,7 +869,8 @@ package final class HostSupervisor: Sendable {
     case .vmStart: executeStart(record)
     case .vmStop: executeStop(record)
     case .vmDestroy: executeDestroy(record)
-    case .runCreate, .runComplete, .runResultsRecover, .runResultsAck, .runResultsDiscard:
+    case .runCreate, .runComplete, .runResultsRecover, .runResultsAck, .runResultsDiscard,
+      .runRetain:
       executeRun(record)
     case .imageEnsure:
       executeImage(record)
@@ -1357,7 +1382,15 @@ package final class HostSupervisor: Sendable {
       do {
         filtered = try native.filteredPolicy(instance.instanceID, runtime: instance.runtimeID)
       } catch {
-        throw HostControlError(.sessionExpired, "FILTERED_EGRESS_NOT_READY on the host")
+        // The failing proof component (sanitized, bounded, nonsecret) so a
+        // refusal is diagnosable from the client and the service log.
+        let reason =
+          switch error {
+          case .failed(let text), .uncertain(let text), .unavailable(let text): text
+          }
+        diagnostics.warn("access.open refused for \(instance.instanceID): \(reason)")
+        throw HostControlError(
+          .sessionExpired, "FILTERED_EGRESS_NOT_READY on the host: " + reason)
       }
       guard let filtered, filtered.bootID == boot else {
         throw HostControlError(

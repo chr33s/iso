@@ -17,7 +17,11 @@ set -uo pipefail
 #   killed at these percentages of the time an uninterrupted one took;
 #   ISO_KILL_FRACTIONS="25 50 75" the same for iso's.
 #
-# Needs Apple Silicon, macOS 27+, Xcode 27, jq, and stock Apple `container`
+# ISO_TEST_PREBUILT=DIR uses the iso, iso-egress, iso-sandbox and
+# iso-macos-helper of a release bundle in DIR instead of building them, so a
+# worker Mac without Xcode can run the suite against the bundle it serves.
+#
+# Needs Apple Silicon, macOS 27+, Xcode 27 (unless ISO_TEST_PREBUILT), jq, and stock Apple `container`
 # with its service running (builds the test image, supplies the kernel). It
 # touches nothing but its own state root and image tag, both removed on exit.
 # The iso phase also builds `iso` into the work directory and drives it against
@@ -31,9 +35,16 @@ fi
 CONTAINER="$(command -v container || true)"
 [[ -x "$CONTAINER" ]] || { echo "SKIP: no Apple container CLI installed"; exit 0; }
 "$CONTAINER" --version
-for tool in swift jq ssh ssh-keygen nc openssl python3; do
+PREBUILT="${ISO_TEST_PREBUILT:-}"
+if [[ -n "$PREBUILT" ]]; then
+    for binary in iso iso-egress iso-sandbox iso-macos-helper; do
+        [[ -x "$PREBUILT/$binary" ]] || { echo "ISO_TEST_PREBUILT has no $binary" >&2; exit 1; }
+    done
+fi
+for tool in jq ssh ssh-keygen nc openssl python3; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done
+[[ -n "$PREBUILT" ]] || command -v swift >/dev/null || { echo "Missing prerequisite: swift" >&2; exit 1; }
 
 ONLY=""
 KEEP=0
@@ -294,7 +305,11 @@ B="$(name b)"
 
 echo "=== Phase: setup ==="
 mkdir -p "$WORK/bin"
-if ./scripts/build-iso-sandbox.sh "$WORK" >"$WORK/build.log" 2>&1; then
+if if [[ -n "$PREBUILT" ]]; then
+        cp -p "$PREBUILT/iso-sandbox" "$PREBUILT/iso-macos-helper" "$WORK/bin/"
+    else
+        ./scripts/build-iso-sandbox.sh "$WORK"
+    fi >"$WORK/build.log" 2>&1; then
     pass "iso-sandbox builds and signs"
 else
     fail "iso-sandbox builds and signs" "see $WORK/build.log"
@@ -573,9 +588,19 @@ threading.Event().wait()
     controls=""
     for t in 127.0.0.1 ${lan4:-} ::1; do
         [[ -z "$t" ]] && continue
-        [[ "$(nc -w 2 "$t" "$canary_port" </dev/null 2>/dev/null)" == canary ]] || controls+=" $t"
+        # The canary may still be starting on a slower Mac: retry briefly.
+        reached=""
+        for _ in 1 2 3 4 5; do
+            [[ "$(nc -w 2 "$t" "$canary_port" </dev/null 2>/dev/null)" == canary ]] && { reached=1; break; }
+            sleep 1
+        done
+        [[ -n "$reached" ]] || controls+=" $t"
     done
-    check "N-T02: host positive controls reach every canary listener" test -z "$controls"
+    if [[ -z "$controls" ]]; then
+        pass "N-T02: host positive controls reach every canary listener"
+    else
+        fail "N-T02: host positive controls reach every canary listener" "unreached:$controls"
+    fi
     : >"$WORK/canary.hits"
     # shellcheck disable=SC2016 # Expand in the guest.
     reached="$(guest "$BR" sh -c 'for t in '"$targets"'; do
@@ -1070,8 +1095,11 @@ if want iso; then
     if [[ -f "$ROOT/initfs.ext4" ]]; then
         mkdir -p "$CROOT" && cp "$ROOT/initfs.ext4" "$CROOT/initfs.ext4"
     fi
-    if swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
-        >"$WORK/iso-build.log" 2>&1 &&
+    if { if [[ -n "$PREBUILT" ]]; then
+            mkdir -p "$(dirname "$ISO")" && cp -p "$PREBUILT/iso" "$ISO"
+        else
+            swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build"
+        fi; } >"$WORK/iso-build.log" 2>&1 &&
         iso setup --profile boundary-fixture >"$WORK/iso-setup.log" 2>&1; then
         pass "iso setup builds, verifies, and publishes the boundary fixture image"
     else
@@ -1414,9 +1442,13 @@ if want iso; then
 
     # Brokered with filtered egress: the guest's only way out is the CONNECT
     # companion over its reverse tunnel, for the approved host only.
-    if swift build --package-path iso-egress --product iso-egress --force-resolved-versions \
-        --scratch-path "$WORK/egress-build" >"$WORK/egress-build.log" 2>&1 &&
-        cp "$WORK/egress-build/debug/iso-egress" "$(dirname "$ISO")/iso-egress"; then
+    if if [[ -n "$PREBUILT" ]]; then
+            cp -p "$PREBUILT/iso-egress" "$(dirname "$ISO")/iso-egress" >"$WORK/egress-build.log" 2>&1
+        else
+            swift build --package-path iso-egress --product iso-egress --force-resolved-versions \
+                --scratch-path "$WORK/egress-build" >"$WORK/egress-build.log" 2>&1 &&
+                cp "$WORK/egress-build/debug/iso-egress" "$(dirname "$ISO")/iso-egress"
+        fi; then
         jq '. + {egress: "filtered", egress_filter: {allowed_hosts: ["github.com", "ghcr.io", "pkg-containers.githubusercontent.com"]}, network: {transport: "brokered"}}' \
             "$CCFG" >"$WORK/iso-brokered-filtered.jsonc"
         bf() { "$ISO" --config "$WORK/iso-brokered-filtered.jsonc" "$@" </dev/null; }

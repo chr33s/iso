@@ -380,12 +380,27 @@ package enum RuntimeQualification: Sendable, Equatable {
 /// recorded policy) holds for this boot.
 package struct FilteredGrantPolicy: Sendable, Equatable {
   package let bootID: BootID
-  package let policyHash: BootID
+  package let policyHash: FilteredPolicyHash
 
-  package init(bootID: BootID, policyHash: BootID) {
+  package init(bootID: BootID, policyHash: FilteredPolicyHash) {
     self.bootID = bootID
     self.policyHash = policyHash
   }
+}
+
+/// A filtered boot's recorded egress policy hash as `NetworkPolicy` writes
+/// it: `sha256:` and 64 lowercase hex digits.
+package struct FilteredPolicyHash: Hashable, Sendable, CustomStringConvertible {
+  package let rawValue: String
+
+  package init(_ value: String) throws(ValidationError) {
+    guard value.hasPrefix("sha256:"),
+      (try? SHA256Hex(String(value.dropFirst(7))))?.rawValue == String(value.dropFirst(7))
+    else { throw ValidationError("invalid filtered policy hash") }
+    rawValue = value
+  }
+
+  package var description: String { rawValue }
 }
 
 /// Nonsecret metadata of a live access grant. The bearer never appears here.
@@ -476,7 +491,7 @@ package struct AccessGrant: Sendable, Equatable {
     if var policy = try r.optionalObject("filtered_policy") {
       filteredPolicy = FilteredGrantPolicy(
         bootID: try policy.parsed("boot_id", BootID.init),
-        policyHash: try policy.parsed("policy_hash", BootID.init))
+        policyHash: try policy.parsed("policy_hash", FilteredPolicyHash.init))
       try policy.finish()
     } else {
       filteredPolicy = nil

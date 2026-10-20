@@ -1,0 +1,13 @@
+{
+  "accept": true,
+  "event": "workflow_dispatch",
+  "inputs": {
+    "count": 7
+  },
+  "jobs": [
+    "run"
+  ],
+  "timeout": {
+    "run": 7
+  }
+}

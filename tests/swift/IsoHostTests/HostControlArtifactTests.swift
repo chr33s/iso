@@ -106,6 +106,9 @@ import Testing
         tarArchive([], extra: [tarHeader(name: "h", size: 0, type: "1", link: "missing")])
       ),
       ("truncated", Array(tarArchive([("a", [1])]).dropLast(512))),
+      // Only an empty directory may name the root.
+      ("root file", tarArchive([("./", [1])])),
+      ("root link", tarArchive([], extra: [tarHeader(name: "./", size: 0, type: "2", link: "x")])),
     ]
     for (label, bytes) in hostile {
       #expect(throws: HostControlError.self, "\(label)") {
@@ -115,6 +118,9 @@ import Testing
     let ok = tarArchive(
       [("d/f", [1])], extra: [tarHeader(name: "d/l", size: 0, type: "2", link: "f")])
     #expect(try ArchiveValidator.validate(bytes: ok).members == 2)
+    // `tar cf - -C dir .` (GNU and BSD) leads with a `./` directory member.
+    let rooted = tarHeader(name: "./", size: 0, type: "5") + tarArchive([("./hello.txt", [1])])
+    #expect(try ArchiveValidator.validate(bytes: rooted).members == 2)
   }
 
   @Test func extractorDesyncAndChainedLinksAreRefused() throws {
