@@ -20,8 +20,18 @@ package enum BoundaryAudit {
     /// Recognized provider variables forwarded into the guest raw.
     case rawProviderForward([String])
     case stop
-    case pullStage(changes: Int, bytes: UInt64, applicable: Bool)
+    case pullStage(
+      changes: Int, bytes: UInt64, applicable: Bool, stageID: String = "", sensitive: Int = 0,
+      excluded: UInt64 = 0)
     case pullApply(applied: Int)
+    /// A return refused or held with its whole stage kept (RET-09).
+    case pullHeld(stageID: String, reason: String)
+    /// An outbound selected-content snapshot (INPUT-01): counts only.
+    case inputSnapshot(
+      snapshotID: String, selected: Int, bytes: UInt64, secretsOmitted: Int, otherOmitted: Int,
+      deletedTracked: Int)
+    /// An instance fenced after an unconfirmed restart cleanup (LIFE-01).
+    case handoffFence(reason: String)
     case pullDirect
     /// The immutable policy binding recorded for a new VM boot.
     case policyBoot(mode: PolicyMode, digest: String?, epoch: String, actions: [PolicyAction])
@@ -78,6 +88,9 @@ package enum BoundaryAudit {
       case .approvalIssued: "approval_issued"
       case .approvalConsumed: "approval_consumed"
       case .pullApplyPartial: "pull_apply_partial"
+      case .pullHeld: "pull_held"
+      case .inputSnapshot: "input_snapshot"
+      case .handoffFence: "handoff_fence"
       }
     }
 
@@ -97,11 +110,30 @@ package enum BoundaryAudit {
       case .rawProviderForward(let names):
         members.append(("variables", .array(names.sorted().map(OutputJSON.string))))
       case .stop, .pullDirect: break
-      case .pullStage(let changes, let bytes, let applicable):
+      case .pullStage(
+        let changes, let bytes, let applicable, let stageID, let sensitive, let excluded):
         members += [
           ("changes", .uint(UInt64(changes))), ("staged_bytes", .uint(bytes)),
           ("applicable", .bool(applicable)),
         ]
+        if !stageID.isEmpty {
+          members += [
+            ("stage_id", .string(stageID)), ("sensitive", .uint(UInt64(sensitive))),
+            ("excluded", .uint(excluded)),
+          ]
+        }
+      case .pullHeld(let stageID, let reason):
+        members += [("stage_id", .string(stageID)), ("reason", .string(reason))]
+      case .inputSnapshot(
+        let snapshotID, let selected, let bytes, let secrets, let other, let deleted):
+        members += [
+          ("snapshot_id", .string(snapshotID)), ("classifier", .string(LocalSecretNames.version)),
+          ("selected", .uint(UInt64(selected))), ("bytes", .uint(bytes)),
+          ("secrets_omitted", .uint(UInt64(secrets))), ("other_omitted", .uint(UInt64(other))),
+          ("deleted_tracked", .uint(UInt64(deleted))),
+        ]
+      case .handoffFence(let reason):
+        members.append(("reason", .string(reason)))
       case .pullApply(let applied), .pullApplyPartial(let applied):
         members.append(("applied", .uint(UInt64(applied))))
       case .policyBoot(let mode, let digest, let epoch, let actions):

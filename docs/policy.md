@@ -104,9 +104,9 @@ processes share their VM's quota.
 With an `approval_within` guard, `iso pull NAME --apply` re-renders the exact
 stage (summary, sensitive-path warnings, bounded text diffs) on the host
 terminal and asks you to type the stage ID. Only that answer, typed at the
-controlling terminal, approves it. `--force` (which still skips only the git
-cleanliness check), piped input, environment variables and `--output json`
-cannot approve; without a terminal the command fails with `approval_required`
+controlling terminal, approves it. `--force`, `--approve-sensitive` (which
+names execution-sensitive paths but is not a policy approval), piped input,
+environment variables and `--output json` cannot approve; without a terminal the command fails with `approval_required`
 and writes nothing.
 
 The approval covers one attempt at one exact stage: its content hashes,

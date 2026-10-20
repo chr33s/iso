@@ -172,16 +172,15 @@ enum ClaudeImport {
 
   /// The host settings read as data (host Claude is never run). Invalid
   /// relevant preferences stop the bootstrap rather than enable anything.
-  static func preferences(source: String, pluginIDs: Set<String>) throws -> Preferences {
-    let path = source + "/settings.json"
+  /// `settings` comes from the import's confined snapshot; the host path
+  /// is never reopened.
+  static func preferences(settings: [UInt8]?, pluginIDs: Set<String>) throws -> Preferences {
     let body: String
-    if let data = FileManager.default.contents(atPath: path) {
-      guard let text = String(validating: Array(data), as: UTF8.self) else {
+    if let settings {
+      guard let text = String(validating: settings, as: UTF8.self) else {
         throw HostError("Failed to read host Claude settings")
       }
       body = text
-    } else if FileManager.default.fileExists(atPath: path) {
-      throw HostError("Failed to read host Claude settings")
     } else {
       body = "{}"
     }
@@ -449,12 +448,13 @@ extension AgentBootstrap {
         config.claude.configDirectory, defaultName: ".claude", label: "claude.config_dir")
     else { return nil }
     let staged: StagingDirectory
+    let reads: [String: [UInt8]]
     do {
       staged = try StagingDirectory()
       do {
-        try staged.stage(
+        reads = try staged.stage(
           from: source, files: ClaudeImport.allowedFiles,
-          directories: ClaudeImport.allowedDirectories)
+          directories: ClaudeImport.allowedDirectories, reads: ["settings.json"])
       } catch {
         staged.remove()
         throw error
@@ -466,7 +466,7 @@ extension AgentBootstrap {
       var snapshot = try readImportSnapshot(target)
       snapshot.pluginIDs.formUnion(try ClaudeImport.skillsPluginIDs(staged.path))
       snapshot.preferences = try ClaudeImport.preferences(
-        source: source, pluginIDs: snapshot.pluginIDs)
+        settings: reads["settings.json"], pluginIDs: snapshot.pluginIDs)
       try client.exec(target, RemoteCommand().literal("mkdir -p ~/.claude"))
       try client.exec(
         target,

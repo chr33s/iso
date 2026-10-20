@@ -312,9 +312,12 @@ iso-ci logs RUN --job JOB [--attempt N]          # that job's stored runner logs
 ```
 
 `run` captures a snapshot of your working tree (tracked files with your
-uncommitted edits and deletions, plus untracked paths you `--include`; local
-credential files such as `.env*`, `*.pem`, `.npmrc` and `.git-credentials` are
-excluded by default), compiles the workflow against the `local-actions/v1`
+uncommitted edits, plus untracked paths you `--include`; local credential files
+such as `.env*`, `*.pem`, `.npmrc` and `.git-credentials` are excluded by
+default). Capture reads the Git index, `HEAD` and refs as data and never runs
+Git, so repository configuration, hooks, filters and fsmonitor never execute on
+the host. Only an explicit `--include` selects untracked files; ignore files are
+not consulted. `run` then compiles the workflow against the `local-actions/v1`
 compatibility manifest, and runs each job in its own clean VM through the
 official runner. A workflow outside the manifest is refused with every problem
 listed before any VM starts. With `--follow`, `run` exits non-zero unless the
@@ -334,10 +337,17 @@ macOS hosted runner.
 How a job sees your code:
 
 1. An approved `actions/checkout` becomes a visible **iso-ci checkout** step that
-   restores the base commit from a bundle inside the snapshot (no network).
-2. A visible **iso-ci overlay** step applies the snapshot (contents, modes,
-   permitted symlinks and deletions) and verifies it. Without a checkout it is
-   the first step.
+   prepares the workspace (no network). The snapshot (`iso-ci.snapshot/v2`)
+   carries selected content only: no base-commit bundle and no history, so
+   files excluded from it (credential-looking names by default) cannot be
+   recovered from history in the job. A checkout that needs history
+   (`fetch-depth` other than 1, `fetch-tags: true`) is refused as an
+   unsupported capability. Recapture snapshots made by an older iso-ci.
+2. A visible **iso-ci overlay** step applies the snapshot (contents, modes and
+   permitted symlinks) and verifies it, then, where git exists, records it as
+   one synthetic commit. That commit is the job's own and is not the base
+   commit; the base commit is kept only as provenance. Without a checkout the
+   overlay is the first step.
 
 The snapshot digest identifies what you supplied at that boundary; later steps
 can still change their own workspace. A run that includes uncommitted changes

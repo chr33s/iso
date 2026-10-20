@@ -109,8 +109,11 @@ func theAgentConfigKeepsTheProxyRequiredOnEveryEgress(egress: EgressMode) throws
   #expect(chmod(token, 0o600) == 0)
   let env = RemoteAgent.codex.agentEnvironment(shadow)
   #expect(env.contains(ModelRouting.codexLocalEnvKey))
-  #expect(env.overlay([:])[ModelRouting.codexLocalEnvKey] == "cap-token")
-  #expect(env.sendEnvOptions == ["-o", "SendEnv=\(ModelRouting.codexLocalEnvKey)"])
+  let prepared = try env.prepare("codex", terminal: .requested)
+  #expect(prepared.environment([:]) == ["ISO_SSH_ENV_0": "cap-token"])
+  #expect(prepared.options == ["-o", "SendEnv=ISO_SSH_ENV_0"])
   // Claude reads its proxy from settings, not the session environment.
-  #expect(RemoteAgent.claude.agentEnvironment(shadow).sendEnvOptions.isEmpty)
+  #expect(
+    try RemoteAgent.claude.agentEnvironment(shadow).prepare("claude", terminal: .requested)
+      .options.isEmpty)
 }

@@ -190,7 +190,10 @@ private func decode(_ json: String) throws -> IsoConfig {
 }
 
 @Test func networkTransportDecodesAndRefusesOpenEgress() throws {
-  #expect(try decode("{}").network.transport == .vmnet)
+  // DEF-01: brokered unless vmnet is chosen; the default egress fits it.
+  #expect(try decode("{}").network.transport == .brokered)
+  #expect(try decode(#"{"network":{"transport":"brokered"}}"#).egress == .none)
+  #expect(try decode(#"{"network":{"transport":"vmnet"}}"#).network.transport == .vmnet)
   #expect(
     try decode(#"{"network":{"transport":"brokered"},"egress":"none"}"#).network.transport
       == .brokered)
@@ -198,7 +201,7 @@ private func decode(_ json: String) throws -> IsoConfig {
     try decode(#"{"network":{"transport":"brokered"},"egress":"filtered"}"#).network.transport
       == .brokered)
   for bad in [
-    #"{"network":{"transport":"brokered"}}"#,
+    #"{"egress":"open"}"#, #"{"security":{"preset":"networked"}}"#,
     #"{"network":{"transport":"brokered"},"egress":"open"}"#,
     #"{"network":{"transport":"nat"}}"#, #"{"network":{"transport":"brokered","policy":"x"}}"#,
     #"{"network":"brokered"}"#,
@@ -210,10 +213,12 @@ private func decode(_ json: String) throws -> IsoConfig {
   // A CLI `--egress open` override cannot make a brokered VM networked.
   #expect(brokered.overridingEgress(.open).transportConflict != nil)
   #expect(brokered.overridingEgress(.filtered).network.transport == .brokered)
-  // The presets keep their meaning: none of them selects the brokered transport.
-  for preset in SecurityPreset.allCases {
+  // A preset never chooses the transport: the brokered default stays,
+  // and the networked preset's open egress needs an explicit vmnet.
+  for preset in SecurityPreset.allCases where preset != .networked {
     #expect(
-      try decode(#"{"security":{"preset":"\#(preset.rawValue)"}}"#).network.transport == .vmnet)
+      try decode(#"{"security":{"preset":"\#(preset.rawValue)"}}"#).network.transport
+        == .brokered)
   }
 }
 
@@ -287,7 +292,7 @@ private let filteredBrokered =
 }
 
 @Test func vmnetPolicyRecordIsUnchanged() throws {
-  try withInstance(#"{"egress":"none"}"#) { instance, config in
+  try withInstance(#"{"egress":"none","network":{"transport":"vmnet"}}"#) { instance, config in
     try NetworkPolicy.save(config, instance)
     let bytes = try #require(try StateStore.readControlFile(NetworkPolicy.path(instance)))
     let text = String(decoding: bytes, as: UTF8.self)
@@ -297,7 +302,7 @@ private let filteredBrokered =
 }
 
 @Test func theTransportIsFixedAtCreation() throws {
-  try withInstance(#"{"egress":"none"}"#) { instance, vmnet in
+  try withInstance(#"{"egress":"none","network":{"transport":"vmnet"}}"#) { instance, vmnet in
     try NetworkPolicy.save(vmnet, instance)
     let brokered = try decode(#"{"network":{"transport":"brokered"},"egress":"none"}"#)
     #expect(throws: HostError.self) { try NetworkPolicy.enforceMode(instance, config: brokered) }

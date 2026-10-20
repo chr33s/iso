@@ -97,7 +97,14 @@ Each stored event is immutable:
 
 Boundary events (`boundary.boot`, `boundary.pull_stage`,
 `boundary.policy_decision`, ...) carry the same fields as the instance view,
-plus `instance_name`, and are attributed to the VM's stable identity
+including the return and input decisions: `boundary.pull_stage` names its
+`stage_id` and counts sensitive and excluded entries, `boundary.pull_held`
+records a refused or held return (`stage_id`, typed `reason` such as
+`missing_sensitive_grant`), `boundary.input_snapshot` records an outbound
+selection by counts only (`snapshot_id`, classifier, selected, bytes, omitted,
+deleted-tracked), and `boundary.handoff_fence` records an instance fenced
+after an unconfirmed restart cleanup; none carries paths, contents or hashes.
+Each also carries `instance_name` and is attributed to the VM's stable identity
 (`policy-instance.json`) and its current host boot binding.
 
 ## Storage and retention

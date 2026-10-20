@@ -25,11 +25,24 @@ func readFile(_ path: String) -> String? {
   FileManager.default.contents(atPath: path).map { String(decoding: $0, as: UTF8.self) }
 }
 
+/// `body` under the pre-DEF-01 profile (networked preset, vmnet, no boot
+/// lifetime) for each of those sections it does not set itself: tests of
+/// other behavior keep their meaning; default tests decode `{}` directly.
+func legacyProfile(_ body: String) -> String {
+  var members: [String] = []
+  if !body.contains("\"security\"") { members.append(#""security": {"preset": "networked"}"#) }
+  if !body.contains("\"network\"") { members.append(#""network": {"transport": "vmnet"}"#) }
+  if !body.contains("\"limits\"") { members.append(#""limits": {"session_ttl": "unlimited"}"#) }
+  let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+  return (members + (trimmed.isEmpty ? [] : [trimmed])).joined(separator: ", ")
+}
+
 func testConfig(_ body: String = "", home: String? = nil, variables: [String: String] = [:])
   throws -> IsoConfig
 {
   try ConfigLoader.decode(
-    ConfigLoader.parse(Array("{\(body)}".utf8), format: .jsonc, path: "c", limits: .configuration),
+    ConfigLoader.parse(
+      Array("{\(legacyProfile(body))}".utf8), format: .jsonc, path: "c", limits: .configuration),
     path: "c", environment: ConfigEnvironment(home: home, variables: variables))
 }
 
@@ -59,7 +72,7 @@ struct FakeGuest {
   let sink = LogSink()
 
   var home: String { root + "/home" }
-  var client: SSHClient { SSHClient(environment: environment) }
+  var client: SSHClient { SSHClient(environment: environment, tools: .searchPath) }
   var target: SSHTarget {
     SSHTarget(
       host: "10.231.1.2", port: 22, user: .default, keyPath: root + "/key",
@@ -100,15 +113,29 @@ struct FakeGuest {
       esac
       printf '%s\n' "$last" >> "$S/commands.log"
       printf 'ARGV %s\n' "$*" >> "$S/argv.log"
+      # Requested names must never reach the host ssh itself.
       for v in ANTHROPIC_API_KEY OPENAI_API_KEY ISO_LOCAL_API_KEY GITHUB_TOKEN CLAUDE_CODE_OAUTH_TOKEN GUEST_VAR; do
         eval "isset=\${$v+x}"
-        if [ -n "$isset" ]; then eval "printf '%s=%s\n' $v \"\$$v\"" >> "$S/env.log"; fi
+        if [ -n "$isset" ]; then printf '%s\n' "$v" >> "$S/host-env.log"; fi
       done
       case "$last" in
         "test -x "*) [ -f "$S/flags/test-x-fails" ] && exit 1; exit 0 ;;
       esac
       cmd=$(printf '%s' "$last" | sed -e "s#/home/ubuntu/.local/bin/claude#$S/guestbin/claude#g" -e "s#/usr/local/bin/codex#$S/guestbin/codex#g")
-      HOME="$S/home" PATH="$S/guestbin:/usr/bin:/bin" exec /bin/sh -c "$cmd"
+      # As sshd: the login shell runs the command; it records what the
+      # guest sees once the alias wrapper has restored the names.
+      HOME="$S/home" PATH="$S/guestbin:/usr/bin:/bin" SHELL="$S/bin/guestshell" exec "$S/bin/guestshell" -c "$cmd"
+      """#, mode: 0o755)
+    try writeFile(
+      root + "/bin/guestshell",
+      #"""
+      #!/bin/sh
+      S="$(cd "$(dirname "$0")/.." && pwd)"
+      for v in ANTHROPIC_API_KEY OPENAI_API_KEY ISO_LOCAL_API_KEY GITHUB_TOKEN CLAUDE_CODE_OAUTH_TOKEN GUEST_VAR; do
+        eval "isset=\${$v+x}"
+        if [ -n "$isset" ]; then eval "printf '%s=%s\n' $v \"\$$v\"" >> "$S/env.log"; fi
+      done
+      exec /bin/sh "$@"
       """#, mode: 0o755)
     // Tunnel masters must show up in `ps` as `ssh`.
     try FileManager.default.createDirectory(

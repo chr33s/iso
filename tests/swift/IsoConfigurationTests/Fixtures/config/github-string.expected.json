@@ -26,7 +26,7 @@
     "marketplaces": [],
     "plugins": [],
     "mcp_servers": {},
-    "config_dir": null,
+    "config_dir": false,
     "local_model": null
   },
   "proxy": {

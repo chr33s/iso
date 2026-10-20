@@ -201,6 +201,13 @@ Anything in the guest remains attacker-controlled for host-security reasoning.
 
 # 5. Feature 1 — Transactional Workspace Return
 
+> **Amended 2026-10-20** by [`iso-security-hardening-spec.md`](iso-security-hardening-spec.md) (RET-01..11):
+> return runs no host Git; every mode, including `direct`, installs only
+> through the mandatory validated stage; return never deletes host files;
+> receives use unique incoming directories with one selected completed stage;
+> applies are per-file atomic with explicit partial outcomes, not
+> whole-workspace transactions. Clauses below that conflict are superseded.
+
 **Priority:** P0  
 **Borrowed concept:** Sandlock COW / dry-run / commit-abort semantics  
 **isolate adaptation:** Apply transactionality at the guest→host workspace boundary.
@@ -221,10 +228,11 @@ The VM disk is already the disposable execution surface. The important transacti
 `iso pull [NAME] [--dir DIR] [--force]` exists today (`Workspace.swift`,
 `docs/workspaces.md`):
 
-- transport is **rsync with `--delete`** when the guest has rsync, otherwise a
-  **tar-pipe** over SSH with end-to-end SHA-256 verification;
-- before overwriting, it runs `git status --porcelain` on the destination and
-  refuses a dirty tree unless `--force` is given.
+- transport is rsync (without `--delete`) when the guest has rsync, otherwise
+  a **tar-pipe** over SSH with end-to-end SHA-256 verification;
+- *(superseded)* it used to run `git status --porcelain` on the destination.
+  Return now never runs host Git: overwriting existing files needs explicit
+  authority instead (`--apply --stage-id`, or `--force` on a direct pull).
 
 Both transports write directly into the destination. rsync cannot validate a
 tree before mutating it, so staging changes the transport's **target**, not the
@@ -232,13 +240,14 @@ transport:
 
 1. pull (rsync or tar-pipe) into a fresh host staging directory, never into the
    destination;
-2. validate and build the manifest from the staged tree (§5.5–5.8), computing
-   deletions by comparing the staged tree to the destination rather than
-   trusting rsync `--delete`;
+2. validate and build the manifest from the staged tree (§5.5–5.8); return
+   does not delete host files (§5.11.1);
 3. apply from staging to the destination with isolate's own apply code (§5.10).
 
-The existing dirty-tree check still runs before apply. `--force` skips only
-that check; it MUST NOT skip stage validation or budgets.
+There is no dirty-tree check. `--force` on a direct pull supplies authority
+for permitted nonsensitive replacements in that one attempt; it MUST NOT skip
+stage validation, budgets, protected paths, drift checks or sensitive-path
+grants.
 
 ## 5.2 Required behavior
 
@@ -418,7 +427,7 @@ If apply fails partway through, isolate MUST:
 - retain enough stage metadata for diagnosis;
 - never silently claim success.
 
-A future version MAY implement stronger transactionality through a temporary worktree/snapshot mechanism.
+A future version MAY implement stronger transactionality through a temporary worktree/snapshot mechanism. The current contract is per-file atomic replacement where available plus explicit partial outcomes; it does not promise whole-workspace atomicity.
 
 ## 5.11 Optional mode: always-stage
 
@@ -434,7 +443,9 @@ Config:
 }
 ```
 
-`direct` is today's `iso pull` behavior, unchanged.
+`direct` keeps its spelling but no longer writes the destination from the
+receiver: it stages, validates and applies in one invocation through the same
+installer, within its overwrite authority.
 
 A later release SHOULD consider making `stage` the default for interactive use after sufficient compatibility data.
 
@@ -446,10 +457,12 @@ A later release SHOULD consider making `stage` the default for interactive use a
 - **No deletions.** A direct `iso pull` has never deleted host files (rsync
   pull runs without `--delete`), so a staged apply applies only add, modify
   and type-change. Deletion review is deferred.
-- One stage per instance at `<instance>/stage/`; a new stage replaces the old.
-  `--apply --stage-id <id>` pins the reviewed stage.
-- Budgets are enforced while walking the completed stage, not during the
-  transfer. The staged transfer asks the guest's rsync or tar to keep hard
+- *(amended)* Each receive goes to a unique incoming directory under
+  `<instance>/returns/`; only a validated, quiescent receive replaces the one
+  selected completed stage. `--apply` requires `--stage-id <id>`.
+- Budgets are enforced while walking the completed stage, and a sampling
+  monitor also stops the transfer at about twice a second (it can overshoot;
+  it is not a hard quota). The staged transfer asks the guest's rsync or tar to keep hard
   links and holes (`-H -S`, `--sparse`), which stops an honest guest's
   hard-linked or sparse files from expanding on the host; the walk then
   rejects hard links and oversize files. It does **not** bound a hostile
@@ -1404,7 +1417,7 @@ stage -> direct
 stage validation/budgets skipped by `iso pull --force`
 ```
 
-A user may explicitly choose a weaker network/workspace mode where the relevant specification permits it, but automatic security downgrade is prohibited. `--force` on `iso pull` keeps its current meaning (skip the destination dirty-tree check) and nothing more.
+A user may explicitly choose a weaker network/workspace mode where the relevant specification permits it, but automatic security downgrade is prohibited. `--force` on `iso pull` supplies only overwrite authority for permitted nonsensitive replacements in a direct apply attempt, and nothing more.
 
 Provider-secret classification is not a downgradeable mode: intentionally guest-visible credentials must be declared through the generic-secret path defined by the Embedded Isolate Secrets specification.
 
@@ -1569,6 +1582,6 @@ Key observed facts used by this proposal:
 - the Swift Apple backend verifies a runtime shape with no host mounts, socket relays, published ports, or agent forwarding;
 - isolate already has an opt-in host-side provider proxy (one process per VM and provider, fresh token per start, reached over `ssh -R`) that keeps supported model API keys out of the guest (`docs/credential-proxy.md`, `ProxyLifecycle.swift`);
 - vmnet has no per-network filter; guest→host/LAN reachability is accepted by design (`docs/trust-model.md`);
-- `iso pull` uses rsync `--delete` or a verified tar-pipe directly into the destination (`docs/workspaces.md`);
+- `iso pull` used rsync or a verified tar-pipe directly into the destination (superseded: every return is now staged and validated, `docs/workspaces.md`);
 - Sandlock exposes COW/dry-run semantics, network controls, credential injection, resource limits, profiles, and a `learn` workflow.
 

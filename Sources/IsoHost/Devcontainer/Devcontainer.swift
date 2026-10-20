@@ -59,6 +59,8 @@ package struct DevcontainerTranslatorInputs: Sendable {
 /// report. The translator never mutates its inputs.
 package struct DevcontainerTranslation: Sendable {
   package var applied: AppliedDevcontainer?
+  /// The report was already shown as the pre-acceptance preview (DEV-01).
+  package var previewed = false
   package var vcpus: UInt8?
   package var memory: MiB?
   package var disk: GiB?

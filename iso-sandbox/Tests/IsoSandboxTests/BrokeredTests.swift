@@ -29,6 +29,23 @@ import Testing
     StreamBroker(bootID: Self.boot, networkPolicy: Self.policy, policy: policy, dial: dial)
   }
 
+  /// LIFE-01: at the deadline no new stream is admitted, whatever the
+  /// owner's halt timing.
+  @Test func noStreamIsAdmittedAtOrAfterTheSessionDeadline() {
+    let live = StreamBroker(
+      bootID: Self.boot, networkPolicy: Self.policy, expiresAt: Date().addingTimeInterval(60)
+    ) { _ in throw SandboxError("no guest") }
+    guard case .success = live.admit(request()) else {
+      Issue.record("a live session refused a stream")
+      return
+    }
+    live.release()
+    let expired = StreamBroker(
+      bootID: Self.boot, networkPolicy: Self.policy, expiresAt: Date().addingTimeInterval(-1)
+    ) { _ in throw SandboxError("no guest") }
+    #expect(expired.admit(request()) == .failure(.expired))
+  }
+
   @Test func channelPolicyDigestIsPinned() {
     // The host recomputes this digest from its own copy of the policy
     // (BrokeredChannel in Sources/IsoHost); both sides pin the same value.
@@ -270,8 +287,14 @@ import Testing
     // One byte every 50 ms for 2 s, never a newline, then EOF: each read
     // succeeds well inside any per-read timeout, so only the total deadline
     // can end the line early. Without it the read lasts until the EOF.
-    let writer = pair[0]
+    // The writer outlives this test, so it owns its own descriptor: writing
+    // to `pair[0]` after the defer closed it would hit whatever later test
+    // reused that number.
+    let writer = dup(pair[0])
+    var one: Int32 = 1
+    setsockopt(writer, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
     Thread.detachNewThread {
+      defer { close(writer) }
       for _ in 0..<40 {
         _ = Splice.writeAll(writer, [UInt8(ascii: "x")])
         Thread.sleep(forTimeInterval: 0.05)

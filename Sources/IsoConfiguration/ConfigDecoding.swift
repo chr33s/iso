@@ -256,14 +256,30 @@ enum ConfigDecoder {
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
       HostPath(expanding: try Parse.string(v, p), home: env.home)
     }
-    let preset = try r.optional("security") { v, p throws(FieldError) in
-      let s = try ObjectReader(v, at: p)
-      try s.rejectUnknown(allowing: ["preset"])
-      return try s.required("preset") { v, p throws(FieldError) in
-        try Parse.stringEnum(v, p, SecurityPreset.allCases)
-      }
-    }
-    let presetDefaults = preset ?? .networked
+    var revoked: [String] = []
+    let preset: SecurityPreset? =
+      try r.optional("security") { v, p throws(FieldError) in
+        let s = try ObjectReader(v, at: p)
+        try s.rejectUnknown(allowing: ["preset", "revoked_grant_ids"])
+        revoked = try s.defaulted("revoked_grant_ids", []) { v, p throws(FieldError) in
+          try Parse.array(v, p) { v, p throws(FieldError) in
+            let id = try Parse.string(v, p)
+            guard id.utf8.count == 16,
+              id.utf8.allSatisfy({ (0x30...0x39).contains($0) || (0x61...0x66).contains($0) })
+            else { throw FieldError(p, "expected a grant id as shown by `iso policy effective`") }
+            return id
+          }
+        }
+        if Set(revoked).count != revoked.count {
+          throw FieldError(p + [.key("revoked_grant_ids")], "duplicate entries")
+        }
+        return try s.optional("preset") { v, p throws(FieldError) in
+          try Parse.stringEnum(v, p, SecurityPreset.allCases)
+        }
+      } ?? nil
+    // DEF-01: an unset preset means provider-only (no egress, proxy
+    // required, staged returns); "networked" is an explicit relaxation.
+    let presetDefaults = preset ?? .providerOnly
     let config = IsoConfig(
       dataDirectory: dataDir,
       vm: try r.defaulted("vm", .defaults, vm),
@@ -320,7 +336,7 @@ enum ConfigDecoder {
         "workspace", WorkspacePullConfig(mode: presetDefaults.pullMode, limits: .defaults)
       ) { v, p throws(FieldError) in
         let w = try ObjectReader(v, at: p)
-        try w.rejectUnknown(allowing: ["pull"])
+        try w.rejectUnknown(allowing: ["pull", "input"])
         return try w.defaulted(
           "pull", WorkspacePullConfig(mode: presetDefaults.pullMode, limits: .defaults)
         ) { v, p throws(FieldError) in try workspacePull(v, p, defaultMode: presetDefaults.pullMode)
@@ -330,11 +346,23 @@ enum ConfigDecoder {
         try Parse.stringEnum(v, p, [EgressMode.open, .none, .filtered])
       },
       egressFilter: try egressFilter(r),
-      limits: try r.defaulted("limits", .none) { v, p throws(FieldError) in
+      limits: try r.defaulted("limits", .defaults) { v, p throws(FieldError) in
         let l = try ObjectReader(v, at: p)
         try l.rejectUnknown(allowing: ["session_ttl"])
+        guard l.members["session_ttl"] != .null else {
+          throw FieldError(
+            l.child("session_ttl"),
+            "session_ttl no longer accepts null — omit it for 8h, give a duration, or use \"unlimited\" for an ordinary local instance"
+          )
+        }
+        // Omitted means the 8h baseline; "unlimited" is an explicit,
+        // local-only choice (enrolled hosts and iso-ci stay finite).
+        guard l.members["session_ttl"] != .string("unlimited") else {
+          return LimitsConfig(sessionTTL: nil)
+        }
         return LimitsConfig(
-          sessionTTL: try l.optional("session_ttl") { v, p throws(FieldError) in
+          sessionTTL: try l.defaulted("session_ttl", LimitsConfig.defaults.sessionTTL) {
+            v, p throws(FieldError) in
             if case .string(let text) = v {
               return try Parse.domain(p) { () throws(ValidationError) in
                 try SessionTTL(parsing: text)
@@ -354,10 +382,13 @@ enum ConfigDecoder {
         let n = try ObjectReader(v, at: p)
         try n.rejectUnknown(allowing: ["transport"])
         return NetworkConfig(
-          transport: try n.defaulted("transport", .vmnet) { v, p throws(FieldError) in
+          transport: try n.defaulted("transport", NetworkConfig.defaults.transport) {
+            v, p throws(FieldError) in
             try Parse.stringEnum(v, p, NetworkTransport.allCases)
           })
-      })
+      },
+      workspaceInput: try workspaceInput(r),
+      revokedGrantIDs: revoked)
     try requirePolicyCombinations(config)
     if let conflict = config.transportConflict {
       throw FieldError([.key("network"), .key("transport")], conflict)
@@ -379,6 +410,81 @@ enum ConfigDecoder {
           try Parse.stringEnum(v, p, EditorHostCapability.allCases)
         }
       })
+  }
+
+  /// `workspace.input` (INPUT-01). Unknown keys, invalid selectors,
+  /// duplicates, conflicting exceptions and limits above the v1 ceilings are
+  /// errors; there is no unlimited spelling.
+  static func workspaceInput(_ root: ObjectReader) throws(FieldError) -> WorkspaceInputConfig {
+    guard let workspace = root.members["workspace"] else { return .defaults }
+    let w = try ObjectReader(workspace, at: root.child("workspace"))
+    guard let value = w.members["input"] else { return .defaults }
+    let path = w.child("input")
+    let r = try ObjectReader(value, at: path)
+    try r.rejectUnknown(allowing: ["mode", "paths", "exclude", "secret_allow", "limits"])
+    func literal(_ v: JSONValue, _ p: [JSONPathComponent]) throws(FieldError) -> String {
+      let text = try Parse.string(v, p)
+      guard WorkspaceInputConfig.validSelector(text) else {
+        throw FieldError(
+          p, "expected a literal relative path without '..', '.', globs or a leading '/'")
+      }
+      return text
+    }
+    let mode = try r.defaulted("mode", WorkspaceInputConfig.Mode.tracked) {
+      v, p throws(FieldError) in try Parse.stringEnum(v, p, [.tracked, .paths])
+    }
+    let selectors = try r.defaulted("paths", [WorkspaceInputConfig.Selector]()) {
+      v, p throws(FieldError) in
+      try Parse.array(v, p) { v, p throws(FieldError) in
+        let s = try ObjectReader(v, at: p)
+        try s.rejectUnknown(allowing: ["path", "recursive"])
+        guard let raw = s.members["path"] else { throw FieldError(p, "missing field `path`") }
+        let selected = try literal(raw, s.child("path"))
+        let recursive = try s.defaulted("recursive", false, Parse.bool)
+        if selected == "." && !recursive {
+          throw FieldError(p, "\".\" selects the whole root only with \"recursive\": true")
+        }
+        return WorkspaceInputConfig.Selector(path: selected, recursive: recursive)
+      }
+    }
+    if mode == .paths && selectors.isEmpty {
+      throw FieldError(path + [.key("paths")], "mode \"paths\" needs at least one selection")
+    }
+    let exclude = try r.defaulted("exclude", [String]()) { v, p throws(FieldError) in
+      try Parse.array(v, p, literal)
+    }
+    let secretAllow = try r.defaulted("secret_allow", [String]()) { v, p throws(FieldError) in
+      try Parse.array(v, p, literal)
+    }
+    for (name, list) in [
+      ("paths", selectors.map(\.path)), ("exclude", exclude), ("secret_allow", secretAllow),
+    ]
+    where Set(list).count != list.count {
+      throw FieldError(path + [.key(name)], "duplicate entries")
+    }
+    if let both = secretAllow.first(where: exclude.contains) {
+      throw FieldError(path + [.key("secret_allow")], "\(both) is also excluded")
+    }
+    let c = WorkspaceInputConfig.Limits.ceilings
+    let limits = try r.defaulted("limits", c) { v, p throws(FieldError) in
+      let l = try ObjectReader(v, at: p)
+      try l.rejectUnknown(allowing: ["max_entries", "max_file_bytes", "max_total_bytes"])
+      func bounded(_ key: String, _ ceiling: UInt64) throws(FieldError) -> UInt64 {
+        let value = try l.defaulted(key, ceiling) { v, p throws(FieldError) in
+          try Parse.nonZero(v, p, as: UInt64.self)
+        }
+        guard value <= ceiling else {
+          throw FieldError(l.child(key), "at most \(ceiling) in workspace.input v1")
+        }
+        return value
+      }
+      return WorkspaceInputConfig.Limits(
+        maxEntries: try bounded("max_entries", c.maxEntries),
+        maxFileBytes: try bounded("max_file_bytes", c.maxFileBytes),
+        maxTotalBytes: try bounded("max_total_bytes", c.maxTotalBytes))
+    }
+    return WorkspaceInputConfig(
+      mode: mode, paths: selectors, exclude: exclude, secretAllow: secretAllow, limits: limits)
   }
 
   static func workspacePull(
@@ -469,7 +575,7 @@ enum ConfigDecoder {
     guard let value = r.members[key] else {
       return AgentConfig(
         apiKey: env.variables[apiKeyVariable].map(Secret.init), envForward: [], marketplaces: [],
-        plugins: [], mcpServers: [:], configDirectory: .default, localModel: nil)
+        plugins: [], mcpServers: [:], configDirectory: .disabled, localModel: nil)
     }
     let path = r.child(key)
     let a = try ObjectReader(value, at: path)
@@ -489,14 +595,19 @@ enum ConfigDecoder {
       mcpServers: try a.defaulted("mcp_servers", [:]) { v, p throws(FieldError) in
         try Parse.map(v, p, mcpServer)
       },
-      configDirectory: try a.defaulted("config_dir", .default) { v, p throws(FieldError) in
+      // Host agent-home imports are off unless a root is named (IMPORT-01).
+      configDirectory: try a.defaulted("config_dir", .disabled) { v, p throws(FieldError) in
         switch v {
-        case .null: return .default
+        case .null:
+          throw FieldError(
+            p,
+            "config_dir no longer accepts null — omit it or use false to import nothing, or name a directory"
+          )
         case .bool(false): return .disabled
         case .bool(true):
           throw FieldError(p, "config_dir does not accept true — use a path string or false")
         case .string(let raw): return .custom(HostPath(expanding: raw, home: env.home))
-        default: throw FieldError(p, "expected a path string, false, or null, found \(v.typeName)")
+        default: throw FieldError(p, "expected a path string or false, found \(v.typeName)")
         }
       },
       localModel: try a.optional("local_model", localModel))

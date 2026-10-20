@@ -539,6 +539,50 @@ package enum InstanceStore {
     return instances.sorted { $0.index < $1.index }
   }
 
+  /// The strict view allocation uses (ALLOC): every entry occupies its
+  /// name whatever its type or readability, and an entry whose index cannot
+  /// be read refuses allocation instead of looking free. Listing stays
+  /// tolerant; this does not.
+  static func reservations(_ config: IsoConfig) throws -> (
+    instances: [Instance], names: Set<String>
+  ) {
+    let root = config.instancesDirectory.path
+    var info = stat()
+    guard lstat(root, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == geteuid() else {
+      throw HostError("\(root) is not a directory this user owns")
+    }
+    let entries: [String]
+    do { entries = try FileManager.default.contentsOfDirectory(atPath: root) } catch {
+      throw HostError("Failed to read instances directory")
+    }
+    var instances: [Instance] = []
+    var names = Set<String>()
+    var unknown: [String] = []
+    for entry in entries.sorted() where !entry.hasPrefix(".") {
+      names.insert(reservationKey(entry))
+      let directory = root + "/" + entry
+      var status = stat()
+      guard lstat(directory, &status) == 0, status.st_mode & S_IFMT == S_IFDIR,
+        let instance = try? Instance.load(directory: directory)
+      else {
+        unknown.append(entry)
+        continue
+      }
+      instances.append(instance)
+    }
+    guard unknown.isEmpty else {
+      throw HostError(
+        "Cannot allocate a new instance: \(unknown.map(neutralizeControls).joined(separator: ", ")) in \(root) may hold an instance whose slot cannot be read, so its addresses and identity cannot be ruled out. Repair its instance.json, or move the entry out of \(root) by hand after checking nothing still runs from it."
+      )
+    }
+    return (instances, names)
+  }
+
+  /// Names as a case-insensitive APFS volume compares them.
+  static func reservationKey(_ name: String) -> String {
+    name.precomposedStringWithCanonicalMapping.lowercased()
+  }
+
   /// Resolve by name, or the only instance when no name is given.
   package static func resolve(_ config: IsoConfig, name: InstanceName?) throws -> Instance {
     if let name {
@@ -650,7 +694,8 @@ extension Instance {
     }
     let lock = try FileLock(path: root + "/.lock")
     defer { lock.release() }
-    let instances = try InstanceStore.list(config)
+    let reservations = try InstanceStore.reservations(config)
+    let instances = reservations.instances
     let used = Set(instances.map(\.index))
     var index: InstanceIndex?
     if let highest = instances.map(\.index.value).max(), highest < InstanceIndex.maximum,
@@ -668,25 +713,41 @@ extension Instance {
     } else if let workspacePath {
       let basename = URL(fileURLWithPath: workspacePath).standardized.lastPathComponent
       resolved = try uniqueName(
-        sanitizedBasename(basename == "/" ? "workspace" : basename), instances)
+        sanitizedBasename(basename == "/" ? "workspace" : basename), reservations.names)
     } else {
       resolved = try InstanceName(index.description)
     }
-    if instances.contains(where: { $0.name == resolved }) {
+    if reservations.names.contains(InstanceStore.reservationKey(resolved.rawValue)) {
       throw HostError("Instance '\(resolved)' already exists")
     }
     let instance = Instance(
       name: resolved, index: index, directory: root + "/" + resolved.rawValue, image: image)
-    do {
-      // Owner-only: the instance holds its pinned key, guest env snapshot
-      // and proxy tokens.
-      try FileManager.default.createDirectory(
-        atPath: instance.directory, withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700])
-    } catch {
-      throw ContextError("Failed to create directory \(instance.directory)", cause: error)
+    // Exclusive: an existing entry of any kind is a collision, never reused.
+    // Owner-only: the instance holds its pinned key, guest env snapshot and
+    // proxy tokens.
+    guard mkdir(instance.directory, 0o700) == 0 else {
+      throw errno == EEXIST
+        ? HostError("Instance '\(resolved)' already exists")
+        : HostError.posix("Failed to create directory", instance.directory)
     }
-    try instance.save()
+    var created = stat()
+    guard lstat(instance.directory, &created) == 0, created.st_mode & S_IFMT == S_IFDIR else {
+      throw HostError.posix("Failed to inspect", instance.directory)
+    }
+    do {
+      try instance.save()
+    } catch {
+      // Remove only the directory this attempt created, and only if empty
+      // apart from what it wrote.
+      var now = stat()
+      if lstat(instance.directory, &now) == 0, now.st_ino == created.st_ino,
+        now.st_dev == created.st_dev
+      {
+        unlink(instance.directory + "/instance.json")
+        rmdir(instance.directory)
+      }
+      throw error
+    }
     return instance
   }
 
@@ -702,10 +763,11 @@ extension Instance {
     return out.isEmpty ? "workspace" : String(out.prefix(60))
   }
 
-  static func uniqueName(_ base: String, _ instances: [Instance]) throws -> InstanceName {
-    let taken = Set(instances.map(\.name.rawValue))
-    if !taken.contains(base) { return try InstanceName(base) }
-    for n in 2...99 where !taken.contains("\(base)-\(n)") {
+  /// `taken` holds reservation keys (`InstanceStore.reservationKey`).
+  static func uniqueName(_ base: String, _ taken: Set<String>) throws -> InstanceName {
+    let key = InstanceStore.reservationKey
+    if !taken.contains(key(base)) { return try InstanceName(base) }
+    for n in 2...99 where !taken.contains(key("\(base)-\(n)")) {
       return try InstanceName("\(base)-\(n)")
     }
     throw HostError("Could not find unique instance name for '\(base)'")

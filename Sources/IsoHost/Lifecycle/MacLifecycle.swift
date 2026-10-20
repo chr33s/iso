@@ -162,6 +162,14 @@ extension AppleBackend {
   /// Codex ChatGPT account auth keeps credentials in the Linux Secret
   /// Service, which macOS guests do not have.
   func requireMacSupportedConfig() throws {
+    // The brokered (NIC-less) transport supports Linux guests only. A
+    // macOS guest runs only on an explicit vmnet choice, never by falling
+    // back, and does not get the brokered profile's isolation.
+    guard config.network.transport == .vmnet else {
+      throw HostError(
+        "macOS guests do not support network.transport \"brokered\" (the default); select \"network\": {\"transport\": \"vmnet\"} explicitly to run one, knowing that egress \"none\" or \"filtered\" on vmnet does not isolate host or LAN services the way brokered does"
+      )
+    }
     guard config.codexAuth != .chatgpt else {
       throw HostError(
         "Codex ChatGPT account auth (`\"codex\": {\"auth\": \"chatgpt\"}`) needs the Linux Secret Service; macOS guests do not support it"

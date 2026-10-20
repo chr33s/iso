@@ -258,6 +258,22 @@ package struct AgentBootstrap: Sendable {
     )
   }
 
+  /// READY-01: the selected adapter's own provider must be brokered where
+  /// remote-model access goes only through the credential proxy; another
+  /// provider's broker does not satisfy it. An adapter without a provider
+  /// (shell, local model) needs none.
+  package func requireSelectedProvider(_ instance: Instance, adapter: AgentAdapterContract) throws {
+    guard let name = adapter.providerName, let provider = ProxyProvider(rawValue: name),
+      config.proxy.mode == .required || config.egress == .none,
+      try ModelState.loadOrDefault(instance).mode == .remote
+    else { return }
+    guard try proxyConfigured(instance, provider) else {
+      throw HostError(
+        "\(adapter.id.rawValue) needs the \(name) credential proxy for '\(instance.name)', which is not configured; run `iso proxy setup` for \(name) (another provider's proxy does not cover it)"
+      )
+    }
+  }
+
   /// Every stored secret this session reads (the persisted `--env`
   /// references and the GitHub PAT for `repo`), resolved in one unlock so the
   /// resolutions that follow are cache hits and the user is asked once.
@@ -265,8 +281,10 @@ package struct AgentBootstrap: Sendable {
     var names = Set<SecretName>()
     if let instance, let state = try GuestEnvState.tryLoad(instance) {
       let routed = Set(try state.providerSecrets().values.map(\.variable))
+      let granted = try GrantLedger.sessionEnvironment(instance, revoked: config.revokedGrantIDs)
       names.formUnion(
-        state.entries.filter { !routed.contains($0.key) }.values.compactMap(\.reference))
+        state.entries.filter { !routed.contains($0.key) && granted.contains($0.key.rawValue) }
+          .values.compactMap(\.reference))
     }
     if let name = GitHubAssignment.vaultName(config, slug: repo) { names.insert(name) }
     guard !names.isEmpty, let secrets else { return }
@@ -310,10 +328,20 @@ package struct AgentBootstrap: Sendable {
         let routed = Set(try state.providerSecrets().values.map(\.variable))
         let withheld = withheldVariables(
           proxyAnthropic: proxyAnthropic, proxyOpenAI: proxyOpenAI, policyEnforced: policyEnforced)
-        let resolved = try resolveReferences(state, excluding: routed)
+        let granted = try GrantLedger.sessionEnvironment(
+          instance, revoked: config.revokedGrantIDs)
+        let ungranted = Set(state.entries.keys.filter { !granted.contains($0.rawValue) })
+        if !ungranted.isEmpty {
+          diagnostics.warn(
+            "Not forwarding saved --env entries without a live grant (\(ungranted.map(\.rawValue).sorted().joined(separator: ", "))); give them again at the next start, or see `iso policy effective \(instance.name)`"
+          )
+        }
+        let resolved = try resolveReferences(state, excluding: routed.union(ungranted))
         for (name, value) in state.sortedEntries {
           // A provider secret feeds that provider's proxy, never the guest.
           if routed.contains(name) { continue }
+          // Withheld (legacy) or revoked grants reach no session (POL-01).
+          if ungranted.contains(name) { continue }
           if let reason = withheld[name.rawValue] {
             try refuse(name.rawValue, from: "runtime --env", reason: reason)
             continue
@@ -437,7 +465,7 @@ package struct AgentBootstrap: Sendable {
   package func bootstrapAndPostStart(
     _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
     postStartOverride: String?, mode: BootMode, skipAgentBootstrap: Bool = false,
-    runtime: SandboxRuntime? = nil
+    runtime: SandboxRuntime? = nil, provision: (SSHTarget) throws -> Void = { _ in }
   ) throws -> SSHTarget {
     proxies.stopModelTunnels(instance)
     try proxies.startEgress(instance, config: config, target: target, runtime: runtime)
@@ -469,8 +497,12 @@ package struct AgentBootstrap: Sendable {
       }
       diagnostics.log(.info, "Skipping guest agent bootstrap (--no-agents)")
       try preparationTarget.requireHandoff()
-      return try requireFilteredHandoff(instance, runtime: runtime, preparation: preparation)
+      let proven =
+        try requireFilteredHandoff(instance, runtime: runtime, preparation: preparation)
         ?? preparationTarget
+      try Shutdown.check()
+      try provision(proven)
+      return proven
     }
     let session = try prepareSession(instance, target: preparationTarget, repo: repo)
     try preparationTarget.requireHandoff()
@@ -494,6 +526,11 @@ package struct AgentBootstrap: Sendable {
     let hookTarget =
       try requireFilteredHandoff(instance, runtime: runtime, preparation: preparation)
       ?? preparationTarget
+    // The hook sees a completed workspace: copy, clone and mount sync run
+    // first, and a failed or interrupted provisioning never reaches it.
+    try Shutdown.check()
+    try provision(hookTarget)
+    try Shutdown.check()
     if let postStart {
       // Capture composite identity before preparing the hook's environment.
       let hookSession =

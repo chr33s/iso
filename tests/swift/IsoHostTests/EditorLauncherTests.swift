@@ -234,7 +234,7 @@ private func editorWorkflow(_ guest: FakeGuest) throws -> ProjectEditorWorkflow 
     context: CommandContext(
       environment: ConfigEnvironment(home: home, variables: [:]), config: config,
       backend: backend, output: SilentOutput(), diagnostics: diagnostics,
-      ssh: SSHClient(environment: [:])),
+      ssh: SSHClient(environment: [:], tools: .searchPath)),
     noGitHub: true, secretResolver: NoSecrets(), executable: nil,
     prepareGitHub: { _, _, _, _ in throw HostError("unexpected prompt") })
   return ProjectEditorWorkflow(

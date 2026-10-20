@@ -14,7 +14,7 @@ private func withPolicyFixture(_ body: (Instance, IsoConfig) throws -> Void) thr
   let config = try ConfigLoader.decode(
     ConfigLoader.parse(
       Array(
-        #"{"egress":"filtered","egress_filter":{"allowed_hosts":["example.com","api.example.com"]}}"#
+        #"{"egress":"filtered","network":{"transport":"vmnet"},"egress_filter":{"allowed_hosts":["example.com","api.example.com"]}}"#
           .utf8),
       format: .json, path: "c", limits: .configuration), path: "c", environment: .empty)
   let instance = Instance(

@@ -489,6 +489,7 @@ extension AppleBackend {
     defer { lock.release() }
     let sidecar = try ownedSidecar(running.instance)
     try runtime.namespace(sidecar.kind).stopAndConfirm(sidecar.machineID)
+    try HandoffFence.clear(running.instance)
   }
 
   /// Stop without proving the guest is reachable (the state probe failed).
@@ -504,6 +505,8 @@ extension AppleBackend {
     if try sandboxes.status(sidecar.machineID) != .stopped {
       try sandboxes.stopAndConfirm(sidecar.machineID)
     }
+    // A confirmed stop reconciles a failed restart.
+    try HandoffFence.clear(instance)
     diagnostics.log(.info, "Instance '\(instance.name)' stopped")
   }
 

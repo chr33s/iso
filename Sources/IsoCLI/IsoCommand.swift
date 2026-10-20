@@ -69,7 +69,8 @@ enum IsoVersion {
 }
 
 struct GlobalOptions: ParsableArguments {
-  @Option(name: .long, help: "Path to iso config file (.jsonc or .json)")
+  @Option(
+    name: .long, help: "Path to iso config file (.jsonc or .json)")
   var config: String?
 
   @Flag(name: .shortAndLong, help: "Increase verbosity")

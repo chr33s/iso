@@ -309,7 +309,7 @@ import Testing
     let key = ConnectedPoolService.activationKey("validation", configuration)
     #expect(ConnectedPoolService.activationKey("validation", configuration) == key)
     var clashing = configuration
-    clashing.pools["shadow"] = try #require(configuration.pools["validation"])
+    clashing.pools["shadow"] = configuration.pools["validation"]
     #expect(ConnectedPoolService.activationKey("validation", clashing) != key)
   }
 

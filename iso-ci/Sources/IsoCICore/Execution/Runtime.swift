@@ -93,7 +93,8 @@ package struct Runtime: Sendable {
     guard _NSGetExecutablePath(&buffer, &size) == 0 else {
       throw CIError(.internalError, "cannot resolve the iso-ci executable path")
     }
-    let path = String(cString: buffer)
+    let path = String(
+      decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     let resolved = (path as NSString).resolvingSymlinksInPath
     return (resolved as NSString).standardizingPath
   }

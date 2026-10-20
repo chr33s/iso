@@ -33,7 +33,9 @@ private func workloadLaunchRechecksImmediatelyBeforeSpawning(launch: WorkloadLau
   defer { guest.remove() }
   let marker = guest.root + "/launched"
   try writeFile(
-    guest.root + "/bin/ssh", "#!/bin/sh\nprintf '%s' \"$GUEST_VAR\" > '\(marker)'\n", mode: 0o755)
+    guest.root + "/bin/ssh",
+    // The value travels only under its alias; the raw name stays unset.
+    "#!/bin/sh\nprintf '%s%s' \"$ISO_SSH_ENV_0\" \"${GUEST_VAR-}\" > '\(marker)'\n", mode: 0o755)
   let state = Mutex((healthy: true, checks: 0))
   var session = try WorkloadSession(session: SSHSession(target: guest.target), supervision: nil) {
     let healthy = state.withLock { value in

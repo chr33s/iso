@@ -35,13 +35,16 @@ struct HostPush: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Option(help: "Client directory (default: the recorded one, else .)") var dir: String?
+  @Option(help: "Client directory (default: the recorded one, else .)")
+  var dir: String?
   @Flag(help: "Overwrite uncommitted guest changes") var force = false
-  @Flag(name: .customLong("exclude-git")) var excludeGit = false
+  @Flag(name: .customLong("exclude-git"), help: ArgumentHelp(DeprecatedExcludeGit.help))
+  var excludeGit = false
 
   func run() throws {
     try IsoCLI.run {
       let env = try HostCommandEnvironment(global)
+      DeprecatedExcludeGit.warn(excludeGit, env.diagnostics)
       let remote = try env.resolve(host)
       let binding = try env.binding(remote, name)
       let recorded = try WorkspaceState.load(try RemoteWorkspace.shadow(env.config, binding))
@@ -49,7 +52,7 @@ struct HostPush: ParsableCommand {
       try withSession(env, remote, binding) { target in
         try RemoteWorkspace.push(
           target, source: source, config: env.config, binding: binding, force: force,
-          excludeGit: excludeGit, environment: env.environment, diagnostics: env.diagnostics)
+          environment: env.environment, diagnostics: env.diagnostics)
       }
       env.output.out("Pushed \(source) to \(binding.name) on \(binding.host)")
     }
@@ -67,41 +70,53 @@ struct HostPull: ParsableCommand {
   @Option(
     help: "Client destination when staging (default: the recorded source directory)")
   var dir: String?
-  @Flag(help: "Apply the completed stage; needs no host connection") var apply = false
-  @Flag(help: "With --apply: apply even when the destination drifted") var force = false
-  @Option(name: .customLong("stage-id"), help: "With --apply: the stage to apply")
+  @Flag(help: "Apply the completed stage named by --stage-id; needs no host connection")
+  var apply = false
+  @Flag(help: "Deprecated, no effect: drift is never overridden") var force = false
+  @Option(name: .customLong("stage-id"), help: "With --apply: the exact stage to apply (required)")
   var stageID: String?
-  @Flag(name: .customLong("exclude-git"), help: "When staging: skip the `.git` directory")
+  @Option(
+    help: ArgumentHelp(
+      "With --apply: approve one execution-sensitive entry shown at review (repeatable)",
+      valueName: "PATH"))
+  var approveSensitive: [String] = []
+  @Flag(name: .customLong("exclude-git"), help: ArgumentHelp(DeprecatedExcludeGit.help))
   var excludeGit = false
 
   /// Each flag belongs to one mode; one that cannot affect the selected mode
-  /// is refused rather than ignored. A stage's destination is fixed when it
-  /// is created.
+  /// is refused rather than ignored (the deprecated no-op flags only warn).
+  /// A stage's destination is fixed when it is created.
   func validate() throws {
     if apply {
       if dir != nil {
         throw UsageError(
           "--dir is fixed when the stage is created; it cannot be used with --apply")
       }
-      if excludeGit {
-        throw UsageError("--exclude-git applies only when staging, not with --apply")
+      if stageID == nil {
+        throw UsageError(
+          "--apply needs the exact --stage-id shown when the stage was created; nothing is inferred"
+        )
       }
     } else {
       if stageID != nil { throw UsageError("--stage-id requires --apply") }
-      if force { throw UsageError("--force requires --apply") }
+      if !approveSensitive.isEmpty { throw UsageError("--approve-sensitive requires --apply") }
     }
   }
 
   func run() throws {
     try IsoCLI.run {
       let env = try HostCommandEnvironment(global)
+      DeprecatedExcludeGit.warn(excludeGit, env.diagnostics)
+      if force { env.diagnostics.warn("--force is deprecated and has no effect") }
       guard
         let binding = try ClientBindingStore(config: env.config).load(
           try env.hostID(host), try InstanceName(name))
       else { throw HostError("no instance '\(name)' is bound on host '\(host)'") }
-      if apply {
+      if apply, let stageID {
         let (manifest, applied) = try RemoteWorkspace.apply(
-          config: env.config, binding: binding, stageID: stageID, force: force,
+          config: env.config, binding: binding,
+          request: WorkspaceTransfer.ApplyRequest(
+            stageID: stageID, replace: true, sensitive: approveSensitive),
           environment: env.environment, diagnostics: env.diagnostics)
         env.output.out("Applied stage \(manifest.id): \(applied.count) change(s)")
         return
@@ -109,14 +124,17 @@ struct HostPull: ParsableCommand {
       let remote = try env.resolve(host)
       let manifest = try withSession(env, remote, binding) { target in
         try RemoteWorkspace.stage(
-          target, config: env.config, binding: binding, directory: dir, excludeGit: excludeGit,
+          target, config: env.config, binding: binding, directory: dir,
           environment: env.environment, diagnostics: env.diagnostics)
       }
-      env.output.out("Staged \(manifest.changes.count) change(s) as stage \(manifest.id)")
-      for change in manifest.changes.prefix(50) {
-        env.output.out("  \(change.operation) \(neutralizeControls(change.path))")
-      }
-      env.output.out("Review, then: iso host pull \(host) \(name) --apply")
+      let review = StageReview(manifest: manifest, tree: "")
+      review.summary(instance: binding.name.rawValue).forEach(env.output.out)
+      let command =
+        (["iso host pull \(host) \(name) --apply --stage-id \(manifest.id)"]
+        + manifest.sensitivePaths.map { "--approve-sensitive \(shellEscape($0))" })
+        .joined(separator: " ")
+      env.output.out(
+        manifest.applicable ? "Review, then: \(command)" : "This stage cannot be applied.")
     }
   }
 }
@@ -148,7 +166,7 @@ struct HostUp: ParsableCommand {
       try withSession(env, remote, binding) { target in
         try RemoteWorkspace.push(
           target, source: project, config: env.config, binding: binding, force: false,
-          excludeGit: false, environment: env.environment, diagnostics: env.diagnostics)
+          environment: env.environment, diagnostics: env.diagnostics)
       }
       env.output.out("Ready: iso host shell \(host) \(binding.name)")
     }
@@ -462,7 +480,7 @@ struct HostRun: ParsableCommand {
       let status: Int32 = try withSession(env, remote, binding) { target in
         try RemoteWorkspace.push(
           target, source: project, config: env.config, binding: binding, force: true,
-          excludeGit: false, environment: env.environment, diagnostics: env.diagnostics)
+          environment: env.environment, diagnostics: env.diagnostics)
         guard let ssh = SSHClient(environment: env.environment).sshExecutable() else {
           throw HostError("ssh is not installed")
         }

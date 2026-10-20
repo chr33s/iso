@@ -171,6 +171,9 @@ package enum AuditEventKind: String, Codable, Sendable, CaseIterable {
   case boundaryPolicyDecision = "boundary.policy_decision"
   case boundaryApprovalIssued = "boundary.approval_issued"
   case boundaryApprovalConsumed = "boundary.approval_consumed"
+  case boundaryPullHeld = "boundary.pull_held"
+  case boundaryInputSnapshot = "boundary.input_snapshot"
+  case boundaryHandoffFence = "boundary.handoff_fence"
   case storeRecordingGap = "store.recording_gap"
 }
 
@@ -632,15 +635,19 @@ extension BoundaryAudit.Event {
     case .policyDecision: .boundaryPolicyDecision
     case .approvalIssued: .boundaryApprovalIssued
     case .approvalConsumed: .boundaryApprovalConsumed
+    case .pullHeld: .boundaryPullHeld
+    case .inputSnapshot: .boundaryInputSnapshot
+    case .handoffFence: .boundaryHandoffFence
     }
   }
 
   var evidence: AuditEvidence {
     switch self {
     case .boot, .policyBoot, .policyProxyClaim, .policyDecision, .approvalIssued,
-      .approvalConsumed:
+      .approvalConsumed, .pullHeld, .handoffFence:
       .hostDecision
-    case .rawProviderForward, .stop, .pullStage, .pullApply, .pullApplyPartial, .pullDirect:
+    case .rawProviderForward, .stop, .pullStage, .pullApply, .pullApplyPartial, .pullDirect,
+      .inputSnapshot:
       .hostObservation
     }
   }
@@ -687,7 +694,7 @@ package enum AuditPayload: Sendable, Equatable, Encodable {
     case .boundaryBoot, .boundaryRawProviderForward, .boundaryStop, .boundaryPullStage,
       .boundaryPullApply, .boundaryPullApplyPartial, .boundaryPullDirect, .boundaryPolicyBoot,
       .boundaryPolicyProxyClaim, .boundaryPolicyDecision, .boundaryApprovalIssued,
-      .boundaryApprovalConsumed:
+      .boundaryApprovalConsumed, .boundaryPullHeld, .boundaryInputSnapshot, .boundaryHandoffFence:
       let object = try data.decode(OutputJSON.self, forKey: key)
       guard case .object = object else {
         throw DecodingError.dataCorruptedError(

@@ -44,6 +44,14 @@ package struct ReprovisionWorkflow {
       boot: BootOptions(
         noAgents: noAgents, noPrompt: noPrompt, configTarget: configTarget,
         persistedGuestEnvironment: savedEnvironment))
+    // Saved entries keep their provenance: only the configuration's own
+    // forwards count as given by this command.
+    options.boot.freshGrantScopes = Set(lifecycle.config.forwardPorts.map(GrantLedger.scope))
+    // The boot sees only what a session would: legacy and revoked entries
+    // stay saved but are not handed out.
+    let granted = try GrantLedger.sessionEnvironment(
+      instance, revoked: lifecycle.config.revokedGrantIDs)
+    let bootEnvironment = savedEnvironment.filter { granted.contains($0.key.rawValue) }
     options.appliedDevcontainer = applied
     switch workspace?.source {
     case .workspace(let path)?: options.workspaceDirectory = path
@@ -59,9 +67,9 @@ package struct ReprovisionWorkflow {
       )
     }
     // Saved references must resolve before the disk is replaced.
-    _ = try GuestEnvState.providerSecrets(savedEnvironment)
+    _ = try GuestEnvState.providerSecrets(bootEnvironment)
     let repo = lifecycle.tokens.instanceRepo(instance)
-    try lifecycle.preflightReferences(savedEnvironment, instance: instance, repo: repo)
+    try lifecycle.preflightReferences(bootEnvironment, instance: instance, repo: repo)
     try lifecycle.maybePromptForPAT(instance, repo: repo, options.boot)
     let shutdown = Shutdown.install()
     defer { shutdown.restore() }
@@ -87,9 +95,8 @@ package struct ReprovisionWorkflow {
         try backend.resizeDisk(try backend.asStopped(restored), toGiB: previousDisk)
       }
       try Shutdown.check()
-      lifecycle.foldGuestEnvironment(savedEnvironment)
-      try lifecycle.backend.startExisting(
-        restored, guestEnvironment: options.boot.persistedGuestEnvironment)
+      lifecycle.foldGuestEnvironment(bootEnvironment)
+      try lifecycle.backend.startExisting(restored, guestEnvironment: bootEnvironment)
       try lifecycle.provisionFirstBoot(restored, options, repo: repo, forwardSet: forwardSet)
     } catch {
       throw ContextError(partial, cause: error)

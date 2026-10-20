@@ -162,7 +162,7 @@ package struct PortForwards: Sendable {
     diagnostics.debug("Tearing down SSH port forwards via control socket \(control)")
     if let ssh = client.sshExecutable(),
       let output = try? client.runner.capture(
-        client.request(ssh, ["-O", "exit", "-o", "ControlPath=\(control)", target.address]))
+        client.request(ssh, target.controlExitArguments(control)))
     {
       diagnostics.debug(
         output.termination.succeeded

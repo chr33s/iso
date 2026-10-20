@@ -108,7 +108,7 @@ private struct CLIFixture {
       backend: AppleBackend(
         config: config, environment: environment.variables, executable: nil,
         diagnostics: diagnostics), output: streams, diagnostics: diagnostics,
-      ssh: SSHClient(environment: environment.variables))
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath))
   }
 
   func remove() { try? FileManager.default.removeItem(atPath: root) }
@@ -232,6 +232,15 @@ private func startOptions(_ context: CommandContext) throws -> BootOptions {
         try SecretName("pat"),
       ]
     ])
+  // READY-01: an agent-free boot needs no provider credential.
+  let agentFree = CountingSecrets(["db": "d", "pat": "github_pat_x"])
+  let (bare, noAgents, bareInstance) = try lifecycleFixture(
+    #", "proxy": {"anthropic": {"credential": "vault:proxy-key"}}, "github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#,
+    secrets: agentFree)
+  defer { bare.remove() }
+  try noAgents.preflightReferences(
+    entries, instance: bareInstance, repo: try RepoSlug("org/repo"), noAgents: true)
+  #expect(agentFree.calls == [[try SecretName("db"), try SecretName("pat")]])
 
   // A missing PAT secret fails up front, before any VM work.
   let missing = CountingSecrets(["db": "d", "proxy-key": "k", "per-vm": "v"])

@@ -86,7 +86,9 @@ package enum Owner {
       bootId: makeBootID())
     let broker: StreamBroker? =
       record.network == .brokered
-      ? StreamBroker(bootID: live.bootId, networkPolicy: record.networkPolicy) { port in
+      ? StreamBroker(
+        bootID: live.bootId, networkPolicy: record.networkPolicy, expiresAt: record.expiresAt
+      ) { port in
         try await container.dialVsock(port: port)
       } : nil
     // Bound before live.json is written: `start` reports a brokered
@@ -119,12 +121,15 @@ package enum Owner {
         while Date() < expiresAt {
           try? await Task.sleep(for: .seconds(min(30, max(1, expiresAt.timeIntervalSinceNow))))
         }
-        log("session expired at \(expiresAt): halting")
+        log("session expired at \(expiresAt): revoking streams and halting")
+        // Existing host-held streams are revoked first; the halt follows.
+        broker?.shutdownAll()
         await lifecycle.requestHalt()
       }
     }
     let effective = effectiveConfig(
       record: record, config: config, rootfs: rootfs, devices: devices)
+    let sessionDeadline = record.expiresAt
     try ControlSocket.serve(at: paths.control) { request in
       switch request.op {
       case .ping:
@@ -132,6 +137,9 @@ package enum Owner {
       case .inspect:
         return ControlResponse(ok: true, inspect: effective)
       case .exec:
+        if let sessionDeadline, Date() >= sessionDeadline {
+          return ControlResponse(ok: false, error: "the boot's session has expired")
+        }
         guard let argv = request.argv, !argv.isEmpty else {
           return ControlResponse(ok: false, error: "empty argv")
         }

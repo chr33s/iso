@@ -112,32 +112,43 @@ package enum ConfigTemplate {
       // "post_start": "make dev-setup",          // runs in the guest after each boot
       // "forward_ports": [3000, "8080:18080", { "guest": 5432, "label": "db" }],
 
-      // Defaults for egress, proxy.mode and workspace.pull.mode: "networked",
-      // "provider-only" or "offline". Explicit fields still win.
-      // "security": { "preset": "provider-only" },
+      // Defaults for egress, proxy.mode and workspace.pull.mode: "provider-only"
+      // (the default: no egress, proxy required, staged pulls), "offline", or
+      // "networked" (needs network.transport "vmnet"). Explicit fields still win.
+      // "security": {
+      //   "preset": "provider-only",
+      //   // Saved instance grants (start-time --env entries, port forwards) to
+      //   // withdraw, by the IDs `iso policy effective` shows.
+      //   "revoked_grant_ids": ["0123456789abcdef"]
+      // },
 
-      // Host-enforced session length per boot ("30m", "8h", or seconds).
+      // Host-enforced session length per boot ("30m", "8h", or seconds; 8h when
+      // omitted; "unlimited" for an ordinary local instance only).
       // "limits": { "session_ttl": "8h" },
 
-      // "open" (default) or "none": no route beyond the host, fixed per instance
+      // "none" (default), "filtered", or "open" (vmnet only); fixed per instance
       // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
-      // "egress": "open",
+      // "egress": "none",
 
-      // "brokered" creates new instances with no network device: SSH and every
-      // iso tunnel run over a fixed vsock stream, and egress is "none" or
-      // "filtered" only ("open" is refused). Fixed per instance at creation;
-      // "vmnet" (default) is one vmnet network device. See docs/configuration.md.
-      // "network": { "transport": "brokered" },
+      // "brokered" (default) creates new instances with no network device: SSH
+      // and every iso tunnel run over a fixed vsock stream, and egress is "none"
+      // or "filtered" only. "vmnet" is one vmnet network device, an explicit
+      // choice that macOS guests and open egress need. Fixed per instance at
+      // creation. See docs/configuration.md.
+      // "network": { "transport": "vmnet" },
 
       // `iso pull` return path. "stage" pulls into a host-side stage for review;
       // nothing reaches the local directory until `iso pull --apply`.
       // "workspace": {
       //   "pull": {
-      //     "mode": "direct",           // or "stage"
+      //     "mode": "stage",            // or "direct"
       //     "max_files": 50000,
       //     "max_bytes": "1GiB",
       //     "max_file_bytes": "256MiB"
-      //   }
+      //   },
+      //   // What `iso up` / `iso push` send: tracked files (or "paths"), never .git
+      //   // or credential-looking names unless listed in "secret_allow".
+      //   "input": { "mode": "tracked", "paths": [], "exclude": [], "secret_allow": [] }
       // },
 
       // Default-deny authorization over provider credential use, proxied requests

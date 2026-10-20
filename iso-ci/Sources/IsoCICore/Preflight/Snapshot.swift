@@ -3,9 +3,8 @@ import Foundation
 
 /// What a snapshot capture includes and how it is bounded.
 package struct SnapshotOptions: Sendable, Equatable {
-  /// Include untracked, non-ignored files (otherwise only `include` matches).
-  package var includeUntracked = false
-  /// Patterns selecting extra untracked files to include.
+  /// Patterns selecting untracked files to include. Nothing untracked is
+  /// selected implicitly: no ignore file is read.
   package var include: [String] = []
   /// Extra exclusions on top of (or instead of) the defaults.
   package var exclude: [String] = []
@@ -18,10 +17,8 @@ package struct SnapshotOptions: Sendable, Equatable {
   package var maxFiles = 100_000
   package var maxFileBytes: UInt64 = 1 << 30
   package var maxTotalBytes: UInt64 = 4 << 30
-  package var maxBundleBytes: UInt64 = 2 << 30
   /// Captures retried when the tree changes underneath; then it fails.
   package var maxAttempts = 3
-  package var gitExecutable = "/usr/bin/git"
 
   package init(outputDirectory: String) { self.outputDirectory = outputDirectory }
 
@@ -54,9 +51,17 @@ package struct SnapshotFile: Sendable, Equatable, Codable {
 /// The archived manifest (`manifest.json`). Deterministic: it carries no
 /// capture time, so equal trees produce equal archives and digests.
 package struct SnapshotManifest: Sendable, Equatable, Codable {
-  package static let schema = "iso-ci.snapshot/v1"
+  /// v2: selected content only, without the base-commit bundle or any
+  /// original history (CI-01). A v1 reader must refuse it.
+  package static let schema = "iso-ci.snapshot/v2"
+
+  /// Whether this build reads `schema`. History-bearing v1 snapshots are
+  /// recaptured, never relabeled.
+  package static func readable(_ schema: String) -> Bool { schema == Self.schema }
 
   package let schema: String
+  /// The commit the selection was taken from: provenance only. The guest
+  /// never receives it; its repository is synthetic.
   package let baseCommit: String
   /// The snapshot differs from the base commit (modified, deleted or
   /// included untracked content). A dirty snapshot never attests that the
@@ -65,10 +70,10 @@ package struct SnapshotManifest: Sendable, Equatable, Codable {
   package let workflowPath: String?
   package let workflowDigest: Digest?
   package let files: [SnapshotFile]
-  /// Base-commit paths absent from the snapshot (removed by the overlay).
+  /// Always empty in v2: there is no base checkout to delete from.
   package let deletions: [String]
   package let excludePatterns: [String]
-  /// Paths left out by an exclusion (their base version, if any, remains).
+  /// Paths left out by an exclusion; the guest receives no version of them.
   package let excludedPaths: [String]
   package let includedUntracked: [String]
 
@@ -89,8 +94,8 @@ package struct SnapshotCaptureResult: Sendable, Equatable {
 }
 
 /// Host-side capture of an immutable selected tree from the operator's own
-/// git working directory (trusted local input). git runs with an explicit
-/// argv and a minimal environment; nothing is interpreted by a shell.
+/// git working directory. The index, HEAD and refs are parsed as inert
+/// data; no Git process, configuration, hook, filter or fsmonitor runs.
 package enum SnapshotCapture {
   package static func capture(repository: String, options: SnapshotOptions) throws(CIError)
     -> SnapshotCaptureResult
@@ -132,24 +137,60 @@ package enum SnapshotCapture {
     }
   }
 
-  static func git(
-    _ arguments: [String], root: String, options: SnapshotOptions, limit: Int = 64 << 20
-  )
-    throws(CIError) -> [UInt8]
+  /// Untracked regular files and links matching an explicit `include`
+  /// pattern, found by walking the tree (never `.git`). No ignore file is
+  /// read, so nothing untracked is selected implicitly.
+  static func untrackedMatching(root: String, tracked: Set<String>, options: SnapshotOptions)
+    throws(CIError) -> [String]
   {
-    var environment = Subprocess.baseEnvironment()
-    environment["LC_ALL"] = "C"
-    environment["GIT_TERMINAL_PROMPT"] = "0"
-    environment["GIT_OPTIONAL_LOCKS"] = "0"
-    let output = try Subprocess.run(
-      Subprocess.Request(
-        executable: options.gitExecutable,
-        arguments: ["-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-C", root]
-          + arguments, environment: environment, timeout: .seconds(600), outputLimit: limit))
-    guard output.succeeded, !output.truncated else {
-      throw CIError(.invalidRequest, "git \(arguments.first ?? "") failed in the repository")
+    var found: [String] = []
+    var pending = [""]
+    var visited = 0
+    while let relative = pending.popLast() {
+      let directory = relative.isEmpty ? root : root + "/" + relative
+      guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
+        continue
+      }
+      for name in names where name != ".git" {
+        visited += 1
+        guard visited <= options.maxFiles * 10 else {
+          throw CIError(.budgetExceeded, "the working tree is too large to search for includes")
+        }
+        let path = relative.isEmpty ? name : relative + "/" + name
+        var status = stat()
+        guard lstat(root + "/" + path, &status) == 0 else { continue }
+        if status.st_mode & S_IFMT == S_IFDIR {
+          pending.append(path)
+        } else if !tracked.contains(path), matchesInclude(path, patterns: options.include) {
+          found.append(path)
+        }
+      }
     }
-    return output.stdout
+    return found
+  }
+
+  /// Whether a tracked file is missing or its size or modification time
+  /// differs from what the index recorded.
+  static func indexDisagrees(_ entries: [GitIndex.Entry], root: String) -> Bool {
+    entries.contains { entry in
+      var status = stat()
+      guard lstat(root + "/" + entry.path, &status) == 0 else { return true }
+      return UInt32(truncatingIfNeeded: status.st_size) != entry.size
+        || UInt32(truncatingIfNeeded: status.st_mtimespec.tv_sec) != entry.mtimeSeconds
+        || UInt32(truncatingIfNeeded: status.st_mtimespec.tv_nsec) != entry.mtimeNanos
+    }
+  }
+
+  /// Whether the index was written after HEAD last moved (staged changes).
+  static func indexNewerThanHead(_ layout: GitIndex.Layout) -> Bool {
+    var index = stat()
+    guard lstat(layout.gitDirectory + "/index", &index) == 0 else { return false }
+    var newest = 0
+    for path in [layout.gitDirectory + "/HEAD", layout.gitDirectory + "/logs/HEAD"] {
+      var status = stat()
+      if lstat(path, &status) == 0 { newest = max(newest, status.st_mtimespec.tv_sec) }
+    }
+    return index.st_mtimespec.tv_sec > newest
   }
 
   static func nulSeparated(_ bytes: [UInt8]) -> [String] {
@@ -214,53 +255,16 @@ package enum SnapshotCapture {
   static func captureOnce(repository: String, options: SnapshotOptions, attempt: Int) throws
     -> SnapshotCaptureResult
   {
-    let topLevel = String(
-      decoding: try git(["rev-parse", "--show-toplevel"], root: repository, options: options),
-      as: UTF8.self
-    ).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard topLevel.hasPrefix("/") else { throw CIError.invalid("not a git working tree") }
-    let root = topLevel
-    let head = try headCommit(root: root, options: options)
-    // Index entries (stage 0); gitlinks and conflicts are unsupported.
-    var indexPaths: [String] = []
-    for record in nulSeparated(try git(["ls-files", "-z", "-s"], root: root, options: options)) {
-      guard let tab = record.firstIndex(of: "\t") else { continue }
-      let fields = record[..<tab].split(separator: " ")
-      let path = String(record[record.index(after: tab)...])
-      guard fields.count == 3 else { continue }
-      if fields[0] == "160000" {
-        throw CIError(.compatibilityRejected, "submodule layouts are unsupported (\(path))")
-      }
-      guard fields[2] == "0" else {
-        throw CIError(.conflict, "the index has unresolved merge conflicts (\(path))")
-      }
-      indexPaths.append(path)
-    }
-    var basePaths: Set<String> = []
-    for record in nulSeparated(
-      try git(["ls-tree", "-r", "-z", "--full-tree", head], root: root, options: options))
-    {
-      guard let tab = record.firstIndex(of: "\t") else { continue }
-      let fields = record[..<tab].split(separator: " ")
-      let path = String(record[record.index(after: tab)...])
-      if fields.first == "160000" {
-        throw CIError(.compatibilityRejected, "submodule layouts are unsupported (\(path))")
-      }
-      basePaths.insert(path)
-    }
-    var untracked: [String] = []
-    if options.includeUntracked || !options.include.isEmpty {
-      for path in nulSeparated(
-        try git(["ls-files", "-z", "--others", "--exclude-standard"], root: root, options: options))
-      where options.includeUntracked || matchesInclude(path, patterns: options.include) {
-        untracked.append(path)
-      }
-    }
-    let changed = Set(
-      nulSeparated(
-        try git(
-          ["diff", "--no-ext-diff", "--name-only", "-z", head, "--"], root: root, options: options))
-    )
+    // The index, HEAD and refs are read as data: no Git process runs on the
+    // operator's repository (CI-01).
+    let layout = try GitIndex.layout(containing: repository)
+    let root = layout.root
+    let head = try GitIndex.head(layout)
+    let indexEntries = try GitIndex.entries(layout)
+    let indexPaths = indexEntries.map(\.path)
+    let untracked =
+      options.include.isEmpty
+      ? [] : try untrackedMatching(root: root, tracked: Set(indexPaths), options: options)
     let patterns = options.effectiveExcludes
     var candidates: [String] = []
     var excludedPaths: [String] = []
@@ -294,7 +298,6 @@ package enum SnapshotCapture {
     }
     var files: [SnapshotFile] = []
     var observed: [String: Observed] = [:]
-    var present: Set<String> = []
     var total: UInt64 = 0
     for path in candidates {
       let full = root + "/" + path
@@ -346,28 +349,16 @@ package enum SnapshotCapture {
       default:
         throw CIError(.compatibilityRejected, "\(path) is not a regular file or symlink")
       }
-      present.insert(path)
     }
-    let excludedSet = Set(excludedPaths)
-    let deletions = basePaths.subtracting(present).subtracting(excludedSet)
-      .sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
+    // v2 snapshots carry no base checkout, so nothing is deleted from one.
+    let deletions: [String] = []
+    // Conservatively dirty: an included untracked file, a tracked file whose
+    // size or time differs from the index (or that is gone), or an index
+    // written after HEAD (staged changes). A false "dirty" only withholds
+    // the clean-tree label.
     let dirty =
-      !deletions.isEmpty || !includedUntracked.isEmpty
-      || !changed.subtracting(excludedSet).isEmpty
-    // The base commit for the guest, without network.
-    let bundle = options.outputDirectory + "/bundle-" + randomHex(bytes: 8)
-    defer { unlink(bundle) }
-    _ = try git(["bundle", "create", "--quiet", bundle, "HEAD"], root: root, options: options)
-    var bundleStatus = stat()
-    guard lstat(bundle, &bundleStatus) == 0, (bundleStatus.st_mode & S_IFMT) == S_IFREG else {
-      throw CIError.storage("git did not produce a bundle")
-    }
-    guard UInt64(bundleStatus.st_size) <= options.maxBundleBytes else {
-      throw CIError(.budgetExceeded, "the base-commit bundle exceeds its size limit")
-    }
-    _ = try writer.addFile(
-      name: "base.bundle", mode: 0o644, source: bundle, expectedSize: UInt64(bundleStatus.st_size),
-      expected: Observed(bundleStatus))
+      !includedUntracked.isEmpty || indexDisagrees(indexEntries, root: root)
+      || indexNewerThanHead(layout)
     // Concurrent-modification checks: every captured path, HEAD and the index.
     for (path, before) in observed {
       var status = stat()
@@ -375,12 +366,7 @@ package enum SnapshotCapture {
         throw ConcurrentChange(path: path)
       }
     }
-    for path in deletions where access(root + "/" + path, F_OK) == 0 {
-      if tracked.contains(path) || untracked.contains(path) { throw ConcurrentChange(path: path) }
-    }
-    guard try headCommit(root: root, options: options) == head else {
-      throw ConcurrentChange(path: "HEAD")
-    }
+    guard try GitIndex.head(layout) == head else { throw ConcurrentChange(path: "HEAD") }
     let workflowDigest = options.workflowPath.flatMap { workflow in
       files.first { $0.path == workflow && $0.kind == .file }?.sha256
     }
@@ -415,17 +401,6 @@ package enum SnapshotCapture {
     return SnapshotCaptureResult(
       archivePath: archivePath, manifest: manifest, digest: digest, size: size,
       capturedAt: SystemClock().now(), attempts: attempt)
-  }
-
-  static func headCommit(root: String, options: SnapshotOptions) throws(CIError) -> String {
-    let head = String(
-      decoding: try git(["rev-parse", "--verify", "HEAD^{commit}"], root: root, options: options),
-      as: UTF8.self
-    ).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard [40, 64].contains(head.utf8.count), Array(head.utf8).allSatisfy(isLowerHex) else {
-      throw CIError.invalid("the repository has no base commit")
-    }
-    return head
   }
 
   static func nulList(_ items: [String]) -> [UInt8] {

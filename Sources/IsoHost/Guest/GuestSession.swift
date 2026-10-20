@@ -7,9 +7,10 @@ import IsoConfiguration
 import IsoCore
 import Synchronization
 
-/// Environment variables forwarded to the guest with `SendEnv`: names go
-/// on the ssh argv, values only into ssh's own environment. Every value is
-/// treated as secret (API keys, tokens), so nothing here prints one.
+/// Environment variables requested for the guest. Every value is treated as
+/// secret (API keys, tokens), so nothing here prints one. A requested name
+/// never configures the host: `prepare` moves each value under a generated
+/// alias, and a wrapper restores the original name inside the guest.
 package struct EnvForward: Sendable, CustomStringConvertible {
   package private(set) var names: [String] = []
   private var values: [String: Secret<String>] = [:]
@@ -23,19 +24,136 @@ package struct EnvForward: Sendable, CustomStringConvertible {
 
   package func contains(_ name: String) -> Bool { values[name] != nil }
 
-  package var sendEnvOptions: [String] { names.flatMap { ["-o", "SendEnv=\($0)"] } }
-
-  /// Added to ssh's own environment only.
-  func overlay(_ environment: [String: String]) -> [String: String] {
-    var merged = environment
-    for name in names { merged[name] = values[name]?.expose() }
-    return merged
-  }
-
   package var description: String {
     "EnvForward { vars: {"
       + names.map { "\(debugQuoted($0)): \"<redacted>\"" }.joined(separator: ", ")
       + "} }"
+  }
+
+  /// Policy limits, not OpenSSH's: a request over any of them fails before
+  /// ssh starts, and nothing is ever truncated.
+  static let maxEntries = 64
+  static let maxValueBytes = 8 * 1024
+  static let maxTotalBytes = 64 * 1024
+  static let maxWrapperBytes = 64 * 1024
+  static let aliasPrefix = "ISO_SSH_ENV_"
+
+  /// The guest command for `remote` with these variables. `terminal` is the
+  /// caller's TERM intent; a normalized TERM replaces a requested one before
+  /// encoding, so it still wins as it did before aliasing.
+  func prepare(_ remote: String, terminal: GuestTerminal) throws -> PreparedGuestCommand {
+    guard !names.isEmpty else { return PreparedGuestCommand(remote: remote, aliases: []) }
+    guard names.count <= Self.maxEntries else {
+      throw HostError(
+        "Refusing to forward \(names.count) guest environment variables (limit \(Self.maxEntries))")
+    }
+    var total = 0
+    var entries: [(name: EnvVarName, value: String)] = []
+    for name in names {
+      let valid: EnvVarName
+      do { valid = try EnvVarName(name) } catch {
+        throw HostError("Refusing to forward a guest environment variable: \(error.message)")
+      }
+      var value = values[name]?.expose() ?? ""
+      if name == "TERM", case .normalized(let term) = terminal { value = term }
+      guard !value.utf8.contains(0) else {
+        throw HostError(
+          "Refusing to forward guest environment variable \(name): its value contains NUL")
+      }
+      guard value.utf8.count <= Self.maxValueBytes else {
+        throw HostError(
+          "Refusing to forward guest environment variable \(name): its value exceeds \(Self.maxValueBytes) bytes"
+        )
+      }
+      total += name.utf8.count + value.utf8.count
+      entries.append((valid, value))
+    }
+    guard total <= Self.maxTotalBytes else {
+      throw HostError(
+        "Refusing to forward the guest environment: its names and values exceed \(Self.maxTotalBytes) bytes"
+      )
+    }
+    let aliases = entries.indices.map { "\(Self.aliasPrefix)\($0)" }
+    // Every value is captured into a positional parameter before any name is
+    // exported, so a requested name that matches an alias, or the saved
+    // login shell and command (`$1`, `$2`), cannot disturb the restore.
+    let present = entries.indices.map { "[ \"${\(3 + 2 * $0)}\" = s ]" }.joined(separator: " && ")
+    let exports = entries.enumerated().map { index, entry in
+      "export \(entry.name.rawValue)=\"${\(4 + 2 * index)}\""
+    }.joined(separator: " && ")
+    let script =
+      "\(present) || { echo 'iso: a forwarded guest environment variable did not arrive (the guest sshd must AcceptEnv ISO_SSH_ENV_*)' >&2; exit 125; }; "
+      + "unset \(aliases.joined(separator: " ")); "
+      + "\(exports) || { echo 'iso: failed to set a forwarded guest environment variable' >&2; exit 125; }; "
+      + "exec \"$2\" -c \"$1\""
+    let captures = aliases.map { "\"${\($0)+s}\" \"${\($0)-}\"" }.joined(separator: " ")
+    let wrapper = "exec /bin/sh -c \(shellEscape(script)) iso-env "
+    let tail = " \"${SHELL:-/bin/sh}\" \(captures)"
+    guard wrapper.utf8.count + tail.utf8.count <= Self.maxWrapperBytes else {
+      throw HostError(
+        "Refusing to forward the guest environment: its wrapper exceeds \(Self.maxWrapperBytes) bytes"
+      )
+    }
+    return PreparedGuestCommand(
+      remote: wrapper + shellEscape(remote) + tail,
+      aliases: zip(aliases, entries).map { ($0, Secret($1.value)) })
+  }
+}
+
+/// What a guest PTY's TERM should be: the caller's requested value, or iso's
+/// normalized host-derived terminal type.
+enum GuestTerminal: Sendable, Equatable {
+  case requested
+  case normalized(String)
+}
+
+/// A guest command with its matched wrapper, `SendEnv` options and alias
+/// values. Only `EnvForward.prepare` builds one, so the three cannot drift.
+struct PreparedGuestCommand: Sendable {
+  let remote: String
+  private let aliases: [(name: String, value: Secret<String>)]
+
+  fileprivate init(remote: String, aliases: [(String, Secret<String>)]) {
+    self.remote = remote
+    self.aliases = aliases.map { (name: $0.0, value: $0.1) }
+  }
+
+  /// Exactly the generated aliases, nothing a requested name chose.
+  var options: [String] { aliases.flatMap { ["-o", "SendEnv=\($0.name)"] } }
+
+  /// The host ssh environment: `base` (an independent host snapshot, kept
+  /// even where a guest asked for the same name) with stale aliases removed
+  /// and the generated ones added.
+  func environment(_ base: [String: String]) -> [String: String] {
+    var merged = base.filter { !$0.key.hasPrefix(EnvForward.aliasPrefix) }
+    for alias in aliases { merged[alias.name] = alias.value.expose() }
+    return merged
+  }
+
+  /// The ssh argv and environment, refused before spawning when they would
+  /// not fit the host's argument space.
+  func launch(
+    _ target: SSHTarget, base: [String: String], pty: Bool
+  ) throws -> (arguments: [String], environment: [String: String]) {
+    // A fixed escape character keeps `Enter ~.` working whatever the
+    // user's ssh config says.
+    let arguments =
+      target.sshOptions + options + (pty ? ["-e", "~", "-t"] : []) + [target.address, remote]
+    let environment = environment(base)
+    let size =
+      arguments.reduce(0) { $0 + $1.utf8.count + 1 }
+      + environment.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count + 2 }
+    guard size <= Self.hostArgumentLimit else {
+      throw HostError("Refusing to launch SSH: its arguments and environment exceed the host limit")
+    }
+    return (arguments, environment)
+  }
+
+  /// Half of the host's `ARG_MAX`, leaving room for pointers and the
+  /// runner's own additions.
+  static var hostArgumentLimit: Int {
+    let limit = sysconf(_SC_ARG_MAX)
+    return limit > 0 ? limit / 2 : 128 * 1024
   }
 }
 
@@ -48,8 +166,6 @@ package struct SSHSession: Sendable {
     self.target = target
     self.env = env
   }
-
-  package var sshOptions: [String] { target.sshOptions + env.sendEnvOptions }
 }
 
 /// A prepared workload whose original readiness identity is rechecked at launch.
@@ -160,16 +276,26 @@ final class SessionSupervisor: Sendable {
 }
 
 extension SSHTarget {
-  /// `scp` takes the port as `-P`.
-  package var scpOptions: [String] { ["-q"] + transportOptions + ["-P", String(port)] }
+  /// `scp` takes the port as `-P`; `-S` pins the ssh it runs (SSH-01),
+  /// so neither `PATH` nor scp's own default chooses it.
+  package func scpOptions(ssh: String) -> [String] {
+    ["-q", "-S", ssh] + transportOptions + ["-P", String(port)]
+  }
 
-  /// rsync's `-e`: it splits on whitespace but honors quotes.
-  package var rsyncSSHCommand: String {
-    "ssh "
-      + sshOptions.map { option in
-        option.unicodeScalars.contains(where: { $0.properties.isWhitespace })
-          ? "'\(option)'" : option
-      }.joined(separator: " ")
+  /// rsync's `-e`, serialized for rsync's own tokenizer (whitespace splits;
+  /// single quotes group and keep `"` literal) rather than a shell's. A word rsync cannot carry
+  /// intact (a `'`, a backslash or a control character) is refused, never mangled.
+  func rsyncSSHCommand(ssh: String) throws -> String {
+    try ([ssh] + sshOptions).map { word in
+      guard
+        !word.isEmpty,
+        !word.unicodeScalars.contains(where: {
+          $0 == "'" || $0 == "\\" || $0.properties.generalCategory == .control
+        })
+      else { throw HostError("an SSH option cannot be passed to rsync intact") }
+      return word.unicodeScalars.contains(where: { $0.properties.isWhitespace || $0 == "\"" })
+        ? "'\(word)'" : word
+    }.joined(separator: " ")
   }
 }
 
@@ -203,11 +329,11 @@ extension SSHClient {
 
   /// Like `exec`, with `env` forwarded.
   package func exec(_ session: SSHSession, _ command: RemoteCommand) throws {
+    let launch = try session.env.prepare(command.rendered, terminal: .requested).launch(
+      session.target, base: environment, pty: false)
     try session.target.requireHandoff()
     let termination = try runner.attached(
-      request(
-        try ssh(), session.sshOptions + [session.target.address, command.rendered],
-        environment: session.env.overlay(environment)),
+      request(try ssh(), launch.arguments, environment: launch.environment),
       inheritStdin: true, deadline: nil)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
@@ -215,11 +341,11 @@ extension SSHClient {
   /// Like `exec(session:)`, with `stdin` for the remote command: a value
   /// that must not appear on the host argv (or in this error text).
   package func exec(_ session: SSHSession, _ command: RemoteCommand, stdin: [UInt8]) throws {
+    let launch = try session.env.prepare(command.rendered, terminal: .requested).launch(
+      session.target, base: environment, pty: false)
     try session.target.requireHandoff()
     let termination = try runner.attached(
-      request(
-        try ssh(), session.sshOptions + [session.target.address, command.rendered],
-        environment: session.env.overlay(environment), input: stdin),
+      request(try ssh(), launch.arguments, environment: launch.environment, input: stdin),
       inheritStdin: false, deadline: nil)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
@@ -279,21 +405,15 @@ extension SSHClient {
     try target.requireHandoff()
     let termination = try runner.attached(
       request(
-        scp, target.scpOptions + (recursive ? ["-r"] : []) + [local, "\(target.address):\(remote)"]),
+        scp,
+        target.scpOptions(ssh: try ssh()) + (recursive ? ["-r"] : [])
+          + [local, "\(target.address):\(remote)"]),
       inheritStdin: true, deadline: nil)
     guard termination.succeeded else {
       throw HostError("\(recursive ? "scp -r" : "scp") failed: \(local) -> \(remote)")
     }
   }
 
-  func executable(named name: String) -> String? {
-    for directory in (environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
-    where !directory.isEmpty {
-      let candidate = "\(directory)/\(name)"
-      if access(candidate, X_OK) == 0 { return candidate }
-    }
-    return nil
-  }
 }
 
 extension ProcessRunner.Termination {
@@ -347,12 +467,6 @@ package enum InteractiveSSH {
     return ["xterm", "xterm-256color", "screen", "vt100"].contains(term) ? term : "xterm-256color"
   }
 
-  package static func arguments(_ session: SSHSession, remote: String) -> [String] {
-    // A fixed escape character keeps `Enter ~.` working whatever the
-    // user's ssh config says.
-    session.sshOptions + ["-e", "~", "-t", session.target.address, remote]
-  }
-
   /// Guest command in `workingDirectory`. A missing directory fails the
   /// remote `cd`; nothing is created on the host or in the guest.
   package static func remote(_ command: [String], workingDirectory: GuestPath) -> String {
@@ -371,11 +485,12 @@ package enum InteractiveSSH {
   ) throws -> ProcessRunner.Termination {
     let session = workload.session
     guard let ssh = client.sshExecutable() else { throw HostError(missingSSH) }
-    var environment = session.env.overlay(client.environment)
-    if allocatePTY { environment["TERM"] = guestTerm(client.environment) }
-    let arguments =
-      allocatePTY
-      ? arguments(session, remote: remote) : session.sshOptions + [session.target.address, remote]
+    let term = guestTerm(client.environment)
+    var launch = try session.env.prepare(
+      remote, terminal: allocatePTY ? .normalized(term) : .requested
+    ).launch(session.target, base: client.environment, pty: allocatePTY)
+    // ssh sends its own TERM in the PTY request.
+    if allocatePTY { launch.environment["TERM"] = term }
     do { try workload.revalidate() } catch {
       audit?.revalidationFailed()
       throw error
@@ -383,7 +498,7 @@ package enum InteractiveSSH {
     audit?.handoff(pty: allocatePTY, forwarded: session.env.names)
     do {
       let termination = try workload.attached(
-        client, client.request(ssh, arguments, environment: environment),
+        client, client.request(ssh, launch.arguments, environment: launch.environment),
         inheritStdin: inheritStdin)
       audit?.transportEnded(termination)
       return termination

@@ -673,7 +673,7 @@ private struct UpdateFixture {
   }
 
   func updater(
-    _ extra: [String: String] = ["ISO_UPDATE_API_BASE_URL": "http://fixture"], log: DiagnosticsLog,
+    _ extra: [String: String] = [:], log: DiagnosticsLog,
     confirm: @escaping @Sendable (String) throws -> Bool = { _ in false }
   ) -> Updater {
     var environment = ["PATH": bin + ":/usr/bin:/bin", "FIXTURE": served, "STUB_LOG": self.log]
@@ -683,6 +683,8 @@ private struct UpdateFixture {
       currentExecutable: install + "/iso", diagnostics: log.diagnostics, confirm: confirm,
       now: { 1234 })
     updater.signers = [signerKey(signingKey)]
+    // Extra environment means a production-mode run against github.com.
+    updater.fixtureBase = extra.isEmpty ? "http://fixture" : nil
     return updater
   }
 
@@ -876,6 +878,51 @@ private let untouched = [
     #expect(fixture.calls.isEmpty)
   }
 
+  @Test func aProductionBuildRefusesTheSourceOverrideBeforeAnyRequest() throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    try fixture.publish(fullRelease)
+    var updater = fixture.updater(
+      ["ISO_UPDATE_API_BASE_URL": "http://fixture"], log: DiagnosticsLog())
+    updater.fixtureBase = nil
+    #expect(throws: HostError.self) { try updater.run(.init(skipConfirm: true)) }
+    #expect(throws: (any Error).self) { _ = try updater.fetchLatest() }
+    #expect(fixture.calls.isEmpty)
+    #expect(fixture.installed == untouched)
+  }
+
+  @Test func releaseTagAndAssetsAreBoundToThisRepository() throws {
+    let base = "https://github.com/chr33s/iso/releases/download/v9.9.9/"
+    func release(_ assets: [(String, String)], tag: String = "v9.9.9") -> Release {
+      Release(tag: tag, assets: assets.map { Release.Asset(name: $0.0, url: $0.1) })
+    }
+    let good = release([("SHA256SUMS", base + "SHA256SUMS")])
+    try good.requireCanonicalTag(requested: "v9.9.9")
+    try good.requireBound(good.assets[0], fixtureBase: nil)
+    #expect(throws: HostError.self) { try good.requireCanonicalTag(requested: "v9.9.8") }
+    #expect(throws: HostError.self) {
+      try release([], tag: "9.9.9").requireCanonicalTag(requested: nil)
+    }
+    for url in [
+      "https://github.com/evil/iso/releases/download/v9.9.9/SHA256SUMS",
+      "https://github.com/chr33s/iso/releases/download/v9.9.8/SHA256SUMS",
+      "https://user@github.com/chr33s/iso/releases/download/v9.9.9/SHA256SUMS",
+      "https://github.com:8443/chr33s/iso/releases/download/v9.9.9/SHA256SUMS",
+      base + "SHA256SUMS?x=1", base + "SHA256SUMS#x", base + "%2e%2e/SHA256SUMS",
+      "http://github.com/chr33s/iso/releases/download/v9.9.9/SHA256SUMS",
+      "https://github.com.evil.example/chr33s/iso/releases/download/v9.9.9/SHA256SUMS",
+    ] {
+      let bad = release([("SHA256SUMS", url)])
+      #expect(throws: HostError.self, "\(url)") {
+        try bad.requireBound(bad.assets[0], fixtureBase: nil)
+      }
+    }
+    let duplicate = release([("SHA256SUMS", base + "SHA256SUMS"), ("SHA256SUMS", base + "x")])
+    #expect(throws: HostError.self) {
+      try duplicate.requireBound(duplicate.assets[0], fixtureBase: nil)
+    }
+  }
+
   @Test func bearerTokenTravelsOnStdinOnly() throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
@@ -892,13 +939,15 @@ private let untouched = [
       readText(fixture.log + ".stdin")
         == String(repeating: "Authorization: token ghp_secret\n", count: 4))
     #expect(
-      log.contains("Note: `gh` not installed — skipped cryptographic attestation verification."))
+      log.contains("Note: `gh` not installed — skipped Sigstore build-provenance verification."))
   }
 
   @Test func attestationUsesTheBundleWithoutCredentialsAndFailsClosed() throws {
     let fixture = try UpdateFixture(withGh: true)
     defer { fixture.remove() }
-    try fixture.publish(fullRelease, bundle: #"{"bundle": 1}"#, base: "https://github.com/dl")
+    try fixture.publish(
+      fullRelease, bundle: #"{"bundle": 1}"#,
+      base: "https://github.com/chr33s/iso/releases/download/v9.9.9")
     let failing = fixture.updater(
       ["GITHUB_TOKEN": "ghp_secret", "GH_VERIFY_EXIT": "1"], log: DiagnosticsLog())
     do {
@@ -917,7 +966,10 @@ private let untouched = [
     #expect(verify.hasSuffix("/attestations.jsonl"))
     // The bundle is fetched with a bare curl: no header, no token on stdin.
     let bundleFetch = try #require(fixture.calls.first { $0.contains("attestations.jsonl -o") })
-    #expect(bundleFetch.hasPrefix("curl -fsSL https://github.com/dl/attestations.jsonl -o "))
+    #expect(
+      bundleFetch.hasPrefix(
+        "curl -fsSL --proto =https --proto-redir =https https://github.com/chr33s/iso/releases/download/v9.9.9/attestations.jsonl -o "
+      ))
     #expect(
       readText(fixture.log + ".stdin")?.components(separatedBy: "\n").filter { !$0.isEmpty }.count
         == 4)
@@ -930,7 +982,8 @@ private let untouched = [
   @Test func attestationFallsBackToTheAPIAndNamesWhy() throws {
     let fixture = try UpdateFixture(withGh: true)
     defer { fixture.remove() }
-    try fixture.publish(fullRelease, bundle: "", base: "https://github.com/dl")
+    try fixture.publish(
+      fullRelease, bundle: "", base: "https://github.com/chr33s/iso/releases/download/v9.9.9")
     let log = DiagnosticsLog()
     do {
       try fixture.updater(["GH_VERIFY_EXIT": "1"], log: log).run(.init(skipConfirm: true))
@@ -943,6 +996,32 @@ private let untouched = [
     #expect(log.contains("attestations.jsonl for release v9.9.9 is empty"))
     let verify = try #require(fixture.calls.first { $0.hasPrefix("gh attestation verify") })
     #expect(!verify.contains("--bundle"))
+    #expect(fixture.installed == untouched)
+  }
+
+  @Test func theRunPathChecksTheReleaseTagAndAssetBinding() throws {
+    // A pinned request answered with another release's metadata.
+    let other = try UpdateFixture(tag: "v9.9.8")
+    defer { other.remove() }
+    try other.publish(fullRelease)
+    try FileManager.default.copyItem(
+      atPath: other.served + "/repos/chr33s/iso/releases/tags/v9.9.8",
+      toPath: other.served + "/repos/chr33s/iso/releases/tags/v9.9.9")
+    #expect(throws: HostError("Requested release v9.9.9 but GitHub returned v9.9.8; refusing it")) {
+      try other.updater(log: DiagnosticsLog()).run(.init(pinnedVersion: "9.9.9", skipConfirm: true))
+    }
+    #expect(other.calls.allSatisfy { !$0.contains(" -o ") })
+    #expect(other.installed == untouched)
+
+    // Assets served from outside the release origin are never downloaded.
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    try fixture.publish(fullRelease, base: "http://elsewhere")
+    let error = try #require(throws: HostError.self) {
+      try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+    }
+    #expect(error.message.contains("is not served from chr33s/iso release v9.9.9"))
+    #expect(fixture.calls.allSatisfy { !$0.contains(" -o ") })
     #expect(fixture.installed == untouched)
   }
 

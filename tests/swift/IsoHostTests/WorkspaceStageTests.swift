@@ -42,8 +42,8 @@ private struct Fixture {
   }
 
   func build(_ limits: StageLimits = .defaults) throws -> StageManifest {
-    var builder = StageBuilder(tree: tree, destination: destination, limits: limits)
-    return try builder.build(id: "0badf00d", instance: "test", excludeGit: false)
+    var builder = try StageBuilder(tree: tree, destination: destination, limits: limits)
+    return try builder.build(id: "0badf00d0badf00d", instance: "test")
   }
 
   func cleanup() {
@@ -65,7 +65,7 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   try f.write("a.txt", "new\n", in: f.tree)
   try f.write("same.txt", "same\n", in: f.tree)
   try f.write("new/dir/b.sh", "#!/bin/sh\n", in: f.tree, mode: 0o755)
-  try f.write("was-file/inner.txt", "i", in: f.tree)
+  try f.link("was-file", to: "a.txt", in: f.tree)
   try f.link("link", to: "a.txt", in: f.tree)
 
   let manifest = try f.build()
@@ -73,14 +73,16 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(
     operations(manifest) == [
       "a.txt": .modify, "new": .add, "new/dir": .add, "new/dir/b.sh": .add, "link": .add,
-      "was-file": .typeChange, "was-file/inner.txt": .add,
+      "was-file": .typeChange,
     ])
   #expect(manifest.changes.map(\.path) == manifest.changes.map(\.path).sorted())
 
   let applied = try StageApplier(manifest: manifest, tree: f.tree).apply()
   #expect(applied.count == manifest.changes.count)
   #expect(try f.read(f.destination + "/a.txt") == "new\n")
-  #expect(try f.read(f.destination + "/was-file/inner.txt") == "i")
+  #expect(
+    try FileManager.default.destinationOfSymbolicLink(atPath: f.destination + "/was-file")
+      == "a.txt")
   #expect(
     try FileManager.default.destinationOfSymbolicLink(atPath: f.destination + "/link") == "a.txt")
   var info = stat()
@@ -100,7 +102,7 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(manifest.issues.count == 3)
   #expect(manifest.issues.allSatisfy { $0.contains("outside the workspace") })
   #expect(operations(manifest)["d/ok"] == .add)
-  #expect(throws: HostError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
+  #expect(throws: ReturnError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
   #expect(!FileManager.default.fileExists(atPath: f.destination + "/d"))
 }
 
@@ -118,19 +120,32 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   let f = try Fixture()
   defer { f.cleanup() }
   try f.write("target.txt", "outside\n", in: f.outside)
-  try f.link("sub", to: f.outside, in: f.destination)
   try f.link("file", to: f.outside + "/target.txt", in: f.destination)
-  try f.write("sub/planted.txt", "guest\n", in: f.tree)
   try f.write("file", "guest\n", in: f.tree)
 
   let manifest = try f.build()
-  #expect(
-    operations(manifest) == ["sub": .typeChange, "sub/planted.txt": .add, "file": .typeChange])
+  #expect(operations(manifest) == ["file": .typeChange])
   _ = try StageApplier(manifest: manifest, tree: f.tree).apply()
-  #expect(!FileManager.default.fileExists(atPath: f.outside + "/planted.txt"))
   #expect(try f.read(f.outside + "/target.txt") == "outside\n")
-  #expect(try f.read(f.destination + "/sub/planted.txt") == "guest\n")
   #expect(try f.read(f.destination + "/file") == "guest\n")
+}
+
+/// A file or link replaced by a directory would unlink the old object
+/// before the directory exists; this release refuses the transition.
+@Test func fileOrLinkToDirectoryIsRefusedBeforeAnyWrite() throws {
+  let f = try Fixture()
+  defer { f.cleanup() }
+  try f.link("sub", to: f.outside, in: f.destination)
+  try f.write("was-file", "x", in: f.destination)
+  try f.write("sub/planted.txt", "guest\n", in: f.tree)
+  try f.write("was-file/inner.txt", "i", in: f.tree)
+  try f.write("ok.txt", "ok", in: f.tree)
+  let manifest = try f.build()
+  #expect(!manifest.applicable)
+  #expect(manifest.issues.filter { $0.contains("with a directory") }.count == 2)
+  #expect(throws: ReturnError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
+  #expect(!FileManager.default.fileExists(atPath: f.destination + "/ok.txt"))
+  #expect(!FileManager.default.fileExists(atPath: f.outside + "/planted.txt"))
 }
 
 @Test func specialFilesHardLinksAndBadNamesAreIssues() throws {
@@ -211,7 +226,7 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   try f.write("b.txt", "guest\n", in: f.tree)
   let manifest = try f.build()
   try f.write("a.txt", "edited meanwhile\n", in: f.destination)
-  #expect(throws: HostError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
+  #expect(throws: ReturnError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
   #expect(try f.read(f.destination + "/a.txt") == "edited meanwhile\n")
   #expect(!FileManager.default.fileExists(atPath: f.destination + "/b.txt"))
 }
@@ -237,11 +252,12 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
 @Test func stageRemovalHandlesLockedDirectories() throws {
   let f = try Fixture()
   defer { f.cleanup() }
-  let location = StageLocation(root: f.root + "/stage")
-  try location.prepare()
-  try f.write("locked/inner/file", "x", in: location.tree)
-  chmod(location.tree + "/locked/inner", 0o000)
-  chmod(location.tree + "/locked", 0o000)
+  let location = StageLocation(root: f.root + "/returns")
+  try makeSelectedStage(location, destination: f.destination) { tree in
+    try f.write("locked/inner/file", "x", in: tree)
+    chmod(tree + "/locked/inner", 0o000)
+  }
+  chmod(try location.loadSelected().stage.tree + "/locked", 0o000)
   try location.remove()
   #expect(!location.exists)
 }
@@ -249,15 +265,16 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
 @Test func manifestRoundTripsThroughTheStageLocation() throws {
   let f = try Fixture()
   defer { f.cleanup() }
-  let location = StageLocation(root: f.root + "/stage")
-  try location.prepare()
-  try f.write("a.txt", "x", in: location.tree)
-  var builder = StageBuilder(tree: location.tree, destination: f.destination, limits: .defaults)
-  let manifest = try builder.build(id: "abcd1234", instance: "test", excludeGit: true)
-  try location.saveManifest(manifest)
-  #expect(try location.loadManifest() == manifest)
+  let location = StageLocation(root: f.root + "/returns")
+  let selected = try makeSelectedStage(location, destination: f.destination) {
+    try f.write("a.txt", "x", in: $0)
+  }
+  #expect(try location.loadSelected().manifest == selected.manifest)
+  #expect(selected.manifest.version == 2 && selected.manifest.returnPolicy == .sensitiveGrants)
   var info = stat()
-  #expect(stat(location.manifestPath, &info) == 0 && info.st_mode & 0o777 == 0o600)
+  #expect(
+    stat(selected.stage.manifestPath, &info) == 0 && info.st_mode & 0o777 == 0o600)
+  #expect(stat(location.root, &info) == 0 && info.st_mode & 0o777 == 0o700)
 }
 
 @Test func reviewShowsChangesDiffsAndConspicuousPaths() throws {
@@ -266,18 +283,28 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   try f.write("a.txt", "one\ntwo\nthree\n", in: f.destination)
   try f.write("a.txt", "one\n2\nthree\n", in: f.tree)
   try f.write(".git/hooks/pre-commit", "#!/bin/sh\n", in: f.tree, mode: 0o755)
+  try f.write(".envrc", "export X=1\n", in: f.tree)
   try f.write("bidi\u{202E}txt.exe", "x", in: f.tree)
   let manifest = try f.build()
   let review = StageReview(manifest: manifest, tree: f.tree)
   let summary = review.summary(instance: "test")
-  #expect(summary[1].contains("4 added, 1 modified, 0 type changes"))
-  #expect(summary.contains { $0.contains(".git/hooks/pre-commit") && $0.contains("git hook runs") })
+  #expect(summary[1].contains("2 added, 1 modified, 0 type changes"))
+  #expect(!summary.contains { $0.contains("pre-commit") })
+  #expect(summary.contains { $0.contains("1 git administration entries") })
+  #expect(summary.contains { $0.contains(".envrc") && $0.contains("withheld: direnv") })
   #expect(summary.contains { $0.contains("bidi?txt.exe") })
   #expect(!summary.joined().contains("\u{202E}"))
+  #expect(review.applyCommand(instance: "t").hasSuffix("--approve-sensitive '.envrc'"))
   let diffs = review.textDiffs()
   #expect(diffs.contains("--- a/a.txt"))
   #expect(diffs.contains("-two"))
   #expect(diffs.contains("+2"))
+  #expect(!diffs.contains { $0.contains("stale") })
+  // Content that no longer matches the manifest marks the view stale.
+  try f.write("a.txt", "one\nTWO\nthree\n", in: f.destination)
+  var stale = false
+  _ = review.textDiffs(markOmitted: true, stale: &stale)
+  #expect(stale)
 }
 
 @Test func hunksKeepThreeLinesOfContext() {
@@ -321,8 +348,8 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
 @Test func stageLockSerializesUsersAndSurvivesStageRemoval() throws {
   let f = try Fixture()
   defer { f.cleanup() }
-  let location = StageLocation(root: f.root + "/stage")
-  try location.prepare()
+  let location = StageLocation(root: f.root + "/returns")
+  try makeSelectedStage(location, destination: f.destination) { try f.write("a", "x", in: $0) }
   let first = try location.lock()
   let acquired = LockedBox(false)
   let done = DispatchSemaphore(value: 0)
@@ -395,7 +422,7 @@ private final class LockedBox: @unchecked Sendable {
   let manifest = try f.build()
   try FileManager.default.removeItem(atPath: f.destination + "/a")
   try f.link("a", to: f.outside, in: f.destination)
-  #expect(throws: HostError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
+  #expect(throws: ReturnError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
   #expect(!FileManager.default.fileExists(atPath: f.destination + "/A.txt"))
   #expect(!FileManager.default.fileExists(atPath: f.outside + "/x"))
 }
@@ -411,6 +438,10 @@ private final class LockedBox: @unchecked Sendable {
   #expect(StageReview.conspicuous(".husky/pre-commit") != nil)
   #expect(StageReview.conspicuous(".vscode/tasks.json") != nil)
   #expect(StageReview.conspicuous(".vscode/settings.json") == nil)
+  // Code points APFS ignores still spell `.git`.
+  #expect(ProtectedPaths.isReservedName(".g\u{200C}it"))
+  #expect(ProtectedPaths.isReservedName(".GI\u{FEFF}T"))
+  #expect(!ProtectedPaths.isReservedName(".gitignore"))
 }
 
 @Test func hugeTextDiffsAreSkipped() {
@@ -429,21 +460,21 @@ private final class LockedBox: @unchecked Sendable {
     name: try InstanceName("t"), index: InstanceIndex(1)!, directory: instanceDirectory,
     image: try ImageName("default"))
   let location = StageLocation(instance)
-  try location.prepare()
-  try f.write("a.txt", "guest", in: location.tree)
-  var builder = StageBuilder(tree: location.tree, destination: f.destination, limits: .defaults)
-  let manifest = try builder.build(id: "0badf00d", instance: "t", excludeGit: false)
-  try location.saveManifest(manifest)
-  let transfer = WorkspaceTransfer(
-    client: SSHClient(environment: [:]), diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
-  let error = try #require(throws: HostError.self) {
-    try transfer.applyStage(instance, stageID: "deadbeef", force: true)
+  let selected = try makeSelectedStage(location, destination: f.destination, instance: "t") {
+    try f.write("a.txt", "guest", in: $0)
   }
-  #expect(error.message.contains("not deadbeef"))
+  let id = selected.manifest.id
+  let transfer = WorkspaceTransfer(
+    client: SSHClient(environment: [:], tools: .searchPath),
+    diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
+  let error = try #require(throws: ReturnError.self) {
+    try transfer.applyStage(instance, .init(stageID: "deadbeefdeadbeef", replace: true))
+  }
+  #expect(error.kind == .wrongStage && error.message.contains("not deadbeefdeadbeef"))
   #expect(!FileManager.default.fileExists(atPath: f.destination + "/a.txt"))
   #expect(location.exists)
-  let (applied, paths) = try transfer.applyStage(instance, stageID: "0badf00d", force: true)
-  #expect(applied.id == "0badf00d" && paths == ["a.txt"])
+  let (applied, paths) = try transfer.applyStage(instance, .init(stageID: id, replace: true))
+  #expect(applied.id == id && paths == ["a.txt"])
   #expect(try f.read(f.destination + "/a.txt") == "guest")
   #expect(!location.exists)
 }
@@ -451,12 +482,14 @@ private final class LockedBox: @unchecked Sendable {
 @Test func manifestsFromAnotherVersionAreRefused() throws {
   let f = try Fixture()
   defer { f.cleanup() }
-  let location = StageLocation(root: f.root + "/stage")
-  try location.prepare()
+  let location = StageLocation(root: f.root + "/returns")
+  let selected = try makeSelectedStage(location, destination: f.destination) {
+    try f.write("a.txt", "x", in: $0)
+  }
   try Data(
-    #"{"version": 2, "id": "x", "instance": "t", "destination": "/d", "created_at": "", "exclude_git": false, "staged_entries": 0, "staged_bytes": 0, "changes": [], "issues": []}"#
+    #"{"version": 1, "id": "x", "instance": "t", "destination": "/d", "created_at": "", "exclude_git": false, "staged_entries": 0, "staged_bytes": 0, "changes": [], "issues": []}"#
       .utf8
-  ).write(to: URL(fileURLWithPath: location.manifestPath))
-  let error = try #require(throws: HostError.self) { try location.loadManifest() }
-  #expect(error.message.contains("Unsupported stage manifest version 2"))
+  ).write(to: URL(fileURLWithPath: selected.stage.manifestPath))
+  let error = try #require(throws: HostError.self) { try location.loadSelected() }
+  #expect(error.message.contains("Unsupported stage manifest version 1"))
 }

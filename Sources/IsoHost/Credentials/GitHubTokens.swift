@@ -83,15 +83,18 @@ package struct GitHubTokens: Sendable {
 
   /// The token for cloning `url` in the guest (used once, over stdin, never
   /// left in the guest environment). An active assignment's entry wins and
-  /// never falls back; then a matching PAT-mode entry; otherwise the host's
-  /// `gh auth token` or `GITHUB_TOKEN`, whatever the mode.
+  /// never falls back; then a matching PAT-mode entry; otherwise only the
+  /// ambient credentials the mode explicitly selects (AUTH-01): none for
+  /// `off`, an unset mode or PAT mode, so the clone is anonymous.
   package func cloneToken(_ github: GitHubAuth?, url: String, assigned: RepoSlug?) throws
     -> Secret<String>?
   {
     if let assigned { return try patToken(github, repo: assigned) }
     if let slug = Self.clonePATSlug(github, url: url) { return try patToken(github, repo: slug) }
+    let ambient = GitHubSourceAuth.ambient(github)
     return Self.selectHostToken(
-      gh: tools.ghAuthToken()?.expose(), env: tools.environment["GITHUB_TOKEN"]
+      gh: ambient.gh ? tools.ghAuthToken()?.expose() : nil,
+      env: ambient.env ? tools.environment["GITHUB_TOKEN"] : nil
     ).map(Secret.init)
   }
 
@@ -425,5 +428,20 @@ package struct HostGitHubTokens: GitHubTokenSource {
 
   package func configureGuest(_ client: SSHClient, _ session: SSHSession) throws {
     try GitHubGuest.setupAuth(client, session)
+  }
+}
+
+/// The one source-retrieval authentication decision (AUTH-01), shared by
+/// guest clones and host devcontainer discovery: ambient host credentials
+/// are used only when the configured mode explicitly selects them. Missing
+/// scope is a refusal or an anonymous request, never a reason to look for a
+/// broader credential.
+package enum GitHubSourceAuth {
+  package static func ambient(_ github: GitHubAuth?) -> (gh: Bool, env: Bool) {
+    switch github {
+    case .auto?: (true, true)
+    case .env?: (false, true)
+    case .off?, .pat?, nil: (false, false)
+    }
   }
 }

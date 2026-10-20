@@ -507,7 +507,7 @@ package enum RemoteWorkspace {
   /// verified route; never bidirectional.
   package static func push(
     _ target: SSHTarget, source: String, config: IsoConfig, binding: ClientBinding, force: Bool,
-    excludeGit: Bool, environment: [String: String], diagnostics: Diagnostics
+    environment: [String: String], diagnostics: Diagnostics
   ) throws {
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: source, isDirectory: &isDirectory),
@@ -523,38 +523,40 @@ package enum RemoteWorkspace {
     if !force { try transfer.checkGuestClean(target, guestWorkspace) }
     diagnostics.log(
       .info, "Pushing \(canonical) -> \(binding.host):\(binding.name):\(guestWorkspace)")
-    if try transfer.guestHasRsync(target) {
-      try transfer.rsyncPush(target, source: canonical, to: guestWorkspace, excludeGit: excludeGit)
-    } else {
-      try transfer.tarPipe(target, source: canonical, to: guestWorkspace, excludeGit: excludeGit)
-    }
+    let shadow = try shadow(config, binding)
+    try transfer.sendSnapshot(
+      target, root: canonical, to: guestWorkspace, input: config.workspaceInput,
+      budget: InputBudget(config.workspaceInput.limits),
+      stateDirectory: shadow.directory + "/inputs")
+    if !force { transfer.commitPushedSnapshot(target, guestWorkspace) }
     try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: canonical))
-      .save(try shadow(config, binding), diagnostics: diagnostics)
+      .save(shadow, diagnostics: diagnostics)
   }
 
   /// Stages the guest workspace for review; nothing reaches the client
   /// directory until `apply`.
   package static func stage(
     _ target: SSHTarget, config: IsoConfig, binding: ClientBinding, directory: String?,
-    excludeGit: Bool, environment: [String: String], diagnostics: Diagnostics
+    environment: [String: String], diagnostics: Diagnostics
   ) throws -> StageManifest {
     try refuseEnforcedWorkspacePolicy(config)
     let transfer = WorkspaceTransfer(
       client: SSHClient(environment: environment), diagnostics: diagnostics)
     return try transfer.stage(
       instance: try shadow(config, binding), target: target, directory: directory,
-      excludeGit: excludeGit, limits: config.workspacePull.limits)
+      limits: config.workspacePull.limits)
   }
 
-  /// Applies a completed stage; needs no host or VM.
+  /// Applies the exact completed stage on this client through the same
+  /// installer and gate as a local apply; needs no host or VM.
   package static func apply(
-    config: IsoConfig, binding: ClientBinding, stageID: String?, force: Bool,
+    config: IsoConfig, binding: ClientBinding, request: WorkspaceTransfer.ApplyRequest,
     environment: [String: String], diagnostics: Diagnostics
   ) throws -> (manifest: StageManifest, applied: [String]) {
     try refuseEnforcedWorkspacePolicy(config)
     let transfer = WorkspaceTransfer(
       client: SSHClient(environment: environment), diagnostics: diagnostics)
-    return try transfer.applyStage(try shadow(config, binding), stageID: stageID, force: force)
+    return try transfer.applyStage(try shadow(config, binding), request)
   }
 
   /// A remote-host binding has no boot-bound policy state on this client.
@@ -685,14 +687,13 @@ package enum RemoteAgent: String, Sendable {
     }
     if let failure = session.failure { throw failure }
     guard let ssh = client.sshExecutable() else { throw HostError("ssh is not installed") }
-    let agentEnv = agentEnvironment(shadow)
+    // Unlike a local attach, this launch keeps the requested TERM.
+    let launch = try agentEnvironment(shadow).prepare(
+      InteractiveSSH.render([binary.rawValue] + arguments), terminal: .requested
+    ).launch(target, base: SSHClient.transportEnvironment(environment), pty: true)
     let termination = try ProcessRunner().attached(
       .init(
-        executable: ssh,
-        arguments: InteractiveSSH.arguments(
-          SSHSession(target: target, env: agentEnv),
-          remote: InteractiveSSH.render([binary.rawValue] + arguments)),
-        environment: agentEnv.overlay(SSHClient.transportEnvironment(environment)),
+        executable: ssh, arguments: launch.arguments, environment: launch.environment,
         deadline: .seconds(0)),
       inheritStdin: true, deadline: nil)
     if case .exited(let code) = termination { return code }

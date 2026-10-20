@@ -143,9 +143,9 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
 
 @Test func remotePullFlagsBelongToOneMode() throws {
   for bad in [
-    ["host", "pull", "h", "vm", "--stage-id", "s"], ["host", "pull", "h", "vm", "--force"],
+    ["host", "pull", "h", "vm", "--stage-id", "s"],
     ["host", "pull", "h", "vm", "--apply", "--dir", "d"],
-    ["host", "pull", "h", "vm", "--apply", "--exclude-git"],
+    ["host", "pull", "h", "vm", "--apply"],
   ] {
     #expect(throws: (any Error).self, "\(bad)") { try IsoCommand.parseAsRoot(bad) }
   }
@@ -153,6 +153,13 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
     "host", "pull", "h", "vm", "--apply", "--stage-id", "s", "--force",
   ])
   #expect(apply.apply && apply.force && apply.stageID == "s")
+  // The deprecated no-op flags parse in either mode; they only warn.
+  for deprecated in [
+    ["host", "pull", "h", "vm", "--force"],
+    ["host", "pull", "h", "vm", "--apply", "--stage-id", "s", "--exclude-git"],
+  ] {
+    #expect(throws: Never.self, "\(deprecated)") { _ = try IsoCommand.parseAsRoot(deprecated) }
+  }
   let stage: HostPull = try parse(["host", "pull", "h", "vm", "--dir", "d", "--exclude-git"])
   #expect(!stage.apply && stage.dir == "d" && stage.excludeGit)
 }

@@ -24,8 +24,10 @@ package enum UpdateChannel {
   package static func signerIdentity(tag: String) -> String {
     "https://github.com/\(repository)/\(signerWorkflow)@refs/tags/\(tag)"
   }
-  /// Test-only: point metadata and downloads at a local fixture. Setting it
-  /// disables attestation verification (and says so on stderr).
+  /// Test-only: point metadata and downloads at a local fixture. Honored
+  /// only by update-fixture builds (`-D ISO_UPDATE_FIXTURES`); a production
+  /// build refuses to update while it is set. Disables attestation
+  /// verification (and says so on stderr).
   package static let apiBaseVariable = "ISO_UPDATE_API_BASE_URL"
 
   /// The prebuilt target this host installs.
@@ -108,6 +110,41 @@ package struct Release: Sendable, Equatable, Decodable {
   }
 
   package func asset(named name: String) -> Asset? { assets.first { $0.name == name } }
+
+  /// The tag must be canonical (`v` + semver) and, for a pinned request,
+  /// exactly the requested one: a valid asset of another release does not
+  /// satisfy it.
+  package func requireCanonicalTag(requested: String?) throws {
+    guard (try? UpdateChannel.normalizeTag(tag)) == tag else {
+      throw HostError("Release tag \(debugQuoted(tag)) is not canonical; refusing it")
+    }
+    if let requested, requested != tag {
+      throw HostError("Requested release \(requested) but GitHub returned \(tag); refusing it")
+    }
+  }
+
+  /// An asset is used only when it is the one asset of that name and its
+  /// URL is exactly this repository's download URL for this tag and name:
+  /// no other host, user info, port, query, fragment or encoded path. A
+  /// fixture origin (tests only) must prefix the URL instead.
+  package func requireBound(_ asset: Asset, fixtureBase: String?) throws {
+    guard assets.filter({ $0.name == asset.name }).count == 1 else {
+      throw HostError("Release \(tag) lists \(asset.name) more than once; refusing it")
+    }
+    let safeName = asset.name.unicodeScalars.allSatisfy {
+      $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0))
+    }
+    let expected =
+      fixtureBase.map { $0 + "/" }
+      ?? "https://github.com/\(UpdateChannel.repository)/releases/download/\(tag)/"
+    let bound =
+      fixtureBase == nil ? asset.url == expected + asset.name : asset.url.hasPrefix(expected)
+    guard safeName, bound else {
+      throw HostError(
+        "Release asset \(debugQuoted(asset.name)) is not served from \(UpdateChannel.repository) release \(tag); refusing it"
+      )
+    }
+  }
 
   package static func parse(_ text: String) throws -> Release {
     do { return try JSONDecoder().decode(Release.self, from: Data(text.utf8)) } catch {

@@ -89,6 +89,11 @@ package struct IsoConfig: Sendable, Equatable {
   package let policy: CompiledPolicy?
   /// `network`: the VM transport new instances are created with.
   package let network: NetworkConfig
+  /// `workspace.input`: what an outbound transfer may carry.
+  package let workspaceInput: WorkspaceInputConfig
+  /// `security.revoked_grant_ids`: saved instance grants to withdraw, by the
+  /// opaque IDs `iso policy effective` shows (POL-01).
+  package let revokedGrantIDs: [String]
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -98,8 +103,11 @@ package struct IsoConfig: Sendable, Equatable {
     appleContainer: AppleContainerConfig, workspacePull: WorkspacePullConfig, egress: EgressMode,
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
     editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?,
-    network: NetworkConfig = .defaults
+    network: NetworkConfig = .defaults, workspaceInput: WorkspaceInputConfig = .defaults,
+    revokedGrantIDs: [String] = []
   ) {
+    self.revokedGrantIDs = revokedGrantIDs
+    self.workspaceInput = workspaceInput
     self.execution = execution
     self.policy = policy
     self.network = network
@@ -394,7 +402,8 @@ package struct NetworkConfig: Sendable, Equatable {
 
   package init(transport: NetworkTransport) { self.transport = transport }
 
-  package static let defaults = NetworkConfig(transport: .vmnet)
+  /// DEF-01: brokered (NIC-less); vmnet is an explicit compatibility choice.
+  package static let defaults = NetworkConfig(transport: .brokered)
 }
 
 /// Approved hosts for `egress: filtered`: exact hostnames and reviewed
@@ -423,7 +432,8 @@ package struct EgressFilter: Sendable, Equatable {
 /// `security.preset` (selective-hardening spec §10): defaults for the
 /// hardening settings. A field written explicitly always wins.
 package enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
-  /// Today's defaults: open egress, `proxy.mode` auto, direct pulls.
+  /// An explicit relaxation: open egress, `proxy.mode` auto, direct pulls.
+  /// Needs `network.transport` "vmnet".
   case networked
   /// No egress, provider credentials only through the proxy, staged pulls.
   case providerOnly = "provider-only"
@@ -450,6 +460,8 @@ package struct LimitsConfig: Sendable, Equatable {
   package init(sessionTTL: SessionTTL?) { self.sessionTTL = sessionTTL }
 
   package static let none = LimitsConfig(sessionTTL: nil)
+  /// DEF-01: an 8h boot lifetime unless configured otherwise.
+  package static let defaults = LimitsConfig(sessionTTL: .eightHours)
 }
 
 /// `editor`: how `iso code`, `iso zed` and `iso editor` run the local editor.
@@ -537,7 +549,8 @@ extension IsoConfig {
       forwardPorts: forwardPorts,
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
-      editor: editor, execution: execution, policy: policy, network: network)
+      editor: editor, execution: execution, policy: policy, network: network,
+      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -579,7 +592,7 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
   }
 
   /// This command's `proxy.mode` override. Does not rewrite the config file.
@@ -592,7 +605,7 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
   }
 
   /// The configuration under an instance's recorded transport.
@@ -604,7 +617,8 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: NetworkConfig(transport: transport))
+      network: NetworkConfig(transport: transport), workspaceInput: workspaceInput,
+      revokedGrantIDs: revokedGrantIDs)
   }
 
   /// Why `egress` cannot run over `network.transport`, or nil. The brokered
@@ -613,7 +627,7 @@ extension IsoConfig {
   package var transportConflict: String? {
     guard network.transport == .brokered, egress == .open else { return nil }
     return
-      "egress \"open\" is invalid with network.transport \"brokered\": a brokered VM has no network device; use egress \"none\" or \"filtered\""
+      "egress \"open\" is invalid with network.transport \"brokered\" (the default): a brokered VM has no network device; use egress \"none\" or \"filtered\", or select \"network\": {\"transport\": \"vmnet\"} explicitly for open egress"
   }
 
   /// This command's egress override. Does not rewrite the config file.
@@ -626,6 +640,76 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+  }
+}
+
+/// `workspace.input` v1 (INPUT-01): the trusted-host selection an outbound
+/// snapshot is built from. Selectors are literal root-relative names.
+package struct WorkspaceInputConfig: Sendable, Equatable {
+  package enum Mode: String, Sendable, Equatable {
+    /// Tracked working-tree files (read inertly from the Git index) plus
+    /// the named untracked selections.
+    case tracked
+    /// Only the named selections.
+    case paths
+  }
+
+  package struct Selector: Sendable, Equatable {
+    package let path: String
+    package let recursive: Bool
+
+    package init(path: String, recursive: Bool) {
+      self.path = path
+      self.recursive = recursive
+    }
+  }
+
+  package struct Limits: Sendable, Equatable {
+    package let maxEntries: UInt64
+    package let maxFileBytes: UInt64
+    package let maxTotalBytes: UInt64
+
+    /// The v1 ceilings; configuration may only lower them.
+    package static let ceilings = Limits(
+      maxEntries: 100_000, maxFileBytes: 1 << 30, maxTotalBytes: 4 << 30)
+
+    package init(maxEntries: UInt64, maxFileBytes: UInt64, maxTotalBytes: UInt64) {
+      self.maxEntries = maxEntries
+      self.maxFileBytes = maxFileBytes
+      self.maxTotalBytes = maxTotalBytes
+    }
+  }
+
+  package let mode: Mode
+  package let paths: [Selector]
+  package let exclude: [String]
+  package let secretAllow: [String]
+  package let limits: Limits
+
+  package init(
+    mode: Mode, paths: [Selector], exclude: [String], secretAllow: [String], limits: Limits
+  ) {
+    self.mode = mode
+    self.paths = paths
+    self.exclude = exclude
+    self.secretAllow = secretAllow
+    self.limits = limits
+  }
+
+  package static let defaults = WorkspaceInputConfig(
+    mode: .tracked, paths: [], exclude: [], secretAllow: [], limits: .ceilings)
+
+  /// A literal, normalized, root-relative selector: no absolute path, no
+  /// `..`, `.` or empty component, no NUL or control character, no glob
+  /// meaning. `"."` alone is the whole-root selection.
+  package static func validSelector(_ path: String) -> Bool {
+    if path == "." { return true }
+    guard !path.isEmpty, !path.hasPrefix("/"), !path.hasSuffix("/"), path.utf8.count <= 4096,
+      !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+    else { return false }
+    return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy {
+      !$0.isEmpty && $0 != "." && $0 != ".."
+    }
   }
 }

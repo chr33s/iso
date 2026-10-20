@@ -46,7 +46,7 @@ struct ProjectArguments: ParsableArguments {
       "Build or reuse a profile-derived image when creating a new instance (repeatable or comma-separated)",
     transform: parseProfileList)
   var profile: [[String]] = []
-  @Flag(help: "Skip `.git/` when copying/syncing local directories") var excludeGit = false
+  @Flag(help: ArgumentHelp(DeprecatedExcludeGit.help)) var excludeGit = false
   @OptionGroup var boot: BootArguments
   @OptionGroup var devcontainerArguments: DevcontainerArguments
   @OptionGroup var egressOptions: EgressOptions

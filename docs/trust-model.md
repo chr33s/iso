@@ -53,16 +53,57 @@ user launched it.
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint, `8.8.8.8`. Reached over the network; authenticated where applicable. |
 
+## Secure defaults (DEF-01)
+
+With no configuration, a new Linux instance is created brokered (no network
+device), with egress `none`, `proxy.mode` `required`, staged returns, no host
+agent-home import, GitHub `off`, the sandboxed editor, and an 8h boot
+lifetime. Each relaxation is an explicit setting, listed by `iso policy
+effective`: `network.transport` `vmnet` (needed for macOS guests and open
+egress; a brokered setting never falls back to it, and vmnet `none`/`filtered`
+does not isolate host or LAN services as brokered does), the `networked`
+preset, `proxy.mode` `auto`/`off`, direct pulls, a named `config_dir`, a
+GitHub mode, editor grants, and `session_ttl` longer than 8h or
+`"unlimited"` (ordinary local instances only; enrolled hosts and iso-ci stay
+finite). A preset label alone is not evidence of effective isolation: the
+recorded transport and egress of an existing instance stay as created.
+
+Host configuration is read only from a regular file owned by this user or
+root that no other principal can write (mode bits or ACLs). Symlinks in the
+path are followed; the resolved file and every ancestor directory of its real
+path must satisfy the same owner, mode and ACL rule, except that a sticky
+world-writable directory such as `/tmp` is allowed. Repository-local
+configuration is never discovered.
+Saved start-time grants (guest environment entries, port forwards) carry IDs
+and provenance in `<instance>/grants.json`; `security.revoked_grant_ids`
+withdraws one before the next handoff and the tombstone persists. A restart
+that fails after boot is stopped with its disk kept; if the stop cannot be
+confirmed the instance is fenced (`handoff-fence.json`) and gets no workload
+until `iso stop` succeeds. A discovered devcontainer is parsed once and its
+translated effects are shown before you accept it; accepting grants no host
+capability.
+
 ## Taint sources (treat as untrusted)
 
-- **Guest filesystem content pulled to the host.** `Workspace.pull`
-  (`Sources/IsoHost/Workspace/Workspace.swift`) brings guest-authored file contents,
-  filenames, and symlinks onto the host filesystem. This is the **widest guest→host
-  channel** and the primary place a path-traversal or symlink escape could land.
-  A staged pull (`WorkspaceStage*.swift`) lands it in `<instance>/stage/`,
-  walks it without following links, rejects special files, hard links,
-  escaping symlinks and control-character names, enforces budgets, and applies
-  descriptor-relative with a destination-drift and content-hash check.
+- **Guest filesystem content pulled to the host.** Every return
+  (`Workspace.swift`, `WorkspaceStage*.swift`, `WorkspaceReturn.swift`)
+  brings guest-authored file contents, filenames and symlinks toward the host:
+  the **widest guest→host channel**. Every mode, `direct` included, receives
+  into a fresh owner-only `<instance>/returns/incoming/<id>/tree` with the
+  qualified system bsdtar/openrsync (absolute paths, fixed environment,
+  root-owned path chain) under an inherited writer lease; only a quiescent,
+  validated receive becomes the selected stage. The walk never follows links;
+  rejects special files, hard links, colliding names, escaping or chained
+  symlinks (every target component, against the planned final tree) and
+  file↔directory transitions; enforces budgets; and never installs `.git` of
+  any form. Host Git never runs during a return. The installer writes only
+  through a destination bound by directory identity, disjoint from iso control
+  state, after complete preflight and a durable single-use attempt record,
+  rechecking each entry before its replace. Known execution-sensitive paths
+  (`.husky`, `.envrc`, `.vscode/tasks.json`) apply only with an exact
+  `--approve-sensitive` grant; that list is incomplete and returned source
+  stays untrusted. Receivers are not sandboxed and the transfer monitor is a
+  sampled budget, not a disk quota.
 - **Committed disks.** `iso commit` turns a guest-mutated disk into an image,
   so the guest authors every file on it. Host-key and machine-id removal runs
   in a maintenance VM, never on the host (see
@@ -116,10 +157,45 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   A user's own `SendEnv` (the guest accepts any) therefore cannot carry a raw
   provider key into the guest in proxy mode. `guest_env.json` (start-time
   `--env` values) is owner-only, in an owner-only instance directory.
+- **Guest names never configure the host.** A requested guest variable
+  travels only under a generated alias (`ISO_SSH_ENV_<n>`, `SendEnv` names
+  only those) in the host ssh child's environment; the host's own `PATH`,
+  `HOME`, `SHELL` and the rest stay as the host snapshot had them even when
+  the guest asks for the same name. A wrapper in the guest captures every
+  alias first, restores the original names, and runs the command with the
+  login shell. A missing alias or failed assignment aborts before the
+  workload starts (exit 125) with no raw-name fallback. Limits: 64 entries,
+  8 KiB per value, 64 KiB of names and values, 64 KiB of wrapper; values with
+  NUL fail before ssh starts. A PTY attach replaces a requested `TERM` with
+  iso's normalized terminal type before encoding; non-PTY sessions and the
+  remote agent launcher keep the requested `TERM`.
+- **No ambient SSH authority for guest transports.** Guest `ssh`, `scp` and
+  rsync's `-e` run with `-F none` (no `~/.ssh/config`: no `ProxyJump`,
+  `LocalCommand`, `SendEnv` or forwards), `PermitLocalCommand=no`,
+  `ForwardX11=no` and `IdentityAgent=none`, on top of the pinned host key.
+  Shipped (optimized) builds take `ssh`, `scp`, `rsync` and `tar` from
+  `/usr/bin` only, never `PATH`; debug builds keep `PATH` lookup for test
+  doubles. `scp` runs its nested ssh through `-S` with that same pinned
+  path. rsync's `-e` is serialized for rsync's own tokenizer, and a word it
+  cannot carry intact (`'`, backslash or a control character) is refused.
+  Every managed ssh runs a ProxyCommand with `SHELL=/bin/sh`, not the
+  caller's shell. Control-master teardown (`-O exit`) runs with `-F none`
+  and `ControlMaster=no`, so a missing or replaced socket fails instead of
+  opening a new guest connection. Enrolled-host management SSH keeps its
+  trusted enrollment configuration and agent by design, with agent and X11
+  forwarding, every forward and `LocalCommand` disabled.
 - **Proxy processes are identified, not assumed.** A proxy starts only on a
   free port and must be the sole listener afterwards (`lsof`), or startup fails
   closed before the credential is sent; a recorded proxy or tunnel PID is
   signalled only while it still names `iso-proxy` / `ssh`.
+- **Source retrieval uses only selected credentials.** A guest clone and
+  host devcontainer discovery share one decision (`GitHubSourceAuth`): an
+  assigned or matching PAT entry, else `gh auth token` / `GITHUB_TOKEN` only
+  when `github` explicitly selects `auto` (both) or `env` (the variable).
+  With `off`, an unset mode, `--no-github`, or PAT mode without a matching
+  entry, the request is anonymous; a missing scope never widens to an
+  ambient credential. A clone token is guest-visible while the clone runs;
+  discovery uses its token on the host only.
 - **`GITHUB_TOKEN` defaults to Off.** A saved VM PAT assignment is also explicit
   opt-in; it stores only a validated existing entry key. Invocation-level
   `--no-github` suppresses the assignment before loading it. Active assignments
@@ -869,7 +945,7 @@ is untrusted, and the whole VM is the boundary.
   Linux image uses. It runs on the build's own vmnet network before the
   template is sealed; the template records the script's SHA-256 and iso
   refuses a template whose recorded script differs. The script sets
-  `AcceptEnv *`, as the Linux image does, so forwarded variables reach the
+  `AcceptEnv *`, as the Linux image does, so the forwarded aliases reach the
   guest.
 - **Filtered egress.** As on Linux: a host-only network with no route, the
   `iso-egress` companion behind an `ssh -R` tunnel on guest loopback, and
@@ -978,10 +1054,17 @@ updated binary never moves back onto a withdrawn release without an explicit
 opt-in. `install.sh` installs whatever `VERSION` names and has neither guard;
 it is the deliberate recovery path.
 
-`ISO_UPDATE_API_BASE_URL` redirects the update origin **and** disables
-attestation; the release signature is still required, so that server must serve
-`SHA256SUMS` signed by a listed key. Only the pinned `github.com` default +
-attestation provide Sigstore provenance. Flag any change that widens where that override
+`ISO_UPDATE_API_BASE_URL` is honored only by update-fixture test builds
+(`-D ISO_UPDATE_FIXTURES`, used by `tests/integration-update.sh`); a
+production build refuses to update, or run the background check, while it is
+set, before any network request. In a fixture build it redirects the origin
+**and** disables attestation; the release signature is still required. In
+production, release metadata must carry the canonical tag (and exactly the
+pinned one for `--version`), and every asset used must be the one asset of its
+name at exactly `https://github.com/chr33s/iso/releases/download/<tag>/<name>`;
+curl requests and redirects are HTTPS-only and a token never follows a
+redirect to another host. Only the pinned `github.com` default + attestation
+provide Sigstore provenance. Flag any change that widens where that override
 is honored, or that softens any step above.
 
 ## Authorization policy

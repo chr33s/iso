@@ -175,7 +175,7 @@ build_iso() {
 echo "==> Building release binary..."
 # Copy both binaries out of the build tree: tests replace $ISO_BIN in place.
 RELEASE_BIN="$TMPDIR/bin/iso-release"
-cp "$(build_iso "${SWIFT_SCRATCH}-release-kind" -Xswiftc -DISO_RELEASE_BUILD)" "$RELEASE_BIN"
+cp "$(build_iso "${SWIFT_SCRATCH}-release-kind" -Xswiftc -DISO_RELEASE_BUILD -Xswiftc -DISO_UPDATE_FIXTURES)" "$RELEASE_BIN"
 patch_release_signer "$RELEASE_BIN"
 cp "$RELEASE_BIN" "$TMPDIR/bin/iso"
 export ISO_BIN="$TMPDIR/bin/iso"

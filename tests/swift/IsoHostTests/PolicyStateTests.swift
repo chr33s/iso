@@ -3,6 +3,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoPolicy
+import IsoSecrets
 import Testing
 
 @testable import IsoHost
@@ -280,4 +281,129 @@ private func instance() throws -> Instance {
     proxyAnthropic: false, proxyOpenAI: false, policyEnforced: true)
   #expect(withheld["ANTHROPIC_API_KEY"] != nil)
   #expect(withheld["OPENAI_API_KEY"] != nil)
+}
+
+/// POL-01/MIG-01: the effective report compares requested with recorded
+/// policy, names every relaxation, and stays read-only.
+@Test func effectivePolicyReportNamesRelaxationsAndRecordedConflicts() throws {
+  let instance = try testInstance(try scratchDirectory("effective") + "/instances/dev")
+  let open = try testConfig(#""egress": "open", "workspace": {"pull": {"mode": "direct"}}"#)
+  try NetworkPolicy.save(open, instance)
+  let strict = try testConfig(
+    #""egress": "none", "proxy": {"mode": "required"}, "network": {"transport": "brokered"}, "workspace": {"pull": {"mode": "stage"}}, "limits": {"session_ttl": "8h"}"#
+  )
+  let before = try FileManager.default.contentsOfDirectory(atPath: instance.directory).sorted()
+  let report = EffectivePolicyReport.json(strict, instance: instance)
+  let text = EffectivePolicyReport.text(report).joined(separator: "\n")
+  #expect(text.contains("Relaxations: none"))
+  #expect(text.contains("egress is fixed at open"))
+  #expect(text.contains("transport is fixed at vmnet"))
+  #expect(
+    try FileManager.default.contentsOfDirectory(atPath: instance.directory).sorted() == before)
+  let relaxed = EffectivePolicyReport.relaxations(open)
+  #expect(relaxed.contains { $0.hasPrefix("egress open") })
+  #expect(relaxed.contains { $0.hasPrefix("workspace.pull.mode direct") })
+}
+
+/// `--json` fields keep one type: an unlimited TTL and an unreadable record
+/// are null (the latter named in `unknown`), never a placeholder string.
+@Test func effectivePolicyJSONKeepsOneTypePerField() throws {
+  let instance = try testInstance(try scratchDirectory("effective-json") + "/instances/dev")
+  try writeFile(instance.directory + "/grants.json", "{corrupt")
+  let unlimited = try testConfig(#""limits": {"session_ttl": "unlimited"}"#)
+  guard case .object(let top) = EffectivePolicyReport.json(unlimited, instance: instance),
+    case .object(let requested)? = top.first(where: { $0.0 == "requested" })?.1,
+    case .object(let recorded)? = top.first(where: { $0.0 == "instance" })?.1
+  else {
+    Issue.record("unexpected report shape")
+    return
+  }
+  let fields = Dictionary(recorded, uniquingKeysWith: { a, _ in a })
+  #expect(requested.first { $0.0 == "session_ttl_seconds" }?.1 == .null)
+  #expect(fields["grants"] == .null && fields["revoked"] == .null)
+  #expect(
+    fields["unknown"]
+      == .array(
+        ["transport", "egress", "grants", "pending_revocations", "revoked"].map(OutputJSON.string)))
+  let text = EffectivePolicyReport.text(EffectivePolicyReport.json(unlimited, instance: instance))
+  #expect(text.contains("  session_ttl_seconds: unlimited"))
+  #expect(text.contains("  grants: unknown"))
+}
+
+/// POL-01: saved grants carry provenance; legacy ones are withheld (not
+/// erased) until given again; a revocation withdraws exactly one, survives
+/// removing the setting, and an unknown ID is an error.
+@Test func savedGrantsAreRevokedByIDAndStayRevoked() throws {
+  let instance = try testInstance(try scratchDirectory("grants") + "/instances/dev")
+  let keep = try EnvVarName("KEEP")
+  let drop = try EnvVarName("DROP")
+  let old = try EnvVarName("OLD")
+  let forward = try PortForward(guest: 8080, host: 18080)
+  var r = try GrantLedger.reconcile(
+    instance, revoked: [],
+    environment: [keep: .literal("1"), drop: .literal("2"), old: .literal("3")],
+    forwards: [forward], fresh: ["KEEP", "DROP", "18080:8080"])
+  let ledger = try GrantLedger.load(instance)
+  #expect(ledger.grants.count == 4)
+  #expect(ledger.grants.first { $0.scope == "OLD" }?.origin == .legacy)
+  // The legacy entry is kept on disk but not handed to the boot.
+  #expect(r.savedEnvironment[old] == .literal("3") && r.appliedEnvironment[old] == nil)
+  #expect(r.withheld == ["--env OLD"])
+  let dropID = try #require(ledger.grants.first { $0.scope == "DROP" }).id
+
+  // An ID no instance records (its instance destroyed) is reported, and
+  // withdraws nothing.
+  let stray = try GrantLedger.reconcile(
+    instance, revoked: ["0123456789abcdef"], environment: r.savedEnvironment,
+    forwards: r.savedForwards, fresh: [])
+  #expect(stray.unknownRevoked == ["0123456789abcdef"])
+  #expect(stray.savedEnvironment == r.savedEnvironment)
+  r = try GrantLedger.reconcile(
+    instance, revoked: [dropID], environment: r.savedEnvironment, forwards: r.savedForwards,
+    fresh: [])
+  #expect(r.savedEnvironment[drop] == nil && r.appliedEnvironment[keep] == .literal("1"))
+  #expect(r.appliedForwards == [forward])
+  // Sessions forward only live command grants: the legacy OLD and the
+  // revoked DROP are withheld, and a revocation only in the configuration
+  // applies before any restart.
+  #expect(try GrantLedger.sessionEnvironment(instance, revoked: []) == ["KEEP"])
+  let keepID = try #require(try GrantLedger.load(instance).grants.first { $0.scope == "KEEP" }).id
+  #expect(try GrantLedger.sessionEnvironment(instance, revoked: [keepID]).isEmpty)
+  // Given again on the command line: a legacy entry becomes a command grant,
+  // and a revoked one gets a new ID; the tombstone stays.
+  var again = r.savedEnvironment
+  again[drop] = .literal("again")
+  r = try GrantLedger.reconcile(
+    instance, revoked: [], environment: again, forwards: r.savedForwards, fresh: ["DROP", "OLD"])
+  let after = try GrantLedger.load(instance)
+  #expect(after.revoked == [dropID])
+  #expect(after.grants.first { $0.scope == "DROP" }.map { $0.id != dropID } == true)
+  #expect(after.grants.first { $0.scope == "OLD" }?.origin == .command)
+  #expect(r.appliedEnvironment[old] == .literal("3") && r.withheld.isEmpty)
+  // Another instance's ID is not an error here.
+  _ = try GrantLedger.reconcile(
+    instance, revoked: ["fedcba9876543210"], environment: r.savedEnvironment,
+    forwards: r.savedForwards, fresh: [], knownElsewhere: ["fedcba9876543210"])
+}
+
+@Test func legacyForwardsAreWithheldAndRevocableByID() throws {
+  let instance = try testInstance(try scratchDirectory("grant-forwards") + "/instances/dev")
+  let given = try PortForward(guest: 3000, host: 13000)
+  let legacy = try PortForward(guest: 4000, host: 14000)
+  var r = try GrantLedger.reconcile(
+    instance, revoked: [], environment: [:], forwards: [given, legacy], fresh: ["13000:3000"])
+  // A forward saved without provenance stays saved but is not applied.
+  #expect(r.appliedForwards == [given])
+  #expect(r.savedForwards == [given, legacy])
+  #expect(r.withheld == ["forward 14000:4000"])
+  let ledger = try GrantLedger.load(instance)
+  #expect(ledger.grants.first { $0.scope == "14000:4000" }?.origin == .legacy)
+  let givenID = try #require(ledger.grants.first { $0.scope == "13000:3000" }).id
+
+  // Revoking a forward grant by ID drops it from both sets.
+  r = try GrantLedger.reconcile(
+    instance, revoked: [givenID], environment: [:], forwards: r.savedForwards, fresh: [])
+  #expect(r.appliedForwards.isEmpty)
+  #expect(r.savedForwards == [legacy])
+  #expect(try GrantLedger.load(instance).revoked == [givenID])
 }

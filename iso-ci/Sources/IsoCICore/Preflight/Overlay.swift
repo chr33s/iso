@@ -9,8 +9,8 @@ import Foundation
 /// that endpoint.
 ///
 /// Guarantee: when the overlay step succeeds, the selected snapshot is
-/// materialized at that boundary (contents, modes, permitted symlinks and
-/// deletions verified). Later user steps may change their own workspace;
+/// materialized at that boundary (contents, modes and permitted symlinks
+/// verified). Later user steps may change their own workspace;
 /// the recorded snapshot provenance does not change with them. Snapshot
 /// paths never contain control characters (capture refuses them), so the
 /// NUL-separated lists are read as lines.
@@ -83,29 +83,21 @@ package enum OverlayScripts {
     """
   }
 
-  /// Materializes the base commit from the snapshot's bundle (no network).
-  /// Without git (a minimal job container), the workspace has no `.git`, as
-  /// with GitHub's checkout there, and the overlay step materializes the
-  /// whole snapshot tree.
+  /// Prepares the checkout directory. The snapshot carries selected
+  /// content only, never the original history (CI-01): with git available
+  /// the workspace becomes an empty repository that the overlay step fills
+  /// and commits as a synthetic commit; without git it has no `.git`, as
+  /// with GitHub's checkout in a minimal container.
   package static func checkout(snapshot: SnapshotReference, path: String) -> String {
     prelude(snapshot, path: path)
       + """
       iso_fetch
       mkdir -p "$dest"
       cd "$dest"
-      if ! command -v git >/dev/null 2>&1; then
-        echo "iso-ci: git is not available here; the workspace has no .git and the overlay step materializes snapshot sha256:$digest"
-        exit 0
+      if command -v git >/dev/null 2>&1; then
+        [ -d .git ] || git init -q .
       fi
-      [ -d .git ] || git init -q .
-      git fetch -q --no-tags "$cache/x/base.bundle" '+HEAD:refs/remotes/iso-ci/base' \\
-        || iso_fail "cannot read the base-commit bundle"
-      [ "$(git rev-parse refs/remotes/iso-ci/base)" = "$base" ] \\
-        || iso_fail "the bundle does not contain base commit $base"
-      git checkout -q --force --detach "$base"
-      git reset -q --hard "$base"
-      git clean -q -ffdx
-      echo "iso-ci: checked out base commit $base from snapshot sha256:$digest (synthetic, no network)"
+      echo "iso-ci: prepared a checkout for snapshot sha256:$digest (selected content of $base; its history is not included)"
 
       """
   }
@@ -149,7 +141,13 @@ package enum OverlayScripts {
         { [ ! -e "$p" ] && [ ! -L "$p" ]; } || iso_problem "expected a deletion: $p"
       done < "$checks/deletions.lines"
       [ "$problems" -eq 0 ] || iso_fail "snapshot overlay verification failed ($problems problems)"
-      echo "iso-ci: snapshot sha256:$digest applied and verified over base $base (\(state))"
+      echo "iso-ci: snapshot sha256:$digest applied and verified (selected from $base, \(state))"
+      if command -v git >/dev/null 2>&1 && [ -d .git ] && ! git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+        git add -A
+        git -c user.name=iso-ci -c user.email=iso-ci@localhost -c commit.gpgsign=false \\
+          commit -q -m "iso-ci: selected snapshot sha256:$digest" >/dev/null
+        echo "iso-ci: synthetic commit $(git rev-parse HEAD) holds the snapshot; it is not $base"
+      fi
 
       """
   }

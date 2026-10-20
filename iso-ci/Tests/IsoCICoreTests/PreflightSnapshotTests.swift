@@ -71,7 +71,7 @@ import Testing
 
   func options() -> SnapshotOptions {
     var options = SnapshotOptions(outputDirectory: root + "/out")
-    options.includeUntracked = true
+    options.include = ["new.txt", ".env"]
     options.workflowPath = ".github/workflows/ci.yml"
     return options
   }
@@ -82,7 +82,9 @@ import Testing
     let manifest = result.manifest
     #expect(manifest.isDirty)
     #expect(manifest.baseCommit.utf8.count == 40)
-    #expect(manifest.deletions == ["del.txt"])
+    // v2 has no base checkout: a removed file is simply absent.
+    #expect(manifest.deletions.isEmpty)
+    #expect(!manifest.files.contains { $0.path == "del.txt" })
     #expect(manifest.excludedPaths == [".env"])
     #expect(manifest.includedUntracked == ["new.txt"])
     let byPath = Dictionary(uniqueKeysWithValues: manifest.files.map { ($0.path, $0) })
@@ -122,16 +124,82 @@ import Testing
     #expect(!result.reference.isDirty)
   }
 
-  @Test func refusesEscapingSymlinks() throws {
+  @Test(arguments: ["2", "3", "4"]) func indexReaderMatchesGitAcrossVersions(version: String)
+    throws
+  {
+    let repo = root + "/index-v\(version)"
+    try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try git(["init", "-q"], repo)
+    try git(["config", "index.version", version], repo)
+    // A v4 prefix strip of 128 bytes or more needs a multi-byte varint.
+    let long = "long/" + String(repeating: "p", count: 200) + "/x.txt"
+    let expected = ["a.txt", long, "z.txt"]
+    for path in expected { try write(repo + "/" + path, path) }
+    try git(["add", "-A"], repo)
+    let entries = try GitIndex.entries(try GitIndex.layout(containing: repo))
+    #expect(entries.map(\.path) == expected)
+  }
+
+  @Test func anUnreadableIndexFailsTheCaptureInsteadOfLookingClean() throws {
     let repo = try makeRepository()
-    symlink("../../outside", repo + "/escape")
+    chmod(repo + "/.git/index", 0)
+    defer { chmod(repo + "/.git/index", 0o644) }
     #expect(throws: CIError.self) {
       try SnapshotCapture.capture(repository: repo, options: options())
+    }
+  }
+
+  @Test func untrackedFilesNeedAnExplicitInclude() throws {
+    let repo = try makeRepository()
+    var options = options()
+    options.include = []
+    let manifest = try SnapshotCapture.capture(repository: repo, options: options).manifest
+    #expect(manifest.includedUntracked.isEmpty)
+    #expect(!manifest.files.contains { $0.path == "new.txt" })
+    #expect(manifest.isDirty)
+  }
+
+  @Test func stagedOnlyChangesAreDirty() throws {
+    let repo = root + "/staged"
+    try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try git(["init", "-q"], repo)
+    try write(repo + "/f.txt", "f\n")
+    try git(["add", "-A"], repo)
+    try git(["commit", "-q", "-m", "c"], repo)
+    sleep(1)
+    try write(repo + "/f.txt", "g\n")
+    try git(["add", "-A"], repo)
+    let manifest = try SnapshotCapture.capture(repository: repo, options: options()).manifest
+    #expect(manifest.isDirty)
+  }
+
+  /// Capture reads the repository as data: a clean filter that any Git
+  /// diff of the modified tracked file would run never runs.
+  @Test func captureRunsNoGitConfiguration() throws {
+    let repo = try makeRepository()
+    let marker = root + "/filter-ran"
+    try write(repo + "/.git/filter.sh", "#!/bin/sh\ntouch '\(marker)'\ncat\n", mode: 0o755)
+    try git(["config", "filter.probe.clean", repo + "/.git/filter.sh"], repo)
+    try write(repo + "/.git/info/attributes", "* filter=probe\n")
+    _ = try SnapshotCapture.capture(repository: repo, options: options())
+    #expect(access(marker, F_OK) != 0)
+    // Witness: the filter is live for Git itself.
+    try run("/usr/bin/git", ["diff", "--quiet"], in: repo)
+    #expect(access(marker, F_OK) == 0)
+  }
+
+  @Test func refusesEscapingSymlinks() throws {
+    let repo = try makeRepository()
+    var options = options()
+    options.include = ["escape", "absolute"]
+    symlink("../../outside", repo + "/escape")
+    #expect(throws: CIError.self) {
+      try SnapshotCapture.capture(repository: repo, options: options)
     }
     unlink(repo + "/escape")
     symlink("/etc/hosts", repo + "/absolute")
     #expect(throws: CIError.self) {
-      try SnapshotCapture.capture(repository: repo, options: options())
+      try SnapshotCapture.capture(repository: repo, options: options)
     }
   }
 
@@ -225,9 +293,11 @@ import Testing
     let reference = result.reference
     let checkout = try step(OverlayScripts.checkout(snapshot: reference, path: "."), guest)
     #expect(checkout.succeeded, "\(text(checkout))")
-    // After the synthetic checkout the workspace is the base commit.
-    #expect(try String(contentsOfFile: guest.workspace + "/a.txt", encoding: .utf8) == "base a\n")
-    #expect(FileManager.default.fileExists(atPath: guest.workspace + "/del.txt"))
+    // CI-01: the checkout carries no base commit or history; the snapshot
+    // has no bundle at all.
+    #expect(!FileManager.default.fileExists(atPath: guest.workspace + "/a.txt"))
+    #expect(!FileManager.default.fileExists(atPath: guest.workspace + "/del.txt"))
+    #expect(result.manifest.schema == "iso-ci.snapshot/v2")
     let overlay = try step(OverlayScripts.overlay(snapshot: reference, path: "."), guest)
     #expect(overlay.succeeded, "\(text(overlay))")
     #expect(
@@ -240,6 +310,7 @@ import Testing
       try FileManager.default.destinationOfSymbolicLink(atPath: guest.workspace + "/link")
         == "a.txt")
     #expect(text(overlay).contains("applied and verified"))
+    #expect(text(overlay).contains("synthetic commit"))
     #expect(!text(overlay).contains("test-token"))
 
     // Regression: a later user step mutating the workspace does not change
@@ -262,7 +333,7 @@ import Testing
     let checkout = try step(
       OverlayScripts.checkout(snapshot: result.reference, path: "."), guest, path: path)
     #expect(checkout.succeeded, "\(text(checkout))")
-    #expect(text(checkout).contains("git is not available"))
+    #expect(text(checkout).contains("history is not included"))
     #expect(!FileManager.default.fileExists(atPath: guest.workspace + "/.git"))
     let overlay = try step(
       OverlayScripts.overlay(snapshot: result.reference, path: "."), guest, path: path)

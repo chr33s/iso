@@ -80,9 +80,10 @@ func filteredReadinessRejectsForgeryReplayAndFraming(change: String) throws {
   let identity = try FilteredReadiness.SigningIdentity(seed: Data(repeating: 0xbb, count: 32))
   let subprocess = try FilteredReadiness.guestRequest(
     guest.target,
-    client: SSHClient(environment: [
-      "PATH": "/usr/bin:/bin", "OPENAI_API_KEY": identity.startupKey.expose(),
-    ]),
+    client: SSHClient(
+      environment: [
+        "PATH": "/usr/bin:/bin", "OPENAI_API_KEY": identity.startupKey.expose(),
+      ], tools: .searchPath),
     port: 10788, nonce: probeNonce, capability: capability)
   let input = String(decoding: try #require(subprocess.input), as: UTF8.self)
   #expect(input.hasPrefix("10788\nGET /__iso/egress-ready HTTP/1.1\r\n"))

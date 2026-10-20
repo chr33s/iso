@@ -195,6 +195,7 @@ package final class AppleBackend: Sendable {
   }
 
   private func asRunning(_ instance: Instance, proof: HandoffProof) throws -> Running? {
+    try HandoffFence.require(instance)
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
     let observed = try observe(runtime, sidecar)
@@ -502,5 +503,36 @@ package struct ContextError: Error, CustomStringConvertible {
       }
     }
     return parts.joined(separator: ": ")
+  }
+}
+
+/// An instance whose failed restart could not be confirmed stopped
+/// (LIFE-01): no workload handoff is made to it until a confirmed stop (or
+/// destroy) reconciles it. The marker is host-owned control state.
+package enum HandoffFence {
+  static func path(_ instance: Instance) -> String { instance.directory + "/handoff-fence.json" }
+
+  struct Record: Codable {
+    var schema = 1
+    let reason: String
+    let at: String
+  }
+
+  package static func set(_ instance: Instance, reason: String) throws(HostError) {
+    try StateStore.writeControlFile(Record(reason: reason, at: utcTimestamp()), to: path(instance))
+  }
+
+  package static func clear(_ instance: Instance) throws(HostError) {
+    try StateStore.removeIfPresent(path(instance))
+  }
+
+  package static func require(_ instance: Instance) throws {
+    guard let bytes = try StateStore.readControlFile(path(instance)) else { return }
+    let reason =
+      (try? StateStore.decode(Record.self, bytes, path: path(instance)))?.reason
+      ?? "unreadable fence record"
+    throw HostError(
+      "Instance '\(instance.name)' is fenced: a failed start could not be confirmed stopped (\(neutralizeControls(reason))). Run `iso stop \(instance.name)` to reconcile it before using it."
+    )
   }
 }

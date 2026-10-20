@@ -1133,6 +1133,19 @@ private struct CompilerSession {
         if entry.value != .bool(false) && entry.value != .string("false") {
           report(line, input, "submodule checkouts are not supported")
         }
+      // A local snapshot carries selected content only, never the original
+      // history (CI-01): a job that needs history is refused, not run on a
+      // truncated one.
+      case "fetch-depth":
+        if entry.value != .string("1") && entry.value != .number(1) {
+          report(
+            line, input,
+            "unsupported capability: local snapshots carry no history (fetch-depth must be 1)")
+        }
+      case "fetch-tags":
+        if entry.value != .bool(false) && entry.value != .string("false") {
+          report(line, input, "unsupported capability: local snapshots carry no tags or history")
+        }
       default: break
       }
     }

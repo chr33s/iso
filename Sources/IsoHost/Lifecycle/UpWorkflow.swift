@@ -170,14 +170,10 @@ package struct UpWorkflow {
       )
     }
     let explicitDevcontainer = if case .explicit = input { true } else { false }
-    let isProject = subject == "this project"
     if request.disk != nil || request.vcpus != nil || request.mem != nil
-      || !request.extraMount.isEmpty || (isProject && request.excludeGit) || explicitDevcontainer
+      || !request.extraMount.isEmpty || explicitDevcontainer
     {
-      let flags =
-        isProject
-        ? "--vcpus, --mem, --disk, --extra-mount, --exclude-git, and --devcontainer only apply"
-        : "--vcpus, --mem, --disk, --extra-mount, and --devcontainer only apply"
+      let flags = "--vcpus, --mem, --disk, --extra-mount, and --devcontainer only apply"
       throw HostFailure(
         .instanceIncompatible(instance.name),
         "Instance '\(instance.name)' already exists for \(subject). \(flags) when creating a new instance.\nTo change memory, vCPUs, or disk on the existing instance, stop it and run `iso resize`. Otherwise `iso destroy \(instance.name)` first to recreate it with those options."

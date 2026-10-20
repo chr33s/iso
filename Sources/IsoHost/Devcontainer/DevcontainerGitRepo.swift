@@ -73,7 +73,9 @@ package struct GitRepoDevcontainerDiscovery: Sendable {
       }
       return Self.normalize(token.expose())
     }
-    return Self.selectHostToken(gh: ghAuthToken(), env: environment["GITHUB_TOKEN"])
+    let ambient = GitHubSourceAuth.ambient(auth)
+    return Self.selectHostToken(
+      gh: ambient.gh ? ghAuthToken() : nil, env: ambient.env ? environment["GITHUB_TOKEN"] : nil)
   }
 
   static func selectHostToken(gh: String?, env: String?) -> String? {

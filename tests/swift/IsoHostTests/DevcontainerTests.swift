@@ -943,7 +943,7 @@ private func stubCurl(_ directory: String, script: String) throws {
   #expect(!text.contains("SYNTHETIC"))
 }
 
-@Test func gitRepoDiscoverySendsTokenOnStdin() throws {
+@Test func gitRepoDiscoveryUsesOnlyAnExplicitlySelectedTokenOnStdin() throws {
   let root = try temporaryDirectory()
   defer { try? FileManager.default.removeItem(atPath: root) }
   try stubCurl(
@@ -954,7 +954,12 @@ private func stubCurl(_ directory: String, script: String) throws {
       """)
   let discovery = GitRepoDevcontainerDiscovery(
     environment: ["PATH": root, "STUB_LOG": root + "/log", "GITHUB_TOKEN": " ghp_SYNTHETIC \n"])
-  let file = try #require(try discovery.discover("https://github.com/owner/repo.git", auth: nil))
+  // AUTH-01: with no GitHub mode the ambient token is never used.
+  _ = try discovery.discover("https://github.com/owner/repo.git", auth: nil)
+  #expect(!(try String(contentsOfFile: root + "/log", encoding: .utf8)).contains("-H @-"))
+  #expect((try? String(contentsOfFile: root + "/log.stdin", encoding: .utf8)) ?? "" == "")
+  try? FileManager.default.removeItem(atPath: root + "/log")
+  let file = try #require(try discovery.discover("https://github.com/owner/repo.git", auth: .env))
   #expect(file.displayPath == "github.com/owner/repo/.devcontainer/devcontainer.json")
   #expect(file.contents == #"{"name":"remote"}"#)
   #expect(
@@ -986,9 +991,14 @@ private struct FakePrompter: DevcontainerPrompter {
   var interactive: Bool
   var useFile = true
   var alwaysIgnore = false
+  /// Called as the apply prompt is asked.
+  var onPrompt: (@Sendable () -> Void)? = nil
   var isInteractive: Bool { interactive }
   func confirm(_ prompt: String) throws -> Bool { alwaysIgnore }
-  func confirmDefaultYes(_ prompt: String) throws -> Bool { useFile }
+  func confirmDefaultYes(_ prompt: String) throws -> Bool {
+    onPrompt?()
+    return useFile
+  }
 }
 
 private final class Sink: @unchecked Sendable {
@@ -1055,12 +1065,31 @@ private func resolver(_ prompter: FakePrompter, _ sink: Sink) -> DevcontainerRes
   let preferences = root + "/prefs.json"
   let options = DevcontainerOptions(
     input: .discover, dryRun: false, workspace: project, preferencePath: preferences)
-  let sink = Sink()
+  let preview = Sink()
+  let shownAtPrompt = Sink()
   let declining = resolver(
-    FakePrompter(interactive: true, useFile: false, alwaysIgnore: true), sink)
+    FakePrompter(
+      interactive: true, useFile: false, alwaysIgnore: true,
+      onPrompt: { shownAtPrompt.append(preview.value) }), preview)
   #expect(try declining.collect(options, inputs: .init(), stage: .setup) == nil)
   #expect(try DevcontainerPreferences.load(preferences).ignoredProjects == [project])
+  // DEV-01: the translated effects were shown before the answer.
+  #expect(!shownAtPrompt.value.isEmpty)
+  #expect(shownAtPrompt.value == preview.value)
 
+  // Accepted, the preview is the one report: `resolve` does not repeat it.
+  let other = root + "/other"
+  try write("{}", other + "/.devcontainer/devcontainer.json")
+  let shown = Sink()
+  let accepted = try #require(
+    try resolver(FakePrompter(interactive: true), shown).resolve(
+      DevcontainerOptions(
+        input: .discover, dryRun: false, workspace: other, preferencePath: preferences),
+      inputs: .init(), stage: .setup))
+  let report = accepted.report.render() + "\n"
+  #expect(shown.value.components(separatedBy: report).count - 1 == 1)
+
+  let sink = Sink()
   let accepting = resolver(FakePrompter(interactive: true), sink)
   #expect(try accepting.collect(options, inputs: .init(), stage: .setup) == nil)
   #expect(

@@ -135,6 +135,11 @@ package struct SessionTTL: Hashable, Sendable, CustomStringConvertible {
     self.seconds = seconds
   }
 
+  /// The DEF-01 baseline boot lifetime.
+  package static let eightHours = SessionTTL(checked: 8 * 3600)
+
+  private init(checked seconds: UInt32) { self.seconds = seconds }
+
   package init(parsing text: String) throws(ValidationError) {
     switch DurationText(parsing: text) {
     case .invalid:

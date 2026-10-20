@@ -173,7 +173,7 @@ package enum Subprocess {
     posix_spawn_file_actions_adddup2(&actions, stdout, 1)
     posix_spawn_file_actions_adddup2(&actions, stderr, 2)
     if let workingDirectory {
-      posix_spawn_file_actions_addchdir_np(&actions, workingDirectory)
+      posix_spawn_file_actions_addchdir(&actions, workingDirectory)
     }
     posix_spawnattr_setflags(
       &attributes,

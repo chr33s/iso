@@ -138,6 +138,7 @@ package enum ConfigLoader {
     guard (status.st_mode & S_IFMT) == S_IFREG else {
       throw .unreadable(path: path, reason: "not a regular file")
     }
+    try ConfigTrust.check(descriptor, status: status, path: path)
     var bytes: [UInt8] = []
     var chunk = [UInt8](repeating: 0, count: 64 << 10)
     while bytes.count <= limit {
@@ -156,5 +157,81 @@ package enum ConfigLoader {
   private static func posixMessage(_ code: Int32) -> String {
     // libc supplies a NUL-terminated message; copy it before another libc call.
     unsafe String(cString: strerror(code))
+  }
+}
+
+/// Host configuration grants authority, so it is read only from a file that
+/// no other principal can change (POL-01): a regular file owned by this user
+/// or root, not group/other-writable, with no ACL entry allowing anyone to
+/// write it, below directories that satisfy the same rule (a sticky
+/// world-writable directory such as `/tmp` excepted). Symlinks in the
+/// given path are followed when it is opened; the checks apply to the
+/// opened file and the ancestors of its resolved path, not to the links.
+package enum ConfigTrust {
+  static func check(_ descriptor: Int32, status: stat, path: String) throws(ConfigError) {
+    let user = geteuid()
+    func untrusted(_ reason: String) -> ConfigError {
+      .unreadable(path: path, reason: "refusing an untrusted configuration file: \(reason)")
+    }
+    guard status.st_uid == user || status.st_uid == 0 else {
+      throw untrusted("it is owned by another user")
+    }
+    guard status.st_mode & 0o022 == 0 else {
+      throw untrusted("it is writable by group or others")
+    }
+    guard !grantsWrite(descriptor) else { throw untrusted("an ACL lets others write it") }
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+    // F_GETPATH writes a NUL-terminated path into the MAXPATHLEN buffer.
+    guard unsafe fcntl(descriptor, F_GETPATH, &buffer) == 0 else {
+      throw untrusted("its location cannot be resolved")
+    }
+    var directory =
+      (String(
+        decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+        as: UTF8.self) as NSString).deletingLastPathComponent
+    while true {
+      let fd = unsafe open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+      guard fd >= 0 else { throw untrusted("\(directory) cannot be inspected") }
+      defer { close(fd) }
+      var info = stat()
+      guard unsafe fstat(fd, &info) == 0 else {
+        throw untrusted("\(directory) cannot be inspected")
+      }
+      let sticky = info.st_mode & S_ISVTX != 0
+      guard info.st_uid == user || info.st_uid == 0 else {
+        throw untrusted("\(directory) is owned by another user")
+      }
+      guard info.st_mode & 0o022 == 0 || sticky else {
+        throw untrusted("\(directory) is writable by group or others")
+      }
+      guard sticky || !grantsWrite(fd) else {
+        throw untrusted("an ACL lets others write \(directory)")
+      }
+      if directory == "/" || directory.isEmpty { return }
+      directory = (directory as NSString).deletingLastPathComponent
+    }
+  }
+
+  /// Whether an extended ACL allows anyone to write, append, add or delete
+  /// entries, or change ownership or permissions. Deny entries are fine.
+  static func grantsWrite(_ descriptor: Int32) -> Bool {
+    guard let acl = unsafe acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else { return false }
+    defer { unsafe acl_free(UnsafeMutableRawPointer(acl)) }
+    var entry: acl_entry_t? = nil
+    var which = ACL_FIRST_ENTRY.rawValue
+    let writes: [acl_perm_t] = [
+      ACL_WRITE_DATA, ACL_APPEND_DATA, ACL_DELETE, ACL_DELETE_CHILD, ACL_WRITE_ATTRIBUTES,
+      ACL_WRITE_EXTATTRIBUTES, ACL_WRITE_SECURITY, ACL_CHANGE_OWNER,
+    ]
+    while unsafe acl_get_entry(acl, Int32(which), &entry) == 0, let current = unsafe entry {
+      which = ACL_NEXT_ENTRY.rawValue
+      var tag = ACL_UNDEFINED_TAG
+      guard unsafe acl_get_tag_type(current, &tag) == 0, tag == ACL_EXTENDED_ALLOW else { continue }
+      var permissions: acl_permset_t? = nil
+      guard unsafe acl_get_permset(current, &permissions) == 0, let permissions = unsafe permissions
+      else { continue }
+      if writes.contains(where: { unsafe acl_get_perm_np(permissions, $0) == 1 }) { return true }
+    }
+    return false
   }
 }

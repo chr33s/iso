@@ -9,7 +9,41 @@ struct PolicyCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "policy",
     abstract: "Inspect the authorization policy a VM boot runs under (docs/policy.md)",
-    subcommands: [PolicyShow.self])
+    subcommands: [PolicyShow.self, PolicyEffective.self])
+}
+
+/// `iso policy effective`: requested versus recorded policy and every
+/// relaxation from the secure-default baseline. Read-only: no secret is
+/// resolved, no VM is started or changed, nothing is audited.
+struct PolicyEffective: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "effective",
+    abstract:
+      "Report requested and recorded transport, egress, credentials, return, imports and lifetime, and every relaxation from the secure defaults (read-only)"
+  )
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(
+    help: "Instance name (default: the only instance, if any)", transform: parseInstanceName)
+  var name: InstanceName?
+  @Flag(help: "Emit JSON instead of the text report") var json = false
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global, intent: .preview)
+      let instance =
+        name != nil
+        ? try InstanceStore.resolve(context.config, name: name)
+        : (try? InstanceStore.list(context.config, skipped: { _, _ in }))
+          .flatMap { $0.count == 1 ? $0[0] : nil }
+      let report = EffectivePolicyReport.json(context.config, instance: instance)
+      if json {
+        context.output.write(report.rendered())
+      } else {
+        EffectivePolicyReport.text(report).map(neutralizeControls).forEach(context.output.out)
+      }
+    }
+  }
 }
 
 struct PolicyShow: ParsableCommand {
@@ -49,14 +83,17 @@ enum TerminalStageConfirmation {
     guard global.output != .json, isatty(STDIN_FILENO) == 1, isatty(STDERR_FILENO) == 1 else {
       return nil
     }
-    return { manifest in
+    return { selected in
+      let manifest = selected.manifest
       let tty = open("/dev/tty", O_RDWR | O_CLOEXEC | O_NOCTTY)
       guard tty >= 0 else { return false }
       defer { close(tty) }
-      let review = StageReview(manifest: manifest, location: StageLocation(instance))
-      var text =
-        (review.summary(instance: instance.name.rawValue) + review.textDiffs(markOmitted: true))
-        .joined(separator: "\n")
+      let review = StageReview(selected)
+      var stale = false
+      let diffs = review.textDiffs(markOmitted: true, stale: &stale)
+      // A review that no longer matches the manifest cannot approve it.
+      guard !stale else { return false }
+      var text = (review.summary(instance: instance.name.rawValue) + diffs).joined(separator: "\n")
       text +=
         "\n\nThe policy requires approving this exact stage before it is applied.\nType the stage id (\(manifest.id)) to apply it now; anything else cancels: "
       guard (try? AtomicFile.writeAll(tty, Array(text.utf8), "/dev/tty")) != nil else {

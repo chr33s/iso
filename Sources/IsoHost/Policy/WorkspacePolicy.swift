@@ -20,7 +20,7 @@ package struct StagePolicyBinding: Codable, Equatable, Sendable {
 
 /// Trusted host-terminal confirmation of one rendered stage. Returns true
 /// only on an explicit answer from the person at the host terminal.
-package typealias StageConfirmation = (StageManifest) throws -> Bool
+package typealias StageConfirmation = (SelectedStage) throws -> Bool
 
 /// Host-side enforcement for `workspace.pull.apply`
 /// (docs/design/iso-policy.md §8).
@@ -98,17 +98,22 @@ package enum WorkspacePolicy {
       workspaceIdentity: attached, destinationIdentity: destinationIdentity)
   }
 
-  /// Version 1 of the mutation-plan digest: the stage ID, instance and
-  /// policy binding, destination, and every path, operation, old-object
-  /// expectation, content hash, mode and link target, length-prefixed so
-  /// no two plans encode alike.
+  /// Version 2 of the mutation-plan digest: the stage ID, return policy,
+  /// instance and policy binding, destination path and binding, gitfile
+  /// observations, and every path, operation, old-object expectation,
+  /// content hash, mode, link target and sensitive classification,
+  /// length-prefixed so no two plans encode alike.
   package static func manifestDigest(_ manifest: StageManifest) -> String {
-    var lines = ["iso-stage-plan-v1"]
+    var lines = ["iso-stage-plan-v2"]
     func field(_ text: String) -> String { "\(text.utf8.count):\(text)" }
     lines.append("id " + field(manifest.id))
+    lines.append("return_policy \(manifest.returnPolicy.rawValue)")
     lines.append("instance " + field(manifest.instance))
     lines.append("destination " + field(manifest.destination))
-    lines.append("exclude_git \(manifest.excludeGit ? 1 : 0)")
+    switch manifest.binding {
+    case .existing(let identity): lines.append("bind existing " + field(identity))
+    case .create(let parent, let name): lines.append("bind create \(field(parent)) \(field(name))")
+    }
     if let policy = manifest.policy {
       lines.append(
         "binding "
@@ -118,6 +123,9 @@ package enum WorkspacePolicy {
           ].map(field).joined(separator: " "))
     } else {
       lines.append("binding -")
+    }
+    for gitfile in manifest.gitfiles {
+      lines.append("gitfile \(field(gitfile.path)) \(field(gitfile.sha256))")
     }
     func object(_ value: StageObject) -> String {
       switch value {
@@ -137,7 +145,7 @@ package enum WorkspacePolicy {
     }
     for change in manifest.changes {
       lines.append(
-        "change \(field(change.path)) \(change.operation.rawValue) new=\(object(change.new)) old=\(old(change.old))"
+        "change \(field(change.path)) \(change.operation.rawValue) new=\(object(change.new)) old=\(old(change.old)) sensitive=\(field(change.sensitive ?? ""))"
       )
     }
     for issue in manifest.issues { lines.append("issue " + field(issue)) }
@@ -171,16 +179,6 @@ package enum WorkspacePolicy {
     )
   }
 
-  /// Serializes every iso return into one destination, keyed by the
-  /// verified directory identity in host-owned lock storage. Acquired after
-  /// the policy lock and before the stage lock.
-  static func workspaceLock(_ instance: Instance, identity: String) throws(HostError) -> FileLock {
-    let name = identity.replacingOccurrences(of: ":", with: "-")
-    let directory = stateRoot(of: instance) + "/workspace-locks"
-    try StateStore.ensurePrivateDirectory(directory)
-    return try FileLock(path: directory + "/\(name).lock")
-  }
-
   /// The backend state root holding `owner.json`, above both local instances
   /// (`instances/NAME`) and remote-host shadows (`host-workspaces/HOST/ID`),
   /// so every return into one destination shares one lock. Without that
@@ -210,11 +208,13 @@ extension WorkspaceTransfer {
   /// An enforcing `workspace.pull.apply` (docs/design/iso-policy.md §8.2):
   /// verify the stage against the current boot, render and confirm it at
   /// the host terminal without holding a lock, then take the policy,
-  /// workspace and stage locks in that order, re-verify everything, consume
-  /// the single-use receipt, and apply through the verified directory
-  /// descriptor. A denial writes nothing.
+  /// per-user apply and stage locks in that order, re-verify everything,
+  /// consume the single-use receipt in the same critical section as the
+  /// durable attempt record, and install through the common installer. A
+  /// denial writes nothing. Named sensitive grants never stand in for the
+  /// terminal confirmation.
   func applyGovernedStage(
-    _ instance: Instance, stageID: String?, force: Bool, binding: PolicyBinding,
+    _ instance: Instance, _ request: ApplyRequest, binding: PolicyBinding,
     policy: CompiledPolicy, confirm: StageConfirmation?
   ) throws -> (manifest: StageManifest, applied: [String]) {
     let location = StageLocation(instance)
@@ -239,14 +239,12 @@ extension WorkspaceTransfer {
         manifestDigest: WorkspacePolicy.manifestDigest(manifest))
     }
 
-    // 1. Prepare and confirm. No lifecycle, workspace or stage lock is held
+    // 1. Prepare and confirm. No lifecycle, apply or stage lock is held
     // while waiting for a person.
-    let manifest = try location.locked { () throws(HostError) in try location.loadManifest() }
-    if let stageID, stageID != manifest.id {
-      throw HostError(
-        "The current stage is \(manifest.id), not \(stageID); review it with `iso diff` before applying"
-      )
-    }
+    let selected = try location.locked { () throws(HostError) in try location.loadSelected() }
+    let manifest = selected.manifest
+    try Self.requireSelected(request.stageID, manifest)
+    try Self.authorize(request, manifest, instance: name)
     guard let staged = manifest.policy, staged.instanceID == binding.instanceID,
       staged.bootID == binding.bootID, staged.policyEpoch == binding.policyEpoch,
       staged.policyDigest == policy.digest
@@ -258,6 +256,8 @@ extension WorkspaceTransfer {
     }
     guard let attached = try WorkspacePolicy.attachedWorkspace(instance),
       attached == staged.workspaceIdentity, manifest.destination == attached,
+      case .existing(let boundIdentity) = manifest.binding,
+      boundIdentity == staged.destinationIdentity,
       WorkspacePolicy.identity(path: manifest.destination) == staged.destinationIdentity
     else {
       throw deny(
@@ -265,23 +265,22 @@ extension WorkspaceTransfer {
         "the attached workspace or its directory changed since stage \(manifest.id) was built; re-stage"
       )
     }
-    let applier = StageApplier(manifest: manifest, tree: location.tree)
-    try applier.preflight()
+    let applier = StageApplier(manifest: manifest, tree: selected.stage.tree)
+    try applier.preflight(try applier.destination.open())
     try applier.verifyStage()
     let evaluation = ApprovalCheck.evaluate(policy, instance: name)
     if case .denied(let reason) = evaluation.outcome {
       throw deny(reason, "the policy does not permit applying to workspace:attached in '\(name)'")
     }
-    let needsApproval = evaluation.requiresApproval
     var receipt: ApprovalReceipt? = nil
-    if needsApproval {
+    if evaluation.requiresApproval {
       guard let confirm else {
         throw deny(
           .approvalRequired,
-          "confirm the reviewed stage at an interactive host terminal; --force, piped input and --output json cannot approve it"
+          "confirm the reviewed stage at an interactive host terminal; --force, --approve-sensitive, piped input and --output json cannot approve it"
         )
       }
-      guard try confirm(manifest) else {
+      guard try confirm(selected) else {
         _ = deny(.approvalRequired, "declined at the terminal")
         throw HostError("Apply of stage \(manifest.id) declined; nothing was written")
       }
@@ -308,63 +307,47 @@ extension WorkspaceTransfer {
         .policyEpochMismatch, "'\(name)' started a new boot since review; re-stage and review again"
       )
     }
-    let destination = open(manifest.destination, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-    guard destination >= 0 else { throw HostError.posix("Failed to open", manifest.destination) }
-    defer { close(destination) }
-    guard let identity = WorkspacePolicy.identity(fd: destination),
-      identity == staged.destinationIdentity
-    else {
-      throw deny(.approvalMismatch, "the destination directory was replaced since review; re-stage")
-    }
-    let workspaceLock = try WorkspacePolicy.workspaceLock(instance, identity: identity)
-    defer { workspaceLock.release() }
+    let applyLock = try ReturnApplyLock.acquire()
+    defer { applyLock.release() }
     let stageLock = try location.lock()
     defer { stageLock.release() }
-    let reread = try location.loadManifest()
-    guard WorkspacePolicy.manifestDigest(reread) == WorkspacePolicy.manifestDigest(manifest) else {
+    let reread = try location.loadSelected()
+    guard
+      WorkspacePolicy.manifestDigest(reread.manifest) == WorkspacePolicy.manifestDigest(manifest)
+    else {
       throw deny(.approvalMismatch, "the stage changed since review; review it again")
     }
-    if !force && FileManager.default.fileExists(atPath: manifest.destination + "/.git") {
-      try checkLocalClean(manifest.destination)
+    guard WorkspacePolicy.identity(path: manifest.destination) == boundIdentity else {
+      throw deny(.approvalMismatch, "the destination directory was replaced since review; re-stage")
     }
-    try applier.preflight()
-    try applier.verifyStage()
 
-    // 3. Authorize and consume immediately before the first mutation.
-    let workspace = try WorkspacePolicy.attachedWorkspace(instance) ?? ""
-    let decision = ApprovalCheck.authorizeAndConsume(
-      &receipt, expected: approval(reread, destination: identity, workspace: workspace),
-      policy: currentPolicy, instance: name, now: clock.nanoseconds(),
-      decisionID: UUID().uuidString.lowercased())
-    if let receipt {
+    // 3. Authorize and consume immediately before the durable begin record
+    // and the first mutation, inside the common installer.
+    return try install(
+      instance, reread, request, location: location, receipt: receipt?.approvalID
+    ) {
+      let workspace = try WorkspacePolicy.attachedWorkspace(instance) ?? ""
+      let decision = ApprovalCheck.authorizeAndConsume(
+        &receipt,
+        expected: approval(reread.manifest, destination: boundIdentity, workspace: workspace),
+        policy: currentPolicy, instance: name, now: clock.nanoseconds(),
+        decisionID: UUID().uuidString.lowercased())
+      if let receipt {
+        BoundaryAudit.record(
+          instance,
+          .approvalConsumed(approvalID: receipt.approvalID, reason: decision.reason),
+          diagnostics: diagnostics)
+      }
       BoundaryAudit.record(
         instance,
-        .approvalConsumed(approvalID: receipt.approvalID, reason: decision.reason),
+        .policyDecision(
+          action: .workspacePullApply, outcome: .decided(decision.verdict, decision.reason),
+          decisionID: decision.decisionID, digest: decision.policyDigest, shadow: false),
         diagnostics: diagnostics)
+      guard decision.allows else {
+        throw PolicyDenied(
+          reason: decision.reason, detail: "stage \(manifest.id) was not applied; review it again")
+      }
     }
-    BoundaryAudit.record(
-      instance,
-      .policyDecision(
-        action: .workspacePullApply, outcome: .decided(decision.verdict, decision.reason),
-        decisionID: decision.decisionID, digest: decision.policyDigest, shadow: false),
-      diagnostics: diagnostics)
-    guard decision.allows else {
-      throw PolicyDenied(
-        reason: decision.reason, detail: "stage \(manifest.id) was not applied; review it again")
-    }
-
-    // 4. Apply through the verified descriptor. A partial failure stays
-    // visible and the receipt stays consumed.
-    let applied: [String]
-    do {
-      applied = try applier.apply(destination: destination)
-    } catch let partial as StageApplyError {
-      BoundaryAudit.record(
-        instance, .pullApplyPartial(applied: partial.applied.count), diagnostics: diagnostics)
-      throw partial
-    }
-    BoundaryAudit.record(instance, .pullApply(applied: applied.count), diagnostics: diagnostics)
-    try location.remove()
-    return (manifest, applied)
   }
 }

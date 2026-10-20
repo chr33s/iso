@@ -45,8 +45,8 @@ struct Setup: ParsableCommand {
     help: ArgumentHelp(
       "Build deadline: seconds, or an s/m/h suffix (e.g. 90s, 30m, 2h)", valueName: "DURATION"),
     transform: parseDurationArgument) var builderTimeout: Duration?
-  @Option(help: "Workspace directory to scan for .devcontainer/devcontainer.json") var workspace:
-    String?
+  @Option(
+    help: "Workspace directory to scan for .devcontainer/devcontainer.json") var workspace: String?
   @OptionGroup var devcontainerArguments: DevcontainerArguments
   @Flag(help: "Translate devcontainer.json and print the report, then exit") var dryRun = false
   @Option(help: ArgumentHelp("Guest operating system: linux or macos", valueName: "OS"))

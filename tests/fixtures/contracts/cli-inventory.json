@@ -202,6 +202,7 @@
     "--apply",
     "--force",
     "--stage-id",
+    "--approve-sensitive",
     "--exclude-git"
   ],
   "host push": [
@@ -334,6 +335,10 @@
     "<name>"
   ],
   "policy": [],
+  "policy effective": [
+    "<name>",
+    "--json"
+  ],
   "policy show": [
     "<name>",
     "--json"
@@ -364,6 +369,7 @@
     "--apply",
     "--discard",
     "--stage-id",
+    "--approve-sensitive",
     "--stat"
   ],
   "push": [

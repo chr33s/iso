@@ -538,7 +538,7 @@ package final class AllocationDriver: EnvironmentProvider, @unchecked Sendable {
   // MARK: Retention, completion, release
 
   package func retain(_ id: AllocationID, mode: RetentionMode, seconds: UInt64) throws(CIError) {
-    guard var record = try store.allocation(id) else {
+    guard let record = try store.allocation(id) else {
       throw CIError(.notFound, "unknown allocation \(id)")
     }
     let client = try hosts.client(record.host)
@@ -574,7 +574,7 @@ package final class AllocationDriver: EnvironmentProvider, @unchecked Sendable {
   }
 
   package func complete(_ id: AllocationID, exitStatus: Int32?) throws(CIError) {
-    guard var record = try store.allocation(id) else {
+    guard let record = try store.allocation(id) else {
       throw CIError(.notFound, "unknown allocation \(id)")
     }
     let client = try hosts.client(record.host)

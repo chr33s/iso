@@ -34,11 +34,11 @@ after hand edits.
 | `data_dir` | string (path) | `~/.iso` | Directory for VM artifacts: images, instances, keys. |
 | `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
-| `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline"}`: defaults for the hardening settings. See [security presets](#security-presets). |
+| `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline", "revoked_grant_ids": [...]}`, both members optional. `preset` sets defaults for the hardening settings; see [security presets](#security-presets). `revoked_grant_ids` lists saved instance grants to withdraw, by the 16-lowercase-hex IDs `iso policy effective` shows; duplicates are rejected, and an ID no instance records only draws a warning. See [`iso policy effective`](commands.md#policy-effective). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
-| `egress` | string | `"open"` | Guest network reach beyond the host: `"open"`, `"none"`, or `"filtered"`. See [egress](#egress). |
-| `network` | object | `{"transport": "vmnet"}` | How new instances' VMs are connected: `"vmnet"` or `"brokered"` (no network device). See [network](#network). |
+| `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
+| `network` | object | `{"transport": "brokered"}` | How new instances' VMs are connected: `"brokered"` (no network device) or `"vmnet"` (an explicit compatibility choice; required for macOS guests and open egress). See [network](#network). |
 | `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
 
@@ -275,7 +275,7 @@ Claude Code configuration injected into the guest VM at start time. Every field 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `api_key` | string | unset (reads `$ANTHROPIC_API_KEY` from environment) | Anthropic API key, literal or `cmd:` reference (run on the host with `sh -c` when needed). Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
-| `config_dir` | string (path) or `false` | `~/.claude` | Source for `CLAUDE.md`, `keybindings.json`, `rules/`, `commands/`, `skills/`, `agents/`, `output-styles/`, `themes/`, and `workflows/`, copied into guest `~/.claude/` on each start. Complete bundles and narrow companion preferences are imported. Supports `~` expansion; `false` stops copying while retaining prior files/preferences. Host deletions do not delete guest files. See [import semantics and limitations](claude-integration.md#config-directory). |
+| `config_dir` | string (path) or `false` | disabled | Opt-in source for `CLAUDE.md`, `keybindings.json`, `rules/`, `commands/`, `skills/`, `agents/`, `output-styles/`, `themes/`, and `workflows/`, copied into guest `~/.claude/` on each start. Complete bundles and narrow companion preferences are imported. Nothing is imported unless a directory is named (for example `"~/.claude"`); `null` is rejected. The named root is read once into a confined snapshot: links must resolve inside it, special files are refused, and an import is capped at 10,000 entries and 256 MiB. Supports `~` expansion; `false` stops copying while retaining prior files/preferences. Host deletions do not delete guest files. See [import semantics and limitations](claude-integration.md#config-directory). |
 | `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are forwarded automatically when set; list additional variables here. |
 | `marketplaces` | array of strings | `[]` | Plugin marketplace sources. Each entry is a GitHub repo URL or an absolute local directory path. Local directories are copied into the guest before registration. |
 | `plugins` | array of strings | `[]` | Plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
@@ -355,7 +355,7 @@ Codex configuration injected into the guest VM at start time. Every field is opt
 |-------|------|---------|-------------|
 | `auth` | string | `"api_key"` | Codex auth mode: `"api_key"` forwards an OpenAI API key; `"chatgpt"` uses ChatGPT account or workspace login through the guest Linux keyring. |
 | `api_key` | string | unset (reads `$OPENAI_API_KEY` from environment) | OpenAI API key, literal or `cmd:` reference. Used only with `auth` `"api_key"`. Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
-| `config_dir` | string (path) or `false` | `~/.codex` | Source directory for Codex config files. Copies an allowlist of entries (`AGENTS.md`, `prompts/`, `config.toml`, `auth.json`) from this directory to `~/.codex/` in the guest on start. `auth.json` is omitted when `auth` is `"chatgpt"` or `proxy.openai` is active. Set to `false` to disable. Supports `~` expansion. |
+| `config_dir` | string (path) or `false` | disabled | Opt-in source directory for Codex config files (for example `"~/.codex"`), read once into the same confined snapshot as Claude's. Copies an allowlist of entries (`AGENTS.md`, `prompts/`, `config.toml`, `auth.json`) from this directory to `~/.codex/` in the guest on start. `auth.json` is omitted when `auth` is `"chatgpt"` or `proxy.openai` is active. Set to `false` to disable. Supports `~` expansion. |
 | `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `OPENAI_API_KEY` and `GITHUB_TOKEN` are forwarded automatically when set; list additional variables here. |
 | `marketplaces` | array of strings | `[]` | Codex plugin marketplace sources. Each entry is a `owner/repo`[`@ref`] shorthand, a git URL, or an absolute local directory path. Local directories are copied into the guest before registration. Baked into the golden image and delta-installed on first boot. |
 | `plugins` | array of strings | `[]` | Codex plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
@@ -436,8 +436,8 @@ the instance's `proxy.json`, not in the config file).
 
 | Value | Behavior |
 |-------|----------|
-| `"auto"` (default) | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one uses direct credential forwarding, with a warning at `up`/`start`. |
-| `"required"` | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) reaches the guest by any path. Values isolate would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
+| `"auto"` | A provider with an upstream (config default or per-VM override) runs through its proxy, and none of its credential variables reaches the guest. A provider without one uses direct credential forwarding, with a warning at `up`/`start`. |
+| `"required"` (default) | No provider credential variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) reaches the guest by any path. Values isolate would forward automatically (host environment, `api_key`) are withheld; declaring one in `env_forward`, `guest_env` or `--env` is an error. The host `~/.codex/auth.json` is not staged into the guest either. A remote-mode VM with agents must have at least one provider proxy, or `up`/`start` fails. |
 | `"off"` | No proxy starts; configured upstreams and per-VM overrides are ignored, and credentials are forwarded as without a proxy. A `{vault:}` provider secret from `--env`/`--env-file` is an error rather than being forwarded. |
 
 `proxy.<provider>.credential` and `github.pat` tokens also accept
@@ -546,7 +546,7 @@ Each timeout must be between 1 and 86400 seconds.
 
 With [`network.transport: "brokered"`](#network) there is no vmnet network at
 all and only `"none"` and `"filtered"` are valid; the paragraphs below describe
-the default vmnet transport.
+the vmnet transport.
 
 `"none"` creates each new instance's sandbox in vmnet host mode with NAT
 (IPv4 and IPv6), the vmnet DNS proxy, router advertisements and DHCP all
@@ -679,9 +679,12 @@ credential proxy.
 { "network": { "transport": "brokered" }, "egress": "filtered" }
 ```
 
-`transport` is `"vmnet"` (the default: one dedicated vmnet network device,
-shared or host-only by `egress`, exactly as described above) or
-`"brokered"`. Unknown `network` members are rejected.
+`transport` is `"brokered"` (the default) or `"vmnet"` (one dedicated vmnet
+network device, shared or host-only by `egress`, exactly as described above).
+`vmnet` is an explicit compatibility choice: macOS guests and open egress need
+it, and a brokered setting never falls back to it. On vmnet, `"none"` and
+`"filtered"` do not isolate the guest from host or LAN services the way
+brokered does. Unknown `network` members are rejected.
 
 A **brokered** instance's VM is created with **no network device**. The
 runtime reads the live `VZVirtualMachine` after creating it and before the
@@ -747,8 +750,8 @@ for what the brokered transport does and does not promise).
 
 | Preset | `egress` | `proxy.mode` | `workspace.pull.mode` |
 |--------|----------|--------------|-----------------------|
-| `networked` (same as no preset) | `open` | `auto` | `direct` |
-| `provider-only` | `none` | `required` | `stage` |
+| `provider-only` (same as no preset) | `none` | `required` | `stage` |
+| `networked` (needs `network.transport` `"vmnet"`) | `open` | `auto` | `direct` |
 | `offline` | `none` | `off` | `stage` |
 
 A preset only supplies defaults: any of those fields written explicitly wins.
@@ -763,8 +766,10 @@ A preset only supplies defaults: any of those fields written explicitly wins.
 ```
 
 `session_ttl` (seconds, or a number with an `s`/`m`/`h` suffix, from 1 minute
-to 720 hours) ends each boot of an instance that long after `up`/`start`
-began it. The sandbox's owner process halts the VM at the deadline using the
+to 720 hours; **8h when omitted**) ends each boot of an instance that long
+after `up`/`start` began it. `"unlimited"` turns the limit off for an ordinary
+local instance only (enrolled hosts and iso-ci stay finite); `null` is
+rejected. The sandbox's owner process halts the VM at the deadline using the
 host's clock (the guest clock plays no part, and host sleep counts), a
 relaunch after a crash refuses to boot past it, and isolate refuses to hand out
 an instance whose deadline has passed (`APPLE_SESSION_EXPIRED`). `iso start`
@@ -790,13 +795,13 @@ Unknown members and values are rejected. See
 
 ## `workspace` section
 
-How `iso pull` returns guest files. See [staged pulls](workspaces.md#staged-pulls).
+How `iso pull` returns guest files. See [staged pulls](workspaces.md#pulling-guest-to-host).
 
 ```jsonc
 {
   "workspace": {
     "pull": {
-      "mode": "stage",          // "direct" (default) or "stage"
+      "mode": "stage",          // "stage" (default) or "direct"
       "max_files": 50000,
       "max_bytes": "1GiB",
       "max_file_bytes": "256MiB"
@@ -807,13 +812,56 @@ How `iso pull` returns guest files. See [staged pulls](workspaces.md#staged-pull
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `pull.mode` | string | `"direct"` | `direct` pulls straight into the local directory; `stage` stages and reviews first |
+| `pull.mode` | string | `"stage"` | `stage` stages and prints a review; `direct` applies a validated plan of additions at once (replacing files needs `--force`) |
 | `pull.max_files` | integer | `50000` | Most staged entries of any type |
 | `pull.max_bytes` | bytes | `"1GiB"` | Most regular-file bytes in one stage |
 | `pull.max_file_bytes` | bytes | `"256MiB"` | Largest single staged file |
 
 Byte fields take an integer or a string with a `KiB`, `MiB` or `GiB` suffix.
-Unknown members of `workspace` and `workspace.pull` are rejected.
+
+### `workspace.input`
+
+What a transfer into the guest (`iso up` copy, `iso push`, mount sync, `iso
+host push`) may carry. Every transfer sends one immutable snapshot of the
+selected files; it never sends `.git` or original history, never deletes guest
+files, and never falls back to copying the whole directory.
+
+```jsonc
+{
+  "workspace": {
+    "input": {
+      "mode": "tracked",              // or "paths"
+      "paths": [{ "path": "generated", "recursive": true }],
+      "exclude": ["fixtures/large"],
+      "secret_allow": ["config/.env.example"],
+      "limits": { "max_entries": 100000, "max_file_bytes": 1073741824, "max_total_bytes": 4294967296 }
+    }
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `mode` | `"tracked"` | `tracked`: the working-tree bytes of every file in the Git index (read as data; Git never runs on the host), plus `paths`. `paths`: only `paths`, which must be non-empty. A non-Git directory or an index iso cannot read inertly (conflicts, submodules, sparse checkouts, SHA-256 repositories) needs `paths`. |
+| `paths` | `[]` | `{ "path": "rel/name", "recursive": false }` selections. Literal root-relative names: no globs, `..`, absolute paths or ignore-file expansion. A directory's contents need `recursive: true`; `"."` with `recursive: true` selects the whole root. |
+| `exclude` | `[]` | Literal entries or subtrees left out. |
+| `secret_allow` | `[]` | Exact selected paths sent even though they match the `local-secret-names/1` table below. Selects nothing new. |
+| `limits` | 100000 entries, 1 GiB per file, 4 GiB total | Counted across every root in one operation; may only be lowered. |
+
+`local-secret-names/1`, applied even to tracked files: `.env`, `.env.*`,
+`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.keystore`, `id_rsa*`, `id_dsa*`,
+`id_ecdsa*`, `id_ed25519*`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`,
+`.git-credentials`, `.aws/`, `.ssh/`, `.gnupg/`, `.docker/config.json`,
+`.kube/config`, `credentials.json` (case-insensitively, at any depth). It is a
+name table, not content scanning. Links are sent as links only when their
+target stays inside the selection and does not pass through another link or
+`.git`; hard-linked files and special files are not sent. Omissions are listed
+by name. Tracked files deleted on the host are reported, not removed from the
+guest. After the first copy the guest gets a new repository with one synthetic
+commit of the sent files; it is not the host's history. `--exclude-git` is a
+deprecated no-op.
+
+Unknown members of `workspace`, `workspace.pull` and `workspace.input` are rejected.
 
 ## `execution` section
 

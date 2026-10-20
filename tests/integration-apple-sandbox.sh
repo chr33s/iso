@@ -1081,6 +1081,9 @@ if want iso; then
             --arg kernel "$kernel" --rawfile stubs "$FIXTURES/stub-agents.sh" \
             --argjson extra "${1:-"{}"}" \
             '{data_dir: $data, github: "off",
+              security: {preset: "networked"}, network: {transport: "vmnet"},
+              limits: {session_ttl: "unlimited"},
+              workspace: {input: {mode: "paths", paths: [{path: ".", recursive: true}]}},
               profiles: {"boundary-fixture": {post_install: $stubs}},
               vm: {vcpu_count: 2, mem_size_mib: 2048, template_size_gib: 8},
               apple_container: ({binary: $binary, builder: $builder, kernel: $kernel} + $extra)}'
@@ -1407,7 +1410,7 @@ if want iso; then
             test "$(jq -r .result.network.effective.network_policy_digest <<<"$bstatus")" = "$(csbx inspect "$bmid" | jq -r .effective.networkPolicy)"
         check "brokered: text status names the transport" grep -q 'Network: brokered' <<<"$(brk status e2e-brk)"
         brk exec e2e-brk -- sh -c 'echo from-guest > /workspace/marker' >/dev/null
-        check "brokered: iso pull returns guest changes over the stream" brk pull e2e-brk
+        check "brokered: iso pull returns guest changes over the stream" brk pull e2e-brk --force
         check "brokered: the pulled change reached the project" test "$(cat "$WORK/project-brokered/marker")" = from-guest
         # The same egress under vmnet, so the transport check (not egress) refuses it.
         vmnet_refusal="$(none exec e2e-brk -- true 2>&1)"

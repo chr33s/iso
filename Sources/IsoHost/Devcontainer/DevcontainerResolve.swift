@@ -114,7 +114,7 @@ package struct DevcontainerResolver: Sendable {
     _ options: DevcontainerOptions, inputs: DevcontainerTranslatorInputs, stage: DevcontainerStage
   ) throws -> DevcontainerTranslation? {
     let translation = try collect(options, inputs: inputs, stage: stage)
-    if let translation { errorSink(translation.report.render() + "\n") }
+    if let translation, !translation.previewed { errorSink(translation.report.render() + "\n") }
     return translation
   }
 
@@ -164,6 +164,18 @@ package struct DevcontainerResolver: Sendable {
       return nil
     }
 
+    // DEV-01: parse and translate once, before any acceptance; the accepted
+    // translation is this frozen snapshot, never a re-read of the file.
+    let parsed: ParsedDevcontainer
+    switch source {
+    case .path(let path): parsed = try ParsedDevcontainer.load(path)
+    case .contents(let path, let contents):
+      parsed = try ParsedDevcontainer(path: path, text: contents)
+    }
+    var translation = Devcontainer.translate(parsed, inputs: inputs, stage: stage)
+    if !isLocal { translation.applied?.source = .remoteContents }
+    translation.report.ignoredPaths = losers
+
     if options.input == .discover && !options.dryRun {
       guard prompter.isInteractive else {
         if isLocal {
@@ -181,7 +193,16 @@ package struct DevcontainerResolver: Sendable {
           "Found \(displayPath) but stdin is not a TTY.\nRun interactively to confirm the remote file, pass --no-devcontainer to ignore it, or pass --devcontainer <local-path> to apply an explicit file.\niso reads a subset of devcontainer.json — see docs/devcontainer.md for the supported keys."
         )
       }
-      guard try prompter.confirmDefaultYes("Use devcontainer.json at \(displayPath)?") else {
+      // The preview: every requested workspace, mount, environment, port,
+      // resource and command effect. Accepting it authorizes guest setup
+      // only; it grants no host capability beyond the configuration's.
+      errorSink(translation.report.render() + "\n")
+      translation.previewed = true
+      guard
+        try prompter.confirmDefaultYes(
+          "Apply the devcontainer settings shown above from \(displayPath)? (They grant no host capability.)"
+        )
+      else {
         if isLocal {
           diagnostics.log(
             .info,
@@ -194,15 +215,6 @@ package struct DevcontainerResolver: Sendable {
       }
     }
 
-    let parsed: ParsedDevcontainer
-    switch source {
-    case .path(let path): parsed = try ParsedDevcontainer.load(path)
-    case .contents(let path, let contents):
-      parsed = try ParsedDevcontainer(path: path, text: contents)
-    }
-    var translation = Devcontainer.translate(parsed, inputs: inputs, stage: stage)
-    if !isLocal { translation.applied?.source = .remoteContents }
-    translation.report.ignoredPaths = losers
     resolveFeatureRequests(&translation)
     return translation
   }

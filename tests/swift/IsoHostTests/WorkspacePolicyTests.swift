@@ -16,7 +16,8 @@ private struct GovernedFixture {
   let sink = LogSink()
   var location: StageLocation { StageLocation(instance) }
   var transfer: WorkspaceTransfer {
-    WorkspaceTransfer(client: SSHClient(environment: [:]), diagnostics: sink.diagnostics)
+    WorkspaceTransfer(
+      client: SSHClient(environment: [:], tools: .searchPath), diagnostics: sink.diagnostics)
   }
 
   init(policy: CompiledPolicy? = nil) throws {
@@ -31,26 +32,21 @@ private struct GovernedFixture {
   }
 
   @discardableResult
-  func stage(_ files: [String: String] = ["new.txt": "hello\n"], id: String = "abcd1234") throws
-    -> StageManifest
-  {
-    try location.prepare()
-    for (name, text) in files {
-      try writeFile(location.tree + "/" + name, text)
-    }
+  func stage(_ files: [String: String] = ["new.txt": "hello\n"]) throws -> StageManifest {
     let binding = try WorkspacePolicy.bindStage(
       instance, destination: destination, explicitDirectory: false, configured: policy,
       diagnostics: sink.diagnostics)
-    var builder = StageBuilder(tree: location.tree, destination: destination, limits: .defaults)
-    let manifest = try builder.build(
-      id: id, instance: instance.name.rawValue, excludeGit: false, policy: binding)
-    try location.saveManifest(manifest)
-    return manifest
+    return try makeSelectedStage(
+      location, destination: destination, instance: instance.name.rawValue, policy: binding
+    ) { try populate($0, files) }.manifest
   }
 
-  func apply(force: Bool = true, confirm: StageConfirmation?) throws -> [String] {
-    try transfer.applyStage(
-      instance, stageID: nil, force: force, configuredPolicy: policy, confirm: confirm
+  var tree: String { (try? location.loadSelected().stage.tree) ?? "/nonexistent" }
+
+  func apply(confirm: StageConfirmation?) throws -> [String] {
+    let id = try location.loadSelected().manifest.id
+    return try transfer.applyStage(
+      instance, .init(stageID: id, replace: true), configuredPolicy: policy, confirm: confirm
     ).applied
   }
 
@@ -82,7 +78,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   let prompts = Mutex(0)
   let applied = try f.apply { shown in
     prompts.withLock { $0 += 1 }
-    #expect(shown.id == manifest.id)
+    #expect(shown.manifest.id == manifest.id)
     return true
   }
   #expect(applied == ["new.txt"])
@@ -98,7 +94,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   // --force, piped input and machine output all arrive here as no confirmation.
   let f = try GovernedFixture()
   try f.stage()
-  #expect(denial { _ = try f.apply(force: true, confirm: nil) } == .approvalRequired)
+  #expect(denial { _ = try f.apply(confirm: nil) } == .approvalRequired)
   #expect(f.destinationEntries.isEmpty)
   #expect(f.location.exists)
 }
@@ -121,9 +117,9 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 @Test func stagedContentChangedDuringReviewIsRefused() throws {
   let f = try GovernedFixture()
   try f.stage()
-  #expect(throws: HostError.self) {
+  #expect(throws: ReturnError.self) {
     _ = try f.apply { _ in
-      try writeFile(f.location.tree + "/new.txt", "swapped\n")
+      try writeFile(f.tree + "/new.txt", "swapped\n")
       return true
     }
   }
@@ -136,7 +132,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   #expect(
     denial {
       _ = try f.apply { _ in
-        try f.stage(id: "ffff0000")
+        try f.stage()
         return true
       }
     } == .approvalMismatch)
@@ -227,20 +223,16 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   let destination = try scratchDirectory("legacydest")
   let sink = LogSink()
   let location = StageLocation(instance)
-  try location.prepare()
-  try writeFile(location.tree + "/a.txt", "a")
-  var builder = StageBuilder(tree: location.tree, destination: destination, limits: .defaults)
-  try location.saveManifest(
-    try builder.build(id: "abcd1234", instance: "dev", excludeGit: false))
-  let transfer = WorkspaceTransfer(
-    client: SSHClient(environment: [:]), diagnostics: sink.diagnostics)
-  #expect(throws: HostError.self) {
-    try transfer.applyStage(
-      instance, stageID: nil, force: true, configuredPolicy: try compiledPolicy())
+  let selected = try makeSelectedStage(location, destination: destination, instance: "dev") {
+    try populate($0, ["a.txt": "a"])
   }
-  #expect(
-    try transfer.applyStage(instance, stageID: nil, force: true, configuredPolicy: nil).applied
-      == ["a.txt"])
+  let transfer = WorkspaceTransfer(
+    client: SSHClient(environment: [:], tools: .searchPath), diagnostics: sink.diagnostics)
+  let request = WorkspaceTransfer.ApplyRequest(stageID: selected.manifest.id, replace: true)
+  #expect(throws: HostError.self) {
+    try transfer.applyStage(instance, request, configuredPolicy: try compiledPolicy())
+  }
+  #expect(try transfer.applyStage(instance, request, configuredPolicy: nil).applied == ["a.txt"])
 }
 
 @Test func manifestDigestCoversTheWholeMutationPlan() throws {
@@ -252,51 +244,56 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   var other = manifest
   other.policy = nil
   variants.append(other)
-  variants.append(
+  func copy(
+    id: String? = nil, createdAt: String? = nil, changes: [StageChange]? = nil,
+    binding: DestinationBinding? = nil, gitfiles: [GitfileObservation]? = nil
+  ) -> StageManifest {
     StageManifest(
-      version: manifest.version, id: "00000000", instance: manifest.instance,
-      destination: manifest.destination, createdAt: manifest.createdAt,
-      excludeGit: manifest.excludeGit, stagedEntries: manifest.stagedEntries,
-      stagedBytes: manifest.stagedBytes, changes: manifest.changes, issues: manifest.issues,
-      policy: manifest.policy))
-  let changed = manifest.changes.map { change in
-    StageChange(
-      path: change.path, operation: change.operation,
-      new: .file(size: 1, sha256: String(repeating: "0", count: 64), mode: 0o755),
-      old: change.old)
+      version: manifest.version, id: id ?? manifest.id, returnPolicy: manifest.returnPolicy,
+      instance: manifest.instance, destination: manifest.destination,
+      binding: binding ?? manifest.binding, createdAt: createdAt ?? manifest.createdAt,
+      stagedEntries: manifest.stagedEntries, stagedBytes: manifest.stagedBytes,
+      changes: changes ?? manifest.changes, excluded: manifest.excluded,
+      excludedCount: manifest.excludedCount, gitfiles: gitfiles ?? manifest.gitfiles,
+      issues: manifest.issues, policy: manifest.policy)
   }
+  variants.append(copy(id: "0000000000000000"))
   variants.append(
-    StageManifest(
-      version: manifest.version, id: manifest.id, instance: manifest.instance,
-      destination: manifest.destination, createdAt: manifest.createdAt,
-      excludeGit: manifest.excludeGit, stagedEntries: manifest.stagedEntries,
-      stagedBytes: manifest.stagedBytes, changes: changed, issues: manifest.issues,
-      policy: manifest.policy))
+    copy(
+      changes: manifest.changes.map { change in
+        StageChange(
+          path: change.path, operation: change.operation,
+          new: .file(size: 1, sha256: String(repeating: "0", count: 64), mode: 0o755),
+          old: change.old)
+      }))
+  variants.append(
+    copy(
+      changes: manifest.changes.map {
+        var change = $0
+        change.sensitive = "x"
+        return change
+      }))
+  variants.append(copy(binding: .create(parentIdentity: "1:2", name: "x")))
+  variants.append(
+    copy(gitfiles: [GitfileObservation(path: ".git", sha256: String(repeating: "1", count: 64))]))
   for variant in variants { #expect(WorkspacePolicy.manifestDigest(variant) != digest) }
   // Creation time is not part of the plan.
-  #expect(
-    WorkspacePolicy.manifestDigest(
-      StageManifest(
-        version: manifest.version, id: manifest.id, instance: manifest.instance,
-        destination: manifest.destination, createdAt: "later", excludeGit: manifest.excludeGit,
-        stagedEntries: manifest.stagedEntries, stagedBytes: manifest.stagedBytes,
-        changes: manifest.changes, issues: manifest.issues, policy: manifest.policy)) == digest)
+  #expect(WorkspacePolicy.manifestDigest(copy(createdAt: "later")) == digest)
 }
 
-@Test func workspaceLocksStayOutOfTheInstancesDirectory() throws {
+@Test func applyLeavesNoLockFilesInTheInstancesDirectory() throws {
   let f = try GovernedFixture()
   try f.stage()
   _ = try f.apply { _ in true }
   let instances = (f.instance.directory as NSString).deletingLastPathComponent
   #expect(try FileManager.default.contentsOfDirectory(atPath: instances) == ["dev"])
-  let root = (instances as NSString).deletingLastPathComponent
-  #expect(FileManager.default.fileExists(atPath: root + "/workspace-locks"))
 }
 
 @Test func approvalReviewMarksEveryOmittedDiff() throws {
   let f = try GovernedFixture()
   let manifest = try f.stage(["text.txt": "visible\n", "binary.bin": "a\u{0}b"])
-  let review = StageReview(manifest: manifest, location: f.location)
+  let review = StageReview(try f.location.loadSelected())
+  #expect(review.manifest == manifest)
   let plain = review.textDiffs()
   #expect(!plain.contains { $0.contains("diff omitted") })
   let marked = review.textDiffs(markOmitted: true)
@@ -304,18 +301,15 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   #expect(marked.contains("+++ b/text.txt"))
 }
 
-@Test func localAndRemoteReturnsShareTheStateRootsLockDirectory() throws {
+@Test func localAndRemoteReturnsShareTheStateRoot() throws {
   let root = try scratchDirectory("lockroot")
   try writeFile(root + "/owner.json", "{}")
   let local = try testInstance(root + "/instances/dev")
   let remote = try testInstance(root + "/host-workspaces/host-1/instance-1")
   #expect(WorkspacePolicy.stateRoot(of: local) == root)
   #expect(WorkspacePolicy.stateRoot(of: remote) == root)
-  let lock = try WorkspacePolicy.workspaceLock(remote, identity: "1:2")
-  lock.release()
-  #expect(FileManager.default.fileExists(atPath: root + "/workspace-locks/1-2.lock"))
-  var info = stat()
-  #expect(stat(root + "/workspace-locks", &info) == 0 && info.st_mode & 0o077 == 0)
+  // Either is a control root a return destination must stay out of.
+  #expect(WorkspaceTransfer.controlRoots(remote).contains(root))
 }
 
 @Test func shadowReportsAStaleStageAsEnforcementWould() throws {

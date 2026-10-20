@@ -55,6 +55,22 @@ Use a separate `--scratch-path` per sanitizer so instrumented builds do not
 invalidate `.build`. The package tests use synthetic credentials and isolated
 temporary state; they never touch `~/.iso`.
 
+`swift test` builds debug, where `SSHClient.ToolLookup.default` is
+`.searchPath` so tests can put `ssh`/`scp`/`rsync`/`tar` doubles on `PATH`.
+Shipped builds default to `.system`, which resolves those tools only from
+`/usr/bin`. That pinning is covered by the test that constructs
+`SSHClient(tools: .system)` explicitly
+(`guestTransportsIgnoreAmbientConfigAndPathTools`).
+`python3 scripts/build-release.py --release --test` compiles the release
+configuration that ships the `.system` default; its test step still runs the
+package tests in debug.
+
+`ManagedSSHRoleTests` resolves every managed SSH role's real arguments with
+`/usr/bin/ssh -G` under a hostile configuration file placed ahead of them
+(guest command, forwards, brokered route, rsync `-e`, scp, control teardown,
+enrolled-host management), and checks that teardown on a missing control
+socket fails without dialing.
+
 With Swift 6.4's default Swift Build engine, the undefined-sanitizer build can
 fail to link C dependency instrumentation with missing `__ubsan_handle_*`
 symbols. If that occurs, explicitly link the matching Xcode runtime:

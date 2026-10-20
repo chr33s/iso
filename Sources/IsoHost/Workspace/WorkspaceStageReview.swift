@@ -3,17 +3,19 @@ import IsoCore
 
 /// Renders a stage for review: a summary, one line per change, then text
 /// diffs. Every guest-derived string passes through `neutralizeControls`,
-/// and nothing here runs a subprocess on staged content.
+/// and nothing here runs a subprocess (no Git, pager, diff or editor).
+/// Content is read descriptor-relative without following links and must
+/// match the manifest's hashes; a mismatch marks the view stale.
 package struct StageReview {
   package let manifest: StageManifest
   let tree: String
 
-  package init(manifest: StageManifest, location: StageLocation) {
-    self.manifest = manifest
-    tree = location.tree
+  package init(_ selected: SelectedStage) {
+    manifest = selected.manifest
+    tree = selected.stage.tree
   }
 
-  init(manifest: StageManifest, tree: String) {
+  package init(manifest: StageManifest, tree: String) {
     self.manifest = manifest
     self.tree = tree
   }
@@ -22,25 +24,11 @@ package struct StageReview {
   static let lineLimit = 400
   static let maxDiffLines = 10_000
 
-  /// Paths whose contents can make host tools run commands. Compared
-  /// case- and normalization-insensitively, as APFS resolves them.
+  /// Paths whose contents can make host tools run commands. Raw `.git`
+  /// administration is never installed; the rest need named grants.
   static func conspicuous(_ path: String) -> String? {
-    let components = path.precomposedStringWithCanonicalMapping.lowercased()
-      .split(separator: "/").map(String.init)
-    if let git = components.firstIndex(of: ".git") {
-      let rest = components[(git + 1)...]
-      if rest.contains("hooks") { return "git hook runs on the host" }
-      if rest.last == "config" { return "git configuration can run host commands" }
-      // A `.git` file redirects the git directory; anything inside one can
-      // hold config (fsmonitor, aliases) or hooks that run on the host.
-      return "git metadata can run host commands"
-    }
-    if components.contains(".husky") { return "git hook runs on the host" }
-    if components.last == ".envrc" { return "direnv runs .envrc on the host" }
-    if components.suffix(2) == [".vscode", "tasks.json"] {
-      return "editor task can run host commands"
-    }
-    return nil
+    if ProtectedPaths.isReserved(path) { return "git administration is never installed" }
+    return SensitivePaths.classify(path)
   }
 
   package func summary(instance: String) -> [String] {
@@ -50,8 +38,9 @@ package struct StageReview {
       if case .file(let size, _, _) = change.new { delta += Int64(size) }
       if case .file(let size, _, _) = change.old { delta -= Int64(size) }
     }
+    let create = if case .create = manifest.binding { " (will be created)" } else { "" }
     var lines = [
-      "Stage \(manifest.id) of '\(instance)' -> \(neutralizeControls(manifest.destination))",
+      "Stage \(manifest.id) of '\(instance)' -> \(neutralizeControls(manifest.destination))\(create)",
       "  \(counts[.add] ?? 0) added, \(counts[.modify] ?? 0) modified, \(counts[.typeChange] ?? 0) type changes; \(Self.signedBytes(delta)) (\(manifest.stagedEntries) entries staged)",
     ]
     for change in manifest.changes {
@@ -73,23 +62,55 @@ package struct StageReview {
       if change.operation == .typeChange {
         line += " [\(change.old.kindName) -> \(change.new.kindName)]"
       }
-      if let note = Self.conspicuous(change.path) { line += "  ! \(note)" }
+      if let note = change.sensitive { line += "  ! withheld: \(note)" }
       lines.append(line)
+    }
+    if manifest.excludedCount > 0 {
+      lines.append(
+        "  \(manifest.excludedCount) git administration entries were received but are never installed"
+      )
     }
     if !manifest.applicable {
       lines.append("This stage cannot be applied:")
       lines += manifest.issues.map { "  - \(neutralizeControls($0))" }
+    } else if !manifest.sensitivePaths.isEmpty {
+      lines.append(
+        "Withheld until named: \(manifest.sensitivePaths.count) execution-sensitive path(s) apply only with --approve-sensitive for each."
+      )
     }
     return lines
+  }
+
+  /// The exact command that applies this stage, naming every sensitive
+  /// path it needs.
+  package func applyCommand(instance: String) -> String {
+    (["iso pull \(instance) --apply --stage-id \(manifest.id)"]
+      + manifest.sensitivePaths.map { "--approve-sensitive \(shellEscape($0))" })
+      .joined(separator: " ")
   }
 
   /// Unified-style diffs for small UTF-8 text files.
   /// With `markOmitted`, every changed file whose diff is not shown gets an
   /// explicit line saying so, so an approval never covers content silently.
+  /// `stale` is set when content no longer matches the manifest.
   package func textDiffs(markOmitted: Bool = false) -> [String] {
+    var stale = false
+    return textDiffs(markOmitted: markOmitted, stale: &stale)
+  }
+
+  package func textDiffs(markOmitted: Bool, stale: inout Bool) -> [String] {
     var lines: [String] = []
+    let destinationView: StageDestinationView? =
+      (try? ReturnDestination(path: manifest.destination, binding: manifest.binding).open())
+      .map {
+        StageDestinationView(
+          ReturnDestination(path: manifest.destination, binding: manifest.binding), $0)
+      }
+    let stageRoot = open(tree, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    defer { if stageRoot >= 0 { close(stageRoot) } }
+    if destinationView == nil || stageRoot < 0 { stale = true }
     for change in manifest.changes {
-      guard case .file(let newSize, _, _) = change.new else { continue }
+      guard case .file(let newSize, let newDigest, _) = change.new else { continue }
       let shown = neutralizeControls(change.path)
       let omitted =
         "(diff omitted for \(shown): binary, not UTF-8, or larger than \(Self.textLimit >> 10) KiB)"
@@ -100,8 +121,18 @@ package struct StageReview {
       let old: [String]
       switch change.old {
       case .absent: old = []
-      case .file(let size, _, _) where size <= Self.textLimit:
-        guard let text = Self.text(at: manifest.destination + "/" + change.path) else {
+      case .file(let size, let oldDigest, _) where size <= Self.textLimit:
+        guard let view = destinationView,
+          let read = try? view.read(change.path, limit: Int(Self.textLimit))
+        else {
+          stale = true
+          continue
+        }
+        guard read.sha256 == oldDigest else {
+          stale = true
+          continue
+        }
+        guard let text = read.bytes.flatMap(Self.lines) else {
           if markOmitted { lines.append(omitted) }
           continue
         }
@@ -110,7 +141,17 @@ package struct StageReview {
         if markOmitted { lines.append(omitted) }
         continue
       }
-      guard let new = Self.text(at: tree + "/" + change.path) else {
+      guard stageRoot >= 0,
+        let read = Self.read(stageRoot, change.path, limit: Int(Self.textLimit))
+      else {
+        stale = true
+        continue
+      }
+      guard read.sha256 == newDigest else {
+        stale = true
+        continue
+      }
+      guard let new = read.bytes.flatMap(Self.lines) else {
         if markOmitted { lines.append(omitted) }
         continue
       }
@@ -118,18 +159,39 @@ package struct StageReview {
       lines.append("+++ b/\(shown)")
       lines += Self.hunks(old: old, new: new)
     }
+    if stale {
+      lines.append(
+        "(this review is stale: the destination or stage changed while it was read; re-stage before applying)"
+      )
+    }
     return lines
   }
 
-  /// Lines of a UTF-8 file without NUL bytes, read without following links.
-  static func text(at path: String) -> [String]? {
-    let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+  /// Bytes (when at most `limit`) and the SHA-256 of `relative` below
+  /// `root`, read without following links.
+  static func read(_ root: Int32, _ relative: String, limit: Int) -> (
+    bytes: [UInt8]?, sha256: String
+  )? {
+    var components = relative.split(separator: "/").map(String.init)
+    guard let name = components.popLast(),
+      let parent = try? StageApplier.openDirectory(root, components, label: "stage")
+    else { return nil }
+    defer { if parent != root { close(parent) } }
+    let fd = openat(parent, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { return nil }
     defer { close(fd) }
-    guard
-      let bytes = try? StateStore.readBounded(
-        fd, path: path, limit: Int(textLimit), tooLarge: "too large")
+    var info = stat()
+    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+      let digest = try? StageBuilder.sha256(fd: fd, path: relative)
     else { return nil }
+    guard info.st_size <= limit, lseek(fd, 0, SEEK_SET) == 0,
+      let bytes = try? StateStore.readBounded(fd, path: relative, limit: limit, tooLarge: "")
+    else { return (nil, digest) }
+    return (bytes, digest)
+  }
+
+  /// Lines of UTF-8 text without NUL bytes.
+  static func lines(_ bytes: [UInt8]) -> [String]? {
     guard !bytes.contains(0), let text = String(validating: bytes, as: UTF8.self) else {
       return nil
     }

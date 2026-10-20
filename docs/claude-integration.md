@@ -111,7 +111,12 @@ When a token is available, isolate runs `gh auth setup-git` in the guest during 
 
 `config_dir` selects a host directory to overlay into the guest's `~/.claude/`
 on every agent bootstrap (`iso up` or `iso start`, without `--no-agents`).
-The default is `~/.claude`; a custom path supports `~` expansion:
+Nothing is imported by default: name the directory (`"~/.claude"` to import
+your host settings) to opt in. Omitting `config_dir` or setting it to `false`
+disables the import; `null` is rejected. The root is read once into a confined
+snapshot; a link that leaves it, or a special file, stops the import. Paths
+support `~` expansion. Turning imports off later does not remove files an
+earlier import copied into a retained guest disk.
 
 ```jsonc
 { "claude": { "config_dir": "~/claude-customizations" } }
@@ -188,8 +193,7 @@ stops bootstrap rather than treating disabled extensions as enabled.
 Files follow an overlay lifecycle: restart overwrites files still present on the
 host, but host deletions do not delete previous guest copies. `config_dir = false`
 stops copying and retains both previous copies and the last preference snapshot.
-A missing default source likewise retains previous imports; custom paths must
-exist at config validation time. If a source disappears after validation, copying
+A named directory must exist at config validation time. If a source disappears after validation, copying
 is skipped and the snapshot retained. To remove retained content, remove it in the
 guest or recreate the VM. Deletion synchronization and broader symlink/copier
 hardening are outside this import contract.

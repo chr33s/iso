@@ -27,9 +27,16 @@ private func target(knownHosts: String = "/state/known_hosts") throws -> SSHTarg
     knownHosts: knownHosts, alias: "iso-0a1b2c3d-00112233445566ff.iso")
 }
 
+/// The fake ssh with the real system receivers, which tests may run.
+private func fakeReceivers(tar: String = "/usr/bin/bsdtar", rsync: String = "/usr/bin/rsync")
+  -> InboundReceivers
+{
+  InboundReceivers(tar: tar, rsync: rsync, ssh: fakeSSH + "/ssh", requireSystemOwnership: false)
+}
+
 private func transfer() -> WorkspaceTransfer {
   WorkspaceTransfer(
-    client: SSHClient(environment: ["PATH": "\(fakeSSH):/usr/bin:/bin"]),
+    client: SSHClient(environment: ["PATH": "\(fakeSSH):/usr/bin:/bin"], tools: .searchPath),
     diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
 }
 
@@ -137,10 +144,26 @@ private func transfer() -> WorkspaceTransfer {
   #expect(!FileManager.default.fileExists(atPath: guest + "/node_modules"))
   #expect(!FileManager.default.fileExists(atPath: guest + "/.git"))
 
-  let back = root + "/back"
-  try FileManager.default.createDirectory(atPath: back, withIntermediateDirectories: true)
-  try transfer().tarPull(try target(), guest: GuestPath(guest), to: back, excludeGit: false)
-  #expect(try String(contentsOfFile: back + "/lib/a.txt", encoding: .utf8) == "a")
+  try FileManager.default.createDirectory(
+    atPath: guest + "/.git", withIntermediateDirectories: true)
+  try Data("guest".utf8).write(to: URL(fileURLWithPath: guest + "/.git/HEAD"))
+  // The guest's GNU tar takes --sparse; the host's bsdtar stands in without it.
+  let bin = root + "/bin"
+  try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+  try Data(
+    "#!/bin/sh\nfor a; do shift; [ \"$a\" = --sparse ] || set -- \"$@\" \"$a\"; done\nexec /usr/bin/tar \"$@\"\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: bin + "/tar"))
+  chmod(bin + "/tar", 0o755)
+  let attempt = try ReceiveAttempt(StageLocation(root: root + "/returns"))
+  try WorkspaceTransfer(
+    client: SSHClient(environment: ["PATH": "\(fakeSSH):\(bin):/usr/bin:/bin"], tools: .searchPath),
+    diagnostics: Diagnostics(verbosity: 0, sink: { _ in })
+  ).tarReceive(
+    try target(), guest: GuestPath(guest), into: attempt, receivers: fakeReceivers())
+  #expect(try String(contentsOfFile: attempt.tree + "/lib/a.txt", encoding: .utf8) == "a")
+  // A return never requests git administration.
+  #expect(!FileManager.default.fileExists(atPath: attempt.tree + "/.git"))
 
   // A remote extraction failure reports the remote stderr.
   #expect {
@@ -226,7 +249,8 @@ private func transfer() -> WorkspaceTransfer {
   let root = try scratch()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let log = root + "/ssh.log"
-  let client = SSHClient(environment: ["PATH": "\(fakeSSH):/usr/bin:/bin", "FAKE_SSH_LOG": log])
+  let client = SSHClient(
+    environment: ["PATH": "\(fakeSSH):/usr/bin:/bin", "FAKE_SSH_LOG": log], tools: .searchPath)
   try InteractiveSSH.exec(
     client,
     WorkloadSession(
@@ -242,28 +266,38 @@ private func transfer() -> WorkspaceTransfer {
 }
 
 @Test func guestTransportCarriesOnlyForwardedVariables() throws {
-  let client = SSHClient(environment: [
-    "PATH": "/usr/bin:/bin", "HOME": "/h", "LC_ALL": "C", "ANTHROPIC_API_KEY": "sk-raw",
-    "GITHUB_TOKEN": "ghp-raw", "AWS_SECRET_ACCESS_KEY": "raw",
-  ])
-  #expect(client.environment == ["PATH": "/usr/bin:/bin", "HOME": "/h", "LC_ALL": "C"])
+  let client = SSHClient(
+    environment: [
+      "PATH": "/usr/bin:/bin", "HOME": "/h", "LC_ALL": "C", "ANTHROPIC_API_KEY": "sk-raw",
+      "GITHUB_TOKEN": "ghp-raw", "AWS_SECRET_ACCESS_KEY": "raw",
+    ], tools: .searchPath)
+  #expect(
+    client.environment == [
+      "PATH": "/usr/bin:/bin", "HOME": "/h", "LC_ALL": "C", "SHELL": "/bin/sh",
+    ])
   // A user's own `SendEnv *` can send only what the child has: the
   // transport base plus what iso forwards on purpose.
   var forward = EnvForward()
   forward.set("OPENAI_API_KEY", Secret("capability"))
-  let child = forward.overlay(client.environment)
+  let child = try forward.prepare("true", terminal: .requested).environment(client.environment)
   #expect(child["ANTHROPIC_API_KEY"] == nil && child["GITHUB_TOKEN"] == nil)
-  #expect(child["OPENAI_API_KEY"] == "capability")
+  #expect(child["OPENAI_API_KEY"] == nil && child["ISO_SSH_ENV_0"] == "capability")
 }
 
 /// An enrolled host's key may be usable only through the agent: its socket
 /// path is kept (absolute only) for management SSH and ProxyCommands, while
 /// every guest SSH option set refuses the agent.
 @Test func transportKeepsOnlyAnAbsoluteAgentSocketAndGuestsRefuseTheAgent() throws {
-  let kept = SSHClient(environment: ["HOME": "/h", "SSH_AUTH_SOCK": "/private/tmp/agent.sock"])
-  #expect(kept.environment == ["HOME": "/h", "SSH_AUTH_SOCK": "/private/tmp/agent.sock"])
+  let kept = SSHClient(
+    environment: ["HOME": "/h", "SSH_AUTH_SOCK": "/private/tmp/agent.sock"], tools: .searchPath)
+  #expect(
+    kept.environment == [
+      "HOME": "/h", "SSH_AUTH_SOCK": "/private/tmp/agent.sock", "SHELL": "/bin/sh",
+    ])
   for bad in ["relative.sock", "/tmp/a\nb", ""] {
-    #expect(SSHClient(environment: ["SSH_AUTH_SOCK": bad]).environment["SSH_AUTH_SOCK"] == nil)
+    #expect(
+      SSHClient(environment: ["SSH_AUTH_SOCK": bad], tools: .searchPath).environment[
+        "SSH_AUTH_SOCK"] == nil)
   }
   let target = SSHTarget(
     host: "127.0.0.1", port: 22, user: .default, keyPath: "/k", knownHosts: "/kh", alias: "g")
@@ -316,9 +350,12 @@ private func finishesWhileStageIsLocked(
   let directory = try scratch()
   defer { StageLocation.grantOwnerAccess(directory) }
   defer { try? FileManager.default.removeItem(atPath: directory) }
-  let inst = try instance(directory)
+  let inst = try instance(directory + "/state/instances/test")
+  try FileManager.default.createDirectory(atPath: inst.directory, withIntermediateDirectories: true)
   let location = StageLocation(inst)
-  try location.prepare()
+  let destination = directory + "/dest"
+  try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: true)
+  try makeSelectedStage(location, destination: destination) { _ in }
   let transfer = transfer()
   let discarded = try finishesWhileStageIsLocked(location) {
     _ = try? transfer.discardStage(inst)
@@ -326,13 +363,9 @@ private func finishesWhileStageIsLocked(
   #expect(!discarded)
   #expect(!location.exists)
 
-  try location.prepare()
-  let destination = directory + "/dest"
-  try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: true)
-  var builder = StageBuilder(tree: location.tree, destination: destination, limits: .defaults)
-  try location.saveManifest(try builder.build(id: "00c0ffee", instance: "test", excludeGit: false))
+  let id = try makeSelectedStage(location, destination: destination) { _ in }.manifest.id
   let applied = try finishesWhileStageIsLocked(location) {
-    _ = try? transfer.applyStage(inst, stageID: nil, force: true)
+    _ = try? transfer.applyStage(inst, .init(stageID: id, replace: true))
   }
   #expect(!applied)
   #expect(!location.exists)
@@ -380,12 +413,12 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
   for index in 0..<10 {
     try Data(repeating: 0x61, count: 20 << 10).write(to: URL(fileURLWithPath: "\(guest)/f\(index)"))
   }
-  let inst = try instance(directory + "/instance")
+  let inst = try instance(directory + "/state/instances/test")
   try FileManager.default.createDirectory(atPath: inst.directory, withIntermediateDirectories: true)
   try WorkspaceState(guestPath: GuestPath(guest), source: .workspace(hostPath: directory + "/dest"))
     .save(inst)
   let transfer = WorkspaceTransfer(
-    client: SSHClient(environment: ["PATH": "\(fakeSSH):\(bin)"]),
+    client: SSHClient(environment: ["PATH": "\(fakeSSH):\(bin)"], tools: .searchPath),
     diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
   let limits = StageLimits(
     maxFiles: 100, maxBytes: ByteCount(bytes: 64 << 10)!, maxFileBytes: ByteCount(bytes: 1 << 30)!)
@@ -396,7 +429,9 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
   let held = try runWhileStageIsLocked(location) {
     do {
       _ = try transfer.stage(
-        instance: inst, target: try! target(), directory: nil, excludeGit: false, limits: limits)
+        instance: inst, target: try! target(), directory: nil, limits: limits,
+        receivers: fakeReceivers(
+          tar: bin + "/tar", rsync: viaRsync ? bin + "/rsync" : "/usr/bin/rsync"))
     } catch { outcome.value = error }
   }
   #expect(!held.finished && !held.stageExisted)
@@ -420,4 +455,146 @@ private final class Box<Value>: @unchecked Sendable {
     get { lock.withLock { stored } }
     set { lock.withLock { stored = newValue } }
   }
+}
+
+// MARK: - Push preflight (PUSH)
+
+private func git(_ directory: String, _ arguments: String...) throws {
+  let output = try ProcessRunner().capture(
+    .init(
+      executable: "/usr/bin/git", arguments: ["-C", directory] + arguments,
+      environment: [
+        "PATH": "/usr/bin:/bin", "HOME": directory, "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+      ], deadline: .seconds(30)))
+  guard output.termination.succeeded else {
+    throw HostError("git \(arguments): \(String(decoding: output.stderr, as: UTF8.self))")
+  }
+}
+
+@Test func pushPreflightFailsClosedOnEveryUncertainState() throws {
+  guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { return }
+  let root = try scratch()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let t = transfer()
+  let target = try target()
+  func state(_ path: String) throws -> WorkspaceTransfer.GuestWorkspaceState {
+    try t.guestState(target, GuestPath(path))
+  }
+  #expect(try state(root + "/missing") == .notRepository)
+  let plain = root + "/plain"
+  try FileManager.default.createDirectory(atPath: plain, withIntermediateDirectories: true)
+  #expect(try state(plain) == .notRepository)
+
+  let origin = root + "/origin"
+  let repo = root + "/repo"
+  try FileManager.default.createDirectory(atPath: origin, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+  try git(origin, "init", "-q", "--bare")
+  try git(repo, "init", "-q")
+  try Data("a".utf8).write(to: URL(fileURLWithPath: repo + "/a"))
+  try git(repo, "add", "a")
+  try git(repo, "commit", "-q", "-m", "one")
+  // No tracking upstream configured: clean, but commits exist only here.
+  #expect(try state(repo) == .clean(upstream: false))
+  try git(repo, "remote", "add", "origin", origin)
+  try git(repo, "push", "-q", "-u", "origin", "HEAD")
+  #expect(try state(repo) == .clean(upstream: true))
+
+  try Data("b".utf8).write(to: URL(fileURLWithPath: repo + "/a"))
+  guard case .dirty(let detail) = try state(repo) else {
+    Issue.record("expected dirty")
+    return
+  }
+  #expect(detail.contains("M a"))
+  try git(repo, "commit", "-q", "-am", "two")
+  #expect(try state(repo) == .dirty("AHEAD 1"))
+  #expect(throws: HostError.self) { try t.checkGuestClean(target, GuestPath(repo)) }
+
+  // A configured upstream that no longer resolves is unknown, not clean.
+  try git(repo, "push", "-q")
+  let branch = try String(contentsOfFile: repo + "/.git/HEAD", encoding: .utf8)
+    .replacingOccurrences(of: "ref: refs/heads/", with: "").trimmingCharacters(
+      in: .whitespacesAndNewlines)
+  try git(repo, "update-ref", "-d", "refs/remotes/origin/\(branch)")
+  guard case .unknown = try state(repo) else {
+    Issue.record("expected unknown")
+    return
+  }
+
+  // A linked worktree (`.git` is a file) is inspected, not skipped.
+  let worktree = root + "/wt"
+  try git(repo, "worktree", "add", "-q", worktree)
+  try Data("dirty".utf8).write(to: URL(fileURLWithPath: worktree + "/a"))
+  guard case .dirty = try state(worktree) else {
+    Issue.record("expected the worktree to be dirty")
+    return
+  }
+
+  // A repository git cannot read is unknown.
+  let broken = root + "/broken"
+  try FileManager.default.createDirectory(
+    atPath: broken + "/.git", withIntermediateDirectories: true)
+  guard case .unknown = try state(broken) else {
+    Issue.record("expected unknown for a broken repository")
+    return
+  }
+}
+
+@Test func malformedOrTruncatedPreflightOutputIsNeverClean() {
+  func output(
+    _ text: String, _ termination: ProcessRunner.Termination = .exited(0), truncated: Bool = false
+  )
+    -> ProcessRunner.Output
+  {
+    .init(termination: termination, stdout: Array(text.utf8), stderr: [], truncated: truncated)
+  }
+  typealias T = WorkspaceTransfer
+  #expect(T.parseGuestState(output("ISO-NO-UPSTREAM\nISO-END\n")) == .clean(upstream: false))
+  for bad in [
+    output(""), output("ISO-UPSTREAM\n"), output("ISO-NO-UPSTREAM\nISO-END\n", .exited(255)),
+    output("ISO-UPSTREAM\nISO-END\n", truncated: true), output("garbage\nISO-UPSTREAM\nISO-END\n"),
+    output("ISO-AHEAD x\nISO-UPSTREAM\nISO-END\n"), output("ISO-END\n"),
+    output("ISO-UNKNOWN status\nISO-END\n"),
+  ] {
+    #expect(!T.parseGuestState(bad).permitsPush, "\(bad.stdout)")
+  }
+}
+
+/// RET-04: a receiver that writes beside its tree is caught before the
+/// inventory, and its receive is never selected.
+@Test func aReceiverWritingOutsideItsTreeIsNeverAccepted() throws {
+  let directory = try scratch()
+  defer { StageLocation.grantOwnerAccess(directory) }
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let bin = directory + "/bin"
+  try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(
+    atPath: bin + "/which", withDestinationPath: "/usr/bin/which")
+  try Data("#!/bin/sh\nexit 0\n".utf8).write(to: URL(fileURLWithPath: bin + "/rsync"))
+  chmod(bin + "/rsync", 0o755)
+  // The "receiver": fills its tree, then writes next to it.
+  let receiver = directory + "/receiver"
+  try Data(
+    "#!/bin/sh\nfor last; do dest=$last; done\necho x > \"$dest/a.txt\"\necho planted > \"$dest/../manifest.json\"\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: receiver))
+  chmod(receiver, 0o755)
+  let inst = try instance(directory + "/state/instances/test")
+  try FileManager.default.createDirectory(atPath: inst.directory, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(
+    atPath: directory + "/guest", withIntermediateDirectories: true)
+  try WorkspaceState(
+    guestPath: GuestPath(directory + "/guest"), source: .workspace(hostPath: directory + "/dest")
+  ).save(inst)
+  let transfer = WorkspaceTransfer(
+    client: SSHClient(environment: ["PATH": "\(fakeSSH):\(bin)"], tools: .searchPath),
+    diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
+  #expect(throws: HostError.self) {
+    _ = try transfer.stage(
+      instance: inst, target: try target(), directory: nil, limits: .defaults,
+      receivers: fakeReceivers(rsync: receiver))
+  }
+  #expect(try StageLocation(inst).selectedID() == nil)
 }

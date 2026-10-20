@@ -48,7 +48,8 @@ import Testing
     backend: AppleBackend(
       config: config, environment: environment.variables, executable: nil,
       diagnostics: diagnostics),
-    output: streams, diagnostics: diagnostics, ssh: SSHClient(environment: environment.variables))
+    output: streams, diagnostics: diagnostics,
+    ssh: SSHClient(environment: environment.variables, tools: .searchPath))
   try GitHubStatus.run(context, vm: nil, probe: false, json: false)
   try GitHubStatus.run(context, vm: nil, probe: false, json: true)
   #expect(

@@ -7,9 +7,19 @@ import Testing
 
 @testable import IsoHost
 
+extension FakeGuest {
+  var returns: StageLocation { StageLocation(root: root + "/returns") }
+  /// The fake guest's own tools stand in for the qualified receivers.
+  var receivers: InboundReceivers {
+    InboundReceivers(
+      tar: root + "/bin/tar", rsync: root + "/bin/rsync", ssh: root + "/bin/ssh",
+      requireSystemOwnership: false)
+  }
+}
+
 private enum AdministrativeOperation: CaseIterable, Sendable {
   case execTarget, execSession, inputTarget, inputSession, capture, checkedCapture, succeeds, copy
-  case wait, tarPush, tarPull, rsyncPush, rsyncPull, dirtyCheck, hook, alias, editor, forward,
+  case wait, tarPush, tarPull, rsyncPull, dirtyCheck, hook, alias, editor, forward,
     rsyncProbe
 
   func perform(_ guest: FakeGuest, _ target: SSHTarget) throws {
@@ -38,12 +48,14 @@ private enum AdministrativeOperation: CaseIterable, Sendable {
     case .tarPush:
       try transfer.tarPipe(target, source: guest.root, to: guestWorkspace, excludeGit: false)
     case .tarPull:
-      try transfer.tarPull(target, guest: guestWorkspace, to: guest.root, excludeGit: false)
-    case .rsyncPush:
-      try transfer.rsyncPush(target, source: guest.root, to: guestWorkspace, excludeGit: false)
+      try transfer.tarReceive(
+        target, guest: guestWorkspace, into: ReceiveAttempt(guest.returns),
+        receivers: guest.receivers)
     case .rsyncPull:
-      try transfer.rsyncPull(target, guest: guestWorkspace, to: guest.root, excludeGit: false)
-    case .dirtyCheck: try transfer.checkGuestClean(target, guestWorkspace)
+      try transfer.rsyncReceive(
+        target, guest: guestWorkspace, into: ReceiveAttempt(guest.returns),
+        receivers: guest.receivers)
+    case .dirtyCheck: _ = try transfer.guestState(target, guestWorkspace)
     case .hook: try guest.bootstrap(testConfig()).runPostStart(session, command: "query")
     case .alias:
       try SSHConfigFile(path: guest.root + "/alias", diagnostics: guest.sink.diagnostics).update(

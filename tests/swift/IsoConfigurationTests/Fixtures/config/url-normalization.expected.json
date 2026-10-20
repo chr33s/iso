@@ -21,7 +21,7 @@
         "url": "https://mcp.example.com"
       }
     },
-    "config_dir": null,
+    "config_dir": false,
     "local_model": {
       "host_url": "http://localhost:11434",
       "model": "m",
@@ -35,7 +35,7 @@
     "marketplaces": [],
     "plugins": [],
     "mcp_servers": {},
-    "config_dir": null,
+    "config_dir": false,
     "local_model": null
   },
   "proxy": {

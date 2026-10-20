@@ -12,6 +12,11 @@ package struct BootOptions {
   package var persistedGuestEnvironment: [EnvVarName: EnvValue]
   /// Generic no-auth runs still require the configured provider proxy.
   package var skipAgentBootstrap: Bool
+  /// Grant scopes given by this command (POL-01). Nil: every entry and
+  /// forward of a first start. A reprovision passes only what the
+  /// configuration grants, so saved entries keep their recorded provenance
+  /// and a revoked one is not re-granted.
+  package var freshGrantScopes: Set<String>? = nil
 
   package init(
     noAgents: Bool = false, noPrompt: Bool = false, forwardPorts: [PortForward] = [],

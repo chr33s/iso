@@ -22,8 +22,9 @@ struct RunCommand: ParsableCommand {
 
   @OptionGroup var global: GlobalOptions
   @Argument(help: "Agent id (`claude`, `codex`, or an installed definition)") var agent: String
-  @Option(name: .long, help: "Project directory (default: current directory)") var workspace:
-    String?
+  @Option(
+    name: .long, help: "Project directory (default: current directory)")
+  var workspace: String?
   @Option(help: "Instance name", transform: parseInstanceName) var name: InstanceName?
   @Option(
     help: "Named image when creating a new instance", transform: parseImageName)

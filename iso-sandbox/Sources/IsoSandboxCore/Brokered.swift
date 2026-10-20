@@ -100,11 +100,14 @@ package final class StreamBroker: Sendable {
     case badSession
     case tooManyStreams
     case rateLimited
+    /// The boot's session deadline has passed (LIFE-01).
+    case expired
     case guestUnavailable(String)
 
     package var description: String {
       switch self {
       case .malformed: "malformed stream request"
+      case .expired: "the boot's session has expired"
       case .stopping: "the sandbox is stopping"
       case .bootChanged: "the sandbox is running a different boot"
       case .channelPolicyChanged: "the runtime's channel policy differs from the one requested"
@@ -143,13 +146,17 @@ package final class StreamBroker: Sendable {
   package let bootID: String
   package let networkPolicy: String?
   package let policy: ChannelPolicy
+  /// The boot's deadline: no stream is admitted at or after it, whatever
+  /// the owner's halt timing.
+  package let expiresAt: Date?
   private let dial: @Sendable (UInt32) async throws -> FileHandle
   private let state = Mutex(State())
 
   package init(
     bootID: String, networkPolicy: String?, policy: ChannelPolicy = .current,
-    dial: @escaping @Sendable (UInt32) async throws -> FileHandle
+    expiresAt: Date? = nil, dial: @escaping @Sendable (UInt32) async throws -> FileHandle
   ) {
+    self.expiresAt = expiresAt
     self.bootID = bootID
     self.networkPolicy = networkPolicy
     self.policy = policy
@@ -161,6 +168,7 @@ package final class StreamBroker: Sendable {
   package func admit(_ request: StreamRequest, now: ContinuousClock.Instant = .now)
     -> Result<ChannelPolicy.Endpoint, Refusal>
   {
+    if let expiresAt, Date() >= expiresAt { return .failure(.expired) }
     guard request.bootId == bootID else { return .failure(.bootChanged) }
     guard request.channelPolicy == policy.digest else { return .failure(.channelPolicyChanged) }
     guard request.networkPolicy == networkPolicy else { return .failure(.networkPolicyChanged) }

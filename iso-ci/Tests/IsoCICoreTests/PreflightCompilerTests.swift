@@ -88,6 +88,32 @@ import Testing
     #expect(again.plan?.digest == plan.digest)
   }
 
+  /// CI-01: local snapshots carry no history, so history-dependent
+  /// checkouts are refused rather than run on a truncated tree.
+  @Test(arguments: ["fetch-depth: 0", "fetch-depth: 50", "fetch-tags: true"])
+  func historyDependentCheckoutsAreRefused(input: String) throws {
+    let source = Data(
+      """
+      on: push
+      jobs:
+        a:
+          runs-on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+              with:
+                \(input)
+      """.utf8)
+    do {
+      _ = try WorkflowCompiler.compile(
+        source: source, path: "w.yml", event: "push", manifest: .localActionsV1,
+        platformMap: Self.platformMap)
+      Issue.record("expected a rejection")
+    } catch {
+      #expect(error.code == .compatibilityRejected)
+      #expect(error.details.values.contains { $0.contains("history") || $0.contains("tags") })
+    }
+  }
+
   @Test func rejectionCarriesEveryDiagnostic() throws {
     let source = Data(
       """
@@ -104,12 +130,10 @@ import Testing
         source: source, path: "w.yml", event: "push", manifest: .localActionsV1,
         platformMap: Self.platformMap)
       Issue.record("expected a rejection")
-    } catch let error as CIError {
+    } catch {
       #expect(error.code == .compatibilityRejected)
       #expect(error.details.count == 3)
       #expect(error.details.values.allSatisfy { $0.hasPrefix("line ") })
-    } catch {
-      Issue.record("unexpected error type")
     }
   }
 

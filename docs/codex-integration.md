@@ -206,7 +206,8 @@ through the guest keyring instead.
 { "codex": { "config_dir": "~/.codex" } }
 ```
 
-The default is `~/.codex`. Set to `false` to disable config file copying entirely.
+Nothing is imported unless a directory is named: omitting `config_dir` or
+setting it to `false` disables copying, and `null` is rejected.
 
 ### Environment variable forwarding
 

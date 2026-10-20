@@ -161,19 +161,19 @@ enum CodexConfigFiles {
     do {
       var config = TOMLTable()
       if let source {
+        let reads: [String: [UInt8]]
         do {
-          try staging.stage(
+          reads = try staging.stage(
             from: source,
             files: allowedFiles(
               proxyActive: proxyActive, proxyMode: proxyMode, egress: egress, auth: auth),
-            directories: allowedDirectories)
+            directories: allowedDirectories, reads: [configFile])
         } catch {
           throw ContextError("Failed to stage Codex allowlisted files", cause: error)
         }
-        let path = source + "/" + configFile
-        if HostFiles.isFile(path) {
-          guard let data = FileManager.default.contents(atPath: path),
-            let text = String(validating: Array(data), as: UTF8.self)
+        // The same confined snapshot, not a second read of the host path.
+        if let data = reads[configFile] {
+          guard let text = String(validating: data, as: UTF8.self)
           else { throw HostError("Failed to read \(configFile)") }
           do { config = try TOMLTable.parse(text) } catch {
             throw ContextError("Failed to parse Codex \(configFile)", cause: error)

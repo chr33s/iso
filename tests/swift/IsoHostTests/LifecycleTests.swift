@@ -128,7 +128,8 @@ private let otherKey =
 
 private func emptyConfig(_ extra: String = "") throws -> IsoConfig {
   try ConfigLoader.decode(
-    ConfigLoader.parse(Array("{\(extra)}".utf8), format: .jsonc, path: "c", limits: .configuration),
+    ConfigLoader.parse(
+      Array("{\(legacyProfile(extra))}".utf8), format: .jsonc, path: "c", limits: .configuration),
     path: "c",
     environment: .empty)
 }
@@ -555,7 +556,7 @@ struct FakeInstallation {
     context: CommandContext(
       environment: environment, config: install.config, backend: backend,
       output: SilentOutput(), diagnostics: Diagnostics(verbosity: 0) { _ in },
-      ssh: SSHClient(environment: environment.variables)),
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath)),
     noGitHub: true, secretResolver: NoSecrets(), executable: nil,
     prepareGitHub: { config, _, _, _ in config })
   let port = UInt16.random(in: 40000...49999)
@@ -571,16 +572,6 @@ struct FakeInstallation {
   #expect(!calls.contains("-L"), "port forwards were spawned before readiness")
   #expect(try PortForwards.load(instance) == [try PortForward(guest: 8080, host: port)])
 
-  // A restart reuses the saved forwards under the same ordering.
-  _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
-  try FileManager.default.removeItem(atPath: log)
-  #expect(throws: (any Error).self) {
-    try lifecycle.restart(instance, RestartRequest(boot: options))
-  }
-  let restarted = (try? String(contentsOfFile: log, encoding: .utf8)) ?? ""
-  #expect(!restarted.isEmpty, "the restarted guest was waited on over ssh")
-  #expect(!restarted.contains("-L"), "port forwards were spawned before readiness on restart")
-
   // `up` does not report the running but unproven instance as reused.
   let project = install.root + "/project"
   try FileManager.default.createDirectory(atPath: project, withIntermediateDirectories: true)
@@ -593,6 +584,19 @@ struct FakeInstallation {
   #expect(throws: InstanceUnhealthy.self) {
     try UpWorkflow(request: request, lifecycle: lifecycle, target: nil).run()
   }
+
+  // A restart reuses the saved forwards under the same ordering, and its
+  // failure after boot stops the VM again with its disk kept (LIFE-01).
+  _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
+  try FileManager.default.removeItem(atPath: log)
+  #expect(throws: (any Error).self) {
+    try lifecycle.restart(instance, RestartRequest(boot: options))
+  }
+  let restarted = (try? String(contentsOfFile: log, encoding: .utf8)) ?? ""
+  #expect(!restarted.isEmpty, "the restarted guest was waited on over ssh")
+  #expect(!restarted.contains("-L"), "port forwards were spawned before readiness on restart")
+  #expect(!backend.isRunning(instance), "a failed restart left the VM running")
+  #expect(FileManager.default.fileExists(atPath: instance.directory))
   try backend.destroyInstance(instance)
 }
 
@@ -614,7 +618,7 @@ struct FakeInstallation {
     context: CommandContext(
       environment: environment, config: install.config, backend: backend,
       output: SilentOutput(), diagnostics: diagnostics,
-      ssh: SSHClient(environment: environment.variables)),
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath)),
     noGitHub: true, secretResolver: NoSecrets(), executable: nil,
     prepareGitHub: { config, _, _, _ in config })
   #expect(try lifecycle.stop(instance) == .stopped)
@@ -1009,4 +1013,96 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   try backend.stop(running)
   try backend.startExisting(instance)
   #expect(try PolicyBinding.load(instance)?.policyEpoch != booted.policyEpoch)
+}
+
+/// LIFE-01: an unconfirmed cleanup fences the instance until a confirmed
+/// stop reconciles it.
+@Test func aFencedInstanceGetsNoHandoffUntilAConfirmedStop() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("fenced"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil, guestEnvironment: [:])
+  try HandoffFence.set(instance, reason: "test")
+  let error = try #require(throws: HostError.self) { try backend.asRunning(instance) }
+  #expect(error.message.contains("is fenced"))
+  try backend.stopUnproven(instance)
+  #expect(try backend.asRunning(instance) == nil)
+  #expect(!FileManager.default.fileExists(atPath: HandoffFence.path(instance)))
+  try backend.destroyInstance(instance)
+}
+
+/// LIFE-01: a failed restart whose rollback stop cannot be confirmed fences
+/// the instance and records the fence in the boundary audit.
+@Test func anUnconfirmedRestartRollbackFencesTheInstance() throws {
+  let install = try FakeInstallation(extra: #", "egress": "filtered""#)
+  defer { install.remove() }
+  // The runtime refuses `stop` while the flag file exists.
+  let bin = install.root + "/bin"
+  try FileManager.default.moveItem(atPath: bin + "/iso-sandbox", toPath: bin + "/iso-sandbox-real")
+  try Data(
+    "#!/bin/sh\nif [ \"$1\" = stop ] && [ -e '\(bin)/fail-stop' ]; then exit 1; fi\nexec '\(bin)/iso-sandbox-real' \"$@\"\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: bin + "/iso-sandbox"))
+  chmod(bin + "/iso-sandbox", 0o755)
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("unfenced"), image: .default, workspacePath: nil)
+  let environment = ConfigEnvironment(
+    home: install.root,
+    variables: ["HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin"])
+  let lifecycle = ProjectLifecycle(
+    context: CommandContext(
+      environment: environment, config: install.config, backend: backend,
+      output: SilentOutput(), diagnostics: Diagnostics(verbosity: 0) { _ in },
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath)),
+    noGitHub: true, secretResolver: NoSecrets(), executable: nil,
+    prepareGitHub: { config, _, _, _ in config })
+  let options = BootOptions(
+    noAgents: true, noPrompt: true,
+    configTarget: ConfigTarget(path: install.root + "/c.jsonc", format: .jsonc))
+  // No egress companion can start here, so readiness never completes.
+  #expect(throws: (any Error).self) {
+    try lifecycle.startInstance(instance, CreationRequest(boot: options))
+  }
+  _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
+  #expect(!FileManager.default.fileExists(atPath: HandoffFence.path(instance)))
+
+  try Data().write(to: URL(fileURLWithPath: bin + "/fail-stop"))
+  #expect(throws: (any Error).self) {
+    try lifecycle.restart(instance, RestartRequest(boot: options))
+  }
+  #expect(FileManager.default.fileExists(atPath: HandoffFence.path(instance)))
+  let error = try #require(throws: HostError.self) { try backend.asRunning(instance) }
+  #expect(error.message.contains("is fenced"))
+  let fence = try BoundaryAudit.load(instance).last { $0["event"] as? String == "handoff_fence" }
+  #expect(fence?["reason"] as? String == "restart_cleanup_unconfirmed")
+
+  // A confirmed stop reconciles it.
+  try FileManager.default.removeItem(atPath: bin + "/fail-stop")
+  try backend.stopUnproven(instance)
+  #expect(try backend.asRunning(instance) == nil)
+  try backend.destroyInstance(instance)
+}
+
+/// DEF-01: a macOS guest never falls back from the brokered default to
+/// vmnet; it needs an explicit vmnet choice.
+@Test func macOSGuestsNeedAnExplicitVmnetChoice() throws {
+  let brokered = try FakeInstallation(
+    extra: #", "egress": "none", "network": {"transport": "brokered"}"#)
+  defer { brokered.remove() }
+  let error = try #require(throws: HostError.self) {
+    try brokered.backend.requireMacSupportedConfig()
+  }
+  #expect(error.message.contains("\"vmnet\""))
+  let vmnet = try FakeInstallation()
+  defer { vmnet.remove() }
+  try vmnet.backend.requireMacSupportedConfig()
 }

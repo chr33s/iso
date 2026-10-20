@@ -479,7 +479,7 @@ private let assignmentConfig = #"""
     #expect(GitHubTokens.selectHostToken(gh: " ", env: "\n") == nil)
   }
 
-  @Test func cloneTokensHonourAssignmentThenPATThenHost() throws {
+  @Test func cloneTokensHonourAssignmentThenPATThenOnlyExplicitAmbientModes() throws {
     let stubs = try Stubs()
     defer { stubs.remove() }
     let tokens = GitHubTokens(
@@ -504,9 +504,18 @@ private let assignmentConfig = #"""
     #expect(throws: (any Error).self) {
       try tokens.cloneToken(auth, url: url, assigned: slug("owner/failed"))
     }
+    // AUTH-01: PAT mode without a matching entry clones anonymously; it
+    // never falls back to ambient host credentials.
     #expect(
-      try tokens.cloneToken(auth, url: "https://github.com/else/where", assigned: nil)?.expose()
-        == "host-token")
+      try tokens.cloneToken(auth, url: "https://github.com/else/where", assigned: nil) == nil)
+    let other = "https://github.com/else/where"
+    for mode in [nil, GitHubAuth.off] {
+      #expect(try tokens.cloneToken(mode, url: other, assigned: nil) == nil)
+    }
+    #expect(try tokens.cloneToken(.env, url: other, assigned: nil)?.expose() == "host-token")
+    #expect(try tokens.cloneToken(.auto, url: other, assigned: nil) != nil)
+    #expect(GitHubSourceAuth.ambient(.env) == (false, true))
+    #expect(GitHubSourceAuth.ambient(nil) == (false, false))
   }
 
   @Test func cloneScriptReadsTheTokenFromStdinAndEscapesTheURL() {

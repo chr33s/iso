@@ -32,16 +32,19 @@ struct Push: ParsableCommand {
   @Argument(
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
-  @Option(help: "Local directory to push (defaults to `workspace.json` `host_path`)")
+  @Option(
+    help: "Local directory to push (defaults to `workspace.json` `host_path`)")
   var dir: String?
   @Flag(help: "Overwrite guest changes without confirmation") var force = false
-  @Flag(help: "Skip the `.git` directory in this transfer") var excludeGit = false
+  @Flag(help: ArgumentHelp(DeprecatedExcludeGit.help)) var excludeGit = false
 
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
-      try context.transfer.push(running, directory: dir, force: force, excludeGit: excludeGit)
+      DeprecatedExcludeGit.warn(excludeGit, context.diagnostics)
+      try context.transfer.push(
+        running, directory: dir, force: force, input: context.config.workspaceInput)
     }
   }
 }
@@ -50,25 +53,34 @@ struct Pull: ParsableCommand {
   static let configuration = CommandConfiguration(
     abstract: "Pull guest workspace to local directory",
     discussion:
-      "With `workspace.pull.mode = \"stage\"` (or --review), the pull lands in a host-side stage and is printed for review; nothing reaches the local directory until `--apply`."
+      "Every pull is received into a host-side stage and validated before anything reaches the local directory; host Git never runs. With `workspace.pull.mode = \"stage\"` (or --review) the stage is printed for review and applied with `--apply --stage-id ID`. In direct mode a plan of additions applies at once; replacing files needs --force, and execution-sensitive paths (.envrc, .husky, .vscode/tasks.json) always need --apply --stage-id ID --approve-sensitive PATH. `.git` is never installed."
   )
 
   @OptionGroup var global: GlobalOptions
   @Argument(
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
-  @Option(help: "Local directory to pull into (defaults to `workspace.json` `host_path`)")
+  @Option(
+    help: "Local directory to pull into (defaults to `workspace.json` `host_path`)")
   var dir: String?
-  @Flag(help: "Overwrite local changes without confirmation") var force = false
-  @Flag(help: "Skip the `.git` directory in this transfer") var excludeGit = false
+  @Flag(help: "In direct mode, allow replacing existing local files (never sensitive paths)")
+  var force = false
+  @Flag(help: ArgumentHelp(DeprecatedExcludeGit.help)) var excludeGit = false
   @Flag(help: "Stage the pull and print it for review without applying it") var review = false
-  @Flag(help: "Apply the reviewed stage to the local directory") var apply = false
+  @Flag(help: "Apply the reviewed stage named by --stage-id to the local directory")
+  var apply = false
   @Flag(help: "Delete the current stage") var discard = false
-  @Option(help: "With --apply, the stage id shown at review; refuses any other stage")
+  @Option(
+    help: "With --apply, the stage id shown at review; required, refuses any other stage")
   var stageId: String?
+  @Option(
+    help: ArgumentHelp(
+      "With --apply --stage-id, approve one execution-sensitive entry shown at review (repeatable; exact path, no globs)",
+      valueName: "PATH"))
+  var approveSensitive: [String] = []
   @Flag(help: "When reviewing, print only the summary, not text diffs") var stat = false
 
-  /// Whether a plain pull (not --apply / --discard) goes through a stage.
+  /// Whether a plain pull (not --apply / --discard) only stages.
   static func stages(review: Bool, mode: WorkspacePullMode) -> Bool {
     review || mode == .stage
   }
@@ -78,6 +90,9 @@ struct Pull: ParsableCommand {
       throw UsageError("--review, --apply and --discard cannot be combined")
     }
     if stageId != nil && !apply { throw UsageError("--stage-id requires --apply") }
+    if !approveSensitive.isEmpty && (!apply || stageId == nil) {
+      throw UsageError("--approve-sensitive requires --apply --stage-id")
+    }
     if dir != nil && (apply || discard) {
       throw UsageError(
         "--dir is fixed when the stage is created; it cannot be used with --\(apply ? "apply" : "discard")"
@@ -89,6 +104,7 @@ struct Pull: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      DeprecatedExcludeGit.warn(excludeGit, context.diagnostics)
       if discard {
         let instance = try InstanceStore.resolve(context.config, name: name)
         let removed = try context.transfer.discardStage(instance)
@@ -98,10 +114,25 @@ struct Pull: ParsableCommand {
       }
       if apply {
         let instance = try InstanceStore.resolve(context.config, name: name)
-        // --force skips only the local git cleanliness check; it never
-        // stands in for a policy approval.
+        guard let stageId else {
+          let selected = try? StageLocation(instance).loadSelectedLocked()
+          throw UsageError(
+            selected.map {
+              "--apply needs the exact stage id. The selected stage is \($0.manifest.id): \(StageReview($0).applyCommand(instance: instance.name.rawValue))"
+            } ?? "--apply needs --stage-id; create and review a stage with `iso diff` first")
+        }
+        // --force adds nothing here: the exact stage id is the overwrite
+        // authority, and it never stands in for a policy approval or a
+        // sensitive-path grant.
+        if force {
+          context.diagnostics.warn(
+            "--force has no effect with --apply: the stage id is the overwrite authority")
+        }
         let (manifest, applied) = try context.transfer.applyStage(
-          instance, stageID: stageId, force: force, configuredPolicy: context.config.policy,
+          instance,
+          WorkspaceTransfer.ApplyRequest(
+            stageID: stageId, replace: true, sensitive: approveSensitive),
+          configuredPolicy: context.config.policy,
           confirm: TerminalStageConfirmation.make(global: global, instance: instance))
         context.diagnostics.log(
           .info,
@@ -112,12 +143,26 @@ struct Pull: ParsableCommand {
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
       guard Self.stages(review: review, mode: context.config.workspacePull.mode) else {
         if stat { throw UsageError("--stat requires --review or workspace.pull.mode \"stage\"") }
-        try context.transfer.pull(
-          running, directory: dir, force: force, excludeGit: excludeGit,
-          configuredPolicy: context.config.policy)
+        do {
+          let (manifest, applied) = try context.transfer.pull(
+            running, directory: dir, force: force, limits: context.config.workspacePull.limits,
+            configuredPolicy: context.config.policy)
+          context.diagnostics.log(
+            .info,
+            "Applied \(applied.count) changes to \(neutralizeControls(manifest.destination))")
+        } catch let held as ReturnError where held.stageID != nil {
+          // The whole stage is kept: show it so it can be reviewed and
+          // applied with the exact authority it needs.
+          if let selected = try? StageLocation(running.instance).loadSelected(),
+            selected.manifest.id == held.stageID
+          {
+            context.printStage(selected, instance: running.instance, diffs: false)
+          }
+          throw held
+        }
         return
       }
-      try context.reviewStage(running, directory: dir, excludeGit: excludeGit, diffs: !stat)
+      try context.reviewStage(running, directory: dir, diffs: !stat)
     }
   }
 }
@@ -130,16 +175,18 @@ struct Diff: ParsableCommand {
   @Argument(
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
-  @Option(help: "Local directory to compare with (defaults to `workspace.json` `host_path`)")
+  @Option(
+    help: "Local directory to compare with (defaults to `workspace.json` `host_path`)")
   var dir: String?
-  @Flag(help: "Skip the `.git` directory in this transfer") var excludeGit = false
+  @Flag(help: ArgumentHelp(DeprecatedExcludeGit.help)) var excludeGit = false
   @Flag(help: "Print only the summary, not text diffs") var stat = false
 
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      DeprecatedExcludeGit.warn(excludeGit, context.diagnostics)
       let running = try context.backend.resolveRunning(name, instances: try context.listInstances())
-      try context.reviewStage(running, directory: dir, excludeGit: excludeGit, diffs: !stat)
+      try context.reviewStage(running, directory: dir, diffs: !stat)
     }
   }
 }
@@ -148,18 +195,18 @@ extension CommandContext {
   /// A staged `pull` (`--review` or `workspace.pull.mode "stage"`) and `diff`:
   /// stage the running guest's workspace, then print it for review. Applying
   /// and discarding stay separate operations.
-  func reviewStage(
-    _ running: AppleBackend.Running, directory: String?, excludeGit: Bool, diffs: Bool
-  ) throws {
-    let manifest = try transfer.stage(
-      running, directory: directory, excludeGit: excludeGit,
-      limits: config.workspacePull.limits, configuredPolicy: config.policy)
-    printStage(manifest, instance: running.instance, diffs: diffs)
+  func reviewStage(_ running: AppleBackend.Running, directory: String?, diffs: Bool) throws {
+    _ = try transfer.stage(
+      running, directory: directory, limits: config.workspacePull.limits,
+      configuredPolicy: config.policy)
+    let selected = try StageLocation(running.instance).loadSelectedLocked()
+    printStage(selected, instance: running.instance, diffs: diffs)
   }
 
   /// The review goes to stdout; the next-step hint to stderr.
-  func printStage(_ manifest: StageManifest, instance: Instance, diffs: Bool) {
-    let review = StageReview(manifest: manifest, location: StageLocation(instance))
+  func printStage(_ selected: SelectedStage, instance: Instance, diffs: Bool) {
+    let manifest = selected.manifest
+    let review = StageReview(selected)
     review.summary(instance: instance.name.rawValue).forEach(output.out)
     if diffs { review.textDiffs().forEach(output.out) }
     if !manifest.applicable {
@@ -168,7 +215,7 @@ extension CommandContext {
       output.error("Nothing to apply.")
     } else {
       output.error(
-        "Apply it with `iso pull \(instance.name) --apply --stage-id \(manifest.id)`, or discard it with `--discard`."
+        "Apply it with `\(review.applyCommand(instance: instance.name.rawValue))`, or discard it with `--discard`."
       )
     }
   }

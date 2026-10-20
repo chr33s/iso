@@ -267,6 +267,7 @@ package struct RunWorkflow {
       try CodexChecks.ensureRemoteAuthConsistent(
         context.config, instance: running.instance, modelState: state)
     }
+    try lifecycle.agents.requireSelectedProvider(running.instance, adapter: planned.adapter)
     var ssh = try lifecycle.agents.workloadSession(for: running, backend: context.backend)
     var defaults: [String] = []
     for item in planned.defaults where !ssh.env.contains(item.name.rawValue) {

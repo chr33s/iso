@@ -103,7 +103,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   #expect(ContinuousClock.now - start < .seconds(10))
 }
 
-@Test func remoteCommandEscapesArgumentsOnce() {
+@Test func remoteCommandEscapesArgumentsOnce() throws {
   let command = RemoteCommand().literal("tar xf - -C ").arg("/a b/it's").literal("/.git")
   #expect(command.rendered == "tar xf - -C '/a b/it'\\''s'/.git")
   #expect(InteractiveSSH.render([]) == "cd /workspace && exec $SHELL -l")
@@ -112,7 +112,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   var env = EnvForward()
   env.set("OPENAI_API_KEY", Secret("sk-secret"))
   #expect(!env.description.contains("sk-secret"))
-  #expect(env.sendEnvOptions == ["-o", "SendEnv=OPENAI_API_KEY"])
+  #expect(try env.prepare("true", terminal: .requested).options == ["-o", "SendEnv=ISO_SSH_ENV_0"])
 }
 
 @Test func ownGroupChildrenAreRegisteredWhileTheyRun() throws {

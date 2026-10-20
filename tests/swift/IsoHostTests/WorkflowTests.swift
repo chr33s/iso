@@ -33,7 +33,8 @@ private func workflowFixture(_ root: String, config body: String = "") throws
   return ProjectLifecycle(
     context: CommandContext(
       environment: environment, config: config, backend: backend,
-      output: UnusedWorkflowOutput(), diagnostics: diagnostics, ssh: SSHClient(environment: [:])),
+      output: UnusedWorkflowOutput(), diagnostics: diagnostics,
+      ssh: SSHClient(environment: [:], tools: .searchPath)),
     noGitHub: false, secretResolver: UnusedWorkflowSecrets(), executable: nil,
     prepareGitHub: { _, _, _, _ in
       Issue.record("local workflow resolution must not prompt")
@@ -213,4 +214,74 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
     try AuditReader(store: store).page(.run(audit.runID), after: nil).run?.summary)
   #expect(summary.outcome == .preparationFailed(.resolve))
   #expect(summary.handoff == nil && summary.environment == nil)
+}
+
+/// ALLOC: corrupt, unknown or non-directory entries occupy their names and
+/// refuse allocation rather than being treated as free slots.
+@Test func allocationReservesEveryExistingEntry() throws {
+  let root = try scratchDirectory("alloc")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let config = try workflowFixture(root).config
+  let first = try Instance.allocate(
+    config, name: try InstanceName("app"), image: .default, workspacePath: nil)
+  let instances = config.instancesDirectory.path
+  // Case-colliding and exact names are taken.
+  #expect(throws: HostError.self) {
+    try Instance.allocate(
+      config, name: try InstanceName("APP"), image: .default, workspacePath: nil)
+  }
+  // A derived name skips the existing one.
+  let derived = try Instance.allocate(config, name: nil, image: .default, workspacePath: "/x/app")
+  #expect(derived.name.rawValue == "app-2" && derived.index != first.index)
+
+  // A corrupt record blocks allocation; nothing is reused or overwritten.
+  try FileManager.default.createDirectory(
+    atPath: instances + "/broken", withIntermediateDirectories: true)
+  try writeFile(instances + "/broken/instance.json", "{not json")
+  #expect(throws: HostError.self) {
+    try Instance.allocate(
+      config, name: try InstanceName("new"), image: .default, workspacePath: nil)
+  }
+  #expect(readFile(instances + "/broken/instance.json") == "{not json")
+  #expect(!FileManager.default.fileExists(atPath: instances + "/new"))
+  try FileManager.default.removeItem(atPath: instances + "/broken")
+
+  // A symlink or file also occupies its name.
+  try FileManager.default.createSymbolicLink(
+    atPath: instances + "/linked", withDestinationPath: root)
+  #expect(throws: HostError.self) {
+    try Instance.allocate(
+      config, name: try InstanceName("other"), image: .default, workspacePath: nil)
+  }
+  try FileManager.default.removeItem(atPath: instances + "/linked")
+  _ = try Instance.allocate(
+    config, name: try InstanceName("other"), image: .default, workspacePath: nil)
+  // The tolerant listing still works with a corrupt entry present.
+  try writeFile(instances + "/stray", "x")
+  #expect(try InstanceStore.list(config, skipped: { _, _ in }).count == 3)
+}
+
+/// READY-01: a launch refuses an agent whose own provider is not brokered
+/// before it opens a workload session or reports a handoff.
+@Test func aLaunchRequiresTheSelectedAgentsOwnProviderBroker() throws {
+  let root = try scratchDirectory("workflow-provider")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(
+    root, config: #""proxy": {"mode": "required", "anthropic": {"credential": "cmd:printf k"}}"#)
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let running = try workloadRunning(guest, identity: nil)
+  let workflow = RunWorkflow(
+    lifecycle: lifecycle, agent: try AgentDefinitionID("codex"), workspace: root,
+    name: nil, image: nil, profiles: [], remove: false, ask: false, prepare: false,
+    forwarded: [], configPath: nil)
+  let planned = try workflow.plan()
+  var record: RunSessionRecord? = nil
+  let error = try #require(throws: HostError.self) {
+    try workflow.launch(
+      planned, running: running, action: .attached, session: &record,
+      started: ContinuousClock.now,
+      report: { _ in Issue.record("an unbrokered agent was handed off") })
+  }
+  #expect(error.message.contains("needs the openai credential proxy"))
 }

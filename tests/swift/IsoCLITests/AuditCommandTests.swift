@@ -95,7 +95,8 @@ private func view(_ arguments: [String]) throws -> Audit.View {
 }
 
 @Test func jsonlIsOnlyForStreamCommands() {
-  #expect(Audit.self is any StreamCommand.Type)
+  let audit: any ParsableCommand.Type = Audit.self
+  #expect(audit is any StreamCommand.Type)
   for command: any ParsableCommand.Type in [List.self, Status.self, RunCommand.self, Logs.self] {
     #expect(!(command is any StreamCommand.Type))
   }
@@ -167,8 +168,10 @@ private func view(_ arguments: [String]) throws -> Audit.View {
     AuditReader(store: store), run, after: nil, limit: 1, poll: .milliseconds(1),
     until: {
       ticks += 1
-      if ticks == 3 { try? store.append(stop(try! HexID(String(repeating: "b", count: 32)), nil)) }
-      if ticks == 6 { try? store.append(stop(vm, boot)) }
+      if ticks == 3 {
+        _ = try? store.append(stop(try! HexID(String(repeating: "b", count: 32)), nil))
+      }
+      if ticks == 6 { _ = try? store.append(stop(vm, boot)) }
       return ticks > 10
     })
   #expect(
@@ -317,7 +320,7 @@ private func view(_ arguments: [String]) throws -> Audit.View {
     until: {
       ticks += 1
       if ticks == 3 {
-        try? store.append(
+        _ = try? store.append(
           .environment(
             run,
             .init(
@@ -389,7 +392,7 @@ private func view(_ arguments: [String]) throws -> Audit.View {
     until: {
       ticks += 1
       if ticks == 3 {
-        try? store.append(
+        _ = try? store.append(
           .environment(
             run,
             .init(

@@ -58,7 +58,7 @@ import Testing
     // The recorded toolkit sequence (reserve, chunked PATCH, commit).
     let fixture = try DataPlaneProtocolTests.fixture("toolkit-cache-v1.json")
     let reserve = await harness.request(
-      "POST", Self.cacheBase + "caches", bearer: token, json: try #require(fixture["reserve"]))
+      "POST", Self.cacheBase + "caches", bearer: token, json: fixture["reserve"])
     #expect(reserve.status == 201)
     let id = try #require(reserve.json?["cacheId"]?.intValue)
     for chunk in try #require(fixture["chunks"]?.arrayValue) {
@@ -75,7 +75,7 @@ import Testing
     #expect(
       await harness.request(
         "POST", Self.cacheBase + "caches/\(id)", bearer: token,
-        json: try #require(fixture["commit"])
+        json: fixture["commit"]
       )
       .status == 204)
     #expect(

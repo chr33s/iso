@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import pty
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -69,6 +70,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="iso-machine-contract-") as directory:
         home = Path(os.path.realpath(directory))
         read_contract.build_state(home)
+        # The read contract's corrupt record checks tolerant listing; a
+        # corrupt record refuses allocation (ALLOC), so it would mask the
+        # create cases here.
+        shutil.rmtree(next(home.glob("**/instances/corrupt")))
         project = home / "project"
         (project / ".devcontainer").mkdir(parents=True)
         (project / ".devcontainer" / "devcontainer.json").write_text('{"hostRequirements": {"cpus": 2}}')

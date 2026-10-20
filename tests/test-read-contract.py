@@ -49,7 +49,11 @@ printf 'Filesystem     1M-blocks  Used Available Use%% Mounted on\\n/dev/vda1   
 """
 
 CONFIG_JSONC = """{
-  // Isolated settings for the command contract.
+  // Isolated settings for the command contract. The fixtures predate the
+  // secure defaults (DEF-01), so they pin the explicit legacy profile.
+  "security": {"preset": "networked"},
+  "network": {"transport": "vmnet"},
+  "limits": {"session_ttl": "unlimited"},
   "apple_container": {"binary": "__BIN__/iso-sandbox"},
   "updates": {"mode": "off"},
   "profiles": {

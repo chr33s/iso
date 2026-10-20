@@ -107,7 +107,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
 | `--image <name>` | Named image to use when creating a new instance (default: `default`) |
 | `--profile <list>` | Build or reuse a profile-derived image when creating a new instance, named from the sorted profiles (for example `node-python`). Repeatable or comma-separated; an empty name (`a,,b`) is refused |
-| `--exclude-git` | Skip `.git/` when copying/syncing local directories; does not strip `.git` from a `--git-repo` clone |
+| `--exclude-git` | Deprecated, no effect: transfers into the guest never carry `.git` (a `--git-repo` clone keeps its own) |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable) |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot |
@@ -128,8 +128,7 @@ iso up --git-repo https://github.com/chr33s/iso.git
 ```
 
 Creation options such as `--vcpus`, `--mem`, `--disk`, `--image`,
-`--profile`, `--extra-mount`, `--git-repo`, `--exclude-git`, and
-`--devcontainer` are applied only when `up` creates a new instance. `iso up
+`--profile`, `--extra-mount`, `--git-repo`, and `--devcontainer` are applied only when `up` creates a new instance. `iso up
 --profile <list>`
 derives an image name from the sorted profile list, runs the same stale-image
 check as `iso setup`, and builds or rebuilds that image if needed. Explicit
@@ -708,7 +707,7 @@ iso push [NAME] [FLAGS]
 | `NAME` | Instance name (required if multiple instances exist) |
 | `--dir <dir>` | Local directory to push (defaults to the workspace host path) |
 | `--force` | Overwrite guest changes without confirmation |
-| `--exclude-git` | Skip the `.git/` directory in this transfer |
+| `--exclude-git` | Deprecated, no effect: a push never sends `.git` |
 
 ```
 iso push
@@ -728,17 +727,18 @@ iso pull [NAME] [FLAGS]
 |------|-------------|
 | `NAME` | Instance name (required if multiple instances exist) |
 | `--dir <dir>` | Local directory to pull into (defaults to the workspace host path) |
-| `--force` | Overwrite local changes without confirmation |
-| `--exclude-git` | Skip the `.git/` directory in this transfer |
+| `--force` | In direct mode, allow replacing existing local files (never execution-sensitive paths) |
+| `--exclude-git` | Deprecated, no effect: a pull never installs `.git` |
 | `--review` | Pull into a host-side stage and print it for review instead of writing the local directory |
-| `--stat` | With `--review`, print only the summary, not text diffs |
-| `--apply` | Apply the current stage to the directory it was created for, then remove it |
-| `--stage-id <id>` | With `--apply`, the id printed at review; any other stage is refused |
+| `--stat` | When reviewing, print only the summary, not text diffs |
+| `--apply` | Apply the reviewed stage named by `--stage-id` to the directory it was created for |
+| `--stage-id <id>` | Required with `--apply`: the id printed at review; any other stage is refused |
+| `--approve-sensitive <PATH>` | With `--apply --stage-id`, approve one execution-sensitive entry shown at review (repeatable; exact path, no globs) |
 | `--discard` | Delete the current stage |
 
 With `workspace.pull.mode = "stage"` ([configuration](configuration.md#workspace-section)),
 a plain `iso pull` behaves like `--review`. See
-[staged pulls](workspaces.md#staged-pulls). Under an enforcing
+[staged pulls](workspaces.md#pulling-guest-to-host). Under an enforcing
 `workspace.pull.apply` policy with an approval guard, `--apply` re-renders
 the stage on the host terminal and applies it only after you type its stage
 ID; `--force` does not waive this, and without a terminal (or with
@@ -750,7 +750,7 @@ Direct pulls and `--dir` naming another directory are refused. See
 iso pull
 iso pull my-project --dir ./local-copy --force
 iso pull my-project --review
-iso pull my-project --apply --stage-id 1a2b3c4d
+iso pull my-project --apply --stage-id 1a2b3c4d5e6f7a8b
 ```
 
 ### `diff`
@@ -760,7 +760,7 @@ added, modified and type-changed paths, then text diffs. Equivalent to
 `iso pull --review`.
 
 ```
-iso diff [NAME] [--dir <dir>] [--exclude-git] [--stat]
+iso diff [NAME] [--dir <dir>] [--stat]
 ```
 
 ### `code` / `zed`
@@ -1026,7 +1026,6 @@ Kept across the wipe, because isolate persists them host-side:
 **Not replayed**, because isolate does not persist them:
 
 - Extra `--extra-mount` directories. Only the *primary* workspace source is recorded in `workspace.json`, so isolate replays none of them. isolate does not guarantee that such a mount is served again after the reboot. There is no way to re-add a mount to an existing instance — `--extra-mount` is creation-only, and `iso push` writes to the recorded workspace path — so recovering one means `iso destroy` and a fresh `iso up`.
-- `--exclude-git`. A workspace originally pushed without `.git/` is re-synced with it.
 - A devcontainer's `postStartCommand`, which reaches the guest only during `iso up`. Its `features` are baked into the image and so do survive. (`postCreateCommand` is unaffected because isolate does not implement it — it is reported as an unrecognised `devcontainer.json` key.)
 
 Before replacing the disk, isolate checks that the image exists, the state files
@@ -1085,7 +1084,7 @@ remote Mac needs `iso setup` and the same `iso` build at the enrolled path.
 | `iso host shell HOST NAME [-- CMD…]` | Open an access session and ssh through the host's owned relay with the guest key pinned. Exits with the session's status; a session ended by a signal exits 1 |
 | `iso host session HOST NAME [--detach\|--stop]` (not both) | Hold a renewed session and print an `ssh -F …` line; `--detach` keeps a coordinator after the command exits, which other `iso host` commands reuse |
 | `iso host up HOST [PATH] [--name --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project. Unlike local `iso up`, every run pushes PATH, including onto a reused VM. On a reused VM an explicit `--egress` must match the egress the VM was created with; a mismatch (or a host that does not report it) is refused, never applied by recreating the VM |
-| `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir --exclude-git] [--apply [--stage-id ID] [--force]]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host). Staging flags and apply flags cannot be mixed: `--stage-id` and `--force` need `--apply`, and `--dir` and `--exclude-git` are refused with it because a stage's destination is fixed when it is staged |
+| `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir] [--apply --stage-id ID [--approve-sensitive PATH]…]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host). `--apply` requires the exact `--stage-id`; `--stage-id` and `--approve-sensitive` need `--apply`, and `--dir` is refused with it because a stage's destination is fixed when it is staged. `--force` and `--exclude-git` are deprecated and have no effect |
 | `iso host agent HOST NAME claude\|codex [-- ARGS]` | Run an agent in the VM; provider credentials stay in this client's confined proxy, reached through the relay. The agent always runs as `proxy.mode = "required"` (recognized provider variables are withheld and Codex `auth.json` is not staged), is refused under `proxy.mode = "off"`, and does not get MCP servers whose headers are resolved on this client or servers in this client's `~/.codex/config.toml` that set `http_headers` |
 | `iso host editor HOST NAME code\|zed [--guest-path PATH]` | A sandboxed editor through the relay; `--path` is the older spelling of `--guest-path` |
 | `iso host forward HOST NAME --forward-port GUEST[:HOST]…` | Client-loopback forwards (127.0.0.1 only) that end with the session. `--forward-port 3000:13000` forwards guest port 3000 to client port 13000, as `iso up --forward-port` does. The older positional form `LOCAL[:GUEST]` (note the reversed order: `13000:3000`) is still accepted; the two forms cannot be mixed |
@@ -1325,6 +1324,32 @@ approval. See [`policy.md`](policy.md).
 ```
 iso policy show [NAME] [--json]
 ```
+
+### `policy effective`
+
+Report what the configuration requests (transport, egress, preset,
+`proxy.mode`, return and input modes, agent imports, GitHub mode, editor,
+session lifetime), every relaxation from the secure defaults, and, for an
+instance, what it recorded at creation (transport and egress, which are
+fixed), its saved environment names and forwards, its saved grants with their
+IDs and origin, pending and applied revocations, whether it is fenced, and
+whether a stage is retained. Requested values that conflict with recorded
+ones are listed. Read-only: no secret is resolved, no credential command or
+provider is contacted, no VM is started or changed, nothing is audited;
+unreadable records are reported as unknown.
+
+```
+iso policy effective [NAME] [--json]
+```
+
+Revoke a saved grant (a start-time `--env` entry or port forward) by listing
+its ID in `security.revoked_grant_ids`. A revoked environment entry reaches no
+later session, even on a running instance; the next start, restart or
+reprovision also tombstones it, and the revocation stays recorded even if the
+setting is later removed. Saved entries without provenance are likewise
+withheld from sessions until given again. Giving the value again on the
+command line creates a new grant with a new ID. An ID no instance records (for
+example after its instance was destroyed) only draws a warning.
 
 ### `audit`
 

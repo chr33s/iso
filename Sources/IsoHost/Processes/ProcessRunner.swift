@@ -24,6 +24,10 @@ package struct ProcessRunner: Sendable {
     /// Bytes written to the child's stdin, which is then closed (EOF).
     /// Secrets go here, never on argv. Nil leaves stdin at `/dev/null`.
     package var input: [UInt8]?
+    /// Descriptors the child keeps under the same numbers, past
+    /// close-on-exec: a receive lease its writers must hold for their
+    /// whole lifetime. Nothing else is inherited.
+    package var inheritedDescriptors: [Int32] = []
 
     package init(
       executable: String, arguments: [String], environment: [String: String],
@@ -484,7 +488,9 @@ package struct ProcessRunner: Sendable {
     var ends = [producerErr[0], consumerErr[0]]
     var buffers: [[UInt8]] = [[], []]
     var chunk = InlineArray<16384, UInt8>(repeating: 0)
-    let isCancelled = producer.isCancelled ?? consumer.isCancelled
+    let cancellations = [producer.isCancelled, consumer.isCancelled].compactMap { $0 }
+    let isCancelled: (() -> Bool)? =
+      cancellations.isEmpty ? nil : { cancellations.contains { $0() } }
     while ends.contains(where: { $0 >= 0 }) {
       if isCancelled?() == true { throw .cancelled }
       var fds = ends.map { pollfd(fd: $0, events: Int16(POLLIN), revents: 0) }
@@ -512,8 +518,25 @@ package struct ProcessRunner: Sendable {
         }
       }
     }
+    // A child can close its stderr and keep writing: cancellation stays
+    // polled until both have exited, not just until their streams end.
+    var producerResult: Termination? = nil
+    var consumerResult: Termination? = nil
+    while producerResult == nil || consumerResult == nil {
+      if isCancelled?() == true { throw .cancelled }
+      if producerResult == nil { producerResult = producerChild.wait(until: .zero) }
+      if consumerResult == nil { consumerResult = consumerChild.wait(until: .zero) }
+      if producerResult == nil || consumerResult == nil {
+        if isCancelled == nil {
+          if producerResult == nil { producerResult = producerChild.waitIndefinitely() }
+          if consumerResult == nil { consumerResult = consumerChild.waitIndefinitely() }
+        } else {
+          usleep(20_000)
+        }
+      }
+    }
     return PipelineOutput(
-      producer: producerChild.waitIndefinitely(), consumer: consumerChild.waitIndefinitely(),
+      producer: producerResult!, consumer: consumerResult!,
       producerStderr: buffers[0], consumerStderr: buffers[1])
   }
 
@@ -540,6 +563,9 @@ package struct ProcessRunner: Sendable {
       case .descriptor(let fd):
         posix_spawn_file_actions_adddup2(&actions, fd, target)
       }
+    }
+    for fd in request.inheritedDescriptors where fd > 2 {
+      posix_spawn_file_actions_addinherit_np(&actions, fd)
     }
     if let directory = request.workingDirectory {
       posix_spawn_file_actions_addchdir(&actions, directory)

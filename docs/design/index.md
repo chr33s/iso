@@ -27,6 +27,9 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Embedded secrets](embedded-secrets-spec.md): encrypted local storage.
 - [Selective hardening](selective-hardening-spec.md): workspace return,
   egress, resource budgets, and audit.
+- [Security hardening](iso-security-hardening-spec.md): host-boundary
+  hardening and secure defaults — selected-content input, Git-free staged
+  return, grant provenance and revocation.
 - [Authorization policy](iso-policy.md): evaluation and approval contracts.
 - [`iso audit` run history](iso-audit.md): the design review behind the
   `iso.audit/v1` store, reader and JSONL stream, implementation notes, and the

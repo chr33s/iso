@@ -114,7 +114,7 @@ opt-in.
   services on the Mac.**
 - [Secret storage](docs/commands.md#secrets): `iso secrets` encrypts local secrets
   with a passphrase and this Mac's Secure Enclave key, with no recovery path.
-- [File review](docs/workspaces.md#staged-pulls): `iso diff` or `iso pull --review`
+- [File review](docs/workspaces.md#review-and-apply): `iso diff` or `iso pull --review`
   stages guest files for inspection before you apply or discard them.
 - [Session limits](docs/configuration.md#limits):
   `"limits": {"session_ttl": "8h"}` stops each boot at a host-clock deadline.

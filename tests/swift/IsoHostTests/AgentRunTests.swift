@@ -355,7 +355,8 @@ func egressLeaseRejectsMalformedSessionDeadlines(deadlineJSON: String) throws {
   EgressLease.closeForwards(instance, ssh: ssh)
   #expect(
     readFile(root + "/ssh.log")
-      == "-O exit -o ControlPath=\(PortForwards.controlPath(instance)) iso-forwards\n")
+      == "-F none -o ControlMaster=no -o ControlPath=\(PortForwards.controlPath(instance)) -O exit iso-forwards\n"
+  )
   #expect(!FileManager.default.fileExists(atPath: PortForwards.controlPath(instance)))
 }
 

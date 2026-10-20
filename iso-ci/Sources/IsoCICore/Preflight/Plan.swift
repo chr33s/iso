@@ -91,11 +91,12 @@ package struct ResolvedAction: Sendable, Equatable, Hashable, Codable {
 package enum StepKind: Sendable, Equatable, Codable {
   case run(script: TemplateValue, shell: TemplateValue?, workingDirectory: TemplateValue?)
   case uses(ActionReference, with: [TemplateEntry])
-  /// Visible synthetic step: materialize the base commit from the snapshot
-  /// in place of an approved `actions/checkout`.
+  /// Visible synthetic step in place of an approved `actions/checkout`:
+  /// prepare the checkout directory (an empty repository when git is
+  /// available); no history is materialized.
   case syntheticCheckout(path: String)
-  /// Visible synthetic step: apply and verify the selected working-tree
-  /// snapshot (including deletions and modes) at this boundary.
+  /// Visible synthetic step: apply and verify the selected snapshot
+  /// (contents, modes and permitted symlinks) at this boundary.
   case snapshotOverlay(path: String)
 }
 

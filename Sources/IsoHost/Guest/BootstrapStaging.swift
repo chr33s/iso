@@ -31,19 +31,140 @@ final class StagingDirectory: Sendable {
     }
   }
 
-  /// Copy the allowlisted `files` and `directories` of `source` in. An
-  /// overlay: nothing already staged is removed. Symlinks are followed.
-  func stage(from source: String, files: [String], directories: [String]) throws {
-    for name in files where HostFiles.isFile(source + "/" + name) {
-      do { try HostFiles.copyFile(source + "/" + name, to: path + "/" + name) } catch {
+  /// Copy the allowlisted `files` and `directories` of `source` in, as one
+  /// confined snapshot of the approved root (IMPORT-01): a link is followed
+  /// only to a regular file or directory inside that root, special files and
+  /// cycles are refused, and the whole import is bounded. `reads` are
+  /// further files read as data (never staged); they are captured here so
+  /// no later step reopens the host path. An overlay: nothing already staged
+  /// is removed.
+  @discardableResult
+  func stage(from source: String, files: [String], directories: [String], reads: [String] = [])
+    throws -> [String: [UInt8]]
+  {
+    var copy = try ConfinedCopy(root: source)
+    for name in files {
+      do { try copy.file(name, to: path + "/" + name) } catch {
         throw ContextError("Failed to stage \(name)", cause: error)
       }
     }
-    for name in directories where HostFiles.isDirectory(source + "/" + name) {
-      do { try HostFiles.copyTree(source + "/" + name, to: path + "/" + name) } catch {
+    for name in directories {
+      do { try copy.tree(name, to: path + "/" + name) } catch {
         throw ContextError("Failed to stage \(name)/", cause: error)
       }
     }
+    var captured: [String: [UInt8]] = [:]
+    for name in reads {
+      do { captured[name] = try copy.read(name) } catch {
+        throw ContextError("Failed to read \(name)", cause: error)
+      }
+    }
+    return captured
+  }
+}
+
+/// Copies out of one approved host root without leaving it: every entry is
+/// resolved and must stay below the root, and counts and bytes are capped.
+struct ConfinedCopy {
+  static let maxEntries = 10_000
+  static let maxBytes: Int64 = 256 << 20
+
+  let root: String
+  private var entries = 0
+  private var bytes: Int64 = 0
+
+  init(root source: String) throws {
+    guard let resolved = canonicalPath(source), HostFiles.isDirectory(resolved) else {
+      throw HostError("Import root \(neutralizeControls(source)) is not a directory")
+    }
+    root = resolved
+  }
+
+  /// `name` below the root, resolved; nil when absent. Throws when it
+  /// resolves outside the root or to anything but a file or directory.
+  func resolve(_ relative: String) throws -> (path: String, directory: Bool)? {
+    let lexical = root + "/" + relative
+    var link = stat()
+    guard lstat(lexical, &link) == 0 else {
+      if errno == ENOENT { return nil }
+      throw HostError.posix("Failed to inspect", lexical)
+    }
+    guard let resolved = canonicalPath(lexical) else {
+      throw HostError("\(neutralizeControls(relative)) is a dangling or cyclic link")
+    }
+    guard resolved.hasPrefix(root + "/") else {
+      throw HostError("\(neutralizeControls(relative)) resolves outside the import root")
+    }
+    var info = stat()
+    guard stat(resolved, &info) == 0 else { throw HostError.posix("Failed to inspect", resolved) }
+    switch info.st_mode & S_IFMT {
+    case S_IFREG: return (resolved, false)
+    case S_IFDIR: return (resolved, true)
+    default: throw HostError("\(neutralizeControls(relative)) is not a regular file or directory")
+    }
+  }
+
+  private mutating func count(_ size: Int64) throws {
+    entries += 1
+    bytes += size
+    guard entries <= Self.maxEntries, bytes <= Self.maxBytes else {
+      throw HostError(
+        "The import exceeds \(Self.maxEntries) entries or \(Self.maxBytes >> 20) MiB; import named files instead"
+      )
+    }
+  }
+
+  mutating func file(_ relative: String, to destination: String) throws {
+    guard let entry = try resolve(relative), !entry.directory else { return }
+    try count(size(entry.path))
+    try HostFiles.copyFile(entry.path, to: destination)
+  }
+
+  mutating func tree(_ relative: String, to destination: String, depth: Int = 0) throws {
+    guard let entry = try resolve(relative), entry.directory else { return }
+    guard depth < HostFiles.maxDepth else {
+      throw HostError("\(neutralizeControls(relative)) is too deeply nested")
+    }
+    try count(0)
+    do {
+      try FileManager.default.createDirectory(
+        atPath: destination, withIntermediateDirectories: true)
+    } catch {
+      throw HostError("Failed to create \(destination)")
+    }
+    let names: [String]
+    do { names = try FileManager.default.contentsOfDirectory(atPath: entry.path).sorted() } catch {
+      throw HostError("Failed to read \(entry.path)")
+    }
+    for name in names {
+      let child = relative + "/" + name
+      guard let resolved = try resolve(child) else { continue }
+      if resolved.directory {
+        try tree(child, to: destination + "/" + name, depth: depth + 1)
+      } else {
+        try file(child, to: destination + "/" + name)
+      }
+    }
+  }
+
+  /// A regular file's bytes, nil when absent.
+  mutating func read(_ relative: String) throws -> [UInt8]? {
+    guard let entry = try resolve(relative) else { return nil }
+    guard !entry.directory else {
+      throw HostError("\(neutralizeControls(relative)) is a directory")
+    }
+    let size = size(entry.path)
+    try count(size)
+    let fd = open(entry.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    guard fd >= 0 else { throw HostError.posix("Failed to open", entry.path) }
+    defer { close(fd) }
+    return try StateStore.readBounded(
+      fd, path: entry.path, limit: Int(Self.maxBytes), tooLarge: "\(relative) is too large")
+  }
+
+  private func size(_ path: String) -> Int64 {
+    var info = stat()
+    return stat(path, &info) == 0 ? Int64(info.st_size) : 0
   }
 }
 

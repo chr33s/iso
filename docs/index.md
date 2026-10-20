@@ -64,6 +64,9 @@ Apple backend. The credential proxy is the Swift package
     references;
   - [`selective-hardening-spec.md`](design/selective-hardening-spec.md):
     staged workspace return, `proxy.mode`, egress modes, budgets, and audit;
+  - [`iso-security-hardening-spec.md`](design/iso-security-hardening-spec.md):
+    host-boundary hardening and secure defaults — selected-content input,
+    Git-free staged return, grant provenance and revocation;
   - [`iso-policy.md`](design/iso-policy.md): the IsoPolicy v1 contract —
     permit/forbid evaluation, admission quotas, single-use staged approvals,
     boot binding and proxy startup version 3;

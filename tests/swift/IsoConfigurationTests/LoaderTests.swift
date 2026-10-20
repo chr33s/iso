@@ -120,7 +120,7 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
   let implicit = try ConfigLoader.select(explicitPath: nil, home: home.path)
   let defaults = try ConfigLoader.load(implicit, environment: fixtureHome)
   #expect(defaults.sshPort == 22)
-  #expect(defaults.egress == .open)
+  #expect(defaults.egress == .none)
 }
 
 // MARK: - Absent / null / false / wrong type
@@ -140,7 +140,10 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
 
 @Test func nullIsAbsentOnlyForOptionalFields() throws {
   #expect(try load(#"{"github": null, "post_start": null}"#).github == nil)
-  #expect(try load(#"{"claude": {"config_dir": null}}"#).claude.configDirectory == .default)
+  // Agent-home imports are opt-in: omitted is disabled, null is refused.
+  #expect(throws: (any Error).self) { try load(#"{"claude": {"config_dir": null}}"#) }
+  #expect(try load(#"{"claude": {}}"#).claude.configDirectory == .disabled)
+  #expect(try load("{}").codex.configDirectory == .disabled)
   #expect(try load(#"{"claude": {"local_model": null, "api_key": null}}"#).claude.apiKey == nil)
   for field in [
     "ssh_port", "vm", "data_dir", "setup", "guest_env", "profiles", "forward_ports", "updates",
@@ -401,10 +404,10 @@ struct FakeFileSystem: ConfigFileSystem {
 
 // MARK: - workspace.pull
 
-@Test func workspacePullDefaultsToDirectWithStageBudgets() throws {
+@Test func workspacePullDefaultsToStageWithStageBudgets() throws {
   let c = try load("{}")
-  #expect(c.workspacePull == .defaults)
-  #expect(c.workspacePull.mode == .direct)
+  #expect(c.workspacePull.mode == .stage)
+  #expect(c.workspacePull.limits == WorkspacePullConfig.defaults.limits)
   #expect(c.workspacePull.limits.maxBytes.description == "1GiB")
 }
 
@@ -431,8 +434,9 @@ struct FakeFileSystem: ConfigFileSystem {
   #expect(fieldError(#"{"workspace": {"pull": {"max_bytes": 0}}}"#) != nil)
 }
 
-@Test func proxyModeDefaultsToAutoAndRejectsUnknownModes() throws {
-  #expect(try load("{}").proxy.mode == .auto)
+@Test func proxyModeDefaultsToRequiredAndRejectsUnknownModes() throws {
+  #expect(try load("{}").proxy.mode == .required)
+  #expect(try load(#"{"proxy": {"mode": "auto"}}"#).proxy.mode == .auto)
   #expect(try load(#"{"proxy": {"mode": "required"}}"#).proxy.mode == .required)
   #expect(try load(#"{"proxy": {"mode": "off"}}"#).proxy.mode == .off)
   #expect(fieldError(#"{"proxy": {"mode": "strict"}}"#)?.field == "proxy.mode")
@@ -459,8 +463,11 @@ struct FakeFileSystem: ConfigFileSystem {
     ProxyAuthScheme.apiKey.wireName == "x_api_key" && ProxyAuthScheme.bearer.wireName == "bearer")
 }
 
-@Test func egressDefaultsToOpenAndAcceptsNone() throws {
-  #expect(try load("{}").egress == .open)
+@Test func egressDefaultsToNoneAndOpenNeedsVmnet() throws {
+  #expect(try load("{}").egress == .none)
+  #expect(throws: (any Error).self) { try load(#"{"egress": "open"}"#) }
+  #expect(
+    try load(#"{"egress": "open", "network": {"transport": "vmnet"}}"#).egress == .open)
   #expect(try load(#"{"egress": "none"}"#).egress == .none)
   #expect(
     try load(#"{"egress": "filtered", "egress_filter": {"allowed_hosts": ["Example.COM."]}}"#)
@@ -487,7 +494,12 @@ struct FakeFileSystem: ConfigFileSystem {
 }
 
 @Test func limitsParseASessionTTL() throws {
-  #expect(try load("{}").limits.sessionTTL == nil)
+  // DEF-01: 8h unless set; "unlimited" is explicit; null is refused.
+  #expect(try load("{}").limits.sessionTTL?.seconds == 28800)
+  #expect(try load(#"{"limits": {}}"#).limits.sessionTTL?.seconds == 28800)
+  #expect(try load(#"{"limits": {"session_ttl": "unlimited"}}"#).limits.sessionTTL == nil)
+  #expect(fieldError(#"{"limits": {"session_ttl": null}}"#)?.field == "limits.session_ttl")
+  #expect(fieldError(#"{"limits": {"session_ttl": 0}}"#)?.field == "limits.session_ttl")
   #expect(try load(#"{"limits": {"session_ttl": "8h"}}"#).limits.sessionTTL?.seconds == 28800)
   #expect(try load(#"{"limits": {"session_ttl": 600}}"#).limits.sessionTTL?.seconds == 600)
   #expect(fieldError(#"{"limits": {"session_ttl": "10s"}}"#)?.field == "limits.session_ttl")
@@ -508,7 +520,17 @@ struct FakeFileSystem: ConfigFileSystem {
 
 @Test func securityPresetsSupplyDefaultsThatExplicitFieldsOverride() throws {
   let plain = try load("{}")
-  #expect(plain.securityPreset == nil && plain.egress == .open && plain.proxy.mode == .auto)
+  #expect(plain.securityPreset == nil && plain.egress == .none && plain.proxy.mode == .required)
+  #expect(plain.network.transport == .brokered && plain.workspacePull.mode == .stage)
+  // An explicit networked preset alone does not choose vmnet.
+  #expect(throws: (any Error).self) { try load(#"{"security": {"preset": "networked"}}"#) }
+  let networked = try load(
+    #"{"security": {"preset": "networked"}, "network": {"transport": "vmnet"}}"#)
+  #expect(networked.egress == .open && networked.proxy.mode == .auto)
+  // One override leaves the other defaults intact.
+  let filtered = try load(#"{"egress": "filtered"}"#)
+  #expect(filtered.proxy.mode == .required && filtered.workspacePull.mode == .stage)
+  #expect(filtered.claude.configDirectory == .disabled && filtered.editor == .defaults)
   let providerOnly = try load(#"{"security": {"preset": "provider-only"}}"#)
   #expect(providerOnly.egress == .none)
   #expect(providerOnly.proxy.mode == .required)
@@ -518,7 +540,7 @@ struct FakeFileSystem: ConfigFileSystem {
     offline.egress == .none && offline.proxy.mode == .off && offline.workspacePull.mode == .stage)
   // Explicit fields win over the preset.
   let overridden = try load(
-    #"{"security": {"preset": "provider-only"}, "egress": "open", "proxy": {"mode": "auto"}, "workspace": {"pull": {"max_files": 5}}}"#
+    #"{"security": {"preset": "provider-only"}, "egress": "open", "network": {"transport": "vmnet"}, "proxy": {"mode": "auto"}, "workspace": {"pull": {"max_files": 5}}}"#
   )
   #expect(overridden.egress == .open && overridden.proxy.mode == .auto)
   #expect(overridden.workspacePull.mode == .stage && overridden.workspacePull.limits.maxFiles == 5)
@@ -532,4 +554,72 @@ struct FakeFileSystem: ConfigFileSystem {
   )
   #expect(c.proxy.mode == .required)
   #expect(c.workspacePull.mode == .stage)
+}
+
+/// POL-01: host configuration comes only from a file no one else can change.
+@Test func untrustedConfigurationFilesAreRefused() throws {
+  let directory = FileManager.default.temporaryDirectory.appending(
+    path: "iso-trust-\(UUID().uuidString)"
+  ).path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let path = directory + "/config.jsonc"
+  try Data("{}".utf8).write(to: URL(fileURLWithPath: path))
+  chmod(path, 0o644)
+  func loads() -> Bool {
+    (try? ConfigLoader.load(.file(path: path, format: .jsonc), environment: fixtureHome)) != nil
+  }
+  #expect(loads())
+  chmod(path, 0o666)
+  #expect(!loads())
+  chmod(path, 0o644)
+  chmod(directory, 0o777)
+  #expect(!loads())
+  chmod(directory, 0o755)
+  // A deliberate dotfile symlink to a trusted target still works.
+  let link = directory + "/linked.jsonc"
+  try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: path)
+  #expect(
+    (try? ConfigLoader.load(.file(path: link, format: .jsonc), environment: fixtureHome)) != nil)
+  func refusal(_ path: String) -> String {
+    do {
+      _ = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: fixtureHome)
+      return ""
+    } catch { return "\(error)" }
+  }
+  // A link is judged by its target's location: a target in a directory
+  // others can write, directly or further up, is refused.
+  let open = directory + "/open"
+  try FileManager.default.createDirectory(
+    atPath: open + "/nested", withIntermediateDirectories: true)
+  for target in [open + "/config.jsonc", open + "/nested/config.jsonc"] {
+    try Data("{}".utf8).write(to: URL(fileURLWithPath: target))
+    chmod(target, 0o644)
+  }
+  chmod(open + "/nested", 0o755)
+  chmod(open, 0o777)
+  defer { chmod(open, 0o755) }
+  for target in [open + "/config.jsonc", open + "/nested/config.jsonc"] {
+    let viaLink = directory + "/via-\(UUID().uuidString).jsonc"
+    try FileManager.default.createSymbolicLink(atPath: viaLink, withDestinationPath: target)
+    let message = refusal(viaLink)
+    #expect(message.contains("refusing an untrusted configuration file"), "\(target)")
+    #expect(message.contains("is writable by group or others"), "\(target)")
+  }
+  chmod(open, 0o755)
+  // An ACL granting another principal write access is refused.
+  #expect(try ACLFixture.chmodACL(path, "everyone allow write"))
+  #expect(refusal(path).contains("an ACL lets others write it"))
+}
+
+/// `chmod +a` through /bin/chmod (this test target has no ProcessRunner).
+enum ACLFixture {
+  static func chmodACL(_ path: String, _ entry: String) throws -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/chmod")
+    process.arguments = ["+a", entry, path]
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus == 0
+  }
 }

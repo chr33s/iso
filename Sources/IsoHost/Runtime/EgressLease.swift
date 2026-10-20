@@ -99,7 +99,12 @@ package enum EgressLease {
     _ = try? ProcessRunner().capture(
       .init(
         executable: ssh,
-        arguments: ["-O", "exit", "-o", "ControlPath=\(control)", "iso-forwards"],
+        // Teardown only: no ambient config, and no new connection when the
+        // socket is gone or replaced (SSH-03).
+        arguments: [
+          "-F", "none", "-o", "ControlMaster=no", "-o", "ControlPath=\(control)", "-O", "exit",
+          "iso-forwards",
+        ],
         environment: [:], deadline: .seconds(5), outputLimit: 64 << 10, overflow: .drain))
     unlink(control)
   }

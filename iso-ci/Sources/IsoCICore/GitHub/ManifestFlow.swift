@@ -92,7 +92,7 @@ package enum ManifestFlow {
       }
     } catch {
       try? credentials.remove(CredentialKind.appPrivateKey.reference(reference))
-      try? store.event(
+      _ = try? store.event(
         "github", "app.credentials_unstored",
         "created GitHub App \(conversion.slug) but could not store its key",
         data: ["app_id": String(conversion.id)])

@@ -311,4 +311,4 @@ VS Code's Remote SSH extension exposes a Ports panel that handles forwarding onc
 
 `iso push` and `iso pull` sync files between host and guest. Both work while an editor is connected; there is no need to disconnect.
 
-Watch for conflicts. `iso push` overwrites guest files, and `iso pull` overwrites local files. Both commands check for uncommitted git changes and refuse to proceed unless you pass `--force`.
+Watch for conflicts. `iso push` overwrites guest files and refuses while the guest has uncommitted changes to tracked files, unless you pass `--force`. `iso pull` stages the guest's changes on the host first; in direct mode it applies only additions without `--force`, and replacements otherwise wait for review (`iso pull --apply --stage-id ID`). See [workspaces](workspaces.md#pulling-guest-to-host).

@@ -117,10 +117,24 @@ package struct SSHTarget: Sendable, Equatable {
       "ServerAliveCountMax=3",
     ]
     for option in hostKeyOptions { options += ["-o", option] }
-    return options + ["-o", "IdentitiesOnly=yes", "-o", "LogLevel=ERROR", "-i", keyPath]
+    // `-F none`: no ambient ~/.ssh/config (ProxyJump, LocalCommand,
+    // SendEnv, forwards) reaches a guest connection; everything it needs is
+    // on this command line.
+    return options + [
+      "-o", "IdentitiesOnly=yes", "-o", "LogLevel=ERROR", "-o", "PermitLocalCommand=no",
+      "-o", "ForwardX11=no", "-F", "none", "-i", keyPath,
+    ]
   }
 
   package var sshOptions: [String] { transportOptions + ["-p", String(port)] }
+
+  /// Teardown of an owned control master (SSH-03): no ambient config, and
+  /// `ControlMaster=no` so a missing or replaced socket fails instead of
+  /// opening a new connection. It can only end the session behind
+  /// `control`.
+  package func controlExitArguments(_ control: String) -> [String] {
+    ["-F", "none", "-o", "ControlMaster=no", "-o", "ControlPath=\(control)", "-O", "exit", address]
+  }
   package var address: String { "\(user)@\(host)" }
   /// For logs: the address ssh dials, or the pinned alias when a
   /// ProxyCommand carries the connection (no address is dialed).
@@ -139,16 +153,20 @@ package struct SSHClient: Sendable {
   /// host environment. A user's own `SendEnv` (with the guest's
   /// `AcceptEnv *`) would otherwise carry any host variable — a raw
   /// provider key in proxy mode — into the guest; values iso forwards on
-  /// purpose are added back by `EnvForward`.
+  /// purpose are added back, under generated aliases, by `EnvForward`.
   ///
   /// `SSH_AUTH_SOCK` (an absolute path only) is kept for SSH to an enrolled
   /// execution host, whose key may be usable only through the agent, and
   /// for guest sessions whose ProxyCommand opens that connection. Guest SSH
   /// never uses it (`IdentityAgent none`) and nothing forwards the agent; it
   /// is never in `SendEnv`.
+  ///
+  /// `SHELL` is fixed: ssh runs a ProxyCommand with `$SHELL -c`, so the
+  /// caller's shell (and its startup files) never interprets the connector.
   package static func transportEnvironment(_ environment: [String: String]) -> [String: String] {
-    let names: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "TERM", "LANG"]
+    let names: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TERM", "LANG"]
     var out = environment.filter { names.contains($0.key) || $0.key.hasPrefix("LC_") }
+    out["SHELL"] = "/bin/sh"
     if let socket = environment["SSH_AUTH_SOCK"], socket.hasPrefix("/"),
       !socket.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
     {
@@ -157,16 +175,47 @@ package struct SSHClient: Sendable {
     return out
   }
 
-  package init(environment: [String: String], runner: ProcessRunner = ProcessRunner()) {
-    self.environment = Self.transportEnvironment(environment)
-    self.runner = runner
+  /// Where managed transports find `ssh`, `scp`, `rsync` and `tar`.
+  package enum ToolLookup: Sendable, Equatable {
+    /// The protected system directory only; never `PATH` (SSH-01).
+    case system
+    /// The caller's `PATH`: test doubles only.
+    case searchPath
+
+    /// Optimized (shipped) builds pin the system tools; debug builds keep
+    /// `PATH` lookup so tests can substitute doubles.
+    package static var `default`: ToolLookup {
+      #if DEBUG
+        .searchPath
+      #else
+        .system
+      #endif
+    }
   }
 
-  /// `ssh` from the caller's `PATH`, as the Rust host resolved it.
-  package func sshExecutable() -> String? {
-    for directory in (environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
-    where !directory.isEmpty {
-      let candidate = "\(directory)/ssh"
+  let tools: ToolLookup
+
+  package init(
+    environment: [String: String], runner: ProcessRunner = ProcessRunner(),
+    tools: ToolLookup = .default
+  ) {
+    self.environment = Self.transportEnvironment(environment)
+    self.runner = runner
+    self.tools = tools
+  }
+
+  static let systemToolDirectory = "/usr/bin"
+
+  /// The managed `ssh`: `/usr/bin/ssh`, never one earlier on `PATH`.
+  package func sshExecutable() -> String? { executable(named: "ssh") }
+
+  func executable(named name: String) -> String? {
+    let directories =
+      tools == .system
+      ? [Self.systemToolDirectory]
+      : (environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":").map(String.init)
+    for directory in directories where !directory.isEmpty {
+      let candidate = "\(directory)/\(name)"
       if access(candidate, X_OK) == 0 { return candidate }
     }
     return nil
@@ -345,7 +394,7 @@ extension SSHClient {
       _ = try? runner.capture(
         .init(
           executable: ssh,
-          arguments: ["-O", "exit", "-o", "ControlPath=\(control)", target.address],
+          arguments: target.controlExitArguments(control),
           environment: environment, deadline: .seconds(10), outputLimit: 64 << 10,
           overflow: .drain))
     }

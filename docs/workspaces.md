@@ -50,20 +50,13 @@ not target `/workspace`, because the copied project owns that path.
 is no host workspace path for that source, later `push` and `pull` commands
 need an explicit `--dir` if you want to sync files back to the host.
 
-#### Pulling a git repository back (absolute-path caveat)
+#### Guest Git configuration stays in the guest
 
-Git operations inside the guest can write absolute guest paths into the
-workspace's `.git/config`. Common triggers:
-
-- `git worktree add` records `core.worktree = /workspace/...` in the worktree's config.
-- `prek install` (and `git config core.hooksPath`) records `core.hooksPath = /workspace/.git/hooks`.
-
-The Apple backend has no live host mounts, so these entries stay in the guest
-until you `iso pull`. Copy and mount transports both include `.git/` by
-default, so a pull brings them to the host, where every `git` invocation then
-fails with `fatal: Invalid path '/workspace': No such file or directory`. Remove
-the offending lines from `.git/config` (and `.git/worktrees/*/config`), avoid
-those commands in the guest, or pass `--exclude-git` on `iso pull`.
+Git operations inside the guest can write absolute guest paths into
+`/workspace/.git/config` (for example `git worktree add`, `prek install` or
+`git config core.hooksPath`). A pull never installs Git administration on the
+host (see [Git administration](#git-administration)), so these entries and
+guest commits stay in the guest; push commits to a remote from there.
 
 ### Manual via SSH
 
@@ -101,76 +94,150 @@ Before overwriting guest files, `push` checks for in-guest work the host doesn't
 - `git status --porcelain --untracked-files=no` — modifications to tracked files. Untracked files are skipped because they're usually host-side build artifacts that were copied into the guest at start time, not work done by an in-guest agent.
 - `git rev-list --count '@{u}..HEAD'` — commits on the current branch that are ahead of its upstream. Catches in-guest commits that a host push would otherwise silently overwrite.
 
-If either signal finds anything, push prints it and exits. `--force` overrides both.
+If either signal finds anything, push prints it and exits. The check fails
+closed: a `.git` file (linked worktree, submodule) counts as a repository, a
+failed Git or SSH step, malformed or truncated output, and a configured
+upstream that no longer resolves all block the push as "cannot tell". A
+branch with no upstream configured at all is allowed when clean, though its
+commits may exist only in the guest. `--force` is the explicit authority to
+overwrite guest work. The check runs in the guest and protects a cooperative
+guest; it is not a security boundary.
 
-Transfer method selection is automatic:
-
-1. **rsync** if the guest has it. Uses `--delete` to mirror the host directory exactly. Reads `.gitignore` files via `--filter=':- .gitignore'`.
-2. **tar-pipe** otherwise. Streams a tar archive over SSH with end-to-end SHA-256 verification.
+What is sent is one immutable snapshot of the selected files
+([`workspace.input`](configuration.md#workspaceinput)): by default the
+working-tree bytes of the files in the Git index, read as data without running
+Git on the host. `.git`, original history and credential-looking names
+(`.env`, keys, `.npmrc`, …) are never sent unless a name is explicitly allowed;
+omissions are listed. The snapshot travels as a tar stream; a push never
+deletes guest files, so files deleted on the host are reported rather than
+removed in the guest. A non-Git directory needs an explicit
+`workspace.input.mode = "paths"` selection.
 
 ## Pulling: guest to host
 
-```bash
-iso pull                                       # uses host_path from workspace.json
-iso pull --dir ./local-copy                    # pull into a specific directory
-iso pull --force                               # skip local dirty check
-iso pull my-instance                           # target a specific instance
-iso pull my-instance --dir ./local-copy        # combined
-```
-
-Before overwriting the local destination, `pull` runs `git status --porcelain` against it. If the directory has a `.git` and any uncommitted changes (tracked or untracked), pull refuses unless you pass `--force`. Unlike push's guest-side check, the local check does not inspect unpushed commits — committing your local work first is enough to satisfy it.
-
-The destination directory is created if absent. Transport selection follows the same rsync-then-tar-pipe order. The tar-pipe fallback verifies SHA-256 checksums end-to-end.
-
-## Staged pulls
-
-`iso diff` (or `iso pull --review`, or any `iso pull` with
-`workspace.pull.mode = "stage"`) pulls into a stage under the instance
-directory instead of the local directory:
+Every pull is received into a host-side stage, validated, and installed by
+one native installer. No receiver writes the local directory, and host Git
+never runs during a return (no `git status`, hooks, filters, pagers or
+editors), so a guest cannot steer host Git through the destination.
 
 ```bash
-iso diff my-instance                         # stage + review
-iso pull my-instance --apply --stage-id 1a2b3c4d
+iso diff my-instance                                     # stage + review
+iso pull my-instance --review                            # the same
+iso pull my-instance --apply --stage-id 1a2b3c4d5e6f7a8b # apply exactly that stage
+iso pull my-instance --apply --stage-id 1a2b3c4d5e6f7a8b \
+  --approve-sensitive .envrc                             # name each sensitive path
 iso pull my-instance --discard
+iso pull my-instance                                     # direct mode (below)
 ```
+
+`--apply` always needs the exact `--stage-id` printed at review; it never
+infers the latest stage. With `workspace.pull.mode = "direct"` a plain
+`iso pull` stages and applies in one step through the same validation: a
+plan of additions applies at once, while replacing existing files needs
+`--force`. A held direct pull keeps the whole stage, prints it, writes
+nothing, and exits nonzero. `--exclude-git` is accepted on `pull` and `diff`
+for compatibility and has no effect.
+
+### Destination
+
+- The destination is resolved once and bound by directory identity. A
+  destination that does not exist yet must have an existing parent; it is
+  created only by an authorized apply, after complete preflight, and that
+  creation is reported as a change even if a later write fails.
+- It must be disjoint from iso control state: the instance directory, the
+  backend state root (other instances, remote shadows, keys) and `~/.iso`,
+  as ancestor or descendant. A home directory that contains `~/.iso` is
+  therefore refused; return into a project or export directory.
+- A destination inside `.git` is refused, as is one with a `.git` symlink in
+  its root or a directory the plan touches.
+
+### Git administration
+
+`.git` at any depth, of any object type and any spelling APFS treats as the
+same name, is never requested, installed, replaced or traversed. What
+arrives anyway is counted against the budgets and summarized at review.
+Existing host `.git` directories stay untouched. Supported layouts are
+ordinary worktrees, standard linked worktrees and submodules, and plain
+export directories: an existing gitfile (`gitdir: …`) is read natively and
+must point outside the returned tree or beneath a protected `.git`; any other
+gitfile makes the destination inapplicable. Arbitrary bare repositories and
+custom `GIT_DIR` layouts are outside this guarantee.
+
+### What a stage may contain
 
 The stage is walked without following links and checked before anything is
 applied:
 
 - Only regular files, directories and symlinks are accepted. FIFOs, sockets,
   devices and hard links make the stage inapplicable.
-- A symlink must be relative, stay inside the workspace, and not pass
-  through another symlink.
-- File names must be UTF-8 without control characters.
+- A symlink must be relative and stay inside the workspace. Every component
+  of its target, the last one included, is checked against the planned final
+  tree: a target through or onto another link, or into `.git`, makes the stage
+  inapplicable.
+- File names must be UTF-8 without control characters. Two names that the
+  destination volume treats as one (case or Unicode normalization), or a
+  name that differs only in that way from the host's existing entry, make the
+  stage inapplicable. A case-insensitive staging volume can already merge some
+  guest names before inspection; only the received tree is validated.
+- A host directory replaced by a file or link, or a file or link replaced by a
+  directory, is reported for you to resolve.
+- Only permission bits up to `0755` are installed: no owner, setuid/setgid,
+  ACLs, extended attributes or flags from the guest.
 - `workspace.pull.max_files`, `max_bytes` and `max_file_bytes` are hard
-  budgets; exceeding one discards the stage. While the transfer runs it is
-  also sampled about twice a second against `max_files` and `max_bytes`
-  (allocated bytes) and stopped once it exceeds either, so a guest cannot fill
-  the host disk before the final check.
+  acceptance budgets; exceeding one discards the stage. While the transfer
+  runs it is also sampled about twice a second and stopped once it exceeds
+  `max_files` or `max_bytes` (allocated bytes). Sampling can overshoot between
+  samples: it is not a hard disk quota. An inspection failure stops the
+  transfer.
 - Directories nested deeper than 64 levels make the stage inapplicable.
-- Symlink names are compared case- and normalization-insensitively, as APFS
-  resolves them.
-- One stage operation runs at a time per instance; a second `iso pull` or
-  `iso diff` waits for the first.
-- A guest file where the host has a directory is reported for you to resolve.
 
-The review lists every added (`A`), modified (`M`) and type-changed (`T`) path,
-flags changes that can run commands on the host (anything under a `.git`
-path, including a `.git` file that redirects the git directory; `.husky/`;
-`.envrc`; `.vscode/tasks.json`), and prints text diffs for small UTF-8 files. `--apply` then:
+### Receiving
 
-- refuses if any reviewed destination path changed since the review, or a
-  staged file no longer matches the hash in the manifest;
-- writes each file through a temporary file and a rename, replacing a
+Receives use only the system `/usr/bin/bsdtar` (bsdtar 3) and
+`/usr/bin/rsync` (openrsync) with a fixed environment and a pinned
+`/usr/bin/ssh`; a tool that is not root-owned and of the qualified family is
+refused, never replaced from `PATH`. Each receive goes to a fresh,
+owner-private incoming directory with an unpredictable ID. Its writers inherit
+a lock lease, so a receiver that outlives a killed `iso` keeps the tree busy:
+it is never validated, reused, promoted or deleted until the lease is free. A
+failed receive leaves the previously selected stage in place; at most one
+selected stage and one incoming receive are kept per instance. Receivers are
+ordinary processes, not sandboxed.
+
+### Review and apply
+
+The review lists every added (`A`), modified (`M`) and type-changed (`T`)
+path and prints text diffs for small UTF-8 files, read without following links
+and checked against the manifest's hashes (a mismatch marks the review stale).
+Known execution-sensitive paths (`.husky/` anywhere, `.envrc`,
+`.vscode/tasks.json`, and links resolving to them) are **withheld**: the whole
+stage applies only when every one is named with `--approve-sensitive PATH`
+(exact paths, no globs or prefixes) alongside `--apply --stage-id`. `--force`,
+direct mode and the stage id never approve them. This list is intentionally
+incomplete; returned source stays untrusted for later host use.
+
+`--apply` then:
+
+- re-validates the manifest, the destination identity, every expected old
+  object and parent, gitfiles and every staged byte before the first write;
+- records a durable attempt before writing: each stage gets one apply
+  attempt, and a crashed or failed attempt is never replayed;
+- writes each file through a temporary file and a rename, rechecking the
+  destination entry immediately before the replace, and replaces a
   destination symlink rather than following it;
-- on failure, lists what was already applied and keeps the stage.
+- on failure, reports what was written, whether the failed entry changed,
+  and whether the destination was created, and keeps the stage. Re-stage
+  with `iso diff` to review what remains. Applies are per-file atomic; the
+  whole workspace is not.
 
-Like a direct pull, a staged pull never deletes local files. `--force` skips
-only the local uncommitted-changes check.
+A pull never deletes local files. One apply runs at a time per user, across
+instances and data roots.
 
 ## Default exclusions
 
-All transfers (rsync and tar-pipe) exclude these reproducible build and cache directories:
+Pulls (rsync and tar-pipe receives) and recursive
+[`workspace.input`](configuration.md#workspaceinput) `paths` selections skip
+these reproducible build and cache directories:
 
 - `node_modules/`
 - `target/`
@@ -178,28 +245,30 @@ All transfers (rsync and tar-pipe) exclude these reproducible build and cache di
 - `.venv/`
 - `.iso/`
 
+The default `index` selection sends exactly the files in the Git index, so
+these names are not filtered there.
+
 When isolate uses tar on a macOS host, host-side tar archive creation runs with
 `COPYFILE_DISABLE=1`. This suppresses tar-generated AppleDouble (`._*`) entries
 for resource forks or extended attributes while packing (the setting has no
 effect on extraction). Without it, those metadata entries can land in a Linux
-guest as ordinary files, including inside `.git/`, where they can break Git's
-pack/ref discovery.
+guest as ordinary files.
 
-`.git/` is **included** by default so agents in the guest get full history, branches, and the ability to make commits that survive a `iso pull`. Pass `--exclude-git` to `iso up`, `iso push`, or `iso pull` to skip it on a per-transfer basis (useful for very large repos where transfer time dominates).
+## `.git` and `.gitignore`
 
-## .gitignore integration
+Every transfer into the guest (first copy, push, mount sync) is one tar stream
+of an immutable host-side snapshot selected by `workspace.input`: the files in
+the Git index, or explicit paths. It never carries `.git` or the host's
+history, and it never reads `.gitignore` or other ignore files. After the
+first copy the guest gets a new repository with one synthetic commit of the
+sent files. `--exclude-git` is a deprecated no-op.
 
-When rsync is available, transfers pass `--filter=':- .gitignore'`. Rsync reads `.gitignore` files at each directory level and skips matching paths.
-
-The tar-pipe fallback on Linux uses GNU tar's `--exclude-vcs-ignores` for the same effect. On macOS, BSD tar lacks this flag, so only the default exclusions above apply.
-
-### `.git/` and .gitignore
-
-A repo whose `.gitignore` lists `.git/` (rare, but legal — sometimes seen in dotfile repos or repos vendoring other repos) gets special handling so the new include-by-default behaviour is not silently undone:
-
-- **rsync**: a protective `--filter=+ /.git/***` is prepended before the per-directory `.gitignore` merge, so `.git/` and its contents are always transferred unless `--exclude-git` is passed.
-- **GNU tar (Linux)**: `--exclude-vcs-ignores` is all-or-nothing. If your `.gitignore` lists `.git/`, the tar-pipe transport will skip it. Pass `--exclude-git` explicitly if that is what you want, or remove the entry from `.gitignore`.
-- **BSD tar (macOS)**: not affected — it doesn't read `.gitignore` at all.
+Pulls never request or install `.git` (see
+[Git administration](#git-administration)). When the guest has rsync, a pull
+passes `--filter=':- .gitignore'`, so the guest's `.gitignore` files can skip
+paths it would otherwise send. This only shrinks the transfer; it is not an
+authority, since the guest controls those files and every received entry is
+validated in the stage. The tar-pipe receive does not read `.gitignore`.
 
 ## Checksum verification
 

@@ -180,7 +180,8 @@ struct Start: MachineCommand {
     help: "Stopped instance name (optional only when exactly one stopped instance exists)",
     transform: parseInstanceName)
   var name: InstanceName?
-  @Option(help: "Project directory used to select an associated stopped instance")
+  @Option(
+    help: "Project directory used to select an associated stopped instance")
   var workspace: String?
   @OptionGroup var boot: BootArguments
   @OptionGroup var devcontainerArguments: DevcontainerArguments

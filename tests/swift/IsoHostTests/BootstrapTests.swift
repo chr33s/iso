@@ -67,7 +67,9 @@ private func envNames(_ env: EnvForward) -> [String] { env.names }
   #expect(seen.contains("GUEST_VAR="))
   #expect(guest.sink.text.contains("guest_env entry 'EXTRA' overrides a previously resolved value"))
   #expect(!guest.log("argv.log").joined().contains("resolved-key"))
-  #expect(guest.log("argv.log").joined().contains("SendEnv=ANTHROPIC_API_KEY"))
+  #expect(guest.log("argv.log").joined().contains("SendEnv=ISO_SSH_ENV_0"))
+  #expect(!guest.log("argv.log").joined().contains("SendEnv=ANTHROPIC_API_KEY"))
+  #expect(guest.log("host-env.log").isEmpty)
 
   let failing = try testConfig(#""claude": {"api_key": "cmd:exit 3"}"#)
   let error = try #require(throws: (any Error).self) {
@@ -83,7 +85,7 @@ private func envNames(_ env: EnvForward) -> [String] { env.names }
   let instance = try testInstance(guest.root + "/instance")
   try GuestEnvState(literals: [
     try EnvVarName("OPENAI_API_KEY"): "raw", try EnvVarName("GUEST_VAR"): "runtime",
-  ]).save(instance)
+  ]).saveGranted(instance)
   let config = try testConfig(
     #""proxy": {"openai": {"credential": "cmd:printf x", "auth": "bearer"}}"#)
   let agents = guest.bootstrap(config)
@@ -105,6 +107,30 @@ private func envNames(_ env: EnvForward) -> [String] { env.names }
   #expect(session.env.contains("OPENAI_API_KEY"))  // not in proxy mode any more
   try guest.client.exec(session, RemoteCommand().literal("true"))
   #expect(guest.log("env.log").contains("ISO_LOCAL_API_KEY=iso-local"))
+}
+
+/// POL-01: a session forwards a saved entry only under a live command
+/// grant. A legacy entry (no provenance) and one revoked in the
+/// configuration stay saved but reach no session, before any restart.
+@Test func sessionsForwardOnlyLiveCommandGrants() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try GuestEnvState(literals: [try EnvVarName("GRANTED"): "1", try EnvVarName("REVOKED"): "2"])
+    .saveGranted(instance)
+  let revokedID = try #require(
+    try GrantLedger.load(instance).grants.first { $0.scope == "REVOKED" }?.id)
+  // Saved later without provenance: legacy.
+  var state = try #require(try GuestEnvState.tryLoad(instance))
+  state.entries[try EnvVarName("LEGACY")] = .literal("3")
+  try state.save(instance)
+  let config = try testConfig(#""security": {"revoked_grant_ids": ["\#(revokedID)"]}"#)
+  let session = try guest.bootstrap(config).prepareSession(
+    instance, target: guest.target, repo: nil)
+  #expect(session.env.names.contains("GRANTED"))
+  #expect(!session.env.names.contains("REVOKED") && !session.env.names.contains("LEGACY"))
+  #expect(try GuestEnvState.tryLoad(instance)?.entries.count == 3)
+  #expect(guest.sink.text.contains("without a live grant (LEGACY, REVOKED)"))
 }
 
 // MARK: - Claude customization import
@@ -152,7 +178,7 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   defer { try? FileManager.default.removeItem(atPath: source) }
   try pluginFixture(source, "directory", #"{"name":"identity","defaultEnabled":false}"#)
   let ids = try ClaudeImport.skillsPluginIDs(source)
-  let empty = try ClaudeImport.preferences(source: source, pluginIDs: ids)
+  let empty = try ClaudeImport.preferences(settings: hostSettings(source), pluginIDs: ids)
   #expect(empty.isEmpty)
   for enabled in [true, false] {
     try writeFile(
@@ -164,7 +190,7 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
        "permissions":{"defaultMode":"plan"},"env":{"TOKEN":"secret"},
        "apiKeyHelper":"secret","hooks":{"SessionStart":[]},"extraKnownMarketplaces":{"excluded":{}}}
       """#)
-    let selected = try ClaudeImport.preferences(source: source, pluginIDs: ids)
+    let selected = try ClaudeImport.preferences(settings: hostSettings(source), pluginIDs: ids)
     #expect(
       selected.json.compact
         == #"{"disableAllHooks":false,"outputStyle":"host-style","enabledPlugins":{"identity@skills-dir":\#(enabled)}}"#
@@ -173,10 +199,12 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   // Removed bundles keep their recorded identity eligible.
   try FileManager.default.removeItem(atPath: source + "/skills")
   #expect(
-    try ClaudeImport.preferences(source: source, pluginIDs: ids).enabledPlugins[
+    try ClaudeImport.preferences(settings: hostSettings(source), pluginIDs: ids).enabledPlugins[
       "identity@skills-dir"] == false)
   try FileManager.default.removeItem(atPath: source + "/settings.json")
-  #expect(try ClaudeImport.preferences(source: source, pluginIDs: ids).enabledPlugins.isEmpty)
+  #expect(
+    try ClaudeImport.preferences(settings: hostSettings(source), pluginIDs: ids).enabledPlugins
+      .isEmpty)
 
   for body in [
     "broken", "[]", #"{"disableAllHooks":"true"}"#, #"{"disableAllHooks":null}"#,
@@ -185,7 +213,8 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   ] {
     try writeFile(source + "/settings.json", body)
     #expect(throws: (any Error).self, "\(body)") {
-      try ClaudeImport.preferences(source: source, pluginIDs: ["identity@skills-dir"])
+      try ClaudeImport.preferences(
+        settings: hostSettings(source), pluginIDs: ["identity@skills-dir"])
     }
   }
   #expect(
@@ -224,7 +253,7 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   }
 }
 
-@Test func stagingIsAnOverlayThatFollowsSymlinks() throws {
+@Test func stagingIsAConfinedOverlay() throws {
   let source = try scratchDirectory("src")
   let external = try scratchDirectory("ext")
   defer {
@@ -235,14 +264,15 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   defer { staged.remove() }
   try FileManager.default.createDirectory(
     atPath: source + "/skills/example", withIntermediateDirectories: true)
-  try writeFile(external + "/support", "external-target")
+  try writeFile(source + "/shared/support", "inside-target")
+  // A link that stays inside the approved root is followed.
   try FileManager.default.createSymbolicLink(
-    atPath: source + "/skills/example/support", withDestinationPath: external)
+    atPath: source + "/skills/example/support", withDestinationPath: source + "/shared")
   try writeFile(source + "/CLAUDE.md", "first")
   try staged.stage(
     from: source, files: ClaudeImport.allowedFiles, directories: ClaudeImport.allowedDirectories)
   try FileManager.default.removeItem(atPath: source + "/CLAUDE.md")
-  try writeFile(external + "/support", "refreshed")
+  try writeFile(source + "/shared/support", "refreshed")
   try staged.stage(
     from: source, files: ClaudeImport.allowedFiles, directories: ClaudeImport.allowedDirectories)
   #expect(readFile(staged.path + "/CLAUDE.md") == "first")
@@ -250,6 +280,22 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   var status = stat()
   lstat(staged.path + "/skills/example/support", &status)
   #expect((status.st_mode & S_IFMT) == S_IFDIR)
+
+  // An allowlisted name that leaves the root, or names a special file, is
+  // refused rather than followed.
+  try writeFile(external + "/secret", "host-secret")
+  try FileManager.default.createSymbolicLink(
+    atPath: source + "/skills/example/escape", withDestinationPath: external + "/secret")
+  #expect(throws: (any Error).self) {
+    try staged.stage(
+      from: source, files: ClaudeImport.allowedFiles, directories: ClaudeImport.allowedDirectories)
+  }
+  try FileManager.default.removeItem(atPath: source + "/skills/example/escape")
+  #expect(mkfifo(source + "/CLAUDE.md", 0o600) == 0)
+  #expect(throws: (any Error).self) {
+    try staged.stage(from: source, files: ["CLAUDE.md"], directories: [])
+  }
+  #expect(!(readFile(staged.path + "/skills/example/escape")?.contains("host-secret") ?? false))
 }
 
 private func prefs(_ json: String) throws -> ClaudeImport.Preferences {
@@ -648,7 +694,7 @@ private func stageCodex(
   try writeFile(market + "/marketplace.json", "{}")
   let config = try testConfig(
     #"""
-    "claude": {"marketplaces": ["\#(market)"], "plugins": ["p@m"],
+    "claude": {"marketplaces": ["\#(market)"], "plugins": ["p@m"], "config_dir": "~/.claude",
                "mcp_servers": {"srv": {"command": "run", "args": ["a"]}}},
     "codex": {"auth": "chatgpt", "plugins": ["cp@m"]}
     """#, home: guest.root + "/hosthome")
@@ -788,7 +834,7 @@ private func stageCodex(
   let guest = try FakeGuest()
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
-  try GuestEnvState(literals: [try EnvVarName("ANTHROPIC_API_KEY"): "raw"]).save(instance)
+  try GuestEnvState(literals: [try EnvVarName("ANTHROPIC_API_KEY"): "raw"]).saveGranted(instance)
   let agents = guest.bootstrap(try testConfig(#""proxy": {"mode": "required"}"#))
   #expect(throws: HostError.self) {
     try agents.prepareSession(instance, target: guest.target, repo: nil)
@@ -901,7 +947,7 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
     try EnvVarName("GUEST_VAR"): .secret(try SecretName("db")),
     try EnvVarName("TOKEN"): .secret(try SecretName("tok")),
     try EnvVarName("MODE"): .literal("dev"),
-  ]).save(instance)
+  ]).saveGranted(instance)
   let secrets = FakeSecrets([
     try SecretName("db"): Array("canary-db".utf8), try SecretName("tok"): Array("canary-tok".utf8),
   ])
@@ -925,7 +971,8 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
   let guest = try FakeGuest()
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
-  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
+  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).saveGranted(
+    instance)
   let resolver = CredentialResolver(environment: guest.environment)
   func agents(_ secrets: (any SecretReferenceResolver)?) throws -> AgentBootstrap {
     AgentBootstrap(
@@ -950,7 +997,8 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
   let guest = try FakeGuest()
   defer { guest.remove() }
   let instance = try testInstance(guest.root + "/instance")
-  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
+  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).saveGranted(
+    instance)
   let secrets = FakeSecrets([
     try SecretName("db"): Array("d".utf8), try SecretName("pat"): Array("github_pat_x".utf8),
   ])
@@ -982,7 +1030,8 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
   // No store and nothing that reads the PAT: the prefetch is a no-op.
   _ = try agents.prepareSession(instance, target: guest.target, repo: try RepoSlug("org/repo"))
   // With `--env` references the existing, clearer error still names the cause.
-  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).save(instance)
+  try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).saveGranted(
+    instance)
   let error = try #require(throws: HostError.self) {
     try agents.prepareSession(instance, target: guest.target, repo: try RepoSlug("org/repo"))
   }
@@ -996,7 +1045,7 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
   try GuestEnvState(entries: [
     try EnvVarName("OPENAI_API_KEY"): .secret(try SecretName("openai")),
     try EnvVarName("GUEST_VAR"): .secret(try SecretName("db")),
-  ]).save(instance)
+  ]).saveGranted(instance)
   let secrets = FakeSecrets([
     try SecretName("openai"): Array("canary-openai".utf8), try SecretName("db"): Array("x".utf8),
   ])
@@ -1104,4 +1153,80 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
       mode: .firstBoot)
   }
   #expect(startError.message.contains("leaves a remote model unreachable"))
+}
+
+/// HOOK: the post-start hook runs once, after provisioning, and never after
+/// a failed one; with no hook, provisioning still runs.
+@Test func postStartRunsOnceAfterSuccessfulProvisioningOnly() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try FileManager.default.createDirectory(
+    atPath: instance.directory, withIntermediateDirectories: true)
+  let config = try testConfig(
+    #""post_start": "if [ -f ~/workspace-ready ]; then echo ready >> ~/hook.txt; else echo early >> ~/hook.txt; fi""#
+  )
+  try guest.bootstrap(config).bootstrapAndPostStart(
+    instance, target: guest.target, repo: nil, noAgents: true, postStartOverride: nil,
+    mode: .firstBoot
+  ) { _ in try writeFile(guest.home + "/workspace-ready", "") }
+  #expect(guest.guestFile("hook.txt") == "ready\n")
+
+  try FileManager.default.removeItem(atPath: guest.home + "/hook.txt")
+  #expect(throws: HostError.self) {
+    try guest.bootstrap(config).bootstrapAndPostStart(
+      instance, target: guest.target, repo: nil, noAgents: true, postStartOverride: nil,
+      mode: .firstBoot
+    ) { _ in throw HostError("copy failed") }
+  }
+  #expect(guest.guestFile("hook.txt") == nil)
+
+  let provisioned = LockedFlag()
+  try guest.bootstrap(try testConfig("")).bootstrapAndPostStart(
+    instance, target: guest.target, repo: nil, noAgents: true, postStartOverride: nil,
+    mode: .firstBoot
+  ) { _ in provisioned.set() }
+  #expect(provisioned.value)
+}
+
+private final class LockedFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored = false
+  func set() { lock.withLock { stored = true } }
+  var value: Bool { lock.withLock { stored } }
+}
+
+private func hostSettings(_ source: String) -> [UInt8]? {
+  FileManager.default.contents(atPath: source + "/settings.json").map(Array.init)
+}
+
+/// READY-01: one provider's broker never satisfies another agent.
+@Test func anAgentLaunchNeedsItsOwnProvidersBroker() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try FileManager.default.createDirectory(
+    atPath: instance.directory, withIntermediateDirectories: true)
+  let config = try testConfig(
+    #""proxy": {"mode": "required", "anthropic": {"credential": "cmd:printf k"}}"#)
+  let agents = guest.bootstrap(config)
+  try agents.requireSelectedProvider(instance, adapter: .claude)
+  try agents.requireSelectedProvider(instance, adapter: .none)
+  let error = try #require(throws: HostError.self) {
+    try agents.requireSelectedProvider(instance, adapter: .codex)
+  }
+  #expect(error.message.contains("openai credential proxy"))
+  // Without a proxy requirement, nothing is demanded.
+  try guest.bootstrap(try testConfig("")).requireSelectedProvider(instance, adapter: .codex)
+}
+
+extension GuestEnvState {
+  /// Saves the snapshot with command grants for every entry, as a start
+  /// that was given them on the command line records.
+  func saveGranted(_ instance: Instance) throws {
+    try save(instance)
+    _ = try GrantLedger.reconcile(
+      instance, revoked: [], environment: entries, forwards: [],
+      fresh: Set(entries.keys.map(\.rawValue)))
+  }
 }

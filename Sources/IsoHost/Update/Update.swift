@@ -63,10 +63,34 @@ package struct Updater: Sendable {
     self.confirm = confirm
     self.runner = runner
     self.now = now
+    fixtureBase = fixtureOrigin
   }
 
-  var apiBaseOverridden: Bool { environment[UpdateChannel.apiBaseVariable] != nil }
-  var apiBase: String { environment[UpdateChannel.apiBaseVariable] ?? UpdateChannel.defaultAPIBase }
+  /// A local fixture origin for metadata and downloads, which disables
+  /// attestation verification. Only tests and update-fixture builds
+  /// (`-D ISO_UPDATE_FIXTURES`) can set it; a production build never reads
+  /// `ISO_UPDATE_API_BASE_URL` as a source.
+  var fixtureBase: String? = nil
+
+  /// The environment's override, honored only by an update-fixture build.
+  var fixtureOrigin: String? {
+    #if ISO_UPDATE_FIXTURES
+      environment[UpdateChannel.apiBaseVariable]
+    #else
+      nil
+    #endif
+  }
+  var apiBaseOverridden: Bool { fixtureBase != nil }
+  var apiBase: String { fixtureBase ?? UpdateChannel.defaultAPIBase }
+
+  /// A production build refuses the source override before any update
+  /// network I/O, the background check included.
+  func requireNoSourceOverride() throws {
+    guard fixtureBase == nil, environment[UpdateChannel.apiBaseVariable] != nil else { return }
+    throw HostError(
+      "\(UpdateChannel.apiBaseVariable) is set, but this build only updates from github.com/\(UpdateChannel.repository); unset it"
+    )
+  }
   var tools: UpdateTools {
     UpdateTools(environment: environment, runner: runner, diagnostics: diagnostics)
   }
@@ -79,6 +103,7 @@ package struct Updater: Sendable {
         "This is a dev build (\(build.versionString)); `iso update` only replaces release binaries.\nRe-run install.sh (or build from source) to replace a dev build."
       )
     }
+    try requireNoSourceOverride()
     if apiBaseOverridden {
       diagnostics.warn(
         "\(UpdateChannel.apiBaseVariable) is set — attestation verification is DISABLED. This is a test-only mode; do not use with untrusted URLs."
@@ -89,9 +114,9 @@ package struct Updater: Sendable {
     do { current = try SemanticVersion(parsing: build.version) } catch {
       throw ContextError("Current version \(build.version) is not valid semver", cause: error)
     }
-    let release =
-      try options.pinnedVersion.map { try fetchByTag(UpdateChannel.normalizeTag($0)) }
-      ?? fetchLatest()
+    let requested = try options.pinnedVersion.map(UpdateChannel.normalizeTag)
+    let release = try requested.map { try fetchByTag($0) } ?? fetchLatest()
+    try release.requireCanonicalTag(requested: requested)
     let target: SemanticVersion
     do { target = try SemanticVersion(parsing: UpdateChannel.stripV(release.tag)) } catch {
       throw ContextError("Release tag \(release.tag) is not valid semver", cause: error)
@@ -139,6 +164,9 @@ package struct Updater: Sendable {
       throw HostError(
         "Release \(release.tag) publishes no \(UpdateChannel.signatureAsset); refusing to install a release not signed by a trusted release key"
       )
+    }
+    for asset in [tarballAsset, sumsAsset, signatureAsset] {
+      try release.requireBound(asset, fixtureBase: fixtureBase)
     }
     let tarball = work.path + "/" + tarballName
     let sums = work.path + "/" + UpdateChannel.checksumAsset
@@ -252,6 +280,7 @@ package struct Updater: Sendable {
   func fetchReleaseMetadata(_ suffix: String, repository: String = UpdateChannel.repository)
     throws -> Release
   {
+    try requireNoSourceOverride()
     let path = "repos/\(repository)/releases/\(suffix)"
     let body: String
     switch authStrategy() {
@@ -278,8 +307,14 @@ package struct Updater: Sendable {
   }
 
   /// The token travels as a header on stdin (`-H @-`), never on argv.
+  /// Outside fixture mode every request and redirect is HTTPS-only; curl
+  /// drops a custom Authorization header when a redirect changes host.
+  var curlProtocols: [String] {
+    fixtureBase == nil ? ["--proto", "=https", "--proto-redir", "=https"] : []
+  }
+
   func curlCapture(_ url: String, token: String?) throws -> String {
-    var arguments = ["-fsSL", "-H", "Accept: application/vnd.github+json"]
+    var arguments = ["-fsSL"] + curlProtocols + ["-H", "Accept: application/vnd.github+json"]
     if token != nil { arguments += ["-H", "@-"] }
     do {
       return try tools.capture(
@@ -298,7 +333,7 @@ package struct Updater: Sendable {
   }
 
   func curlDownload(_ url: String, destination: String, token: String?) throws {
-    var arguments = ["-fsSL"]
+    var arguments = ["-fsSL"] + curlProtocols
     if token != nil { arguments += ["-H", "@-"] }
     do {
       try tools.run(
@@ -340,7 +375,14 @@ package struct Updater: Sendable {
         "Release \(release.tag) publishes no \(bundle) — verifying the attestation through the GitHub API, for which `gh` needs a credential authorized for \(repository)."
       )
       return .api(.noAsset)
-    case .fetch(let found): asset = found
+    case .fetch(let found):
+      guard (try? release.requireBound(found, fixtureBase: fixtureBase)) != nil else {
+        diagnostics.warn(
+          "\(bundle) for release \(release.tag) is not a \(repository) release asset — verifying the attestation through the GitHub API."
+        )
+        return .api(.downloadFailed)
+      }
+      asset = found
     }
     let destination = directory + "/" + bundle
     // Deliberately bare curl: the bundle is a public asset, and attaching a
@@ -369,7 +411,7 @@ package struct Updater: Sendable {
       let bundle = UpdateChannel.bundleAsset
       diagnostics.log(
         .info,
-        "Note: `gh` not installed — skipped cryptographic attestation verification. The download was verified against the published `SHA256SUMS` checksum, which is the same assurance level as most `curl | bash` installers. For end-to-end Sigstore verification, install `gh` (https://cli.github.com) and re-run, or verify manually: `gh attestation verify <tarball> --repo \(repository) --bundle \(bundle)` against the \(bundle) asset from the same release."
+        "Note: `gh` not installed — skipped Sigstore build-provenance verification. The archive was still verified against `SHA256SUMS`, whose signature by a release key compiled into this binary was checked, and against the revocation list. For build provenance as well, install `gh` (https://cli.github.com) and re-run, or verify manually: `gh attestation verify <tarball> --repo \(repository) --bundle \(bundle)` against the \(bundle) asset from the same release."
       )
       return
     case .api, .bundle: break

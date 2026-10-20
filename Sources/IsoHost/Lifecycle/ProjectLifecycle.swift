@@ -95,8 +95,11 @@ package final class ProjectLifecycle {
   /// unlock: `--env`, proxy credentials (configured and per-VM) and the
   /// GitHub PAT for `repo`. The values stay in the process's resolver cache
   /// for this command's sessions, so nothing later prompts again.
+  /// `noAgents`: an agent-free boot needs no provider credential, so none
+  /// is resolved (READY-01); only its own references are.
   package func preflightReferences(
-    _ entries: [EnvVarName: EnvValue], instance: Instance? = nil, repo: RepoSlug? = nil
+    _ entries: [EnvVarName: EnvValue], instance: Instance? = nil, repo: RepoSlug? = nil,
+    noAgents: Bool = false
   ) throws {
     let routed = try GuestEnvState.providerSecrets(entries)
     if config.proxy.mode == .off,
@@ -106,8 +109,9 @@ package final class ProjectLifecycle {
     }
     let proxyNames = try ProxyState.storedCredentialNames(config.proxy, instance: instance)
     try GuestEnvState.checkCredentialSeparation(entries, proxyCredentialNames: proxyNames)
-    // Configured `vault:` proxy credentials join the same unlock.
-    let names = Set(entries.values.compactMap(\.reference)).union(proxyNames)
+    // Configured `vault:` proxy credentials join the same unlock, but only
+    // when an agent will need them.
+    let names = Set(entries.values.compactMap(\.reference)).union(noAgents ? [] : proxyNames)
       .union(
         try GitHubAssignment.vaultName(
           config, instance: instance, repo: repo, githubDisabled: githubDisabled
@@ -187,7 +191,9 @@ package final class ProjectLifecycle {
 
   package func startInstance(_ instance: Instance, _ options: CreationRequest) throws {
     let repo = try resolveStartRepo(options)
-    try preflightReferences(options.boot.persistedGuestEnvironment, instance: instance, repo: repo)
+    try preflightReferences(
+      options.boot.persistedGuestEnvironment, instance: instance, repo: repo,
+      noAgents: options.boot.noAgents)
     try maybePromptForPAT(instance, repo: repo, options.boot)
     // Busy host ports fail before any VM cost.
     let forwardSet = PortForward.merge(config: config.forwardPorts, cli: options.boot.forwardPorts)
@@ -201,8 +207,9 @@ package final class ProjectLifecycle {
     try provisionFirstBoot(instance, options, repo: repo, forwardSet: forwardSet)
   }
 
-  /// A guest carrying only its image: state, agents, forwards, then the
-  /// workspace and mounts. Shared by a fresh start and a reprovision. The
+  /// A guest carrying only its image: state, agents, then the workspace
+  /// and mounts, then the post-start hook (only after provisioning
+  /// succeeded), then forwards. Shared by a fresh start and a reprovision. The
   /// managed alias and port forwards use the target bootstrap proved, so
   /// neither reaches a filtered guest before its composite readiness.
   package func provisionFirstBoot(
@@ -211,22 +218,46 @@ package final class ProjectLifecycle {
     try Shutdown.check()
     let target = try readyTarget(instance)
     try Shutdown.check()
-    try PortForwards.save(forwardSet, instance, diagnostics: diagnostics)
-    try GuestEnvState(entries: options.boot.persistedGuestEnvironment).save(
-      instance, diagnostics: diagnostics)
+    let grants = try GrantLedger.reconcile(
+      instance, revoked: config.revokedGrantIDs,
+      environment: options.boot.persistedGuestEnvironment, forwards: forwardSet,
+      fresh: options.boot.freshGrantScopes
+        ?? Set(options.boot.persistedGuestEnvironment.keys.map(\.rawValue))
+        .union(forwardSet.map(GrantLedger.scope)),
+      knownElsewhere: GrantLedger.knownIDs(config, except: instance))
+    warnGrantReconciliation(instance, grants)
+    try PortForwards.save(grants.savedForwards, instance, diagnostics: diagnostics)
+    try GuestEnvState(entries: grants.savedEnvironment).save(instance, diagnostics: diagnostics)
     if let applied = options.appliedDevcontainer {
       try DevcontainerState(applied: applied).save(instance)
     }
+    let transfer = WorkspaceTransfer(client: context.ssh, diagnostics: diagnostics)
     let transferTarget = try agents.bootstrapAndPostStart(
       instance, target: target, repo: repo, noAgents: options.boot.noAgents,
       postStartOverride: options.boot.postStartOverride, mode: .firstBoot,
-      skipAgentBootstrap: options.boot.skipAgentBootstrap, runtime: try backend.runtime())
+      skipAgentBootstrap: options.boot.skipAgentBootstrap, runtime: try backend.runtime()
+    ) { transferTarget in
+      try provisionWorkspace(instance, options, transfer: transfer, target: transferTarget)
+    }
     try Shutdown.check()
     refreshSSHConfig(instance, transferTarget)
-    try forwards.spawn(instance, transferTarget, forwardSet)
+    try forwards.spawn(instance, transferTarget, grants.appliedForwards)
+    diagnostics.log(
+      .info, "Instance '\(instance.name)' started — SSH: \(target.endpointDescription)")
+  }
 
-    let transfer = WorkspaceTransfer(client: context.ssh, diagnostics: diagnostics)
+  /// The one-time workspace copy or clone and mount sync of a first boot,
+  /// run before the post-start hook.
+  func provisionWorkspace(
+    _ instance: Instance, _ options: CreationRequest, transfer: WorkspaceTransfer,
+    target transferTarget: SSHTarget
+  ) throws {
     var recorded = false
+    // One outbound budget for the whole operation, across every root.
+    let budget = InputBudget(config.workspaceInput.limits)
+    if options.excludeGit {
+      diagnostics.warn("--exclude-git is deprecated: transfers into the guest never carry .git")
+    }
     if let directory = options.workspaceDirectory {
       var isDirectory: ObjCBool = false
       guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
@@ -235,34 +266,37 @@ package final class ProjectLifecycle {
       guard let absolute = canonicalPath(directory) else {
         throw HostError("Failed to resolve \(directory)")
       }
-      try transfer.tarPipe(
-        transferTarget, source: absolute, to: guestWorkspace, excludeGit: options.excludeGit)
+      try transfer.sendSnapshot(
+        transferTarget, root: absolute, to: guestWorkspace, input: config.workspaceInput,
+        budget: budget, stateDirectory: instance.directory + "/inputs", audit: instance)
+      transfer.initializeGuestRepository(transferTarget, guestWorkspace)
       try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: absolute))
         .save(instance, diagnostics: diagnostics)
       recorded = true
     } else if let url = options.gitRepo {
       let assigned = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
       try GitHubGuest.clone(
-        context.ssh, transferTarget, url: url, github: config.github, assigned: assigned?.repo,
+        context.ssh, transferTarget, url: url, github: githubDisabled ? .off : config.github,
+        assigned: assigned?.repo,
         tokens: GitHubTokens(environment: context.environment.variables, diagnostics: diagnostics))
       try WorkspaceState(guestPath: guestWorkspace, source: .gitRepo(url: url))
         .save(instance, diagnostics: diagnostics)
       recorded = true
     }
+    try Shutdown.check()
     if !options.mounts.isEmpty {
       if recorded {
         try transfer.syncMountContents(
-          transferTarget, options.mounts, excludeGit: options.excludeGit)
+          transferTarget, options.mounts, input: config.workspaceInput, budget: budget,
+          stateDirectory: instance.directory + "/inputs")
       } else {
         try transfer.syncMounts(
-          transferTarget, instance, options.mounts, excludeGit: options.excludeGit)
+          transferTarget, instance, options.mounts, input: config.workspaceInput, budget: budget)
       }
       diagnostics.warn(
         "\(AppleBackend.name) mounts use one-time sync, not live filesystem sharing. Use `iso push` / `iso pull` to sync changes."
       )
     }
-    diagnostics.log(
-      .info, "Instance '\(instance.name)' started — SSH: \(target.endpointDescription)")
   }
 
   package func readyTarget(_ instance: Instance) throws -> SSHTarget {
@@ -276,6 +310,19 @@ package final class ProjectLifecycle {
   }
 
   /// Keeps an alias the user installed current; never installs one.
+  func warnGrantReconciliation(_ instance: Instance, _ grants: GrantLedger.Reconciled) {
+    if !grants.withheld.isEmpty {
+      diagnostics.warn(
+        "Not applying saved grants recorded without provenance (\(grants.withheld.joined(separator: ", "))); give them again on the command line to keep them, or revoke them by ID (`iso policy effective \(instance.name)`)"
+      )
+    }
+    if !grants.unknownRevoked.isEmpty {
+      diagnostics.warn(
+        "security.revoked_grant_ids names \(grants.unknownRevoked.joined(separator: ", ")), which no current instance records; remove it from the configuration once it is no longer needed"
+      )
+    }
+  }
+
   package func refreshSSHConfig(_ instance: Instance, _ target: SSHTarget) {
     do { try sshConfig.refreshIfPresent(target, instance) } catch {
       diagnostics.warn("Failed to refresh SSH config for '\(instance.name)': \(error)")
@@ -295,30 +342,72 @@ package final class ProjectLifecycle {
     let repo = tokens.instanceRepo(instance)
     try maybePromptForPAT(instance, repo: repo, options)
     let saved = try PortForwards.load(instance) ?? []
-    let forwardSet = PortForward.merge(config: saved, cli: options.forwardPorts)
+    var forwardSet = PortForward.merge(config: saved, cli: options.forwardPorts)
     try PortForwards.checkCollisions(forwardSet)
     var guestEnvironment = try GuestEnvState.tryLoad(instance)?.entries ?? [:]
     for (key, value) in options.persistedGuestEnvironment { guestEnvironment[key] = value }
+    // Saved grants re-apply only under their recorded provenance; revoked
+    // ones are withdrawn (and tombstoned) before anything is handed out.
+    let grants = try GrantLedger.reconcile(
+      instance, revoked: config.revokedGrantIDs, environment: guestEnvironment,
+      forwards: forwardSet,
+      fresh: Set(options.persistedGuestEnvironment.keys.map(\.rawValue))
+        .union(options.forwardPorts.map(GrantLedger.scope)),
+      knownElsewhere: GrantLedger.knownIDs(config, except: instance))
+    warnGrantReconciliation(instance, grants)
+    guestEnvironment = grants.appliedEnvironment
+    forwardSet = grants.appliedForwards
+    let savedEnvironment = grants.savedEnvironment
+    let savedForwards = grants.savedForwards
     _ = try GuestEnvState.providerSecrets(guestEnvironment)
-    try preflightReferences(guestEnvironment, instance: instance, repo: repo)
+    try preflightReferences(
+      guestEnvironment, instance: instance, repo: repo, noAgents: options.noAgents)
     foldGuestEnvironment(guestEnvironment)
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
     try agents.requireProviderProxy(
       instance, noAgents: options.noAgents, guestEnvironment: guestEnvironment)
     try backend.startExisting(instance, guestEnvironment: guestEnvironment)
-    try Shutdown.check()
-    let target = try readyTarget(instance)
-    try Shutdown.check()
-    try PortForwards.save(forwardSet, instance, diagnostics: diagnostics)
-    try GuestEnvState(entries: guestEnvironment).save(instance, diagnostics: diagnostics)
-    let proven = try agents.bootstrapAndPostStart(
-      instance, target: target, repo: repo, noAgents: options.noAgents,
-      postStartOverride: options.postStartOverride, mode: .restart,
-      skipAgentBootstrap: options.skipAgentBootstrap, runtime: try backend.runtime())
-    refreshSSHConfig(instance, proven)
-    try forwards.spawn(instance, proven, forwardSet)
+    let target: SSHTarget
+    do {
+      try Shutdown.check()
+      target = try readyTarget(instance)
+      try Shutdown.check()
+      try PortForwards.save(savedForwards, instance, diagnostics: diagnostics)
+      try GuestEnvState(entries: savedEnvironment).save(instance, diagnostics: diagnostics)
+      let proven = try agents.bootstrapAndPostStart(
+        instance, target: target, repo: repo, noAgents: options.noAgents,
+        postStartOverride: options.postStartOverride, mode: .restart,
+        skipAgentBootstrap: options.skipAgentBootstrap, runtime: try backend.runtime())
+      refreshSSHConfig(instance, proven)
+      try forwards.spawn(instance, proven, forwardSet)
+    } catch {
+      rollBackRestart(instance, cause: error)
+      throw error
+    }
     diagnostics.log(
       .info, "Instance '\(instance.name)' restarted — SSH: \(target.endpointDescription)")
+  }
+
+  /// After a restart boots but provisioning or readiness fails: revoke what
+  /// the attempt started (forwards, proxies, tunnels), then stop the VM with
+  /// its disk kept. If the stop cannot be confirmed, fence the instance so no
+  /// workload is handed to it until `iso stop` reconciles it.
+  func rollBackRestart(_ instance: Instance, cause: any Error) {
+    diagnostics.log(.error, "Restart of '\(instance.name)' failed: \(oneLine(cause)); stopping it")
+    if let target = try? backend.sshTarget(instance) { forwards.teardown(instance, target) }
+    agents.proxies.stopAll(instance)
+    do {
+      try backend.stopUnproven(instance)
+    } catch {
+      diagnostics.warn(
+        "Could not confirm that '\(instance.name)' stopped (\(oneLine(error))); it is fenced until `iso stop \(instance.name)` succeeds"
+      )
+      BoundaryAudit.record(
+        instance, .handoffFence(reason: "restart_cleanup_unconfirmed"), diagnostics: diagnostics)
+      do { try HandoffFence.set(instance, reason: "restart cleanup unconfirmed") } catch {
+        diagnostics.warn("Failed to record the fence for '\(instance.name)': \(error)")
+      }
+    }
   }
 
   // MARK: Instance lookup
