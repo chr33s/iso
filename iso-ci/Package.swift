@@ -13,6 +13,8 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
     // The guest-facing preflight data plane (HTTP/1.1 over a Unix socket).
     .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
+    // The inert Git index reader shared with the host (no Git process).
+    .package(path: "../iso-policy"),
   ],
   targets: [
     .target(
@@ -21,6 +23,7 @@ let package = Package(
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "IsoGitIndex", package: "iso-policy"),
       ],
       linkerSettings: [.linkedLibrary("sqlite3")]),
     .executableTarget(

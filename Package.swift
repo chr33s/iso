@@ -35,6 +35,7 @@ let package = Package(
       dependencies: [
         "IsoCore", "IsoConfiguration", "IsoSecrets",
         .product(name: "IsoPolicy", package: "iso-policy"),
+        .product(name: "IsoGitIndex", package: "iso-policy"),
       ],
       exclude: ["Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb"]),
     .executableTarget(

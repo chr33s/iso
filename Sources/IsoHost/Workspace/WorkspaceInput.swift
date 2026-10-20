@@ -1,7 +1,7 @@
-import CryptoKit
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoGitIndex
 
 // Outbound selected-content snapshots (security-hardening spec INPUT-01).
 // Every transfer into the guest — first copy, push, mount sync — sends one
@@ -14,7 +14,6 @@ import IsoCore
 /// explicit path selection.
 enum GitIndexInventory {
   static let maxIndexBytes = 256 << 20
-  static let maxEntries = 1_000_000
 
   struct Unsupported: Error, CustomStringConvertible {
     let description: String
@@ -59,84 +58,20 @@ enum GitIndexInventory {
     return try parse(bytes)
   }
 
+  /// The shared inert reader (`IsoGitIndex`), plus this host's own rule
+  /// that every path is a valid selector.
   static func parse(_ bytes: [UInt8]) throws -> [String] {
     func unsupported(_ why: String) -> Unsupported {
       Unsupported(description: "the Git index cannot be read inertly (\(why))")
     }
-    guard bytes.count >= 32, Array(bytes[0..<4]) == Array("DIRC".utf8) else {
-      throw unsupported("not an index file")
-    }
-    let body = bytes[0..<(bytes.count - 20)]
-    guard Array(Insecure.SHA1.hash(data: body)) == Array(bytes[(bytes.count - 20)...]) else {
-      throw unsupported("checksum mismatch or a non-SHA-1 repository")
-    }
-    func u32(_ at: Int) throws -> Int {
-      guard at + 4 <= body.count else { throw unsupported("truncated") }
-      return Int(bytes[at]) << 24 | Int(bytes[at + 1]) << 16 | Int(bytes[at + 2]) << 8
-        | Int(bytes[at + 3])
-    }
-    func u16(_ at: Int) throws -> Int {
-      guard at + 2 <= body.count else { throw unsupported("truncated") }
-      return Int(bytes[at]) << 8 | Int(bytes[at + 1])
-    }
-    let version = try u32(4)
-    guard [2, 3, 4].contains(version) else { throw unsupported("version \(version)") }
-    let count = try u32(8)
-    guard count <= maxEntries else { throw unsupported("too many entries") }
-    var offset = 12
-    var previous: [UInt8] = []
-    var paths: [String] = []
-    for _ in 0..<count {
-      let start = offset
-      let mode = try u32(start + 24)
-      offset = start + 40 + 20
-      let flags = try u16(offset)
-      offset += 2
-      guard (flags >> 12) & 0x3 == 0 else { throw unsupported("unmerged entries") }
-      if flags & 0x4000 != 0 {
-        guard version >= 3 else { throw unsupported("extended flags in version 2") }
-        let extended = try u16(offset)
-        offset += 2
-        guard extended & 0x4000 == 0 else { throw unsupported("skip-worktree (sparse) entries") }
+    let entries: [GitIndexFile.Entry]
+    do { entries = try GitIndexFile.parse(bytes) } catch { throw unsupported("\(error)") }
+    return try entries.map { entry in
+      guard WorkspaceInputConfig.validSelector(entry.path), entry.path != "." else {
+        throw unsupported("an unsupported path name")
       }
-      var name: [UInt8]
-      if version == 4 {
-        // Git's offset varint: big-endian 7-bit groups, each continuation
-        // adding one (`decode_varint`).
-        var strip = 0
-        var byte: UInt8
-        var first = true
-        repeat {
-          guard offset < body.count, strip < 1 << 24 else { throw unsupported("bad path prefix") }
-          byte = bytes[offset]
-          offset += 1
-          strip = (first ? 0 : (strip + 1) << 7) + Int(byte & 0x7F)
-          first = false
-        } while byte & 0x80 != 0
-        guard strip <= previous.count else { throw unsupported("bad path prefix") }
-        name = Array(previous.prefix(previous.count - strip))
-        guard let end = body[offset...].firstIndex(of: 0) else { throw unsupported("truncated") }
-        name += bytes[offset..<end]
-        offset = end + 1
-      } else {
-        guard let end = body[offset...].firstIndex(of: 0) else { throw unsupported("truncated") }
-        name = Array(bytes[offset..<end])
-        let length = end - start + 1
-        offset = start + ((length + 7) / 8) * 8
-      }
-      previous = name
-      switch mode & 0o170000 {
-      case 0o100000, 0o120000: break
-      case 0o160000: throw unsupported("submodules")
-      case 0o040000: throw unsupported("a sparse index")
-      default: throw unsupported("an unknown entry type")
-      }
-      guard let text = String(validating: name, as: UTF8.self),
-        WorkspaceInputConfig.validSelector(text), text != "."
-      else { throw unsupported("an unsupported path name") }
-      paths.append(text)
+      return entry.path
     }
-    return paths
   }
 }
 

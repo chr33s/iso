@@ -94,7 +94,8 @@ To use another Mac, enroll it with iso first
 enrollment and pinned SSH; it never discovers tailnet nodes, and job VMs never
 join a tailnet.
 
-Build and install iso-ci:
+Build and install iso-ci from a repository checkout (it builds the shared
+inert Git index reader from the sibling `iso-policy` package):
 
 ```sh
 swift build -c release --package-path iso-ci
