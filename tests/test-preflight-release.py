@@ -40,7 +40,7 @@ fi
 PYTHON_GATES = [
     'tests/test-read-contract.py', 'tests/test-lifecycle-contract.py',
     'tests/test-data-root-contract.py', 'tests/test-machine-contract.py',
-    'tests/test-cli-surface.py',
+    'tests/test-audit-contract.py', 'tests/test-cli-surface.py',
     'tests/test-preflight-release.py', 'tests/test-verify-candidate.py', 'tests/test-accept-release.py',
     'tests/test-check-release-signatures.py',
     'scripts/build-release.py',
@@ -118,6 +118,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                      'test-lifecycle-contract.py --swift .build/debug/iso',
                      'test-data-root-contract.py --swift .build/debug/iso',
                      'test-machine-contract.py --swift .build/debug/iso',
+                     'test-audit-contract.py --swift .build/debug/iso',
                      'test-cli-surface.py --swift .build/debug/iso',
                      'test-preflight-release.py',
                      'test-verify-candidate.py', 'test-accept-release.py',
@@ -205,7 +206,8 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('Preflight FAILED', result.stdout)
 
     def test_baseline_failure_is_fatal(self):
-        for gate in ('test-lifecycle-contract.py', 'test-machine-contract.py'):
+        for gate in ('test-lifecycle-contract.py', 'test-machine-contract.py',
+                     'test-audit-contract.py'):
             with self.subTest(gate=gate):
                 result = self.run_preflight('--quick', fail=gate)
                 self.assertNotEqual(result.returncode, 0)
