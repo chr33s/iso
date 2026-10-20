@@ -181,7 +181,8 @@ struct Start: MachineCommand {
     transform: parseInstanceName)
   var name: InstanceName?
   @Option(
-    help: "Project directory used to select an associated stopped instance")
+    help: "Project directory used to select an associated stopped instance",
+    completion: .directory)
   var workspace: String?
   @OptionGroup var boot: BootArguments
   @OptionGroup var devcontainerArguments: DevcontainerArguments

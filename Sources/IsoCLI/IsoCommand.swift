@@ -58,7 +58,14 @@ struct IsoCommand: ParsableCommand {
     } catch {
       let code = exitCode(for: error)
       guard code == .validationFailure else { exit(withError: error) }
-      FileHandle.standardError.write(Data((fullMessage(for: error) + "\n").utf8))
+      var text = fullMessage(for: error)
+      if let hint = CommandSuggestion.hint(for: error, arguments: CommandLine.arguments) {
+        // After the error line, before the usage lines.
+        var lines = text.components(separatedBy: "\n")
+        lines.insert(hint, at: min(1, lines.count))
+        text = lines.joined(separator: "\n")
+      }
+      FileHandle.standardError.write(Data((text + "\n").utf8))
       Foundation.exit(2)
     }
   }
@@ -70,7 +77,8 @@ enum IsoVersion {
 
 struct GlobalOptions: ParsableArguments {
   @Option(
-    name: .long, help: "Path to iso config file (.jsonc or .json)")
+    name: .long, help: "Path to iso config file (.jsonc or .json)",
+    completion: .file(extensions: ["jsonc", "json"]))
   var config: String?
 
   @Flag(name: .shortAndLong, help: "Increase verbosity")

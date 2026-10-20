@@ -35,7 +35,7 @@ struct HostPush: ParsableCommand {
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
   @Argument var name: String
-  @Option(help: "Client directory (default: the recorded one, else .)")
+  @Option(help: "Client directory (default: the recorded one, else .)", completion: .directory)
   var dir: String?
   @Flag(help: "Overwrite uncommitted guest changes") var force = false
   @Flag(name: .customLong("exclude-git"), help: ArgumentHelp(DeprecatedExcludeGit.help))
@@ -68,7 +68,8 @@ struct HostPull: ParsableCommand {
   @Argument var host: String
   @Argument var name: String
   @Option(
-    help: "Client destination when staging (default: the recorded source directory)")
+    help: "Client destination when staging (default: the recorded source directory)",
+    completion: .directory)
   var dir: String?
   @Flag(help: "Apply the completed stage named by --stage-id; needs no host connection")
   var apply = false
@@ -436,7 +437,7 @@ struct HostRun: ParsableCommand {
 
   @OptionGroup var global: GlobalOptions
   @Argument var host: String
-  @Option(help: "Client project directory to push") var dir: String = "."
+  @Option(help: "Client project directory to push", completion: .directory) var dir: String = "."
   @Option var image: String = ImageName.default.rawValue
   @Option(help: "VM lifetime (default: 1h; at most 24h)", transform: parseDurationArgument)
   var ttl: Duration?

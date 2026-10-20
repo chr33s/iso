@@ -33,7 +33,8 @@ struct Push: ParsableCommand {
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
   @Option(
-    help: "Local directory to push (defaults to `workspace.json` `host_path`)")
+    help: "Local directory to push (defaults to `workspace.json` `host_path`)",
+    completion: .directory)
   var dir: String?
   @Flag(help: "Overwrite guest changes without confirmation") var force = false
   @Flag(help: ArgumentHelp(DeprecatedExcludeGit.help)) var excludeGit = false
@@ -61,7 +62,8 @@ struct Pull: ParsableCommand {
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
   @Option(
-    help: "Local directory to pull into (defaults to `workspace.json` `host_path`)")
+    help: "Local directory to pull into (defaults to `workspace.json` `host_path`)",
+    completion: .directory)
   var dir: String?
   @Flag(help: "In direct mode, allow replacing existing local files (never sensitive paths)")
   var force = false
@@ -86,8 +88,11 @@ struct Pull: ParsableCommand {
   }
 
   func validate() throws {
-    if [review, apply, discard].filter({ $0 }).count > 1 {
-      throw UsageError("--review, --apply and --discard cannot be combined")
+    if let conflict = CommandSuggestion.exclusive(
+      ["--review": review, "--apply": apply, "--discard": discard],
+      why: "review a new stage, apply the reviewed one, or discard it, one per command")
+    {
+      throw conflict
     }
     if stageId != nil && !apply { throw UsageError("--stage-id requires --apply") }
     if !approveSensitive.isEmpty && (!apply || stageId == nil) {
@@ -176,7 +181,8 @@ struct Diff: ParsableCommand {
     help: "Instance name (required if multiple instances exist)", transform: parseInstanceName)
   var name: InstanceName?
   @Option(
-    help: "Local directory to compare with (defaults to `workspace.json` `host_path`)")
+    help: "Local directory to compare with (defaults to `workspace.json` `host_path`)",
+    completion: .directory)
   var dir: String?
   @Flag(help: ArgumentHelp(DeprecatedExcludeGit.help)) var excludeGit = false
   @Flag(help: "Print only the summary, not text diffs") var stat = false
