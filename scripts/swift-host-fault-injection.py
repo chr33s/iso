@@ -1549,7 +1549,7 @@ FAULTS = [
      "var merged = base.filter { !$0.key.hasPrefix(EnvForward.aliasPrefix) }", "var merged = base",
      "requestedGuestNamesNeverReachTheHostEnvironment"),
     ("guest-env-missing-alias", "Sources/IsoHost/Guest/GuestSession.swift",
-     '"[ \\"${\\(3 + 2 * $0)}\\" = s ]"', '"[ \\"${\\(3 + 2 * $0)}\\" = s ] || true"',
+     '.literal("[ \\"${\\(3 + 2 * index)}\\" = s ]")', '.literal("[ \\"${\\(3 + 2 * index)}\\" = s ] || true")',
      "aMissingAliasAbortsBeforeTheWorkloadRuns"),
     ("guest-env-nul", "Sources/IsoHost/Guest/GuestSession.swift",
      "guard !value.utf8.contains(0) else {", "guard true else {",

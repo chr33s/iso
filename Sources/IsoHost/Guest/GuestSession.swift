@@ -77,25 +77,33 @@ package struct EnvForward: Sendable, CustomStringConvertible {
     // Every value is captured into a positional parameter before any name is
     // exported, so a requested name that matches an alias, or the saved
     // login shell and command (`$1`, `$2`), cannot disturb the restore.
-    let present = entries.indices.map { "[ \"${\(3 + 2 * $0)}\" = s ]" }.joined(separator: " && ")
-    let exports = entries.enumerated().map { index, entry in
-      "export \(entry.name.rawValue)=\"${\(4 + 2 * index)}\""
-    }.joined(separator: " && ")
-    let script =
-      "\(present) || { echo 'iso: a forwarded guest environment variable did not arrive (the guest sshd must AcceptEnv ISO_SSH_ENV_*)' >&2; exit 125; }; "
-      + "unset \(aliases.joined(separator: " ")); "
-      + "\(exports) || { echo 'iso: failed to set a forwarded guest environment variable' >&2; exit 125; }; "
-      + "exec \"$2\" -c \"$1\""
-    let captures = aliases.map { "\"${\($0)+s}\" \"${\($0)-}\"" }.joined(separator: " ")
-    let wrapper = "exec /bin/sh -c \(shellEscape(script)) iso-env "
-    let tail = " \"${SHELL:-/bin/sh}\" \(captures)"
-    guard wrapper.utf8.count + tail.utf8.count <= Self.maxWrapperBytes else {
+    // Names are validated `EnvVarName`s and aliases are iso's own, so both
+    // are literal shell words; values never appear in the script.
+    var script = RemoteCommand()
+    for index in entries.indices {
+      script = script.literal(index == 0 ? "" : " && ").literal("[ \"${\(3 + 2 * index)}\" = s ]")
+    }
+    script = script.literal(
+      " || { echo 'iso: a forwarded guest environment variable did not arrive (the guest sshd must AcceptEnv ISO_SSH_ENV_*)' >&2; exit 125; }; "
+    ).literal("unset \(aliases.joined(separator: " ")); ")
+    for (index, entry) in entries.enumerated() {
+      script = script.literal(index == 0 ? "" : " && ")
+        .literal("export \(entry.name.rawValue)=\"${\(4 + 2 * index)}\"")
+    }
+    script = script.literal(
+      " || { echo 'iso: failed to set a forwarded guest environment variable' >&2; exit 125; }; "
+    ).literal("exec \"$2\" -c \"$1\"")
+    var wrapper = RemoteCommand().literal("exec /bin/sh -c ").arg(script.rendered)
+      .literal(" iso-env ").arg(remote).literal(" \"${SHELL:-/bin/sh}\"")
+    for alias in aliases { wrapper = wrapper.literal(" \"${\(alias)+s}\" \"${\(alias)-}\"") }
+    guard wrapper.rendered.utf8.count - shellEscape(remote).utf8.count <= Self.maxWrapperBytes
+    else {
       throw HostError(
         "Refusing to forward the guest environment: its wrapper exceeds \(Self.maxWrapperBytes) bytes"
       )
     }
     return PreparedGuestCommand(
-      remote: wrapper + shellEscape(remote) + tail,
+      remote: wrapper.rendered,
       aliases: zip(aliases, entries).map { ($0, Secret($1.value)) })
   }
 }
