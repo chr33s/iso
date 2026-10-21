@@ -1183,6 +1183,48 @@ if want iso; then
     check "iso start boots it again" iso start e2e --no-agents --no-github
     check "guest data survives stop/start" test "$(iso exec e2e -- sh -c 'cat ~/snap-before' 2>/dev/null)" = before
 
+    # S2 (SSH-03) end to end: revocation reaches the next session, and a
+    # replaced or missing control socket is torn down without a new guest
+    # connection or signalling a process that is not iso's.
+    grant="$(iso policy effective e2e --json |
+        jq -r '.instance.grants[] | select(test(" guest_env OVERRIDDEN ")) | split(" ")[0]')"
+    check "S2: the --env grant has an ID" test -n "$grant"
+    jq --arg id "$grant" '. + {security: ((.security // {}) + {revoked_grant_ids: [$id]})}' \
+        "$CCFG" >"$WORK/iso-revoked.jsonc"
+    # shellcheck disable=SC2016 # Expand in the guest.
+    check "S2: a revoked grant reaches no later session, before any restart" \
+        test "$("$ISO" --config "$WORK/iso-revoked.jsonc" exec e2e -- sh -c 'echo ${OVERRIDDEN:-unset}' </dev/null 2>/dev/null)" = unset
+    # shellcheck disable=SC2016 # Expand in the guest.
+    check "S2: the unrevoked configuration still forwards it" \
+        test "$(iso exec e2e -- sh -c 'echo ${OVERRIDDEN:-unset}')" = cli
+    iso stop e2e >/dev/null 2>&1
+    check "S2: a start with a port forward" \
+        iso start e2e --no-agents --no-github --forward-port 8080:18080
+    # The master's own argv names its control socket (a long data root puts
+    # it in the private temporary directory).
+    master="$(pgrep -f -- "-L 127.0.0.1:18080:127.0.0.1:8080" | head -1)"
+    sock="$(ps -o command= -p "${master:-0}" | tr ' ' '\n' | sed -n 's/^ControlPath=//p' | head -1)"
+    check "S2: the forward master runs behind its owned socket" test -n "$master" -a -S "$sock"
+    sleep 300 &
+    bystander=$!
+    mv "$sock" "$sock.real" && : >"$sock"
+    started=$SECONDS
+    check "S2: stop succeeds with a replaced control socket" iso stop e2e
+    check "S2: teardown did not wait on a connection" test $((SECONDS - started)) -lt 60
+    check "S2: the impostor socket is removed" test ! -e "$sock"
+    others="$(pgrep -f -- "ControlPath=$sock" | grep -vx "${master:-0}" || true)"
+    check "S2: no new ssh was started for the control path" test -z "$others"
+    check "S2: a process that is not iso's is never signalled" kill -0 "$bystander"
+    kill "$bystander" 2>/dev/null
+    rm -f "$sock.real"
+    check "S2: start again with the saved forward" iso start e2e --no-agents --no-github
+    second="$(pgrep -f -- "ControlPath=$sock" | grep -vx "${master:-0}" | head -1)"
+    rm -f "$sock"
+    check "S2: stop succeeds with a missing control socket" iso stop e2e
+    others="$(pgrep -f -- "ControlPath=$sock" | grep -vx "${master:-0}" | grep -vx "${second:-0}" || true)"
+    check "S2: still no new ssh for the control path" test -z "$others"
+    check "iso start boots it after the S2 checks" iso start e2e --no-agents --no-github
+
     # Secure Enclave secret store end to end (needs Touch ID, so opt-in):
     # generic references reach the guest, provider references never do, and
     # no host state holds a resolved value.
