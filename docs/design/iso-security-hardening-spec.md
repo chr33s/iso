@@ -789,10 +789,12 @@ Evidence on the final tree:
   enrolled-host management hop keeps its trusted configuration by design and
   was excluded from the hostile block. `ManagedSSHRoleTests` resolves every
   role's real arguments with `ssh -G` under the same kind of file. Under the
-  same hostile file, a sandboxed `iso zed` session against a real VM brought
-  up Zed's remote server through the editor's own SSH (session key, session
-  config, iso's loopback tunnel); quitting the editor ended the session and
-  left no session key authorized in the guest.
+  same hostile file, sandboxed `iso zed` and `iso code` sessions against a
+  real VM each brought up the editor's server in the guest through the
+  editor's own SSH (session key, session config, iso's loopback tunnel);
+  quitting the editor ended the session and left no session key authorized.
+  (VS Code needed Remote-SSH 0.128's scp probe allowed when it uploads a
+  host-downloaded server; see the editor sandbox.)
 - S2: the VM suite revokes an `--env` grant by ID (absent from the next
   session before any restart), replaces and then removes a port-forward
   control socket (each stop succeeds promptly, starts no new ssh for the
