@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import statistics
@@ -424,6 +425,9 @@ class Runner:
             project.mkdir()
             marker = uuid.uuid4().hex
             (project / "marker").write_text(marker)
+            # Input is the Git index by default (workspace.input).
+            subprocess.run(["git", "-C", str(project), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(project), "add", "marker"], check=True)
             push = self.iso_cmd("host", "push", self.args.name, self.instance, "--dir", str(project), timeout=600)
             if push.returncode != 0:
                 return self.record("workspace-push", "fail", started, reason=tail(push.stderr))
@@ -434,7 +438,11 @@ class Runner:
                 "echo changed > /workspace/marker", timeout=300)
             stage = self.iso_cmd("host", "pull", self.args.name, self.instance, "--dir", str(project), timeout=600)
             unchanged = (project / "marker").read_text() == marker
-            apply = self.iso_cmd("host", "pull", self.args.name, self.instance, "--apply", timeout=120)
+            # Applying needs the exact stage ID the stage printed.
+            found = re.search(r"--stage-id ([0-9a-f]+)", stage.stdout + stage.stderr)
+            apply = self.iso_cmd(
+                "host", "pull", self.args.name, self.instance, "--apply", "--stage-id",
+                found.group(1) if found else "missing", timeout=120)
             applied = (project / "marker").read_text().strip() == "changed"
             ok = shell.returncode == 0 and stage.returncode == 0 and unchanged and apply.returncode == 0 and applied
             return self.record(
