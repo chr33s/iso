@@ -529,3 +529,26 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
   #expect(throws: ReturnError.self) { _ = try f.transfer.discardStage(f.instance) }
   #expect(FileManager.default.fileExists(atPath: attempt.tree))
 }
+
+/// A second `terminate` (an explicit one plus a `defer`) must not close the
+/// descriptor numbers again: by then another thread may own them.
+@Test func terminatingAPipedChildTwiceClosesNothingElse() throws {
+  let child = try ProcessRunner().piped(
+    .init(executable: "/bin/sleep", arguments: ["5"], environment: [:], deadline: .seconds(10)))
+  let numbers = [child.input, child.output]
+  child.terminate()
+  // Take the freed numbers, as a concurrent test would (unless a parallel
+  // test took them first, which leaves nothing to check).
+  var reused: [Int32] = []
+  while reused.count < 64, !Set(numbers).isSubset(of: Set(reused)) {
+    var pair: [Int32] = [0, 0]
+    guard pipe(&pair) == 0 else { break }
+    reused += pair
+  }
+  defer { for fd in reused { close(fd) } }
+  guard Set(numbers).isSubset(of: Set(reused)) else { return }
+  child.terminate()
+  for fd in reused {
+    #expect(fcntl(fd, F_GETFD) >= 0, "fd \(fd) was closed by the second terminate")
+  }
+}

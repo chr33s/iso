@@ -274,15 +274,32 @@ package struct ProcessRunner: Sendable {
   /// A child in its own process group whose stdin and stdout are pipes held
   /// by the caller, for byte streams that live as long as a connection. The
   /// caller owns the descriptors and must `terminate` the child.
-  package struct PipedChild: Sendable {
+  /// A reference, so `terminate` runs once however many owners call it: a
+  /// second kill could hit a reused process group, and a second close a
+  /// descriptor number another thread now owns.
+  package final class PipedChild: Sendable {
     package let pid: pid_t
     /// Write end of the child's stdin.
     package let input: Int32
     /// Read end of the child's stdout.
     package let output: Int32
+    private let terminated = Mutex(false)
+
+    init(pid: pid_t, input: Int32, output: Int32) {
+      self.pid = pid
+      self.input = input
+      self.output = output
+    }
 
     /// Kills the child's process group and reaps it; closes both pipes.
+    /// Later calls do nothing.
     package func terminate() {
+      guard
+        terminated.withLock({ done in
+          defer { done = true }
+          return !done
+        })
+      else { return }
       kill(-pid, SIGKILL)
       var status: Int32 = 0
       while waitpid(pid, &status, 0) < 0 && errno == EINTR {}

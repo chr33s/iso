@@ -1643,6 +1643,11 @@ FAULTS = [
      '"-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",',
      '"-o", "StrictHostKeyChecking=yes",',
      "managementSSHOverridesGrantedAuthority"),
+    # A piped child is terminated (killed, reaped, closed) at most once.
+    ("piped-child-terminate-twice", "Sources/IsoHost/Processes/ProcessRunner.swift",
+     "      else { return }\n      kill(-pid, SIGKILL)",
+     "      else { kill(-pid, SIGKILL); close(input); close(output); return }\n      kill(-pid, SIGKILL)",
+     "terminatingAPipedChildTwiceClosesNothingElse"),
 ]
 
 
