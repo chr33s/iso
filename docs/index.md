@@ -41,6 +41,8 @@ Apple backend. The credential proxy is the Swift package
   contracts, fault injection, libFuzzer fuzzing, integration suites.
 - [`platform-notes.md`](platform-notes.md) — Docker networking, scp `~`
   caveat, diagnostics on stderr.
+- [`xcode-security-settings.md`](xcode-security-settings.md) — Enhanced
+  Security entitlements and other security build-setting decisions.
 - [`design/`](design/index.md) — decision records:
   - [`apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md): why the
     Apple backend runs its own runtime;

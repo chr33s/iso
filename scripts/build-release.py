@@ -14,9 +14,12 @@ Stages, in order, each explicit:
             of exactly that commit, before and after the build.
 2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`),
             the filtered-egress companion (`iso-egress`), and the Apple
-            runtime (`iso-sandbox`, ad-hoc signed with its entitlement by
-            scripts/build-iso-sandbox.sh, with the macOS guest agent
-            `iso-macos-helper`). `--release` builds
+            runtime (`iso-sandbox`, with the macOS guest agent
+            `iso-macos-helper`). Every binary is signed ad hoc with the
+            hardened runtime and the Enhanced Security entitlements
+            (scripts/enhanced-security.entitlements; iso-sandbox's come from
+            iso-sandbox/iso-sandbox.entitlements, signed by
+            scripts/build-iso-sandbox.sh). `--release` builds
             with optimizations and `-D ISO_RELEASE_BUILD`, which makes
             `iso update` treat the binary as a release.
 3. test     (`--test`) every package's tests in the staging copy.
@@ -41,6 +44,7 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -51,6 +55,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TRIPLE = "aarch64-apple-darwin"
 BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]
+# Signed here; build-iso-sandbox.sh signs iso-sandbox and iso-macos-helper.
+ADHOC_SIGNED = ["iso", "iso-proxy", "iso-egress"]
+ENTITLEMENTS = "scripts/enhanced-security.entitlements"
 SIGNING_ENV = frozenset({
     "MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY",
     "NOTARY_API_KEY_P8", "NOTARY_API_KEY_ID", "NOTARY_API_ISSUER_ID",
@@ -146,12 +153,25 @@ def test(staging):
     run(["swift", "test", "--package-path", staging / "iso-sandbox", "--no-parallel"], staging)
 
 
-def verify(directory, expected_version):
+def adhoc_sign(directory, entitlements):
+    for name in ADHOC_SIGNED:
+        run(["codesign", "--force", "--sign", "-", "--options", "runtime",
+             "--entitlements", entitlements, directory / name], directory)
+
+
+def verify(directory, expected_version, entitlements):
+    required = plistlib.loads(entitlements.read_bytes())
     for name in BINARIES:
         path = directory / name
         if not (path.is_file() and os.access(path, os.X_OK)):
             raise SystemExit(f"{name} is missing or not executable")
         run(["codesign", "--verify", "--strict", path], directory)
+        signed = run(["codesign", "--display", "--entitlements", "-", "--xml", path], directory,
+                     capture=True)
+        granted = plistlib.loads(signed.encode()) if signed.strip() else {}
+        missing = sorted(key for key, value in required.items() if granted.get(key) != value)
+        if missing:
+            raise SystemExit(f"{name} is not signed with {', '.join(missing)}")
     version = run([directory / "iso", "--version"], directory, capture=True).strip()
     if version != expected_version:
         raise SystemExit(f"expected `iso --version` to print {expected_version!r}, got {version!r}")
@@ -247,11 +267,13 @@ def main():
         for binary, source in binaries.items():
             shutil.copy2(source, bundle / binary)
         copy_legal_files(staging, bundle)
+        phase("Ad-hoc sign iso, iso-proxy and iso-egress")
+        adhoc_sign(bundle, staging / ENTITLEMENTS)
         if args.sign:
             phase("Sign and notarize (Developer ID)")
             run([ROOT / "scripts/macos-sign-notarize.sh", bundle], work, signing=True)
         phase("Verify binaries")
-        verify(bundle, expected_version)
+        verify(bundle, expected_version, staging / ENTITLEMENTS)
         manifest = {
             "format": 1, "name": name, "version": version, "tag": args.tag,
             "configuration": configuration, "release_build": args.release,

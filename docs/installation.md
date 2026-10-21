@@ -55,9 +55,9 @@ python3 scripts/build-release.py --release
 ```
 
 This is the one release build entrypoint. It builds `iso` (this package),
-`iso-proxy`, `iso-egress`, `iso-sandbox` (ad-hoc signed with its entitlement)
-and `iso-macos-helper` from a staged copy of the checkout and writes
-`iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
+`iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` from a staged
+copy of the checkout, signs each ad hoc with the hardened runtime and the
+Enhanced Security entitlements, and writes `iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
 `.build/release-archive/`. Add `--test` to run every package's tests first.
 Extract the archive and install its executables in the same directory on
 `PATH`. A missing `iso-egress` blocks only filtered boots.

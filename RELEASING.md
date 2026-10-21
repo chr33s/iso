@@ -39,9 +39,12 @@ build entrypoint. Its stages are explicit and run in order:
    modified. `--expected-revision SHA` requires a clean checkout of exactly
    that commit, before and after the build.
 2. **build** — `iso` (release: optimized, `-D ISO_RELEASE_BUILD`, which makes
-   `iso update` treat the binary as a release), `iso-proxy`, `iso-egress`, and
-   `iso-sandbox` (ad-hoc signed with its virtualization entitlement by
-   `scripts/build-iso-sandbox.sh`), all with `--force-resolved-versions`.
+   `iso update` treat the binary as a release), `iso-proxy`, `iso-egress`,
+   `iso-sandbox` and `iso-macos-helper`, all with `--force-resolved-versions`.
+   Each is signed ad hoc with the hardened runtime and the Enhanced Security
+   entitlements in `scripts/enhanced-security.entitlements` (`iso-sandbox`
+   uses `iso-sandbox/iso-sandbox.entitlements`, which adds the virtualization
+   entitlement, and is signed by `scripts/build-iso-sandbox.sh`).
 3. **test** (`--test`) — every package's tests in the staging copy.
 4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
    signing and notarization; see [macOS signing](#macos-signing).
@@ -150,11 +153,12 @@ workflow identity; use those original identities when verifying old artifacts.
 `scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
 staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
-`iso`, `iso-proxy`, `iso-egress`, and `iso-sandbox` with a Developer ID Application
-certificate (hardened runtime, secure timestamp; `iso-sandbox` keeps its
-virtualization entitlement), submits them to Apple's notary service, and fails
-unless notarization is `Accepted`. A browser-downloaded archive then runs
-without `xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled
+`iso`, `iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` with a
+Developer ID Application certificate (hardened runtime, secure timestamp, the
+Enhanced Security entitlements; `iso-sandbox` keeps its virtualization
+entitlement), submits them to Apple's notary service, and fails unless
+notarization is `Accepted`. A browser-downloaded archive then runs without
+`xattr -d com.apple.quarantine`. Bare binaries cannot carry a stapled
 ticket, so Gatekeeper checks notarization online on first launch.
 
 Only the signing script sees the signing secrets; the builder removes them from

@@ -142,10 +142,9 @@ sign() {
         --sign "${signing_hash}" "$@"
     codesign --verify --strict --verbose=2 "${@: -1}"
 }
-sign "${dir}/iso"
-sign "${dir}/iso-proxy"
-sign "${dir}/iso-egress"
-sign "${dir}/iso-macos-helper"
+for binary in iso iso-proxy iso-egress iso-macos-helper; do
+    sign --entitlements "${root}/scripts/enhanced-security.entitlements" "${dir}/${binary}"
+done
 sign --entitlements "${root}/iso-sandbox/iso-sandbox.entitlements" "${dir}/iso-sandbox"
 
 printf '%s' "${NOTARY_API_KEY_P8}" | base64 --decode > "${work}/notary.p8"

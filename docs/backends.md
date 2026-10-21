@@ -38,7 +38,7 @@ Host Docker is not needed. Docker runs *inside* the guest.
 scripts/build-iso-sandbox.sh            # installs ~/.local/opt/iso-sandbox/bin/iso-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime and its one entitlement (`com.apple.security.virtualization`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. isolate accepts protocol 5 with containerization 0.45.0 and refuses any other protocol or containerization version.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime, the Enhanced Security entitlements and `com.apple.security.virtualization` (`iso-sandbox/iso-sandbox.entitlements`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. isolate accepts protocol 5 with containerization 0.45.0 and refuses any other protocol or containerization version.
 
 ### Supported combinations
 

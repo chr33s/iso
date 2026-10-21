@@ -5,8 +5,9 @@ set -euo pipefail
 # backend drives, and iso-macos-helper, the agent it installs in macOS guest
 # templates, and install both into PREFIX/bin. PREFIX/bin must be owned by
 # you or root and not writable by others except the wheel or admin group.
-# Both are signed ad hoc with the hardened runtime; iso-sandbox also gets the
-# com.apple.security.virtualization entitlement. Never uses sudo.
+# Both are signed ad hoc with the hardened runtime and the Enhanced Security
+# entitlements: iso-macos-helper with scripts/enhanced-security.entitlements,
+# iso-sandbox with iso-sandbox.entitlements, which adds virtualization. No sudo.
 #
 # Usage:
 #   scripts/build-iso-sandbox.sh [PREFIX]
@@ -18,7 +19,7 @@ set -euo pipefail
 
 case "${1:-}" in
     -h | --help)
-        sed -n '4,17p' "$0" | sed -E 's/^# ?//'
+        sed -n '4,18p' "$0" | sed -E 's/^# ?//'
         exit 0
         ;;
 esac
@@ -33,7 +34,8 @@ if [[ "${prefix}" != /* ]]; then
     exit 1
 fi
 
-pkg="$(cd "$(dirname "$0")/../iso-sandbox" && pwd)"
+scripts="$(cd "$(dirname "$0")" && pwd)"
+pkg="$(cd "${scripts}/../iso-sandbox" && pwd)"
 swift build --package-path "${pkg}" -c release --force-resolved-versions
 bin="$(swift build --package-path "${pkg}" -c release --show-bin-path)"
 
@@ -67,7 +69,7 @@ install_signed() {
     mv -f "${tmp}" "${prefix}/bin/${name}"
     trap - EXIT
 }
-install_signed iso-macos-helper
+install_signed iso-macos-helper --entitlements "${scripts}/enhanced-security.entitlements"
 install_signed iso-sandbox --entitlements "${pkg}/iso-sandbox.entitlements"
 
 "${prefix}/bin/iso-sandbox" version
