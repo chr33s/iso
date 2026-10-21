@@ -1238,6 +1238,24 @@ if want iso; then
     check "the escape did not reach the project" test ! -e "$WORK/project/escape"
     iso exec e2e -- rm /workspace/escape >/dev/null
 
+    # Scoped outbound removal (INPUT-01): a push removes the tracked files
+    # deleted on the host, by name, and nothing else in the guest.
+    jq '. + {workspace: {input: {mode: "tracked"}}}' "$CCFG" >"$WORK/iso-tracked.jsonc"
+    trk() { "$ISO" --config "$WORK/iso-tracked.jsonc" "$@" </dev/null; }
+    mkdir -p "$WORK/tracked"
+    printf 'a\n' >"$WORK/tracked/gone.txt"
+    printf 'b\n' >"$WORK/tracked/kept.txt"
+    git -C "$WORK/tracked" init -q && git -C "$WORK/tracked" add gone.txt kept.txt
+    check "a tracked push sends the index's files" trk push e2e --dir "$WORK/tracked" --force
+    check "the tracked file reached the guest" test "$(iso exec e2e -- cat /workspace/gone.txt)" = a
+    rm "$WORK/tracked/gone.txt"
+    check "a push after a host deletion succeeds" trk push e2e --dir "$WORK/tracked" --force
+    check "the host-deleted tracked file is removed in the guest" \
+        iso exec e2e -- test ! -e /workspace/gone.txt
+    check "other tracked files stay" test "$(iso exec e2e -- cat /workspace/kept.txt)" = b
+    check "guest files outside the selection stay" iso exec e2e -- test -e /workspace/marker
+    iso exec e2e -- rm -f /workspace/kept.txt >/dev/null
+
     # What iso's own sandbox exposes, with a live agent and the canary in
     # iso's environment.
     mid="$(machine_id e2e)"
