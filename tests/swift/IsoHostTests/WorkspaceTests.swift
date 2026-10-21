@@ -598,3 +598,55 @@ private func git(_ directory: String, _ arguments: String...) throws {
   }
   #expect(try StageLocation(inst).selectedID() == nil)
 }
+
+/// INPUT-01 outbound removal: a push removes exactly the tracked files the
+/// host deleted, one escaped argument each, and leaves guest-only files and
+/// any directory in its place alone.
+@Test func pushRemovesOnlyTheTrackedFilesTheHostDeleted() throws {
+  let root = try scratch()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let guest = root + "/guest"
+  for path in ["gone.txt", "sub/also gone's.txt", "-dash", "keep.txt", "guest-only.txt"] {
+    try FileManager.default.createDirectory(
+      atPath: (guest + "/" + path as NSString).deletingLastPathComponent,
+      withIntermediateDirectories: true)
+    try Data(path.utf8).write(to: URL(fileURLWithPath: guest + "/" + path))
+  }
+  try FileManager.default.createDirectory(
+    atPath: guest + "/now-a-dir", withIntermediateDirectories: true)
+  try transfer().removeDeletedTracked(
+    try target(), GuestPath(guest), ["gone.txt", "sub/also gone's.txt", "-dash", "now-a-dir"],
+    force: true)
+  for gone in ["gone.txt", "sub/also gone's.txt", "-dash"] {
+    #expect(!FileManager.default.fileExists(atPath: guest + "/" + gone), "\(gone)")
+  }
+  for kept in ["keep.txt", "guest-only.txt", "now-a-dir"] {
+    #expect(FileManager.default.fileExists(atPath: guest + "/" + kept), "\(kept)")
+  }
+}
+
+/// Without --force a removal never takes guest work the clean check cannot
+/// see: only a file the guest repository holds unchanged from HEAD goes.
+@Test func anUnforcedRemovalKeepsWhatTheGuestRepositoryDoesNotHoldUnchanged() throws {
+  guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { return }
+  let root = try scratch()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let guest = root + "/guest"
+  try FileManager.default.createDirectory(atPath: guest, withIntermediateDirectories: true)
+  try git(guest, "init", "-q")
+  for path in ["committed.txt", "edited.txt"] {
+    try Data(path.utf8).write(to: URL(fileURLWithPath: guest + "/" + path))
+  }
+  try git(guest, "add", ".")
+  try git(guest, "commit", "-q", "-m", "first copy")
+  try Data("agent work".utf8).write(to: URL(fileURLWithPath: guest + "/edited.txt"))
+  // Pushed later and edited in the guest, but never committed there.
+  try Data("only copy".utf8).write(to: URL(fileURLWithPath: guest + "/pushed-later.txt"))
+  let t = transfer()
+  try t.removeDeletedTracked(
+    try target(), GuestPath(guest), ["committed.txt", "edited.txt", "pushed-later.txt"],
+    force: false)
+  #expect(!FileManager.default.fileExists(atPath: guest + "/committed.txt"))
+  #expect(FileManager.default.fileExists(atPath: guest + "/edited.txt"))
+  #expect(FileManager.default.fileExists(atPath: guest + "/pushed-later.txt"))
+}

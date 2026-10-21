@@ -1,6 +1,6 @@
 # iso security hardening: final implementation specification
 
-**Status:** Final design specification v1.0, implemented in the working tree. Outbound tracked-file removal is reported rather than applied, as INPUT-01 (section 8) permits.  
+**Status:** Final design specification v1.0, implemented. Outbound removal is scoped to tracked files deleted on the host, applied by a permitted push.  
 **Date:** 20 October 2026  
 **Target:** `chr33s/iso`, macOS 27+ on Apple Silicon; supported Linux and macOS guests, local and enrolled remote execution hosts.  
 **Purpose:** Combine the coop comparison, critical boundary review, and supplied secure-defaults design into one implementation contract with explicit limits, compatibility decisions, and release gates.  

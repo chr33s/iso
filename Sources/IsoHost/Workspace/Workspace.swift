@@ -408,7 +408,8 @@ package struct WorkspaceTransfer: Sendable {
   }
 
   /// `iso push`: one selected-content snapshot of the workspace, sent over
-  /// the guest copy without deleting anything there.
+  /// the guest copy; the only deletions are the tracked files the host
+  /// deleted.
   package func push(
     _ running: AppleBackend.Running, directory: String?, force: Bool,
     input: WorkspaceInputConfig
@@ -421,11 +422,14 @@ package struct WorkspaceTransfer: Sendable {
     else { throw HostError("Source directory \(source) does not exist") }
     if !force { try checkGuestClean(running.target, state.guestPath) }
     diagnostics.log(.info, "Pushing \(source) -> guest:\(state.guestPath)")
-    try sendSnapshot(
+    let report = try sendSnapshot(
       running.target, root: source, to: state.guestPath, input: input,
       budget: InputBudget(input.limits), stateDirectory: running.instance.directory + "/inputs",
       audit: running.instance)
-    if !force { commitPushedSnapshot(running.target, state.guestPath) }
+    // A failed removal still records what was sent, so the next push's
+    // clean check does not mistake it for guest work.
+    defer { if !force { commitPushedSnapshot(running.target, state.guestPath) } }
+    try removeDeletedTracked(running.target, state.guestPath, report.deletedTracked, force: force)
     diagnostics.log(.info, "Push complete")
   }
 
@@ -478,9 +482,63 @@ package struct WorkspaceTransfer: Sendable {
     if !report.unsupported.isEmpty {
       diagnostics.warn("Not sent (hard links or special files): \(list(report.unsupported))")
     }
-    if !report.deletedTracked.isEmpty {
+  }
+
+  /// Removes from the guest copy the tracked files the host deleted
+  /// (INPUT-01 outbound removal intent). Each path came from the host's own
+  /// index, passed the selection rules and is named in the output. Only
+  /// files and links are removed, never a directory. Without `force`, a
+  /// path is kept unless the guest repository tracks it unchanged from its
+  /// HEAD: the clean check cannot see an edit to a file the guest never
+  /// committed, and that edit may be the only copy.
+  func removeDeletedTracked(
+    _ target: SSHTarget, _ guest: GuestPath, _ paths: [String], force: Bool
+  ) throws {
+    guard !paths.isEmpty else { return }
+    var batches: [[String]] = [[]]
+    var size = 0
+    for path in paths {
+      if size + path.utf8.count > 32 << 10, !batches[batches.count - 1].isEmpty {
+        batches.append([])
+        size = 0
+      }
+      batches[batches.count - 1].append(path)
+      size += path.utf8.count + 3
+    }
+    // One letter per path, in order: r removed, k kept.
+    let unchanged =
+      force
+      ? ""
+      : "if [ ! -d .git ] || ! command -v git >/dev/null 2>&1 || ! git ls-files --error-unmatch -- \"$p\" >/dev/null 2>&1 || ! git diff --quiet HEAD -- \"$p\" 2>/dev/null; then printf k; continue; fi; "
+    var removed: [String] = []
+    var kept: [String] = []
+    for batch in batches {
+      var command = RemoteCommand().literal("cd ").arg(guest.rawValue).literal(" && for p in")
+      for path in batch { command = command.literal(" ").arg(path) }
+      command = command.literal(
+        "; do if [ -d \"$p\" ] && [ ! -L \"$p\" ]; then printf k; continue; fi; \(unchanged)rm -f -- \"$p\" || exit 1; printf r; done"
+      )
+      try target.requireHandoff()
+      guard let marks = client.capture(target, command.rendered), marks.count == batch.count,
+        marks.allSatisfy({ $0 == "r" || $0 == "k" })
+      else { throw HostError("Failed to remove files deleted on the host from guest:\(guest)") }
+      for (path, mark) in zip(batch, marks) {
+        if mark == "r" { removed.append(path) } else { kept.append(path) }
+      }
+    }
+    func list(_ paths: [String]) -> String {
+      paths.prefix(20).map(neutralizeControls).joined(separator: ", ")
+        + (paths.count > 20 ? ", …" : "")
+    }
+    if !removed.isEmpty {
+      diagnostics.log(
+        .info,
+        "Removed \(removed.count) tracked file(s) deleted on the host from guest:\(guest): \(list(removed))"
+      )
+    }
+    if !kept.isEmpty {
       diagnostics.warn(
-        "\(report.deletedTracked.count) tracked file(s) deleted on the host are not removed from the guest (outbound removal is not supported): \(list(report.deletedTracked))"
+        "Kept \(kept.count) file(s) deleted on the host that the guest repository does not hold unchanged (remove them in the guest, or push with --force): \(list(kept))"
       )
     }
   }

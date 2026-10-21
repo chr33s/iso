@@ -108,9 +108,13 @@ What is sent is one immutable snapshot of the selected files
 working-tree bytes of the files in the Git index, read as data without running
 Git on the host. `.git`, original history and credential-looking names
 (`.env`, keys, `.npmrc`, …) are never sent unless a name is explicitly allowed;
-omissions are listed. The snapshot travels as a tar stream; a push never
-deletes guest files, so files deleted on the host are reported rather than
-removed in the guest. A non-Git directory needs an explicit
+omissions are listed. The snapshot travels as a tar stream. A push also
+removes, by name, the tracked files you deleted on the host (only files and
+links, never a directory, and never a reserved, excluded or credential-looking
+path), and only when it may overwrite: a clean guest, or `--force`. Without
+`--force` a file is removed only when the guest repository holds it unchanged
+from its HEAD; any other is kept and named. Nothing else in the guest is
+deleted. A non-Git directory needs an explicit
 `workspace.input.mode = "paths"` selection.
 
 ## Pulling: guest to host

@@ -98,7 +98,7 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   guard hasGit else { return }
   let root = try scratchDirectory("ws")
   try git(root, "init", "-q")
-  for path in ["src/main.c", ".env", "deleted.txt", "keep/notes.md"] {
+  for path in ["src/main.c", ".env", "deleted.txt", "keep/notes.md", "keep/old.md", "id_rsa"] {
     try writeFile(root + "/" + path, path)
   }
   try git(root, "add", ".")
@@ -106,7 +106,11 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   try writeFile(root + "/src/main.c", "modified")
   try writeFile(root + "/untracked.txt", "u")
   try writeFile(root + "/extra/data.json", "{}")
-  try FileManager.default.removeItem(atPath: root + "/deleted.txt")
+  // Deleted on the host: only `deleted.txt` is a removal candidate; the
+  // excluded and the secret-named deletions are never removed in the guest.
+  for path in ["deleted.txt", "keep/old.md", "id_rsa"] {
+    try FileManager.default.removeItem(atPath: root + "/" + path)
+  }
   let input = WorkspaceInputConfig(
     mode: .tracked, paths: [.init(path: "extra", recursive: true)], exclude: ["keep"],
     secretAllow: [], limits: .ceilings)

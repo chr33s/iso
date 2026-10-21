@@ -524,11 +524,16 @@ package enum RemoteWorkspace {
     diagnostics.log(
       .info, "Pushing \(canonical) -> \(binding.host):\(binding.name):\(guestWorkspace)")
     let shadow = try shadow(config, binding)
-    try transfer.sendSnapshot(
+    let report = try transfer.sendSnapshot(
       target, root: canonical, to: guestWorkspace, input: config.workspaceInput,
       budget: InputBudget(config.workspaceInput.limits),
       stateDirectory: shadow.directory + "/inputs")
-    if !force { transfer.commitPushedSnapshot(target, guestWorkspace) }
+    // A failed removal still records what was sent (see `push`).
+    do {
+      defer { if !force { transfer.commitPushedSnapshot(target, guestWorkspace) } }
+      try transfer.removeDeletedTracked(
+        target, guestWorkspace, report.deletedTracked, force: force)
+    }
     try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: canonical))
       .save(shadow, diagnostics: diagnostics)
   }

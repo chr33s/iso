@@ -823,8 +823,9 @@ Byte fields take an integer or a string with a `KiB`, `MiB` or `GiB` suffix.
 
 What a transfer into the guest (`iso up` copy, `iso push`, mount sync, `iso
 host push`) may carry. Every transfer sends one immutable snapshot of the
-selected files; it never sends `.git` or original history, never deletes guest
-files, and never falls back to copying the whole directory.
+selected files; it never sends `.git` or original history and never falls back
+to copying the whole directory. Only a push deletes in the guest, and only the
+tracked files deleted on the host.
 
 ```jsonc
 {
@@ -856,8 +857,8 @@ files, and never falls back to copying the whole directory.
 name table, not content scanning. Links are sent as links only when their
 target stays inside the selection and does not pass through another link or
 `.git`; hard-linked files and special files are not sent. Omissions are listed
-by name. Tracked files deleted on the host are reported, not removed from the
-guest. After the first copy the guest gets a new repository with one synthetic
+by name. A push removes from the guest, by name, the tracked files deleted on
+the host that the selection would otherwise send; nothing else is deleted. After the first copy the guest gets a new repository with one synthetic
 commit of the sent files; it is not the host's history. `--exclude-git` is a
 deprecated no-op.
 

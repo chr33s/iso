@@ -151,8 +151,8 @@ package struct InputReport: Equatable {
   var excluded: [String] = []
   var links: [String] = []
   var unsupported: [String] = []
-  /// Tracked files deleted on the host; outbound removal is not
-  /// implemented, so the guest keeps its copies.
+  /// Tracked files deleted on the host, eligible for removal from the
+  /// guest copy by a push (never reserved, excluded or secret-named).
   var deletedTracked: [String] = []
 }
 
@@ -260,7 +260,9 @@ final class InputSnapshot {
           for path in tracked {
             var info = stat()
             if lstat(root + "/" + path, &info) != 0 && errno == ENOENT {
-              report.deletedTracked.append(path)
+              // Removal intent only for what the selection would send: a
+              // reserved, excluded or secret-named path is never removed.
+              if omission(path) == nil { report.deletedTracked.append(path) }
             } else {
               candidates.append(path)
             }

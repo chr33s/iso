@@ -1643,11 +1643,24 @@ FAULTS = [
      '"-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no",',
      '"-o", "StrictHostKeyChecking=yes",',
      "managementSSHOverridesGrantedAuthority"),
+    # INPUT-01 scoped outbound removal.
+    ("push-removal-deletes-directories", "Sources/IsoHost/Workspace/Workspace.swift",
+     'do if [ -d \\"$p\\" ] && [ ! -L \\"$p\\" ]; then printf k; continue; fi; \\(unchanged)rm -f',
+     'do \\(unchanged)rm -rf',
+     "pushRemovesOnlyTheTrackedFilesTheHostDeleted"),
+    ("push-removal-ignores-selection", "Sources/IsoHost/Workspace/WorkspaceInput.swift",
+     "              if omission(path) == nil { report.deletedTracked.append(path) }",
+     "              report.deletedTracked.append(path)",
+     "aTrackedSnapshotSendsSelectedBytesOnly"),
     # A piped child is terminated (killed, reaped, closed) at most once.
     ("piped-child-terminate-twice", "Sources/IsoHost/Processes/ProcessRunner.swift",
      "      else { return }\n      kill(-pid, SIGKILL)",
      "      else { kill(-pid, SIGKILL); close(input); close(output); return }\n      kill(-pid, SIGKILL)",
      "terminatingAPipedChildTwiceClosesNothingElse"),
+    ("push-removal-ignores-guest-edits", "Sources/IsoHost/Workspace/Workspace.swift",
+     "      force\n      ? \"\"\n      : \"if [ ! -d .git ]",
+     "      true\n      ? \"\"\n      : \"if [ ! -d .git ]",
+     "anUnforcedRemovalKeepsWhatTheGuestRepositoryDoesNotHoldUnchanged"),
 ]
 
 
