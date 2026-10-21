@@ -756,6 +756,51 @@ This groups substantive upstream changes after the recorded fork point through t
 
 The P0 return recommendations go beyond a literal coop port: descriptor-bound destinations, protected control roots, accurate partial outcomes and a qualified supported-layout contract are iso-specific obligations created by its existing stage/policy design. Preserve the editor enclave and maintenance VM rather than reducing those controls to upstream warnings. [Iso trust model][I-TRUST]; [private atomic writes][I-ATOMIC]; [release validation][I-RELEASE].
 
+## 14. Review and sign-off
+
+Implemented on branch `security-hardening` (base `58fb040`). The maintainer
+reviewed and approved the stop-and-confirm items on 2026-10-21:
+
+1. New receive subprocesses (`/usr/bin/bsdtar`, `/usr/bin/rsync` openrsync)
+   run on guest-sent data, from the protected system tools, with an inherited
+   lease and validated layout (RET-03/04).
+2. The return installer writes host paths derived from guest data, through
+   descriptor-relative, no-follow traversal and the destination binding
+   (RET-05–08).
+3. The `iso update` chain changed and is stricter: canonical tag, exact
+   asset URLs, HTTPS only, fixtures compile-gated (UPD-01).
+4. Forwarded guest environment values travel as `ISO_SSH_ENV_<n>` aliases
+   (ENV-01–04).
+5. New audit events: `pull_held`, `input_snapshot`, `handoff_fence` (AUD-01).
+6. Secure defaults: brokered transport, the provider-only preset and an 8h
+   session TTL (DEF-01).
+
+Evidence on the final tree:
+
+- Host package tests, companion packages (iso-policy, iso-proxy, iso-egress,
+  iso-ci, iso-sandbox), the six host contract scripts and
+  `swift format lint --strict` pass; the fault-injection suite detects every
+  fault (522).
+- S1: the full Apple VM suite (every phase) and the host-control suite, both
+  `--local` and `--remote` against a second Mac, pass with a hostile
+  `Include` at the top of the operator's `~/.ssh/config` (ProxyCommand and
+  LocalCommand writing markers, agent and X11 forwarding, `SendEnv *`, a
+  RemoteForward, `StrictHostKeyChecking no`); no marker was written. The
+  enrolled-host management hop keeps its trusted configuration by design and
+  was excluded from the hostile block. `ManagedSSHRoleTests` resolves every
+  role's real arguments with `ssh -G` under the same kind of file. Under the
+  same hostile file, a sandboxed `iso zed` session against a real VM brought
+  up Zed's remote server through the editor's own SSH (session key, session
+  config, iso's loopback tunnel); quitting the editor ended the session and
+  left no session key authorized in the guest.
+- S2: the VM suite revokes an `--env` grant by ID (absent from the next
+  session before any restart), replaces and then removes a port-forward
+  control socket (each stop succeeds promptly, starts no new ssh for the
+  control path and never signals an unrelated process); the host-control
+  suite covers relay session revocation, a lost management link, a
+  worker-service restart fencing earlier grants, and TTL expiry with an
+  offline client and a wedged guest.
+
 ## Source references
 
 [I-PROVENANCE]: https://github.com/chr33s/iso/blob/58fb04089503925070c74630f80edef28b19d9f2/PROVENANCE.md
