@@ -99,19 +99,20 @@ iso host up build-mac .
 
 ## Security controls
 
-Default VMs have network access. The [credential proxy](docs/credential-proxy.md)
-is automatic for providers with a configured upstream; other restrictions are
-opt-in.
+Default VMs are hardened. Without a preset, iso applies `provider-only`: a
+NIC-less brokered VM with no general egress, the
+[credential proxy](docs/credential-proxy.md) required, and staged file returns.
+Each relaxation is explicit, and `iso policy effective` lists them.
 
-- [Security presets](docs/configuration.md#security-presets):
-  `"security": {"preset": "provider-only"}` requires the proxy, disables direct
-  egress and stages file returns for review. `offline` suits local models or
-  pre-provisioned images.
-- [Credential handling](docs/configuration.md#proxymode): `proxy.mode: "required"`
-  withholds all provider credential variables from the guest.
-- [Network limits](docs/configuration.md#egress): `"egress": "none"` blocks routes
-  beyond the Mac while preserving SSH and its tunnels. **Guests can still reach
-  services on the Mac.**
+- [Security presets](docs/configuration.md#security-presets): `networked`
+  (needs `"network": {"transport": "vmnet"}`) restores open egress and direct
+  pulls; `offline` suits local models or pre-provisioned images.
+- [Credential handling](docs/configuration.md#proxymode): the default
+  `proxy.mode: "required"` withholds all provider credential variables from the
+  guest.
+- [Network limits](docs/configuration.md#network): a brokered VM has no network
+  device; `"egress": "filtered"` allows only listed hosts. **On a vmnet VM,
+  guests can still reach services on the Mac.**
 - [Secret storage](docs/commands.md#secrets): `iso secrets` encrypts local secrets
   with a passphrase and this Mac's Secure Enclave key, with no recovery path.
 - [File review](docs/workspaces.md#review-and-apply): `iso diff` or `iso pull --review`
@@ -121,9 +122,10 @@ opt-in.
 - [Authorization policy](docs/policy.md): an optional default-deny `policy`
   permits provider credential use, proxied requests and `iso pull --apply`, with
   request rate limits and a single-use approval of the reviewed stage.
-  `iso policy show` reports the active snapshot.
-- [Audit records](docs/commands.md#audit): `iso audit` reports boundary events and
-  forwarded variable names, never their values.
+  `iso policy show` reports the active snapshot. `iso policy effective` lists
+  saved grants, which `security.revoked_grant_ids` revokes.
+- [Audit records](docs/audit.md): `iso audit` reports boundary events and a
+  per-run history (also as a JSONL stream), as metadata only, never values.
 
 Read the [trust model](docs/trust-model.md) for the boundaries and their limits.
 
@@ -133,6 +135,7 @@ Read the [trust model](docs/trust-model.md) for the boundaries and their limits.
   [configuration](docs/configuration.md)
 - [Machine interface](docs/machine-interface.md) for editors, CI and other
   integrations
+- [iso-ci](docs/ci.md), the separately installed GitHub Actions companion
 - [Full documentation index](docs/index.md)
 - [Architecture](docs/ARCHITECTURE.md) and [release validation](docs/release-validation.md)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)

@@ -107,6 +107,7 @@ export const references = [
                     "proxy",
                     "secrets",
                     "policy-show",
+                    "policy-effective",
                     "audit",
                 ],
             },

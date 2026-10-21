@@ -1776,7 +1776,7 @@
                         <span class="host-tag">outside the VM</span>
                     </div>
                     <p class="demo-caption">
-                        Illustrative session · after setup, with provider-only configured
+                        Illustrative session · after setup, with the default provider-only settings
                     </p>
                 </div>
             </section>
@@ -1929,8 +1929,8 @@
                         </div>
                         <h3>Your keys. Your side.</h3>
                         <p>
-                            Route provider requests through a Swift host-side proxy. Required proxy
-                            mode keeps provider credentials out of the guest environment.
+                            Route provider requests through a Swift host-side proxy. By default,
+                            required proxy mode keeps provider credentials out of the guest.
                         </p>
                         <a class="text-link" href="/docs/credential-proxy"
                             >Meet the credential proxy
@@ -2005,12 +2005,12 @@
                         </div>
                         <h3>Review what comes back.</h3>
                         <p>
-                            Inspect changes with <code>iso diff</code>, or stage files with
-                            <code>iso pull --review</code>. Check the guest’s work before applying
-                            it to your project.
+                            Every pull lands in a host-side stage first. Inspect it with
+                            <code>iso diff</code>, then apply exactly that stage, with no host Git
+                            run on the guest’s files.
                         </p>
-                        <a class="text-link" href="/docs/workspaces#staged-pulls"
-                            >See staged pulls
+                        <a class="text-link" href="/docs/workspaces#review-and-apply"
+                            >See review and apply
                             <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg
                         ></a>
                     </article>
@@ -2175,12 +2175,12 @@
                         </div>
                         <h3>Limit the network.</h3>
                         <p>
-                            Set <code>egress</code> to <code>none</code> to cut routes beyond your
-                            Mac, or <code>filtered</code> to allow only listed hosts. Guests can
-                            still reach services on the Mac itself.
+                            By default the VM has no network device and no general egress. iso
+                            reaches it over a brokered stream; set <code>egress</code> to
+                            <code>filtered</code> to allow only listed hosts.
                         </p>
-                        <a class="text-link" href="/docs/configuration/security#egress"
-                            >Read about egress
+                        <a class="text-link" href="/docs/configuration/security#network"
+                            >Read about brokered networking
                             <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg
                         ></a>
                     </article>
@@ -2245,10 +2245,10 @@
                         <p>
                             <code>iso secrets</code> encrypts local secrets with a passphrase and
                             this Mac’s Secure Enclave key. <code>iso audit</code> records boundary
-                            events and variable names, never values.
+                            events and each run’s history: names and counts, never values.
                         </p>
-                        <a class="text-link" href="/docs/commands/security#secrets"
-                            >See secrets and audit
+                        <a class="text-link" href="/docs/audit"
+                            >See the audit history
                             <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg
                         ></a>
                     </article>
@@ -2298,8 +2298,8 @@
                         <h3>Set rules at the boundary.</h3>
                         <p>
                             For local VMs, opt into default-deny rules for provider access and
-                            applying staged files. Add proxy request limits and require a fresh,
-                            single-use approval before each apply.
+                            applying staged files. <code>iso policy effective</code> lists saved
+                            grants, and any can be revoked by ID.
                         </p>
                         <a class="text-link" href="/docs/policy"
                             >Explore authorization policy
@@ -2350,7 +2350,10 @@
                 <p class="trust-note">
                     Automating a workflow? Scripts and CI can use the versioned
                     <code>iso.machine/v1</code> interface for structured command output.
-                    <a href="/docs/machine-interface">Read the machine interface →</a>
+                    <a href="/docs/machine-interface">Read the machine interface →</a><br />
+                    Running GitHub Actions? The separately installed <code>iso-ci</code> runs each
+                    job in a fresh, NIC-less VM on your own Macs.
+                    <a href="/docs/ci">Read about iso-ci →</a>
                 </p>
             </section>
             <section
@@ -2396,12 +2399,12 @@
                             >config.jsonc<a
                                 class="code-tag"
                                 href="/docs/configuration/security#security-presets"
-                                >Optional hardening →</a
+                                >Security presets →</a
                             >
                         </div>
                         <pre
                             class="config-code"
-                        ><code><span class="syn-comment">// A boundary you control.</span>
+                        ><code><span class="syn-comment">// The default, spelled out.</span>
 {
   <span class="syn-key">"security"</span>: {
     <span class="syn-key">"preset"</span>: <span class="syn-string">"provider-only"</span>
@@ -2411,10 +2414,10 @@
   }
 }</code></pre>
                         <div class="config-explainer">
-                            <h3>Less access. On purpose.</h3>
+                            <h3>Less access. By default.</h3>
                             <p>
-                                The provider-only preset disables direct guest internet access,
-                                requires the credential proxy, and stages file returns. Set a
+                                Without a preset, iso uses provider-only: no network device,
+                                the credential proxy required, and staged file returns. Add a
                                 session deadline, too.
                             </p>
                             <div class="config-pills">
@@ -2435,8 +2438,9 @@
                         </div>
                     </div>
                     <p class="trust-note">
-                        Hardening is opt-in; the default is networked. No-egress mode can still
-                        reach services on your Mac. A VM is a boundary, not a guarantee.
+                        Relaxing the defaults is explicit: the networked preset needs a vmnet VM,
+                        whose guests can reach services on your Mac. A VM is a boundary, not a
+                        guarantee.
                         <a href="/docs/trust-model">Read the trust model →</a>
                     </p>
                 </div>
