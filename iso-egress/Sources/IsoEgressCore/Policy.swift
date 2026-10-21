@@ -129,8 +129,10 @@ package enum AddressPolicy {
   private static func ipv6(_ text: String) -> [UInt8]? {
     guard !text.utf8.contains(0), !text.contains("%") else { return nil }
     var address = in6_addr()
-    guard text.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
-    return withUnsafeBytes(of: address) { Array($0) }
+    // inet_pton reads the NUL-terminated copy (no interior NUL, checked above) and
+    // writes one in6_addr.
+    guard text.withCString({ unsafe inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
+    return withUnsafeBytes(of: address) { unsafe Array($0) }
   }
 }
 
@@ -341,7 +343,7 @@ package enum ConnectGate {
   package static func readHead(
     _ client: Int32, deadline: Duration = EgressBudgets.head, alive: () -> Bool = { true }
   ) -> [UInt8] {
-    readHead(client, deadline: deadline, alive: alive, pollEvents: { poll(&$0, 1, $1) })
+    readHead(client, deadline: deadline, alive: alive, pollEvents: { unsafe poll(&$0, 1, $1) })
   }
 
   /// Incomplete input never becomes a head; bytes after the terminator stay
@@ -370,7 +372,8 @@ package enum ConnectGate {
       guard probe.revents & Int16(POLLIN | POLLHUP) != 0 else { continue }
       // Peek before consuming so coalesced tunnel data never becomes headers.
       let room = min(buffer.count, EgressBudgets.maxHeadBytes - head.count)
-      let peeked = recv(client, &buffer, room, MSG_DONTWAIT | MSG_PEEK)
+      // `room` is at most buffer.count.
+      let peeked = unsafe recv(client, &buffer, room, MSG_DONTWAIT | MSG_PEEK)
       if peeked < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
       guard peeked > 0 else { return [] }
       let delimiter: [UInt8] = [13, 10, 13, 10]
@@ -387,7 +390,8 @@ package enum ConnectGate {
           break
         }
       }
-      let received = recv(client, &buffer, take, MSG_DONTWAIT)
+      // `take` is at most what was peeked, so it fits the buffer too.
+      let received = unsafe recv(client, &buffer, take, MSG_DONTWAIT)
       if received < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
       guard received > 0 else { return [] }
       head.append(contentsOf: buffer.prefix(received))

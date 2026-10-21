@@ -41,7 +41,7 @@ enum EgressMain {
     FileHandle.standardError.write(Data("iso-egress listening 127.0.0.1:\(port)\n".utf8))
     while lease.alive() {
       var listen = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-      if poll(&listen, 1, 200) < 0 {
+      if unsafe poll(&listen, 1, 200) < 0 {
         if errno == EINTR { continue }
         break
       }
@@ -68,15 +68,16 @@ enum EgressMain {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { throw PolicyError("socket failed") }
     var reuse: Int32 = 1
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+    unsafe setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
     var address = sockaddr_in()
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     address.sin_family = sa_family_t(AF_INET)
     address.sin_port = port.bigEndian
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    address.sin_addr = in_addr(s_addr: unsafe inet_addr("127.0.0.1"))
+    // One sockaddr_in viewed as a sockaddr of its exact length, for the call only.
     let bound = withUnsafePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      unsafe $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        unsafe bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
       }
     }
     guard bound == 0, listen(fd, Int32(EgressBudgets.maxSockets)) == 0 else {
@@ -109,7 +110,7 @@ enum JailSelfTest {
     if connectErrno(80) != EPERM { failures.append("port 80 was not denied") }
     if connectErrno(443) == EPERM { failures.append("port 443 was denied by the profile") }
     if !bindAllowed() { failures.append("loopback bind was denied") }
-    if getenv("HTTP_PROXY") != nil || getenv("http_proxy") != nil {
+    if unsafe getenv("HTTP_PROXY") != nil || getenv("http_proxy") != nil {
       failures.append("inherited proxy variable was visible")
     }
     if failures.isEmpty {
@@ -124,10 +125,11 @@ enum JailSelfTest {
 
   static func writeAllowed() -> Bool {
     let path = "/tmp/iso-egress-jail-\(getpid())"
-    let fd = open(path, O_CREAT | O_WRONLY | O_EXCL, 0o600)
+    // The C path is borrowed for each call only.
+    let fd = unsafe open(path, O_CREAT | O_WRONLY | O_EXCL, 0o600)
     if fd >= 0 {
       close(fd)
-      unlink(path)
+      unsafe unlink(path)
       return true
     }
     return false
@@ -135,10 +137,12 @@ enum JailSelfTest {
 
   static func execAllowed() -> Bool {
     var pid: pid_t = 0
-    let path = strdup("/usr/bin/true")
-    defer { free(path) }
-    var arguments: [UnsafeMutablePointer<CChar>?] = [path, nil]
-    let result = posix_spawn(&pid, path, nil, nil, &arguments, nil)
+    // A strdup copy, freed on return, in a NULL-terminated argv; the self-test
+    // does not check strdup for failure.
+    let path = unsafe strdup("/usr/bin/true")
+    defer { unsafe free(path) }
+    var arguments: [UnsafeMutablePointer<CChar>?] = unsafe [path, nil]
+    let result = unsafe posix_spawn(&pid, path, nil, nil, &arguments, nil)
     if result == 0 {
       waitpid(pid, nil, 0)
       return true
@@ -154,10 +158,11 @@ enum JailSelfTest {
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     address.sin_family = sa_family_t(AF_INET)
     address.sin_port = port.bigEndian
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    address.sin_addr = in_addr(s_addr: unsafe inet_addr("127.0.0.1"))
+    // One sockaddr_in viewed as a sockaddr of its exact length, for the call only.
     let connected = withUnsafePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      unsafe $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        unsafe Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
       }
     }
     return connected == 0 ? 0 : errno
@@ -170,10 +175,11 @@ enum JailSelfTest {
     var address = sockaddr_in()
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     address.sin_family = sa_family_t(AF_INET)
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    address.sin_addr = in_addr(s_addr: unsafe inet_addr("127.0.0.1"))
+    // One sockaddr_in viewed as a sockaddr of its exact length, for the call only.
     return withUnsafePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+      unsafe $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        unsafe bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
       }
     }
   }

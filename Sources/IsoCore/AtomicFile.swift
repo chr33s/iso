@@ -27,7 +27,8 @@ package enum AtomicFile {
     // `fs::metadata` does): a dotfiles link to a 0600 file must not come
     // back as a link-mode (0755) regular file.
     var existing = stat()
-    let exists = stat(path, &existing) == 0
+    // The C path is borrowed for this call; stat writes one initialized value.
+    let exists = unsafe stat(path, &existing) == 0
     let permissions: mode_t
     switch policy {
     case .preserveExisting(let fallback):
@@ -36,11 +37,12 @@ package enum AtomicFile {
     }
 
     let temporary = temporaryPath(for: path)
-    let fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    // Path arguments here and below are C strings borrowed for the call only.
+    let fd = unsafe open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else { throw .posix("Failed to write temp file", temporary) }
     var published = false
     defer {
-      if !published { unlink(temporary) }
+      if !published { unsafe unlink(temporary) }
     }
     do {
       defer { close(fd) }
@@ -50,7 +52,7 @@ package enum AtomicFile {
       }
       guard fsync(fd) == 0 else { throw HostError.posix("Failed to sync", temporary) }
     }
-    guard rename(temporary, path) == 0 else {
+    guard unsafe rename(temporary, path) == 0 else {
       throw .posix("Failed to rename \(temporary) ->", path)
     }
     published = true
@@ -69,9 +71,10 @@ package enum AtomicFile {
       }
     }
     let temporary = temporaryPath(for: path)
-    let fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    // Path arguments here and below are C strings borrowed for the call only.
+    let fd = unsafe open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else { throw .posix("Failed to write temp file", temporary) }
-    defer { unlink(temporary) }
+    defer { unsafe unlink(temporary) }
     do {
       defer { close(fd) }
       try writeAll(fd, bytes, temporary)
@@ -81,7 +84,7 @@ package enum AtomicFile {
       guard fsync(fd) == 0 else { throw HostError.posix("Failed to sync", temporary) }
     }
     // link(2) fails with EEXIST for any existing entry, including symlinks.
-    guard link(temporary, path) == 0 else {
+    guard unsafe link(temporary, path) == 0 else {
       let code = errno
       if code == EEXIST { throw HostError("\(path) already exists") }
       throw .posix("Failed to create", path, code)
@@ -93,7 +96,10 @@ package enum AtomicFile {
   package static func writeAll(_ fd: Int32, _ bytes: [UInt8], _ path: String) throws(HostError) {
     var offset = 0
     while offset < bytes.count {
-      let written = bytes[offset...].withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+      // write reads at most the slice's count; the pointer stays inside this closure.
+      let written = bytes[offset...].withUnsafeBytes {
+        unsafe Darwin.write(fd, $0.baseAddress, $0.count)
+      }
       if written < 0 {
         if errno == EINTR { continue }
         throw .posix("Failed to write", path)
@@ -106,7 +112,8 @@ package enum AtomicFile {
     let parent = (path as NSString).deletingLastPathComponent
     let name = (path as NSString).lastPathComponent
     var random = UInt64(0)
-    arc4random_buf(&random, MemoryLayout<UInt64>.size)
+    // Fills exactly the one UInt64 borrowed for this call.
+    unsafe arc4random_buf(&random, MemoryLayout<UInt64>.size)
     let file = ".\(name).\(getpid()).\(String(random, radix: 16)).tmp"
     return parent.isEmpty ? file : parent + "/" + file
   }

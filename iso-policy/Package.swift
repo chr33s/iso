@@ -6,6 +6,11 @@
 // process, no networking, no subprocesses, no third-party dependencies.
 import PackageDescription
 
+// Unacknowledged unsafe operations are errors; see docs/code-style.md.
+let strictMemorySafety: [SwiftSetting] = [
+  .strictMemorySafety(), .treatWarning("StrictMemorySafety", as: .error),
+]
+
 let package = Package(
   name: "iso-policy",
   platforms: [.macOS("27.0")],
@@ -14,8 +19,8 @@ let package = Package(
     .library(name: "IsoGitIndex", targets: ["IsoGitIndex"]),
   ],
   targets: [
-    .target(name: "IsoPolicy"),
-    .target(name: "IsoGitIndex"),
+    .target(name: "IsoPolicy", swiftSettings: strictMemorySafety),
+    .target(name: "IsoGitIndex", swiftSettings: strictMemorySafety),
     .testTarget(name: "IsoGitIndexTests", dependencies: ["IsoGitIndex"]),
     .testTarget(
       name: "IsoPolicyTests", dependencies: ["IsoPolicy"], resources: [.copy("Fixtures")]),

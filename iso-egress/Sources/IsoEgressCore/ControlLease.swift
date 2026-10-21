@@ -39,7 +39,7 @@ package final class ControlLease: Sendable {
       return false
     }
     var events = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-    let ready = poll(&events, 1, 0)
+    let ready = unsafe poll(&events, 1, 0)
     if ready < 0 {
       if errno == EINTR { return true }
       state.revoked = true
@@ -51,7 +51,8 @@ package final class ControlLease: Sendable {
     }
     if events.revents & Int16(POLLIN) != 0 {
       var byte: UInt8 = 0
-      let count = read(descriptor, &byte, 1)
+      // Reads at most the one byte borrowed here.
+      let count = unsafe read(descriptor, &byte, 1)
       if count < 0 && errno == EINTR { return true }
       guard count == 1, byte == 1 else {
         state.revoked = true

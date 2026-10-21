@@ -22,9 +22,20 @@ a bug through.
 
 - Swift 6.4 toolchain, Swift 6 language mode (`swiftLanguageModes: [.v6]`), strict concurrency, the
   pinned Xcode toolchain, macOS 27 deployment target.
-- `IsoConfiguration` enables strict memory safety and treats its diagnostics
-  as errors. Keep `unsafe` acknowledgments on the smallest audited C/Foundation
-  call, with the buffer bounds and pointer lifetime documented.
+- Strict memory safety is an error (the `strictMemorySafety` setting declared
+  in the root, `iso-policy`, `iso-proxy` and `iso-egress` manifests) in
+  `IsoCore`, `IsoConfiguration`, `IsoFuzzHarnesses`, `IsoPolicy`, `IsoGitIndex`,
+  `IsoProxyCore`, `IsoProxyTransport`, `IsoProxy`, `IsoEgressCore` and
+  `IsoEgress`: the shared core, configuration and policy code (and the fuzz
+  harnesses that drive it), and the proxy and egress companions that relay
+  guest traffic. Keep `unsafe` acknowledgments on the smallest audited
+  C/Foundation call, with the buffer bounds and pointer lifetime documented.
+  Mark a type `@safe` only when it owns its raw pointer and lends it out solely
+  within a scoped call, and say why in its doc comment (`ResolvedAddresses` in
+  `iso-egress`). A new shipped target in `iso-policy`, `iso-proxy` or
+  `iso-egress` gets the setting too; test, test-support and benchmark targets
+  do not. A new root target follows its layer: on for core and configuration
+  code, off for host, CLI and secrets.
 - Commit every `Package.resolved`; build and test with
   `--force-resolved-versions` so an unexpected resolution change fails.
   Add a dependency only with a reviewed reason; the host depends only on

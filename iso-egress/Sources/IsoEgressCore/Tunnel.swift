@@ -36,15 +36,16 @@ package enum Tunnel {
     var noSignal: Int32 = 1
     guard fcntl(left, F_SETFL, savedLeft | O_NONBLOCK) == 0,
       fcntl(right, F_SETFL, savedRight | O_NONBLOCK) == 0,
-      setsockopt(left, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
-        == 0,
-      setsockopt(right, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
-        == 0
+      // setsockopt reads only the one Int32 borrowed for each call.
+      unsafe setsockopt(
+        left, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size)) == 0,
+      unsafe setsockopt(
+        right, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size)) == 0
     else { return }
-    pump(
+    unsafe pump(
       left, right, alive: alive, maxReads: maxReads, idle: idle, queueCap: queueCap, budget: budget,
-      read: { fd, pointer, count in recv(fd, pointer, count, 0) },
-      write: { fd, pointer, count in send(fd, pointer, count, 0) })
+      read: { fd, pointer, count in unsafe recv(fd, pointer, count, 0) },
+      write: { fd, pointer, count in unsafe send(fd, pointer, count, 0) })
   }
 
   private enum Phase { case reading, draining, finished }
@@ -61,7 +62,9 @@ package enum Tunnel {
     _ left: Int32, _ right: Int32, alive: () -> Bool, maxReads: Int?, idle: Duration, queueCap: Int,
     budget: RelayBudget, read: (Int32, UnsafeMutableRawPointer, Int) -> Int,
     write: (Int32, UnsafeRawPointer, Int) -> Int,
-    pollEvents: (inout [pollfd], Int32) -> Int32 = { poll(&$0, 2, $1) }
+    // The caller always passes a two-entry array (a paused entry has fd -1),
+    // matching nfds 2.
+    pollEvents: (inout [pollfd], Int32) -> Int32 = { unsafe poll(&$0, 2, $1) }
   ) {
     // Index names the source socket; each queue writes to the other socket.
     let sockets = [left, right]
@@ -100,7 +103,8 @@ package enum Tunnel {
       if fds.contains(where: { $0.revents & Int16(POLLERR | POLLNVAL) != 0 }) { return }
       for index in 0..<2 where !directions[index].queue.isEmpty {
         guard fds[1 - index].revents & Int16(POLLOUT | POLLHUP) != 0 else { continue }
-        switch flush(&directions[index].queue, to: sockets[1 - index], write: write, budget: budget)
+        switch unsafe flush(
+          &directions[index].queue, to: sockets[1 - index], write: write, budget: budget)
         {
         case .progress(let count):
           held -= count
@@ -116,7 +120,7 @@ package enum Tunnel {
           aggregateAvailable: budget.available
         ).allowed
         guard room > 0 else { continue }
-        switch take(
+        switch unsafe take(
           sockets[index], into: &directions[index].queue, room: room, buffer: &buffer, read: read,
           budget: budget)
         {
@@ -148,7 +152,8 @@ package enum Tunnel {
     var error: Int32 = 0
     let count = queue.withUnsafeBytes { raw -> Int in
       guard let base = raw.baseAddress else { return 0 }
-      let wrote = write(fd, base, queue.count)
+      // Writes at most the queue's own byte count from its base.
+      let wrote = unsafe write(fd, base, raw.count)
       error = errno
       return wrote
     }
@@ -171,7 +176,8 @@ package enum Tunnel {
     var error: Int32 = 0
     let count = buffer.withUnsafeMutableBytes { raw -> Int in
       guard let base = raw.baseAddress else { return -1 }
-      let got = read(fd, base, reserved)
+      // `reserved` never exceeds buffer.count (see the reservation above).
+      let got = unsafe read(fd, base, reserved)
       error = errno
       return got
     }

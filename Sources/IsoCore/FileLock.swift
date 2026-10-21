@@ -7,7 +7,8 @@ package struct HostError: Error, Equatable, Sendable, CustomStringConvertible {
   package var description: String { message }
 
   package static func posix(_ action: String, _ path: String, _ code: Int32 = errno) -> HostError {
-    HostError("\(action) \(path): \(String(cString: strerror(code)))")
+    // libc supplies a NUL-terminated message; it is copied before another libc call.
+    HostError("\(action) \(path): \(unsafe String(cString: strerror(code)))")
   }
 }
 
@@ -27,7 +28,8 @@ package final class FileLock: Sendable {
       }
     }
     // The lock file carries no content; ownership is attached to its descriptor.
-    let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    // The C path is borrowed for this call only.
+    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
     guard fd >= 0 else { throw .posix("Failed to create lock file", path) }
     while flock(fd, LOCK_EX) != 0 {
       let code = errno
@@ -51,7 +53,8 @@ package final class FileLock: Sendable {
         throw HostError("Failed to create directory \(parent)")
       }
     }
-    let fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o600)
+    // The C path is borrowed for this call only.
+    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw .posix("Failed to create lock file", path) }
     while flock(fd, LOCK_EX | LOCK_NB) != 0 {
       let code = errno
@@ -109,14 +112,16 @@ package final class FileLock: Sendable {
 /// file (`O_CLOEXEC` and owner-only creation implied). Nil only when the file
 /// is absent and `flags` does not create it.
 package func openRegularFile(_ path: String, _ flags: Int32) throws(HostError) -> Int32? {
-  let fd = open(path, flags | O_NOFOLLOW | O_CLOEXEC, 0o600)
+  // The C path is borrowed for this call only.
+  let fd = unsafe open(path, flags | O_NOFOLLOW | O_CLOEXEC, 0o600)
   if fd < 0 {
     let code = errno
     if code == ENOENT && flags & O_CREAT == 0 { return nil }
     throw .posix("Failed to open", path, code)
   }
   var status = stat()
-  guard fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+  // fstat writes one initialized stat value, borrowed for this call.
+  guard unsafe fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
     close(fd)
     throw HostError("\(path) is not a regular file")
   }

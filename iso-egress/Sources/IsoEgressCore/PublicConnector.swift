@@ -7,7 +7,7 @@ import Darwin
 /// route) falls through to the next validated one.
 package enum PublicConnector {
   package static func connect(_ host: String, admission: Admission) -> Int32? {
-    connect(
+    unsafe connect(
       host, local: HostAddresses.current,
       resolve: {
         Resolver.lookup($0, admission: admission)
@@ -20,29 +20,31 @@ package enum PublicConnector {
   ) -> Int32? {
     let local = local()
     guard let resolved = resolve(host) else { return nil }
-    return resolved.withAddressInfo { info in
-      var cursor: UnsafePointer<addrinfo>? = info
+    // The libc list is borrowed for this closure only and walked by ai_next.
+    return unsafe resolved.withAddressInfo { info in
+      var cursor: UnsafePointer<addrinfo>? = unsafe info
       var addresses: [String] = []
-      while let node = cursor {
-        guard let text = numeric(node) else { return nil }
+      while let node = unsafe cursor {
+        guard let text = unsafe numeric(node) else { return nil }
         addresses.append(text)
-        cursor = node.pointee.ai_next.map { UnsafePointer($0) }
+        unsafe cursor = node.pointee.ai_next.map { unsafe UnsafePointer($0) }
       }
       guard AddressChoice.firstPublic(addresses, local: local) != nil else { return nil }
-      var candidate: UnsafePointer<addrinfo>? = info
-      while let node = candidate {
-        if let fd = dial(node, local) { return fd }
-        candidate = node.pointee.ai_next.map { UnsafePointer($0) }
+      var candidate: UnsafePointer<addrinfo>? = unsafe info
+      while let node = unsafe candidate {
+        if let fd = unsafe dial(node, local) { return fd }
+        unsafe candidate = node.pointee.ai_next.map { unsafe UnsafePointer($0) }
       }
       return nil
     }
   }
 
   private static func dial(_ info: UnsafePointer<addrinfo>, _ local: Set<String>) -> Int32? {
-    guard let first = info.pointee.ai_addr else { return nil }
-    let fd = socket(info.pointee.ai_family, SOCK_STREAM, 0)
+    // ai_addr is valid for ai_addrlen bytes while the list is borrowed.
+    guard let first = unsafe info.pointee.ai_addr else { return nil }
+    let fd = socket(unsafe info.pointee.ai_family, SOCK_STREAM, 0)
     guard fd >= 0 else { return nil }
-    guard Dial.connect(fd, address: first, length: info.pointee.ai_addrlen),
+    guard unsafe Dial.connect(fd, address: first, length: info.pointee.ai_addrlen),
       Dial.peerIsPublic(fd, local: local)
     else {
       close(fd)
@@ -52,10 +54,11 @@ package enum PublicConnector {
   }
 
   static func numeric(_ node: UnsafePointer<addrinfo>) -> String? {
-    guard let address = node.pointee.ai_addr else { return nil }
+    guard let address = unsafe node.pointee.ai_addr else { return nil }
     var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+    // getnameinfo reads ai_addrlen bytes and writes a NUL-terminated NI_MAXHOST name.
     guard
-      getnameinfo(
+      unsafe getnameinfo(
         address, node.pointee.ai_addrlen, &buffer,
         socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0
     else { return nil }

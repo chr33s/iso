@@ -784,8 +784,9 @@ swift test --force-resolved-versions --filter orderedJSON
 swift test --package-path iso-egress --force-resolved-versions --filter concurrent
 ```
 
-The ordinary host build enforces strict memory safety in `IsoConfiguration`;
-unacknowledged unsafe operations in that target are compiler errors.
+Ordinary builds enforce strict memory safety in the targets listed in
+[code style](code-style.md#toolchain-and-formatting); unacknowledged unsafe
+operations there are compiler errors.
 The Apple VM suite's `machine` phase proves an exec reached the guest before
 timing out and cannot complete its delayed work afterward.
 

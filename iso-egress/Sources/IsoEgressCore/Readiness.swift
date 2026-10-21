@@ -23,7 +23,8 @@ package struct EgressReadiness: Sendable {
     policyHash =
       "sha256:"
       + SHA256.hash(data: Data(canonical.utf8)).map {
-        String(format: "%02x", $0)
+        // A literal format with one matching UInt8 argument.
+        unsafe String(format: "%02x", $0)
       }.joined()
   }
 
@@ -93,14 +94,16 @@ package struct EgressReadiness: Sendable {
     guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }
     defer { _ = fcntl(fd, F_SETFL, flags) }
     guard
-      setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size)) == 0
+      unsafe setsockopt(
+        fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size)) == 0
     else { return false }
     let deadline = ContinuousClock.now + .seconds(1)
     var offset = 0
     while offset < bytes.count && ContinuousClock.now < deadline && alive() {
       let written = bytes.withUnsafeBytes { buffer -> Int in
         guard let base = buffer.baseAddress else { return 0 }
-        return send(fd, base.advanced(by: offset), bytes.count - offset, 0)
+        // offset < bytes.count, so the range stays inside the borrowed buffer.
+        return unsafe send(fd, base.advanced(by: offset), bytes.count - offset, 0)
       }
       if written > 0 {
         offset += written
@@ -109,7 +112,7 @@ package struct EgressReadiness: Sendable {
       if written == 0 { return false }
       guard errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK else { return false }
       var event = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-      if poll(&event, 1, 20) < 0 && errno != EINTR { return false }
+      if unsafe poll(&event, 1, 20) < 0 && errno != EINTR { return false }
     }
     return offset == bytes.count
   }

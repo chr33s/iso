@@ -12,15 +12,17 @@ enum Jail {
 
   static func disableCoreDumps() throws {
     var limit = rlimit(rlim_cur: 0, rlim_max: 0)
-    guard setrlimit(RLIMIT_CORE, &limit) == 0 else { throw Failure.coreLimit }
+    // setrlimit only reads the one rlimit borrowed for this call.
+    guard unsafe setrlimit(RLIMIT_CORE, &limit) == 0 else { throw Failure.coreLimit }
   }
 
   static func requireConfinement() throws {
     let path = "/private/tmp/iso-proxy-jail-" + UUID().uuidString
-    let fd = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+    // The C path is borrowed for each call only.
+    let fd = unsafe Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
     if fd >= 0 {
       Darwin.close(fd)
-      Darwin.unlink(path)
+      unsafe Darwin.unlink(path)
       throw Failure.fileWriteAllowed
     }
     guard errno == EPERM || errno == EACCES else { throw Failure.fileWriteAllowed }
@@ -36,24 +38,26 @@ enum Jail {
   }
 
   private static func probeExec() -> Int32 {
-    var arguments: [UnsafeMutablePointer<CChar>?] = [
+    // A NULL-terminated argv of owned strdup copies, each freed once on return.
+    var arguments: [UnsafeMutablePointer<CChar>?] = unsafe [
       strdup("/bin/sh"), strdup("-c"), strdup("exit 0"), nil,
     ]
     defer {
-      for argument in arguments.compactMap({ $0 }) { free(argument) }
+      for unsafe argument in unsafe arguments.compactMap({ unsafe $0 }) { unsafe free(argument) }
     }
-    guard arguments.prefix(3).allSatisfy({ $0 != nil }) else { return ENOMEM }
-    var environment: [UnsafeMutablePointer<CChar>?] = [nil]
+    guard unsafe arguments.prefix(3).allSatisfy({ unsafe $0 != nil }) else { return ENOMEM }
+    var environment: [UnsafeMutablePointer<CChar>?] = unsafe [nil]
     var pid: pid_t = 0
+    // posix_spawn reads both NULL-terminated arrays only during the call.
     let result = arguments.withUnsafeMutableBufferPointer { args in
       environment.withUnsafeMutableBufferPointer { env in
         guard let args = args.baseAddress, let env = env.baseAddress else { return EINVAL }
-        return posix_spawn(&pid, "/bin/sh", nil, nil, args, env)
+        return unsafe posix_spawn(&pid, "/bin/sh", nil, nil, args, env)
       }
     }
     if result == 0 {
       var status: Int32 = 0
-      while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+      while unsafe waitpid(pid, &status, 0) < 0 && errno == EINTR {}
     }
     return result
   }
@@ -67,10 +71,12 @@ enum Jail {
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     address.sin_family = sa_family_t(AF_INET)
     address.sin_port = port.bigEndian
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    address.sin_addr = in_addr(s_addr: unsafe inet_addr("127.0.0.1"))
+    // One sockaddr_in viewed as a sockaddr of its exact length, for this call only.
     return withUnsafePointer(to: &address) { pointer in
-      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
-        Darwin.connect(fd, pointer, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 ? 0 : errno
+      unsafe pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
+        unsafe Darwin.connect(fd, pointer, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+          ? 0 : errno
       }
     }
   }

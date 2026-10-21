@@ -1,6 +1,11 @@
 // swift-tools-version: 6.4
 import PackageDescription
 
+// Unacknowledged unsafe operations are errors; see docs/code-style.md.
+let strictMemorySafety: [SwiftSetting] = [
+  .strictMemorySafety(), .treatWarning("StrictMemorySafety", as: .error),
+]
+
 let package = Package(
   name: "iso-proxy",
   platforms: [.macOS("27.0")],
@@ -16,14 +21,15 @@ let package = Package(
   ],
   targets: [
     .target(
-      name: "IsoProxyCore", dependencies: [.product(name: "IsoPolicy", package: "iso-policy")]),
+      name: "IsoProxyCore", dependencies: [.product(name: "IsoPolicy", package: "iso-policy")],
+      swiftSettings: strictMemorySafety),
     .executableTarget(
       name: "IsoProxy",
       dependencies: [
         "IsoProxyCore", "IsoProxyTransport",
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
-      ]),
+      ], swiftSettings: strictMemorySafety),
     .target(
       name: "IsoProxyTransport",
       dependencies: [
@@ -36,7 +42,7 @@ let package = Package(
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
         .product(name: "IsoPolicy", package: "iso-policy"),
-      ]),
+      ], swiftSettings: strictMemorySafety),
     .testTarget(
       name: "IsoProxyTransportTests",
       dependencies: [

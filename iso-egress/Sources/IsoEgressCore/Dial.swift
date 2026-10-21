@@ -63,15 +63,17 @@ final class Box<T: Sendable>: Sendable {
 
 package enum HostAddresses {
   package static func current() -> Set<String> {
+    // The libc list is walked only before the deferred free; each address is
+    // read with its own sa_len into an NI_MAXHOST buffer.
     var list: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&list) == 0, let list else { return [] }
-    defer { freeifaddrs(list) }
+    guard unsafe getifaddrs(&list) == 0, let list = unsafe list else { return [] }
+    defer { unsafe freeifaddrs(list) }
     var names: Set<String> = []
-    var cursor: UnsafeMutablePointer<ifaddrs>? = list
-    while let node = cursor {
-      if let address = node.pointee.ifa_addr {
+    var cursor: UnsafeMutablePointer<ifaddrs>? = unsafe list
+    while let node = unsafe cursor {
+      if let address = unsafe node.pointee.ifa_addr {
         var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        if getnameinfo(
+        if unsafe getnameinfo(
           address, socklen_t(address.pointee.sa_len), &buffer, socklen_t(buffer.count), nil, 0,
           NI_NUMERICHOST) == 0
         {
@@ -80,7 +82,7 @@ package enum HostAddresses {
           names.insert(host.lowercased())
         }
       }
-      cursor = node.pointee.ifa_next
+      unsafe cursor = node.pointee.ifa_next
     }
     return names
   }
@@ -93,12 +95,13 @@ package enum Resolver {
     deadline: Duration = EgressBudgets.dns
   ) -> ResolvedAddresses? {
     lookup(admission: admission, deadline: deadline) {
-      var hints = addrinfo()
-      hints.ai_family = AF_UNSPEC
-      hints.ai_socktype = SOCK_STREAM
+      var hints = unsafe addrinfo()
+      unsafe hints.ai_family = AF_UNSPEC
+      unsafe hints.ai_socktype = SOCK_STREAM
       var resolved: UnsafeMutablePointer<addrinfo>?
-      let code = getaddrinfo(host, port, &hints, &resolved)
-      return ResolvedAddresses.adopting(resolved, status: code)
+      // C strings are borrowed for the call; the returned list is owned by ResolvedAddresses.
+      let code = unsafe getaddrinfo(host, port, &hints, &resolved)
+      return unsafe ResolvedAddresses.adopting(resolved, status: code)
     }
   }
 
@@ -116,7 +119,11 @@ package enum Resolver {
 }
 
 /// Owns an immutable libc address list, including results arriving after timeout.
-package final class ResolvedAddresses: @unchecked Sendable {
+/// `@safe`: the class frees the list once, in deinit, and stays alive while
+/// `withAddressInfo` lends it. Callers still acknowledge, with `unsafe`, that
+/// `adopting` gets a uniquely owned list with its matching release, and that the
+/// body does not keep the pointer.
+@safe package final class ResolvedAddresses: @unchecked Sendable {
   private let info: UnsafeMutablePointer<addrinfo>
   private let release: @Sendable (UnsafeMutablePointer<addrinfo>) -> Void
 
@@ -124,26 +131,28 @@ package final class ResolvedAddresses: @unchecked Sendable {
     _ info: UnsafeMutablePointer<addrinfo>,
     release: @escaping @Sendable (UnsafeMutablePointer<addrinfo>) -> Void
   ) {
-    self.info = info
-    self.release = release
+    unsafe self.info = info
+    unsafe self.release = release
   }
 
   static func adopting(
     _ info: UnsafeMutablePointer<addrinfo>?, status: Int32,
-    release: @escaping @Sendable (UnsafeMutablePointer<addrinfo>) -> Void = { freeaddrinfo($0) }
+    release: @escaping @Sendable (UnsafeMutablePointer<addrinfo>) -> Void = {
+      unsafe freeaddrinfo($0)
+    }
   ) -> ResolvedAddresses? {
-    guard status == 0, let info else {
-      if let info { release(info) }
+    guard status == 0, let info = unsafe info else {
+      if let info = unsafe info { unsafe release(info) }
       return nil
     }
-    return ResolvedAddresses(info, release: release)
+    return unsafe ResolvedAddresses(info, release: release)
   }
 
-  deinit { release(info) }
+  deinit { unsafe release(info) }
 
   /// The list is borrowed for this callback only; do not free or retain pointers.
   package func withAddressInfo<T>(_ body: (UnsafePointer<addrinfo>) throws -> T) rethrows -> T {
-    try withExtendedLifetime(self) { try body(UnsafePointer(info)) }
+    try withExtendedLifetime(self) { try unsafe body(UnsafePointer(info)) }
   }
 }
 
@@ -153,7 +162,7 @@ package enum Dial {
     _ fd: Int32, address: UnsafePointer<sockaddr>, length: socklen_t,
     timeout: Duration = EgressBudgets.connect
   ) -> Bool {
-    connect(
+    unsafe connect(
       fd, address: address, length: length, timeout: timeout,
       start: Darwin.connect, wait: Darwin.poll)
   }
@@ -168,7 +177,7 @@ package enum Dial {
     let flags = fcntl(fd, F_GETFL)
     guard flags >= 0 else { return false }
     guard fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }
-    let started = start(fd, address, length)
+    let started = unsafe start(fd, address, length)
     if started == 0 {
       _ = fcntl(fd, F_SETFL, flags)
       return true
@@ -179,11 +188,12 @@ package enum Dial {
     }
     var probe = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
     let milliseconds = Int32(max(1, min(Monotonic.nanoseconds(timeout) / 1_000_000, 60_000)))
-    let ready = wait(&probe, 1, milliseconds)
+    // `wait` (poll in release) and getsockopt write only the single values borrowed here.
+    let ready = unsafe wait(&probe, 1, milliseconds)
     var error: Int32 = 0
     var size = socklen_t(MemoryLayout<Int32>.size)
     if ready > 0 {
-      _ = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size)
+      _ = unsafe getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size)
     } else {
       error = ETIMEDOUT
     }
@@ -194,14 +204,18 @@ package enum Dial {
   package static func peerIsPublic(_ fd: Int32, local: Set<String>) -> Bool {
     var storage = sockaddr_storage()
     var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+    // The kernel writes at most `length` bytes of sockaddr_storage and returns
+    // the length getnameinfo then reads; the pointers stay inside the closures.
     let ok = withUnsafeMutablePointer(to: &storage) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(fd, $0, &length) }
+      unsafe $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        unsafe getpeername(fd, $0, &length)
+      }
     }
     guard ok == 0 else { return false }
     var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
     let named = withUnsafePointer(to: &storage) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        getnameinfo($0, length, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST)
+      unsafe $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        unsafe getnameinfo($0, length, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST)
       }
     }
     guard named == 0 else { return false }

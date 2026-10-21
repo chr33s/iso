@@ -4,6 +4,11 @@
 // packages and separate processes; this package never links them.
 import PackageDescription
 
+// Unacknowledged unsafe operations are errors; see docs/code-style.md.
+let strictMemorySafety: [SwiftSetting] = [
+  .strictMemorySafety(), .treatWarning("StrictMemorySafety", as: .error),
+]
+
 let package = Package(
   name: "iso",
   platforms: [.macOS("27.0")],
@@ -19,11 +24,11 @@ let package = Package(
     .package(path: "iso-policy"),
   ],
   targets: [
-    .target(name: "IsoCore"),
+    .target(name: "IsoCore", swiftSettings: strictMemorySafety),
     .target(
       name: "IsoConfiguration",
       dependencies: ["IsoCore", .product(name: "IsoPolicy", package: "iso-policy")],
-      swiftSettings: [.strictMemorySafety(), .treatWarning("StrictMemorySafety", as: .error)]),
+      swiftSettings: strictMemorySafety),
     // The local secret store; must not depend on IsoHost (VM/runtime code).
     .target(
       name: "IsoSecrets",
@@ -52,7 +57,7 @@ let package = Package(
     // ordinary builds. Not part of any product.
     .target(
       name: "IsoFuzzHarnesses", dependencies: ["IsoCore", "IsoConfiguration"],
-      path: "fuzz/Targets"),
+      path: "fuzz/Targets", swiftSettings: strictMemorySafety),
     .testTarget(
       name: "IsoFuzzReplayTests", dependencies: ["IsoFuzzHarnesses"],
       path: "tests/swift/IsoFuzzReplayTests"),

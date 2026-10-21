@@ -21,7 +21,7 @@ package enum EgressBudgets {
 package enum Monotonic {
   package static func now() -> UInt64 {
     var time = timespec()
-    clock_gettime(CLOCK_MONOTONIC, &time)
+    unsafe clock_gettime(CLOCK_MONOTONIC, &time)
     return UInt64(time.tv_sec) * 1_000_000_000 &+ UInt64(time.tv_nsec)
   }
 
