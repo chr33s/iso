@@ -39,6 +39,11 @@ keys.
 Plain `swift build` development binaries are linker-signed only and carry
 none of these entitlements.
 
+Strict memory safety (`.strictMemorySafety()` as an error) is SwiftPM's
+nearest equivalent to the extra diagnostic settings. It is on in the shared
+core, configuration, policy, proxy and egress targets listed in
+[code style](code-style.md#toolchain-and-formatting).
+
 ## Disabled settings
 
 None.
@@ -55,9 +60,6 @@ Settings considered but not yet enabled. Revisit them later.
   binary. Adopting it means moving the release builds to Xcode's toolchain and
   updating `BUILD.json`'s `architecture` and `verify-candidate.py`.
   `#if arch(arm64)` still holds on arm64e.
-- Strict memory safety (`.strictMemorySafety()` as an error) on targets other
-  than `IsoConfiguration`: SwiftPM's nearest equivalent to the extra
-  diagnostic settings. Each `unsafe` finding needs review.
 - `com.apple.security.hardened-process.checked-allocations.enable-pure-data`
   and `checked-allocations.no-tagged-receive`: optional memory tagging
   sub-options, not part of the default set.
