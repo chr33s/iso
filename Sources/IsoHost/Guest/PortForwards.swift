@@ -122,7 +122,19 @@ package struct PortForwards: Sendable {
     return result == 0 ? nil : errno
   }
 
-  static func controlPath(_ instance: Instance) -> String { instance.directory + "/forwards.sock" }
+  /// The forward master's control socket: `<instance>/forwards.sock` when it
+  /// fits macOS's 104-byte Unix socket limit with the 17-byte suffix ssh adds
+  /// while binding, else a per-instance name in the user's private temporary
+  /// directory (a long data root would otherwise make every forward fail).
+  static func controlPath(_ instance: Instance) -> String {
+    let local = instance.directory + "/forwards.sock"
+    if local.utf8.count + 17 < 104 { return local }
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in instance.directory.utf8 { hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
+    let directory = NSTemporaryDirectory()
+    return (directory.hasSuffix("/") ? directory : directory + "/") + "iso-fwd-"
+      + String(format: "%016llx", hash) + ".sock"
+  }
 
   /// Starts the forwarder; a no-op for an empty set. Any leftover master
   /// from a crashed run is closed first so it cannot hold the ports.

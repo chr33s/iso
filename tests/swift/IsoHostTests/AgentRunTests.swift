@@ -419,3 +419,23 @@ private func agentConfig(_ root: String) throws -> IsoConfig {
     Array("{\"data_dir\": \"\(root)\"}".utf8), format: .json, path: "c", limits: .configuration)
   return try ConfigLoader.decode(value, path: "c", environment: .empty)
 }
+
+/// macOS caps Unix socket paths at 104 bytes and ssh binds a 17-byte
+/// temporary name beside the control path: a long data root gets a short,
+/// stable, per-instance socket in the private temporary directory instead.
+@Test func forwardControlSocketsFitTheUnixPathLimit() throws {
+  func instance(_ directory: String) throws -> Instance {
+    Instance(
+      name: try InstanceName("dev"), index: InstanceIndex(0)!, directory: directory, image: .default
+    )
+  }
+  #expect(
+    PortForwards.controlPath(try instance("/tmp/iso/instances/dev"))
+      == "/tmp/iso/instances/dev/forwards.sock")
+  let deep = "/private/var/folders/aa/" + String(repeating: "d", count: 60) + "/iso-data/instances"
+  let path = PortForwards.controlPath(try instance(deep + "/one"))
+  #expect(path.utf8.count + 17 < 104)
+  #expect(path.hasPrefix(NSTemporaryDirectory()))
+  #expect(PortForwards.controlPath(try instance(deep + "/one")) == path)
+  #expect(PortForwards.controlPath(try instance(deep + "/two")) != path)
+}

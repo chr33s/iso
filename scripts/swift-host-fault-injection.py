@@ -1661,6 +1661,11 @@ FAULTS = [
      "      force\n      ? \"\"\n      : \"if [ ! -d .git ]",
      "      true\n      ? \"\"\n      : \"if [ ! -d .git ]",
      "anUnforcedRemovalKeepsWhatTheGuestRepositoryDoesNotHoldUnchanged"),
+    # Port-forward control sockets fit the 104-byte Unix path limit.
+    ("forward-socket-path-limit", "Sources/IsoHost/Guest/PortForwards.swift",
+     "    if local.utf8.count + 17 < 104 { return local }",
+     "    if true { return local }",
+     "forwardControlSocketsFitTheUnixPathLimit"),
 ]
 
 
