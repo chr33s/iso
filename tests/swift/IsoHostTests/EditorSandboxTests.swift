@@ -445,8 +445,17 @@ private struct SessionFixture {
     atPath: fixture.guest.root + "/s", withIntermediateDirectories: true)
   let healthy = Mutex(true)
   let start = ContinuousClock.now
-  Thread.detachNewThread {
-    Thread.sleep(forTimeInterval: 1)
+  // The proof is lost while the editor runs: the flip waits for the editor
+  // (a fixed delay raced the pre-launch check on a loaded machine).
+  Thread.detachNewThread { [root = fixture.guest.root] in
+    func editorRunning() -> Bool {
+      guard let text = readFile(root + "/editor.pid"),
+        let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
+      else { return false }
+      return kill(pid, 0) == 0
+    }
+    let deadline = ContinuousClock.now + .seconds(10)
+    while !editorRunning(), ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.05) }
     healthy.withLock { $0 = false }
   }
   let error = try #require(throws: GuestHandoffFailure.self) {
@@ -502,6 +511,35 @@ private struct SessionFixture {
         target: SSHConnectionTarget(
           instance: try InstanceName("z"), guestPath: guestWorkspace, egress: egress),
         capabilities: capabilities, forwardPort: 41001, hostHome: nil))
+  }
+  #expect(try plan([.internet], egress: .none).fileTransfer)
+  #expect(try !plan([], egress: .none).fileTransfer)
+  #expect(try !plan([.internet], egress: .open).fileTransfer)
+}
+
+/// Remote-SSH probes and runs `scp` when it uploads a host-downloaded server
+/// (`internet` with restricted egress); refused, its spawn fails with EPERM
+/// and the connection is abandoned. Otherwise scp stays out of the sandbox.
+@Test func aSandboxedVSCodeMayRunSCPOnlyWhenItUploadsItsServer() throws {
+  let root = try scratchDirectory("code-plan")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let home = root + "/home"
+  try FileManager.default.createDirectory(
+    atPath: home + "/.vscode/extensions/ms-vscode-remote.remote-ssh-0.128.0",
+    withIntermediateDirectories: true)
+  let app = TrustedEditorApp(
+    bundle: root + "/Visual Studio Code.app",
+    executable: root + "/Visual Studio Code.app/Contents/MacOS/Electron", version: "1.0")
+  func plan(_ capabilities: [EditorHostCapability], egress: EgressMode) throws
+    -> SandboxedEditorPlan
+  {
+    let enclave = try EditorEnclave.create(in: root)
+    return try VSCodeEditorProvider().prepareSandboxed(
+      SandboxedEditorContext(
+        enclave: enclave, app: app,
+        target: SSHConnectionTarget(
+          instance: try InstanceName("c"), guestPath: guestWorkspace, egress: egress),
+        capabilities: capabilities, forwardPort: 41002, hostHome: home))
   }
   #expect(try plan([.internet], egress: .none).fileTransfer)
   #expect(try !plan([], egress: .none).fileTransfer)

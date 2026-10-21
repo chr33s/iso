@@ -60,6 +60,10 @@ package struct VSCodeEditorProvider: EditorProvider {
       throw ContextError("Failed to copy the Remote - SSH extension from \(source)", cause: error)
     }
     let internet = context.capabilities.contains(.internet)
+    // With a host-side server download Remote-SSH uploads the server with
+    // scp, and probes /usr/bin/scp before connecting: refused, the probe's
+    // spawn fails (EPERM) and the connection is abandoned.
+    let upload = internet && context.target.egress != .open
     var settings: [String: Any] = [
       "chat.disableAIFeatures": true,
       "telemetry.telemetryLevel": "off",
@@ -79,9 +83,7 @@ package struct VSCodeEditorProvider: EditorProvider {
       "remote.SSH.showLoginTerminal": false,
       "remote.SSH.preferredLocalPortRange": "\(context.forwardPort)-\(context.forwardPort)",
     ]
-    if internet, context.target.egress != .open {
-      settings["remote.SSH.localServerDownload"] = "always"
-    }
+    if upload { settings["remote.SSH.localServerDownload"] = "always" }
     try enclave.write(try settingsJSON(settings), to: enclave.data + "/User/settings.json")
     return SandboxedEditorPlan(
       arguments: [
@@ -93,7 +95,8 @@ package struct VSCodeEditorProvider: EditorProvider {
         "port-forwarding", "permitopen=\"localhost:*\"", "permitopen=\"127.0.0.1:*\"",
       ],
       usesForwardPort: true, terminal: true,
-      machServicePrefix: bundleIdentity.identifier + ".MachPortRendezvousServer.")
+      machServicePrefix: bundleIdentity.identifier + ".MachPortRendezvousServer.",
+      fileTransfer: upload)
   }
 
   /// The newest user-owned Remote-SSH in the user's VS Code extensions.

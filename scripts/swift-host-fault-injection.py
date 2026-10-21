@@ -1666,6 +1666,10 @@ FAULTS = [
      "    if local.utf8.count + 17 < 104 { return local }",
      "    if true { return local }",
      "forwardControlSocketsFitTheUnixPathLimit"),
+    # A sandboxed VS Code that uploads its server may run scp, and only then.
+    ("vscode-upload-scp", "Sources/IsoHost/Editor/VSCodeEditorProvider.swift",
+     "      fileTransfer: upload)", "      fileTransfer: false)",
+     "aSandboxedVSCodeMayRunSCPOnlyWhenItUploadsItsServer"),
 ]
 
 
