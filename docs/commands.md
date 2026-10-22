@@ -613,8 +613,11 @@ iso agent update --check         # report versions, change nothing
 
 Show or switch a VM's model backend between cloud (Anthropic / OpenAI) and a
 host-side local model server. The selection is per-instance and persists across
-restarts. Switching rewrites the guest agent config; it never rebuilds or
-restarts the VM.
+restarts. Switching rewrites the guest agent config of a running VM; it never
+rebuilds or restarts the VM. On a running brokered VM, a switch that adds or
+removes a local-model service changes the boot's network policy, which is fixed
+per boot: the selection is saved, the guest is left as it is, and the command
+prints the `iso stop NAME && iso start NAME` that applies it.
 
 ```
 iso model show [NAME]

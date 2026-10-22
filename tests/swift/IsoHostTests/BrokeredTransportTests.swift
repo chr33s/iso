@@ -319,6 +319,8 @@ private let filteredBrokered =
 @Test func aChangedGrantRequiresARestart() throws {
   try withInstance(filteredBrokered) { instance, config in
     try NetworkPolicy.save(config, instance)
+    let recorded = try #require(try NetworkPolicy.load(instance))
+    #expect(!(try NetworkPolicy.brokeredPolicyChanged(recorded, instance, config: config)))
     let widened = try decode(
       #"{"network":{"transport":"brokered"},"egress":"filtered","egress_filter":{"allowed_hosts":["api.example.com","other.example.com"]}}"#
     )
@@ -331,12 +333,27 @@ private let filteredBrokered =
     model.mode = .local
     try model.save(instance)
     #expect(throws: HostError.self) { try NetworkPolicy.enforce(instance, config: local) }
+    #expect(try NetworkPolicy.brokeredPolicyChanged(recorded, instance, config: local))
     let resolved = try BrokeredNetworkPolicy.resolve(local, instance)
     #expect(
       resolved.localServices == [
         .init(name: "claude-local-model", guestPort: 1234, hostAddress: "127.0.0.1", hostPort: 1234)
       ])
     #expect(resolved.digest != (try #require(try NetworkPolicy.load(instance)?.brokeredDigest)))
+  }
+}
+
+@Test func aVmnetBootNeverReportsABrokeredPolicyChange() throws {
+  try withInstance(#"{"network":{"transport":"vmnet"},"egress":"none"}"#) { instance, config in
+    try NetworkPolicy.save(config, instance)
+    let local = try decode(
+      #"{"network":{"transport":"vmnet"},"egress":"none","claude":{"local_model":{"host_url":"http://127.0.0.1:1234","model":"m"}}}"#
+    )
+    var model = ModelState()
+    model.mode = .local
+    try model.save(instance)
+    let recorded = try #require(try NetworkPolicy.load(instance))
+    #expect(!(try NetworkPolicy.brokeredPolicyChanged(recorded, instance, config: local)))
   }
 }
 

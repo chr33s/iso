@@ -355,18 +355,39 @@ struct ModelCommand: ParsableCommand {
     try report(context, instance, state, applied: applyToRunning(context, instance))
   }
 
-  /// Re-materialize the guest configuration live; false when stopped.
-  static func applyToRunning(_ context: CommandContext, _ instance: Instance) throws -> Bool {
-    guard let running = try context.backend.asBootstrapRunning(instance) else { return false }
+  /// How a saved model selection reached the instance.
+  enum Application: Equatable {
+    /// Re-materialized in the running guest.
+    case applied
+    /// Stopped; the next start applies it.
+    case saved
+    /// Running brokered boot whose network policy (local-model services)
+    /// the selection changes; only a restart can apply it.
+    case restartRequired
+  }
+
+  /// Re-materialize the guest configuration live when the running boot's
+  /// network policy still matches.
+  static func applyToRunning(_ context: CommandContext, _ instance: Instance) throws
+    -> Application
+  {
+    // Before the handoff, which refuses a changed boot policy outright.
+    if context.backend.isRunning(instance) {
+      let recorded = try NetworkPolicy.enforceMode(instance, config: context.config)
+      if try NetworkPolicy.brokeredPolicyChanged(recorded, instance, config: context.config) {
+        return .restartRequired
+      }
+    }
+    guard let running = try context.backend.asBootstrapRunning(instance) else { return .saved }
     let agents = context.agents
     let session = try agents.session(for: running)
     try agents.bootstrapAgents(session, instance: running.instance, mode: .restart)
     if context.config.egress == .filtered { _ = try context.backend.completeBootstrap(running) }
-    return true
+    return .applied
   }
 
   static func report(
-    _ context: CommandContext, _ instance: Instance, _ state: ModelState, applied: Bool
+    _ context: CommandContext, _ instance: Instance, _ state: ModelState, applied: Application
   ) throws {
     let local = state.mode == .local
     for line in reportLines(
@@ -379,7 +400,7 @@ struct ModelCommand: ParsableCommand {
   }
 
   static func reportLines(
-    _ name: String, mode: ModelMode, claudeLocal: Bool, codexLocal: Bool, applied: Bool
+    _ name: String, mode: ModelMode, claudeLocal: Bool, codexLocal: Bool, applied: Application
   ) -> [String] {
     var lines: [String] = []
     switch mode {
@@ -397,10 +418,17 @@ struct ModelCommand: ParsableCommand {
         )
       }
     }
-    lines.append(
-      applied
-        ? "Applied to the running VM — no restart needed; relaunch claude/codex (e.g. `iso claude \(name)`) to pick it up."
-        : "Saved — applies on next start.")
+    switch applied {
+    case .applied:
+      lines.append(
+        "Applied to the running VM — no restart needed; relaunch claude/codex (e.g. `iso claude \(name)`) to pick it up."
+      )
+    case .saved: lines.append("Saved — applies on next start.")
+    case .restartRequired:
+      lines.append(
+        "Saved — '\(name)' is brokered, and its local-model services are fixed for each boot; apply with `iso stop \(name) && iso start \(name)`."
+      )
+    }
     return lines
   }
 

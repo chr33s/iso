@@ -8,6 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **`iso model set` on brokered VMs:** on a running brokered instance, a
+  switch to or from a local model failed with
+  `POLICY_CHANGE_REQUIRES_RESTART`, because local-model services are part of
+  the boot's network policy. The selection is now saved and the command
+  names the `iso stop NAME && iso start NAME` that applies it; vmnet VMs
+  still switch live.
 - **iso-ci** (new, separately installed companion in `iso-ci/`; release
   qualification not yet recorded): isolated GitHub Actions execution in
   NIC-less iso VMs. GitHub-connected pools keep fresh single-use official

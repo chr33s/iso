@@ -138,15 +138,21 @@ package struct NetworkPolicy: Sendable, Equatable {
         "POLICY_CHANGE_REQUIRES_RESTART: filtered allowlist differs from the recorded boot policy for '\(instance.name)'. Stop and start it to apply the new allowlist."
       )
     }
-    if recorded.recordedTransport == .brokered {
-      let current = try BrokeredNetworkPolicy.resolve(config, instance)
-      guard current.digest == recorded.brokeredDigest else {
-        throw HostError(
-          "POLICY_CHANGE_REQUIRES_RESTART: the brokered network policy of '\(instance.name)' (provider grants, local services or egress) differs from the one its boot was started with. Stop and start it to apply the new policy."
-        )
-      }
+    if try brokeredPolicyChanged(recorded, instance, config: config) {
+      throw HostError(
+        "POLICY_CHANGE_REQUIRES_RESTART: the brokered network policy of '\(instance.name)' (provider grants, local services or egress) differs from the one its boot was started with. Stop and start it to apply the new policy."
+      )
     }
     return recorded
+  }
+
+  /// Whether `recorded`, a brokered boot's policy, differs from the one
+  /// `config` resolves to for `instance` now; false for vmnet.
+  package static func brokeredPolicyChanged(
+    _ recorded: NetworkPolicy, _ instance: Instance, config: IsoConfig
+  ) throws -> Bool {
+    guard recorded.recordedTransport == .brokered else { return false }
+    return try BrokeredNetworkPolicy.resolve(config, instance).digest != recorded.brokeredDigest
   }
 }
 

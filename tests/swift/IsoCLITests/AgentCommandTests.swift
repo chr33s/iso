@@ -63,22 +63,29 @@ import Testing
     try ModelCommand.toolLine("Codex", mode: .remote, endpoint: endpoint) == "Codex     cloud")
 
   var lines = ModelCommand.reportLines(
-    "dev", mode: .local, claudeLocal: true, codexLocal: true, applied: true)
+    "dev", mode: .local, claudeLocal: true, codexLocal: true, applied: .applied)
   #expect(lines[0] == "'dev' now uses a local model for Claude and Codex.")
   #expect(!lines.contains { $0.contains("stays on cloud") })
   #expect(lines.last!.contains("relaunch"))
   lines = ModelCommand.reportLines(
-    "dev", mode: .local, claudeLocal: true, codexLocal: false, applied: true)
+    "dev", mode: .local, claudeLocal: true, codexLocal: false, applied: .applied)
   #expect(lines[0] == "'dev' now uses a local model for Claude.")
   let warning = try #require(lines.first { $0.contains("stays on cloud") })
   #expect(warning.contains("Codex") && warning.contains("codex.local_model"))
   #expect(!warning.contains("Claude"))
   lines = ModelCommand.reportLines(
-    "dev", mode: .remote, claudeLocal: false, codexLocal: false, applied: false)
+    "dev", mode: .remote, claudeLocal: false, codexLocal: false, applied: .saved)
   #expect(
     lines == [
       "'dev' now uses cloud models for Claude and Codex.", "Saved — applies on next start.",
     ])
+  lines = ModelCommand.reportLines(
+    "dev", mode: .local, claudeLocal: true, codexLocal: false, applied: .restartRequired)
+  #expect(
+    lines.last
+      == "Saved — 'dev' is brokered, and its local-model services are fixed for each boot; apply with `iso stop dev && iso start dev`."
+  )
+  #expect(!lines.contains { $0.contains("no restart needed") })
 }
 
 /// A private data directory with one stopped instance, loaded as a command.
