@@ -20,9 +20,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Stand-in for every Python gate: records its path and arguments.
 PYTHON_STUB = '''import os, sys
+call = " ".join([os.path.basename(sys.argv[0]), *sys.argv[1:]])
 with open(os.environ["PREFLIGHT_CALLS"], "a") as f:
-    f.write(" ".join([os.path.basename(sys.argv[0]), *sys.argv[1:]]) + "\\n")
-sys.exit(1 if os.path.basename(sys.argv[0]) == os.environ.get("PREFLIGHT_FAIL") else 0)
+    f.write(call + "\\n")
+fail = os.environ.get("PREFLIGHT_FAIL")
+sys.exit(1 if fail in (os.path.basename(sys.argv[0]), call) else 0)
 '''
 
 # Stand-in for tools and shell gates: records its name and arguments.
@@ -128,7 +130,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
             self.assertIn(call, calls)
         # --quick skips the archive build, the VM suite and fuzzing.
         self.assertFalse([c for c in calls if c.startswith(('build-release.py', 'run-integration.sh', 'fuzz.sh'))])
-        self.assertNotIn('integration-filtered-broker-readiness.py', calls)
+        self.assertFalse([c for c in calls if c.startswith('integration-filtered-broker-readiness.py')])
         self.assertFalse([c for c in calls if c.startswith(('cargo', 'rustup'))])
         self.assertNotIn('Next: tag', result.stdout)
         self.assertIn('unrun gates before tagging', result.stdout)
@@ -150,7 +152,9 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('test-swift-egress-jail.py', calls)
         self.assertIn('test-swift-egress-lease.py', calls)
         self.assertIn('test-swift-egress-mutations.py', calls)
-        self.assertIn('integration-filtered-broker-readiness.py', calls)
+        filtered = [c for c in calls if c.startswith('integration-filtered-broker-readiness.py')]
+        self.assertEqual(filtered, ['integration-filtered-broker-readiness.py --transport vmnet',
+                                    'integration-filtered-broker-readiness.py --transport brokered'])
         self.assertIn('All required checks passed for v9.8.7.', result.stdout)
 
     def test_proxy_build_and_e2e_failures_are_fatal(self):
@@ -175,9 +179,14 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
 
     def test_filtered_vm_failure_is_fatal(self):
         self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
-        result = self.run_preflight(fail='integration-filtered-broker-readiness.py')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAIL: Filtered VM transport, revocation and network', result.stdout)
+        # A failure of either transport fails the step; neither masks the other.
+        for transport in ('vmnet', 'brokered'):
+            with self.subTest(transport=transport):
+                self.log.unlink(missing_ok=True)
+                result = self.run_preflight(
+                    fail=f'integration-filtered-broker-readiness.py --transport {transport}')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('FAIL: Filtered VM transport, revocation and network', result.stdout)
 
     def test_older_macos_warns_instead_of_building_the_archive(self):
         result = self.run_preflight()
