@@ -8,12 +8,106 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.7.0
+
+### Breaking: secure defaults
+
+New and omitted configuration now resolves to one hardened baseline. Run
+`iso policy effective [NAME]` to see what a configuration or instance
+requests, records and relaxes before upgrading existing workflows. An
+instance's transport and egress stay as recorded at its creation.
+
+- **Network:** `network.transport` defaults to `"brokered"` and `egress` to
+  `"none"`. `vmnet` is an explicit choice, required for macOS guests and
+  `egress: "open"`; brokered never falls back to it. The `networked` preset
+  needs `"network": {"transport": "vmnet"}`; `provider-only` is now the
+  same as no preset.
+- **Provider credentials:** `proxy.mode` defaults to `"required"`; no
+  provider credential variable reaches the guest.
+- **Session lifetime:** `limits.session_ttl` defaults to 8h per boot.
+  `"unlimited"` turns it off for an ordinary local instance only; `null` is
+  rejected.
+- **Agent config imports:** `claude.config_dir` and `codex.config_dir` are
+  off by default; name a directory (for example `"~/.claude"`) to opt in. A
+  named root is read once into a confined snapshot (links stay inside it,
+  no special files, 10,000 entries / 256 MiB). Turning imports off does not
+  remove files already copied into a retained guest.
+- **GitHub:** an unset `github` is `"off"`, which also stops clone and
+  devcontainer discovery from using ambient host tokens.
+- **Pull:** `workspace.pull.mode` defaults to `"stage"`. A pull never runs
+  host Git and never installs `.git`; one installer applies a validated
+  stage. `--apply` now requires the exact `--stage-id` (no "latest"
+  shortcut). Known execution-sensitive paths (`.husky/`, `.envrc`,
+  `.vscode/tasks.json`) are withheld until each is approved with
+  `--approve-sensitive PATH`.
+  Direct mode applies additions; replacing files needs `--force`. On
+  `iso host pull`, `--force` is deprecated and ignored.
+- **Push and first copy (`workspace.input`):** transfers into the guest send
+  one immutable snapshot of the Git index's tracked files (read inertly;
+  Git never runs on the host) or of explicit `paths`, never `.git`, never
+  the whole directory as a fallback, and never names in the
+  `local-secret-names/1` table (`.env*`, keys, `.netrc`, `.aws/`, …) unless
+  listed in `secret_allow`. Non-Git directories and unreadable indexes need
+  `mode: "paths"`. The guest gets a fresh repository with one synthetic
+  commit, not the host's history. `--exclude-git` is a deprecated no-op.
+- **Scoped removal on push:** `iso push` and `iso host push` remove from the
+  guest exactly the tracked files deleted on the host, by name; never
+  directories, excluded or credential-looking paths. Without `--force` a
+  file goes only if the guest holds it unchanged from HEAD.
+
+### Added
+
+- **`iso policy effective [NAME] [--json]`:** a read-only report of the
+  requested policy, every relaxation from the defaults, and an instance's
+  recorded transport, egress, saved environment, forwards and grants with
+  their IDs and origin. `security.revoked_grant_ids` withdraws a saved
+  `--env` grant or port forward by ID; a revoked environment entry reaches
+  no later session, even on a running instance.
+- **Run audit history:** every `iso run`, `claude`, `codex` and
+  `claude-agents` invocation gets an audit run ID printed on stderr.
+  `iso audit --runs`, `--run ID`, `--follow` and `--export PATH` read its
+  request, effective environment, handoff, transport status, cleanup and
+  boundary events (metadata only; 7 days / 128 MiB). `--output jsonl` is the
+  new `iso.audit.stream/v1` protocol, and `iso audit` supports
+  `--output json`. See [audit](docs/audit.md).
+- **CLI help:** a misspelled subcommand suggests the nearest name, mutually
+  exclusive flags are named as given, and static completion offers
+  `.jsonc`/`.json` files for `--config` and directories where a directory is
+  expected.
+
+### Security
+
+- **Managed SSH ignores ambient configuration:** iso's ssh, scp and rsync
+  roles run with `-F none`, pinned tools and a fixed `ProxyCommand` shell, so
+  a hostile `~/.ssh/config` cannot redirect them.
+- **Guest environment separation:** forwarded guest variables travel as
+  `ISO_SSH_ENV_<n>` aliases; guest variable names never configure host
+  processes.
+- **`iso update`:** binds the canonical release tag and exact
+  `chr33s/iso` asset URLs, HTTPS only, and production builds refuse
+  `ISO_UPDATE_API_BASE_URL`.
+- **Release binaries:** all five binaries are signed with the hardened
+  runtime and Enhanced Security entitlements, and the core, policy, proxy
+  and egress packages build with strict memory safety.
+
+### Fixed
+
 - **`iso model set` on brokered VMs:** on a running brokered instance, a
   switch to or from a local model failed with
   `POLICY_CHANGE_REQUIRES_RESTART`, because local-model services are part of
   the boot's network policy. The selection is now saved and the command
   names the `iso stop NAME && iso start NAME` that applies it; vmnet VMs
   still switch live.
+- **Port forwards with a long data root:** forwards failed at start when the
+  instance path pushed ssh's control socket past macOS's 104-byte Unix path
+  limit; the socket moves to a short private path when needed.
+- **Sandboxed VS Code server upload:** with `internet` allowed and restricted
+  egress, Remote-SSH's scp probe was refused by the session sandbox and the
+  connection was abandoned; the session now gets the same scp/sftp rule as
+  Zed's upload.
+
+### Also in this release
+
 - **iso-ci** (new, separately installed companion in `iso-ci/`; release
   qualification not yet recorded): isolated GitHub Actions execution in
   NIC-less iso VMs. GitHub-connected pools keep fresh single-use official
