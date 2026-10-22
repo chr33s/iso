@@ -74,7 +74,7 @@ def main():
 
     def stage_id():
         result = iso("pull", "policy-gate", "--review", capture=True)
-        found = re.search(r"--stage-id ([0-9a-f]{8})", result.stderr)
+        found = re.search(r"--stage-id ([0-9a-f]{16})(?![0-9a-f])", result.stderr)
         assert found, "review did not print a stage id"
         return found[1]
 
@@ -129,7 +129,8 @@ def main():
                                 "kernel": str(kernel)},
             "proxy": {"mode": "required", **{name: {"credential": f"cmd:printf %s {fake}", "auth": "bearer"}
                                              for name, fake in FAKES.items()}},
-            "workspace": {"pull": {"mode": "stage"}},
+            "workspace": {"pull": {"mode": "stage"},
+                          "input": {"mode": "paths", "paths": [{"path": ".", "recursive": True}]}},
             "policy": {
                 "version": 1, "mode": "enforce",
                 "actions": ["credential.use", "proxy.request", "workspace.pull.apply"],

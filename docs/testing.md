@@ -1105,8 +1105,14 @@ For the real-VM filtered transport gate, build the host, `iso-egress` and
 `iso-proxy`, then run:
 
 ```bash
-python3 tests/integration-filtered-broker-readiness.py
+python3 tests/integration-filtered-broker-readiness.py --transport vmnet
+python3 tests/integration-filtered-broker-readiness.py --transport brokered
 ```
+
+Run both; the release preflight does. `--transport` (default `vmnet`) sets the
+filtered VM's `network.transport`. The network phase probes the vmnet device
+and subnet, so only the vmnet run has it; the brokered run also checks that
+`iso model set` on a running VM saves the selection and asks for a restart.
 
 It installs an ad-hoc-signed private runtime and uses the fail-on-use boundary image
 with Python and network-probe tools, synthetic credentials, and initially an empty

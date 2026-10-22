@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SECRETS = ["iso-broker-test-anthropic", "iso-broker-test-openai", "iso-broker-host-ant", "iso-broker-host-oai"]
 
 
-def exercise(work, only=None):
+def exercise(work, only=None, transport="vmnet"):
     builder_cli = shutil.which("container")
     assert builder_cli, "Apple container CLI is required"
     builder_cli = Path(builder_cli).resolve(strict=True)
@@ -49,10 +49,12 @@ def exercise(work, only=None):
     state = work / "data/backends/apple-container-v1/instances/brokers"
     config.write_text(json.dumps({
         "data_dir": str(work / "data"), "github": "off", "egress": "filtered",
+        "network": {"transport": transport},
         "egress_filter": {"allowed_hosts": ["api.github.com"] if only == "network" else []},
         "proxy": {"mode": "required", "anthropic": {"credential": "cmd:printf %s " + SECRETS[0]},
                   "openai": {"credential": "cmd:printf %s " + SECRETS[1], "auth": "bearer"}},
         "claude": {"config_dir": False}, "codex": {"config_dir": False},
+        "workspace": {"input": {"mode": "paths", "paths": [{"path": ".", "recursive": True}]}},
         "post_start": "printf 'broker-proof-hook\\n' > /tmp/iso-broker-hook",
         "profiles": {"boundary-fixture": {
             "apt_packages": ["python3", "socat", "netcat-openbsd", "iputils-ping"],
@@ -191,8 +193,10 @@ sys.exit(result.returncode)
                 (["agent", "update", "brokers", "--check", "--claude"], 6, "administrative version query"),
                 (["push", "brokers", "--force"], 3, "workspace push probe"),
                 (["pull", "brokers", "--review", "--stat"], 3, "staged workspace pull probe"),
-                (["push", "brokers", "--force"], 6, "workspace push launch"),
-                (["pull", "brokers", "--review", "--stat"], 6, "staged workspace pull launch"),
+                # Each handoff probes anthropic then openai; an odd boundary
+                # pauses openai inside the final proof before the transfer.
+                (["push", "brokers", "--force"], 5, "workspace push launch"),
+                (["pull", "brokers", "--review", "--stat"], 5, "staged workspace pull launch"),
             ]:
                 (project / "marker").write_text("late-workspace-must-not-transfer\n")
                 counter.write_text("0")
@@ -292,7 +296,18 @@ sys.exit(result.returncode)
         local = json.loads(config.read_text())
         local.setdefault("claude", {})["local_model"] = {"host_url": "http://127.0.0.1:47123", "model": "fixture"}
         config.write_text(json.dumps(local))
-        run(["model", "set", "local", "brokers"])
+        def switch_model(mode):
+            if transport == "vmnet":
+                run(["model", "set", mode, "brokers"])
+                return
+            # A local service is part of the brokered boot policy: the switch is
+            # saved and named as needing a restart, never applied to this boot.
+            run(["model", "set", mode, "brokers"], contains="iso stop brokers && iso start brokers")
+            run(["exec", "brokers", "--", "true"], expected=1, contains="POLICY_CHANGE_REQUIRES_RESTART")
+            run(["stop", "brokers"])
+            run(["start", "brokers", "--no-github"])
+
+        switch_model("local")
         run(["exec", "brokers", "--", "true"])
         tunnel_pid = int((state / "proxy-model-47123-fwd.pid").read_text())
         assert "ssh" in subprocess.check_output(["/bin/ps", "-ww", "-p", str(tunnel_pid), "-o", "command="], text=True)
@@ -301,7 +316,7 @@ sys.exit(result.returncode)
         text, _ = run(["status", "brokers"], contains="(unhealthy)")
         assert "FILTERED_MODEL_TUNNEL_NOT_READY" in text
         run(["list"], contains="unhealthy")
-        run(["model", "set", "remote", "brokers"])
+        switch_model("remote")
         run(["exec", "brokers", "--", "true"])
         config.write_text(json.dumps(without_hook))
         print("PASS a started local-model tunnel joins the composite proof; losing it is unhealthy", flush=True)
@@ -310,7 +325,10 @@ sys.exit(result.returncode)
             return
         exercise_egress(state, binary, config, run)
         exercise_revocation(state, binary, config, run)
-        exercise_network(work, config, run)
+        if transport == "vmnet":
+            exercise_network(work, config, run)
+        else:
+            print("network phase not run: it probes the vmnet device and subnet a brokered VM lacks", flush=True)
     finally:
         # A failed configuration probe must not prevent owned-resource cleanup.
         config.write_text(cleanup_configuration)
@@ -324,19 +342,24 @@ sys.exit(result.returncode)
                     subprocess.run([builder_cli, "image", "delete", image], env=env, check=True)
         shutil.rmtree(work)
         print("cleaned private VM, images, workspace and binary copies", flush=True)
-    print("PASS filtered transport, broker, pressure and network probes; native agents are qualified by integration-proxy-transition.py --live-agents --filtered", flush=True)
+    phases = "broker, pressure and network probes" if transport == "vmnet" else "broker and pressure probes"
+    print(f"PASS filtered transport ({transport}), {phases}; native agents are qualified by integration-proxy-transition.py --live-agents --filtered", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", choices=("brokers", "egress", "revocation", "network"),
                         help="run one phase for diagnosis; default runs all phases")
+    parser.add_argument("--transport", choices=("vmnet", "brokered"), default="vmnet",
+                        help="network.transport of the filtered VM; brokered has no network phase")
     args = parser.parse_args()
+    if args.transport == "brokered" and args.only == "network":
+        parser.error("the network phase needs --transport vmnet")
     work = Path(tempfile.mkdtemp(prefix="iso-filtered-brokers-"))
     os.chmod(work, 0o700)
     print(f"Artifacts: {work}", flush=True)
     try:
-        exercise(work, args.only)
+        exercise(work, args.only, args.transport)
     except BaseException:
         # Before VM/image setup there are only private binary/config copies.
         if work.exists() and not (work / "data").exists():

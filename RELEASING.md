@@ -309,7 +309,8 @@ Apple Silicon machine.
    ```bash
    ./tests/run-integration.sh
    python3 tests/integration-proxy-transition.py --controlled-upstream
-   python3 tests/integration-filtered-broker-readiness.py
+   python3 tests/integration-filtered-broker-readiness.py --transport vmnet
+   python3 tests/integration-filtered-broker-readiness.py --transport brokered
    ```
 
    The full preflight also runs the filtered VM gate; `--quick` skips it.

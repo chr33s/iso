@@ -207,7 +207,9 @@ run_filtered_vm() {
     warn "Filtered VM validation requires macOS 27+ — run its hardware gate before tagging"
     return 0
   fi
-  python3 tests/integration-filtered-broker-readiness.py
+  # `step` runs this under `if`, where set -e does not apply.
+  python3 tests/integration-filtered-broker-readiness.py --transport vmnet &&
+    python3 tests/integration-filtered-broker-readiness.py --transport brokered
 }
 
 # ── Run ──────────────────────────────────────────────────────────

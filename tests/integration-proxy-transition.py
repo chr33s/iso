@@ -289,6 +289,9 @@ def main():
             "apple_container": {"binary": str(work / "bin/iso-sandbox"), "builder": str(provider),
                                 "kernel": str(kernel)},
             "proxy": proxies,
+            "workspace": {"input": {"mode": "paths", "paths": [{"path": ".", "recursive": True}]}},
+            # Without --brokered this gate qualifies vmnet; brokered is the default.
+            "network": {"transport": "vmnet"}, "egress": "open",
         }
         if args.enforce_policy:
             selected = sorted(proxies)
@@ -308,7 +311,8 @@ def main():
         if args.brokered:
             # No network device: the brokers are the guest's only way to a provider.
             configuration["network"] = {"transport": "brokered"}
-            configuration.setdefault("egress", "none")
+            if not args.filtered:
+                configuration["egress"] = "none"
             configuration["profiles"] = {"proxy-filtered-acceptance": {"apt_packages": ["python3"]}}
         config.write_text(json.dumps(configuration, indent=2) + "\n")
         (work / "project").mkdir()

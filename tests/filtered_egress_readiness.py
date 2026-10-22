@@ -130,8 +130,8 @@ def exercise(state, binary, config, run):
     peer_endpoint = endpoint("egress-peer")
     assert peer_endpoint.password != own_endpoint.password, "VMs share an egress capability"
     connect("egress-peer", peer_endpoint.port, peer_endpoint.password, "api.github.com", 200)
-    connect("egress-peer", peer_endpoint.port, own_endpoint.password, "api.github.com", 403)
-    connect("brokers", own_endpoint.port, peer_endpoint.password, "api.github.com", 403)
+    connect("egress-peer", peer_endpoint.port, own_endpoint.password, "api.github.com", 407)
+    connect("brokers", own_endpoint.port, peer_endpoint.password, "api.github.com", 407)
     authenticated_probe("egress-peer", peer_endpoint.port, peer_endpoint.password, 200)
     authenticated_probe("egress-peer", peer_endpoint.port, own_endpoint.password, 403)
     authenticated_probe("brokers", own_endpoint.port, peer_endpoint.password, 403)
@@ -177,7 +177,7 @@ def exercise(state, binary, config, run):
     restarted = endpoint("brokers")
     authenticated_probe("brokers", restarted.port, original_capability.decode("ascii"), 403)
     authenticated_probe("brokers", restarted.port, restarted.password, 200)
-    connect("brokers", restarted.port, original_capability.decode("ascii"), "api.github.com", 403)
+    connect("brokers", restarted.port, original_capability.decode("ascii"), "api.github.com", 407)
     connect("brokers", restarted.port, restarted.password, "api.github.com", 200)
 
     # Restoring the previous boot's capability in the host's private fixture
