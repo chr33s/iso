@@ -112,6 +112,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/macos-sign-notarize.sh
+            scripts/enhanced-security.entitlements
             iso-sandbox/iso-sandbox.entitlements
           sparse-checkout-cone-mode: false
 

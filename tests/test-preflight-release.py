@@ -432,6 +432,17 @@ esac
 
 
 class ReleaseBinaryTests(unittest.TestCase):
+    def test_signing_checkout_includes_every_file_the_signer_reads(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        block = re.search(
+            r"  sign-macos:\n.*?          sparse-checkout: \|\n(.*?)\n          sparse-checkout-cone-mode",
+            workflow, re.S)[1]
+        checkout = {line.strip() for line in block.splitlines()}
+        signer = (ROOT / 'scripts/macos-sign-notarize.sh').read_text()
+        read = set(re.findall(r'\$\{root\}/([\w./-]+)', signer))
+        self.assertIn('scripts/enhanced-security.entitlements', read)
+        self.assertLessEqual(read | {'scripts/macos-sign-notarize.sh'}, checkout)
+
     def test_release_source_gate_rejects_commit_outside_main(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
         script = re.search(
