@@ -983,8 +983,9 @@ class Run:
     def gate_R(self, sid, g):
         """Observation and virtual input below the logged-in automation
         layer: boot progress, the login window, a first-login Setup
-        Assistant, the lock screen, a restart dialog, a TCC prompt and the
-        update policy, then an emergency stop with the guest helper gone.
+        Assistant, the lock screen, a restart dialog, a TCC prompt answered
+        by `cu respond` and the update policy, then an emergency stop with
+        the guest helper gone.
         The template's `iso` user has a password that existed only during
         the build, so the login is a second local user's."""
         g.ssh("pkill -x IsoVZProbe; true", check=False)
@@ -1094,13 +1095,20 @@ class Run:
         cu.type("Terminal\n")
         time.sleep(5)
         cu.type("ls ~/Desktop > /tmp/r-tcc.txt 2>&1; echo rc=$? >> /tmp/r-tcc.txt\n")
-        allow = cu.find("Allow", timeout=20)
-        out["tcc_prompt_seen"] = allow is not None
-        if allow:
-            cu.at(allow)
+        def respond(mode, requester="Terminal"):
+            expect = {"prompt": "tcc.folder_access", "requester": requester, "resource": "desktop",
+                      "response": "allow"}
+            return self.rt.cu(sid, "respond", "--session", cu.session, "--expect", json.dumps(expect),
+                              "--mode", mode, check=False) or {}
+        wrong = respond("observe", requester="Finder")
+        out["tcc_wrong_requester"] = wrong.get("reason")
+        proposal = respond("observe")
+        out["tcc_prompt_seen"] = proposal.get("outcome") == "proposed"
+        reply = respond("auto") if out["tcc_prompt_seen"] else {}
+        out["tcc_response"] = reply.get("outcome")
         try:
-            out["tcc_allowed"] = bool(wait_for(
-                lambda: "rc=0" in g.ssh("cat /tmp/r-tcc.txt 2>/dev/null; true"), 20, "tcc", 1)) if allow else False
+            out["tcc_allowed"] = reply.get("outcome") == "responded" and bool(wait_for(
+                lambda: "rc=0" in g.ssh("cat /tmp/r-tcc.txt 2>/dev/null; true"), 20, "tcc", 1))
         except TimeoutError:
             out["tcc_allowed"] = False
         # Update policy: automatic checks and downloads are off.
@@ -1127,6 +1135,7 @@ class Run:
         out["emergency_stopped"] = self.rt.run("macos", "inspect", sid)["status"] == "stopped"
         ok = (out["login_window_seen"] and out["logged_in"] and out["desktop_reached"]
               and out["locked"] and out["unlocked"] and out["restart_dialog_seen"] and out["restart_cancelled"]
+              and out["tcc_wrong_requester"] == "requester_mismatch"
               and out["tcc_prompt_seen"] and out["tcc_allowed"] and out["updates_disabled"]
               and out["no_update_prompt_on_screen"] and out["emergency_stopped"]
               and out["emergency_stop_path"] != "guest_helper_shutdown")

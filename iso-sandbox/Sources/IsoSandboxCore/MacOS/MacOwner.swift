@@ -71,6 +71,10 @@ package struct MacControlResponse: Codable, Sendable {
   package var frame: MacFrameInfo? = nil
   /// Input events handed to the view. Submission, not proof of delivery.
   package var submitted: Int? = nil
+  /// For a refused computer-use request: why, and for `cu-act` whether it
+  /// was refused before any input was sent.
+  package var refusal: CURefusal? = nil
+  package var beforeInput: Bool? = nil
   package var stopPath: String? = nil
 
   package init(ok: Bool, error: String? = nil) {
@@ -334,7 +338,11 @@ package enum MacOwner {
           vmInstance: f.binding.vmInstance, sha256: f.sha256, timestamp: f.timestamp, png: f.png)
         return r
       case .cuAct:
-        guard let action = req.action else { throw SandboxError("cu-act needs an action") }
+        guard let action = req.action else {
+          var e = SandboxError("cu-act needs an action", refusal: .invalidAction)
+          e.beforeInput = true
+          throw e
+        }
         let n = try await screen.act(
           session: req.session, request: action, basedOnFrame: req.basedOnFrame)
         var r = MacControlResponse(ok: true)
@@ -342,7 +350,12 @@ package enum MacOwner {
         return r
       }
     } catch {
-      return MacControlResponse(ok: false, error: "\(error)")
+      var r = MacControlResponse(ok: false, error: "\(error)")
+      if let e = error as? SandboxError, let refusal = e.refusal {
+        r.refusal = refusal
+        r.beforeInput = req.op == .cuAct ? e.beforeInput : nil
+      }
+      return r
     }
   }
 

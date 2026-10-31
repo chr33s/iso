@@ -368,7 +368,14 @@ package enum SandboxStatus: String, Codable, Sendable {
 
 package struct SandboxError: Error, CustomStringConvertible {
   package let description: String
-  package init(_ message: String) { description = message }
+  /// Set on computer-use refusals, so clients branch on a code, not the text.
+  package var refusal: CURefusal?
+  /// A computer-use action refused before any input event was sent.
+  package var beforeInput = false
+  package init(_ message: String, refusal: CURefusal? = nil) {
+    description = message
+    self.refusal = refusal
+  }
 }
 
 /// Kernels this runtime has been validated with (sha256 of the vmlinux).

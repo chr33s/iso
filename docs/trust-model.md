@@ -969,6 +969,16 @@ is untrusted, and the whole VM is the boundary.
   coordinates, paths, key codes, ASCII text). They are synthesized into the
   view in-process and never posted to the host event system. The owner needs
   no Screen Recording or Accessibility permission.
+- **Permission dialogs (`cu respond`).** Dialog text is guest-rendered
+  pixels, recognized with Vision in the `iso-sandbox` CLI process, never in
+  the owner. Recognized text only selects a candidate: the caller's
+  expectation (prompt family, exact requester name, folder, response) is the
+  sole authority, and an unknown field or an unqualified family is refused.
+  The responder sends one click at most, based on a re-observed frame, and
+  never replays it; its output is fixed enums, with no recognized text. It
+  answers only guest dialogs, and a guest can spoof one: this is an
+  automation reliability contract inside the VM boundary, not a new
+  boundary.
 - **Control socket.** It sits in the per-user `iso-sbx` directory, mode 0600,
   and accepts only the owning uid (`getpeereid`), as for Linux owners.
 - **Stop and TTL.** A guest cannot wedge a stop. Each host write to the

@@ -50,7 +50,9 @@ package final class MacScreen {
   private func check(_ id: String?) throws -> CUBinding {
     let bound = try table.check(id, current: current())
     // A view outside a window renders nothing and drops pointer input.
-    guard view.window != nil else { throw SandboxError("view has no window") }
+    guard view.window != nil else {
+      throw SandboxError("view has no window", refusal: .noWindow)
+    }
     return bound
   }
 
@@ -84,7 +86,8 @@ package final class MacScreen {
     guard let image = ctx.makeImage() else { throw SandboxError("no frame image") }
     // A uniform frame is how a missing framebuffer looks: refuse it.
     if let range = Self.channelRange(image), range <= 3 {
-      throw SandboxError("blank frame (channel range \(range)): framebuffer not observed")
+      throw SandboxError(
+        "blank frame (channel range \(range)): framebuffer not observed", refusal: .blankFrame)
     }
     guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
     else { throw SandboxError("png encoding failed") }
@@ -131,10 +134,19 @@ package final class MacScreen {
   package func act(session: String?, request: CUActionRequest, basedOnFrame: String?) async throws
     -> Int
   {
-    let bound = try check(session)
-    if let basedOnFrame { try table.requireFrame(basedOnFrame, from: bound) }
-    let action = try request.validated(width: width, height: height)
-    guard !acting else { throw SandboxError("another action is in progress") }
+    let bound: CUBinding
+    let action: CUAction
+    do {
+      bound = try check(session)
+      if let basedOnFrame { try table.requireFrame(basedOnFrame, from: bound) }
+      do { action = try request.validated(width: width, height: height) } catch {
+        throw SandboxError("\(error)", refusal: .invalidAction)
+      }
+      guard !acting else { throw SandboxError("another action is in progress", refusal: .busy) }
+    } catch var e as SandboxError {
+      e.beforeInput = true
+      throw e
+    }
     acting = true
     defer { acting = false }
     var pressed: [CUButton] = []

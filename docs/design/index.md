@@ -50,6 +50,9 @@ and [trust model](../trust-model.md) for supported behavior.
 
 - [macOS runtime design](macos-guest-computer-use.md) and
   [qualification plan](macos-computer-use-qualification-plan.md).
+- [Guest permission-dialog responder](permission-dialog-auto-response.md):
+  `cu respond` for expected TCC folder-access prompts; Keychain and
+  authentication prompts are reported, not answered.
 - [Q0 spike results](macos-computer-use-q0-spike.md).
 - [Process-context experiment](macos-vz-context-headless-experiment-spec.md)
   and [results](macos-vz-context-experiment.md).

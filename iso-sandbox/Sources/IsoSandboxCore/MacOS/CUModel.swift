@@ -84,7 +84,10 @@ package struct CUActionRequest: Codable, Sendable {
     func point(_ p: CUPoint) throws -> CUPoint {
       guard p.x.isFinite, p.y.isFinite, p.x >= 0, p.y >= 0, p.x < Double(width),
         p.y < Double(height)
-      else { throw SandboxError("coordinate (\(p.x), \(p.y)) outside [0,\(width))×[0,\(height))") }
+      else {
+        throw SandboxError(
+          "coordinate (\(p.x), \(p.y)) outside [0,\(width))×[0,\(height))")
+      }
       return p
     }
     func here() throws -> CUPoint {
@@ -228,6 +231,29 @@ package enum USKeyboard {
   }
 }
 
+/// Why the owner refused a computer-use request, carried on the control
+/// response beside the message.
+package enum CURefusal: String, Codable, Sendable {
+  case helperGone = "helper_gone"
+  case unknownSession = "unknown_session"
+  case sessionRefused = "session_refused"
+  case unknownFrame = "unknown_frame"
+  case foreignFrame = "foreign_frame"
+  case noWindow = "no_window"
+  case blankFrame = "blank_frame"
+  case busy
+  case invalidAction = "invalid_action"
+
+  /// The session or frame binding is void: no decision made on it stands.
+  package var voidsBinding: Bool {
+    switch self {
+    case .helperGone, .unknownSession, .sessionRefused, .unknownFrame, .foreignFrame, .noWindow:
+      true
+    case .blankFrame, .busy, .invalidAction: false
+    }
+  }
+}
+
 /// What a session is bound to (Gate H). Any difference refuses the session.
 package struct CUBinding: Codable, Equatable, Sendable {
   package var bootId: String
@@ -274,7 +300,9 @@ package struct CUSessions: Sendable {
   package init() {}
 
   package mutating func open(current: CUBinding?) throws -> (String, CUBinding) {
-    guard let current else { throw SandboxError("guest helper not connected") }
+    guard let current else {
+      throw SandboxError("guest helper not connected", refusal: .helperGone)
+    }
     let id = UUID().uuidString.lowercased()
     sessions[id] = current
     return (id, current)
@@ -283,10 +311,12 @@ package struct CUSessions: Sendable {
   /// The session's binding if it still matches `current`. A session that no
   /// longer matches is forgotten, so it is refused from then on.
   package mutating func check(_ id: String?, current: CUBinding?) throws -> CUBinding {
-    guard let id, let bound = sessions[id] else { throw SandboxError("unknown session") }
+    guard let id, let bound = sessions[id] else {
+      throw SandboxError("unknown session", refusal: .unknownSession)
+    }
     if let why = bound.mismatch(current) {
       sessions[id] = nil
-      throw SandboxError("session refused: \(why)")
+      throw SandboxError("session refused: \(why)", refusal: .sessionRefused)
     }
     return bound
   }
@@ -303,7 +333,11 @@ package struct CUSessions: Sendable {
 
   /// An action based on `frame` must come from the session's own binding.
   package func requireFrame(_ frame: String, from binding: CUBinding) throws {
-    guard let captured = frames[frame] else { throw SandboxError("unknown frame") }
-    guard captured == binding else { throw SandboxError("frame from another binding") }
+    guard let captured = frames[frame] else {
+      throw SandboxError("unknown frame", refusal: .unknownFrame)
+    }
+    guard captured == binding else {
+      throw SandboxError("frame from another binding", refusal: .foreignFrame)
+    }
   }
 }

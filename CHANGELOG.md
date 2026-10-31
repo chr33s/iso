@@ -8,6 +8,15 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **macOS guests:** `iso-sandbox macos cu respond` answers one expected
+  guest TCC folder-access prompt (observe or auto mode): one click at most,
+  based on a fresh frame, with the dialog verified gone. Keychain, password
+  and System Settings prompts are reported as `needs_user`,
+  `needs_authentication` or `setup_required`. Gate R now uses it.
+- **macOS guests:** refused computer-use control requests carry a
+  `refusal` code and, for `cu-act`, `beforeInput`; clients branch on these
+  rather than on `error` text.
+
 ## v0.7.0
 
 ### Breaking: secure defaults

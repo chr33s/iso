@@ -226,6 +226,12 @@ Control-socket operations. Clients must be the owning uid.
 | `cu-frame` | `session` | `frame` {`frameId`, `seq`, `width`, `height`, `bootId`, `guestBoot`, `vmInstance`, `sha256`, `timestamp`, `png` (base64)} |
 | `cu-act` | `session`, `action`, optional `basedOnFrame` | `ok`, `submitted` (input events handed to the view) |
 
+A refused computer-use request also carries `refusal`, a code
+(`helper_gone`, `unknown_session`, `session_refused`, `unknown_frame`,
+`foreign_frame`, `no_window`, `blank_frame`, `busy`, `invalid_action`), and
+for `cu-act`, `beforeInput`: true when it was refused before any input
+event was sent. Clients branch on these, not on `error` text.
+
 The CLI (`iso-sandbox macos cu session|frame|act`) writes the PNG to
 `--out` and prints the rest.
 
@@ -262,6 +268,12 @@ The CLI (`iso-sandbox macos cu session|frame|act`) writes the PNG to
 - **No host side effects.** Nothing is posted to the host event system. The
   owner needs no Screen Recording or Accessibility permission, and never
   activates.
+- **Permission dialogs.** `iso-sandbox macos cu respond` answers one
+  expected guest TCC folder-access prompt over these operations: it
+  recognizes the dialog in the CLI process, re-observes it, clicks at most
+  once based on the fresh frame, and checks the dialog is gone. Keychain,
+  password and System Settings prompts are reported, never answered. See
+  [`permission-dialog-auto-response.md`](permission-dialog-auto-response.md).
 
 ## Effective configuration (Gate O)
 
@@ -353,7 +365,7 @@ Later runs on the same host and template added the remaining gates:
 | D background owner | pass | 50 clicks reach the guest fixture while the host's pointer and frontmost app are unchanged, the owner is never frontmost and has no window on screen; physical HID input during a run voids and repeats it. The host was locked. Visible console: not offered. Fast user switching: not supported (the owner runs in the user's launchd domain) |
 | Q application coverage | pass, 35/35 | AppKit (button, field, editor, checkbox, radio, popup, slider, scroll, context menu, sheet, child window, drag and drop, menu shortcut and menu bar), SwiftUI (button, field, toggle, picker, slider, editor), WKWebView (field, button, checkbox, select, link) and Electron 44.5.1 (field, button, checkbox, select) fixtures; Terminal, TextEdit (save), Calculator, Finder (new folder), System Settings (Dark appearance) and Safari (typed URL reaching a guest listener), each checked outside the app. The first click into an inactive window only activates it; one such retry is allowed and counted (WebKit field). System Settings' sidebar did not take synthesized clicks in that run, so the pane was opened by URL before the Dark click |
 | S performance | recorded | Frame request p50/p95 152/164 ms (6.5 frames/s through the CLI); action acknowledged p50/p95 14/16 ms; input observed by the guest fixture p50/p95 43/51 ms (host receipt over SSH, an upper bound); click to visible change p50 379 ms; owner CPU 0.3 % idle. The 250 ms frame target is met; the 50 ms input target is met at p50 and missed by 1 ms at p95 |
-| R login and system UI | pass | Reboot to the login window (name and password mode) and log in as a second local user through computer use; drive that user's first-login Setup Assistant (11 steps, from Accessibility to Get Started) to the desktop; lock with Control-Command-Q and unlock with the password; open and cancel the Apple-menu restart dialog; allow a TCC prompt (Terminal reading Desktop) and see the command succeed; no update prompt; with the guest helper booted out, `macos stop` still stops the VM (forced, 16.5 s). Boot progress is not observable: sessions need the helper, which starts after boot |
+| R login and system UI | pass | Reboot to the login window (name and password mode) and log in as a second local user through computer use; drive that user's first-login Setup Assistant (11 steps, from Accessibility to Get Started) to the desktop; lock with Control-Command-Q and unlock with the password; open and cancel the Apple-menu restart dialog; allow a TCC prompt (Terminal reading Desktop) with `cu respond` and see the command succeed; no update prompt; with the guest helper booted out, `macos stop` still stops the VM (forced, 16.5 s). Boot progress is not observable: sessions need the helper, which starts after boot |
 | T soak | pass | 8 hours, two guests (`20261006T223607-6279`): 72,798 clicks, 242,660 keystrokes, 3,033 frames, 100 app launch/quit cycles, 20 stop/start cycles and 5 owner SIGKILLs. 0 wrong or missing clicks, 0 lost or misplaced keystrokes, 0 cross-VM events, 0 actions accepted on a stale boot, 0 stale or foreign frames, 0 driver errors; owner RSS 54–343 MiB with no growth between the second and last hour; no leaked owner process |
 | T host sleep and wake | pass | `tests/macos-guest-sleepwake.py` (`20261007T104119-4bc6`): the host entered sleep (the power log's "Software Sleep") and woke; network traffic woke it after 2 s each time, before the scheduled wake. The owner, its boot, the guest boot and the helper connection survived; SSH, clicks, typed text and frames with the fixture's token worked before and after, through both the session from before the sleep and a new one |
 | S scaling | pass | One VM: frames p50/p95 196/206 ms; two VMs at once: 205/215 ms. A third macOS guest is refused by the platform (VZErrorDomain 6) |

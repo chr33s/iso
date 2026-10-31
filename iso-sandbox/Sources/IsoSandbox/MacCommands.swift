@@ -172,8 +172,8 @@ struct MacReconcile: AsyncParsableCommand {
 /// Computer use against a running macOS sandbox.
 struct MacCU: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "cu", abstract: "Computer use: sessions, frames, actions.",
-    subcommands: [Session.self, Frame.self, Act.self])
+    commandName: "cu", abstract: "Computer use: sessions, frames, actions, dialog responses.",
+    subcommands: [Session.self, Frame.self, Act.self, Respond.self])
 
   static func check(_ r: MacControlResponse) throws -> MacControlResponse {
     guard r.ok else { throw SandboxError(r.error ?? "refused") }
@@ -253,7 +253,40 @@ struct MacCU: AsyncParsableCommand {
       try printJSON(["submitted": r.submitted ?? 0])
     }
   }
+
+  struct Respond: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract:
+        "Answer one expected guest permission dialog: observe, re-observe, click at most once, verify."
+    )
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    @Option var session: String
+    @Option(help: "The expected prompt as JSON (prompt, requester, resource, response)")
+    var expect: String
+    @Option(help: "observe (report the response only) or auto") var mode = CUDialogMode.auto
+    @Option(help: "How long to wait for the dialog to appear") var waitSeconds = 20
+    @Option(help: "How long to wait for the dialog to go after the click") var verifySeconds = 10
+
+    func validate() throws {
+      guard (1...120).contains(waitSeconds), (1...120).contains(verifySeconds) else {
+        throw ValidationError("--wait-seconds and --verify-seconds must be 1-120")
+      }
+    }
+
+    func run() async throws {
+      let expectation = try JSONDecoder().decode(CUExpectation.self, from: Data(expect.utf8))
+      let responder = CUDialogResponder(
+        mode: mode, expectation: expectation,
+        wait: TimeInterval(waitSeconds), verifyWindow: TimeInterval(verifySeconds))
+      try printJSON(
+        try await responder.run(
+          MacCUDialogTransport(root: try root.resolve(), id: try SandboxID(id), session: session)))
+    }
+  }
 }
+
+extension CUDialogMode: ExpressibleByArgument {}
 
 /// `count * unit`, refusing overflow instead of trapping.
 func bytes(_ count: UInt64, _ unit: UInt64) throws -> UInt64 {
