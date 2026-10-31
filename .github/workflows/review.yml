@@ -123,7 +123,7 @@ jobs:
 
       # The workspace is the default branch; the PR exists only as git objects
       # under refs/remotes/origin/review-*, never as files the agent loads.
-      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241 # jactionlint ignore=agentic-actions
+      - uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.241 # jactionlint ignore=agentic-actions
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: true
@@ -227,7 +227,7 @@ jobs:
       - name: Run Codex review
         id: run_codex
         # Default-branch workspace; the PR is only git objects (see above).
-        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12 # jactionlint ignore=agentic-actions
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.12 # jactionlint ignore=agentic-actions
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/prompts/review.md
