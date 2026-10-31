@@ -33,7 +33,7 @@ jobs:
 
       # Tools pinned in mise.toml (Swift, Python, yq, jactionlint, ...), the same
       # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
         with:
           version: 2026.10.7
 
@@ -134,7 +134,7 @@ jobs:
 
       # Tools pinned in mise.toml (Swift, Python, yq, jactionlint, ...), the same
       # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
-      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
         with:
           version: 2026.10.7
 
@@ -159,6 +159,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           advanced-security: false
