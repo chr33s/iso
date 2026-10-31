@@ -102,6 +102,8 @@ package struct MacEffectiveConfig: Codable, Sendable {
   package var usbControllers: Int
   package var clipboard: Bool
   package var ownerTopology: String
+  /// From the record; nil when guest-driven computer use is off.
+  package var guestComputerUse: MacGuestComputerUse?
 
   /// Read from the configuration the VM booted with and the listeners it
   /// registered, not restated: an extra disk, socket listener, console or
@@ -133,7 +135,8 @@ package struct MacEffectiveConfig: Codable, Sendable {
       directoryShares: c.directorySharingDevices.count, audioDevices: c.audioDevices.count,
       serialPorts: c.serialPorts.count, usbControllers: c.usbControllers.count,
       // A clipboard (the SPICE agent) needs a console device.
-      clipboard: !c.consoleDevices.isEmpty, ownerTopology: topology)
+      clipboard: !c.consoleDevices.isEmpty, ownerTopology: topology,
+      guestComputerUse: record.guestComputerUse)
   }
 
   static func networkLabel(_ c: VZVirtualMachineConfiguration, record: MacSandboxRecord) -> String {

@@ -57,7 +57,8 @@ package enum MacSandboxes {
 
   package static func create(
     root: SandboxRoot, id: SandboxID, owner: String, template: SandboxID, cpus: Int,
-    memoryBytes: UInt64, network: NetworkMode, authorizedKey: String
+    memoryBytes: UInt64, network: NetworkMode, authorizedKey: String,
+    guestComputerUse: MacGuestComputerUse? = nil
   ) async throws -> MacSandboxRecord {
     try root.createMacDirectories()
     guard SSHPublicKey.isEd25519(authorizedKey) else {
@@ -95,7 +96,8 @@ package enum MacSandboxes {
             memoryBytes: memoryBytes,
             macAddress: VZMACAddress.randomLocallyAdministered().string.lowercased(),
             subnetIndex: index, network: network, enrollment: .pending,
-            authorizedKey: SSHPublicKey.canonical(authorizedKey), createdAt: Date(), expiresAt: nil)
+            authorizedKey: SSHPublicKey.canonical(authorizedKey), createdAt: Date(), expiresAt: nil,
+            guestComputerUse: guestComputerUse)
           // Writing the record commits the create.
           try paths.save(r)
           record = r

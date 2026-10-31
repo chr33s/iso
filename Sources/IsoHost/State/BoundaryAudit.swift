@@ -45,6 +45,9 @@ package enum BoundaryAudit {
     case approvalConsumed(approvalID: String, reason: PolicyReason)
     /// A stage apply that stopped partway; the receipt stays consumed.
     case pullApplyPartial(applied: Int)
+    /// A macOS boot's guest-driven computer use, read from its owner at
+    /// stop: the frame rate and counts only.
+    case guestComputerUse(MacGuestCUCounts)
 
     package enum ClaimOutcome: String, Sendable, Equatable {
       case claimed, refused, shadow
@@ -91,6 +94,7 @@ package enum BoundaryAudit {
       case .pullHeld: "pull_held"
       case .inputSnapshot: "input_snapshot"
       case .handoffFence: "handoff_fence"
+      case .guestComputerUse: "guest_computer_use"
       }
     }
 
@@ -134,6 +138,17 @@ package enum BoundaryAudit {
         ]
       case .handoffFence(let reason):
         members.append(("reason", .string(reason)))
+      case .guestComputerUse(let c):
+        members += [
+          ("frame_rate", .uint(UInt64(c.frameRate))), ("sessions", .uint(UInt64(c.sessions))),
+          ("frames", .uint(UInt64(c.frames))), ("actions", .uint(UInt64(c.actions))),
+          ("status_requests", .uint(UInt64(c.statusRequests))),
+          ("preemptions", .uint(UInt64(c.preemptions))),
+          (
+            "refusals",
+            .object(c.refusals.keys.sorted().map { ($0, .uint(UInt64(c.refusals[$0] ?? 0))) })
+          ),
+        ]
       case .pullApply(let applied), .pullApplyPartial(let applied):
         members.append(("applied", .uint(UInt64(applied))))
       case .policyBoot(let mode, let digest, let epoch, let actions):

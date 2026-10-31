@@ -124,9 +124,10 @@ extension AppleBackend {
     let memoryMiB = UInt64(config.vm.memory.mib.value)
     try NetworkPolicy.save(config, instance)
     try journal.advance(instance, .create(stage: .creatingMachine))
+    let guestComputerUse = MacGuestComputerUse(config.computerUse)
     try runtime.macCreate(
       machine, template: template, cpus: cpus, memoryMiB: memoryMiB, owner: owner.id,
-      egress: config.egress, authorizedKey: authorizedKey)
+      egress: config.egress, authorizedKey: authorizedKey, guestComputerUse: guestComputerUse)
     try journal.advance(instance, .create(stage: .machineCreated))
     var sidecar = MachineSidecar(
       schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: owner.id,
@@ -134,9 +135,14 @@ extension AppleBackend {
       imageManifestID: manifest.manifestID, guestUser: manifest.guestUser, requestedCPUs: cpus,
       requestedMemoryBytes: memoryMiB * (1 << 20), hostKeyFingerprint: "",
       lastObservedOwnerPID: nil, lastObservedIP: nil, reenrollHostKey: false,
-      createdAt: utcTimestamp(), runtimeIdentity: try runtime.requireQualified(), guestOS: .macos)
-    try IsolationGate.verifyMacRecord(
-      try runtime.macInspect(machine), try expected(sidecar, runtime), template: template)
+      createdAt: utcTimestamp(), runtimeIdentity: try runtime.requireQualified(), guestOS: .macos,
+      guestComputerUse: guestComputerUse)
+    let created = try runtime.macInspect(machine)
+    try IsolationGate.verifyMacRecord(created, try expected(sidecar, runtime), template: template)
+    guard created.record.guestComputerUse == guestComputerUse else {
+      throw RuntimeError.identityConflict(
+        "sandbox \(machine) was not created with the requested guest computer use")
+    }
     let deadline = macBootDeadline(runtime)
     let (ready, key) = try macBootValidated(
       runtime, try expected(sidecar, runtime), template: template, until: deadline,
@@ -196,6 +202,16 @@ extension AppleBackend {
     }
     try IsolationGate.verifyMacRecord(
       inspection, try expected(sidecar, runtime), template: template)
+    // The sandbox record decides the listener; an instance whose sidecar
+    // predates recording it learns it here, so its bootstrap and stop-time
+    // audit follow the listener.
+    if sidecar.syncGuestComputerUse(from: inspection.record) { try sidecar.save(instance) }
+    if inspection.record.guestComputerUse != MacGuestComputerUse(config.computerUse) {
+      // Fixed at create: the record, not this configuration, decides.
+      diagnostics.warn(
+        "computer_use differs from what instance '\(instance.name)' was created with; recreate it for the change to take effect"
+      )
+    }
     let deadline = macBootDeadline(runtime)
     do {
       let (ready, key) = try macBootValidated(
@@ -210,6 +226,17 @@ extension AppleBackend {
       stopAfterFailure(runtime.namespace(.macos), sidecar.machineID)
       throw error
     }
+  }
+
+  /// A running macOS instance's guest computer-use counts for the audit,
+  /// read before it stops; nil when it is off or unreadable.
+  package func guestComputerUseAudit(_ instance: Instance) -> BoundaryAudit.Event? {
+    // Only sandboxes created with it have counts: no extra inspect otherwise.
+    guard let sidecar = try? MachineSidecar.loadIfPresent(instance), sidecar.kind == .macos,
+      sidecar.guestComputerUse != nil,
+      let counts = try? runtime().macInspect(sidecar.machineID).runtime?.guestComputerUse
+    else { return nil }
+    return .guestComputerUse(counts)
   }
 
   // MARK: Delete

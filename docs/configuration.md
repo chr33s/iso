@@ -36,6 +36,7 @@ after hand edits.
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline", "revoked_grant_ids": [...]}`, both members optional. `preset` sets defaults for the hardening settings; see [security presets](#security-presets). `revoked_grant_ids` lists saved instance grants to withdraw, by the 16-lowercase-hex IDs `iso policy effective` shows; duplicates are rejected, and an ID no instance records only draws a warning. See [`iso policy effective`](commands.md#policy-effective). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
+| `computer_use` | object | unset (off) | macOS guests only: `{"guest_access": true, "guest_frame_rate": 4}` lets an agent in the guest drive its own display. See [computer_use](#computer_use). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
 | `network` | object | `{"transport": "brokered"}` | How new instances' VMs are connected: `"brokered"` (no network device) or `"vmnet"` (an explicit compatibility choice; required for macOS guests and open egress). See [network](#network). |
@@ -783,6 +784,31 @@ begins a new session. Unknown `limits` members are rejected.
 
 Host-side logs are already bounded without a setting: the guest console log
 restarts after 8 MiB, and the owner log holds only the runtime's own lines.
+
+## `computer_use`
+
+```jsonc
+{ "computer_use": { "guest_access": true, "guest_frame_rate": 4 } }
+```
+
+macOS images only: a Linux instance runs without it, with a warning at
+creation. With `guest_access`, the instance's sandbox is created with a
+second host vsock listener (port 7802), and the guest's Claude Code and
+Codex get an MCP server named `iso-cu`
+(`/usr/local/libexec/iso-macos-helper cu-mcp`). Its
+tools take frames of the guest's display and send pointer and keyboard
+input to it, injected by the host through the VM's virtual keyboard and
+pointer, as host computer use is: the guest needs no Accessibility or
+Screen Recording permission. `guest_frame_rate` (1–10, default 4; only with
+`guest_access`) caps frames per second; actions are capped at 20 a second.
+
+The setting is fixed when the instance is created, and the instance keeps
+both the listener and the MCP server registration it was created with;
+changing it later only warns until the instance is recreated. The MCP
+server name `iso-cu` is then reserved. The host can take the display back at any time
+(`iso-sandbox macos cu hold`, and any host action); see
+[guest-driven computer use](design/guest-driven-computer-use.md). Unknown
+`computer_use` members are rejected.
 
 ## `editor`
 

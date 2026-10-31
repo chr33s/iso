@@ -613,8 +613,35 @@ package struct AgentBootstrap: Sendable {
     }
     let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
     try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
-    try bootstrapClaude(session, instance: instance, mode: mode)
-    try bootstrapCodex(session, instance: instance, mode: mode)
+    let agents = try withGuestComputerUse(instance)
+    try agents.bootstrapClaude(session, instance: instance, mode: mode)
+    try agents.bootstrapCodex(session, instance: instance, mode: mode)
+  }
+
+  /// The MCP server name guest-driven computer use registers for the agents.
+  package static let computerUseServer = "iso-cu"
+  /// The guest helper, installed in every macOS template, runs the server.
+  package static let computerUseCommand = "/usr/local/libexec/iso-macos-helper"
+
+  /// A macOS instance created with guest computer use also gives its agents
+  /// the `iso-cu` MCP server (docs/design/guest-driven-computer-use.md).
+  /// The instance's sidecar decides, which mirrors the sandbox record that
+  /// decides the vsock listener (synced at start), not the current
+  /// configuration.
+  func withGuestComputerUse(_ instance: Instance) throws -> AgentBootstrap {
+    guard let sidecar = try MachineSidecar.loadIfPresent(instance), sidecar.kind == .macos,
+      sidecar.guestComputerUse != nil
+    else { return self }
+    let name = Self.computerUseServer
+    guard config.claude.mcpServers[name] == nil, config.codex.mcpServers[name] == nil else {
+      throw HostError(
+        "the MCP server name \"\(name)\" is reserved for computer_use.guest_access; rename yours")
+    }
+    return AgentBootstrap(
+      config: config.addingMCPServer(
+        name, .stdio(command: Self.computerUseCommand, args: ["cu-mcp"], env: [:])),
+      client: client, environment: environment, home: home, resolver: resolver, proxies: proxies,
+      github: github, diagnostics: diagnostics, secrets: secrets, placement: placement)
   }
 
   // MARK: - Shared helpers

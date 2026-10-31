@@ -8,6 +8,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- **macOS guests:** guest-driven computer use. With
+  `"computer_use": {"guest_access": true}`, an agent in a macOS guest gets an
+  `iso-cu` MCP server (`iso-macos-helper cu-mcp`) whose tools take frames of
+  its own display and send input through the VM's virtual keyboard and
+  pointer, brokered by the host on vsock 7802. Off by default; fixed per
+  instance at creation; `guest_frame_rate` (1–10, default 4). The host can
+  take the display back with `iso-sandbox macos cu hold` (and release it),
+  and `iso stop` audits the boot's counts as `boundary.guest_computer_use`.
+  Templates built before this release need rebuilding for the `cu-mcp`
+  subcommand.
+
 - **macOS guests:** `iso-sandbox macos cu respond` answers one expected
   guest TCC folder-access prompt (observe or auto mode): one click at most,
   based on a fresh frame, with the dialog verified gone. Keychain, password

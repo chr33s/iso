@@ -24,6 +24,8 @@ package struct MacRecord: Sendable, Equatable, Decodable {
   package let authorizedKey: String
   package let createdAt: String
   package let expiresAt: String?
+  /// Guest-driven computer use, fixed at create; nil when off.
+  package let guestComputerUse: MacGuestComputerUse?
 
   package var sessionDeadline: Date? {
     expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
@@ -56,11 +58,13 @@ package struct MacEffective: Sendable, Equatable, Decodable {
   package let usbControllers: Int
   package let clipboard: Bool
   package let ownerTopology: String
+  /// Absent from owners that predate guest-driven computer use: off.
+  package let guestComputerUse: MacGuestComputerUse?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, template, cpus, memoryBytes, displays, pointingDevices, keyboards, storage, network
     case macAddress, vsockPorts, directoryShares, audioDevices, serialPorts, usbControllers
-    case clipboard, ownerTopology
+    case clipboard, ownerTopology, guestComputerUse
   }
 
   package init(from decoder: any Decoder) throws {
@@ -82,6 +86,20 @@ package struct MacEffective: Sendable, Equatable, Decodable {
     usbControllers = try c.decode(Int.self, forKey: .usbControllers)
     clipboard = try c.decode(Bool.self, forKey: .clipboard)
     ownerTopology = try c.decode(String.self, forKey: .ownerTopology)
+    guestComputerUse = try c.decodeIfPresent(MacGuestComputerUse.self, forKey: .guestComputerUse)
+  }
+}
+
+/// `guestComputerUse` in a macOS record and effective configuration.
+package struct MacGuestComputerUse: Sendable, Equatable, Codable {
+  package let frameRate: Int
+
+  package init(frameRate: Int) { self.frameRate = frameRate }
+
+  /// What `config` asks new sandboxes to be created with.
+  package init?(_ config: ComputerUseConfig) {
+    guard let rate = config.guestFrameRate else { return nil }
+    frameRate = rate
   }
 }
 
@@ -94,6 +112,77 @@ package struct MacRuntimeStatus: Sendable, Equatable, Decodable {
   package let sshHostKey: String?
   package let sshHostKeyConfirmed: Bool
   package let ipv4: String
+  /// This boot's guest computer-use counts; absent when it is off. An
+  /// invalid report (a negative count) is dropped: only the audit loses it.
+  package let guestComputerUse: MacGuestCUCounts?
+
+  enum CodingKeys: String, CodingKey {
+    case vmState, bootId, enrollment, helperConnected, sshHostKey, sshHostKeyConfirmed, ipv4
+    case guestComputerUse
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    vmState = try c.decode(String.self, forKey: .vmState)
+    bootId = try c.decode(String.self, forKey: .bootId)
+    enrollment = try c.decode(String.self, forKey: .enrollment)
+    helperConnected = try c.decode(Bool.self, forKey: .helperConnected)
+    sshHostKey = try c.decodeIfPresent(String.self, forKey: .sshHostKey)
+    sshHostKeyConfirmed = try c.decode(Bool.self, forKey: .sshHostKeyConfirmed)
+    ipv4 = try c.decode(String.self, forKey: .ipv4)
+    guestComputerUse = try? c.decodeIfPresent(MacGuestCUCounts.self, forKey: .guestComputerUse)
+  }
+}
+
+/// The owner's per-boot guest computer-use counts (`runtime.guestComputerUse`).
+package struct MacGuestCUCounts: Sendable, Equatable, Decodable {
+  package let frameRate: Int
+  package let sessions: Int
+  package let frames: Int
+  package let actions: Int
+  package let statusRequests: Int
+  package let preemptions: Int
+  /// Refusal codes as the owner names them; anything else is dropped.
+  package let refusals: [String: Int]
+
+  package init(
+    frameRate: Int, sessions: Int, frames: Int, actions: Int, statusRequests: Int,
+    preemptions: Int, refusals: [String: Int]
+  ) {
+    self.frameRate = frameRate
+    self.sessions = sessions
+    self.frames = frames
+    self.actions = actions
+    self.statusRequests = statusRequests
+    self.preemptions = preemptions
+    self.refusals = refusals.filter { Self.isCode($0.key) && $0.value >= 0 }
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case frameRate, sessions, frames, actions, statusRequests, preemptions, refusals
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    for key in [CodingKeys.frameRate, .sessions, .frames, .actions, .statusRequests, .preemptions]
+    where try c.decode(Int.self, forKey: key) < 0 {
+      throw DecodingError.dataCorruptedError(
+        forKey: key, in: c, debugDescription: "a count is never negative")
+    }
+    self.init(
+      frameRate: try c.decode(Int.self, forKey: .frameRate),
+      sessions: try c.decode(Int.self, forKey: .sessions),
+      frames: try c.decode(Int.self, forKey: .frames),
+      actions: try c.decode(Int.self, forKey: .actions),
+      statusRequests: try c.decode(Int.self, forKey: .statusRequests),
+      preemptions: try c.decode(Int.self, forKey: .preemptions),
+      refusals: try c.decode([String: Int].self, forKey: .refusals))
+  }
+
+  /// Lowercase letters and underscores, as the runtime's refusal codes are.
+  static func isCode(_ s: String) -> Bool {
+    (1...32).contains(s.count) && s.allSatisfy { ("a"..."z").contains($0) || $0 == "_" }
+  }
 }
 
 /// `iso-sandbox macos inspect <id>`.
@@ -232,7 +321,7 @@ extension SandboxRuntime {
 
   package func macCreate(
     _ name: MachineName, template: MachineName, cpus: UInt32, memoryMiB: UInt64, owner: OwnerID,
-    egress: EgressMode, authorizedKey: String
+    egress: EgressMode, authorizedKey: String, guestComputerUse: MacGuestComputerUse? = nil
   ) throws(RuntimeError) {
     _ = try Self.checked(
       executor,
@@ -243,7 +332,10 @@ extension SandboxRuntime {
           String(cpus), "--memory-mib", String(memoryMiB), "--network",
           egress.requiresHostOnlyNetwork ? "host-only" : "shared", "--authorized-key",
           authorizedKey,
-        ]),
+        ]
+          + (guestComputerUse.map {
+            ["--guest-computer-use", "--guest-frame-rate", String($0.frameRate)]
+          } ?? [])),
       deadline: createDeadline, limit: Self.jsonLimit, cancellable: true)
   }
 

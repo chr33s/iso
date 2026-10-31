@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import IsoMacProtocol
 import Vision
 
 /// The dialog responder's transport over a running owner's control socket:

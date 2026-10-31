@@ -2,7 +2,7 @@
 """Real-hardware qualification of macOS guests in iso-sandbox (gates from
 docs/design/macos-computer-use-qualification-plan.md). macOS 27+ on Apple Silicon only.
 
-    tests/macos-guest-qualify.py --sandbox BIN --template NAME [--root DIR] [--gates B,L,I,J,O,C,D,E,G,P,H,K]
+    tests/macos-guest-qualify.py --sandbox BIN --template NAME [--root DIR] [--gates B,L,I,J,O,C,D,E,G,P,H,K,U]
                                  [--captures N] [--clicks N] [--keep]
 
 Needs a published template (`iso-sandbox macos template build`) and the
@@ -18,6 +18,7 @@ import os
 import queue
 import random
 import secrets
+import select
 import signal
 import shutil
 import subprocess
@@ -237,6 +238,61 @@ class CU:
         return None
 
 
+class GuestMCP:
+    """The guest's `iso-macos-helper cu-mcp`, driven over pinned SSH as an
+    agent would: JSON-RPC lines on stdin, replies (frames are megabytes) on
+    stdout."""
+
+    def __init__(self, g):
+        self.p = subprocess.Popen(["ssh", *g.opts(), f"iso@{g.ip}", "./iso-macos-helper cu-mcp"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.n = 0
+        self.buf = b""
+
+    def send(self, obj):
+        self.p.stdin.write((json.dumps(obj) + "\n").encode())
+        self.p.stdin.flush()
+
+    def notify(self, method):
+        self.send({"jsonrpc": "2.0", "method": method})
+
+    def rpc(self, method, params=None, timeout=60):
+        self.n += 1
+        self.send({"jsonrpc": "2.0", "id": self.n, "method": method, "params": params or {}})
+        deadline = time.time() + timeout
+        fd = self.p.stdout.fileno()
+        while b"\n" not in self.buf:
+            if time.time() > deadline or not select.select([fd], [], [], max(0, deadline - time.time()))[0]:
+                raise TimeoutError(f"no reply to {method}")
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                raise RuntimeError("cu-mcp exited")
+            self.buf += chunk
+        line, self.buf = self.buf.split(b"\n", 1)
+        return json.loads(line)
+
+    def tool(self, name, **args):
+        return self.rpc("tools/call", {"name": name, "arguments": args}).get("result") or {}
+
+    @staticmethod
+    def text(result):
+        return " ".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text")
+
+    def frame(self):
+        r = self.tool("screenshot")
+        if r.get("isError") or not any(c.get("type") == "image" for c in r.get("content", [])):
+            return None
+        t = self.text(r)
+        return t.split("frameId: ", 1)[1].split(" ", 1)[0] if "frameId: " in t else None
+
+    def close(self):
+        try:
+            self.p.stdin.close()
+            self.p.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            self.p.kill()
+
+
 def wait_for(pred, timeout, what, interval=2.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -393,10 +449,10 @@ class Run:
         (self.dir / "result.json").write_text(json.dumps({"run": self.id, "meta": meta, "gates": self.gates},
                                                          indent=2, default=str))
 
-    def create(self, name, network="shared"):
+    def create(self, name, network="shared", extra=()):
         sid = f"q{self.id[-4:]}-{name}"
         self.rt.run("macos", "create", sid, "--template", self.args.template, "--owner", "qualify",
-                    "--network", network, "--authorized-key", self.pub)
+                    "--network", network, "--authorized-key", self.pub, *extra)
         self.created.append(sid)
         return sid
 
@@ -1141,6 +1197,84 @@ class Run:
               and out["emergency_stop_path"] != "guest_helper_shutdown")
         self.record("R", "pass" if ok else "fail", **out)
 
+    # ----------------------------------------------------------- Gate U
+
+    def gate_U(self, sid, g):
+        """Guest-driven computer use (docs/design/guest-driven-computer-use.md):
+        the guest's MCP server reaches the owner on vsock 7802 and drives
+        TextEdit through the VM's own keyboard; host watching does not
+        interrupt it, a host hold refuses it until released, the frame rate
+        is enforced, and the owner's per-boot counts add up. The sandbox is
+        created at 1 frame per second so the limit is observable. The helper
+        is this build's, copied in, so the template need not be rebuilt."""
+        out = {}
+        eff = self.rt.run("macos", "inspect", sid).get("effective") or {}
+        out["effective_vsock"] = eff.get("vsockPorts")
+        out["effective_guest_cu"] = eff.get("guestComputerUse")
+        g.scp(self.dir / "vsock-probe", "vsock-probe")
+        vs = json.loads(g.ssh("./vsock-probe " + " ".join(VSOCK_PORTS)))
+        out["vsock"] = vs
+        out["vsock_helper_and_cu_only"] = (vs.get("7801") == "open" and vs.get("7802") == "open"
+                                           and all(v != "open" for k, v in vs.items() if k not in ("7801", "7802")))
+        g.scp(Path(self.args.sandbox).resolve().parent / "iso-macos-helper", "iso-macos-helper")
+        token = "isocu" + secrets.token_hex(4)
+        g.ssh("rm -f ~/u.txt && printf '' > ~/u.txt && open -a TextEdit ~/u.txt")
+        time.sleep(6)
+        m = GuestMCP(g)
+        try:
+            init = m.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                        "clientInfo": {"name": "qualify", "version": "1"}})
+            m.notify("notifications/initialized")
+            out["server"] = (init.get("result") or {}).get("serverInfo")
+            out["tools"] = sorted(t["name"] for t in m.rpc("tools/list")["result"]["tools"])
+            frame = m.frame()
+            out["screenshot"] = frame is not None
+            if frame:
+                time.sleep(1.1)
+                out["type"] = m.text(m.tool("type", text=token, frameId=frame))
+                time.sleep(1.1)
+                out["save"] = m.text(m.tool("key", keyCode=1, modifiers=["command"], frameId=frame))
+            try:
+                out["typed_and_saved"] = bool(wait_for(lambda: token in g.ssh("cat ~/u.txt; true"), 20, "save", 1))
+            except TimeoutError:
+                out["typed_and_saved"] = False
+            # Host watching takes no hold.
+            time.sleep(1.1)
+            host = (self.rt.cu(sid, "session", check=False) or {}).get("session")
+            watched = host and self.rt.cu(sid, "frame", "--session", host, "--out", str(self.dir / "u-host.png"),
+                                         check=False)
+            time.sleep(1.1)
+            out["watch_does_not_preempt"] = bool(watched) and m.frame() is not None
+            # A host hold refuses the guest until released.
+            time.sleep(1.1)
+            self.rt.cu(sid, "hold", "--seconds", "60")
+            held = m.tool("screenshot")
+            out["held_refused"] = bool(held.get("isError")) and "host has control" in m.text(held)
+            out["status_during_hold"] = m.text(m.tool("control_status"))
+            self.rt.cu(sid, "release")
+            time.sleep(1.1)
+            out["after_release"] = m.frame() is not None
+            out["status_after_release"] = m.text(m.tool("control_status"))
+            # Frames are limited to 1 a second: back-to-back ones are refused.
+            burst = [m.tool("screenshot") for _ in range(3)]
+            out["rate_limited"] = sum(1 for b in burst if "rate_limited" in m.text(b))
+        finally:
+            m.close()
+        counts = ((self.rt.run("macos", "inspect", sid).get("runtime") or {}).get("guestComputerUse") or {})
+        out["counts"] = counts
+        refusals = counts.get("refusals") or {}
+        ok = (out["effective_vsock"] == [7801, 7802] and out["effective_guest_cu"] == {"frameRate": 1}
+              and out["vsock_helper_and_cu_only"] and out.get("server", {}).get("name") == "iso-cu"
+              and "screenshot" in out["tools"] and "down" not in out["tools"]
+              and out["screenshot"] and out["typed_and_saved"] and out["watch_does_not_preempt"]
+              and out["held_refused"] and "controller: host" in out["status_during_hold"]
+              and out["after_release"] and "controller: host" not in out["status_after_release"]
+              and out["rate_limited"] >= 1
+              and counts.get("frames", 0) >= 3 and counts.get("actions", 0) >= 2
+              and counts.get("preemptions", 0) >= 1 and refusals.get("held_by_host", 0) >= 1
+              and refusals.get("rate_limited", 0) >= 1)
+        self.record("U", "pass" if ok else "fail", **out)
+
     # ----------------------------------------------------------- Gate S
 
     def owner_usage(self, pid):
@@ -1385,6 +1519,10 @@ def main():
             run.gate_K(a, ga)
         if "SCALE" in gates:
             run.gate_S_scaling()
+        if "U" in gates:
+            u = run.create("u", extra=("--guest-computer-use", "--guest-frame-rate", "1"))
+            run.gate_U(u, run.boot(u))
+            run.rt.run("macos", "stop", u, timeout=600, check=False)
         if "R" in gates:
             # Last: it changes the guest's login policy and stops it.
             r = run.create("r")

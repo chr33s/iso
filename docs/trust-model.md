@@ -969,6 +969,23 @@ is untrusted, and the whole VM is the boundary.
   coordinates, paths, key codes, ASCII text). They are synthesized into the
   view in-process and never posted to the host event system. The owner needs
   no Screen Recording or Accessibility permission.
+- **Guest computer use (vsock 7802).** Off by default; the owner registers
+  the listener only for sandboxes created with `--guest-computer-use`
+  (`iso`: `computer_use.guest_access`), and the isolation gate accepts 7802
+  only when the record says so. Requests are tainted: lines of at most
+  64 KiB, a closed four-operation set (`session`, `frame`, `act`, `status`)
+  that refuses unknown fields, `basedOnFrame` required on every action, the
+  same action validation and frame binding as host callers, at most 2
+  connections, and per-sandbox rate limits (the configured 1–10 frames and
+  20 actions a second, and 100 requests a second of any kind, refused ones
+  included). Responses carry only the guest's own framebuffer and
+  fixed-shape metadata; `status` reveals only whether the host holds control
+  and for how long. Input is synthesized into that VM's view only. The host
+  always wins: any host action, or `cu hold`, ends the guest's session and
+  refuses new ones until it is released or expires. Any guest process may
+  connect; the guest is one principal and could drive its own desktop
+  anyway. A guest that enables this can click its own consent dialogs,
+  which changes no host policy.
 - **Permission dialogs (`cu respond`).** Dialog text is guest-rendered
   pixels, recognized with Vision in the `iso-sandbox` CLI process, never in
   the owner. Recognized text only selects a candidate: the caller's

@@ -37,6 +37,7 @@ let package = Package(
       name: "IsoSandbox",
       dependencies: [
         "IsoSandboxCore",
+        "IsoMacProtocol",
         .product(name: "Containerization", package: "containerization"),
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]

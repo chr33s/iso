@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import IsoMacProtocol
 import Testing
 
 @testable import IsoSandboxCore

@@ -94,6 +94,8 @@ package struct IsoConfig: Sendable, Equatable {
   /// `security.revoked_grant_ids`: saved instance grants to withdraw, by the
   /// opaque IDs `iso policy effective` shows (POL-01).
   package let revokedGrantIDs: [String]
+  /// `computer_use`: guest-driven computer use for macOS guests.
+  package let computerUse: ComputerUseConfig
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -104,8 +106,9 @@ package struct IsoConfig: Sendable, Equatable {
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
     editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?,
     network: NetworkConfig = .defaults, workspaceInput: WorkspaceInputConfig = .defaults,
-    revokedGrantIDs: [String] = []
+    revokedGrantIDs: [String] = [], computerUse: ComputerUseConfig = .off
   ) {
+    self.computerUse = computerUse
     self.revokedGrantIDs = revokedGrantIDs
     self.workspaceInput = workspaceInput
     self.execution = execution
@@ -451,6 +454,25 @@ package enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
   var pullMode: WorkspacePullMode { self == .networked ? .direct : .stage }
 }
 
+/// `computer_use` (docs/design/guest-driven-computer-use.md): whether an
+/// agent in a macOS guest may drive its own display, and how fast it may
+/// take frames.
+package struct ComputerUseConfig: Sendable, Equatable {
+  /// Frames per second the guest may take; nil when guest access is off.
+  package let guestFrameRate: Int?
+
+  package var guestAccess: Bool { guestFrameRate != nil }
+
+  /// The runtime's `GuestCUProtocol.defaultFrameRate` and `frameRates`
+  /// (iso-sandbox, a separate package).
+  package static let defaultFrameRate = 4
+  package static let frameRates = 1...10
+
+  package init(guestFrameRate: Int?) { self.guestFrameRate = guestFrameRate }
+
+  package static let off = ComputerUseConfig(guestFrameRate: nil)
+}
+
 /// `limits` (selective-hardening spec §8).
 package struct LimitsConfig: Sendable, Equatable {
   /// Each boot ends this long after it starts, enforced by the sandbox owner
@@ -550,7 +572,7 @@ extension IsoConfig {
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
       editor: editor, execution: execution, policy: policy, network: network,
-      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs, computerUse: computerUse)
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -592,7 +614,29 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
+      computerUse: computerUse)
+  }
+
+  /// Both agents with one more MCP server. Does not rewrite the config file.
+  package func addingMCPServer(_ name: String, _ server: MCPServer) -> IsoConfig {
+    func agent(_ a: AgentConfig) -> AgentConfig {
+      var servers = a.mcpServers
+      servers[name] = server
+      return AgentConfig(
+        apiKey: a.apiKey, envForward: a.envForward, marketplaces: a.marketplaces,
+        plugins: a.plugins, mcpServers: servers, configDirectory: a.configDirectory,
+        localModel: a.localModel)
+    }
+    return IsoConfig(
+      dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
+      claude: agent(claude), codex: agent(codex), codexAuth: codexAuth, proxy: proxy,
+      guestEnvironment: guestEnvironment, profiles: profiles, postStart: postStart,
+      forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
+      workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
+      securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
+      computerUse: computerUse)
   }
 
   /// This command's `proxy.mode` override. Does not rewrite the config file.
@@ -605,7 +649,8 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
+      computerUse: computerUse)
   }
 
   /// The configuration under an instance's recorded transport.
@@ -618,7 +663,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: NetworkConfig(transport: transport), workspaceInput: workspaceInput,
-      revokedGrantIDs: revokedGrantIDs)
+      revokedGrantIDs: revokedGrantIDs, computerUse: computerUse)
   }
 
   /// Why `egress` cannot run over `network.transport`, or nil. The brokered
@@ -640,7 +685,8 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
+      computerUse: computerUse)
   }
 }
 

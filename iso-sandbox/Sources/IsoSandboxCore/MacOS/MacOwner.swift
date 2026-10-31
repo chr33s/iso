@@ -14,19 +14,25 @@ package struct MacControlRequest: Codable, Sendable {
     case cuSession = "cu-session"
     case cuFrame = "cu-frame"
     case cuAct = "cu-act"
+    case cuHold = "cu-hold"
+    case cuRelease = "cu-release"
   }
   package var op: Op
   package var session: String? = nil
   package var action: CUActionRequest? = nil
   package var basedOnFrame: String? = nil
+  /// `cu-hold`: how long, in seconds.
+  package var seconds: Int? = nil
 
   package init(
-    op: Op, session: String? = nil, action: CUActionRequest? = nil, basedOnFrame: String? = nil
+    op: Op, session: String? = nil, action: CUActionRequest? = nil, basedOnFrame: String? = nil,
+    seconds: Int? = nil
   ) {
     self.op = op
     self.session = session
     self.action = action
     self.basedOnFrame = basedOnFrame
+    self.seconds = seconds
   }
 }
 
@@ -46,6 +52,8 @@ package struct MacStatus: Codable, Sendable {
   package var sshHostKeyConfirmed: Bool
   package var ipv4: String
   package var topology: String
+  /// This boot's guest computer-use counts; nil when it is off.
+  package var guestComputerUse: MacGuestCUCounters? = nil
 }
 
 package struct MacFrameInfo: Codable, Sendable {
@@ -75,6 +83,9 @@ package struct MacControlResponse: Codable, Sendable {
   /// was refused before any input was sent.
   package var refusal: CURefusal? = nil
   package var beforeInput: Bool? = nil
+  /// `cu-hold` and `cu-release`: who drives the display afterwards.
+  package var controller: GuestCUController? = nil
+  package var holdRemainingSeconds: Int? = nil
   package var stopPath: String? = nil
 
   package init(ok: Bool, error: String? = nil) {
@@ -224,6 +235,14 @@ package enum MacOwner {
         bootId: bootId, vmInstance: vm.instance, guestBoot: guestBoot,
         helperGeneration: link.generation, width: MacDisplay.width, height: MacDisplay.height)
     }
+    // Guest-driven computer use: only for sandboxes created with it, and
+    // before the effective configuration is read, which reports it.
+    let guestLink = record.guestComputerUse.map { guestCU in
+      MacGuestCULink(frameRate: guestCU.frameRate, log: ownerLog) { request in
+        await MacGuestCULink.serve(request, screen: screen)
+      }
+    }
+    if let guestLink { vm.setSocketListener(guestLink, port: GuestCUProtocol.port) }
     let effective = MacEffectiveConfig.from(
       config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology)
 
@@ -274,12 +293,13 @@ package enum MacOwner {
       (req: MacControlRequest) async -> MacControlResponse in
       await handle(
         req, vm: vm, link: link, store: store, screen: screen, effective: effective, bootId: bootId,
-        address: address, stopper: stopper)
+        address: address, stopper: stopper, guestLink: guestLink)
     } failure: {
       MacControlResponse(ok: false, error: $0)
     }
 
-    app.run()
+    // The listener holds its delegate weakly.
+    withExtendedLifetime(guestLink) { app.run() }
     exit(0)
   }
 
@@ -289,7 +309,8 @@ package enum MacOwner {
   static func handle(
     _ req: MacControlRequest, vm: MacVM, link: MacHelperLink, store: MacRecordStore,
     screen: MacScreen,
-    effective: MacEffectiveConfig, bootId: String, address: String, stopper: MacStopper
+    effective: MacEffectiveConfig, bootId: String, address: String, stopper: MacStopper,
+    guestLink: MacGuestCULink? = nil
   ) async -> MacControlResponse {
     do {
       switch req.op {
@@ -311,7 +332,12 @@ package enum MacOwner {
           helperGeneration: link.generation,
           sshHostKey: store.current.enrollment == .enrolled ? pin : nil,
           sshHostKeyConfirmed: confirmed, ipv4: address,
-          topology: screen.topology)
+          topology: screen.topology,
+          guestComputerUse: guestLink.map {
+            var counts = $0.counters
+            counts.preemptions = screen.preemptions
+            return counts
+          })
         return r
       case .stop:
         var r = MacControlResponse(ok: true)
@@ -347,6 +373,21 @@ package enum MacOwner {
           session: req.session, request: action, basedOnFrame: req.basedOnFrame)
         var r = MacControlResponse(ok: true)
         r.submitted = n
+        return r
+      case .cuHold, .cuRelease:
+        if req.op == .cuHold {
+          let seconds = req.seconds ?? CUControl.defaultHold
+          guard CUControl.holdRange.contains(seconds) else {
+            throw SandboxError(
+              "hold must be \(CUControl.holdRange.lowerBound)-\(CUControl.holdRange.upperBound) seconds"
+            )
+          }
+          screen.hold(seconds: TimeInterval(seconds))
+        } else {
+          screen.release()
+        }
+        var r = MacControlResponse(ok: true)
+        (r.controller, r.holdRemainingSeconds) = screen.controlState
         return r
       }
     } catch {

@@ -210,6 +210,12 @@ extension AppleBackend {
     let owner = try Owner.load(config)
     let manifest = try ImageManifest.load(config, instance.image)
     try runtime.verifyImage(manifest)
+    if manifest.guestOS != .macos && config.computerUse.guestAccess {
+      // One configuration serves every instance: Linux ones ignore it.
+      diagnostics.warn(
+        "computer_use.guest_access applies to macOS images only; instance '\(instance.name)' (\(instance.image)) runs without it"
+      )
+    }
     if config.network.transport == .brokered {
       // Refused before any record or VM exists: never a downgraded start.
       if let conflict = config.transportConflict { throw HostError(conflict) }

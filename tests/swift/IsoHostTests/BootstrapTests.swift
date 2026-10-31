@@ -1230,3 +1230,44 @@ extension GuestEnvState {
       fresh: Set(entries.keys.map(\.rawValue)))
   }
 }
+
+// MARK: - Guest computer use
+
+@Test func guestComputerUseRegistersItsServerFromTheInstanceNotTheConfiguration() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  try FileManager.default.createDirectory(
+    atPath: instance.directory, withIntermediateDirectories: true)
+  func sidecar(_ guestComputerUse: MacGuestComputerUse?) throws {
+    try MachineSidecar(
+      schemaVersion: StateSchema.version, backend: StateSchema.backend,
+      ownerID: try OwnerID("0a1b2c3d00112233445566778899aabb"),
+      machineID: try MachineName("iso-0a1b2c3d-00112233445566ff"), imageRef: "r",
+      imageDigest: "d", imageManifestID: "m", guestUser: .default, requestedCPUs: 2,
+      requestedMemoryBytes: 1 << 30, hostKeyFingerprint: "", lastObservedOwnerPID: nil,
+      lastObservedIP: nil, reenrollHostKey: false, createdAt: "t", runtimeIdentity: "i",
+      guestOS: .macos, guestComputerUse: guestComputerUse
+    ).save(instance)
+  }
+  let on = try testConfig(#""computer_use": {"guest_access": true}"#)
+  let off = try testConfig()
+  let server = MCPServer.stdio(
+    command: AgentBootstrap.computerUseCommand, args: ["cu-mcp"], env: [:])
+  // Created with it: registered for both agents, whatever the config says now.
+  try sidecar(MacGuestComputerUse(frameRate: 4))
+  for config in [on, off] {
+    let agents = try guest.bootstrap(config).withGuestComputerUse(instance)
+    #expect(agents.config.claude.mcpServers[AgentBootstrap.computerUseServer] == server)
+    #expect(agents.config.codex.mcpServers[AgentBootstrap.computerUseServer] == server)
+  }
+  // Created without it: never registered, even with the config now on.
+  try sidecar(nil)
+  #expect(try guest.bootstrap(on).withGuestComputerUse(instance).config.claude.mcpServers.isEmpty)
+  // The name is reserved while it is on.
+  try sidecar(MacGuestComputerUse(frameRate: 4))
+  let clash = try testConfig(
+    #""computer_use": {"guest_access": true}, "claude": {"mcp_servers": {"iso-cu": {"command": "x"}}}"#
+  )
+  #expect(throws: HostError.self) { try guest.bootstrap(clash).withGuestComputerUse(instance) }
+}

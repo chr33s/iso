@@ -310,8 +310,11 @@ package enum IsolationGate {
 
 extension IsolationGate {
   /// The guest helper's vsock port, `HelperProtocol.port` in iso-sandbox
-  /// (a separate package): the only port a macOS guest may have.
-  static let macVsockPorts: [UInt32] = [7801]
+  /// (a separate package), and with guest-driven computer use
+  /// `GuestCUProtocol.port`: the only ports a macOS guest may have.
+  static func macVsockPorts(guestComputerUse: Bool) -> [UInt32] {
+    guestComputerUse ? [7801, 7802] : [7801]
+  }
 
   package static func macDiskPath(runtimeRoot: String, sandbox: MachineName) -> String {
     SandboxNamespace.directory(root: runtimeRoot, sandbox, .macos) + "/disk.img"
@@ -412,12 +415,20 @@ extension IsolationGate {
         "sandbox \(name) attaches \(effective.storage.map { sanitizeForDisplay($0) }), not only its own disk \(disk)"
       )
     }
+    // Guest computer use as created: the running owner must report the
+    // record's setting, and its listener only with it.
+    guard effective.guestComputerUse == inspection.record.guestComputerUse else {
+      throw .hostExposure(
+        "sandbox \(name) runs guest computer use \(effective.guestComputerUse.map { "at \($0.frameRate) fps" } ?? "off") but was created with \(inspection.record.guestComputerUse.map { "\($0.frameRate) fps" } ?? "off")"
+      )
+    }
+    let vsockPorts = macVsockPorts(guestComputerUse: inspection.record.guestComputerUse != nil)
     guard effective.directoryShares == 0, effective.audioDevices == 0, effective.serialPorts == 0,
       effective.usbControllers == 0, !effective.clipboard, effective.displays.count == 1,
-      effective.vsockPorts == macVsockPorts
+      effective.vsockPorts == vsockPorts
     else {
       throw .hostExposure(
-        "sandbox \(name) has \(effective.directoryShares) shares, \(effective.audioDevices) audio, \(effective.serialPorts) serial, \(effective.usbControllers) USB, clipboard \(effective.clipboard), \(effective.displays.count) displays, vsock \(effective.vsockPorts); expected none, one display and vsock \(macVsockPorts)"
+        "sandbox \(name) has \(effective.directoryShares) shares, \(effective.audioDevices) audio, \(effective.serialPorts) serial, \(effective.usbControllers) USB, clipboard \(effective.clipboard), \(effective.displays.count) displays, vsock \(effective.vsockPorts); expected none, one display and vsock \(vsockPorts)"
       )
     }
     guard let ip = try? IPv4Address(live.ipv4) else {

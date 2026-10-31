@@ -225,10 +225,16 @@ Control-socket operations. Clients must be the owning uid.
 | `cu-session` | — | `session`, `binding` {`bootId`, `vmInstance`, `guestBoot`, `helperGeneration`, `width`, `height`} |
 | `cu-frame` | `session` | `frame` {`frameId`, `seq`, `width`, `height`, `bootId`, `guestBoot`, `vmInstance`, `sha256`, `timestamp`, `png` (base64)} |
 | `cu-act` | `session`, `action`, optional `basedOnFrame` | `ok`, `submitted` (input events handed to the view) |
+| `cu-hold` | optional `seconds` (1–3600, default 300) | `controller`, `holdRemainingSeconds` |
+| `cu-release` | — | `controller`, `holdRemainingSeconds` |
 
-A refused computer-use request also carries `refusal`, a code
+`cu-hold` and `cu-release` arbitrate with
+[guest-driven computer use](guest-driven-computer-use.md): a hold, and every
+`cu-act`, ends the guest's session; `cu-session` and `cu-frame` do not. A
+refused computer-use request also carries `refusal`, a code
 (`helper_gone`, `unknown_session`, `session_refused`, `unknown_frame`,
-`foreign_frame`, `no_window`, `blank_frame`, `busy`, `invalid_action`), and
+`foreign_frame`, `no_window`, `blank_frame`, `busy`, `invalid_action`,
+`held_by_host`, `rate_limited`), and
 for `cu-act`, `beforeInput`: true when it was refused before any input
 event was sent. Clients branch on these, not on `error` text.
 

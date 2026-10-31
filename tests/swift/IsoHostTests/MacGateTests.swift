@@ -92,6 +92,35 @@ private func with(_ section: String, _ key: String, _ value: Any) -> [String: An
   }
 }
 
+@Test func guestComputerUseMustMatchTheRecordAndOpenOnlyItsListener() throws {
+  let on: [String: Any] = ["frameRate": 4]
+  var enabled = with("record", "guestComputerUse", on)
+  var effective = enabled["effective"] as! [String: Any]
+  effective["guestComputerUse"] = on
+  effective["vsockPorts"] = [7801, 7802]
+  enabled["effective"] = effective
+  _ = try gate(enabled)
+  func exposure(_ object: [String: Any]) -> Bool {
+    do { _ = try gate(object) } catch {
+      if case .hostExposure = error as? RuntimeError { return true }
+    }
+    return false
+  }
+  // The listener without the record's setting, or the setting without it.
+  #expect(exposure(with("effective", "vsockPorts", [7801, 7802])))
+  var noListener = enabled
+  effective["vsockPorts"] = [7801]
+  noListener["effective"] = effective
+  #expect(exposure(noListener))
+  // A different frame rate than the record's, or a setting the record lacks.
+  var faster = enabled
+  effective["vsockPorts"] = [7801, 7802]
+  effective["guestComputerUse"] = ["frameRate": 10]
+  faster["effective"] = effective
+  #expect(exposure(faster))
+  #expect(exposure(with("effective", "guestComputerUse", on)))
+}
+
 @Test func networkAndAddressMustMatchTheDedicatedSubnet() throws {
   for object in [
     with("effective", "network", "vmnet-shared:10.231.8.0/24"),
@@ -158,6 +187,52 @@ private func with(_ section: String, _ key: String, _ value: Any) -> [String: An
   let encoded = try JSONEncoder().encode(mac)
   #expect(String(decoding: encoded, as: UTF8.self).contains(#""guest_os":"macos""#))
   #expect(try JSONDecoder().decode(MachineSidecar.self, from: encoded).kind == .macos)
+}
+
+@Test func macSidecarsPersistGuestComputerUseAndFollowTheRecord() throws {
+  var mac = MachineSidecar(
+    schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: macOwner,
+    machineID: macSandbox, imageRef: "r", imageDigest: "d", imageManifestID: "m",
+    guestUser: .default, requestedCPUs: 2, requestedMemoryBytes: 1 << 30, hostKeyFingerprint: "",
+    lastObservedOwnerPID: nil, lastObservedIP: nil, reenrollHostKey: false, createdAt: "t",
+    runtimeIdentity: "i", guestOS: .macos)
+  #expect(
+    !String(decoding: try JSONEncoder().encode(mac), as: UTF8.self).contains("guest_computer_use"))
+  mac.guestComputerUse = MacGuestComputerUse(frameRate: 4)
+  let encoded = try JSONEncoder().encode(mac)
+  #expect(
+    String(decoding: encoded, as: UTF8.self).contains(#""guest_computer_use":{"frameRate":4}"#))
+  #expect(
+    try JSONDecoder().decode(MachineSidecar.self, from: encoded).guestComputerUse
+      == mac.guestComputerUse)
+  // An older sidecar learns the record's setting, once.
+  var old = mac
+  old.guestComputerUse = nil
+  let on = try inspection(
+    {
+      var o = with("record", "guestComputerUse", ["frameRate": 2])
+      var e = o["effective"] as! [String: Any]
+      e["guestComputerUse"] = ["frameRate": 2]
+      e["vsockPorts"] = [7801, 7802]
+      o["effective"] = e
+      return o
+    }()
+  ).record
+  let changed = old.syncGuestComputerUse(from: on)
+  #expect(changed)
+  #expect(old.guestComputerUse == MacGuestComputerUse(frameRate: 2))
+  let again = old.syncGuestComputerUse(from: on)
+  #expect(!again)
+}
+
+@Test func invalidGuestComputerUseCountsLoseOnlyTheCounts() throws {
+  let bad: [String: Any] = [
+    "frameRate": 4, "sessions": 1, "frames": -1, "actions": 0, "statusRequests": 0,
+    "preemptions": 0, "refusals": [String: Int](),
+  ]
+  let i = try inspection(with("runtime", "guestComputerUse", bad))
+  #expect(i.runtime != nil)
+  #expect(i.runtime?.guestComputerUse == nil)
 }
 
 private func refusal(_ object: [String: Any], _ egress: EgressMode = .open) -> RuntimeError? {
@@ -239,7 +314,24 @@ private func refusal(_ object: [String: Any], _ egress: EgressMode = .open) -> R
     contentsOf: root.appending(path: "iso-sandbox/Sources/IsoSandboxCore/MacOS/MacTemplates.swift"),
     encoding: .utf8)
   #expect(layout.contains("package let macGuestsFeature = \"\(RuntimeProtocol.macFeature)\"\n"))
-  #expect(helper.contains("package static let port: UInt32 = \(IsolationGate.macVsockPorts[0])\n"))
+  #expect(
+    helper.contains(
+      "package static let port: UInt32 = \(IsolationGate.macVsockPorts(guestComputerUse: false)[0])\n"
+    ))
+  let guestCU = try String(
+    contentsOf: root.appending(path: "iso-sandbox/Sources/IsoMacProtocol/GuestCUProtocol.swift"),
+    encoding: .utf8)
+  #expect(
+    guestCU.contains(
+      "package static let port: UInt32 = \(IsolationGate.macVsockPorts(guestComputerUse: true)[1])\n"
+    ))
+  #expect(
+    guestCU.contains(
+      "package static let defaultFrameRate = \(ComputerUseConfig.defaultFrameRate)\n"))
+  #expect(
+    guestCU.contains(
+      "package static let frameRates = \(ComputerUseConfig.frameRates.lowerBound)...\(ComputerUseConfig.frameRates.upperBound)\n"
+    ))
   #expect(templates.contains("static let guestUser = \"\(MacProvision.guestUser)\""))
 }
 

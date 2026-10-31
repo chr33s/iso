@@ -155,11 +155,29 @@ package struct MacSandboxRecord: Codable, Sendable {
   package var authorizedKey: String
   package var createdAt: Date
   package var expiresAt: Date?
+  /// Guest-driven computer use, fixed at create; nil when off.
+  package var guestComputerUse: MacGuestComputerUse? = nil
 
   package var subnet: String { SandboxRecord.subnet(subnetIndex) }
   /// The guest's static address: `.2` of its subnet, as for Linux sandboxes.
   package var guestAddress: String { "10.231.\(subnetIndex).2" }
   package var gateway: String { "10.231.\(subnetIndex).1" }
+}
+
+/// Guest-driven computer use for one sandbox
+/// (docs/design/guest-driven-computer-use.md).
+package struct MacGuestComputerUse: Codable, Equatable, Sendable {
+  /// Frames per second the guest may take.
+  package var frameRate: Int
+
+  package init(frameRate: Int) throws {
+    guard GuestCUProtocol.frameRates.contains(frameRate) else {
+      throw SandboxError(
+        "guest frame rate must be \(GuestCUProtocol.frameRates.lowerBound)-\(GuestCUProtocol.frameRates.upperBound)"
+      )
+    }
+    self.frameRate = frameRate
+  }
 }
 
 /// Written by the macOS owner while its VM runs; removed on stop.

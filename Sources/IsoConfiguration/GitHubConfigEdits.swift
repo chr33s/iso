@@ -23,7 +23,8 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
+      computerUse: computerUse)
   }
 
   /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
@@ -37,7 +38,8 @@ extension IsoConfig {
       forwardPorts: forwardPorts, updates: updates, appleContainer: appleContainer,
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
-      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs)
+      network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
+      computerUse: computerUse)
   }
 }
 

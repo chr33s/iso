@@ -209,8 +209,14 @@ package enum SSHPublicKey {
 /// Reads newline-terminated lines from a file descriptor with a hard cap.
 package struct LineReader {
   let fd: Int32
+  let limit: Int
   var buffer: [UInt8] = []
-  package init(fd: Int32) { self.fd = fd }
+  /// Bytes of `buffer` already known to hold no newline.
+  var scanned = 0
+  package init(fd: Int32, limit: Int = HelperProtocol.maxLine) {
+    self.fd = fd
+    self.limit = limit
+  }
 
   package enum Next: Equatable {
     case line([UInt8])
@@ -224,12 +230,15 @@ package struct LineReader {
   package mutating func next(deadline: Date? = nil) -> Next {
     var chunk = [UInt8](repeating: 0, count: 4096)
     while true {
-      if let nl = buffer.firstIndex(of: 0x0A) {
+      // Only new bytes are searched: a multi-megabyte line stays linear.
+      if let nl = buffer[scanned...].firstIndex(of: 0x0A) {
         let line = Array(buffer[..<nl])
         buffer.removeSubrange(...nl)
+        scanned = 0
         return .line(line)
       }
-      if buffer.count > HelperProtocol.maxLine { return .tooLong }
+      scanned = buffer.count
+      if buffer.count > limit { return .tooLong }
       if let deadline, Date() >= deadline { return .deadline }
       let n = read(fd, &chunk, chunk.count)
       if n < 0, errno == EINTR { continue }

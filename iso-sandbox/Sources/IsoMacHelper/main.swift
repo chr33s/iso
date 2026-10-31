@@ -4,11 +4,20 @@
 // It connects to the host owner on vsock port 7801 and answers its
 // challenge (see IsoMacProtocol and docs/design/macos-guest-computer-use.md).
 // It acts only on the closed message set: enroll (first boot of a clone),
-// network, status, shutdown. It runs no other commands.
+// network, status, shutdown. It runs no other commands. Run as
+// `iso-macos-helper cu-mcp`, it is instead the computer-use MCP server
+// (CUMCP.swift).
 
 import Darwin
 import Foundation
 import IsoMacProtocol
+
+// `cu-mcp`: the guest computer-use MCP server, run by an agent as the guest
+// user; it never touches the helper's key or state.
+if CommandLine.arguments.dropFirst().first == "cu-mcp" {
+  runComputerUseMCP()
+  exit(0)
+}
 
 let helperVersion = "1"
 let stateDir = "/var/db/iso-macos-helper"

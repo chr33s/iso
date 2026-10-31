@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import IsoMacProtocol
 import Virtualization
 
 /// The owner's computer-use surface (Gates C–H): a `VZVirtualMachineView` in
@@ -14,6 +15,8 @@ package final class MacScreen {
   private let view: VZVirtualMachineView
   private let window: NSWindow
   private var table = CUSessions()
+  /// Who drives the display: host holds win over the guest's session.
+  private var control = CUControl()
   /// One action at a time: actions suspend between steps, and two in flight
   /// would interleave on the single pointer and keyboard.
   private var acting = false
@@ -43,8 +46,43 @@ package final class MacScreen {
 
   // MARK: sessions
 
+  /// A host session. Opening one takes no hold: a host may watch frames
+  /// while the guest drives.
   package func newSession() throws -> (String, CUBinding) {
     try table.open(current: current())
+  }
+
+  /// The guest's session, replacing any earlier one; refused during a host
+  /// hold.
+  package func newGuestSession() throws -> (String, CUBinding) {
+    let (id, binding) = try table.open(current: current())
+    do {
+      if let old = try control.openGuest(id, at: Date()) { table.revoke(old) }
+    } catch {
+      table.revoke(id)
+      throw error
+    }
+    return (id, binding)
+  }
+
+  // MARK: control
+
+  /// Guest sessions host holds have ended this boot.
+  package private(set) var preemptions = 0
+
+  /// Starts or extends a host hold, ending the guest's session.
+  package func hold(seconds: TimeInterval) {
+    if let guest = control.hold(for: seconds, at: Date()) {
+      table.revoke(guest)
+      preemptions += 1
+    }
+  }
+
+  package func release() { control.release() }
+
+  package var controlState: (controller: GuestCUController, holdRemainingSeconds: Int) {
+    let now = Date()
+    return (control.controller(at: now), control.holdRemaining(at: now))
   }
 
   private func check(_ id: String?) throws -> CUBinding {
@@ -67,7 +105,8 @@ package final class MacScreen {
     package var timestamp: Date
   }
 
-  package func frame(session: String?) throws -> Frame {
+  package func frame(session: String?, origin: CUOrigin = .host) throws -> Frame {
+    if origin == .guest { try control.requireGuest(session, at: Date()) }
     let bound = try check(session)
     guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
       throw SandboxError("no bitmap for the view")
@@ -131,12 +170,13 @@ package final class MacScreen {
   /// Runs one validated action. `basedOnFrame`, if given, must be a frame
   /// captured under this session's binding. A failure part-way releases every
   /// button and key the action pressed.
-  package func act(session: String?, request: CUActionRequest, basedOnFrame: String?) async throws
-    -> Int
-  {
+  package func act(
+    session: String?, request: CUActionRequest, basedOnFrame: String?, origin: CUOrigin = .host
+  ) async throws -> Int {
     let bound: CUBinding
     let action: CUAction
     do {
+      if origin == .guest { try control.requireGuest(session, at: Date()) }
       bound = try check(session)
       if let basedOnFrame { try table.requireFrame(basedOnFrame, from: bound) }
       do { action = try request.validated(width: width, height: height) } catch {
@@ -147,6 +187,8 @@ package final class MacScreen {
       e.beforeInput = true
       throw e
     }
+    // Host input never interleaves with the guest's: it takes a hold first.
+    if origin == .host { hold(seconds: CUControl.implicitHold) }
     acting = true
     defer { acting = false }
     var pressed: [CUButton] = []
@@ -343,6 +385,10 @@ package final class MacScreen {
     }
   }
 }
+
+/// Who asked for a frame or an action: a host control-socket client or the
+/// guest's computer-use channel.
+package enum CUOrigin: Sendable { case host, guest }
 
 /// AppKit pulls a titled window back onto a screen when it is ordered
 /// front; this window must stay where it is put.

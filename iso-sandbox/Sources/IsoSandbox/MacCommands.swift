@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import IsoMacProtocol
 import IsoSandboxCore
 
 /// `iso-sandbox macos …`: macOS guests (docs/design/macos-guest-computer-use.md).
@@ -73,10 +74,17 @@ struct MacCreate: AsyncParsableCommand {
   @Option(help: "shared or host-only") var network = "shared"
   @Option(help: "ssh-ed25519 public key authorized for the guest user at first boot")
   var authorizedKey: String
+  @Flag(help: "Let the guest drive its own display over vsock 7802")
+  var guestComputerUse = false
+  @Option(help: "Frames per second the guest may take (1-10; with --guest-computer-use)")
+  var guestFrameRate: Int?
 
   func validate() throws {
     guard ["shared", "host-only"].contains(network) else {
       throw ValidationError("--network must be shared or host-only")
+    }
+    guard guestComputerUse || guestFrameRate == nil else {
+      throw ValidationError("--guest-frame-rate needs --guest-computer-use")
     }
   }
 
@@ -85,7 +93,10 @@ struct MacCreate: AsyncParsableCommand {
       try await MacSandboxes.create(
         root: try root.resolve(), id: try SandboxID(id), owner: owner,
         template: try SandboxID(template), cpus: cpus, memoryBytes: try bytes(memoryMib, mib),
-        network: network == "host-only" ? .hostOnly : .shared, authorizedKey: authorizedKey))
+        network: network == "host-only" ? .hostOnly : .shared, authorizedKey: authorizedKey,
+        guestComputerUse: guestComputerUse
+          ? try MacGuestComputerUse(frameRate: guestFrameRate ?? GuestCUProtocol.defaultFrameRate)
+          : nil))
   }
 }
 
@@ -173,7 +184,7 @@ struct MacReconcile: AsyncParsableCommand {
 struct MacCU: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "cu", abstract: "Computer use: sessions, frames, actions, dialog responses.",
-    subcommands: [Session.self, Frame.self, Act.self, Respond.self])
+    subcommands: [Session.self, Frame.self, Act.self, Respond.self, Hold.self, Release.self])
 
   static func check(_ r: MacControlResponse) throws -> MacControlResponse {
     guard r.ok else { throw SandboxError(r.error ?? "refused") }
@@ -251,6 +262,44 @@ struct MacCU: AsyncParsableCommand {
           root: try root.resolve(), id: try SandboxID(id),
           .init(op: .cuAct, session: session, action: request, basedOnFrame: basedOnFrame)))
       try printJSON(["submitted": r.submitted ?? 0])
+    }
+  }
+
+  struct ControlOutput: Encodable {
+    var controller: GuestCUController
+    var holdRemainingSeconds: Int
+  }
+
+  static func control(_ r: MacControlResponse) throws -> ControlOutput {
+    guard let c = r.controller, let s = r.holdRemainingSeconds else {
+      throw SandboxError("no control state")
+    }
+    return ControlOutput(controller: c, holdRemainingSeconds: s)
+  }
+
+  struct Hold: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Take the display from the guest: end its session and refuse new ones.")
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    @Option(help: "How long (1-3600); a hold already longer is kept") var seconds = 300
+    func run() async throws {
+      let r = try check(
+        try MacSandboxes.cu(
+          root: try root.resolve(), id: try SandboxID(id), .init(op: .cuHold, seconds: seconds)))
+      try printJSON(try control(r))
+    }
+  }
+
+  struct Release: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "End a host hold, so the guest may drive again.")
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    func run() async throws {
+      let r = try check(
+        try MacSandboxes.cu(root: try root.resolve(), id: try SandboxID(id), .init(op: .cuRelease)))
+      try printJSON(try control(r))
     }
   }
 

@@ -250,7 +250,7 @@ enum ConfigDecoder {
       "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
       "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
       "workspace", "egress", "egress_filter", "limits", "security", "editor", "execution",
-      "policy", "network",
+      "policy", "network", "computer_use",
     ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
@@ -388,7 +388,8 @@ enum ConfigDecoder {
           })
       },
       workspaceInput: try workspaceInput(r),
-      revokedGrantIDs: revoked)
+      revokedGrantIDs: revoked,
+      computerUse: try r.defaulted("computer_use", .off, computerUse))
     try requirePolicyCombinations(config)
     if let conflict = config.transportConflict {
       throw FieldError([.key("network"), .key("transport")], conflict)
@@ -485,6 +486,31 @@ enum ConfigDecoder {
     }
     return WorkspaceInputConfig(
       mode: mode, paths: selectors, exclude: exclude, secretAllow: secretAllow, limits: limits)
+  }
+
+  /// `computer_use`: `guest_frame_rate` only alongside `"guest_access": true`.
+  static func computerUse(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> ComputerUseConfig
+  {
+    let r = try ObjectReader(value, at: path)
+    try r.rejectUnknown(allowing: ["guest_access", "guest_frame_rate"])
+    let access = try r.defaulted("guest_access", false, Parse.bool)
+    guard access else {
+      if r.members["guest_frame_rate"] != nil {
+        throw FieldError(r.child("guest_frame_rate"), "needs \"guest_access\": true")
+      }
+      return .off
+    }
+    let range = ComputerUseConfig.frameRates
+    let rate = try r.defaulted("guest_frame_rate", ComputerUseConfig.defaultFrameRate) {
+      v, p throws(FieldError) in
+      let n = Int(try Parse.unsigned(v, p, as: UInt8.self))
+      guard range.contains(n) else {
+        throw FieldError(p, "must be \(range.lowerBound)-\(range.upperBound) frames per second")
+      }
+      return n
+    }
+    return ComputerUseConfig(guestFrameRate: rate)
   }
 
   static func workspacePull(

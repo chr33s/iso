@@ -126,6 +126,11 @@ package enum ConfigTemplate {
       // omitted; "unlimited" for an ordinary local instance only).
       // "limits": { "session_ttl": "8h" },
 
+      // macOS guests only: let an agent in the guest drive its own display
+      // through the `iso-cu` MCP server (frames per second 1-10, default 4).
+      // Fixed per instance at creation. See docs/configuration.md.
+      // "computer_use": { "guest_access": true, "guest_frame_rate": 4 },
+
       // "none" (default), "filtered", or "open" (vmnet only); fixed per instance
       // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
       // "egress": "none",

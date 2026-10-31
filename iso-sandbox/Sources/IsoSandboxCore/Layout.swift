@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import IsoMacProtocol
 
 /// Version of the JSON contract between iso and this binary. Bump on any
 /// incompatible change to a command's arguments or output.

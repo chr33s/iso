@@ -225,8 +225,20 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   package var lifecycle: InstanceLifecycle = .reusable
   /// Absent for Linux guests, so their records are unchanged.
   package var guestOS: GuestOS? = nil
+  /// macOS guests: guest-driven computer use as the sandbox was created;
+  /// absent when off. Bootstrap and stop follow this, not the current
+  /// configuration, which may have changed since.
+  package var guestComputerUse: MacGuestComputerUse? = nil
 
   package var isDisposableRun: Bool { lifecycle == .disposable }
+
+  /// Takes the sandbox record's guest computer-use setting; true when it
+  /// changed, so the caller saves the sidecar.
+  package mutating func syncGuestComputerUse(from record: MacRecord) -> Bool {
+    guard guestComputerUse != record.guestComputerUse else { return false }
+    guestComputerUse = record.guestComputerUse
+    return true
+  }
   package var kind: GuestOS { guestOS ?? .linux }
 
   package static func path(_ instance: Instance) -> String {
@@ -277,6 +289,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     case runtimeIdentity = "runtime_identity"
     case lifecycle
     case guestOS = "guest_os"
+    case guestComputerUse = "guest_computer_use"
   }
 
   /// Persist explicit nulls for optional observations.
@@ -300,6 +313,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     try c.encode(runtimeIdentity, forKey: .runtimeIdentity)
     try c.encode(lifecycle, forKey: .lifecycle)
     try c.encodeIfPresent(guestOS, forKey: .guestOS)
+    try c.encodeIfPresent(guestComputerUse, forKey: .guestComputerUse)
   }
 }
 

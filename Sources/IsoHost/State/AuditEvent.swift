@@ -174,6 +174,7 @@ package enum AuditEventKind: String, Codable, Sendable, CaseIterable {
   case boundaryPullHeld = "boundary.pull_held"
   case boundaryInputSnapshot = "boundary.input_snapshot"
   case boundaryHandoffFence = "boundary.handoff_fence"
+  case boundaryGuestComputerUse = "boundary.guest_computer_use"
   case storeRecordingGap = "store.recording_gap"
 }
 
@@ -638,6 +639,7 @@ extension BoundaryAudit.Event {
     case .pullHeld: .boundaryPullHeld
     case .inputSnapshot: .boundaryInputSnapshot
     case .handoffFence: .boundaryHandoffFence
+    case .guestComputerUse: .boundaryGuestComputerUse
     }
   }
 
@@ -647,7 +649,7 @@ extension BoundaryAudit.Event {
       .approvalConsumed, .pullHeld, .handoffFence:
       .hostDecision
     case .rawProviderForward, .stop, .pullStage, .pullApply, .pullApplyPartial, .pullDirect,
-      .inputSnapshot:
+      .inputSnapshot, .guestComputerUse:
       .hostObservation
     }
   }
@@ -694,7 +696,8 @@ package enum AuditPayload: Sendable, Equatable, Encodable {
     case .boundaryBoot, .boundaryRawProviderForward, .boundaryStop, .boundaryPullStage,
       .boundaryPullApply, .boundaryPullApplyPartial, .boundaryPullDirect, .boundaryPolicyBoot,
       .boundaryPolicyProxyClaim, .boundaryPolicyDecision, .boundaryApprovalIssued,
-      .boundaryApprovalConsumed, .boundaryPullHeld, .boundaryInputSnapshot, .boundaryHandoffFence:
+      .boundaryApprovalConsumed, .boundaryPullHeld, .boundaryInputSnapshot, .boundaryHandoffFence,
+      .boundaryGuestComputerUse:
       let object = try data.decode(OutputJSON.self, forKey: key)
       guard case .object = object else {
         throw DecodingError.dataCorruptedError(

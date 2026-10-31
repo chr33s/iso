@@ -102,8 +102,12 @@ including the return and input decisions: `boundary.pull_stage` names its
 records a refused or held return (`stage_id`, typed `reason` such as
 `missing_sensitive_grant`), `boundary.input_snapshot` records an outbound
 selection by counts only (`snapshot_id`, classifier, selected, bytes, omitted,
-deleted-tracked), and `boundary.handoff_fence` records an instance fenced
-after an unconfirmed restart cleanup; none carries paths, contents or hashes.
+deleted-tracked), `boundary.handoff_fence` records an instance fenced
+after an unconfirmed restart cleanup, and `boundary.guest_computer_use`
+records a macOS boot's guest-driven computer use when `iso stop` stops it
+(`frame_rate`, and counts of `sessions`, `frames`, `actions`,
+`status_requests`, host-hold `preemptions` and `refusals` by code); none
+carries paths, contents, hashes, pixels, coordinates or typed text.
 Each also carries `instance_name` and is attributed to the VM's stable identity
 (`policy-instance.json`) and its current host boot binding.
 

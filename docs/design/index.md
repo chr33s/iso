@@ -53,6 +53,9 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Guest permission-dialog responder](permission-dialog-auto-response.md):
   `cu respond` for expected TCC folder-access prompts; Keychain and
   authentication prompts are reported, not answered.
+- [Guest-driven computer use](guest-driven-computer-use.md): an agent in a
+  macOS guest drives its own desktop through a host-brokered vsock channel
+  and the VM's virtual HID devices.
 - [Q0 spike results](macos-computer-use-q0-spike.md).
 - [Process-context experiment](macos-vz-context-headless-experiment-spec.md)
   and [results](macos-vz-context-experiment.md).

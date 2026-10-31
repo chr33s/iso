@@ -506,6 +506,39 @@ struct FakeFileSystem: ConfigFileSystem {
   #expect(fieldError(#"{"limits": {"max_log_bytes": 1}}"#)?.field == "limits.max_log_bytes")
 }
 
+@Test func computerUseIsOffUnlessGuestAccessIsTrue() throws {
+  #expect(try load("{}").computerUse == .off)
+  #expect(try load(#"{"computer_use": {}}"#).computerUse == .off)
+  #expect(try load(#"{"computer_use": {"guest_access": false}}"#).computerUse == .off)
+  let on = try load(#"{"computer_use": {"guest_access": true}}"#).computerUse
+  #expect(on.guestAccess)
+  #expect(on.guestFrameRate == 4)
+  #expect(
+    try load(#"{"computer_use": {"guest_access": true, "guest_frame_rate": 10}}"#).computerUse
+      .guestFrameRate == 10)
+  for bad in [0, 11] {
+    #expect(
+      fieldError(#"{"computer_use": {"guest_access": true, "guest_frame_rate": \#(bad)}}"#)?.field
+        == "computer_use.guest_frame_rate")
+  }
+  #expect(
+    fieldError(#"{"computer_use": {"guest_frame_rate": 4}}"#)?.field
+      == "computer_use.guest_frame_rate")
+  #expect(
+    fieldError(#"{"computer_use": {"host_access": true}}"#)?.field == "computer_use.host_access")
+  #expect(
+    fieldError(#"{"computer_use": {"guest_access": "yes"}}"#)?.field == "computer_use.guest_access")
+}
+
+@Test func addingAnMCPServerReachesBothAgentsAndKeepsTheRest() throws {
+  let base = try load(#"{"computer_use": {"guest_access": true}}"#)
+  let added = base.addingMCPServer("iso-cu", .stdio(command: "/x", args: ["cu-mcp"], env: [:]))
+  #expect(added.claude.mcpServers["iso-cu"] == .stdio(command: "/x", args: ["cu-mcp"], env: [:]))
+  #expect(added.codex.mcpServers["iso-cu"] == added.claude.mcpServers["iso-cu"])
+  #expect(added.computerUse == base.computerUse)
+  #expect(added.limits == base.limits)
+}
+
 @Test func editorSecurityDefaultsToSandboxedWithNoGrants() throws {
   #expect(try load("{}").editor == .defaults)
   #expect(EditorConfig.defaults == EditorConfig(security: .sandboxed, allow: []))

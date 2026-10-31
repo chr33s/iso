@@ -1,4 +1,5 @@
 import Foundation
+import IsoMacProtocol
 
 // Computer-use contract (docs/design/macos-guest-computer-use.md): framebuffer
 // pixels, origin top-left, range [0,width) × [0,height); one pointer, one
@@ -231,29 +232,6 @@ package enum USKeyboard {
   }
 }
 
-/// Why the owner refused a computer-use request, carried on the control
-/// response beside the message.
-package enum CURefusal: String, Codable, Sendable {
-  case helperGone = "helper_gone"
-  case unknownSession = "unknown_session"
-  case sessionRefused = "session_refused"
-  case unknownFrame = "unknown_frame"
-  case foreignFrame = "foreign_frame"
-  case noWindow = "no_window"
-  case blankFrame = "blank_frame"
-  case busy
-  case invalidAction = "invalid_action"
-
-  /// The session or frame binding is void: no decision made on it stands.
-  package var voidsBinding: Bool {
-    switch self {
-    case .helperGone, .unknownSession, .sessionRefused, .unknownFrame, .foreignFrame, .noWindow:
-      true
-    case .blankFrame, .busy, .invalidAction: false
-    }
-  }
-}
-
 /// What a session is bound to (Gate H). Any difference refuses the session.
 package struct CUBinding: Codable, Equatable, Sendable {
   package var bootId: String
@@ -320,6 +298,9 @@ package struct CUSessions: Sendable {
     }
     return bound
   }
+
+  /// Forgets a session, so it is refused from then on.
+  package mutating func revoke(_ id: String) { sessions[id] = nil }
 
   /// Registers a frame captured under `binding`; returns its id and sequence.
   package mutating func recordFrame(_ binding: CUBinding) -> (id: String, seq: Int) {
