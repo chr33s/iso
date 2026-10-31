@@ -19,11 +19,6 @@ extension ProxyProvider {
     basePort &+ instance.index.value
   }
 
-  /// Codex forwards the capability token through `SendEnv` on later
-  /// sessions, so it is kept on host disk; Claude's rides in the guest
-  /// `settings.json` and stays in memory.
-  var persistsToken: Bool { self == .openai }
-
   package var keychainService: String {
     switch self {
     case .anthropic: "iso-anthropic"

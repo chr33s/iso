@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 import Testing
 
 @testable import IsoHost
@@ -22,6 +23,33 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(SeatbeltProfile.egress.contains("(deny default)"))
 }
 
+/// Both companions read only system paths and their own binary, reach no
+/// loopback IP service on any port (443 and 53 included), and no UNIX socket
+/// but the resolver's.
+@Test(arguments: [("PROXY_BIN", SeatbeltProfile.proxy), ("EGRESS_BIN", SeatbeltProfile.egress)])
+func companionProfilesAreNarrow(binary: String, profile: String) throws {
+  let rules = profile.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.hasPrefix(";;") }
+  #expect(!rules.contains("(allow file-read*)"))
+  #expect(!rules.contains { $0.hasPrefix("(allow file-read-metadata)") })
+  #expect(rules.contains("(allow file-read*"))
+  #expect(rules.contains("(literal (param \"\(binary)\"))"))
+  #expect(
+    !rules.contains {
+      $0.contains("subpath \"/Users") || $0.contains("subpath \"/private/var/folders")
+    })
+  #expect(!rules.contains("(allow network-outbound (remote unix-socket))"))
+  #expect(
+    rules.contains(#"(allow network-outbound (path-literal "/private/var/run/mDNSResponder"))"#))
+  let loopback = try #require(
+    rules.firstIndex(of: #"(deny network-outbound (remote ip "localhost:*"))"#))
+  // Seatbelt applies the last matching rule: the deny must follow every port allow.
+  for port in [#"(remote tcp "*:443"))"#, #"(remote tcp "*:53"))"#, #"(remote udp "*:53"))"#] {
+    let allow = try #require(rules.firstIndex(of: "(allow network-outbound " + port))
+    #expect(allow < loopback, "\(port) is allowed after the loopback deny")
+  }
+}
+
 @Test func proxyPortsArePerInstanceAndPerProvider() throws {
   let root = try scratchDirectory("ports")
   defer { try? FileManager.default.removeItem(atPath: root) }
@@ -30,7 +58,6 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(ProxyProvider.openai.port(try testInstance(root, index: 0)) == 9788)
   #expect(ProxyProvider.openai.port(try testInstance(root, index: 5)) == 9793)
   #expect(ProxyProvider.anthropic.basePort + InstanceIndex.maximum < ProxyProvider.openai.basePort)
-  #expect(ProxyProvider.openai.persistsToken && !ProxyProvider.anthropic.persistsToken)
 }
 
 @Test func startupDocumentsCarryTheCredentialOnlyInTheirBody() throws {
@@ -323,10 +350,15 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(guest.log("tunnels.log").contains { $0.contains("-R 127.0.0.1:9795:127.0.0.1:9795") })
   #expect(FileManager.default.fileExists(atPath: ProxyLauncher.pidPath(instance, "openai")))
 
+  let identity = ProcessIdentity.path(forPIDFile: ProxyLauncher.pidPath(instance, "openai"))
+  #expect(FileManager.default.fileExists(atPath: identity))
+  #expect(
+    ProxyLauncher.recordedProcessAlive(ProxyLauncher.pidPath(instance, "openai"), expect: .proxy))
+
   launcher.stop(instance, provider: .openai)
   for path in [
     ProxyLauncher.pidPath(instance, "openai"), ProxyLauncher.forwardPIDPath(instance, "openai"),
-    ProxyLauncher.tokenPath(instance, "openai"),
+    ProxyLauncher.tokenPath(instance, "openai"), identity,
   ] {
     #expect(!FileManager.default.fileExists(atPath: path))
   }
@@ -489,15 +521,197 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
 }
 
 @Test func recordedPIDsAreSignalledOnlyWhileTheyNameTheProcess() {
-  #expect(ProxyLauncher.RecordedProcess.proxy.matches("/opt/iso/bin/iso-proxy"))
-  #expect(ProxyLauncher.RecordedProcess.proxy.matches("/usr/bin/python3 /tmp/g/app/iso-proxy"))
-  #expect(
-    !ProxyLauncher.RecordedProcess.proxy.matches("/Applications/Safari.app/Contents/MacOS/Safari"))
-  #expect(ProxyLauncher.RecordedProcess.ssh.matches("/usr/bin/ssh -N -T host"))
-  #expect(!ProxyLauncher.RecordedProcess.ssh.matches("/bin/zsh -c ssh"))
-  // This test process is alive but is not a proxy: it must not be signalled.
-  #expect(
-    ProxyLauncher.commandLine(getpid()).map(ProxyLauncher.RecordedProcess.proxy.matches) == false)
+  #expect(ProxyLauncher.RecordedProcess.isSSH("/usr/bin/ssh -N -T host"))
+  #expect(!ProxyLauncher.RecordedProcess.isSSH("/bin/zsh -c ssh"))
+  // This test process is alive but was never recorded as a proxy.
+  #expect(!ProxyLauncher.isRecorded(getpid(), pidPath: "/nonexistent/proxy.pid", expect: .proxy))
+}
+
+/// A process whose arguments merely name iso-proxy or iso-egress is not a
+/// companion; only the identity recorded at spawn (start time and
+/// executable) makes a PID one, and a legacy record must run the executable
+/// iso would start.
+@Test func companionPIDsAreTrustedOnlyByTheirRecordedIdentity() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance", index: 12)
+  try FileManager.default.createDirectory(
+    atPath: instance.directory, withIntermediateDirectories: true)
+  let bystander = Process()
+  // bash itself, not the /bin/sh trampoline, so the image stays the same.
+  bystander.executableURL = URL(fileURLWithPath: "/bin/bash")
+  bystander.arguments = ["-c", "/bin/sleep 30; :", "/opt/iso/bin/iso-proxy", "/opt/iso/iso-egress"]
+  try bystander.run()
+  defer { bystander.terminate() }
+  let pid = bystander.processIdentifier
+  for (name, expect) in [("openai", ProxyLauncher.RecordedProcess.proxy), ("egress", .egress)] {
+    let pidPath = ProxyLauncher.pidPath(instance, name)
+    try writeFile(pidPath, String(pid))
+    #expect(!ProxyLauncher.recordedProcessAlive(pidPath, expect: expect))
+    #expect(
+      !ProxyLauncher.isRecorded(
+        pid, pidPath: pidPath, expect: expect, legacyExecutable: "/opt/iso/bin/iso-proxy"))
+    #expect(
+      ProxyLauncher.isRecorded(
+        pid, pidPath: pidPath, expect: expect,
+        legacyExecutable: ProcessIdentity.executablePath(pid)))
+    // Liveness checks accept a legacy record running the companion beside
+    // this iso, as stopping does.
+    let bin = guest.root + "/bin-\(name)"
+    try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      atPath: bin + (name == "openai" ? "/iso-proxy" : "/iso-egress"),
+      withDestinationPath: "/bin/bash")
+    #expect(
+      ProxyLauncher.recordedProcessAlive(pidPath, expect: expect, isoExecutable: bin + "/iso"))
+    #expect(
+      !ProxyLauncher.recordedProcessAlive(
+        pidPath, expect: expect, isoExecutable: "/opt/iso/bin/iso"))
+    try ProxyLauncher.record(pid, at: pidPath, label: name)
+    #expect(ProxyLauncher.recordedProcessAlive(pidPath, expect: expect))
+    let recorded = try #require(ProcessIdentity.load(forPIDFile: pidPath))
+    #expect(recorded.executable == ProcessIdentity.executablePath(pid))
+    // The same PID with another start time is a reused PID.
+    try ProcessIdentity(
+      pid: pid, startSeconds: recorded.startSeconds &- 1,
+      startMicroseconds: recorded.startMicroseconds, executable: recorded.executable
+    ).save(forPIDFile: pidPath)
+    #expect(!ProxyLauncher.recordedProcessAlive(pidPath, expect: expect))
+  }
+  let launcher = guest.proxies()
+  launcher.stop(instance, provider: .openai)
+  launcher.stopEgress(instance)
+  usleep(200_000)
+  #expect(bystander.isRunning)
+  for name in ["openai", "egress"] {
+    let pidPath = ProxyLauncher.pidPath(instance, name)
+    #expect(!FileManager.default.fileExists(atPath: pidPath))
+    #expect(!FileManager.default.fileExists(atPath: ProcessIdentity.path(forPIDFile: pidPath)))
+  }
+}
+
+/// Copies `/bin/sleep` to `path`, re-signed ad hoc: a copied platform binary
+/// is killed at launch.
+private func runnableSleep(at path: String) throws {
+  try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: path)
+  let signed = try ProcessRunner().capture(
+    .init(
+      executable: "/usr/bin/codesign", arguments: ["-f", "-s", "-", path], environment: [:],
+      deadline: .seconds(30)))
+  try #require(signed.termination.succeeded)
+}
+
+/// A companion started from an image that `iso update` later replaces, or
+/// that is then removed, is still the recorded process; a reused PID is not.
+@Test func aRecordedCompanionOutlivesItsImageBeingReplacedOrRemoved() throws {
+  let root = try scratchDirectory("identity")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let image = root + "/iso-proxy"
+  try runnableSleep(at: image)
+  let child = Process()
+  child.executableURL = URL(fileURLWithPath: image)
+  child.arguments = ["30"]
+  try child.run()
+  defer {
+    child.terminate()
+    child.waitUntilExit()
+  }
+  let pid = child.processIdentifier
+  let identity = try #require(ProcessIdentity.observe(pid))
+  #expect(identity.executable == image)
+  // An update renames a new binary over the path; the kernel still reports it.
+  try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: root + "/staged")
+  #expect(rename(root + "/staged", image) == 0)
+  #expect(child.isRunning)
+  #expect(identity.isAlive)
+  // Once the path is gone the kernel reports none; the start time still matches.
+  #expect(unlink(image) == 0)
+  #expect(ProcessIdentity.executablePath(pid) == nil)
+  #expect(child.isRunning)
+  #expect(identity.isAlive)
+  let start = (seconds: identity.startSeconds, microseconds: identity.startMicroseconds)
+  #expect(!identity.matches(start: start, executable: "/usr/bin/other"))
+  #expect(!identity.matches(start: (start.seconds &- 1, start.microseconds), executable: nil))
+  let reused = ProcessIdentity(
+    pid: pid, startSeconds: identity.startSeconds &- 1,
+    startMicroseconds: identity.startMicroseconds, executable: identity.executable)
+  #expect(!reused.isAlive)
+}
+
+/// Stopping a record written by an older iso compares the running image with
+/// the companion's path without checking its signature, so a companion that
+/// would fail verification (mid-upgrade) is still stopped. A tunnel's stop
+/// leaves `TunnelIdentity`'s file to `stopTunnel`.
+@Test func legacyRecordsAreStoppedWithoutVerifyingTheCompanion() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let app = guest.root + "/legacy"
+  try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+  try writeFile(app + "/iso", "", mode: 0o755)
+  try runnableSleep(at: app + "/iso-proxy")
+  let verified = Mutex(0)
+  let launcher = ProxyLauncher(
+    environment: [:], resolver: CredentialResolver(environment: [:]),
+    diagnostics: guest.sink.diagnostics, isoExecutable: app + "/iso",
+    sandboxExec: guest.root + "/bin/sandbox-exec", controlRoot: guest.root,
+    verifyCompanion: { _ in
+      verified.withLock { $0 += 1 }
+      throw HostError("refused")
+    })
+  let child = Process()
+  child.executableURL = URL(fileURLWithPath: app + "/iso-proxy")
+  child.arguments = ["30"]
+  try child.run()
+  let instance = try testInstance(guest.root + "/instance", index: 14)
+  try FileManager.default.createDirectory(
+    atPath: instance.directory, withIntermediateDirectories: true)
+  let pidPath = ProxyLauncher.pidPath(instance, "openai")
+  try writeFile(pidPath, String(child.processIdentifier))
+  #expect(child.isRunning)
+  launcher.killPIDFile(pidPath, label: "proxy", expect: .proxy)
+  child.waitUntilExit()
+  #expect(child.terminationReason == .uncaughtSignal && child.terminationStatus == SIGTERM)
+  #expect(verified.withLock { $0 } == 0)
+  #expect(!FileManager.default.fileExists(atPath: pidPath))
+
+  let forward = ProxyLauncher.forwardPIDPath(instance, "openai")
+  try writeFile(forward, "999999")
+  try writeFile(TunnelIdentity.path(instance, "openai"), "{}")
+  launcher.killPIDFile(forward, label: "proxy tunnel", expect: .ssh)
+  #expect(!FileManager.default.fileExists(atPath: forward))
+  #expect(FileManager.default.fileExists(atPath: TunnelIdentity.path(instance, "openai")))
+}
+
+@Test func egressStartsConfinedUnderItsOwnProfile() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let iso = try guest.installProxyStubs()
+  // The proxy stand-in serves any startup document with a listen address.
+  try FileManager.default.copyItem(
+    atPath: guest.root + "/app/iso-proxy", toPath: guest.root + "/app/iso-egress")
+  let instance = try testInstance(guest.root + "/instance", index: 13)
+  try FileManager.default.createDirectory(
+    atPath: instance.directory, withIntermediateDirectories: true)
+  let launcher = guest.proxies(iso: iso)
+  let port = EgressPorts.port(instance)
+  var control: [Int32] = [-1, -1]
+  try #require(pipe(&control) == 0)
+  defer {
+    close(control[0])
+    close(control[1])
+  }
+  try launcher.spawnEgress(
+    instance, port: port, binary: try launcher.locateEgressBinary(),
+    startup: Array(#"{"listen":"127.0.0.1:\#(port)"}"#.utf8), controlRead: control[0])
+  defer { launcher.stopEgress(instance) }
+  let argv = try #require(readFile(guest.root + "/sandbox-argv"))
+  let binary = guest.root + "/app/iso-egress"
+  #expect(argv.hasPrefix("-D\nEGRESS_BIN=\(binary)\n-p\n"))
+  #expect(argv.contains(SeatbeltProfile.egress))
+  #expect(argv.hasSuffix("\n\(binary)\n"))
+  let pidPath = ProxyLauncher.pidPath(instance, "egress")
+  #expect(ProxyLauncher.recordedProcessAlive(pidPath, expect: .egress))
+  #expect(FileManager.default.fileExists(atPath: ProcessIdentity.path(forPIDFile: pidPath)))
 }
 
 @Test func aProxyPortServedByAnotherProcessIsRefused() throws {

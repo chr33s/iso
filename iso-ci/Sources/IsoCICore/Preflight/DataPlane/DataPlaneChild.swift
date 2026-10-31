@@ -82,16 +82,17 @@ package enum DataPlaneChild {
       close(fd)
       unlink(control)
     }
-    // The controller-private probe must not be readable.
+    // The controller-private probe must not be readable. Only a sandbox
+    // denial counts: ENOENT would mean the probe was never there to deny.
     let probe = open(probePath, O_RDONLY)
-    checks["probe_denied"] = .bool(probe < 0)
+    checks["probe_denied"] = .bool(probe < 0 && Self.isDenial(errno))
     if probe >= 0 { close(probe) }
     // No write outside staging.
     let outside =
       (probePath as NSString).deletingLastPathComponent + "/.iso-ci-jail-probe-"
       + randomHex(bytes: 4)
     let outsideFD = open(outside, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-    checks["outside_write_denied"] = .bool(outsideFD < 0)
+    checks["outside_write_denied"] = .bool(outsideFD < 0 && Self.isDenial(errno))
     if outsideFD >= 0 {
       close(outsideFD)
       unlink(outside)
@@ -118,7 +119,7 @@ package enum DataPlaneChild {
       }
       // EPERM/EACCES is the sandbox; ECONNREFUSED would mean the connect
       // was allowed and only found no listener — that is a failure.
-      denied = result != 0 && (errno == EPERM || errno == EACCES)
+      denied = result != 0 && Self.isDenial(errno)
       close(socketFD)
     }
     checks["tcp_denied"] = .bool(denied)
@@ -135,6 +136,10 @@ package enum DataPlaneChild {
     let confined = checks.values.allSatisfy { $0 == .bool(true) }
     return (confined, ["confined": .bool(confined), "checks": .object(checks)])
   }
+
+  /// The errors a sandbox denial produces; any other failure (a missing
+  /// path, a refused connection) proves nothing about confinement.
+  static func isDenial(_ code: Int32) -> Bool { code == EPERM || code == EACCES }
 }
 
 /// The child's backend: every call becomes a request frame the controller

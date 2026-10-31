@@ -4,7 +4,10 @@
 (deny default)
 (allow process-exec (literal (param "EXE")))
 (allow file-read* (literal (param "EXE")))
-(allow file-read-metadata)
+(allow file-read-metadata
+  (literal "/etc")
+  (literal "/tmp")
+  (literal "/var"))
 (allow file-read-data (literal "/"))
 (allow file-read*
   (subpath "/System")

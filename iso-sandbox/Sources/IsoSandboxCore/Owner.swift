@@ -21,6 +21,22 @@ package enum Owner {
   /// After the forced kill, before the owner gives up on the guest agent.
   static let killGraceSeconds: UInt64 = 10
 
+  /// The created VM's live inventory, read and checked against `mode`
+  /// before the guest's init runs. Any failure stops the VM unbooted.
+  static func checkDevices(
+    of id: SandboxID, mode: NetworkMode, read: () async throws -> VMDevices,
+    stop: () async -> Void
+  ) async throws -> VMDevices {
+    do {
+      let devices = try await read()
+      try devices.requireExpected(for: mode)
+      return devices
+    } catch {
+      await stop()
+      throw SandboxError("sandbox \(id) stopped unbooted: \(error)")
+    }
+  }
+
   package static func run(root: SandboxRoot, id: SandboxID) async throws {
     try root.requireInitialized()
     let paths = root.sandbox(id)
@@ -64,19 +80,13 @@ package enum Owner {
     let container = try LinuxContainer(id.rawValue, rootfs: rootfs, vmm: vmm, configuration: config)
     // `create` boots the VM into the framework's init; the guest's own
     // init runs only at `start`, so the device check below precedes any
-    // guest-authored code.
+    // guest-authored code. It runs for every network mode: the framework
+    // attaches devices iso did not ask for (a virtio-fs share), and a VM
+    // whose live inventory differs from the expected one never starts.
     try await container.create()
-    var devices: VMDevices?
-    if record.network == .brokered {
-      let observed = try await VMDevices.read(container)
-      guard observed.network == 0, observed.socket == 1 else {
-        try? await container.stop()
-        throw SandboxError(
-          "brokered sandbox \(id) was created with \(observed.network) network and \(observed.socket) socket devices; expected 0 and 1"
-        )
-      }
-      devices = observed
-    }
+    let devices = try await checkDevices(
+      of: id, mode: record.network, read: { try await VMDevices.read(container) },
+      stop: { try? await container.stop() })
     try await container.start()
 
     let live = LiveState(
@@ -144,8 +154,8 @@ package enum Owner {
           return ControlResponse(ok: false, error: "empty argv")
         }
         do {
-          return try await exec(
-            container, argv, stdin: request.stdin, timeout: request.timeoutSeconds)
+          let timeout = try ExecTimeout(requested: request.timeoutSeconds)
+          return try await exec(container, argv, stdin: request.stdin, timeout: timeout)
         } catch {
           return ControlResponse(ok: false, error: "\(error)")
         }
@@ -205,7 +215,7 @@ package enum Owner {
     let guarded = try await FileLock.acquire(
       paths.mutationLock, .exclusive, polling: .milliseconds(50))
     defer { withExtendedLifetime(guarded) {} }
-    let fd = open(paths.lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+    let fd = open(paths.lock.path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw SandboxError("open \(paths.lock.path): errno \(errno)") }
     do {
       guard try await acquireOwnership(fd) else { throw SandboxError("\(id) already has an owner") }
@@ -301,10 +311,11 @@ package enum Owner {
     return config
   }
 
-  /// `devices` is the live inventory of a brokered sandbox, nil otherwise.
+  /// `devices` is the live inventory, already checked against
+  /// `VMDevices.requireExpected`; only a brokered report carries its counts.
   static func effectiveConfig(
     record: SandboxRecord, config: LinuxContainer.Configuration, rootfs: Containerization.Mount,
-    devices: VMDevices?
+    devices: VMDevices
   ) -> EffectiveConfig {
     func view(_ m: Containerization.Mount) -> EffectiveConfig.MountView {
       .init(type: m.type, source: m.source, destination: m.destination, options: m.options)
@@ -336,8 +347,8 @@ package enum Owner {
     if record.network == .brokered {
       let policy = ChannelPolicy.current
       effective.transport = NetworkMode.brokered.rawValue
-      effective.networkDevices = devices?.network
-      effective.socketDevices = devices?.socket
+      effective.networkDevices = devices.network.count
+      effective.socketDevices = devices.socket
       effective.channelPolicy = policy
       effective.channelPolicyDigest = policy.digest
       effective.networkPolicy = record.networkPolicy
@@ -345,7 +356,9 @@ package enum Owner {
     return effective
   }
 
-  static func exec(_ container: LinuxContainer, _ argv: [String], stdin: Data?, timeout: Int64?)
+  static func exec(
+    _ container: LinuxContainer, _ argv: [String], stdin: Data?, timeout: ExecTimeout
+  )
     async throws -> ControlResponse
   {
     let out = BufferWriter()

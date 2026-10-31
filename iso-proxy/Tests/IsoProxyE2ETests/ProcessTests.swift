@@ -157,9 +157,15 @@ struct IsoProxyProcessE2ETests {
     let key = try Curve25519.Signing.PublicKey(rawRepresentation: publicBytes)
     for _ in 0..<2 {
       let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-      let wire = try request(
+      let unauthenticated = try request(
         port, headers: "X-Iso-Nonce: \(nonce)\r\n", target: "/__iso/broker-ready", host: "localhost"
       )
+      try check(
+        unauthenticated.starts(with: Data("HTTP/1.1 401".utf8)),
+        "readiness signed without the capability")
+      let wire = try request(
+        port, headers: "X-Iso-Nonce: \(nonce)\r\nAuthorization: Bearer \(token)\r\n",
+        target: "/__iso/broker-ready", host: "localhost")
       try check(wire.count <= 1024, "unbounded readiness reply")
       let separator = try #require(wire.range(of: Data("\r\n\r\n".utf8)))
       let body = Data(wire[separator.upperBound...])
@@ -182,10 +188,11 @@ struct IsoProxyProcessE2ETests {
         "invalid signature accepted")
       try redacted(wire, secrets: [secret, token, privateKey])
       let denied = try request(
-        port, headers: "X-Iso-Nonce: \(nonce)\r\nAuthorization: Bearer \(token)\r\n",
+        port, headers: "X-Iso-Nonce: \(nonce)\r\nX-Api-Key: \(token)\r\n",
         target: "/__iso/broker-ready", host: "localhost")
       try check(
-        denied.starts(with: Data("HTTP/1.1 400".utf8)), "readiness accepted provider authorization")
+        denied.starts(with: Data("HTTP/1.1 400".utf8)),
+        "readiness accepted another credential header")
     }
     child.terminate()
     try check(try await child.wait() == 0, "readiness shutdown")

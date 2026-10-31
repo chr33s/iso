@@ -165,7 +165,10 @@ sys.exit(result.returncode)
         for path in state.iterdir():
             if path.is_file() and path.stat().st_size <= 1 << 20:
                 assert all(secret.encode() not in path.read_bytes() for secret in SECRETS), "raw provider key in host instance state"
-        assert not (state / "proxy-anthropic.token").exists(), "readiness persisted an Anthropic capability"
+        for provider in ["anthropic", "openai"]:
+            token = state / f"proxy-{provider}.token"
+            assert token.is_file(), f"no persisted {provider} broker capability"
+            assert token.stat().st_mode & 0o777 == 0o600, f"{provider} broker capability is not owner-only"
         print("PASS both required brokers bootstrap and prove live local/guest paths; no raw keys in guest env/config or host instance state", flush=True)
         selected = {"egress": lambda: exercise_egress(state, binary, config, run),
                     "revocation": lambda: exercise_revocation(state, binary, config, run),

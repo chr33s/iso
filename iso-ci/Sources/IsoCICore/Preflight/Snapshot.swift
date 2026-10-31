@@ -25,10 +25,14 @@ package struct SnapshotOptions: Sendable, Equatable {
   /// Local credential material excluded by default. Patterns without `/`
   /// match a file or directory name anywhere; a trailing `/` matches a
   /// directory; patterns with `/` match the repository-relative path.
+  /// Matching ignores case, as the default macOS file system does.
   package static let defaultExcludes = [
-    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "id_rsa*", "id_dsa*",
-    "id_ecdsa*", "id_ed25519*", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git-credentials",
-    ".aws/", ".ssh/", ".gnupg/", ".docker/config.json", ".kube/config", "credentials.json",
+    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.jks", "*.ppk",
+    "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".netrc", "_netrc", ".npmrc", ".pypirc",
+    ".yarnrc.yml", ".git-credentials", ".pgpass", ".my.cnf", ".s3cfg", ".boto", ".terraformrc",
+    "terraform.rc", "terraform.tfstate", "terraform.tfstate.*", ".aws/", ".ssh/", ".gnupg/",
+    ".docker/config.json", ".kube/config", ".gem/credentials", ".config/gh/hosts.yml",
+    "credentials.json",
   ]
 
   package var effectiveExcludes: [String] {
@@ -73,8 +77,6 @@ package struct SnapshotManifest: Sendable, Equatable, Codable {
   /// Always empty in v2: there is no base checkout to delete from.
   package let deletions: [String]
   package let excludePatterns: [String]
-  /// Paths left out by an exclusion; the guest receives no version of them.
-  package let excludedPaths: [String]
   package let includedUntracked: [String]
 
   package func reference(digest: Digest) -> SnapshotReference {
@@ -85,6 +87,10 @@ package struct SnapshotManifest: Sendable, Equatable, Codable {
 package struct SnapshotCaptureResult: Sendable, Equatable {
   package let archivePath: String
   package let manifest: SnapshotManifest
+  /// Paths left out by an exclusion; the guest receives no version of them.
+  /// Reported to the operator only: the archived manifest does not name
+  /// them, so the guest never learns which credential files exist.
+  package let excludedPaths: [String]
   package let digest: Digest
   package let size: UInt64
   package let capturedAt: EpochSeconds
@@ -171,14 +177,41 @@ package enum SnapshotCapture {
 
   /// Whether a tracked file is missing or its size or modification time
   /// differs from what the index recorded.
-  static func indexDisagrees(_ entries: [GitIndex.Entry], root: String) -> Bool {
+  static func indexDisagrees(_ entries: [GitIndex.Entry], root: Int32) -> Bool {
     entries.contains { entry in
       var status = stat()
-      guard lstat(root + "/" + entry.path, &status) == 0 else { return true }
+      guard inspect(root, entry.path, &status) == 0 else { return true }
       return UInt32(truncatingIfNeeded: status.st_size) != entry.size
         || UInt32(truncatingIfNeeded: status.st_mtimespec.tv_sec) != entry.mtimeSeconds
         || UInt32(truncatingIfNeeded: status.st_mtimespec.tv_nsec) != entry.mtimeNanos
     }
+  }
+
+  /// `lstat` of a path relative to the open working-tree root that refuses
+  /// a symlink in any intermediate component: a tracked directory replaced
+  /// by a link never leads the capture outside the tree. Returns 0 or the
+  /// `errno` (`ELOOP` for such a link).
+  static func inspect(_ root: Int32, _ path: String, _ status: inout stat) -> Int32 {
+    fstatat(root, path, &status, AT_SYMLINK_NOFOLLOW_ANY) == 0 ? 0 : errno
+  }
+
+  /// The target of the symlink at `path`, read through a parent directory
+  /// opened without following any link.
+  static func linkTarget(_ root: Int32, _ path: String) -> String? {
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+    let name = String(parts.last ?? "")
+    var directory = root
+    if parts.count > 1 {
+      directory = openat(
+        root, parts.dropLast().joined(separator: "/"),
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW_ANY)
+      guard directory >= 0 else { return nil }
+    }
+    defer { if directory != root { close(directory) } }
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
+    let count = readlinkat(directory, name, &buffer, Int(PATH_MAX))
+    guard count >= 0 else { return nil }
+    return String(decoding: buffer.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 
   /// Whether the index was written after HEAD last moved (staged changes).
@@ -215,15 +248,17 @@ package enum SnapshotCapture {
       if pattern.hasSuffix("/") {
         let name = String(pattern.dropLast())
         if name.contains("/") {
-          if path.hasPrefix(name + "/") { return true }
-        } else if components.dropLast().contains(where: { fnmatch(name, $0, 0) == 0 }) {
+          if path.lowercased().hasPrefix(name.lowercased() + "/") { return true }
+        } else if components.dropLast().contains(where: { fnmatch(name, $0, FNM_CASEFOLD) == 0 }) {
           return true
         }
       } else if pattern.contains("/") {
-        if fnmatch(pattern, path, FNM_PATHNAME) == 0 || path.hasSuffix("/" + pattern) {
+        if fnmatch(pattern, path, FNM_PATHNAME | FNM_CASEFOLD) == 0
+          || path.lowercased().hasSuffix("/" + pattern.lowercased())
+        {
           return true
         }
-      } else if components.contains(where: { fnmatch(pattern, $0, 0) == 0 }) {
+      } else if components.contains(where: { fnmatch(pattern, $0, FNM_CASEFOLD) == 0 }) {
         return true
       }
     }
@@ -288,6 +323,9 @@ package enum SnapshotCapture {
     guard candidates.count <= options.maxFiles else {
       throw CIError(.budgetExceeded, "the snapshot has more than \(options.maxFiles) files")
     }
+    let rootFD = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    guard rootFD >= 0 else { throw CIError.storage("cannot open the working tree") }
+    defer { close(rootFD) }
     try PrivateFiles.ensureDirectory(options.outputDirectory)
     let archivePath = options.outputDirectory + "/snapshot-" + randomHex(bytes: 8) + ".tar"
     var writer = try TarWriter(path: archivePath)
@@ -300,11 +338,15 @@ package enum SnapshotCapture {
     var observed: [String: Observed] = [:]
     var total: UInt64 = 0
     for path in candidates {
-      let full = root + "/" + path
       var status = stat()
-      guard lstat(full, &status) == 0 else {
-        if errno == ENOENT { continue }  // deleted in the working tree
-        throw CIError.storage("cannot inspect \(path)")
+      switch inspect(rootFD, path, &status) {
+      case 0: break
+      case ENOENT, ENOTDIR: continue  // deleted in the working tree
+      case ELOOP:
+        throw CIError(
+          .compatibilityRejected,
+          "a directory above \(path) is a symlink; tracked paths must be inside the working tree")
+      default: throw CIError.storage("cannot inspect \(path)")
       }
       switch status.st_mode & S_IFMT {
       case S_IFREG:
@@ -318,18 +360,16 @@ package enum SnapshotCapture {
         }
         let mode = status.st_mode & 0o111 != 0 ? 0o755 : 0o644
         let digest = try writer.addFile(
-          name: "tree/" + path, mode: mode, source: full, expectedSize: size,
+          name: "tree/" + path, mode: mode, directory: rootFD, source: path, expectedSize: size,
           expected: Observed(status))
         files.append(
           SnapshotFile(path: path, kind: .file, mode: mode, size: size, sha256: digest, target: nil)
         )
         observed[path] = Observed(status)
       case S_IFLNK:
-        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-        let count = readlink(full, &buffer, Int(PATH_MAX))
-        guard count >= 0 else { throw CIError.storage("cannot read link \(path)") }
-        let target = String(
-          decoding: buffer.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        guard let target = linkTarget(rootFD, path) else {
+          throw CIError.storage("cannot read link \(path)")
+        }
         guard containedTarget(link: path, target: target) != nil,
           !target.unicodeScalars.contains(where: { $0.value < 0x20 })
         else {
@@ -357,12 +397,12 @@ package enum SnapshotCapture {
     // written after HEAD (staged changes). A false "dirty" only withholds
     // the clean-tree label.
     let dirty =
-      !includedUntracked.isEmpty || indexDisagrees(indexEntries, root: root)
+      !includedUntracked.isEmpty || indexDisagrees(indexEntries, root: rootFD)
       || indexNewerThanHead(layout)
     // Concurrent-modification checks: every captured path, HEAD and the index.
     for (path, before) in observed {
       var status = stat()
-      guard lstat(root + "/" + path, &status) == 0, Observed(status) == before else {
+      guard inspect(rootFD, path, &status) == 0, Observed(status) == before else {
         throw ConcurrentChange(path: path)
       }
     }
@@ -387,8 +427,7 @@ package enum SnapshotCapture {
     let manifest = SnapshotManifest(
       schema: SnapshotManifest.schema, baseCommit: head, isDirty: dirty,
       workflowPath: options.workflowPath, workflowDigest: workflowDigest, files: files,
-      deletions: deletions, excludePatterns: patterns, excludedPaths: excludedPaths,
-      includedUntracked: includedUntracked)
+      deletions: deletions, excludePatterns: patterns, includedUntracked: includedUntracked)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let manifestBytes: Data
@@ -399,7 +438,8 @@ package enum SnapshotCapture {
     let (digest, size) = try writer.finish()
     completed = true
     return SnapshotCaptureResult(
-      archivePath: archivePath, manifest: manifest, digest: digest, size: size,
+      archivePath: archivePath, manifest: manifest, excludedPaths: excludedPaths, digest: digest,
+      size: size,
       capturedAt: SystemClock().now(), attempts: attempt)
   }
 
@@ -515,13 +555,14 @@ struct TarWriter {
     try entry(name: name, mode: 0o777, size: 0, type: UInt8(ascii: "2"), link: target)
   }
 
-  /// Streams `source` into the archive; throws `ConcurrentChange` when its
-  /// size or timestamps move while it is read.
+  /// Streams `source`, relative to `directory`, into the archive without
+  /// following a symlink in any component; throws `ConcurrentChange` when
+  /// it is not a plain path or its size or timestamps move while it is read.
   mutating func addFile(
-    name: String, mode: Int, source: String, expectedSize: UInt64,
+    name: String, mode: Int, directory: Int32, source: String, expectedSize: UInt64,
     expected: SnapshotCapture.Observed
   ) throws -> Digest {
-    let input = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    let input = openat(directory, source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY)
     guard input >= 0 else { throw SnapshotCapture.ConcurrentChange(path: name) }
     defer { Darwin.close(input) }
     try entry(name: name, mode: mode, size: expectedSize, type: UInt8(ascii: "0"))

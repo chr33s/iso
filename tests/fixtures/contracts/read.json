@@ -61,7 +61,7 @@
   },
   "profiles show node": {
     "exit": 0,
-    "stdout": "Profile: node (builtin)\n  apt_packages: nodejs\n  pre_install:  set -euo pipefail ... (4 lines)\n  post_install: (none)\n  marketplaces: (none)\n  plugins:      (none)\n"
+    "stdout": "Profile: node (builtin)\n  apt_packages: nodejs\n  pre_install:  set -euo pipefail ... (29 lines)\n  post_install: (none)\n  marketplaces: (none)\n  plugins:      (none)\n"
   },
   "profiles show nope": {
     "exit": 1,
@@ -73,7 +73,7 @@
   },
   "profiles show rust": {
     "exit": 0,
-    "stdout": "Profile: rust (builtin)\n  apt_packages: (none)\n  pre_install:  (none)\n  post_install: set -euo pipefail ... (5 lines)\n  marketplaces: https://github.com/anthropics/claude-plugins-official\n  plugins:      rust-analyzer-lsp@claude-plugins-official\n"
+    "stdout": "Profile: rust (builtin)\n  apt_packages: (none)\n  pre_install:  (none)\n  post_install: set -euo pipefail ... (26 lines)\n  marketplaces: https://github.com/anthropics/claude-plugins-official\n  plugins:      rust-analyzer-lsp@claude-plugins-official\n"
   },
   "profiles show zz-tools": {
     "exit": 0,

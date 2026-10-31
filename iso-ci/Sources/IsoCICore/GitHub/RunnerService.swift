@@ -41,7 +41,8 @@ package final class InstallationRunnerService: RunnerService {
     switch scope {
     case .repository: return 1
     case .organization(let org, let groupName):
-      let groups = try client.api.runnerGroups(org: org, token: try client.token())
+      let groups = try client.api.runnerGroups(
+        org: org, token: try client.token(.runnerGroupsRead))
       guard let group = groups.first(where: { $0.name == groupName }) else {
         throw CIError(.githubRefused, "runner group \(groupName) does not exist in \(org)")
       }
@@ -56,25 +57,28 @@ package final class InstallationRunnerService: RunnerService {
     try client.api.generateJITConfig(
       scope: scope, name: name, runnerGroupID: runnerGroupID, labels: labels,
       workFolder: workFolder,
-      token: try client.token())
+      token: try client.token(.runnerAdministration(scope)))
   }
 
   package func runners(scope: GitHubRunnerScope, named name: String) throws(CIError)
     -> [GitHubRunnerInfo]
   {
-    try client.api.runners(scope: scope, name: name, token: try client.token())
+    try client.api.runners(
+      scope: scope, name: name, token: try client.token(.runnerAdministration(scope)))
   }
 
   package func runner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> GitHubRunnerInfo? {
-    try client.api.runner(scope: scope, id: id, token: try client.token())
+    try client.api.runner(
+      scope: scope, id: id, token: try client.token(.runnerAdministration(scope)))
   }
 
   package func deleteRunner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> Bool {
-    try client.api.deleteRunner(scope: scope, id: id, token: try client.token())
+    try client.api.deleteRunner(
+      scope: scope, id: id, token: try client.token(.runnerAdministration(scope)))
   }
 
   package func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
-    let token = try client.token()
+    let token = try client.token(.actionsRead(Self.repository(scope)))
     var jobs: [GitHubJobInfo] = []
     for repository in try correlationRepositories(scope, token: token) {
       var runs: [GitHubRunInfo] = []
@@ -89,7 +93,7 @@ package final class InstallationRunnerService: RunnerService {
   }
 
   package func completedJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
-    let token = try client.token()
+    let token = try client.token(.actionsRead(Self.repository(scope)))
     var jobs: [GitHubJobInfo] = []
     for repository in try correlationRepositories(scope, token: token) {
       let runs = try client.api.workflowRuns(
@@ -99,6 +103,12 @@ package final class InstallationRunnerService: RunnerService {
       }
     }
     return jobs
+  }
+
+  /// The one repository a repository-scoped pool's tokens are narrowed to.
+  static func repository(_ scope: GitHubScope) -> RepositoryName? {
+    guard case .repository(let repository) = scope else { return nil }
+    return repository
   }
 
   private func correlationRepositories(_ scope: GitHubScope, token: RedactedSecret)
@@ -113,7 +123,8 @@ package final class InstallationRunnerService: RunnerService {
   }
 
   package func job(repository: RepositoryName, id: Int64) throws(CIError) -> GitHubJobInfo {
-    try client.api.job(repository: repository, id: id, token: try client.token())
+    try client.api.job(
+      repository: repository, id: id, token: try client.token(.actionsRead(repository)))
   }
 }
 

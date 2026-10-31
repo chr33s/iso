@@ -32,6 +32,17 @@ public enum GitIndexFile {
     case sparseIndex
     case unknownEntryType
     case nonUTF8Path
+    /// A split index (`link` extension): the entries live partly in a
+    /// separate shared index this reader does not combine.
+    case splitIndex
+    /// A sparse-directory (`sdir`) extension: directories stand in for the
+    /// files under them.
+    case sparseDirectories
+    /// A mandatory extension (lowercase signature) this reader does not
+    /// understand; Git itself refuses such an index.
+    case unknownRequiredExtension(String)
+    /// An extension header or length that does not fit the file.
+    case badExtension
 
     public var description: String {
       switch self {
@@ -48,12 +59,18 @@ public enum GitIndexFile {
       case .sparseIndex: "a sparse index"
       case .unknownEntryType: "an unknown entry type"
       case .nonUTF8Path: "a non-UTF-8 path"
+      case .splitIndex: "a split index (core.splitIndex); run `git update-index --no-split-index`"
+      case .sparseDirectories: "a sparse index (sparse-directory extension)"
+      case .unknownRequiredExtension(let signature): "an unknown required extension \(signature)"
+      case .badExtension: "a malformed extension"
       }
     }
   }
 
   /// Stage-0 entries of a version 2–4 SHA-1 index whose trailer verifies,
-  /// in index order.
+  /// in index order. Optional extensions (uppercase signature: cache tree,
+  /// resolve undo, end-of-index and offset tables) are skipped; a split or
+  /// sparse index, or any other required extension, is refused.
   public static func parse(_ bytes: [UInt8]) throws(Refusal) -> [Entry] {
     guard bytes.count >= 32, Array(bytes[0..<4]) == Array("DIRC".utf8) else {
       throw .notAnIndex
@@ -129,6 +146,37 @@ public enum GitIndexFile {
         Entry(
           path: path, mode: mode, size: size, mtimeSeconds: mtimeSeconds, mtimeNanos: mtimeNanos))
     }
+    try checkExtensions(bytes, from: offset, end: body.count)
     return entries
+  }
+
+  /// Walks the extensions between the last entry and the trailer: each is a
+  /// 4-byte signature and a big-endian 32-bit length, then that many bytes.
+  /// Every length must stay inside the file and the walk must end exactly
+  /// at the trailer.
+  static func checkExtensions(_ bytes: [UInt8], from start: Int, end: Int) throws(Refusal) {
+    guard start <= end else { throw .truncated }
+    var offset = start
+    while offset < end {
+      guard end - offset >= 8 else { throw .badExtension }
+      let signature = Array(bytes[offset..<(offset + 4)])
+      let length =
+        Int(bytes[offset + 4]) << 24 | Int(bytes[offset + 5]) << 16 | Int(bytes[offset + 6]) << 8
+        | Int(bytes[offset + 7])
+      offset += 8
+      guard length <= end - offset else { throw .badExtension }
+      offset += length
+      switch signature {
+      case Array("link".utf8): throw .splitIndex
+      case Array("sdir".utf8): throw .sparseDirectories
+      default:
+        // Git's rule: a signature starting with A-Z is optional.
+        guard (0x41...0x5A).contains(signature[0]) else {
+          let printable = signature.allSatisfy { (0x21...0x7E).contains($0) }
+          throw .unknownRequiredExtension(
+            printable ? String(decoding: signature, as: UTF8.self) : "(binary)")
+        }
+      }
+    }
   }
 }

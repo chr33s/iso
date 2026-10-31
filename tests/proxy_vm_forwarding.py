@@ -185,6 +185,25 @@ def https_listener(work, log, *, interactive=False):
                 helper.wait(timeout=5)
 
 
+def fixture_profile(work, xctest, products):
+    """The production proxy profile, changed only where the fixture must differ.
+
+    The fixture runs as xctest, so it also reads the Xcode developer directory,
+    the built test products and the fixture CA; and its controlled upstream is
+    loopback 443, which production denies. Writes, exec and every other rule
+    stay those of the production profile, which is never edited for fixtures.
+    """
+    text = (ROOT / "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb").read_text()
+    loopback = '(deny network-outbound (remote ip "localhost:*"))\n'
+    assert text.count(loopback) == 1, "production profile no longer denies loopback"
+    reads = [xctest.parents[2].resolve(), products.resolve(), work.resolve()]
+    assert all('"' not in str(path) and "\\" not in str(path) for path in reads)
+    path = work / "seatbelt-fixture.sb"
+    path.write_text(text.replace(loopback, "") + "(allow file-read*\n"
+                    + "".join(f'  (subpath "{read}")\n' for read in reads) + ")\n")
+    return path
+
+
 def exercise(work, provider, port, token, credential, guest_command, log, *, listener):
     """One admitted operation; host releases the last SSE event only after guest ACK."""
     work.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -249,7 +268,7 @@ def exercise(work, provider, port, token, credential, guest_command, log, *, lis
         xctest = subprocess.check_output(["xcrun", "--find", "xctest"], text=True).strip()
         bundle = Path(directory) / "IsoProxyTransportTests.xctest"
         command = ["/usr/bin/sandbox-exec", "-D", "PROXY_BIN=" + str(Path(xctest).resolve()),
-                   "-f", str(ROOT / "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb"), xctest,
+                   "-f", str(fixture_profile(work, Path(xctest), Path(directory))), xctest,
                    "-XCTest", "IsoProxyTransportTests.VMProxyFixture/testServe", str(bundle)]
         fixture = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log,
                                    env={"ISO_VM_FIXTURE_CA": str(work / "forward_ca.der")}, start_new_session=True)

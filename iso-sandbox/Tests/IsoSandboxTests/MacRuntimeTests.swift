@@ -1,5 +1,6 @@
 import Foundation
 import IsoMacProtocol
+import Synchronization
 import Testing
 
 @testable import IsoSandboxCore
@@ -658,4 +659,198 @@ private func answerStatus(_ guest: inout GuestEnd, with key: String) -> Bool {
     #expect("\(error)".contains("iso-macos-helper not found"))
   }
   #expect(MacTemplates.list(root: root).isEmpty)
+}
+
+// MARK: - a guest that stops reading cannot wedge a stop
+
+/// Fills `fd`'s send buffer (its peer never reads). A short send timeout
+/// ends the fill; it is cleared again so later writers block as before.
+private func fillSendBuffer(_ fd: Int32) {
+  func sendTimeout(_ usec: Int32) {
+    var tv = timeval(tv_sec: 0, tv_usec: usec)
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+  }
+  sendTimeout(50_000)
+  let junk = [UInt8](repeating: 0x41, count: 4096)
+  while junk.withUnsafeBytes({ write(fd, $0.baseAddress, $0.count) }) > 0 {}
+  sendTimeout(0)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aBoundedWriteToAPeerThatNeverReadsGivesUpAtTheDeadline() {
+  var fds: [Int32] = [0, 0]
+  #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+  defer {
+    close(fds[0])
+    close(fds[1])
+  }
+  fillSendBuffer(fds[0])
+  let started = ContinuousClock.now
+  let sent = BoundedWrite.all(
+    fds[0], Array("{}\n".utf8), deadline: .now + .milliseconds(300))
+  #expect(!sent)
+  #expect(ContinuousClock.now - started < .seconds(3))
+  // The descriptor's blocking mode is untouched.
+  #expect(fcntl(fds[0], F_GETFL) & O_NONBLOCK == 0)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aHelperRequestToAGuestThatStopsReadingReturnsWithinItsTimeout() async {
+  let key = HelperKey.random()
+  let link = MacHelperLink(store: FakeStore(enrolled: true, key: key), log: { _ in })
+  var fds: [Int32] = [0, 0]
+  guard socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0 else {
+    Issue.record("socketpair")
+    return
+  }
+  // The test keeps its own handle on the host end to fill it.
+  let host = dup(fds[0])
+  defer { close(host) }
+  guard link.accept(fd: fds[0], retaining: nil) else {
+    Issue.record("accept")
+    return
+  }
+  var guest = GuestEnd(fd: fds[1])
+  defer { close(guest.fd) }
+  _ = guest.hello(boot: "B", enrolled: true, key: key)
+  #expect(await waitFor { link.isConnected })
+  guard let network = guest.read(), network.type == .network else {
+    Issue.record("network request")
+    return
+  }
+  var ack = HelperMessage(type: .ack)
+  ack.id = network.id
+  guest.send(ack)
+  // From here the guest never reads again.
+  fillSendBuffer(host)
+  let started = ContinuousClock.now
+  let acknowledged = await Task.detached { link.requestShutdown(timeout: 0.5) }.value
+  #expect(!acknowledged)
+  #expect(ContinuousClock.now - started < .seconds(5))
+  // A timed-out write drops the connection rather than leave half a line.
+  #expect(await waitFor { !link.isConnected })
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aHelperShutdownThatNeverReturnsIsAbandonedAtItsDeadline() async {
+  let started = ContinuousClock.now
+  let acknowledged = await firstResult(within: 0.2, otherwise: false) {
+    try? await Task.sleep(for: .seconds(3600))
+    return true
+  }
+  #expect(!acknowledged)
+  #expect(ContinuousClock.now - started < .seconds(5))
+  #expect(await firstResult(within: 5, otherwise: false) { true })
+}
+
+/// When the stopper's sequence began and when it forced the exit.
+private final class StopTimeline: Sendable {
+  private let times = Mutex<(sequences: [ContinuousClock.Instant], exit: ContinuousClock.Instant?)>(
+    ([], nil))
+  func sequenceBegan() { times.withLock { $0.sequences.append(.now) } }
+  func exited() { times.withLock { $0.exit = $0.exit ?? .now } }
+  var sequences: [ContinuousClock.Instant] { times.withLock { $0.sequences } }
+  var exit: ContinuousClock.Instant? { times.withLock { $0.exit } }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aStopThatNeverFinishesEndsTheOwnerAfterTheGracePeriod() async {
+  let timeline = StopTimeline()
+  let stopper = MacStopper(
+    exitGrace: 0.3, forceExit: { timeline.exited() },
+    sequence: {
+      timeline.sequenceBegan()
+      try? await Task.sleep(for: .seconds(3600))
+      return "never"
+    })
+  await stopper.started()
+  let stopping = Task { await stopper.stop() }
+  #expect(await waitFor { timeline.exit != nil })
+  stopping.cancel()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aStopOfARunningVMRunsTheSequenceOnceForEveryCaller() async {
+  let timeline = StopTimeline()
+  let stopper = MacStopper(
+    exitGrace: 3600, forceExit: { timeline.exited() },
+    sequence: {
+      timeline.sequenceBegan()
+      try? await Task.sleep(for: .milliseconds(100))
+      return "guest_helper_shutdown"
+    })
+  await stopper.started()
+  async let first = stopper.stop()
+  async let second = stopper.stop()
+  #expect(await [first, second] == ["guest_helper_shutdown", "guest_helper_shutdown"])
+  #expect(await stopper.stop() == "guest_helper_shutdown")
+  #expect(timeline.sequences.count == 1)
+  #expect(timeline.exit == nil)
+}
+
+/// A stop (TTL, signal or control request) while the VM is still starting
+/// is not lost: it waits for the start, then runs, and the exit's grace
+/// counts from the sequence's start, not the request's.
+@Test(.timeLimit(.minutes(1)))
+func aStopWhileStartingRunsOnceStartedWithTheExitArmedFromThere() async throws {
+  let timeline = StopTimeline()
+  let stopper = MacStopper(
+    exitGrace: 0.8, forceExit: { timeline.exited() },
+    sequence: {
+      timeline.sequenceBegan()
+      try? await Task.sleep(for: .seconds(3600))
+      return "never"
+    })
+  // The caller goes away: the request is still remembered.
+  let caller = Task { await stopper.stop() }
+  try await Task.sleep(for: .milliseconds(500))
+  caller.cancel()
+  #expect(timeline.sequences.isEmpty)
+  await stopper.started()
+  #expect(await waitFor { !timeline.sequences.isEmpty })
+  let began = try #require(timeline.sequences.first)
+  #expect(timeline.sequences.count == 1)
+  #expect(await waitFor { timeline.exit != nil })
+  let exit = try #require(timeline.exit)
+  #expect(exit - began >= .milliseconds(700))
+}
+
+@Test(.timeLimit(.minutes(1)))
+func aStopWhileAStartNeverCompletesStillEndsTheOwner() async {
+  let timeline = StopTimeline()
+  let stopper = MacStopper(
+    exitGrace: 0.3, forceExit: { timeline.exited() },
+    sequence: {
+      timeline.sequenceBegan()
+      return "forced"
+    })
+  let stopping = Task { await stopper.stop() }
+  #expect(await waitFor { timeline.exit != nil })
+  #expect(timeline.sequences.isEmpty)
+  stopping.cancel()
+}
+
+/// A sequence that found the VM not running is retried by the next
+/// request, whose own start re-arms the exit.
+@Test(.timeLimit(.minutes(1)))
+func aRetriedStopReArmsTheExitFromTheRetry() async throws {
+  let timeline = StopTimeline()
+  let stopper = MacStopper(
+    exitGrace: 0.8, forceExit: { timeline.exited() },
+    sequence: {
+      timeline.sequenceBegan()
+      guard timeline.sequences.count > 1 else { return "none (paused)" }
+      try? await Task.sleep(for: .seconds(3600))
+      return "never"
+    })
+  await stopper.started()
+  #expect(await stopper.stop() == "none (paused)")
+  try await Task.sleep(for: .milliseconds(500))
+  let retry = Task { await stopper.stop() }
+  #expect(await waitFor { timeline.exit != nil })
+  let sequences = timeline.sequences
+  #expect(sequences.count == 2)
+  let exit = try #require(timeline.exit)
+  #expect(exit - sequences[1] >= .milliseconds(700))
+  retry.cancel()
 }

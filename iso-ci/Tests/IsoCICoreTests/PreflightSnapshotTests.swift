@@ -85,7 +85,7 @@ import Testing
     // v2 has no base checkout: a removed file is simply absent.
     #expect(manifest.deletions.isEmpty)
     #expect(!manifest.files.contains { $0.path == "del.txt" })
-    #expect(manifest.excludedPaths == [".env"])
+    #expect(result.excludedPaths == [".env"])
     #expect(manifest.includedUntracked == ["new.txt"])
     let byPath = Dictionary(uniqueKeysWithValues: manifest.files.map { ($0.path, $0) })
     #expect(byPath["a.txt"]?.sha256 == Digest(hashing: "changed a\n"))
@@ -101,6 +101,111 @@ import Testing
     #expect(Digest(hashing: bytes) == result.digest)
     #expect(result.size == UInt64(bytes.count))
     #expect(!String(decoding: bytes, as: UTF8.self).contains("hunter2"))
+    // The guest-visible manifest does not say which paths were left out.
+    let archived = try run("/usr/bin/tar", ["-xOf", result.archivePath, "manifest.json"], in: root)
+    let json = try StrictJSON.parse(archived.stdout, limits: JSONLimits(maxBytes: 1 << 20))
+    #expect(json["excludedPaths"] == nil)
+    #expect(json["includedUntracked"] == ["new.txt"])
+  }
+
+  /// A tracked directory replaced by a symlink to a directory outside the
+  /// working tree: capture refuses instead of reading through the link.
+  @Test func refusesATrackedDirectoryReplacedByASymlink() throws {
+    let repo = try makeRepository()
+    let outside = root + "/outside"
+    try write(outside + "/x.txt", "outside secret\n")
+    try FileManager.default.removeItem(atPath: repo + "/lib")
+    symlink(outside, repo + "/lib")
+    var options = options()
+    options.outputDirectory = root + "/out-link"
+    #expect {
+      try SnapshotCapture.capture(repository: repo, options: options)
+    } throws: { error in
+      (error as? CIError)?.code == .compatibilityRejected
+    }
+    // Nothing was left behind, and nothing outside was archived.
+    let left = (try? FileManager.default.contentsOfDirectory(atPath: options.outputDirectory)) ?? []
+    #expect(left.isEmpty)
+    // A relative link that stays inside the tree is refused the same way:
+    // the tracked path must be reached through real directories.
+    unlink(repo + "/lib")
+    try FileManager.default.createDirectory(
+      atPath: repo + "/real", withIntermediateDirectories: true)
+    try write(repo + "/real/x.txt", "x\n")
+    symlink("real", repo + "/lib")
+    #expect(throws: CIError.self) {
+      try SnapshotCapture.capture(repository: repo, options: options)
+    }
+  }
+
+  @Test func aSplitIndexIsRefused() throws {
+    let repo = root + "/split"
+    try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try git(["init", "-q"], repo)
+    try write(repo + "/a.txt", "a\n")
+    try git(["-c", "core.splitIndex=true", "add", "-A"], repo)
+    try write(repo + "/b.txt", "b\n")
+    try git(["-c", "core.splitIndex=true", "add", "b.txt"], repo)
+    try git(["-c", "core.splitIndex=true", "commit", "-q", "-m", "c"], repo)
+    #expect {
+      try GitIndex.entries(try GitIndex.layout(containing: repo))
+    } throws: { error in
+      (error as? CIError)?.message.contains("split index") == true
+    }
+  }
+
+  @Test func originURLIsReadInertlyFromTheRepositoryConfig() throws {
+    func value(_ text: String) -> String? {
+      GitConfigFile.lastValue(
+        Array(text.utf8), section: "remote", subsection: "origin", key: "url")
+    }
+    #expect(
+      value("[remote \"origin\"]\n\turl = git@github.com:octo/demo.git\n")
+        == "git@github.com:octo/demo.git")
+    // Case-insensitive section and key, comments, quotes, escapes, CRLF,
+    // and the last value wins.
+    #expect(
+      value(
+        "# c\r\n[REMOTE \"origin\"] ; c\r\n  URL = first\r\n\tUrl = \"https://x/o/r\" # trailing\r\n"
+      )
+        == "https://x/o/r")
+    #expect(value("[remote \"origin\"]\nurl = a\\\nb\n") == "ab")
+    #expect(value("[remote \"origin\"]\nurl = \"a;b#c\"  \n") == "a;b#c")
+    // The subsection is case-sensitive; the legacy dotted form is lowercased.
+    #expect(value("[remote \"Origin\"]\nurl = x\n") == nil)
+    #expect(value("[remote.Origin]\nurl = x\n") == "x")
+    // Other sections and remotes do not count; a key on the header line does.
+    #expect(value("[remote \"upstream\"]\nurl = x\n[branch \"main\"]\nremote = origin\n") == nil)
+    #expect(value("[remote \"origin\"] url = y\n") == "y")
+    // Malformed or valueless content yields nothing rather than a guess.
+    #expect(value("[remote \"origin\"\nurl = x\n") == nil)
+    #expect(value("[remote \"origin\"]\nurl = \"x\n") == nil)
+    #expect(value("[remote \"origin\"]\nurl\n") == nil)
+    #expect(value("url = x\n") == nil)
+  }
+
+  /// A linked worktree's `.git` file leads to the shared config; include
+  /// directives are never followed, though Git itself would honor them.
+  @Test func repositoryNameFollowsTheWorktreeGitfileButNotIncludes() throws {
+    let repo = try makeRepository()
+    try git(["remote", "add", "origin", "git@github.com:octo/inert.git"], repo)
+    try write(
+      repo + "/.git/included.cfg", "[remote \"origin\"]\n\turl = https://github.com/evil/included\n"
+    )
+    try write(
+      repo + "/.git/config",
+      try String(contentsOfFile: repo + "/.git/config", encoding: .utf8)
+        + "[include]\n\tpath = included.cfg\n")
+    // Witness: Git itself would take the included value.
+    let witness = try run("/usr/bin/git", ["config", "--get", "remote.origin.url"], in: repo)
+    #expect(String(decoding: witness.stdout, as: UTF8.self).contains("evil/included"))
+    #expect(PreflightService.repositoryName(repo) == "octo/inert")
+    let worktree = root + "/worktree"
+    try git(["worktree", "add", "-q", worktree], repo)
+    var status = stat()
+    #expect(lstat(worktree + "/.git", &status) == 0 && status.st_mode & S_IFMT == S_IFREG)
+    #expect(PreflightService.repositoryName(worktree) == "octo/inert")
+    #expect(PreflightService.repositoryName(root + "/clean-none").hasPrefix("local/"))
   }
 
   @Test func captureIsDeterministic() throws {
@@ -211,6 +316,21 @@ import Testing
     #expect(SnapshotCapture.excluded("home/.aws/credentials", patterns: patterns))
     #expect(SnapshotCapture.excluded(".docker/config.json", patterns: patterns))
     #expect(SnapshotCapture.excluded("keys/id_ed25519.pub", patterns: patterns))
+    // Matching ignores case, as the default macOS file system does.
+    #expect(SnapshotCapture.excluded("Config/.ENV", patterns: patterns))
+    #expect(SnapshotCapture.excluded("certs/Server.PEM", patterns: patterns))
+    #expect(SnapshotCapture.excluded("Home/.AWS/credentials", patterns: patterns))
+    #expect(SnapshotCapture.excluded(".Docker/Config.json", patterns: patterns))
+    for path in [
+      ".gem/credentials", "home/.gem/credentials", ".terraformrc", "terraform.rc",
+      "infra/terraform.tfstate", "infra/terraform.tfstate.backup", "keys/release.jks",
+      ".pgpass", ".my.cnf", "putty/key.ppk", ".s3cfg", ".boto", ".config/gh/hosts.yml",
+      "home/.config/gh/hosts.yml", ".yarnrc.yml",
+    ] {
+      #expect(SnapshotCapture.excluded(path, patterns: patterns), "\(path)")
+    }
+    #expect(!SnapshotCapture.excluded("terraform.tf", patterns: patterns))
+    #expect(!SnapshotCapture.excluded(".config/gh/config.yml", patterns: patterns))
     #expect(!SnapshotCapture.excluded("src/environment.swift", patterns: patterns))
     #expect(!SnapshotCapture.excluded("README.md", patterns: patterns))
   }
@@ -224,10 +344,12 @@ import Testing
     try write(path, "after, and longer\n")
     var writer = try TarWriter(path: root + "/t.tar")
     defer { writer.close() }
+    let directory = open(root, O_RDONLY | O_DIRECTORY)
+    defer { close(directory) }
     #expect(throws: SnapshotCapture.ConcurrentChange.self) {
       _ = try writer.addFile(
-        name: "tree/moving.txt", mode: 0o644, source: path, expectedSize: UInt64(status.st_size),
-        expected: observed)
+        name: "tree/moving.txt", mode: 0o644, directory: directory, source: "moving.txt",
+        expectedSize: UInt64(status.st_size), expected: observed)
     }
   }
 

@@ -289,12 +289,14 @@ package struct WorkspaceTransfer: Sendable {
       .literal(" \(excludes.joined(separator: " ")) .")
     var producer = request(receivers.ssh, target.sshOptions + [target.address, command.rendered])
     producer.isCancelled = cancel
-    var consumer = request(
-      receivers.tar,
+    // Confined: the stream decides what bsdtar writes, never where.
+    let (receiver, arguments) = try receivers.tarCommand(
       [
         "xf", "-", "-C", attempt.tree, "--no-same-owner", "--no-acls", "--no-fflags", "--no-xattrs",
         "--no-mac-metadata",
-      ], environment: receivers.environment(client.environment))
+      ], writableTree: attempt.tree)
+    var consumer = request(
+      receiver, arguments, environment: receivers.environment(client.environment))
     consumer.inheritedDescriptors = [attempt.writerDescriptor]
     try target.requireHandoff()
     let output = try runner.pipeline(producer, consumer)

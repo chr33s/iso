@@ -44,8 +44,9 @@ package protocol AuthorityReader: Sendable {
   )
   func repository(_ repository: RepositoryName) throws(CIError) -> GitHubRepositoryInfo
   func runnerGroups(org: String) throws(CIError) -> [GitHubRunnerGroupInfo]
-  /// A policy document at `path`, or nil when unavailable to the installation.
-  func policy(_ path: String) throws(CIError) -> JSONValue?
+  /// A policy document of `repository` at `path`, or nil when unavailable
+  /// to the installation.
+  func policy(_ path: String, of repository: RepositoryName) throws(CIError) -> JSONValue?
 }
 
 package final class APIAuthorityReader: AuthorityReader {
@@ -60,19 +61,21 @@ package final class APIAuthorityReader: AuthorityReader {
   package func installationRepositories() throws(CIError) -> (
     repositories: [GitHubRepositoryInfo], truncated: Bool
   ) {
-    try client.api.installationRepositories(token: try client.token())
+    try client.api.installationRepositories(token: try client.token(.metadataRead(nil)))
   }
 
   package func repository(_ repository: RepositoryName) throws(CIError) -> GitHubRepositoryInfo {
-    try client.api.repository(repository, token: try client.token())
+    try client.api.repository(repository, token: try client.token(.metadataRead(repository)))
   }
 
   package func runnerGroups(org: String) throws(CIError) -> [GitHubRunnerGroupInfo] {
-    try client.api.runnerGroups(org: org, token: try client.token())
+    try client.api.runnerGroups(org: org, token: try client.token(.runnerGroupsRead))
   }
 
-  package func policy(_ path: String) throws(CIError) -> JSONValue? {
-    try client.api.optionalPolicy(path, token: try client.token())
+  package func policy(_ path: String, of repository: RepositoryName) throws(CIError)
+    -> JSONValue?
+  {
+    try client.api.optionalPolicy(path, token: try client.token(.actionsPolicyRead(repository)))
   }
 }
 
@@ -301,7 +304,7 @@ package enum PoolActivation {
   {
     let base = "/repos/\(repository.owner)/\(repository.name)/actions/permissions"
     var out: [AuthorityGuarantee] = []
-    if let workflow = try? reader.policy(base + "/workflow"),
+    if let workflow = try? reader.policy(base + "/workflow", of: repository),
       let level = workflow["default_workflow_permissions"]?.stringValue
     {
       out.append(
@@ -313,7 +316,8 @@ package enum PoolActivation {
         AuthorityGuarantee(
           "GITHUB_TOKEN default", .unavailable, "policy not readable by the installation"))
     }
-    if let approval = try? reader.policy(base + "/fork-pr-contributor-approval"),
+    if let approval = try? reader.policy(
+      base + "/fork-pr-contributor-approval", of: repository),
       let policy = approval["approval_policy"]?.stringValue
     {
       out.append(

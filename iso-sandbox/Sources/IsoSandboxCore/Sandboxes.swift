@@ -426,8 +426,10 @@ package enum Sandboxes {
       throw SandboxError("truncate: errno \(errno)")
     }
     let log = try await Maintenance.growFilesystem(root: root, scratch: scratch, disk: disk)
+    let last = log.split(separator: "\n").last.map(String.init) ?? ""
     Owner.log(
-      "grew \(disk.lastPathComponent) to \(bytes) bytes: \(log.split(separator: "\n").last ?? "")")
+      "grew \(disk.lastPathComponent) to \(bytes) bytes: \(GuestText.printable(String(last.suffix(2000))))"
+    )
   }
 
   /// Save a stopped sandbox's disk as `name`, with its identity removed.

@@ -255,7 +255,7 @@ private func exchange(
   let parsed = try config(settings(policy: try policy(capacity: 1)))
   let authorizer = ProviderAuthorizer(config: parsed, clock: FakeClock(), log: { _ in })
   let probe =
-    "GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\n\r\n"
+    "GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\nAuthorization: Bearer \(capability)\r\n\r\n"
   for _ in 0..<3 {
     let result = try exchange(parsed, authorizer, wire: probe)
     #expect(result.response.hasPrefix("HTTP/1.1 200 OK"))

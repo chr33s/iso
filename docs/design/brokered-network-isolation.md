@@ -434,9 +434,13 @@ VM configuration: interfaces = []  -> VZVirtualMachine.networkDevices == 0
 - **NIC-less proof before guest code (NET-01, NET-02).** `LinuxContainer.create()`
   boots the VM into the framework's init only; the guest's `/sbin/init` runs at
   `start()`. Between the two, the owner reads the live
-  `VZVirtualMachineInstance.vzVirtualMachine.networkDevices` and
-  `socketDevices` on the VM queue and stops the VM unbooted unless they are
-  `0` and `1`. The reading is reported in the effective configuration
+  `VZVirtualMachineInstance.vzVirtualMachine` device inventory on the VM
+  queue (`VMDevices`) and stops the VM unbooted unless it has `0` network
+  devices and `1` socket device, no console, memory-balloon, USB or graphics
+  device, and at most the one virtio-fs device `apple/containerization`
+  always attaches, carrying an empty `VZMultipleDirectoryShare` (or no
+  share). The same check, with one vmnet network device, runs for vmnet
+  sandboxes. The brokered counts are reported in the effective configuration
   (`networkDevices`, `socketDevices`).
 - **Fixed channel policy.** `ChannelPolicy.current` (`iso.channels/v1`): one
   endpoint (`ssh` → guest vsock port 2222, host-to-guest), 64 streams, 64

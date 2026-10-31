@@ -8,6 +8,10 @@ name: On-Demand Review
 # comment or inline review comment; it never reviews every PR automatically.
 # One gate job decides for both agents. Each agent then runs in its own job
 # with only its own secret and permissions.
+# The gate job admits only OWNER/MEMBER/COLLABORATOR comments, never runs PR
+# code, and holds no model credential; each agent job has its own per-PR
+# concurrency group, so a workflow-wide group would cancel unrelated requests.
+# jactionlint ignore=dangerous-triggers,concurrency-limits
 on:
   issue_comment:
     types: [created]
@@ -84,10 +88,27 @@ jobs:
       # path is reached.
       id-token: write
     steps:
+      # The working directory, CLAUDE.md, .claude/ hooks and skills come from
+      # the default branch, never the contributor's PR. Without `ref:`, a
+      # pull_request_review_comment event checks out the PR merge commit, so a
+      # fork would supply the agent's instructions and executable hooks.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
+
+      # The PR base and head as objects only; neither tree is materialized.
+      - name: Fetch pull request refs
+        env:
+          BASE_BRANCH: ${{ needs.gate.outputs.base_branch }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "refs/heads/$BASE_BRANCH:refs/remotes/origin/review-base"
+          git fetch --no-tags origin \
+            "refs/pull/$PR_NUMBER/head:refs/remotes/origin/review-head"
 
       - name: Caution reviewer on an untrusted-author PR
         if: needs.gate.outputs.untrusted == 'true'
@@ -100,7 +121,9 @@ jobs:
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body '⚠️ **@claude is about to review a PR from an outside contributor.**
           The diff, commit messages, and comments here are **untrusted input** and may contain prompt-injection attempting to make the review agent read or leak CI secrets. The agent is instructed to treat all of it as data, never as instructions — but that is a mitigation, not a guarantee. **Review the diff yourself for injection before relying on the agent'\''s output, and do not merge on the agent'\''s say-so alone.**'
 
-      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+      # The workspace is the default branch; the PR exists only as git objects
+      # under refs/remotes/origin/review-*, never as files the agent loads.
+      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241 # jactionlint ignore=agentic-actions
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           track_progress: true
@@ -120,6 +143,10 @@ jobs:
             PR NUMBER: ${{ needs.gate.outputs.pr_number }}
 
             A user requested a review by mentioning @claude in a comment on this pull request.
+
+            The PR is NOT checked out. Its base is refs/remotes/origin/review-base
+            and its head is refs/remotes/origin/review-head; read them with
+            `git diff`, `git show` and `gh pr diff`, never by checking them out.
 
             Run the /my-review command against this pull request (diff from the PR's base branch).
             Post substantive findings as inline review comments on the PR, following the
@@ -199,7 +226,8 @@ jobs:
 
       - name: Run Codex review
         id: run_codex
-        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        # Default-branch workspace; the PR is only git objects (see above).
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12 # jactionlint ignore=agentic-actions
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/prompts/review.md

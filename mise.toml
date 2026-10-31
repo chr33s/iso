@@ -8,7 +8,17 @@
 # the Virtualization framework the runtime links against. The pinned Swift
 # toolchain matches the Swift 6.4 that Xcode 27 ships.
 
-min_version = "2026.8.0"
+min_version = "2026.10.7"
+
+# mise.lock pins each tool's download URL and checksum (and its GitHub
+# attestation where the registry has one). Regenerate it with
+# `mise lock --platform macos-arm64,linux-x64` after changing a pin.
+[settings]
+lockfile = true
+
+# `actionlint` in an activated shell runs jactionlint.
+[shell_alias]
+actionlint = "jactionlint"
 
 [tools]
 # Swift toolchain (swift build/test, swift format).
@@ -21,7 +31,9 @@ jq = "1.8.2"
 yq = "4.53.6"
 # Script and workflow linters.
 shellcheck = "0.11.0"
-"github:kjanat/actionlint" = "1.17.0"
+# jactionlint (jdx/jactionlint), a stricter actionlint fork; mise.lock pins
+# its checksum and provenance. Configuration: .github/jactionlint.yaml.
+jactionlint = "2.4.0"
 zizmor = "1.30.1"
 # Apple `container` CLI: builds the guest images (`iso setup`) and serves the
 # integration suites. Its service still has to be started once

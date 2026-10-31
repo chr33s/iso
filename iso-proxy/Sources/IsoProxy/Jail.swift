@@ -8,7 +8,10 @@ import Foundation
 /// These probes run before reading stdin, while no provider secret is present.
 /// Denial must specifically be a permission error, not a missing path or socket.
 enum Jail {
-  enum Failure: Error { case coreLimit, fileWriteAllowed, execAllowed, egressAllowed, httpsDenied }
+  enum Failure: Error {
+    case coreLimit, fileWriteAllowed, execAllowed, egressAllowed, loopbackHTTPSAllowed
+    case loopbackDNSAllowed, httpsDenied, homeReadAllowed
+  }
 
   static func disableCoreDumps() throws {
     var limit = rlimit(rlim_cur: 0, rlim_max: 0)
@@ -25,16 +28,43 @@ enum Jail {
       unsafe Darwin.unlink(path)
       throw Failure.fileWriteAllowed
     }
-    guard errno == EPERM || errno == EACCES else { throw Failure.fileWriteAllowed }
+    guard denied(errno) else { throw Failure.fileWriteAllowed }
 
-    let spawnError = probeExec()
-    guard spawnError == EPERM || spawnError == EACCES else { throw Failure.execAllowed }
+    guard denied(probeExec()) else { throw Failure.execAllowed }
 
     let blockedPort = UInt16.random(in: 49152...65535)
-    let other = connectError(port: blockedPort)
-    guard other == EPERM || other == EACCES else { throw Failure.egressAllowed }
-    let https = connectError(port: 443)
-    guard https != EPERM && https != EACCES else { throw Failure.httpsDenied }
+    guard denied(connectError("127.0.0.1", port: blockedPort)) else { throw Failure.egressAllowed }
+    // Ports 443 and 53 are open to the network only; loopback services stay out of reach.
+    guard denied(connectError("127.0.0.1", port: 443)) else { throw Failure.loopbackHTTPSAllowed }
+    guard denied(connectError("127.0.0.1", port: 53)) else { throw Failure.loopbackDNSAllowed }
+    // A TEST-NET-1 address: the non-blocking connect is only started, never completed.
+    guard !denied(connectError("192.0.2.1", port: 443)) else { throw Failure.httpsDenied }
+
+    // A missing home proves nothing; /Users always exists.
+    var home = openError(homeDirectory())
+    if home == ENOENT { home = openError("/Users") }
+    guard denied(home) else { throw Failure.homeReadAllowed }
+  }
+
+  private static func denied(_ code: Int32) -> Bool { code == EPERM || code == EACCES }
+
+  /// The invoking user's home directory from the user database, not `HOME`,
+  /// which sandbox-exec does not pass.
+  private static func homeDirectory() -> String {
+    // getpwuid's static record is read immediately on this thread.
+    guard let entry = unsafe getpwuid(getuid()), let directory = unsafe entry.pointee.pw_dir else {
+      return "/Users"
+    }
+    let home = unsafe String(cString: directory)
+    return home.hasPrefix("/") && home != "/" ? home : "/Users"
+  }
+
+  private static func openError(_ path: String) -> Int32 {
+    // The C path is borrowed for the call only.
+    let fd = unsafe Darwin.open(path, O_RDONLY)
+    guard fd >= 0 else { return errno }
+    Darwin.close(fd)
+    return 0
   }
 
   private static func probeExec() -> Int32 {
@@ -62,7 +92,8 @@ enum Jail {
     return result
   }
 
-  private static func connectError(port: UInt16) -> Int32 {
+  /// The errno of a non-blocking connect; 0 or EINPROGRESS when permitted.
+  private static func connectError(_ host: String, port: UInt16) -> Int32 {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { return errno }
     defer { Darwin.close(fd) }
@@ -71,7 +102,7 @@ enum Jail {
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     address.sin_family = sa_family_t(AF_INET)
     address.sin_port = port.bigEndian
-    address.sin_addr = in_addr(s_addr: unsafe inet_addr("127.0.0.1"))
+    address.sin_addr = in_addr(s_addr: unsafe inet_addr(host))
     // One sockaddr_in viewed as a sockaddr of its exact length, for this call only.
     return withUnsafePointer(to: &address) { pointer in
       unsafe pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in

@@ -10,8 +10,10 @@
 /// home directory, the controller database, the object store or any
 /// credential file. Parameters: `EXE`, `STAGING`, `SOCKETS` (real paths:
 /// Seatbelt matches `/private/var`, not `/var`). Reading the root directory
-/// listing is allowed because the Swift runtime reads `/` at startup;
-/// metadata reads are allowed for dyld and Foundation path resolution.
+/// listing is allowed because the Swift runtime reads `/` at startup.
+/// Metadata outside the readable trees is limited to the `/etc`, `/tmp`
+/// and `/var` links dyld and Foundation resolve at startup, so the child
+/// cannot probe which files exist elsewhere on the host.
 ///
 /// This string is the canonical copy; `iso-ci/scripts/dataplane-seatbelt.sb`
 /// is generated from it for manual inspection (`sandbox-exec -f`).
@@ -21,7 +23,10 @@ package enum DataPlaneSeatbelt {
     (deny default)
     (allow process-exec (literal (param "EXE")))
     (allow file-read* (literal (param "EXE")))
-    (allow file-read-metadata)
+    (allow file-read-metadata
+      (literal "/etc")
+      (literal "/tmp")
+      (literal "/var"))
     (allow file-read-data (literal "/"))
     (allow file-read*
       (subpath "/System")

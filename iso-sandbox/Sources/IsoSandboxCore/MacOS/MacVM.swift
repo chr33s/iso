@@ -163,12 +163,15 @@ package final class MacVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendab
   }
 
   /// The graceful stop sequence (Gate K): `requestStop`, then the guest
-  /// helper's shutdown, then `stop()`. Returns the path taken.
+  /// helper's shutdown, then `stop()`. Returns the path taken. The helper's
+  /// request is raced against `helperDeadline`: a guest that wedges the
+  /// helper channel only moves the sequence on to the forced stop.
   package func stop(
     // A macOS guest ignored `requestStop` in every qualification run, so its
     // wait is short; the helper's shutdown is the path that works.
-    requestWait: TimeInterval = 15, helperWait: TimeInterval = 120,
-    helperShutdown: () async -> Bool
+    requestWait: TimeInterval = 15, helperDeadline: TimeInterval = 20,
+    helperWait: TimeInterval = 120,
+    helperShutdown: @escaping @Sendable () async -> Bool
   ) async -> String {
     guard state == "running" else { return "none (\(state))" }
     let requested: Bool =
@@ -178,7 +181,9 @@ package final class MacVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendab
       } ?? false
     func isStopped() -> Bool { ["stopped", "error"].contains(state) }
     if requested, await waitUntil(requestWait, isStopped) { return "request_stop" }
-    if await helperShutdown(), await waitUntil(helperWait, isStopped) {
+    if await firstResult(within: helperDeadline, otherwise: false, helperShutdown),
+      await waitUntil(helperWait, isStopped)
+    {
       return "guest_helper_shutdown"
     }
     await forceStop()
@@ -218,4 +223,37 @@ package func waitUntil(
     try? await Task.sleep(for: interval)
   }
   return cond()
+}
+
+/// `body`'s result, or `fallback` once `timeout` passes, whichever comes
+/// first. `body` is not awaited past the timeout: it keeps running on its
+/// own and its late result is dropped.
+package func firstResult<T: Sendable>(
+  within timeout: TimeInterval, otherwise fallback: T,
+  _ body: @escaping @Sendable () async -> T
+) async -> T {
+  let once = ResumeOnce<T>()
+  return await withCheckedContinuation { continuation in
+    once.arm(continuation)
+    Task { once.resume(await body()) }
+    Task {
+      try? await Task.sleep(for: .seconds(timeout))
+      once.resume(fallback)
+    }
+  }
+}
+
+private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<T, Never>?
+
+  func arm(_ c: CheckedContinuation<T, Never>) { lock.withLock { continuation = c } }
+
+  func resume(_ value: T) {
+    let c: CheckedContinuation<T, Never>? = lock.withLock {
+      defer { continuation = nil }
+      return continuation
+    }
+    c?.resume(returning: value)
+  }
 }

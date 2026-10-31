@@ -212,6 +212,75 @@ import Testing
       })
   }
 
+  /// The submitted run's repository name comes from the repository's own
+  /// config read as data: an include Git would honor is not followed.
+  @Test func submitNamesTheRepositoryWithoutRunningGit() throws {
+    let fixture = try Self.fixture(workflow: Self.simple)
+    let config = fixture.repository + "/.git/config"
+    try "[remote \"origin\"]\n\turl = https://github.com/octo/inert.git\n".write(
+      toFile: fixture.repository + "/.git/included.cfg", atomically: true, encoding: .utf8)
+    try
+      (try String(contentsOfFile: config, encoding: .utf8)
+      + "[remote \"origin\"]\n\turl = git@github.com:octo/named.git\n"
+      + "[include]\n\tpath = included.cfg\n")
+      .write(toFile: config, atomically: true, encoding: .utf8)
+    let value = try #require(submit(fixture)).get()
+    let run = try PreflightRunID(try #require(value["run"]?.stringValue))
+    let record = try #require(try fixture.store.preflightRun(run, as: PreflightRunRecord.self))
+    #expect(record.repository == "octo/named")
+  }
+
+  /// Only a clean-tree run without secrets publishes shared cache entries:
+  /// the scope a submitted run's job registers is confined otherwise.
+  @Test func dirtyOrSecretRunsConfineTheirCaches() throws {
+    let fixture = try Self.fixture(workflow: Self.simple)
+    let configuration = try TestConfig.configuration()
+    func confinement(secrets: JSONValue = [:]) throws -> (PreflightRunID, String?) {
+      let value = try #require(submit(fixture, secrets: secrets)).get()
+      let run = try PreflightRunID(try #require(value["run"]?.stringValue))
+      let record = try #require(try fixture.store.preflightRun(run, as: PreflightRunRecord.self))
+      let profile = try ResolvedProfile(name: record.profile, configuration: configuration)
+      let scope = PreflightService.cacheScope(
+        record, run: run, secretsMapped: !record.secretNames.isEmpty, profile: profile,
+        host: .local)
+      return (run, scope.confinedToRun)
+    }
+    #expect(try confinement().1 == nil)
+    let (secretRun, secretScope) = try confinement(secrets: ["TOKEN": "s"])
+    #expect(secretScope == secretRun.rawValue)
+    try "dirty\n".write(toFile: fixture.repository + "/a.txt", atomically: true, encoding: .utf8)
+    let (dirtyRun, dirtyScope) = try confinement()
+    #expect(dirtyScope == dirtyRun.rawValue)
+    // A patched revision confines the whole run, even its clean base.
+    let clean = InputRevision(
+      number: 0, baseCommit: String(repeating: "a", count: 40), snapshot: Digest(hashing: "s"),
+      dirty: false, capturedAt: 1, patchedAttempt: nil)
+    let patched = InputRevision(
+      number: 1, baseCommit: clean.baseCommit, snapshot: Digest(hashing: "p"), dirty: false,
+      capturedAt: 2, patchedAttempt: .generate())
+    #expect(
+      PreflightService.cacheConfinement(
+        run: dirtyRun, secretsMapped: false, revisions: [clean, patched]) == dirtyRun.rawValue)
+  }
+
+  /// Mapped secret values leave controller memory when the run finishes.
+  @Test func mappedSecretsAreDroppedWhenTheRunFinishes() throws {
+    let fixture = try Self.fixture(workflow: Self.simple)
+    let value = try #require(submit(fixture, secrets: ["TOKEN": "s3cr3t-value"])).get()
+    let run = try PreflightRunID(try #require(value["run"]?.stringValue))
+    #expect(fixture.service.holdsSecrets(run))
+    // No eligible host: build fails, test is skipped, and the run settles.
+    var settled = false
+    for tick in 0..<50 where !settled {
+      fixture.service.reconcile(now: 1_000 + EpochSeconds(tick))
+      Thread.sleep(forTimeInterval: 0.1)
+      settled =
+        try fixture.store.preflightRun(run, as: PreflightRunRecord.self)?.state == .finished
+    }
+    #expect(settled)
+    #expect(!fixture.service.holdsSecrets(run))
+  }
+
   /// C-T07: a started runner that never acquires its job (for example, one
   /// that cannot reach the endpoint) fails within the boot allowance instead
   /// of holding its VM until the hard deadline.

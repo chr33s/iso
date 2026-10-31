@@ -34,6 +34,9 @@ package struct ProxyLauncher: Sendable {
   let sandboxExec: String
   /// Where tunnel control sockets are created (short, private paths).
   let controlRoot: String
+  /// Checks a located companion before it is started: its code signature in
+  /// release builds, nothing in debug builds.
+  let verifyCompanion: @Sendable (String) throws -> Void
 
   package init(
     environment: [String: String], resolver: CredentialResolver, diagnostics: Diagnostics,
@@ -46,7 +49,9 @@ package struct ProxyLauncher: Sendable {
 
   init(
     environment: [String: String], resolver: CredentialResolver, diagnostics: Diagnostics,
-    isoExecutable: String?, sandboxExec: String, controlRoot: String
+    isoExecutable: String?, sandboxExec: String, controlRoot: String,
+    verifyCompanion: @escaping @Sendable (String) throws -> Void = CompanionSignature
+      .verifyForRelease
   ) {
     self.environment = environment
     self.resolver = resolver
@@ -54,6 +59,7 @@ package struct ProxyLauncher: Sendable {
     self.isoExecutable = isoExecutable
     self.sandboxExec = sandboxExec
     self.controlRoot = controlRoot
+    self.verifyCompanion = verifyCompanion
   }
 
   // MARK: Paths
@@ -108,17 +114,18 @@ package struct ProxyLauncher: Sendable {
       listen: "127.0.0.1:\(port)", capabilityToken: token, provider: provider, auth: upstream.auth,
       credential: credential, readiness: readiness)
     try spawnProxy(instance, name: provider.rawValue, port: port, startup: startup)
-    if provider.persistsToken {
-      do {
-        try AtomicFile.write(
-          Array(token.expose().utf8), to: Self.tokenPath(instance, provider.rawValue),
-          mode: .atMost(0o600))
-      } catch {
-        stop(instance, provider: provider)
-        throw ContextError(
-          "Failed to write proxy token file \(Self.tokenPath(instance, provider.rawValue))",
-          cause: error)
-      }
+    // Owner-private host state, persisted for every provider: broker readiness
+    // probes (host and guest loopback) present it as their bearer capability,
+    // and later Codex sessions forward the OpenAI token through `SendEnv`.
+    do {
+      try AtomicFile.write(
+        Array(token.expose().utf8), to: Self.tokenPath(instance, provider.rawValue),
+        mode: .atMost(0o600))
+    } catch {
+      stop(instance, provider: provider)
+      throw ContextError(
+        "Failed to write proxy token file \(Self.tokenPath(instance, provider.rawValue))",
+        cause: error)
     }
     do {
       if let readiness {
@@ -292,6 +299,7 @@ package struct ProxyLauncher: Sendable {
         "iso-egress not found next to iso at \(directory). Filtered egress cannot start; build iso-egress and place it beside iso. No NAT fallback is used."
       )
     }
+    try verifyCompanion(candidate)
     return candidate
   }
 
@@ -304,15 +312,19 @@ package struct ProxyLauncher: Sendable {
     let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
     guard log >= 0 else { throw HostError.posix("Failed to create egress lease log", logPath) }
     defer { close(log) }
-    let child = try DetachedChild.spawn(
+    var child = try DetachedChild.spawn(
       executable: isoExecutable,
       arguments: [
         "egress-lease", instance.directory, machineID, String(ownerPID), bootID, livePath,
       ],
       environment: ["PATH": "/usr/bin:/bin"], stdin: .null, stderr: log, inherit: [(writeEnd, 3)])
-    try AtomicFile.write(
-      Array(String(child.pid).utf8), to: instance.directory + "/egress-lease.pid",
-      mode: .atMost(0o644))
+    do {
+      try Self.record(
+        child.pid, at: instance.directory + "/egress-lease.pid", label: "egress lease")
+    } catch {
+      child.kill()
+      throw error
+    }
   }
 
   func spawnEgress(
@@ -356,15 +368,15 @@ package struct ProxyLauncher: Sendable {
       throw error
     }
     do {
-      try AtomicFile.write(
-        Array(String(child.pid).utf8), to: Self.pidPath(instance, "egress"), mode: .atMost(0o644))
+      try Self.record(child.pid, at: Self.pidPath(instance, "egress"), label: "iso-egress")
     } catch {
       child.kill()
       throw error
     }
   }
 
-  /// The persisted Codex capability token, if a proxy is running.
+  /// The provider's persisted guest capability token, if its proxy is running:
+  /// read by broker readiness probes and, for OpenAI, forwarded to Codex sessions.
   package static func capabilityToken(_ instance: Instance, provider: ProxyProvider) -> Secret<
     String
   >? {
@@ -385,6 +397,7 @@ package struct ProxyLauncher: Sendable {
         "Swift proxy iso-proxy not found next to iso at \(directory) — build with scripts/build-release.py or reinstall iso"
       )
     }
+    try verifyCompanion(candidate)
     return candidate
   }
 
@@ -424,8 +437,7 @@ package struct ProxyLauncher: Sendable {
       throw error
     }
     do {
-      try AtomicFile.write(
-        Array(String(child.pid).utf8), to: Self.pidPath(instance, name), mode: .atMost(0o644))
+      try Self.record(child.pid, at: Self.pidPath(instance, name), label: "credential proxy")
     } catch {
       // Without a PID file nothing could stop it later.
       child.kill()
@@ -679,6 +691,17 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
+  /// Records a running child: first the identity it has now (sandbox-exec
+  /// has already replaced itself with the companion), then the PID file that
+  /// names it.
+  static func record(_ pid: pid_t, at pidPath: String, label: String) throws {
+    guard let identity = ProcessIdentity.observe(pid) else {
+      throw HostError("The \(label) (pid \(pid)) exited before it could be recorded")
+    }
+    try identity.save(forPIDFile: pidPath)
+    try AtomicFile.write(Array(String(pid).utf8), to: pidPath, mode: .atMost(0o644))
+  }
+
   /// What a recorded PID must still be before it is signalled.
   enum RecordedProcess {
     /// `iso-proxy` (sandbox-exec replaced itself with it).
@@ -690,23 +713,70 @@ package struct ProxyLauncher: Sendable {
     /// `iso egress-lease`, the renewal process.
     case lease
 
-    func matches(_ command: String) -> Bool {
-      let words = command.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
-      switch self {
-      case .proxy: return words.contains { ($0 as NSString).lastPathComponent == "iso-proxy" }
-      case .egress: return words.contains { ($0 as NSString).lastPathComponent == "iso-egress" }
-      case .ssh: return words.first.map { ($0 as NSString).lastPathComponent == "ssh" } ?? false
-      case .lease: return words.contains("egress-lease")
-      }
+    /// A tunnel master's command line: `ssh` itself, not a word in another
+    /// program's arguments. `TunnelIdentity` binds it further.
+    static func isSSH(_ command: String) -> Bool {
+      command.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map {
+        ($0 as NSString).lastPathComponent == "ssh"
+      } ?? false
     }
   }
 
-  static func recordedProcessAlive(_ path: String, expect: RecordedProcess) -> Bool {
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8),
-      let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0,
-      let command = commandLine(pid)
+  /// Whether `pid`, read from `pidPath`, is still the process iso started.
+  /// Companions and the lease must match the identity recorded at spawn. A
+  /// record without one (written by an older iso) counts only when the
+  /// process runs `legacyExecutable`, the canonical path iso would start now;
+  /// without that it is never trusted.
+  static func isRecorded(
+    _ pid: pid_t, pidPath: String, expect: RecordedProcess,
+    legacyExecutable: @autoclosure () -> String? = nil
+  ) -> Bool {
+    if case .ssh = expect { return commandLine(pid).map(RecordedProcess.isSSH) ?? false }
+    if let identity = ProcessIdentity.load(forPIDFile: pidPath) {
+      return identity.pid == pid && identity.isAlive
+    }
+    guard let legacyExecutable = legacyExecutable(),
+      ProcessIdentity.executablePath(pid) == legacyExecutable
     else { return false }
-    return expect.matches(command)
+    if case .lease = expect {
+      return commandLine(pid)?.split(separator: " ").contains("egress-lease") ?? false
+    }
+    return true
+  }
+
+  /// Whether the process a PID file names is still the one iso started. A
+  /// record an older iso wrote has no identity file; it counts only when the
+  /// process runs the companion this iso would start (`isoExecutable`, the
+  /// running iso by default).
+  static func recordedProcessAlive(
+    _ path: String, expect: RecordedProcess,
+    isoExecutable: @autoclosure () -> String? = Bundle.main.executablePath
+  ) -> Bool {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+      let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0
+    else { return false }
+    return isRecorded(
+      pid, pidPath: path, expect: expect,
+      legacyExecutable: legacyExecutable(expect, isoExecutable: isoExecutable()))
+  }
+
+  /// The canonical executable iso itself would start for a legacy record.
+  /// Only compared with a running process's image, never launched, so the
+  /// companion's signature is not checked here: a stop mid-upgrade still
+  /// recognises the companion it started.
+  func legacyExecutable(_ expect: RecordedProcess) -> String? {
+    Self.legacyExecutable(expect, isoExecutable: isoExecutable)
+  }
+
+  static func legacyExecutable(_ expect: RecordedProcess, isoExecutable: String?) -> String? {
+    guard let isoExecutable else { return nil }
+    let directory = (isoExecutable as NSString).deletingLastPathComponent
+    return switch expect {
+    case .proxy: canonicalPath(directory + "/iso-proxy")
+    case .egress: canonicalPath(directory + "/iso-egress")
+    case .lease: canonicalPath(isoExecutable)
+    case .ssh: nil
+    }
   }
 
   /// The command line of `pid`, nil when no such process.
@@ -737,7 +807,10 @@ package struct ProxyLauncher: Sendable {
     guard let bytes = try? StateStore.readControlFile(path) else { return }
     let text = String(decoding: bytes, as: UTF8.self).trimmingUnicodeWhitespace()
     if let pid = Int32(text), pid > 0 {
-      if let command = Self.commandLine(pid), expect.matches(command) {
+      // The legacy path is computed only for a record without an identity.
+      if Self.isRecorded(
+        pid, pidPath: path, expect: expect, legacyExecutable: legacyExecutable(expect))
+      {
         Darwin.kill(pid, SIGTERM)
         diagnostics.debug("Sent SIGTERM to \(label) (pid \(pid))")
       } else {
@@ -746,8 +819,10 @@ package struct ProxyLauncher: Sendable {
     } else {
       diagnostics.debug("Ignoring malformed pid file \(path)")
     }
-    if unlink(path) != 0 && errno != ENOENT {
-      diagnostics.debug("Failed to remove pid file \(path) (non-fatal)")
+    // A tunnel's identity file is `TunnelIdentity`'s, which `stopTunnel` removes.
+    let files = expect == .ssh ? [path] : [path, ProcessIdentity.path(forPIDFile: path)]
+    for file in files where unlink(file) != 0 && errno != ENOENT {
+      diagnostics.debug("Failed to remove pid file \(file) (non-fatal)")
     }
   }
 

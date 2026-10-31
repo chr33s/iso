@@ -33,10 +33,28 @@ enum BrokerReadiness {
     }
   }
 
-  static func request(nonce: String) -> [UInt8] {
-    Array(
-      ("GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\n\r\n")
+  /// The broker answers only a holder of its guest capability. The guest
+  /// already holds it, so the guest-loopback probe discloses nothing new.
+  /// A proxy an older iso started asks for none, and refuses a probe that
+  /// carries one; see ``capabilities(_:provider:)``.
+  static func request(nonce: String, capability: Secret<String>?) -> [UInt8] {
+    let authorization = capability.map { "Authorization: Bearer \($0.expose())\r\n" } ?? ""
+    return Array(
+      ("GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\n\(authorization)\r\n")
         .utf8)
+  }
+
+  static func capability(_ instance: Instance, provider: ProxyProvider) -> Secret<String>? {
+    ProxyLauncher.capabilityToken(instance, provider: provider)
+  }
+
+  /// The probes to try, in order: with the persisted capability, then
+  /// without one, for a proxy an older iso started (which persisted no
+  /// Anthropic token, and rejects any probe that carries a capability). A
+  /// current proxy refuses the bare probe, so readiness still fails
+  /// closed; every reply is verified against the persisted key either way.
+  static func capabilities(_ instance: Instance, provider: ProxyProvider) -> [Secret<String>?] {
+    capability(instance, provider: provider).map { [$0, nil] } ?? [nil]
   }
 
   private struct Reply: Decodable {
@@ -119,13 +137,17 @@ enum BrokerReadiness {
     // A policy-bound proxy must prove the stored binding; corrupt state fails.
     try requireDirect(
       instance, provider: provider, policy: policy, tunnelAddress: tunnelAddress,
-      authorization: try ProxyAuthorizationStartup.expected(instance, provider: provider))
+      authorization: try ProxyAuthorizationStartup.expected(instance, provider: provider)
+    ).key
   }
 
+  /// The verification key, and the capability the companion answered the
+  /// direct probe for (nil: it answered the bare probe), which the guest
+  /// probe then uses.
   private static func requireDirect(
     _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy?,
     tunnelAddress: String?, authorization: ProxyAuthorizationStartup?
-  ) throws -> FilteredReadiness.VerificationKey {
+  ) throws -> (key: FilteredReadiness.VerificationKey, capability: Secret<String>?) {
     guard
       ProxyLauncher.recordedProcessAlive(
         ProxyLauncher.pidPath(instance, provider.rawValue), expect: .proxy),
@@ -143,18 +165,40 @@ enum BrokerReadiness {
         "FILTERED_BROKER_NOT_READY: \(provider.rawValue) readiness identity unavailable",
         cause: error)
     }
-    let directNonce = randomHex(16)
     guard
-      let response = FilteredReadiness.exchange(
-        port: provider.port(instance), request: request(nonce: directNonce)),
-      verifies(
-        response, nonce: directNonce, provider: provider, policy: policy,
-        authorization: authorization, key: key)
+      let answered = directProbe(
+        instance, provider: provider, policy: policy, authorization: authorization, key: key)
     else {
+      // A current proxy refuses the bare probe: with no token on disk it
+      // can never pass, and only a restart writes one.
+      let hint =
+        capability(instance, provider: provider) == nil
+        ? "; its capability is unavailable, so restart the instance" : ""
       throw HostError(
-        "FILTERED_BROKER_NOT_READY: authenticated \(provider.rawValue) companion probe failed")
+        "FILTERED_BROKER_NOT_READY: authenticated \(provider.rawValue) companion probe failed\(hint)"
+      )
     }
-    return key
+    return (key, answered)
+  }
+
+  /// The capability the companion answered a verified direct probe for
+  /// (`.some(nil)`: it answered the bare probe), or nil when none did.
+  static func directProbe(
+    _ instance: Instance, provider: ProxyProvider, policy: FilteredHandoff.BootPolicy?,
+    authorization: ProxyAuthorizationStartup?, key: FilteredReadiness.VerificationKey
+  ) -> Secret<String>?? {
+    for capability in capabilities(instance, provider: provider) {
+      let nonce = randomHex(16)
+      if let response = FilteredReadiness.exchange(
+        port: provider.port(instance), request: request(nonce: nonce, capability: capability)),
+        verifies(
+          response, nonce: nonce, provider: provider, policy: policy,
+          authorization: authorization, key: key)
+      {
+        return .some(capability)
+      }
+    }
+    return nil
   }
 
   @discardableResult
@@ -164,7 +208,8 @@ enum BrokerReadiness {
   ) throws -> FilteredReadiness.VerificationKey {
     // One load of the expected identity serves both probes.
     let authorization = try ProxyAuthorizationStartup.expected(instance, provider: provider)
-    let key = try requireDirect(
+    // The guest probe uses what the direct probe was answered for.
+    let (key, capability) = try requireDirect(
       instance, provider: provider, policy: policy, tunnelAddress: target.address,
       authorization: authorization)
     let port = provider.port(instance)
@@ -174,7 +219,7 @@ enum BrokerReadiness {
       output = try ProcessRunner().capture(
         FilteredReadiness.guestExchangeRequest(
           target, client: SSHClient(environment: environment), port: port,
-          request: request(nonce: guestNonce)))
+          request: request(nonce: guestNonce, capability: capability)))
     } catch {
       throw ContextError(
         "FILTERED_BROKER_NOT_READY: \(provider.rawValue) guest-loopback probe did not complete",

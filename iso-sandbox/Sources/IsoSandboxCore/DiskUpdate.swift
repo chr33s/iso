@@ -73,7 +73,9 @@ package enum DiskUpdate {
     defer { withExtendedLifetime(lock) {} }
     if published {
       try paths.writeRecordFile(pending.record)
-    } else {
+    } else if !pending.work.contains("/"), Sandboxes.isScratch(pending.work) {
+      // As `DiskCommit.settle`: only a scratch name directly in the
+      // sandbox directory is ever removed.
       try? FileManager.default.removeItem(at: paths.dir.appendingPathComponent(pending.work))
     }
     try FileManager.default.removeItem(at: file)

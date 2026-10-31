@@ -120,6 +120,25 @@ import Testing
     #expect(seen == 16 << 30)
   }
 
+  /// Only a scratch name directly in the sandbox directory is discarded
+  /// from a staged update that never published, as for a staged commit,
+  /// even when the staged inode names the file it points at.
+  @Test(arguments: ["record.json", "../b/rootfs.ext4", "../b/record.json"])
+  func anUnpublishedUpdateNeverRemovesANonScratchWorkName(_ work: String) throws {
+    let r = try root()
+    let paths = try stoppedSandbox(r, "a")
+    let neighbour = try stoppedSandbox(r, "b")
+    let target = paths.dir.appendingPathComponent(work)
+    let inode = try #require(SandboxPaths.inode(target))
+    let pending = DiskUpdate.Pending(work: work, inode: inode, record: try paths.loadRecord())
+    try JSONEncoder.pretty.encode(pending).write(to: paths.pendingDiskUpdate)
+    #expect(try DiskUpdate.settle(paths))
+    #expect(FileManager.default.fileExists(atPath: target.path))
+    #expect(FileManager.default.fileExists(atPath: paths.rootfs.path))
+    #expect(FileManager.default.fileExists(atPath: neighbour.record.path))
+    #expect(!FileManager.default.fileExists(atPath: paths.pendingDiskUpdate.path))
+  }
+
   @Test func unreadableStagedStateIsAnErrorButDeleteStillWorks() async throws {
     let r = try root()
     let paths = try stoppedSandbox(r, "a")

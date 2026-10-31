@@ -54,6 +54,115 @@ import Testing
     #expect(Date().timeIntervalSince(start) < 5)
   }
 
+  /// A raw connection to `path` that sends nothing until told to.
+  func rawConnect(_ path: URL) throws -> FileHandle {
+    let fd = try ControlSocket.connectClient(path, timeout: 10)
+    return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aClientThatNeverSendsItsRequestIsCutOffAtTheDeadline() throws {
+    let path = socketPath()
+    defer { unlink(path.path) }
+    try ControlSocket.serveJSON(
+      at: path, limits: .init(maxConnections: 4, ioDeadlineSeconds: 1),
+      handler: { (_: ControlRequest) in ControlResponse(ok: true) },
+      failure: { ControlResponse(ok: false, error: $0) })
+    let stalled = try rawConnect(path)
+    let start = Date()
+    guard case .line(let line) = ControlSocket.readLine(stalled, limit: nil) else {
+      Issue.record("no reply to a stalled request")
+      return
+    }
+    #expect(try JSONDecoder().decode(ControlResponse.self, from: line).ok == false)
+    #expect(Date().timeIntervalSince(start) < 5)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func connectionsPastTheCapAreClosedUnreadUntilASlotFrees() throws {
+    let path = socketPath()
+    defer { unlink(path.path) }
+    try ControlSocket.serveJSON(
+      at: path, limits: .init(maxConnections: 2, ioDeadlineSeconds: 2),
+      handler: { (_: ControlRequest) in ControlResponse(ok: true) },
+      failure: { ControlResponse(ok: false, error: $0) })
+    let held = [try rawConnect(path), try rawConnect(path)]
+    // Let the accept loop claim both slots.
+    Thread.sleep(forTimeInterval: 0.3)
+    let refused = try rawConnect(path)
+    #expect(ControlSocket.readLine(refused, limit: nil) == .closed)
+    // The stalled holders time out, and their slots serve requests again.
+    for handle in held { _ = ControlSocket.readLine(handle, limit: nil) }
+    Thread.sleep(forTimeInterval: 0.3)
+    #expect(try ControlSocket.call(path, .init(op: .ping), timeout: 5).ok)
+  }
+
+  /// Whether `handle` has a reply or an end of stream waiting.
+  func hasInput(_ handle: FileHandle) -> Bool {
+    var fds = pollfd(fd: handle.fileDescriptor, events: Int16(POLLIN), revents: 0)
+    return poll(&fds, 1, 0) > 0
+  }
+
+  /// Each byte arrives well within the receive timeout, so only the
+  /// whole-request deadline ends the connection.
+  @Test(.timeLimit(.minutes(1)))
+  func aClientThatTricklesItsRequestIsCutOffAtTheDeadline() throws {
+    let path = socketPath()
+    defer { unlink(path.path) }
+    try ControlSocket.serveJSON(
+      at: path, limits: .init(maxConnections: 4, ioDeadlineSeconds: 1),
+      handler: { (_: ControlRequest) in ControlResponse(ok: true) },
+      failure: { ControlResponse(ok: false, error: $0) })
+    let trickling = try rawConnect(path)
+    let start = Date()
+    var cutOff = false
+    while !cutOff, Date().timeIntervalSince(start) < 10 {
+      _ = try? trickling.write(contentsOf: Data(" ".utf8))
+      Thread.sleep(forTimeInterval: 0.2)
+      cutOff = hasInput(trickling)
+    }
+    #expect(cutOff)
+    #expect(Date().timeIntervalSince(start) < 4)
+  }
+
+  /// A client that sends its request and never reads the reply stalls the
+  /// owner's write; the send timeout abandons it and frees the slot.
+  @Test(.timeLimit(.minutes(1)))
+  func aClientThatNeverReadsItsReplyReleasesItsSlot() throws {
+    let path = socketPath()
+    defer { unlink(path.path) }
+    try ControlSocket.serveJSON(
+      at: path, limits: .init(maxConnections: 1, ioDeadlineSeconds: 1),
+      handler: { (request: ControlRequest) in
+        // Far larger than the socket buffers.
+        request.op == .exec
+          ? ControlResponse(ok: true, stdout: Data(count: 16 << 20)) : ControlResponse(ok: true)
+      },
+      failure: { ControlResponse(ok: false, error: $0) })
+    let stalled = try rawConnect(path)
+    try stalled.write(contentsOf: Data("{\"op\":\"exec\"}\n".utf8))
+    // Let the owner start the reply and stall on it.
+    Thread.sleep(forTimeInterval: 0.5)
+    let start = Date()
+    var served = false
+    while !served, Date().timeIntervalSince(start) < 10 {
+      served = (try? ControlSocket.call(path, .init(op: .ping), timeout: 2).ok) ?? false
+      if !served { Thread.sleep(forTimeInterval: 0.2) }
+    }
+    #expect(served)
+    #expect(Date().timeIntervalSince(start) < 6)
+    withExtendedLifetime(stalled) {}
+  }
+
+  @Test func connectionSlotsCountAndRelease() {
+    let slots = ConnectionSlots(limit: 2)
+    #expect(slots.enter() && slots.enter())
+    #expect(!slots.enter())
+    slots.leave()
+    #expect(slots.inUse == 1)
+    #expect(slots.enter())
+  }
+
   @Test func malformedRequestGetsAnErrorReply() throws {
     let path = socketPath()
     defer { unlink(path.path) }

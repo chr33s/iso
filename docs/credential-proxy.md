@@ -188,9 +188,14 @@ verification keys persist in owner-private host state and are removed on stop.
 Copying public keys into a workspace grants no signing authority.
 
 The existing listener accepts only `GET /__iso/broker-ready` with `Host:
-localhost`, a lowercase 16-byte hex `X-Iso-Nonce`, and `Connection: close`;
-extra headers, bodies and trailers are refused. No provider capability is
-required and none is created or persisted by this probe. It returns signed
+localhost`, a lowercase 16-byte hex `X-Iso-Nonce`, `Connection: close`, and the
+guest capability as `Authorization: Bearer`; without a valid capability it
+answers 401 and signs nothing, so it is no signing oracle for other local
+processes. Extra headers, bodies and trailers are refused. The host keeps each
+provider's capability in owner-private (0600) `proxy-<provider>.token` state for
+two reasons: these probes present it, and later Codex sessions forward the
+OpenAI capability to the guest through `SendEnv`. The guest-loopback probe sends
+only the capability the guest already holds. It returns signed
 public identity data, never credentials or an upstream response. Configured
 brokers remain required when `--no-agents` skips their bootstrap. Local-model
 and proxy-off modes require none.
@@ -226,12 +231,21 @@ idle sockets cannot bypass the request limit. The listener binds only host
 loopback and is reverse-tunnelled
 to exactly one guest — never a non-loopback interface, never the LAN. The host
 starts the proxy only on a free port and sends the credential only after
-confirming that the proxy is the port's sole listener; proxy and tunnel PIDs
-are signalled only while they still name `iso-proxy` or `ssh`.
+confirming that the proxy is the port's sole listener. A proxy PID is
+signalled only while it is still the process recorded at spawn (its start time
+and executable in `proxy-<name>.identity.json`); tunnel PIDs only while they are
+the recorded `ssh` master. Release builds start only an `iso-proxy` with a
+Developer ID signature of iso's own team (or, for an ad hoc signed iso, any
+valid signature). Either way the binary must be owned by root or the user with
+no group or other write bit, and each directory above it must be owned by root
+or the user and not other-writable unless sticky; group-writable directories
+are accepted.
 
 It is **jailed** by `sandbox-exec` using the checked-in Seatbelt profile, which
-denies filesystem writes and program execution and limits outbound connections
-to ports 443 and 53. Startup fails closed if these denials cannot be established.
+denies filesystem writes and program execution, limits reads to system paths and
+the binary itself, and limits outbound connections to non-loopback ports 443 and 53 (DNS)
+and the system resolver's socket; every loopback IP service is denied. Startup fails closed if these denials cannot be
+established.
 The network rules are port-scoped; TLS verifies the fixed provider identity.
 See [trust model](trust-model.md) for the accepted limitations.
 
@@ -256,10 +270,12 @@ SwiftNIO's aggregate accounting and is stricter than counting headers alone.
 The complete wire request head is additionally capped at 82,496 bytes, including
 optional whitespace and separators. Body bytes do not consume that allowance.
 
-The Swift executable refuses startup unless file writes, shell execution, and
-a randomly selected disallowed TCP port are denied. Seatbelt permits outbound
-TCP on ports 443 and 53; application policy fixes the provider hostname and TLS
-verifies its identity. The production Seatbelt profile adds only
+The Swift executable refuses startup, before reading stdin, unless file writes,
+shell execution, a randomly selected disallowed TCP port, loopback ports 443 and 53
+and reads of the user's home directory are denied, and unless a non-blocking connect
+to a TEST-NET address on port 443 is not denied. Seatbelt permits outbound TCP
+to non-loopback port 443 and to port 53; application policy fixes the provider
+hostname and TLS verifies its identity. The production Seatbelt profile adds only
 `com.apple.trustd.agent` lookup for system trust evaluation; it adds no keychain
 service or filesystem write allowance. The credential-free process gate proves
 TLS to both providers under that profile and fails when this permission is

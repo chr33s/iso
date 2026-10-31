@@ -62,21 +62,33 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
     // Written outside `lock`: a guest that stops reading must not stall the
     // owner's other readers of this link.
     var numbered = m
-    let fd: Int32 = lock.withLock {
+    let (fd, connectionID): (Int32, Int) = lock.withLock {
       replySlot = nil
       lastRequest = lastRequest == Int(Int32.max) ? 1 : lastRequest + 1
       outstanding = lastRequest
       numbered.id = lastRequest
-      return writeFD >= 0 ? dup(writeFD) : -1
+      return (writeFD >= 0 ? dup(writeFD) : -1, activeID)
     }
+    // One deadline covers the write and the reply: a guest that stops
+    // reading its end makes the write time out, which counts as no reply.
+    let deadline = DispatchTime.now() + timeout
+    let writeDeadline = ContinuousClock.now + .seconds(timeout)
     guard fd >= 0 else { return nil }
-    let line = numbered.encodedLine()
-    let sent = line.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) == $0.count }
+    let sent = BoundedWrite.all(fd, Array(numbered.encodedLine()), deadline: writeDeadline)
     close(fd)
-    guard sent else { return nil }
+    guard sent else {
+      // A partly written line would corrupt the stream: drop the
+      // connection. Its reader then ends and clears the active link; the
+      // guest helper reconnects and authenticates again.
+      lock.withLock {
+        outstanding = 0
+        if activeID == connectionID, readFD >= 0 { shutdown(readFD, SHUT_RDWR) }
+      }
+      log("helper request not sent within \(timeout)s; dropping the connection")
+      return nil
+    }
     // A signal left by a reply that raced the reset above finds the slot
     // empty: keep waiting for this request's own reply.
-    let deadline = DispatchTime.now() + timeout
     while replySignal.wait(timeout: deadline) == .success {
       if let reply = lock.withLock({ replySlot }) { return reply }
     }
@@ -85,8 +97,8 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
   }
 
   /// Ask the guest to shut itself down; true if it acknowledged.
-  package func requestShutdown() -> Bool {
-    request(HelperMessage(type: .shutdown), timeout: 10)?.type == .ack
+  package func requestShutdown(timeout: TimeInterval = 10) -> Bool {
+    request(HelperMessage(type: .shutdown), timeout: timeout)?.type == .ack
   }
 
   /// The guest's current SSH host key, which must equal the pin.
@@ -160,8 +172,9 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
   }
 
   private func send(_ fd: Int32, _ m: HelperMessage) -> Bool {
-    let line = m.encodedLine()
-    return line.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) == $0.count }
+    BoundedWrite.all(
+      fd, Array(m.encodedLine()),
+      deadline: ContinuousClock.now + .seconds(HelperProtocol.helloDeadline))
   }
 
   /// Challenge, hello, and (first boot) enrollment. Returns the connection's
@@ -289,5 +302,47 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
     }
     close(fd)
     if wasActive { log("helper disconnected") }
+  }
+}
+
+/// Writes to a descriptor whose peer may stop reading, without blocking
+/// past a deadline. Each write waits for writability with `poll`, then
+/// writes at most `chunk` bytes: no more than a writable socket's send
+/// low-water mark, so the write completes without blocking. (Darwin ignores
+/// `MSG_DONTWAIT` on Unix stream sockets, and `O_NONBLOCK` would change the
+/// descriptor's mode for its reader too, which shares it through `dup`.)
+package enum BoundedWrite {
+  static let chunk = 512
+
+  /// True when every byte was written before `deadline`; false on timeout,
+  /// error, or a closed peer. A partial write is not undone.
+  package static func all(_ fd: Int32, _ bytes: [UInt8], deadline: ContinuousClock.Instant)
+    -> Bool
+  {
+    var offset = 0
+    while offset < bytes.count {
+      let remaining = deadline - .now
+      guard remaining > .zero else { return false }
+      let (seconds, attoseconds) = remaining.components
+      let millis = Int32(clamping: seconds * 1000 + attoseconds / 1_000_000_000_000_000 + 1)
+      var ready = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+      let polled = poll(&ready, 1, millis)
+      if polled < 0 {
+        if errno == EINTR { continue }
+        return false
+      }
+      guard polled > 0 else { return false }
+      guard ready.revents & Int16(POLLERR | POLLHUP | POLLNVAL) == 0 else { return false }
+      let written = bytes.withUnsafeBytes { raw -> Int in
+        guard let base = raw.baseAddress else { return -1 }
+        return write(fd, base + offset, min(chunk, raw.count - offset))
+      }
+      if written < 0 {
+        if errno == EINTR || errno == EAGAIN { continue }
+        return false
+      }
+      offset += written
+    }
+    return true
   }
 }

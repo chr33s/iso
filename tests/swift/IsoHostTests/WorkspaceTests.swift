@@ -27,11 +27,15 @@ private func target(knownHosts: String = "/state/known_hosts") throws -> SSHTarg
     knownHosts: knownHosts, alias: "iso-0a1b2c3d-00112233445566ff.iso")
 }
 
-/// The fake ssh with the real system receivers, which tests may run.
+/// The fake ssh with the real system receivers, which tests may run. The
+/// real bsdtar runs confined as in production; a script stand-in cannot.
 private func fakeReceivers(tar: String = "/usr/bin/bsdtar", rsync: String = "/usr/bin/rsync")
   -> InboundReceivers
 {
-  InboundReceivers(tar: tar, rsync: rsync, ssh: fakeSSH + "/ssh", requireSystemOwnership: false)
+  InboundReceivers(
+    tar: tar, rsync: rsync, ssh: fakeSSH + "/ssh", requireSystemOwnership: false,
+    confinement: tar == "/usr/bin/bsdtar"
+      ? .seatbelt(sandboxExec: "/usr/bin/sandbox-exec") : .none)
 }
 
 private func transfer() -> WorkspaceTransfer {

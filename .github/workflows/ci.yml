@@ -31,11 +31,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # Tools pinned in mise.toml (Swift, Python, yq, actionlint, ...), the same
+      # Tools pinned in mise.toml (Swift, Python, yq, jactionlint, ...), the same
       # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
       - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         with:
-          version: 2026.8.3
+          version: 2026.10.7
 
       # The pre-commit gates (mise.toml `check`) over every tracked file.
       - name: Hygiene, format, build, and tests
@@ -51,7 +51,7 @@ jobs:
         run: mise run check-policy
 
       - name: Workflow lint
-        run: actionlint
+        run: jactionlint
 
       - name: Release legal notices
         run: python3 tests/test-release-legal.py
@@ -116,6 +116,11 @@ jobs:
         shell: bash
         run: scripts/fuzz.sh smoke 30
 
+      # Every companion package above built with --force-resolved-versions;
+      # none of them may have rewritten its committed pins.
+      - name: Companion SwiftPM pins unchanged
+        run: git diff --exit-code -- '*Package.resolved'
+
   # The proxy intentionally targets macOS 27 system trust. macos-latest does
   # not guarantee that SDK/runtime; xcode-27 is GitHub's macOS 27 preview image.
   proxy:
@@ -127,11 +132,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # Tools pinned in mise.toml (Swift, Python, yq, actionlint, ...), the same
+      # Tools pinned in mise.toml (Swift, Python, yq, jactionlint, ...), the same
       # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
       - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         with:
-          version: 2026.8.3
+          version: 2026.10.7
 
       - name: Swift proxy format and offline E2E gates
         shell: bash
@@ -146,6 +151,7 @@ jobs:
   zizmor:
     name: Workflow security audit
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

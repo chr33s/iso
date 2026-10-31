@@ -102,6 +102,76 @@ private func der(_ tag: UInt8, _ body: [UInt8]) -> [UInt8] {
     #expect(http.requests.count == 3)
   }
 
+  /// Each use asks GitHub for a token narrowed to its repository and
+  /// permissions; never the installation's full grant.
+  @Test func installationTokensAreNarrowedPerUse() throws {
+    let app = try GitHubTestApp.make()
+    let clock = TestClock()
+    let http = ScriptedGitHubHTTP()
+    let issued = Mutex(0)
+    http.on { request in
+      guard request.method == .post, request.url.path == "/app/installations/7/access_tokens" else {
+        return nil
+      }
+      let n = issued.withLock {
+        $0 += 1
+        return $0
+      }
+      return GitHubHTTPResponse(
+        status: 201,
+        body: Array(
+          #"{"token":"ghs_\#(n)","expires_at":"\#(isoDate(clock.now() + 3_600))"}"#.utf8))
+    }
+    http.route(.delete, "/repos/octo/demo/actions/runners/5", status: 204, json: "")
+    http.route(.delete, "/orgs/octo/actions/runners/6", status: 204, json: "")
+    http.route(.get, "/repos/octo/demo/actions/runs", json: #"{"workflow_runs":[]}"#)
+    http.route(.get, "/repos/octo/demo/actions/permissions/workflow", json: "{}")
+    let api = GitHubAPI(http: http, sleeper: RecordingGitHubSleeper())
+    let client = GitHubInstallationClient(
+      api: api,
+      auth: GitHubAppAuth(app: app.record, credentials: app.credentials, api: api, clock: clock),
+      installationID: 7)
+    let runners = InstallationRunnerService(client: client)
+    let repository = try RepositoryName("octo/demo")
+    func tokenRequests() throws -> [JSONValue] {
+      try http.requests.filter { $0.url.path.hasSuffix("/access_tokens") }.map {
+        try StrictJSON.parse(try #require($0.body), limits: JSONLimits(maxBytes: 1 << 16))
+      }
+    }
+
+    #expect(try runners.deleteRunner(scope: .repository(repository), id: 5))
+    #expect(
+      try tokenRequests().last
+        == [
+          "repositories": ["demo"],
+          "permissions": ["administration": "write", "metadata": "read"],
+        ])
+    #expect(try runners.deleteRunner(scope: .organization("octo"), id: 6))
+    #expect(
+      try tokenRequests().last
+        == ["permissions": ["organization_self_hosted_runners": "write", "metadata": "read"]])
+    _ = try runners.activeJobs(scope: .repository(repository))
+    #expect(
+      try tokenRequests().last
+        == [
+          "repositories": ["demo"], "permissions": ["actions": "read", "metadata": "read"],
+        ])
+    _ = try APIAuthorityReader(client: client).policy(
+      "/repos/octo/demo/actions/permissions/workflow", of: repository)
+    #expect(
+      try tokenRequests().last
+        == [
+          "repositories": ["demo"],
+          "permissions": ["administration": "read", "actions": "read", "metadata": "read"],
+        ])
+    // A narrowed token is cached under its own narrowing only.
+    #expect(try tokenRequests().count == 4)
+    #expect(try runners.deleteRunner(scope: .repository(repository), id: 5))
+    #expect(try tokenRequests().count == 4)
+    // No request ever asks for the unnarrowed installation grant.
+    #expect(try tokenRequests().allSatisfy { $0["permissions"] != nil })
+  }
+
   @Test func missingKeyIsUnauthorized() throws {
     let record = GitHubAppRecord(
       appID: 1, slug: "x", owner: "o", clientID: nil, htmlURL: nil,

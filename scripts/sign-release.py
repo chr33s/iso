@@ -10,7 +10,9 @@ release signing key. This script, run by a maintainer:
 2. downloads its tarballs, SHA256SUMS and attestations.jsonl, and checks that
    SHA256SUMS lists exactly the published tarballs with matching digests and
    that each tarball's attestation verifies with the same signer pin
-   `iso update` uses — so the key only ever signs what release.yml built;
+   `iso update` uses, bound to the commit the tag names both on GitHub and
+   in this checkout (`--source-digest`) — so the key only ever signs what
+   release.yml built from the commit the maintainer has locally;
 3. signs SHA256SUMS with `ssh-keygen -Y sign` (the private key stays in the
    ssh-agent, e.g. 1Password or the Secure Enclave), then verifies the result
    against .github/release-signers;
@@ -69,6 +71,27 @@ def check_checksums(directory, tarballs):
             die(f"{name}: SHA256SUMS says {listed[name]}, downloaded {actual}")
 
 
+def tag_commit(tag):
+    """The commit `tag` names on GitHub, which must equal the local tag's.
+
+    A tag moved on GitHub after the maintainer reviewed it, or a local tag that
+    was never fetched, stops signing: the attestation is then checked against
+    the exact commit the maintainer holds.
+    """
+    remote = run("gh", "api", f"repos/{REPO}/commits/{tag}", "--jq", ".sha",
+                 capture=True).strip()
+    try:
+        local = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet",
+             f"refs/tags/{tag}^{{commit}}"],
+            check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
+    except subprocess.CalledProcessError:
+        die(f"{tag} is not a local tag; run `git fetch --tags` and review it first")
+    if not re.fullmatch(r"[0-9a-f]{40}", remote) or remote != local:
+        die(f"{tag} names {remote or 'nothing'} on GitHub but {local} locally")
+    return remote
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("tag")
@@ -90,6 +113,9 @@ def main():
     if not tarballs:
         die(f"{args.tag} has no tarballs")
 
+    commit = tag_commit(args.tag)
+    print(f"{args.tag} -> {commit}")
+
     with tempfile.TemporaryDirectory() as scratch:
         work = Path(scratch)
         for name in tarballs + ["SHA256SUMS", "attestations.jsonl"]:
@@ -100,7 +126,8 @@ def main():
             run("gh", "attestation", "verify", str(work / name), "--repo", REPO,
                 "--cert-identity",
                 f"https://github.com/{REPO}/.github/workflows/release.yml@refs/tags/{args.tag}",
-                "--source-ref", f"refs/tags/{args.tag}", "--deny-self-hosted-runners",
+                "--source-ref", f"refs/tags/{args.tag}", "--source-digest", commit,
+                "--deny-self-hosted-runners",
                 "--bundle", str(work / "attestations.jsonl"))
 
         key = args.key

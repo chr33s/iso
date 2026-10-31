@@ -145,6 +145,8 @@ struct Create: AsyncParsableCommand {
     guard mode != nil else {
       throw ValidationError("--network must be shared, host-only or brokered")
     }
+    _ = try bytes(memoryMib, mib)
+    _ = try bytes(diskGib, gib)
   }
 
   func run() async throws {
@@ -152,7 +154,7 @@ struct Create: AsyncParsableCommand {
       if let image { .image(image) } else { .disk(try SandboxID(fromDisk ?? "")) }
     let record = try await Sandboxes.create(
       root: try root.resolve(), id: try SandboxID(id), owner: owner, source: source, cpus: cpus,
-      memoryBytes: memoryMib * mib, diskBytes: diskGib * gib,
+      memoryBytes: try bytes(memoryMib, mib), diskBytes: try bytes(diskGib, gib),
       network: mode ?? .shared)
     try printJSON(record)
   }
@@ -215,9 +217,22 @@ struct Exec: AsyncParsableCommand {
     abstract: "Run a command as root in the sandbox over the native control path.")
   @OptionGroup var root: RootOptions
   @Flag(name: .shortAndLong, help: "Forward this process's stdin") var interactive = false
-  @Option var timeout: Int64?
+  @Option(
+    help: """
+      Seconds to wait for the command (default \(ExecTimeout.defaultSeconds), \
+      at most \(ExecTimeout.maxSeconds))
+      """)
+  var timeout: Int64?
   @Argument var id: String
   @Argument(parsing: .captureForPassthrough) var argv: [String] = []
+
+  func validate() throws {
+    do {
+      _ = try ExecTimeout(requested: timeout)
+    } catch {
+      throw ValidationError(error.description)
+    }
+  }
 
   func run() async throws {
     let paths = try root.resolve().sandbox(try SandboxID(id))
@@ -226,7 +241,7 @@ struct Exec: AsyncParsableCommand {
     let input = interactive ? FileHandle.standardInput.readDataToEndOfFile() : nil
     let response = try ControlSocket.call(
       paths.control, .init(op: .exec, argv: command, stdin: input, timeoutSeconds: timeout),
-      timeout: timeout.map { TimeInterval($0) + 30 })
+      timeout: TimeInterval(try ExecTimeout(requested: timeout).seconds + 30))
     guard response.ok else { throw SandboxError(response.error ?? "exec failed") }
     if let out = response.stdout { FileHandle.standardOutput.write(out) }
     if let err = response.stderr { FileHandle.standardError.write(err) }
@@ -280,7 +295,7 @@ struct Set: AsyncParsableCommand {
     try printJSON(
       try await Sandboxes.setResources(
         root: try root.resolve(), id: try SandboxID(id), cpus: cpus,
-        memoryBytes: memoryMib.map { $0 * mib },
+        memoryBytes: try memoryMib.map { try bytes($0, mib) },
         operation: try operation.resolve(), expect: try expectOperation.map(OperationID.init)))
   }
 }
@@ -295,7 +310,7 @@ struct Grow: AsyncParsableCommand {
   func run() async throws {
     try printJSON(
       try await Sandboxes.grow(
-        root: try root.resolve(), id: try SandboxID(id), diskBytes: diskGib * gib,
+        root: try root.resolve(), id: try SandboxID(id), diskBytes: try bytes(diskGib, gib),
         operation: try operation.resolve()))
   }
 }

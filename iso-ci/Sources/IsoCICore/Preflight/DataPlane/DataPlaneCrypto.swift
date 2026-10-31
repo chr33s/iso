@@ -253,8 +253,16 @@ package struct ClientAssertionVerifier: Sendable {
     return key
   }
 
-  /// Returns the assertion's `jti` once every check passed.
-  package func verify(_ assertion: String, now: Int64) throws(CIError) -> String {
+  /// A verified assertion: its `jti` and the last moment it is accepted
+  /// (`exp` plus the allowed clock skew).
+  package struct Verified: Sendable, Equatable {
+    package let id: String
+    package let acceptedUntil: Int64
+  }
+
+  /// Returns the assertion's `jti` and acceptance window once every check
+  /// passed.
+  package func verify(_ assertion: String, now: Int64) throws(CIError) -> Verified {
     let token = try JWTParts(assertion)
     guard token.header["alg"]?.stringValue == "RS256" else {
       throw CIError(.unauthorized, "unsupported assertion algorithm")
@@ -284,7 +292,7 @@ package struct ClientAssertionVerifier: Sendable {
     guard let jti = token.claims["jti"]?.stringValue, (1...128).contains(jti.utf8.count) else {
       throw CIError(.unauthorized, "assertion lacks an identifier")
     }
-    return jti
+    return Verified(id: jti, acceptedUntil: expires + Self.clockSkew)
   }
 }
 

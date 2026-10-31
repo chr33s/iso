@@ -55,13 +55,16 @@ package struct BrokerReadiness: Sendable {
     return result
   }
 
-  /// No credentials, body, query, or selectable destination on this route.
+  /// Exactly the capability as `Authorization: Bearer`, which the caller
+  /// verifies, and no body, query, or selectable destination on this route.
   package static func challenge(method: String, uri: String, headers: [Header]) -> String? {
-    guard method == "GET", uri == path, headers.count == 3 else { return nil }
+    guard method == "GET", uri == path, headers.count == 4 else { return nil }
     let hosts = headers.filter { $0.name.lowercased() == "host" }
     let connections = headers.filter { $0.name.lowercased() == "connection" }
     let nonces = headers.filter { $0.name.lowercased() == "x-iso-nonce" }
-    guard hosts.count == 1, hosts[0].value == "localhost",
+    let authorizations = headers.filter { $0.name.lowercased() == "authorization" }
+    guard authorizations.count == 1, authorizations[0].value.hasPrefix("Bearer "),
+      hosts.count == 1, hosts[0].value == "localhost",
       connections.count == 1, connections[0].value == "close",
       nonces.count == 1, Self.hex(nonces[0].value, count: 16) != nil
     else { return nil }

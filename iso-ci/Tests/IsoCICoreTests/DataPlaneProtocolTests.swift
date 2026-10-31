@@ -108,6 +108,50 @@ import Testing
 
   // MARK: OAuth client assertion
 
+  /// A used assertion id stays refused for as long as the assertion could
+  /// verify, however many others follow; the set is bounded by refusing new
+  /// ids, and ids are forgotten only once their window has closed.
+  @Test func usedAssertionsStayRefusedUntilTheyExpire() async throws {
+    var settings = DataPlaneService.Settings.fast
+    settings.maxAssertionsPerWindow = 4
+    let harness = try await DPHarness(settings: settings)
+    let (_, _, runner) = try await harness.register()
+    func token(_ assertion: String) async -> Int {
+      let form =
+        "grant_type=client_credentials&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=\(assertion)"
+      return await harness.request("POST", "/_apis/oauth2/token", body: Array(form.utf8)).status
+    }
+    func fresh() -> String {
+      DPHarness.assertion(
+        key: runner.key, clientID: runner.clientID, audience: runner.audience,
+        now: Int64(harness.clock.now()))
+    }
+    let first = fresh()
+    #expect(await token(first) == 200)
+    for _ in 0..<3 { #expect(await token(fresh()) == 200) }
+    // Full: a new id is refused rather than evicting a live one.
+    #expect(await token(fresh()) == 429)
+    #expect(await token(first) == 401)
+    // Past the first window (lifetime 300 plus skew), ids are pruned.
+    harness.clock.advance(EpochSeconds(300 + ClientAssertionVerifier.clockSkew + 1))
+    #expect(await token(fresh()) == 200)
+  }
+
+  /// A flood of bad client assertions gets the endpoint-wide 429.
+  @Test func oauthRefusalsCountAgainstTheAnonymousBudget() async throws {
+    let harness = try await DPHarness()
+    _ = try await harness.register()
+    let form =
+      "grant_type=client_credentials&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=a.b.c"
+    var statuses: [Int] = []
+    for _ in 0..<(DataPlaneService.Settings().maxAnonymousPerSecond + 1) {
+      statuses.append(
+        await harness.request("POST", "/_apis/oauth2/token", body: Array(form.utf8)).status)
+    }
+    #expect(statuses.dropLast().allSatisfy { $0 == 401 })
+    #expect(statuses.last == 429)
+  }
+
   @Test func oauthRequiresAFreshAssertionSignedByTheAllocationKey() async throws {
     let harness = try await DPHarness()
     let (_, _, runner) = try await harness.register()

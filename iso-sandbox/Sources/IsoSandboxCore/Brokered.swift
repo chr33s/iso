@@ -2,7 +2,6 @@ import Containerization
 import Darwin
 import Foundation
 import Synchronization
-import Virtualization
 
 /// The brokered transport (docs/design/brokered-network-isolation.md): a
 /// sandbox with no network device whose host reaches it only through
@@ -481,26 +480,6 @@ package enum Splice {
       if byte == UInt8(ascii: "\n") { return line }
       guard line.count < limit else { return nil }
       line.append(byte)
-    }
-  }
-}
-
-/// Devices on the live `VZVirtualMachine`, not the configuration iso asked
-/// for: the brokered contract's network-device count is this reading.
-package struct VMDevices: Sendable, Equatable {
-  package var network: Int
-  package var socket: Int
-
-  static func read(_ container: LinuxContainer) async throws -> VMDevices {
-    try await container.withVirtualMachineInstance { instance in
-      guard let vz = instance as? VZVirtualMachineInstance else {
-        throw SandboxError("the VM is not a Virtualization.framework machine")
-      }
-      return vz.vmQueue.sync {
-        VMDevices(
-          network: vz.vzVirtualMachine.networkDevices.count,
-          socket: vz.vzVirtualMachine.socketDevices.count)
-      }
     }
   }
 }

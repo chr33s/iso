@@ -94,6 +94,11 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       store: objects, childStaging: root.staging + "/dataplane", scripts: scripts)
   }
 
+  /// Whether mapped secret values for `run` are still in controller memory.
+  func holdsSecrets(_ run: PreflightRunID) -> Bool {
+    state.withLock { $0.secrets[run] != nil }
+  }
+
   // MARK: Data plane
 
   /// Starts the confined child once; failure to establish confinement
@@ -268,20 +273,18 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       "snapshot": .string(reference.digest.rawValue), "base_commit": .string(reference.baseCommit),
       "dirty": .bool(reference.isDirty), "plan": .string(plan.digest.rawValue),
       "included_untracked": .array(capture.manifest.includedUntracked.map(JSONValue.string)),
-      "excluded": .array(capture.manifest.excludedPaths.map(JSONValue.string)),
+      "excluded": .array(capture.excludedPaths.map(JSONValue.string)),
     ]
   }
 
   /// `OWNER/REPOSITORY` from the origin remote, else `local/<directory>`.
+  /// The repository's own config is parsed as data (`GitIndex.originURL`):
+  /// no Git process runs and no include, system or global config applies.
   static func repositoryName(_ path: String) -> String {
-    if let git = Subprocess.which("git"),
-      let output = try? Subprocess.run(
-        .init(
-          executable: git, arguments: ["-C", path, "config", "--get", "remote.origin.url"],
-          environment: Subprocess.baseEnvironment(), timeout: .seconds(10))),
-      output.succeeded
+    if let layout = try? GitIndex.layout(containing: path),
+      let origin = try? GitIndex.originURL(layout)
     {
-      var url = output.stdoutTextTrimmed
+      var url = origin
       if url.hasSuffix(".git") { url.removeLast(4) }
       let parts = url.split(whereSeparator: { $0 == "/" || $0 == ":" }).suffix(2).map(String.init)
       if parts.count == 2, let name = try? RepositoryName(parts[0] + "/" + parts[1]) {
@@ -555,9 +558,9 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       updated.conclusion = conclusion.rawValue
       updated.finishedAt = now
       try? store.savePreflightRun(record.id, createdAt: record.createdAt, updated)
-      if updated.state == .aborted || record.secretNames.isEmpty {
-        state.withLock { _ = $0.secrets.removeValue(forKey: record.id) }
-      }
+      // Mapped secrets never outlive the run; a later retry asks for a
+      // resubmission instead (`registerEndpoint`).
+      state.withLock { _ = $0.secrets.removeValue(forKey: record.id) }
       _ = try? store.event(
         "run:\(record.id)", "run.finished",
         "run \(conclusion.rawValue)\(record.baseRevision.dirty ? " (with uncommitted changes; not evidence for the base commit)" : "")"
@@ -748,12 +751,9 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
         bitPattern: UInt64(Digest(hashing: runID.rawValue).rawValue.prefix(12), radix: 16) ?? 1),
       runAttempt: Int64(attempt.number), needs: needMap,
       inputs: record.inputs.isEmpty ? nil : .object(record.inputs.mapValues { .string($0) }))
-    let scope = ObjectStore.CacheScope(
-      repository: record.repository, authority: profile.profile.authority.rawValue,
-      platform: profile.profile.platform,
-      imageDigest: profile.image.digest(on: allocation.host).rawValue,
-      toolchain: profile.image.runnerVersion, inputDigest: record.plan.workflowDigest.rawValue,
-      confinedToRun: secrets.isEmpty ? nil : runID.rawValue)
+    let scope = Self.cacheScope(
+      record, run: runID, secretsMapped: !secrets.isEmpty, profile: profile,
+      host: allocation.host)
     let registration = DataPlaneRegistration(
       allocation: allocation.id, attempt: attempt.id, run: runID,
       authority: profile.profile.authority,
@@ -771,6 +771,32 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       }
     }
     return try registered.get()
+  }
+
+  /// The cache partition a job of `record` registers with the data plane.
+  static func cacheScope(
+    _ record: PreflightRunRecord, run: PreflightRunID, secretsMapped: Bool,
+    profile: ResolvedProfile, host: Name
+  ) -> ObjectStore.CacheScope {
+    ObjectStore.CacheScope(
+      repository: record.repository, authority: profile.profile.authority.rawValue,
+      platform: profile.profile.platform,
+      imageDigest: profile.image.digest(on: host).rawValue,
+      toolchain: profile.image.runnerVersion, inputDigest: record.plan.workflowDigest.rawValue,
+      confinedToRun: cacheConfinement(
+        run: run, secretsMapped: secretsMapped, revisions: record.revisions))
+  }
+
+  /// The run a job's cache entries are confined to, or nil for the shared
+  /// partition. Only a run whose every input revision is a clean tree, with
+  /// no mapped secrets, publishes shared entries: a key saved from
+  /// uncommitted or patched content, or with secrets in scope, is never
+  /// restored by a later run of the clean base.
+  static func cacheConfinement(
+    run: PreflightRunID, secretsMapped: Bool, revisions: [InputRevision]
+  ) -> String? {
+    let clean = revisions.allSatisfy { !$0.dirty && $0.patchedAttempt == nil }
+    return secretsMapped || !clean ? run.rawValue : nil
   }
 
   /// Starts the official runner once the image's runner version matches;

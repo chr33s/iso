@@ -13,9 +13,9 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/containerization.git", exact: "0.45.0"),
-    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.7.0"),
+    .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
     // Already resolved through containerization; named for `FilePath`.
-    .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
+    .package(url: "https://github.com/apple/swift-system.git", exact: "1.8.1"),
   ],
   targets: [
     // The macOS-guest helper protocol, shared by the runtime and the guest helper.

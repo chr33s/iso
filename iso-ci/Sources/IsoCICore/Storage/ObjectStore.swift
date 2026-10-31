@@ -336,7 +336,8 @@ package final class ObjectStore: Sendable {
     package let imageDigest: String
     package let toolchain: String
     package let inputDigest: String
-    /// Set when the publishing attempt received secrets: such entries are
+    /// Set when the publishing run received secrets or captured a dirty or
+    /// patched tree (`PreflightService.cacheConfinement`): such entries are
     /// confined to their own run and never shared or promoted.
     package let confinedToRun: String?
 

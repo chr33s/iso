@@ -16,9 +16,9 @@ updates:
     open-pull-requests-limit: 5
 
 
-  # SwiftPM pins (Package.resolved) for the host, proxy and runtime packages.
+  # SwiftPM pins (Package.resolved) for the host, proxy, runtime and iso-ci packages.
   - package-ecosystem: swift
-    directories: ["/", "/iso-proxy", "/iso-sandbox"]
+    directories: ["/", "/iso-proxy", "/iso-sandbox", "/iso-ci"]
     schedule:
       interval: weekly
     cooldown:

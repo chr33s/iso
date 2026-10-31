@@ -67,16 +67,16 @@ private actor TestGuestProcess: GuestProcess {
 
 @Test func guestExecDeletesBeforeReturningWithoutKillingAnExitedProcess() async throws {
   let process = TestGuestProcess(.exited)
-  let status = try await runGuestProcess(process, timeout: nil)
+  let status = try await runGuestProcess(process, timeout: .default)
   #expect(status.exitCode == 7)
-  #expect(await process.events == [.start, .wait(nil), .delete])
+  #expect(await process.events == [.start, .wait(ExecTimeout.defaultSeconds), .delete])
 }
 
 @Test(arguments: [false, true])
 func guestExecCleansPartialStartupAndPreservesTheStartError(cleanupFails: Bool) async {
   let process = TestGuestProcess(.startFailure, cleanupFails: cleanupFails)
   do {
-    _ = try await runGuestProcess(process, timeout: 2)
+    _ = try await runGuestProcess(process, timeout: try ExecTimeout(requested: 2))
     Issue.record("failed startup was accepted")
   } catch {
     #expect(error as? TestGuestProcess.Failure == .start)
@@ -88,7 +88,7 @@ func guestExecCleansPartialStartupAndPreservesTheStartError(cleanupFails: Bool) 
 func guestExecKillsOnTimeoutAndPreservesTheWaitError(cleanupFails: Bool) async {
   let process = TestGuestProcess(.timeout, cleanupFails: cleanupFails)
   do {
-    _ = try await runGuestProcess(process, timeout: 2)
+    _ = try await runGuestProcess(process, timeout: try ExecTimeout(requested: 2))
     Issue.record("timed-out process was accepted")
   } catch {
     #expect(error as? TestGuestProcess.Failure == .timeout)
@@ -99,7 +99,9 @@ func guestExecKillsOnTimeoutAndPreservesTheWaitError(cleanupFails: Bool) async {
 @Test(arguments: [false, true])
 func guestExecShieldsCleanupAfterCancellation(duringStart: Bool) async {
   let process = TestGuestProcess(duringStart ? .cancelledDuringStart : .cancelledDuringWait)
-  let result = await Task { try await runGuestProcess(process, timeout: 2) }.result
+  let result = await Task {
+    try await runGuestProcess(process, timeout: try ExecTimeout(requested: 2))
+  }.result
   guard case .failure(let error) = result else {
     Issue.record("cancelled exec returned success")
     return
@@ -124,4 +126,14 @@ func guestExecShieldsCleanupAfterCancellation(duringStart: Bool) async {
   let data = writer.data
   #expect(data.count == BufferWriter.limit)
   #expect(data.allSatisfy { $0 == 42 })
+}
+
+@Test func anExecWithoutATimeoutGetsTheDefaultAndNoneExceedsTheMaximum() throws {
+  #expect(try ExecTimeout(requested: nil) == .default)
+  #expect(ExecTimeout.default.seconds == ExecTimeout.defaultSeconds)
+  #expect(try ExecTimeout(requested: 1).seconds == 1)
+  #expect(try ExecTimeout(requested: ExecTimeout.maxSeconds).seconds == ExecTimeout.maxSeconds)
+  for refused: Int64 in [0, -1, ExecTimeout.maxSeconds + 1, .max] {
+    #expect(throws: SandboxError.self) { try ExecTimeout(requested: refused) }
+  }
 }

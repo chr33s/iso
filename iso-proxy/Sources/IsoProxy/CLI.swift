@@ -92,7 +92,9 @@ struct ProxyMain {
       try await upstream.probeTLS(provider: .openai)
       try await upstream.shutdown()
       try await group.shutdownGracefully()
-      log("iso-proxy jail self-test: write/exec/egress denied; DNS/system TLS passed")
+      log(
+        "iso-proxy jail self-test: write/exec/egress/loopback-443/loopback-53/home-read denied; DNS/system TLS passed"
+      )
     } catch {
       log("iso-proxy self-test failure category: \(String(describing: type(of: error)))")
       if let io = error as? IOError { log("iso-proxy self-test errno: \(io.errnoCode)") }

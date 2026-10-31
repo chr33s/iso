@@ -13,7 +13,7 @@ extension FakeGuest {
   var receivers: InboundReceivers {
     InboundReceivers(
       tar: root + "/bin/tar", rsync: root + "/bin/rsync", ssh: root + "/bin/ssh",
-      requireSystemOwnership: false)
+      requireSystemOwnership: false, confinement: .none)
   }
 }
 

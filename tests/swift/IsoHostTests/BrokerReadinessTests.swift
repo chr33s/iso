@@ -56,6 +56,33 @@ func brokerReadinessRejectsSignedWrongFieldsAndForgery(change: String) throws {
       policy: .init(bootID: boot, policyHash: hash), key: try .init(encoded: publicKey)))
 }
 
+@Test func brokerReadinessRequestsCarryTheCapability() {
+  let capability = Secret(String(repeating: "c", count: 64))
+  #expect(
+    String(decoding: BrokerReadiness.request(nonce: nonce, capability: capability), as: UTF8.self)
+      == "GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\nAuthorization: Bearer \(capability.expose())\r\n\r\n"
+  )
+}
+
+@Test func brokerReadinessProbesWithoutACapabilityAnOlderIsoNeverPersisted() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let instance = try testInstance(guest.root + "/instance")
+  // A proxy an older iso started: no token, and a probe without one.
+  #expect(BrokerReadiness.capability(instance, provider: .anthropic) == nil)
+  #expect(
+    String(decoding: BrokerReadiness.request(nonce: nonce, capability: nil), as: UTF8.self)
+      == "GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\n\r\n"
+  )
+  #expect(BrokerReadiness.capabilities(instance, provider: .anthropic).map { $0 == nil } == [true])
+  try writeFile(ProxyLauncher.tokenPath(instance, "anthropic"), "cap-anthropic\n")
+  #expect(BrokerReadiness.capability(instance, provider: .anthropic)?.expose() == "cap-anthropic")
+  // With a token: that first, so a current proxy is never sent a bare probe
+  // before the one it answers; then bare, for a proxy that rejects one.
+  let order = BrokerReadiness.capabilities(instance, provider: .anthropic)
+  #expect(order.map { $0?.expose() } == ["cap-anthropic", nil])
+}
+
 @Test func brokerRequirementsUseEffectiveRemoteUpstreamsWithoutResolvingSecrets() throws {
   let guest = try FakeGuest()
   defer { guest.remove() }
@@ -148,6 +175,15 @@ func brokerReadinessRejectsSignedWrongFieldsAndForgery(change: String) throws {
       target: guest.target, readinessPolicy: .init(bootID: boot, policyHash: hash))
   }
   #expect(oneLineError(error).contains("authenticated openai companion probe failed"))
+  // The probe the broker saw presented the capability it was started with.
+  let startup = try OrderedJSON.parse(try #require(readFile(guest.root + "/proxy-stdin")))
+  guard case .string(let token)? = startup["capability_token"] else {
+    Issue.record("no capability in the startup document")
+    return
+  }
+  let requests = try #require(readFile(guest.root + "/proxy-requests"))
+  #expect(requests.contains("GET /__iso/broker-ready HTTP/1.1\r\n"))
+  #expect(requests.contains("\r\nAuthorization: Bearer \(token)\r\n\r\n"))
   for path in [
     BrokerReadiness.keyPath(instance, provider: .openai),
     ProxyLauncher.pidPath(instance, "openai"), ProxyLauncher.forwardPIDPath(instance, "openai"),

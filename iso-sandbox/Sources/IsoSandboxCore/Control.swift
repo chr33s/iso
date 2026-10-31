@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Local control protocol between CLI invocations and a sandbox's owner
 /// process: one newline-terminated JSON request, one JSON response, over a
@@ -131,33 +132,71 @@ package enum ControlSocket {
     try serveJSON(at: path, handler: handler) { ControlResponse(ok: false, error: $0) }
   }
 
+  /// Per-connection bounds of an owner's control socket.
+  package struct Limits: Sendable {
+    /// Connections handled at once, including ones still sending their
+    /// request; past it a connection is closed unread. Each in-flight
+    /// `exec` holds one, so this also bounds concurrent execs.
+    package var maxConnections: Int
+    /// The whole request line must arrive within this long of the
+    /// connection being accepted (an 8 MiB `exec -i` stdin over a local
+    /// socket takes far less), and a reply write that makes no progress
+    /// for this long is abandoned: a client that stalls cannot hold a slot.
+    package var ioDeadlineSeconds: Int
+
+    package static let `default` = Limits(maxConnections: 64, ioDeadlineSeconds: 30)
+  }
+
   /// `serve` for any request/response pair; `failure` builds the reply to a
   /// request that could not be read.
   package static func serveJSON<Request: Decodable & Sendable, Response: Encodable & Sendable>(
-    at path: URL, handler: @escaping @Sendable (Request) async -> Response,
+    at path: URL, limits: Limits = .default,
+    handler: @escaping @Sendable (Request) async -> Response,
     failure: @escaping @Sendable (String) -> Response
   ) throws {
     let fd = try listen(at: path)
+    let slots = ConnectionSlots(limit: limits.maxConnections)
+    let ioDeadlineSeconds = limits.ioDeadlineSeconds
     acceptLoop(fd) { conn in
-      let handle = FileHandle(fileDescriptor: conn, closeOnDealloc: true)
-      Task.detached {
-        let response: Response
-        switch readLine(handle, limit: maxRequestBytes) {
-        case .line(let line):
-          if let request = try? JSONDecoder().decode(Request.self, from: line) {
-            response = await handler(request)
-          } else {
+      guard slots.enter() else {
+        close(conn)
+        return
+      }
+      // The request is read on its own thread, not a task: a blocking read
+      // must never occupy a thread of the shared concurrency pool, which
+      // the owner's halt timers also run on.
+      Thread.detachNewThread {
+        let handle = FileHandle(fileDescriptor: conn, closeOnDealloc: true)
+        setReceiveTimeout(conn, TimeInterval(ioDeadlineSeconds))
+        setSendTimeout(conn, TimeInterval(ioDeadlineSeconds))
+        let deadline = ContinuousClock.now + .seconds(ioDeadlineSeconds)
+        let read = readLine(handle, limit: maxRequestBytes, deadline: deadline)
+        Task.detached {
+          let response: Response
+          switch read {
+          case .line(let line):
+            if let request = try? JSONDecoder().decode(Request.self, from: line) {
+              response = await handler(request)
+            } else {
+              response = failure("malformed request")
+            }
+          case .tooLong:
+            response = failure("request exceeds \(maxRequestBytes) bytes")
+          case .closed:
             response = failure("malformed request")
           }
-        case .tooLong:
-          response = failure("request exceeds \(maxRequestBytes) bytes")
-        case .closed:
-          response = failure("malformed request")
+          var encoded = (try? JSONEncoder.wire.encode(response)) ?? Data()
+          encoded.append(0x0A)
+          let out = encoded
+          // A blocking write (bounded by the send timeout), so off the pool.
+          // `FileHandle.write` retries a timed-out write forever; `write(2)`
+          // returns, and a write that makes no progress ends the reply.
+          Thread.detachNewThread {
+            defer { slots.leave() }
+            _ = Splice.writeAll(handle.fileDescriptor, out)
+            try? handle.close()
+          }
         }
-        var out = (try? JSONEncoder.wire.encode(response)) ?? Data()
-        out.append(0x0A)
-        try? handle.write(contentsOf: out)
-        try? handle.close()
       }
     }
   }
@@ -242,6 +281,12 @@ package enum ControlSocket {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
   }
 
+  /// Zero clears the timeout.
+  static func setSendTimeout(_ fd: Int32, _ seconds: TimeInterval) {
+    var tv = timeval(tv_sec: Int(seconds), tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+  }
+
   /// Sends one request. `timeout` bounds the wait for the reply (nil waits
   /// indefinitely, for a long exec); an expired wait is an error.
   package static func call(_ path: URL, _ request: ControlRequest, timeout: TimeInterval? = 30)
@@ -280,11 +325,16 @@ package enum ControlSocket {
 
   /// Reads one request/response line of at most `limit` bytes (excluding
   /// the newline). `FileHandle.read(upToCount:)` blocks until the full
-  /// count arrives, so read(2) directly.
-  static func readLine(_ handle: FileHandle, limit: Int?) -> ReadResult {
+  /// count arrives, so read(2) directly. Past `deadline` (checked between
+  /// reads; the socket's receive timeout bounds each read) the line is
+  /// abandoned as `.closed`.
+  static func readLine(
+    _ handle: FileHandle, limit: Int?, deadline: ContinuousClock.Instant? = nil
+  ) -> ReadResult {
     var buffer = Data()
     var chunk = [UInt8](repeating: 0, count: 65536)
     while true {
+      if let deadline, ContinuousClock.now >= deadline { return .closed }
       let n = read(handle.fileDescriptor, &chunk, chunk.count)
       if n < 0, errno == EINTR { continue }
       guard n > 0 else { return buffer.isEmpty ? .closed : .line(buffer) }
@@ -294,4 +344,26 @@ package enum ControlSocket {
       if end < n { return .line(buffer) }
     }
   }
+}
+
+/// A counted set of connection slots, shared by an accept loop and the
+/// handlers it starts.
+package final class ConnectionSlots: Sendable {
+  package let limit: Int
+  private let used = Mutex(0)
+
+  package init(limit: Int) { self.limit = limit }
+
+  /// Claims a slot; false when all are taken.
+  package func enter() -> Bool {
+    used.withLock { used in
+      guard used < limit else { return false }
+      used += 1
+      return true
+    }
+  }
+
+  package func leave() { used.withLock { $0 -= 1 } }
+
+  package var inUse: Int { used.withLock { $0 } }
 }

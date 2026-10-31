@@ -151,7 +151,7 @@ import Testing
     #expect(config.sockets.isEmpty)
     let rootfs = Mount.block(format: "ext4", source: "/r", destination: "/", options: [])
     let effective = Owner.effectiveConfig(
-      record: record, config: config, rootfs: rootfs, devices: VMDevices(network: 0, socket: 1))
+      record: record, config: config, rootfs: rootfs, devices: VMDevices(network: [], socket: 1))
     #expect(effective.interfaces.isEmpty)
     #expect(effective.transport == "brokered")
     #expect(effective.networkDevices == 0 && effective.socketDevices == 1)
@@ -159,10 +159,13 @@ import Testing
     #expect(effective.networkPolicy == Self.policy)
     // A vmnet sandbox reports none of the brokered fields.
     record.network = .shared
-    let vmnet = Owner.effectiveConfig(record: record, config: config, rootfs: rootfs, devices: nil)
+    let vmnet = Owner.effectiveConfig(
+      record: record, config: config, rootfs: rootfs,
+      devices: VMDevices(network: [.vmnet], socket: 1))
     #expect(vmnet.transport == nil && vmnet.networkDevices == nil && vmnet.channelPolicy == nil)
     let encoded = String(decoding: try JSONEncoder.wire.encode(vmnet), as: UTF8.self)
     #expect(!encoded.contains("transport") && !encoded.contains("channelPolicy"))
+    #expect(!encoded.contains("networkDevices") && !encoded.contains("socketDevices"))
   }
 
   /// A served broker whose "guest" is one end of a socket pair; the test

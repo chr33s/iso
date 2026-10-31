@@ -314,11 +314,17 @@ iso-ci logs RUN --job JOB [--attempt N]          # that job's stored runner logs
 
 `run` captures a snapshot of your working tree (tracked files with your
 uncommitted edits, plus untracked paths you `--include`; local credential files
-such as `.env*`, `*.pem`, `.npmrc` and `.git-credentials` are excluded by
-default). Capture reads the Git index, `HEAD` and refs as data and never runs
-Git, so repository configuration, hooks, filters and fsmonitor never execute on
-the host. Only an explicit `--include` selects untracked files; ignore files are
-not consulted. `run` then compiles the workflow against the `local-actions/v1`
+such as `.env*`, `*.pem`, `*.jks`, `.npmrc`, `.pgpass`, `terraform.tfstate`,
+`.config/gh/hosts.yml` and `.git-credentials` are excluded by default, matched
+without regard to case). `run` lists the excluded paths for you; the snapshot
+the job receives does not name them. Capture reads the Git index, `HEAD`, refs
+and the repository's own `config` (for the `origin` URL that names the
+repository) as data and never runs Git, so repository configuration, include
+directives, hooks, filters and fsmonitor never execute or apply on the host. A
+split or sparse index is refused (`git update-index --no-split-index` converts
+a split one), as is a tracked path whose parent directory has been replaced by
+a symlink. Only an explicit `--include` selects untracked files; ignore files
+are not consulted. `run` then compiles the workflow against the `local-actions/v1`
 compatibility manifest, and runs each job in its own clean VM through the
 official runner. A workflow outside the manifest is refused with every problem
 listed before any VM starts. With `--follow`, `run` exits non-zero unless the
@@ -364,7 +370,10 @@ confined child process with no credentials, no network and access only to its
 staging directory; if that confinement cannot be established, preflight is
 refused. Caches are partitioned by repository, authority, platform, image,
 runner version and workflow digest; the first complete upload of a key wins,
-and incomplete uploads are never visible. Artifacts are scoped to their run and
+and incomplete uploads are never visible. Only a run of a clean tree without
+mapped secrets saves shared cache entries: a run with uncommitted, included
+untracked or patched content, or with `--secret`, keeps its cache entries to
+itself, so a later run of the clean base never restores them. Artifacts are scoped to their run and
 can be downloaded only by jobs that depend on the producing job.
 
 Job and service containers need their images. With the template's
@@ -404,11 +413,11 @@ Every guest is treated as hostile.
 | Material | Where it lives | Reaches a guest? |
 |---|---|---|
 | GitHub App private key | Login keychain (`dev.iso.ci`) | Never |
-| Installation access tokens | Controller memory | Never |
+| Installation access tokens | Controller memory, each narrowed to the repository and permissions its call needs | Never |
 | Runner JIT configuration | Sent once over the VM's SSH session on stdin | Yes, by design (it registers that one runner) |
 | `GITHUB_TOKEN` and repository secrets (connected) | Issued by GitHub to the job | Yes, as GitHub decides |
 | Preflight per-allocation credentials | Controller memory | Yes; they authorize only that allocation's local endpoint |
-| Preflight secrets | `--secret NAME=ENV_VAR` per run, controller memory | Yes, only the ones you map |
+| Preflight secrets | `--secret NAME=ENV_VAR` per run, controller memory until the run finishes (a later `retry` asks you to resubmit) | Yes, only the ones you map |
 | iso host-management keys, tailnet credentials | Untouched by iso-ci | Never |
 
 A pool's `validation` authority describes the grants iso-ci gives; it cannot

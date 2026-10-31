@@ -42,8 +42,10 @@ private func output(_ channel: EmbeddedChannel) throws -> String {
   return text
 }
 
-private let wire =
+private let unauthenticated =
   "GET /__iso/broker-ready HTTP/1.1\r\nHost: localhost\r\nX-Iso-Nonce: \(nonce)\r\nConnection: close\r\n\r\n"
+private let wire = unauthenticated.replacingOccurrences(
+  of: "\r\n\r\n", with: "\r\nAuthorization: Bearer \(capability)\r\n\r\n")
 
 @Test(arguments: ["anthropic", "openai"])
 func brokerLocalReadinessSignsWithoutForwardingOrCredentials(provider: String) throws {
@@ -95,8 +97,8 @@ func brokerLocalReadinessSignsWithoutForwardingOrCredentials(provider: String) t
     wire.replacingOccurrences(
       of: "\r\n\r\n", with: "\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"),
     wire.replacingOccurrences(of: "localhost", with: "evil"),
-    wire.replacingOccurrences(
-      of: "\r\n\r\n", with: "\r\nAuthorization: Bearer \(capability)\r\n\r\n"),
+    wire.replacingOccurrences(of: "\r\n\r\n", with: "\r\nX-Api-Key: \(capability)\r\n\r\n"),
+    wire.replacingOccurrences(of: "Authorization: Bearer", with: "X-Api-Key:"),
   ] {
     let channel = try channel()
     defer { _ = try? channel.finish(acceptAlreadyClosed: true) }
@@ -107,9 +109,30 @@ func brokerLocalReadinessSignsWithoutForwardingOrCredentials(provider: String) t
   }
   let legacy = try channel(settings(version: 1))
   defer { _ = try? legacy.finish(acceptAlreadyClosed: true) }
-  _ = try legacy.writeInbound(ByteBuffer(string: wire))
+  _ = try legacy.writeInbound(ByteBuffer(string: unauthenticated))
   #expect(try output(legacy).hasPrefix("HTTP/1.1 401"))
   #expect(try legacy.readInbound(as: HTTPServerRequestPart.self) == nil)
+}
+
+/// Without the capability the broker signs nothing: it is not a signing
+/// oracle for other local processes.
+@Test func brokerReadinessRequiresTheCapability() throws {
+  for invalid in [
+    unauthenticated,
+    wire.replacingOccurrences(of: capability, with: String(repeating: "f", count: 64)),
+    wire.replacingOccurrences(of: "Bearer \(capability)", with: "Basic \(capability)"),
+    wire.replacingOccurrences(
+      of: "\r\n\r\n", with: "\r\nAuthorization: Bearer \(capability)\r\n\r\n"),
+  ] {
+    let channel = try channel()
+    defer { _ = try? channel.finish(acceptAlreadyClosed: true) }
+    _ = try channel.writeInbound(ByteBuffer(string: invalid))
+    let response = try output(channel)
+    #expect(response.hasPrefix("HTTP/1.1 401"), "\(invalid)")
+    #expect(!response.contains("signature"))
+    #expect(!channel.isActive)
+    #expect(try channel.readInbound(as: HTTPServerRequestPart.self) == nil)
+  }
 }
 
 @Test func brokerReadinessWaitsForEndAndBoundsIncompleteChallenges() throws {
@@ -155,6 +178,7 @@ private final class PausedReadinessWrites: ChannelOutboundHandler {
   let gate = try #require(context.handler as? InboundGate)
   let headers = HTTPHeaders([
     ("Host", "localhost"), ("X-Iso-Nonce", nonce), ("Connection", "close"),
+    ("Authorization", "Bearer " + capability),
   ])
   gate.channelRead(
     context: context,
@@ -169,9 +193,13 @@ private final class PausedReadinessWrites: ChannelOutboundHandler {
 @Test func brokerReadinessChallengesAreClosed() {
   let headers = [
     Header("host", "localhost"), Header("x-iso-nonce", nonce), Header("connection", "close"),
+    Header("authorization", "Bearer " + capability),
   ]
   #expect(
     BrokerReadiness.challenge(method: "GET", uri: BrokerReadiness.path, headers: headers) == nonce)
+  #expect(
+    BrokerReadiness.challenge(
+      method: "GET", uri: BrokerReadiness.path, headers: Array(headers.prefix(3))) == nil)
   #expect(
     BrokerReadiness.challenge(method: "POST", uri: BrokerReadiness.path, headers: headers) == nil)
   #expect(
@@ -180,11 +208,11 @@ private final class PausedReadinessWrites: ChannelOutboundHandler {
   #expect(
     BrokerReadiness.challenge(
       method: "GET", uri: BrokerReadiness.path,
-      headers: headers + [Header("authorization", "Bearer " + capability)]) == nil)
+      headers: Array(headers.prefix(3)) + [Header("x-api-key", capability)]) == nil)
   #expect(
     BrokerReadiness.challenge(
       method: "GET", uri: BrokerReadiness.path,
-      headers: [headers[0], Header("x-iso-nonce", "invalid"), headers[2]]) == nil)
+      headers: [headers[0], Header("x-iso-nonce", "invalid"), headers[2], headers[3]]) == nil)
 }
 
 @Test func brokerReadinessStartupRejectsMalformedAndUnknownIdentities() throws {

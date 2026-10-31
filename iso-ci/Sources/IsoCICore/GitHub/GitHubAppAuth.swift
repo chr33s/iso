@@ -215,10 +215,59 @@ package final class GitHubInstallationClient: Sendable {
     self.installationID = installationID
   }
 
-  package func token() throws(CIError) -> RedactedSecret {
-    do { return try auth.installationToken(installationID) } catch {
+  /// An installation token narrowed to `scope`: each use asks for only the
+  /// repositories and permissions it needs.
+  package func token(_ scope: InstallationTokenScope) throws(CIError) -> RedactedSecret {
+    do {
+      return try auth.installationToken(
+        installationID, repositories: scope.repositories, permissions: scope.permissions)
+    } catch {
       if error.code == .unauthorized { auth.invalidate() }
       throw error
     }
+  }
+}
+
+/// The repositories and permissions one installation token is narrowed to
+/// (`POST /app/installations/{id}/access_tokens`). `repositories` holds
+/// repository names without the owner; nil keeps the installation's own
+/// selection, as an organization-level call needs.
+package struct InstallationTokenScope: Sendable, Equatable {
+  package let repositories: [String]?
+  package let permissions: [String: String]
+
+  init(_ repository: RepositoryName?, _ permissions: [String: String]) {
+    repositories = repository.map { [$0.name] }
+    self.permissions = permissions.merging(["metadata": "read"]) { granted, _ in granted }
+  }
+
+  /// Registering, listing and deleting self-hosted runners: Administration
+  /// write on the one repository, or organization Self-hosted runners write.
+  package static func runnerAdministration(_ scope: GitHubRunnerScope) -> Self {
+    switch scope {
+    case .repository(let repository): Self(repository, ["administration": "write"])
+    case .organization: Self(nil, ["organization_self_hosted_runners": "write"])
+    }
+  }
+
+  /// Reading an organization's runner groups.
+  package static let runnerGroupsRead = Self(nil, ["organization_self_hosted_runners": "read"])
+
+  /// Reading workflow runs and jobs for correlation: Actions read on the one
+  /// repository, or on the installation's repositories for an organization.
+  package static func actionsRead(_ repository: RepositoryName?) -> Self {
+    Self(repository, ["actions": "read"])
+  }
+
+  /// Repository and installation metadata (visibility, accessible
+  /// repositories).
+  package static func metadataRead(_ repository: RepositoryName?) -> Self {
+    Self(repository, [:])
+  }
+
+  /// A repository's Actions policy (`/actions/permissions/...`), which
+  /// GitHub serves under the Administration read permission.
+  package static func actionsPolicyRead(_ repository: RepositoryName) -> Self {
+    Self(repository, ["administration": "read", "actions": "read"])
   }
 }

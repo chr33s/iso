@@ -256,6 +256,104 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
   }
 }
 
+/// A receiver the stream has compromised still writes only beneath its tree.
+/// bsdtar with `-P`, which honors absolute member names, stands in for one.
+@Test(
+  .enabled(
+    if: FileManager.default.isExecutableFile(atPath: "/usr/bin/python3"),
+    "builds its hostile archive with /usr/bin/python3"))
+func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
+  let f = try ReturnFixture()
+  let archive = f.root + "/escape.tar"
+  try hostileArchive(archive, #"f("inside"); f("\#(f.outside)/escape")"#)
+  let input = Array(try #require(FileManager.default.contents(atPath: archive)))
+  func extract(_ receivers: InboundReceivers, into attempt: ReceiveAttempt) throws -> Bool {
+    let (executable, arguments) = try receivers.tarCommand(
+      ["xf", "-", "-P", "-C", attempt.tree], writableTree: attempt.tree)
+    return try ProcessRunner().capture(
+      .init(
+        executable: executable, arguments: arguments, environment: ["PATH": "/usr/bin:/bin"],
+        deadline: .seconds(30), input: input)
+    ).termination.succeeded
+  }
+  let confined = try ReceiveAttempt(f.location)
+  #expect(try !extract(.system, into: confined))
+  #expect(readFile(confined.tree + "/inside") == "x")
+  #expect(!FileManager.default.fileExists(atPath: f.outside + "/escape"))
+  #expect(f.sentinelIntact)
+  confined.abandon()
+  // Unconfined, the same receiver escapes: the profile stopped it, not bsdtar.
+  let unconfined = try ReceiveAttempt(f.location)
+  defer { unconfined.abandon() }
+  let open = InboundReceivers(
+    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    requireSystemOwnership: true, confinement: .none)
+  #expect(try extract(open, into: unconfined))
+  #expect(FileManager.default.fileExists(atPath: f.outside + "/escape"))
+}
+
+/// bsdtar changes into the canonical tree the profile names, never through a
+/// symlinked ancestor such as a linked data_dir.
+@Test func theConfinedTarReceiverChangesIntoTheCanonicalTree() throws {
+  let base = FileManager.default.temporaryDirectory.appending(path: "iso-tar-\(UUID().uuidString)")
+    .path
+  defer { try? FileManager.default.removeItem(atPath: base) }
+  try FileManager.default.createDirectory(
+    atPath: base + "/real/tree", withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(
+    atPath: base + "/link", withDestinationPath: base + "/real")
+  let receivers = InboundReceivers(
+    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    requireSystemOwnership: true, confinement: .seatbelt(sandboxExec: "/usr/bin/sandbox-exec"))
+  let (_, arguments) = try receivers.tarCommand(
+    ["xf", "-", "-C", base + "/link/tree"], writableTree: base + "/link/tree")
+  let root = try #require(canonicalPath(base + "/real/tree"))
+  #expect(arguments.contains("TREE=\(root)"))
+  #expect(Array(arguments.suffix(2)) == ["-C", root])
+  #expect(!arguments.contains(base + "/link/tree"))
+}
+
+/// The pull's tar receiver runs through the confinement wrapper with the
+/// receiver profile and its own canonical tree.
+@Test func tarPullsRunTheReceiverUnderItsProfile() throws {
+  let f = try ReturnFixture()
+  let guest = f.root + "/guest"
+  try FileManager.default.createDirectory(atPath: guest, withIntermediateDirectories: true)
+  try writeFile(guest + "/a.txt", "a")
+  let bin = f.root + "/bin"
+  try writeFile(
+    bin + "/sandbox-exec",
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(f.root)/sandbox-argv\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -D|-p) shift 2 ;; *) break ;; esac; done\nexec \"$@\"\n"
+  )
+  chmod(bin + "/sandbox-exec", 0o755)
+  // The guest's GNU tar takes --sparse; the host's bsdtar stands in without it.
+  try writeFile(
+    bin + "/tar",
+    "#!/bin/sh\nfor a; do shift; [ \"$a\" = --sparse ] || set -- \"$@\" \"$a\"; done\nexec /usr/bin/tar \"$@\"\n"
+  )
+  chmod(bin + "/tar", 0o755)
+  let fakeSSH = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appending(path: "../../fixtures/fake-ssh").standardized.path
+  let transfer = WorkspaceTransfer(
+    client: SSHClient(environment: ["PATH": "\(bin):/usr/bin:/bin"], tools: .searchPath),
+    diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
+  let attempt = try ReceiveAttempt(f.location)
+  defer { attempt.abandon() }
+  let target = SSHTarget(
+    host: "127.0.0.1", port: 22, user: .default, keyPath: "/k", knownHosts: "/kh", alias: "g")
+  try transfer.tarReceive(
+    target, guest: GuestPath(guest), into: attempt,
+    receivers: InboundReceivers(
+      tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: fakeSSH + "/ssh",
+      requireSystemOwnership: false, confinement: .seatbelt(sandboxExec: bin + "/sandbox-exec")))
+  #expect(readFile(attempt.tree + "/a.txt") == "a")
+  let argv = try #require(readFile(f.root + "/sandbox-argv"))
+  let tree = try #require(canonicalPath(attempt.tree))
+  #expect(argv.hasPrefix("-D\nRECEIVER=/usr/bin/bsdtar\n-D\nTREE=\(tree)\n-p\n"))
+  #expect(argv.contains(SeatbeltProfile.tarReceiver))
+  #expect(argv.contains("\n/usr/bin/bsdtar\nxf\n-\n-C\n"))
+}
+
 @Test func receiversAreQualifiedSystemTools() throws {
   try InboundReceivers.system.qualify(ProcessRunner())
   let impostor = InboundReceivers(
@@ -268,6 +366,11 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
     tar: scratch + "/tar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true)
   #expect(throws: HostError.self) { try userOwned.qualify(ProcessRunner()) }
+  // The confinement wrapper is held to the same standard as the receivers.
+  let userWrapper = InboundReceivers(
+    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    requireSystemOwnership: true, confinement: .seatbelt(sandboxExec: scratch + "/tar"))
+  #expect(throws: HostError.self) { try userWrapper.qualify(ProcessRunner()) }
   #expect(
     InboundReceivers.system.environment(["PATH": "/evil", "HOME": "/h"])["PATH"]
       == "/usr/bin:/bin:/usr/sbin:/sbin")

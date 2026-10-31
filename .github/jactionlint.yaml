@@ -1,0 +1,14 @@
+# jactionlint configuration (mise.toml pins jactionlint).
+profile: default
+
+# Runner labels jactionlint does not know yet. `xcode-27` is GitHub's
+# hosted macOS 27 image (docs/testing.md), not a self-hosted runner.
+self-hosted-runner:
+  labels:
+    - xcode-27
+
+# Local SwiftPM checkouts carry other projects' workflows and actions.
+paths:
+  "**/.build/**":
+    ignore:
+      - ".*"

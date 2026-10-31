@@ -40,6 +40,9 @@ package actor DataPlaneService {
     /// Distinct blobs (logs, artifacts) one allocation may stage.
     package var maxBlobsPerAllocation = 256
     package var maxCacheReservations = 32
+    /// Distinct client assertions one allocation may exchange within one
+    /// acceptance window (`ClientAssertionVerifier.maxLifetime` plus skew).
+    package var maxAssertionsPerWindow = 1_024
 
     package init() {}
   }
@@ -85,7 +88,9 @@ package actor DataPlaneService {
   struct Slot {
     let grant: DataPlaneGrant
     let verifier: ClientAssertionVerifier
-    var seenAssertions: [String] = []
+    /// Accepted assertion ids until their acceptance window closes; an id
+    /// is never forgotten while a replay of it could still verify.
+    var seenAssertions: [String: Int64] = [:]
     var session: String?
     var phase: Phase = .waiting
     var cancelled = false
@@ -289,18 +294,21 @@ package actor DataPlaneService {
       let parts = try? JWTParts(assertion), let issuer = parts.claims["iss"]?.stringValue,
       let allocation = clients[issuer], var slot = slots[allocation],
       request.boundAllocation == nil || request.boundAllocation == allocation
-    else {
-      _ = anonymousRefusal(401, "invalid client")
-      return refusal
+    else { return Self.oauthRefusal(anonymousRefusal(401, "invalid client")) }
+    let verified: ClientAssertionVerifier.Verified
+    do { verified = try slot.verifier.verify(assertion, now: now) } catch {
+      return Self.oauthRefusal(anonymousRefusal(401, "invalid client"))
     }
-    let jti: String
-    do { jti = try slot.verifier.verify(assertion, now: now) } catch {
-      _ = anonymousRefusal(401, "invalid client")
-      return refusal
+    let current = now
+    slot.seenAssertions = slot.seenAssertions.filter { $0.value >= current }
+    guard slot.seenAssertions[verified.id] == nil else { return refusal }
+    // Within one window the set is bounded by refusing, never by evicting
+    // an id that could still be replayed.
+    guard slot.seenAssertions.count < settings.maxAssertionsPerWindow else {
+      slots[allocation] = slot
+      return .error(429, "too many token requests")
     }
-    guard !slot.seenAssertions.contains(jti) else { return refusal }
-    slot.seenAssertions.append(jti)
-    if slot.seenAssertions.count > 1_024 { slot.seenAssertions.removeFirst(512) }
+    slot.seenAssertions[verified.id] = verified.acceptedUntil
     slots[allocation] = slot
     let expires = min(now + settings.runnerTokenLifetime, slot.grant.expiresAt)
     guard expires > now else { return refusal }
@@ -311,6 +319,12 @@ package actor DataPlaneService {
         "access_token": .string(token), "token_type": "Bearer",
         "expires_in": .integer(expires - now),
       ])
+  }
+
+  /// The OAuth error body for a refused client, unless the anonymous budget
+  /// is exhausted: then its 429 is returned as is.
+  static func oauthRefusal(_ budget: DataPlaneResponse) -> DataPlaneResponse {
+    budget.status == 429 ? budget : .json(401, ["error": "invalid_client"])
   }
 
   // MARK: Broker

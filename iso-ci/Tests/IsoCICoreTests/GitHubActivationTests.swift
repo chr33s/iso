@@ -48,7 +48,9 @@ final class GitHubFakeAuthority: AuthorityReader, @unchecked Sendable {
 
   func runnerGroups(org: String) throws(CIError) -> [GitHubRunnerGroupInfo] { groups }
 
-  func policy(_ path: String) throws(CIError) -> JSONValue? { policies[path] }
+  func policy(_ path: String, of repository: RepositoryName) throws(CIError) -> JSONValue? {
+    policies[path]
+  }
 }
 
 @Suite struct GitHubActivationTests {

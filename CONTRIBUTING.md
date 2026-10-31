@@ -23,7 +23,7 @@ applies.
 - **Xcode 27** on macOS 27+ Apple Silicon (macOS SDK, code signing).
 - **[mise](https://mise.jdx.dev)**, which installs the pinned toolchain from
   [`mise.toml`](mise.toml) — Swift 6.4.0 (with `swift format`), Python, jq,
-  yq, shellcheck, actionlint, zizmor and Apple's `container` CLI — and the git
+  yq, shellcheck, jactionlint, zizmor and Apple's `container` CLI — and the git
   hook: run `./scripts/install-dev-tools.sh` once.
 - To run the integration suite: the stock Apple `container` service and guest
   kernel; see [backend setup](docs/backends.md#macos--apple-sandbox) and

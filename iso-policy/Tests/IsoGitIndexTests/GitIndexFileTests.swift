@@ -15,6 +15,8 @@ private struct IndexBuilder {
 
   var version: UInt32
   var items: [Item]
+  /// Raw extensions appended after the entries: signature and payload.
+  var extensions: [(String, [UInt8])] = []
 
   static func u32(_ value: UInt32) -> [UInt8] {
     [
@@ -64,6 +66,9 @@ private struct IndexBuilder {
       previous = name
       out += entry
     }
+    for (signature, payload) in extensions {
+      out += Array(signature.utf8) + Self.u32(UInt32(payload.count)) + payload
+    }
     return out + Array(Insecure.SHA1.hash(data: out))
   }
 }
@@ -89,12 +94,6 @@ private struct IndexBuilder {
 }
 
 @Test func unreadableFormsAreRefusedNotGuessed() {
-  func refusal(_ bytes: [UInt8]) -> GitIndexFile.Refusal? {
-    do {
-      _ = try GitIndexFile.parse(bytes)
-      return nil
-    } catch { return error }
-  }
   var good = IndexBuilder(version: 2, items: [.init(path: "a")]).bytes()
   #expect(refusal([]) == .notAnIndex)
   good[good.count - 1] ^= 0xFF
@@ -118,4 +117,73 @@ private struct IndexBuilder {
   var short = Array(IndexBuilder(version: 2, items: [.init(path: "a")]).bytes().dropLast(20))
   short[11] = 2
   #expect(refusal(short + Array(Insecure.SHA1.hash(data: short))) == .truncated)
+}
+
+private func refusal(_ bytes: [UInt8]) -> GitIndexFile.Refusal? {
+  do {
+    _ = try GitIndexFile.parse(bytes)
+    return nil
+  } catch { return error }
+}
+
+/// The main index Git 2.56 wrote with `core.splitIndex=true` after
+/// `git add a.txt b.txt` then `git add c.txt`: two entries whose names live
+/// only in the shared index, and a `link` extension naming that index.
+private let splitIndexFixture =
+  "RElSQwAAAAIAAAACauVy4yva2A1q5XLjK9rYDQEAAA8p9VJgAACBpAAAAfUAAAAAAAAAAniYGSJhOyr7YCUEL/a9h4rBmU6F"
+  + "AAAAAGrlcuMr280rauVy4yvbzSsBAAAPKfVSYQAAgaQAAAH1AAAAAAAAAAJheAeYIo0Xry00/OTPvfNVVoMkcgAAAABsaW5r"
+  + "AAAARACqP2gvDAwRfmUdymrec05xWTcYAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAACAAAAAgAAAAIAAAAAAAAAAAAAAAMAAAAA"
+  + "bWdcXJTT4HQi8IpNR8cVX/ohLxo="
+
+@Test func aSplitIndexWrittenByGitIsRefused() throws {
+  let bytes = try #require(decodeBase64(splitIndexFixture))
+  #expect(bytes.count == 236)
+  #expect(refusal(bytes) == .splitIndex)
+}
+
+@Test func optionalExtensionsAreSkippedAndRequiredOnesRefused() throws {
+  var builder = IndexBuilder(version: 2, items: [.init(path: "a")])
+  builder.extensions = [
+    ("TREE", [1, 2, 3]), ("REUC", []), ("EOIE", [UInt8](repeating: 0, count: 24)),
+  ]
+  #expect(try GitIndexFile.parse(builder.bytes()).map(\.path) == ["a"])
+  builder.extensions = [("TREE", [1]), ("link", [UInt8](repeating: 0, count: 20))]
+  #expect(refusal(builder.bytes()) == .splitIndex)
+  builder.extensions = [("sdir", [])]
+  #expect(refusal(builder.bytes()) == .sparseDirectories)
+  builder.extensions = [("abcd", [])]
+  #expect(refusal(builder.bytes()) == .unknownRequiredExtension("abcd"))
+}
+
+@Test func malformedExtensionsAreRefused() {
+  let base = Array(IndexBuilder(version: 4, items: [.init(path: "a")]).bytes().dropLast(20))
+  func signed(_ body: [UInt8]) -> [UInt8] { body + Array(Insecure.SHA1.hash(data: body)) }
+  // A length running past the trailer.
+  #expect(refusal(signed(base + Array("TREE".utf8) + [0, 0, 1, 0])) == .badExtension)
+  // A header cut short.
+  #expect(refusal(signed(base + Array("TRE".utf8))) == .badExtension)
+  // The largest length cannot overflow the bound.
+  #expect(refusal(signed(base + Array("TREE".utf8) + [0xFF, 0xFF, 0xFF, 0xFF])) == .badExtension)
+}
+
+/// Standard base64 without Foundation (the test target links only
+/// IsoGitIndex and CryptoKit).
+private func decodeBase64(_ text: String) -> [UInt8]? {
+  let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".utf8)
+  var table = [Int](repeating: -1, count: 256)
+  for (index, byte) in alphabet.enumerated() { table[Int(byte)] = index }
+  var out: [UInt8] = []
+  var buffer = 0
+  var bits = 0
+  for byte in text.utf8 where byte != UInt8(ascii: "=") {
+    let value = table[Int(byte)]
+    guard value >= 0 else { return nil }
+    buffer = ((buffer << 6) | value) & 0xFFFF
+    bits += 6
+    if bits >= 8 {
+      bits -= 8
+      out.append(UInt8((buffer >> bits) & 0xFF))
+    }
+  }
+  return out
 }

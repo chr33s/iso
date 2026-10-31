@@ -241,7 +241,8 @@ struct FakeGuest {
       while True:
           c, _ = s.accept()
           try:
-              c.recv(4096); c.sendall(b"HTTP/1.1 401 Unauthorized\\r\\nContent-Length: 0\\r\\n\\r\\n")
+              open("\(root)/proxy-requests", "ab").write(c.recv(4096))
+              c.sendall(b"HTTP/1.1 401 Unauthorized\\r\\nContent-Length: 0\\r\\n\\r\\n")
           finally:
               c.close()
       """, mode: 0o755)

@@ -218,6 +218,8 @@ import Testing
     #expect(DataPlaneSeatbelt.profile.contains("(deny default)"))
     #expect(!DataPlaneSeatbelt.profile.contains("network-outbound"))
     #expect(!DataPlaneSeatbelt.profile.contains("(allow default)"))
+    // Metadata is not readable host-wide.
+    #expect(!DataPlaneSeatbelt.profile.contains("(allow file-read-metadata)"))
     // No links: the controller and guest forwards are never redirected.
     #expect(DataPlaneSeatbelt.profile.contains("(deny file-write-create (vnode-type SYMLINK))"))
     #expect(DataPlaneSeatbelt.profile.contains("(deny file-link)"))

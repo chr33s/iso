@@ -102,8 +102,13 @@ capability.
   rechecking each entry before its replace. Known execution-sensitive paths
   (`.husky`, `.envrc`, `.vscode/tasks.json`) apply only with an exact
   `--approve-sensitive` grant; that list is incomplete and returned source
-  stays untrusted. Receivers are not sandboxed and the transfer monitor is a
-  sampled budget, not a disk quota.
+  stays untrusted. The tar receiver (`bsdtar`) runs under `sandbox-exec` with
+  a deny-default profile (`SeatbeltProfile.tarReceiver`): it can write only
+  beneath the attempt's tree, read system paths, execute nothing but itself
+  and open no network connection; the writer-lease descriptor is inherited
+  already open. The rsync receiver is not sandboxed: it must start `ssh`, and
+  on the brokered transport the runtime connector through `/bin/sh`. The
+  transfer monitor is a sampled budget, not a disk quota.
 - **Committed disks.** `iso commit` turns a guest-mutated disk into an image,
   so the guest authors every file on it. Host-key and machine-id removal runs
   in a maintenance VM, never on the host (see
@@ -186,8 +191,25 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   forwarding, every forward and `LocalCommand` disabled.
 - **Proxy processes are identified, not assumed.** A proxy starts only on a
   free port and must be the sole listener afterwards (`lsof`), or startup fails
-  closed before the credential is sent; a recorded proxy or tunnel PID is
-  signalled only while it still names `iso-proxy` / `ssh`.
+  closed before the credential is sent. Each companion PID file has a
+  `<name>.identity.json` beside it recording the process's kernel start time
+  and executable once it runs; a recorded proxy, egress companion or egress
+  lease PID is trusted or signalled only while it is still that exact process
+  (a reused PID has another start time). The executable must match whenever
+  the kernel still reports the image's path; once that path no longer exists
+  (uninstalled, or removed after an update replaced it) the start time alone
+  identifies the process. A record from an older iso without that identity is
+  signalled only while the PID runs the executable iso would start now (the
+  path is compared, the companion's signature is not checked), and is never
+  trusted as alive. Tunnel PIDs are bound by their own
+  identity (see below). Release builds start `iso-proxy` and `iso-egress` only
+  after Security.framework validates them: carrying a Developer ID signature
+  of iso's own team, or, when iso itself is signed ad hoc, any valid signature.
+  In both cases the companion must be an executable regular file owned by root
+  or the user with no group or other write bit, and every directory above it
+  must be owned by root or the user and not other-writable unless sticky
+  (group-writable directories such as a `root:admin` 0775 one are accepted).
+  Debug builds skip these checks.
 - **Source retrieval uses only selected credentials.** A guest clone and
   host devcontainer discovery share one decision (`GitHubSourceAuth`): an
   assigned or matching PAT entry, else `gh auth token` / `GITHUB_TOKEN` only
@@ -538,8 +560,11 @@ is read by other programs, so it is a disclosure boundary like stderr:
   guest-loopback challenges. Version-2 startup supplies a transient Ed25519 seed;
   only `proxy-<provider>-readiness-public-key` persists. The local
   `GET /__iso/broker-ready` challenge signs nonce, provider, boot ID and policy hash.
-  It needs no provider capability, exposes no credential, and cannot select an
-  upstream. Exact method, URI and three-header framing, no body/trailers, a
+  It requires the guest capability (`Authorization: Bearer`), so no other local
+  process can use the broker as a signing oracle; the host keeps each
+  provider's capability in owner-private instance state for these probes. It
+  exposes no credential and cannot select an upstream. Exact method, URI and
+  four-header framing, no body/trailers, a
   two-second completion deadline and a one-second signed-reply write deadline keep
   this separate from provider forwarding. The existing capability gate, provider
   operation allowlist, confinement and credential persistence are unchanged.
@@ -581,8 +606,19 @@ is read by other programs, so it is a disclosure boundary like stderr:
   real credential and accepts untrusted guest HTTP. The host wraps it in
   `sandbox-exec -p` with the Seatbelt profile embedded in
   `Sources/IsoHost/Guest/SeatbeltProfile.swift`.
-  File writes and program execution are denied; outbound connections are
-  restricted to ports 443 and 53. Startup probes the denials before binding.
+  File writes and program execution are denied. Reads are limited to system
+  paths (`/System`, `/usr/lib`, `/usr/share`, `/Library/Preferences`, the dyld
+  and timezone databases, `/private/etc`, a few devices) and the binary itself;
+  home directories and iso state are unreadable. Outbound connections are
+  restricted to non-loopback port 443, non-loopback DNS on port 53 and the
+  `/private/var/run/mDNSResponder` socket; a deny after the port allows keeps
+  every loopback IP service, on any port, out of reach. Startup probes, before
+  reading stdin, that writes, exec, a random port, loopback ports 443 and 53
+  and a read of the user's home are denied and that port 443 to a TEST-NET
+  address is not. The
+  `iso-egress` companion runs under the same file, loopback and resolver rules
+  (`SeatbeltProfile.egress`) and makes the same probes before it reads its
+  readiness key and CONNECT capability.
   If confinement or HTTP readiness fails, VM startup aborts. The guest cannot
   select another implementation or supply a binary path.
 
@@ -591,7 +627,7 @@ is read by other programs, so it is a disclosure boundary like stderr:
     elsewhere on port 443. Application policy pins the provider hostname and
     verifies its identity through macOS system trust, including host-admin/MDM
     roots; the guest cannot alter either setting.
-  - File reads remain available for runtime and resolver requirements. Existing
+  - System files stay readable for runtime and resolver requirements. Existing
     stderr descriptors remain writable; no request/credential content is logged.
   - `sandbox-exec` is deprecated but remains the confinement primitive.
 
@@ -611,8 +647,9 @@ visible exception, not general host access.
 
 - **No device, proven host-side.** The runtime owner builds the VM with no
   interface and reads the live `VZVirtualMachine` after `create` (before the
-  guest's own init runs): any network device, or other than one socket
-  device, stops it unbooted. The host gate independently requires the
+  guest's own init runs): any network device, other than one socket
+  device, or any device outside the inventory in
+  [Apple sandbox backend](#apple-sandbox-backend) stops it unbooted. The host gate independently requires the
   owner's reading of `0`/`1`, no interface or address, `transport:
   brokered`, and refuses any unknown effective field. A requested mode
   string or guest report never stands in for this observation.
@@ -694,7 +731,13 @@ exposure, and isolate verifies the effective configuration anyway
 
 - **Runtime shape.** Each instance is its own VM on its own vmnet network
   (`10.231.N.0/24`), or with no network device at all for `network: brokered`
-  (no subnet; see [Brokered transport](#brokered-transport)). The runtime's `SandboxRecord` has no field for a host
+  (no subnet; see [Brokered transport](#brokered-transport)). For every
+  network mode the owner reads the live `VZVirtualMachine` after `create`,
+  before the guest's own init runs, and stops it unbooted unless it has
+  exactly one socket device, one vmnet network device (none for brokered), no
+  console, memory-balloon, USB or graphics device, and at most the one
+  virtio-fs device `apple/containerization` always attaches, sharing no host
+  directory (`VMDevices.requireExpected`). The runtime's `SandboxRecord` has no field for a host
   mount, socket relay, published port, or agent forwarding, and its VM
   configuration is built in one function (`Owner.machineConfiguration`) with
   kernel pseudo-filesystems only. Its one network field, `network`, can only
@@ -783,7 +826,12 @@ exposure, and isolate verifies the effective configuration anyway
   `iso-sandbox exec`: an argv delivered over vsock to the guest agent, never a
   shell string. Only fixed commands and iso-chosen paths go through it;
   guest-controlled text never does. The owner's control socket is `0600` in a
-  `0700` per-user directory and checks the peer UID.
+  `0700` per-user directory and checks the peer UID. It handles at most 64
+  connections at once (each in-flight `exec` holds one), a request line must
+  arrive within 30 s, and every `exec` is bounded: 600 s when no timeout is
+  given, at most 24 h. Guest-authored maintenance output (`e2fsck` on a
+  guest-written disk) is truncated and has control characters replaced
+  before it reaches a log or error.
 - **Host-key pinning and re-enrollment.** A changed key fails with
   `APPLE_HOST_KEY_CHANGED`. The only path that replaces a pin is a start after
   `iso restore`: isolate replaced the disk itself, and the restore removed the
@@ -923,6 +971,14 @@ is untrusted, and the whole VM is the boundary.
   no Screen Recording or Accessibility permission.
 - **Control socket.** It sits in the per-user `iso-sbx` directory, mode 0600,
   and accepts only the owning uid (`getpeereid`), as for Linux owners.
+- **Stop and TTL.** A guest cannot wedge a stop. Each host write to the
+  helper channel is bounded by its request's deadline (a write that times
+  out drops the connection), the helper shutdown is abandoned after 20 s in
+  favour of a forced stop, and the owner exits (ending the in-process VM)
+  240 s after the stop sequence begins if the VM has not stopped by then. A
+  stop request, TTL expiry or signal that arrives while the VM is still
+  starting is held and runs once the start completes (the owner also exits
+  240 s after such a request if the start never completes).
 - **Host CLI.** `iso` hands out a macOS guest only after
   `IsolationGate.verifyMacEffective` accepts the owner's report: the record's
   owner, template, network mode and resources; one display; no shares,

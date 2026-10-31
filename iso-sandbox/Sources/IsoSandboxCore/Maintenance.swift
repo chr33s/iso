@@ -234,7 +234,11 @@ package enum Maintenance {
     try? await container.stop()
     let log = String(decoding: out.data, as: UTF8.self)
     guard status.exitCode == 0 else {
-      throw SandboxError("maintenance failed (exit \(status.exitCode)):\n\(log)")
+      // The output is guest-authored (e2fsck on a guest-written filesystem):
+      // bounded and stripped of control characters before it reaches a log.
+      throw SandboxError(
+        "maintenance failed (exit \(status.exitCode)): \(GuestText.printable(String(log.suffix(2000))))"
+      )
     }
     return log
   }

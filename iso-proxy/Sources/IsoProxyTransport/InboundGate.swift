@@ -63,6 +63,9 @@ final class InboundGate: ChannelDuplexHandler {
       let headers = head.headers.map { Header($0.name, $0.value) }
       guard let target = try? RequestTarget(head.uri) else { return refuse(context, .badRequest) }
       if target.path == BrokerReadiness.path, config.readiness != nil {
+        // The signing key answers only a holder of the capability, so no other
+        // local process can use the broker as a signing oracle.
+        guard config.capability.authorizes(headers) else { return refuse(context, .unauthorized) }
         guard
           let nonce = BrokerReadiness.challenge(
             method: head.method.rawValue, uri: head.uri, headers: headers)

@@ -11,6 +11,13 @@ on:
 
 permissions: {}
 
+# One run per tag. A release run is never cancelled: a half-finished run can
+# leave a draft without its attestation.
+# jactionlint ignore=concurrency-limits
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   BINARY: iso
 
@@ -18,6 +25,7 @@ jobs:
   source:
     if: github.repository == 'chr33s/iso'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -39,6 +47,7 @@ jobs:
     permissions:
       contents: read
     runs-on: xcode-27
+    timeout-minutes: 60
     env:
       TARGET: aarch64-apple-darwin
 
@@ -51,7 +60,7 @@ jobs:
       # another workflow run must not feed a release build.
       - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         with:
-          version: 2026.8.3
+          version: 2026.10.7
           cache: false
 
       # One release entrypoint (spec S-05): builds iso, iso-proxy and
@@ -101,6 +110,7 @@ jobs:
   sign-macos:
     needs: build
     runs-on: xcode-27
+    timeout-minutes: 60
     environment: release
     permissions:
       contents: read
@@ -122,6 +132,7 @@ jobs:
           name: unsigned-${{ env.TARGET }}
 
       - name: Sign and notarize
+        shell: bash
         env:
           TAG: ${{ github.ref_name }}
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -145,6 +156,15 @@ jobs:
           done
           jq '.developer_id_signed = true' "$manifest" > "$manifest.new"
           mv "$manifest.new" "$manifest"
+
+      # The signed binaries run only in this step, which carries no signing or
+      # notary secret: a compromised dependency that reads its environment at
+      # startup finds nothing here.
+      - name: Smoke-test and archive signed binaries
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          name="${BINARY}-${TAG}-${TARGET}"
           "staging/${name}/iso" --version
           "staging/${name}/iso-sandbox" version
           COPYFILE_DISABLE=1 tar -czf "${name}.tar.gz" -C staging "${name}"
@@ -159,6 +179,7 @@ jobs:
   release:
     needs: [build, sign-macos]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write

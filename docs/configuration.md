@@ -591,10 +591,16 @@ bytes before forwarding a half-close; the opposite direction remains usable.
 Hard I/O errors terminate the relay, while interrupted operations are retried.
 Idle time measures read or write progress. These behaviors have local socket
 fixture coverage, not full filtered-VM qualification. The production
-Seatbelt profile denies file writes, child execution, and TCP ports other than
-443 and DNS port 53. Existing session handoff checks require protocol 5,
-compare the runtime's boot identity and owner PID with bounded live state,
-and compare the frozen policy hash with the atomic host record
+Seatbelt profile (`seatbelt-egress.sb`) denies file writes and child
+execution, limits reads to system paths and the companion binary (home
+directories and iso state are unreadable), allows outbound connections only to
+non-loopback ports 443 and 53, denies every loopback IP destination on any
+port, and allows only the `/private/var/run/mDNSResponder` UNIX socket. Before
+it reads stdin, the companion probes that writes, exec, a random port, loopback
+ports 443 and 53 and a read of the user's home are denied and that port 443 to
+a TEST-NET address is not; it refuses to start otherwise. Existing session
+handoff checks require protocol 5, compare the runtime's boot identity and
+owner PID with bounded live state, and compare the frozen policy hash with the atomic host record
 `egress-boot-policy.json`. Network policy records must have canonical hosts
 and a matching computed hash. Older filtered sessions with only
 `egress-boot-id` must be stopped and restarted; that file is not adopted as a

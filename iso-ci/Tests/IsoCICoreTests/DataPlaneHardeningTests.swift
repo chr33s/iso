@@ -357,4 +357,44 @@ import Testing
     }
     #expect(notice == nil)
   }
+
+  // MARK: Jail self-test
+
+  /// A loopback port with no listener: a connect to it is refused, not
+  /// denied.
+  static func closedLoopbackPort() throws -> UInt16 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    try #require(fd >= 0)
+    defer { close(fd) }
+    var address = sockaddr_in()
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let bound = withUnsafeMutablePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0
+      }
+    }
+    try #require(bound)
+    return UInt16(bigEndian: address.sin_port)
+  }
+
+  /// Run unconfined, the self-test's failures are a missing path (ENOENT)
+  /// and a refused connection: neither is a sandbox denial, so neither
+  /// check may pass.
+  @Test func failuresThatAreNotSandboxDenialsDoNotCountAsConfinement() throws {
+    let base = scratchDirectory("selftest")
+    let staging = base + "/staging"
+    try PrivateFiles.ensureDirectory(staging)
+    defer { try? FileManager.default.removeItem(atPath: base) }
+    let (confined, report) = DataPlaneChild.selfTest(
+      stagingDirectory: staging, probePath: base + "/missing/probe",
+      tcpPort: try Self.closedLoopbackPort())
+    #expect(!confined)
+    let checks = try #require(report["checks"]?.objectValue)
+    #expect(checks["staging_writable"] == .bool(true))
+    #expect(checks["probe_denied"] == .bool(false))
+    #expect(checks["outside_write_denied"] == .bool(false))
+    #expect(checks["tcp_denied"] == .bool(false))
+  }
 }

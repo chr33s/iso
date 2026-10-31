@@ -863,8 +863,10 @@ file-descriptor limit for the 256-stream workloads. Release builds depend on
 the reusable CI workflow, including this job.
 
 The hosted runner label is documented in [GitHub's announcement](https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/).
-actionlint is pinned in `mise.toml` to the [kjanat/actionlint](https://github.com/kjanat/actionlint)
-fork, which recognizes that label. Opt-in RSS, live provider TLS/credentials, VM integration and live-validation
+Workflows are linted with [jactionlint](https://github.com/jdx/jactionlint),
+pinned in `mise.toml` (checksum in `mise.lock`; `actionlint` is a mise shell
+alias for it); [`.github/jactionlint.yaml`](../.github/jactionlint.yaml) declares
+that label. Opt-in RSS, live provider TLS/credentials, VM integration and live-validation
 requirements remain separate gates; this CI job does not replace them.
 
 ### Historical AsyncHTTPClient TLS cancellation audit
@@ -907,8 +909,10 @@ both provider identities without sending HTTP requests or credentials, then chec
 that removing the exact trustd permission breaks system verification. It does not
 replace credentialed provider/agent smoke tests or broader memory measurements.
 `python3 scripts/test-swift-egress-jail.py` runs `iso-egress --jail-selftest`
-under `seatbelt-egress.sb` and checks write, exec, and non-443 denial. It does
-not open a public connection or boot a VM.
+under `seatbelt-egress.sb` and checks write, exec, non-443, loopback-443,
+loopback-53 and home-read denial, then checks that the unconfined companion
+refuses to start without reading its startup input from stdin. It does not open a public
+connection or boot a VM.
 
 After `swift build --package-path iso-egress --force-resolved-versions`, run
 `python3 scripts/test-swift-egress-lease.py`. It starts the production companion

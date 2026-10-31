@@ -597,10 +597,55 @@ struct InboundReceivers: Sendable {
   /// Whether each tool and its directories must be root-owned and not
   /// writable by others. Only test doubles turn it off.
   let requireSystemOwnership: Bool
+  /// How the tar receiver runs. Only script test doubles run unconfined.
+  let confinement: ReceiverConfinement
+
+  /// The tar receiver under Seatbelt: writes beneath its receive tree only.
+  /// The rsync receiver is not confined: it must start `ssh`, and on the
+  /// brokered transport the runtime's connector through `/bin/sh`.
+  enum ReceiverConfinement: Sendable, Equatable {
+    case seatbelt(sandboxExec: String)
+    case none
+  }
+
+  init(
+    tar: String, rsync: String, ssh: String, requireSystemOwnership: Bool,
+    confinement: ReceiverConfinement = .seatbelt(sandboxExec: "/usr/bin/sandbox-exec")
+  ) {
+    self.tar = tar
+    self.rsync = rsync
+    self.ssh = ssh
+    self.requireSystemOwnership = requireSystemOwnership
+    self.confinement = confinement
+  }
 
   static let system = InboundReceivers(
     tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true)
+
+  /// The tar receiver's executable and arguments: `tar <arguments>`, wrapped
+  /// in `sandbox-exec` with `SeatbeltProfile.tarReceiver` so that only
+  /// `tree` is writable. Both paths are canonical, as Seatbelt matches them.
+  func tarCommand(_ arguments: [String], writableTree tree: String) throws -> (String, [String]) {
+    guard case .seatbelt(let sandboxExec) = confinement else { return (tar, arguments) }
+    guard let receiver = canonicalPath(tar), let root = canonicalPath(tree) else {
+      throw HostError("Failed to resolve the tar receiver or its receive tree")
+    }
+    // bsdtar changes into the tree by the same canonical path the profile
+    // allows: a symlink above it (a linked data_dir) is never traversed,
+    // since the profile denies reading most symlinks.
+    var confined = arguments
+    for i in confined.indices.dropLast() where confined[i] == "-C" && confined[i + 1] == tree {
+      confined[i + 1] = root
+    }
+    return (
+      sandboxExec,
+      [
+        "-D", "RECEIVER=\(receiver)", "-D", "TREE=\(root)", "-p", SeatbeltProfile.tarReceiver,
+        receiver,
+      ] + confined
+    )
+  }
 
   /// The qualified macOS families: bsdtar 3 and openrsync.
   static let families = ["tar": "bsdtar 3.", "rsync": "openrsync:"]
@@ -618,9 +663,15 @@ struct InboundReceivers: Sendable {
   private static let qualified = Mutex<Set<String>>([])
 
   func qualify(_ runner: ProcessRunner) throws {
-    let key = [tar, rsync, ssh, String(requireSystemOwnership)].joined(separator: "\0")
+    let wrapper: [String] =
+      switch confinement {
+      case .seatbelt(let sandboxExec): [sandboxExec]
+      case .none: []
+      }
+    let key = ([tar, rsync, ssh, String(requireSystemOwnership)] + wrapper).joined(
+      separator: "\0")
     if Self.qualified.withLock({ $0.contains(key) }) { return }
-    for path in [tar, rsync, ssh] {
+    for path in [tar, rsync, ssh] + wrapper {
       guard path.hasPrefix("/") else { throw unqualified(path, "not an absolute path") }
       guard access(path, X_OK) == 0 else { throw unqualified(path, "not executable") }
       if requireSystemOwnership { try Self.checkSystemOwned(path) }

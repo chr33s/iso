@@ -3,6 +3,7 @@ import Containerization
 import ContainerizationExtras
 import Foundation
 import IsoMacProtocol
+import Synchronization
 import Virtualization
 
 /// Control protocol of a macOS owner (same socket conventions as Linux
@@ -222,6 +223,15 @@ package enum MacOwner {
     let effective = MacEffectiveConfig.from(
       config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology)
 
+    let stopper = MacStopper(vm: vm, link: link) {
+      // The last resort, as a Linux owner's: the stop sequence did not end
+      // the VM in time. Exiting this process ends it; a clean exit is not
+      // restarted by launchd.
+      log("vm did not stop: exiting the owner to end the VM")
+      try? FileManager.default.removeItem(at: livePath)
+      unlink(controlPath.path)
+      _exit(0)
+    }
     Task { @MainActor in
       do {
         try await vm.start()
@@ -233,9 +243,9 @@ package enum MacOwner {
       let live = MacLiveState(pid: getpid(), startedAt: Date(), bootId: bootId, ipv4: address)
       try? JSONEncoder.pretty.encode(live).write(to: paths.live, options: .atomic)
       log("started pid=\(live.pid) ipv4=\(address) instance=\(vm.instance)")
+      // A stop or expiry that arrived while starting runs now.
+      await stopper.started()
     }
-
-    let stopper = MacStopper(vm: vm, link: link)
     if let expiresAt = record.expiresAt {
       Task {
         while Date() < expiresAt {
@@ -361,7 +371,7 @@ package enum MacOwner {
   static func claim(_ paths: MacSandboxPaths) throws -> Int32 {
     let guarded = try FileLock.acquire(paths.mutationLock, .exclusive)
     defer { withExtendedLifetime(guarded) {} }
-    let fd = open(paths.lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+    let fd = open(paths.lock.path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw SandboxError("open \(paths.lock.path): errno \(errno)") }
     for _ in 0..<20 {
       if flock(fd, LOCK_EX | LOCK_NB) == 0 { return fd }
@@ -426,35 +436,102 @@ package enum MacOwner {
   }
 }
 
-/// Runs the stop sequence once, however many callers ask.
+/// Runs the stop sequence once, however many callers ask. A stop that
+/// arrives while the VM is still starting is remembered and runs as soon as
+/// `started()` reports the VM running. The owner is ended if a sequence has
+/// not ended it within `exitGrace` of that sequence's start.
 actor MacStopper {
-  let vm: MacVM
-  let link: MacHelperLink
+  /// Longer than the whole sequence in `MacVM.stop` (request 15 s, helper
+  /// 20 s, helper wait 120 s, forced stop 30 s).
+  static let exitGraceSeconds: TimeInterval = 240
+
+  private let sequence: @Sendable () async -> String
+  private let exitGrace: TimeInterval
+  private let forceExit: @Sendable () -> Void
+  private let exitTimer = ExitTimer()
+  private var running = false
+  private var pending = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
   private var result: Task<String, Never>?
 
-  init(vm: MacVM, link: MacHelperLink) {
-    self.vm = vm
-    self.link = link
+  init(
+    exitGrace: TimeInterval = MacStopper.exitGraceSeconds,
+    forceExit: @escaping @Sendable () -> Void,
+    sequence: @escaping @Sendable () async -> String
+  ) {
+    self.exitGrace = exitGrace
+    self.forceExit = forceExit
+    self.sequence = sequence
   }
 
-  /// A stop that found the VM not running (e.g. still starting) is not
-  /// remembered, so a later request runs the sequence again.
-  func stop() async -> String {
-    if let result {
-      let path = await result.value
-      if !path.hasPrefix("none") { return path }
-      self.result = nil
-    }
-    let vm = self.vm
-    let link = self.link
-    let t = Task {
-      let path = await vm.stop {
+  init(vm: MacVM, link: MacHelperLink, forceExit: @escaping @Sendable () -> Void) {
+    self.init(forceExit: forceExit) {
+      await vm.stop {
         await Task.detached { link.requestShutdown() }.value
       }
+    }
+  }
+
+  /// The VM finished starting: a stop requested meanwhile begins now, even
+  /// if its caller has gone away.
+  func started() {
+    guard !running else { return }
+    running = true
+    if pending { _ = begin() }
+    let resumed = waiters
+    waiters = []
+    for waiter in resumed { waiter.resume() }
+  }
+
+  /// A sequence that found the VM not running (`none (...)`) is not
+  /// remembered, so a later request runs it again.
+  func stop() async -> String {
+    if !running {
+      if !pending {
+        pending = true
+        // Bounds a start that never completes; `begin` re-arms from the
+        // sequence's own start.
+        exitTimer.arm(after: exitGrace, forceExit)
+      }
+      await withCheckedContinuation { waiters.append($0) }
+    }
+    while true {
+      guard let current = result else { return await begin().value }
+      let path = await current.value
+      if !path.hasPrefix("none") { return path }
+      if result == current { result = nil }
+    }
+  }
+
+  /// Starts the sequence and arms the last-resort exit from now: every step
+  /// waits on the guest or the framework, and the VM runs in this process,
+  /// so exiting is the one step nothing can block.
+  private func begin() -> Task<String, Never> {
+    let sequence = self.sequence
+    let t = Task {
+      let path = await sequence()
       MacOwner.log("stop path: \(path)")
       return path
     }
     result = t
-    return await t.value
+    exitTimer.arm(after: exitGrace, forceExit)
+    return t
+  }
+}
+
+/// A last-resort timer on its own thread (never the concurrency pool);
+/// arming it again supersedes the earlier arming.
+final class ExitTimer: Sendable {
+  private let generation = Mutex(0)
+
+  func arm(after seconds: TimeInterval, _ fire: @escaping @Sendable () -> Void) {
+    let armed = generation.withLock {
+      $0 += 1
+      return $0
+    }
+    Thread.detachNewThread { [self] in
+      Thread.sleep(forTimeInterval: seconds)
+      if generation.withLock({ $0 == armed }) { fire() }
+    }
   }
 }

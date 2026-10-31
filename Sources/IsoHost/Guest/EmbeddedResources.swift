@@ -305,10 +305,25 @@ package enum EmbeddedResources {
     "docker-repo.sh": #"""
     set -euo pipefail
 
+    # The Docker CE key file's primary keys must be exactly the pinned set
+    # (sorted, space-separated): every key in the file is installed for apt.
+    DOCKER_KEY_FPRS='9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
+
     echo '  [guest] Adding Docker CE repository...'
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    key=$(mktemp)
+    trap 'rm -f "$key"' EXIT
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$key" https://download.docker.com/linux/ubuntu/gpg
+    # Each primary key's fingerprint is the fpr record right after its pub record.
+    actual=$(gpg --show-keys --with-colons "$key" \
+        | awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10 } { primary = 0 }' \
+        | LC_ALL=C sort | paste -sd ' ' -)
+    if [ "$actual" != "$DOCKER_KEY_FPRS" ]; then
+        echo "  [guest] ERROR: Docker primary key fingerprints are ${actual:-missing}," \
+             "expected $DOCKER_KEY_FPRS" >&2
+        exit 1
+    fi
+    gpg --dearmor < "$key" > /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
         https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
@@ -318,10 +333,25 @@ package enum EmbeddedResources {
     "gh-cli-repo.sh": #"""
     set -euo pipefail
 
+    # The GitHub CLI archive keyring's primary keys must be exactly the pinned set
+    # (sorted, space-separated): every key in the file is installed for apt.
+    GH_KEY_FPRS='2C6106201985B60E6C7AC87323F3D4EA75716059 7F38BBB59D064DBCB3D84D725612B36462313325'
+
     echo '  [guest] Adding GitHub CLI repository...'
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    key=$(mktemp)
+    trap 'rm -f "$key"' EXIT
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$key" \
+        https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    # Each primary key's fingerprint is the fpr record right after its pub record.
+    actual=$(gpg --show-keys --with-colons "$key" \
+        | awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10 } { primary = 0 }' \
+        | LC_ALL=C sort | paste -sd ' ' -)
+    if [ "$actual" != "$GH_KEY_FPRS" ]; then
+        echo "  [guest] ERROR: GitHub CLI primary key fingerprints are ${actual:-missing}," \
+             "expected $GH_KEY_FPRS" >&2
+        exit 1
+    fi
+    install -m 0644 "$key" /usr/share/keyrings/githubcli-archive-keyring.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
         https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list
@@ -330,15 +360,61 @@ package enum EmbeddedResources {
     "profiles/node-pre.sh": #"""
     set -euo pipefail
 
+    # NodeSource's apt repository, configured directly instead of running its
+    # setup script as root. The key file's primary keys must be exactly the pinned
+    # set (sorted, space-separated): every key in the file is installed for apt.
+    NODESOURCE_KEY_FPRS='6F71F525282841EEDAF851B42F59B5F99B1BE0B4'
+
     echo '  [guest] Adding NodeSource 22.x repository...'
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    install -m 0755 -d /etc/apt/keyrings
+    key=$(mktemp)
+    trap 'rm -f "$key"' EXIT
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$key" \
+        https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    # Each primary key's fingerprint is the fpr record right after its pub record.
+    actual=$(gpg --show-keys --with-colons "$key" \
+        | awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10 } { primary = 0 }' \
+        | LC_ALL=C sort | paste -sd ' ' -)
+    if [ "$actual" != "$NODESOURCE_KEY_FPRS" ]; then
+        echo "  [guest] ERROR: NodeSource primary key fingerprints are ${actual:-missing}," \
+             "expected $NODESOURCE_KEY_FPRS" >&2
+        exit 1
+    fi
+    gpg --dearmor < "$key" > /etc/apt/keyrings/nodesource.gpg
+    chmod a+r /etc/apt/keyrings/nodesource.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/nodesource.gpg] \
+        https://deb.nodesource.com/node_22.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list
+    printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' \
+        > /etc/apt/preferences.d/nodesource
 
     """#,
     "profiles/rust-post.sh": #"""
     set -euo pipefail
 
-    echo '  [guest] Installing Rust via rustup...'
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    # rustup-init at a pinned version, checked against its pinned SHA-256 before
+    # it runs; never the rustup.sh bootstrap script piped to a shell.
+    RUSTUP_VERSION=1.29.2
+    case "$(uname -m)" in
+        aarch64|arm64)
+            RUSTUP_TARGET=aarch64-unknown-linux-gnu
+            RUSTUP_SHA256=a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697 ;;
+        x86_64)
+            RUSTUP_TARGET=x86_64-unknown-linux-gnu
+            RUSTUP_SHA256=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4 ;;
+        *)
+            echo "  [guest] ERROR: no pinned rustup-init for $(uname -m)" >&2
+            exit 1 ;;
+    esac
+
+    echo "  [guest] Installing Rust via rustup-init ${RUSTUP_VERSION}..."
+    init=$(mktemp)
+    trap 'rm -f "$init"' EXIT
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$init" \
+        "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUSTUP_TARGET}/rustup-init"
+    echo "${RUSTUP_SHA256}  ${init}" | sha256sum -c --quiet -
+    chmod 0755 "$init"
+    "$init" -y --no-modify-path --default-toolchain stable </dev/null
     cp /root/.cargo/bin/* /usr/local/bin/ 2>/dev/null || true
 
     """#,
