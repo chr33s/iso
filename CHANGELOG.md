@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.8.0
+
+### Added
+
 - **macOS guests:** guest-driven computer use. With
   `"computer_use": {"guest_access": true}`, an agent in a macOS guest gets an
   `iso-cu` MCP server (`iso-macos-helper cu-mcp`) whose tools take frames of
@@ -18,7 +22,6 @@ SPDX-License-Identifier: Apache-2.0
   and `iso stop` audits the boot's counts as `boundary.guest_computer_use`.
   Templates built before this release need rebuilding for the `cu-mcp`
   subcommand.
-
 - **macOS guests:** `iso-sandbox macos cu respond` answers one expected
   guest TCC folder-access prompt (observe or auto mode): one click at most,
   based on a fresh frame, with the dialog verified gone. Keychain, password
@@ -27,6 +30,48 @@ SPDX-License-Identifier: Apache-2.0
 - **macOS guests:** refused computer-use control requests carry a
   `refusal` code and, for `cu-act`, `beforeInput`; clients branch on these
   rather than on `error` text.
+
+### Security
+
+- **Companion confinement:** `iso-proxy` and `iso-egress` can read only
+  system paths and their own binary (home directories and iso state are
+  unreadable), and reach only non-loopback ports 443 and 53 and the system
+  resolver socket; every loopback service is denied. Each probes these
+  denials before reading its startup input and refuses to start otherwise.
+- **Companion identity:** release builds start `iso-proxy` and `iso-egress`
+  only with a valid Developer ID signature of iso's own team (any valid
+  signature for an ad hoc signed iso), from a binary and parent directories
+  no other user can write. A recorded companion PID is signalled only while
+  it is still the process recorded at spawn (start time and executable in
+  `<name>.identity.json`), so a reused PID is never signalled.
+- **Broker readiness probe:** now requires the guest capability as
+  `Authorization: Bearer` and answers 401 without it, so other local
+  processes cannot use it as a signing oracle.
+- **Workspace pull:** the tar receiver runs under a deny-default Seatbelt
+  profile that can write only beneath its receive tree, execute nothing and
+  open no network connection.
+- **Apple VM device inventory:** before the guest's init runs, every VM
+  (brokered or vmnet) is stopped unbooted unless its devices are exactly the
+  expected socket device, network device (none for brokered) and empty
+  virtio-fs share, with no console, balloon, USB or graphics device.
+- **Runtime control socket:** at most 64 concurrent connections, a 30 s
+  request-line deadline, and every `iso-sandbox exec` bounded (600 s when no
+  `--timeout` is given, at most 24 h). Guest-authored `e2fsck` output is
+  truncated and control characters are replaced before it is logged.
+- **Stop and TTL:** a guest cannot wedge a stop. Helper writes are bounded
+  by their deadline, helper shutdown is abandoned after 20 s for a forced
+  stop, and the owner exits 240 s after a stop begins. A stop, TTL expiry or
+  signal during start is held until the start completes.
+- **Guest package sources:** the Docker, GitHub CLI and NodeSource apt keys
+  are checked against pinned fingerprints, NodeSource is configured directly
+  rather than by running its setup script as root, and the `rust` profile
+  installs a pinned, checksum-verified `rustup-init`.
+- **iso-ci:** preflight snapshots exclude more credential files (`*.jks`,
+  `.pgpass`, `terraform.tfstate`, `.config/gh/hosts.yml`, case-insensitive)
+  and list them to the user; split or sparse indexes and tracked paths under
+  a symlinked directory are refused. Only clean runs without mapped secrets
+  save shared cache entries, installation tokens are narrowed per call, and
+  mapped secrets are dropped when the run finishes.
 
 ## v0.7.0
 
