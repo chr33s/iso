@@ -514,7 +514,12 @@ private func renderedFrame(_ texts: [(String, Double, Double)]) throws -> Data {
   return try #require(rep.representation(using: .png, properties: [:]))
 }
 
-@Test func recognitionOverARenderedFrameFindsTheDialog() throws {
+// Vision text recognition throws `nilError` on GitHub-hosted macOS runner VMs.
+@Test(
+  .disabled(
+    if: ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+    "Vision text recognition is unavailable on hosted runners"))
+func recognitionOverARenderedFrameFindsTheDialog() throws {
   let png = try renderedFrame([
     ("\u{201C}Terminal\u{201D} would like to access files in your Desktop folder.", 700, 400),
     ("Don\u{2019}t Allow", 760, 520), ("Allow", 1000, 520),
@@ -529,5 +534,8 @@ private func renderedFrame(_ texts: [(String, Double, Double)]) throws -> Data {
   #expect(abs(d.allow.y - 531) < 12)
   #expect(d.allow.x > 1000 && d.allow.x < 1060)
   #expect(d.deny.x > 760 && d.deny.x < 860)
+}
+
+@Test func recognitionRefusesAnythingButAFrameSizedPNG() {
   #expect(throws: SandboxError.self) { try CUTextRecognition.lines(png: Data("not a png".utf8)) }
 }
