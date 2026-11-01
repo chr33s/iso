@@ -221,7 +221,7 @@ before signing any binary, without logging identity names or secret values.
 `ssh-keygen -Y sign` signature over its `SHA256SUMS`, in namespace
 `release-sums@chr33s`, by a key compiled into the running binary
 (`ReleaseSigners.keys` in `Sources/IsoHost/Update/ReleaseSignature.swift`). The
-private key is a maintainer's SSH key in their ssh-agent; it never reaches CI,
+private key is a maintainer's SSH key, in their ssh-agent or `~/.ssh`; it never reaches CI,
 which is why `release.yml` stops at a draft.
 
 [`scripts/sign-release.py`](scripts/sign-release.py) does the signing:
@@ -233,7 +233,8 @@ python3 scripts/sign-release.py vX.Y.Z      # --key PUB to pick a signer, --no-p
 It requires the release to still be a draft, downloads its tarballs,
 `SHA256SUMS` and `attestations.jsonl`, checks that `SHA256SUMS` lists exactly
 those tarballs with matching digests and that each attestation verifies with
-the same signer pin `iso update` uses, signs with the agent, verifies the
+the same signer pin `iso update` uses, signs (through the agent, or the
+private key beside a matching `~/.ssh/*.pub`), verifies the
 signature against [`.github/release-signers`](.github/release-signers), uploads
 `SHA256SUMS.sig` and publishes the release.
 
@@ -349,7 +350,8 @@ Apple Silicon machine.
    This triggers `release.yml`, which ends with a draft release.
 
 9. **Sign and publish.** Once `release.yml` is green, with the release
-   signing key in your ssh-agent:
+   signing key in your ssh-agent or `~/.ssh` (a passphrase-protected key
+   prompts for its passphrase):
 
    ```bash
    python3 scripts/sign-release.py vX.Y.Z

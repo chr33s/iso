@@ -19,7 +19,8 @@ release signing key. This script, run by a maintainer:
 4. uploads SHA256SUMS.sig and publishes the release (skipped by --no-publish).
 
 --key names the public key file of the signer to use; the default is the
-first key in .github/release-signers.
+first key in .github/release-signers, read from a matching ~/.ssh/*.pub when
+there is one so that a key not loaded in an agent can sign from its file.
 """
 
 import argparse
@@ -56,6 +57,27 @@ def signer_keys():
         if line.strip() and not line.startswith("#"):
             keys.append(" ".join(line.split()[-2:]))
     return keys
+
+
+def default_key(work):
+    """The first listed signer's public key file.
+
+    A matching ~/.ssh/*.pub is preferred: ssh-keygen tries the agent first and
+    then the private key beside it, so a passphrase-protected key that is not
+    loaded in an agent still signs. Otherwise the key is written to `work`,
+    which only an agent holding the private key can sign with.
+    """
+    wanted = signer_keys()[0]
+    for pub in sorted((Path.home() / ".ssh").glob("*.pub")):
+        try:
+            fields = pub.read_text().split()
+        except OSError:
+            continue
+        if " ".join(fields[:2]) == wanted:
+            return pub
+    key = work / "signer.pub"
+    key.write_text(wanted + "\n")
+    return key
 
 
 def check_checksums(directory, tarballs):
@@ -130,10 +152,7 @@ def main():
                 "--deny-self-hosted-runners",
                 "--bundle", str(work / "attestations.jsonl"))
 
-        key = args.key
-        if key is None:
-            key = work / "signer.pub"
-            key.write_text(signer_keys()[0] + "\n")
+        key = args.key or default_key(work)
         sums = work / "SHA256SUMS"
         run("ssh-keygen", "-Y", "sign", "-f", str(key), "-n", NAMESPACE, str(sums))
         signature = work / "SHA256SUMS.sig"
