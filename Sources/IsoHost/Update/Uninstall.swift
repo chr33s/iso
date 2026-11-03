@@ -6,7 +6,8 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// `iso uninstall`: remove this binary and, unless `--keep-data`, the
+/// `iso uninstall`: remove this binary and the companion executables
+/// installed beside it and, unless `--keep-data`, the
 /// owned backend state (`<data_dir>/backends/apple-container-v1`) and the
 /// update-check state. Configuration and unrelated files under `data_dir`
 /// are never removed. This build's SSH config blocks are always stripped.
@@ -74,13 +75,14 @@ package struct Uninstaller {
     }
     if try decideRemoveData(options) {
       try purgeAllData()
+      // Decide containment while the data directory still exists to
+      // canonicalize; afterwards the check cannot tell.
+      let configKept = !Self.configPathIsUnderDataDirectory(configPath, ownedDataDirectory)
       wipe(ownedDataDirectory, failure: .warn("Failed to remove data dir"))
       do { try UpdateCheck.removeState(home: home, diagnostics: diagnostics) } catch {
         diagnostics.debug("Failed to remove update-check state (non-fatal): \(error)")
       }
-      if !Self.configPathIsUnderDataDirectory(configPath, ownedDataDirectory),
-        pathExists(configPath)
-      {
+      if configKept, pathExists(configPath) {
         diagnostics.log(
           .info, "Config at \(configPath) is outside the data directory and was not removed")
       }
@@ -121,6 +123,11 @@ package struct Uninstaller {
     let (instances, images) = counts()
     diagnostics.log(.info, "This will remove:")
     diagnostics.log(.info, "  binary:    \(binaryPath)")
+    if !Self.isDevTargetPath(binaryPath) {
+      for companion in Self.companions(of: binaryPath) {
+        diagnostics.log(.info, "  companion: \(companion)")
+      }
+    }
     if pathExists(ownedDataDirectory) {
       diagnostics.log(
         .info,
@@ -195,12 +202,27 @@ package struct Uninstaller {
       )
       return
     }
+    for companion in Self.companions(of: path) {
+      if unlink(companion) != 0 {
+        diagnostics.warn("Failed to remove \(companion): \(rustIOError(errno))")
+      }
+    }
     guard unlink(path) == 0 else {
       let code = errno
       if code == EACCES || code == EPERM {
         throw HostError("Cannot remove \(path): \(rustIOError(code)). Try `sudo iso uninstall`.")
       }
       throw ContextError("Failed to remove binary at \(path)", cause: HostError(rustIOError(code)))
+    }
+  }
+
+  /// The executables `install.sh` and `iso update` place beside `iso`, when
+  /// present as regular files (never followed through a symlink).
+  static func companions(of binaryPath: String) -> [String] {
+    let directory = (binaryPath as NSString).deletingLastPathComponent
+    return SelfReplace.companionNames.map { directory + "/" + $0 }.filter { path in
+      var status = stat()
+      return lstat(path, &status) == 0 && status.st_mode & S_IFMT == S_IFREG
     }
   }
 

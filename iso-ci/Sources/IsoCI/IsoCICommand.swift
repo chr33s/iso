@@ -43,9 +43,18 @@ struct GlobalOptions: ParsableArguments {
   var isoConfig: String?
   @Flag(help: "Machine-readable JSON output with typed status codes") var json = false
 
+  func validate() throws {
+    do throws(CIError) {
+      _ = try DataRoot.resolve(root, environment: ProcessInfo.processInfo.environment)
+    } catch {
+      throw ValidationError(error.message)
+    }
+  }
+
+  /// Valid once `validate()` has accepted the options.
   var dataRoot: DataRoot {
-    if let root, root.hasPrefix("/") { return DataRoot(path: root) }
-    return DataRoot.default(environment: ProcessInfo.processInfo.environment)
+    (try? DataRoot.resolve(root, environment: ProcessInfo.processInfo.environment))
+      ?? DataRoot(path: NSHomeDirectory() + "/.iso-ci")
   }
 
   func dispatcher() -> ControlDispatcher {
@@ -150,7 +159,7 @@ struct Serve: ParsableCommand {
       if install || uninstall {
         let result = try UserService.apply(
           install: install, root: global.dataRoot, executable: try Runtime.currentExecutable(),
-          iso: global.iso)
+          iso: global.iso, isoConfig: global.isoConfig, interval: interval)
         Output.emit(result, json: global.json) { _ in
           Output.line(
             install
@@ -160,7 +169,7 @@ struct Serve: ParsableCommand {
       }
       let runtime = try Runtime.open(
         root: global.dataRoot, iso: global.iso, isoConfig: global.isoConfig,
-        environment: ProcessInfo.processInfo.environment)
+        environment: ProcessInfo.processInfo.environment, interval: interval)
       try Services.install(runtime)
       Output.note("controller serving \(global.dataRoot.path)")
       try runtime.controller.run()
@@ -438,12 +447,10 @@ struct Logs: ParsableCommand {
         var params: [String: JSONValue] = ["run": .string(target), "job": .string(job)]
         if let attempt { params["attempt"] = .integer(Int64(attempt)) }
         let value = try global.call("job.logs", .object(params))
-        if global.json {
-          Output.print(value)
-          return
+        Output.emit(value, json: global.json) { value in
+          for segment in value["logs"]?.arrayValue ?? [] { Output.line(segment.stringValue ?? "") }
+          if value["truncated"] == .bool(true) { Output.line("[logs truncated]") }
         }
-        for segment in value["logs"]?.arrayValue ?? [] { Output.line(segment.stringValue ?? "") }
-        if value["truncated"] == .bool(true) { Output.line("[logs truncated]") }
       } else if follow {
         try Self.follow(global: global, target: target, after: after)
       } else {
@@ -454,14 +461,14 @@ struct Logs: ParsableCommand {
     }
   }
 
+  /// With `--json`, each batch of events is one enveloped line.
   static func print(_ value: JSONValue, json: Bool) {
-    if json {
-      Output.print(value)
-      return
-    }
-    for event in value["events"]?.arrayValue ?? [] {
-      let time = Date(timeIntervalSince1970: Double(event["at"]?.intValue ?? 0))
-      Output.line("\(time.ISO8601Format()) \(string(event["kind"])) \(string(event["message"]))")
+    Output.emit(value, json: json) { value in
+      for event in value["events"]?.arrayValue ?? [] {
+        let time = Date(timeIntervalSince1970: Double(event["at"]?.intValue ?? 0))
+        Output.line(
+          "\(time.ISO8601Format()) \(string(event["kind"])) \(string(event["message"]))")
+      }
     }
   }
 
@@ -477,9 +484,7 @@ struct Logs: ParsableCommand {
       print(value, json: global.json)
       cursor = value["cursor"]?.intValue ?? cursor
       let state = try global.call("inspect", ["target": .string(target)])
-      if state["settled"] == .bool(true)
-        || state["allocation"]?["vm_cleanup"] == .string("verified")
-      {
+      if state["settled"] == .bool(true) {
         let rest = try global.call(
           "events", ["subject": .string(target), "after": .integer(cursor)])
         print(rest, json: global.json)
@@ -524,7 +529,8 @@ struct Debug: ParsableCommand {
       let arguments = (value["arguments"]?.arrayValue ?? []).compactMap(\.stringValue)
       Output.note("debug session \(session) (closes when you exit)")
       let pid = try Subprocess.spawn(
-        ssh, arguments, Subprocess.hostConnectionEnvironment(), stdin: 0, stdout: 1, stderr: 2)
+        ssh, arguments, Subprocess.hostConnectionEnvironment(), stdin: 0, stdout: 1, stderr: 2,
+        group: .caller)
       var raw: Int32 = 0
       while waitpid(pid, &raw, 0) < 0 && errno == EINTR {}
       status = (raw & 0x7f) == 0 ? (raw >> 8) & 0xff : 1

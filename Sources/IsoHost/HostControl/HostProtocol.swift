@@ -259,17 +259,18 @@ package enum Maintenance: Sendable, Equatable {
     }
   }
 
-  /// At least one bounded field; disk only grows (checked natively).
+  /// At least one field, within `VMSpec`'s bounds so the recorded spec can
+  /// follow the native change; disk only grows (checked natively).
   package static func validatedResize(cpus: UInt32?, memoryMiB: UInt64?, diskGiB: UInt64?)
     throws(HostControlError) -> Maintenance
   {
     guard cpus != nil || memoryMiB != nil || diskGiB != nil else {
       throw .invalidRequest("resize needs cpus, memory_mib or disk_gib")
     }
-    if let cpus, !(1...UInt32(UInt8.max)).contains(cpus) {
+    if let cpus, !(1...VMSpec.maxCPUs).contains(cpus) {
       throw .invalidRequest("cpus out of range")
     }
-    if let memoryMiB, !(256...UInt64(UInt32.max)).contains(memoryMiB) {
+    if let memoryMiB, !(256...(1 << 20)).contains(memoryMiB) {
       throw .invalidRequest("memory_mib out of range")
     }
     if let diskGiB, !(1...4_096).contains(diskGiB) {

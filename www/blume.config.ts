@@ -22,6 +22,8 @@ const design = [
     "editor-providers-spec",
     "editor-hardening",
     "macos-guest-computer-use",
+    "guest-driven-computer-use",
+    "permission-dialog-auto-response",
     "macos-computer-use-qualification-plan",
     "macos-computer-use-q0-spike",
     "macos-vz-context-experiment",
@@ -74,7 +76,12 @@ export default defineConfig({
                 },
                 {
                     label: "Security",
-                    items: ["/trust-model", "/credential-proxy", "/policy"],
+                    items: [
+                        "/trust-model",
+                        "/credential-proxy",
+                        "/policy",
+                        "/xcode-security-settings",
+                    ],
                 },
                 {
                     label: "Reference",

@@ -432,13 +432,26 @@ package final class ControllerStore: Sendable {
 
   // MARK: Events
 
+  /// The longest prefix of `text` within `maxBytes` UTF-8 bytes, cut on a
+  /// Unicode scalar boundary.
+  static func prefix(_ text: String, maxBytes: Int) -> String {
+    var out = String.UnicodeScalarView()
+    var bytes = 0
+    for scalar in text.unicodeScalars {
+      bytes += UTF8.width(scalar)
+      guard bytes <= maxBytes else { break }
+      out.append(scalar)
+    }
+    return String(out)
+  }
+
   /// Appends one bounded event. Messages are bounded and control-free; data
   /// values are nonsecret identifiers.
   @discardableResult
   package func event(
     _ subject: String, _ kind: String, _ message: String, data: [String: String] = [:]
   ) throws(CIError) -> Int64 {
-    let bounded = String(CIError.bounded(message).utf8.prefix(Self.maxEventMessageBytes)) ?? ""
+    let bounded = Self.prefix(CIError.bounded(message), maxBytes: Self.maxEventMessageBytes)
     try db.query(
       "INSERT INTO events(at, subject, kind, message, data) VALUES (?, ?, ?, ?, ?)",
       [

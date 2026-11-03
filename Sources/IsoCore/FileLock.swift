@@ -91,10 +91,48 @@ package final class FileLock: Sendable {
 
   /// `.<name>.lock` beside `target`, shared by all writers of that file.
   package static func sibling(of target: String) throws(HostError) -> FileLock {
+    try FileLock(path: siblingPath(of: target))
+  }
+
+  static func siblingPath(of target: String) -> String {
     let parent = (target as NSString).deletingLastPathComponent
     let name = (target as NSString).lastPathComponent
     let lockName = ".\(name.isEmpty ? "iso" : name).lock"
-    return try FileLock(path: parent.isEmpty ? lockName : parent + "/" + lockName)
+    return parent.isEmpty ? lockName : parent + "/" + lockName
+  }
+
+  /// `sibling(of:)` for a directory that a holder may remove: the directory
+  /// is never created, and once the lock is held the path must still name
+  /// the locked file. Nil when the directory is gone, or was removed (with
+  /// the lock) while this process waited, so a waiter never ends up holding
+  /// an unlinked lock beside a new owner of a recreated path.
+  package static func siblingInExistingDirectory(of target: String) throws(HostError)
+    -> FileLock?
+  {
+    let path = siblingPath(of: target)
+    // The C path is borrowed for this call only.
+    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
+    guard fd >= 0 else {
+      let code = errno
+      if code == ENOENT { return nil }
+      throw .posix("Failed to create lock file", path, code)
+    }
+    while flock(fd, LOCK_EX) != 0 {
+      let code = errno
+      if code == EINTR { continue }
+      close(fd)
+      throw .posix("Failed to acquire lock on", path, code)
+    }
+    var held = stat()
+    var named = stat()
+    // fstat and lstat each write one initialized stat value, borrowed for the call.
+    guard unsafe fstat(fd, &held) == 0, unsafe lstat(path, &named) == 0,
+      held.st_dev == named.st_dev, held.st_ino == named.st_ino
+    else {
+      close(fd)
+      return nil
+    }
+    return FileLock(descriptor: fd)
   }
 
   package func release() {

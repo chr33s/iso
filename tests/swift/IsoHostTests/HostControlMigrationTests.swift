@@ -8,6 +8,10 @@ import Testing
 /// The production `AppleNativeHost` adapter and migration, driven through the
 /// real `AppleBackend` against the stateful fake runtime.
 @Suite(.serialized) struct HostControlNativeAdapterTests {
+  /// Other `iso` processes on the developer's machine must not block these
+  /// tests; `anotherIsoProcessBlocksMigration` covers the blocking itself.
+  let noWriters: () -> [pid_t] = { [] }
+
   func supervisor(_ install: FakeInstallation) throws -> HostSupervisor {
     var settings = HostSupervisor.Settings()
     settings.dispatch = .manual
@@ -101,7 +105,8 @@ import Testing
     let instance = try legacy(install, "old")
     let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
     let preview = try HostMigration.preview(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     #expect(preview.legacyInstances.map(\.name.rawValue) == ["old"])
     #expect(preview.legacyInstances.first?.adoptable == true)
     try #require(preview.eligible, "\(preview.blockers)")
@@ -112,9 +117,11 @@ import Testing
     #expect(failure(call(pending, .vmList(cursor: nil, limit: 10))) == .migrationRequired)
     // The service completes activation (resumable: running it twice is harmless).
     try HostMigration.complete(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     try HostMigration.complete(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     #expect(try HostMigration.loadRecord(install.config)?.state == .active)
     // Older binaries (owner schema 1 only) now reject the root; this build reads it.
     let ownerBytes = try #require(try StateStore.readControlFile(Owner.path(install.config)))
@@ -153,10 +160,12 @@ import Testing
     let instance = try legacy(install, "old")
     let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
     let preview = try HostMigration.preview(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     _ = try HostMigration.prepare(config: install.config, preview: preview)
     try HostMigration.complete(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     #expect(try ServiceAdoption.load(instance) != nil)
     // A corrupt marker is an error, not "not adopted": the fence holds.
     let marker = ServiceAdoption.path(instance)
@@ -177,7 +186,8 @@ import Testing
     let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
     try install.backend.startExisting(instance)
     let running = try HostMigration.preview(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     #expect(running.blockers.contains { $0.contains("is running") })
     #expect(throws: HostControlError.self) {
       try HostMigration.prepare(config: install.config, preview: running)
@@ -186,13 +196,15 @@ import Testing
     #expect(install.backend.isRunning(instance))
     try install.backend.stopUnproven(instance)
     let ready = try HostMigration.preview(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     _ = try HostMigration.prepare(config: install.config, preview: ready)
     // The instance starts again before the service completes: completion refuses.
     try install.backend.startExisting(instance)
     #expect(throws: HostControlError.self) {
       try HostMigration.complete(
-        config: install.config, backend: install.backend, diagnostics: diagnostics)
+        config: install.config, backend: install.backend, diagnostics: diagnostics,
+        otherWriters: noWriters)
     }
     #expect(try ServiceAdoption.load(instance) == nil)
     try HostMigration.rollback(config: install.config)
@@ -207,7 +219,8 @@ import Testing
     _ = try legacy(install, "idle")
     let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
     let ready = try HostMigration.preview(
-      config: install.config, backend: install.backend, diagnostics: diagnostics)
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
     _ = try HostMigration.prepare(config: install.config, preview: ready)
     // A service that could not complete activation still holds its lock.
     let store = try OperationStore(root: HostService.root(install.config))
@@ -218,5 +231,33 @@ import Testing
     DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { service.release() }
     try HostMigration.rollback(config: install.config, waitingForService: .seconds(5))
     #expect(try HostMigration.loadRecord(install.config)?.state == .rolledBack)
+  }
+
+  @Test func anotherIsoProcessBlocksMigration() throws {
+    let install = try FakeInstallation()
+    defer { install.remove() }
+    let instance = try legacy(install, "idle")
+    let diagnostics = Diagnostics(verbosity: 0, sink: { _ in })
+    let blocked = try HostMigration.preview(
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: { [4242] })
+    #expect(blocked.otherWriters == [4242])
+    #expect(
+      blocked.blockers.contains { $0.contains("other iso processes are running (pids 4242)") })
+    #expect(throws: HostControlError.self) {
+      try HostMigration.prepare(config: install.config, preview: blocked)
+    }
+    // A writer that appears after prepare stops the service's completion too.
+    let ready = try HostMigration.preview(
+      config: install.config, backend: install.backend, diagnostics: diagnostics,
+      otherWriters: noWriters)
+    _ = try HostMigration.prepare(config: install.config, preview: ready)
+    #expect(throws: HostControlError.self) {
+      try HostMigration.complete(
+        config: install.config, backend: install.backend, diagnostics: diagnostics,
+        otherWriters: { [4242] })
+    }
+    #expect(try ServiceAdoption.load(instance) == nil)
+    #expect(try HostMigration.loadRecord(install.config)?.state == .prepared)
   }
 }

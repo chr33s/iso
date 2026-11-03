@@ -683,8 +683,6 @@ private let small: AuditRetention = {
     name: try InstanceName("my-project"), index: InstanceIndex(1)!, directory: directory,
     image: try ImageName("default"))
   let canary = "sk-ant-canary-\(UUID().uuidString)"
-  setenv("ANTHROPIC_API_KEY", canary, 1)
-  defer { unsetenv("ANTHROPIC_API_KEY") }
   try PolicyBoot.begin(instance, configured: nil, diagnostics: Diagnostics(verbosity: 0))
   BoundaryAudit.record(
     instance,

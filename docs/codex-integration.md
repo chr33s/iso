@@ -82,10 +82,18 @@ Every field is optional. An empty `codex` object (or omitting it entirely) keeps
 
 ### API key forwarding
 
-The default auth mode is `"auth": "api_key"`. In this mode, isolate forwards
-`OPENAI_API_KEY` to the guest via SSH `SendEnv` on every session: `iso codex`,
-`iso shell`, and `iso exec` alike. The key is never written to disk inside
-the guest.
+The default auth mode is `"auth": "api_key"`. Under the default
+`proxy.mode: "required"` (the `provider-only` baseline) the key does not reach
+the guest: Codex calls the [credential proxy](credential-proxy.md), which
+injects the key stored by `iso proxy setup --openai`. A remote-model VM with
+agents and no provider proxy fails at `iso up`/`iso start`. See
+[`proxy.mode`](configuration.md#proxymode).
+
+Raw forwarding applies only when `proxy.mode` is `"auto"` with no OpenAI proxy
+configured, or `"off"`, and `egress` is not `"none"` (for example with the
+`networked` preset). isolate then forwards `OPENAI_API_KEY` to the guest via
+SSH `SendEnv` on every session: `iso codex`, `iso shell`, and `iso exec` alike.
+The key is never written to disk inside the guest.
 
 Resolution order:
 
@@ -213,7 +221,7 @@ setting it to `false` disables copying, and `null` is rejected.
 
 `env_forward` lists additional environment variable names to forward from the host to the guest via SSH `SendEnv`. These are forwarded on every SSH session, not just during bootstrap.
 
-`OPENAI_API_KEY` and `GITHUB_TOKEN` are handled through their own mechanisms and do not need to appear here.
+`OPENAI_API_KEY` and `GITHUB_TOKEN` are handled through their own mechanisms and do not need to appear here. Provider credential variables are an error here under the default `proxy.mode: "required"`.
 
 ### MCP server registration
 

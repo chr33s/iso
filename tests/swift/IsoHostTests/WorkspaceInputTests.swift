@@ -19,6 +19,10 @@ private func git(_ directory: String, _ arguments: String...) throws {
   }
 }
 
+/// One snapshot state directory for the run: each capture makes its own
+/// entry inside it, which the snapshot removes.
+private let inputState = try! scratchDirectory("inputs")
+
 private var hasGit: Bool { FileManager.default.isExecutableFile(atPath: "/usr/bin/git") }
 
 private func capture(
@@ -27,13 +31,14 @@ private func capture(
 ) throws -> InputSnapshot {
   try InputSnapshot.capture(
     root: root, input: input, budget: budget ?? InputBudget(input.limits),
-    stateDirectory: try scratchDirectory("inputs"), wholeRoot: wholeRoot)
+    stateDirectory: inputState, wholeRoot: wholeRoot)
 }
 
 @Test(arguments: ["2", "4"])
 func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   guard hasGit else { return }
   let root = try scratchDirectory("repo")
+  defer { removeScratch(root) }
   try git(root, "init", "-q")
   try git(root, "config", "index.version", version)
   // `long/…` then `z.txt`: a v4 prefix strip of 128 bytes or more needs
@@ -53,18 +58,22 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   let paths = try #require(try GitIndexInventory.trackedPaths(root))
   #expect(paths == expected)
   #expect(!FileManager.default.fileExists(atPath: marker))
-  #expect(try GitIndexInventory.trackedPaths(try scratchDirectory("plain")) == nil)
+  let plain = try scratchDirectory("plain")
+  defer { removeScratch(plain) }
+  #expect(try GitIndexInventory.trackedPaths(plain) == nil)
 }
 
 @Test func unreadableIndexFormsAreRefusedNotGuessed() throws {
   #expect(throws: GitIndexInventory.Unsupported.self) { try GitIndexInventory.parse([]) }
-  var corrupt = Array("DIRC".utf8) + [0, 0, 0, 2, 0, 0, 0, 0] + [UInt8](repeating: 0, count: 20)
+  // A non-zero trailer that does not verify (an all-zero one is skipHash).
+  var corrupt = Array("DIRC".utf8) + [0, 0, 0, 2, 0, 0, 0, 0] + [UInt8](repeating: 1, count: 20)
   #expect(throws: GitIndexInventory.Unsupported.self) { try GitIndexInventory.parse(corrupt) }
   corrupt[7] = 9
   #expect(throws: GitIndexInventory.Unsupported.self) { try GitIndexInventory.parse(corrupt) }
   guard hasGit else { return }
   // Submodules and unmerged entries need explicit path selection.
   let root = try scratchDirectory("conflict")
+  defer { removeScratch(root) }
   try git(root, "init", "-q")
   try writeFile(root + "/f", "base\n")
   try git(root, "add", "f")
@@ -97,6 +106,7 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
 @Test func aTrackedSnapshotSendsSelectedBytesOnly() throws {
   guard hasGit else { return }
   let root = try scratchDirectory("ws")
+  defer { removeScratch(root) }
   try git(root, "init", "-q")
   for path in ["src/main.c", ".env", "deleted.txt", "keep/notes.md", "keep/old.md", "id_rsa"] {
     try writeFile(root + "/" + path, path)
@@ -136,6 +146,7 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
 
 @Test func aNonGitWorkspaceNeedsExplicitPaths() throws {
   let root = try scratchDirectory("plainws")
+  defer { removeScratch(root) }
   try writeFile(root + "/a.txt", "a")
   try writeFile(root + "/node_modules/x.js", "x")
   #expect(throws: HostError.self) { try capture(root) }
@@ -151,7 +162,9 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
 
 @Test func linksHardLinksAndSpecialFilesAreNotSent() throws {
   let root = try scratchDirectory("links")
+  defer { removeScratch(root) }
   let outside = try scratchDirectory("outside")
+  defer { removeScratch(outside) }
   try writeFile(outside + "/secret", "host")
   try writeFile(root + "/a.txt", "a")
   try FileManager.default.createSymbolicLink(atPath: root + "/ok", withDestinationPath: "a.txt")
@@ -180,6 +193,7 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
 /// writing through the link could leave the root or the snapshot tree.
 @Test func pathsBelowASelectedLinkAreNotCopiedThroughIt() throws {
   let root = try scratchDirectory("through-link")
+  defer { removeScratch(root) }
   try writeFile(root + "/a/f", "host")
   try FileManager.default.createSymbolicLink(atPath: root + "/a/lnk", withDestinationPath: ".")
   let input = WorkspaceInputConfig(
@@ -197,7 +211,9 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
 
 @Test func limitsAreSharedAcrossRootsAndNeverUnlimited() throws {
   let first = try scratchDirectory("r1")
+  defer { removeScratch(first) }
   let second = try scratchDirectory("r2")
+  defer { removeScratch(second) }
   for i in 0..<3 {
     try writeFile(first + "/f\(i)", "x")
     try writeFile(second + "/g\(i)", "x")
@@ -214,6 +230,7 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   #expect(throws: HostError.self) { try capture(first, input) }
   // Each file fits, but together they exceed the total.
   let total = try scratchDirectory("r3")
+  defer { removeScratch(total) }
   for i in 0..<2 { try writeFile(total + "/h\(i)", String(repeating: "z", count: 10)) }
   let narrow = WorkspaceInputConfig(
     mode: .paths, paths: [.init(path: ".", recursive: true)], exclude: [], secretAllow: [],
@@ -254,10 +271,13 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
 /// or omitted path name reaches the audit log.
 @Test func aSentSnapshotIsAuditedWithCountsAndNoPathNames() throws {
   let root = try scratchDirectory("audited")
+  defer { removeScratch(root) }
   try writeFile(root + "/visible-name.txt", "abc")
   try writeFile(root + "/sub/other-name.txt", "de")
   try writeFile(root + "/.env", "TOKEN=hunter2")
-  let instance = try testInstance(try scratchDirectory("audit-instance") + "/instances/dev")
+  let scratch = try scratchDirectory("audit-instance")
+  defer { removeScratch(scratch) }
+  let instance = try testInstance(scratch + "/instances/dev")
   let input = WorkspaceInputConfig(
     mode: .paths, paths: [.init(path: ".", recursive: true)], exclude: [], secretAllow: [],
     limits: .ceilings)
@@ -270,7 +290,7 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
     knownHosts: root + "/known_hosts", alias: "iso-test.iso")
   _ = try? transfer.sendSnapshot(
     target, root: root, to: GuestPath("/home/ubuntu/w"), input: input,
-    budget: InputBudget(input.limits), stateDirectory: try scratchDirectory("audit-inputs"),
+    budget: InputBudget(input.limits), stateDirectory: inputState,
     audit: instance)
   let record = try #require(
     try BoundaryAudit.load(instance).last { $0["event"] as? String == "input_snapshot" })

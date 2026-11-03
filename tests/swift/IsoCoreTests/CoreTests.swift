@@ -32,7 +32,11 @@ func rejectsOtherURLs(_ url: String) {
 
 @Test func repoSlugValidation() throws {
   #expect(throws: Never.self) { try RepoSlug("user-name/repo.name_v2") }
-  for bad in ["trailofbits", "/iso", "trailofbits/", "a/b/c", "owner!/repo", "o/r e", "ö/r", ""] {
+  #expect(throws: Never.self) { try RepoSlug("o/.github") }
+  #expect(throws: Never.self) { try RepoSlug("o/...") }
+  for bad in ["trailofbits", "/iso", "trailofbits/", "a/b/c", "owner!/repo", "o/r e", "ö/r", ""]
+    + ["o/.", "o/..", "../user", "./r", "../.."]
+  {
     #expect(throws: ValidationError.self) { try RepoSlug(bad) }
   }
   let slug = try RepoSlug("owner/repo")
@@ -210,4 +214,20 @@ func rejectsOtherURLs(_ url: String) {
   for bad in ["", "30s", "59", "721h", "1d", "-1h", "h"] {
     #expect(throws: ValidationError.self, "\(bad)") { try SessionTTL(parsing: bad) }
   }
+}
+
+@Test(arguments: [
+  "plain", "", "it's", "a'\u{301};echo INJECTED;'\u{301}b", "x'\u{200D}y", "'\u{301}", "''",
+])
+func shellEscapeRoundTripsThroughSh(_ value: String) throws {
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: "/bin/sh")
+  process.arguments = ["-c", "printf %s " + shellEscape(value)]
+  let pipe = Pipe()
+  process.standardOutput = pipe
+  try process.run()
+  let output = pipe.fileHandleForReading.readDataToEndOfFile()
+  process.waitUntilExit()
+  #expect(process.terminationStatus == 0)
+  #expect(String(decoding: output, as: UTF8.self) == value)
 }

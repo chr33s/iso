@@ -103,7 +103,24 @@ cmd_build() {
   swift_module IsoFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
   local t
   for t in "${TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
+  sources_stamp > "$BUILD/targets.sha256"
   echo "built: ${TARGETS[*]} in $BUILD" >&2
+}
+
+# SHA-256 over every Swift input of the targets and this script (which holds
+# the compiler flags), so a stale build from another revision is rebuilt.
+sources_stamp() {
+  (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh Sources/IsoCore/*.swift \
+    iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift \
+    fuzz/Targets/*.swift fuzz/Entrypoints/*.swift) | shasum -a 256 | cut -d' ' -f1
+}
+
+ensure_built() { # target
+  if [[ -x "$BUILD/$1" && -f "$BUILD/targets.sha256" \
+    && "$(cat "$BUILD/targets.sha256")" == "$(sources_stamp)" ]]; then
+    return
+  fi
+  cmd_build
 }
 
 limits() {
@@ -114,7 +131,7 @@ limits() {
 cmd_run() { # target [seconds] [seed]
   is_target "${1:-}" || die "usage: run {${TARGETS[*]}} [SECONDS] [SEED]"
   local target="$1" seconds="${2:-60}" seed="${3:-0}"
-  [[ -x "$BUILD/$target" ]] || cmd_build
+  ensure_built "$target"
   local work="$BUILD/corpus/$target" artifacts="$ROOT/fuzz/artifacts/$target/"
   mkdir -p "$work" "$artifacts"
   echo "campaign: target=$target seconds=$seconds seed=$seed revision=$(git -C "$ROOT" rev-parse HEAD)" >&2
@@ -135,7 +152,7 @@ cmd_replay() { # target [files...]
   is_target "${1:-}" || die "usage: replay {${TARGETS[*]}} [FILE...]"
   local target="$1"
   shift
-  [[ -x "$BUILD/$target" ]] || cmd_build
+  ensure_built "$target"
   local inputs=("$@")
   if [[ ${#inputs[@]} -eq 0 ]]; then
     while IFS= read -r -d '' file; do inputs+=("$file"); done \
@@ -148,14 +165,14 @@ cmd_replay() { # target [files...]
 
 cmd_merge() { # target
   is_target "${1:-}" || die "usage: merge {${TARGETS[*]}}"
-  [[ -x "$BUILD/$1" ]] || cmd_build
+  ensure_built "$1"
   # shellcheck disable=SC2046
   "$BUILD/$1" $(limits) -merge=1 "$ROOT/fuzz/corpus/$1" "$BUILD/corpus/$1"
 }
 
 cmd_minimize() { # target crash
   is_target "${1:-}" && [[ -f "${2:-}" ]] || die "usage: minimize {${TARGETS[*]}} CRASH_FILE"
-  [[ -x "$BUILD/$1" ]] || cmd_build
+  ensure_built "$1"
   # shellcheck disable=SC2046
   "$BUILD/$1" $(limits) -minimize_crash=1 -runs=100000 -exact_artifact_path="$2.min" "$2"
   echo "minimized: $2.min" >&2

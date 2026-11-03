@@ -73,9 +73,19 @@ extension SandboxRuntime {
     _ = try checked(
       ["start"],
       [name.rawValue, "--wait-seconds", String(settings.bootTimeout.seconds)]
-        + (expiresAt.map { ["--expires-at", String(Int64($0.timeIntervalSince1970))] } ?? [])
+        + (expiresAt.map { ["--expires-at", String(Self.epochSeconds($0))] } ?? [])
         + (networkPolicy.map { ["--network-policy", $0.rawValue] } ?? []),
       deadline: bootDeadline + .seconds(10), limit: Self.jsonLimit, cancellable: true)
+  }
+
+  /// Whole seconds since the epoch, clamped to `Int64`: a saturated
+  /// deadline must not trap the converting process.
+  static func epochSeconds(_ date: Date) -> Int64 {
+    let seconds = date.timeIntervalSince1970.rounded(.down)
+    if seconds.isNaN { return 0 }
+    if seconds >= 0x1p63 { return .max }
+    if seconds < -0x1p63 { return .min }
+    return Int64(seconds)
   }
 
   /// Exit status ignored: callers confirm the state with `inspect`.

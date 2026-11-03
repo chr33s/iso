@@ -10,15 +10,19 @@ import Testing
 /// arguments, standing in for `~/.ssh/config`: a guest role must discard it
 /// (`-F none`), and the management role, which keeps its trusted
 /// configuration by design, must still override the authority it grants.
-@Suite struct ManagedSSHRoleTests {
+@Suite final class ManagedSSHRoleTests: Sendable {
   static let ssh = "/usr/bin/ssh"
 
   let hostile: String
   /// ssh ignores an `-i` file that does not exist; iso's key always does.
   let key: String
 
+  let directory: String
+
+  deinit { removeScratch(directory) }
+
   init() throws {
-    let directory = try scratchDirectory("ssh-roles")
+    directory = try scratchDirectory("ssh-roles")
     key = directory + "/key"
     try writeFile(key, "not a real key\n")
     hostile = directory + "/hostile-config"
@@ -153,7 +157,7 @@ import Testing
     let output = try ProcessRunner().capture(
       .init(
         executable: Self.ssh,
-        arguments: unroutable.controlExitArguments(try scratchDirectory("gone") + "/forwards.sock"),
+        arguments: unroutable.controlExitArguments(directory + "/gone/forwards.sock"),
         environment: [:], deadline: .seconds(20), outputLimit: 1 << 16, overflow: .drain))
     #expect(!output.termination.succeeded)
     #expect(String(decoding: output.stderr, as: UTF8.self).contains("Control socket connect"))

@@ -141,8 +141,7 @@ verify_checksum() {
     elif command -v shasum > /dev/null 2>&1; then
         actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
     else
-        info "Warning: no sha256sum or shasum found, skipping checksum verification"
-        return 0
+        die "Neither sha256sum nor shasum found; the checksum check is mandatory"
     fi
 
     if [ "$actual" != "$expected" ]; then
@@ -226,7 +225,9 @@ need curl
 need ssh-keygen
 detect_platform
 
-VERSION="${VERSION:-$(latest_version)}"
+# `|| true`: under `set -e` a failed lookup would exit here, before the
+# message below.
+VERSION="${VERSION:-$(latest_version || true)}"
 [ -n "$VERSION" ] || die "Could not determine latest version. Set VERSION= explicitly."
 # v0.1.0 and v0.2.0 predate iso-macos-helper, which this installer requires.
 # The install.sh at their own tag installs them.
@@ -252,7 +253,8 @@ download_asset "SHA256SUMS.sig" "${TMPDIR}/SHA256SUMS.sig" \
 verify_signature "${TMPDIR}/SHA256SUMS" "${TMPDIR}/SHA256SUMS.sig"
 
 info "Verifying checksum..."
-EXPECTED="$(grep "${TARBALL}" "${TMPDIR}/SHA256SUMS" | cut -d' ' -f1)"
+# awk exits 0 without a match, so the message below is reached.
+EXPECTED="$(awk -v name="${TARBALL}" '$2 == name { print $1 }' "${TMPDIR}/SHA256SUMS")"
 [ -n "$EXPECTED" ] || die "Tarball ${TARBALL} not found in SHA256SUMS"
 verify_checksum "${TMPDIR}/${TARBALL}" "$EXPECTED"
 

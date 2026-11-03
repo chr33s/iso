@@ -95,8 +95,9 @@ private func kind(_ text: String, limits: JSONLimits = .configuration) -> JSONPr
   #expect(kind("[1,2,3]", limits: small) == .arrayTooLong(path: "<root>", limit: 2))
   #expect(kind("[12345]", limits: small) == nil)
   #expect(kind("[123456]", limits: small) == .numberTooLong(path: "[0]", limit: 5))
-  #expect(kind(#"["1234567"]"#, limits: small) == nil)
-  #expect(kind(#"["12345678"]"#, limits: small) == .stringTooLong(path: "[0]", limit: 8))
+  #expect(kind(#"["12345678"]"#, limits: small) == nil)
+  #expect(kind(#"["123456789"]"#, limits: small) == .stringTooLong(path: "[0]", limit: 8))
+  #expect(kind(#"{"12345678":1}"#, limits: small) == nil)
 }
 
 @Test func hostileNestingDoesNotExhaustTheStack() {

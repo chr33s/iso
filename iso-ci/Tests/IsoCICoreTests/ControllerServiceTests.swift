@@ -80,15 +80,16 @@ import Testing
           - run: echo test
     """
 
-  func submit(_ fixture: Fixture, secrets: JSONValue = [:], include: JSONValue = [])
-    -> Result<JSONValue, CIError>?
-  {
+  func submit(
+    _ fixture: Fixture, secrets: JSONValue = [:], include: JSONValue = [],
+    exclude: JSONValue = []
+  ) -> Result<JSONValue, CIError>? {
     fixture.service.handle(
       ControlRequest(
         method: "run.submit",
         params: [
           "workflow": ".github/workflows/ci.yml", "repository": .string(fixture.repository),
-          "platform": "linux/arm64", "event": "push", "include": include, "exclude": [],
+          "platform": "linux/arm64", "event": "push", "include": include, "exclude": exclude,
           "secrets": secrets,
           "inputs": [:],
         ]))
@@ -197,14 +198,40 @@ import Testing
     #expect(error.code == .conflict)
   }
 
+  /// Regression: reserved names and the job-message limits were enforced
+  /// only at launch, so the run was accepted and every job then failed.
+  @Test func submitRefusesSecretsNoJobCouldCarry() throws {
+    let fixture = try Self.fixture(workflow: Self.simple)
+    let large = String(repeating: "x", count: JobMessageBuilder.maxSecretBytes + 1)
+    for secrets: JSONValue in [
+      ["ISO_CI_TOKEN": "x"], ["github_token": "x"], ["BIG": .string(large)],
+    ] {
+      guard case .failure(let error)? = submit(fixture, secrets: secrets) else {
+        Issue.record("expected a refusal for \(secrets.canonicalString)")
+        continue
+      }
+      #expect(error.code == .invalidRequest)
+    }
+    #expect(try fixture.store.preflightRunIDs(limit: 10).isEmpty)
+  }
+
   @Test func secretsAreNeverPersisted() throws {
     let fixture = try Self.fixture(workflow: Self.simple)
     let value = try #require(submit(fixture, secrets: ["TOKEN": "s3cr3t-value"])).get()
     let run = try PreflightRunID(try #require(value["run"]?.stringValue))
     let record = try #require(try fixture.store.preflightRun(run, as: PreflightRunRecord.self))
     #expect(record.secretNames == ["TOKEN"])
-    let bytes = try #require(try PrivateFiles.read(fixture.root.database, limit: 64 << 20))
-    #expect(!String(decoding: bytes, as: UTF8.self).contains("s3cr3t-value"))
+    // The database runs in WAL mode and is never checkpointed here, so the
+    // rows just written live in the -wal file: scan every database file.
+    var stored = ""
+    for suffix in ["", "-wal", "-journal"] {
+      guard let bytes = try PrivateFiles.read(fixture.root.database + suffix, limit: 64 << 20)
+      else { continue }
+      stored += String(decoding: bytes, as: UTF8.self)
+    }
+    #expect(!stored.contains("s3cr3t-value"))
+    // The scan reaches the run record itself (it names the secret).
+    #expect(stored.contains("\"TOKEN\""))
     let events = try fixture.store.events(after: 0)
     #expect(
       !events.contains {
@@ -319,6 +346,57 @@ import Testing
     #expect(failed.state == .failed)
     #expect(failed.reason == "the runner did not acquire the job within \(boot) s")
     #expect(try fixture.store.allocation(allocation.id)?.execution == .failed)
+  }
+
+  /// A patch re-captures with the run's include/exclude patterns, so a file
+  /// the run withheld does not reach the guest through a later revision.
+  @Test func patchReusesTheRunsSnapshotPatterns() throws {
+    let fixture = try Self.fixture(workflow: Self.simple)
+    let value = try #require(
+      submit(fixture, include: ["notes.txt"], exclude: ["a.txt"])
+    ).get()
+    let run = try PreflightRunID(try #require(value["run"]?.stringValue))
+    let record = try #require(try fixture.store.preflightRun(run, as: PreflightRunRecord.self))
+    #expect(record.include == ["notes.txt"])
+    #expect(record.exclude == ["a.txt"])
+    let options = try PreflightService.patchSnapshotOptions(record, outputDirectory: "/tmp/x")
+    #expect(options.include == ["notes.txt"])
+    #expect(options.exclude == ["a.txt"])
+    #expect(options.useDefaultExcludes)
+    #expect(options.workflowPath == record.plan.workflowPath)
+
+    // A record from before patterns were kept cannot be patched safely.
+    var json = try JSONEncoder().encode(record)
+    var object = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
+    object.removeValue(forKey: "include")
+    object.removeValue(forKey: "exclude")
+    json = try JSONSerialization.data(withJSONObject: object)
+    let legacy = try JSONDecoder().decode(PreflightRunRecord.self, from: json)
+    #expect(legacy.include == nil)
+    #expect(throws: CIError.self) {
+      try PreflightService.patchSnapshotOptions(legacy, outputDirectory: "/tmp/x")
+    }
+  }
+
+  /// Regression: `succeeded_with_issues` (shown as success by GitHub) and
+  /// `skipped` were recorded as failed attempts.
+  @Test func jobConclusionsMapToAttemptStates() {
+    let cases: [(String, JobAttemptState)] = [
+      ("succeeded", .succeeded), ("succeeded_with_issues", .succeeded), ("failed", .failed),
+      ("canceled", .cancelled), ("skipped", .skipped), ("abandoned", .failed),
+    ]
+    for (conclusion, state) in cases {
+      #expect(PreflightService.attemptState(conclusion: conclusion) == state, "\(conclusion)")
+    }
+  }
+
+  /// Regression: patch wrote into `/opt/actions-runner` whatever the
+  /// image's `runner_directory` was.
+  @Test func patchTargetsTheConfiguredRunnerDirectory() {
+    #expect(
+      PreflightService.workspace(
+        runnerDirectory: "/home/runner/actions-runner", repository: "octo/demo")
+        == "/home/runner/actions-runner/_work/demo/demo")
   }
 
   @Test func patchNeedsALiveRetainedEnvironment() throws {

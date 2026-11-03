@@ -41,6 +41,22 @@ import Testing
   #expect(!error.message.contains("ANTHROPIC_API_KEY="))
 }
 
+@Test func argvEntriesMayUseTheirWholeByteLimit() throws {
+  func definition(_ entry: String) -> String {
+    """
+    {"schema_version":1,"id":"repo-helper","display_name":"n","launch":{"argv":["\(entry)"]},"auth_adapter":"none"}
+    """
+  }
+  let longest = String(repeating: "a", count: AgentDefinition.maxArgvEntryBytes)
+  let decoded = try AgentDefinitionDecoder.decode(
+    Array(definition(longest).utf8), path: "d.json", format: .json)
+  #expect(decoded.launch.argv == [longest])
+  #expect(throws: AgentDefinitionError.self) {
+    try AgentDefinitionDecoder.decode(
+      Array(definition(longest + "a").utf8), path: "d.json", format: .json)
+  }
+}
+
 @Test func definitionRejectsTraversalAndDuplicateKeys() {
   let traversal = """
     {"schema_version":1,"id":"repo-helper","display_name":"n","launch":{"argv":["t"],"working_directory":"/workspace/../etc"},"auth_adapter":"none"}

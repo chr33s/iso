@@ -223,7 +223,7 @@ extension AppleBackend {
       try NetworkPolicy.save(config, instance)
       return ready
     } catch {
-      stopAfterFailure(runtime.namespace(.macos), sidecar.machineID)
+      stopAfterFailure(runtime.namespace(.macos), sidecar.machineID, fencing: instance)
       throw error
     }
   }

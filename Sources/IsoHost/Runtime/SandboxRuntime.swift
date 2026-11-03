@@ -288,9 +288,18 @@ package struct SandboxRuntime: Sendable {
     try RuntimeProtocol.parseList(probe(["list"]))
   }
 
+  /// Inspect also asks a running owner for its effective configuration,
+  /// bounded at 10 s inside the runtime; a slow owner then reports none and
+  /// the caller polls again. The host deadline leaves room for that bound.
   package func inspect(_ name: MachineName) throws(RuntimeError) -> SandboxInspection {
-    try RuntimeProtocol.parseInspect(probe(["inspect"], [name.rawValue]), expected: name)
+    try RuntimeProtocol.parseInspect(
+      Self.checked(
+        executor, arguments(["inspect"], [name.rawValue]),
+        deadline: settings.probeTimeout.duration + Self.ownerInspectMargin, limit: Self.jsonLimit),
+      expected: name)
   }
+
+  static let ownerInspectMargin: Duration = .seconds(15)
 
   /// Require a live boot identity before filtered egress can start.
   package func requireFilteredBoot(_ name: MachineName, _ kind: GuestOS)

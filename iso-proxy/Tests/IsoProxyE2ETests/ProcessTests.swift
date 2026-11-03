@@ -83,9 +83,14 @@ struct IsoProxyProcessE2ETests {
       }
       invalid.append(value)
     }
+    // A valid version 1 document padded with JSON whitespace: past the
+    // 64 KiB version 1 bound, and past the 128 KiB startup read bound
+    // (Limits.startupBytes / startupBytesV3), so only the size bounds refuse.
+    let valid = try JSONSerialization.data(withJSONObject: config(port: try freePort()))
     let inputs =
       try invalid.map { try JSONSerialization.data(withJSONObject: $0) } + [
-        Data(repeating: 120, count: 65537)
+        valid + Data(repeating: 0x20, count: 64 * 1024),
+        valid + Data(repeating: 0x20, count: 128 * 1024),
       ]
     for (index, data) in inputs.enumerated() {
       let input = try inputFile(data, evidence: evidence, name: "case-\(index)")

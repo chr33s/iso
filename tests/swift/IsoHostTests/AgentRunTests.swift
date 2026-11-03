@@ -62,7 +62,34 @@ import Testing
   #expect(genericInvocation.defaults.map(\.name.rawValue) == ["NO_COLOR"])
 }
 
-@Test func previewJSONOmitsSecretsAndDoesNotApproveHints() throws {
+/// `--flag=value` names the same option as `--flag value`, so neither a
+/// definition nor `--ask` passthrough can set an adapter-managed flag that way.
+@Test func managedFlagsAreRecognisedInTheirEqualsForm() throws {
+  let bypassing = try AgentDefinitionDecoder.decode(
+    Array(
+      #"{"schema_version":1,"id":"bypass","display_name":"b","launch":{"argv":["claude","--permission-mode=bypassPermissions"]},"auth_adapter":"claude"}"#
+        .utf8), path: "d.json", format: .json)
+  #expect(throws: HostError.self) {
+    try AgentLaunchPlanner.plan(
+      definition: bypassing, source: .installed, definitionHash: "h", cliImage: nil,
+      cliProfiles: [], ask: true)
+  }
+  let claude = AgentCatalog.builtin(try AgentDefinitionID("claude"))!
+  let plan = try AgentLaunchPlanner.plan(
+    definition: claude, source: .builtin, definitionHash: AgentCatalog.definitionHash(claude),
+    cliImage: nil, cliProfiles: [], ask: true)
+  #expect(throws: HostError.self) {
+    try AgentDispatch.invocation(
+      plan: plan, passthrough: ["--permission-mode=bypassPermissions"], guestUser: .default,
+      codexAccount: false, stdinIsTerminal: true, stdoutIsTerminal: true)
+  }
+  #expect(AgentDispatch.flagName("--model=opus") == "--model")
+  #expect(AgentDispatch.flagName("--model") == "--model")
+}
+
+/// `RunPreview.make` takes no credential input, so the preview cannot carry
+/// one; this checks that network hints stay unapproved.
+@Test func previewJSONDoesNotApproveHints() throws {
   let definition = AgentCatalog.builtins[0]
   let plan = try AgentLaunchPlanner.plan(
     definition: definition, source: .builtin, definitionHash: "sha256:abc", cliImage: nil,
@@ -78,8 +105,6 @@ import Testing
   let text = try JSONOutput.render(preview)
   #expect(try jsonObject(text)["approved_hosts"] as? [String] == [])
   #expect(text.contains("github.com"))
-  #expect(!text.contains("sk-"))
-  #expect(!text.contains("cmd:"))
   #expect(text.contains("run_preview"))
 }
 

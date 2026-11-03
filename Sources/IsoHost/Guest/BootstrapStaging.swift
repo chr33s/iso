@@ -147,6 +147,29 @@ struct ConfinedCopy {
     }
   }
 
+  /// The whole root's contents into `destination`, with `tree`'s rules.
+  mutating func everything(to destination: String) throws {
+    try count(0)
+    do {
+      try FileManager.default.createDirectory(
+        atPath: destination, withIntermediateDirectories: true)
+    } catch {
+      throw HostError("Failed to create \(destination)")
+    }
+    let names: [String]
+    do { names = try FileManager.default.contentsOfDirectory(atPath: root).sorted() } catch {
+      throw HostError("Failed to read \(root)")
+    }
+    for name in names {
+      guard let resolved = try resolve(name) else { continue }
+      if resolved.directory {
+        try tree(name, to: destination + "/" + name, depth: 1)
+      } else {
+        try file(name, to: destination + "/" + name)
+      }
+    }
+  }
+
   /// A regular file's bytes, nil when absent.
   mutating func read(_ relative: String) throws -> [UInt8]? {
     guard let entry = try resolve(relative) else { return nil }

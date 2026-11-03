@@ -16,7 +16,9 @@ release signing key. This script, run by a maintainer:
 3. signs SHA256SUMS with `ssh-keygen -Y sign` (the private key stays in the
    ssh-agent, e.g. 1Password or the Secure Enclave), then verifies the result
    against .github/release-signers;
-4. uploads SHA256SUMS.sig and publishes the release (skipped by --no-publish).
+4. uploads SHA256SUMS.sig and publishes the release (skipped by --no-publish),
+   then checks that GitHub's recorded asset digests still match what was
+   signed.
 
 --key names the public key file of the signer to use; the default is the
 first key in .github/release-signers, read from a matching ~/.ssh/*.pub when
@@ -80,17 +82,44 @@ def default_key(work):
     return key
 
 
+SUMS_LINE = re.compile(r"([0-9a-f]{64})  ([^\s*][^\n]*)\n")
+
+
 def check_checksums(directory, tarballs):
+    """SHA256SUMS must be exactly `sha256sum`'s output for `tarballs`: one
+    canonical line per tarball, nothing else. Parsers disagree on which of
+    two entries for one name wins, so a duplicate, blank, comment or
+    otherwise non-canonical line is refused rather than interpreted."""
+    text = (directory / "SHA256SUMS").read_text()
     listed = {}
-    for line in (directory / "SHA256SUMS").read_text().splitlines():
-        digest, name = line.split(maxsplit=1)
-        listed[name.lstrip("*")] = digest.lower()
+    lines = text.splitlines(keepends=True)
+    for line in lines:
+        match = SUMS_LINE.fullmatch(line)
+        if not match:
+            die(f"SHA256SUMS has a non-canonical line: {line!r}")
+        digest, name = match.groups()
+        if name in listed:
+            die(f"SHA256SUMS lists {name} more than once")
+        listed[name] = digest
     if set(listed) != set(tarballs):
         die(f"SHA256SUMS lists {sorted(listed)}, release has {sorted(tarballs)}")
     for name in tarballs:
         actual = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         if actual != listed[name]:
             die(f"{name}: SHA256SUMS says {listed[name]}, downloaded {actual}")
+
+
+def check_published(tag, expected):
+    """The release's asset digests, as GitHub records them, match what was
+    checked and signed. Releases are mutable, so an asset swapped after the
+    check is reported rather than left behind a valid signature."""
+    release = json.loads(run(
+        "gh", "api", f"repos/{REPO}/releases/tags/{tag}", capture=True))
+    published = {asset["name"]: asset.get("digest") for asset in release["assets"]}
+    for name, digest in expected.items():
+        if published.get(name) != f"sha256:{digest}":
+            die(f"{tag}: published {name} has digest {published.get(name)}, "
+                f"signed sha256:{digest}; investigate before announcing the release")
 
 
 def tag_commit(tag):
@@ -152,6 +181,8 @@ def main():
                 "--deny-self-hosted-runners",
                 "--bundle", str(work / "attestations.jsonl"))
 
+        signed = {name: hashlib.sha256((work / name).read_bytes()).hexdigest()
+                  for name in tarballs + ["SHA256SUMS"]}
         key = args.key or default_key(work)
         sums = work / "SHA256SUMS"
         run("ssh-keygen", "-Y", "sign", "-f", str(key), "-n", NAMESPACE, str(sums))
@@ -165,6 +196,7 @@ def main():
         print(f"Signed {args.tag}; publish with: gh release edit {args.tag} --draft=false --latest")
         return
     run("gh", "release", "edit", args.tag, "--repo", REPO, "--draft=false", "--latest")
+    check_published(args.tag, signed)
     print(f"Signed and published {args.tag}")
 
 

@@ -11,8 +11,9 @@ VM under an enforcing policy with synthetic `cmd:` credentials, and checks:
   gate is ever admitted, so nothing reaches a real provider;
 - re-applying agent configuration to the running boot (`iso model set remote …`)
   is refused rather than relaunching a proxy with empty counters;
-- a governed `iso pull --apply` without a terminal, with `--force`, or with
-  `--output json` fails with `approval_required` and writes nothing;
+- a governed `iso pull --apply` without a terminal or with `--force` fails
+  with `approval_required`, and with `--output json` is refused as
+  `UNSUPPORTED_MACHINE_OUTPUT` before any policy check; none writes anything;
 - an apply confirmed by typing the stage ID at a pseudo-terminal succeeds;
 - a new boot gets a new epoch, and a stage built in the previous boot is
   refused with `policy_epoch_mismatch`.
@@ -194,9 +195,11 @@ def main():
         for extra in [[], ["--force"]]:
             result = iso("pull", "policy-gate", "--apply", "--stage-id", stage, *extra, capture=True, check=False)
             assert result.returncode != 0 and "approval_required" in result.stderr, result.stderr
+        # `pull` has no machine output: the CLI refuses before any policy
+        # check. If pull gains it, this must become `approval_required`.
         result = iso("--output", "json", "pull", "policy-gate", "--apply", "--stage-id", stage,
                      capture=True, check=False)
-        assert result.returncode != 0
+        assert result.returncode == 2 and "UNSUPPORTED_MACHINE_OUTPUT" in result.stdout, result.stdout
         assert not (project / "guest.txt").exists(), "a refused apply wrote the destination"
 
         phase("Governed apply confirmed at a terminal")

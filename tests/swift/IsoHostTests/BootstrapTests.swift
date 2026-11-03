@@ -253,6 +253,38 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
   }
 }
 
+/// A local marketplace directory is snapshotted with `ConfinedCopy` before
+/// `scp -r` (which follows links) sees it: inside links become plain
+/// copies, and a link out of the directory is refused.
+@Test func marketplaceSnapshotIsConfined() throws {
+  let source = try scratchDirectory("market")
+  let external = try scratchDirectory("ext")
+  let staged = try StagingDirectory()
+  defer {
+    try? FileManager.default.removeItem(atPath: source)
+    try? FileManager.default.removeItem(atPath: external)
+    staged.remove()
+  }
+  try writeFile(source + "/plugins/p/plugin.json", "{}")
+  try writeFile(source + "/README.md", "readme")
+  try FileManager.default.createSymbolicLink(
+    atPath: source + "/plugins/p/readme", withDestinationPath: source + "/README.md")
+  var copy = try ConfinedCopy(root: source)
+  try copy.everything(to: staged.path + "/market")
+  #expect(readFile(staged.path + "/market/plugins/p/plugin.json") == "{}")
+  #expect(readFile(staged.path + "/market/README.md") == "readme")
+  var status = stat()
+  lstat(staged.path + "/market/plugins/p/readme", &status)
+  #expect((status.st_mode & S_IFMT) == S_IFREG)
+
+  try writeFile(external + "/id_ed25519", "host-secret")
+  try FileManager.default.createSymbolicLink(
+    atPath: source + "/plugins/p/notes", withDestinationPath: external + "/id_ed25519")
+  var escaping = try ConfinedCopy(root: source)
+  #expect(throws: (any Error).self) { try escaping.everything(to: staged.path + "/again") }
+  #expect(readFile(staged.path + "/again/plugins/p/notes") == nil)
+}
+
 @Test func stagingIsAConfinedOverlay() throws {
   let source = try scratchDirectory("src")
   let external = try scratchDirectory("ext")
@@ -796,6 +828,16 @@ private func stageCodex(
   #expect(throws: Never.self) {
     try TOMLTable.parse("[a" + String(repeating: ".b", count: 100) + "]\nx = 1\n")
   }
+  // The cap is cumulative: inline tables that each open with a long dotted
+  // key, or a long header followed by one, still exceed it.
+  let segments = String(repeating: "a.", count: 100) + "a"
+  let inline =
+    "x = " + String(repeating: "{ \(segments) = ", count: 2) + "1"
+    + String(repeating: " }", count: 2) + "\n"
+  #expect(throws: (any Error).self) { try TOMLTable.parse(inline) }
+  let stacked = "[\(segments)]\n\(segments) = 1\n"
+  #expect(throws: (any Error).self) { try TOMLTable.parse(stacked) }
+  #expect(throws: Never.self) { try TOMLTable.parse("[a.b]\nc.d = { e.f = [1] }\n") }
 }
 
 // MARK: - proxy.mode

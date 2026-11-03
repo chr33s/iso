@@ -735,8 +735,10 @@ class Run:
         types = {line.rsplit("(", 1)[-1].split(",")[0].strip() for line in mounts.splitlines() if "(" in line}
         out["mount_types"] = sorted(types)
         out["no_foreign_mounts"] = types <= LOCAL_FS
-        out["host_file_absent"] = self.canary not in g.ssh(
-            f"/usr/bin/grep -rIl {self.canary} /Volumes /Users 2>/dev/null; true", timeout=300)
+        # grep -l prints the paths of files holding the token: any path at
+        # all is a leak, whatever the file is called.
+        out["host_file_absent"] = not g.ssh(
+            f"/usr/bin/grep -rIl {self.canary} /Volumes /Users 2>/dev/null; true", timeout=300).strip()
         # Host environment, including the runtime's own environment.
         out["host_env_absent"] = self.canary not in g.ssh("/usr/bin/env; sudo /bin/ps -E -ax -o command", timeout=60)
         # Host ssh-agent (a canary key is loaded): nothing is forwarded.

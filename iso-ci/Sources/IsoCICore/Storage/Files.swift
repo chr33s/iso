@@ -139,9 +139,18 @@ package struct DataRoot: Sendable, Equatable {
 
   package init(path: String) { self.path = path }
 
-  package static func `default`(environment: [String: String]) -> DataRoot {
-    if let explicit = environment["ISO_CI_HOME"], explicit.hasPrefix("/") {
-      return DataRoot(path: explicit)
+  /// The data root named by `--root`, else `ISO_CI_HOME`, else
+  /// `~/.iso-ci`. A relative path is refused rather than ignored, so a
+  /// command never silently runs against the default root.
+  package static func resolve(_ explicit: String?, environment: [String: String])
+    throws(CIError) -> DataRoot
+  {
+    for (name, value) in [("--root", explicit), ("ISO_CI_HOME", environment["ISO_CI_HOME"])] {
+      guard let value, !value.isEmpty else { continue }
+      guard value.hasPrefix("/") else {
+        throw CIError.invalid("\(name) must be an absolute path")
+      }
+      return DataRoot(path: value)
     }
     return DataRoot(path: NSHomeDirectory() + "/.iso-ci")
   }

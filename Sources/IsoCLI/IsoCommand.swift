@@ -114,7 +114,8 @@ struct GlobalOptions: ParsableArguments {
   }
 }
 
-/// Maps typed failures to stderr and exit status 1.
+/// Maps typed failures to stderr and exit status 1; validation errors stay
+/// usage errors (exit 2).
 func run(_ body: () throws -> Void) throws {
   do {
     try body()
@@ -126,6 +127,9 @@ func run(_ body: () throws -> Void) throws {
     throw ExitCode(exit.status)
   } catch let error as IsoCore.ValidationError {
     throw ArgumentParser.ValidationError(error.message)
+  } catch let error as ArgumentParser.ValidationError {
+    // A usage error found while running exits 2, like one found in validate().
+    throw error
   } catch {
     // Error chains can carry guest, runtime or registry text (remote stderr,
     // devcontainer keys): control characters never reach the terminal raw.

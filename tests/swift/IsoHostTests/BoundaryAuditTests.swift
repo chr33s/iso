@@ -129,8 +129,8 @@ private func auditInstance() throws -> Instance {
   let loose = BoundaryAudit.suggestConfig(raw).joined(separator: "\n")
   #expect(loose.contains(#"// "proxy": { "mode": "required" }"#))
   #expect(loose.contains(#"// "egress": "none""#))
-  // Unknown events never widen anything.
-  #expect(!loose.contains("open\""))
+  // Unknown events never change the suggestion.
+  #expect(BoundaryAudit.suggestConfig(Array(raw.prefix(2))).joined(separator: "\n") == loose)
 }
 
 @Test func bootsAndPullsAreRecordedAtTheirCallSites() throws {

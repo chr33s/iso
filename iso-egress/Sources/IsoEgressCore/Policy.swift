@@ -65,7 +65,7 @@ package enum Denial: String, Sendable {
 /// Conservative public-unicast policy, pinned to the IANA special-purpose
 /// registries dated 2025-10-09. Mapped and transition forms are never unwrapped.
 package enum AddressPolicy {
-  package static let revision = "iana-2025-10-09-v1"
+  package static let revision = "iana-2025-10-09-v2"
   package static func isPublicIPv4(_ octets: [UInt8]) -> Bool {
     guard octets.count == 4 else { return false }
     let a = octets[0]
@@ -75,7 +75,7 @@ package enum AddressPolicy {
     if a == 169 && b == 254 { return false }
     if a == 172 && (16...31).contains(b) { return false }
     if a == 192 && b == 168 { return false }
-    if a == 192 && b == 0 { return false }
+    if a == 192 && b == 0 && octets[2] == 0 { return false }
     if a == 192 && b == 88 && octets[2] == 99 { return false }
     if a == 198 && (b == 18 || b == 19) { return false }
     if a == 192 && b == 0 && octets[2] == 2 { return false }

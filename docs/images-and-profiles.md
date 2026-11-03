@@ -68,12 +68,12 @@ iso setup --profile python,node,rust
 |---------|---------------------|
 | `python` | `python3`, `python3-pip`, `python3-venv` |
 | `node` | `nodejs` (NodeSource repository added via pre-install script) |
-| `c` | `clang`, `llvm`, `gdb`, `valgrind`, `cmake`. Installs plugin: `clangd-lsp@claude-plugins-official` |
+| `c` | `clang`, `llvm`, `gdb`, `valgrind`, `cmake`. Lists plugin `clangd-lsp@claude-plugins-official` (not installed; see below) |
 | `fuzz` | `clang`, `llvm`, `afl++`, `lcov` |
-| `rust` | Rust toolchain via post-install script (not apt). Installs plugin: `rust-analyzer-lsp@claude-plugins-official` |
+| `rust` | Rust toolchain via post-install script (not apt). Lists plugin `rust-analyzer-lsp@claude-plugins-official` (not installed; see below) |
 | `go` | `golang` |
 
-Plugins listed above are installed by the profile and do not need to be listed separately in config. The Apple backend does not bake marketplaces and plugins into the image; the first boot of each instance installs them.
+The Apple backend does not apply a profile's marketplaces and plugins: the image does not include them, and first boot installs only `claude.marketplaces`/`claude.plugins` and `codex.marketplaces`/`codex.plugins` from the configuration. To get a plugin a profile lists, add it and its marketplace (`https://github.com/anthropics/claude-plugins-official`) to the `claude` section.
 
 ## Custom profiles
 
@@ -98,8 +98,8 @@ Five fields per profile:
 - **`apt_packages`**: apt packages to install.
 - **`pre_install`**: shell script that runs before `apt-get install`. Use this to add package repositories.
 - **`post_install`**: shell script that runs after `apt-get install`. Use this for pip installs, binary downloads, or other setup.
-- **`marketplaces`**: plugin marketplace sources (URLs or local paths) to register.
-- **`plugins`**: plugins to install from the registered marketplaces.
+- **`marketplaces`**: plugin marketplace sources (URLs or local paths). Accepted and shown by `iso profiles`, but not registered on the Apple backend.
+- **`plugins`**: plugins from those marketplaces. Accepted and shown by `iso profiles`, but not installed on the Apple backend; list them under `claude.plugins` instead.
 
 Custom profiles override built-in ones. A custom profile named `python` replaces the built-in `python` profile entirely.
 
@@ -236,7 +236,7 @@ The build is crash-safe. Every build gets a fresh image tag; a failed build or v
 
 1. Clones the image's cached base disk (APFS clone) for the instance
 2. Sizes the disk from `--disk`, the committed image's size, or `vm.template_size_gib`
-3. Creates and boots a sandbox on its own vmnet network, then passes the isolation gate and pins the guest's SSH host key
+3. Creates and boots a sandbox (with no network device under the default `network.transport: "brokered"`, or on its own vmnet network with `"vmnet"`), then passes the isolation gate and pins the guest's SSH host key
 
 See [How instances work](backends.md#how-instances-work) for every step.
 

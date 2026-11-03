@@ -3,13 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// POSIX single-quote escaping (`shlex.quote`'s algorithm): the value
-/// reaches a shell as one literal word.
+/// reaches a shell as one literal word. Escapes per Unicode scalar: an
+/// apostrophe followed by a combining mark is one `Character` but still
+/// ends a quoted word in the shell.
 package func shellEscape(_ value: String) -> String {
-  var escaped = "'"
-  for character in value {
-    if character == "'" { escaped += "'\\''" } else { escaped.append(character) }
+  var escaped = String.UnicodeScalarView()
+  escaped.append("'")
+  for scalar in value.unicodeScalars {
+    if scalar == "'" {
+      escaped.append(contentsOf: "'\\''".unicodeScalars)
+    } else {
+      escaped.append(scalar)
+    }
   }
-  return escaped + "'"
+  escaped.append("'")
+  return String(escaped)
 }
 
 /// A remote shell command assembled from trusted literal fragments and

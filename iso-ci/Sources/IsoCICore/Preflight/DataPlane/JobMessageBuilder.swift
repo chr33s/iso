@@ -126,13 +126,10 @@ package enum JobMessageBuilder {
     }
   }
 
-  /// Builds the message. `secrets` values are delivered only as secret
-  /// variables (masked by the runner); their names come from the plan.
-  package static func build(
-    plan: WorkflowPlan, job: JobPlan, attempt: JobAttemptID, run: PreflightRunID,
-    contexts: Contexts, endpoint: Endpoint, secrets: [String: String],
-    syntheticScripts: any SyntheticStepScripts, snapshot: Digest?
-  ) throws(CIError) -> JSONValue {
+  /// Refuses invalid or reserved secret names and more secrets, or more
+  /// secret bytes, than a job message carries. Submission checks this too,
+  /// so a run that could never launch is refused up front.
+  package static func validate(secrets: [String: String]) throws(CIError) {
     guard secrets.count <= maxSecrets else { throw CIError.invalid("too many secrets") }
     var secretBytes = 0
     for (name, value) in secrets {
@@ -142,6 +139,16 @@ package enum JobMessageBuilder {
       secretBytes += value.utf8.count
     }
     guard secretBytes <= maxSecretBytes else { throw CIError.invalid("secrets are too large") }
+  }
+
+  /// Builds the message. `secrets` values are delivered only as secret
+  /// variables (masked by the runner); their names come from the plan.
+  package static func build(
+    plan: WorkflowPlan, job: JobPlan, attempt: JobAttemptID, run: PreflightRunID,
+    contexts: Contexts, endpoint: Endpoint, secrets: [String: String],
+    syntheticScripts: any SyntheticStepScripts, snapshot: Digest?
+  ) throws(CIError) -> JSONValue {
+    try validate(secrets: secrets)
 
     let identity = Identity(attempt: attempt, run: run)
     var variables: [String: JSONValue] = [

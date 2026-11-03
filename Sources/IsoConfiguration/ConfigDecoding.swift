@@ -712,9 +712,12 @@ enum ConfigDecoder {
     _ value: JSONValue, _ path: [JSONPathComponent], defaultMode: ProxyMode = .auto
   ) throws(FieldError) -> ProxyConfig {
     let r = try ObjectReader(value, at: path)
-    func upstream(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
-      -> ProxyUpstream
-    {
+    /// `schemes` lists what the provider accepts upstream; the first is the
+    /// default. OpenAI keys are always Bearer, so `api_key` is refused there
+    /// rather than reaching iso-proxy, which rejects it at startup.
+    func upstream(
+      _ value: JSONValue, _ path: [JSONPathComponent], _ schemes: [ProxyAuthScheme]
+    ) throws(FieldError) -> ProxyUpstream {
       let u = try ObjectReader(value, at: path)
       let raw = try u.required("credential", Parse.secret)
       if raw.expose().hasPrefix("vault:") {
@@ -730,12 +733,17 @@ enum ConfigDecoder {
       }
       return ProxyUpstream(
         credential: credential,
-        auth: try u.defaulted("auth", .apiKey) { v, p throws(FieldError) in
-          try Parse.stringEnum(v, p, [ProxyAuthScheme.apiKey, .bearer])
+        auth: try u.defaulted("auth", schemes[0]) { v, p throws(FieldError) in
+          try Parse.stringEnum(v, p, schemes)
         })
     }
     return ProxyConfig(
-      anthropic: try r.optional("anthropic", upstream), openai: try r.optional("openai", upstream),
+      anthropic: try r.optional("anthropic") { v, p throws(FieldError) in
+        try upstream(v, p, [.apiKey, .bearer])
+      },
+      openai: try r.optional("openai") { v, p throws(FieldError) in
+        try upstream(v, p, [.bearer])
+      },
       mode: try r.defaulted("mode", defaultMode) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, [ProxyMode.auto, .required, .off])
       })

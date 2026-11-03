@@ -54,6 +54,8 @@ final class GitHubFakeRunners: RunnerService {
     /// the reply was lost.
     var loseNextJITReply = false
     var lookupFailure: CIError?
+    /// When set, the next runner deletion fails with this error.
+    var deleteFailure: CIError?
     var reportedLabels: [String]?
     var groupID: Int64 = 1
     /// The service host GitHub assigns in the JIT configuration.
@@ -124,10 +126,15 @@ final class GitHubFakeRunners: RunnerService {
   }
 
   func deleteRunner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> Bool {
-    state.withLock { state in
+    let outcome: Result<Bool, CIError> = state.withLock { state in
+      if let failure = state.deleteFailure {
+        state.deleteFailure = nil
+        return .failure(failure)
+      }
       state.deleted.append(id)
-      return state.runners.removeValue(forKey: id) != nil
+      return .success(state.runners.removeValue(forKey: id) != nil)
     }
+    return try outcome.get()
   }
 
   func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
@@ -211,6 +218,8 @@ final class GitHubFakeProvider: EnvironmentProvider {
     var bootstrapExit: Int32 = 0
     var admitFailure: CIError?
     var refusingHosts: Set<Name> = []
+    /// Allocations whose guest ssh fails (exit 255) on every command.
+    var unreachableGuests: Set<AllocationID> = []
   }
 
   let store: ControllerStore
@@ -270,6 +279,9 @@ final class GitHubFakeProvider: EnvironmentProvider {
   func execute(_ id: AllocationID, _ command: GuestCommand) throws(CIError) -> GuestCommandResult {
     record("execute", id)
     onExecute.withLock { $0 }?()
+    if state.withLock({ $0.unreachableGuests.contains(id) }) {
+      throw CIError(.hostUnreachable, "ssh to the guest failed (exit 255)")
+    }
     return state.withLock { state in
       state.commands.append((id, command))
       if command.argv.contains("iso-ci-version") {

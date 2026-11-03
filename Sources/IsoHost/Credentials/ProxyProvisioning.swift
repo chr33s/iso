@@ -33,7 +33,7 @@ package enum ProxyProvisioning {
         ("a"..."z").contains($0) || ("A"..."Z").contains($0) || ("0"..."9").contains($0)
           || "-_./:=".unicodeScalars.contains($0)
       }
-    return safe ? text : "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    return safe ? text : shellEscape(text)
   }
 
   package static func reference(service: String, account: String) -> CredentialReference {
@@ -41,9 +41,8 @@ package enum ProxyProvisioning {
       "cmd:security find-generic-password -s \(shellQuote(service)) -a \(shellQuote(account)) -w")!
   }
 
-  /// `security add-generic-password -U`. The CLI takes the secret only on
-  /// argv (a documented exception); nothing else sees it and it is never
-  /// logged. Fails when the Keychain is unavailable or refuses the write.
+  /// `security add-generic-password -U`. The secret rides argv (the
+  /// exception docs/trust-model.md documents); it is never logged. Fails when the Keychain is unavailable or refuses the write.
   package static func storeInKeychain(
     service: String, account: String, secret: Secret<String>, environment: [String: String],
     runner: ProcessRunner = ProcessRunner(), tool: String = securityTool

@@ -11,7 +11,9 @@
 min_version = "2026.10.7"
 
 # mise.lock pins each tool's download URL and checksum (and its GitHub
-# attestation where the registry has one). Regenerate it with
+# attestation where the registry has one). The exception is `swift`: its
+# entry (core swift backend) records only the toolchain package URL, so the
+# lockfile does not hash the compiler download. Regenerate it with
 # `mise lock --platform macos-arm64,linux-x64` after changing a pin.
 [settings]
 lockfile = true

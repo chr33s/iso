@@ -93,8 +93,11 @@ package enum HostMigration {
 
   // MARK: - Preview
 
+  /// `otherWriters` lists the other `iso` processes that block migration;
+  /// tests pass a stand-in so the host's own `iso` processes do not leak in.
   package static func preview(
-    config: IsoConfig, backend: AppleBackend, diagnostics: Diagnostics
+    config: IsoConfig, backend: AppleBackend, diagnostics: Diagnostics,
+    otherWriters: () -> [pid_t] = otherIsoProcesses
   ) throws -> Preview {
     var legacy: [LegacyInstance] = []
     let instances = try InstanceStore.list(config) { path, error in
@@ -110,7 +113,7 @@ package enum HostMigration {
           pendingJournal: journal.map { $0.op.describe }, guestOS: sidecar?.kind ?? .linux,
           disposable: sidecar?.isDisposableRun ?? false))
     }
-    let writers = otherIsoProcesses()
+    let writers = otherWriters()
     var blockers: [String] = []
     for instance in legacy {
       if let journal = instance.pendingJournal {
@@ -195,9 +198,10 @@ package enum HostMigration {
   /// writers and every planned identity, then adopts each instance, fences
   /// the owner record against older binaries, and commits active. Each step
   /// is idempotent, so a crash at any point resumes here.
-  package static func complete(config: IsoConfig, backend: AppleBackend, diagnostics: Diagnostics)
-    throws
-  {
+  package static func complete(
+    config: IsoConfig, backend: AppleBackend, diagnostics: Diagnostics,
+    otherWriters: () -> [pid_t] = otherIsoProcesses
+  ) throws {
     guard var record = try loadRecord(config), record.state == .prepared else { return }
     let owner = try Owner.load(config)
     let store = try OperationStore(root: HostService.root(config))
@@ -206,7 +210,7 @@ package enum HostMigration {
     guard var installation = try store.loadInstallation(), installation.ownerID == owner.id else {
       throw HostControlError(.migrationRequired, "the installation record does not match the owner")
     }
-    let writers = otherIsoProcesses()
+    let writers = otherWriters()
     guard writers.isEmpty else {
       throw HostControlError(
         .migrationRequired,

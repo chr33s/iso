@@ -16,6 +16,11 @@ package struct AgentAdapterContract: Sendable, Equatable {
   package let managedFlags: Set<String>
   package let providerName: String?
 
+  /// `argument` sets a managed flag, spelled `--flag` or `--flag=value`.
+  package func manages(_ argument: String) -> Bool {
+    managedFlags.contains(AgentDispatch.flagName(argument))
+  }
+
   package static let none = AgentAdapterContract(
     id: .none, contractVersion: contractVersion, logicalExecutables: [], supportsAsk: false,
     terminalModes: Set(AgentTerminalMode.allCases), managedFlags: [], providerName: nil)
@@ -98,7 +103,7 @@ package enum AgentLaunchPlanner {
         "adapter '\(adapter.id)' does not support terminal mode '\(definition.launch.terminal.rawValue)'"
       )
     }
-    for flag in definition.launch.argv where adapter.managedFlags.contains(flag) {
+    for flag in definition.launch.argv where adapter.manages(flag) {
       throw HostError(
         "definition argv must not set adapter-managed flag \(flag); pass --ask or omit it")
     }
@@ -165,6 +170,12 @@ package struct AgentInvocation: Sendable, Equatable {
 }
 
 package enum AgentDispatch {
+  /// The option an argument names: `--flag=value` sets `--flag`, as the
+  /// agent CLIs' parsers read it.
+  static func flagName(_ argument: String) -> String {
+    String(argument.prefix { $0 != "=" })
+  }
+
   package static func invocation(
     plan: AgentLaunchPlan, passthrough: [String], guestUser: GuestUser, codexAccount: Bool,
     stdinIsTerminal: Bool, stdoutIsTerminal: Bool
@@ -186,7 +197,7 @@ package enum AgentDispatch {
       allocatePTY = stdinIsTerminal && stdoutIsTerminal
     }
     let defaults = Array(plan.argv.dropFirst())
-    for flag in defaults + passthrough where plan.adapter.managedFlags.contains(flag) && plan.ask {
+    for flag in defaults + passthrough where plan.adapter.manages(flag) && plan.ask {
       throw HostError(
         "passthrough flag \(flag) conflicts with --ask on adapter '\(plan.adapter.id)'")
     }
@@ -197,7 +208,7 @@ package enum AgentDispatch {
       binary = guestUser.claudeBinary.rawValue
       tail = defaults + passthrough
       if plan.ask {
-        guard !tail.contains("--permission-mode") else {
+        guard !tail.contains(where: { flagName($0) == "--permission-mode" }) else {
           throw HostError("passthrough flag --permission-mode conflicts with --ask")
         }
         tail = ["--permission-mode", "default"] + tail
@@ -205,7 +216,11 @@ package enum AgentDispatch {
     case AgentAdapterID.codex.rawValue:
       let forwarded = defaults + passthrough
       let auth = ["login", "logout"].contains(forwarded.first ?? "")
-      if !plan.ask && !auth && forwarded.contains("--dangerously-bypass-approvals-and-sandbox") {
+      if !plan.ask && !auth
+        && forwarded.contains(where: {
+          flagName($0) == "--dangerously-bypass-approvals-and-sandbox"
+        })
+      {
         throw HostError(
           "passthrough flag --dangerously-bypass-approvals-and-sandbox conflicts with the adapter default"
         )

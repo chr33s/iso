@@ -472,6 +472,7 @@ extension CIConfiguration {
       guard networkPolicies[profile.networkPolicy]?.preflightService == false else {
         throw CIError.config("pool \(name): connected profiles cannot carry the preflight endpoint")
       }
+      try Self.requireBudgets(pool.hosts, hosts, user: "pool \(name)")
     }
     if let preflight {
       guard let profile = profiles[preflight.profile] else {
@@ -483,6 +484,17 @@ extension CIConfiguration {
       guard networkPolicies[profile.networkPolicy]?.preflightService == true else {
         throw CIError.config("preflight needs a network policy with preflight_service: true")
       }
+      try Self.requireBudgets(preflight.hosts, hosts, user: "preflight")
+    }
+  }
+
+  /// Placement budgets every host it may use: a host without a `hosts:`
+  /// entry would have no controller-side budget at all.
+  private static func requireBudgets(
+    _ used: [Name], _ budgets: [Name: HostBudget], user: String
+  ) throws(CIError) {
+    for host in used where budgets[host] == nil {
+      throw CIError.config("\(user) uses host \(host), which has no hosts: budget")
     }
   }
 

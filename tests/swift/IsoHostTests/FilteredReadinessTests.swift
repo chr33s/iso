@@ -40,14 +40,16 @@ private func probeReply(change: String = "") throws -> [UInt8] {
   }
   let body = try JSONSerialization.data(withJSONObject: object)
   let status = change == "status" ? "403 Forbidden" : "200 OK"
-  let length = body.count + (change == "length" ? 1 : 0)
+  // Oversize padding is counted in Content-Length (and JSON allows trailing
+  // whitespace), so only the size cap can reject it.
+  let padding = [UInt8](repeating: 32, count: change == "oversize" ? 1025 : 0)
+  let length = body.count + padding.count + (change == "length" ? 1 : 0)
   let duplicate = change == "duplicate" ? "Content-Length: \(length)\r\n" : ""
   var reply =
     Array(
       "HTTP/1.1 \(status)\r\nContent-Length: \(length)\r\n\(duplicate)Connection: close\r\n\r\n"
-        .utf8) + body
+        .utf8) + body + padding
   if change == "truncated" { reply.removeLast() }
-  if change == "oversize" { reply += [UInt8](repeating: 32, count: 1025) }
   return reply
 }
 

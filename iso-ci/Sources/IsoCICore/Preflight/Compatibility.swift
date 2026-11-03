@@ -16,6 +16,21 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
     /// The approved image descriptor name this manifest was qualified with.
     package let imageIdentity: String
     package let platform: String
+
+    /// Whether `version` (an exact `X.Y.Z`) lies in the bound range.
+    package func admits(_ version: String) -> Bool {
+      func parts(_ text: String) -> [Int]? {
+        let numbers = text.split(separator: ".", omittingEmptySubsequences: false).map {
+          Int($0)
+        }
+        guard numbers.count == 3, numbers.allSatisfy({ ($0 ?? -1) >= 0 }) else { return nil }
+        return numbers.compactMap { $0 }
+      }
+      guard let value = parts(version), let low = parts(minimumVersion),
+        let high = parts(maximumVersion)
+      else { return false }
+      return !value.lexicographicallyPrecedes(low) && !high.lexicographicallyPrecedes(value)
+    }
   }
 
   package enum ActionKind: String, Sendable, Codable {
@@ -81,7 +96,7 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
   package static let localActionsV1 = CompatibilityManifest(
     id: "local-actions/v1",
     runner: RunnerBinding(
-      minimumVersion: "2.328.0", maximumVersion: "2.329.0",
+      minimumVersion: "2.329.0", maximumVersion: "2.338.0",
       imageIdentity: "approved-linux-arm64-runner", platform: "linux/arm64"),
     features: [
       "continue-on-error", "defaults.run", "env", "if", "job.container", "job.outputs",

@@ -632,9 +632,14 @@ package enum InstanceStore {
     }
   }
 
-  /// Serialize mutations of one instance through its shared lock path.
+  /// Serialize mutations of one instance through its shared lock path. The
+  /// lock lives in the instance directory, which `destroy` removes while
+  /// holding it: locking never recreates that directory, and a waiter whose
+  /// instance was destroyed meanwhile fails instead of acting on it.
   package static func lock(_ instance: Instance) throws(HostError) -> FileLock {
-    try FileLock.sibling(of: MachineSidecar.path(instance))
+    guard let lock = try FileLock.siblingInExistingDirectory(of: MachineSidecar.path(instance))
+    else { throw HostError("Instance '\(instance.name)' no longer exists") }
+    return lock
   }
 }
 

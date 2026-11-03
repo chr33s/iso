@@ -3,7 +3,7 @@
 **Document ID:** ISO-NET-001  
 **Version:** 1.0  
 **Date:** 16 October 2026  
-**Status:** Implemented as the opt-in `network.transport: "brokered"`; natively qualified on one tuple only, with open items. Sections 1–13 are the specification; [section 14](#14-implementation-status) records what was built and what is qualified.  
+**Status:** Implemented as `network.transport: "brokered"`, shipped opt-in and the default since the security-hardening change (DEF-01); natively qualified on one tuple only, with open items. Sections 1–13 are the specification; [section 14](#14-implementation-status) records what was built and what is qualified.
 **Sequence:** Implement and qualify this specification before Spec 02 (iso-ci).  
 **Repository baseline:** `chr33s/iso` at `d27752a7fd1b1731c8dd700e2e9457c119e2fc2e`.  
 **Primary users:** Coding agents, interactive shells, workspace tools, sandboxed editors, and users of enrolled remote Macs.
@@ -402,13 +402,16 @@ for other macOS, runtime or kernel builds.
 
 ### What ships
 
-An opt-in transport, `"network": {"transport": "brokered"}`
-([configuration](../configuration.md#network)). A brokered instance's Linux VM
+A transport, `"network": {"transport": "brokered"}`
+([configuration](../configuration.md#network)), shipped opt-in and the default
+since the security-hardening change
+([DEF-01](iso-security-hardening-spec.md)), which made `"vmnet"` the explicit
+compatibility choice. A brokered instance's Linux VM
 has **no network device**. Every SSH-based feature keeps working because only
 SSH's last hop changes: ssh's `ProxyCommand` is the runtime's fixed stream
 connector, and the runtime owner opens a Virtio-socket stream to the guest's
 SSH adapter for each admitted request. The vmnet transport is unchanged and
-remains the default.
+must now be selected explicitly.
 
 ```text
 iso shell / exec / push / pull / agents / tunnels / editor bridge

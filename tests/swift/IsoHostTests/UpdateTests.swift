@@ -96,11 +96,18 @@ private let releaseBuild = IsoBuild(version: "0.6.0", kind: .release, versionStr
   #expect(Checksums.parse("abcd  x.tar.gz\n", file: "x.tar.gz") == nil)
   #expect(
     Checksums.parse("\(String(repeating: "z", count: 64))  x.tar.gz\n", file: "x.tar.gz") == nil)
+  // A listing that names the file twice is refused, whichever entry is
+  // well-formed: tools disagree on which one wins.
   let one = String(repeating: "1", count: 64)
+  let two = String(repeating: "2", count: 64)
+  for listing in [
+    "\(one)  x.tar.gz\n\(two)  x.tar.gz\n", "\(one)  x.tar.gz\n\(two) *x.tar.gz\n",
+    "\(one)  x.tar.gz\nabcd  x.tar.gz\n", "\(one)  x.tar.gz\n\n# again\n\(one)  x.tar.gz\n",
+  ] {
+    #expect(Checksums.parse(listing, file: "x.tar.gz") == nil, "\(listing)")
+  }
   #expect(
-    Checksums.parse(
-      "\(one)  x.tar.gz\n\(String(repeating: "2", count: 64))  x.tar.gz\n", file: "x.tar.gz")?
-      .rawValue == one)
+    Checksums.parse("\(one)  x.tar.gz\n\(two)  y.tar.gz\n", file: "x.tar.gz")?.rawValue == one)
   let three = String(repeating: "3", count: 64)
   #expect(Checksums.parse("\(three)  x.tar.gz\r\n", file: "x.tar.gz")?.rawValue == three)
   // Upper-case digests compare equal to the computed lower-case digest.

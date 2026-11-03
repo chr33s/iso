@@ -192,6 +192,7 @@ func aMissingAliasAbortsBeforeTheWorkloadRuns(shell: String) throws {
     host: "127.0.0.1", port: 22, user: .default, keyPath: "/k'", knownHosts: "/kh", alias: "g")
   #expect(throws: HostError.self) { try quoted.rsyncSSHCommand(ssh: "/usr/bin/ssh") }
   let decoy = try scratchDirectory("decoy")
+  defer { try? FileManager.default.removeItem(atPath: decoy) }
   try writeFile(decoy + "/ssh", "#!/bin/sh\n", mode: 0o755)
   let system = SSHClient(environment: ["PATH": decoy + ":/usr/bin"], tools: .system)
   #expect(system.sshExecutable() == "/usr/bin/ssh")

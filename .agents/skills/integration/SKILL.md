@@ -15,8 +15,8 @@ SPDX-License-Identifier: Apache-2.0
 The runner is `./tests/run-integration.sh`, which invokes the Apple runtime
 suite (`tests/integration-apple-sandbox.sh`) on macOS 27+ Apple Silicon.
 Supported options are `--only PHASE[,PHASE...]` and `--keep`; phases are
-`setup disks machine isolation exposure identity persistence resources growth
-snapshots recovery concurrency iso`. It needs Xcode 27, `jq`, and stock Apple
+`setup disks machine isolation exposure identity brokered persistence
+resources growth snapshots recovery concurrency iso`. It needs Xcode 27, `jq`, and stock Apple
 `container` with its service running; it builds `iso-sandbox` and `iso`
 itself. Run it for host lifecycle, guest-visible, runtime, or isolation
 changes. For credential-proxy changes also run

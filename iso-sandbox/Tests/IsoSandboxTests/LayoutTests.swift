@@ -98,8 +98,8 @@ import Testing
     #expect(back.network == .hostOnly)
     #expect(
       String(decoding: try JSONEncoder.pretty.encode(r), as: UTF8.self).contains("\"host_only\""))
-    // Only these two modes exist; nothing wider is representable.
-    #expect(Set([NetworkMode.shared, .hostOnly].map(\.rawValue)) == ["shared", "host_only"])
+    // Exactly these modes exist: a new, wider one must be added here on purpose.
+    #expect(Set(NetworkMode.allCases.map(\.rawValue)) == ["shared", "host_only", "brokered"])
   }
 
   @Test func currentRecordsRequireNetworkAndBootIdentity() throws {

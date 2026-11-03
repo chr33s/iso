@@ -12,6 +12,9 @@ func completedResponseDrainsAfterUpstreamClosesDuringGuestWrite(
 ) throws {
   let loop = EmbeddedEventLoop()
   let guest = EmbeddedChannel(loop: loop)
+  // Connected, so the closing assertion below can fail and the relay's
+  // close-on-failure path runs.
+  try guest.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).wait()
   let writer = PendingGuestBody()
   let anchor = GuestRelayAnchor()
   try guest.pipeline.syncOperations.addHandlers([writer, anchor])

@@ -120,7 +120,7 @@ explicit `apple_container.binary` still takes precedence. `iso update` targets
 
 The image carries no SSH host keys and an empty `/etc/machine-id`. Each sandbox generates its own on first boot and keeps them across restarts. `sshd` refuses passwords and root logins and disables agent forwarding. Units that would fight the runtime's addressing (networkd, resolved, udevd, timesyncd) are masked.
 
-Marketplaces and plugins are not baked into the image. The first boot installs them through the shared bootstrap.
+Marketplaces and plugins are not baked into the image. The first boot installs the configured `claude` and `codex` ones through the shared bootstrap; a profile's `marketplaces` and `plugins` are not applied.
 
 ### How instances work
 
@@ -213,7 +213,7 @@ Runtime and builder commands run with a cleared environment: only `HOME`, `USER`
 
 ### Validation status
 
-Validated on macOS 27.0 (Apple M5 Max) with iso-sandbox 0.1.0 and containerization 0.45.0. Runtime 0.3.0 has re-run the setup, machine, isolation, exposure and `iso` phases, and 0.4.0 the setup and `iso` phases; see the table above.
+Validated on macOS 27.0 (Apple M5 Max) with iso-sandbox 0.1.0 and containerization 0.45.0; see the table above.
 
 - **Runtime ([`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh); the selection experiment is in [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md)):**
   - Peer isolation: a root guest cannot reach another sandbox by TCP, UDP, or ICMP over IPv4 or IPv6. That holds with forged on-link routes, static neighbour entries, spoofed source addresses, and broadcast/multicast, and after restarts; the host reaches each listener as the positive control.

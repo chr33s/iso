@@ -150,15 +150,21 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
 }
 
 @Test func childSeesOnlyTheExplicitEnvironmentAndNoExtraDescriptors() throws {
-  setenv("ISO_TEST_AMBIENT", "leak", 1)
-  defer { unsetenv("ISO_TEST_AMBIENT") }
+  // The test process always has an environment of its own (HOME, PATH, ...);
+  // none of it may reach the child. Changing it here would race with the
+  // parallel tests that spawn children.
+  #expect(!ProcessInfo.processInfo.environment.isEmpty)
+  let env = try ProcessRunner().capture(
+    .init(
+      executable: "/usr/bin/env", arguments: [], environment: ["ISO_ONLY": "1"],
+      deadline: .seconds(5)))
+  #expect(String(decoding: env.stdout, as: UTF8.self) == "ISO_ONLY=1\n")
   // Hold extra descriptors open in this process; none may reach the child.
   let held = (0..<4).map { _ in open("/dev/null", O_RDONLY) }
   defer { for fd in held { close(fd) } }
   let paths = held.map { "/dev/fd/\($0)" }.joined(separator: " ")
-  let output = try sh(
-    "printf '%s\\n' \"${ISO_TEST_AMBIENT-unset}\"; /bin/ls -d \(paths) 2>/dev/null")
-  #expect(String(decoding: output.stdout, as: UTF8.self) == "unset\n")
+  let output = try sh("/bin/ls -d \(paths) 2>/dev/null")
+  #expect(output.stdout.isEmpty)
   #expect(try sh("cat").stdout.isEmpty)
 }
 
@@ -329,6 +335,8 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let path = directory + "/config.jsonc"
   try Data("{\"ssh_port\": 2222} // keep".utf8).write(to: URL(fileURLWithPath: path))
+  // An explicit, non-default mode: edits keep it whatever the runner's umask.
+  #expect(chmod(path, 0o640) == 0)
   let environment = ConfigEnvironment(home: directory, variables: [:])
   try await withThrowingTaskGroup(of: Void.self) { group in
     for (index, provider) in [ProxyProvider.anthropic, .openai, .anthropic, .openai].enumerated() {
@@ -345,7 +353,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   #expect(config.sshPort == 2222)
   #expect(config.proxy.anthropic != nil)
   #expect(config.proxy.openai != nil)
-  #expect(mode(path) == 0o644)
+  #expect(mode(path) == 0o640)
 }
 
 @Test func failedEditLeavesTheFileUntouched() throws {

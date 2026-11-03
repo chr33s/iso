@@ -67,8 +67,11 @@ public enum GitIndexFile {
     }
   }
 
-  /// Stage-0 entries of a version 2–4 SHA-1 index whose trailer verifies,
-  /// in index order. Optional extensions (uppercase signature: cache tree,
+  /// Stage-0 entries of a version 2–4 SHA-1 index whose trailer verifies
+  /// or is all zero, in index order. Git writes a zero trailer under
+  /// `index.skipHash` (on with `feature.manyFiles`) and reads it without
+  /// verification; the checksum detects corruption, it does not
+  /// authenticate, and the structural checks below still apply. Optional extensions (uppercase signature: cache tree,
   /// resolve undo, end-of-index and offset tables) are skipped; a split or
   /// sparse index, or any other required extension, is refused.
   public static func parse(_ bytes: [UInt8]) throws(Refusal) -> [Entry] {
@@ -76,7 +79,9 @@ public enum GitIndexFile {
       throw .notAnIndex
     }
     let body = bytes[0..<(bytes.count - 20)]
-    guard Array(Insecure.SHA1.hash(data: body)) == Array(bytes[(bytes.count - 20)...]) else {
+    let trailer = bytes[(bytes.count - 20)...]
+    let skipped = trailer.allSatisfy { $0 == 0 }
+    guard skipped || Array(Insecure.SHA1.hash(data: body)) == Array(trailer) else {
       throw .checksumMismatch
     }
     func u32(_ at: Int) throws(Refusal) -> UInt32 {

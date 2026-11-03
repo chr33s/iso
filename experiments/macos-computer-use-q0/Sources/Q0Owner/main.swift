@@ -21,6 +21,8 @@ import ScreenCaptureKit
 import Virtualization
 
 setvbuf(stdout, nil, _IOLBF, 0)
+// A control client that disconnects early must not kill the owner (and its VM).
+signal(SIGPIPE, SIG_IGN)
 
 func log(_ s: String) {
   FileHandle.standardError.write(("q0host: " + s + "\n").data(using: .utf8)!)
@@ -662,12 +664,13 @@ func serve(_ owner: Owner, at path: String) {
       let c = accept(fd, nil, nil)
       if c < 0 { continue }
       Thread.detachNewThread {
-        let input = FileHandle(fileDescriptor: c, closeOnDealloc: false)
+        // read(2), not FileHandle.availableData, which raises on ECONNRESET.
         var buf = Data()
+        var raw = [UInt8](repeating: 0, count: 4096)
         while true {
-          let chunk = input.availableData
-          if chunk.isEmpty { break }
-          buf.append(chunk)
+          let n = read(c, &raw, raw.count)
+          if n <= 0 { break }
+          buf.append(contentsOf: raw[0..<n])
           while let nl = buf.firstIndex(of: 0x0A) {
             let line = buf[..<nl]
             buf = Data(buf[(nl + 1)...])

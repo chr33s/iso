@@ -237,6 +237,8 @@ struct TOMLParser {
   mutating func document() throws(TOMLParseError) -> TOMLTable {
     let root = Node(.header)
     var table = root
+    // Levels the current table's header already used.
+    var tableDepth = 0
     while true {
       skipBlank()
       guard let byte = current else { break }
@@ -252,22 +254,24 @@ struct TOMLParser {
         if peek("[[") {
           index += 2
           skipBlank()
-          let path = try key()
+          let path = try key(depth: 0)
           skipBlank()
           guard peek("]]") else { throw fail("expected `]]`") }
           index += 2
           table = try appendArrayTable(root, path)
+          tableDepth = path.count
         } else {
           index += 1
           skipBlank()
-          let path = try key()
+          let path = try key(depth: 0)
           skipBlank()
           guard current == UInt8(ascii: "]") else { throw fail("expected `]`") }
           index += 1
           table = try defineTable(root, path)
+          tableDepth = path.count
         }
       } else {
-        try keyValue(into: table, depth: 0)
+        try keyValue(into: table, depth: tableDepth)
       }
       try endOfLine()
     }
@@ -340,12 +344,12 @@ struct TOMLParser {
   }
 
   mutating func keyValue(into table: Node, depth: Int) throws(TOMLParseError) {
-    let path = try key()
+    let path = try key(depth: depth)
     skipBlank()
     guard current == UInt8(ascii: "=") else { throw fail("expected `=`") }
     index += 1
     skipBlank()
-    let parsed = try value(depth: depth)
+    let parsed = try value(depth: depth + path.count - 1)
     var node = table
     for key in path.dropLast() {
       switch node.children[key] {
@@ -378,7 +382,8 @@ struct TOMLParser {
 
   // MARK: Keys
 
-  mutating func key() throws(TOMLParseError) -> [String] {
+  /// `depth` is the nesting the key starts at; each further segment adds one.
+  mutating func key(depth: Int) throws(TOMLParseError) -> [String] {
     var parts: [String] = []
     while true {
       skipBlank()
@@ -398,8 +403,8 @@ struct TOMLParser {
       skipBlank()
       guard current == UInt8(ascii: ".") else { return parts }
       // Each segment is a table level: dotted keys and headers count
-      // against the same nesting limit as arrays and inline tables.
-      guard parts.count < Self.maxDepth else { throw fail("recursion limit exceeded") }
+      // against the same cumulative nesting limit as arrays and inline tables.
+      guard depth + parts.count < Self.maxDepth else { throw fail("recursion limit exceeded") }
       index += 1
     }
   }

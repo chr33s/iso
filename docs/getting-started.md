@@ -41,6 +41,17 @@ Setup writes `~/.iso/config.jsonc` if it is missing and builds the default
 Linux image with Docker, git, Claude Code, and Codex. VM state lives under
 `~/.iso/`. Rerunning setup skips completed work.
 
+By default the guest reaches the model provider only through the
+[credential proxy](credential-proxy.md) (`proxy.mode: "required"`), so store a
+provider credential before starting a project:
+
+```sh
+iso proxy setup            # Claude: a `claude setup-token` token, or --api-key
+iso proxy setup --openai   # Codex: an OpenAI API key
+```
+
+Without a provider proxy, `iso up` stops before creating the VM.
+
 ### 2. Start your project
 
 ```sh
@@ -62,9 +73,12 @@ iso codex
 ```
 
 Agents run with permission bypass enabled inside the VM. The VM is the
-isolation boundary. Provider API keys are read from `ANTHROPIC_API_KEY` or
-`OPENAI_API_KEY` in your host environment; account sign-in is covered in the
-agent guides above.
+isolation boundary. The proxy injects the provider credential on the host; the
+guest never receives it. Host `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` reach
+the guest only with an explicit relaxation (the `networked`
+[preset](configuration.md#security-presets), or `proxy.mode` `"auto"` or
+`"off"` with egress enabled) and no proxy for that provider; account sign-in is
+covered in the agent guides above.
 
 For a shell, use `iso shell`. Exit the agent or shell to return to the host;
 the VM keeps running. `iso status` shows its state and resource usage.

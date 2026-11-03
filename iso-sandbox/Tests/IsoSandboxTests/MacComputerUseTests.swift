@@ -132,3 +132,14 @@ private func request(_ kind: String, _ build: (inout CUActionRequest) -> Void = 
   c.width = 1280
   #expect(b.mismatch(c) == "geometry changed")
 }
+
+@Test func actReplyWaitCoversTheLongestTypedText() {
+  #expect(MacSandboxes.replyTimeout(MacControlRequest(op: .cuFrame)) == 120)
+  let longest = request("type") {
+    $0.text = String(repeating: "A", count: CUActionRequest.maxText)
+  }
+  let wait = MacSandboxes.replyTimeout(MacControlRequest(op: .cuAct, action: longest))
+  // Shift down, key down, key up, shift up per character, 12 ms apart.
+  let typing = Double(CUActionRequest.maxText * 4) * 0.012
+  #expect(wait >= typing + 60)
+}

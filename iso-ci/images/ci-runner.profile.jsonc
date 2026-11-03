@@ -2,7 +2,7 @@
 // Add this object under "profiles" in ~/.iso/config.jsonc on every CI host,
 // then build the approved image there:
 //
-//   iso setup --profile ci-runner --name ci-runner
+//   iso setup --profile ci-runner --image ci-runner
 //
 // The profile pins the official GitHub Actions runner for Linux ARM64 by
 // version and SHA-256 and installs it under /opt/actions-runner. It bakes in
@@ -14,8 +14,10 @@
 //
 // Update policy: GitHub requires self-hosted runners to update within its
 // published window. Bump RUNNER_VERSION and RUNNER_SHA256 together, rebuild,
-// re-approve the image descriptor (runner_version in iso-ci config), and rerun
-// the connected and preflight compatibility suites before activating pools.
+// re-approve the image descriptor (runner_version in iso-ci config), widen
+// the local-actions/v1 runner binding in Compatibility.swift (preflight
+// refuses a runner outside it), and rerun the connected and preflight
+// compatibility suites before activating pools.
 {
   "ci-runner": {
     "apt_packages": ["ca-certificates", "curl", "jq", "tar", "gzip", "libicu74", "libssl3", "libkrb5-3", "zlib1g"],

@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 import Testing
 
 @testable import IsoHost
@@ -391,4 +392,33 @@ private let sidecarJSON = """
   #expect(disposable.schemaVersion == reusable.schemaVersion)
   let encoded = try StateStore.encode(disposable, path: "sidecar")
   #expect(try StateSchema.decodeSidecar(encoded, path: "sidecar") == disposable)
+}
+
+/// Destroy removes the instance directory while holding the lock inside it:
+/// a later lock or grant write must not recreate the directory, and a waiter
+/// must not end up holding the unlinked lock.
+@Test func instanceLockNeverRecreatesADestroyedInstance() throws {
+  let root = try scratchDirectory("instance-lock")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let instance = try testInstance(root + "/dev")
+  let holder = try InstanceStore.lock(instance)
+  final class Outcome: Sendable { let acquired = Mutex<Bool?>(nil) }
+  let outcome = Outcome()
+  let finished = DispatchSemaphore(value: 0)
+  Thread {
+    let lock = try? InstanceStore.lock(instance)
+    lock?.release()
+    outcome.acquired.withLock { $0 = lock != nil }
+    finished.signal()
+  }.start()
+  usleep(100_000)
+  try FileManager.default.removeItem(atPath: instance.directory)
+  holder.release()
+  #expect(finished.wait(timeout: .now() + 10) == .success)
+  #expect(outcome.acquired.withLock { $0 } == false)
+  #expect(throws: HostError.self) { try InstanceStore.lock(instance) }
+  #expect(throws: (any Error).self) {
+    try GrantLedger.reconcile(instance, revoked: [], environment: [:], forwards: [], fresh: [])
+  }
+  #expect(!FileManager.default.fileExists(atPath: instance.directory))
 }

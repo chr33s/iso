@@ -147,9 +147,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   #expect(ProxyLauncher.recordedModelTunnels(instance).isEmpty)
   #expect(FileManager.default.fileExists(atPath: instance.directory + "/proxy-anthropic-fwd.pid"))
 
-  #expect(ProxyLauncher.isSSHCommand("/usr/bin/ssh\n"))
-  #expect(ProxyLauncher.isSSHCommand("ssh"))
-  #expect(!ProxyLauncher.isSSHCommand("sshd"))
   // A reused PID that is not ssh is neither current nor signalled.
   try writeFile(ProxyLauncher.forwardPIDPath(instance, "model-8000"), String(getpid()))
   #expect(launcher.modelTunnelPID(instance, port: 8000) == nil)
@@ -527,6 +524,43 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   #expect(!ProxyLauncher.isRecorded(getpid(), pidPath: "/nonexistent/proxy.pid", expect: .proxy))
 }
 
+/// A stale tunnel PID file can name an unrelated `ssh` (the user's own
+/// session after a reboot): without the tunnel's recorded identity it is not
+/// signalled.
+@Test func aStaleTunnelPIDNamingAnotherSSHIsNotSignalled() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let bin = guest.root + "/other"
+  try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+  try runnableSleep(at: bin + "/ssh")
+  let child = Process()
+  child.executableURL = URL(fileURLWithPath: bin + "/ssh")
+  child.arguments = ["30"]
+  try child.run()
+  defer {
+    child.terminate()
+    child.waitUntilExit()
+  }
+  let instance = try testInstance(guest.root + "/instance", index: 15)
+  let launcher = guest.proxies()
+  let pid = child.processIdentifier
+  for name in ["anthropic", "model-8000"] {
+    try writeFile(ProxyLauncher.forwardPIDPath(instance, name), String(pid))
+  }
+  #expect(ProxyLauncher.RecordedProcess.isSSH(ProxyLauncher.commandLine(pid) ?? ""))
+  #expect(launcher.modelTunnelPID(instance, port: 8000) == nil)
+  launcher.stopModelTunnel(instance, port: 8000)
+  launcher.stopTunnel(instance, "anthropic", label: "proxy tunnel")
+  // An identity for another master (its control path) does not cover it either.
+  try writeFile(ProxyLauncher.forwardPIDPath(instance, "openai"), String(pid))
+  try TunnelIdentity(pid: pid, controlPath: "/tmp/elsewhere/ssh.sock", address: "30")
+    .save(instance, name: "openai")
+  launcher.stopTunnel(instance, "openai", label: "proxy tunnel")
+  usleep(200_000)
+  #expect(child.isRunning)
+  #expect(!FileManager.default.fileExists(atPath: ProxyLauncher.forwardPIDPath(instance, "openai")))
+}
+
 /// A process whose arguments merely name iso-proxy or iso-egress is not a
 /// companion; only the identity recorded at spawn (start time and
 /// executable) makes a PID one, and a legacy record must run the executable
@@ -540,7 +574,11 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   let bystander = Process()
   // bash itself, not the /bin/sh trampoline, so the image stays the same.
   bystander.executableURL = URL(fileURLWithPath: "/bin/bash")
-  bystander.arguments = ["-c", "/bin/sleep 30; :", "/opt/iso/bin/iso-proxy", "/opt/iso/iso-egress"]
+  // SIGTERM ends its sleep too, so the child does not outlive the test.
+  bystander.arguments = [
+    "-c", "trap 'kill $! 2>/dev/null; exit' TERM; /bin/sleep 30 & wait", "/opt/iso/bin/iso-proxy",
+    "/opt/iso/iso-egress",
+  ]
   try bystander.run()
   defer { bystander.terminate() }
   let pid = bystander.processIdentifier

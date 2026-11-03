@@ -13,8 +13,9 @@ struct RunCommand: ParsableCommand {
       bootstrapped again. Guest output is not copied back. `--rm` always creates
       a new disposable instance and does not adopt an existing one.
 
-      Filtered egress is not part of this build: network hints on a definition
-      are reported and never granted.
+      Network hints on a definition are shown and are not grants: approve hosts
+      for a filtered instance with `--egress filtered --allow-host HOST` or the
+      configuration's `egress_filter.allowed_hosts`.
 
       `iso host run` is different: it runs a plain command (not an agent) in a
       disposable VM on an enrolled host and collects ~/iso-results.

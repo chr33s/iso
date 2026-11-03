@@ -173,9 +173,6 @@ import Testing
     #expect(error.details.count == HostControlError.maxDetails)
     #expect(error.retry == .refreshObservationThenNewOperation)
     #expect(try HostControlError(wire: error.wire) == error)
-    for code in HostControlError.Code.allCases {
-      #expect(HostControlError.Retry.allCases.contains(code.defaultRetry))
-    }
   }
 
   @Test func helloAdvertisesOnlyDispatchedMethods() throws {

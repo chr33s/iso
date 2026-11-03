@@ -35,10 +35,12 @@ A distribution holds five executables. The first four are host processes;
 
 The host drives the runtime over its JSON CLI and starts companions through
 their startup protocols; it never links those packages. The one shared code
-is the [`iso-policy/`](../iso-policy) library (`IsoPolicy`): the default-deny
-policy evaluator, sliding-window admissions and single-use approvals, linked
-by both `iso` and `iso-proxy` but never a process of its own
-([`policy.md`](policy.md), [`design/iso-policy.md`](design/iso-policy.md)). `iso` resolves
+is the [`iso-policy/`](../iso-policy) package, never a process of its own. Its
+`IsoPolicy` library (the default-deny policy evaluator, sliding-window
+admissions and single-use approvals) is linked by both `iso` and `iso-proxy`
+([`policy.md`](policy.md), [`design/iso-policy.md`](design/iso-policy.md)); its
+`IsoGitIndex` library, the inert Git index reader, is linked by `iso` and the
+separately installed `iso-ci`. `iso` resolves
 `iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable, and
 `iso-sandbox` finds `iso-macos-helper` beside itself. A missing `iso-egress`
 blocks only filtered boots.
@@ -58,6 +60,8 @@ iso/
 │   │   ├── Processes/     # spawning, signal propagation, detached child ownership
 │   │   ├── Guest/         # SSH, bootstrap, images, agents, proxy startup; Resources/
 │   │   ├── Editor/        # compiled-in editor providers; sandboxed editor sessions
+│   │   ├── HostControl/   # execution-host protocol, supervisor, run/artifact stores, relays
+│   │   ├── Policy/        # policy state, grant ledger, workspace policy, effective report
 │   │   ├── Credentials/   # credential resolution, Keychain, GitHub and proxy config
 │   │   ├── Workspace/     # transfer and staged-return workflows
 │   │   ├── Devcontainer/  # parsing, translation and verified OCI Features
@@ -284,7 +288,7 @@ fetch release metadata, download the platform archive, `SHA256SUMS` and
 `ReleaseSigners` (mandatory), the checksum (mandatory) and the Sigstore
 attestation, extract into a private
 temporary directory with path validation, then replace `iso-sandbox`,
-`iso-proxy` and finally `iso`. Any failure before a replacement leaves every
+`iso-macos-helper`, `iso-proxy`, `iso-egress` and finally `iso`. Any failure before a replacement leaves every
 installed binary untouched; each replacement is atomic but the set is not a
 single transaction. Only release builds (`-D ISO_RELEASE_BUILD`, set by
 `scripts/build-release.py --release`) update themselves. A background notifier
@@ -314,7 +318,10 @@ Hold these when changing the code; the review lenses check for their violation:
 4. **Value invariants live in constructors.** Parse into a `IsoCore` type at
    the boundary; don't re-validate primitives downstream.
 5. **Secrets never touch argv or logs.** Environment/`SendEnv`/stdin only;
-   diagnostics never print a resolved secret.
+   diagnostics never print a resolved secret. The one known argv exception is
+   the macOS Keychain store step (`security add-generic-password -w`,
+   `SecretStore.swift`), whose CLI has no stdin path
+   ([trust-model](trust-model.md)).
 6. **No shell interpolation.** Host processes start only through
    `ProcessRunner` with an explicit argv; guest commands are built with
    `RemoteCommand.arg` (untrusted values) and `.literal` (iso-authored

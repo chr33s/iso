@@ -25,6 +25,7 @@ import json
 import os
 import platform
 import re
+import select
 import shutil
 import signal
 import statistics
@@ -582,9 +583,9 @@ class Runner:
         command = [self.iso] + (["--config", self.args.config] if self.args.config else []) + [
             "host", "session", self.args.name, self.instance]
         session = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.environment)
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=self.environment)
         try:
-            line = session.stdout.readline().strip()
+            line = first_line(session)
             parts = line.split()
             if len(parts) != 4 or parts[0] != "ssh":
                 return self.record("relay-round-trip", "fail", started, reason=f"unexpected session output {line!r}")
@@ -620,8 +621,8 @@ class Runner:
         command = [self.iso] + (["--config", self.args.config] if self.args.config else []) + [
             "host", "session", self.args.name, self.instance]
         session = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.environment)
-        parts = session.stdout.readline().strip().split()
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=self.environment)
+        parts = first_line(session).split()
         if len(parts) != 4 or parts[0] != "ssh":
             session.kill()
             return None
@@ -892,6 +893,23 @@ def seed_initfs(state):
         runtime = Path(state) / "runtime"
         runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
         shutil.copyfile(seed, runtime / "initfs.ext4")
+
+def first_line(process, timeout=120):
+    """The first stdout line of `process`, or "" when none arrives within
+    `timeout` seconds (a stalled coordinator must not hang the run)."""
+    fd = process.stdout.fileno()
+    deadline = time.monotonic() + timeout
+    data = b""
+    while b"\n" not in data:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            return ""
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        data += chunk
+    return data.split(b"\n", 1)[0].decode(errors="replace").strip()
+
 
 def tail(text, limit=600):
     text = (text or "").strip()

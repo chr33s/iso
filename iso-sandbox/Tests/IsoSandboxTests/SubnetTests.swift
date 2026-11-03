@@ -141,6 +141,11 @@ import Testing
     #expect(throws: Boom.self) {
       try SubnetAllocator(root: root).allocate(for: try SandboxID("a")) { _ in throw Boom() }
     }
-    #expect(try root.allRecords().isEmpty)
+    // The allocator's only persistent effect is its state file: a failed
+    // commit leaves none, and the same index is offered again.
+    #expect(!FileManager.default.fileExists(atPath: root.subnetState.path))
+    var offered: Int?
+    try SubnetAllocator(root: root).allocate(for: try SandboxID("a")) { offered = $0 }
+    #expect(offered == SubnetAllocator.range.first)
   }
 }

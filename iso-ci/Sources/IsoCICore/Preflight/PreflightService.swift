@@ -67,6 +67,8 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
   private let scripts = SnapshotScriptRegistry()
   private let broker: DataPlaneBroker
   private let state = Mutex<State>(State())
+  /// Serializes data-plane launches so concurrent first jobs share one child.
+  private let launchLock = NSLock()
 
   private struct State {
     var supervisor: DataPlaneSupervisor?
@@ -104,6 +106,9 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
   /// Starts the confined child once; failure to establish confinement
   /// refuses preflight admission (no unconfined fallback).
   private func dataPlane() throws(CIError) {
+    if state.withLock({ $0.supervisor?.isRunning ?? false }) { return }
+    launchLock.lock()
+    defer { launchLock.unlock() }
     if state.withLock({ $0.supervisor?.isRunning ?? false }) { return }
     let paths = DataPlaneSupervisor.Paths(
       executable: executable, socket: root.dataPlaneSocket, staging: root.staging + "/dataplane",
@@ -167,6 +172,7 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
         }
         secrets[key] = text
       }
+      try JobMessageBuilder.validate(secrets: secrets)
     }
     var inputs: [String: String] = [:]
     if let raw = r.optional("inputs"), case .object(let members) = raw {
@@ -191,6 +197,12 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       throw CIError.config("preflight compatibility has no manifest")
     }
     let manifest = try CompatibilityManifest.builtin(manifestID)
+    guard manifest.runner.admits(profile.image.runnerVersion) else {
+      throw CIError(
+        .compatibilityRejected,
+        "runner \(profile.image.runnerVersion) is outside \(manifest.id)'s runner range \(manifest.runner.minimumVersion)-\(manifest.runner.maximumVersion)"
+      )
+    }
     if let host, !preflight.hosts.contains(host) {
       throw CIError(.admissionRefused, "host \(host) is not configured for preflight")
     }
@@ -253,7 +265,8 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       id: id, repositoryPath: repositoryPath, repository: repository, plan: plan,
       revision: revision,
       createdAt: store.now, pinnedHost: host, profile: preflight.profile, inputs: inputs,
-      secretNames: secrets.keys.sorted(), retainOnFailure: .live)
+      secretNames: secrets.keys.sorted(), retainOnFailure: .live, include: include,
+      exclude: exclude)
     try store.db.transaction { () throws(CIError) in
       try store.savePreflightRun(id, createdAt: record.createdAt, record)
       for job in plan.jobs {
@@ -915,12 +928,7 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       blocking { await broker.unregister(allocation) }
       return
     }
-    let state: JobAttemptState =
-      switch result.conclusion {
-      case "success", "succeeded": .succeeded
-      case "cancelled", "canceled": .cancelled
-      default: .failed
-      }
+    let state = Self.attemptState(conclusion: result.conclusion)
     guard
       let attempt = try? updateAttempt(
         notice.attempt,
@@ -993,6 +1001,24 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       _ = try? store.event(
         "allocation:\(allocation)", "allocation.finish_failed",
         "\(error.code.rawValue): \(error.message)")
+    }
+  }
+
+  /// The runner's job workspace (`WorkFolder` `_work`) under the image's
+  /// configured runner directory.
+  static func workspace(runnerDirectory: String, repository: String) -> String {
+    let name = repository.split(separator: "/").last.map(String.init) ?? "repository"
+    return "\(runnerDirectory)/_work/\(name)/\(name)"
+  }
+
+  /// The attempt state for a runner job conclusion. GitHub shows
+  /// `succeeded_with_issues` as a success.
+  static func attemptState(conclusion: String) -> JobAttemptState {
+    switch conclusion {
+    case "success", "succeeded", "succeeded_with_issues": .succeeded
+    case "cancelled", "canceled": .cancelled
+    case "skipped": .skipped
+    default: .failed
     }
   }
 
@@ -1132,6 +1158,23 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     ]
   }
 
+  /// A patch captures with the run's own include/exclude patterns, so a
+  /// file the run withheld is withheld from every later revision too.
+  static func patchSnapshotOptions(_ record: PreflightRunRecord, outputDirectory: String)
+    throws(CIError) -> SnapshotOptions
+  {
+    guard let include = record.include, let exclude = record.exclude else {
+      throw CIError(
+        .conflict,
+        "run \(record.id) predates recorded snapshot patterns; start a new run to patch")
+    }
+    var options = SnapshotOptions(outputDirectory: outputDirectory)
+    options.include = include
+    options.exclude = exclude
+    options.workflowPath = record.plan.workflowPath
+    return options
+  }
+
   /// Transfers a new validated snapshot into a retained, non-running
   /// environment and records it as a new input revision.
   private func patch(_ params: JSONValue) throws(CIError) -> JSONValue {
@@ -1158,8 +1201,8 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     else {
       throw CIError.invalid("patch must come from the run's repository \(record.repositoryPath)")
     }
-    var options = SnapshotOptions(outputDirectory: root.staging + "/snapshots")
-    options.workflowPath = record.plan.workflowPath
+    let options = try Self.patchSnapshotOptions(
+      record, outputDirectory: root.staging + "/snapshots")
     let capture = try SnapshotCapture.capture(repository: repository, options: options)
     defer { PrivateFiles.remove(capture.archivePath) }
     let imported = try objects.importFile(capture.archivePath, kind: .snapshot, limit: 512 << 20)
@@ -1176,8 +1219,10 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     else {
       throw CIError(.internalError, "no overlay script")
     }
-    let repoName = record.repository.split(separator: "/").last.map(String.init) ?? "repository"
-    let workspace = "/opt/actions-runner/_work/\(repoName)/\(repoName)"
+    let profile = try ResolvedProfile(
+      name: record.profile, configuration: try loadConfiguration().get())
+    let workspace = Self.workspace(
+      runnerDirectory: profile.image.runnerDirectory, repository: record.repository)
     let script = """
       export RUNNER_TEMP="$(mktemp -d)"
       export GITHUB_WORKSPACE=\(shellQuote(workspace))

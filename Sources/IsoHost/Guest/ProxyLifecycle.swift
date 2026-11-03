@@ -268,7 +268,11 @@ package struct ProxyLauncher: Sendable {
       .info,
       "Started filtered egress companion on 127.0.0.1:\(port) (guest loopback, port 443 only)"
     )
-    configureEgressClients(target, port: port, capability: capability, user: sidecar.guestUser)
+    // The client setup is a Linux/systemd script; a macOS guest has no
+    // Docker daemon or /etc/environment for it to configure.
+    if sidecar.kind == .linux {
+      configureEgressClients(target, port: port, capability: capability, user: sidecar.guestUser)
+    }
   }
 
   package func stopEgress(_ instance: Instance) {
@@ -714,7 +718,7 @@ package struct ProxyLauncher: Sendable {
     case lease
 
     /// A tunnel master's command line: `ssh` itself, not a word in another
-    /// program's arguments. `TunnelIdentity` binds it further.
+    /// program's arguments. Signalling also needs its `TunnelIdentity`.
     static func isSSH(_ command: String) -> Bool {
       command.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map {
         ($0 as NSString).lastPathComponent == "ssh"
@@ -731,7 +735,12 @@ package struct ProxyLauncher: Sendable {
     _ pid: pid_t, pidPath: String, expect: RecordedProcess,
     legacyExecutable: @autoclosure () -> String? = nil
   ) -> Bool {
-    if case .ssh = expect { return commandLine(pid).map(RecordedProcess.isSSH) ?? false }
+    // A tunnel master counts only as the exact process its recorded identity
+    // names (PID, control path and destination): any other `ssh`, such as
+    // the user's own session on a reused PID, is never signalled.
+    if case .ssh = expect {
+      return TunnelIdentity.load(forPIDFile: pidPath)?.isRunning(as: pid) ?? false
+    }
     if let identity = ProcessIdentity.load(forPIDFile: pidPath) {
       return identity.pid == pid && identity.isAlive
     }
@@ -867,25 +876,13 @@ package struct ProxyLauncher: Sendable {
     "\(target.address):\(target.port) \(target.alias) \(tunnel.guestPort):\(tunnel.hostAddress):\(tunnel.hostPort)"
   }
 
-  /// A recorded PID counts only while `ps` still names it `ssh`, so a
-  /// reused PID is never trusted or signalled.
+  /// A recorded PID counts only while it is still the master its
+  /// `TunnelIdentity` names, so a reused PID (even another `ssh`) is never
+  /// trusted or signalled.
   func modelTunnelPID(_ instance: Instance, port: UInt16) -> Int32? {
-    guard
-      let bytes = try? StateStore.readControlFile(
-        Self.forwardPIDPath(instance, Self.modelTunnelName(port))),
-      let pid = Int32(String(decoding: bytes, as: UTF8.self).trimmingUnicodeWhitespace()), pid > 0,
-      let output = try? ProcessRunner().capture(
-        .init(
-          executable: "/bin/ps", arguments: ["-o", "comm=", "-p", String(pid)], environment: [:],
-          deadline: .seconds(10), outputLimit: 64 << 10, overflow: .drain)),
-      output.termination.succeeded,
-      Self.isSSHCommand(String(decoding: output.stdout, as: UTF8.self))
-    else { return nil }
-    return pid
-  }
-
-  static func isSSHCommand(_ comm: String) -> Bool {
-    (comm.trimmingUnicodeWhitespace() as NSString).lastPathComponent == "ssh"
+    let name = Self.modelTunnelName(port)
+    guard TunnelIdentity.verify(instance, name, address: nil) else { return nil }
+    return TunnelIdentity.load(instance, name)?.pid
   }
 
   func modelTunnelIsCurrent(_ instance: Instance, port: UInt16, spec: String) -> Bool {

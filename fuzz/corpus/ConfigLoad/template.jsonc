@@ -16,7 +16,7 @@
   //   "skip": ["owner/big-repo"],   // repos to skip the auto-prompt for
   //   "pat": {
   //     "owner/repo": {
-  //       "token": "cmd:security find-generic-password -s iso-github-pat -a owner-repo -w"
+  //       "token": "cmd:security find-generic-password -s iso-github-pat -a owner/repo -w"
   //     }
   //   }
   // },

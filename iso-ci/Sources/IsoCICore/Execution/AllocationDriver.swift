@@ -55,11 +55,20 @@ package final class HostDirectory: Sendable {
   /// Re-reads the advertised capabilities of an enabled host so placement
   /// sees evidence recorded (or withdrawn) after `enable`. Identity is
   /// checked by the pinned client; an unreachable host keeps its snapshot
-  /// and is handled by admission.
+  /// and is handled by admission. A host quarantined as unreachable is
+  /// enabled again once it answers the pinned `hello`.
   package func refreshCapabilities(_ alias: Name) throws(CIError) {
-    guard var record = try store.host(alias), record.state == .enabled else { return }
+    guard var record = try store.host(alias),
+      record.state == .enabled || record.state == .quarantined
+    else { return }
     let client = try client(alias)
     let (hello, epoch) = try client.hello()
+    if record.state == .quarantined {
+      record.state = .enabled
+      record.reason = nil
+      try store.event(
+        "host:\(alias)", "host.recovered", "host \(alias) answered again; quarantine lifted")
+    }
     guard hello.methods.contains(HostMethod.hostCapabilities.rawValue) else {
       record.capabilities = nil
       record.observedAt = store.now

@@ -236,19 +236,8 @@ def launchd_plist(label, argv, out, err, session=None, user_name=None):
 
 
 def stop_stale_owners():
-    # Direct (C0) owners have no launchd job and, for vm-run, no socket: find them by argv.
-    pids = sh("pgrep", "-f", f"vz-context-probe vm-(run|view) {VM}").split()
-    for pid in pids:
-        subprocess.run(["kill", "-TERM", pid], capture_output=True)
-    if pids:
-        deadline = time.time() + 60
-        while time.time() < deadline and sh("pgrep", "-f", f"vz-context-probe vm-(run|view) {VM}"):
-            time.sleep(1)
-    for domain in DOMAINS:
-        subprocess.run(["launchctl", "bootout", f"{domain}/{os.getuid()}/{LABEL}"], capture_output=True)
-    for label in ("dev.iso.q0spike.owner",):  # the Q0 harness owns the same VM bundle
-        for domain in DOMAINS:
-            subprocess.run(["launchctl", "bootout", f"{domain}/{os.getuid()}/{label}"], capture_output=True)
+    # A vm-view owner (direct or launchd) has a control socket: stop it
+    # gracefully first, since SIGTERM (from kill or bootout) ends it at once.
     if SOCK.exists():
         try:
             call({"op": "stop"}, timeout=200)
@@ -256,6 +245,19 @@ def stop_stale_owners():
             time.sleep(2)
         except (OSError, ValueError):
             SOCK.unlink(missing_ok=True)  # nobody listening
+    for domain in DOMAINS:
+        subprocess.run(["launchctl", "bootout", f"{domain}/{os.getuid()}/{LABEL}"], capture_output=True)
+    for label in ("dev.iso.q0spike.owner",):  # the Q0 harness owns the same VM bundle
+        for domain in DOMAINS:
+            subprocess.run(["launchctl", "bootout", f"{domain}/{os.getuid()}/{label}"], capture_output=True)
+    # Direct (C0) owners have no launchd job and, for vm-run, no socket: find what is left by argv.
+    pids = sh("pgrep", "-f", f"vz-context-probe vm-(run|view) {VM}").split()
+    for pid in pids:
+        subprocess.run(["kill", "-TERM", pid], capture_output=True)
+    if pids:
+        deadline = time.time() + 60
+        while time.time() < deadline and sh("pgrep", "-f", f"vz-context-probe vm-(run|view) {VM}"):
+            time.sleep(1)
 
 
 def events(rd):

@@ -14,7 +14,13 @@
     fi
 
     echo '  [guest] Installing Codex CLI with the native installer...'
-    CODEX_NATIVE_BIN="/home/${GUEST_USER}/.local/bin/codex"
+    # `iso agent update --codex` also runs this on macOS guests.
+    if [ "$(uname -s)" = Darwin ]; then
+        GUEST_HOME="/Users/${GUEST_USER}"
+    else
+        GUEST_HOME="/home/${GUEST_USER}"
+    fi
+    CODEX_NATIVE_BIN="${GUEST_HOME}/.local/bin/codex"
     CODEX_INSTALLER=$(mktemp)
     CODEX_LINK_TMP="/usr/local/bin/codex.new.$$"
     trap 'rm -f "$CODEX_INSTALLER" "$CODEX_LINK_TMP"' EXIT
@@ -27,12 +33,17 @@
     # Retain the upstream package layout and guest ownership for `codex update`.
     # PATH is already managed by iso; the installer need not edit shell profiles.
     su - "$GUEST_USER" -c \
-        "PATH='/home/${GUEST_USER}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' CODEX_NON_INTERACTIVE=1 sh '$CODEX_INSTALLER'" \
+        "PATH='${GUEST_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' CODEX_NON_INTERACTIVE=1 sh '$CODEX_INSTALLER'" \
         </dev/null
 
     # Keep existing iso wrappers and absolute-path callers working after updates.
     ln -s "$CODEX_NATIVE_BIN" "$CODEX_LINK_TMP"
-    mv -Tf "$CODEX_LINK_TMP" /usr/local/bin/codex
+    # Replace the link itself, not a directory it may point to (`-T` is GNU-only).
+    if [ "$(uname -s)" = Darwin ]; then
+        mv -fh "$CODEX_LINK_TMP" /usr/local/bin/codex
+    else
+        mv -Tf "$CODEX_LINK_TMP" /usr/local/bin/codex
+    fi
 
     # The native installer validates its package; verify iso's link as its user.
     if ! su - "$GUEST_USER" -c '/usr/local/bin/codex --version' </dev/null; then

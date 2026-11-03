@@ -21,6 +21,7 @@ inside the guest recorded.
 import argparse
 import json
 import os
+import plistlib
 import queue
 import random
 import secrets
@@ -87,6 +88,12 @@ class Owner:
         raise SystemExit(f"owner did not reach running; see {logf}")
 
     def stop(self):
+        # The owner's "stop" is a hard power-off (a macOS guest may ignore
+        # requestStop), so flush the guest's disk first, best effort.
+        try:
+            ssh("sync", check=False, timeout=15)
+        except (OSError, RuntimeError, SystemExit, subprocess.TimeoutExpired):
+            pass
         try:
             call({"op": "stop"}, timeout=60)
             call({"op": "quit"})
@@ -103,19 +110,16 @@ class Owner:
 
 
 def launchd_plist(argv, logf, session):
-    args = "".join(f"<string>{a}</string>" for a in argv)
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>{LABEL}</string>
-<key>ProgramArguments</key><array>{args}</array>
-<key>RunAtLoad</key><true/>
-<key>LimitLoadToSessionType</key><string>{session}</string>
-<key>ProcessType</key><string>Interactive</string>
-<key>StandardOutPath</key><string>{logf}</string>
-<key>StandardErrorPath</key><string>{logf}</string>
-</dict></plist>
-"""
+    # plistlib escapes the paths, which come from $Q0_STATE, $HOME and $Q0_SOCK.
+    return plistlib.dumps({
+        "Label": LABEL,
+        "ProgramArguments": [str(a) for a in argv],
+        "RunAtLoad": True,
+        "LimitLoadToSessionType": session,
+        "ProcessType": "Interactive",
+        "StandardOutPath": str(logf),
+        "StandardErrorPath": str(logf),
+    }).decode()
 
 
 def stop_any_owner():
@@ -185,13 +189,15 @@ def ssh_base(ip, password=False):
         # Spike only: TOFU into a spike-local known_hosts. Gate J requires the pin from vsock.
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=5",
-        "-o", "ControlPath=/tmp/q0ssh-%C", "-o", "ControlMaster=auto", "-o", "ControlPersist=120",
     ]
+    # ssh keeps the first value given for an option, so the password session
+    # gets no ControlPath at all: it must not become the key sessions' master.
     if password:
         opts += ["-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no",
-                 "-o", "ControlMaster=no"]
+                 "-o", "ControlMaster=no", "-o", "ControlPath=none"]
     else:
-        opts += ["-i", str(KEY), "-o", "BatchMode=yes", "-o", "PreferredAuthentications=publickey"]
+        opts += ["-i", str(KEY), "-o", "BatchMode=yes", "-o", "PreferredAuthentications=publickey",
+                 "-o", "ControlPath=/tmp/q0ssh-%C", "-o", "ControlMaster=auto", "-o", "ControlPersist=120"]
     return opts
 
 
@@ -258,6 +264,8 @@ def bootstrap_guest():
     ssh("launchctl bootout gui/$(id -u)/dev.iso.q0helper 2>/dev/null; "
         "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.iso.q0helper.plist", check=False)
     wait_for(lambda: call({"op": "state"}).get("boot_id"), 60, "vsock helper hello")
+    # Flush the copies to the guest disk before any stop.
+    ssh("sync", check=False)
 
 
 def wait_guest_ready():

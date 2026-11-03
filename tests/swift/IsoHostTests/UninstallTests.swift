@@ -207,9 +207,33 @@ private struct UninstallFixture {
     #expect(readText(fixture.home + "/.iso/unrelated/sentinel") == "unrelated")
     #expect(!(readText(fixture.sshConfig) ?? "").contains("iso"))
     #expect((readText(fixture.sshConfig) ?? "").contains("Host github.com"))
-    // Baseline quirk: the check runs after the owned root is gone, so only the
-    // config canonicalizes and the "can't tell" branch suppresses the notice.
-    #expect(!log.contains("is outside the data directory"))
+    // The config sits beside, not under, the owned backend directory.
+    #expect(
+      log.contains(
+        "Config at \(fixture.home)/.iso/config.jsonc is outside the data directory and was not removed"
+      ))
+  }
+
+  @Test func companionExecutablesAreRemovedWithTheBinary() throws {
+    let fixture = try UninstallFixture()
+    defer { fixture.remove() }
+    let bin = fixture.root + "/bin"
+    for name in ["iso-sandbox", "iso-macos-helper", "iso-proxy"] {
+      try writeUpdateFile(bin + "/" + name, name, mode: 0o755)
+    }
+    // A symlink in a companion's place is not followed or removed.
+    try writeUpdateFile(fixture.root + "/elsewhere", "keep")
+    try FileManager.default.createSymbolicLink(
+      atPath: bin + "/iso-egress", withDestinationPath: fixture.root + "/elsewhere")
+    try writeUpdateFile(bin + "/unrelated", "keep")
+    let log = DiagnosticsLog()
+    try fixture.uninstaller(log: log).run(.init(yes: true, keepData: true))
+    for name in ["iso", "iso-sandbox", "iso-macos-helper", "iso-proxy"] {
+      #expect(!pathExists(bin + "/" + name), "\(name)")
+    }
+    #expect(readText(fixture.root + "/elsewhere") == "keep")
+    #expect(readText(bin + "/unrelated") == "keep")
+    #expect(log.contains("  companion: \(bin)/iso-proxy"))
   }
 
   @Test func nonInteractiveWithoutYesRefuses() throws {

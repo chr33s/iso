@@ -143,7 +143,7 @@ package enum OverlayScripts {
       [ "$problems" -eq 0 ] || iso_fail "snapshot overlay verification failed ($problems problems)"
       echo "iso-ci: snapshot sha256:$digest applied and verified (selected from $base, \(state))"
       if command -v git >/dev/null 2>&1 && [ -d .git ] && ! git rev-parse -q --verify HEAD >/dev/null 2>&1; then
-        git add -A
+        git add -A -f
         git -c user.name=iso-ci -c user.email=iso-ci@localhost -c commit.gpgsign=false \\
           commit -q -m "iso-ci: selected snapshot sha256:$digest" >/dev/null
         echo "iso-ci: synthetic commit $(git rev-parse HEAD) holds the snapshot; it is not $base"

@@ -219,12 +219,13 @@ private func waitFor(_ cond: () -> Bool) async -> Bool {
   #expect(await waitFor { link.generation == 2 })
   #expect(second.read()?.type == .network)
   second.send(HelperMessage(type: .ack))
-  // The old connection's late reply must not answer the new request.
+  let answered = Task.detached { link.status() }
+  #expect(second.read()?.type == .status)
+  // The old connection's late reply, sent while the new request is
+  // outstanding, must not answer it.
   var stale = HelperMessage(type: .statusReply)
   stale.sshHostKey = "ssh-ed25519 " + Data(repeating: 1, count: 51).base64EncodedString()
   first.send(stale)
-  let answered = Task.detached { link.status() }
-  #expect(second.read()?.type == .status)
   var genuine = HelperMessage(type: .statusReply)
   genuine.sshHostKey = hostKey
   second.send(genuine)
@@ -442,13 +443,15 @@ private func fakeTemplate(_ root: SandboxRoot, _ name: String = "t") throws -> S
   _ = try await MacSandboxes.create(
     root: root, id: id, owner: "o", template: t, cpus: 4, memoryBytes: 8 << 30, network: .shared,
     authorizedKey: hostKey)
-  await #expect(throws: SandboxError.self) {
+  let past = await #expect(throws: SandboxError.self) {
     try await MacSandboxes.start(
       root: root, id: id, executable: "/usr/bin/false", wait: 1,
       expiresAt: Date().addingTimeInterval(-1))
   }
+  #expect(past?.description == "--expires-at is in the past")
   let paths = root.macSandbox(id)
   var r = try paths.loadRecord()
+  #expect(r.expiresAt == nil, "a refused start persists nothing")
   r.enrollment = .identityMismatch
   try paths.save(r)
   do {

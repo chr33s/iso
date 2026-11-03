@@ -86,7 +86,9 @@ result = subprocess.run(["/usr/bin/ssh"] + sys.argv[1:], input=request, capture_
 count = int((root / "probe-count").read_text()) + 1
 (root / "probe-count").write_text(str(count))
 if count == int((root / "probe-trigger").read_text()):
-    (root / "probe-checkpoint").write_text(str(count))
+    # Renamed into place: the controller never reads a created but empty file.
+    (root / "probe-checkpoint.tmp").write_text(str(count))
+    os.replace(root / "probe-checkpoint.tmp", root / "probe-checkpoint")
     deadline = time.monotonic() + 4
     while not (root / "probe-release").exists():
         if time.monotonic() >= deadline:

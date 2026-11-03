@@ -79,10 +79,15 @@ package struct OperationStore: Sendable {
     let record = InstallationRecord(
       hostID: .generate(), ownerID: owner, state: .active, createdAt: now.seconds)
     let bytes = try StateStore.encode(record, path: installationPath)
-    try AtomicFile.createExclusive(bytes, at: installationPath, mode: 0o600)
-    // A concurrent creator may have won; its record is authoritative.
+    do { try AtomicFile.createExclusive(bytes, at: installationPath, mode: 0o600) } catch {
+      // A concurrent creator may have won; its record is authoritative.
+      guard try loadInstallation() != nil else { throw error }
+    }
     guard let stored = try loadInstallation() else {
       throw HostError("host-control installation record disappeared")
+    }
+    guard stored.ownerID == owner else {
+      throw HostError("host-control installation belongs to a different owner")
     }
     return stored
   }

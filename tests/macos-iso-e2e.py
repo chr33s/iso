@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """`iso` end to end on macOS guests (real hardware: macOS 27+, Apple Silicon).
 
-    tests/macos-iso-e2e.py --ipsw FILE [--work DIR] [--keep]
+    tests/macos-iso-e2e.py --ipsw FILE [--work DIR] [--skip-build]
 
 Builds the iso host, iso-egress and the runtime from this checkout into
-DIR (default ~/.iso-macos-e2e), runs `iso setup --guest macos` there (a
+DIR (default ~/.iso-macos-e2e; --skip-build reuses DIR/bin), runs `iso setup --guest macos` there (a
 no-op once the image is current; about 25 minutes otherwise), then checks
 up, exec, status, list, stop, start and destroy with open egress, and the
 filtered-egress boundary. It uses its own data directory and never your
@@ -126,9 +126,12 @@ def main():
     binaries = work / "bin" if args.skip_build else build(work)
     project = Path(tempfile.mkdtemp(prefix="iso-macos-e2e-"))
     (project / "README.txt").write_text("hello from host\n")
-    open_config = config(work, "config-open.jsonc", {})
+    # macOS guests need an explicit vmnet transport (the brokered default is
+    # Linux-only), and open egress needs the networked preset.
+    macos = {"network": {"transport": "vmnet"}, "security": {"preset": "networked"}}
+    open_config = config(work, "config-open.jsonc", macos)
     filtered_config = config(work, "config-filtered.jsonc",
-                             {"egress": "filtered", "egress_filter": {"allowed_hosts": ["api.github.com"]}})
+                             {**macos, "egress": "filtered", "egress_filter": {"allowed_hosts": ["api.github.com"]}})
     iso = Iso(binaries / "iso", open_config, project)
     code, _, err = iso("setup", "--guest", "macos", "--ipsw", args.ipsw, "--image", "mac", timeout=4 * 3600)
     if check("setup --guest macos", code == 0, err[-800:]):

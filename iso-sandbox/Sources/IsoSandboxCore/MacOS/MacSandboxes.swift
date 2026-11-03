@@ -265,6 +265,20 @@ package enum MacSandboxes {
   {
     let paths = root.macSandbox(id)
     _ = try paths.loadRecord()
-    return try call(paths, req, timeout: 120)
+    return try call(paths, req, timeout: replyTimeout(req))
+  }
+
+  /// The owner replies to `cu-act` only after the whole action is sent, so
+  /// the wait grows with the action: each key event and each drag point is
+  /// followed by a pause (12 ms and 8 ms in `MacScreen.act`). A maximal
+  /// typed text (4096 shifted characters, about 200 s) still fits.
+  static func replyTimeout(_ req: MacControlRequest) -> TimeInterval {
+    var seconds: TimeInterval = 120
+    if req.op == .cuAct, let action = req.action {
+      let text = String((action.text ?? "").unicodeScalars.prefix(CUActionRequest.maxText))
+      seconds += Double(CUKeys.events(forText: text).count) * 0.012
+      seconds += Double(min(action.path?.count ?? 0, CUActionRequest.maxPath)) * 0.008
+    }
+    return seconds
   }
 }

@@ -289,27 +289,47 @@ import Testing
   @Test func socketsCapConnectionsAndCloseSilentClients() async throws {
     let harness = try await DPHarness()
     let (allocation, _, _) = try await harness.register()
+    let clock = ContinuousClock()
+    // The header deadline is far longer than the checks, so a third
+    // connection that closes quickly was refused by the cap, not the deadline.
     let path = DataPlaneProcessTests.shortSocketPath()
     var limits = DataPlaneHTTPServer.Limits()
     limits.maxConnections = 2
-    limits.headerTimeout = .milliseconds(300)
+    limits.headerTimeout = .seconds(8)
     let server = try await DataPlaneHTTPServer.start(
       socketPath: path, service: harness.service, allocation: allocation, limits: limits)
     defer { unlink(path) }
-    let first = try DataPlaneProcessTests.UnixHTTPClient(path: path)
+    var first: DataPlaneProcessTests.UnixHTTPClient? = try .init(path: path)
     let second = try DataPlaneProcessTests.UnixHTTPClient(path: path)
     try await Task.sleep(for: .milliseconds(50))
-    // The third connection is closed at once.
+    let refusedAt = clock.now
     let third = try DataPlaneProcessTests.UnixHTTPClient(path: path)
     #expect(third.fill() == false)
-    // Silent clients are closed after the header deadline.
-    #expect(first.fill() == false)
-    #expect(second.fill() == false)
-    // Capacity is available again afterwards.
+    #expect(clock.now - refusedAt < .seconds(4))
+    // The admitted connections are still served.
+    second.send("GET", "/nothing")
+    #expect(second.receive()?.0 == 404)
+    // Capacity is available again once one closes.
+    _ = first
+    first = nil
+    try await Task.sleep(for: .milliseconds(200))
     let fourth = try DataPlaneProcessTests.UnixHTTPClient(path: path)
     fourth.send("GET", "/nothing")
     #expect(fourth.receive()?.0 == 404)
     await server.close()
+
+    // Silent clients are closed after the header deadline.
+    let silentPath = DataPlaneProcessTests.shortSocketPath()
+    var short = DataPlaneHTTPServer.Limits()
+    short.headerTimeout = .milliseconds(300)
+    let silentServer = try await DataPlaneHTTPServer.start(
+      socketPath: silentPath, service: harness.service, allocation: allocation, limits: short)
+    defer { unlink(silentPath) }
+    let silent = try DataPlaneProcessTests.UnixHTTPClient(path: silentPath)
+    let openedAt = clock.now
+    #expect(silent.fill() == false)
+    #expect(clock.now - openedAt < .seconds(5))
+    await silentServer.close()
   }
 
   // MARK: P3-16 controller flood
@@ -345,15 +365,8 @@ import Testing
     await harness.broker.event(
       allocation,
       .completed(.init(conclusion: "succeeded", outputs: [:], steps: [], annotations: [])))
-    let notice = await withTaskGroup(of: DataPlaneNotice?.self) { group in
-      group.addTask { await dpNextNotice(harness.broker) { $0.allocation == allocation } }
-      group.addTask {
-        try? await Task.sleep(for: .milliseconds(200))
-        return nil
-      }
-      let first = await group.next() ?? nil
-      group.cancelAll()
-      return first
+    let notice = await dpNextNotice(harness.broker, timeout: .milliseconds(200)) {
+      $0.allocation == allocation
     }
     #expect(notice == nil)
   }

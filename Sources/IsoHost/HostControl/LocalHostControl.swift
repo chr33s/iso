@@ -85,28 +85,42 @@ package final class LocalHostServer: Sendable {
       relay: try Self.listen(paths.relay))
   }
 
-  /// Accept loops; returns only if every listener fails.
+  /// Accept loops; returns as soon as any listener fails for good, so the
+  /// service exits (and launchd restarts it) rather than keep its lock with
+  /// a socket nobody accepts on.
   package func serve(_ listeners: Listeners) {
-    let group = DispatchGroup()
+    let stopped = DispatchSemaphore(value: 0)
     for (listener, kind) in [
       (listeners.control, Kind.control), (listeners.remote, .remote), (listeners.relay, .relay),
     ] {
-      group.enter()
       Thread.detachNewThread { [self] in
         acceptLoop(listener, kind: kind)
-        group.leave()
+        stopped.signal()
       }
     }
-    group.wait()
+    stopped.wait()
   }
 
-  private func acceptLoop(_ listener: Int32, kind: Kind) {
+  /// Descriptor or buffer exhaustion clears as connections close; `accept`
+  /// is retried after a pause instead of ending the listener.
+  static func isTransientAcceptError(_ code: Int32) -> Bool {
+    code == EMFILE || code == ENFILE || code == ENOBUFS || code == ENOMEM
+  }
+
+  func acceptLoop(_ listener: Int32, kind: Kind) {
     while true {
       let client = accept(listener, nil, nil)
       if client < 0 {
-        if errno == EINTR || errno == ECONNABORTED { continue }
+        let code = errno
+        if code == EINTR || code == ECONNABORTED { continue }
+        if Self.isTransientAcceptError(code) {
+          diagnostics.warn(
+            "host-control \(kind.rawValue) listener paused: \(String(cString: strerror(code)))")
+          usleep(100_000)
+          continue
+        }
         diagnostics.warn(
-          "host-control \(kind.rawValue) listener stopped: \(String(cString: strerror(errno)))")
+          "host-control \(kind.rawValue) listener stopped: \(String(cString: strerror(code)))")
         return
       }
       _ = fcntl(client, F_SETFD, FD_CLOEXEC)

@@ -254,8 +254,15 @@ package struct ResourceUsage: Sendable, Equatable {
     + "{gsub(/\\./,\"\",$NF); n+=$NF} END {print \"MemAvailable: \" int(n*ps/1024) \" kB\"}'; "
     + "/bin/df -m /System/Volumes/Data; fi"
 
-  var memPercent: UInt64 { memTotalMiB > 0 ? memUsedMiB * 100 / memTotalMiB : 0 }
-  var diskPercent: UInt64 { diskTotalMiB > 0 ? diskUsedMiB * 100 / diskTotalMiB : 0 }
+  var memPercent: UInt64 { Self.percent(memUsedMiB, of: memTotalMiB) }
+  var diskPercent: UInt64 { Self.percent(diskUsedMiB, of: diskTotalMiB) }
+
+  /// The guest supplies both values, so the product is taken full-width and
+  /// `used` is clamped to `total`; the quotient then never exceeds 100.
+  static func percent(_ used: UInt64, of total: UInt64) -> UInt64 {
+    guard total > 0 else { return 0 }
+    return total.dividingFullWidth(min(used, total).multipliedFullWidth(by: 100)).quotient
+  }
 
   /// Memory is `unavailable` when the guest reported no `MemTotal`.
   package var display: String {

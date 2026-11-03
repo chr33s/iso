@@ -28,7 +28,7 @@ package enum ConfigTemplate {
       //   "skip": ["owner/big-repo"],   // repos to skip the auto-prompt for
       //   "pat": {
       //     "owner/repo": {
-      //       "token": "cmd:security find-generic-password -s iso-github-pat -a owner-repo -w"
+      //       "token": "cmd:security find-generic-password -s iso-github-pat -a owner/repo -w"
       //     }
       //   }
       // },
@@ -134,6 +134,8 @@ package enum ConfigTemplate {
       // "none" (default), "filtered", or "open" (vmnet only); fixed per instance
       // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
       // "egress": "none",
+      // With "filtered", only these exact hosts are reachable; none when empty.
+      // "egress_filter": { "allowed_hosts": ["api.github.com"] },
 
       // "brokered" (default) creates new instances with no network device: SSH
       // and every iso tunnel run over a fixed vsock stream, and egress is "none"

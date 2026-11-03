@@ -118,6 +118,29 @@ import Testing
       ])
   }
 
+  /// Regression: an allocation released after its lost-reply registrations
+  /// were found and deleted settles instead of flipping between uncertain
+  /// and intended forever.
+  @Test func aReleaseAfterResolvedLostRepliesSettles() throws {
+    let h = try GitHubReconcilerHarness()
+    h.runners.state.withLock { $0.loseNextJITReply = true }
+    h.reconciler.reconcile()
+    let id = try #require(try h.open().first).id
+    for _ in 1..<ConnectedPoolReconciler.maxJITAttempts {
+      h.runners.state.withLock { $0.loseNextJITReply = true }
+      h.reconciler.reconcile()
+    }
+    // The last lost reply is resolved, and the attempts are exhausted.
+    h.reconciler.reconcile()
+    #expect(h.runners.state.withLock { $0.deleted } == [100, 101, 102])
+    #expect(try h.store.allocation(id)?.vmCleanup == .verified)
+    h.reconciler.reconcile()
+    h.reconciler.reconcile()
+    let after = try #require(try h.store.allocation(id))
+    #expect(after.registration == .removed)
+    #expect(after.isSettled)
+  }
+
   @Test func unresolvedRegistrationBlocksCapacityAndKeepsResources() throws {
     let h = try GitHubReconcilerHarness(desiredIdle: 2)
     h.runners.state.withLock {
@@ -145,6 +168,19 @@ import Testing
     h.runners.state.withLock { $0.lookupFailure = nil }
     h.reconciler.reconcile()
     #expect(try h.store.allocation(allocation.id)?.vmCleanup == .verified)
+  }
+
+  /// Regression: `pool resolve --runner-id` reported success although the
+  /// runner deletion failed.
+  @Test func supervisedResolutionReportsAFailedDeletion() throws {
+    let h = try GitHubReconcilerHarness()
+    h.reconciler.reconcile()
+    let id = try #require(try h.open().first).id
+    h.runners.state.withLock { $0.deleteFailure = CIError(.githubUnavailable, "503") }
+    #expect(throws: CIError.self) { try h.reconciler.superviseRegistration(id, runnerID: 100) }
+    #expect(try h.store.allocation(id)?.registration == .removalPending)
+    try h.reconciler.superviseRegistration(id, runnerID: 100)
+    #expect(try h.store.allocation(id)?.registration == .removed)
   }
 
   @Test func deletionIsExactlyOwnedNeverByPrefix() throws {
@@ -186,6 +222,26 @@ import Testing
     #expect(h.runners.state.withLock { $0.deleted }.contains(100))
     // The GitHub conclusion is never invented.
     #expect(after.job?.conclusion == nil)
+  }
+
+  /// Regression: a refused deletion (assignment race) must not block every
+  /// later deletion of the same runner on a duplicate intent id.
+  @Test func aRefusedDeletionDoesNotBlockTheNextOne() throws {
+    let h = try GitHubReconcilerHarness()
+    h.reconciler.reconcile()
+    let id = try #require(try h.open().first).id
+    h.runners.state.withLock { $0.deleteFailure = CIError(.githubRefused, "runner is busy") }
+    try PoolControl.drain("validation", store: h.store)
+    h.reconciler.reconcile()
+    #expect(try h.store.allocation(id)?.registration == .assigned)
+    try PoolControl.abort(id, store: h.store)
+    let report = h.reconciler.reconcile()
+    #expect(!report.errors.contains { $0.contains("persist delete intent") })
+    #expect(h.runners.state.withLock { $0.deleted } == [100])
+    #expect(try h.store.allocation(id)?.registration == .removed)
+    let statuses = try h.store.intents(allocation: id).filter { $0.kind == .githubRunnerDelete }
+      .map(\.status)
+    #expect(statuses == [.refused, .confirmed])
   }
 
   @Test func idleRunnersRetireBeforeTheJobAllowanceRunsOut() throws {
@@ -360,6 +416,39 @@ import Testing
     let assigned = try #require(try h.store.allocation(busy.id))
     #expect(assigned.vmCleanup != .verified)
     #expect(assigned.job?.jobID == 3)
+  }
+
+  /// A paused pool keeps its operator state, but a failed activation gate
+  /// (for example the repository turned public) still retires its idle runners.
+  @Test func aPausedPoolWhoseGateFailsRetiresItsIdleRunners() throws {
+    let h = try GitHubReconcilerHarness()
+    h.reconciler.reconcile()
+    let idle = try #require(try h.open().first)
+    try PoolControl.pause("validation", store: h.store)
+    h.reconciler.reconcile()
+    #expect(try h.store.allocation(idle.id)?.registration == .registered)
+    let gated = ConnectedPoolReconciler(
+      pool: "validation", store: h.store, configuration: h.configuration, provider: h.provider,
+      runners: h.runners, placement: GitHubFirstHostPlacement(), controller: h.controller,
+      clock: h.clock, gate: "public repository execution is not qualified")
+    let report = gated.reconcile()
+    #expect(report.retired == [idle.id])
+    #expect(try h.store.allocation(idle.id)?.registration == .removed)
+    #expect(try h.store.poolStatus("validation")?.state == .paused)
+  }
+
+  /// A guest that makes its own ssh fail (exit 255) affects only itself:
+  /// its host is not treated as down, so lifecycle still runs there.
+  @Test func aFailingGuestSessionDoesNotTakeItsHostDown() throws {
+    let h = try GitHubReconcilerHarness()
+    h.reconciler.reconcile()
+    let hostile = try #require(try h.open().first)
+    h.provider.state.withLock { _ = $0.unreachableGuests.insert(hostile.id) }
+    try PoolControl.drain("validation", store: h.store)
+    let report = h.reconciler.reconcile()
+    #expect(report.uncertain.isEmpty)
+    #expect(report.retired == [hostile.id])
+    #expect(try h.store.allocation(hostile.id)?.vmCleanup == .verified)
   }
 
   @Test func pausedAndZeroIdlePoolsDoNotReplenish() throws {

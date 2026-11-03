@@ -56,6 +56,9 @@ package final class UpstreamClient: Sendable {
     return tls
   }
 
+  /// An AHC client configuration for tests that drive a guest-side client.
+  /// Production never builds an `HTTPClient`: upstream requests go through
+  /// `OwnedHTTPRequest` and `CancellableTLSConnection`.
   static func configuration() -> HTTPClient.Configuration {
     var config = HTTPClient.Configuration(
       tlsConfiguration: tlsConfiguration(), redirectConfiguration: .disallow,

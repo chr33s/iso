@@ -736,8 +736,9 @@ package struct AgentBootstrap: Sendable {
       authorization: authorization)
   }
 
-  /// Copy a local marketplace directory into the guest; other sources pass
-  /// through unchanged.
+  /// Copy a local marketplace directory into the guest as one confined
+  /// snapshot (IMPORT-01: no link out of the directory, no special files,
+  /// bounded); other sources pass through unchanged.
   func stageMarketplaceSource(
     _ session: SSHSession, tool: String, source: String, madeDirectory: inout Bool
   ) throws -> String {
@@ -757,8 +758,17 @@ package struct AgentBootstrap: Sendable {
     }
     let remote = GuestPath("\(toolDirectory)/\(name)")
     diagnostics.log(.info, "Copying local marketplace to guest: \(source) -> \(remote)")
+    let staging = try StagingDirectory()
+    defer { staging.remove() }
+    let snapshot = staging.path + "/" + name
     do {
-      try client.copy(session.target, local: source, remote: remote, recursive: true)
+      var confined = try ConfinedCopy(root: source)
+      try confined.everything(to: snapshot)
+    } catch {
+      throw ContextError("Failed to stage marketplace '\(source)'", cause: error)
+    }
+    do {
+      try client.copy(session.target, local: snapshot, remote: remote, recursive: true)
     } catch {
       throw ContextError("Failed to copy marketplace '\(source)' to guest", cause: error)
     }

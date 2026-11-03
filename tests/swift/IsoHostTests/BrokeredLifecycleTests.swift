@@ -75,7 +75,10 @@ private func option(_ call: [String], _ name: String) -> String? {
   let restart = try #require(install.calls().first { $0.first == "start" })
   #expect(option(restart, "--network-policy") == digest.rawValue)
   let again = try #require(try backend.asRunning(instance))
-  guard case .brokered(let next) = again.ready.route else { return }
+  guard case .brokered(let next) = again.ready.route else {
+    Issue.record("a restarted brokered instance came back on another route")
+    return
+  }
   #expect(next.bootID != route.bootID)
   #expect(throws: (any Error).self) { try WorkloadHandoff.require(running) { again } }
 
@@ -265,7 +268,8 @@ private func hostVM(_ install: FakeInstallation, _ native: AppleNativeHost, egre
   try native.stop(id, runtime: machine)
   #expect(egress.calls.last == "stop \(name)")
   try native.delete(id, runtime: machine, owner: try Owner.load(install.config).id)
-  #expect(egress.calls.last == "stop \(name)")
+  // Delete stops the companion again, whether or not the VM was running.
+  #expect(egress.calls == ["start \(name) filtered", "stop \(name)", "stop \(name)"])
 }
 
 @Test func aFilteredBootWhoseCompanionFailsIsStoppedNotLeftRunning() throws {

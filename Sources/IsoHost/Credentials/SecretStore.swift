@@ -13,7 +13,7 @@ import IsoCore
 /// iso neither creates nor deletes what it points at. There is no fallback
 /// store; when the Keychain is unavailable, provisioning fails.
 package enum SecretStore {
-  /// Service name for GitHub PATs; the account is the repo slug with `-`.
+  /// Service name for GitHub PATs; the account is the `owner/repo` slug.
   package static let githubPATService = "iso-github-pat"
   /// Provider proxy credentials. A per-VM override appends `-<vm>`.
   package static let anthropicService = "iso-anthropic"
@@ -23,14 +23,15 @@ package enum SecretStore {
   package static let keychainToken = "macos_keychain"
 }
 
-/// Keychain account name: the safe-name class only, so it is usable as a
-/// lookup key and round-trips through the `cmd:` reference.
+/// Keychain account name: the safe-name class or a repository slug, so it
+/// is usable as a lookup key and round-trips through the `cmd:` reference.
 package struct SecretAccount: Hashable, Sendable, CustomStringConvertible {
   package let rawValue: String
 
-  /// `owner/repo` becomes `owner-repo`.
+  /// The `owner/repo` slug itself. Owners and repositories may both contain
+  /// `-`, so joining them with `-` would map two repositories to one item.
   package init(repo: RepoSlug) {
-    rawValue = repo.rawValue.replacingOccurrences(of: "/", with: "-")
+    rawValue = repo.rawValue
   }
 
   package init(_ name: String) throws(ValidationError) {
@@ -82,7 +83,7 @@ package struct KeychainReference: Equatable, Sendable, CustomStringConvertible {
       }
     }
     if !value.isEmpty && plain { return value }
-    return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    return shellEscape(value)
   }
 
   /// Shell words for the constructs `quote` emits (single quotes and
@@ -155,9 +156,10 @@ package struct Keychain: Sendable {
 
   /// Create or replace the item and return its reference.
   ///
-  /// `security` has no stdin form for a generic password: `-w` takes it on
-  /// argv, where local process listings can briefly see it (the baseline's
-  /// accepted cost). It never appears in iso's own messages.
+  /// `-w` takes the secret on argv, where local process listings can
+  /// briefly see it (the documented exception in docs/trust-model.md; the
+  /// same applies to `ProxyProvisioning.storeInKeychain`). It never appears
+  /// in iso's own messages.
   package func store(service: String, account: SecretAccount, secret: Secret<String>) throws
     -> KeychainReference
   {
@@ -183,12 +185,13 @@ package struct Keychain: Sendable {
     return KeychainReference(service: service, account: account.rawValue)
   }
 
-  /// Remove the item; best-effort, a missing item is not an error.
-  package func delete(service: String, account: SecretAccount) {
+  /// Remove the item a reference names; best-effort, a missing item is not
+  /// an error.
+  package func delete(_ item: KeychainReference) {
     _ = try? runner.capture(
       .init(
         executable: security,
-        arguments: ["delete-generic-password", "-s", service, "-a", account.rawValue],
+        arguments: ["delete-generic-password", "-s", item.service, "-a", item.account],
         environment: environment, deadline: .seconds(60), overflow: .drain))
   }
 }

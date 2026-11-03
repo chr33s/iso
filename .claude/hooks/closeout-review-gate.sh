@@ -14,17 +14,66 @@ set -euo pipefail
 # and (c) store markers under the shared git common dir so a marker written
 # from a worktree is visible from every other worktree and the main checkout.
 #
-# Fail-open by design: anything that isn't an identifiable `gh pr create` in a
-# git repo is allowed through, so the gate never wedges unrelated work.
+# Fail-open by design: anything that isn't an identifiable `gh pr create` (or
+# its alias `gh pr new`) in a git repo is allowed through, so the gate never
+# wedges unrelated work.
 
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // .tool_input.cmd // .command // .cmd // empty' <<<"$INPUT" 2>/dev/null || true)
 
 [ -z "$COMMAND" ] && exit 0
 
-# Only gate PR creation. `pr create` is contiguous (subcommand follows `pr`).
-# POSIX anchors (no `\b`) so detection behaves the same under GNU and BSD grep.
-printf '%s' "$COMMAND" | grep -qE '(^|[[:space:]])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' || exit 0
+# Split a command into shell words with a quote-aware scan. Quoted text stays
+# inside its word, so `git commit -m "... gh pr create ..."` or a `--body`
+# naming `--head` is never read as the command itself. Unquoted `;`, `&` and
+# `|` end a word and are emitted as a `;` separator word.
+TOKS=()
+tokenize() {
+  local s="$1" c i n q="" tok=""
+  TOKS=()
+  n=${#s}
+  for ((i = 0; i < n; i++)); do
+    c="${s:i:1}"
+    if [ -n "$q" ]; then
+      if [ "$c" = "$q" ]; then q=""; else tok+="$c"; fi
+    elif [ "$c" = '"' ] || [ "$c" = "'" ]; then
+      q="$c"
+    elif [[ "$c" == [[:space:]] || "$c" == ";" || "$c" == "&" || "$c" == "|" ]]; then
+      if [ -n "$tok" ]; then
+        TOKS+=("$tok")
+        tok=""
+      fi
+      [[ "$c" == [[:space:]] ]] || TOKS+=(";")
+    else
+      tok+="$c"
+    fi
+  done
+  [ -n "$tok" ] && TOKS+=("$tok")
+  return 0
+}
+
+# Only gate PR creation: a `gh` word (any path, e.g. /opt/homebrew/bin/gh)
+# followed by `pr create` or `pr new`, unless that command only asks for help.
+# Sets PR_WORDS to the words of that one command.
+PR_WORDS=()
+pr_create_command() {
+  local i j n=${#TOKS[@]}
+  for ((i = 0; i + 2 < n; i++)); do
+    [ "${TOKS[i]##*/}" = gh ] && [ "${TOKS[i + 1]}" = pr ] || continue
+    case "${TOKS[i + 2]}" in create | new) ;; *) continue ;; esac
+    PR_WORDS=()
+    for ((j = i; j < n; j++)); do
+      [ "${TOKS[j]}" = ";" ] && break
+      case "${TOKS[j]}" in --help | -h) continue 2 ;; esac
+      PR_WORDS+=("${TOKS[j]}")
+    done
+    return 0
+  done
+  return 1
+}
+
+tokenize "$COMMAND"
+pr_create_command || exit 0
 
 # Locate the directory the command actually runs git/gh in: an explicit
 # `cd <dir> && ...` prefix wins, else the cwd the hook was invoked with.
@@ -45,32 +94,15 @@ fi
 
 git -C "$WORKDIR" rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 
-# Read the value of an actual `--head`/`-H` flag with a quote-aware scan. A
-# regex over the raw command takes the leftmost match, so a `--head`/`-H` token
-# quoted inside a `--body`/`--title` string would hijack branch selection
-# whenever it names a resolvable ref (`main`, `develop`). Tokenizing first keeps
-# such a token bound inside its quoted argument, where it is never the flag.
+# Read the value of an actual `--head`/`-H` flag from the words of the PR
+# command. A regex over the raw command takes the leftmost match, so a
+# `--head`/`-H` token quoted inside a `--body`/`--title` string would hijack
+# branch selection whenever it names a resolvable ref (`main`, `develop`). The
+# tokenizer keeps such a token bound inside its quoted argument, where it is
+# never the flag.
 head_flag_value() {
-  local s="$1" c i n q="" tok="" want=0
-  local -a toks=()
-  n=${#s}
-  for ((i = 0; i < n; i++)); do
-    c="${s:i:1}"
-    if [ -n "$q" ]; then
-      if [ "$c" = "$q" ]; then q=""; else tok+="$c"; fi
-    elif [ "$c" = '"' ] || [ "$c" = "'" ]; then
-      q="$c"
-    elif [[ "$c" == [[:space:]] ]]; then
-      if [ -n "$tok" ]; then
-        toks+=("$tok")
-        tok=""
-      fi
-    else
-      tok+="$c"
-    fi
-  done
-  [ -n "$tok" ] && toks+=("$tok")
-  for tok in "${toks[@]}"; do
+  local tok want=0
+  for tok in "${PR_WORDS[@]}"; do
     if [ "$want" = 1 ]; then
       printf '%s' "$tok"
       return
@@ -98,7 +130,7 @@ head_flag_value() {
 # that does not resolve to a commit falls back to the current branch, so the
 # gate still evaluates a real branch.
 BRANCH=""
-candidate=$(head_flag_value "$COMMAND")
+candidate=$(head_flag_value)
 candidate="${candidate##*:}"
 if [ -n "$candidate" ] &&
   git -C "$WORKDIR" rev-parse --verify --quiet "${candidate}^{commit}" >/dev/null 2>&1; then

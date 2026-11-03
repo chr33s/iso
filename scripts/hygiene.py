@@ -62,8 +62,10 @@ def check(path):
     if data and not data.endswith(b"\n"):
         problems.append("no newline at end of file")
     if path.endswith((".yml", ".yaml")):
-        result = subprocess.run(["yq", "--exit-status", ".", str(file)], capture_output=True)
-        if result.returncode not in (0, 1):  # 1: valid YAML whose value is null/false
+        # Without --exit-status, yq exits 0 for any document (including null or
+        # false) and 1 for a parse error.
+        result = subprocess.run(["yq", ".", str(file)], capture_output=True)
+        if result.returncode != 0:
             problems.append("YAML does not parse: " + result.stderr.decode(errors="replace").strip())
     return problems
 

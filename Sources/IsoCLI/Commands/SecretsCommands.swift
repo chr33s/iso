@@ -186,13 +186,20 @@ enum TerminalInput {
   /// terminal and restores it on every signal (including a stop and resume,
   /// where it turns echo off again and re-prompts).
   static func hidden(_ prompt: String) throws -> Secret<[UInt8]> {
+    try hidden(
+      prompt,
+      unavailable:
+        "Could not read from the terminal; use \(PassphraseInput.descriptorVariable) for automation"
+    )
+  }
+
+  /// `hidden(_:)` with the message for a missing terminal.
+  static func hidden(_ prompt: String, unavailable: String) throws -> Secret<[UInt8]> {
     // Canonical terminal input is capped at MAX_CANON per line.
     var buffer = [CChar](repeating: 0, count: Int(MAX_CANON) + 1)
     defer { buffer.withUnsafeMutableBytes { _ = memset_s($0.baseAddress, $0.count, 0, $0.count) } }
     guard readpassphrase("\(prompt): ", &buffer, buffer.count, RPP_REQUIRE_TTY) != nil else {
-      throw HostError(
-        "Could not read from the terminal; use \(PassphraseInput.descriptorVariable) for automation"
-      )
+      throw HostError(unavailable)
     }
     let line = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
     guard line.count < buffer.count - 2 else {

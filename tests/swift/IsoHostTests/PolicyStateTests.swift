@@ -30,6 +30,7 @@ private func instance() throws -> Instance {
 
 @Test func everyBootRecordsAFreshImmutableBinding() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   let off = try PolicyBoot.begin(instance, configured: nil, diagnostics: sink.diagnostics)
   #expect(off.policyMode == .off)
@@ -56,6 +57,7 @@ private func instance() throws -> Instance {
 
 @Test func corruptOrTamperedBindingsFailClosed() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   try PolicyBoot.begin(instance, configured: try compiledPolicy(), diagnostics: sink.diagnostics)
   let path = PolicyBinding.path(instance)
@@ -77,6 +79,7 @@ private func instance() throws -> Instance {
 
 @Test func enforcingBootClaimsOneProxyLaunchPerProvider() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   let policy = try compiledPolicy()
   let binding = try PolicyBoot.begin(instance, configured: policy, diagnostics: sink.diagnostics)
@@ -114,6 +117,7 @@ private func instance() throws -> Instance {
 
 @Test func shadowRelaunchReportsASimulationReset() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   let policy = try compiledPolicy(mode: "shadow")
   try PolicyBoot.begin(instance, configured: policy, diagnostics: sink.diagnostics)
@@ -129,6 +133,7 @@ private func instance() throws -> Instance {
 
 @Test func legacyAndUngovernedLaunchesUseTheExistingProtocol() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   // No binding and no requested enforcement: legacy behavior.
   #expect(
@@ -154,6 +159,7 @@ private func instance() throws -> Instance {
 
 @Test func version3StartupCarriesPolicyButNoCredentialInIt() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   let policy = try compiledPolicy()
   try PolicyBoot.begin(instance, configured: policy, diagnostics: sink.diagnostics)
@@ -193,6 +199,7 @@ private func instance() throws -> Instance {
     encoded: signer.publicKey.rawRepresentation.map { String(format: "%02x", $0) }.joined())
   let nonce = String(repeating: "d", count: 32)
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let policy = try compiledPolicy()
   try PolicyBoot.begin(instance, configured: policy, diagnostics: LogSink().diagnostics)
   let expected = try #require(
@@ -241,6 +248,7 @@ private func instance() throws -> Instance {
 
 @Test func policyShowReportsActiveAndPendingWithoutSecrets() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   let sink = LogSink()
   let unbound = try PolicyReport.json(instance, configured: nil, processObserved: { _ in false })
   #expect(PolicyReport.text(unbound).contains { $0.contains("none recorded") })
@@ -262,6 +270,7 @@ private func instance() throws -> Instance {
 
 @Test func aLostBindingAfterPolicyBootsFailsClosed() throws {
   let instance = try instance()
+  defer { removeScratch(instance.directory) }
   try PolicyBoot.begin(
     instance, configured: try compiledPolicy(), diagnostics: LogSink().diagnostics)
   unlink(PolicyBinding.path(instance))
@@ -275,6 +284,7 @@ private func instance() throws -> Instance {
 
 @Test func anEnforcingBootWithholdsRawKeysWhateverTheConfigSays() throws {
   let guest = try FakeGuest()
+  defer { guest.remove() }
   let agents = guest.bootstrap(try testConfig(#""proxy": {"mode": "auto"}"#))
   #expect(agents.withheldVariables(proxyAnthropic: false, proxyOpenAI: false).isEmpty)
   let withheld = agents.withheldVariables(
@@ -286,7 +296,9 @@ private func instance() throws -> Instance {
 /// POL-01/MIG-01: the effective report compares requested with recorded
 /// policy, names every relaxation, and stays read-only.
 @Test func effectivePolicyReportNamesRelaxationsAndRecordedConflicts() throws {
-  let instance = try testInstance(try scratchDirectory("effective") + "/instances/dev")
+  let scratch = try scratchDirectory("effective")
+  defer { removeScratch(scratch) }
+  let instance = try testInstance(scratch + "/instances/dev")
   let open = try testConfig(#""egress": "open", "workspace": {"pull": {"mode": "direct"}}"#)
   try NetworkPolicy.save(open, instance)
   let strict = try testConfig(
@@ -308,7 +320,9 @@ private func instance() throws -> Instance {
 /// `--json` fields keep one type: an unlimited TTL and an unreadable record
 /// are null (the latter named in `unknown`), never a placeholder string.
 @Test func effectivePolicyJSONKeepsOneTypePerField() throws {
-  let instance = try testInstance(try scratchDirectory("effective-json") + "/instances/dev")
+  let scratch = try scratchDirectory("effective-json")
+  defer { removeScratch(scratch) }
+  let instance = try testInstance(scratch + "/instances/dev")
   try writeFile(instance.directory + "/grants.json", "{corrupt")
   let unlimited = try testConfig(#""limits": {"session_ttl": "unlimited"}"#)
   guard case .object(let top) = EffectivePolicyReport.json(unlimited, instance: instance),
@@ -334,7 +348,9 @@ private func instance() throws -> Instance {
 /// erased) until given again; a revocation withdraws exactly one, survives
 /// removing the setting, and an unknown ID is an error.
 @Test func savedGrantsAreRevokedByIDAndStayRevoked() throws {
-  let instance = try testInstance(try scratchDirectory("grants") + "/instances/dev")
+  let scratch = try scratchDirectory("grants")
+  defer { removeScratch(scratch) }
+  let instance = try testInstance(scratch + "/instances/dev")
   let keep = try EnvVarName("KEEP")
   let drop = try EnvVarName("DROP")
   let old = try EnvVarName("OLD")
@@ -387,7 +403,9 @@ private func instance() throws -> Instance {
 }
 
 @Test func legacyForwardsAreWithheldAndRevocableByID() throws {
-  let instance = try testInstance(try scratchDirectory("grant-forwards") + "/instances/dev")
+  let scratch = try scratchDirectory("grant-forwards")
+  defer { removeScratch(scratch) }
+  let instance = try testInstance(scratch + "/instances/dev")
   let given = try PortForward(guest: 3000, host: 13000)
   let legacy = try PortForward(guest: 4000, host: 14000)
   var r = try GrantLedger.reconcile(

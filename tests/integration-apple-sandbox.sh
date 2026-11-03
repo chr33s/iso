@@ -374,8 +374,12 @@ if want disks; then
         sbx delete "$n" --owner "$RUN"
     done
     t0="$(date +%s)"
-    create "$(name cached)"
-    check "a second create from the same image is a clone (<5 s)" test $(($(date +%s) - t0)) -lt 5
+    # A create that fails at once is not a fast clone.
+    if create "$(name cached)"; then
+        check "a second create from the same image is a clone (<5 s)" test $(($(date +%s) - t0)) -lt 5
+    else
+        fail "a second create from the same image is a clone (<5 s)"
+    fi
     sbx delete "$(name cached)" --owner "$RUN"
 fi
 
@@ -1273,9 +1277,17 @@ if want iso; then
     check "the applied change reached the project" test "$(cat "$WORK/project/marker")" = guest
     check "the applied stage is removed" test ! -e "$CSTATE/instances/e2e/stage"
     iso exec e2e -- ln -s /etc/passwd /workspace/escape >/dev/null
+    escape_review="$(iso diff e2e --stat 2>/dev/null)"
     check "a stage with an escaping symlink is inapplicable" \
-        grep -q 'cannot be applied' <<<"$(iso diff e2e --stat 2>/dev/null)"
-    check "iso pull --apply refuses it" refuses iso pull e2e --apply
+        grep -q 'cannot be applied' <<<"$escape_review"
+    # The exact stage id reaches the apply path; without it --apply is only
+    # a usage error.
+    escape_id="$(sed -n 's/^Stage \([0-9a-f]*\) .*/\1/p' <<<"$escape_review")"
+    check "the inapplicable stage names its id" test -n "$escape_id"
+    escape_err="$(iso pull e2e --apply --stage-id "$escape_id" 2>&1 >/dev/null)"
+    escape_status=$?
+    check "iso pull --apply --stage-id refuses it" test "$escape_status" -ne 0
+    check "the refusal is the inapplicable stage" grep -q "Stage $escape_id cannot be applied" <<<"$escape_err"
     check "iso pull --discard removes the stage" iso pull e2e --discard
     check "the escape did not reach the project" test ! -e "$WORK/project/escape"
     iso exec e2e -- rm /workspace/escape >/dev/null

@@ -52,11 +52,17 @@ package struct PreflightRunRecord: Sendable, Equatable, Codable {
   package let secretNames: [String]
   package let retainOnFailure: FailureRetention
   package var notes: [String]
+  /// The run's snapshot `--include`/`--exclude` patterns, which every later
+  /// capture (`patch`) reuses so an excluded file never reaches the guest.
+  /// Nil for runs recorded before patterns were kept: those are unknown.
+  package let include: [String]?
+  package let exclude: [String]?
 
   package init(
     id: PreflightRunID, repositoryPath: String, repository: String, plan: WorkflowPlan,
     revision: InputRevision, createdAt: EpochSeconds, pinnedHost: Name?, profile: Name,
-    inputs: [String: String], secretNames: [String], retainOnFailure: FailureRetention
+    inputs: [String: String], secretNames: [String], retainOnFailure: FailureRetention,
+    include: [String] = [], exclude: [String] = []
   ) {
     self.id = id
     self.repositoryPath = repositoryPath
@@ -71,6 +77,8 @@ package struct PreflightRunRecord: Sendable, Equatable, Codable {
     self.secretNames = secretNames
     self.retainOnFailure = retainOnFailure
     notes = []
+    self.include = include
+    self.exclude = exclude
   }
 
   package var baseRevision: InputRevision { revisions[0] }

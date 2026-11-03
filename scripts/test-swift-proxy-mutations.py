@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Exercise the five mandatory Swift policy mutations from the port spec.
 
-Run against an idle worktree: each mutation is restored in finally, including
-when a test times out. A compilation failure is not counted as a killed mutant.
-This targeted gate supplements, rather than substitutes for, a full Muter sweep.
+Mutations are applied to a scratch copy of iso-proxy (with the iso-policy
+dependency and the proxy test fixtures it reads), so the working tree is never
+modified, even if the run is killed. A compilation failure is not counted as a
+killed mutant. This targeted gate supplements, rather than substitutes for, a
+full Muter sweep.
 """
 
 from pathlib import Path
+import shutil
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "iso-proxy"
-SOURCES = PACKAGE / "Sources"
 MUTATIONS = [
     ("broker paused response deadline removed", "IsoProxyTransport/InboundGate.swift",
      'context.eventLoop.scheduleTask(in: .seconds(1))', 'context.eventLoop.scheduleTask(in: .seconds(3600))'),
@@ -41,25 +43,47 @@ MUTATIONS = [
 ]
 
 
-def run_tests():
+def run_tests(package):
     return subprocess.run(
-        ["swift", "test", "--package-path", str(PACKAGE)],
+        ["swift", "test", "--package-path", str(package)],
         capture_output=True, text=True, timeout=180,
     )
 
 
 def main():
-    baseline = run_tests()
+    with tempfile.TemporaryDirectory(prefix="iso-proxy-mutation-") as directory:
+        scratch = Path(directory)
+        # The proxy package resolves ../iso-policy, and its tests read the
+        # proxy fixtures and the production Seatbelt profile relative to the
+        # repository root.
+        build_output = shutil.ignore_patterns(".build", ".swiftpm")
+        for package in ("iso-proxy", "iso-policy"):
+            shutil.copytree(ROOT / package, scratch / package, ignore=build_output)
+        shutil.copytree(ROOT / "tests/fixtures/credential-proxy",
+                        scratch / "tests/fixtures/credential-proxy")
+        profile = Path("Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb")
+        (scratch / profile.parent).mkdir(parents=True)
+        shutil.copy2(ROOT / profile, scratch / profile)
+        run_mutations(scratch / "iso-proxy")
+
+
+def run_mutations(package):
+    sources = package / "Sources"
+    # The scratch copy starts without build output; build it once outside the
+    # per-run test timeout.
+    subprocess.run(["swift", "build", "--build-tests", "--package-path", str(package)],
+                   capture_output=True, timeout=1800, check=True)
+    baseline = run_tests(package)
     if baseline.returncode:
         raise SystemExit("Baseline failed:\n" + baseline.stdout + baseline.stderr)
     for name, filename, before, after in MUTATIONS:
-        path = SOURCES / filename
+        path = sources / filename
         original = path.read_text()
         if original.count(before) != 1:
             raise SystemExit(f"Mutation no longer matches exactly once: {name}")
         try:
             path.write_text(original.replace(before, after, 1))
-            result = run_tests()
+            result = run_tests(package)
             output = result.stdout + result.stderr
             if result.returncode == 0:
                 raise SystemExit(f"SURVIVED: {name}")
@@ -68,7 +92,7 @@ def main():
             print(f"Killed: {name}", flush=True)
         finally:
             path.write_text(original)
-    restored = run_tests()
+    restored = run_tests(package)
     if restored.returncode:
         raise SystemExit("Restored baseline failed:\n" + restored.stdout + restored.stderr)
     print("All policy and parser-limit mutations killed; restored baseline passed.")

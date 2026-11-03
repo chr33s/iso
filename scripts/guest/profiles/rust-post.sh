@@ -22,5 +22,15 @@ curl --proto '=https' --tlsv1.2 -fsSL -o "$init" \
     "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUSTUP_TARGET}/rustup-init"
 echo "${RUSTUP_SHA256}  ${init}" | sha256sum -c --quiet -
 chmod 0755 "$init"
-"$init" -y --no-modify-path --default-toolchain stable </dev/null
-cp /root/.cargo/bin/* /usr/local/bin/ 2>/dev/null || true
+# A shared install, not root's ~/.rustup: the guest user runs the toolchain.
+# The rustup proxies find it through RUSTUP_HOME, which /etc/environment sets
+# for every session (pam_env). Writable by all, as in the official Rust image,
+# so the guest user can add toolchains and cargo can cache crates.
+RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+    "$init" -y --no-modify-path --default-toolchain stable </dev/null
+chmod -R a+w /usr/local/rustup /usr/local/cargo
+ln -sf /usr/local/cargo/bin/* /usr/local/bin/
+grep -q '^RUSTUP_HOME=' /etc/environment 2>/dev/null \
+    || echo 'RUSTUP_HOME="/usr/local/rustup"' >> /etc/environment
+grep -q '^CARGO_HOME=' /etc/environment 2>/dev/null \
+    || echo 'CARGO_HOME="/usr/local/cargo"' >> /etc/environment

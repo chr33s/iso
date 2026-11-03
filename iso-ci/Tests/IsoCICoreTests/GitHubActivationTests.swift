@@ -155,6 +155,19 @@ final class GitHubFakeAuthority: AuthorityReader, @unchecked Sendable {
     #expect(report.state == .inactive)
   }
 
+  /// GitHub names are case-insensitive: `Octo/App` routes like `octo/app`.
+  @Test func sharedScopeIsComparedCaseInsensitively() throws {
+    var (configuration, installation) = try setup()
+    var shadow = try #require(configuration.pools["validation"])
+    shadow.scope = .repository(try RepositoryName("Octo/App"))
+    configuration.pools["second"] = shadow
+    let report = PoolActivation.evaluate(
+      pool: "validation", configuration: configuration, installation: installation,
+      reader: GitHubFakeAuthority())
+    #expect(report.state == .inactive)
+    #expect(report.reasons.contains { $0.contains("same scope and labels") })
+  }
+
   @Test func organizationPoolsNeedAPrivateRunnerGroup() throws {
     var (configuration, installation) = try setup()
     configuration.pools["validation"]?.scope = .organization("octo", runnerGroup: "iso")

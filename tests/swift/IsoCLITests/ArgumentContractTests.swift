@@ -446,6 +446,29 @@ private struct VisibleGroup: ParsableCommand {
   #expect(throws: ExitCode(3)) { try IsoCLI.run { throw WorkloadExit(.exited(3), reported: true) } }
 }
 
+@Test func usageErrorsFoundWhileRunningKeepTheUsageExit() {
+  // Both validation types reach ArgumentParser as usage errors (exit 2),
+  // not the generic exit 1.
+  #expect(throws: ArgumentParser.ValidationError.self) {
+    try IsoCLI.run { throw ArgumentParser.ValidationError("--apply needs --stage-id") }
+  }
+  #expect(throws: ArgumentParser.ValidationError.self) {
+    try IsoCLI.run { throw IsoCore.ValidationError("bad") }
+  }
+  #expect(throws: ExitCode.failure) { try IsoCLI.run { throw HostError("x") } }
+}
+
 @Test func destroyAllRefusesANameBeforeAnyWork() {
   #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["destroy", "vm-a", "--all"]) }
+}
+
+@Test func editorAllowIsRefusedWhenTheConfiguredSecurityIsUnsafe() throws {
+  let unsafe = EditorConfig(security: .unsafe, allow: [])
+  let allow = try EditorSecurityOptions.parse(["--editor-allow", "clipboard"])
+  #expect(throws: ArgumentParser.ValidationError.self) { try allow.resolve(unsafe) }
+  #expect(try EditorSecurityOptions.parse([]).resolve(unsafe) == unsafe)
+  let widened = try EditorSecurityOptions.parse([
+    "--editor-security", "sandboxed", "--editor-allow", "clipboard",
+  ]).resolve(unsafe)
+  #expect(widened == EditorConfig(security: .sandboxed, allow: [.clipboard]))
 }

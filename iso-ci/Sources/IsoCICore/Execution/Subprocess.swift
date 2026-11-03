@@ -155,11 +155,22 @@ package enum Subprocess {
   /// How long output is still read after the child exits or is killed.
   static let drainGrace: DispatchTimeInterval = .seconds(2)
 
+  /// Which process group a spawned child joins.
+  package enum ProcessGroup: Sendable {
+    /// A new group, so the whole tree can be signalled at once.
+    case own
+    /// The caller's group: an interactive child that must stay in the
+    /// terminal's foreground group, or tty access stops it (SIGTTOU/SIGTTIN).
+    case caller
+  }
+
   /// Spawns with exactly the given stdio descriptors inherited, in its own
-  /// process group. The caller owns and must reap the returned pid.
+  /// process group unless `group` says otherwise. The caller owns and must
+  /// reap the returned pid.
   package static func spawn(
     _ executable: String, _ arguments: [String], _ environment: [String: String],
-    stdin: Int32, stdout: Int32, stderr: Int32, workingDirectory: String? = nil
+    stdin: Int32, stdout: Int32, stderr: Int32, workingDirectory: String? = nil,
+    group: ProcessGroup = .own
   ) throws(CIError) -> pid_t {
     var actions: posix_spawn_file_actions_t?
     var attributes: posix_spawnattr_t?
@@ -175,10 +186,10 @@ package enum Subprocess {
     if let workingDirectory {
       posix_spawn_file_actions_addchdir(&actions, workingDirectory)
     }
-    posix_spawnattr_setflags(
-      &attributes,
-      Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF))
-    posix_spawnattr_setpgroup(&attributes, 0)
+    var flags = POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF
+    if group == .own { flags |= POSIX_SPAWN_SETPGROUP }
+    posix_spawnattr_setflags(&attributes, Int16(flags))
+    if group == .own { posix_spawnattr_setpgroup(&attributes, 0) }
     var defaults = sigset_t()
     sigemptyset(&defaults)
     sigaddset(&defaults, SIGPIPE)

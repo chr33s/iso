@@ -167,7 +167,7 @@ import Testing
     #expect(logs.count == 1)
     let logDigest = try #require(logs.first?.digest)
 
-    let (allocationB, _, runnerB) = try await harness.register()
+    let (allocationB, registrationB, runnerB) = try await harness.register()
     let (_, tokenB, _) = try await harness.acquire(runnerB)
     // Allowed: the shared immutable cache entry in the same scope.
     #expect(try await Self.restore(harness, token: tokenB, keys: "shared", version: "v") == "deps")
@@ -176,13 +176,13 @@ import Testing
       await harness.request(
         "GET", "/_iso/snapshot/\(snapshotA.rawValue)", bearer: runnerB.config.isoToken
       ).status == 403)
-    // ... A's log object, even through the broker directly ...
-    await #expect(throws: CIError.self) {
-      try await harness.broker.call(allocationB, .openSnapshot(logDigest))
-    }
+    // ... A's log object: only A's attempt holds a grant for it ...
     #expect(
       try harness.store.isGranted(
         subject: registrationA.attempt.rawValue, kind: .log, digest: logDigest))
+    #expect(
+      try !harness.store.isGranted(
+        subject: registrationB.attempt.rawValue, kind: .log, digest: logDigest))
     // ... A's signed log URL is bound to A (B cannot reuse it with its own id).
     let reused = target.replacingOccurrences(of: allocationA.rawValue, with: allocationB.rawValue)
     #expect(await harness.request("PUT", reused, body: Array("x".utf8)).status == 403)

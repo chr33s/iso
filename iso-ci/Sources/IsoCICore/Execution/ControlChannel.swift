@@ -261,8 +261,15 @@ package struct ControlClient: Sendable {
     var tv = timeval(tv_sec: timeout, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     let request = ControlRequest(method: method, params: params)
-    guard writeAll(fd, request.frame), let line = readLine(fd, limit: 16 << 20) else {
-      throw CIError(.controllerUnavailable, "the controller did not reply")
+    // An incomplete frame is never dispatched, so a failed write is safe to
+    // retry elsewhere; a request sent without a reply may have been applied.
+    guard writeAll(fd, request.frame) else {
+      throw CIError(.controllerUnavailable, "the controller did not accept the request")
+    }
+    guard let line = readLine(fd, limit: 16 << 20) else {
+      throw CIError(
+        .operationUncertain,
+        "the controller did not reply; the request may have been applied (check `iso-ci status`)")
     }
     let response = try ControlResponse.decode(line)
     guard response.id == request.id else { throw CIError.invalid("control reply does not match") }

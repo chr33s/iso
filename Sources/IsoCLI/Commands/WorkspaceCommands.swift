@@ -299,7 +299,8 @@ struct Editor: ParsableCommand {
       try context.sshConfigFile().install(running, stderr: context.output.error)
       try EditorLauncher(
         environment: context.environment.variables, diagnostics: context.diagnostics,
-        security: securityOptions.resolve(context.config.editor), home: context.environment.home
+        security: try securityOptions.resolve(context.config.editor),
+        home: context.environment.home
       )
       .launch(
         running, SSHConnectionTarget(running, guestPath: path, egress: context.config.egress),

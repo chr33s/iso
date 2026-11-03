@@ -85,20 +85,19 @@ enum TerminalPrompt {
     return reply.isEmpty ? nil : reply
   }
 
-  /// A secret typed with echo off (`stty -echo`, restored afterwards).
+  /// A secret typed with echo off through `readpassphrase(3)`, which
+  /// restores the terminal on every signal (Ctrl-C included). A non-TTY
+  /// stdin is read as one plain line.
   static func secret() throws -> Secret<String> {
-    FileHandle.standardError.write(Data("Paste token: ".utf8))
-    var saved = termios()
-    let echoOff = isatty(0) == 1 && tcgetattr(0, &saved) == 0
-    if echoOff {
-      var quiet = saved
-      quiet.c_lflag &= ~tcflag_t(ECHO)
-      tcsetattr(0, TCSANOW, &quiet)
-    }
-    let reply = readReply()
-    if echoOff {
-      tcsetattr(0, TCSANOW, &saved)
-      FileHandle.standardError.write(Data("\n".utf8))
+    let reply: String?
+    if isatty(0) == 1 {
+      reply = String(
+        decoding: try TerminalInput.hidden(
+          "Paste token", unavailable: "Could not read the token from the terminal"
+        ).expose(), as: UTF8.self)
+    } else {
+      FileHandle.standardError.write(Data("Paste token: ".utf8))
+      reply = readReply()
     }
     let token = (reply ?? "").trimmingUnicodeWhitespace()
     guard !token.isEmpty else { throw HostError("No token entered") }

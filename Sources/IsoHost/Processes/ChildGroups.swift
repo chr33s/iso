@@ -41,6 +41,9 @@ package enum ChildGroups {
   /// SIGINT, SIGTERM and SIGHUP: signal every live child group, then
   /// terminate with the default action.
   package static func installTerminationHandlers() {
+    // `slots` is a lazily initialized global (swift_once, malloc): touch it
+    // now so the handler never runs its initializer in signal context.
+    _ = slots
     let handler: @convention(c) (Int32) -> Void = { signalNumber in
       // Async-signal-safe: plain loads and kill(2) only.
       for index in 0..<ChildGroups.capacity {

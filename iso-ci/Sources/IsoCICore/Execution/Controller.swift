@@ -85,11 +85,12 @@ package final class Controller: Sendable {
   package static let capabilityRefreshSeconds: UInt64 = 60
 
   /// Placement reads cached snapshots; refresh stale ones so evidence
-  /// recorded or withdrawn after `enable` reaches placement.
+  /// recorded or withdrawn after `enable` reaches placement. Quarantined
+  /// hosts are probed every pass so a host that answers again is restored.
   private func refreshHostCapabilities(now: EpochSeconds) {
     guard let records = try? store.hosts() else { return }
-    for record in records where record.state == .enabled {
-      if let observed = record.observedAt, now >= observed,
+    for record in records where record.state == .enabled || record.state == .quarantined {
+      if record.state == .enabled, let observed = record.observedAt, now >= observed,
         now < observed &+ Self.capabilityRefreshSeconds
       {
         continue
@@ -277,6 +278,7 @@ package final class Controller: Sendable {
     if let id = try? AllocationID(target), let record = try store.allocation(id) {
       return [
         "allocation": jsonValue(record), "phase": .string(record.phase),
+        "settled": .bool(record.isSettled),
         "intents": .array(try store.intents(allocation: id).map { jsonValue($0) }),
       ]
     }

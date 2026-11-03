@@ -28,7 +28,16 @@ struct TunnelIdentity: Codable, Equatable {
   }
 
   static func load(_ instance: Instance, _ name: String) -> TunnelIdentity? {
-    let path = path(instance, name)
+    load(atPath: path(instance, name))
+  }
+
+  /// The identity recorded beside a tunnel's `-fwd.pid` file.
+  static func load(forPIDFile pidPath: String) -> TunnelIdentity? {
+    guard pidPath.hasSuffix("-fwd.pid") else { return nil }
+    return load(atPath: String(pidPath.dropLast(".pid".count)) + ".identity.json")
+  }
+
+  static func load(atPath path: String) -> TunnelIdentity? {
     guard let bytes = try? StateStore.readControlFile(path) ?? nil,
       let identity = try? StateStore.decode(TunnelIdentity.self, bytes, path: path),
       identity.schemaVersion == 1, identity.pid > 0
@@ -46,6 +55,12 @@ struct TunnelIdentity: Codable, Equatable {
     let arguments = words.dropFirst()
     return arguments.contains(address)
       && zip(arguments, arguments.dropFirst()).contains { $0 == "-S" && $1 == controlPath }
+  }
+
+  /// `pid` is still this master: the recorded PID, and `ps` names it with
+  /// this control path and destination.
+  func isRunning(as pid: Int32) -> Bool {
+    pid == self.pid && (ProxyLauncher.commandLine(pid).map(matches(commandLine:)) ?? false)
   }
 
   /// The recorded tunnel is alive and still the master this boot started,

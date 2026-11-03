@@ -201,7 +201,8 @@ struct Setup: ParsableCommand {
 
       if service == "install" {
         report["service"] = try UserService.apply(
-          install: true, root: root, executable: try Runtime.currentExecutable(), iso: global.iso)
+          install: true, root: root, executable: try Runtime.currentExecutable(), iso: global.iso,
+          isoConfig: global.isoConfig)
         step("service: installed and started")
       } else if service == "foreground" {
         step(

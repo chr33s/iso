@@ -40,7 +40,7 @@ package enum ArchiveValidator {
   private static func validate(_ reader: inout some BlockSource, limits: Limits)
     throws(HostControlError) -> Summary
   {
-    var seen: [String: Character] = [:]
+    var seen = MemberIndex()
     var members = 0
     var content: UInt64 = 0
     var pendingPath: String?
@@ -71,13 +71,27 @@ package enum ArchiveValidator {
           payload += block
         }
         payload = Array(payload.prefix(Int(size)))
+        // Extractors disagree on which of two overriding names wins (PAX
+        // after GNU, or the reverse), so a member names itself once.
         if type == "x" {
           let records = try paxRecords(payload)
-          if let path = records["path"] { pendingPath = path }
-          if let link = records["linkpath"] { pendingLink = link }
+          if let path = records["path"] {
+            guard pendingPath == nil else { throw reject("member name is set twice") }
+            pendingPath = path
+          }
+          if let link = records["linkpath"] {
+            guard pendingLink == nil else { throw reject("link target is set twice") }
+            pendingLink = link
+          }
         } else {
           let text = try utf8(Array(payload.prefix { $0 != 0 }))
-          if type == "L" { pendingPath = text } else { pendingLink = text }
+          if type == "L" {
+            guard pendingPath == nil else { throw reject("member name is set twice") }
+            pendingPath = text
+          } else {
+            guard pendingLink == nil else { throw reject("link target is set twice") }
+            pendingLink = text
+          }
         }
         continue
       case "g":
@@ -102,6 +116,11 @@ package enum ArchiveValidator {
       // GNU and BSD tar name the archive root (`./`) as an empty directory
       // member; it carries nothing to extract, so only that is skipped.
       if type == "5", size == 0, namesRoot(name) { continue }
+      // libarchive extracts any member whose name ends in `/` as a
+      // directory and reads its "data" as further headers.
+      if type != "5", name.hasSuffix("/") {
+        throw reject("non-directory member \(debugQuoted(name)) has a directory name")
+      }
       let normalized = fold(try normalize(name, limits: limits))
       let kind: Character =
         switch type {
@@ -111,37 +130,32 @@ package enum ArchiveValidator {
         case "1": "h"
         default: throw reject("unsupported member type in \(debugQuoted(normalized))")
         }
-      if let previous = seen[normalized] {
+      // `normalize` returned at least one component.
+      let components = normalized.split(separator: "/")
+      // A member under a path that is not a directory would follow it.
+      let parent = try seen.walk(components.dropLast()) { existing throws(HostControlError) in
+        guard existing == "d" else {
+          throw reject("member \(debugQuoted(normalized)) is beneath a non-directory")
+        }
+      }
+      if let parent, let previous = seen.kind(of: components[components.count - 1], under: parent) {
         // A directory may be repeated; anything else is a conflict.
         guard previous == "d" && kind == "d" else {
           throw reject("duplicate archive member \(debugQuoted(normalized))")
         }
       }
-      // A member under a path that is not a directory would follow it.
-      var parent = (normalized as NSString).deletingLastPathComponent
-      while !parent.isEmpty {
-        if let existing = seen[parent], existing != "d" {
-          throw reject("member \(debugQuoted(normalized)) is beneath a non-directory")
-        }
-        parent = (parent as NSString).deletingLastPathComponent
-      }
       switch kind {
       case "l":
-        try checkSymlink(link, member: normalized, seen: seen, limits: limits)
+        try checkSymlink(link, member: normalized, parent: parent, seen: seen, limits: limits)
       case "h":
         let target = fold(try normalize(link, limits: limits))
-        guard seen[target] == "f" else {
+        guard seen.kind(of: target.split(separator: "/")) == "f" else {
           throw reject("hard link \(debugQuoted(normalized)) names no earlier regular file")
         }
       default: break
       }
-      seen[normalized] = kind
       // Implied parents are directories: a later link or file there conflicts.
-      var ancestor = (normalized as NSString).deletingLastPathComponent
-      while !ancestor.isEmpty, seen[ancestor] == nil {
-        seen[ancestor] = "d"
-        ancestor = (ancestor as NSString).deletingLastPathComponent
-      }
+      seen.insert(components, kind: kind)
       if kind == "f" {
         let (sum, overflow) = content.addingReportingOverflow(size)
         guard !overflow else { throw reject("archive size overflows") }
@@ -167,12 +181,21 @@ package enum ArchiveValidator {
     return text
   }
 
+  /// The header's own name. Only POSIX ustar (`ustar\0` `00`) has a
+  /// prefix field; old GNU (`ustar  \0`) keeps times there, and v7 has no
+  /// magic. Any other `ustar` variant is refused rather than guessed at.
   private static func headerPath(_ header: [UInt8]) throws(HostControlError) -> String {
     let name = try utf8(Array(header[0..<100].prefix { $0 != 0 }))
-    let magic = Array(header[257..<262])
-    guard magic == Array("ustar".utf8) else { return name }
-    let prefix = try utf8(Array(header[345..<500].prefix { $0 != 0 }))
-    return prefix.isEmpty ? name : prefix + "/" + name
+    let magic = Array(header[257..<265])
+    if magic == Array("ustar\u{0}00".utf8) {
+      let prefix = try utf8(Array(header[345..<500].prefix { $0 != 0 }))
+      return prefix.isEmpty ? name : prefix + "/" + name
+    }
+    if magic == Array("ustar  \u{0}".utf8) { return name }
+    guard Array(header[257..<262]) != Array("ustar".utf8) else {
+      throw reject("unsupported tar header format")
+    }
+    return name
   }
 
   /// A relative name made only of `.` components (`.`, `./`, `././`).
@@ -210,22 +233,26 @@ package enum ArchiveValidator {
   /// through an earlier symlink member, so it resolves inside the archive
   /// without depending on other links.
   private static func checkSymlink(
-    _ target: String, member: String, seen: [String: Character], limits: Limits
+    _ target: String, member: String, parent: Int?, seen: MemberIndex, limits: Limits
   ) throws(HostControlError) {
     guard !target.isEmpty, !target.hasPrefix("/"), target.utf8.count <= limits.maxPathBytes else {
       throw reject("symlink \(debugQuoted(member)) has an absolute or empty target")
     }
-    var parts = member.split(separator: "/").dropLast().map(String.init)
+    var depth = member.split(separator: "/").count - 1
+    // Once a prefix names no earlier member, no longer prefix can either.
+    var node = parent
     for part in target.split(separator: "/", omittingEmptySubsequences: true) where part != "." {
       guard part != ".." else {
         throw reject("symlink \(debugQuoted(member)) climbs with '..'")
       }
-      parts.append(fold(String(part)))
-      guard seen[parts.joined(separator: "/")] != "l" else {
+      depth += 1
+      let folded = Substring(fold(String(part)))
+      node = node.flatMap { seen.child(of: $0, named: folded) }
+      guard node.map({ seen.kind(at: $0) }) != "l" else {
         throw reject("symlink \(debugQuoted(member)) passes through another symlink")
       }
     }
-    guard !parts.isEmpty else { throw reject("symlink \(debugQuoted(member)) names the root") }
+    guard depth > 0 else { throw reject("symlink \(debugQuoted(member)) names the root") }
   }
 
   private static func verifyChecksum(_ header: [UInt8]) throws(HostControlError) {
@@ -281,6 +308,64 @@ package enum ArchiveValidator {
       index += length
     }
     return records
+  }
+}
+
+/// Members seen so far, as a tree of folded path components. Each lookup and
+/// insert costs one step per component, and memory grows with the archive's
+/// distinct components rather than with every prefix string, so deep member
+/// names cannot amplify the archive's size.
+private struct MemberIndex {
+  private var kinds: [Character] = ["d"]
+  private var children: [[Substring: Int]] = [[:]]
+  private static let root = 0
+
+  func child(of node: Int, named part: Substring) -> Int? { children[node][part] }
+
+  func kind(at node: Int) -> Character { kinds[node] }
+
+  func kind(of part: Substring, under node: Int) -> Character? {
+    children[node][part].map { kinds[$0] }
+  }
+
+  func kind(of components: [Substring]) -> Character? {
+    var node = Self.root
+    for part in components {
+      guard let next = children[node][part] else { return nil }
+      node = next
+    }
+    return node == Self.root ? nil : kinds[node]
+  }
+
+  /// Follows `components` from the root, passing each recorded kind to
+  /// `visit`; nil once a component names no earlier member.
+  func walk(
+    _ components: ArraySlice<Substring>, visit: (Character) throws(HostControlError) -> Void
+  ) throws(HostControlError) -> Int? {
+    var node = Self.root
+    for part in components {
+      guard let next = children[node][part] else { return nil }
+      try visit(kinds[next])
+      node = next
+    }
+    return node
+  }
+
+  /// Records `kind` for the member and `d` for any ancestor not seen before.
+  mutating func insert(_ components: [Substring], kind: Character) {
+    var node = Self.root
+    for part in components {
+      if let next = children[node][part] {
+        node = next
+      } else {
+        let next = kinds.count
+        kinds.append("d")
+        children.append([:])
+        children[node][part] = next
+        node = next
+      }
+    }
+    kinds[node] = kind
   }
 }
 

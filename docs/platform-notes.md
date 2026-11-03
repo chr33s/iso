@@ -23,19 +23,25 @@ backend and its raw-table "direct access filtering" rule, and
 workarounds (iptables-legacy, a static `resolv.conf`, masking `fcnet.service`,
 and `DOCKER_INSECURE_NO_IPTABLES_RAW=1`) are not part of this fork's image.
 
-## scp tilde expansion (OpenSSH 9+)
+## scp tilde expansion
 
-Modern scp (OpenSSH 9+) uses SFTP by default, which does **not** expand `~` in
-remote paths. `scp file user@host:~/.claude/CLAUDE.md` silently creates a literal
-`~` directory instead of writing to the home directory.
+Since OpenSSH 9.0, scp uses SFTP by default. In that mode `~` in a remote path
+is expanded only through the `expand-path@openssh.com` extension, which needs
+OpenSSH 8.7 or later on both ends; against an older server,
+`scp file user@host:~/.claude/CLAUDE.md` creates a literal `~` directory.
 
-Fix: `GuestPath` values use `./` instead of `~/` in remote paths (e.g.
-`GuestPath("./.claude")`). SFTP defaults to the user's home directory, so
-`./path` is equivalent to `~/path`. This convention is used by
-`SSHSession.copy` (`Sources/IsoHost/Guest/GuestSession.swift`).
+Convention: `GuestPath` values given to scp use `./` instead of `~/` (e.g.
+`GuestPath("./.claude")`). SFTP starts in the user's home directory, so
+`./path` is equivalent to `~/path` with any server. `SSHClient.copy`
+(`Sources/IsoHost/Guest/GuestSession.swift`) passes the path to scp unchanged.
 
-SSH commands (`exec`) are unaffected — the remote shell expands `~` normally.
-Only scp's SFTP mode has this issue.
+One caller does not follow the convention: local marketplace staging
+(`stageMarketplaceSource` in `Sources/IsoHost/Guest/Bootstrap.swift`) copies to
+`~/.iso/marketplaces/<tool>/<name>`, relying on the guest's OpenSSH to expand
+`~`, and passes the same `~` path, single-quoted, to `claude plugin marketplace
+add` and `codex plugin marketplace add`.
+
+SSH commands (`exec`) are unaffected: the remote shell expands an unquoted `~`.
 
 ## Diagnostics go to stderr
 

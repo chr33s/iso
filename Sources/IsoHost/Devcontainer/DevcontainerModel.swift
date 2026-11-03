@@ -209,8 +209,13 @@ package struct MemorySpec: Sendable, Equatable {
     return MemorySpec(mib: nonZero)
   }
 
-  /// Gibibytes, rounded up from the stored MiB.
-  package var gib: GiB { GiB((mib.value + 1023) / 1024)! }
+  /// Gibibytes, rounded up from the stored MiB. Divides before rounding so
+  /// a MiB count near `UInt32.max` cannot overflow; the result is non-zero
+  /// because the stored MiB is.
+  package var gib: GiB {
+    let whole = mib.value / 1024
+    return GiB(mib.value % 1024 == 0 ? whole : whole + 1)!
+  }
 }
 
 func parseSizeBytes(_ text: String) throws(ValidationError) -> UInt64 {

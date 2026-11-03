@@ -44,9 +44,11 @@ import Testing
     let r = try root()
     try stoppedSandbox(r, "a", disk: 8 << 30)
     for bytes: UInt64 in [4 << 30, 8 << 30] {
-      await #expect(throws: SandboxError.self) {
+      // The message, not just the type: later steps also throw SandboxError.
+      let error = await #expect(throws: SandboxError.self) {
         try await Sandboxes.grow(root: r, id: try SandboxID("a"), diskBytes: bytes)
       }
+      #expect(error?.description == "shrinking a disk is not supported")
     }
   }
 
@@ -54,10 +56,11 @@ import Testing
     let r = try root()
     try stoppedSandbox(r, "a")
     try Data().write(to: r.disk(try SandboxID("taken")))
-    await #expect(throws: SandboxError.self) {
+    let error = await #expect(throws: SandboxError.self) {
       try await Sandboxes.commit(
         root: r, id: try SandboxID("a"), name: try SandboxID("taken"), replace: false)
     }
+    #expect(error?.description == "disk taken exists")
   }
 
   @Test func restoreFromAMissingDiskChangesNothing() async throws {

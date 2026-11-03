@@ -41,9 +41,9 @@ swift build --force-resolved-versions
 ```
 
 The host CLI lands at `.build/debug/iso` (`-c release` for
-`.build/release/iso`). A usable installation also needs `iso-proxy` and
-`iso-sandbox` beside it; `python3 scripts/build-release.py` builds all three
-and assembles the same archive layout the installer and `iso update` use (see
+`.build/release/iso`). A usable installation also needs `iso-proxy`,
+`iso-egress`, `iso-sandbox` and `iso-macos-helper` beside it;
+`python3 scripts/build-release.py` builds all five and assembles the same archive layout the installer and `iso update` use (see
 [RELEASING.md](RELEASING.md)).
 
 ## Pre-commit hook
@@ -88,8 +88,8 @@ runtime, and the CLI surface. They also replay the fuzz corpus. Test behavior,
 not implementation — a test that breaks under a refactor but not a behavior
 change is testing the wrong thing.
 
-The Python host checks (configuration migration, compatibility inventory,
-golden parity with the former Rust host, CLI surface) are listed in
+The Python host checks (release legal notices, the read, lifecycle,
+data-root, machine and audit contracts, and the CLI surface) are listed in
 [docs/testing.md](docs/testing.md#swift-host-checks).
 
 ### Integration tests

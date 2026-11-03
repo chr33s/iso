@@ -220,7 +220,9 @@ private let assignmentConfig = #"""
     ] {
       #expect(KeychainReference.parse(opaque) == nil, "\(opaque)")
     }
-    let awkward = ["", "-w", "a b", "'", "a'b", "tab\there", "ünï", "--fields", "security"]
+    let awkward = [
+      "", "-w", "a b", "'", "a'b", "tab\there", "ünï", "--fields", "security", "a'\u{301}b",
+    ]
     for service in awkward {
       for account in awkward {
         let value = KeychainReference(service: service, account: account)
@@ -251,8 +253,10 @@ private let assignmentConfig = #"""
   }
 
   @Test func secretAccountsUseTheSafeClass() throws {
-    #expect(SecretAccount(repo: slug("trailofbits/iso")).rawValue == "trailofbits-iso")
-    #expect(SecretAccount(repo: slug("trail-of.bits_1/iso")).rawValue == "trail-of.bits_1-iso")
+    #expect(SecretAccount(repo: slug("trailofbits/iso")).rawValue == "trailofbits/iso")
+    #expect(SecretAccount(repo: slug("trail-of.bits_1/iso")).rawValue == "trail-of.bits_1/iso")
+    // Distinct repositories never share one Keychain item.
+    #expect(SecretAccount(repo: slug("foo-bar/baz")) != SecretAccount(repo: slug("foo/bar-baz")))
     #expect(throws: ValidationError.self) { try SecretAccount("") }
     for bad in ["a/b", "/a", "a b"] {
       #expect(throws: ValidationError.self) { try SecretAccount(bad) }
@@ -266,10 +270,10 @@ private let assignmentConfig = #"""
     let reference = try keychain.store(
       service: "iso-github-pat", account: SecretAccount(repo: slug("o/r")),
       secret: Secret("github_pat_SYNTHETIC"))
-    #expect(reference == KeychainReference(service: "iso-github-pat", account: "o-r"))
+    #expect(reference == KeychainReference(service: "iso-github-pat", account: "o/r"))
     #expect(
       stubs.calls("security")
-        == ["add-generic-password -U -s iso-github-pat -a o-r -w github_pat_SYNTHETIC"])
+        == ["add-generic-password -U -s iso-github-pat -a o/r -w github_pat_SYNTHETIC"])
     try stubs.write("36", "security.exit")
     do {
       _ = try keychain.store(
@@ -282,7 +286,7 @@ private let assignmentConfig = #"""
       #expect(text.contains("-w <redacted> exited with exit status: 36"))
       #expect(!text.contains("SYNTHETIC"))
     }
-    keychain.delete(service: "iso-github-pat", account: try SecretAccount("o-r"))
+    keychain.delete(KeychainReference(service: "iso-github-pat", account: "o-r"))
     #expect(stubs.calls("security").last == "delete-generic-password -s iso-github-pat -a o-r")
   }
 
@@ -828,7 +832,7 @@ private let assignmentConfig = #"""
       cfg, target: ConfigTarget(path: path, format: .jsonc), repo: slug("acme/parent"))
 
     let written = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
-    let reference = "cmd:security find-generic-password -s iso-github-pat -a acme-parent -w"
+    let reference = "cmd:security find-generic-password -s iso-github-pat -a acme/parent -w"
     #expect(written.github?.patEntry(slug("acme/parent"))?.expose() == reference)
     guard case .pat(let pat)? = written.github else { throw HostError("mode") }
     #expect(pat.skip.isEmpty)
@@ -836,7 +840,7 @@ private let assignmentConfig = #"""
     #expect(fileMode(path) == 0o644)
     #expect(
       stubs.calls("security")
-        == ["add-generic-password -U -s iso-github-pat -a acme-parent -w github_pat_SYNTHETIC"])
+        == ["add-generic-password -U -s iso-github-pat -a acme/parent -w github_pat_SYNTHETIC"])
     #expect(stubs.calls("open") == ["https://github.com/settings/personal-access-tokens/new"])
     #expect(console.echo.all == ["off", "on"])
     let out = console.output.text
@@ -954,7 +958,8 @@ private let assignmentConfig = #"""
     let path = stubs.root + "/config.jsonc"
     let text = #"""
       {"github": {"mode": "pat", "pat": {
-        "acme/kc": {"token": "cmd:security find-generic-password -s iso-github-pat -a acme-kc -w"},
+        "acme/kc": {"token": "cmd:security find-generic-password -s iso-github-pat -a legacy-kc -w"},
+        "acme/other": {"token": "cmd:security find-generic-password -s someone-else -a acme/other -w"},
         "acme/op": {"token": "cmd:op item get 'acme' --fields password --reveal"},
         "acme/file": {"token": "cmd:cat \#(stubs.root)/github-pat/acme-file.txt"}}}}
       """#
@@ -969,9 +974,9 @@ private let assignmentConfig = #"""
     let github = host(stubs, console: console, logs: logs)
     var cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
     try github.forgetPAT(cfg, target: target, repo: slug("acme/kc"))
-    #expect(stubs.calls("security") == ["delete-generic-password -s iso-github-pat -a acme-kc"])
+    #expect(stubs.calls("security") == ["delete-generic-password -s iso-github-pat -a legacy-kc"])
     #expect(console.output.text.hasPrefix("Removed PAT entry for acme/kc.\nnote: the token itself"))
-    for repo in ["acme/op", "acme/file"] {
+    for repo in ["acme/op", "acme/file", "acme/other"] {
       cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
       try github.forgetPAT(cfg, target: target, repo: slug(repo))
     }

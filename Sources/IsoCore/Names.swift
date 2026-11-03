@@ -134,7 +134,8 @@ package struct EnvVarName: Hashable, Comparable, Sendable, CustomStringConvertib
   package static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 }
 
-/// GitHub `owner/repo` slug: exactly one `/`, non-empty segments, safe class.
+/// GitHub `owner/repo` slug: exactly one `/`, non-empty segments, safe class,
+/// and neither segment `.` or `..`, which a URL path would collapse.
 package struct RepoSlug: Hashable, Comparable, Sendable, CustomStringConvertible {
   package let rawValue: String
 
@@ -154,6 +155,9 @@ package struct RepoSlug: Hashable, Comparable, Sendable, CustomStringConvertible
     guard owner.allSatisfy(isSafeNameCharacter), repo.allSatisfy(isSafeNameCharacter) else {
       throw ValidationError(
         "Repo slug '\(slug)' contains invalid characters (allowed: a-z, A-Z, 0-9, '-', '_', '.')")
+    }
+    for segment in [String(owner), String(repo)] where segment == "." || segment == ".." {
+      throw ValidationError("Repo slug '\(slug)' must not use '.' or '..' as owner or repo")
     }
     rawValue = slug
   }

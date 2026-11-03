@@ -152,13 +152,13 @@ final class DPHarness: Sendable {
   /// A client assertion as `VssOAuthJwtBearerAssertion` builds it.
   static func assertion(
     key: SecKey, clientID: String, audience: String, now: Int64, lifetime: Int64 = 300,
-    jti: String = UUID().uuidString
+    jti: String = UUID().uuidString, notBefore: Int64? = nil, expires: Int64? = nil
   ) -> String {
     let header = Base64URL.encode(JSONValue.object(["alg": "RS256", "typ": "JWT"]).canonical)
     let claims: JSONValue = [
       "iss": .string(clientID), "sub": .string(clientID), "aud": .string(audience),
-      "nbf": .integer(now),
-      "exp": .integer(now + lifetime), "iat": .integer(now), "jti": .string(jti),
+      "nbf": .integer(notBefore ?? now),
+      "exp": .integer(expires ?? now + lifetime), "iat": .integer(now), "jti": .string(jti),
     ]
     let input = header + "." + Base64URL.encode(claims.canonical)
     var error: Unmanaged<CFError>?
@@ -225,12 +225,25 @@ extension DataPlaneService.Settings {
   }
 }
 
-/// Collects notices for assertions.
-func dpNextNotice(_ broker: DataPlaneBroker, where match: (DataPlaneNotice) -> Bool) async
-  -> DataPlaneNotice?
-{
-  for await notice in broker.notices where match(notice) { return notice }
-  return nil
+/// The next matching notice, or nil after `timeout`: the broker's notice
+/// stream never finishes, so a missing notice fails instead of hanging.
+func dpNextNotice(
+  _ broker: DataPlaneBroker, timeout: Duration = .seconds(30),
+  where match: @escaping @Sendable (DataPlaneNotice) -> Bool
+) async -> DataPlaneNotice? {
+  await withTaskGroup(of: DataPlaneNotice?.self) { group in
+    group.addTask {
+      for await notice in broker.notices where match(notice) { return notice }
+      return nil
+    }
+    group.addTask {
+      try? await Task.sleep(for: timeout)
+      return nil
+    }
+    let first = await group.next() ?? nil
+    group.cancelAll()
+    return first
+  }
 }
 
 @Suite struct DataPlaneHarnessTests {

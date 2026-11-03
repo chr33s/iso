@@ -78,6 +78,8 @@ package final class ConnectedPoolReconciler: Sendable {
   /// How long to wait for GitHub to confirm a conclusion before deciding
   /// failure retention from the runner process alone.
   package static let conclusionWaitSeconds: EpochSeconds = 120
+  /// Set on a confirmed JIT intent whose registration was deleted again.
+  static let removedRunnerParameter = "removed_runner_id"
 
   package let pool: Name
   let store: ControllerStore
@@ -87,13 +89,18 @@ package final class ConnectedPoolReconciler: Sendable {
   let placement: any PlacementPolicy
   let controller: ControllerID
   let clock: any CIClock
+  /// Why the pool's activation gate refuses it this pass, or nil. A pool in
+  /// an operator state (paused) keeps that state, but its idle runners still
+  /// retire while the gate refuses it.
+  let gate: String?
 
   package init(
     pool: Name, store: ControllerStore, configuration: CIConfiguration,
     provider: any EnvironmentProvider, runners: any RunnerService,
     placement: any PlacementPolicy = DefaultPlacementPolicy(), controller: ControllerID,
-    clock: any CIClock = SystemClock()
+    clock: any CIClock = SystemClock(), gate: String? = nil
   ) {
+    self.gate = gate
     self.pool = pool
     self.store = store
     self.configuration = configuration
@@ -199,7 +206,8 @@ package final class ConnectedPoolReconciler: Sendable {
       guard allocation.vmCleanup == .verified else { break }
       let jit = ((try? store.intents(allocation: id)) ?? []).filter { $0.kind == .githubJITCreate }
       if jit.contains(where: {
-        $0.status == .sent || $0.status == .uncertain || $0.status == .confirmed
+        $0.status == .sent || $0.status == .uncertain
+          || ($0.status == .confirmed && $0.parameters[Self.removedRunnerParameter] == nil)
       }) {
         update(id) { $0.registration = .uncertain }
       } else {
@@ -267,11 +275,13 @@ package final class ConnectedPoolReconciler: Sendable {
       // Ours (exact controller-scoped name), but the JIT material is lost:
       // remove that exact registration; a new one may be requested later.
       let runner = found[0]
+      var confirmed: [IntentRecord] = []
       for var intent in intents {
         intent.status = .confirmed
         intent.outcome = "registration \(runner.id) exists; JIT material was lost"
         intent.updatedAt = clock.now()
         try? store.save(intent)
+        confirmed.append(intent)
       }
       update(id) {
         $0.runnerID = runner.id
@@ -280,6 +290,12 @@ package final class ConnectedPoolReconciler: Sendable {
       }
       _ = deleteOwned(id, scope: scope, pass: &pass)
       if (try? store.allocation(id))?.registration == .removed {
+        // Record that these registrations are gone, so a release before the
+        // next JIT request settles instead of looking uncertain again.
+        for var intent in confirmed {
+          intent.parameters[Self.removedRunnerParameter] = String(runner.id)
+          try? store.save(intent)
+        }
         update(id) { $0.registration = .intended }
       }
     default:
@@ -353,7 +369,10 @@ package final class ConnectedPoolReconciler: Sendable {
     else { return }
     let result: GuestCommandResult
     do { result = try provider.execute(id, RunnerBootstrap.status()) } catch {
-      if error.code == .hostUnreachable { pass.hostsDown.insert(allocation.host) }
+      // A guest command can fail for guest-controlled reasons (ssh exit 255
+      // is the guest's to choose), so it never marks the whole host down;
+      // host-control calls (`observe`) decide that.
+      pass.report.error(error, "runner status \(id.short)")
       return
     }
     switch RunnerBootstrap.parseStatus(result) {
@@ -525,6 +544,8 @@ package final class ConnectedPoolReconciler: Sendable {
       // An inactive pool has lost a required guarantee or its credentials:
       // its idle runners must not take another job from GitHub.
       reason = "pool is inactive"
+    } else if let gate {
+      reason = "activation refused: \(gate)"
     } else if let retire = allocation.idleRetireAt, now >= retire {
       reason = "idle allowance used"
     } else if let ready = allocation.readyAt, info?.status != "online",
@@ -644,13 +665,17 @@ package final class ConnectedPoolReconciler: Sendable {
     guard let allocation = try? store.allocation(id), let runnerID = allocation.runnerID,
       let name = allocation.runnerName
     else { return .gone }
-    let existing = ((try? store.intents(allocation: id)) ?? []).last {
-      $0.kind == .githubRunnerDelete && $0.status != .confirmed && $0.status != .refused
+    let deletes = ((try? store.intents(allocation: id)) ?? []).filter {
+      $0.kind == .githubRunnerDelete
     }
+    let existing = deletes.last { $0.status != .confirmed && $0.status != .refused }
+    // A settled (refused) attempt keeps its row; a later attempt gets its own id.
+    let attempt = deletes.isEmpty ? "" : "-\(deletes.count)"
     var intent =
       existing
       ?? IntentRecord(
-        id: "delete-\(id.rawValue)-\(runnerID)", allocation: id, kind: .githubRunnerDelete,
+        id: "delete-\(id.rawValue)-\(runnerID)\(attempt)", allocation: id,
+        kind: .githubRunnerDelete,
         parameters: ["runner_id": String(runnerID), "runner_name": name], at: clock.now())
     if existing == nil {
       do { try store.insert(intent) } catch {
@@ -1123,7 +1148,15 @@ package final class ConnectedPoolReconciler: Sendable {
         $0.registration = .removalPending
       }
       var pass = Pass(report: ReconcileReport(pool: self.pool))
-      _ = deleteOwned(id, scope: scope, pass: &pass, evenIfBusy: true)
+      switch deleteOwned(id, scope: scope, pass: &pass, evenIfBusy: true) {
+      case .deleted, .gone:
+        break
+      case .busy, .failed:
+        throw CIError(
+          .operationUncertain,
+          "runner \(runnerID) was not deleted (\(pass.report.errors.first ?? "see `iso-ci inspect`")); the registration stays removal-pending and is retried each pass"
+        )
+      }
     } else {
       try store.update(id) {
         $0.uncertainty = nil

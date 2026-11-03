@@ -28,9 +28,18 @@ struct EditorSecurityOptions: ParsableArguments {
   }
 
   /// The flags win over the config; `--editor-allow` adds to `editor.allow`.
-  func resolve(_ config: EditorConfig) -> EditorConfig {
+  /// `--editor-allow` is refused, not dropped, when the configured security
+  /// is `unsafe`.
+  func resolve(_ config: EditorConfig) throws -> EditorConfig {
     let security = editorSecurity ?? config.security
-    guard security == .sandboxed else { return EditorConfig(security: .unsafe, allow: []) }
+    guard security == .sandboxed else {
+      guard editorAllow.isEmpty else {
+        throw UsageError(
+          "--editor-allow applies only to sandboxed editor security; the configured editor.security is \"unsafe\" (pass --editor-security sandboxed)"
+        )
+      }
+      return EditorConfig(security: .unsafe, allow: [])
+    }
     return EditorConfig(security: security, allow: config.allow + editorAllow)
   }
 }
@@ -99,11 +108,12 @@ extension ProjectEditorCommand {
       let guestPath = try launchOptions.parsedGuestPath()
       let context = try projectArguments.loadContext(global)
       try rejectHostHomeProject(guestPath, home: context.environment.home)
+      let security = try securityOptions.resolve(context.config.editor)
       let workflow = ProjectEditorWorkflow(
         up: try projectArguments.workflow(context, global: global, command: Self.machineName),
         launcher: EditorLauncher(
           environment: context.environment.variables, diagnostics: context.diagnostics,
-          security: securityOptions.resolve(context.config.editor), home: context.environment.home
+          security: security, home: context.environment.home
         ))
       let outcome = try workflow.run(
         provider, guestPath: guestPath, mode: launchOptions.noLaunch ? .prepareOnly : .launch)

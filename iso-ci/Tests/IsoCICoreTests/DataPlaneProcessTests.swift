@@ -203,11 +203,18 @@ import Testing
     await #expect(throws: CIError.self) { try await fresh.register(registration) }
   }
 
-  @Test func sandboxArgumentsCarryTheProfileAndResolvedPaths() {
+  @Test func sandboxArgumentsCarryTheProfileAndResolvedPaths() throws {
+    // Real directories behind the `/tmp` -> `/private/tmp` link: Seatbelt
+    // matches real paths, so the arguments must carry the resolved ones.
+    let base = "/tmp/iso-ci-sbx-" + randomHex(bytes: 4)
+    defer { PrivateFiles.removeTree(base) }
     let paths = DataPlaneSupervisor.Paths(
-      executable: "/opt/iso-ci/iso-ci", socket: "/var/folders/x/T/iso-ci-1/dp.sock",
-      staging: "/var/folders/x/T/s",
+      executable: "/opt/iso-ci/iso-ci", socket: base + "/iso-ci-1/dp.sock", staging: base + "/s",
       probe: "/p")
+    for directory in [paths.staging, paths.socketDirectory] {
+      try FileManager.default.createDirectory(
+        atPath: directory, withIntermediateDirectories: true)
+    }
     let arguments = DataPlaneSupervisor.sandboxArguments(paths, ["_dataplane"])
     #expect(arguments.first == "/usr/bin/sandbox-exec")
     #expect(arguments[1] == "-p")
@@ -224,7 +231,8 @@ import Testing
     #expect(DataPlaneSeatbelt.profile.contains("(deny file-write-create (vnode-type SYMLINK))"))
     #expect(DataPlaneSeatbelt.profile.contains("(deny file-link)"))
     // Sockets are only bindable in the per-allocation socket directory.
-    #expect(arguments.contains { $0.hasPrefix("SOCKETS=") && $0.hasSuffix("/iso-ci-1/dp") })
-    #expect(paths.socketDirectory == "/var/folders/x/T/iso-ci-1/dp")
+    #expect(arguments.contains("STAGING=/private\(base)/s"))
+    #expect(arguments.contains("SOCKETS=/private\(base)/iso-ci-1/dp"))
+    #expect(paths.socketDirectory == base + "/iso-ci-1/dp")
   }
 }

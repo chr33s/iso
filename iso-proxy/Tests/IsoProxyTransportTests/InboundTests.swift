@@ -301,7 +301,11 @@ private func request(
 @Test func idleConnectionsConsumeCapacity() throws {
   let capacity = Capacity(1)
   let first = try channel(connections: capacity)
+  // Connected first, so an inactive channel afterwards means the gate
+  // closed it for lack of capacity.
   let second = EmbeddedChannel()
+  try second.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).wait()
+  #expect(second.isActive)
   try InboundPipeline.configure(
     channel: second, config: configuration(), connections: capacity, requests: Capacity(1))
   #expect(!second.isActive)

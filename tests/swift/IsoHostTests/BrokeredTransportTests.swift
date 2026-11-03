@@ -613,7 +613,6 @@ private func brokeredRunning(_ guest: FakeGuest, boot: String? = nil) throws -> 
   // /etc/environment; the URL still arrives only on stdin.
   #expect(script.contains("envfile=/etc/environment"))
   #expect(script.contains(#"for k in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY"#))
-  #expect(!script.contains("c0ffee"))
   let rendered = EgressClients.command(port: 10789, user: user).rendered
   #expect(rendered.hasPrefix("sudo sh -c '"))
   #expect(

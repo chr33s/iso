@@ -20,8 +20,16 @@ private struct GovernedFixture {
       client: SSHClient(environment: [:], tools: .searchPath), diagnostics: sink.diagnostics)
   }
 
+  let root: String
+
+  func cleanup() {
+    removeScratch(root)
+    removeScratch(destination)
+  }
+
   init(policy: CompiledPolicy? = nil) throws {
-    instance = try testInstance(try scratchDirectory("wsp") + "/instances/dev")
+    root = try scratchDirectory("wsp")
+    instance = try testInstance(root + "/instances/dev")
     destination = try scratchDirectory("dest")
     self.policy = try policy ?? compiledPolicy()
     try WorkspaceState(
@@ -73,6 +81,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func confirmedExactStageAppliesOnceThroughTheVerifiedDirectory() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage()
   #expect(manifest.policy?.destinationIdentity == WorkspacePolicy.identity(path: f.destination))
   let prompts = Mutex(0)
@@ -93,6 +102,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 @Test func noTerminalMeansApprovalRequiredAndZeroWrites() throws {
   // --force, piped input and machine output all arrive here as no confirmation.
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   #expect(denial { _ = try f.apply(confirm: nil) } == .approvalRequired)
   #expect(f.destinationEntries.isEmpty)
@@ -101,6 +111,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func declinedConfirmationWritesNothing() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   #expect(throws: HostError.self) { _ = try f.apply { _ in false } }
   #expect(f.destinationEntries.isEmpty)
@@ -108,6 +119,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func aNewBootSupersedesTheStage() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   try PolicyBoot.begin(f.instance, configured: f.policy, diagnostics: f.sink.diagnostics)
   #expect(denial { _ = try f.apply { _ in true } } == .policyEpochMismatch)
@@ -116,6 +128,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func stagedContentChangedDuringReviewIsRefused() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   #expect(throws: ReturnError.self) {
     _ = try f.apply { _ in
@@ -128,6 +141,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func restagingDuringReviewInvalidatesTheApproval() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   #expect(
     denial {
@@ -141,6 +155,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func replacedDestinationRootIsRefused() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   let moved = f.destination + ".moved"
   #expect(
@@ -162,6 +177,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
       #"{"id":"apply","effect":"permit","action":"workspace.pull.apply","resources":["workspace:attached"]},{"id":"never","effect":"forbid","action":"workspace.pull.apply","resources":["workspace:attached"]}"#
   )
   let f = try GovernedFixture(policy: policy)
+  defer { f.cleanup() }
   try f.stage()
   let prompted = Mutex(false)
   #expect(
@@ -176,13 +192,16 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func withoutAnApprovalGuardNoPromptIsNeeded() throws {
   let f = try GovernedFixture(policy: try compiledPolicy(guards: ""))
+  defer { f.cleanup() }
   try f.stage()
   #expect(try f.apply(confirm: nil) == ["new.txt"])
 }
 
 @Test func onlyTheAttachedWorkspaceCanBeStaged() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   let other = try scratchDirectory("other")
+  defer { removeScratch(other) }
   #expect(throws: HostError.self) {
     try WorkspacePolicy.bindStage(
       f.instance, destination: other, explicitDirectory: true, configured: f.policy,
@@ -198,11 +217,13 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func directPullIsRefusedUnderEnforcementAndUnevaluatedInShadow() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   #expect(throws: HostError.self) {
     try WorkspacePolicy.checkDirectPull(
       f.instance, configured: f.policy, diagnostics: f.sink.diagnostics)
   }
   let shadow = try GovernedFixture(policy: try compiledPolicy(mode: "shadow"))
+  defer { shadow.cleanup() }
   try WorkspacePolicy.checkDirectPull(
     shadow.instance, configured: shadow.policy, diagnostics: shadow.sink.diagnostics)
   #expect(try shadow.events("policy_decision").last?["reason"] as? String == "not_staged")
@@ -210,6 +231,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func shadowApplyReportsWithoutPromptingOrBlocking() throws {
   let f = try GovernedFixture(policy: try compiledPolicy(mode: "shadow"))
+  defer { f.cleanup() }
   try f.stage()
   #expect(try f.apply(confirm: nil) == ["new.txt"])
   let decision = try #require(try f.events("policy_decision").last)
@@ -219,8 +241,11 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 }
 
 @Test func unboundBootRefusesRequestedEnforcementButKeepsLegacyApply() throws {
-  let instance = try testInstance(try scratchDirectory("legacy") + "/instances/dev")
+  let scratch = try scratchDirectory("legacy")
+  defer { removeScratch(scratch) }
+  let instance = try testInstance(scratch + "/instances/dev")
   let destination = try scratchDirectory("legacydest")
+  defer { removeScratch(destination) }
   let sink = LogSink()
   let location = StageLocation(instance)
   let selected = try makeSelectedStage(location, destination: destination, instance: "dev") {
@@ -237,6 +262,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func manifestDigestCoversTheWholeMutationPlan() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(["a.txt": "a", "b.txt": "b"])
   let digest = WorkspacePolicy.manifestDigest(manifest)
   #expect(digest.hasPrefix("sha256:"))
@@ -283,6 +309,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func applyLeavesNoLockFilesInTheInstancesDirectory() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   try f.stage()
   _ = try f.apply { _ in true }
   let instances = (f.instance.directory as NSString).deletingLastPathComponent
@@ -291,6 +318,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func approvalReviewMarksEveryOmittedDiff() throws {
   let f = try GovernedFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(["text.txt": "visible\n", "binary.bin": "a\u{0}b"])
   let review = StageReview(try f.location.loadSelected())
   #expect(review.manifest == manifest)
@@ -303,6 +331,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func localAndRemoteReturnsShareTheStateRoot() throws {
   let root = try scratchDirectory("lockroot")
+  defer { removeScratch(root) }
   try writeFile(root + "/owner.json", "{}")
   let local = try testInstance(root + "/instances/dev")
   let remote = try testInstance(root + "/host-workspaces/host-1/instance-1")
@@ -314,6 +343,7 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
 
 @Test func shadowReportsAStaleStageAsEnforcementWould() throws {
   let f = try GovernedFixture(policy: try compiledPolicy(mode: "shadow", guards: ""))
+  defer { f.cleanup() }
   try f.stage()
   try PolicyBoot.begin(f.instance, configured: f.policy, diagnostics: f.sink.diagnostics)
   #expect(try f.apply(confirm: nil) == ["new.txt"])

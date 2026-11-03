@@ -285,3 +285,27 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   }
   #expect(error.message.contains("needs the openai credential proxy"))
 }
+
+/// READY-01 for `iso run --rm`: the selected agent's own broker is required
+/// before the disposable VM is created, not after it boots.
+@Test func aDisposableRunRefusesAnUnbrokeredAgentBeforeAnyVM() throws {
+  let root = try scratchDirectory("workflow-rm-provider")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(
+    root, config: #""proxy": {"mode": "required", "anthropic": {"credential": "cmd:printf k"}}"#)
+  let workflow = RunWorkflow(
+    lifecycle: lifecycle, agent: try AgentDefinitionID("codex"), workspace: root,
+    name: nil, image: nil, profiles: [], remove: true, ask: false, prepare: false,
+    forwarded: [], configPath: nil)
+  let error = try #require(throws: HostError.self) {
+    try workflow.execute(
+      confirmPreparation: { _ in true },
+      report: { _ in Issue.record("an unbrokered agent was handed off") })
+  }
+  #expect(error.message.contains("needs the openai credential proxy"))
+  let sessions = try RunSessionStore.list(lifecycle.config)
+  #expect(sessions.count == 1)
+  #expect(sessions.first?.state == .cleanupPending)
+  #expect(sessions.first?.cleanupOutcome == "start failed")
+  #expect(try InstanceStore.list(lifecycle.config).isEmpty)
+}

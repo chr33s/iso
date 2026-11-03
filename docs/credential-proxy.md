@@ -6,7 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Credential-injecting proxy (`proxy`)
 
-Status: **Anthropic (Claude Code) and OpenAI (Codex); macOS 27+ only.** Opt-in; off by default. Design:
+Status: **Anthropic (Claude Code) and OpenAI (Codex); macOS 27+ only.** Required by default:
+without a security preset, `proxy.mode` is `"required"` (the `provider-only`
+baseline). Design:
 [`design/issue-411-injecting-proxy.md`](design/issue-411-injecting-proxy.md).
 
 ## What it does
@@ -144,7 +146,8 @@ token, reference it via `cmd:`, and set `"auth": "bearer"`.
 
 ## `proxy.mode`
 
-`"auto"` (the default) keeps the behavior above: a provider with an upstream
+`"required"` is the default (from the `provider-only` baseline). `"auto"`, set
+explicitly or by the `networked` preset, keeps the behavior above: a provider with an upstream
 is proxied and none of its credential variables (`ANTHROPIC_API_KEY`,
 `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, or `OPENAI_API_KEY`) is
 forwarded; a provider without one is forwarded raw, with a warning.

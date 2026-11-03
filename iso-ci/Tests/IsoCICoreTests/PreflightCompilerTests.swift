@@ -34,6 +34,20 @@ import Testing
     return (report, expect)
   }
 
+  /// Regression: the manifest's runner binding must cover the runner the
+  /// approved image pins, and only that range is admitted.
+  @Test func runnerBindingCoversThePinnedRunner() throws {
+    let binding = CompatibilityManifest.localActionsV1.runner
+    let template = try CIConfiguration.parse(
+      CIConfiguration.template(repository: "octo/app", host: "local"))
+    for image in template.images.values { #expect(binding.admits(image.runnerVersion)) }
+    #expect(binding.admits("2.338.0"))
+    #expect(binding.admits("2.329.0"))
+    #expect(!binding.admits("2.328.9"))
+    #expect(!binding.admits("2.339.0"))
+    #expect(!binding.admits("2.338"))
+  }
+
   @Test func corpusIsPresent() {
     #expect(Self.fixtures.count >= 30)
     #expect(Self.fixtures.contains { $0.hasPrefix("accept-") })
@@ -134,6 +148,27 @@ import Testing
       #expect(error.code == .compatibilityRejected)
       #expect(error.details.count == 3)
       #expect(error.details.values.allSatisfy { $0.hasPrefix("line ") })
+    }
+  }
+
+  @Test(arguments: ["\"\"", "\"@\"", "\"@@\""])
+  func emptyUsesWithoutAnIdIsRejectedNotATrap(_ uses: String) throws {
+    let source = Data(
+      """
+      on: push
+      jobs:
+        a:
+          runs-on: ubuntu-latest
+          steps:
+            - uses: \(uses)
+      """.utf8)
+    do {
+      _ = try WorkflowCompiler.compile(
+        source: source, path: "w.yml", event: "push", manifest: .localActionsV1,
+        platformMap: Self.platformMap)
+      Issue.record("expected a rejection")
+    } catch {
+      #expect(error.code == .compatibilityRejected)
     }
   }
 

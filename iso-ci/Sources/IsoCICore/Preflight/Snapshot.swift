@@ -27,7 +27,8 @@ package struct SnapshotOptions: Sendable, Equatable {
   /// directory; patterns with `/` match the repository-relative path.
   /// Matching ignores case, as the default macOS file system does.
   package static let defaultExcludes = [
-    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.jks", "*.ppk",
+    ".env", ".env.*", ".env-*", ".env_*", ".envrc", "*.pem", "*.key", "*.p12", "*.pfx",
+    "*.keystore", "*.jks", "*.ppk",
     "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".netrc", "_netrc", ".npmrc", ".pypirc",
     ".yarnrc.yml", ".git-credentials", ".pgpass", ".my.cnf", ".s3cfg", ".boto", ".terraformrc",
     "terraform.rc", "terraform.tfstate", "terraform.tfstate.*", ".aws/", ".ssh/", ".gnupg/",
@@ -226,6 +227,19 @@ package enum SnapshotCapture {
     return index.st_mtimespec.tv_sec > newest
   }
 
+  /// Whether a reset (`ORIG_HEAD`) moved HEAD after the index was last
+  /// written. `git reset --soft` leaves the old tip's content staged while
+  /// HEAD moves back, which `indexNewerThanHead` cannot see; a hard or mixed
+  /// reset writes the index first, within the same second.
+  static func resetAfterIndex(_ layout: GitIndex.Layout) -> Bool {
+    var index = stat()
+    var reset = stat()
+    guard lstat(layout.gitDirectory + "/index", &index) == 0,
+      lstat(layout.gitDirectory + "/ORIG_HEAD", &reset) == 0
+    else { return false }
+    return reset.st_mtimespec.tv_sec > index.st_mtimespec.tv_sec
+  }
+
   static func nulSeparated(_ bytes: [UInt8]) -> [String] {
     bytes.split(separator: 0, omittingEmptySubsequences: true).map {
       String(decoding: $0, as: UTF8.self)
@@ -394,11 +408,12 @@ package enum SnapshotCapture {
     let deletions: [String] = []
     // Conservatively dirty: an included untracked file, a tracked file whose
     // size or time differs from the index (or that is gone), or an index
-    // written after HEAD (staged changes). A false "dirty" only withholds
-    // the clean-tree label.
+    // written after HEAD (staged changes), or a reset after the index was
+    // written (`reset --soft` staging the old tip). A false "dirty" only
+    // withholds the clean-tree label.
     let dirty =
       !includedUntracked.isEmpty || indexDisagrees(indexEntries, root: rootFD)
-      || indexNewerThanHead(layout)
+      || indexNewerThanHead(layout) || resetAfterIndex(layout)
     // Concurrent-modification checks: every captured path, HEAD and the index.
     for (path, before) in observed {
       var status = stat()

@@ -249,7 +249,7 @@ these reproducible build and cache directories:
 - `.venv/`
 - `.iso/`
 
-The default `index` selection sends exactly the files in the Git index, so
+The default `tracked` selection sends exactly the files in the Git index, so
 these names are not filtered there.
 
 When isolate uses tar on a macOS host, host-side tar archive creation runs with

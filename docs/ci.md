@@ -82,7 +82,7 @@ On every Mac that will run CI jobs:
    Add the `ci-runner` profile to the host's iso configuration, then:
 
    ```sh
-   iso setup --profile ci-runner --name ci-runner
+   iso setup --profile ci-runner --image ci-runner
    ```
 
    The image holds the official Actions runner (pinned version and SHA-256)
@@ -195,8 +195,12 @@ Rules the controller enforces:
   host. For a pool on several hosts, list the other hosts' qualified digests
   under `host_digests: {ALIAS: sha256:...}`. They are part of the approved
   descriptor, and a host's VMs boot exactly its listed digest.
-- `platform` is `linux/arm64`. There is no implicit architecture translation;
-  preflight maps a `runs-on` label only through `platform_map`.
+- Every host a pool or `preflight` lists needs its own `hosts:` budget.
+- `platform` is `linux/arm64`. There is no implicit architecture translation.
+  Preflight accepts exactly `[self-hosted, linux, ARM64]` (case-insensitive,
+  optionally with labels that `platform_map` maps to `linux/arm64`) without
+  any `platform_map` entry; every other `runs-on` must map entirely through
+  `platform_map` to `linux/arm64`.
 - `egress` is `none` or `filtered`, never `open`. `required_hosts` are exact
   hostnames or iso's `*.<suffix>` rules ([filtered
   egress](configuration.md#egress)). Each must be covered by the host's
@@ -314,7 +318,7 @@ iso-ci logs RUN --job JOB [--attempt N]          # that job's stored runner logs
 
 `run` captures a snapshot of your working tree (tracked files with your
 uncommitted edits, plus untracked paths you `--include`; local credential files
-such as `.env*`, `*.pem`, `*.jks`, `.npmrc`, `.pgpass`, `terraform.tfstate`,
+such as `.env`, `.env.*`, `.env-*`, `.env_*`, `.envrc`, `*.pem`, `*.jks`, `.npmrc`, `.pgpass`, `terraform.tfstate`,
 `.config/gh/hosts.yml` and `.git-credentials` are excluded by default, matched
 without regard to case). `run` lists the excluded paths for you; the snapshot
 the job receives does not name them. Capture reads the Git index, `HEAD`, refs
@@ -338,7 +342,7 @@ static matrices, `if:` and job outputs; job and service containers on the
 guest's own Docker. It refuses reusable workflows, dynamic matrices,
 `environment:`, OIDC (`id-token: write`), container credentials, more than one
 checkout, submodules, LFS, and any `runs-on` you have not mapped in
-`platform_map`. ARM64 preflight is never presented as equivalent to an x86 or
+`platform_map`, except the built-in `[self-hosted, linux, ARM64]` set. ARM64 preflight is never presented as equivalent to an x86 or
 macOS hosted runner.
 
 How a job sees your code:

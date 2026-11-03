@@ -320,6 +320,17 @@ private func name(_ text: String) -> SecretName { try! SecretName(text) }
   #expect(EnclaveStoreError.enclaveKeyUnavailable.description.contains("no recovery path"))
 }
 
+@Test func missingSealedUnlockKeyIsPermanentNotUninitialized() throws {
+  let s = try Scratch()
+  defer { s.cleanup() }
+  try s.initialize()
+  unlink(s.directory + "/store-duk.sealed")
+  // Not `.notInitialized`, whose advice (`iso secrets init`) would refuse.
+  #expect(throws: EnclaveStoreError.enclaveKeyUnavailable) {
+    try s.store.list(passphrase: passphrase)
+  }
+}
+
 @Test func unsafePermissionsFailClosed() throws {
   let s = try Scratch()
   defer { s.cleanup() }

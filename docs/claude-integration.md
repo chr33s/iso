@@ -83,7 +83,17 @@ Every field is optional. An empty `claude` object (or omitting it entirely) skip
 
 ### API key forwarding
 
-isolate forwards `ANTHROPIC_API_KEY` to the guest via SSH `SendEnv` on every session: `iso claude`, `iso shell`, and `iso exec` alike. The key is never written to disk inside the guest.
+By default (`proxy.mode: "required"`, from the `provider-only` baseline) no
+Anthropic credential reaches the guest: Claude Code calls the
+[credential proxy](credential-proxy.md), which injects the credential stored by
+`iso proxy setup`. A remote-model VM with agents and no provider proxy fails at
+`iso up`/`iso start`. See [`proxy.mode`](configuration.md#proxymode).
+
+Raw forwarding applies only when `proxy.mode` is `"auto"` with no Anthropic
+proxy configured, or `"off"`, and `egress` is not `"none"` (for example with
+the `networked` preset). isolate then forwards `ANTHROPIC_API_KEY` to the guest
+via SSH `SendEnv` on every session: `iso claude`, `iso shell`, and `iso exec`
+alike. The key is never written to disk inside the guest.
 
 Resolution order:
 
@@ -125,8 +135,10 @@ earlier import copied into a retained guest disk.
 The copied entries are `CLAUDE.md`, `keybindings.json`, `rules/`, `commands/`, `skills/`, `agents/`, `output-styles/`, `themes/`, and `workflows/`.
 Directories are copied recursively in full, including nested skill references,
 scripts, executable assets, hidden supporting files, and skills-directory plugin
-bundles. This uses the existing copier: symlinks are followed and materialized,
-including targets outside the source. Directory names do **not** guarantee that
+bundles. The copy is a confined snapshot: a symlink is materialized only when it
+resolves inside the `config_dir` root (a link outside it stops the import),
+special files are refused, and an import is capped at 10,000 entries and
+256 MiB. Directory names do **not** guarantee that
 recursive content is free of credentials; select a source containing only content
 you intend to put in the VM. Absolute host paths inside content are not rewritten.
 
@@ -202,10 +214,10 @@ hardening are outside this import contract.
 
 `env_forward` lists additional environment variable names to forward from the host to the guest via SSH `SendEnv`. These are forwarded on every SSH session, not just during bootstrap.
 
-`ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are handled through their own mechanisms (described above) and do not need to appear here.
+`ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are handled through their own mechanisms (described above) and do not need to appear here. Provider credential variables (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`) are an error here under the default `proxy.mode: "required"`.
 
 ```jsonc
-{ "claude": { "env_forward": ["MYORG_KEY", "OPENAI_API_KEY"] } }
+{ "claude": { "env_forward": ["MYORG_KEY", "MYORG_REGION"] } }
 ```
 
 Each variable must be set in the host environment at the time of the SSH session. Unset variables are silently skipped.
@@ -250,7 +262,7 @@ Plugins are installed after marketplaces are registered. If a plugin references 
 
 `mcp_servers` maps server names to their definitions. Each server is registered via `claude mcp add-json -s user <name>` inside the guest, with the JSON definition passed on stdin so resolved header values never appear in a process argument list.
 
-Two server types are supported:
+Three server types are supported: stdio, HTTP and SSE (`"type": "sse"`, a remote server using server-sent events, configured like HTTP). See the [configuration reference](configuration.md#mcp-servers) for every field.
 
 **stdio**: a local command that communicates over stdin/stdout:
 
@@ -286,8 +298,8 @@ When `iso up` creates/restarts a project VM or `iso start` restarts a stopped VM
 2. **User content preparation**: Stage the [allowlisted customizations](#config-directory) from `config_dir` and refresh their narrow companion-preference snapshot.
 3. **Managed permissions**: Merge isolate's managed permission keys (`permissions.defaultMode: bypassPermissions` and `permissions.skipDangerousModePermissionPrompt: true`) into the guest's `~/.claude/settings.json`, preserving unrelated keys and applying the imported companion preferences described above. The setting must live in user scope — Claude Code ignores `skipDangerousModePermissionPrompt` from project settings. Other keys Claude Code stores in this file (notably `enabledPlugins` and `extraKnownMarketplaces`) are preserved except for the explicitly imported plugin IDs, so unrelated plugin and marketplace state survives a stop/start cycle. Isolate also owns the `env` block for local-model routing (see [Local model support](#local-model-support)): it is set when the VM is in local-model mode and removed in remote mode, so any hand-authored `env` entries in this file are not preserved. A file that cannot be parsed is replaced with managed defaults, then the imported companion preferences are reapplied before invoking Claude.
    After settings are written, transfer the staged content into guest `~/.claude/`, then seed onboarding when required.
-4. **Marketplaces**: Register each marketplace source (local directories are copied to the guest first). On first boot, isolate compares the configured marketplaces against those already baked into the golden image (from `iso setup --profile`) and only installs the ones that are missing.
-5. **Plugins**: Install each plugin from the registered marketplaces. Like marketplaces, isolate computes the delta against plugins already present in the golden image and skips those that are already installed.
+4. **Marketplaces**: Register each `claude.marketplaces` source (local directories are copied to the guest first). On first boot, isolate skips any marketplace the image's template record lists as baked in; the Apple backend records none, so every configured marketplace is registered. Profile `marketplaces` are not applied.
+5. **Plugins**: Install each `claude.plugins` entry from the registered marketplaces, with the same template-record delta as marketplaces (empty on the Apple backend). Profile `plugins` are not applied.
 6. **MCP servers**: Register each MCP server definition.
 
 On restart (`iso start` of a stopped instance), isolate refreshes GitHub auth (step 1), config directory contents (step 2), and the managed `~/.claude/settings.json` (step 3). Marketplaces, plugins, and MCP servers persist on the guest disk and are not re-installed.
@@ -301,11 +313,11 @@ iso up . --no-agents
 iso start --no-agents
 ```
 
-This skips the entire bootstrap sequence. The VM boots normally but gets no API key, no GitHub token, no plugins, and no MCP servers. You can still run `iso claude` afterward, and that session forwards `ANTHROPIC_API_KEY` and any `env_forward` variables via SSH. Plugins and MCP servers won't be available unless you configure them manually inside the guest.
+This skips the entire bootstrap sequence. The VM boots normally but gets no API key, no GitHub token, no plugins, and no MCP servers. You can still run `iso claude` afterward; that session forwards any `env_forward` variables via SSH, and `ANTHROPIC_API_KEY` only where raw forwarding applies (see [API key forwarding](#api-key-forwarding)). Plugins and MCP servers won't be available unless you configure them manually inside the guest.
 
 ## Updating Claude Code
 
-Claude Code auto-updates in the background by default — it checks for a newer version on startup and periodically, and applies the update on the next launch. isolate does not disable this and the guest has outbound network access, so Claude Code keeps itself current with no action from you.
+Claude Code auto-updates in the background by default — it checks for a newer version on startup and periodically, and applies the update on the next launch. isolate does not disable this. With open egress (`network.transport: "vmnet"` and `egress: "open"`, as the `networked` preset sets), Claude Code keeps itself current with no action from you. A default VM (brokered transport, `egress: "none"`) has no outbound network, so the background updater cannot reach the update server.
 
 To force an update immediately rather than waiting for the background updater:
 

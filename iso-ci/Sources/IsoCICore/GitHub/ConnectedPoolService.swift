@@ -127,8 +127,9 @@ package final class ConnectedPoolService: ControllerService {
         finishCredentialRemoval(poolName)
         continue
       }
+      var gate: String?
       if let current, current.pools[poolName] != nil {
-        let gate = activationGate(poolName, pool, configuration: current, now: now)
+        gate = activationGate(poolName, pool, configuration: current, now: now)
         if let status, Self.isAutomatic(status.state) || status.state == .inactive {
           let target: PoolState =
             gate == nil ? (pool.desiredIdleVMs == 0 ? .paused : .active) : .inactive
@@ -155,7 +156,7 @@ package final class ConnectedPoolService: ControllerService {
       }
       let reconciler = ConnectedPoolReconciler(
         pool: poolName, store: store, configuration: effective, provider: provider,
-        runners: runners, controller: controller)
+        runners: runners, controller: controller, gate: gate)
       let report = reconciler.reconcile()
       state.withLock { $0.reports[poolName] = report }
       if (try? store.poolStatus(poolName))?.state == .removed { finishCredentialRemoval(poolName) }

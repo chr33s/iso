@@ -13,7 +13,8 @@ package struct JSONLimits: Sendable, Equatable {
   package var maxKeys: Int
   package var maxArrayElements: Int
   package var maxNumberLength: Int
-  /// Longest string literal, raw (escapes included), in bytes.
+  /// Longest string content between the quotes, raw (escapes included), in
+  /// bytes.
   package var maxStringBytes: Int
 
   package static let configuration = JSONLimits(
@@ -366,7 +367,8 @@ package enum JSONPreflight {
       }
       while true {
         guard let byte = current else { throw fail(.syntax("unterminated string"), at: start) }
-        guard index - start <= limits.maxStringBytes else {
+        // Content bytes before `current`; `start` is the opening quote.
+        guard index - start - 1 <= limits.maxStringBytes else {
           throw fail(
             .stringTooLong(path: renderPath(path), limit: limits.maxStringBytes), at: start)
         }

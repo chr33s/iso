@@ -10,7 +10,9 @@ System-of-record map for `iso`. The root [`AGENTS.md`](../AGENTS.md) is the
 short navigational entrypoint; durable detail lives here.
 
 This is the `chr33s/iso` fork of Trail of Bits’ isolate. Supported hosts are
-**macOS 27+ on Apple Silicon only**; guests run Linux. The host CLI is Swift
+**macOS 27+ on Apple Silicon only**; guests run Linux, or macOS from an image
+built with `iso setup --guest macos`
+([macOS guests](images-and-profiles.md#macos-guests)). The host CLI is Swift
 (root [`Package.swift`](../Package.swift), [`Sources/`](../Sources/)) with one
 Apple backend. The credential proxy is the Swift package
 [`iso-proxy/`](../iso-proxy/); the Apple runtime is
@@ -117,8 +119,8 @@ Apple backend. The credential proxy is the Swift package
 - [`remote-hosts.md`](remote-hosts.md) — project VMs on trusted remote Macs.
 - [`claude-integration.md`](claude-integration.md),
   [`codex-integration.md`](codex-integration.md) — agent integration.
-- [`credential-proxy.md`](credential-proxy.md) — the opt-in `proxy`
-  credential-injecting proxy (issue #411): keeps the raw API key out of the
+- [`credential-proxy.md`](credential-proxy.md) — the `proxy`
+  credential-injecting proxy (required by default) (issue #411): keeps the raw API key out of the
   guest.
 
 ## Agent tooling

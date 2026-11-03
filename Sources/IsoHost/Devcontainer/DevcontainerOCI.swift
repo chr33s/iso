@@ -54,6 +54,7 @@ package struct FeatureRequest: Sendable, Equatable {
     } else if let colon = rest.lastIndex(of: ":") {
       let tag = rest[rest.index(after: colon)...]
       guard !tag.isEmpty else { throw HostError(shapeMessage) }
+      guard isOCITag(tag) else { throw HostError("feature tag contains unsupported characters") }
       name = rest[..<colon]
       reference = .tag(String(tag))
     } else {
@@ -90,6 +91,12 @@ package struct FeatureRequest: Sendable, Equatable {
     }
     return sortedMembers(out)
   }
+}
+
+/// The OCI distribution tag grammar: `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`.
+private func isOCITag(_ tag: Substring) -> Bool {
+  guard let first = tag.unicodeScalars.first, tag.unicodeScalars.count <= 128 else { return false }
+  return first != "-" && first != "." && tag.unicodeScalars.allSatisfy(isFeatureNameCharacter)
 }
 
 private func isFeatureNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
@@ -134,8 +141,8 @@ package struct ResolvedFeature: Sendable, Equatable {
   /// Provisioning-script fragment that unpacks the archive embedded as
   /// base64 and runs its `install.sh` with the options exported.
   package var installSnippet: String {
-    var out = "\necho '  [guest] Installing devcontainer Feature "
-    out += shellSingleQuote(installed.reference) + "'\n"
+    var out = "\necho '  [guest] Installing devcontainer Feature '"
+    out += shellSingleQuote(installed.reference) + "\n"
     out += "(\n"
     out += "feature_dir=$(mktemp -d)\n"
     out += "trap 'rm -rf \"$feature_dir\"' EXIT\n"

@@ -79,7 +79,7 @@ Configure via the wizard:
 iso github setup-pat --repo chr33s/iso
 ```
 
-The wizard opens the PAT-creation form in your browser, validates the token via `/user` and `/repos/<repo>`, stores the token in the macOS Keychain (service `iso-github-pat`, account `owner-repo`), and writes a `github.pat["owner/repo"]` entry. The token itself is stored only in the Keychain — the config file holds a `cmd:` invocation that retrieves it. If the Keychain is unavailable the wizard fails; there is no fallback store.
+The wizard opens the PAT-creation form in your browser, validates the token via `/user` and `/repos/<repo>`, stores the token in the macOS Keychain (service `iso-github-pat`, account `owner/repo`), and writes a `github.pat["owner/repo"]` entry. The token itself is stored only in the Keychain — the config file holds a `cmd:` invocation that retrieves it. If the Keychain is unavailable the wizard fails; there is no fallback store.
 
 #### Submodule discovery
 
@@ -106,10 +106,10 @@ Multi-repo example:
     "mode": "pat",
     "pat": {
       "chr33s/iso": {
-        "token": "cmd:security find-generic-password -s iso-github-pat -a trailofbits-iso -w"
+        "token": "cmd:security find-generic-password -s iso-github-pat -a chr33s/iso -w"
       },
       "example/agent-plugins": {
-        "token": "cmd:security find-generic-password -s iso-github-pat -a trailofbits-iso-plugins -w"
+        "token": "cmd:security find-generic-password -s iso-github-pat -a example/agent-plugins -w"
       }
     }
   }
@@ -235,7 +235,7 @@ iso setup --guest-user vscode
 
 The name is validated against the POSIX-portable pattern `[a-z_][a-z0-9_-]{0,31}`; `root` is rejected because isolate assumes an unprivileged uid-1000 account.
 
-The guest user is **baked into the image at setup time and immutable for the image's lifetime** — it is persisted in the image's `template_config.json`, and `up` / `start` / `shell` / `exec` read it back from there. To change it, destroy and recreate the image: `iso destroy && iso setup --guest-user <name>`.
+The guest user is **baked into the image at setup time and immutable for the image's lifetime** — it is persisted in the image's `template-config.json`, and `up` / `start` / `shell` / `exec` read it back from there. To change it, destroy and recreate the image: `iso destroy && iso setup --guest-user <name>`.
 
 ### devcontainer `remoteUser`
 
@@ -275,9 +275,9 @@ Claude Code configuration injected into the guest VM at start time. Every field 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `api_key` | string | unset (reads `$ANTHROPIC_API_KEY` from environment) | Anthropic API key, literal or `cmd:` reference (run on the host with `sh -c` when needed). Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
+| `api_key` | string | unset (reads `$ANTHROPIC_API_KEY` from environment) | Anthropic API key, literal or `cmd:` reference (run on the host with `sh -c` when needed). Forwarded to the guest via SSH `SendEnv` only where [`proxy.mode`](#proxymode) allows; withheld under the default `"required"`. Never written to disk inside the VM. |
 | `config_dir` | string (path) or `false` | disabled | Opt-in source for `CLAUDE.md`, `keybindings.json`, `rules/`, `commands/`, `skills/`, `agents/`, `output-styles/`, `themes/`, and `workflows/`, copied into guest `~/.claude/` on each start. Complete bundles and narrow companion preferences are imported. Nothing is imported unless a directory is named (for example `"~/.claude"`); `null` is rejected. The named root is read once into a confined snapshot: links must resolve inside it, special files are refused, and an import is capped at 10,000 entries and 256 MiB. Supports `~` expansion; `false` stops copying while retaining prior files/preferences. Host deletions do not delete guest files. See [import semantics and limitations](claude-integration.md#config-directory). |
-| `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are forwarded automatically when set; list additional variables here. |
+| `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `GITHUB_TOKEN` and, where [`proxy.mode`](#proxymode) allows, `ANTHROPIC_API_KEY` are forwarded automatically when set; list additional variables here. |
 | `marketplaces` | array of strings | `[]` | Plugin marketplace sources. Each entry is a GitHub repo URL or an absolute local directory path. Local directories are copied into the guest before registration. |
 | `plugins` | array of strings | `[]` | Plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
 | `mcp_servers` | object | `{}` | MCP servers to register in the guest. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
@@ -355,10 +355,10 @@ Codex configuration injected into the guest VM at start time. Every field is opt
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `auth` | string | `"api_key"` | Codex auth mode: `"api_key"` forwards an OpenAI API key; `"chatgpt"` uses ChatGPT account or workspace login through the guest Linux keyring. |
-| `api_key` | string | unset (reads `$OPENAI_API_KEY` from environment) | OpenAI API key, literal or `cmd:` reference. Used only with `auth` `"api_key"`. Forwarded to the guest via SSH `SendEnv`. Never written to disk inside the VM. |
+| `api_key` | string | unset (reads `$OPENAI_API_KEY` from environment) | OpenAI API key, literal or `cmd:` reference. Used only with `auth` `"api_key"`. Forwarded to the guest via SSH `SendEnv` only where [`proxy.mode`](#proxymode) allows; withheld under the default `"required"`. Never written to disk inside the VM. |
 | `config_dir` | string (path) or `false` | disabled | Opt-in source directory for Codex config files (for example `"~/.codex"`), read once into the same confined snapshot as Claude's. Copies an allowlist of entries (`AGENTS.md`, `prompts/`, `config.toml`, `auth.json`) from this directory to `~/.codex/` in the guest on start. `auth.json` is omitted when `auth` is `"chatgpt"` or `proxy.openai` is active. Set to `false` to disable. Supports `~` expansion. |
-| `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `OPENAI_API_KEY` and `GITHUB_TOKEN` are forwarded automatically when set; list additional variables here. |
-| `marketplaces` | array of strings | `[]` | Codex plugin marketplace sources. Each entry is a `owner/repo`[`@ref`] shorthand, a git URL, or an absolute local directory path. Local directories are copied into the guest before registration. Baked into the golden image and delta-installed on first boot. |
+| `env_forward` | array of strings | `[]` | Extra environment variable names to forward from host to guest via SSH `SendEnv`. `GITHUB_TOKEN` and, where [`proxy.mode`](#proxymode) allows, `OPENAI_API_KEY` are forwarded automatically when set; list additional variables here. |
+| `marketplaces` | array of strings | `[]` | Codex plugin marketplace sources. Each entry is a `owner/repo`[`@ref`] shorthand, a git URL, or an absolute local directory path. Local directories are copied into the guest before registration. Installed on first boot (not baked into the image). |
 | `plugins` | array of strings | `[]` | Codex plugins to install from registered marketplaces. Format: `plugin-name@marketplace-name`. |
 | `mcp_servers` | object | `{}` | MCP servers to merge into the guest `~/.codex/config.toml`. Keys are server names; values are server definitions. See [MCP servers](#mcp-servers). |
 | `local_model` | object | unset | Host-side model endpoint to route Codex at when the VM is in local mode (`iso model set local <vm>`). See [Local-model routing](#local-model-routing). |
@@ -452,7 +452,7 @@ Both objects take the same fields:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `credential` | string | required | A `cmd:` reference that prints the real credential (an API key or a Claude `setup-token`), resolved at proxy start. Literal values are rejected; the error names the field without printing it. The resolved value is never written to disk and never forwarded into the guest. |
-| `auth` | `api_key` \| `bearer` | `api_key` | How the proxy injects the credential upstream. `api_key` sends `x-api-key: <credential>` (the Anthropic API-key form); `bearer` sends `Authorization: Bearer <credential>`, used for a Claude `setup-token`. OpenAI keys are always Bearer. |
+| `auth` | `api_key` \| `bearer` | `api_key` (`anthropic`), `bearer` (`openai`) | How the proxy injects the credential upstream. `api_key` sends `x-api-key: <credential>` (the Anthropic API-key form); `bearer` sends `Authorization: Bearer <credential>`, used for a Claude `setup-token`. OpenAI keys are always Bearer: `proxy.openai` accepts only `bearer`. |
 
 ```jsonc
 {
@@ -500,8 +500,8 @@ Custom installation profiles for `iso setup --profile <name>`. Each profile decl
 | `apt_packages` | array of strings | `[]` | Apt packages to install in the guest template. |
 | `pre_install` | string | unset | Shell commands to run before `apt-get install` (e.g., adding PPAs or GPG keys). |
 | `post_install` | string | unset | Shell commands to run after `apt-get install`. |
-| `marketplaces` | array of strings | `[]` | Plugin marketplace sources for this profile. Same format as `claude.marketplaces`. |
-| `plugins` | array of strings | `[]` | Plugins to install for this profile. Same format as `claude.plugins`. |
+| `marketplaces` | array of strings | `[]` | Plugin marketplace sources for this profile. Same format as `claude.marketplaces`. Shown by `iso profiles`; the Apple backend does not register them. |
+| `plugins` | array of strings | `[]` | Plugins for this profile. Same format as `claude.plugins`. Shown by `iso profiles`; the Apple backend does not install them (list them in `claude.plugins`). |
 
 Custom profiles compose with built-in ones (`python`, `node`, `c`, `fuzz`, `rust`, `go`). Combine them with commas: `iso setup --profile python,node,my-tools`.
 

@@ -47,9 +47,15 @@ private struct ReturnFixture {
     ).applied
   }
 
+  /// Content, listing, and link count: a hard link to the sentinel changes
+  /// only the last.
+  func cleanup() { removeScratch(root) }
+
   var sentinelIntact: Bool {
-    (try? String(contentsOfFile: outside + "/sentinel", encoding: .utf8)) == "untouched"
+    var status = stat()
+    return (try? String(contentsOfFile: outside + "/sentinel", encoding: .utf8)) == "untouched"
       && (try? FileManager.default.contentsOfDirectory(atPath: outside)) == ["sentinel"]
+      && lstat(outside + "/sentinel", &status) == 0 && status.st_nlink == 1
   }
 }
 
@@ -69,6 +75,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 @Test func returnNeverRunsHostGitEvenWithAHostileRepository() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   // A destination repository whose config would run a command if any Git
   // inspected it, plus a PATH git that would leave a marker.
   let marker = f.root + "/git-ran"
@@ -78,18 +85,25 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
   try writeFile(bin + "/git", "#!/bin/sh\ntouch \(marker)\n")
   chmod(bin + "/git", 0o755)
   let manifest = try f.stage(["tracked.txt": "guest\n", "new.txt": "n"])
+  // The fake git is first on the PATH the transfer resolves its tools from.
+  let client = SSHClient(environment: ["PATH": bin + ":/usr/bin:/bin"], tools: .searchPath)
+  #expect(client.executable(named: "git") == bin + "/git")
+  let transfer = WorkspaceTransfer(
+    client: client, diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
   // Positive control: the fake git does leave a marker when run.
   _ = try ProcessRunner().capture(
     .init(executable: bin + "/git", arguments: [], environment: [:], deadline: .seconds(5)))
   #expect(FileManager.default.fileExists(atPath: marker))
   try FileManager.default.removeItem(atPath: marker)
-  _ = try f.apply(manifest.id)
+  _ = try transfer.applyStage(
+    f.instance, .init(stageID: manifest.id, replace: true, sensitive: [], direct: false))
   #expect(!FileManager.default.fileExists(atPath: marker))
   #expect(readFile(f.destination + "/tracked.txt") == "guest\n")
 }
 
 @Test func gitAdministrationIsNeverInstalledInAnyForm() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try writeFile(f.destination + "/.git/HEAD", "ref: refs/heads/host\n")
   let manifest = try f.stage(
     [
@@ -109,6 +123,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 @Test func linksIntoGitAdministrationAreRefused() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(["a": "a"], links: ["hook": ".git/hooks/pre-commit"])
   #expect(!manifest.applicable)
   #expect(manifest.issues.contains { $0.contains("git administration") })
@@ -117,6 +132,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 @Test func standardGitfilesAreProtectedAndCustomTargetsRefused() throws {
   // A linked worktree whose git directory is outside the destination.
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try writeFile(f.destination + "/.git", "gitdir: \(f.outside)/repo/.git/worktrees/wt\n")
   let manifest = try f.stage(["a.txt": "a"])
   #expect(manifest.applicable)
@@ -128,11 +144,13 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
   // A submodule's gitfile pointing beneath the protected .git is supported.
   let g = try ReturnFixture()
+  defer { g.cleanup() }
   try writeFile(g.destination + "/sub/.git", "gitdir: ../.git/modules/sub\n")
   #expect(try g.stage(["sub/x": "x"]).applicable)
 
   // A custom git directory inside the destination is not.
   let h = try ReturnFixture()
+  defer { h.cleanup() }
   try writeFile(h.destination + "/.git", "gitdir: admin\n")
   let custom = try h.stage(["a.txt": "a"])
   #expect(!custom.applicable)
@@ -142,6 +160,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 @Test func anExistingGitSymlinkMakesTheDestinationInapplicable() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try FileManager.default.createSymbolicLink(
     atPath: f.destination + "/.git", withDestinationPath: f.outside)
   let manifest = try f.stage(["a.txt": "a"])
@@ -151,6 +170,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 @Test func aDestinationInsideGitAdministrationIsRefused() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try FileManager.default.createDirectory(
     atPath: f.destination + "/.git/x", withIntermediateDirectories: true)
   let error = try #require(throws: ReturnError.self) {
@@ -163,6 +183,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 @Test func spellingDifferencesFromHostEntriesAreRefused() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   guard pathconf(f.destination, _PC_CASE_SENSITIVE) == 0 else { return }
   try writeFile(f.destination + "/README.md", "host")
   let manifest = try f.stage(["readme.md": "guest"])
@@ -172,6 +193,7 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 @Test func aLinkWhoseFinalComponentIsALinkIsAChain() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try FileManager.default.createSymbolicLink(
     atPath: f.destination + "/hostlink", withDestinationPath: f.outside + "/sentinel")
   let manifest = try f.stage(["a": "a"], links: ["l": "hostlink", "m": "a"])
@@ -209,7 +231,7 @@ private func hostileArchive(_ path: String, _ script: String) throws {
 
 @Test(arguments: [
   ("parent", #"f("../escape")"#),
-  ("absolute", #"f("/tmp/iso-abs-escape-\#(UUID().uuidString)")"#),
+  ("absolute", #"f("OUTSIDE/escape")"#),
   ("link-then-file", "l(\"l\", \"OUTSIDE\"); f(\"l/escape\")"),
   ("hardlink-out", "l(\"h\", \"OUTSIDE/sentinel\", tarfile.LNKTYPE)"),
   ("dir-link-swap", "d(\"d\"); l(\"d2\", \"OUTSIDE\"); f(\"d2/escape\")"),
@@ -218,6 +240,7 @@ private func hostileArchive(_ path: String, _ script: String) throws {
 func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throws {
   guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { return }
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let archive = f.root + "/hostile.tar"
   try hostileArchive(archive, script.replacingOccurrences(of: "OUTSIDE", with: f.outside))
   let guest = f.root + "/guest"
@@ -264,6 +287,7 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
     "builds its hostile archive with /usr/bin/python3"))
 func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let archive = f.root + "/escape.tar"
   try hostileArchive(archive, #"f("inside"); f("\#(f.outside)/escape")"#)
   let input = Array(try #require(FileManager.default.contents(atPath: archive)))
@@ -317,6 +341,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 /// receiver profile and its own canonical tree.
 @Test func tarPullsRunTheReceiverUnderItsProfile() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let guest = f.root + "/guest"
   try FileManager.default.createDirectory(atPath: guest, withIntermediateDirectories: true)
   try writeFile(guest + "/a.txt", "a")
@@ -360,6 +385,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
     tar: "/bin/cat", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh", requireSystemOwnership: true)
   #expect(throws: HostError.self) { try impostor.qualify(ProcessRunner()) }
   let scratch = try scratchDirectory("tools")
+  defer { removeScratch(scratch) }
   try writeFile(scratch + "/tar", "#!/bin/sh\n")
   chmod(scratch + "/tar", 0o755)
   let userOwned = InboundReceivers(
@@ -380,6 +406,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func destinationsOverlappingControlStateAreRefused() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let roots = WorkspaceTransfer.controlRoots(f.instance)
   for bad in [f.instance.directory, f.root + "/state", f.root, f.instance.directory + "/returns"] {
     try FileManager.default.createDirectory(atPath: bad, withIntermediateDirectories: true)
@@ -397,6 +424,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func anAbsentDestinationIsCreatedOnlyByAnAuthorizedApply() throws {
   let f = try ReturnFixture(createDestination: false)
+  defer { f.cleanup() }
   let manifest = try f.stage(["a.txt": "a", ".envrc": "x"])
   guard case .create = manifest.binding else {
     Issue.record("expected a create binding")
@@ -410,6 +438,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
   // A destination that appears after review is drift, not overwritten.
   let g = try ReturnFixture(createDestination: false)
+  defer { g.cleanup() }
   let second = try g.stage(["a.txt": "a"])
   try FileManager.default.createDirectory(atPath: g.destination, withIntermediateDirectories: true)
   #expect(returnError { _ = try g.apply(second.id) }?.kind == .drift)
@@ -423,6 +452,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func aRenamedDestinationRootIsDrift() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(["a.txt": "a"])
   try FileManager.default.moveItem(atPath: f.destination, toPath: f.root + "/moved")
   try FileManager.default.createDirectory(atPath: f.destination, withIntermediateDirectories: true)
@@ -435,6 +465,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func aLingeringWriterKeepsTheIncomingTreeBusy() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let lock = try f.location.lock()
   defer { lock.release() }
   let attempt = try ReceiveAttempt(f.location)
@@ -458,6 +489,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func aFailedReceiveKeepsThePreviouslySelectedStage() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let first = try f.stage(["a.txt": "a"])
   let lock = try f.location.lock()
   let attempt = try ReceiveAttempt(f.location)
@@ -470,6 +502,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func writesOutsideTheReceiveTreeRejectTheAttempt() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let lock = try f.location.lock()
   defer { lock.release() }
   let attempt = try ReceiveAttempt(f.location)
@@ -504,6 +537,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func lateStageTamperIsCaughtBeforeTheFirstWrite() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(["a.txt": "a", "z.txt": "reviewed"])
   try writeFile(try f.location.loadSelected().stage.tree + "/z.txt", "swapped")
   #expect(returnError { _ = try f.apply(manifest.id) }?.kind == .drift)
@@ -512,6 +546,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func anAttemptConsumesItsStageEvenAfterAPartialFailure() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try writeFile(f.destination + "/ro/.keep", "")
   let manifest = try f.stage(["a.txt": "a", "ro/.keep": "", "ro/x.txt": "x"])
   chmod(f.destination + "/ro", 0o500)
@@ -533,6 +568,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func aFailedCreateReportsTheCreatedRoot() throws {
   let f = try ReturnFixture(createDestination: false)
+  defer { f.cleanup() }
   let manifest = try f.stage(["a.txt": "a", "b.txt": "b"])
   try writeFile(try f.location.loadSelected().stage.tree + "/b.txt", "swapped")
   let selected = try f.location.loadSelected()
@@ -550,6 +586,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func directModeAppliesAdditionsButHoldsReplacements() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try writeFile(f.destination + "/kept.txt", "host")
   let additions = try f.stage(["new.txt": "n"])
   #expect(try f.apply(additions.id, replace: false, direct: true) == ["new.txt"])
@@ -569,6 +606,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func sensitivePathsNeedExactNamedGrants() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(
     [
       ".envrc": "export A=1\n", "app/.husky/pre-commit": "#!/bin/sh\n",
@@ -602,6 +640,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func manifestValidationRejectsTamperedPlans() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   let manifest = try f.stage(["a.txt": "a", ".envrc": "x"])
   let path = try f.location.loadSelected().stage.manifestPath
   let original = try String(contentsOfFile: path, encoding: .utf8)
@@ -619,6 +658,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 
 @Test func discardNeverDeletesALiveReceive() throws {
   let f = try ReturnFixture()
+  defer { f.cleanup() }
   try f.stage(["a.txt": "a"])
   let lock = try f.location.lock()
   let attempt = try ReceiveAttempt(f.location)

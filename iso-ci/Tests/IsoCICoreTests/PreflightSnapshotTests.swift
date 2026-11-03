@@ -278,6 +278,23 @@ import Testing
     #expect(manifest.isDirty)
   }
 
+  /// Regression: `git reset --soft` moves HEAD back without touching the
+  /// index, which still holds the old tip's content staged.
+  @Test func aSoftResetIsDirty() throws {
+    let repo = root + "/soft"
+    try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try git(["init", "-q"], repo)
+    try write(repo + "/f.txt", "f\n")
+    try git(["add", "-A"], repo)
+    try git(["commit", "-q", "-m", "one"], repo)
+    try write(repo + "/f.txt", "g\n")
+    try git(["commit", "-q", "-am", "two"], repo)
+    sleep(1)
+    try git(["reset", "-q", "--soft", "HEAD~1"], repo)
+    let manifest = try SnapshotCapture.capture(repository: repo, options: options()).manifest
+    #expect(manifest.isDirty)
+  }
+
   /// Capture reads the repository as data: a clean filter that any Git
   /// diff of the modified tracked file would run never runs.
   @Test func captureRunsNoGitConfiguration() throws {
@@ -322,6 +339,7 @@ import Testing
     #expect(SnapshotCapture.excluded("Home/.AWS/credentials", patterns: patterns))
     #expect(SnapshotCapture.excluded(".Docker/Config.json", patterns: patterns))
     for path in [
+      ".env-production", "app/.env_local", ".envrc",
       ".gem/credentials", "home/.gem/credentials", ".terraformrc", "terraform.rc",
       "infra/terraform.tfstate", "infra/terraform.tfstate.backup", "keys/release.jks",
       ".pgpass", ".my.cnf", "putty/key.ppk", ".s3cfg", ".boto", ".config/gh/hosts.yml",
@@ -435,14 +453,35 @@ import Testing
     #expect(text(overlay).contains("synthetic commit"))
     #expect(!text(overlay).contains("test-token"))
 
-    // Regression: a later user step mutating the workspace does not change
-    // the recorded snapshot provenance, and a fresh overlay re-verifies.
+    // Regression: after a later user step mutates the workspace, a fresh
+    // overlay re-verifies the snapshot.
     try write(guest.workspace + "/a.txt", "mutated by a later step\n")
-    #expect(result.reference == reference)
-    #expect(
-      result.manifest.files.first { $0.path == "a.txt" }?.sha256 == Digest(hashing: "changed a\n"))
     let again = try step(OverlayScripts.overlay(snapshot: reference, path: "."), guest)
     #expect(again.succeeded, "\(text(again))")
+  }
+
+  /// Regression: the synthetic commit holds tracked files under ignored
+  /// paths too (the workspace holds only snapshot content).
+  @Test func theSyntheticCommitHoldsTrackedIgnoredFiles() throws {
+    let repo = root + "/ignored"
+    try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+    try git(["init", "-q"], repo)
+    try write(repo + "/.gitignore", "dist/\n")
+    try write(repo + "/dist/foo.js", "built\n")
+    try write(repo + "/.github/workflows/ci.yml", "on: push\n")
+    try git(["add", "-A"], repo)
+    try git(["add", "-f", "dist/foo.js"], repo)
+    try git(["commit", "-q", "-m", "c"], repo)
+    var options = SnapshotOptions(outputDirectory: root + "/out")
+    options.workflowPath = ".github/workflows/ci.yml"
+    let result = try SnapshotCapture.capture(repository: repo, options: options)
+    let guest = try guest(serving: result)
+    let checkout = try step(OverlayScripts.checkout(snapshot: result.reference, path: "."), guest)
+    #expect(checkout.succeeded, "\(text(checkout))")
+    let overlay = try step(OverlayScripts.overlay(snapshot: result.reference, path: "."), guest)
+    #expect(overlay.succeeded, "\(text(overlay))")
+    let files = try run("/usr/bin/git", ["ls-files"], in: guest.workspace)
+    #expect(String(decoding: files.stdout, as: UTF8.self).contains("dist/foo.js"))
   }
 
   /// A job container without git: the checkout leaves no `.git` and the

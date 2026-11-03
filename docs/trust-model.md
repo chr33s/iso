@@ -51,7 +51,7 @@ user launched it.
 | Host user + `config.jsonc` | Trusted | `cmd:` values run arbitrary `/bin/sh -c` on the host (`CredentialResolver` in `Sources/IsoHost/Credentials/CredentialResolver.swift`), only when an operation needs the value — never merely by loading the configuration. The config file is a host code-execution surface; only the owner should write it. |
 | isolate process (host) | Trusted | Holds/relays secrets, constructs guest commands, drives `iso-sandbox`, `container build`, `ssh`, and `iso-proxy`. Every subprocess goes through `ProcessRunner` with an argv, never a shell string. |
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
-| GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint, `8.8.8.8`. Reached over the network; authenticated where applicable. |
+| GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint. Reached over the network; authenticated where applicable. |
 
 ## Secure defaults (DEF-01)
 
@@ -152,8 +152,11 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   `GitHubAPI.swift` / `Update.swift` / `DevcontainerGitRepo.swift`). Never
   build a command line with the secret as an argument — it is visible in
   `ps`/`/proc`. The one known exception is the macOS Keychain store step
-  (`security add-generic-password -w`, `SecretStore.swift`), whose CLI offers
-  no stdin path; it is documented at the call site and never appears in isolate's
+  (`security add-generic-password -w`, in `SecretStore.swift` and
+  `ProxyProvisioning.swift`): the secret is on `security`'s argv while it
+  runs, where a local process listing can see it. `security -i` would read
+  the same command on stdin, but iso does not use it yet. The exception is
+  documented at both call sites and the secret never appears in isolate's
   messages. MCP server definitions (with resolved header secrets) reach
   `claude mcp add-json` on stdin, not the ssh command line.
 - **Nothing else rides the SSH environment.** Guest-bound `ssh`/`scp`/`rsync`
@@ -259,7 +262,7 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   refused for values placed in the guest (`claude.api_key`, `codex.api_key`,
   MCP headers).
 - **Proxy mode keeps the model API keys out of the guest entirely** (issue #411,
-  opt-in `proxy`). When enabled in remote model mode, `ANTHROPIC_API_KEY`
+  `proxy`; `proxy.mode` is `"required"` by default). When enabled in remote model mode, `ANTHROPIC_API_KEY`
   (Claude) and/or `OPENAI_API_KEY` (Codex) are **not** forwarded
   (`suppressAnthropicKey` / `suppressOpenAIKey` in `Bootstrap.swift`, one per
   provider); the host-side `iso-proxy` holds the real credential and the
@@ -1052,7 +1055,8 @@ Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
    `ssh-keygen -Y verify`. This is the provenance floor that does not depend
    on `gh`, and it holds in test mode too.
 
-   The key is a maintainer's SSH key held in their ssh-agent and never in CI:
+   The key is a maintainer's SSH key, used from their ssh-agent or a key file
+   under `~/.ssh`, and never in CI:
    `release.yml` publishes a **draft**, and `scripts/sign-release.py` checks
    the draft's digests and pinned attestation before signing and publishing
    it. The key list is compiled in rather than fetched from

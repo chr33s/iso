@@ -199,6 +199,8 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(throws: HostError.self) {
     try writer.page(AuditReader(store: store), .run(run), after: nil, limit: 10)
   }
+  // The pipe recovers: an error record the writer attempted would now land.
+  sink.failAfter = nil
   writer.fail(HostError("Broken pipe"))
   #expect(sink.types == ["state", "event"])
 }

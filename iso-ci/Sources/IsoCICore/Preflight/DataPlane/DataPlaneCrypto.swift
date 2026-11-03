@@ -286,13 +286,19 @@ package struct ClientAssertionVerifier: Sendable {
     guard let expires = token.numericClaim("exp"), let notBefore = token.numericClaim("nbf") else {
       throw CIError(.unauthorized, "assertion lacks a validity window")
     }
-    guard expires - notBefore <= Self.maxLifetime, now <= expires + Self.clockSkew,
-      now + Self.clockSkew >= notBefore
+    // The claims are guest-chosen (the signing key is guest-visible), so the
+    // window arithmetic must not trap on extreme values.
+    let lifetime = expires.subtractingReportingOverflow(notBefore)
+    let acceptedUntil = expires.addingReportingOverflow(Self.clockSkew)
+    let latestStart = now.addingReportingOverflow(Self.clockSkew)
+    guard !lifetime.overflow, !acceptedUntil.overflow, !latestStart.overflow,
+      lifetime.partialValue <= Self.maxLifetime, now <= acceptedUntil.partialValue,
+      latestStart.partialValue >= notBefore
     else { throw CIError(.unauthorized, "assertion is expired or not yet valid") }
     guard let jti = token.claims["jti"]?.stringValue, (1...128).contains(jti.utf8.count) else {
       throw CIError(.unauthorized, "assertion lacks an identifier")
     }
-    return Verified(id: jti, acceptedUntil: expires + Self.clockSkew)
+    return Verified(id: jti, acceptedUntil: acceptedUntil.partialValue)
   }
 }
 

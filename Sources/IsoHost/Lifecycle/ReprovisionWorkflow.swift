@@ -30,6 +30,12 @@ package struct ReprovisionWorkflow {
 
   package func run(confirm: (InstanceName, ImageName, WorkspaceState?) throws -> Bool) throws {
     let instance = try InstanceStore.resolve(lifecycle.config, name: name)
+    // The disk restore below refuses a macOS guest; refuse before stopping it.
+    if let sidecar = try MachineSidecar.loadIfPresent(instance), sidecar.kind != .linux {
+      throw HostError(
+        "Instance '\(instance.name)' is a macOS guest: restore --reprovision is not supported for macOS guests"
+      )
+    }
     let image = self.image ?? instance.image
     guard lifecycle.backend.imageIsBuilt(image) else {
       throw HostError("No image '\(image)' found. Run `iso images` to list available images.")
@@ -97,7 +103,14 @@ package struct ReprovisionWorkflow {
       try Shutdown.check()
       lifecycle.foldGuestEnvironment(bootEnvironment)
       try lifecycle.backend.startExisting(restored, guestEnvironment: bootEnvironment)
-      try lifecycle.provisionFirstBoot(restored, options, repo: repo, forwardSet: forwardSet)
+      do {
+        try lifecycle.provisionFirstBoot(restored, options, repo: repo, forwardSet: forwardSet)
+      } catch {
+        // As for a failed restart (LIFE-01): revoke what the boot started
+        // and stop it with its disk kept, or fence it.
+        lifecycle.rollBackRestart(restored, cause: error)
+        throw error
+      }
     } catch {
       throw ContextError(partial, cause: error)
     }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import IsoCICore
@@ -29,6 +30,11 @@ import Testing
     ("unknown key", "retry: fresh-job", "retry: fresh-job\n  continue_failed_steps: true"),
     ("step continuation", "retry: fresh-job", "retry: failed-step"),
     ("unknown profile", "profile: linux-validation", "profile: nope"),
+    ("unbudgeted pool host", "hosts: [local]\n    github:", "hosts: [local, mba]\n    github:"),
+    (
+      "unbudgeted preflight host", "hosts: [local]\n  architecture_mapping",
+      "hosts: [mba]\n  architecture_mapping"
+    ),
   ])
   func refusesInvalidConfiguration(_ testCase: (String, String, String)) throws {
     let (_, from, to) = testCase
@@ -57,6 +63,17 @@ import Testing
     #expect(rest.count == 2)
   }
 
+  /// Regression: a cut inside a multi-byte character stored an empty message.
+  @Test func longMessagesAreCutOnACharacterBoundary() throws {
+    let store = try ControllerStore.inMemory()
+    let message = "a" + String(repeating: "é", count: ControllerStore.maxEventMessageBytes)
+    try store.event("test", "test.long", message)
+    let stored = try #require(try store.events(after: 0).last).message
+    #expect(!stored.isEmpty)
+    #expect(stored.utf8.count <= ControllerStore.maxEventMessageBytes)
+    #expect(message.hasPrefix(stored))
+  }
+
   @Test func allocationsRoundTripAndSettle() throws {
     let store = try ControllerStore.inMemory()
     var record = AllocationRecord(
@@ -79,6 +96,21 @@ import Testing
   @Test func controllerIdentityIsStable() throws {
     let store = try ControllerStore.inMemory()
     #expect(try store.controllerID() == (try store.controllerID()))
+  }
+}
+
+@Suite struct DataRootTests {
+  /// Regression: a relative `--root` or `ISO_CI_HOME` was ignored, so the
+  /// command ran against the default root.
+  @Test func relativeRootsAreRefusedNotIgnored() throws {
+    #expect(throws: CIError.self) { try DataRoot.resolve("ci-test", environment: [:]) }
+    #expect(throws: CIError.self) { try DataRoot.resolve(nil, environment: ["ISO_CI_HOME": "x"]) }
+    #expect(
+      try DataRoot.resolve("/a", environment: ["ISO_CI_HOME": "/b"]) == DataRoot(path: "/a"))
+    #expect(try DataRoot.resolve(nil, environment: ["ISO_CI_HOME": "/b"]) == DataRoot(path: "/b"))
+    #expect(
+      try DataRoot.resolve(nil, environment: [:])
+        == DataRoot(path: NSHomeDirectory() + "/.iso-ci"))
   }
 }
 
@@ -198,6 +230,58 @@ import Testing
     #expect(throws: CIError.self) { _ = try client.call("other") }
     var status = stat()
     #expect(lstat(path, &status) == 0 && status.st_mode & 0o077 == 0)
+  }
+
+  /// Regression: a request sent without a reply may have been applied, so
+  /// it is uncertain, and the dispatcher never re-runs it in process.
+  @Test func aSentRequestWithoutAReplyIsUncertainNotRerun() throws {
+    let root = DataRoot(path: scratchDirectory("no-reply"))
+    let listener = try listenUnix(root.controlSocket)
+    defer {
+      close(listener)
+      unlink(root.controlSocket)
+    }
+    let server = Thread {
+      let client = accept(listener, nil, nil)
+      _ = readLine(client, limit: 1 << 20)
+      close(client)
+    }
+    server.start()
+    let opened = Mutex(false)
+    let dispatcher = ControlDispatcher(root: root) { () throws(CIError) -> Runtime in
+      opened.withLock { $0 = true }
+      throw CIError(.internalError, "not reached")
+    }
+    do {
+      _ = try dispatcher.call("abort", ["target": "x"])
+      Issue.record("expected an uncertain outcome")
+    } catch {
+      #expect(error.code == .operationUncertain)
+    }
+    #expect(!opened.withLock { $0 })
+  }
+
+  /// Regression: with no controller, work that only a serving controller
+  /// carries out is refused instead of being accepted in process.
+  @Test func submissionsNeedAServingController() throws {
+    let root = DataRoot(path: scratchDirectory("no-controller"))
+    let opened = Mutex(false)
+    let dispatcher = ControlDispatcher(root: root) { () throws(CIError) -> Runtime in
+      opened.withLock { $0 = true }
+      throw CIError(.internalError, "in process")
+    }
+    for method in ["run.submit", "retry"] {
+      do {
+        _ = try dispatcher.call(method, [:])
+        Issue.record("expected a refusal for \(method)")
+      } catch {
+        #expect(error.code == .controllerUnavailable)
+      }
+    }
+    #expect(!opened.withLock { $0 })
+    // Other requests still run in process.
+    #expect(throws: CIError.self) { _ = try dispatcher.call("status", [:]) }
+    #expect(opened.withLock { $0 })
   }
 
   @Test func requestDecodingIsStrict() {

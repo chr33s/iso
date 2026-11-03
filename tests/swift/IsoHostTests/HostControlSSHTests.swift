@@ -48,6 +48,39 @@ import Testing
     #expect(throws: HostControlError.self) { try wrong.call(.vmList(cursor: nil, limit: 1)) }
   }
 
+  /// One listener failing for good ends `serve`, so the service exits and is
+  /// restarted instead of holding its lock with a dead socket; descriptor
+  /// exhaustion is retried, not fatal.
+  @Test func serveReturnsWhenAnyListenerStops() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let paths = HostControlPaths(
+      directory: FileManager.default.temporaryDirectory.appending(
+        path: "iso-hc-\(UUID().uuidString.prefix(8))"
+      ).path)
+    defer { try? FileManager.default.removeItem(atPath: paths.directory) }
+    let server = LocalHostServer(
+      supervisor: f.supervisor, paths: paths, diagnostics: Diagnostics(verbosity: 0, sink: { _ in })
+    )
+    let bound = try server.bind()
+    defer {
+      for fd in [bound.control, bound.remote, bound.relay] {
+        shutdown(fd, SHUT_RDWR)
+        close(fd)
+      }
+    }
+    let listeners = LocalHostServer.Listeners(
+      control: bound.control, remote: bound.remote, relay: -1)
+    let returned = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+      server.serve(listeners)
+      returned.signal()
+    }
+    #expect(returned.wait(timeout: .now() + 5) == .success)
+    #expect(LocalHostServer.isTransientAcceptError(EMFILE))
+    #expect(!LocalHostServer.isTransientAcceptError(EBADF))
+  }
+
   @Test func malformedFrameClosesOnlyThatStream() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }

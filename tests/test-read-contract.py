@@ -34,9 +34,11 @@ case "$1" in
     if [ "$4" = "iso-0a1b2c3d-000000000000000b" ]; then echo "disk busy" >&2; exit 3; fi
     printf '  boot line one  \\n\\033[31mred\\033[0m and\\302\\255soft\\n'
     head -c 70000 /dev/zero | tr '\\0' x; printf '\\n'
-    echo "stderr note" >&2
+    # A snapshot spools runtime stderr with stdout, in pipe-read order, so
+    # only the followed stream (stderr forwarded apart) carries a note.
+    if [ "$5" = "--follow" ]; then echo "stderr note" >&2; fi
     printf 'last line without newline'
-    [ "$5" = "--follow" ] && printf '\\nfollowed\\n'
+    if [ "$5" = "--follow" ]; then printf '\\nfollowed\\n'; fi
     ;;
   *) echo "unexpected: $*" >&2; exit 64 ;;
 esac

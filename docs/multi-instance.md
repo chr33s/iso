@@ -71,7 +71,7 @@ This applies to `shell`, `stop`, `destroy`, `status <name>`, `logs`, `push`, `pu
 
 ### Just the names
 
-`iso list` (alias `ls`) prints a minimal name/state table. It reads from local on-disk state only, so it's fast and works even when VMs are unreachable. Use it when you just need to remember what's available:
+`iso list` (alias `ls`) prints a minimal name/state table: `running`, `stopped`, `unhealthy` (a failed filtered-egress readiness proof) or `unknown`. The state comes from the runtime (`iso-sandbox inspect`), never from an SSH connection to the guest, so it works even when VMs are unreachable. See [`list`](commands.md#list). Use it when you just need to remember what's available:
 
 ```
 $ iso list

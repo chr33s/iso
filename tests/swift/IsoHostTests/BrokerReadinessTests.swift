@@ -30,12 +30,15 @@ private func reply(change: String = "") throws -> [UInt8] {
     "signature": change == "signature"
       ? Data(repeating: 0, count: 64).base64EncodedString() : signed,
   ])
+  // Oversize padding is counted in Content-Length (and JSON allows trailing
+  // whitespace), so only the size cap can reject it.
+  let padding = [UInt8](repeating: 32, count: change == "oversize" ? 1025 : 0)
+  let length = body.count + padding.count + (change == "length" ? 1 : 0)
   var result =
     Array(
-      ("HTTP/1.1 200 OK\r\ncontent-length: \(body.count + (change == "length" ? 1 : 0))\r\nconnection: close\r\n\r\n")
-        .utf8) + body
+      ("HTTP/1.1 200 OK\r\ncontent-length: \(length)\r\nconnection: close\r\n\r\n").utf8)
+    + body + padding
   if change == "truncated" { result.removeLast() }
-  if change == "oversize" { result += [UInt8](repeating: 32, count: 1025) }
   return result
 }
 
@@ -191,4 +194,25 @@ func brokerReadinessRejectsSignedWrongFieldsAndForgery(change: String) throws {
   ] {
     #expect(!FileManager.default.fileExists(atPath: path))
   }
+  // The processes are gone too, not only their pid files.
+  for record in ["proxy.process", "tunnel-master.process"] {
+    let text = try #require(readFile(guest.root + "/" + record))
+    let pid = try #require(pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+    #expect(processEnds(pid), "\(record) \(pid) is still running")
+  }
+}
+
+/// Whether `pid` exits (or is only an unreaped zombie) within a few seconds.
+private func processEnds(_ pid: pid_t) -> Bool {
+  let deadline = ContinuousClock.now + .seconds(5)
+  repeat {
+    // `kinfo_proc` still describes a zombie, which proc_pidinfo does not.
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+    var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    let found = sysctl(&name, 4, &info, &size, nil, 0) == 0 && size > 0
+    if !found || Int32(info.kp_proc.p_stat) == SZOMB { return true }
+    usleep(20_000)
+  } while ContinuousClock.now < deadline
+  return false
 }

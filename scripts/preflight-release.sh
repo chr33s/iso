@@ -8,7 +8,8 @@ set -euo pipefail
 # Release preflight for iso.
 #
 # Runs every check that gates a release from one machine, mirroring the CI
-# jobs (swift format, build, test, the current contract checks, the
+# jobs (hygiene, the `mise run lint`/`check-policy`/`check-ci` tasks CI runs,
+# build, test, workflow lint, the contract and regression scripts, the
 # lightweight integration scripts) so a doomed tag is never pushed, and adds
 # the checks CI does not perform:
 #   - Swift package version (Sources/IsoHost/Update/UpdateVersion.swift) / CHANGELOG
@@ -127,9 +128,43 @@ check_versions() {
   printf 'Version sources agree; tag %s is free.\n' "$tag"
 }
 
+# The same mise.toml tasks CI runs, so the package list cannot drift.
+need_mise() {
+  have mise && return 0
+  echo "mise not installed — install the pinned tools with ./scripts/install-dev-tools.sh" >&2
+  return 1
+}
+
 run_format() {
-  swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints \
-    iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
+  need_mise && mise run lint
+}
+
+run_policy_tests() {
+  need_mise && mise run check-policy
+}
+
+run_ci_companion() {
+  if ! macos_27; then
+    warn "iso-ci companion checks require macOS 27+ — run \`mise run check-ci\` before tagging"
+    return 0
+  fi
+  need_mise && mise run check-ci
+}
+
+run_workflow_lint() {
+  if ! have jactionlint; then
+    warn "jactionlint not installed — workflow lint skipped (CI still runs it; mise install)"
+    return 0
+  fi
+  jactionlint
+}
+
+run_proxy_fixtures() {
+  local failed=0
+  python3 tests/test-proxy-vm-fixture.py || failed=1
+  python3 tests/test-proxy-live.py || failed=1
+  python3 tests/test-proxy-agent-smoke.py || failed=1
+  return "$failed"
 }
 
 run_host_tests() {
@@ -216,12 +251,20 @@ run_filtered_vm() {
 
 step "Working tree clean" check_worktree
 step "Version consistency" check_versions
-step "Format (swift format lint --strict)" run_format
+step "Repository hygiene" python3 scripts/hygiene.py --all
+step "Format (mise run lint)" run_format
 step "Swift host build and tests" run_host_tests
+step "IsoPolicy library tests" run_policy_tests
+step "Workflow lint (jactionlint)" run_workflow_lint
+step "Release legal notices" python3 tests/test-release-legal.py
 step "Host behavior contracts" run_contracts
+step "VM integration harness regression tests" python3 tests/test-apple-integration-harness.py
+step "Proxy runner and fixture regression tests" run_proxy_fixtures
+step "Codex account wrapper regression tests" python3 tests/test-codex-account.py
 step "Swift proxy tests" run_swift_proxy
 step "Swift egress tests and confined lease" run_swift_egress
 step "iso-sandbox tests" run_sandbox_tests
+step "iso-ci companion" run_ci_companion
 step "Workflow audit (zizmor)" run_zizmor
 step "Release preflight regression tests" python3 tests/test-preflight-release.py
 step "Hosted candidate verifier regression tests" python3 tests/test-verify-candidate.py

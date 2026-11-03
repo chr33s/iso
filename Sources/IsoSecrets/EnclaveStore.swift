@@ -173,7 +173,14 @@ package struct EnclaveStore: Sendable {
     }
     let envelope: StoreEnvelope = try Self.decode(try readPrivateFile(storePath))
     let parameters = try envelope.parameters()
-    let sealed = try readPrivateFile(sealedKeyPath)
+    // With the store present, a missing sealed key is as permanent as a
+    // missing device key: `secrets init` would refuse the existing store.
+    let sealed: [UInt8]
+    do {
+      sealed = try readPrivateFile(sealedKeyPath)
+    } catch .notInitialized {
+      throw .enclaveKeyUnavailable
+    }
     let ephemeral = try SealedDeviceUnlockKey.ephemeralKey(sealed)
     let passwordKey = try KDF.passwordKey(passphrase, parameters)
     let keyBytes: [UInt8]

@@ -350,16 +350,18 @@ package struct GitHubHost: Sendable {
 
   // MARK: forget-pat
 
-  /// Remove the entry (no skip marker) and, when its reference is the
-  /// Keychain item iso writes, that item. Any other reference is the
-  /// user's own and is left alone.
+  /// Remove the entry (no skip marker) and, when its reference is a
+  /// Keychain item in iso's PAT service, exactly the item it names. Any
+  /// other reference is the user's own and is left alone.
   package func forgetPAT(_ config: IsoConfig, target: ConfigTarget, repo: RepoSlug) throws {
     guard let entry = config.github?.patEntry(repo) else {
       throw HostError(
         "No PAT entry for '\(repo)' — nothing to forget. Run `iso github status`.")
     }
-    if KeychainReference.parse(entry.expose()) != nil {
-      keychain.delete(service: SecretStore.githubPATService, account: SecretAccount(repo: repo))
+    if let item = KeychainReference.parse(entry.expose()),
+      item.service == SecretStore.githubPATService
+    {
+      keychain.delete(item)
     } else {
       diagnostics.log(
         .info,

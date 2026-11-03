@@ -119,6 +119,18 @@ private struct IndexBuilder {
   #expect(refusal(short + Array(Insecure.SHA1.hash(data: short))) == .truncated)
 }
 
+@Test func aZeroTrailerIsReadAsGitDoes() throws {
+  // `index.skipHash` (and `feature.manyFiles`) writes 20 zero bytes in
+  // place of the checksum; Git reads such an index without verifying it.
+  let signed = IndexBuilder(version: 4, items: [.init(path: "b.txt")]).bytes()
+  let skipped = Array(signed.dropLast(20)) + [UInt8](repeating: 0, count: 20)
+  #expect(try GitIndexFile.parse(skipped).map(\.path) == ["b.txt"])
+  // Structural checks still apply to an unverified index.
+  var short = Array(skipped.dropLast(20))
+  short[11] = 2
+  #expect(refusal(short + [UInt8](repeating: 0, count: 20)) == .truncated)
+}
+
 private func refusal(_ bytes: [UInt8]) -> GitIndexFile.Refusal? {
   do {
     _ = try GitIndexFile.parse(bytes)

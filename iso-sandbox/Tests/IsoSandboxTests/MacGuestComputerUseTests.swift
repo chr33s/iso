@@ -178,15 +178,28 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   var fds: [Int32] = [0, 0]
   #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
   defer { close(fds[0]) }
-  // Two lines in one write, then one split over three writes.
-  for chunk in ["one\ntwo\nthr", "e", "e\n"] {
+  let writer = fds[1]
+  func send(_ chunk: String) {
     _ = chunk.utf8CString.withUnsafeBufferPointer {
-      write(fds[1], $0.baseAddress, chunk.utf8.count)
+      write(writer, $0.baseAddress, chunk.utf8.count)
     }
   }
-  close(fds[1])
+  // Two lines in one write; the partial third stays buffered across them.
+  send("one\ntwo\nthr")
   var reader = LineReader(fd: fds[0], limit: 64)
   var lines: [String] = []
+  for _ in 0..<2 {
+    if case .line(let l) = reader.next() { lines.append(String(decoding: l, as: UTF8.self)) }
+  }
+  // The rest of that line arrives in later reads, while the reader waits.
+  let rest = Thread {
+    for chunk in ["e", "e\n"] {
+      Thread.sleep(forTimeInterval: 0.05)
+      send(chunk)
+    }
+    close(writer)
+  }
+  rest.start()
   while case .line(let l) = reader.next() { lines.append(String(decoding: l, as: UTF8.self)) }
   #expect(lines == ["one", "two", "three"])
 }
@@ -214,6 +227,10 @@ private func parse(_ s: String) -> Result<GuestCURequest, GuestCURequest.ParseEr
   #expect(
     parse(#"{"op":"act","session":"s","basedOnFrame":"f","action":{"kind":"click","exec":1}}"#)
       == .failure(.unknownField("action.exec")))
+  #expect(
+    parse(
+      #"{"op":"act","session":"s","basedOnFrame":"f","action":{"kind":"drag","path":[{"x":1,"y":1,"z":9},{"x":5,"y":5}]}}"#
+    ) == .failure(.unknownField("action.path.z")))
   #expect(
     parse(#"{"op":"act","session":"s","action":{"kind":"click","x":1,"y":2}}"#)
       == .failure(.missing("basedOnFrame")))

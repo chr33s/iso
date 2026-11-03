@@ -334,8 +334,13 @@ package struct AppleNativeHost: NativeHost {
       case .resize(let cpus, let memory, let disk):
         if let disk {
           let stopped = try backend.asStopped(instance)
-          // Growing to the current size is already done (a reconciling retry).
-          if try backend.currentDiskGiB(stopped) < disk {
+          // Growing to the current size is already done (a reconciling retry);
+          // a smaller size would be recorded although nothing shrank.
+          let current = try backend.currentDiskGiB(stopped)
+          guard current <= disk else {
+            throw HostError("disk_gib \(disk) is below the current \(current) GiB")
+          }
+          if current < disk {
             try backend.resizeDisk(stopped, toGiB: disk)
           }
         }

@@ -627,6 +627,62 @@ struct FakeInstallation {
   try backend.destroyInstance(instance)
 }
 
+/// Wraps the fake runtime so `stop` fails while `<bin>/fail-stop` exists.
+private func refuseStops(_ install: FakeInstallation) throws -> String {
+  let bin = install.root + "/bin"
+  try FileManager.default.moveItem(atPath: bin + "/iso-sandbox", toPath: bin + "/iso-sandbox-real")
+  try Data(
+    "#!/bin/sh\nif [ \"$1\" = stop ] && [ -e '\(bin)/fail-stop' ]; then exit 1; fi\nexec '\(bin)/iso-sandbox-real' \"$@\"\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: bin + "/iso-sandbox"))
+  chmod(bin + "/iso-sandbox", 0o755)
+  return bin + "/fail-stop"
+}
+
+/// A stop the runtime cannot confirm still takes the credential proxy down,
+/// and a restart whose boot fails after it began, and whose stop then cannot
+/// be confirmed, is fenced (LIFE-01).
+@Test func unconfirmedStopsRevokeProxiesAndFenceAFailedBoot() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let failStop = try refuseStops(install)
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("stubborn"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let environment = ConfigEnvironment(
+    home: install.root,
+    variables: ["HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin"])
+  let lifecycle = ProjectLifecycle(
+    context: CommandContext(
+      environment: environment, config: install.config, backend: backend,
+      output: SilentOutput(), diagnostics: Diagnostics(verbosity: 0) { _ in },
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath)),
+    noGitHub: true, secretResolver: NoSecrets(), executable: nil,
+    prepareGitHub: { config, _, _, _ in config })
+  let token = ProxyLauncher.tokenPath(instance, ProxyProvider.anthropic.rawValue)
+  try writeFile(token, "capability")
+  try Data().write(to: URL(fileURLWithPath: failStop))
+  #expect(throws: (any Error).self) { try lifecycle.stop(instance) }
+  #expect(!FileManager.default.fileExists(atPath: token))
+  try FileManager.default.removeItem(atPath: failStop)
+  try lifecycle.stop(instance)
+
+  // The guest now presents a key other than the pinned one.
+  let sidecar = try MachineSidecar.load(instance)
+  try HostKeyPin.apply(
+    .reenrollAfterRestore, instance: instance, machine: sidecar.machineID,
+    key: try HostPublicKey(parsing: otherKey))
+  try Data().write(to: URL(fileURLWithPath: failStop))
+  #expect(throws: (any Error).self) {
+    try backend.startExisting(instance, guestEnvironment: [:])
+  }
+  #expect(FileManager.default.fileExists(atPath: HandoffFence.path(instance)))
+}
+
 // MARK: - macOS guests
 
 private func macSetup(_ install: FakeInstallation, image: ImageName) throws {
@@ -665,6 +721,34 @@ private func macSetup(_ install: FakeInstallation, image: ImageName) throws {
       rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
       macOSRestoreImage: other))
   #expect(install.calls().contains { $0.starts(with: ["macos", "template", "build"]) })
+}
+
+/// Reprovisioning is refused for a macOS guest before it is stopped.
+@Test func reprovisionRefusesAMacOSGuestWithoutStoppingIt() throws {
+  let install = try FakeInstallation(extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#)
+  defer { install.remove() }
+  let backend = install.backend
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("mac1"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let environment = ConfigEnvironment(
+    home: install.root,
+    variables: ["HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin"])
+  let lifecycle = ProjectLifecycle(
+    context: CommandContext(
+      environment: environment, config: install.config, backend: backend,
+      output: SilentOutput(), diagnostics: Diagnostics(verbosity: 0) { _ in },
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath)),
+    noGitHub: true, secretResolver: NoSecrets(), executable: nil,
+    prepareGitHub: { config, _, _, _ in config })
+  let workflow = ReprovisionWorkflow(
+    lifecycle: lifecycle, name: instance.name, image: nil, noAgents: true, noPrompt: true,
+    configTarget: ConfigTarget(path: install.root + "/c.jsonc", format: .jsonc))
+  let error = try #require(throws: HostError.self) { try workflow.run { _, _, _ in true } }
+  #expect(error.message.contains("macOS guest"))
+  #expect(try backend.asRunning(instance) != nil)
 }
 
 @Test func macOSInstancesRunThroughTheMacRuntimeAndTheMacGate() throws {

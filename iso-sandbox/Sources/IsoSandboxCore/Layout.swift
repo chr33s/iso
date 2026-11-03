@@ -271,7 +271,7 @@ package struct OperationID: RawRepresentable, Codable, Hashable, Sendable, Custo
 }
 
 /// How a sandbox reaches beyond its VM. Fixed at create.
-package enum NetworkMode: String, Codable, Sendable {
+package enum NetworkMode: String, Codable, Sendable, CaseIterable {
   /// NAT to the host's uplinks (vmnet shared mode).
   case shared
   /// No route beyond the host: vmnet host mode with NAT44, NAT66, the DNS

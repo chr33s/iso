@@ -71,7 +71,7 @@ Everything lives under the existing state root:
   record.json  disk.img  aux.img  machine-id.bin
   helper.key   (0600, set at enrollment)   ssh_host_ed25519.pub (pin)
   live.json  owner.log  launchd.plist  owner.lock  owner.failed
-<root>/locks/macos-<id>.lock            mutation guard, as for Linux sandboxes
+<root>/locks/sandbox-<id>.lock           mutation guard, the same file as a Linux sandbox's
 ```
 
 Sandbox identifiers share one namespace with Linux sandboxes, and the subnet

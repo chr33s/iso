@@ -352,8 +352,10 @@ private func finishesWhileStageIsLocked(
 
 @Test func applyAndDiscardWaitForTheStageLock() throws {
   let directory = try scratch()
-  defer { StageLocation.grantOwnerAccess(directory) }
-  defer { try? FileManager.default.removeItem(atPath: directory) }
+  defer {
+    StageLocation.grantOwnerAccess(directory)
+    try? FileManager.default.removeItem(atPath: directory)
+  }
   let inst = try instance(directory + "/state/instances/test")
   try FileManager.default.createDirectory(atPath: inst.directory, withIntermediateDirectories: true)
   let location = StageLocation(inst)
@@ -381,8 +383,10 @@ private func finishesWhileStageIsLocked(
 /// pull early.
 private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error: (any Error)?) {
   let directory = try scratch()
-  defer { StageLocation.grantOwnerAccess(directory) }
-  defer { try? FileManager.default.removeItem(atPath: directory) }
+  defer {
+    StageLocation.grantOwnerAccess(directory)
+    try? FileManager.default.removeItem(atPath: directory)
+  }
   let bin = directory + "/bin"
   try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
   try FileManager.default.createSymbolicLink(
@@ -570,8 +574,10 @@ private func git(_ directory: String, _ arguments: String...) throws {
 /// inventory, and its receive is never selected.
 @Test func aReceiverWritingOutsideItsTreeIsNeverAccepted() throws {
   let directory = try scratch()
-  defer { StageLocation.grantOwnerAccess(directory) }
-  defer { try? FileManager.default.removeItem(atPath: directory) }
+  defer {
+    StageLocation.grantOwnerAccess(directory)
+    try? FileManager.default.removeItem(atPath: directory)
+  }
   let bin = directory + "/bin"
   try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
   try FileManager.default.createSymbolicLink(

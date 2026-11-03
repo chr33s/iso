@@ -155,23 +155,27 @@ package struct Release: Sendable, Equatable, Decodable {
 
 package enum Checksums {
   /// The digest for `file` in a `sha256sum`-style listing. Accepts
-  /// `<hash>  <file>` and `<hash> *<file>`, skips blank and `#` lines; the
-  /// first well-formed entry wins and malformed digests are skipped. A
-  /// non-blank line without whitespace ends the search (baseline).
+  /// `<hash>  <file>` and `<hash> *<file>`, skips blank and `#` lines and
+  /// malformed digests. A non-blank line without whitespace ends the search
+  /// (baseline). A listing that names `file` more than once is refused:
+  /// tools disagree on which entry wins, so a signed listing with two
+  /// entries could vouch for a digest its signer never checked.
   package static func parse(_ content: String, file: String) -> SHA256Hex? {
+    var found: SHA256Hex?
+    var entries = 0
     for raw in rustLines(content) {
       let line = raw.trimmingUnicodeWhitespace().unicodeScalars
       if line.isEmpty || line.first == "#" { continue }
-      guard let split = line.firstIndex(where: isASCIIWhitespace) else { return nil }
+      guard let split = line.firstIndex(where: isASCIIWhitespace) else { break }
       let hash = String(String.UnicodeScalarView(line[..<split]))
       let rest = line[line.index(after: split)...]
         .drop { $0.properties.isWhitespace }
         .drop { $0 == "*" }
-      if String(String.UnicodeScalarView(rest)) == file, let parsed = try? SHA256Hex(hash) {
-        return parsed
-      }
+      guard String(String.UnicodeScalarView(rest)) == file else { continue }
+      entries += 1
+      if found == nil { found = try? SHA256Hex(hash) }
     }
-    return nil
+    return entries == 1 ? found : nil
   }
 
   package static func of(_ bytes: [UInt8]) -> SHA256Hex {

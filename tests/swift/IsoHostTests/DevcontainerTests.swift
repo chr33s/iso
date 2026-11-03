@@ -345,6 +345,9 @@ private func parseError(_ text: String) -> String? {
   let spec = try MemorySpec.parse("1500MiB")
   #expect(spec.mib.value == 1500 && spec.gib.value == 2)
   #expect(try MemorySpec.parse(" 1.5 g ").mib.value == 1431)
+  // MiB counts near UInt32.max round up to GiB without overflowing.
+  #expect(try MemorySpec.parse("4294967295MiB").gib.value == 4_194_304)
+  #expect(try MemorySpec.parse("4294966273MiB").gib.value == 4_194_304)
 }
 
 @Test func memorySpecRejectsGarbage() throws {
@@ -676,6 +679,11 @@ private func instance(_ directory: String) throws -> Instance {
       options: DevcontainerJSON.parse(#"{ "version": "1.24", "moby": true, "n": 1.5, "z": null }"#))
   )
   #expect(tagged.reference.reference == .tag("1.2.3"))
+  let longest = "_" + String(repeating: "a", count: 127)
+  #expect(
+    try FeatureRequest.parse(
+      rawID: "ghcr.io/devcontainers/features/go:" + longest, options: DevcontainerJSON(.object([]))
+    )?.reference.reference == .tag(longest))
   #expect(tagged.options.map(\.key) == ["moby", "n", "version", "z"])
   #expect(tagged.options.map(\.value) == ["true", "1.5", "1.24", ""])
 
@@ -708,6 +716,11 @@ private func instance(_ directory: String) throws -> Instance {
   #expect(
     message("ghcr.io/devcontainers/features/a b:1")
       == "feature name contains unsupported characters")
+  for tag in ["1#$(id>/tmp/pwn)", "1'x", "-1", ".1", String(repeating: "a", count: 129)] {
+    #expect(
+      message("ghcr.io/devcontainers/features/go:" + tag)
+        == "feature tag contains unsupported characters")
+  }
   #expect(message("ghcr.io/devcontainers/features/go:1", "5") == "expected feature options object")
   #expect(
     message("ghcr.io/devcontainers/features/go:1", #"{"version": {"nested": true}}"#)?.contains(
@@ -735,7 +748,7 @@ private func sampleFeature(archive: [UInt8] = Array("archive-bytes".utf8)) throw
   #expect(
     feature.installSnippet == """
 
-      echo '  [guest] Installing devcontainer Feature 'ghcr.io/devcontainers/features/github-cli:1''
+      echo '  [guest] Installing devcontainer Feature ''ghcr.io/devcontainers/features/github-cli:1'
       (
       feature_dir=$(mktemp -d)
       trap 'rm -rf "$feature_dir"' EXIT

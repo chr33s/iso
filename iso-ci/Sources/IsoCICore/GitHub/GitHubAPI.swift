@@ -216,6 +216,10 @@ package enum GitHubRunnerScope: Sendable, Equatable, Hashable {
     }
   }
 
+  /// GitHub owner and repository names are case-insensitive, so routing
+  /// compares scopes by this key, not by their spelling.
+  var routingKey: String { prefix.lowercased() }
+
   package var owner: String {
     switch self {
     case .repository(let repository): repository.owner

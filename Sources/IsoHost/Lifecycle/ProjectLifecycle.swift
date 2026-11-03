@@ -161,7 +161,9 @@ package final class ProjectLifecycle {
       if let target = try? backend.sshTarget(instance) { forwards.teardown(instance, target) }
       agents.proxies.stopAll(instance)
       do { try backend.destroyInstance(instance) } catch {
-        diagnostics.debug("Cleanup failed (non-fatal): \(error)")
+        diagnostics.warn(
+          "Could not destroy instance '\(instance.name)' after its failed start: \(error); remove it with `iso destroy \(instance.name)`"
+        )
       }
       do { try sshConfig.remove(instance) } catch {
         diagnostics.debug("SSH config cleanup failed (non-fatal): \(error)")
@@ -493,7 +495,10 @@ package final class ProjectLifecycle {
     if let running {
       forwards.teardown(running.instance, running.target)
       let guestComputerUse = context.backend.guestComputerUseAudit(instance)
-      try context.backend.stop(running)
+      do { try context.backend.stop(running) } catch {
+        agents.proxies.stopAll(instance)
+        throw error
+      }
       if let guestComputerUse {
         BoundaryAudit.record(instance, guestComputerUse, diagnostics: context.diagnostics)
       }

@@ -562,6 +562,8 @@ package enum SelfReplace {
   static let egressName = "iso-egress"
   static let runtimeName = "iso-sandbox"
   static let guestHelperName = "iso-macos-helper"
+  /// Every executable installed beside `iso`.
+  static let companionNames = [runtimeName, guestHelperName, proxyName, egressName]
 
   static func join(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : directory + "/" + name

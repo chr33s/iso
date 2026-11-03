@@ -481,12 +481,26 @@ private struct SessionFixture {
   #expect(fixture.enclaves.isEmpty)
 
   try fixture.mode("run")
+  // The first session left its tunnel and editor pids behind. Close this
+  // session's own tunnel once its editor runs, rather than after a fixed
+  // delay, which could kill the stale tunnel instead.
+  for stale in ["/tunnel.pid", "/editor.pid"] {
+    try? FileManager.default.removeItem(atPath: fixture.guest.root + stale)
+  }
   Thread.detachNewThread { [root = fixture.guest.root] in
-    Thread.sleep(forTimeInterval: 1)
-    if let text = readFile(root + "/tunnel.pid"),
-      let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
-    {
-      kill(pid, SIGKILL)
+    func live(_ file: String) -> pid_t? {
+      guard let text = readFile(root + file),
+        let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)), kill(pid, 0) == 0
+      else { return nil }
+      return pid
+    }
+    let deadline = ContinuousClock.now + .seconds(10)
+    while ContinuousClock.now < deadline {
+      if live("/editor.pid") != nil, let tunnel = live("/tunnel.pid") {
+        kill(tunnel, SIGKILL)
+        return
+      }
+      Thread.sleep(forTimeInterval: 0.05)
     }
   }
   #expect(throws: HostError("The SSH tunnel to instance 'dev' closed; the editor session ended")) {

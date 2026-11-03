@@ -33,6 +33,29 @@ import Testing
     #expect(Date().timeIntervalSince(started) < 8)
     #expect(output.timedOut)
   }
+
+  /// An interactive child (`iso-ci debug`'s ssh) stays in the caller's
+  /// process group, so it keeps the terminal; others get their own group.
+  @Test(arguments: [Subprocess.ProcessGroup.own, .caller])
+  func spawnPlacesTheChildInTheRequestedGroup(_ group: Subprocess.ProcessGroup) throws {
+    var fds: [Int32] = [0, 0]
+    #expect(pipe(&fds) == 0)
+    let devNull = open("/dev/null", O_RDWR | O_CLOEXEC)
+    defer { close(devNull) }
+    let pid = try Subprocess.spawn(
+      "/bin/sh", ["-c", "/bin/ps -o pgid= -p $$"], [:], stdin: devNull, stdout: fds[1],
+      stderr: devNull, group: group)
+    close(fds[1])
+    let output = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true).readDataToEndOfFile()
+    var status: Int32 = 0
+    while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+    let pgid = Int32(
+      String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    switch group {
+    case .own: #expect(pgid == pid)
+    case .caller: #expect(pgid == getpgrp())
+    }
+  }
 }
 
 /// Remote hosts may be reachable only through the operator's SSH agent; the

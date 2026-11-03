@@ -17,7 +17,7 @@ extension HostSupervisor {
     guard outputLimit > 0, outputLimit <= RunStore.maxOutputBytes else {
       throw .invalidRequest("output_limit_bytes must be 1-\(RunStore.maxOutputBytes)")
     }
-    let maxTTL = transport == .ssh ? settings.remoteMaxTTL : UInt64.max
+    let maxTTL = transport == .ssh ? settings.remoteMaxTTL : settings.localMaxTTL
     guard ttl > 0, ttl <= maxTTL else { throw .invalidRequest("ttl_seconds is out of range") }
     // One slot per run from creation until verified cleanup (spec 12.3).
     guard runs.slotsInUse() < RunStore.retentionSlots else {

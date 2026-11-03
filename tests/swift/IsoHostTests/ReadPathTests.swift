@@ -108,6 +108,14 @@ import Testing
   #expect(display == "Load: 1.50  Mem: 512/2048 MiB (25%)  Disk: 5000/20000 MiB (25%)")
 }
 
+@Test func resourceUsagePercentagesDoNotTrapOnGuestControlledValues() {
+  let usage = ResourceUsage.parse("x 1 18446744073709551615 0 0 /\n")
+  #expect(usage.diskUsedMiB == UInt64.max)
+  #expect(usage.summary == "load=0.00 mem=0% disk=100%")
+  #expect(ResourceUsage.percent(UInt64.max / 2, of: UInt64.max) == 49)
+  #expect(ResourceUsage.percent(3200, of: 20480) == 15)
+}
+
 // MARK: - Profiles
 
 private func config(_ text: String) throws -> IsoConfig {

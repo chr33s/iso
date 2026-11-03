@@ -164,18 +164,17 @@ wake) and checks input, frames, SSH and the session binding before and after.
 CI additionally runs the fast, host-only `tests/integration-install.sh`,
 `tests/integration-update.sh`, and `tests/integration-uninstall.sh` suites.
 
-For the credential proxy, build the local Swift artifacts and run the Apple
-sandbox proxy gate against the Swift host:
+For the credential proxy, run the Apple sandbox proxy gate against the Swift
+host:
 
 ```bash
-swift build --force-resolved-versions
-python3 scripts/build-proxy-transition.py
 python3 tests/integration-proxy-transition.py
 ```
 
-The transition builder enforces the checked-in Swift dependency resolutions;
-it fails instead of updating transitive pins during an artifact build. The
-gate writes a JSONC config and supplies its synthetic credentials as `cmd:`
+The gate builds the artifacts it needs (`iso`, `iso-proxy`, `iso-egress`,
+`iso-sandbox`), the Swift packages with
+`--force-resolved-versions`, so it fails instead of updating transitive pins
+during an artifact build. The gate writes a JSONC config and supplies its synthetic credentials as `cmd:`
 references (C-04 rejects literal proxy credentials).
 
 This gate builds a private runtime and VM image, boots two VMs, and
@@ -338,8 +337,8 @@ It checks [Anthropic token counting](https://platform.claude.com/docs/en/api/typ
 for a positive `input_tokens` result. A disconnect result proves client-side
 closure followed by a successful request; it does not prove when provider-side
 generation or billing stopped. This is a host API smoke gate, not the real-VM
-or Claude/Codex tool-use gate. Recorded results are in the H-07 row of
-[release-validation.md](release-validation.md).
+or Claude/Codex tool-use gate. [release-validation.md](release-validation.md)
+lists it among the live gates a release needs.
 `python3 tests/test-proxy-live.py` exercises the runner offline in CI and makes
 no provider calls.
 
@@ -444,12 +443,7 @@ tests or memory stress tests.
 When adding new features, consider whether they should be covered here. New
 commands or guest-visible changes are good candidates for a new test phase.
 
-Run `python3 tests/test-integration-probes.py` for host-only regression tests
-of Codex installer failure propagation, update/config assertions, address
-discovery, ping result handling, and bounded HTTP retries. These use a
-temporary loopback HTTP server and require Python 3, Bash, and curl;
-CI runs them. The full VM suite additionally checks these probes against
-real guests. A host FORWARD policy other than ACCEPT still causes an explicit
+A host FORWARD policy other than ACCEPT still causes an explicit
 skip of the routed guest-isolation probe, since it would mask the isolate rule.
 
 Run `python3 tests/test-codex-account.py` for the account wrapper's argument,
@@ -750,7 +744,8 @@ directory (the working tree is never modified), first runs every covered test
 unmodified there as a control, then applies each fault in turn. A fault counts
 as detected only when a test runs and fails; a fault that stops the package
 compiling proves nothing and fails the run. Exit status is non-zero if any
-fault survives or its original text no longer matches.
+fault survives or its original text no longer matches exactly one place in its
+file.
 
 **When to add a fault.** When a change adds or alters security-relevant host
 behavior — parsing of untrusted or user-edited input, credential handling,
@@ -931,7 +926,7 @@ the process and close its listener and an unfinished guest request. This does
 not exercise the host supervisor, runtime owner/boot checks, successful tunnels,
 public DNS/HTTPS, or a VM. CI and release preflight run these package/process gates.
 
-`AddressPolicyTests.swift` checks the versioned `iana-2025-10-09-v1` address
+`AddressPolicyTests.swift` checks the versioned `iana-2025-10-09-v2` address
 policy against the [IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/)
 and [IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/)
 special-purpose registries dated 2025-10-09. IPv6 must parse numerically and fall

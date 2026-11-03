@@ -116,7 +116,9 @@ package enum PoolActivation {
     // Scope exclusivity among this controller's pools.
     let labelSet = Set(pool.labels.map(\.normalized))
     let clashing = configuration.pools.filter { other in
-      other.key != name && GitHubRunnerScope(other.value.scope) == GitHubRunnerScope(pool.scope)
+      other.key != name
+        && GitHubRunnerScope(other.value.scope).routingKey
+          == GitHubRunnerScope(pool.scope).routingKey
         && Set(other.value.labels.map(\.normalized)) == labelSet
     }
     if clashing.isEmpty {

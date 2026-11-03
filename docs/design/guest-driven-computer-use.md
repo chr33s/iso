@@ -68,10 +68,13 @@ process.
    `/usr/local/libexec/iso-macos-helper` (root-owned, mode 0755); its
    `cu-mcp` subcommand is the MCP server. A template built before this
    change has a helper without it, and needs rebuilding.
-2. Enable it in the instance's configuration:
+2. Enable it in the instance's configuration. macOS guests need the vmnet
+   transport; under the default `"brokered"` transport `iso up` refuses a
+   macOS image before creating the VM:
 
    ```jsonc
    {
+     "network": { "transport": "vmnet" }, // required for macOS guests
      "computer_use": {
        "guest_access": true, // default false; macOS images only
        "guest_frame_rate": 4 // frames per second, 1–10, default 4

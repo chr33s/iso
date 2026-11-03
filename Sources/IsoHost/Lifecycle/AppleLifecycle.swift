@@ -170,9 +170,20 @@ extension AppleBackend {
   // MARK: Stop and delete
 
   /// After a failed start: stop, keep the disk.
-  func stopAfterFailure(_ sandboxes: SandboxNamespace, _ name: MachineName) {
+  /// `fencing` names an existing instance whose boot failed after it began
+  /// (LIFE-01): if its stop cannot be confirmed it is fenced, so no workload
+  /// is handed to it until `iso stop` reconciles it.
+  func stopAfterFailure(
+    _ sandboxes: SandboxNamespace, _ name: MachineName, fencing instance: Instance? = nil
+  ) {
     do { try sandboxes.stopAndConfirm(name) } catch {
       diagnostics.warn("Failed to stop sandbox \(name) after a failed start: \(oneLine(error))")
+      guard let instance else { return }
+      BoundaryAudit.record(
+        instance, .handoffFence(reason: "restart_cleanup_unconfirmed"), diagnostics: diagnostics)
+      do { try HandoffFence.set(instance, reason: "restart cleanup unconfirmed") } catch {
+        diagnostics.warn("Failed to record the fence for '\(instance.name)': \(error)")
+      }
     }
   }
 
@@ -429,7 +440,7 @@ extension AppleBackend {
       // a separately authenticated companion bound to this boot and policy.
       try NetworkPolicy.save(config, instance, brokered: brokered)
     } catch {
-      stopAfterFailure(runtime.namespace(.linux), sidecar.machineID)
+      stopAfterFailure(runtime.namespace(.linux), sidecar.machineID, fencing: instance)
       throw error
     }
     sidecar.lastObservedOwnerPID = ready.ownerPID

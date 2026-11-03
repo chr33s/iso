@@ -137,6 +137,27 @@ import Testing
     #expect(await token(fresh()) == 200)
   }
 
+  /// Guest-signed validity windows at the edges of `Int64` are refused, not
+  /// a trap that takes down the shared endpoint.
+  @Test func extremeAssertionWindowsAreRefused() async throws {
+    let harness = try await DPHarness()
+    let (_, _, runner) = try await harness.register()
+    let windows: [(Int64, Int64)] = [
+      (Int64.max - 107, Int64.max), (Int64.min, Int64.max), (Int64.min, Int64.min + 1),
+      (Int64.max, Int64.max),
+    ]
+    for (notBefore, expires) in windows {
+      let assertion = DPHarness.assertion(
+        key: runner.key, clientID: runner.clientID, audience: runner.audience,
+        now: Int64(harness.clock.now()), notBefore: notBefore, expires: expires)
+      let form =
+        "grant_type=client_credentials&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=\(assertion)"
+      let status = await harness.request("POST", "/_apis/oauth2/token", body: Array(form.utf8))
+        .status
+      #expect(status == 401, "nbf \(notBefore) exp \(expires)")
+    }
+  }
+
   /// A flood of bad client assertions gets the endpoint-wide 429.
   @Test func oauthRefusalsCountAgainstTheAnonymousBudget() async throws {
     let harness = try await DPHarness()

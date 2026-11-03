@@ -499,6 +499,7 @@ bootstrapped again, and guest output is not copied back.
 ```
 iso run <agent> [--workspace DIR] [--name NAME]
         [--image NAME | --profile LIST]
+        [--egress MODE] [--allow-host HOST]...
         [--prepare] [--rm] [--ask] [--dry-run] [--json]
         [-- AGENT_ARGS...]
 ```
@@ -510,6 +511,8 @@ iso run <agent> [--workspace DIR] [--name NAME]
 | `--name <name>` | Instance name. Must match the recorded workspace when both are set |
 | `--image <name>` | Image for a new instance. Mutually exclusive with `--profile` |
 | `--profile <list>` | Profile set for a new instance, repeatable or comma-separated. Replaces a definition's environment selector |
+| `--egress <mode>` | Egress mode when creating an instance: `open`, `none`, or `filtered` |
+| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered` |
 | `--prepare` | Authorize image preparation. Preparation uses the host network and receives neither the workspace nor provider credentials |
 | `--rm` | Create a new disposable instance and destroy it after the agent exits. Never attaches cleanup to an existing VM |
 | `--ask` | Use the adapter's permission prompts instead of its default bypass |
@@ -859,9 +862,9 @@ iso ssh-config my-project --clean
 ```
 
 The alias is created only when you run `iso ssh-config` (or `iso editor`).
-The lifecycle keeps it tidy: `iso stop` and `iso destroy` remove the block,
-and `iso start` refreshes an already-installed block so it stays valid across
-a restart, since the guest address can change.
+The lifecycle keeps it tidy: `iso destroy` removes the block, `iso stop`
+leaves it in place, and `iso start` refreshes an already-installed block so it
+stays valid across a restart, since the guest address can change.
 
 The block pins each guest's host key: it sets `StrictHostKeyChecking yes` with
 the instance's own `known_hosts` and `HostKeyAlias <machine>.iso`, plus
@@ -1104,7 +1107,8 @@ fail with `no connection attempt completed`. Each locally built binary has its
 own code identity and asks again.
 
 `iso host-agent` (hidden) holds the service's internal entrypoints: `daemon`,
-`serve --stdio`, `relay --stdio` and `connect --descriptor`. They accept no
+`serve --stdio`, `relay --stdio`, `connect --descriptor` and
+`client --host ALIAS --stdio [--relay]`. They accept no
 guest command or path; requests arrive on stdin.
 
 ### `update`
@@ -1148,7 +1152,7 @@ See also the [`updates` section](configuration.md#updates-section) of the config
 
 ### `uninstall`
 
-Remove the isolate binary and, optionally, its data directories (`~/.iso` and the update-check state). Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
+Remove the isolate binary and the companion executables installed beside it (`iso-sandbox`, `iso-macos-helper`, `iso-proxy`, `iso-egress`) and, optionally, its data: owned instances are destroyed and `<data_dir>/backends/apple-container-v1/` and the update-check state are removed. The configuration file, the secret store (`<data_dir>/secrets/`) and other files under `<data_dir>` (default `~/.iso`) are kept. Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
 
 ```
 iso uninstall [FLAGS]
@@ -1157,8 +1161,8 @@ iso uninstall [FLAGS]
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip interactive confirmation prompts. Removes data unless `--keep-data` is set. |
-| `--keep-data` | Remove only the binary; preserve `~/.iso` and the update-check state. Conflicts with `--purge`. |
-| `--purge` | Also remove `~/.iso` and the update-check state without prompting. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
+| `--keep-data` | Remove only the binary; preserve `<data_dir>/backends/apple-container-v1/` and the update-check state. Conflicts with `--purge`. |
+| `--purge` | Also destroy owned instances and remove `<data_dir>/backends/apple-container-v1/` and the update-check state without prompting; the config and `secrets/` are kept. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
 
 Without `--yes`, the command prints a summary (binary path, data directory, instance and image counts) and asks for confirmation. A second prompt asks whether to also remove the data directory unless `--keep-data` or `--purge` is set. Non-interactive runs require `--yes`.
 

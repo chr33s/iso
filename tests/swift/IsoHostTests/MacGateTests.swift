@@ -358,7 +358,8 @@ private func listener(echo: Bool) throws -> UInt16 {
     var buffer = [UInt8](repeating: 0, count: 4096)
     let n = read(peer, &buffer, buffer.count)
     if echo, n > 0 { _ = write(peer, buffer, n) }
-    if echo { close(peer) } else { Thread.sleep(forTimeInterval: 8) }
+    if !echo { Thread.sleep(forTimeInterval: 8) }
+    if peer >= 0 { close(peer) }
     close(fd)
   }
   return UInt16(bigEndian: address.sin_port)

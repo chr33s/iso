@@ -1,0 +1,5 @@
+{
+  "unknown_top_level": {
+    "nested": [1, 2.5, "x"]
+  }
+}

@@ -142,6 +142,25 @@ import Testing
     #expect(try f.supervisor.store.loadOperation(start.operationID)?.deadline == nil)
   }
 
+  /// A local TTL whose deadline the runtime cannot represent is refused at
+  /// admission instead of trapping the service when the boot is formatted.
+  @Test func localTTLIsBoundedToARepresentableDeadline() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let created = try f.receipt(.vmCreate(f.spec()), transport: .local)
+    f.supervisor.runPending()
+    let instance = try #require(created.instance)
+    #expect(
+      failure(
+        f.call(
+          .vmStart(
+            instance, expectedGeneration: 1, ttlSeconds: .max, policy: try f.spec().policyHash),
+          operation: .generate(), transport: .local))
+        == .invalidRequest)
+    #expect(SandboxRuntime.epochSeconds(Date(timeIntervalSince1970: 1e300)) == .max)
+    #expect(SandboxRuntime.epochSeconds(Date(timeIntervalSince1970: 12.9)) == 12)
+  }
+
   @Test func staleGenerationAndBusyAreRefused() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }
@@ -727,6 +746,11 @@ import Testing
       name: InstanceName("p"), image: ImageName("custom"), imageDigest: nil, cpus: 2,
       memoryMiB: 4096, diskGiB: 8, guestOS: .linux, egress: .open)
     #expect(failure(f.call(.vmCreate(spec), operation: .generate())) == .instanceIncompatible)
+    #expect(
+      failure(
+        f.call(
+          .runCreate(run: .generate(), spec: spec, outputLimitBytes: 1 << 20, ttlSeconds: 600),
+          operation: .generate())) == .instanceIncompatible)
     let ensure = try f.receipt(try request("custom"))
     f.supervisor.runPending()
     let done = try f.operation(ensure.operationID)
@@ -754,6 +778,31 @@ import Testing
     #expect(try f.receipt(body, operation: op).disposition == .existing)
     #expect(f.native.state.withLock { $0.builds } == 2)
     _ = try f.receipt(body)
+  }
+
+  /// A resize the recorded spec could not follow is refused before any
+  /// native change.
+  @Test func resizeStaysWithinTheSpecBounds() throws {
+    #expect(throws: HostControlError.self) {
+      try Maintenance.validatedResize(cpus: VMSpec.maxCPUs + 1, memoryMiB: nil, diskGiB: nil)
+    }
+    #expect(throws: HostControlError.self) {
+      try Maintenance.validatedResize(cpus: nil, memoryMiB: (1 << 20) + 1, diskGiB: nil)
+    }
+    #expect(
+      try Maintenance.validatedResize(cpus: VMSpec.maxCPUs, memoryMiB: 1 << 20, diskGiB: nil)
+        == .resize(cpus: VMSpec.maxCPUs, memoryMiB: 1 << 20, diskGiB: nil))
+  }
+
+  @Test func aCancelledBuildReleasesItsImage() throws {
+    let f = try SupervisorFixture()
+    defer { f.cleanup() }
+    let body = try request("custom")
+    let ensure = try f.receipt(body)
+    let cancelled = try OperationReceipt(
+      wire: f.call(.operationCancel(target: ensure.operationID)).get())
+    #expect(cancelled.state == .cancelled)
+    #expect(try f.receipt(body).disposition == .accepted)
   }
 
   @Test func macOSImagesAreRefusedBeforeWork() throws {
@@ -819,5 +868,28 @@ import Testing
     let local = f.supervisor.hello(transport: .local).methods
     let remote = f.supervisor.hello(transport: .ssh).methods
     #expect(local.contains(.vmResize) && !remote.contains(.vmResize))
+  }
+}
+
+/// Concurrent first use of a data root adopts whichever installation record
+/// won the exclusive create instead of failing the losers.
+@Test func concurrentFirstUseAdoptsTheWinningInstallation() throws {
+  let owner = try OwnerID(String(repeating: "ab", count: 16))
+  for _ in 0..<10 {
+    let root = try scratchDirectory("installation")
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let failures = Atomic<Int>(0)
+    let hosts = Mutex<Set<String>>([])
+    DispatchQueue.concurrentPerform(iterations: 8) { _ in
+      do {
+        let store = try OperationStore(root: root)
+        let record = try store.installation(owner: owner, now: WireTime(seconds: 1))
+        hosts.withLock { _ = $0.insert(record.hostID.rawValue) }
+      } catch {
+        failures.add(1, ordering: .relaxed)
+      }
+    }
+    #expect(failures.load(ordering: .relaxed) == 0)
+    #expect(hosts.withLock { $0.count } == 1)
   }
 }

@@ -45,6 +45,9 @@ PYTHON_GATES = [
     'tests/test-audit-contract.py', 'tests/test-cli-surface.py',
     'tests/test-preflight-release.py', 'tests/test-verify-candidate.py', 'tests/test-accept-release.py',
     'tests/test-check-release-signatures.py',
+    'scripts/hygiene.py', 'tests/test-release-legal.py',
+    'tests/test-apple-integration-harness.py', 'tests/test-proxy-vm-fixture.py',
+    'tests/test-proxy-live.py', 'tests/test-proxy-agent-smoke.py', 'tests/test-codex-account.py',
     'scripts/build-release.py',
     'scripts/test-swift-egress-jail.py', 'scripts/test-swift-egress-lease.py',
     'scripts/test-swift-egress-pressure.py',
@@ -70,7 +73,7 @@ class PreflightTests(unittest.TestCase):
         (self.root / 'CHANGELOG.md').write_text('## v9.8.7\n\nRelease notes.\n')
         self.log = self.root / 'calls'
         # cargo and rustup must never be reached; they record if they are.
-        for name in ('swift', 'zizmor', 'cargo', 'rustup'):
+        for name in ('swift', 'zizmor', 'mise', 'jactionlint', 'cargo', 'rustup'):
             self.executable('bin/' + name, TOOL_STUB)
         self.executable('bin/sw_vers', '#!/bin/bash\necho 26.0\n')
         self.executable('bin/uname', '#!/bin/bash\necho Darwin\n')
@@ -108,11 +111,10 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Version sources agree; tag v9.8.7 is free.', result.stdout)
         calls = self.calls()
-        for call in ('swift format lint --recursive --strict Package.swift Sources tests/swift '
-                     'fuzz/Targets fuzz/Entrypoints iso-proxy/Sources iso-proxy/Tests '
-                     'iso-egress/Package.swift iso-egress/Sources iso-egress/Tests '
-                     'scripts/verify-egress-readiness.swift '
-                     'iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests',
+        for call in ('hygiene.py --all', 'mise run lint', 'mise run check-policy',
+                     'jactionlint ', 'test-release-legal.py',
+                     'test-apple-integration-harness.py', 'test-proxy-vm-fixture.py',
+                     'test-proxy-live.py', 'test-proxy-agent-smoke.py', 'test-codex-account.py',
                      'swift build --force-resolved-versions',
                      'swift test --force-resolved-versions',
                      'swift test --package-path iso-sandbox --force-resolved-versions --no-parallel',
@@ -149,6 +151,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn(f'proxy-e2e-binary={self.root}/.build/proxy-test/iso-proxy', calls)
         self.assertIn('swift test --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-egress --force-resolved-versions', calls)
+        self.assertIn('mise run check-ci', calls)
         self.assertIn('test-swift-egress-jail.py', calls)
         self.assertIn('test-swift-egress-lease.py', calls)
         self.assertIn('test-swift-egress-mutations.py', calls)

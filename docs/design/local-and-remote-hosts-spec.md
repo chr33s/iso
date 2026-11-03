@@ -76,12 +76,12 @@ that pins its config, a separate scratch client root, and localhost pinned in a
 scratch `known_hosts` (neither `~/.iso` nor `~/.ssh` is touched). Enrollment,
 hello, every mutation and every guest stream crossed the pinned SSH frontend
 and the owned relay. Result `pass` on every case, including Q2's offline-client
-deadline: with no session and no renewals the worker stopped the VM 61.4 s after
+deadline: with no session and no renewals the worker stopped the VM 61.2 s after
 a 60 s deadline (bound: deadline + 120 s); and with guest root masking the
 poweroff/halt targets and running a SIGTERM-ignoring process, the runtime
 owner's hard stop verified the VM stopped 124.4 s after a 60 s deadline was set
-(within the bound, A15). Hello over SSH: p50 411 ms, p95 417 ms;
-SSH connection setup alone: p50 355 ms. Evidence:
+(within the bound, A15). Hello over SSH (5 samples): p50 405 ms, p95 405 ms;
+SSH connection setup alone: p50 347 ms. Evidence:
 `docs/design/local-and-remote-hosts/native-loopback-evidence.json`.
 
 **Two physical Macs.** `--remote` then ran from the development Mac (client)

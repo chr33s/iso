@@ -959,7 +959,7 @@ private struct CompilerSession {
         if let scalar = uses?.scalar {
           stem =
             "__"
-            + scalar.value.split(separator: "@").first.map(String.init)!
+            + String(scalar.value.split(separator: "@").first ?? "")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
             .replacingOccurrences(of: ".", with: "_")
         }

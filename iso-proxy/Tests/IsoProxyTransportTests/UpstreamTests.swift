@@ -38,19 +38,18 @@ private func proxyConfig() throws -> ProxyConfig {
   #expect(request.headers.first(name: "x-api-key") == "upstream-test-secret")
   #expect(!request.headers.contains(name: "authorization"))
   #expect(!request.headers.contains(name: "x-private"))
-  let client = UpstreamClient.configuration()
-  #expect(client.proxy == nil)
-  #expect(client.httpVersion == .http1Only)
-  #expect(client.timeout.connect == .seconds(30))
-  #expect(client.timeout.read == nil)
-  #expect(client.maximumUsesPerConnection == 1)
-  #expect(client.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit == 256)
-  #expect(client.tlsConfiguration?.certificateVerification == .fullVerification)
-  guard case .default? = client.tlsConfiguration?.trustRoots else {
+  // Production dials through OwnedHTTPRequest and CancellableTLSConnection
+  // with this TLS configuration and establishment deadline, never through
+  // an AHC HTTPClient.
+  #expect(Limits.establishmentSeconds == 30)
+  let tls = UpstreamClient.tlsConfiguration()
+  #expect(tls.certificateVerification == .fullVerification)
+  #expect(tls.applicationProtocols == ["http/1.1"])
+  guard case .default = tls.trustRoots else {
     Issue.record("system trust roots must remain selected")
     return
   }
-  #expect(client.tlsConfiguration?.additionalTrustRoots.isEmpty == true)
+  #expect(tls.additionalTrustRoots.isEmpty)
 }
 
 @Test func uploadWaitsForEachWriteAndCancels() throws {

@@ -11,6 +11,7 @@ import Testing
 final class ScriptedRuntime: RuntimeExecutor {
   private let reply: @Sendable ([String]) -> Result<ProcessRunner.Output, RuntimeError>
   let calls = Mutex<[[String]]>([])
+  let deadlines = Mutex<[Duration]>([])
 
   init(_ reply: @escaping @Sendable ([String]) -> Result<ProcessRunner.Output, RuntimeError>) {
     self.reply = reply
@@ -20,6 +21,7 @@ final class ScriptedRuntime: RuntimeExecutor {
     throws(RuntimeError) -> ProcessRunner.Output
   {
     calls.withLock { $0.append(arguments) }
+    deadlines.withLock { $0.append(deadline) }
     return try reply(arguments).get()
   }
 
@@ -61,6 +63,8 @@ let qualifiedVersion =
     #"{"name":"iso-sandbox","version":"0.2.0","protocol":2,"containerization":"0.45.0"}"#,
     #"{"name":"iso-sandbox","version":"1","protocol":1,"containerization":"0.45.0"}"#,
     #"{"name":"iso-sandbox","version":"1","protocol":4,"containerization":"0.46.0"}"#,
+    // The current protocol does not excuse another containerization release.
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.46.0"}"#,
   ] {
     #expect(throws: RuntimeError.self) {
       try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(bad.utf8)))
@@ -103,6 +107,21 @@ let qualifiedVersion =
   #expect(boot.livePath == "/state/runtime/sandboxes/\(name.rawValue)/live.json")
   #expect(RuntimeProtocol.filteredBootAllowed(advertised: 4, bootID: "abc") == false)
   #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "") == false)
+}
+
+/// The runtime's own owner call inside `inspect` is bounded at 10 s; the host
+/// deadline must outlast it so a slow owner yields `effective: nil` and a
+/// retry, not a killed runtime and an uncertain boot.
+@Test func inspectOutlastsTheRuntimesOwnerCall() throws {
+  let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appending(path: "../../fixtures/iso-sandbox/inspect-running.json").standardized
+  let text = try String(contentsOf: fixture, encoding: .utf8)
+  let executor = ScriptedRuntime { _ in ScriptedRuntime.ok(text) }
+  let settings = AppleContainerConfig.defaults
+  let runtime = SandboxRuntime(executor: executor, root: "/r", settings: settings)
+  _ = try runtime.inspect(try MachineName("iso-0a1b2c3d-00112233445566ff"))
+  let deadline = try #require(executor.deadlines.withLock { $0.last })
+  #expect(deadline >= settings.probeTimeout.duration + .seconds(10))
 }
 
 @Test func unqualifiedRuntimeIsKeptButRefusedForHandOut() throws {

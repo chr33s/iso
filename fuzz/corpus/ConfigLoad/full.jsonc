@@ -15,13 +15,6 @@
       "host": 6001
     }
   ],
-  "unknown_top_level": {
-    "nested": [
-      1,
-      2.5,
-      "x"
-    ]
-  },
   "github": {
     "mode": "pat",
     "skip": [

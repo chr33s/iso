@@ -465,11 +465,13 @@ A later release SHOULD consider making `stage` the default for interactive use a
   it is not a hard quota). The staged transfer asks the guest's rsync or tar to keep hard
   links and holes (`-H -S`, `--sparse`), which stops an honest guest's
   hard-linked or sparse files from expanding on the host; the walk then
-  rejects hard links and oversize files. It does **not** bound a hostile
-  guest: with root it can replace its own `tar` or rsync and stream an
-  arbitrarily large archive into the stage before the walk runs. Stopping
-  the transfer at `max_bytes` (§5.8 SHOULD) remains open; direct pull has the
-  same exposure.
+  rejects hard links and oversize files. A hostile guest with root can
+  replace its own `tar` or rsync; what bounds it is the transfer-time monitor
+  (`StageGrowthGuard`), wired into both the rsync and the tar receive of every
+  stage, direct pull included. It measures the incoming tree's allocated bytes
+  and file count about twice a second and cancels the transfer once
+  `max_bytes` or `max_files` is exceeded. It can overshoot by what arrives
+  between samples, and it is not a hard disk quota.
 - A symlink whose target passes through another symlink (staged, or already
   in the destination) is rejected: lexical containment alone does not hold
   once the kernel resolves intermediate links.
@@ -491,7 +493,9 @@ Tests MUST cover:
 - filename edge cases;
 - stage tampering before apply;
 - apply interruption;
-- `--force` skips only the dirty-tree check, never validation or budgets;
+- `--force` only supplies authority for permitted nonsensitive replacements
+  in that direct apply attempt (RET-09); it never skips validation, budgets,
+  protected paths, drift checks or sensitive-path grants;
 - both transports (rsync and tar-pipe) land only in staging.
 
 ---

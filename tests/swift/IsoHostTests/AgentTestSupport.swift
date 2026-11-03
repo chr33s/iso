@@ -14,6 +14,13 @@ func scratchDirectory(_ label: String) throws -> String {
   return BinaryResolver.canonicalPath(String(cString: path))
 }
 
+/// Removes a scratch tree, restoring owner access first: stage trees can
+/// hold read-only directories.
+func removeScratch(_ path: String) {
+  StageLocation.grantOwnerAccess(path)
+  try? FileManager.default.removeItem(atPath: path)
+}
+
 func writeFile(_ path: String, _ text: String, mode: mode_t = 0o644) throws {
   try FileManager.default.createDirectory(
     atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -104,6 +111,7 @@ struct FakeGuest {
           printf 'master %s\n' "$*" >> "$S/tunnels.log"
           [ -f "$S/flags/master-exits" ] && exit 255
           : > "$sock"
+          echo $$ > "$S/tunnel-master.process"
           # Like a real master, `ps` shows the control path and destination.
           exec /bin/bash -c 'exec -a "$1" /bin/bash -c "sleep 60 & wait" -S "$2" "$3"' _ "$S/tunnel/ssh" "$sock" "$last" ;;
         *" -O "*)
@@ -232,6 +240,7 @@ struct FakeGuest {
       data = sys.stdin.read()
       open("\(root)/proxy-stdin", "w").write(data)
       open("\(root)/proxy-env", "w").write(json.dumps(dict(os.environ)))
+      open("\(root)/proxy.process", "w").write(str(os.getpid()))
       if "\(behavior)" == "exit":
           sys.stderr.write("boom: jail could not be established\\n")
           sys.exit(7)

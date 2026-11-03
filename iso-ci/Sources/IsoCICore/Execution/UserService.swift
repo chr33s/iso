@@ -20,7 +20,23 @@ package enum UserService {
     "macOS may require Full Disk Access or Local Network approval for the iso executable it calls",
   ]
 
-  package static func apply(install: Bool, root: DataRoot, executable: String, iso: String?)
+  /// The service's `serve` command line: the same root, iso, iso config
+  /// and interval the operator chose at install.
+  package static func programArguments(
+    root: DataRoot, executable: String, iso: String?, isoConfig: String?,
+    interval: Double?
+  ) -> [String] {
+    var arguments = [executable, "serve", "--root", root.path]
+    if let iso { arguments += ["--iso", iso] }
+    if let isoConfig { arguments += ["--iso-config", isoConfig] }
+    if let interval { arguments += ["--interval", String(interval)] }
+    return arguments
+  }
+
+  package static func apply(
+    install: Bool, root: DataRoot, executable: String, iso: String?, isoConfig: String? = nil,
+    interval: Double? = nil
+  )
     throws(CIError) -> JSONValue
   {
     let label = label(root)
@@ -37,8 +53,8 @@ package enum UserService {
       PrivateFiles.remove(path)
       return ["label": .string(label), "installed": false]
     }
-    var arguments = [executable, "serve", "--root", root.path]
-    if let iso { arguments += ["--iso", iso] }
+    let arguments = programArguments(
+      root: root, executable: executable, iso: iso, isoConfig: isoConfig, interval: interval)
     try root.prepare()
     let document: [String: Any] = [
       "Label": label,

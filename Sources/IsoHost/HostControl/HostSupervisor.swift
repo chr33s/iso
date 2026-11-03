@@ -15,6 +15,9 @@ package final class HostSupervisor: Sendable {
     /// Remote boots must be finite (spec 8.1).
     package var remoteDefaultTTL: UInt64 = 8 * 3_600
     package var remoteMaxTTL: UInt64 = 24 * 3_600
+    /// Local boots may be long-lived, but their deadline must stay a date
+    /// the runtime can represent (about 136 years).
+    package var localMaxTTL: UInt64 = UInt64(UInt32.max)
     /// `limits.session_ttl` for local starts without a TTL; nil means none.
     package var localDefaultTTL: UInt64?
     package var dispatch: Dispatch = .background
@@ -112,11 +115,19 @@ package final class HostSupervisor: Sendable {
     enforceDeadlines(observe: true)
     let sweep = settings.sweepInterval
     let reconcile = settings.reconcileInterval
+    // Lease expiry has its own thread: the deadline loop below makes
+    // blocking runtime calls (stops, deletes) that must not hold relays of
+    // a lapsed lease open past its budget.
+    Thread.detachNewThread { [self] in
+      while !state.withLock({ $0.stopping }) {
+        Thread.sleep(forTimeInterval: sweep.seconds)
+        sessions.sweep()
+      }
+    }
     Thread.detachNewThread { [self] in
       var last = ContinuousClock.now
       while !state.withLock({ $0.stopping }) {
         Thread.sleep(forTimeInterval: sweep.seconds)
-        sessions.sweep()
         let full = ContinuousClock.now - last >= reconcile
         enforceDeadlines(observe: full)
         if full {
@@ -489,6 +500,7 @@ package final class HostSupervisor: Sendable {
     _ change: Maintenance
   ) throws(HostControlError) -> OperationReceipt {
     var instance = try authoritative(target)
+    guard instance.runID == nil else { throw .unsupported("maintenance of a run's VM") }
     if let active = try liveActiveOperation(instance) { throw busy(active) }
     guard instance.generation == generation else { throw generationConflict(instance) }
     guard instance.lifecycle == .stopped else {
@@ -682,6 +694,9 @@ package final class HostSupervisor: Sendable {
     qualification: RuntimeQualification
   ) throws(HostControlError) -> OperationReceipt {
     var instance = try authoritative(target)
+    // A run's VM boots only through its run's transitions (spec 12.2): its
+    // one recovery boot cannot be bought again with a plain start.
+    guard instance.runID == nil else { throw .unsupported("starting a run's VM directly") }
     if let active = try liveActiveOperation(instance) {
       throw busy(active)
     }
@@ -708,7 +723,9 @@ package final class HostSupervisor: Sendable {
       }
       seconds = requested
     case .local:
-      if let ttl, ttl == 0 { throw .invalidRequest("ttl_seconds must be positive") }
+      if let ttl, ttl == 0 || ttl > settings.localMaxTTL {
+        throw .invalidRequest("ttl_seconds must be 1-\(settings.localMaxTTL)")
+      }
       // Without a request TTL the configured session_ttl still bounds the
       // boot; record it so leases are capped by the same deadline.
       seconds = ttl ?? settings.localDefaultTTL
@@ -1274,6 +1291,8 @@ package final class HostSupervisor: Sendable {
       do { try store.saveOperation(record) } catch {
         throw HostControlError(.operationUncertain, "cancellation could not be recorded")
       }
+      // A cancelled image.ensure never executes, so its release is here.
+      state.imagesBusy = state.imagesBusy.filter { $0.value != target }
       return record.receipt(disposition: .existing, instance: qualified(record))
     }
   }
@@ -1353,6 +1372,11 @@ package final class HostSupervisor: Sendable {
     let instance = try authoritative(request.instance)
     guard instance.lifecycle == .running, instance.activeOperation == nil else {
       throw HostControlError(.sessionExpired, "the instance is not running")
+    }
+    // A run's VM is attachable only while the run itself runs; a recovery
+    // boot serves the worker's bounded export route alone.
+    if let run = instance.runID, (try? runs.load(run))?.phase != .running {
+      throw .unsupported("access to a run's VM outside its running phase")
     }
     guard instance.generation == request.expectedGeneration else {
       throw generationConflict(instance)

@@ -17,7 +17,7 @@ package struct Runtime: Sendable {
   package static func open(
     root: DataRoot, iso explicitISO: String?, isoConfig explicitISOConfig: String? = nil,
     environment: [String: String],
-    clock: any CIClock = SystemClock()
+    clock: any CIClock = SystemClock(), interval: TimeInterval = 15
   ) throws(CIError) -> Runtime {
     try root.prepare()
     let database = try Database(path: root.database)
@@ -37,7 +37,7 @@ package struct Runtime: Sendable {
     }
     let controller = Controller(
       root: root, store: store, driver: driver, hosts: hosts, configuration: configuration,
-      configurationError: configurationError)
+      configurationError: configurationError, interval: interval)
     return Runtime(
       root: root, store: store, objects: objects, hosts: hosts, driver: driver,
       controller: controller,
@@ -106,6 +106,11 @@ package struct ControlDispatcher: Sendable {
   package let root: DataRoot
   package let makeRuntime: @Sendable () throws(CIError) -> Runtime
 
+  /// Requests whose work only a serving controller carries out: run in
+  /// process, their jobs would never start and mapped secrets would be lost
+  /// when the CLI exits.
+  package static let needsServingController: Set<String> = ["run.submit", "retry"]
+
   package init(root: DataRoot, makeRuntime: @escaping @Sendable () throws(CIError) -> Runtime) {
     self.root = root
     self.makeRuntime = makeRuntime
@@ -122,6 +127,11 @@ package struct ControlDispatcher: Sendable {
       return try client.call(method, params)
     } catch {
       guard error.code == .controllerUnavailable else { throw error }
+    }
+    if Self.needsServingController.contains(method) {
+      throw CIError(
+        .controllerUnavailable,
+        "the iso-ci controller is not running; start it with `iso-ci serve`, then resubmit")
     }
     try root.prepare()
     guard let lock = try OwnershipLock.attempt(path: root.lock) else {

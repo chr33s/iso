@@ -149,23 +149,25 @@ jobs:
             `git diff`, `git show` and `gh pr diff`, never by checking them out.
 
             Run the /my-review command against this pull request (diff from the PR's base branch).
-            Post substantive findings as inline review comments on the PR, following the
-            "Post findings to the PR" section of the command.
+            Posting is requested: follow section 6 ("Report or post") of
+            .agents/skills/review/SKILL.md. Post each substantive finding with the
+            inline-comment tool and the summary with `gh pr comment`.
 
           # The agent reads the untrusted PR diff/comment into its context. This
           # allowlist does NOT eliminate the ability to read process env: `grep`,
-          # `rg`, `jq`, `find`, and the `Read` tool can all read
-          # /proc/self/environ (which holds ANTHROPIC_API_KEY and GITHUB_TOKEN),
-          # so dropping `cat` closed no exfil path on its own. What the list does
-          # is narrow the exfil *surface* to observable, GitHub-only channels:
-          # no WebSearch/WebFetch and no broad `gh api` (only read-only
-          # `gh api graphql` for the reviewThreads query /my-review needs) means
-          # there is no silent external outbound — any leak would have to be
-          # posted to this PR, in the open. The actual boundary against a
-          # malicious fork diff is the author-association gate on the triggering
-          # comment (the `gate` job), not this allowlist.
+          # `jq` and the `Read` tool can all read /proc/self/environ (which holds
+          # ANTHROPIC_API_KEY and GITHUB_TOKEN). What the list does is narrow the
+          # exfil surface: no WebSearch/WebFetch; no `gh api` (`--hostname` and
+          # GraphQL mutations reach beyond this PR); no `git fetch` (it accepts
+          # any URL, and both refs are fetched above); no `find` or `rg`
+          # (`find -exec` and `rg --pre` run arbitrary programs; the Glob and
+          # Grep tools cover search). It is not a network boundary: `gh pr`
+          # subcommands accept `-R HOST/OWNER/REPO` and can contact another
+          # host. The actual boundary against a malicious fork diff is the
+          # author-association gate on the triggering comment (the `gate` job),
+          # not this allowlist.
           claude_args: |
-            --allowedTools "Agent,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api graphql:*),Bash(rg:*),Bash(grep:*),Bash(ls:*),Bash(find:*),Bash(jq:*)"
+            --allowedTools "Agent,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(grep:*),Bash(ls:*),Bash(jq:*)"
 
   codex:
     name: Codex review

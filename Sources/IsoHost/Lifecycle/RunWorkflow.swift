@@ -71,6 +71,10 @@ package struct RunWorkflow {
     let instance: Instance
     let action: AuditFacts.StartAction
     var sessionRecord: RunSessionRecord?
+    // A disposable VM exists from its first boot until cleanup: the first
+    // signal becomes a cleanup failure instead of orphaning it.
+    var shutdown: Shutdown.Guard?
+    defer { shutdown?.restore() }
     switch try executionTarget(resolution) {
     case .attach(let existing):
       instance = existing
@@ -88,6 +92,7 @@ package struct RunWorkflow {
       stage = .start
       action = .created
       if remove {
+        shutdown = Shutdown.install()
         let owner = try Owner.loadOrInit(context.config)
         let record = try RunSessionStore.create(
           context.config, name: requestedName ?? (try disposableName()), workspace: directory,
@@ -105,6 +110,9 @@ package struct RunWorkflow {
         options.boot.skipAgentBootstrap = planned.adapter.id == .none
         options.workspaceDirectory = directory
         do {
+          // READY-01 before any VM cost: another provider's proxy, which
+          // satisfies the start-time check, does not cover this adapter.
+          try lifecycle.agents.requireSelectedProvider(allocated, adapter: planned.adapter)
           try lifecycle.startInstance(allocated, options)
           guard let sidecar = try MachineSidecar.loadIfPresent(allocated) else {
             throw HostError("disposable instance '\(allocated.name)' has no sandbox record")
@@ -116,11 +124,19 @@ package struct RunWorkflow {
           sessionRecord = creating
         } catch {
           lifecycle.agents.proxies.stopAll(allocated)
-          try? lifecycle.backend.destroyInstance(allocated)
           creating.state = .cleanupPending
-          creating.cleanupOutcome = "start failed"
+          do {
+            try lifecycle.backend.destroyInstance(allocated)
+            creating.cleanupOutcome = "start failed"
+            audit?.cleanup(creating.sessionID, .startFailed)
+          } catch let cleanup {
+            diagnostics.warn(
+              "Could not destroy disposable instance '\(allocated.name)' after its start failed: \(cleanup); run `iso run-cleanup --session \(creating.sessionID)`"
+            )
+            creating.cleanupOutcome = "destroy failed"
+            audit?.cleanup(creating.sessionID, .destroyFailed)
+          }
           try? RunSessionStore.save(creating, config: context.config)
-          audit?.cleanup(creating.sessionID, .startFailed)
           throw error
         }
         instance = allocated
@@ -133,9 +149,15 @@ package struct RunWorkflow {
       }
     }
     stage = .connect
-    let running = try context.backend.asRunning(instance)
-    guard let running else {
-      throw HostError("Instance '\(instance.name)' is not running after start")
+    let running: AppleBackend.Running
+    do {
+      guard let proof = try context.backend.asRunning(instance) else {
+        throw HostError("Instance '\(instance.name)' is not running after start")
+      }
+      running = proof
+    } catch {
+      abandonDisposable(&sessionRecord, report: report)
+      throw error
     }
     try launch(
       planned, running: running, action: action, session: &sessionRecord, started: started,
@@ -259,6 +281,62 @@ package struct RunWorkflow {
     session record: inout RunSessionRecord?, started: ContinuousClock.Instant,
     report: (Event) -> Void
   ) throws {
+    let ssh: WorkloadSession
+    let invocation: AgentInvocation
+    do {
+      (ssh, invocation) = try prepareHandoff(
+        planned, running: running, action: action, session: record, started: started,
+        report: report)
+      if var record {
+        // The flag is sticky: a signal during the first boot ends here.
+        try Shutdown.check()
+        record.state = .running
+        try RunSessionStore.save(record, config: context.config)
+      }
+    } catch {
+      abandonDisposable(&record, report: report)
+      throw error
+    }
+    let shutdown = remove ? Shutdown.install() : nil
+    defer { shutdown?.restore() }
+    let termination: ProcessRunner.Termination
+    do {
+      termination = try InteractiveSSH.runReporting(
+        context.ssh, ssh, invocation.argv, workingDirectory: invocation.workingDirectory,
+        allocatePTY: invocation.allocatePTY, diagnostics: diagnostics, audit: audit)
+    } catch {
+      try finishCleanup(&record, agent: "unknown", report: report)
+      throw error
+    }
+    let agentStatus = statusText(termination)
+    if remove {
+      try finishCleanup(&record, agent: agentStatus, report: report)
+    } else {
+      report(.retained(termination, running.instance.name))
+    }
+    // The retained or cleanup report already named an exit code; a signal
+    // is reported by the error itself.
+    guard termination.succeeded else {
+      let exited = if case .exited = termination { true } else { false }
+      throw WorkloadExit(termination, reported: exited)
+    }
+  }
+
+  /// A disposable VM that fails before its agent starts is cleaned up as if
+  /// the agent never ran; the caller still sees the original error.
+  func abandonDisposable(_ record: inout RunSessionRecord?, report: (Event) -> Void) {
+    guard record != nil else { return }
+    do { try finishCleanup(&record, agent: "not started", report: report) } catch {
+      diagnostics.warn("Cleanup of the disposable instance failed: \(error)")
+    }
+  }
+
+  /// Everything between a proven-running instance and the agent handoff.
+  func prepareHandoff(
+    _ planned: AgentLaunchPlan, running: AppleBackend.Running, action: AuditFacts.StartAction,
+    session record: RunSessionRecord?, started: ContinuousClock.Instant,
+    report: (Event) -> Void
+  ) throws -> (WorkloadSession, AgentInvocation) {
     let codexAccount =
       context.config.codexAuth == .chatgpt
       && planned.adapter.id.rawValue == AgentAdapterID.codex.rawValue
@@ -292,33 +370,7 @@ package struct RunWorkflow {
     report(
       .handoff(
         planned, running, created: action == .created, elapsed: ContinuousClock.now - started))
-    if var record {
-      record.state = .running
-      try RunSessionStore.save(record, config: context.config)
-    }
-    let shutdown = remove ? Shutdown.install() : nil
-    defer { shutdown?.restore() }
-    let termination: ProcessRunner.Termination
-    do {
-      termination = try InteractiveSSH.runReporting(
-        context.ssh, ssh, invocation.argv, workingDirectory: invocation.workingDirectory,
-        allocatePTY: invocation.allocatePTY, diagnostics: diagnostics, audit: audit)
-    } catch {
-      try finishCleanup(&record, agent: "unknown", report: report)
-      throw error
-    }
-    let agentStatus = statusText(termination)
-    if remove {
-      try finishCleanup(&record, agent: agentStatus, report: report)
-    } else {
-      report(.retained(termination, running.instance.name))
-    }
-    // The retained or cleanup report already named an exit code; a signal
-    // is reported by the error itself.
-    guard termination.succeeded else {
-      let exited = if case .exited = termination { true } else { false }
-      throw WorkloadExit(termination, reported: exited)
-    }
+    return (ssh, invocation)
   }
 
   package func finishCleanup(
@@ -383,6 +435,8 @@ package struct RunWorkflow {
       guard confirm(message) else { throw HostError("preparation not authorized") }
     }
     let definitions = try resolveProfiles(planned.environment.profiles, context.config)
+    let shutdown = Shutdown.install()
+    defer { shutdown.restore() }
     try context.backend.setup(
       SetupOptions(
         rebuild: false, profiles: definitions, image: planned.environment.image,

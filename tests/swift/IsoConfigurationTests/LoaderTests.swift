@@ -312,6 +312,18 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
     fieldError(#"{"proxy": {"openai": {"credential": 5}}}"#)?.field == "proxy.openai.credential")
 }
 
+@Test func proxyAuthDefaultsPerProvider() throws {
+  let c = try load(
+    #"{"proxy": {"anthropic": {"credential": "cmd:a"}, "openai": {"credential": "cmd:o"}}}"#)
+  #expect(c.proxy.anthropic?.auth == .apiKey)
+  // iso-proxy accepts only Bearer for OpenAI, so that is the default and
+  // the only spelling accepted.
+  #expect(c.proxy.openai?.auth == .bearer)
+  #expect(
+    fieldError(#"{"proxy": {"openai": {"credential": "cmd:o", "auth": "api_key"}}}"#)?.field
+      == "proxy.openai.auth")
+}
+
 @Test func errorsNeverContainSecretBearingValues() {
   let secret = "SYNTHETIC-SECRET-VALUE"
   let documents = [

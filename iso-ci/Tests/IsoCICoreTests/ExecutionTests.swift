@@ -199,6 +199,23 @@ import Testing
     #expect(try harness.store.allocation(record.id)?.vmCleanup == .verified)
   }
 
+  // Regression: a transient unreachable host is quarantined, and the
+  // quarantine lifts once the host answers the pinned hello again.
+  @Test func quarantinedHostRecoversWhenItAnswersAgain() throws {
+    let harness = try Self.harness()
+    harness.host.state.withLock { $0.unreachable = true }
+    #expect(throws: CIError.self) {
+      _ = try harness.driver.admit(host: "local", profile: harness.profile)
+    }
+    #expect(try harness.store.host("local")?.state == .quarantined)
+    #expect(throws: CIError.self) { try harness.driver.hosts.refreshCapabilities("local") }
+    #expect(try harness.store.host("local")?.state == .quarantined)
+    harness.host.state.withLock { $0.unreachable = false }
+    try harness.driver.hosts.refreshCapabilities("local")
+    #expect(try harness.store.host("local")?.state == .enabled)
+    _ = try harness.driver.admit(host: "local", profile: harness.profile)
+  }
+
   // Regression: an unreachable host after the discard is cleanup debt, never
   // an invented verified deletion.
   @Test func unverifiedDiscardStaysCleanupDebt() throws {
@@ -299,6 +316,30 @@ import Testing
     #expect(try select() == nil)
   }
 
+  // Regression: `logs --follow` stops on the `settled` field, which
+  // allocation inspect must carry just as preflight run inspect does.
+  @Test func allocationInspectReportsSettlement() throws {
+    let harness = try Self.harness()
+    let record = try Self.allocation(harness)
+    let controller = Controller(
+      root: harness.driver.root, store: harness.store, driver: harness.driver,
+      hosts: harness.driver.hosts, configuration: harness.configuration, configurationError: nil)
+    let inspect = { () throws -> JSONValue in
+      try controller.handle(
+        ControlRequest(method: "inspect", params: ["target": .string(record.id.rawValue)])
+      ).get()
+    }
+    #expect(!record.isSettled)
+    #expect(try inspect()["settled"] == .bool(false))
+    try harness.store.update(record.id) {
+      $0.vmCleanup = .verified
+      $0.registration = .removed
+    }
+    let settled = try #require(try harness.store.allocation(record.id))
+    #expect(settled.isSettled)
+    #expect(try inspect()["settled"] == .bool(true))
+  }
+
   @Test func hostIdentityChangeIsRefused() throws {
     let host = FakeHost(capabilities: FakeHost.qualifiedCapabilities(allowed: Self.reviewedHosts))
     let store = try ControllerStore.inMemory()
@@ -338,5 +379,24 @@ import Testing
     proof["boot_id"] = "boot-1"
     proof["network_policy_digest"] = "deadbeef"
     #expect(throws: CIError.self) { _ = try NetworkProof(wire: .object(proof)) }
+  }
+}
+
+/// Regression: `serve --install` dropped `--iso-config` and `--interval`.
+@Suite struct UserServiceTests {
+  @Test func theServiceKeepsTheOperatorsServeOptions() {
+    let root = DataRoot(path: "/tmp/root")
+    #expect(
+      UserService.programArguments(
+        root: root, executable: "/bin/iso-ci", iso: "/bin/iso", isoConfig: "/c/ci.jsonc",
+        interval: 5)
+        == [
+          "/bin/iso-ci", "serve", "--root", "/tmp/root", "--iso", "/bin/iso", "--iso-config",
+          "/c/ci.jsonc", "--interval", "5.0",
+        ])
+    #expect(
+      UserService.programArguments(
+        root: root, executable: "/bin/iso-ci", iso: nil, isoConfig: nil, interval: nil)
+        == ["/bin/iso-ci", "serve", "--root", "/tmp/root"])
   }
 }

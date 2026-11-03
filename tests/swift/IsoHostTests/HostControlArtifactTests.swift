@@ -123,6 +123,42 @@ import Testing
     #expect(try ArchiveValidator.validate(bytes: rooted).members == 2)
   }
 
+  /// Each member names ~2,000 levels under a fresh top-level directory; keying
+  /// every implied ancestor by its full prefix retained gigabytes here.
+  @Test(.timeLimit(.minutes(1))) func deepMemberNamesStayLinearInArchiveSize() throws {
+    var archive: [UInt8] = []
+    let members = 1_000
+    for index in 0..<members {
+      let top = String(index, radix: 36)
+      let name = top + String(repeating: "/a", count: (4_000 - top.utf8.count) / 2)
+      let record = "path=\(name)"
+      var length = record.utf8.count + 3
+      while "\(length) \(record)\n".utf8.count != length { length += 1 }
+      let data = Array("\(length) \(record)\n".utf8)
+      archive += tarHeader(name: "pax", size: data.count, type: "x") + data
+      archive += [UInt8](repeating: 0, count: (512 - data.count % 512) % 512)
+      archive += tarHeader(name: "placeholder", size: 0, type: "0")
+    }
+    archive += [UInt8](repeating: 0, count: 1024)
+    #expect(try ArchiveValidator.validate(bytes: archive).members == members)
+    // The tree still sees every implied ancestor.
+    let conflict =
+      tarArchive([("a/b/c/d", [1])], extra: [tarHeader(name: "a/b", size: 0, type: "0")])
+    #expect(throws: HostControlError.self) { try ArchiveValidator.validate(bytes: conflict) }
+    let beneath = tarArchive([("a/b", [1]), ("a/b/c", [1])])
+    #expect(throws: HostControlError.self) { try ArchiveValidator.validate(bytes: beneath) }
+    let throughLink = tarArchive(
+      [("d/f", [1])],
+      extra: [
+        tarHeader(name: "d/l", size: 0, type: "2", link: "f"),
+        tarHeader(name: "m", size: 0, type: "2", link: "D/L/x"),
+      ])
+    #expect(throws: HostControlError.self) { try ArchiveValidator.validate(bytes: throughLink) }
+    let hardLink = tarArchive(
+      [("d/f", [1])], extra: [tarHeader(name: "h", size: 0, type: "1", link: "D/F")])
+    #expect(try ArchiveValidator.validate(bytes: hardLink).members == 2)
+  }
+
   @Test func extractorDesyncAndChainedLinksAreRefused() throws {
     func pax(_ records: [String]) -> [UInt8] {
       let body = records.map { record -> String in
@@ -134,7 +170,58 @@ import Testing
       return tarHeader(name: "pax", size: data.count, type: "x") + data
         + [UInt8](repeating: 0, count: (512 - data.count % 512) % 512)
     }
+    /// `header` with bytes at `offset` replaced and the checksum redone.
+    func patched(_ header: [UInt8], _ text: String, at offset: Int) -> [UInt8] {
+      var out = header
+      for (index, byte) in text.utf8.enumerated() { out[offset + index] = byte }
+      for index in 148..<156 { out[index] = 32 }
+      let sum = out.reduce(0) { $0 + Int($1) }
+      for (index, byte) in (String(sum, radix: 8).leftPad(6) + "\0 ").utf8.enumerated() {
+        out[148 + index] = byte
+      }
+      return out
+    }
+    func longName(_ type: Character, _ text: String) -> [UInt8] {
+      let data = Array((text + "\0").utf8)
+      return tarHeader(name: "././@LongLink", size: data.count, type: type) + data
+        + [UInt8](repeating: 0, count: (512 - data.count % 512) % 512)
+    }
     let cases: [(String, [UInt8])] = [
+      (
+        // libarchive reads a regular `foo/` as a directory, and its data
+        // blocks as the headers of hidden members.
+        "regular file with a directory name",
+        tarArchive(
+          [],
+          extra: [
+            tarHeader(name: "foo/", size: 1024, type: "0"),
+            tarHeader(name: "esc", size: 0, type: "2", link: "/etc"),
+            [UInt8](repeating: 0, count: 512),
+          ])
+      ),
+      (
+        // Old GNU keeps atime at 345, which must not read as a prefix.
+        "old GNU absolute name",
+        tarArchive(
+          [],
+          extra: [
+            patched(
+              patched(tarHeader(name: "/tmp/abs", size: 0, type: "0"), "ustar  \0", at: 257),
+              "00000000001", at: 345)
+          ])
+      ),
+      (
+        "unknown ustar variant",
+        tarArchive(
+          [], extra: [patched(tarHeader(name: "a", size: 0, type: "0"), "ustar\0zz", at: 257)])
+      ),
+      ("pax then GNU name", pax(["path=a"]) + longName("L", "b") + tarArchive([("c", [1])])),
+      ("GNU then pax name", longName("L", "b") + pax(["path=a"]) + tarArchive([("c", [1])])),
+      (
+        "pax then GNU link",
+        pax(["linkpath=x"]) + longName("K", "y")
+          + tarArchive([], extra: [tarHeader(name: "l", size: 0, type: "2", link: "z")])
+      ),
       (
         "pax size",
         tarArchive([("a", [1])], extra: []).dropLast(1024) + pax(["size=1024"])
@@ -381,6 +468,24 @@ import Testing
     var state = try inspect(f, run)
     #expect(state.phase == .stoppedDiskPendingExport)
     #expect(state.artifact == nil)
+    // Only the run's transitions boot its disk: a plain start or maintenance
+    // would bypass its recovery allowance and restrictions.
+    let childID = try #require(state.instanceID)
+    let child = try #require(try f.supervisor.store.loadInstance(childID))
+    #expect(
+      failure(
+        f.call(
+          .vmStart(
+            child.qualified, expectedGeneration: child.generation, ttlSeconds: 60,
+            policy: try f.spec(name: "run", egress: .none).policyHash), operation: .generate()))
+        == .unsupportedCapability)
+    #expect(
+      failure(
+        f.call(
+          .maintenance(
+            child.qualified, expectedGeneration: child.generation,
+            .resize(cpus: 4, memoryMiB: nil, diskGiB: nil)), operation: .generate()))
+        == .unsupportedCapability)
     let retention = try #require(state.retentionDeadline)
     // Time passes before recovery: a recomputed deadline would differ.
     f.clock.advance(.seconds(120))

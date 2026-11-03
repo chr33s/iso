@@ -33,7 +33,7 @@
     "anthropic": null,
     "openai": {
       "credential": "cmd:security find-generic-password -s iso-openai -a openai -w",
-      "auth": "api_key"
+      "auth": "bearer"
     }
   },
   "guest_env": {},

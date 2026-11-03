@@ -36,8 +36,8 @@ and [trust model](../trust-model.md) for supported behavior.
   evidence for each essential check.
 - [Credential proxy proposal](issue-411-injecting-proxy.md) and
   [proxy jail compatibility](proxy-jail-graceful-degradation.md).
-- [Sandboxy-inspired features](sandboxy-inspired-features-spec.md): proposal
-  with implementation and qualification notes.
+- [Sandboxy-inspired features](sandboxy-inspired-features-spec.md): draft
+  proposal only; it records no implementation or qualification.
 
 ## Editors
 

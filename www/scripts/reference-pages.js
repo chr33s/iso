@@ -154,12 +154,13 @@ export const references = [
                 slug: "agents",
                 title: "Agent and profile settings",
                 summary:
-                    "Configure Claude Code, Codex, local models, MCP servers, and image profiles.",
+                    "Configure Claude Code, Codex, local models, MCP servers, image profiles, and macOS computer use.",
                 sections: [
                     "claude-section",
                     "codex-section",
                     "local-model-routing",
                     "profiles-section",
+                    "computer_use",
                 ],
             },
             {

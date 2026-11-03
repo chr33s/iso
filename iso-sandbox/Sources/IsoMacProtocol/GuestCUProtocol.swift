@@ -141,6 +141,12 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
       if let extra = Set(a.keys).subtracting(GuestCUAction.fields).sorted().first {
         return .failure(.unknownField("action.\(extra)"))
       }
+      // Path points are closed too; the decoder alone would drop extra keys.
+      for case let point as [String: Any] in a["path"] as? [Any] ?? [] {
+        if let extra = Set(point.keys).subtracting(["x", "y"]).sorted().first {
+          return .failure(.unknownField("action.path.\(extra)"))
+        }
+      }
     }
     guard let r = try? JSONDecoder().decode(GuestCURequest.self, from: Data(line)) else {
       return .failure(.malformed)
