@@ -86,6 +86,12 @@ iso setup --guest macos --ipsw ~/Downloads/UniversalMac_27.0.1_Restore.ipsw --im
 iso up . --image mac --vcpus 4 --mem 8192
 ```
 
+To let an agent in a macOS guest see and drive its own display, set
+`"computer_use": {"guest_access": true}` before creating the instance. The
+agent gets an `iso-cu` MCP server; the host injects its input through the VM's
+virtual keyboard and pointer and can take the display back at any time. See
+[`computer_use`](docs/configuration.md#computer_use).
+
 ### Remote Macs
 
 Enroll another trusted Apple Silicon Mac over SSH and run a project's VM there.
@@ -126,6 +132,10 @@ Each relaxation is explicit, and `iso policy effective` lists them.
   saved grants, which `security.revoked_grant_ids` revokes.
 - [Audit records](docs/audit.md): `iso audit` reports boundary events and a
   per-run history (also as a JSONL stream), as metadata only, never values.
+- [Confined companions](docs/credential-proxy.md#what-it-does-and-does-not-guarantee):
+  `iso-proxy` and `iso-egress` run under a Seatbelt profile that denies home
+  directories, iso state and every loopback service, and release builds start
+  them only with iso's own Developer ID signature.
 
 Read the [trust model](docs/trust-model.md) for the boundaries and their limits.
 
@@ -135,7 +145,9 @@ Read the [trust model](docs/trust-model.md) for the boundaries and their limits.
   [configuration](docs/configuration.md)
 - [Machine interface](docs/machine-interface.md) for editors, CI and other
   integrations
-- [iso-ci](docs/ci.md), the separately installed GitHub Actions companion
+- [iso-ci](docs/ci.md), the separately installed GitHub Actions companion,
+  which can also gate commits or pushes on your project's workflow from its
+  [Git hooks](docs/ci.md#running-a-projects-ci-from-its-git-hooks)
 - [Full documentation index](docs/index.md)
 - [Architecture](docs/ARCHITECTURE.md) and [release validation](docs/release-validation.md)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
