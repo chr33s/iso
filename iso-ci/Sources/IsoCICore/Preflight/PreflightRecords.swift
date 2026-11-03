@@ -57,12 +57,15 @@ package struct PreflightRunRecord: Sendable, Equatable, Codable {
   /// Nil for runs recorded before patterns were kept: those are unknown.
   package let include: [String]?
   package let exclude: [String]?
+  /// What the base revision captured; nil for runs recorded before staged
+  /// snapshots existed (always the working tree).
+  package let snapshotSource: SnapshotSource?
 
   package init(
     id: PreflightRunID, repositoryPath: String, repository: String, plan: WorkflowPlan,
     revision: InputRevision, createdAt: EpochSeconds, pinnedHost: Name?, profile: Name,
     inputs: [String: String], secretNames: [String], retainOnFailure: FailureRetention,
-    include: [String] = [], exclude: [String] = []
+    include: [String] = [], exclude: [String] = [], snapshotSource: SnapshotSource = .workingTree
   ) {
     self.id = id
     self.repositoryPath = repositoryPath
@@ -79,6 +82,7 @@ package struct PreflightRunRecord: Sendable, Equatable, Codable {
     notes = []
     self.include = include
     self.exclude = exclude
+    self.snapshotSource = snapshotSource
   }
 
   package var baseRevision: InputRevision { revisions[0] }

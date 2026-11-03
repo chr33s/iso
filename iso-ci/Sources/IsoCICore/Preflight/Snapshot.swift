@@ -1,8 +1,24 @@
+import CryptoKit
 import Darwin
 import Foundation
 
+/// Which content a snapshot captures.
+package enum SnapshotSource: String, Sendable, Equatable, Codable, CaseIterable {
+  /// Tracked paths as they are in the working tree, unstaged edits
+  /// included, plus untracked paths an `include` selects.
+  case workingTree = "working-tree"
+  /// Exactly the content the index stages for the next commit. Read from
+  /// the working tree as data and verified blob by blob against the index:
+  /// a tracked path whose working-tree content, type or executable bit
+  /// differs from its staged version refuses the capture rather than being
+  /// silently replaced, and nothing untracked is ever selected.
+  case staged
+}
+
 /// What a snapshot capture includes and how it is bounded.
 package struct SnapshotOptions: Sendable, Equatable {
+  /// Working tree (the default) or the staged index.
+  package var source: SnapshotSource = .workingTree
   /// Patterns selecting untracked files to include. Nothing untracked is
   /// selected implicitly: no ignore file is read.
   package var include: [String] = []
@@ -311,6 +327,13 @@ package enum SnapshotCapture {
     let head = try GitIndex.head(layout)
     let indexEntries = try GitIndex.entries(layout)
     let indexPaths = indexEntries.map(\.path)
+    let staged = options.source == .staged
+    guard !staged || options.include.isEmpty else {
+      throw CIError.invalid("a staged snapshot never includes untracked paths; drop --include")
+    }
+    let stagedEntries =
+      staged ? Dictionary(indexEntries.map { ($0.path, $0) }, uniquingKeysWith: { $1 }) : [:]
+    var unstaged: [String] = []
     let untracked =
       options.include.isEmpty
       ? [] : try untrackedMatching(root: root, tracked: Set(indexPaths), options: options)
@@ -353,9 +376,18 @@ package enum SnapshotCapture {
     var total: UInt64 = 0
     for path in candidates {
       var status = stat()
+      let entry = stagedEntries[path]
+      if let entry, entry.intentToAdd {
+        unstaged.append(path)
+        continue
+      }
       switch inspect(rootFD, path, &status) {
       case 0: break
-      case ENOENT, ENOTDIR: continue  // deleted in the working tree
+      case ENOENT, ENOTDIR:
+        // Deleted in the working tree; a staged capture cannot supply the
+        // version the commit would contain.
+        if staged { unstaged.append(path) }
+        continue
       case ELOOP:
         throw CIError(
           .compatibilityRejected,
@@ -373,9 +405,13 @@ package enum SnapshotCapture {
           throw CIError(.budgetExceeded, "the snapshot exceeds its total size limit")
         }
         let mode = status.st_mode & 0o111 != 0 ? 0o755 : 0o644
-        let digest = try writer.addFile(
+        let (digest, blob) = try writer.addFile(
           name: "tree/" + path, mode: mode, directory: rootFD, source: path, expectedSize: size,
-          expected: Observed(status))
+          expected: Observed(status), gitBlob: staged)
+        if let entry, entry.mode != (mode == 0o755 ? 0o100755 : 0o100644) || blob != entry.objectID
+        {
+          unstaged.append(path)
+        }
         files.append(
           SnapshotFile(path: path, kind: .file, mode: mode, size: size, sha256: digest, target: nil)
         )
@@ -392,6 +428,11 @@ package enum SnapshotCapture {
             "symlink \(path) is absolute or points outside the working tree; it is not permitted in a snapshot"
           )
         }
+        if let entry,
+          entry.mode != 0o120000 || Self.gitBlobID(Array(target.utf8)) != entry.objectID
+        {
+          unstaged.append(path)
+        }
         try writer.addSymlink(name: "tree/" + path, target: target)
         files.append(
           SnapshotFile(
@@ -403,6 +444,14 @@ package enum SnapshotCapture {
       default:
         throw CIError(.compatibilityRejected, "\(path) is not a regular file or symlink")
       }
+    }
+    if !unstaged.isEmpty {
+      let shown = unstaged.prefix(10).joined(separator: ", ")
+      let more = unstaged.count > 10 ? " and \(unstaged.count - 10) more" : ""
+      throw CIError(
+        .conflict,
+        "the staged snapshot refuses \(unstaged.count) tracked path(s) whose working-tree version differs from the index: \(shown)\(more). Stage them, stash the unstaged changes (git stash push --keep-index), or use the working-tree snapshot"
+      )
     }
     // v2 snapshots carry no base checkout, so nothing is deleted from one.
     let deletions: [String] = []
@@ -456,6 +505,14 @@ package enum SnapshotCapture {
       archivePath: archivePath, manifest: manifest, excludedPaths: excludedPaths, digest: digest,
       size: size,
       capturedAt: SystemClock().now(), attempts: attempt)
+  }
+
+  /// Git's SHA-1 object id for a blob holding `content`.
+  static func gitBlobID(_ content: [UInt8]) -> [UInt8] {
+    var hasher = Insecure.SHA1()
+    hasher.update(data: Array("blob \(content.count)\u{0}".utf8))
+    hasher.update(data: content)
+    return Array(hasher.finalize())
   }
 
   static func nulList(_ items: [String]) -> [UInt8] {
@@ -575,13 +632,19 @@ struct TarWriter {
   /// it is not a plain path or its size or timestamps move while it is read.
   mutating func addFile(
     name: String, mode: Int, directory: Int32, source: String, expectedSize: UInt64,
-    expected: SnapshotCapture.Observed
-  ) throws -> Digest {
+    expected: SnapshotCapture.Observed, gitBlob: Bool = false
+  ) throws -> (Digest, [UInt8]?) {
     let input = openat(directory, source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW_ANY)
     guard input >= 0 else { throw SnapshotCapture.ConcurrentChange(path: name) }
     defer { Darwin.close(input) }
     try entry(name: name, mode: mode, size: expectedSize, type: UInt8(ascii: "0"))
     var content = StreamingSHA256()
+    var blob: Insecure.SHA1? = nil
+    if gitBlob {
+      var hasher = Insecure.SHA1()
+      hasher.update(data: Array("blob \(expectedSize)\u{0}".utf8))
+      blob = hasher
+    }
     var buffer = [UInt8](repeating: 0, count: 1 << 16)
     var remaining = expectedSize
     while remaining > 0 {
@@ -591,6 +654,7 @@ struct TarWriter {
       guard count > 0 else { throw SnapshotCapture.ConcurrentChange(path: name) }
       let chunk = Array(buffer[0..<count])
       content.update(chunk)
+      blob?.update(data: chunk)
       try emit(chunk)
       remaining -= UInt64(count)
     }
@@ -600,7 +664,7 @@ struct TarWriter {
       SnapshotCapture.Observed(after) == expected
     else { throw SnapshotCapture.ConcurrentChange(path: name) }
     try pad(expectedSize)
-    return content.finalize()
+    return (content.finalize(), blob.map { Array($0.finalize()) })
   }
 
   mutating func finish() throws(CIError) -> (Digest, UInt64) {

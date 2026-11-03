@@ -23,7 +23,8 @@ Apple backend. The credential proxy is the Swift package
 ## CI companion
 
 - [`ci.md`](ci.md) — `iso-ci`: GitHub-connected runner pools and local
-  workflow preflight in brokered VMs (separately installed; [`iso-ci/`](../iso-ci/)).
+  workflow preflight in brokered VMs, including project Git hooks that run it
+  before commits or pushes (separately installed; [`iso-ci/`](../iso-ci/)).
 
 ## Authorization policy
 

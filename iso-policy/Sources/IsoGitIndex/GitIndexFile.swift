@@ -15,6 +15,10 @@ public enum GitIndexFile {
     public let size: UInt32
     public let mtimeSeconds: UInt32
     public let mtimeNanos: UInt32
+    /// The staged blob's SHA-1 object id (20 bytes).
+    public let objectID: [UInt8]
+    /// `git add -N`: a placeholder for a path whose content is not staged.
+    public let intentToAdd: Bool
   }
 
   public enum Refusal: Error, Sendable, Equatable, CustomStringConvertible {
@@ -107,13 +111,17 @@ public enum GitIndexFile {
       let mode = try u32(start + 24)
       let size = try u32(start + 36)
       offset = start + 62
+      guard offset <= body.count else { throw .truncated }
+      let objectID = Array(bytes[(start + 40)..<(start + 60)])
       let flags = try u16(offset - 2)
       guard (flags >> 12) & 0x3 == 0 else { throw .unmerged }
+      var intentToAdd = false
       if flags & 0x4000 != 0 {
         guard version >= 3 else { throw .extendedFlagsInVersion2 }
         let extended = try u16(offset)
         offset += 2
         guard extended & 0x4000 == 0 else { throw .skipWorktree }
+        intentToAdd = extended & 0x2000 != 0
       }
       var name: [UInt8]
       if version == 4 {
@@ -149,7 +157,8 @@ public enum GitIndexFile {
       guard let path = String(validating: name, as: UTF8.self) else { throw .nonUTF8Path }
       entries.append(
         Entry(
-          path: path, mode: mode, size: size, mtimeSeconds: mtimeSeconds, mtimeNanos: mtimeNanos))
+          path: path, mode: mode, size: size, mtimeSeconds: mtimeSeconds, mtimeNanos: mtimeNanos,
+          objectID: objectID, intentToAdd: intentToAdd))
     }
     try checkExtensions(bytes, from: offset, end: body.count)
     return entries

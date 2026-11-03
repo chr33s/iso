@@ -15,7 +15,7 @@ struct IsoCICommand: ParsableCommand {
     version: IsoCIVersion.current,
     subcommands: [
       Setup.self, Serve.self, Status.self, PoolCommand.self, Run.self, Logs.self, Inspect.self,
-      Debug.self, Patch.self, Retry.self, Abort.self, Results.self, Actions.self,
+      Debug.self, Patch.self, Retry.self, Abort.self, Results.self, Actions.self, Hooks.self,
       RelayHelper.self,
     ])
 }
@@ -363,12 +363,31 @@ struct Run: ParsableCommand {
   var secrets: [String] = []
   @Option(name: .customLong("input"), help: "workflow_dispatch input NAME=VALUE (repeatable)")
   var inputs: [String] = []
+  @Option(
+    help: ArgumentHelp(
+      "What to capture: working-tree (tracked files with unstaged edits) or staged (exactly the index; refused when a tracked file differs from its staged version)",
+      valueName: "source"))
+  var snapshot: SnapshotSource = .workingTree
   @Flag(help: "Wait for the run and stream its events") var follow = false
+  @Option(
+    help: ArgumentHelp(
+      "With --follow: abort the run and exit non-zero if it has not settled after this many seconds",
+      valueName: "seconds"))
+  var timeout: Int?
 
   func validate() throws {
     guard platform == "linux/arm64" else {
       throw ValidationError(
         "only linux/arm64 preflight is supported; no implicit architecture translation")
+    }
+    if snapshot == .staged, !include.isEmpty {
+      throw ValidationError("a staged snapshot never includes untracked paths; drop --include")
+    }
+    if let timeout {
+      guard follow else { throw ValidationError("--timeout requires --follow") }
+      guard (1...86_400).contains(timeout) else {
+        throw ValidationError("--timeout must be between 1 and 86400 seconds")
+      }
     }
   }
 
@@ -400,7 +419,7 @@ struct Run: ParsableCommand {
         "platform": .string(platform),
         "event": .string(event), "include": .array(include.map { .string($0) }),
         "exclude": .array(exclude.map { .string($0) }), "secrets": .object(secretValues),
-        "inputs": .object(inputValues),
+        "inputs": .object(inputValues), "snapshot": .string(snapshot.rawValue),
       ]
       if let host { params["host"] = .string(host) }
       let value = try global.call("run.submit", .object(params))
@@ -408,7 +427,9 @@ struct Run: ParsableCommand {
         Output.line(
           "Run \(string(value["run"])) submitted (\(string(value["jobs"])) jobs, snapshot \(string(value["snapshot"])))"
         )
-        if value["dirty"] == .bool(true) {
+        if snapshot == .staged {
+          Output.line("Snapshot: the staged index (verified against the working tree)")
+        } else if value["dirty"] == .bool(true) {
           Output.line(
             "Note: the snapshot includes uncommitted changes; a pass is not evidence for base commit \(string(value["base_commit"]))"
           )
@@ -421,7 +442,15 @@ struct Run: ParsableCommand {
         }
       }
       if follow, let run = value["run"]?.stringValue {
-        conclusion = try Logs.follow(global: global, target: run)["run"]?["conclusion"]
+        let deadline = timeout.map { Date().addingTimeInterval(TimeInterval($0)) }
+        guard let state = try Logs.follow(global: global, target: run, deadline: deadline) else {
+          _ = try? global.call("abort", ["target": .string(run)])
+          throw CIError(
+            .budgetExceeded,
+            "run \(run) did not settle within \(timeout ?? 0) s; abort requested (see `iso-ci inspect \(run)`)"
+          )
+        }
+        conclusion = state["run"]?["conclusion"]
       }
     }
     // A followed run that did not succeed exits non-zero.
@@ -452,7 +481,7 @@ struct Logs: ParsableCommand {
           if value["truncated"] == .bool(true) { Output.line("[logs truncated]") }
         }
       } else if follow {
-        try Self.follow(global: global, target: target, after: after)
+        _ = try Self.follow(global: global, target: target, after: after)
       } else {
         let value = try global.call(
           "events", ["subject": .string(target), "after": .integer(after)])
@@ -474,11 +503,14 @@ struct Logs: ParsableCommand {
 
   /// Streams events until the target settles; returns its final state.
   @discardableResult
-  static func follow(global: GlobalOptions, target: String, after: Int64 = 0) throws(CIError)
-    -> JSONValue
-  {
+  /// Streams events until `target` settles and returns its state; nil when
+  /// `deadline` passes first.
+  static func follow(
+    global: GlobalOptions, target: String, after: Int64 = 0, deadline: Date? = nil
+  ) throws(CIError) -> JSONValue? {
     var cursor = after
     while true {
+      if let deadline, Date() >= deadline { return nil }
       let value = try global.call(
         "events", ["subject": .string(target), "after": .integer(cursor)])
       print(value, json: global.json)
@@ -665,3 +697,5 @@ func absolutePath(_ path: String?) -> String {
   return URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: cwd, isDirectory: true))
     .standardizedFileURL.path
 }
+
+extension SnapshotSource: ExpressibleByArgument {}

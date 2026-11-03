@@ -6,7 +6,7 @@ jobs in clean, NIC-less iso VMs on your own Apple Silicon Macs, in two modes:
 | Mode | Who decides what runs | What iso-ci does |
 |---|---|---|
 | **GitHub-connected pool** | GitHub | Keeps a bounded number of fresh, single-use official runners ready. GitHub assigns jobs, records checks, and keeps its normal caches and artifacts. |
-| **Local preflight** | iso-ci | Compiles a workflow from the supported subset, captures your working tree as an immutable snapshot, and runs each job through the official runner against local services. You can inspect, debug, patch and rerun a job from the start. |
+| **Local preflight** | iso-ci | Compiles a workflow from the supported subset, captures your working tree or staged index as an immutable snapshot, and runs each job through the official runner against local services. You can inspect, debug, patch and rerun a job from the start. |
 
 Each job attempt gets its own VM and its own guest-local Docker daemon. iso-ci
 never reuses a VM for a second job, never registers or changes a developer
@@ -311,6 +311,7 @@ the keychain is unlocked.
 ```sh
 iso-ci actions import actions/cache@v4         # once per approved action
 iso-ci run .github/workflows/ci.yml --follow
+iso-ci run .github/workflows/ci.yml --snapshot staged --follow --timeout 1800
 iso-ci run .github/workflows/ci.yml --secret NPM_TOKEN=MY_NPM_TOKEN
 iso-ci inspect RUN
 iso-ci logs RUN --job JOB [--attempt N]          # that job's stored runner logs
@@ -332,7 +333,20 @@ are not consulted. `run` then compiles the workflow against the `local-actions/v
 compatibility manifest, and runs each job in its own clean VM through the
 official runner. A workflow outside the manifest is refused with every problem
 listed before any VM starts. With `--follow`, `run` exits non-zero unless the
-run succeeds.
+run succeeds; `--timeout SECONDS` (with `--follow`) aborts a run that has not
+settled by then and exits non-zero.
+
+`--snapshot staged` captures exactly what the index stages for the next
+commit instead of the working tree. Capture still reads files from the working
+tree as data, never runs Git, and applies the same exclusions, but it checks
+every tracked path against its staged blob: a path whose working-tree content,
+executable bit or symlink target differs from the index, a staged path deleted
+from the working tree, or a `git add -N` placeholder refuses the run and names
+the paths. Stage them, or set the unstaged changes aside with
+`git stash push --keep-index`. A staged snapshot never includes untracked
+paths, so `--include` is refused with it. The default, `--snapshot
+working-tree`, includes unstaged edits, so it does not check exactly what a
+commit will contain.
 
 The manifest covers: `run` steps with shell, environment, working directory,
 defaults, timeouts and `continue-on-error`; approved JavaScript and composite
@@ -409,6 +423,75 @@ always starts a clean VM from the first step; failed-step continuation is not
 supported. When a retried job's dependencies ran on an earlier revision, the
 result is reported as mixed-input, not as one clean run. Replaying a connected
 job is a separate local run and never changes a GitHub check.
+
+### Running a project's CI from its Git hooks
+
+`iso-ci hooks` makes local preflight a check in your own project's Git hooks:
+on a protected branch, a commit (or push) is blocked unless the project's
+workflow passes in disposable iso VMs. Other branches skip the hook. It runs
+the project's CI, not iso's, and needs a working local preflight setup (see
+[Before you start](#before-you-start)): an installed `iso-ci`, an approved
+preflight profile and image, a qualified host, and any approved actions the
+workflow uses.
+
+```sh
+cd ~/src/my-project
+iso-ci hooks install --dry-run                  # show what would change
+iso-ci hooks install                            # pre-commit on main, .github/workflows/ci.yml
+iso-ci hooks install --hook pre-push --branch trunk --timeout 3600
+iso-ci hooks status
+iso-ci hooks uninstall [--hook pre-commit]
+```
+
+`install` writes a POSIX `sh` hook meant to be committed with the project. By
+default it goes in `.githooks/` and iso-ci sets `git config --local
+core.hooksPath .githooks`; each collaborator who wants the check runs that
+same `git config` command once. Options: `--hook pre-commit|pre-push`,
+`--branch` (default `main`), `--workflow` (default `.github/workflows/ci.yml`),
+`--event` (default `push`), `--snapshot` (default `staged`), `--timeout`
+(default 1800 seconds) and `--directory` (when `core.hooksPath` is not set).
+The hook names no path on your Mac; it runs `iso-ci` from `PATH`, or from
+`ISO_CI` when set (Git GUI clients often run hooks with a short `PATH`).
+
+Existing hooks are not overwritten silently. `install` refuses:
+
+- a hook file iso-ci did not write. `--force` replaces it and keeps it as
+  `<hook>.iso-ci-backup`, which `uninstall` restores;
+- moving `core.hooksPath` while `.git/hooks` holds active hooks, which would
+  stop them running (move them into the project hooks directory first);
+- a `core.hooksPath` from your user or system Git configuration, which a local
+  setting would bypass for this repository;
+- `--directory` that differs from a `core.hooksPath` the repository already
+  sets.
+
+To use a hook manager instead (pre-commit, lefthook, husky), call
+`iso-ci run .github/workflows/ci.yml --snapshot staged --follow --timeout
+1800` from its configuration. `uninstall` removes only hooks iso-ci wrote, and
+unsets `core.hooksPath` only when iso-ci set it and the directory holds no
+other hook.
+
+What each hook checks:
+
+| Hook | Runs when | Checks |
+|---|---|---|
+| `pre-commit` | committing on the protected branch | The staged index (`--snapshot staged`), so it checks exactly what the commit will contain, or refuses. |
+| `pre-push` | pushing to `refs/heads/<branch>` | The checked-out commit. It refuses a push of a commit other than `HEAD`, and staged changes, which the pushed commit does not contain. |
+
+| You run | Result |
+|---|---|
+| `git commit` on the protected branch; the workflow passes | The commit proceeds |
+| `git commit` on the protected branch; a job fails, the workflow is refused, the run times out, or `iso-ci` is missing | The commit is blocked, with the reason |
+| `git commit` on another branch | The hook skips local preflight |
+| `git commit --no-verify` | Git skips the hook |
+
+A run takes as long as the workflow does and starts one VM per job, so a
+team may prefer the `pre-push` hook, or a manual `iso-ci run`, and keep only
+quick checks in `pre-commit`. Failed jobs stay inspectable with `iso-ci
+inspect` and `iso-ci logs` as above. Secrets are never imported automatically:
+a workflow that needs one still needs `--secret NAME=ENV_VAR` in a manual run,
+and a hook passes none. Local preflight runs Linux ARM64 jobs only. Your
+hosted CI stays authoritative: a local pass is not evidence for a hosted x86 or
+macOS job.
 
 ## Credentials and trust
 

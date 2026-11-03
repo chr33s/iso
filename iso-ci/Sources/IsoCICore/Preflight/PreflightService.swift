@@ -163,6 +163,18 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     let event = try r.optionalString("event") ?? "push"
     let include = try r.strings("include")
     let exclude = try r.strings("exclude")
+    let snapshotSource: SnapshotSource
+    switch try r.optionalString("snapshot") {
+    case nil: snapshotSource = .workingTree
+    case let text?:
+      guard let parsed = SnapshotSource(rawValue: text) else {
+        throw CIError.invalid("snapshot must be working-tree or staged")
+      }
+      snapshotSource = parsed
+    }
+    guard snapshotSource == .workingTree || include.isEmpty else {
+      throw CIError.invalid("a staged snapshot never includes untracked paths; drop --include")
+    }
     let host = try r.optionalParsed("host", as: Name.self)
     var secrets: [String: String] = [:]
     if let raw = r.optional("secrets"), case .object(let members) = raw {
@@ -220,6 +232,7 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     // Only untracked paths matching an explicit include are captured.
     options.include = include
     options.exclude = exclude
+    options.source = snapshotSource
     options.workflowPath = workflowPath
     try PrivateFiles.ensureDirectory(options.outputDirectory)
     let capture = try SnapshotCapture.capture(repository: repositoryPath, options: options)
@@ -266,7 +279,7 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       revision: revision,
       createdAt: store.now, pinnedHost: host, profile: preflight.profile, inputs: inputs,
       secretNames: secrets.keys.sorted(), retainOnFailure: .live, include: include,
-      exclude: exclude)
+      exclude: exclude, snapshotSource: snapshotSource)
     try store.db.transaction { () throws(CIError) in
       try store.savePreflightRun(id, createdAt: record.createdAt, record)
       for job in plan.jobs {
@@ -279,12 +292,13 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     state.withLock { $0.secrets[id] = secrets }
     try store.event(
       "run:\(id)", "run.submitted",
-      "\(plan.jobs.count) job(s) from \(workflowPath); snapshot sha256:\(reference.digest.short)\(reference.isDirty ? " (includes uncommitted changes)" : "")",
+      "\(plan.jobs.count) job(s) from \(workflowPath); \(snapshotSource.rawValue) snapshot sha256:\(reference.digest.short)\(reference.isDirty ? " (includes uncommitted changes)" : "")",
       data: ["base_commit": reference.baseCommit, "plan": plan.digest.short])
     return [
       "run": .string(id.rawValue), "jobs": .integer(Int64(plan.jobs.count)),
       "snapshot": .string(reference.digest.rawValue), "base_commit": .string(reference.baseCommit),
       "dirty": .bool(reference.isDirty), "plan": .string(plan.digest.rawValue),
+      "snapshot_source": .string(snapshotSource.rawValue),
       "included_untracked": .array(capture.manifest.includedUntracked.map(JSONValue.string)),
       "excluded": .array(capture.excludedPaths.map(JSONValue.string)),
     ]

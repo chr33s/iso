@@ -11,6 +11,7 @@ private struct IndexBuilder {
     var size: UInt32 = 1
     var stage: Int = 0
     var skipWorktree = false
+    var intentToAdd = false
   }
 
   var version: UInt32
@@ -52,9 +53,10 @@ private struct IndexBuilder {
       entry += Self.u32(item.mode) + Self.u32(501) + Self.u32(20) + Self.u32(item.size)
       entry += [UInt8](repeating: 0xAB, count: 20)  // object id
       var flags = min(name.count, 0xFFF) | (item.stage << 12)
-      if item.skipWorktree { flags |= 0x4000 }
+      let extended = (item.skipWorktree ? 0x4000 : 0) | (item.intentToAdd ? 0x2000 : 0)
+      if extended != 0 { flags |= 0x4000 }
       entry += Self.u16(flags)
-      if item.skipWorktree { entry += Self.u16(0x4000) }
+      if extended != 0 { entry += Self.u16(extended) }
       if version == 4 {
         let common = zip(previous, name).prefix { $0 == $1 }.count
         entry += Self.varint(previous.count - common) + name[common...] + [0]
@@ -85,6 +87,19 @@ private struct IndexBuilder {
   #expect(entries.map(\.path) == paths + ["zz-link"])
   #expect(entries.last?.mode == 0o120000)
   #expect(entries.first?.mtimeSeconds == 1_700_000_000 && entries.first?.mtimeNanos == 7)
+}
+
+/// Staged-snapshot verification compares working-tree content with each
+/// entry's blob id, and refuses `git add -N` placeholders.
+@Test func entriesCarryTheirObjectIDAndIntentToAdd() throws {
+  let builder = IndexBuilder(
+    version: 3, items: [.init(path: "a"), .init(path: "b", size: 0, intentToAdd: true)])
+  let entries = try GitIndexFile.parse(builder.bytes())
+  #expect(
+    entries.map(\.objectID) == [
+      [UInt8](repeating: 0xAB, count: 20), [UInt8](repeating: 0xAB, count: 20),
+    ])
+  #expect(entries.map(\.intentToAdd) == [false, true])
 }
 
 @Test func varintMatchesGitsEncodingAtTheBoundaries() {

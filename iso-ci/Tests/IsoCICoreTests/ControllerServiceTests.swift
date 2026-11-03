@@ -399,6 +399,37 @@ import Testing
         == "/home/runner/actions-runner/_work/demo/demo")
   }
 
+  /// `run.submit` takes the snapshot source, records it on the run, and
+  /// refuses untracked includes for a staged snapshot.
+  @Test func submitRecordsAStagedSnapshotSource() throws {
+    let fixture = try Self.fixture(workflow: Self.simple)
+    func submitting(_ snapshot: String, include: JSONValue = []) -> Result<JSONValue, CIError>? {
+      fixture.service.handle(
+        ControlRequest(
+          method: "run.submit",
+          params: [
+            "workflow": ".github/workflows/ci.yml", "repository": .string(fixture.repository),
+            "platform": "linux/arm64", "event": "push", "include": include, "exclude": [],
+            "secrets": [:], "inputs": [:], "snapshot": .string(snapshot),
+          ]))
+    }
+    let value = try #require(submitting("staged")).get()
+    #expect(value["snapshot_source"] == "staged")
+    let run = try PreflightRunID(try #require(value["run"]?.stringValue))
+    #expect(
+      try fixture.store.preflightRun(run, as: PreflightRunRecord.self)?.snapshotSource == .staged)
+    guard case .failure(let included)? = submitting("staged", include: ["x.txt"]) else {
+      Issue.record("expected a refusal")
+      return
+    }
+    #expect(included.code == .invalidRequest)
+    guard case .failure(let unknown)? = submitting("index") else {
+      Issue.record("expected a refusal")
+      return
+    }
+    #expect(unknown.code == .invalidRequest)
+  }
+
   @Test func patchNeedsALiveRetainedEnvironment() throws {
     let fixture = try Self.fixture(workflow: Self.simple)
     guard
