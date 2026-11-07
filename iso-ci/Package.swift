@@ -12,7 +12,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
     // The guest-facing preflight data plane (HTTP/1.1 over a Unix socket).
-    .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
+    .package(url: "https://github.com/apple/swift-nio.git", exact: "2.104.0"),
     // The inert Git index reader shared with the host (no Git process).
     .package(path: "../iso-policy"),
   ],
