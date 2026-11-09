@@ -7,8 +7,12 @@ self-hosted-runner:
   labels:
     - xcode-27
 
-# Local SwiftPM checkouts carry other projects' workflows and actions.
+# Local SwiftPM checkouts (`.build`, and `--scratch-path .build-*`) carry
+# other projects' workflows and actions.
 paths:
   "**/.build/**":
+    ignore:
+      - ".*"
+  "**/.build-*/**":
     ignore:
       - ".*"
