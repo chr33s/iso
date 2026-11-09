@@ -36,7 +36,9 @@ struct Version: ParsableCommand {
     let `protocol` = protocolVersion
     let containerization = containerizationVersion
     /// Optional capabilities beyond the Linux sandbox protocol.
-    let features = [macGuestsFeature, brokeredTransportFeature]
+    let features =
+      [macGuestsFeature, brokeredTransportFeature]
+      + (MacAccelerators.compiledIn ? [macCoreAIFeature] : [])
   }
 
   func run() throws { try printJSON(Info()) }

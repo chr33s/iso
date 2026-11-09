@@ -1172,6 +1172,35 @@ controlling terminal — never a file, token, flag, environment variable or
 guest callback. The policy digest identifies content; it is not a signature,
 and this feature does not defend against the host administrator.
 
+## Experimental: paravirtualized Core AI (off; outside the stated boundary)
+
+`coreai` ([`coreai.md`](coreai.md),
+[design](design/paravirtualized-coreai.md)) is the one iso feature that
+weakens the host to strengthen the guest. It is off by default, refused
+unless `acknowledge_reduced_host_security` is `true`, and never part of a
+release:
+
+- **AMFI relaxed.** `com.apple.private.virtualization` loads on a non-Apple
+  binary only with AMFI relaxed (`amfi_get_out_of_my_way`-class boot-args),
+  which turns code-signing enforcement off for every process on the host,
+  not only `iso-sandbox-coreai`. The Enhanced Security entitlements of the
+  other iso executables are still present but no longer verified. iso never
+  changes boot-args or SIP: the owner's preflight reads them, refuses a fully
+  secured host, and the boot is audited as `host.security.reduced`.
+- **Shared hardware.** The guest reaches the host GPU and Neural Engine
+  drivers through paravirtual devices. A bug there is a guest→host escape
+  class Gate O otherwise excludes. The gate still requires exactly the
+  recorded accelerator classes, read back from the booted configuration,
+  and the owner's reduced-host preflight; any other device fails as host
+  exposure.
+- **Private API.** Classes and selectors are resolved at run time and only
+  in the `-DISO_COREAI` build; absent means unavailable, never a crash. The
+  release verifier refuses any `com.apple.private.*` entitlement and the
+  `iso-sandbox-coreai` binary.
+- **Guest-authored report.** The helper's `coreai_status` reply (compute
+  kind names, delegate flag) is bounded by the protocol, re-checked by the
+  host, and used only for the `up` line and the audit.
+
 ## Documented, accepted trade-offs
 
 These are deliberate and documented in [`AGENTS.md`](../AGENTS.md) /

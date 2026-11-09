@@ -5,8 +5,9 @@ import Virtualization
 
 /// Builds a macOS guest's `VZVirtualMachineConfiguration`: one display, one
 /// absolute pointing device, one keyboard, one vmnet network device, one
-/// vsock device, the clone's own disk, entropy. Nothing else: no directory
-/// shares, audio, serial ports, USB, clipboard or host sockets (Gate O).
+/// vsock device, the clone's own disk, entropy, and only for a Core AI
+/// sandbox its requested accelerators. Nothing else: no directory shares,
+/// audio, serial ports, USB, clipboard or host sockets (Gate O).
 package enum MacConfig {
   package static func hardwareModel(_ url: URL) throws -> VZMacHardwareModel {
     guard let data = try? Data(contentsOf: url),
@@ -25,7 +26,8 @@ package enum MacConfig {
 
   package static func make(
     hardwareModel: VZMacHardwareModel, machineIdentifier: VZMacMachineIdentifier, aux: URL,
-    disk: URL, cpus: Int, memoryBytes: UInt64, network: VZNetworkDeviceConfiguration
+    disk: URL, cpus: Int, memoryBytes: UInt64, network: VZNetworkDeviceConfiguration,
+    accelerators: [MacAccelerator] = []
   ) throws -> VZVirtualMachineConfiguration {
     let platform = VZMacPlatformConfiguration()
     platform.hardwareModel = hardwareModel
@@ -53,13 +55,18 @@ package enum MacConfig {
     c.keyboards = [VZMacKeyboardConfiguration()]
     c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+    try MacAccelerators.apply(accelerators, to: c)
     try c.validate()
-    try requireOnlyExpectedDevices(c)
+    try requireOnlyExpectedDevices(c, expectedAccelerators: accelerators)
     return c
   }
 
-  /// Fails closed on any device this runtime did not put there.
-  static func requireOnlyExpectedDevices(_ c: VZVirtualMachineConfiguration) throws {
+  /// Fails closed on any device this runtime did not put there, including
+  /// any accelerator other than exactly those requested.
+  static func requireOnlyExpectedDevices(
+    _ c: VZVirtualMachineConfiguration, expectedAccelerators: [MacAccelerator]
+  ) throws {
+    try MacAccelerators.requireExactly(expectedAccelerators, in: c)
     let unexpected: [(String, Int)] = [
       ("directory sharing", c.directorySharingDevices.count),
       ("audio", c.audioDevices.count),
@@ -104,6 +111,11 @@ package struct MacEffectiveConfig: Codable, Sendable {
   package var ownerTopology: String
   /// From the record; nil when guest-driven computer use is off.
   package var guestComputerUse: MacGuestComputerUse?
+  /// Accelerator device classes, read back from the configuration.
+  package var accelerators: [String] = []
+  /// From the Core AI build only: whether the owner found AMFI relaxed on
+  /// the host (for a Core AI sandbox, its preflight); nil otherwise.
+  package var hostSecurityReduced: Bool? = nil
 
   /// Read from the configuration the VM booted with and the listeners it
   /// registered, not restated: an extra disk, socket listener, console or
@@ -112,7 +124,7 @@ package struct MacEffectiveConfig: Codable, Sendable {
   /// record; the subnet is the network's own.
   static func from(
     _ c: VZVirtualMachineConfiguration, record: MacSandboxRecord, vsockPorts: [UInt32],
-    topology: String
+    topology: String, hostSecurity: MacHostSecurity.Report? = nil
   ) -> MacEffectiveConfig {
     MacEffectiveConfig(
       id: record.id.rawValue, template: record.template.rawValue, cpus: c.cpuCount,
@@ -136,7 +148,8 @@ package struct MacEffectiveConfig: Codable, Sendable {
       serialPorts: c.serialPorts.count, usbControllers: c.usbControllers.count,
       // A clipboard (the SPICE agent) needs a console device.
       clipboard: !c.consoleDevices.isEmpty, ownerTopology: topology,
-      guestComputerUse: record.guestComputerUse)
+      guestComputerUse: record.guestComputerUse, accelerators: MacAccelerators.attached(c),
+      hostSecurityReduced: hostSecurity?.reduced)
   }
 
   static func networkLabel(_ c: VZVirtualMachineConfiguration, record: MacSandboxRecord) -> String {

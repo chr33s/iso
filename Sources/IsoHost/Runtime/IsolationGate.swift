@@ -344,6 +344,25 @@ extension IsolationGate {
         "sandbox \(expected.sandbox) records unknown enrollment \(debugQuoted(sanitizeForDisplay(other)))"
       )
     }
+    _ = try macAcceleratorClasses(record, sandbox: expected.sandbox)
+  }
+
+  /// The accelerator device classes a macOS sandbox's record asks for,
+  /// sorted; empty when Core AI is off. An unknown, repeated or empty list
+  /// is refused.
+  package static func macAcceleratorClasses(_ record: MacRecord, sandbox: MachineName)
+    throws(RuntimeError) -> [String]
+  {
+    guard let coreAI = record.coreAI else { return [] }
+    let classes = coreAI.accelerators.compactMap(CoreAIDevices.className)
+    guard !classes.isEmpty, classes.count == coreAI.accelerators.count,
+      Set(classes).count == classes.count
+    else {
+      throw .unqualified(
+        "sandbox \(sandbox) records unknown Core AI accelerators \(coreAI.accelerators.map { debugQuoted(sanitizeForDisplay($0)) })"
+      )
+    }
+    return classes.sorted()
   }
 
   /// Why a booting macOS sandbox is not ready to gate yet, or nil once its
@@ -420,6 +439,19 @@ extension IsolationGate {
     guard effective.guestComputerUse == inspection.record.guestComputerUse else {
       throw .hostExposure(
         "sandbox \(name) runs guest computer use \(effective.guestComputerUse.map { "at \($0.frameRate) fps" } ?? "off") but was created with \(inspection.record.guestComputerUse.map { "\($0.frameRate) fps" } ?? "off")"
+      )
+    }
+    // Core AI as created: exactly the recorded accelerators, read back from
+    // the booted configuration, and only on a host the owner found relaxed.
+    let accelerators = try macAcceleratorClasses(inspection.record, sandbox: name)
+    guard effective.accelerators.sorted() == accelerators else {
+      throw .hostExposure(
+        "sandbox \(name) attaches accelerators \(effective.accelerators.map { sanitizeForDisplay($0) }) but was created with \(accelerators.isEmpty ? "none" : accelerators.joined(separator: ", "))"
+      )
+    }
+    guard accelerators.isEmpty || effective.hostSecurityReduced == true else {
+      throw .hostExposure(
+        "sandbox \(name) attaches Core AI accelerators without its owner's reduced-host-security preflight"
       )
     }
     let vsockPorts = macVsockPorts(guestComputerUse: inspection.record.guestComputerUse != nil)

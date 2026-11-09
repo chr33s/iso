@@ -10,20 +10,42 @@ set -euo pipefail
 # iso-sandbox with iso-sandbox.entitlements, which adds virtualization. No sudo.
 #
 # Usage:
-#   scripts/build-iso-sandbox.sh [PREFIX]
+#   scripts/build-iso-sandbox.sh [--experimental-coreai] [PREFIX]
 #     PREFIX defaults to ~/.local/opt/iso-sandbox
 #
 # iso finds <PREFIX>/bin/iso-sandbox at the default PREFIX; otherwise set
 #   "apple_container": {"binary": "<PREFIX>/bin/iso-sandbox"}
 # See docs/backends.md. Requires Xcode 27 and Swift 6.4 on an Apple Silicon Mac.
+#
+# --experimental-coreai instead builds iso-sandbox-coreai (with -DISO_COREAI)
+# and signs it with iso-sandbox-coreai.entitlements, which adds the private
+# com.apple.private.virtualization. That entitlement loads only on a host with
+# AMFI relaxed, which weakens every process on the host; never released. See
+# docs/coreai.md.
 
-case "${1:-}" in
-    -h | --help)
-        sed -n '4,18p' "$0" | sed -E 's/^# ?//'
-        exit 0
-        ;;
-esac
-prefix="${1:-${HOME}/.local/opt/iso-sandbox}"
+coreai=0
+prefix=""
+for arg in "$@"; do
+    case "${arg}" in
+        -h | --help)
+            sed -n '4,24p' "$0" | sed -E 's/^# ?//'
+            exit 0
+            ;;
+        --experimental-coreai) coreai=1 ;;
+        -*)
+            echo "error: unknown option ${arg}" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "${prefix}" ]]; then
+                echo "error: more than one PREFIX" >&2
+                exit 1
+            fi
+            prefix="${arg}"
+            ;;
+    esac
+done
+prefix="${prefix:-${HOME}/.local/opt/iso-sandbox}"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "error: iso-sandbox needs an Apple Silicon Mac" >&2
@@ -36,8 +58,13 @@ fi
 
 scripts="$(cd "$(dirname "$0")" && pwd)"
 pkg="$(cd "${scripts}/../iso-sandbox" && pwd)"
-swift build --package-path "${pkg}" -c release --force-resolved-versions
-bin="$(swift build --package-path "${pkg}" -c release --show-bin-path)"
+build=(swift build --package-path "${pkg}" -c release --force-resolved-versions)
+if ((coreai)); then
+    # A separate scratch path: the default build never sees -DISO_COREAI.
+    build+=(--scratch-path "${pkg}/.build-coreai" -Xswiftc -DISO_COREAI)
+fi
+"${build[@]}"
+bin="$("${build[@]}" --show-bin-path)"
 
 # Another user who can write here could swap the binary iso runs. Checked
 # before `install -d`, which would silently reset an existing directory's mode.
@@ -57,20 +84,37 @@ if [[ -e "${prefix}/bin" ]]; then
 else
     install -d -m 0755 "${prefix}/bin"
 fi
-# install_signed NAME [CODESIGN-ARGS...]: stage, sign and rename into place.
+# install_signed SOURCE NAME [CODESIGN-ARGS...]: stage, sign and rename into place.
 install_signed() {
-    local name="$1"
-    shift
+    local source="$1" name="$2"
+    shift 2
     tmp="$(mktemp "${prefix}/bin/.${name}.XXXXXX")"
     trap 'rm -f "${tmp}"' EXIT
-    cp "${bin}/${name}" "${tmp}"
+    cp "${bin}/${source}" "${tmp}"
     codesign --force --sign - --options runtime "$@" "${tmp}"
     chmod 0755 "${tmp}"
     mv -f "${tmp}" "${prefix}/bin/${name}"
     trap - EXIT
 }
-install_signed iso-macos-helper --entitlements "${scripts}/enhanced-security.entitlements"
-install_signed iso-sandbox --entitlements "${pkg}/iso-sandbox.entitlements"
+if ((coreai)); then
+    # The guest helper has no Core AI code: keep the one the plain build
+    # installed, so template builds record one helper whichever runtime ran.
+    if [[ ! -x "${prefix}/bin/iso-macos-helper" ]]; then
+        install_signed iso-macos-helper iso-macos-helper \
+            --entitlements "${scripts}/enhanced-security.entitlements"
+    fi
+    install_signed iso-sandbox iso-sandbox-coreai \
+        --entitlements "${pkg}/iso-sandbox-coreai.entitlements"
+    # `version` may not run on a fully secured host: the private entitlement
+    # stops the binary from launching there.
+    "${prefix}/bin/iso-sandbox-coreai" version ||
+        echo "warning: iso-sandbox-coreai did not run; AMFI is probably enforcing (see docs/coreai.md)" >&2
+    echo "Installed ${prefix}/bin/iso-sandbox-coreai"
+    exit 0
+fi
+install_signed iso-macos-helper iso-macos-helper \
+    --entitlements "${scripts}/enhanced-security.entitlements"
+install_signed iso-sandbox iso-sandbox --entitlements "${pkg}/iso-sandbox.entitlements"
 
 "${prefix}/bin/iso-sandbox" version
 echo "Installed ${prefix}/bin/iso-sandbox and ${prefix}/bin/iso-macos-helper"

@@ -96,6 +96,9 @@ package struct IsoConfig: Sendable, Equatable {
   package let revokedGrantIDs: [String]
   /// `computer_use`: guest-driven computer use for macOS guests.
   package let computerUse: ComputerUseConfig
+  /// `coreai`: paravirtualized Core AI accelerators for macOS guests; nil
+  /// when off (docs/design/paravirtualized-coreai.md).
+  package let coreAI: CoreAIConfig?
 
   package init(
     dataDirectory: HostPath, vm: VMConfig, sshPort: UInt16, github: GitHubAuth?,
@@ -106,9 +109,11 @@ package struct IsoConfig: Sendable, Equatable {
     egressFilter: EgressFilter, limits: LimitsConfig, securityPreset: SecurityPreset?,
     editor: EditorConfig, execution: ExecutionConfig = .defaults, policy: CompiledPolicy?,
     network: NetworkConfig = .defaults, workspaceInput: WorkspaceInputConfig = .defaults,
-    revokedGrantIDs: [String] = [], computerUse: ComputerUseConfig = .off
+    revokedGrantIDs: [String] = [], computerUse: ComputerUseConfig = .off,
+    coreAI: CoreAIConfig? = nil
   ) {
     self.computerUse = computerUse
+    self.coreAI = coreAI
     self.revokedGrantIDs = revokedGrantIDs
     self.workspaceInput = workspaceInput
     self.execution = execution
@@ -473,6 +478,33 @@ package struct ComputerUseConfig: Sendable, Equatable {
   package static let off = ComputerUseConfig(guestFrameRate: nil)
 }
 
+/// `coreai` (docs/design/paravirtualized-coreai.md): which paravirtualized
+/// Core AI accelerators a new macOS instance gets. Present only when
+/// enabled, which also requires acknowledging that the host must run with
+/// AMFI relaxed for the private entitlement that loads them.
+package struct CoreAIConfig: Sendable, Equatable {
+  package enum Accelerator: String, Sendable, CaseIterable {
+    case gpu
+    case neuralEngine = "neural_engine"
+  }
+
+  /// Non-empty, without repeats, in configured order.
+  package let accelerators: [Accelerator]
+  /// `acknowledge_reduced_host_security`: always true for an enabled value.
+  package let acknowledged: Bool
+
+  /// Nil unless `accelerators` is non-empty, unique and `acknowledged`.
+  package init?(accelerators: [Accelerator], acknowledged: Bool) {
+    guard !accelerators.isEmpty, Set(accelerators).count == accelerators.count, acknowledged
+    else { return nil }
+    self.accelerators = accelerators
+    self.acknowledged = acknowledged
+  }
+
+  /// `gpu,neural_engine`, as the runtime's `macos create --coreai` takes it.
+  package var runtimeArgument: String { accelerators.map(\.rawValue).joined(separator: ",") }
+}
+
 /// `limits` (selective-hardening spec §8).
 package struct LimitsConfig: Sendable, Equatable {
   /// Each boot ends this long after it starts, enforced by the sandbox owner
@@ -572,7 +604,8 @@ extension IsoConfig {
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
       editor: editor, execution: execution, policy: policy, network: network,
-      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs, computerUse: computerUse)
+      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs, computerUse: computerUse,
+      coreAI: coreAI)
   }
 
   /// MCP servers whose headers are client-resolved values (HTTP/SSE servers
@@ -615,7 +648,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse)
+      computerUse: computerUse, coreAI: coreAI)
   }
 
   /// Both agents with one more MCP server. Does not rewrite the config file.
@@ -636,7 +669,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse)
+      computerUse: computerUse, coreAI: coreAI)
   }
 
   /// This command's `proxy.mode` override. Does not rewrite the config file.
@@ -650,7 +683,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse)
+      computerUse: computerUse, coreAI: coreAI)
   }
 
   /// The configuration under an instance's recorded transport.
@@ -663,7 +696,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: NetworkConfig(transport: transport), workspaceInput: workspaceInput,
-      revokedGrantIDs: revokedGrantIDs, computerUse: computerUse)
+      revokedGrantIDs: revokedGrantIDs, computerUse: computerUse, coreAI: coreAI)
   }
 
   /// Why `egress` cannot run over `network.transport`, or nil. The brokered
@@ -686,7 +719,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: mode, egressFilter: filter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse)
+      computerUse: computerUse, coreAI: coreAI)
   }
 }
 

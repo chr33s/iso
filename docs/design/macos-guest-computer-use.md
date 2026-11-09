@@ -182,6 +182,9 @@ On demand, the host also sends:
 - `status`, on `inspect` and on every `cu-session`: the guest reports its SSH
   host key, which must equal the pin. A session is opened only when it does.
 - `shutdown`, from the stop sequence: the guest runs `shutdown -h now`.
+- `coreai_status`, only for a [Core AI](paravirtualized-coreai.md) sandbox,
+  once per authenticated connection: the guest reports its compute kinds and
+  whether the Core AI delegate flag is on. Read-only and bounded.
 
 The helper runs no other commands. A hello from another guest process
 without the key is rejected and cannot replace the accepted connection.

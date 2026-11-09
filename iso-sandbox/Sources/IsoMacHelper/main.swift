@@ -4,7 +4,8 @@
 // It connects to the host owner on vsock port 7801 and answers its
 // challenge (see IsoMacProtocol and docs/design/macos-guest-computer-use.md).
 // It acts only on the closed message set: enroll (first boot of a clone),
-// network, status, shutdown. It runs no other commands. Run as
+// network, status, coreai_status (read-only), shutdown. It runs no other
+// commands. Run as
 // `iso-macos-helper cu-mcp`, it is instead the computer-use MCP server
 // (CUMCP.swift).
 
@@ -210,6 +211,11 @@ func session(_ fd: Int32) {
     case .status where key != nil:
       var r = reply(.statusReply, to: m)
       r.sshHostKey = hostKey()
+      _ = send(fd, r)
+    case .coreAIStatus where key != nil:
+      var r = reply(.coreAIStatusReply, to: m)
+      r.availableKinds = CoreAIProbe.availableKinds()
+      r.delegateEnabled = CoreAIProbe.delegateEnabled()
       _ = send(fd, r)
     case .shutdown where key != nil:
       _ = send(fd, reply(.ack, to: m))

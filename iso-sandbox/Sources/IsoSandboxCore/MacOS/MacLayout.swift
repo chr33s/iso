@@ -79,6 +79,11 @@ package struct MacTemplate: Codable, Sendable {
   package var minimumCPUs: Int
   package var minimumMemoryBytes: UInt64
   package var createdAt: Date
+  /// True when the guest setup wrote the paravirtualized Core AI feature
+  /// flag (docs/design/paravirtualized-coreai.md); nil for a plain template.
+  package var coreAIFeatureFlag: Bool? = nil
+
+  package var hasCoreAIFeatureFlag: Bool { coreAIFeatureFlag == true }
 }
 
 package struct MacSandboxPaths: Sendable {
@@ -157,6 +162,8 @@ package struct MacSandboxRecord: Codable, Sendable {
   package var expiresAt: Date?
   /// Guest-driven computer use, fixed at create; nil when off.
   package var guestComputerUse: MacGuestComputerUse? = nil
+  /// Paravirtualized Core AI accelerators, fixed at create; nil when off.
+  package var coreAI: MacCoreAI? = nil
 
   package var subnet: String { SandboxRecord.subnet(subnetIndex) }
   /// The guest's static address: `.2` of its subnet, as for Linux sandboxes.
@@ -177,6 +184,46 @@ package struct MacGuestComputerUse: Codable, Equatable, Sendable {
       )
     }
     self.frameRate = frameRate
+  }
+}
+
+/// A paravirtualized Core AI accelerator (docs/design/paravirtualized-coreai.md).
+package enum MacAccelerator: String, Codable, CaseIterable, Sendable {
+  case gpu
+  case neuralEngine = "neural_engine"
+}
+
+/// Paravirtualized Core AI for one sandbox: the accelerators its owner
+/// attaches. The sandbox's template carries the guest feature flag.
+package struct MacCoreAI: Codable, Equatable, Sendable {
+  package var accelerators: [MacAccelerator]
+
+  package init(accelerators: [MacAccelerator]) throws {
+    guard !accelerators.isEmpty else {
+      throw SandboxError("Core AI needs at least one accelerator")
+    }
+    guard Set(accelerators).count == accelerators.count else {
+      throw SandboxError("Core AI accelerators must not repeat")
+    }
+    self.accelerators = accelerators
+  }
+
+  /// `gpu,neural_engine`, as `macos create --coreai` takes it.
+  package init(parsing list: String) throws {
+    var kinds: [MacAccelerator] = []
+    for part in list.split(separator: ",", omittingEmptySubsequences: false) {
+      guard let kind = MacAccelerator(rawValue: String(part)) else {
+        throw SandboxError("unknown Core AI accelerator \(String(part).debugDescription)")
+      }
+      kinds.append(kind)
+    }
+    try self.init(accelerators: kinds)
+  }
+
+  package init(from decoder: any Decoder) throws {
+    enum Keys: String, CodingKey { case accelerators }
+    let c = try decoder.container(keyedBy: Keys.self)
+    try self.init(accelerators: try c.decode([MacAccelerator].self, forKey: .accelerators))
   }
 }
 

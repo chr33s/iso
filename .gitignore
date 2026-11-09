@@ -16,6 +16,7 @@ __pycache__/
 /.build-*/
 /.swiftpm/
 /*/.build/
+/*/.build-*/
 /*/.swiftpm/
 /experiments/*/.build/
 /experiments/*/.swiftpm/

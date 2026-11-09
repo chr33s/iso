@@ -24,7 +24,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse)
+      computerUse: computerUse, coreAI: coreAI)
   }
 
   /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
@@ -39,7 +39,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse)
+      computerUse: computerUse, coreAI: coreAI)
   }
 }
 

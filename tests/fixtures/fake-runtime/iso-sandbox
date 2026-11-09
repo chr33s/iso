@@ -62,6 +62,8 @@ def main():
         features = [] if mode().get("noMacFeature") else ["macos-guests"]
         if not mode().get("noBrokeredFeature"):
             features.append("brokered-transport")
+        if mode().get("coreAIFeature"):
+            features.append("macos-coreai")
         if features:
             version["features"] = features
         return out(version)
@@ -142,6 +144,8 @@ def mac_inspect(root, sandbox):
                                        "createdAt"]}
     if sandbox.get("expiresAt"):
         record["expiresAt"] = sandbox["expiresAt"]
+    if sandbox.get("coreAI"):
+        record["coreAI"] = sandbox["coreAI"]
     result = {"record": record, "status": sandbox["status"]}
     knobs = mode()
     pending = sandbox["status"] == "running" and knobs.get("pendingInspects", 0) > 0
@@ -161,12 +165,26 @@ def mac_inspect(root, sandbox):
             + f":10.231.{sandbox['subnetIndex']}.0/24",
             "macAddress": sandbox["macAddress"], "vsockPorts": [7801], "directoryShares": 0, "audioDevices": 0,
             "serialPorts": 0, "usbControllers": 0, "clipboard": False, "ownerTopology": "user/501 Background"}
+        if sandbox.get("coreAI"):
+            classes = {"gpu": "_VZMacCoreAIDeviceConfiguration",
+                       "neural_engine": "_VZMacNeuralEngineDeviceConfiguration"}
+            result["effective"]["accelerators"] = knobs.get(
+                "attachedAccelerators", [classes[k] for k in sandbox["coreAI"]["accelerators"]])
+            result["effective"]["hostSecurityReduced"] = True
+        elif knobs.get("coreAIFeature"):
+            result["effective"]["hostSecurityReduced"] = True
         result["runtime"] = {
             "vmState": "running", "vmInstance": "vm-1", "bootId": "mac-boot",
             "enrollment": "pending" if pending else sandbox["enrollment"], "helperConnected": not pending,
             "guestBoot": "guest-boot", "guestBuild": "26A434", "helperGeneration": 1,
             "sshHostKey": knobs.get("confirmedKey", PUBKEY), "sshHostKeyConfirmed": not pending, "ipv4": address,
             "topology": "user/501 Background"}
+        if sandbox.get("coreAI") and "coreAIProbe" in knobs:
+            if knobs["coreAIProbe"] is not None:
+                result["runtime"]["coreAI"] = knobs["coreAIProbe"]
+        elif sandbox.get("coreAI"):
+            result["runtime"]["coreAI"] = {"availableKinds": ["cpu", "gpu", "neuralEngine"],
+                                           "delegateEnabled": True, "guestBoot": "guest-boot"}
     return result
 
 
@@ -184,6 +202,10 @@ def handle_macos(words, args, root, state):
             "provisionSha256": mode().get("provisionSha", hashlib.sha256(provision).hexdigest()),
             "diskBytes": int(option(args, "--disk-gib")) << 30, "minimumCPUs": 2,
             "minimumMemoryBytes": 4 << 30, "createdAt": "2026-10-06T00:00:00Z"}
+        if "--coreai" in args:
+            if not name.endswith("-coreai"):
+                fail("a Core AI template's name must end in -coreai")
+            templates[name]["coreAIFeatureFlag"] = True
         return templates[name]
     if key == "template list":
         return sorted(templates.values(), key=lambda t: t["name"])
@@ -211,6 +233,11 @@ def handle_macos(words, args, root, state):
             "network": "host_only" if option(args, "--network") == "host-only" else "shared",
             "enrollment": "pending", "authorizedKey": option(args, "--authorized-key"),
             "createdAt": "2026-10-06T00:00:00Z", "status": "stopped"}
+        if option(args, "--coreai"):
+            if not template.get("coreAIFeatureFlag"):
+                del sandboxes[sandbox_id]
+                fail(f"template {template['name']} has no Core AI feature flag")
+            sandboxes[sandbox_id]["coreAI"] = {"accelerators": option(args, "--coreai").split(",")}
         os.makedirs(os.path.join(root, "macos", "sandboxes", sandbox_id), exist_ok=True)
         return {k: v for k, v in sandboxes[sandbox_id].items() if k != "status"}
     sandbox = sandboxes.get(sandbox_id)

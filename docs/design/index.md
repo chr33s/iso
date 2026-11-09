@@ -56,6 +56,11 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Guest-driven computer use](guest-driven-computer-use.md): an agent in a
   macOS guest drives its own desktop through a host-brokered vsock channel
   and the VM's virtual HID devices.
+- [Paravirtualized Core AI](paravirtualized-coreai.md): experimental GPU and
+  Neural Engine Core AI for macOS guests through private API, at the cost of
+  a host running with AMFI relaxed. Follow-up: VM save/restore of a Core AI
+  instance needs the host flag `ParavirtualizedCoreAIHost/enable_save_restore`
+  (§11) once iso has snapshots; until then Core AI instances only shut down.
 - [Q0 spike results](macos-computer-use-q0-spike.md).
 - [Process-context experiment](macos-vz-context-headless-experiment-spec.md)
   and [results](macos-vz-context-experiment.md).

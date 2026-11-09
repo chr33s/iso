@@ -26,6 +26,8 @@ package struct MacRecord: Sendable, Equatable, Decodable {
   package let expiresAt: String?
   /// Guest-driven computer use, fixed at create; nil when off.
   package let guestComputerUse: MacGuestComputerUse?
+  /// Paravirtualized Core AI, fixed at create; nil when off.
+  package let coreAI: MacCoreAIRecord?
 
   package var sessionDeadline: Date? {
     expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
@@ -60,11 +62,17 @@ package struct MacEffective: Sendable, Equatable, Decodable {
   package let ownerTopology: String
   /// Absent from owners that predate guest-driven computer use: off.
   package let guestComputerUse: MacGuestComputerUse?
+  /// Accelerator device classes read back from the booted configuration;
+  /// absent from owners that predate Core AI: none.
+  package let accelerators: [String]
+  /// A Core AI sandbox's owner preflight: whether AMFI is relaxed on the
+  /// host. Nil for any other sandbox.
+  package let hostSecurityReduced: Bool?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, template, cpus, memoryBytes, displays, pointingDevices, keyboards, storage, network
     case macAddress, vsockPorts, directoryShares, audioDevices, serialPorts, usbControllers
-    case clipboard, ownerTopology, guestComputerUse
+    case clipboard, ownerTopology, guestComputerUse, accelerators, hostSecurityReduced
   }
 
   package init(from decoder: any Decoder) throws {
@@ -87,6 +95,59 @@ package struct MacEffective: Sendable, Equatable, Decodable {
     clipboard = try c.decode(Bool.self, forKey: .clipboard)
     ownerTopology = try c.decode(String.self, forKey: .ownerTopology)
     guestComputerUse = try c.decodeIfPresent(MacGuestComputerUse.self, forKey: .guestComputerUse)
+    accelerators = try c.decodeIfPresent([String].self, forKey: .accelerators) ?? []
+    hostSecurityReduced = try c.decodeIfPresent(Bool.self, forKey: .hostSecurityReduced)
+  }
+}
+
+/// `coreAI` in a macOS record: the accelerators the owner attaches.
+package struct MacCoreAIRecord: Sendable, Equatable, Codable {
+  /// `gpu` or `neural_engine`, as `macos create --coreai` takes them.
+  package let accelerators: [String]
+
+  package init(accelerators: [String]) { self.accelerators = accelerators }
+
+  /// The same accelerators in any order (the gate compares them as a set).
+  package static func same(_ a: MacCoreAIRecord?, _ b: MacCoreAIRecord?) -> Bool {
+    a?.accelerators.sorted() == b?.accelerators.sorted()
+  }
+
+  /// What `config` asks new sandboxes to be created with.
+  package init?(_ config: CoreAIConfig?) {
+    guard let config else { return nil }
+    accelerators = config.accelerators.map(\.rawValue)
+  }
+}
+
+/// The guest's `coreai_status` report (`runtime.coreAI`). Guest-authored:
+/// the runtime bounds it, and the host re-checks each kind before display
+/// or audit.
+package struct MacCoreAIProbe: Sendable, Equatable, Decodable {
+  package let availableKinds: [String]
+  package let delegateEnabled: Bool
+
+  package init(availableKinds: [String], delegateEnabled: Bool) {
+    self.availableKinds = availableKinds
+    self.delegateEnabled = delegateEnabled
+  }
+
+  enum CodingKeys: String, CodingKey { case availableKinds, delegateEnabled }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let kinds = try c.decode([String].self, forKey: .availableKinds)
+    guard kinds.count <= 8, kinds.allSatisfy(Self.isKind) else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .availableKinds, in: c, debugDescription: "not a list of compute kinds")
+    }
+    self.init(
+      availableKinds: kinds, delegateEnabled: try c.decode(Bool.self, forKey: .delegateEnabled))
+  }
+
+  /// ASCII letters, 1-32 of them, as the helper protocol allows.
+  static func isKind(_ s: String) -> Bool {
+    (1...32).contains(s.utf8.count)
+      && s.utf8.allSatisfy { (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) }
   }
 }
 
@@ -115,10 +176,13 @@ package struct MacRuntimeStatus: Sendable, Equatable, Decodable {
   /// This boot's guest computer-use counts; absent when it is off. An
   /// invalid report (a negative count) is dropped: only the audit loses it.
   package let guestComputerUse: MacGuestCUCounts?
+  /// The guest's Core AI report for this boot; absent until it answers, or
+  /// when Core AI is off. An invalid report is dropped.
+  package let coreAI: MacCoreAIProbe?
 
   enum CodingKeys: String, CodingKey {
     case vmState, bootId, enrollment, helperConnected, sshHostKey, sshHostKeyConfirmed, ipv4
-    case guestComputerUse
+    case guestComputerUse, coreAI
   }
 
   package init(from decoder: any Decoder) throws {
@@ -131,6 +195,7 @@ package struct MacRuntimeStatus: Sendable, Equatable, Decodable {
     sshHostKeyConfirmed = try c.decode(Bool.self, forKey: .sshHostKeyConfirmed)
     ipv4 = try c.decode(String.self, forKey: .ipv4)
     guestComputerUse = try? c.decodeIfPresent(MacGuestCUCounts.self, forKey: .guestComputerUse)
+    coreAI = (try? c.decodeIfPresent(MacCoreAIProbe.self, forKey: .coreAI)) ?? nil
   }
 }
 
@@ -206,6 +271,10 @@ package struct MacTemplateInfo: Sendable, Equatable, Decodable {
   package let provisionSha256: String?
   package let minimumCPUs: UInt32
   package let minimumMemoryBytes: UInt64
+  /// True for a template built with the Core AI feature flag.
+  package let coreAIFeatureFlag: Bool?
+
+  package var hasCoreAIFeatureFlag: Bool { coreAIFeatureFlag == true }
 }
 
 package struct MacListed: Sendable, Equatable, Decodable {
@@ -215,6 +284,8 @@ package struct MacListed: Sendable, Equatable, Decodable {
 
 extension RuntimeProtocol {
   package static let macFeature = "macos-guests"
+  /// Advertised only by the experimental `iso-sandbox-coreai` build.
+  package static let macCoreAIFeature = "macos-coreai"
 
   package static func parseMacInspect(_ bytes: [UInt8], expected: MachineName)
     throws(RuntimeError) -> MacInspection
@@ -278,7 +349,7 @@ extension SandboxRuntime {
   /// passed to `progress`, sanitized.
   package func macBuildTemplate(
     _ name: MachineName, ipsw: String, provision: String, cpus: UInt32, memoryMiB: UInt64,
-    diskGiB: UInt64, deadline: Duration, progress: (String) -> Void
+    diskGiB: UInt64, coreAI: Bool = false, deadline: Duration, progress: (String) -> Void
   ) throws -> MacTemplateInfo {
     var stdout: [UInt8] = []
     var lines = BoundedLineSplitter(limit: 4096)
@@ -294,7 +365,7 @@ extension SandboxRuntime {
         [
           "--ipsw", ipsw, "--name", name.rawValue, "--provision", provision, "--cpus", String(cpus),
           "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
-        ]),
+        ] + (coreAI ? ["--coreai"] : [])),
       deadline: deadline, cancellable: true
     ) { stream, bytes in
       switch stream {
@@ -321,7 +392,8 @@ extension SandboxRuntime {
 
   package func macCreate(
     _ name: MachineName, template: MachineName, cpus: UInt32, memoryMiB: UInt64, owner: OwnerID,
-    egress: EgressMode, authorizedKey: String, guestComputerUse: MacGuestComputerUse? = nil
+    egress: EgressMode, authorizedKey: String, guestComputerUse: MacGuestComputerUse? = nil,
+    coreAI: MacCoreAIRecord? = nil
   ) throws(RuntimeError) {
     _ = try Self.checked(
       executor,
@@ -335,7 +407,8 @@ extension SandboxRuntime {
         ]
           + (guestComputerUse.map {
             ["--guest-computer-use", "--guest-frame-rate", String($0.frameRate)]
-          } ?? [])),
+          } ?? [])
+          + (coreAI.map { ["--coreai", $0.accelerators.joined(separator: ",")] } ?? [])),
       deadline: createDeadline, limit: Self.jsonLimit, cancellable: true)
   }
 

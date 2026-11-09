@@ -1190,3 +1190,178 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   defer { vmnet.remove() }
   try vmnet.backend.requireMacSupportedConfig()
 }
+
+// MARK: - Paravirtualized Core AI (docs/design/paravirtualized-coreai.md)
+
+private let coreAIConfig =
+  #", "coreai": {"accelerators": ["gpu", "neural_engine"], "acknowledge_reduced_host_security": true}"#
+
+private func macCoreAISetup(_ install: FakeInstallation, image: ImageName, coreAI: Bool = true)
+  throws
+{
+  let ipsw = install.root + "/restore.ipsw"
+  FileManager.default.createFile(atPath: ipsw, contents: Data("ipsw".utf8))
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
+      macOSRestoreImage: ipsw, macOSCoreAI: coreAI))
+}
+
+private final class CapturedLines: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [String] = []
+  func append(_ line: String) { lock.withLock { values.append(line) } }
+  var lines: [String] { lock.withLock { values } }
+}
+
+private func capturing(_ install: FakeInstallation) -> (AppleBackend, CapturedLines) {
+  let captured = CapturedLines()
+  let backend = AppleBackend(
+    config: install.config,
+    environment: [
+      "HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin",
+      "TMPDIR": NSTemporaryDirectory(),
+    ],
+    executable: nil, diagnostics: Diagnostics(verbosity: 0) { captured.append($0) })
+  return (backend, captured)
+}
+
+@Test func coreAISetupBuildsAFlaggedTemplateAndRecordsIt() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let image = try ImageName("macai")
+  try macCoreAISetup(install, image: image)
+  let build = try #require(
+    install.calls().first { $0.starts(with: ["macos", "template", "build"]) })
+  #expect(build.contains("--coreai"))
+  #expect(build[build.firstIndex(of: "--name")! + 1].hasSuffix("-coreai"))
+  let manifest = try ImageManifest.load(install.config, image)
+  #expect(manifest.hasCoreAIFeatureFlag)
+  #expect(manifest.manifestID.hasSuffix("-coreai"))
+  #expect(manifest.imageRef.hasSuffix("-coreai"))
+  try install.backend.runtime().verifyImage(manifest)
+  // Unchanged inputs: no second build.
+  try macCoreAISetup(install, image: image)
+  #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "build"]) })
+  // The same restore image without --coreai is a different template.
+  try macCoreAISetup(install, image: image, coreAI: false)
+  let plain = try #require(
+    install.calls().first { $0.starts(with: ["macos", "template", "build"]) })
+  #expect(!plain.contains("--coreai"))
+  let rebuilt = try ImageManifest.load(install.config, image)
+  #expect(!rebuilt.hasCoreAIFeatureFlag && !rebuilt.manifestID.hasSuffix("-coreai"))
+}
+
+@Test func coreAIInstancesNeedAMacOSImageAFlaggedTemplateAndTheCoreAIRuntime() throws {
+  let install = try FakeInstallation(extra: macVM + coreAIConfig)
+  defer { install.remove() }
+  var (backend, captured) = capturing(install)
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let plainImage = try ImageName("mac")
+  try macCoreAISetup(install, image: plainImage, coreAI: false)
+  let image = try ImageName("macai")
+  try macCoreAISetup(install, image: image)
+  _ = install.calls()
+
+  func refused(_ name: String, _ image: ImageName) throws -> String {
+    let instance = try Instance.allocate(
+      install.config, name: InstanceName(name), image: image, workspacePath: nil)
+    let error = try #require(throws: HostError.self) {
+      try backend.createAndStart(instance, diskGiB: nil)
+    }
+    #expect(try MachineSidecar.loadIfPresent(instance) == nil, "nothing is created")
+    return error.message
+  }
+  #expect(try refused("linux", .default).contains("macOS guests only"))
+  #expect(try refused("plain", plainImage).contains("iso setup --guest macos --coreai"))
+  #expect(try refused("nofeature", image).contains("iso-sandbox-coreai"))
+  #expect(!install.calls().contains { $0.starts(with: ["macos", "create"]) })
+
+  // A backend probes its runtime once: a fresh one sees the new features.
+  try macMode(install, ["coreAIFeature": true])
+  (backend, captured) = capturing(install)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("ai"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let create = try #require(install.calls().first { $0.starts(with: ["macos", "create"]) })
+  #expect(create[create.firstIndex(of: "--coreai")! + 1] == "gpu,neural_engine")
+  #expect(try MachineSidecar.load(instance).coreAI?.accelerators == ["gpu", "neural_engine"])
+  #expect(
+    captured.lines.contains {
+      $0.contains("core ai: gpu, neuralEngine (paravirtualized; host security reduced)")
+    })
+  let events = try BoundaryAudit.load(instance).compactMap { $0["event"] as? String }
+  #expect(events.contains("host_security_reduced"))
+  #expect(events.contains("mac_coreai_attached"))
+  #expect(events.contains("mac_coreai_probe"))
+  let attached = try #require(
+    try BoundaryAudit.load(instance).first { $0["event"] as? String == "mac_coreai_attached" })
+  #expect(
+    Set(attached["accelerators"] as? [String] ?? [])
+      == ["_VZMacCoreAIDeviceConfiguration", "_VZMacNeuralEngineDeviceConfiguration"])
+
+  // A restart of the recorded Core AI instance needs the Core AI runtime too.
+  let running = try #require(try backend.asRunning(instance))
+  try backend.stop(running)
+  try macMode(install, [:])
+  #expect(throws: HostError.self) { try capturing(install).0.startExisting(instance) }
+  try macMode(install, ["coreAIFeature": true])
+  (backend, captured) = capturing(install)
+  try backend.startExisting(instance)
+  #expect(try backend.asRunning(instance) != nil)
+}
+
+@Test func aCoreAIBootWithOtherAcceleratorsFailsTheGateAndAShortReportOnlyWarns() throws {
+  let install = try FakeInstallation(extra: macVM + coreAIConfig)
+  defer { install.remove() }
+  let image = try ImageName("macai")
+  try macCoreAISetup(install, image: image)
+  try macMode(
+    install, ["coreAIFeature": true, "attachedAccelerators": ["_VZMacCoreAIDeviceConfiguration"]])
+  let (backend, captured) = capturing(install)
+  let exposed = try Instance.allocate(
+    install.config, name: InstanceName("exposed"), image: image, workspacePath: nil)
+  let error = try #require(throws: RuntimeError.self) {
+    try backend.createAndStart(exposed, diskGiB: nil)
+  }
+  guard case .hostExposure = error else {
+    Issue.record("expected a host-exposure refusal, got \(error)")
+    return
+  }
+  try macMode(
+    install,
+    [
+      "coreAIFeature": true,
+      "coreAIProbe": ["availableKinds": ["cpu", "gpu"], "delegateEnabled": true],
+    ])
+  let short = try Instance.allocate(
+    install.config, name: InstanceName("short"), image: image, workspacePath: nil)
+  try backend.createAndStart(short, diskGiB: nil)
+  #expect(try backend.asRunning(short) != nil)
+  #expect(
+    try BoundaryAudit.load(short).compactMap { $0["event"] as? String }.contains(
+      "host_security_reduced"))
+  #expect(
+    captured.lines.contains {
+      $0.contains("core ai: guest reports gpu of requested gpu, neuralEngine")
+    })
+}
+
+/// The Core AI build reports a reduced host for every macOS boot, so the
+/// audit shows the weakened window for an instance without Core AI too.
+@Test func aReducedHostIsAuditedForAMacOSBootWithoutCoreAI() throws {
+  let install = try FakeInstallation(extra: macVM)
+  defer { install.remove() }
+  let image = try ImageName("mac")
+  try macSetup(install, image: image)
+  try macMode(install, ["coreAIFeature": true])
+  let (backend, _) = capturing(install)
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("plain"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let events = try BoundaryAudit.load(instance).compactMap { $0["event"] as? String }
+  #expect(events.contains("host_security_reduced"))
+  #expect(!events.contains("mac_coreai_attached"))
+}

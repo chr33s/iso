@@ -542,6 +542,40 @@ struct FakeFileSystem: ConfigFileSystem {
     fieldError(#"{"computer_use": {"guest_access": "yes"}}"#)?.field == "computer_use.guest_access")
 }
 
+@Test func coreAIIsOffUnlessAcceleratorsAreListedAndTheHostCostAcknowledged() throws {
+  #expect(try load("{}").coreAI == nil)
+  #expect(try load(#"{"coreai": {}}"#).coreAI == nil)
+  #expect(try load(#"{"coreai": {"acknowledge_reduced_host_security": true}}"#).coreAI == nil)
+  let both = try load(
+    #"{"coreai": {"accelerators": ["gpu", "neural_engine"], "acknowledge_reduced_host_security": true}}"#
+  ).coreAI
+  #expect(both?.accelerators == [.gpu, .neuralEngine])
+  #expect(both?.acknowledged == true)
+  #expect(both?.runtimeArgument == "gpu,neural_engine")
+  let one = try load(
+    #"{"coreai": {"accelerators": ["neural_engine"], "acknowledge_reduced_host_security": true}}"#
+  ).coreAI
+  #expect(one?.accelerators == [.neuralEngine])
+  for (bad, field) in [
+    (#"["gpu", "cpu"]"#, "coreai.accelerators[1]"), (#"["gpu", "gpu"]"#, "coreai.accelerators"),
+    ("[]", "coreai.accelerators"), (#""gpu""#, "coreai.accelerators"),
+  ] {
+    #expect(
+      fieldError(
+        #"{"coreai": {"accelerators": \#(bad), "acknowledge_reduced_host_security": true}}"#)?
+        .field == field, "\(bad)")
+  }
+  for ack in ["", #", "acknowledge_reduced_host_security": false"#] {
+    let error = fieldError(#"{"coreai": {"accelerators": ["gpu"]\#(ack)}}"#)
+    #expect(error?.field == "coreai.acknowledge_reduced_host_security")
+    #expect(error?.reason == #"needs "acknowledge_reduced_host_security": true"#)
+  }
+  #expect(fieldError(#"{"coreai": {"binary": "/x"}}"#)?.field == "coreai.binary")
+  #expect(fieldError(#"{"coreai": null}"#)?.field == "coreai")
+  #expect(CoreAIConfig(accelerators: [.gpu], acknowledged: false) == nil)
+  #expect(CoreAIConfig(accelerators: [], acknowledged: true) == nil)
+}
+
 @Test func addingAnMCPServerReachesBothAgentsAndKeepsTheRest() throws {
   let base = try load(#"{"computer_use": {"guest_access": true}}"#)
   let added = base.addingMCPServer("iso-cu", .stdio(command: "/x", args: ["cu-mcp"], env: [:]))

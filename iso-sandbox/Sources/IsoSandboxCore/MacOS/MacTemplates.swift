@@ -14,6 +14,20 @@ package enum MacTemplates {
   /// The environment variable through which `iso-sandbox` answers ssh's
   /// password prompt during a template build (see `Entry.main`).
   package static let askpassEnv = "ISO_SANDBOX_ASKPASS_SECRET"
+  /// Every Core AI template's name ends in this, and no other's does, so a
+  /// plain template is never mistaken for an enabled one.
+  package static let coreAISuffix = "-coreai"
+
+  /// Refuses a name whose suffix disagrees with `coreAI`.
+  static func requireName(_ name: SandboxID, coreAI: Bool) throws {
+    let suffixed = name.rawValue.hasSuffix(coreAISuffix)
+    guard suffixed == coreAI else {
+      throw SandboxError(
+        coreAI
+          ? "a Core AI template's name must end in \(coreAISuffix)"
+          : "only a Core AI template's name may end in \(coreAISuffix)")
+    }
+  }
 
   static func log(_ s: String) {
     FileHandle.standardError.write(Data("macos template: \(s)\n".utf8))
@@ -53,8 +67,9 @@ package enum MacTemplates {
 
   package static func build(
     root: SandboxRoot, name: SandboxID, ipsw: URL, helper: URL, provision: URL? = nil,
-    executable: String, cpus: Int, memoryBytes: UInt64, diskBytes: UInt64
+    executable: String, cpus: Int, memoryBytes: UInt64, diskBytes: UInt64, coreAI: Bool = false
   ) async throws -> MacTemplate {
+    try requireName(name, coreAI: coreAI)
     try root.createMacDirectories()
     // Held for the whole build, so `reconcile` never removes a live build.
     let operation = try OperationLock.shared(root)
@@ -70,7 +85,8 @@ package enum MacTemplates {
     do {
       let template = try await buildInto(
         build, name: name, ipsw: ipsw, helper: helper, provision: provision,
-        executable: executable, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes)
+        executable: executable, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes,
+        coreAI: coreAI)
       try JSONEncoder.pretty.encode(template).write(to: build.metadata, options: .atomic)
       guard rename(build.dir.path, final.dir.path) == 0 else {
         throw SandboxError("publish \(name): errno \(errno)")
@@ -85,7 +101,7 @@ package enum MacTemplates {
 
   static func buildInto(
     _ b: MacTemplatePaths, name: SandboxID, ipsw: URL, helper: URL, provision: URL?,
-    executable: String, cpus: Int, memoryBytes: UInt64, diskBytes: UInt64
+    executable: String, cpus: Int, memoryBytes: UInt64, diskBytes: UInt64, coreAI: Bool
   ) async throws -> MacTemplate {
     // The small inputs first: a missing helper (an install that predates
     // it) fails before the restore image is read.
@@ -99,6 +115,7 @@ package enum MacTemplates {
     let ipswSha = try sha256(ipsw)
     log("restore image sha256 \(ipswSha)")
     let image = try await VZMacOSRestoreImage.image(from: ipsw)
+    if coreAI { try requireCoreAIGuest(image.operatingSystemVersion) }
     guard let req = image.mostFeaturefulSupportedConfiguration, req.hardwareModel.isSupported else {
       throw SandboxError("restore image \(image.buildVersion) is not supported on this host")
     }
@@ -194,9 +211,11 @@ package enum MacTemplates {
       // the guest's sshd accepts no new connection.
       let build = try GuestText.version(ssh.run("sw_vers -buildVersion", timeout: 30).output)
       let version = try GuestText.version(ssh.run("sw_vers -productVersion", timeout: 30).output)
+      if coreAI { try requireCoreAIGuest(GuestText.operatingSystemVersion(version)) }
       try ssh.copy(helper, to: "iso-macos-helper")
       if let provision { try ssh.copy(provision, to: "iso-provision.sh") }
-      try ssh.put(guestSetupScript(provision: provision != nil), to: "iso-setup.sh")
+      try ssh.put(
+        guestSetupScript(provision: provision != nil, coreAI: coreAI), to: "iso-setup.sh")
       let setup = try ssh.run(
         "sudo -S -p '' /bin/sh /Users/iso/iso-setup.sh", stdin: password + "\n", timeout: 3600)
       guard setup.status == 0 else {
@@ -215,18 +234,39 @@ package enum MacTemplates {
         name: name, productVersion: version, build: build, ipswSha256: ipswSha,
         helperSha256: helperSha, provisionSha256: provisionSha, diskBytes: diskBytes,
         minimumCPUs: req.minimumSupportedCPUCount,
-        minimumMemoryBytes: req.minimumSupportedMemorySize, createdAt: Date())
+        minimumMemoryBytes: req.minimumSupportedMemorySize, createdAt: Date(),
+        coreAIFeatureFlag: coreAI ? true : nil)
     } catch {
       await vm.forceStop()
       throw error
     }
   }
 
+  /// The guest the Core AI feature flag needs.
+  static func requireCoreAIGuest(_ v: OperatingSystemVersion) throws {
+    guard MacAccelerators.atLeastMinimum(v) else {
+      throw SandboxError(
+        "Core AI needs a macOS \(MacAccelerators.minimumVersionString) or later restore image; this one is \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+      )
+    }
+  }
+
+  /// Turns the paravirtualized Core AI delegate on (macOS 27.3+). The
+  /// setup script's closing shutdown is the restart the flag needs.
+  static let coreAIFeatureFlagScript = """
+    # Paravirtualized Core AI delegate (macOS 27.3+). Experimental.
+    mkdir -p /Library/Preferences/FeatureFlags/Domain
+    defaults write /Library/Preferences/FeatureFlags/Domain/ParavirtualizedCoreAI \\
+      enable_pv_delegate -dict Enabled -bool true
+    """
+
   /// Run as root in the guest during the build. Ends by removing the SSH
   /// host keys, so every clone generates its own at enrollment. With
   /// `provision`, the operator's script runs as root after the runtime's own
-  /// setup and before that cleanup; its failure fails the build.
-  static func guestSetupScript(provision: Bool = false) -> String {
+  /// setup and before that cleanup; its failure fails the build. With
+  /// `coreAI`, the Core AI feature flag is written before the operator's
+  /// script.
+  static func guestSetupScript(provision: Bool = false, coreAI: Bool = false) -> String {
     """
     #!/bin/sh
     set -eu
@@ -260,6 +300,7 @@ package enum MacTemplates {
     # management, `softwareupdate --schedule off` has no effect.
     defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false
     defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
+    \(coreAI ? coreAIFeatureFlagScript : ":")
     \(provision ? "/bin/bash /Users/iso/iso-provision.sh </dev/null" : ":")
     rm -f /Users/iso/iso-macos-helper /Users/iso/iso-setup.sh /Users/iso/iso-provision.sh
     # Last: no host keys in the template, then a clean shutdown once this
@@ -468,6 +509,17 @@ package enum GuestText {
   /// Control characters (including newlines and ESC) replaced.
   package static func printable(_ s: String) -> String {
     String(s.unicodeScalars.map { $0.properties.generalCategory == .control ? "?" : Character($0) })
+  }
+
+  /// `major.minor[.patch]` from a checked version string.
+  static func operatingSystemVersion(_ s: String) throws -> OperatingSystemVersion {
+    let parts = s.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+    guard (2...3).contains(parts.count), parts.allSatisfy({ ($0 ?? -1) >= 0 }) else {
+      throw SandboxError("unexpected macOS version \(s.debugDescription) from the guest")
+    }
+    return OperatingSystemVersion(
+      majorVersion: parts[0]!, minorVersion: parts[1]!,
+      patchVersion: parts.count > 2 ? parts[2]! : 0)
   }
 
   /// A version string: letters, digits and dots, at most 32 characters.

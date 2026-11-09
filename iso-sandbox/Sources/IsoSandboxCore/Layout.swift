@@ -10,6 +10,10 @@ package let macGuestsFeature = "macos-guests"
 /// `version` capability: `create --network brokered`, `start --network-policy`,
 /// `connect` and `streams` (docs/design/brokered-network-isolation.md).
 package let brokeredTransportFeature = "brokered-transport"
+/// `version` capability of the experimental `iso-sandbox-coreai` build:
+/// `macos create --coreai` attaches paravirtualized Core AI accelerators
+/// (docs/design/paravirtualized-coreai.md).
+package let macCoreAIFeature = "macos-coreai"
 package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.45.0"
 

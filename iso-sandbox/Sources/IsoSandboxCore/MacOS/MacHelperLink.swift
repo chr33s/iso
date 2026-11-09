@@ -40,9 +40,17 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
   private var lastRequest = 0
   private let replySignal = DispatchSemaphore(value: 0)
 
-  package init(store: any MacEnrollmentStore, log: @escaping @Sendable (String) -> Void) {
+  /// Run on its own thread each time a connection becomes the active one,
+  /// after the network request is queued.
+  private let onActive: (@Sendable () -> Void)?
+
+  package init(
+    store: any MacEnrollmentStore, log: @escaping @Sendable (String) -> Void,
+    onActive: (@Sendable () -> Void)? = nil
+  ) {
     self.store = store
     self.log = log
+    self.onActive = onActive
   }
 
   package var guestBoot: String? { lock.withLock { _guestBoot } }
@@ -104,6 +112,16 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
   /// The guest's current SSH host key, which must equal the pin.
   package func status() -> HelperMessage? {
     request(HelperMessage(type: .status), timeout: 10)
+  }
+
+  /// The guest's Core AI compute kinds and delegate flag; nil when it did
+  /// not answer with a `coreai_status_reply`.
+  package func coreAIStatus() -> MacCoreAIProbe? {
+    guard let r = request(HelperMessage(type: .coreAIStatus), timeout: 10),
+      r.type == .coreAIStatusReply, let kinds = r.availableKinds
+    else { return nil }
+    return MacCoreAIProbe(
+      availableKinds: kinds, delegateEnabled: r.delegateEnabled == true, guestBoot: guestBoot)
   }
 
   // MARK: listener
@@ -261,6 +279,7 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
       log(
         "helper network \(r?.type == .ack ? "applied" : "failed: \(GuestText.printable(String((r?.message ?? "no reply").prefix(200))))")"
       )
+      onActive?()
     }
     return reader
   }
@@ -270,7 +289,7 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
     var reader = reader
     while case .line(let line) = reader.next() {
       guard case .success(let m) = HelperMessage.parse(line),
-        [.ack, .error, .statusReply].contains(m.type)
+        [.ack, .error, .statusReply, .coreAIStatusReply].contains(m.type)
       else {
         log("helper sent an unexpected message; closing")
         break

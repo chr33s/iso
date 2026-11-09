@@ -54,7 +54,58 @@ package struct MacStatus: Codable, Sendable {
   package var topology: String
   /// This boot's guest computer-use counts; nil when it is off.
   package var guestComputerUse: MacGuestCUCounters? = nil
+  /// The guest's last Core AI report; nil when Core AI is off or the guest
+  /// has not answered yet.
+  package var coreAI: MacCoreAIProbe? = nil
 }
+
+/// What the guest helper reported for `coreai_status`. Guest-authored:
+/// the protocol bounds the kinds; nothing here is trusted beyond display
+/// and audit.
+package struct MacCoreAIProbe: Codable, Equatable, Sendable {
+  package var availableKinds: [String]
+  package var delegateEnabled: Bool
+  /// The guest boot that answered.
+  package var guestBoot: String?
+}
+
+/// The latest Core AI probe result. The helper link probes on every
+/// authenticated connection, so a guest reboot gets a fresh report.
+final class MacCoreAIProbeBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: MacCoreAIProbe?
+  /// Set once, before the VM starts.
+  weak var link: MacHelperLink?
+
+  var current: MacCoreAIProbe? { lock.withLock { value } }
+
+  /// The guest's paravirtual drivers can register after its helper
+  /// connects: a report short of `expecting` is retried this often.
+  static let retries = 12
+  static let retryInterval: TimeInterval = 5
+
+  /// Runs on the helper link's thread, until the report covers `expecting`,
+  /// the retries run out, or the connection changes.
+  func probe(expecting: [MacAccelerator], log: (String) -> Void) {
+    guard let link else { return }
+    let boot = link.guestBoot
+    let wanted = expecting.map { $0 == .neuralEngine ? "neuralEngine" : $0.rawValue }
+    for attempt in 0...Self.retries {
+      if attempt > 0 { Thread.sleep(forTimeInterval: Self.retryInterval) }
+      guard link.guestBoot == boot else { return }
+      let probe = link.coreAIStatus()
+      lock.withLock { value = probe }
+      log(
+        "core ai probe: \(probe.map { "kinds \($0.availableKinds) delegate \($0.delegateEnabled)" } ?? "no reply")"
+      )
+      if let probe, probe.delegateEnabled, wanted.allSatisfy(probe.availableKinds.contains) {
+        return
+      }
+    }
+  }
+}
+
+private func ownerLogLine(_ s: String) { MacOwner.log(s) }
 
 package struct MacFrameInfo: Codable, Sendable {
   package var frameId: String
@@ -200,13 +251,38 @@ package enum MacOwner {
       gateway: iface.ipv4Gateway?.description ?? record.gateway,
       dns: record.network == .shared ? [iface.ipv4Gateway?.description ?? record.gateway] : [])
 
+    // Core AI: the template must carry the guest flag, and the host must be
+    // able to load the private entitlement, before any VM is built.
+    // The Core AI build reports the host's state on every boot, so the
+    // audit shows the weakened window even for sandboxes without Core AI.
+    var hostSecurity = MacAccelerators.compiledIn ? MacHostSecurity.current() : nil
+    if let coreAI = record.coreAI {
+      guard try root.macTemplate(record.template).load().hasCoreAIFeatureFlag else {
+        throw SandboxError("template \(record.template) has no Core AI feature flag")
+      }
+      let read = hostSecurity ?? MacHostSecurity.current()
+      let report = try MacHostSecurity.preflight(report: { read })
+      hostSecurity = report
+      log(
+        "host security reduced (\(report.detail)); attaching Core AI accelerators \(coreAI.accelerators.map(\.rawValue))"
+      )
+    }
     let config = try MacConfig.make(
       hardwareModel: try MacConfig.hardwareModel(root.macTemplate(record.template).hardwareModel),
       machineIdentifier: try MacConfig.machineIdentifier(paths.machineID), aux: paths.aux,
-      disk: paths.disk, cpus: record.cpus, memoryBytes: record.memoryBytes, network: device)
+      disk: paths.disk, cpus: record.cpus, memoryBytes: record.memoryBytes, network: device,
+      accelerators: record.coreAI?.accelerators ?? [])
 
     let store = MacRecordStore(paths: paths, record: record, network: helperNet)
-    let link = MacHelperLink(store: store, log: { log($0) })
+    let coreAIProbe = MacCoreAIProbeBox()
+    var onActive: (@Sendable () -> Void)?
+    if let coreAI = record.coreAI {
+      onActive = { @Sendable in coreAIProbe.probe(expecting: coreAI.accelerators, log: ownerLogLine)
+      }
+    }
+    let link = MacHelperLink(store: store, log: { log($0) }, onActive: onActive)
+    coreAIProbe.link = link
+    let reportedProbe = record.coreAI == nil ? nil : coreAIProbe
     let controlPath = paths.control
     let livePath = paths.live
     let ownerLog: @Sendable (String) -> Void = { log($0) }
@@ -244,7 +320,8 @@ package enum MacOwner {
     }
     if let guestLink { vm.setSocketListener(guestLink, port: GuestCUProtocol.port) }
     let effective = MacEffectiveConfig.from(
-      config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology)
+      config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology,
+      hostSecurity: hostSecurity)
 
     let stopper = MacStopper(vm: vm, link: link) {
       // The last resort, as a Linux owner's: the stop sequence did not end
@@ -293,7 +370,8 @@ package enum MacOwner {
       (req: MacControlRequest) async -> MacControlResponse in
       await handle(
         req, vm: vm, link: link, store: store, screen: screen, effective: effective, bootId: bootId,
-        address: address, stopper: stopper, guestLink: guestLink)
+        address: address, stopper: stopper, guestLink: guestLink,
+        coreAI: reportedProbe)
     } failure: {
       MacControlResponse(ok: false, error: $0)
     }
@@ -310,7 +388,7 @@ package enum MacOwner {
     _ req: MacControlRequest, vm: MacVM, link: MacHelperLink, store: MacRecordStore,
     screen: MacScreen,
     effective: MacEffectiveConfig, bootId: String, address: String, stopper: MacStopper,
-    guestLink: MacGuestCULink? = nil
+    guestLink: MacGuestCULink? = nil, coreAI: MacCoreAIProbeBox? = nil
   ) async -> MacControlResponse {
     do {
       switch req.op {
@@ -337,6 +415,10 @@ package enum MacOwner {
             var counts = $0.counters
             counts.preemptions = screen.preemptions
             return counts
+          },
+          // Only a report from the guest boot now connected.
+          coreAI: coreAI?.current.flatMap {
+            $0.guestBoot != nil && $0.guestBoot == link.guestBoot ? $0 : nil
           })
         return r
       case .stop:

@@ -121,6 +121,109 @@ private func with(_ section: String, _ key: String, _ value: Any) -> [String: An
   #expect(exposure(with("effective", "guestComputerUse", on)))
 }
 
+private func coreAIMac(_ accelerators: [String], attached: [String], reduced: Bool?)
+  -> [String: Any]
+{
+  var object = with("record", "coreAI", ["accelerators": accelerators])
+  var effective = object["effective"] as! [String: Any]
+  effective["accelerators"] = attached
+  if let reduced { effective["hostSecurityReduced"] = reduced }
+  object["effective"] = effective
+  return object
+}
+
+@Test func coreAIAcceleratorsMustMatchTheRecordExactly() throws {
+  let gpu = "_VZMacCoreAIDeviceConfiguration"
+  let ane = "_VZMacNeuralEngineDeviceConfiguration"
+  _ = try gate(coreAIMac(["gpu", "neural_engine"], attached: [ane, gpu], reduced: true))
+  _ = try gate(coreAIMac(["gpu"], attached: [gpu], reduced: true))
+  func exposure(_ object: [String: Any]) -> Bool {
+    do { _ = try gate(object) } catch {
+      if case .hostExposure = error as? RuntimeError { return true }
+    }
+    return false
+  }
+  // An accelerator the record lacks, one too few, the wrong one, or one
+  // without the owner's reduced-host-security preflight.
+  #expect(exposure(with("effective", "accelerators", [gpu])))
+  #expect(exposure(coreAIMac(["gpu", "neural_engine"], attached: [gpu], reduced: true)))
+  #expect(exposure(coreAIMac(["gpu"], attached: [ane], reduced: true)))
+  #expect(exposure(coreAIMac(["gpu"], attached: [gpu, gpu], reduced: true)))
+  #expect(exposure(coreAIMac(["gpu"], attached: [gpu], reduced: false)))
+  #expect(exposure(coreAIMac(["gpu"], attached: [gpu], reduced: nil)))
+  // An owner that predates Core AI reports no accelerators: off passes.
+  #expect(try inspection(runningMac()).effective?.accelerators == [])
+  // An unknown or repeated recorded accelerator is refused before boot.
+  for bad in [["cpu"], ["gpu", "gpu"], []] {
+    #expect(throws: RuntimeError.self) {
+      try IsolationGate.verifyMacRecord(
+        inspection(coreAIMac(bad, attached: [], reduced: nil)), expected(), template: macTemplate)
+    }
+  }
+}
+
+@Test func theGuestsCoreAIReportIsBoundedAndDroppedWhenInvalid() throws {
+  let good = try inspection(
+    with("runtime", "coreAI", ["availableKinds": ["cpu", "gpu"], "delegateEnabled": true]))
+  #expect(
+    good.runtime?.coreAI == MacCoreAIProbe(availableKinds: ["cpu", "gpu"], delegateEnabled: true))
+  for bad: Any in [
+    ["availableKinds": ["\u{1b}[2J"], "delegateEnabled": true],
+    ["availableKinds": Array(repeating: "gpu", count: 9), "delegateEnabled": true],
+    ["availableKinds": ["gpu"]],
+  ] {
+    let i = try inspection(with("runtime", "coreAI", bad))
+    #expect(i.runtime?.coreAI == nil)
+    #expect(i.runtime?.helperConnected == true, "only the report is lost")
+  }
+}
+
+@Test func theUpLineSaysWhatTheGuestReports() {
+  let both = MacCoreAIRecord(accelerators: ["gpu", "neural_engine"])
+  #expect(
+    CoreAIReport.line(
+      recorded: both,
+      probe: MacCoreAIProbe(availableKinds: ["cpu", "gpu", "neuralEngine"], delegateEnabled: true))
+      == .ok("core ai: gpu, neuralEngine (paravirtualized; host security reduced)"))
+  #expect(
+    CoreAIReport.line(
+      recorded: both,
+      probe: MacCoreAIProbe(availableKinds: ["cpu", "gpu"], delegateEnabled: true))
+      == .degraded(
+        "core ai: guest reports gpu of requested gpu, neuralEngine (paravirtualized; host security reduced)"
+      ))
+  guard
+    case .degraded(let off) = CoreAIReport.line(
+      recorded: both,
+      probe: MacCoreAIProbe(availableKinds: ["cpu", "gpu", "neuralEngine"], delegateEnabled: false)),
+    case .degraded(let silent) = CoreAIReport.line(recorded: both, probe: nil)
+  else {
+    Issue.record("a delegate that is off, or no report, is degraded")
+    return
+  }
+  #expect(off.hasSuffix("the paravirtualized delegate flag is off"))
+  #expect(silent.contains("has not reported"))
+}
+
+@Test func macSidecarsPersistCoreAIAndFollowTheRecord() throws {
+  var sidecar = try JSONDecoder().decode(
+    MachineSidecar.self,
+    from: Data(
+      #"{"schema_version":1,"backend":"apple-container-v1","owner_id":"0a1b2c3d00112233445566778899aabb","machine_id":"iso-0a1b2c3d-00112233445566ff","image_ref":"t","image_digest":"d","image_manifest_id":"m","guest_user":"iso","requested_cpus":4,"requested_memory_bytes":1,"host_key_fingerprint":"","last_observed_owner_pid":null,"last_observed_ip":null,"reenroll_host_key":false,"created_at":"x","runtime_identity":"r","lifecycle":"reusable","guest_os":"macos"}"#
+        .utf8))
+  #expect(sidecar.coreAI == nil)
+  #expect(!String(decoding: try JSONEncoder().encode(sidecar), as: UTF8.self).contains("coreai"))
+  #expect(
+    sidecar.syncCoreAI(from: try inspection(coreAIMac(["gpu"], attached: [], reduced: nil)).record))
+  #expect(sidecar.coreAI == MacCoreAIRecord(accelerators: ["gpu"]))
+  #expect(
+    !sidecar.syncCoreAI(from: try inspection(coreAIMac(["gpu"], attached: [], reduced: nil)).record)
+  )
+  let encoded = try JSONEncoder().encode(sidecar)
+  #expect(String(decoding: encoded, as: UTF8.self).contains(#""coreai":{"accelerators":["gpu"]}"#))
+  #expect(try JSONDecoder().decode(MachineSidecar.self, from: encoded).coreAI == sidecar.coreAI)
+}
+
 @Test func networkAndAddressMustMatchTheDedicatedSubnet() throws {
   for object in [
     with("effective", "network", "vmnet-shared:10.231.8.0/24"),
@@ -333,6 +436,20 @@ private func refusal(_ object: [String: Any], _ egress: EgressMode = .open) -> R
       "package static let frameRates = \(ComputerUseConfig.frameRates.lowerBound)...\(ComputerUseConfig.frameRates.upperBound)\n"
     ))
   #expect(templates.contains("static let guestUser = \"\(MacProvision.guestUser)\""))
+  #expect(
+    layout.contains("package let macCoreAIFeature = \"\(RuntimeProtocol.macCoreAIFeature)\"\n"))
+  #expect(
+    templates.contains("package static let coreAISuffix = \"\(AppleBackend.macCoreAISuffix)\"\n"))
+  let accelerators = try String(
+    contentsOf: root.appending(
+      path: "iso-sandbox/Sources/IsoSandboxCore/MacOS/MacAccelerators.swift"),
+    encoding: .utf8)
+  for kind in CoreAIConfig.Accelerator.allCases {
+    let runtimeCase = kind == .gpu ? ".gpu" : ".neuralEngine"
+    #expect(
+      accelerators.contains(
+        "case \(runtimeCase): \"\(CoreAIDevices.className(kind.rawValue) ?? "-")\"\n"))
+  }
 }
 
 /// A loopback listener for one connection: echoes what it reads, or holds
@@ -445,4 +562,19 @@ private func listener(echo: Bool) throws -> UInt16 {
   #expect(usage.memTotalMiB == 8192 && usage.memUsedMiB == 6144)
   #expect(usage.diskTotalMiB == 60000 && usage.diskUsedMiB == 13000)
   #expect(ResourceUsage.command.hasPrefix("if [ -r /proc/loadavg ]; then cat /proc/loadavg;"))
+}
+
+@Test func coreAIRecordsCompareAsSets() {
+  let a = MacCoreAIRecord(accelerators: ["gpu", "neural_engine"])
+  let b = MacCoreAIRecord(accelerators: ["neural_engine", "gpu"])
+  #expect(MacCoreAIRecord.same(a, b))
+  #expect(MacCoreAIRecord.same(nil, nil))
+  #expect(!MacCoreAIRecord.same(a, nil))
+  #expect(!MacCoreAIRecord.same(a, MacCoreAIRecord(accelerators: ["gpu"])))
+  #expect(
+    CoreAIReport.covers(
+      a, MacCoreAIProbe(availableKinds: ["cpu", "neuralEngine", "gpu"], delegateEnabled: true)))
+  #expect(
+    !CoreAIReport.covers(a, MacCoreAIProbe(availableKinds: ["cpu", "gpu"], delegateEnabled: true)))
+  #expect(!CoreAIReport.covers(a, nil))
 }

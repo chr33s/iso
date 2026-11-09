@@ -33,6 +33,7 @@ extension IsoConfig {
       updates: updates, appleContainer: appleContainer, workspacePull: workspacePull,
       egress: egress, egressFilter: egressFilter, limits: limits, securityPreset: securityPreset,
       editor: editor, execution: execution, policy: policy, network: network,
-      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs, computerUse: computerUse)
+      workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs, computerUse: computerUse,
+      coreAI: coreAI)
   }
 }

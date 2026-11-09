@@ -17,13 +17,17 @@ package struct SetupOptions: Sendable {
   package var refuseRebuild: Bool
   /// macOS restore image for `--guest macos`; nil builds a Linux image.
   package var macOSRestoreImage: String?
+  /// `--coreai`: build the macOS template with the paravirtualized Core AI
+  /// feature flag.
+  package var macOSCoreAI: Bool
 
   package init(
     rebuild: Bool, profiles: [ProfileDefinition], image: ImageName, guestUser: GuestUser,
     builderTimeout: Duration?, ociFeatures: [ResolvedFeature] = [], refuseRebuild: Bool = false,
-    macOSRestoreImage: String? = nil
+    macOSRestoreImage: String? = nil, macOSCoreAI: Bool = false
   ) {
     self.macOSRestoreImage = macOSRestoreImage
+    self.macOSCoreAI = macOSCoreAI
     self.rebuild = rebuild
     self.profiles = profiles
     self.image = image

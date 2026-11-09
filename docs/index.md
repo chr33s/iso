@@ -112,6 +112,8 @@ Apple backend. The credential proxy is the Swift package
 - [`audit.md`](audit.md) — `iso audit` run history: the `iso.audit/v1` event
   model, retention, cursors and the `iso.audit.stream/v1` JSONL protocol.
 - [`configuration.md`](configuration.md) — `config.jsonc` reference.
+- [`coreai.md`](coreai.md) — experimental paravirtualized Core AI for macOS
+  guests (weakens the host).
 - [`backends.md`](backends.md) — the Apple sandbox backend (`iso-sandbox` on `apple/containerization`) and its state layout.
 - [`images-and-profiles.md`](images-and-profiles.md),
   [`workspaces.md`](workspaces.md), [`multi-instance.md`](multi-instance.md),

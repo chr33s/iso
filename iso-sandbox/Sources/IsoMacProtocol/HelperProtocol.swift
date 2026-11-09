@@ -107,9 +107,11 @@ package struct HelperMessage: Codable, Equatable, Sendable {
   package enum Kind: String, Codable, Sendable {
     // host → guest
     case challenge, enroll, network, status, shutdown
+    case coreAIStatus = "coreai_status"
     // guest → host
     case hello, enrolled
     case statusReply = "status_reply"
+    case coreAIStatusReply = "coreai_status_reply"
     case ack, error
   }
 
@@ -127,6 +129,10 @@ package struct HelperMessage: Codable, Equatable, Sendable {
   package var network: HelperNetwork? = nil
   package var sshHostKey: String? = nil
   package var message: String? = nil
+  /// `coreai_status_reply`: the Core AI compute kinds the guest reports and
+  /// whether the paravirtualized delegate's feature flag is on.
+  package var availableKinds: [String]? = nil
+  package var delegateEnabled: Bool? = nil
   /// A host request's number, echoed in its reply, so a reply that arrives
   /// after its request timed out cannot answer the next one. Absent from
   /// helpers that predate it.
@@ -138,6 +144,18 @@ package struct HelperMessage: Codable, Equatable, Sendable {
     case helperVersion = "helper_version"
     case authorizedKey = "authorized_key"
     case sshHostKey = "ssh_host_key"
+    case availableKinds = "available_kinds"
+    case delegateEnabled = "delegate_enabled"
+  }
+
+  /// Most compute kinds a reply may name, and the longest name.
+  package static let maxKinds = 8
+  package static let maxKindLength = 32
+
+  /// A compute kind name: ASCII letters only.
+  package static func isKind(_ s: String) -> Bool {
+    (1...maxKindLength).contains(s.utf8.count)
+      && s.utf8.allSatisfy { (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) }
   }
 
   package init(type: Kind) { self.type = type }
@@ -167,6 +185,11 @@ package struct HelperMessage: Codable, Equatable, Sendable {
     if let n = m.network, !n.isWellFormed { return .failure(.malformed) }
     if let k = m.key, HelperKey(hex: k) == nil { return .failure(.malformed) }
     if let i = m.id, !(0...Int(Int32.max)).contains(i) { return .failure(.malformed) }
+    if let kinds = m.availableKinds,
+      kinds.count > maxKinds || !kinds.allSatisfy(isKind) || Set(kinds).count != kinds.count
+    {
+      return .failure(.malformed)
+    }
     return .success(m)
   }
 }

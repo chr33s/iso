@@ -7,6 +7,8 @@ extension AppleBackend {
   static let macBuildCPUs: UInt32 = 4
   static let macBuildMemoryMiB: UInt64 = 8192
   static let macDefaultDiskGiB: UInt64 = 64
+  /// The runtime's `MacTemplates.coreAISuffix` (iso-sandbox, a separate package).
+  static let macCoreAISuffix = "-coreai"
 
   /// `iso setup --guest macos`: install macOS from the operator's restore
   /// image into a new runtime template, provisioned by ``MacProvision``,
@@ -41,7 +43,8 @@ extension AppleBackend {
     // The restore image (many GiB) is hashed only when everything cheaper
     // says the image is current.
     if !options.rebuild, let previous, previous.guestOS == .macos,
-      previous.manifestID == ImageManifest.macManifestID(provisionSHA256: provisionSHA),
+      previous.manifestID
+        == ImageManifest.macManifestID(provisionSHA256: provisionSHA, coreAI: options.macOSCoreAI),
       (try? runtime.verifyImage(previous)) != nil,
       previous.baseImage.hasSuffix("ipsw-sha256:\(try sha256Hex(fileAt: restore))")
     {
@@ -58,21 +61,32 @@ extension AppleBackend {
     try StateStore.ensurePrivateDirectory(imageDirectory)
     let scriptPath = imageDirectory + "/macos-provision.sh"
     try AtomicFile.write(Array(script.utf8), to: scriptPath, mode: .atMost(0o600))
-    let name = try MachineName.generate(for: owner.id, randomHex: randomHex(8))
+    // A Core AI template's name carries the runtime's `-coreai` suffix.
+    let name = try MachineName(
+      MachineName.generate(for: owner.id, randomHex: randomHex(8)).rawValue
+        + (options.macOSCoreAI ? Self.macCoreAISuffix : ""))
     let disk = UInt64(config.vm.templateSize.value)
     diagnostics.log(
-      .info, "Installing macOS from \(restore) into template \(name); this takes a while")
+      .info,
+      "Installing macOS from \(restore) into \(options.macOSCoreAI ? "Core AI " : "")template \(name); this takes a while"
+    )
     let template = try runtime.macBuildTemplate(
       name, ipsw: restore, provision: scriptPath,
       cpus: max(Self.macBuildCPUs, UInt32(config.vm.vcpuCount)),
       memoryMiB: max(Self.macBuildMemoryMiB, UInt64(config.vm.memory.mib.value)),
-      diskGiB: max(Self.macDefaultDiskGiB, disk),
+      diskGiB: max(Self.macDefaultDiskGiB, disk), coreAI: options.macOSCoreAI,
       deadline: options.builderTimeout ?? .seconds(3 * 3600)
     ) { diagnostics.log(.info, $0) }
     guard template.provisionSha256 == provisionSHA else {
       try? runtime.macDeleteTemplate(name)
       throw RuntimeError.identityConflict(
         "template \(name) recorded a different provisioning script than iso supplied")
+    }
+    guard template.hasCoreAIFeatureFlag == options.macOSCoreAI else {
+      try? runtime.macDeleteTemplate(name)
+      throw RuntimeError.identityConflict(
+        "template \(name) \(template.hasCoreAIFeatureFlag ? "has" : "lacks") the Core AI feature flag; iso asked for \(options.macOSCoreAI ? "it" : "a plain template")"
+      )
     }
     let created = utcTimestamp()
     try ImageManifest(

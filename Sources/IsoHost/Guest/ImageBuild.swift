@@ -26,6 +26,12 @@ package struct ImageManifest: Sendable, Equatable, Codable {
   /// Guest-side transport adapters the image was built with
   /// (``vsockSSHAdapter``); absent for images that predate them.
   package var guestAdapters: [String]? = nil
+  /// A macOS template built with `--coreai` (the paravirtualized Core AI
+  /// feature flag): read from `manifestID`, which `verifyImage` ties to the
+  /// runtime template's own flag.
+  package var hasCoreAIFeatureFlag: Bool {
+    guestOS == .macos && manifestID.hasSuffix(Self.macCoreAIManifestSuffix)
+  }
 
   enum CodingKeys: String, CodingKey {
     case backend, digest, disk, platform, created
@@ -64,14 +70,18 @@ package struct ImageManifest: Sendable, Equatable, Codable {
     "macos:\(template.build):helper-\(template.helperSha256)"
   }
 
-  /// The provisioning script a macOS template was built with.
+  /// The provisioning script a macOS template was built with, and whether
+  /// its guest has the Core AI feature flag.
   package static func macManifestID(_ template: MacTemplateInfo) -> String {
-    macManifestID(provisionSHA256: template.provisionSha256 ?? "none")
+    macManifestID(
+      provisionSHA256: template.provisionSha256 ?? "none", coreAI: template.hasCoreAIFeatureFlag)
   }
 
-  package static func macManifestID(provisionSHA256: String) -> String {
-    "macos-provision-\(provisionSHA256)"
+  package static func macManifestID(provisionSHA256: String, coreAI: Bool = false) -> String {
+    "macos-provision-\(provisionSHA256)" + (coreAI ? macCoreAIManifestSuffix : "")
   }
+
+  static let macCoreAIManifestSuffix = "-coreai"
 
   package struct CommittedDisk: Sendable, Equatable, Codable {
     package let name: MachineName

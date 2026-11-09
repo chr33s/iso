@@ -37,6 +37,7 @@ after hand edits.
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline", "revoked_grant_ids": [...]}`, both members optional. `preset` sets defaults for the hardening settings; see [security presets](#security-presets). `revoked_grant_ids` lists saved instance grants to withdraw, by the 16-lowercase-hex IDs `iso policy effective` shows; duplicates are rejected, and an ID no instance records only draws a warning. See [`iso policy effective`](commands.md#policy-effective). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
 | `computer_use` | object | unset (off) | macOS guests only: `{"guest_access": true, "guest_frame_rate": 4}` lets an agent in the guest drive its own display. See [computer_use](#computer_use). |
+| `coreai` | object | unset (off) | Experimental, macOS guests only: paravirtualized Core AI accelerators. Weakens the host. See [coreai](#coreai). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
 | `network` | object | `{"transport": "brokered"}` | How new instances' VMs are connected: `"brokered"` (no network device) or `"vmnet"` (an explicit compatibility choice; required for macOS guests and open egress). See [network](#network). |
@@ -809,6 +810,28 @@ server name `iso-cu` is then reserved. The host can take the display back at any
 (`iso-sandbox macos cu hold`, and any host action); see
 [guest-driven computer use](design/guest-driven-computer-use.md). Unknown
 `computer_use` members are rejected.
+
+## `coreai`
+
+```jsonc
+{ "coreai": { "accelerators": ["gpu", "neural_engine"], "acknowledge_reduced_host_security": true } }
+```
+
+**Experimental; weakens the host.** Gives a macOS guest the host's GPU
+and/or Neural Engine for Core AI through private Virtualization.framework
+devices. `accelerators` is a non-empty list of `"gpu"` and
+`"neural_engine"` without repeats; with it,
+`acknowledge_reduced_host_security` must be `true`, because the private
+entitlement those devices need loads only on a host running with AMFI
+relaxed. An empty object, or one without `accelerators`, is off; `null`
+and unknown members are errors.
+
+With `coreai` set, iso runs the unreleased `iso-sandbox-coreai` build
+(`scripts/build-iso-sandbox.sh --experimental-coreai`; `apple_container.binary`
+still overrides the path), refuses Linux images, and refuses a macOS image
+whose template was not built with `iso setup --guest macos --coreai`. The
+setting is fixed when the instance is created. It is reported as a
+relaxation by `iso policy effective`. See [`coreai.md`](coreai.md).
 
 ## `editor`
 

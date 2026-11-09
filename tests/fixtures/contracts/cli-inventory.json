@@ -443,7 +443,8 @@
     "--no-devcontainer",
     "--dry-run",
     "--guest",
-    "--ipsw"
+    "--ipsw",
+    "--coreai"
   ],
   "shell": [
     "<name>",

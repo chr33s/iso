@@ -106,7 +106,12 @@ deleted-tracked), `boundary.handoff_fence` records an instance fenced
 after an unconfirmed restart cleanup, and `boundary.guest_computer_use`
 records a macOS boot's guest-driven computer use when `iso stop` stops it
 (`frame_rate`, and counts of `sessions`, `frames`, `actions`,
-`status_requests`, host-hold `preemptions` and `refusals` by code); none
+`status_requests`, host-hold `preemptions` and `refusals` by code). For a
+[Core AI](coreai.md) instance, each boot records `mac.coreai.attached`
+(accelerator device classes, template, template and runtime builds),
+`host.security.reduced` (the owner found AMFI relaxed on the host) and,
+once the guest answers, `mac.coreai.probe` (compute kind names and whether
+the delegate flag is on). None
 carries paths, contents, hashes, pixels, coordinates or typed text.
 Each also carries `instance_name` and is attributed to the VM's stable identity
 (`policy-instance.json`) and its current host boot binding.

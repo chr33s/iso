@@ -56,6 +56,11 @@ struct Setup: ParsableCommand {
     help: ArgumentHelp(
       "macOS restore image to install (required with --guest macos)", valueName: "IPSW"))
   var ipsw: String?
+  @Flag(
+    help:
+      "Experimental: build the macOS template with the paravirtualized Core AI feature flag (macOS 27.3+; with --guest macos)"
+  )
+  var coreai = false
 
   func validate() throws {
     switch (guest, ipsw) {
@@ -63,6 +68,7 @@ struct Setup: ParsableCommand {
     case (.linux, .some): throw UsageError("--ipsw is only used with --guest macos")
     default: break
     }
+    if coreai && guest != .macos { throw UsageError("--coreai is only used with --guest macos") }
     if guest == .macos {
       let linuxOnly =
         !profile.isEmpty || !extraPackages.isEmpty || postInstall != nil || guestUser != nil
@@ -108,7 +114,7 @@ struct Setup: ParsableCommand {
         try context.backend.setup(
           SetupOptions(
             rebuild: rebuild, profiles: [], image: image, guestUser: .default,
-            builderTimeout: builderTimeout, macOSRestoreImage: ipsw))
+            builderTimeout: builderTimeout, macOSRestoreImage: ipsw, macOSCoreAI: coreai))
         return
       }
       var names = profile.flatMap { $0 }

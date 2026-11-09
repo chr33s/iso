@@ -229,6 +229,9 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   /// absent when off. Bootstrap and stop follow this, not the current
   /// configuration, which may have changed since.
   package var guestComputerUse: MacGuestComputerUse? = nil
+  /// macOS guests: paravirtualized Core AI as the sandbox was created;
+  /// absent when off.
+  package var coreAI: MacCoreAIRecord? = nil
 
   package var isDisposableRun: Bool { lifecycle == .disposable }
 
@@ -237,6 +240,13 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   package mutating func syncGuestComputerUse(from record: MacRecord) -> Bool {
     guard guestComputerUse != record.guestComputerUse else { return false }
     guestComputerUse = record.guestComputerUse
+    return true
+  }
+
+  /// Takes the sandbox record's Core AI setting; true when it changed.
+  package mutating func syncCoreAI(from record: MacRecord) -> Bool {
+    guard coreAI != record.coreAI else { return false }
+    coreAI = record.coreAI
     return true
   }
   package var kind: GuestOS { guestOS ?? .linux }
@@ -290,6 +300,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     case lifecycle
     case guestOS = "guest_os"
     case guestComputerUse = "guest_computer_use"
+    case coreAI = "coreai"
   }
 
   /// Persist explicit nulls for optional observations.
@@ -314,6 +325,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     try c.encode(lifecycle, forKey: .lifecycle)
     try c.encodeIfPresent(guestOS, forKey: .guestOS)
     try c.encodeIfPresent(guestComputerUse, forKey: .guestComputerUse)
+    try c.encodeIfPresent(coreAI, forKey: .coreAI)
   }
 }
 

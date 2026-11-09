@@ -8,6 +8,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Added
+
+- **macOS guests (experimental, unreleased build):** paravirtualized Core AI.
+  `"coreai": {"accelerators": ["gpu", "neural_engine"],
+  "acknowledge_reduced_host_security": true}` attaches macOS 27.3's private
+  GPU/Neural Engine accelerator devices to new instances, on a template built
+  with `iso setup --guest macos --coreai`, through `iso-sandbox-coreai`
+  (`scripts/build-iso-sandbox.sh --experimental-coreai`). Its private
+  entitlement needs a host with AMFI relaxed. Reported as a relaxation by
+  `iso policy effective` and audited as `mac.coreai.attached`,
+  `mac.coreai.probe` and `host.security.reduced`. The release verifier refuses
+  any `com.apple.private.*` entitlement. See `docs/coreai.md`.
+
 ## v0.8.0
 
 ### Added

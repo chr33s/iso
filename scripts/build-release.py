@@ -58,6 +58,11 @@ BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]
 # Signed here; build-iso-sandbox.sh signs iso-sandbox and iso-macos-helper.
 ADHOC_SIGNED = ["iso", "iso-proxy", "iso-egress"]
 ENTITLEMENTS = "scripts/enhanced-security.entitlements"
+# Private entitlements need AMFI relaxed on the host; the experimental
+# iso-sandbox-coreai build that carries one is never released
+# (docs/design/paravirtualized-coreai.md).
+PRIVATE_ENTITLEMENT_PREFIX = "com.apple.private."
+UNRELEASED = ["iso-sandbox-coreai", "iso-sandbox-coreai.entitlements"]
 SIGNING_ENV = frozenset({
     "MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY",
     "NOTARY_API_KEY_P8", "NOTARY_API_KEY_ID", "NOTARY_API_ISSUER_ID",
@@ -159,19 +164,33 @@ def adhoc_sign(directory, entitlements):
              "--entitlements", entitlements, directory / name], directory)
 
 
+def signed_entitlements(path, directory):
+    signed = run(["codesign", "--display", "--entitlements", "-", "--xml", path], directory,
+                 capture=True)
+    return plistlib.loads(signed.encode()) if signed.strip() else {}
+
+
+def check_entitlements(name, granted, required):
+    """Every required entitlement, and no private one."""
+    missing = sorted(key for key, value in required.items() if granted.get(key) != value)
+    if missing:
+        raise SystemExit(f"{name} is not signed with {', '.join(missing)}")
+    private = sorted(key for key in granted if key.startswith(PRIVATE_ENTITLEMENT_PREFIX))
+    if private:
+        raise SystemExit(f"{name} carries private entitlement(s) {', '.join(private)}")
+
+
 def verify(directory, expected_version, entitlements):
     required = plistlib.loads(entitlements.read_bytes())
+    for name in UNRELEASED:
+        if (directory / name).exists():
+            raise SystemExit(f"{name} must never be in a release")
     for name in BINARIES:
         path = directory / name
         if not (path.is_file() and os.access(path, os.X_OK)):
             raise SystemExit(f"{name} is missing or not executable")
         run(["codesign", "--verify", "--strict", path], directory)
-        signed = run(["codesign", "--display", "--entitlements", "-", "--xml", path], directory,
-                     capture=True)
-        granted = plistlib.loads(signed.encode()) if signed.strip() else {}
-        missing = sorted(key for key, value in required.items() if granted.get(key) != value)
-        if missing:
-            raise SystemExit(f"{name} is not signed with {', '.join(missing)}")
+        check_entitlements(name, signed_entitlements(path, directory), required)
     version = run([directory / "iso", "--version"], directory, capture=True).strip()
     if version != expected_version:
         raise SystemExit(f"expected `iso --version` to print {expected_version!r}, got {version!r}")

@@ -48,6 +48,15 @@ package enum BoundaryAudit {
     /// A macOS boot's guest-driven computer use, read from its owner at
     /// stop: the frame rate and counts only.
     case guestComputerUse(MacGuestCUCounts)
+    /// A Core AI boot: the accelerator classes its configuration carries,
+    /// the template, and the template and runtime builds.
+    case macCoreAIAttached(
+      accelerators: [String], template: String, templateBuild: String, runtime: String)
+    /// The guest's Core AI report after enrollment: kind names and the
+    /// delegate flag only.
+    case macCoreAIProbe(availableKinds: [String], delegateEnabled: Bool)
+    /// The owner's preflight found AMFI relaxed on the host for this boot.
+    case hostSecurityReduced
 
     package enum ClaimOutcome: String, Sendable, Equatable {
       case claimed, refused, shadow
@@ -95,6 +104,9 @@ package enum BoundaryAudit {
       case .inputSnapshot: "input_snapshot"
       case .handoffFence: "handoff_fence"
       case .guestComputerUse: "guest_computer_use"
+      case .macCoreAIAttached: "mac_coreai_attached"
+      case .macCoreAIProbe: "mac_coreai_probe"
+      case .hostSecurityReduced: "host_security_reduced"
       }
     }
 
@@ -149,6 +161,19 @@ package enum BoundaryAudit {
             .object(c.refusals.keys.sorted().map { ($0, .uint(UInt64(c.refusals[$0] ?? 0))) })
           ),
         ]
+      case .macCoreAIAttached(let accelerators, let template, let templateBuild, let runtime):
+        members += [
+          ("accelerators", .array(accelerators.map { .string(sanitizeForDisplay($0)) })),
+          ("template", .string(sanitizeForDisplay(template))),
+          ("template_build", .string(sanitizeForDisplay(templateBuild))),
+          ("runtime", .string(sanitizeForDisplay(runtime))),
+        ]
+      case .macCoreAIProbe(let kinds, let delegate):
+        members += [
+          ("available_kinds", .array(kinds.map(OutputJSON.string))),
+          ("delegate_enabled", .bool(delegate)),
+        ]
+      case .hostSecurityReduced: break
       case .pullApply(let applied), .pullApplyPartial(let applied):
         members.append(("applied", .uint(UInt64(applied))))
       case .policyBoot(let mode, let digest, let epoch, let actions):

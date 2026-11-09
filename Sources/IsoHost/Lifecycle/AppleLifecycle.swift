@@ -227,6 +227,7 @@ extension AppleBackend {
         "computer_use.guest_access applies to macOS images only; instance '\(instance.name)' (\(instance.image)) runs without it"
       )
     }
+    try requireCoreAIImage(manifest, instance: instance)
     if config.network.transport == .brokered {
       // Refused before any record or VM exists: never a downgraded start.
       if let conflict = config.transportConflict { throw HostError(conflict) }
@@ -296,6 +297,7 @@ extension AppleBackend {
     // Checks of the configuration alone, before any state is written.
     try runtime.requireMacGuests()
     try requireMacSupportedConfig()
+    if config.coreAI != nil { try runtime.requireCoreAI() }
     let authorizedKey = try Self.authorizedKey(config)
     let lock = try InstanceStore.lock(instance)
     defer { lock.release() }

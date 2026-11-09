@@ -217,14 +217,21 @@ package struct SandboxRuntime: Sendable {
     }
   }
 
-  /// Resolve the configured or installed runtime for `config`.
-  package static func open(_ config: IsoConfig, environment: [String: String], executable: String?)
-    throws(RuntimeError) -> SandboxRuntime
-  {
+  /// Resolve the configured or installed runtime for `config`. With
+  /// `coreai`, the installed default is the experimental
+  /// `iso-sandbox-coreai` build instead.
+  /// `tool` forces the experimental build, for an instance created with
+  /// Core AI whatever the configuration says now.
+  package static func open(
+    _ config: IsoConfig, environment: [String: String], executable: String?,
+    tool forced: BinaryResolver.Tool? = nil
+  ) throws(RuntimeError) -> SandboxRuntime {
+    let tool: BinaryResolver.Tool = forced ?? (config.coreAI == nil ? .runtime : .coreAIRuntime)
     let binary = try BinaryResolver.resolve(
       configured: config.appleContainer.binary?.path,
-      defaults: BinaryResolver.defaultRuntimes(home: environment["HOME"], executable: executable),
-      tool: .runtime)
+      defaults: BinaryResolver.defaultRuntimes(
+        home: environment["HOME"], executable: executable, name: tool.name),
+      tool: tool)
     return SandboxRuntime(
       executor: ProcessRuntimeExecutor(binary: binary, parentEnvironment: environment),
       root: BinaryResolver.canonicalPath(config.stateRoot.appending("runtime").path),
@@ -347,12 +354,22 @@ package struct SandboxRuntime: Sendable {
 package enum BinaryResolver {
   package enum Tool: Sendable {
     case runtime
+    /// The experimental runtime `coreai` selects.
+    case coreAIRuntime
     case builder
 
-    var name: String { self == .runtime ? "iso-sandbox" : "container" }
+    var name: String {
+      switch self {
+      case .runtime: "iso-sandbox"
+      case .coreAIRuntime: CoreAIRuntime.binaryName
+      case .builder: "container"
+      }
+    }
     var installHint: String {
       switch self {
       case .runtime: "Build it with scripts/build-iso-sandbox.sh, or set `apple_container.binary`."
+      case .coreAIRuntime:
+        "\(CoreAIRuntime.missing); build it with scripts/build-iso-sandbox.sh --experimental-coreai."
       case .builder: "Install Apple `container` 1.4.1 or later, or set `apple_container.builder`."
       }
     }
@@ -363,13 +380,15 @@ package enum BinaryResolver {
   static let rootEquivalentGroups: Set<gid_t> = [0, 80]
 
   /// Runtime beside the running host first, then fixed install locations.
-  package static func defaultRuntimes(home: String?, executable: String?) -> [String] {
+  package static func defaultRuntimes(
+    home: String?, executable: String?, name: String = "iso-sandbox"
+  ) -> [String] {
     var candidates: [String] = []
     if let executable {
-      candidates.append((executable as NSString).deletingLastPathComponent + "/iso-sandbox")
+      candidates.append((executable as NSString).deletingLastPathComponent + "/" + name)
     }
-    if let home { candidates.append(home + "/.local/opt/iso-sandbox/bin/iso-sandbox") }
-    return candidates + ["/usr/local/bin/iso-sandbox", "/opt/homebrew/bin/iso-sandbox"]
+    if let home { candidates.append(home + "/.local/opt/iso-sandbox/bin/" + name) }
+    return candidates + ["/usr/local/bin/" + name, "/opt/homebrew/bin/" + name]
   }
 
   package static let defaultBuilders = ["/usr/local/bin/container", "/opt/homebrew/bin/container"]

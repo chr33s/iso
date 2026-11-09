@@ -60,6 +60,36 @@ private func auditInstance() throws -> Instance {
   }
 }
 
+@Test func coreAIIsAuditedAsMetadataOnly() throws {
+  let instance = try auditInstance()
+  defer { try? FileManager.default.removeItem(atPath: instance.directory) }
+  let time = Date(timeIntervalSince1970: 1_800_000_000)
+  let events: [BoundaryAudit.Event] = [
+    .hostSecurityReduced,
+    .macCoreAIAttached(
+      accelerators: ["_VZMacCoreAIDeviceConfiguration"], template: "iso-0a1b2c3d-00-coreai",
+      templateBuild: "27D1\u{1b}[2J", runtime: "iso-sandbox 0.1.0"),
+    .macCoreAIProbe(availableKinds: ["cpu", "gpu"], delegateEnabled: true),
+  ]
+  for event in events { BoundaryAudit.record(instance, event, now: time) }
+  let lines = try BoundaryAudit.lines(instance).map(canonicalJSON)
+  #expect(
+    lines == [
+      try canonicalJSON(#"{"time":"2027-01-15T08:00:00Z","event":"host_security_reduced"}"#),
+      try canonicalJSON(
+        #"{"time":"2027-01-15T08:00:00Z","event":"mac_coreai_attached","accelerators":["_VZMacCoreAIDeviceConfiguration"],"template":"iso-0a1b2c3d-00-coreai","template_build":"27D1?[2J","runtime":"iso-sandbox 0.1.0"}"#
+      ),
+      try canonicalJSON(
+        #"{"time":"2027-01-15T08:00:00Z","event":"mac_coreai_probe","available_kinds":["cpu","gpu"],"delegate_enabled":true}"#
+      ),
+    ])
+  #expect(
+    events.map(\.auditKind) == [.hostSecurityReduced, .macCoreAIAttached, .macCoreAIProbe])
+  #expect(
+    events.map(\.auditKind.rawValue)
+      == ["host.security.reduced", "mac.coreai.attached", "mac.coreai.probe"])
+}
+
 @Test func auditLogStaysBounded() throws {
   let instance = try auditInstance()
   defer { try? FileManager.default.removeItem(atPath: instance.directory) }

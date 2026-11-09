@@ -54,7 +54,9 @@ jobs:
         run: jactionlint
 
       - name: Release legal notices
-        run: python3 tests/test-release-legal.py
+        run: |
+          python3 tests/test-release-legal.py
+          python3 tests/test-release-private-entitlements.py
 
       - name: Host behavior and CLI contracts
         run: |

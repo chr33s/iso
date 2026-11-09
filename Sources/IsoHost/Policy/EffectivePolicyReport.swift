@@ -44,6 +44,7 @@ package enum EffectivePolicyReport {
       ("editor_allow", .array(config.editor.allow.map { .string($0.rawValue) })),
       // Null means no boot lifetime ("unlimited").
       ("session_ttl_seconds", config.limits.sessionTTL.map { .uint(UInt64($0.seconds)) } ?? .null),
+      ("coreai", .array((config.coreAI?.accelerators ?? []).map { .string($0.rawValue) })),
     ])
   }
 
@@ -80,6 +81,11 @@ package enum EffectivePolicyReport {
       }
     } else {
       out.append("limits.session_ttl: no boot lifetime")
+    }
+    if let coreAI = config.coreAI {
+      out.append(
+        "coreai \(coreAI.runtimeArgument): paravirtualized Core AI on a --coreai template; acknowledge_reduced_host_security true: the host runs with AMFI relaxed and the guest reaches the host GPU/Neural Engine drivers"
+      )
     }
     return out
   }
@@ -148,6 +154,27 @@ package enum EffectivePolicyReport {
       members += [("grants", .null), ("pending_revocations", .null), ("revoked", .null)]
       unknown += ["grants", "pending_revocations", "revoked"]
       conflicts.append("the grant ledger is unreadable or corrupt")
+    }
+    // Core AI is fixed at creation: the sidecar, not the configuration,
+    // says what this instance's VM gets.
+    do {
+      if let sidecar = try MachineSidecar.loadIfPresent(instance) {
+        let recorded = sidecar.coreAI?.accelerators ?? []
+        members.append(("coreai", .array(recorded.map(OutputJSON.string))))
+        let requested = (config.coreAI?.accelerators ?? []).map(\.rawValue)
+        if !MacCoreAIRecord.same(sidecar.coreAI, MacCoreAIRecord(config.coreAI)) {
+          conflicts.append(
+            "coreai is fixed at \(recorded.isEmpty ? "off" : recorded.joined(separator: ",")) for this VM; the configuration requests \(requested.isEmpty ? "off" : requested.joined(separator: ","))"
+          )
+        }
+      } else {
+        members.append(("coreai", .null))
+        unknown.append("coreai")
+      }
+    } catch {
+      members.append(("coreai", .null))
+      unknown.append("coreai")
+      conflicts.append("the machine record is unreadable or corrupt")
     }
     members.append(
       ("fenced", .bool(FileManager.default.fileExists(atPath: HandoffFence.path(instance)))))

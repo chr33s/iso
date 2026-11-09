@@ -250,7 +250,7 @@ enum ConfigDecoder {
       "data_dir", "vm", "ssh_port", "github", "setup", "claude", "codex", "proxy",
       "guest_env", "profiles", "post_start", "forward_ports", "updates", "apple_container",
       "workspace", "egress", "egress_filter", "limits", "security", "editor", "execution",
-      "policy", "network", "computer_use",
+      "policy", "network", "computer_use", "coreai",
     ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
@@ -389,7 +389,8 @@ enum ConfigDecoder {
       },
       workspaceInput: try workspaceInput(r),
       revokedGrantIDs: revoked,
-      computerUse: try r.defaulted("computer_use", .off, computerUse))
+      computerUse: try r.defaulted("computer_use", .off, computerUse),
+      coreAI: try r.defaulted("coreai", nil, coreAI))
     try requirePolicyCombinations(config)
     if let conflict = config.transportConflict {
       throw FieldError([.key("network"), .key("transport")], conflict)
@@ -511,6 +512,33 @@ enum ConfigDecoder {
       return n
     }
     return ComputerUseConfig(guestFrameRate: rate)
+  }
+
+  /// `coreai`: `accelerators` is a non-empty, duplicate-free list of `gpu`
+  /// and `neural_engine`, and needs `"acknowledge_reduced_host_security":
+  /// true`. An empty object, or one without `accelerators`, is off.
+  static func coreAI(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> CoreAIConfig?
+  {
+    let r = try ObjectReader(value, at: path)
+    try r.rejectUnknown(allowing: ["accelerators", "acknowledge_reduced_host_security"])
+    let acknowledged = try r.defaulted("acknowledge_reduced_host_security", false, Parse.bool)
+    guard r.members["accelerators"] != nil else { return nil }
+    let accelerators = try r.defaulted("accelerators", [CoreAIConfig.Accelerator]()) {
+      v, p throws(FieldError) in
+      let kinds = try Parse.array(v, p) { v, p throws(FieldError) in
+        try Parse.stringEnum(v, p, CoreAIConfig.Accelerator.allCases)
+      }
+      guard !kinds.isEmpty else { throw FieldError(p, "needs at least one accelerator") }
+      guard Set(kinds).count == kinds.count else { throw FieldError(p, "duplicate entries") }
+      return kinds
+    }
+    guard acknowledged else {
+      throw FieldError(
+        r.child("acknowledge_reduced_host_security"),
+        "needs \"acknowledge_reduced_host_security\": true")
+    }
+    return CoreAIConfig(accelerators: accelerators, acknowledged: true)
   }
 
   static func workspacePull(

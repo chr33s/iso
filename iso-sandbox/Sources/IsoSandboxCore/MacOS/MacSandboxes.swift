@@ -58,7 +58,7 @@ package enum MacSandboxes {
   package static func create(
     root: SandboxRoot, id: SandboxID, owner: String, template: SandboxID, cpus: Int,
     memoryBytes: UInt64, network: NetworkMode, authorizedKey: String,
-    guestComputerUse: MacGuestComputerUse? = nil
+    guestComputerUse: MacGuestComputerUse? = nil, coreAI: MacCoreAI? = nil
   ) async throws -> MacSandboxRecord {
     try root.createMacDirectories()
     guard SSHPublicKey.isEd25519(authorizedKey) else {
@@ -71,6 +71,7 @@ package enum MacSandboxes {
         "template \(template) needs at least \(meta.minimumCPUs) CPUs and \(meta.minimumMemoryBytes >> 20) MiB"
       )
     }
+    try requireCoreAITemplate(meta, coreAI: coreAI)
     let lock = try OperationLock.shared(root)
     defer { withExtendedLifetime(lock) {} }
     let paths = root.macSandbox(id)
@@ -97,7 +98,7 @@ package enum MacSandboxes {
             macAddress: VZMACAddress.randomLocallyAdministered().string.lowercased(),
             subnetIndex: index, network: network, enrollment: .pending,
             authorizedKey: SSHPublicKey.canonical(authorizedKey), createdAt: Date(), expiresAt: nil,
-            guestComputerUse: guestComputerUse)
+            guestComputerUse: guestComputerUse, coreAI: coreAI)
           // Writing the record commits the create.
           try paths.save(r)
           record = r
@@ -108,6 +109,15 @@ package enum MacSandboxes {
         try? FileManager.default.removeItem(at: paths.dir)
         throw error
       }
+    }
+  }
+
+  /// Core AI only on a template whose guest setup wrote the feature flag.
+  static func requireCoreAITemplate(_ meta: MacTemplate, coreAI: MacCoreAI?) throws {
+    guard coreAI == nil || meta.hasCoreAIFeatureFlag else {
+      throw SandboxError(
+        "template \(meta.name) has no Core AI feature flag; rebuild it with `iso setup --guest macos --coreai`"
+      )
     }
   }
 

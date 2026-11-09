@@ -680,6 +680,28 @@ What `iso` should borrow is Cua’s **oracle rigor**, evidence retention, and re
 
 Before implementing the full macOS lifecycle, prove these five cells on real hardware.
 
+
+## Gate AI — paravirtualized Core AI (experimental)
+
+**Not a release blocker**: `coreai` is never released
+([design](paravirtualized-coreai.md)). Run on a macOS 27.3 development Mac
+with a 27.3 guest and `scripts/build-iso-sandbox.sh --experimental-coreai`.
+
+| Check | Pass |
+| --- | --- |
+| Preflight on a fully secured host | refused with the AMFI message, no VM created |
+| Boot with `["gpu","neural_engine"]` | `MacEffectiveConfig.accelerators` has both classes; Gate O passes |
+| Boot with `["gpu"]` | exactly one class attached |
+| Guest probe | `availableKinds` ⊇ `{gpu, neuralEngine}`, `delegateEnabled` |
+| Plain template + `coreai` | refused before boot |
+| Perf smoke | a public YOLO/CLIP Core AI model in the guest ≥ 3× guest-CPU time; record host ratio |
+| Audit | `mac.coreai.attached`, `mac.coreai.probe`, `host.security.reduced` present, values absent |
+
+Also record the answers to the design's open questions (§13): ad hoc versus
+certificate signing, which object answers `_setAcceleratorDevices:`, and
+the guest IOKit classes the helper's probe matches (`PVAIDevice`,
+`H11ANEIn`).
+
 ## Q0.1 Rendered native window
 
 - boot macOS

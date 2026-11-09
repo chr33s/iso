@@ -338,7 +338,8 @@ private func instance() throws -> Instance {
   #expect(
     fields["unknown"]
       == .array(
-        ["transport", "egress", "grants", "pending_revocations", "revoked"].map(OutputJSON.string)))
+        ["transport", "egress", "grants", "pending_revocations", "revoked", "coreai"].map(
+          OutputJSON.string)))
   let text = EffectivePolicyReport.text(EffectivePolicyReport.json(unlimited, instance: instance))
   #expect(text.contains("  session_ttl_seconds: unlimited"))
   #expect(text.contains("  grants: unknown"))
@@ -424,4 +425,30 @@ private func instance() throws -> Instance {
   #expect(r.appliedForwards.isEmpty)
   #expect(r.savedForwards == [legacy])
   #expect(try GrantLedger.load(instance).revoked == [givenID])
+}
+
+/// `coreai` is a relaxation: the report names the accelerators, the
+/// template variant and the acknowledgement, and the instance's fixed
+/// setting.
+@Test func coreAIIsReportedAsARelaxation() throws {
+  let off = try testConfig()
+  #expect(!EffectivePolicyReport.relaxations(off).contains { $0.hasPrefix("coreai") })
+  let on = try testConfig(
+    #""coreai": {"accelerators": ["gpu", "neural_engine"], "acknowledge_reduced_host_security": true}"#
+  )
+  let relaxation = try #require(
+    EffectivePolicyReport.relaxations(on).first { $0.hasPrefix("coreai") })
+  #expect(relaxation.contains("gpu,neural_engine"))
+  #expect(relaxation.contains("--coreai template"))
+  #expect(relaxation.contains("acknowledge_reduced_host_security true"))
+  #expect(relaxation.contains("AMFI relaxed"))
+  guard case .object(let requested) = EffectivePolicyReport.requested(on) else {
+    Issue.record("unexpected report shape")
+    return
+  }
+  #expect(
+    requested.first { $0.0 == "coreai" }?.1
+      == .array([.string("gpu"), .string("neural_engine")]))
+  guard case .object(let plain) = EffectivePolicyReport.requested(off) else { return }
+  #expect(plain.first { $0.0 == "coreai" }?.1 == .array([]))
 }

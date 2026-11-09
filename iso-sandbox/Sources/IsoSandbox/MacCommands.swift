@@ -31,6 +31,11 @@ struct MacTemplateCommand: AsyncParsableCommand {
     @Option var cpus = 4
     @Option var memoryMib: UInt64 = 8192
     @Option var diskGib: UInt64 = 64
+    @Flag(
+      help:
+        "Write the paravirtualized Core AI feature flag (macOS 27.3+ restore image; the name must end in -coreai)"
+    )
+    var coreai = false
     func run() async throws {
       let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
       let helper =
@@ -42,7 +47,8 @@ struct MacTemplateCommand: AsyncParsableCommand {
           root: try root.resolve(), name: try SandboxID(name), ipsw: URL(fileURLWithPath: ipsw),
           helper: helper, provision: provision.map { URL(fileURLWithPath: $0) }, executable: exe,
           cpus: cpus,
-          memoryBytes: try bytes(memoryMib, mib), diskBytes: try bytes(diskGib, gib)))
+          memoryBytes: try bytes(memoryMib, mib), diskBytes: try bytes(diskGib, gib),
+          coreAI: coreai))
     }
   }
 
@@ -78,6 +84,11 @@ struct MacCreate: AsyncParsableCommand {
   var guestComputerUse = false
   @Option(help: "Frames per second the guest may take (1-10; with --guest-computer-use)")
   var guestFrameRate: Int?
+  @Option(
+    help:
+      "Paravirtualized Core AI accelerators to attach (gpu,neural_engine); needs a -coreai template and the iso-sandbox-coreai build"
+  )
+  var coreai: String?
 
   func validate() throws {
     guard ["shared", "host-only"].contains(network) else {
@@ -96,7 +107,8 @@ struct MacCreate: AsyncParsableCommand {
         network: network == "host-only" ? .hostOnly : .shared, authorizedKey: authorizedKey,
         guestComputerUse: guestComputerUse
           ? try MacGuestComputerUse(frameRate: guestFrameRate ?? GuestCUProtocol.defaultFrameRate)
-          : nil))
+          : nil,
+        coreAI: try coreai.map(MacCoreAI.init(parsing:))))
   }
 }
 
