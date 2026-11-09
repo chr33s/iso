@@ -1,6 +1,7 @@
 ---
 name: integration
 description: Run and interpret isolate's macOS 27+ VM integration suite for the Apple runtime. Use when asked for integration testing or when guest-visible/lifecycle work needs its pre-merge gate.
+allowed-tools: Bash(./tests/run-integration.sh:*) Bash(git rev-parse:*) Bash(uname:*)
 ---
 
 <!--

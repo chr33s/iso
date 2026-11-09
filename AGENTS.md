@@ -141,7 +141,8 @@ runtime check.
   `scripts/swift-host-fault-injection.py` that a test detects.
 - Before opening, use the
   [`closeout-review`](.agents/skills/closeout-review/SKILL.md) skill on the
-  working diff. Describe what the code does now in plain, factual language.
+  working diff. Describe what the code does now in plain, factual language; a
+  bug fix is a bug fix.
 
 ## Review discipline
 

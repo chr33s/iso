@@ -129,9 +129,10 @@ Apple backend. The credential proxy is the Swift package
 ## Agent tooling
 
 - [`.agents/skills/`](../.agents/skills/) — shared review, closeout, fault-injection,
-  integration, and PR-shepherding workflows discovered by Codex.
+  integration, and PR-shepherding workflows discovered by Codex and, through
+  the `.claude/skills` symlink, Claude Code.
 - [`.github/workflows/review.yml`](../.github/workflows/review.yml)
   — trusted-user, on-demand `@claude` and `@codex` PR reviews (Codex in a
   read-only sandbox).
-- [`.claude/`](../.claude/) — compatibility commands, skill entrypoints, and
-  local hooks/settings.
+- [`.claude/`](../.claude/) — the `.claude/skills` symlink, the `/my-review`
+  command, review subagents, and local hooks/settings.
