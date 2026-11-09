@@ -34,6 +34,9 @@ import Testing
       guard result == 0 else { throw CIError(.hostUnreachable, "connect failed") }
       var timeout = timeval(tv_sec: 10, tv_usec: 0)
       setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+      // A write to a connection the server refused fails instead of raising SIGPIPE.
+      var noSigpipe: Int32 = 1
+      setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
     }
 
     deinit { close(fd) }

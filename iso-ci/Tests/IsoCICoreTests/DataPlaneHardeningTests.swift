@@ -290,8 +290,10 @@ import Testing
     let harness = try await DPHarness()
     let (allocation, _, _) = try await harness.register()
     let clock = ContinuousClock()
-    // The header deadline is far longer than the checks, so a third
-    // connection that closes quickly was refused by the cap, not the deadline.
+    // The header deadline is far longer than the checks, so a connection that
+    // closes quickly was refused by the cap, not the deadline. Connections are
+    // admitted on whichever event loop they land, so any one of the three may
+    // be the refused one.
     let path = DataPlaneProcessTests.shortSocketPath()
     var limits = DataPlaneHTTPServer.Limits()
     limits.maxConnections = 2
@@ -299,19 +301,17 @@ import Testing
     let server = try await DataPlaneHTTPServer.start(
       socketPath: path, service: harness.service, allocation: allocation, limits: limits)
     defer { unlink(path) }
-    var first: DataPlaneProcessTests.UnixHTTPClient? = try .init(path: path)
-    let second = try DataPlaneProcessTests.UnixHTTPClient(path: path)
-    try await Task.sleep(for: .milliseconds(50))
-    let refusedAt = clock.now
-    let third = try DataPlaneProcessTests.UnixHTTPClient(path: path)
-    #expect(third.fill() == false)
-    #expect(clock.now - refusedAt < .seconds(4))
-    // The admitted connections are still served.
-    second.send("GET", "/nothing")
-    #expect(second.receive()?.0 == 404)
-    // Capacity is available again once one closes.
-    _ = first
-    first = nil
+    var clients: [DataPlaneProcessTests.UnixHTTPClient?] = try (0..<3).map { _ in
+      try DataPlaneProcessTests.UnixHTTPClient(path: path)
+    }
+    let sentAt = clock.now
+    for client in clients { client?.send("GET", "/nothing") }
+    let statuses = clients.map { $0?.receive()?.0 }
+    #expect(statuses.filter { $0 == 404 }.count == 2)
+    #expect(statuses.filter { $0 == nil }.count == 1)
+    #expect(clock.now - sentAt < .seconds(4))
+    // Capacity is available again once an admitted connection closes.
+    if let admitted = statuses.firstIndex(of: 404) { clients[admitted] = nil }
     try await Task.sleep(for: .milliseconds(200))
     let fourth = try DataPlaneProcessTests.UnixHTTPClient(path: path)
     fourth.send("GET", "/nothing")
