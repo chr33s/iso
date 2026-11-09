@@ -8,21 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
-### Changed
-
-- **Apple `container` baseline 1.7.1** (was 1.4.1 minimum, 1.5.0 pinned in
-  `mise.toml`). The runtime now pins the guest kernel container 1.7.1 installs,
-  `vmlinux-6.18.56-208-debug` (Kata 4.3.1, sha256 `98a1005f…f7511`), in place
-  of `vmlinux-6.18.15-186`. Existing hosts run `container system kernel set
-  --recommended`, then `iso setup`; the kernel is part of the NET-HANDOFF-1
-  tuple, so brokered hosts record new evidence.
-
-### Fixed
-
-- `iso setup` image builds failed with `APPLE_IDENTITY_CONFLICT` on container
-  1.7, which saves `local/x` as `docker.io/local/x`. `iso-sandbox image import
-  --name` re-tags exactly that registry-qualified alias; any other mismatch is
-  still refused.
+## v0.9.0
 
 ### Added
 
@@ -40,19 +26,75 @@ SPDX-License-Identifier: Apache-2.0
   C-T24 passed live on an organization pool; see the [operator
   guide](docs/ci.md#scale-sets-and-shared-hosts) and the qualification
   record.
+- **iso-ci:** `iso-ci hooks install|status|uninstall` writes a `pre-commit`
+  or `pre-push` hook that blocks a commit or push to a protected branch
+  (default `main`) unless the project's workflow passes in local preflight.
+  `iso-ci run --snapshot staged` captures exactly the staged index and refuses
+  paths whose working tree differs from it; `--timeout SECONDS` (with
+  `--follow`) aborts an unsettled run. See [Running a project's CI from its
+  Git hooks](docs/ci.md#running-a-projects-ci-from-its-git-hooks).
 - **iso-sandbox:** each VM owner writes and holds a lease file describing the
   running VM (`iso.vm-lease/v1`).
-
-- **macOS guests (experimental, unreleased build):** paravirtualized Core AI.
-  `"coreai": {"accelerators": ["gpu", "neural_engine"],
+- **macOS guests (experimental, source builds only):** paravirtualized Core
+  AI. `"coreai": {"accelerators": ["gpu", "neural_engine"],
   "acknowledge_reduced_host_security": true}` attaches macOS 27.3's private
   GPU/Neural Engine accelerator devices to new instances, on a template built
   with `iso setup --guest macos --coreai`, through `iso-sandbox-coreai`
-  (`scripts/build-iso-sandbox.sh --experimental-coreai`). Its private
-  entitlement needs a host with AMFI relaxed. Reported as a relaxation by
-  `iso policy effective` and audited as `mac.coreai.attached`,
-  `mac.coreai.probe` and `host.security.reduced`. The release verifier refuses
-  any `com.apple.private.*` entitlement. See `docs/coreai.md`.
+  (`scripts/build-iso-sandbox.sh --experimental-coreai`), which the release
+  archive does not contain. Its private entitlement needs a host with AMFI
+  relaxed. Reported as a relaxation by `iso policy effective` and audited as
+  `mac.coreai.attached`, `mac.coreai.probe` and `host.security.reduced`. The
+  release verifier refuses any `com.apple.private.*` entitlement. See
+  `docs/coreai.md`.
+
+### Changed
+
+- **Apple `container` baseline 1.7.1** (was 1.4.1 minimum, 1.5.0 pinned in
+  `mise.toml`). The runtime now pins the guest kernel container 1.7.1 installs,
+  `vmlinux-6.18.56-208-debug` (Kata 4.3.1, sha256 `98a1005f…f7511`), in place
+  of `vmlinux-6.18.15-186`. Existing hosts run `container system kernel set
+  --recommended`, then `iso setup`; the kernel is part of the NET-HANDOFF-1
+  tuple, so brokered hosts record new evidence.
+- `proxy.openai.auth` defaults to `"bearer"`, and `"api_key"` is now a
+  configuration error (OpenAI keys were always sent as Bearer).
+- GitHub PAT Keychain accounts are keyed by `owner/repo`, so two repositories
+  with the same name no longer share an entry.
+- Usage errors exit 2. `iso uninstall` also removes the companion binaries.
+
+### Fixed
+
+- `iso setup` image builds failed with `APPLE_IDENTITY_CONFLICT` on container
+  1.7, which saves `local/x` as `docker.io/local/x`. `iso-sandbox image import
+  --name` re-tags exactly that registry-qualified alias; any other mismatch is
+  still refused.
+- `iso run --rm` destroys the VM on any failure before launch; `iso stop`
+  stops the proxy and tunnels when the VM stop fails; instance locks never
+  recreate a destroyed instance directory.
+- Codex in macOS guests (`codex.sh` no longer uses GNU `mv -T`), and the
+  Linux egress client setup is skipped on macOS guests. `restore
+  --reprovision` refuses macOS guests up front.
+- Git indexes with `skipHash` (zero trailer) are accepted; managed agent
+  flags are recognised in `--flag=value` form.
+- Integer overflows in guest disk-usage percentages,
+  `hostRequirements.storage` parsing and client-assertion windows; an empty
+  `uses:` in iso-ci is a compile error, not a crash.
+- Filtered egress denies `192.0.0.0/24`; it denied all of `192.0.0.0/16`.
+
+### Security
+
+- **Archive validation:** `iso update` refuses non-directory members named
+  `x/`, unknown ustar variants, and names or links set by both PAX and GNU
+  headers, and indexes members as a tree so deep paths cost linear time.
+  `SHA256SUMS` listings that name a file twice are refused.
+- **Shell quoting:** escaping works per Unicode scalar, so an apostrophe
+  followed by a combining mark can no longer break out of its quotes.
+- **Local marketplaces:** copied into the guest as a confined snapshot
+  instead of `scp -r`, which followed symlinks.
+- **Devcontainer features:** references are quoted and tags must match the
+  OCI grammar.
+- **Tunnels:** a tunnel PID is signalled only when its identity matches.
+- **Snapshots:** the default exclusions cover `.envrc`, `.env-*` and
+  `.env_*`.
 
 ## v0.8.0
 
