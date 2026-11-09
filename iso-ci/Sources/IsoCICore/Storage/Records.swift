@@ -423,6 +423,8 @@ package struct ApprovalRecord: Sendable, Equatable, Codable {
     case image
     case networkPolicy = "network_policy"
     case compatibility, limits, profile
+    /// A host budget that sets shared-host fields.
+    case host
   }
 
   package let kind: Kind

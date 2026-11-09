@@ -36,7 +36,7 @@ import Testing
 
   /// An interactive child (`iso-ci debug`'s ssh) stays in the caller's
   /// process group, so it keeps the terminal; others get their own group.
-  @Test(arguments: [Subprocess.ProcessGroup.own, .caller])
+  @Test(arguments: [Subprocess.ProcessGroup.own, .caller, .session])
   func spawnPlacesTheChildInTheRequestedGroup(_ group: Subprocess.ProcessGroup) throws {
     var fds: [Int32] = [0, 0]
     #expect(pipe(&fds) == 0)
@@ -52,7 +52,7 @@ import Testing
     let pgid = Int32(
       String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     switch group {
-    case .own: #expect(pgid == pid)
+    case .own, .session: #expect(pgid == pid)
     case .caller: #expect(pgid == getpgrp())
     }
   }

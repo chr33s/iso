@@ -16,7 +16,7 @@ struct IsoCICommand: ParsableCommand {
     subcommands: [
       Setup.self, Serve.self, Status.self, PoolCommand.self, Run.self, Logs.self, Inspect.self,
       Debug.self, Patch.self, Retry.self, Abort.self, Results.self, Actions.self, Hooks.self,
-      RelayHelper.self,
+      RelayHelper.self, InternalSupervise.self,
     ])
 }
 
@@ -148,9 +148,16 @@ struct Serve: ParsableCommand {
   @Flag(help: "Explicitly install and start the per-user launchd service") var install = false
   @Flag(help: "Stop and remove the per-user launchd service") var uninstall = false
   @Option(help: "Reconciliation interval in seconds") var interval: Double = 15
+  @Option(
+    name: .customLong("record-protocol-trace"),
+    help: "Append sanitized scale-set, scheduling and allocation records (JSONL) to this file")
+  var protocolTrace: String?
 
   func validate() throws {
     if install && uninstall { throw ValidationError("--install and --uninstall are exclusive") }
+    if protocolTrace != nil && (install || uninstall) {
+      throw ValidationError("--record-protocol-trace applies to a foreground controller")
+    }
     guard (2...600).contains(interval) else { throw ValidationError("--interval must be 2-600") }
   }
 
@@ -170,7 +177,8 @@ struct Serve: ParsableCommand {
       let runtime = try Runtime.open(
         root: global.dataRoot, iso: global.iso, isoConfig: global.isoConfig,
         environment: ProcessInfo.processInfo.environment, interval: interval)
-      try Services.install(runtime)
+      let trace = try protocolTrace.map { (path) throws(CIError) in try ProtocolTrace(path: path) }
+      try Services.install(runtime, serving: true, trace: trace)
       Output.note("controller serving \(global.dataRoot.path)")
       try runtime.controller.run()
     }

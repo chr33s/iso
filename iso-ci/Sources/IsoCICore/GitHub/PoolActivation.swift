@@ -86,6 +86,8 @@ package final class APIAuthorityReader: AuthorityReader {
 /// that cannot be verified leaves the pool inactive.
 package enum PoolActivation {
   package static let privilegedReason = "privileged release execution is not qualified"
+  package static let macOSReason =
+    "macOS guests need a network interface; CI runs only NIC-less (NET-HANDOFF-1) Linux guests"
 
   package static func evaluate(
     pool name: Name, configuration: CIConfiguration, installation: InstallationRecord?,
@@ -102,6 +104,15 @@ package enum PoolActivation {
     guard let pool = configuration.pools[name], let profile = configuration.profiles[pool.profile]
     else {
       reasons.append("pool configuration is incomplete")
+      return inactive()
+    }
+    if profile.guestOS == .macos {
+      // macOS guests need a NIC; CI runs only NIC-less brokered guests.
+      reasons.append(macOSReason)
+      guarantees.append(
+        AuthorityGuarantee(
+          "brokered execution", .unavailable, "NET-HANDOFF-1 covers Linux guests only",
+          required: true))
       return inactive()
     }
     if profile.authority == .privileged {
@@ -224,17 +235,20 @@ package enum PoolActivation {
       // by repository privacy or name.
       do {
         let repo = try reader.repository(repository)
-        if repo.isPublic {
+        if repo.isPublic, let gate = publicJobGate(pool) {
+          guarantees.append(gate)
+        } else if repo.isPublic {
           reasons.append("public repository execution is not qualified")
           guarantees.append(
             AuthorityGuarantee(
               "public trigger exposure", .unavailable, "repository is public", required: true))
           return inactive()
+        } else {
+          guarantees.append(
+            AuthorityGuarantee(
+              "public trigger exposure", .verified, "repository is \(repo.visibility ?? "private")",
+              required: true))
         }
-        guarantees.append(
-          AuthorityGuarantee(
-            "public trigger exposure", .verified, "repository is \(repo.visibility ?? "private")",
-            required: true))
       } catch {
         reasons.append("repository visibility could not be verified: \(error.message)")
         guarantees.append(
@@ -253,7 +267,9 @@ package enum PoolActivation {
           return inactive()
         }
         groupID = group.id
-        if group.allowsPublicRepositories {
+        if group.allowsPublicRepositories, let gate = publicJobGate(pool) {
+          guarantees.append(gate)
+        } else if group.allowsPublicRepositories {
           reasons.append(
             "runner group \(groupName) allows public repositories; public execution is not qualified"
           )
@@ -297,6 +313,20 @@ package enum PoolActivation {
     }
     return PoolActivationReport(
       pool: name, state: .active, reasons: reasons, guarantees: guarantees, runnerGroupID: groupID)
+  }
+
+  /// A scale-set pool that opted into public repositories gates every job
+  /// before acquisition: fork pull requests refused, only write-gated
+  /// events or named actors (enforced by configuration validation).
+  static func publicJobGate(_ pool: PoolConfiguration) -> AuthorityGuarantee? {
+    guard let policy = pool.scaleSet?.jobPolicy, policy.allowPublicRepo, !policy.allowForkPRs
+    else { return nil }
+    let actors =
+      policy.allowedActors.isEmpty ? "any actor" : policy.allowedActors.joined(separator: ", ")
+    return AuthorityGuarantee(
+      "public trigger exposure", .verified,
+      "per-job policy before acquisition: fork pull requests refused; events \(policy.allowedEvents.joined(separator: ", ")); \(actors)",
+      required: true)
   }
 
   /// Repository Actions policy, reported (not required) because labels

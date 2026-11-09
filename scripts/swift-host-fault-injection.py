@@ -18,6 +18,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # (id, file, original text, replacement, swift test filter)
 FAULTS = [
+    # iso-ci scale sets, shared-host scheduling and allocation supervisors.
+    ("ci-job-policy-fork", "iso-ci/Sources/IsoCICore/GitHub/JobPolicy.swift",
+     "if facts.isFork && !policy.allowForkPRs {", "if false {",
+     "forkPullRequestsArePerDefaultRefused"),
+    ("ci-job-policy-public", "iso-ci/Sources/IsoCICore/GitHub/JobPolicy.swift",
+     "if !facts.repositoryPrivate && !policy.allowPublicRepo {", "if false {",
+     "publicEventAndActorChecks"),
+    ("ci-job-policy-scope", "iso-ci/Sources/IsoCICore/GitHub/JobPolicy.swift",
+     "guard configured.rawValue.lowercased() == repository.rawValue.lowercased() else {",
+     "guard true else {",
+     "offersOutsideTheScopeOrDisagreeingWithGitHubAreRefused"),
+    ("ci-public-opt-in-bound", "iso-ci/Sources/IsoCICore/Storage/Configuration.swift",
+     "guard !policy.allowForkPRs else {", "guard true else {",
+     "publicOptInIsBounded"),
+    ("ci-actions-host-suffix", "iso-ci/Sources/IsoCICore/GitHub/ScaleSetClient.swift",
+     "host.hasSuffix(hostSuffix),", "!host.isEmpty,",
+     "tokensOnlyTravelToActionsServiceHosts"),
+    ("ci-host-approval", "iso-ci/Sources/IsoCICore/Storage/Configuration.swift",
+     "budget.isApprovedDescriptor else { return nil }", "false else { return nil }",
+     "hostBudgetsWithSharedHostFieldsNeedApproval"),
+    ("ci-supervisor-inherit", "iso-ci/Sources/IsoCICore/Execution/Subprocess.swift",
+     "posix_spawn_file_actions_addinherit_np(&actions, target)", "_ = target",
+     "aDescriptorAlreadyAtItsTargetIsInherited"),
+    ("ci-supervisor-lock-owner", "iso-ci/Sources/IsoCICore/Execution/AllocationSupervisor.swift",
+     "guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else {", "guard true else {",
+     "reporterRequiresTheAllocationsOwnLock"),
     ("ordered-json-depth", "Sources/IsoHost/Support/OrderedJSON.swift",
      'case UInt8(ascii: "{"):\n        guard depth < OrderedJSON.maxDepth else',
      'case UInt8(ascii: "{"):\n        guard depth >= 0 else',
@@ -1906,7 +1932,7 @@ TOP_LEVEL_SKIPS = {".git", ".build", "target", "iso-proxy", "iso-egress"}
 
 
 def skip_top_level(directory, names):
-    if Path(directory) in (ROOT / "iso-sandbox", ROOT / "iso-policy"):
+    if Path(directory) in (ROOT / "iso-sandbox", ROOT / "iso-policy", ROOT / "iso-ci"):
         return set(names) & {".build", ".swiftpm"}
     if Path(directory) != ROOT:
         return set()
@@ -1914,7 +1940,7 @@ def skip_top_level(directory, names):
 
 
 def test_package(relative):
-    for package in ("iso-sandbox", "iso-policy"):
+    for package in ("iso-sandbox", "iso-policy", "iso-ci"):
         if relative.startswith(package + "/"):
             return package
     return "."

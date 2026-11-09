@@ -93,14 +93,28 @@ package final class ConnectedPoolReconciler: Sendable {
   /// an operator state (paused) keeps that state, but its idle runners still
   /// retire while the gate refuses it.
   let gate: String?
+  /// A scale-set pool's current demand from its listener; nil for a warm
+  /// pool, or while the listener is not running.
+  let scaleSetDemand: ScaleSetDemand?
+  /// Starts a new allocation's work in a supervisor process; nil runs it
+  /// inline in this pass.
+  let launcher: (any AllocationLauncher)?
+  let supervisors: any SupervisorDirectory
+  let trace: ProtocolTrace?
 
   package init(
     pool: Name, store: ControllerStore, configuration: CIConfiguration,
     provider: any EnvironmentProvider, runners: any RunnerService,
     placement: any PlacementPolicy = DefaultPlacementPolicy(), controller: ControllerID,
-    clock: any CIClock = SystemClock(), gate: String? = nil
+    clock: any CIClock = SystemClock(), gate: String? = nil,
+    scaleSetDemand: ScaleSetDemand? = nil, launcher: (any AllocationLauncher)? = nil,
+    supervisors: any SupervisorDirectory = InlineSupervision(), trace: ProtocolTrace? = nil
   ) {
     self.gate = gate
+    self.scaleSetDemand = scaleSetDemand
+    self.launcher = launcher
+    self.supervisors = supervisors
+    self.trace = trace
     self.pool = pool
     self.store = store
     self.configuration = configuration
@@ -117,7 +131,7 @@ package final class ConnectedPoolReconciler: Sendable {
   }
 
   /// Per-pass context.
-  private struct Pass {
+  package struct Pass {
     var report: ReconcileReport
     var githubHealthy = true
     var hostsDown: Set<Name> = []
@@ -128,34 +142,100 @@ package final class ConnectedPoolReconciler: Sendable {
     var groupID: Int64?
   }
 
-  /// One full pass: refresh, lifecycle, deficit, creation. Never throws;
-  /// every failure is recorded in the report and the event log.
+  /// A pass between its maintenance and admission phases: the controller
+  /// schedules every pool's `requests` together, then admits the grants.
+  package struct PreparedPass {
+    package var pass: Pass
+    let poolConfig: PoolConfiguration?
+    let scope: GitHubRunnerScope?
+    let state: PoolState
+    /// Missing capacity, oldest first; empty when admission is paused.
+    package var requests: [ScheduleRequest] = []
+  }
+
+  /// One full pass: refresh, lifecycle, deficit, creation with this pool's
+  /// own placement policy. Never throws; every failure is recorded in the
+  /// report and the event log.
   @discardableResult
   package func reconcile() -> ReconcileReport {
+    var prepared = prepare(since: clock.now())
+    if let poolConfig = prepared.poolConfig, let scope = prepared.scope {
+      for _ in prepared.requests {
+        guard prepared.pass.githubHealthy, prepared.pass.report.uncertain.isEmpty,
+          create(poolConfig, scope: scope, host: nil, pass: &prepared.pass)
+        else { break }
+      }
+    }
+    return finish(&prepared)
+  }
+
+  /// Refresh and lifecycle, then this pool's missing capacity as schedule
+  /// requests. `since` dates requests that have no job of their own (warm
+  /// runners, scale-set minimum runners).
+  package func prepare(since: EpochSeconds) -> PreparedPass {
     var pass = Pass(report: ReconcileReport(pool: pool))
     guard let poolConfig = configuration.pools[pool] else {
       pass.report.admissionPaused = "pool is not configured"
-      return pass.report
+      return PreparedPass(pass: pass, poolConfig: nil, scope: nil, state: .inactive)
     }
     let state = (try? store.poolStatus(pool))?.state ?? .inactive
     let scope = GitHubRunnerScope(poolConfig.scope)
-    for allocation in (try? store.openAllocations(pool: pool)) ?? [] {
+    for allocation in (try? store.openAllocations(pool: pool)) ?? []
+    where !supervisorOwns(allocation, poolConfig) {
       refresh(allocation.id, scope: scope, pool: poolConfig, pass: &pass)
     }
-    for allocation in (try? store.openAllocations(pool: pool)) ?? [] {
+    for allocation in (try? store.openAllocations(pool: pool)) ?? []
+    where !supervisorOwns(allocation, poolConfig) {
       lifecycle(allocation.id, scope: scope, pool: poolConfig, state: state, pass: &pass)
     }
-    replenish(poolConfig, scope: scope, state: state, pass: &pass)
-    if state == .removing, ((try? store.openAllocations(pool: pool)) ?? []).isEmpty {
+    var prepared = PreparedPass(pass: pass, poolConfig: poolConfig, scope: scope, state: state)
+    prepared.requests = plan(poolConfig, state: state, since: since, pass: &prepared.pass)
+    return prepared
+  }
+
+  /// Whether a live supervisor owns this allocation's startup. Startup is
+  /// bounded: past twice the boot allowance (plus a margin) a supervisor
+  /// that still holds the lock is presumed stuck, and the controller's
+  /// lifecycle (deadline, release) applies again.
+  func supervisorOwns(_ allocation: AllocationRecord, _ pool: PoolConfiguration) -> Bool {
+    guard supervisors.status(allocation.id).ownsStartup else { return false }
+    let boot =
+      configuration.profiles[pool.profile].flatMap { configuration.limits[$0.limits] }?
+      .bootSeconds ?? 600
+    return clock.now() < allocation.createdAt + boot * 2 + 300
+  }
+
+  /// Admits the hosts the scheduler granted (one per request, in queue
+  /// order) and retires idle runners it chose to drain a host.
+  package func admit(_ prepared: inout PreparedPass, grants: [Name], retire ids: [AllocationID]) {
+    guard let poolConfig = prepared.poolConfig, let scope = prepared.scope else { return }
+    for id in ids {
+      guard let allocation = try? store.allocation(id), allocation.pool == pool,
+        allocation.job == nil, allocation.desired == .active, !allocation.isSettled,
+        !supervisorOwns(allocation, poolConfig)
+      else { continue }
+      retire(id, reason: "host draining for an exclusive job", scope: scope, pass: &prepared.pass)
+    }
+    for host in grants {
+      guard prepared.pass.githubHealthy, prepared.pass.report.uncertain.isEmpty,
+        create(poolConfig, scope: scope, host: host, pass: &prepared.pass)
+      else { break }
+    }
+  }
+
+  /// Offboarding completion and the pass's error event.
+  package func finish(_ prepared: inout PreparedPass) -> ReconcileReport {
+    if prepared.state == .removing, ((try? store.openAllocations(pool: pool)) ?? []).isEmpty {
       try? PoolControl.set(
         pool, .removed, reason: "offboarded; owned resources released", store: store)
     }
-    if !pass.report.errors.isEmpty {
+    let report = prepared.pass.report
+    if !report.errors.isEmpty {
       _ = try? store.event(
-        "pool:\(pool)", "pool.reconcile", "\(pass.report.errors.count) problem(s)",
-        data: ["first": pass.report.errors.first ?? ""])
+        "pool:\(pool)", "pool.reconcile", "\(report.errors.count) problem(s)",
+        data: ["first": report.errors.first ?? ""])
     }
-    return pass.report
+    return report
   }
 
   // MARK: (1) Refresh
@@ -735,9 +815,9 @@ package final class ConnectedPoolReconciler: Sendable {
 
   // MARK: (3)+(4) Replenishment
 
-  private func replenish(
-    _ pool: PoolConfiguration, scope: GitHubRunnerScope, state: PoolState, pass: inout Pass
-  ) {
+  private func plan(
+    _ pool: PoolConfiguration, state: PoolState, since: EpochSeconds, pass: inout Pass
+  ) -> [ScheduleRequest] {
     let open = (try? store.openAllocations(pool: self.pool)) ?? []
     let live = open.filter { !$0.isSettled }.count
     let idleOrStarting = open.filter {
@@ -751,37 +831,79 @@ package final class ConnectedPoolReconciler: Sendable {
     let current = (try? store.poolStatus(self.pool))?.state ?? .inactive
     guard state == .active, current == .active else {
       pass.report.admissionPaused = "pool is \((current == .active ? state : current).rawValue)"
-      return
+      return []
     }
-    guard pool.desiredIdleVMs > 0 else {
-      pass.report.admissionPaused = "desired_idle_vms is 0 (paused, non-replenishing)"
-      return
+    var waiting: [PendingScaleSetJob] = []
+    let wanted: Int
+    if let scaleSet = pool.scaleSet {
+      guard let demand = scaleSetDemand, demand.connected else {
+        pass.report.admissionPaused =
+          "the scale set session is not established"
+          + (scaleSetDemand?.lastError.map { ": \($0)" } ?? "")
+        return []
+      }
+      if let block = demand.admissionBlock {
+        pass.report.admissionPaused = block
+        return []
+      }
+      // Busy runners serve running jobs; idle and starting ones the waiting.
+      let busy = open.filter {
+        $0.desired == .active && $0.job != nil && !$0.execution.isTerminal
+          && $0.runnerExitStatus == nil && $0.vmCleanup != .verified
+      }.count
+      waiting = demand.pending
+      wanted = max(Int(scaleSet.minRunners), demand.neededRunners) - idleOrStarting - busy
+    } else {
+      guard pool.desiredIdleVMs > 0 else {
+        pass.report.admissionPaused = "desired_idle_vms is 0 (paused, non-replenishing)"
+        return []
+      }
+      wanted = Int(pool.desiredIdleVMs) - idleOrStarting
     }
     guard pass.githubHealthy else {
       pass.report.admissionPaused = "GitHub is unavailable; admission paused this pass"
-      return
+      return []
     }
     if let unresolved = open.first(where: { $0.uncertainty != nil || $0.registration == .uncertain }
     ) {
       pass.report.admissionPaused = "resolving uncertainty on \(unresolved.id.short) first"
-      return
+      return []
     }
-    let wanted = Int(pool.desiredIdleVMs) - idleOrStarting
     let room = Int(pool.maxLiveVMs) - live
     let deficit = max(0, min(wanted, room))
     pass.report.deficit = deficit
-    for _ in 0..<deficit {
-      // New uncertainty (or a GitHub failure) stops further admission.
-      guard pass.githubHealthy, pass.report.uncertain.isEmpty,
-        create(pool, scope: scope, pass: &pass)
-      else { break }
+    guard deficit > 0,
+      let profile = try? ResolvedProfile(name: pool.profile, configuration: configuration)
+    else { return [] }
+    // Idle and starting runners take the oldest waiting jobs; each further
+    // waiting job is one request, dated by GitHub's queue time.
+    var requests: [ScheduleRequest] = []
+    for job in waiting.dropFirst(idleOrStarting).prefix(deficit) {
+      requests.append(
+        request(
+          id: "job:\(self.pool):\(job.key)", at: job.enqueuedAt, pool, profile))
     }
+    for index in requests.count..<deficit {
+      let kind = pool.scaleSet == nil ? "warm" : "min"
+      requests.append(request(id: "\(kind):\(self.pool):\(index)", at: since, pool, profile))
+    }
+    return requests
+  }
+
+  private func request(
+    id: String, at: EpochSeconds, _ pool: PoolConfiguration, _ profile: ResolvedProfile
+  ) -> ScheduleRequest {
+    ScheduleRequest(
+      id: id, enqueuedAt: at, pool: self.pool, candidates: pool.hosts,
+      reservation: profile.limits.reservation, exclusive: profile.profile.isExclusive,
+      guestOS: profile.profile.guestOS)
   }
 
   /// Persists the allocation and runner name, admits, provisions, then
   /// bootstraps. Returns false when no more capacity should be tried.
-  private func create(_ pool: PoolConfiguration, scope: GitHubRunnerScope, pass: inout Pass) -> Bool
-  {
+  private func create(
+    _ pool: PoolConfiguration, scope: GitHubRunnerScope, host granted: Name?, pass: inout Pass
+  ) -> Bool {
     let profile: ResolvedProfile
     do { profile = try ResolvedProfile(name: pool.profile, configuration: configuration) } catch {
       pass.report.error(error, "profile")
@@ -791,6 +913,13 @@ package final class ConnectedPoolReconciler: Sendable {
     // A host that refuses admission is skipped for the rest of the pass, so
     // one unqualified worker never stops the others from serving the pool.
     var placed: (host: Name, admission: Admission)?
+    if let granted {
+      do { placed = (granted, try provider.admit(host: granted, profile: profile)) } catch {
+        pass.report.error(error, "admission on \(granted)")
+        pass.refusedHosts.insert(granted)
+        return false
+      }
+    }
     while placed == nil {
       let candidates = pool.hosts.filter { !pass.refusedHosts.contains($0) }
       let choice: (choice: Name?, refusals: [PlacementRefusal])
@@ -848,6 +977,78 @@ package final class ConnectedPoolReconciler: Sendable {
       return false
     }
     pass.report.created.append(id)
+    trace?.record(
+      "allocation_created", pool: self.pool,
+      fields: ["allocation": .string(id.rawValue), "host": .string(host.rawValue)])
+    if let launcher, let digest = configuration.poolDigest(self.pool) {
+      do { try launcher.launch(id, pool: self.pool, poolDigest: digest) } catch {
+        pass.report.error(error, "supervisor \(id.short)")
+        update(id) {
+          $0.desired = .release
+          $0.execution = .cancelled
+          $0.note("the allocation supervisor could not start")
+        }
+        release(id, pass: &pass)
+        return false
+      }
+      return true
+    }
+    return start(id, profile: profile, admission: admission, scope: scope, pool: pool, pass: &pass)
+  }
+
+  /// The supervisor's work: re-admit the recorded host (the admission is
+  /// not persisted), refuse if its evidence no longer matches what the
+  /// allocation recorded, then provision, hold the session and bootstrap.
+  package func startAllocation(_ id: AllocationID, reporter: SupervisorReporter?) -> ReconcileReport
+  {
+    var pass = Pass(report: ReconcileReport(pool: pool))
+    guard let pool = configuration.pools[self.pool], let record = try? store.allocation(id),
+      record.pool == self.pool, record.instance == nil, record.readyAt == nil,
+      let profile = try? ResolvedProfile(name: pool.profile, configuration: configuration)
+    else {
+      pass.report.error(CIError(.conflict, "allocation \(id.short) is not startable"), "supervise")
+      reporter?.report(.failed, detail: "not startable")
+      return pass.report
+    }
+    let scope = GitHubRunnerScope(pool.scope)
+    reporter?.report(.provisioning)
+    let admission: Admission
+    do { admission = try provider.admit(host: record.host, profile: profile) } catch {
+      pass.report.error(error, "admission on \(record.host)")
+      update(id) {
+        $0.desired = .release
+        $0.execution = .cancelled
+      }
+      release(id, pass: &pass)
+      reporter?.report(.failed, detail: error.message)
+      return pass.report
+    }
+    guard admission.expectedNetworkPolicy == record.provenance.networkPolicyDigest,
+      admission.qualificationDigest == record.provenance.qualificationDigest
+    else {
+      update(id) {
+        $0.desired = .release
+        $0.execution = .cancelled
+        $0.note("host evidence changed between scheduling and start")
+      }
+      release(id, pass: &pass)
+      reporter?.report(.failed, detail: "host evidence changed")
+      return pass.report
+    }
+    let started = start(
+      id, profile: profile, admission: admission, scope: scope, pool: pool, pass: &pass,
+      reporter: reporter)
+    let after = try? store.allocation(id)
+    reporter?.report(
+      started && after?.readyAt != nil && after?.desired == .active ? .holding : .failed,
+      runnerID: after?.runnerID, detail: pass.report.errors.first)
+    return pass.report
+  }
+
+  private func start(
+    _ id: AllocationID, profile: ResolvedProfile, admission: Admission, scope: GitHubRunnerScope,
+    pool: PoolConfiguration, pass: inout Pass, reporter: SupervisorReporter? = nil
+  ) -> Bool {
     do {
       try provider.provision(id, profile: profile, admission: admission)
     } catch {
@@ -869,6 +1070,7 @@ package final class ConnectedPoolReconciler: Sendable {
       release(id, pass: &pass)
       return false
     }
+    reporter?.report(.registering)
     bootstrap(id, scope: scope, pool: pool, pass: &pass)
     return true
   }
@@ -1089,10 +1291,15 @@ package final class ConnectedPoolReconciler: Sendable {
       }
       pass.runnerInfo[id] = info
       let labels = pool.labels.map(\.rawValue)
+      // A scale set's runners carry its labels and may carry its name.
+      let allowed = Set((labels + [pool.scaleSet?.name].compactMap { $0 }).map { $0.lowercased() })
+      let labelsDiffer =
+        pool.scaleSet == nil
+        ? !info.hasExactly(labels) : !info.labels.allSatisfy { allowed.contains($0.lowercased()) }
       var mismatch: String?
       if info.name != name {
         mismatch = "runner name differs"
-      } else if !info.labels.isEmpty && !info.hasExactly(labels) {
+      } else if !info.labels.isEmpty && labelsDiffer {
         mismatch = "GitHub labels \(info.labels.sorted()) differ from the pool's \(labels.sorted())"
       } else if case .organization = pool.scope, let reported = info.runnerGroupID,
         reported != groupID

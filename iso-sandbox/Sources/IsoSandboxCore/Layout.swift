@@ -387,8 +387,9 @@ package struct SandboxError: Error, CustomStringConvertible {
 /// `init` refuses any other kernel; there is no override.
 package enum KernelPin {
   package static let allowed: Set<String> = [
-    // vmlinux-6.18.15-186, installed by Apple `container` 1.4.1 (Kata static build).
-    "2fe4a58d2885d623bcb4d705900ac8c1d4f02371152da8126b3b00c8c47fc3a1"
+    // vmlinux-6.18.56-208-debug, installed by Apple `container` 1.7.1 (Kata
+    // static 4.3.1, tarball sha256:2c5bf7cde334ad5307d482f45cceda496f91c9b6b96f5278c47f4f4eac1bbae6).
+    "98a1005f8cc395e99b85775b9dce2b239190520b102bf549f4225104dcd7f511"
   ]
 
   /// The kernel for `root`, validated against `allowed`. A root keeps a

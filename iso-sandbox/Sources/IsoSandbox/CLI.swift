@@ -91,10 +91,13 @@ struct ImageCommand: AsyncParsableCommand {
       abstract: "Load an OCI archive (e.g. from `container image save`).")
     @OptionGroup var root: RootOptions
     @Option var ociTar: String
+    @Option(help: "The reference the archive must hold; a registry-qualified alias is re-tagged")
+    var name: String?
     func run() async throws {
       let r = try root.resolve()
       try r.requireInitialized()
-      try printJSON(try await Disks.importImage(root: r, ociTar: URL(fileURLWithPath: ociTar)))
+      try printJSON(
+        try await Disks.importImage(root: r, ociTar: URL(fileURLWithPath: ociTar), name: name))
     }
   }
 

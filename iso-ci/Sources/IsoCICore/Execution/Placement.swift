@@ -53,42 +53,77 @@ package struct PlacementRefusal: Sendable, Equatable {
 /// require enablement, current NET-HANDOFF-1 advertisement and
 /// qualification, and budgets; prefer observable image locality; then a
 /// stable fair order. The host still admits physically and atomically.
+package enum HostEligibility: Sendable, Equatable {
+  case eligible(HostCapabilitiesSnapshot)
+  case refused(PlacementRefusal)
+}
+
 package enum HostPlacement {
+  /// Whether `host` may take new CI work at all (capacity aside): enabled,
+  /// NET-HANDOFF-1 currently advertised, and qualified.
+  package static func eligibility(_ host: Name, store: ControllerStore, now: EpochSeconds)
+    throws(CIError) -> HostEligibility
+  {
+    guard let record = try store.host(host) else {
+      return .refused(PlacementRefusal(host: host, reason: "not enabled"))
+    }
+    guard record.state == .enabled else {
+      return .refused(
+        PlacementRefusal(
+          host: host, reason: record.state.rawValue, capacity: record.state == .quarantined))
+    }
+    guard let snapshot = record.capabilities,
+      snapshot.advertised.contains(HostCapabilityName.netHandoff1.rawValue),
+      snapshot.qualificationStatus == HostCapabilities.QualificationStatus.qualified.rawValue
+    else {
+      return .refused(
+        PlacementRefusal(host: host, reason: "NET-HANDOFF-1 not currently advertised"))
+    }
+    if let expires = snapshot.qualificationExpiresAt, expires <= now {
+      return .refused(PlacementRefusal(host: host, reason: "qualification expired"))
+    }
+    return .eligible(snapshot)
+  }
+
+  /// The budget CI admission uses on `host`: its configured ceiling less
+  /// the owner reservation and the external use the board last observed.
+  package static func effectiveBudget(
+    _ host: Name, configuration: CIConfiguration, board: SchedulerBoard?
+  ) -> HostBudget? {
+    configuration.hosts[host].map {
+      HostCapacity(budget: $0, external: board?.snapshot.external[host] ?? .none).effectiveBudget
+    }
+  }
+
   package static func select(
     candidates: [Name], profile: ResolvedProfile, configuration: CIConfiguration,
-    store: ControllerStore, fairnessKey: String, now: EpochSeconds
+    store: ControllerStore, fairnessKey: String, now: EpochSeconds, board: SchedulerBoard? = nil
   ) throws(CIError) -> (choice: Name?, refusals: [PlacementRefusal]) {
     var eligible: [(host: Name, usage: HostLoad, budget: HostBudget?, local: Bool)] = []
     var refusals: [PlacementRefusal] = []
     let open = try store.openAllocations()
     for host in candidates {
-      guard let record = try store.host(host) else {
-        refusals.append(PlacementRefusal(host: host, reason: "not enabled"))
-        continue
-      }
-      guard record.state == .enabled else {
-        refusals.append(
-          PlacementRefusal(
-            host: host, reason: record.state.rawValue, capacity: record.state == .quarantined))
-        continue
-      }
-      guard let snapshot = record.capabilities,
-        snapshot.advertised.contains(HostCapabilityName.netHandoff1.rawValue),
-        snapshot.qualificationStatus == HostCapabilities.QualificationStatus.qualified.rawValue
-      else {
-        refusals.append(
-          PlacementRefusal(host: host, reason: "NET-HANDOFF-1 not currently advertised"))
-        continue
-      }
-      if let expires = snapshot.qualificationExpiresAt, expires <= now {
-        refusals.append(PlacementRefusal(host: host, reason: "qualification expired"))
+      let snapshot: HostCapabilitiesSnapshot
+      switch try eligibility(host, store: store, now: now) {
+      case .eligible(let value): snapshot = value
+      case .refused(let refusal):
+        refusals.append(refusal)
         continue
       }
       let usage = HostLoad.of(open.filter { $0.host == host })
-      let budget = configuration.hosts[host]
+      let budget = effectiveBudget(host, configuration: configuration, board: board)
       guard usage.admits(profile.limits.reservation, budget: budget, slots: snapshot.retentionSlots)
       else {
         refusals.append(PlacementRefusal(host: host, reason: "budget exhausted", capacity: true))
+        continue
+      }
+      // Reservations and drains from the shared queue bind work placed
+      // outside it too.
+      if let board, let budget,
+        let reason = board.refusal(
+          host: host, adding: profile.limits.reservation, load: usage, budget: budget)
+      {
+        refusals.append(PlacementRefusal(host: host, reason: reason, capacity: true))
         continue
       }
       let local = open.contains {

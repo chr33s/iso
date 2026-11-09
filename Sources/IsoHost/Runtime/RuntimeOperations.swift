@@ -168,10 +168,13 @@ extension SandboxRuntime {
 
   package func exists(_ name: MachineName) throws(RuntimeError) -> Bool { try listed(name) != nil }
 
-  package func importImage(tar: String) throws(RuntimeError) -> [RuntimeImage] {
+  /// Imports an OCI archive that must hold `reference` (the runtime
+  /// re-tags a registry-qualified alias of it; see `iso-sandbox image import`).
+  package func importImage(tar: String, reference: String) throws(RuntimeError) -> [RuntimeImage] {
     try RuntimeProtocol.parseImages(
       checked(
-        ["image", "import"], ["--oci-tar", tar], deadline: createDeadline, limit: Self.jsonLimit))
+        ["image", "import"], ["--oci-tar", tar, "--name", reference], deadline: createDeadline,
+        limit: Self.jsonLimit))
   }
 
   package func deleteImageBestEffort(_ reference: String, diagnostics: Diagnostics) {
@@ -314,7 +317,7 @@ package struct ImageBuilder: Sendable {
     }
     _ = try? checked(["image", "delete", reference], deadline: settings.operationTimeout.duration)
     _ = try saved.get()
-    let imported = try runtime.importImage(tar: tar)
+    let imported = try runtime.importImage(tar: tar, reference: reference)
     guard let entry = imported.first(where: { $0.reference == reference }) else {
       let references =
         "[" + imported.map { debugQuoted($0.reference) }.joined(separator: ", ") + "]"

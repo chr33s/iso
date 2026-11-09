@@ -370,7 +370,7 @@ package enum BinaryResolver {
       case .runtime: "Build it with scripts/build-iso-sandbox.sh, or set `apple_container.binary`."
       case .coreAIRuntime:
         "\(CoreAIRuntime.missing); build it with scripts/build-iso-sandbox.sh --experimental-coreai."
-      case .builder: "Install Apple `container` 1.4.1 or later, or set `apple_container.builder`."
+      case .builder: "Install Apple `container` 1.7.1 or later, or set `apple_container.builder`."
       }
     }
   }

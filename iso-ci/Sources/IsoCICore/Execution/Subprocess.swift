@@ -162,6 +162,9 @@ package enum Subprocess {
     /// The caller's group: an interactive child that must stay in the
     /// terminal's foreground group, or tty access stops it (SIGTTOU/SIGTTIN).
     case caller
+    /// A new session (and group): a detached child that outlives its parent
+    /// and is not signalled with the parent's process group.
+    case session
   }
 
   /// Spawns with exactly the given stdio descriptors inherited, in its own
@@ -170,7 +173,7 @@ package enum Subprocess {
   package static func spawn(
     _ executable: String, _ arguments: [String], _ environment: [String: String],
     stdin: Int32, stdout: Int32, stderr: Int32, workingDirectory: String? = nil,
-    group: ProcessGroup = .own
+    group: ProcessGroup = .own, inherit: [(source: Int32, target: Int32)] = []
   ) throws(CIError) -> pid_t {
     var actions: posix_spawn_file_actions_t?
     var attributes: posix_spawnattr_t?
@@ -183,11 +186,23 @@ package enum Subprocess {
     posix_spawn_file_actions_adddup2(&actions, stdin, 0)
     posix_spawn_file_actions_adddup2(&actions, stdout, 1)
     posix_spawn_file_actions_adddup2(&actions, stderr, 2)
+    // Exactly these extra descriptors survive POSIX_SPAWN_CLOEXEC_DEFAULT:
+    // dup2 leaves its target inheritable, but dup2 onto itself is a no-op
+    // that keeps close-on-exec, so a descriptor already at its target is
+    // marked for inheritance instead.
+    for (source, target) in inherit where target > 2 {
+      if source == target {
+        posix_spawn_file_actions_addinherit_np(&actions, target)
+      } else {
+        posix_spawn_file_actions_adddup2(&actions, source, target)
+      }
+    }
     if let workingDirectory {
       posix_spawn_file_actions_addchdir(&actions, workingDirectory)
     }
     var flags = POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF
     if group == .own { flags |= POSIX_SPAWN_SETPGROUP }
+    if group == .session { flags |= POSIX_SPAWN_SETSID }
     posix_spawnattr_setflags(&attributes, Int16(flags))
     if group == .own { posix_spawnattr_setpgroup(&attributes, 0) }
     var defaults = sigset_t()

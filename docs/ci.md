@@ -113,7 +113,7 @@ labels; they can never define host executables, secrets, network
 destinations, privileges or resource ceilings.
 
 ```yaml
-schema: iso-ci/v1
+schema: iso-ci/v2     # iso-ci/v1 files stay valid; `schema_version: 2` also works
 
 images:              # approved runner images on iso hosts
   approved-linux-arm64-runner:
@@ -229,6 +229,115 @@ Rules the controller enforces:
   --installation-name NAME`.
 - An invalid or partial configuration leaves the affected pools inactive.
 
+### Scale sets and shared hosts
+
+A pool's `provisioning_mode` is `warm_pool` (the default: keep
+`desired_idle_vms` runners registered ahead of demand) or `scaleset`. A
+scale-set pool registers a GitHub runner scale set named `scaleset.name`,
+holds a long-poll message session with GitHub's Actions service, and starts
+a VM only for a job GitHub gives it that passes the pool's `job_policy`. With
+`min_runners: 0` an idle pool holds no VM and no registration. Workflows
+target it with `runs-on: <scaleset.name>` (or its labels). The App needs the
+usual runner permissions (Administration write for a repository pool, Self-hosted
+runners write for an organization pool).
+
+```yaml
+hosts:
+  local:
+    max_vms: 4
+    cpus: 12                       # the Mac's ceiling for iso and iso-ci together
+    memory_mib: 32768
+    disk_gib: 512
+    owner_reserved_cpus: 2         # never admitted to CI
+    owner_reserved_memory_mib: 4096
+    track_external_macos_vms: true # local host only
+
+profiles:
+  linux-heavy-bench:
+    # ...as above...
+    exclusive_host: true           # drain the host first and run alone
+
+pools:
+  iso-main-scaleset:
+    profile: linux-validation
+    hosts: [local]
+    github:
+      installation: selected-installation
+      scope: { repository: OWNER/REPOSITORY }
+      labels: [self-hosted, linux, ARM64, iso-arm64-fast]
+    provisioning_mode: scaleset
+    scaleset:
+      name: iso-arm64-fast
+      min_runners: 0
+      max_runners: 4
+      job_policy:
+        allow_fork_prs: false      # the default
+        allow_public_repo: false   # the default
+        allowed_events: [push, pull_request, workflow_dispatch, merge_group]
+        allowed_actors: []         # empty: any actor under allowed_events
+    retention_on_failure: disabled
+```
+
+- A scale-set pool takes `scaleset.min_runners` and `max_runners` instead of
+  `desired_idle_vms` and `max_live_vms`. Each job still gets one fresh,
+  single-use VM and a JIT runner registered in the scale set.
+- iso-ci creates the scale set *elastic* when GitHub allows it, else
+  *non-elastic*; the `scaleset.created` event says which. Creating an elastic
+  scale set needs Administer permission, which an App installation does not
+  hold, so an App gets a non-elastic one.
+  - **Elastic:** GitHub offers each job, and iso-ci checks the policy before
+    acquiring it. A refused job never reaches the scale set and stays queued
+    for other runners.
+  - **Non-elastic:** GitHub assigns jobs to the scale set directly, and any of
+    its runners may take any assigned job. iso-ci checks each job as it is
+    assigned. While any assigned job is refused, or was assigned before this
+    session began (after a restart), iso-ci starts **no** runner for that
+    scale set (`iso-ci status` says why). A refused job keeps blocking the pool
+    until it leaves the queue (cancel it, or GitHub expires it). A runner
+    already started for an approved job can still take a refused job assigned
+    while it boots; public repositories therefore need an elastic scale set.
+- The policy is decided on GitHub's own workflow run record (`GET
+  /repos/{owner}/{repo}/actions/runs/{id}`), never on the job message alone.
+  A refused job never gets a registration, a host admission or a VM. Each
+  refusal is an event with its code:
+  `JOB_REJECTED_PUBLIC_REPO`, `JOB_REJECTED_FORK_PR` (the run's head is
+  another repository, or a pull request run names none), `JOB_REJECTED_EVENT`,
+  `JOB_REJECTED_ACTOR` (the actor or re-run's triggering actor),
+  `JOB_REJECTED_SCOPE` and `JOB_REJECTED_UNVERIFIABLE` (unreadable, or the
+  run disagrees with the offer).
+- `allow_public_repo: true` needs `min_runners: 0` and an elastic scale set
+  (the listener refuses to run otherwise), cannot be combined with
+  `allow_fork_prs: true`, and
+  allows only events that need write access to trigger (`push`,
+  `pull_request`, `workflow_dispatch`, `merge_group`, `schedule`) unless
+  `allowed_actors` names who may trigger. Only scale-set pools can opt in:
+  a warm pool on a public repository, or on a runner group that admits public
+  repositories, stays inactive.
+- Every pending unit of work, across all pools (scale-set jobs and missing
+  warm runners), waits in one queue ordered by age. The oldest job that
+  waits only for capacity on a host reserves room there: later jobs may use
+  that host only if the reserved job would still fit beside them, so small
+  jobs cannot starve a large one.
+- A job for an `exclusive_host` profile drains its host: idle runners there
+  are retired, nothing else is placed, and it starts once the host has no CI
+  VM. Normal placement resumes when it exits.
+- CI's ceiling on a host is `cpus`/`memory_mib` less the owner reservation
+  and the CPU and memory of VMs iso-ci does not own. On the `local` host
+  these are read from the leases that iso-sandbox writes for every running VM
+  (`~/.iso/run/leases/<sandbox>.json`, held under `flock` while the VM runs).
+  Virtualization.framework runs at most two macOS VMs per Mac; a macOS job
+  waits as `QUEUED_WAITING_VZ_SLOT` while two run. With
+  `track_external_macos_vms: true`, VM processes that hold no lease also count
+  as macOS VMs. CI profiles can name `platform: macos/arm64`, but such a pool
+  stays inactive: macOS guests need a network interface, and CI runs only
+  NIC-less (NET-HANDOFF-1) guests.
+- The new profile and pool fields are part of their descriptor digests, so
+  setting them needs `iso-ci setup --approve`; descriptors that do not use
+  them keep their digests. A host budget that sets `owner_reserved_cpus`,
+  `owner_reserved_memory_mib` or `track_external_macos_vms` becomes an
+  approved descriptor too: pools and preflight on that host stay inactive
+  until you approve it; budgets without those fields need no approval.
+
 ## Onboarding
 
 `iso-ci setup` is idempotent; repeat it with the step you need:
@@ -294,9 +403,37 @@ it: check the runner list on GitHub, then run
 `iso-ci pool resolve ALLOCATION --runner-id ID` (the exact runner is deleted)
 or `--none`. `iso-ci status` lists it under unresolved cleanup until then.
 
-The controller holds the VM leases. Closing a terminal never stops a job;
-`abort` does. If the controller itself stops, each host stops its VMs after
-the lease grace period and enforces the hard deadline regardless.
+Closing a terminal never stops a job; `abort` does. A serving controller
+starts each connected allocation in its own supervisor process (`iso-ci
+internal-supervise`, in a new session), passing it the allocation's
+`run/allocations/<id>.lock` already locked with `flock`. The supervisor
+provisions the VM, registers the JIT runner, starts it, and then holds the
+VM's access session until the controller stops, retains or releases it; the
+kernel releases the lock when it exits. Restarting the controller (or `iso
+update`) therefore neither interrupts a registration nor lets the host stop
+a running VM: on start the controller re-adopts every allocation whose lock
+is still held and leaves its startup to the supervisor. An allocation whose
+supervisor died before the VM was ready is released; one that was ready
+continues normally, and a lost registration reply is resolved by name as
+before. If no supervisor and no controller hold a VM's session, its host
+stops it after the lease grace period and enforces the hard deadline
+regardless.
+
+On SIGTERM or SIGINT the controller deletes its scale-set message sessions
+before exiting. A session left open (a controller killed with SIGKILL) keeps
+receiving the scale set's jobs on GitHub's side until it expires, and the
+next controller's session sees none of them. If that happens, delete and
+recreate the scale set, or wait for the session to expire.
+
+`iso-ci status` shows the shared queue under `services.scheduler`: each
+request with its state (`PLACED`, `QUEUED_WAITING_ROOM`,
+`QUEUED_BEHIND_RESERVATION`, `QUEUED_WAITING_DRAIN`, `QUEUED_WAITING_VZ_SLOT`,
+`QUEUED_NO_HOST`), each host's mode (`NORMAL`, `DRAINING_FOR_EXCLUSIVE`,
+`EXCLUSIVE_BUSY`), its room reservation and the external use counted against
+it. `iso-ci serve --record-protocol-trace FILE` appends a JSONL record (0600)
+of scale-set sessions, messages, policy refusals, acquisitions, scheduling
+rounds and allocation creation; it carries no tokens, queue URLs or JIT
+material.
 
 `--json` prints `{"ok":true,"result":...}` or `{"ok":false,"error":{"code":...}}`
 with stable codes (for example `CAPABILITY_MISSING`, `OPERATION_UNCERTAIN`,
@@ -513,11 +650,21 @@ reduce GitHub's `GITHUB_TOKEN` permissions or withhold repository secrets.
 operator-attested or unavailable. Public repositories and forks are separate
 support claims: repository privacy never grants them.
 
-Public and fork execution and privileged release execution are refused, not
-supported. GitHub does not let the installation verify fork approval or
-per-job admission, so a pool whose repository is public, or whose runner group
-admits public repositories, stays inactive, and an `authority: privileged`
-pool stays inactive even after `pool resume`.
+Fork execution and privileged release execution are refused, not supported.
+A warm pool cannot see which job its runner will get, so a warm pool whose
+repository is public, or whose runner group admits public repositories, stays
+inactive. A scale-set pool sees each job before acquiring it, so it may opt
+into public repositories with `allow_public_repo: true` under the bounds in
+[scale sets and shared hosts](#scale-sets-and-shared-hosts); fork pull
+requests stay refused per job. An `authority: privileged` pool stays inactive
+even after `pool resume`.
+
+A scale-set pool's controller talks to GitHub's Actions service
+(`*.actions.githubusercontent.com`) with an admin token from a runner
+registration token and with its message-session token. Both stay in
+controller memory, go only to `https` hosts under that suffix, and never
+reach a guest; the guest receives only the JIT configuration, as for warm
+pools.
 
 Stopping admission or revoking a grant does not erase secrets already in a
 guest's memory, files, logs or retained disk. Log masking is defense in depth.
@@ -533,6 +680,10 @@ guest's memory, files, logs or retained disk. Log masking is defense in depth.
 | The brokered proof fails | The host revokes access; the allocation is stopped; there is no NIC fallback |
 | Abort or expiry | External stop, permitted diagnostics staged, cleanup requested and verified |
 | A job's outcome is unknown | No automatic replay of side-effecting work |
+| The controller restarts | Live supervisors keep their allocations; the controller re-adopts them and does not touch their startup |
+| A supervisor dies | Before the VM was ready: the allocation is released. After: the controller holds the session and runs the lifecycle |
+| A scale-set job fails the job policy | Not acquired; no VM or registration; a `job.rejected` event with its code |
+| The scale-set session or token expires | The session is refreshed or recreated; jobs GitHub assigned meanwhile are counted from its statistics |
 
 Cleanup that cannot be verified stays in `status` as unresolved cleanup and
 keeps consuming budget until a later pass verifies it.

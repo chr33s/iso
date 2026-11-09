@@ -20,11 +20,50 @@ package final class ConnectedPoolService: ControllerService {
   private let state = Mutex<State>(State())
   private let api: GitHubAPI
   private let credentials: any CredentialStore
+  private let board: SchedulerBoard
+  private let external: any ExternalUsageProbe
+  private let feeds: ScaleSetFeedFactory?
+  private let supervision: AllocationSupervision?
+  private let trace: ProtocolTrace?
+
+  /// Makes (and starts) the listener for a scale-set pool.
+  package typealias ScaleSetFeedFactory =
+    @Sendable (Name, PoolConfiguration, InstallationRecord) throws(CIError) -> any ScaleSetFeed
+
+  /// Supervisor processes: the launcher for new allocations, the directory
+  /// that says which allocations a live supervisor owns, and the startup
+  /// scan (nil runs allocation startup inline in the pass).
+  package struct AllocationSupervision: Sendable {
+    package let launcher: any AllocationLauncher
+    package let directory: any SupervisorDirectory
+    package let adopt: @Sendable () -> SupervisorAdoption
+
+    package init(
+      launcher: any AllocationLauncher, directory: any SupervisorDirectory,
+      adopt: @escaping @Sendable () -> SupervisorAdoption
+    ) {
+      self.launcher = launcher
+      self.directory = directory
+      self.adopt = adopt
+    }
+
+    package init(_ supervisors: AllocationSupervisors) {
+      self.init(launcher: supervisors, directory: supervisors, adopt: { supervisors.adopt() })
+    }
+  }
 
   private struct State {
     var reports: [Name: ReconcileReport] = [:]
     var activation: [Name: (at: EpochSeconds, key: String, report: PoolActivationReport)] = [:]
     var resumedSessions: Set<AllocationID> = []
+    var feeds: [Name: any ScaleSetFeed] = [:]
+    /// The pool digest each listener was built from; a change (policy,
+    /// scope, scale set) replaces the listener.
+    var feedDigests: [Name: Digest] = [:]
+    /// When each pool's job-less demand (warm or minimum runners) began.
+    var demandSince: [Name: EpochSeconds] = [:]
+    var modes: [Name: HostMode] = [:]
+    var adopted = false
   }
 
   package init(
@@ -32,8 +71,17 @@ package final class ConnectedPoolService: ControllerService {
     loadConfiguration: @escaping @Sendable () -> Result<CIConfiguration, CIError>,
     clients: @escaping @Sendable (InstallationRecord) throws(CIError) -> GitHubInstallationClient,
     api: GitHubAPI = GitHubAPI(http: URLSessionGitHubHTTP()),
-    credentials: any CredentialStore = KeychainCredentialStore()
+    credentials: any CredentialStore = KeychainCredentialStore(),
+    board: SchedulerBoard = SchedulerBoard(),
+    external: any ExternalUsageProbe = NoExternalUsage(),
+    feeds: ScaleSetFeedFactory? = nil, supervision: AllocationSupervision? = nil,
+    trace: ProtocolTrace? = nil
   ) {
+    self.board = board
+    self.external = external
+    self.feeds = feeds
+    self.supervision = supervision
+    self.trace = trace
     self.api = api
     self.credentials = credentials
     self.store = store
@@ -67,6 +115,8 @@ package final class ConnectedPoolService: ControllerService {
   // MARK: Reconciliation
 
   package func reconcile(now: EpochSeconds) {
+    trace?.advance()
+    adoptSupervisors()
     // Owned VMs and registrations are offboarded even when the current
     // configuration is invalid or no longer names the pool: the last valid
     // configuration still describes how to reach and release them.
@@ -90,6 +140,7 @@ package final class ConnectedPoolService: ControllerService {
       effective = lastGood
     }
     guard let controller = try? store.controllerID() else { return }
+    var prepared: [(Name, ConnectedPoolReconciler, ConnectedPoolReconciler.PreparedPass)] = []
     for status in (try? store.poolStatuses()) ?? [] where status.state != .removed {
       guard current != nil, current?.pools[status.name] == nil else { continue }
       guard let previous = lastGood?.pools[status.name],
@@ -114,8 +165,11 @@ package final class ConnectedPoolService: ControllerService {
           effective.compatibility[name] =
             effective.compatibility[name] ?? lastGood?.compatibility[name]
         case .limits: effective.limits[name] = effective.limits[name] ?? lastGood?.limits[name]
-        case .profile: break
+        case .profile, .host: break
         }
+      }
+      for host in previous.hosts where effective.hosts[host] == nil {
+        effective.hosts[host] = lastGood?.hosts[host]
       }
       if status.state != .removing {
         try? PoolControl.set(status.name, .removing, reason: "no longer configured", store: store)
@@ -131,10 +185,11 @@ package final class ConnectedPoolService: ControllerService {
       if let current, current.pools[poolName] != nil {
         gate = activationGate(poolName, pool, configuration: current, now: now)
         if let status, Self.isAutomatic(status.state) || status.state == .inactive {
-          let target: PoolState =
-            gate == nil ? (pool.desiredIdleVMs == 0 ? .paused : .active) : .inactive
-          let reason =
-            gate ?? (pool.desiredIdleVMs == 0 ? "desired_idle_vms is 0 (no demand source)" : nil)
+          // A scale set's demand source is GitHub's queue, so min_runners 0
+          // is scale-to-zero, not a pause.
+          let paused = pool.desiredIdleVMs == 0 && pool.scaleSet == nil
+          let target: PoolState = gate == nil ? (paused ? .paused : .active) : .inactive
+          let reason = gate ?? (paused ? "desired_idle_vms is 0 (no demand source)" : nil)
           if status.state != target || status.reason != reason {
             try? PoolControl.set(poolName, target, reason: reason, store: store)
           }
@@ -154,12 +209,235 @@ package final class ConnectedPoolService: ControllerService {
       } else {
         runners = OfflineRunnerService(reason: "installation \(pool.installation) is not connected")
       }
+      let feed = scaleSetFeed(
+        poolName, pool,
+        wanted: gate == nil && current?.pools[poolName] != nil
+          && (try? store.poolStatus(poolName))?.state == .active)
       let reconciler = ConnectedPoolReconciler(
         pool: poolName, store: store, configuration: effective, provider: provider,
-        runners: runners, controller: controller, gate: gate)
-      let report = reconciler.reconcile()
+        runners: feed.map { ScaleSetRunnerService(base: runners, feed: $0) } ?? runners,
+        controller: controller, gate: gate, scaleSetDemand: feed?.demand(),
+        launcher: supervision?.launcher,
+        supervisors: supervision?.directory ?? InlineSupervision(), trace: trace)
+      let since = state.withLock { $0.demandSince[poolName] } ?? now
+      let pass = reconciler.prepare(since: since)
+      state.withLock {
+        if pass.requests.isEmpty {
+          $0.demandSince[poolName] = nil
+        } else if $0.demandSince[poolName] == nil {
+          $0.demandSince[poolName] = now
+        }
+      }
+      prepared.append((poolName, reconciler, pass))
+    }
+    stopFeeds(except: Set(effective.pools.keys))
+    let decision = schedule(prepared.flatMap { $0.2.requests }, configuration: effective, now: now)
+    for (poolName, reconciler, var pass) in prepared {
+      let mine = Set(pass.requests.map(\.id))
+      let grants = decision.placements.filter { mine.contains($0.request) }.map(\.host)
+      reconciler.admit(&pass, grants: grants, retire: decision.retire)
+      let report = reconciler.finish(&pass)
       state.withLock { $0.reports[poolName] = report }
       if (try? store.poolStatus(poolName))?.state == .removed { finishCredentialRemoval(poolName) }
+    }
+  }
+
+  // MARK: Scheduling
+
+  /// One queue across every pool: the requests of all pools are ordered by
+  /// age and placed with room reservation, exclusive drains and the
+  /// macOS VM ceiling; the outcome is published for preflight placement.
+  private func schedule(
+    _ requests: [ScheduleRequest], configuration: CIConfiguration, now: EpochSeconds
+  )
+    -> CapacityDecision
+  {
+    let (hosts, external) = Self.schedulerHosts(
+      configuration: configuration, store: store, external: self.external, now: now)
+    let previous = state.withLock { $0.modes }
+    let decision = Scheduler.schedule(requests: requests, hosts: hosts, previous: previous)
+    state.withLock { $0.modes = decision.modes }
+    var snapshot = SchedulerBoard.Snapshot()
+    snapshot.modes = decision.modes
+    snapshot.reservations = decision.reservations
+    snapshot.external = external
+    snapshot.waiting = decision.waiting
+    snapshot.queue = requests.sorted(by: ScheduleRequest.precedes)
+    board.publish(snapshot)
+    for (host, mode) in decision.modes where mode != (previous[host] ?? .normal) {
+      _ = try? store.event("host:\(host)", "host.mode", mode.label)
+    }
+    Self.record(decision, requests: requests, trace: trace)
+    return decision
+  }
+
+  /// The trace record of one scheduling round (shared with the replayer).
+  package static func record(
+    _ decision: CapacityDecision, requests: [ScheduleRequest], trace: ProtocolTrace?
+  ) {
+    guard let trace, !requests.isEmpty || !decision.retire.isEmpty else { return }
+    trace.record(
+      "schedule",
+      fields: [
+        "placements": .array(
+          decision.placements.map {
+            ["job_id": .string($0.request), "host": .string($0.host.rawValue)]
+          }),
+        "waiting": .object(decision.waiting.mapValues { .string($0.code) }),
+        "retire": .array(decision.retire.map { .string($0.rawValue) }),
+        "modes": .object(
+          Dictionary(
+            uniqueKeysWithValues: decision.modes.map { ($0.key.rawValue, .string($0.value.label)) })
+        ),
+      ])
+  }
+
+  /// What the scheduler sees of every host a pool or preflight may use:
+  /// eligibility, effective capacity (owner reservation and external use
+  /// subtracted) and the CI allocations holding resources there.
+  package static func schedulerHosts(
+    configuration: CIConfiguration, store: ControllerStore, external probe: any ExternalUsageProbe,
+    now: EpochSeconds
+  ) -> (hosts: [SchedulerHost], external: [Name: ExternalUsage]) {
+    var names = Set(configuration.pools.values.flatMap(\.hosts))
+    names.formUnion(configuration.preflight?.hosts ?? [])
+    var hosts: [SchedulerHost] = []
+    var external: [Name: ExternalUsage] = [:]
+    for name in names.sorted() {
+      guard let budget = configuration.hosts[name] else { continue }
+      let open = ((try? store.openAllocations(host: name)) ?? []).filter(\.holdsResources)
+      let usage = probe.usage(
+        host: name, budget: budget, own: Set(open.compactMap { $0.instance?.runtimeID }))
+      external[name] = usage
+      var ineligible: String?
+      var slots: UInt64 = 0
+      switch (try? HostPlacement.eligibility(name, store: store, now: now))
+        ?? .refused(PlacementRefusal(host: name, reason: "host record unreadable"))
+      {
+      case .eligible(let snapshot): slots = snapshot.retentionSlots
+      case .refused(let refusal): ineligible = refusal.reason
+      }
+      hosts.append(
+        SchedulerHost(
+          name: name, capacity: HostCapacity(budget: budget, external: usage), slots: slots,
+          allocations: open.map { scheduled($0, configuration) }, ineligible: ineligible))
+    }
+    return (hosts, external)
+  }
+
+  static func scheduled(_ allocation: AllocationRecord, _ configuration: CIConfiguration)
+    -> ScheduledAllocation
+  {
+    let profileName =
+      allocation.pool.flatMap { configuration.pools[$0]?.profile }
+      ?? (allocation.kind == .preflight ? configuration.preflight?.profile : nil)
+    let profile = profileName.flatMap { configuration.profiles[$0] }
+    let guest: GuestOS =
+      allocation.instance.map { $0.guestOS == GuestOS.macos.rawValue ? .macos : .linux }
+      ?? profile?.guestOS ?? .linux
+    let idle =
+      allocation.kind == .connected && allocation.desired == .active && allocation.job == nil
+      && allocation.readyAt != nil && allocation.execution == .pending
+      && allocation.runnerExitStatus == nil && allocation.registration == .registered
+    return ScheduledAllocation(
+      id: allocation.id, reservation: allocation.reservation,
+      exclusive: profile?.isExclusive ?? false, guestOS: guest, idle: idle)
+  }
+
+  // MARK: Scale sets
+
+  /// The pool's running listener when it should have one; starts or stops
+  /// it as the pool's activation changes.
+  private func scaleSetFeed(_ name: Name, _ pool: PoolConfiguration, wanted: Bool)
+    -> (any ScaleSetFeed)?
+  {
+    guard pool.scaleSet != nil, let feeds else { return nil }
+    if !wanted {
+      state.withLock { $0.feeds.removeValue(forKey: name) }?.stop()
+      return nil
+    }
+    let digest = descriptorDigest(pool)
+    let (existing, stale) = state.withLock { state -> ((any ScaleSetFeed)?, (any ScaleSetFeed)?) in
+      guard let feed = state.feeds[name] else { return (nil, nil) }
+      if state.feedDigests[name] == digest { return (feed, nil) }
+      state.feeds[name] = nil
+      state.feedDigests[name] = nil
+      return (nil, feed)
+    }
+    stale?.stop()
+    if let existing { return existing }
+    guard let installation = try? store.installation(pool.installation) else { return nil }
+    do {
+      let feed = try feeds(name, pool, installation)
+      state.withLock {
+        $0.feeds[name] = feed
+        $0.feedDigests[name] = digest
+      }
+      return feed
+    } catch {
+      _ = try? store.event(
+        "pool:\(name)", "scaleset.error", "listener not started: \(error.message)",
+        data: ["code": error.code.rawValue])
+      return nil
+    }
+  }
+
+  private func stopFeeds(except pools: Set<Name>) {
+    let stale = state.withLock { state -> [any ScaleSetFeed] in
+      let names = state.feeds.keys.filter { !pools.contains($0) }
+      return names.compactMap { state.feeds.removeValue(forKey: $0) }
+    }
+    for feed in stale { feed.stop() }
+  }
+
+  /// Stops every listener (controller shutdown).
+  package func stopListeners() { stopFeeds(except: []) }
+
+  package func shutdown() { stopListeners() }
+
+  // MARK: Supervisors
+
+  /// Re-adopts live supervisors once, then each pass clears the files of
+  /// supervisors that have exited. A supervisor that died while it owned
+  /// startup hands the allocation back to the normal lifecycle, which
+  /// resolves any lost JIT reply by name.
+  private func adoptSupervisors() {
+    guard let supervision else { return }
+    let first = state.withLock { state -> Bool in
+      defer { state.adopted = true }
+      return !state.adopted
+    }
+    let adoption = supervision.adopt()
+    if first {
+      for (id, state) in adoption.live.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+        _ = try? store.event(
+          "allocation:\(id)", "supervisor.readopted",
+          "live supervisor re-adopted (\(state?.phase.rawValue ?? "unknown phase"))")
+        trace?.record(
+          "supervisor_readopted",
+          fields: [
+            "allocation": .string(id.rawValue),
+            "phase": .string(state?.phase.rawValue ?? "unknown"),
+          ])
+      }
+    }
+    for (id, state) in adoption.ended.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+      let phase = state?.phase ?? .failed
+      guard phase.ownsStartup || phase == .failed else { continue }
+      _ = try? store.event(
+        "allocation:\(id)", "supervisor.lost",
+        "supervisor ended during \(phase.rawValue); the controller takes over")
+      // Nothing proven ready is ever bootstrapped by guesswork: an
+      // allocation that never became ready is released (its persisted
+      // create intent resolves any VM a lost reply left behind). A ready
+      // one continues in the normal lifecycle, which resolves a lost JIT
+      // reply by name.
+      _ = try? store.update(id) {
+        guard $0.readyAt == nil, $0.desired == .active else { return }
+        $0.desired = .release
+        if $0.execution == .pending { $0.execution = .cancelled }
+        $0.note("supervisor ended before the VM was ready")
+      }
     }
   }
 
@@ -189,7 +467,9 @@ package final class ConnectedPoolService: ControllerService {
   private func activationGate(
     _ name: Name, _ pool: PoolConfiguration, configuration: CIConfiguration, now: EpochSeconds
   ) -> String? {
-    for (kind, descriptor, digest) in configuration.descriptors(of: pool.profile) {
+    for (kind, descriptor, digest) in configuration.descriptors(of: pool.profile)
+      + configuration.hostDescriptors(pool.hosts)
+    {
       guard let approval = try? store.approval(kind, descriptor), approval.digest == digest else {
         return
           "\(kind.rawValue) \(descriptor) is not approved at its current digest (run `iso-ci setup --approve`)"
@@ -235,6 +515,7 @@ package final class ConnectedPoolService: ControllerService {
     for allocation in (try? store.openAllocations(pool: pool)) ?? []
     where allocation.readyAt != nil && allocation.observedRunPhase == .running
       && allocation.desired != .retainLive && allocation.vmCleanup != .verified
+      && supervision?.directory.status(allocation.id).isLive != true
     {
       let first = state.withLock { $0.resumedSessions.insert(allocation.id).inserted }
       guard first else { continue }

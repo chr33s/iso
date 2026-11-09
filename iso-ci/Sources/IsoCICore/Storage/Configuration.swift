@@ -1,13 +1,16 @@
 import Foundation
 
-/// Administrator-controlled configuration (`schema: iso-ci/v1`, spec section
+/// Administrator-controlled configuration (`schema: iso-ci/v2`, spec section
 /// 12). Profiles reference named descriptors (image, network policy,
 /// compatibility, limits); each descriptor has a content digest, and a pool
 /// activates only when every descriptor it uses matches an approved digest.
 /// Repository workflow content can request a pool or profile; it can never
 /// define any of these values.
 package struct CIConfiguration: Sendable, Equatable, Codable {
-  package static let schema = "iso-ci/v1"
+  /// The schema `setup` writes. `iso-ci/v1` files stay valid: every v2
+  /// addition is optional, so a v1 file means the same thing under v2.
+  package static let schema = "iso-ci/v2"
+  package static let schemas: [String: Int64] = ["iso-ci/v1": 1, "iso-ci/v2": 2]
 
   package var images: [Name: ImageDescriptor]
   package var networkPolicies: [Name: NetworkPolicyDescriptor]
@@ -114,12 +117,49 @@ package struct LimitsDescriptor: Sendable, Equatable, Codable {
 }
 
 /// Per-host admission budgets on the controller side; the host still
-/// admits physically under its own limits.
+/// admits physically under its own limits. `cpus` and `memoryMiB` are the
+/// ceiling shared by iso and iso-ci on that Mac; the owner reservation and
+/// any interactive iso VMs come off it before CI admission (`HostCapacity`).
 package struct HostBudget: Sendable, Equatable, Codable {
   package var maxVMs: UInt32
   package var cpus: UInt32
   package var memoryMiB: UInt64
   package var diskGiB: UInt64
+  /// Whether this budget sets a shared-host field, which makes the host
+  /// budget an approved descriptor (`iso-ci setup --approve`).
+  package var isApprovedDescriptor: Bool {
+    ownerReservedCPUs != nil || ownerReservedMemoryMiB != nil || trackExternalMacOSVMs != nil
+  }
+
+  /// Kept for the desktop owner; never admitted to CI. Absent means 0.
+  package var ownerReservedCPUs: UInt32? = nil
+  package var ownerReservedMemoryMiB: UInt64? = nil
+  /// Also count Virtualization.framework VM processes that hold no iso
+  /// lease toward the two-macOS-VM ceiling (local host only).
+  package var trackExternalMacOSVMs: Bool? = nil
+
+  package init(
+    maxVMs: UInt32, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
+    ownerReservedCPUs: UInt32? = nil, ownerReservedMemoryMiB: UInt64? = nil,
+    trackExternalMacOSVMs: Bool? = nil
+  ) {
+    self.maxVMs = maxVMs
+    self.cpus = cpus
+    self.memoryMiB = memoryMiB
+    self.diskGiB = diskGiB
+    self.ownerReservedCPUs = ownerReservedCPUs
+    self.ownerReservedMemoryMiB = ownerReservedMemoryMiB
+    self.trackExternalMacOSVMs = trackExternalMacOSVMs
+  }
+}
+
+/// The guest operating system a profile's VMs run, derived from its
+/// platform. Virtualization.framework runs at most two macOS VMs per Mac.
+package enum GuestOS: String, Sendable, Codable, CaseIterable {
+  case linux
+  case macos
+
+  package static let macOSVMCeiling = 2
 }
 
 package enum Authority: String, Sendable, Codable, CaseIterable {
@@ -128,12 +168,33 @@ package enum Authority: String, Sendable, Codable, CaseIterable {
 }
 
 package struct RunnerProfile: Sendable, Equatable, Codable {
+  package static let platforms: [String: GuestOS] = ["linux/arm64": .linux, "macos/arm64": .macos]
+
   package var platform: String
   package var image: Name
   package var networkPolicy: Name
   package var compatibility: Name
   package var authority: Authority
   package var limits: Name
+  /// Drain sibling allocations from the chosen host first and run alone.
+  /// Stored only when true, so profiles without it keep their digests.
+  package var exclusiveHost: Bool? = nil
+
+  package init(
+    platform: String, image: Name, networkPolicy: Name, compatibility: Name,
+    authority: Authority, limits: Name, exclusiveHost: Bool? = nil
+  ) {
+    self.platform = platform
+    self.image = image
+    self.networkPolicy = networkPolicy
+    self.compatibility = compatibility
+    self.authority = authority
+    self.limits = limits
+    self.exclusiveHost = exclusiveHost == true ? true : nil
+  }
+
+  package var isExclusive: Bool { exclusiveHost == true }
+  package var guestOS: GuestOS { Self.platforms[platform] ?? .linux }
 }
 
 package enum GitHubScope: Sendable, Equatable, Codable, Hashable {
@@ -154,15 +215,91 @@ package enum FailureRetention: String, Sendable, Codable, CaseIterable {
   case stopped
 }
 
+/// How a connected pool provides runners: a warm pool keeps
+/// `desired_idle_vms` registered ahead of demand; a scale set registers no
+/// runner until GitHub offers it a job that passes the pool's job policy.
+package enum ProvisioningMode: String, Sendable, Codable, CaseIterable {
+  case warmPool = "warm_pool"
+  case scaleSet = "scaleset"
+}
+
+/// Which queued jobs a scale-set pool acquires, evaluated before any VM or
+/// registration exists. Default-deny: a job is acquired only when every
+/// check passes and its facts could be read.
+package struct JobPolicy: Sendable, Equatable, Codable {
+  package static let defaultEvents = ["push", "pull_request", "workflow_dispatch", "merge_group"]
+  /// Events a public repository may admit: each needs write access to the
+  /// repository to trigger (a same-repository `pull_request` needs a pushed
+  /// branch; fork pull requests are refused separately).
+  package static let writeGatedEvents: Set<String> = [
+    "push", "pull_request", "workflow_dispatch", "merge_group", "schedule",
+  ]
+
+  package var allowForkPRs: Bool
+  package var allowPublicRepo: Bool
+  package var allowedEvents: [String]
+  /// Lowercased logins; empty admits any actor under `allowedEvents`.
+  package var allowedActors: [String]
+
+  package init(
+    allowForkPRs: Bool = false, allowPublicRepo: Bool = false,
+    allowedEvents: [String] = JobPolicy.defaultEvents, allowedActors: [String] = []
+  ) {
+    self.allowForkPRs = allowForkPRs
+    self.allowPublicRepo = allowPublicRepo
+    self.allowedEvents = allowedEvents
+    self.allowedActors = allowedActors
+  }
+}
+
+/// A GitHub runner scale set the pool registers and long-polls.
+package struct ScaleSetConfiguration: Sendable, Equatable, Codable {
+  /// The scale set's name; workflows target it with `runs-on`.
+  package var name: String
+  package var minRunners: UInt32
+  package var maxRunners: UInt32
+  package var jobPolicy: JobPolicy
+
+  package init(name: String, minRunners: UInt32, maxRunners: UInt32, jobPolicy: JobPolicy) {
+    self.name = name
+    self.minRunners = minRunners
+    self.maxRunners = maxRunners
+    self.jobPolicy = jobPolicy
+  }
+}
+
 package struct PoolConfiguration: Sendable, Equatable, Codable {
   package var profile: Name
   package var hosts: [Name]
   package var installation: Name
   package var scope: GitHubScope
   package var labels: [RunnerLabel]
+  /// For a scale set, its `max_runners`.
   package var maxLiveVMs: UInt32
+  /// For a scale set, its `min_runners`.
   package var desiredIdleVMs: UInt32
   package var retentionOnFailure: FailureRetention
+  /// Present only for `provisioning_mode: scaleset`, so warm pools keep
+  /// their digests.
+  package var scaleSet: ScaleSetConfiguration? = nil
+
+  package init(
+    profile: Name, hosts: [Name], installation: Name, scope: GitHubScope, labels: [RunnerLabel],
+    maxLiveVMs: UInt32, desiredIdleVMs: UInt32, retentionOnFailure: FailureRetention,
+    scaleSet: ScaleSetConfiguration? = nil
+  ) {
+    self.profile = profile
+    self.hosts = hosts
+    self.installation = installation
+    self.scope = scope
+    self.labels = labels
+    self.maxLiveVMs = maxLiveVMs
+    self.desiredIdleVMs = desiredIdleVMs
+    self.retentionOnFailure = retentionOnFailure
+    self.scaleSet = scaleSet
+  }
+
+  package var provisioningMode: ProvisioningMode { scaleSet == nil ? .warmPool : .scaleSet }
 }
 
 package struct PreflightConfiguration: Sendable, Equatable, Codable {
@@ -199,8 +336,15 @@ extension CIConfiguration {
     let root: YAMLNode
     do { root = try YAML.parse(text) } catch { throw CIError.config(error.message) }
     var r = try ConfigReader(root, path: "")
-    guard try r.string("schema") == schema else {
-      throw CIError.config("schema must be \(schema)")
+    // `schema: iso-ci/vN` names the version; `schema_version: N` may say
+    // the same, and alone means `iso-ci/vN`.
+    let named = try r.optionalString("schema")
+    let numbered = try r.optionalUnsigned("schema_version", max: 99).map { Int64($0) }
+    guard let version = named.flatMap({ schemas[$0] }) ?? (named == nil ? numbered : nil),
+      numbered == nil || numbered == version, schemas.values.contains(version)
+    else {
+      throw CIError.config(
+        "schema must be iso-ci/v1 or iso-ci/v2 (or schema_version 1 or 2, matching any schema)")
     }
     var config = CIConfiguration()
     config.images = try r.namedMap("images") { (node, path) throws(CIError) in
@@ -305,15 +449,30 @@ extension CIConfiguration {
         maxVMs: UInt32(try d.positive("max_vms", max: 64)),
         cpus: UInt32(try d.positive("cpus", max: 1_024)),
         memoryMiB: try d.positive("memory_mib", max: 1 << 24),
-        diskGiB: try d.positive("disk_gib", max: 1 << 20))
+        diskGiB: try d.positive("disk_gib", max: 1 << 20),
+        ownerReservedCPUs: try d.optionalUnsigned("owner_reserved_cpus", max: 1_024).map {
+          UInt32($0)
+        },
+        ownerReservedMemoryMiB: try d.optionalUnsigned("owner_reserved_memory_mib", max: 1 << 24),
+        trackExternalMacOSVMs: try d.optionalBool("track_external_macos_vms"))
+      guard (budget.ownerReservedCPUs ?? 0) < budget.cpus,
+        (budget.ownerReservedMemoryMiB ?? 0) < budget.memoryMiB
+      else {
+        throw CIError.config("\(path): the owner reservation must leave CPUs and memory for CI")
+      }
+      if budget.trackExternalMacOSVMs == true, path != "hosts.\(HostCapacity.localHost)" {
+        throw CIError.config(
+          "\(path).track_external_macos_vms applies only to the local host (alias \(HostCapacity.localHost))"
+        )
+      }
       try d.finish()
       return budget
     }
     config.profiles = try r.namedMap("profiles") { (node, path) throws(CIError) in
       var d = try ConfigReader(node, path: path)
       let platform = try d.string("platform")
-      guard platform == "linux/arm64" else {
-        throw CIError.config("\(path).platform must be linux/arm64 (the only supported target)")
+      guard RunnerProfile.platforms[platform] != nil else {
+        throw CIError.config("\(path).platform must be linux/arm64 or macos/arm64")
       }
       guard let authority = Authority(rawValue: try d.string("authority")) else {
         throw CIError.config("\(path).authority must be validation or privileged")
@@ -321,7 +480,7 @@ extension CIConfiguration {
       let profile = RunnerProfile(
         platform: platform, image: try d.name("image"), networkPolicy: try d.name("network_policy"),
         compatibility: try d.name("compatibility"), authority: authority,
-        limits: try d.name("limits"))
+        limits: try d.name("limits"), exclusiveHost: try d.optionalBool("exclusive_host"))
       try d.finish()
       return profile
     }
@@ -380,10 +539,36 @@ extension CIConfiguration {
           "\(path).github.labels needs a pool-specific label (for example iso-ci)")
       }
       try github.finish()
-      let maxLive = UInt32(try d.positive("max_live_vms", max: 64))
-      let idle = UInt32(try d.unsigned("desired_idle_vms", max: 64))
-      guard idle <= maxLive else {
-        throw CIError.config("\(path).desired_idle_vms exceeds max_live_vms")
+      guard
+        let mode = ProvisioningMode(
+          rawValue: try d.optionalString("provisioning_mode") ?? ProvisioningMode.warmPool.rawValue)
+      else {
+        throw CIError.config("\(path).provisioning_mode must be warm_pool or scaleset")
+      }
+      let scaleSet: ScaleSetConfiguration?
+      let maxLive: UInt32
+      let idle: UInt32
+      switch mode {
+      case .warmPool:
+        guard d.optionalNode("scaleset") == nil else {
+          throw CIError.config("\(path).scaleset needs provisioning_mode: scaleset")
+        }
+        scaleSet = nil
+        maxLive = UInt32(try d.positive("max_live_vms", max: 64))
+        idle = UInt32(try d.unsigned("desired_idle_vms", max: 64))
+        guard idle <= maxLive else {
+          throw CIError.config("\(path).desired_idle_vms exceeds max_live_vms")
+        }
+      case .scaleSet:
+        for key in ["max_live_vms", "desired_idle_vms"] where d.optionalNode(key) != nil {
+          throw CIError.config(
+            "\(path).\(key) does not apply to a scale set; use scaleset.min_runners and max_runners"
+          )
+        }
+        let parsed = try Self.parseScaleSet(try d.object("scaleset"), path: "\(path).scaleset")
+        scaleSet = parsed
+        maxLive = parsed.maxRunners
+        idle = parsed.minRunners
       }
       guard
         let retention = FailureRetention(
@@ -394,7 +579,8 @@ extension CIConfiguration {
       try d.finish()
       return PoolConfiguration(
         profile: profile, hosts: hosts, installation: installation, scope: scope, labels: labels,
-        maxLiveVMs: maxLive, desiredIdleVMs: idle, retentionOnFailure: retention)
+        maxLiveVMs: maxLive, desiredIdleVMs: idle, retentionOnFailure: retention,
+        scaleSet: scaleSet)
     }
     if let node = r.optionalNode("preflight") {
       var d = try ConfigReader(node, path: "preflight")
@@ -436,6 +622,66 @@ extension CIConfiguration {
     try r.finish()
     try config.validateReferences()
     return config
+  }
+
+  static func parseScaleSet(_ reader: ConfigReader, path: String) throws(CIError)
+    -> ScaleSetConfiguration
+  {
+    var d = reader
+    let name = try d.string("name")
+    guard (1...100).contains(name.utf8.count), name.unicodeScalars.allSatisfy(isSafeNameScalar)
+    else { throw CIError.config("\(path).name is not a valid scale set name") }
+    let minimum = UInt32(try d.unsigned("min_runners", max: 64))
+    let maximum = UInt32(try d.positive("max_runners", max: 64))
+    guard minimum <= maximum else {
+      throw CIError.config("\(path).min_runners exceeds max_runners")
+    }
+    var policy = JobPolicy()
+    if let node = d.optionalNode("job_policy") {
+      var p = try ConfigReader(node, path: "\(path).job_policy")
+      policy.allowForkPRs = try p.optionalBool("allow_fork_prs") ?? false
+      policy.allowPublicRepo = try p.optionalBool("allow_public_repo") ?? false
+      if let events = try p.optionalStrings("allowed_events") {
+        guard !events.isEmpty,
+          events.allSatisfy({
+            (1...64).contains($0.utf8.count)
+              && $0.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || $0 == "_" }
+          })
+        else {
+          throw CIError.config(
+            "\(path).job_policy.allowed_events must list lowercase GitHub event names")
+        }
+        policy.allowedEvents = Array(Set(events)).sorted()
+      }
+      if let actors = try p.optionalStrings("allowed_actors") {
+        guard actors.allSatisfy({ RepositoryName.validOrganization($0) }) else {
+          throw CIError.config("\(path).job_policy.allowed_actors must list GitHub logins")
+        }
+        policy.allowedActors = Array(Set(actors.map { $0.lowercased() })).sorted()
+      }
+      try p.finish()
+    }
+    if policy.allowPublicRepo {
+      // A public repository lets anyone open pull requests and trigger
+      // events: only write-gated events, and never fork pull requests. An
+      // idle runner could take any job GitHub assigns before it is vetted.
+      guard minimum == 0 else {
+        throw CIError.config("\(path): allow_public_repo needs min_runners: 0")
+      }
+      guard !policy.allowForkPRs else {
+        throw CIError.config(
+          "\(path).job_policy: allow_fork_prs cannot be combined with allow_public_repo")
+      }
+      let open = policy.allowedEvents.filter { !JobPolicy.writeGatedEvents.contains($0) }
+      guard open.isEmpty || !policy.allowedActors.isEmpty else {
+        throw CIError.config(
+          "\(path).job_policy: a public repository may allow only write-gated events (\(JobPolicy.writeGatedEvents.sorted().joined(separator: ", "))) unless allowed_actors is set; \(open.joined(separator: ", ")) can be triggered by anyone"
+        )
+      }
+    }
+    try d.finish()
+    return ScaleSetConfiguration(
+      name: name, minRunners: minimum, maxRunners: maximum, jobPolicy: policy)
   }
 
   /// Every reference resolves and every mode matches its use.
@@ -485,6 +731,18 @@ extension CIConfiguration {
         throw CIError.config("preflight needs a network policy with preflight_service: true")
       }
       try Self.requireBudgets(preflight.hosts, hosts, user: "preflight")
+      guard profile.guestOS == .linux else {
+        throw CIError.config("preflight needs a linux/arm64 profile")
+      }
+    }
+    var scaleSets: [String: Name] = [:]
+    for (name, pool) in pools.sorted(by: { $0.key < $1.key }) {
+      guard let scaleSet = pool.scaleSet else { continue }
+      let key = "\(GitHubRunnerScope(pool.scope).routingKey)/\(scaleSet.name.lowercased())"
+      if let other = scaleSets[key] {
+        throw CIError.config("pools \(other) and \(name) name the same scale set")
+      }
+      scaleSets[key] = name
     }
   }
 
@@ -518,6 +776,16 @@ extension CIConfiguration {
       members["limits"] = .string(limits.digestOfDescriptor.rawValue)
     }
     return Digest(hashing: JSONValue.object(members).canonical)
+  }
+
+  /// The host budgets among `hosts` that set shared-host fields (owner
+  /// reservation, external macOS tracking), for approval checks. Budgets
+  /// without them are not approved descriptors, so existing approvals hold.
+  package func hostDescriptors(_ hosts: [Name]) -> [(ApprovalRecord.Kind, Name, Digest)] {
+    hosts.sorted().compactMap { name in
+      guard let budget = self.hosts[name], budget.isApprovedDescriptor else { return nil }
+      return (.host, name, descriptorDigest(budget))
+    }
   }
 
   /// The descriptors a profile depends on, for approval checks.
@@ -785,7 +1053,7 @@ extension CIConfiguration {
   /// connected pool and the preflight profile, with illustrative values.
   package static func template(repository: String, host: String) -> String {
     """
-    schema: iso-ci/v1
+    schema: iso-ci/v2
 
     # Approved immutable descriptors. Changing any of them requires
     # re-approval (`iso-ci setup --approve`) before a pool using it activates.
@@ -862,6 +1130,10 @@ extension CIConfiguration {
         live_retention_seconds: 3600
         stopped_retention_seconds: 86400
 
+    # The ceiling iso and iso-ci share on each Mac. CI admission subtracts the
+    # owner reservation and the VMs iso-ci does not own (read from iso's VM
+    # leases on the local host). Optional: owner_reserved_cpus,
+    # owner_reserved_memory_mib, track_external_macos_vms (local only).
     hosts:
       \(host):
         max_vms: 2
@@ -898,6 +1170,14 @@ extension CIConfiguration {
         max_live_vms: 2
         desired_idle_vms: 1
         retention_on_failure: disabled
+        # For scale-to-zero, replace max_live_vms and desired_idle_vms with a
+        # runner scale set; each offered job is checked before it is acquired:
+        #   provisioning_mode: scaleset
+        #   scaleset:
+        #     name: iso-arm64
+        #     min_runners: 0
+        #     max_runners: 2
+        #     job_policy: {allow_fork_prs: false, allow_public_repo: false}
 
     preflight:
       profile: linux-preflight

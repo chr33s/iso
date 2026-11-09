@@ -7,12 +7,15 @@ package enum GitHubAuthorization: Sendable {
   case app(RedactedSecret)
   /// An installation access token.
   case installation(RedactedSecret)
+  /// A runner registration token (`/actions/runner-registration` only).
+  case remoteAuth(RedactedSecret)
 
   var header: String? {
     switch self {
     case .none: nil
     case .app(let jwt): "Bearer " + jwt.value
     case .installation(let token): "Bearer " + token.value
+    case .remoteAuth(let token): "RemoteAuth " + token.value
     }
   }
 }
@@ -319,6 +322,56 @@ extension GitHubAPI {
       .post, url: try url(scope.prefix + "/actions/runners/generate-jitconfig"),
       auth: .installation(token), body: body, idempotent: false, expect: [201])
     return try GitHubJITConfig(json: try required(reply))
+  }
+
+  /// `POST …/actions/runners/registration-token`: a short-lived token whose
+  /// only use here is the Actions service exchange below.
+  package func registrationToken(scope: GitHubRunnerScope, token: RedactedSecret) throws(CIError)
+    -> RedactedSecret
+  {
+    let reply = try send(
+      .post, url: try url(scope.prefix + "/actions/runners/registration-token"),
+      auth: .installation(token), idempotent: false, expect: [201])
+    guard let value = try required(reply)["token"]?.stringValue, !value.isEmpty,
+      value.utf8.count <= 4_096
+    else { throw CIError(.githubUnavailable, "GitHub returned no registration token") }
+    return RedactedSecret(value)
+  }
+
+  /// `POST /actions/runner-registration`: exchanges a registration token
+  /// for the Actions service URL and an admin token for runner scale sets.
+  package func actionsServiceAdmin(scope: GitHubRunnerScope, registration: RedactedSecret)
+    throws(CIError) -> (url: URL, token: RedactedSecret)
+  {
+    let target: String
+    switch scope {
+    case .repository(let repository): target = "https://github.com/\(repository.rawValue)"
+    case .organization(let org): target = "https://github.com/\(org)"
+    }
+    let reply = try send(
+      .post, url: try url("/actions/runner-registration"), auth: .remoteAuth(registration),
+      body: ["url": .string(target), "runner_event": "register"], idempotent: false,
+      expect: [200, 201])
+    let json = try required(reply)
+    guard let raw = json["url"]?.stringValue, let service = ActionsService.validatedURL(raw),
+      let token = json["token"]?.stringValue, !token.isEmpty, token.utf8.count <= 16_384
+    else {
+      throw CIError(.githubUnavailable, "GitHub returned no usable Actions service connection")
+    }
+    return (service, RedactedSecret(token))
+  }
+
+  /// `GET /repos/{owner}/{repo}/actions/runs/{id}`: the facts a job policy
+  /// decides on.
+  package func workflowRun(repository: RepositoryName, id: Int64, token: RedactedSecret)
+    throws(CIError) -> JobFacts
+  {
+    try JobFacts(
+      run: try required(
+        try send(
+          .get,
+          url: try url("/repos/\(repository.owner)/\(repository.name)/actions/runs/\(id)"),
+          auth: .installation(token))))
   }
 
   /// Runners in `scope`, optionally filtered by exact name.

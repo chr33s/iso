@@ -3,14 +3,14 @@
 lockfile_version = 3
 
 [[tools.container]]
-version = "1.5.0"
+version = "1.7.1"
 backend = "aqua:apple/container"
-specifiers = ["1.5.0"]
+specifiers = ["1.7.1"]
 
 [tools.container."platforms.macos-arm64"]
-checksum = "sha256:a24808cb202318fa1c3bbee0c6c6887fe1225fe899d7b687a0ddd939bd6573f8"
-url = "https://github.com/apple/container/releases/download/1.5.0/container-1.5.0-installer-signed.pkg"
-url_api = "https://api.github.com/repos/apple/container/releases/assets/597136570"
+checksum = "sha256:b6739caf3d47ca53a78f1a7edf32521420a75c7941838c3cefa75f30b80f5a97"
+url = "https://github.com/apple/container/releases/download/1.7.1/container-1.7.1-installer-signed.pkg"
+url_api = "https://api.github.com/repos/apple/container/releases/assets/719067242"
 
 [[tools.jactionlint]]
 version = "2.4.0"

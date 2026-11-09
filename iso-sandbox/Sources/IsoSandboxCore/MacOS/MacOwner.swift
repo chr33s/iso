@@ -273,6 +273,9 @@ package enum MacOwner {
       disk: paths.disk, cpus: record.cpus, memoryBytes: record.memoryBytes, network: device,
       accelerators: record.coreAI?.accelerators ?? [])
 
+    // Held (never closed) for the owner's life, like the claim.
+    _ = VMLease.hold(
+      sandbox: id.rawValue, guestOS: "macos", cpus: record.cpus, memoryBytes: record.memoryBytes)
     let store = MacRecordStore(paths: paths, record: record, network: helperNet)
     let coreAIProbe = MacCoreAIProbeBox()
     var onActive: (@Sendable () -> Void)?

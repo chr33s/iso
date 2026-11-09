@@ -1,0 +1,9 @@
+{"tick": 0, "type": "config_loaded", "supervised": true, "hosts": {"local": {"cpus": 8, "memory_mib": 32768, "max_vms": 2}}, "pools": {"iso-fast": {"mode": "scaleset", "cpus": 2, "max": 2}}}
+{"tick": 1, "type": "scaleset_message", "pool": "iso-fast", "kind": "JobAvailable", "job_id": "job-1"}
+{"tick": 1, "type": "expect", "placed": ["job-1"], "vms": 1, "supervised": 1, "ready": 0, "jit": 0}
+{"tick": 2, "type": "controller_restart"}
+{"tick": 2, "type": "expect", "placed": [], "vms": 1, "supervised": 1, "uncertain": 0, "releases": 0, "admits": 1}
+{"tick": 3, "type": "supervisor_complete"}
+{"tick": 3, "type": "expect", "placed": [], "vms": 1, "supervised": 0, "ready": 1, "jit": 1, "uncertain": 0, "releases": 0}
+{"tick": 4, "type": "vm_exited", "job_id": "job-1", "exit_code": 0}
+{"tick": 4, "type": "expect", "vms": 0}

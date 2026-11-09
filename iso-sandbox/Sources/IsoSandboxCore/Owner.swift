@@ -54,6 +54,9 @@ package enum Owner {
       log("session expired at \(expiresAt); not booting")
       return
     }
+    // Held (never closed) for the owner's life, like the claim.
+    _ = VMLease.hold(
+      sandbox: id.rawValue, guestOS: "linux", cpus: record.cpus, memoryBytes: record.memoryBytes)
     let vmm = VZVirtualMachineManager(
       kernel: Kernel(path: root.kernel, platform: .linuxArm),
       initialFilesystem: .block(

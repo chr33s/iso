@@ -62,8 +62,10 @@ FIXTURES="$PWD/tests/fixtures/apple-sandbox"
 RUN="t$(openssl rand -hex 4)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/iso-sandbox-test.XXXXXX")"
 ROOT="$WORK/root"
-IMAGE="local/iso-sandbox-test:$RUN"
-MAINTENANCE="local/iso-sandbox-test-maintenance:$RUN"
+# Fully qualified: container 1.7 records a saved image's reference with its
+# registry (`docker.io/local/...`); 1.5 kept the name as given.
+IMAGE="docker.io/local/iso-sandbox-test:$RUN"
+MAINTENANCE="docker.io/local/iso-sandbox-test-maintenance:$RUN"
 SANDBOX="$WORK/bin/iso-sandbox"
 CYCLES="${CYCLES:-5}"
 CONCURRENCY="${CONCURRENCY:-1 4 8}"

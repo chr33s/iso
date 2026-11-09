@@ -163,6 +163,8 @@ package struct DataRoot: Sendable, Equatable {
   package var keys: String { path + "/keys" }
   package var sessions: String { path + "/sessions" }
   package var logs: String { path + "/logs" }
+  /// Per-allocation supervisor locks and state (`<id>.lock`, `<id>.state.json`).
+  package var allocations: String { path + "/run/allocations" }
 
   /// Control sockets need a short path: a per-user temporary directory
   /// with a bounded name derived from the data root.

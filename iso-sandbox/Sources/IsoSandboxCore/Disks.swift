@@ -18,7 +18,41 @@ package struct DiskSummary: Codable, Sendable {
 package enum Disks {
   /// Load an OCI archive (as written by `container image save`) into the
   /// private image store.
-  package static func importImage(root: SandboxRoot, ociTar: URL) async throws -> [ImageSummary] {
+  /// Docker-style normalization of a reference's name: a first component
+  /// without a `.` or `:` (and not `localhost`) is on `docker.io`, and a
+  /// single-component name there is under `library/`. The tag or digest is
+  /// kept as written.
+  package static func normalizedReference(_ reference: String) -> String {
+    var parts = reference.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+    let first = parts.first ?? ""
+    let hasRegistry =
+      parts.count > 1 && (first.contains(".") || first.contains(":") || first == "localhost")
+    if !hasRegistry {
+      if parts.count == 1 { parts.insert("library", at: 0) }
+      parts.insert("docker.io", at: 0)
+    }
+    return parts.joined(separator: "/")
+  }
+
+  /// Loads an OCI archive. With `name`, the archive must hold exactly that
+  /// image: a builder that recorded it under its registry-qualified form
+  /// (container 1.7 saves `local/x` as `docker.io/local/x`) is re-tagged to
+  /// `name` and the alias removed. Anything else is returned as loaded, for
+  /// the caller to refuse.
+  package static func importImage(root: SandboxRoot, ociTar: URL, name: String? = nil)
+    async throws -> [ImageSummary]
+  {
+    let loaded = try await load(root: root, ociTar: ociTar)
+    guard let name, !loaded.contains(where: { $0.reference == name }), loaded.count == 1,
+      normalizedReference(loaded[0].reference) == normalizedReference(name)
+    else { return loaded }
+    let store = try ImageStore(path: root.imageStore)
+    let tagged = try await store.tag(existing: loaded[0].reference, new: name)
+    try await store.delete(reference: loaded[0].reference)
+    return [ImageSummary(reference: tagged.reference, digest: tagged.digest)]
+  }
+
+  private static func load(root: SandboxRoot, ociTar: URL) async throws -> [ImageSummary] {
     let layout = root.root.appendingPathComponent(".oci-layout-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: layout, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: layout) }

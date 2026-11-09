@@ -69,6 +69,7 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
   private let state = Mutex<State>(State())
   /// Serializes data-plane launches so concurrent first jobs share one child.
   private let launchLock = NSLock()
+  private let board: SchedulerBoard
 
   private struct State {
     var supervisor: DataPlaneSupervisor?
@@ -84,8 +85,10 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
   package init(
     root: DataRoot, store: ControllerStore, objects: ObjectStore, provider: any EnvironmentProvider,
     executable: String,
-    loadConfiguration: @escaping @Sendable () -> Result<CIConfiguration, CIError>
+    loadConfiguration: @escaping @Sendable () -> Result<CIConfiguration, CIError>,
+    board: SchedulerBoard = SchedulerBoard()
   ) {
+    self.board = board
     self.root = root
     self.store = store
     self.objects = objects
@@ -199,7 +202,9 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       throw CIError.config("no preflight section is configured")
     }
     let profile = try ResolvedProfile(name: preflight.profile, configuration: configuration)
-    for (kind, name, digest) in configuration.descriptors(of: preflight.profile) {
+    for (kind, name, digest) in configuration.descriptors(of: preflight.profile)
+      + configuration.hostDescriptors(preflight.hosts)
+    {
       guard try store.approval(kind, name)?.digest == digest else {
         throw CIError(
           .admissionRefused, "\(kind.rawValue) \(name) is not approved at its current digest")
@@ -654,7 +659,7 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     let candidates = record.pinnedHost.map { [$0] } ?? preflight.hosts
     let placement = try HostPlacement.select(
       candidates: candidates, profile: profile, configuration: configuration, store: store,
-      fairnessKey: "preflight", now: store.now)
+      fairnessKey: "preflight", now: store.now, board: board)
     if placement.choice == nil, !placement.refusals.isEmpty,
       placement.refusals.allSatisfy({ !$0.capacity })
     {

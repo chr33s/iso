@@ -1,0 +1,10 @@
+{"tick": 0, "type": "config_loaded", "hosts": {"local": {"cpus": 8, "memory_mib": 32768, "max_vms": 4}}, "pools": {"warm": {"mode": "warm_pool", "cpus": 2, "desired_idle": 1, "max": 2}, "fast": {"mode": "scaleset", "cpus": 2, "max": 2}, "heavy": {"mode": "scaleset", "cpus": 4, "max": 1, "exclusive": true}}}
+{"tick": 0, "type": "expect", "vms": 1, "modes": {"local": "NORMAL"}}
+{"tick": 1, "type": "scaleset_message", "pool": "fast", "kind": "JobAvailable", "job_id": "f1"}
+{"tick": 1, "type": "expect", "placed": ["f1"], "vms": 2}
+{"tick": 2, "type": "scaleset_message", "pool": "heavy", "kind": "JobAvailable", "job_id": "x1"}
+{"tick": 2, "type": "expect", "placed": [], "retired": 1, "vms": 1, "modes": {"local": "DRAINING_FOR_EXCLUSIVE"}, "waiting": {"x1": "QUEUED_WAITING_DRAIN"}}
+{"tick": 3, "type": "vm_exited", "job_id": "f1", "exit_code": 0}
+{"tick": 3, "type": "expect", "placed": ["x1"], "vms": 1, "modes": {"local": "EXCLUSIVE_BUSY"}}
+{"tick": 4, "type": "vm_exited", "job_id": "x1", "exit_code": 0}
+{"tick": 4, "type": "expect", "vms": 1, "modes": {"local": "NORMAL"}}

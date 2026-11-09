@@ -146,7 +146,7 @@ Each reconciliation pass:
 3. Compute the idle deficit and available resource budgets. Starting allocations reserve future idle slots; retained and uncertain resources still consume their applicable budgets.
 4. Create only the admitted deficit, after fair placement; verify brokered readiness; obtain JIT material; launch the runner and verify scope, labels and connection.
 
-Default to one ready runner when capacity permits, within an explicit live-VM cap. Zero desired idle without a demand source means a paused/non-replenishing pool, not working scale-to-zero. Webhooks, scale sets and demand-based zero-idle operation are outside the ready-pool implementation.
+Default to one ready runner when capacity permits, within an explicit live-VM cap. Zero desired idle without a demand source means a paused/non-replenishing pool, not working scale-to-zero. Demand-based zero-idle operation uses a runner scale set instead (`provisioning_mode: scaleset`): the controller holds the scale set's message session, evaluates each job against GitHub's run record and the pool's job policy (before acquiring it on an elastic scale set; on assignment on a non-elastic one, where a refused or unvetted assigned job stops all new runners), and creates one fresh VM and scale-set JIT runner per admitted job. Webhooks are not used.
 
 Allocate the VM and prove its profile **before** releasing bootstrap material. Persist the chosen runner name, controller identity and allocation correlation before the JIT request. JIT creation is not assumed idempotent: if its response is lost, reconcile the exact owned registration in the correct scope before retrying. If ownership cannot be resolved, retain an explicit registration-uncertain state and require supervised resolution instead of guessing. Do not delete runners based only on a shared name prefix. Keep App keys and installation-management tokens out of worker request payloads and guests (a controller may physically share the local Mac); JIT material is guest-visible and excluded from host argv, templates and logs.
 
@@ -299,7 +299,7 @@ Mutations return stable operation/allocation identifiers. Machine-readable comma
 Configuration is administrator-controlled. Repository-local workflow content may request an authorized pool or profile; it cannot define host executables, secrets, network destinations, privileged grants, or resource ceilings. The example uses symbolic references which setup resolves to approved immutable descriptors.
 
 ```yaml
-schema: iso-ci/v1
+schema: iso-ci/v2
 
 profiles:
   linux-validation:
@@ -459,6 +459,10 @@ a release sign-off.
 | 9 Preflight | Strict YAML subset, expression subset, `local-actions/v1` manifest, compiler with full static diagnostics, job graph, deterministic selected-content snapshots (`iso-ci.snapshot/v2`, no base-commit bundle or history) with credential-file excludes, synthetic checkout/overlay steps, `run`/`debug`/`patch`/`retry`/`abort`, approved action archives (`iso-ci actions import`). |
 | 10 Storage and authority | Scoped caches (first writer wins, invisible until verified), run-scoped artifacts gated by dependency provenance and authority class, signed URLs, per-allocation budgets; GitHub-side guarantees reported as verified / operator-attested / unavailable; privileged pools stay inactive. |
 | 12 Interface | All commands in the table, plus `pool resume`, `pool resolve`, `actions import/list`; `--json` with typed codes. |
+| Scale sets, job policy | `ScaleSetClient` (registration token → Actions service admin token; scale set find/create; session create/refresh/delete; long poll; message delete; `acquirejobs`; `generatejitconfig`), `ScaleSetListener` (one session per pool, background poll loop; elastic scale set when GitHub allows it, else non-elastic; runner demand bounded by GitHub's per-message statistics; sessions deleted on SIGTERM/SIGINT), `JobPolicyEvaluator` (public, fork, event, actor, scope, unverifiable) before acquisition or on assignment; `ScaleSetRunnerService` registers through the scale set and otherwise uses REST. |
+| Shared-host scheduling | `Scheduler` (one queue by `(enqueued_at, id)` across pools, `RoomReservation`, exclusive drains, two-macOS-VM ceiling), `HostCapacity` (owner reservation, iso-sandbox VM leases in `~/.iso/run/leases`), `SchedulerBoard` (the same reservations and drains bind preflight placement); `ConnectedPoolReconciler.prepare/admit` split so all pools are scheduled together. |
+| Allocation supervisors | `AllocationSupervisors` (inherited `flock` on `run/allocations/<id>.lock`, `state.json` by atomic rename, startup re-adoption scan), `iso-ci internal-supervise` (`SupervisorMain`: startup, then holds the access session). |
+| Protocol traces | `serve --record-protocol-trace` (`ProtocolTrace`); `Tests/IsoCICoreTests/TraceReplay` replays `Fixtures/traces/C-T19…C-T24` against the scheduler, listener, job policy and reconcilers. |
 
 ### Decisions taken while implementing
 
@@ -471,6 +475,24 @@ a release sign-off.
 - Failed preflight jobs are retained live (finite, host-owned) for debug and
   patch; connected pools follow `retention_on_failure` (default disabled).
 - `concurrency:` is accepted with a warning that it is ignored.
+- On an elastic scale set, jobs are gated at acquisition, the only point
+  before GitHub assigns a job to a runner; a scale-set JIT runner is not bound
+  to one job, but it only receives jobs this controller acquired. GitHub
+  requires Administer permission to create an elastic scale set, which App
+  installations lack (the live run got 403 for `isElastic` and 200 without
+  it), so App-backed pools run non-elastic: jobs are assigned without an
+  offer, gated on assignment, and while any assigned job is refused or
+  unvetted no new runner starts. A runner started for an approved job may
+  still take a refused job assigned while it boots, so public repositories
+  are allowed only on elastic scale sets with `min_runners: 0`.
+- An allocation's VM is owned by the host service and its launchd VM owner,
+  not by the supervisor. The supervisor owns the controller-side startup
+  transaction (provision, JIT registration, runner start) and the VM's access
+  session; the controller keeps the steady-state lifecycle. Its status is read
+  from the lock and `state.json`; there is no per-allocation status socket.
+- The trace replay tests live in the existing test target, to share its host
+  and GitHub fakes, and compose controller rounds as `ConnectedPoolService`
+  does without its GitHub activation gate.
 
 ### Known gaps
 
@@ -483,6 +505,26 @@ a release sign-off.
   allocation settles after an abort.
 - The guest bootstrap's Docker proxy configuration assumes systemd and sudo
   in the image.
+- The runner scale set protocol has run live against GitHub only in its
+  non-elastic form (an organization App on `iso-ci`); the elastic
+  acquisition path is covered by fixtures only. Its endpoints are not a
+  documented public API (GitHub calls scale sets a preview).
+- On a non-elastic scale set, a refused job blocks new runners until it
+  leaves GitHub's queue, and jobs assigned before a controller restart block
+  them until they leave the queue too: safe, but an operator may need to
+  cancel such runs.
+- macOS CI profiles never activate (macOS guests need a NIC), so the
+  two-macOS-VM ceiling only matters for the queue model and is exercised by
+  fixtures. External usage is read only for the `local` host; remote hosts
+  still admit physically under their own limits.
+- On the local host, a CI VM that is still booting (its runtime id not yet
+  recorded) is counted both as a CI allocation and through its lease, which
+  briefly understates capacity (the safe direction).
+- A job whose run record cannot be read is refused as
+  `JOB_REJECTED_UNVERIFIABLE`; whether GitHub offers it again is unverified.
+- Only host budgets that set shared-host fields are approved descriptors, so
+  existing approvals hold across the upgrade; `max_vms`/`cpus`/`memory_mib`/
+  `disk_gib` alone remain unapproved, as before.
 
 Operator constraints are in the [operator guide](../ci.md): storing the App
 key again after a rebuild ([onboarding](../ci.md#onboarding)), `no_proxy` for

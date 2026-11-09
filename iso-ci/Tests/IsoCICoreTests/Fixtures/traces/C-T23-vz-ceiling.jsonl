@@ -1,0 +1,8 @@
+{"tick": 0, "type": "config_loaded", "hosts": {"local": {"cpus": 12, "memory_mib": 32768, "max_vms": 4}}, "pools": {"mac": {"mode": "scaleset", "cpus": 2, "guest_os": "macos", "max": 2}}}
+{"tick": 0, "type": "lease_acquired", "sandbox": "iso-interactive-claude", "guest_os": "macos", "cpus": 4, "memory_mib": 8192}
+{"tick": 1, "type": "scaleset_message", "pool": "mac", "kind": "JobAvailable", "job_id": "m1"}
+{"tick": 1, "type": "expect", "placed": ["m1"], "vms": 1}
+{"tick": 2, "type": "scaleset_message", "pool": "mac", "kind": "JobAvailable", "job_id": "m2"}
+{"tick": 2, "type": "expect", "placed": [], "vms": 1, "waiting": {"m2": "QUEUED_WAITING_VZ_SLOT"}}
+{"tick": 3, "type": "lease_released", "sandbox": "iso-interactive-claude"}
+{"tick": 3, "type": "expect", "placed": ["m2"], "vms": 2}

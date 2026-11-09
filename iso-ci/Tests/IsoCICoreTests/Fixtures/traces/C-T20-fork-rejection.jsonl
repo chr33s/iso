@@ -1,0 +1,7 @@
+{"tick": 0, "type": "config_loaded", "hosts": {"local": {"cpus": 8, "memory_mib": 16384, "max_vms": 2}}, "pools": {"iso-fast": {"mode": "scaleset", "cpus": 2, "min": 0, "max": 4}}}
+{"tick": 1, "type": "scaleset_message", "pool": "iso-fast", "kind": "JobAvailable", "job_id": "job-fork-attack", "is_fork": true, "event": "pull_request"}
+{"tick": 1, "type": "scaleset_message", "pool": "iso-fast", "kind": "JobAvailable", "job_id": "job-comment", "event": "issue_comment"}
+{"tick": 1, "type": "scaleset_message", "pool": "iso-fast", "kind": "JobAvailable", "job_id": "job-public", "private": false, "event": "push"}
+{"tick": 1, "type": "expect", "rejected": {"job-fork-attack": "JOB_REJECTED_FORK_PR", "job-comment": "JOB_REJECTED_EVENT", "job-public": "JOB_REJECTED_PUBLIC_REPO"}, "placed": [], "vms": 0, "admits": 0, "jit": 0}
+{"tick": 2, "type": "scaleset_message", "pool": "iso-fast", "kind": "JobAvailable", "job_id": "job-push", "event": "push"}
+{"tick": 2, "type": "expect", "placed": ["job-push"], "vms": 1, "admits": 1}

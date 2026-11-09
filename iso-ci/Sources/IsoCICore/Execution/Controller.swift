@@ -9,6 +9,12 @@ package protocol ControllerService: Sendable {
   func reconcile(now: EpochSeconds)
   func handle(_ request: ControlRequest) -> Result<JSONValue, CIError>?
   func status() -> JSONValue
+  /// Releases external sessions before the controller exits.
+  func shutdown()
+}
+
+extension ControllerService {
+  package func shutdown() {}
 }
 
 /// Converts an `Encodable` record to `JSONValue` for control replies.
@@ -61,11 +67,28 @@ package final class Controller: Sendable {
     try server.start()
     try store.event("controller", "controller.started", "controller started (pid \(getpid()))")
     signal(SIGPIPE, SIG_IGN)
+    // A scale set's message session outlives a killed controller on
+    // GitHub's side and keeps receiving its jobs: delete sessions on the way
+    // out. Supervisors run in their own sessions and are not signalled.
+    var sources: [any DispatchSourceSignal] = []
+    for number in [SIGTERM, SIGINT] {
+      signal(number, SIG_IGN)
+      let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+      source.setEventHandler { [self] in
+        for service in services.withLock({ $0 }) { service.shutdown() }
+        _ = try? store.event(
+          "controller", "controller.stopped", "controller stopped by signal \(number)")
+        exit(0)
+      }
+      source.resume()
+      sources.append(source)
+    }
     while true {
       reconcile()
       Thread.sleep(forTimeInterval: interval)
     }
     _ = lock
+    _ = sources
   }
 
   private let passLock = NSLock()
@@ -179,8 +202,11 @@ package final class Controller: Sendable {
     configuration.withLock { $0 = (config, nil) }
     var rows: [JSONValue] = []
     var seen: Set<String> = []
-    for profile in config.profiles.keys.sorted() {
-      for (kind, name, digest) in config.descriptors(of: profile)
+    let groups =
+      config.profiles.keys.sorted().map { config.descriptors(of: $0) }
+      + [config.hostDescriptors(Array(config.hosts.keys))]
+    for group in groups {
+      for (kind, name, digest) in group
       where seen.insert("\(kind.rawValue)/\(name)").inserted {
         let previous = try store.approval(kind, name)
         let changed = previous?.digest != digest

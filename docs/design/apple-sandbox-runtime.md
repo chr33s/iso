@@ -87,7 +87,7 @@ direct runtime Track B.
   (protocol 1, now 2), with the isolation gate, journal, and host-key pinning of the
   earlier backend carried over. It gains `resize --size`, `commit`, and
   `restore`.
-- Stock `container` 1.4.1 remains a prerequisite, but only to build images and
+- Stock `container` 1.7.1 remains a prerequisite, but only to build images and
   supply the pinned guest kernel.
 - Real-hardware coverage is `tests/integration-apple-sandbox.sh`. Unit tests
   (Rust and `swift test`) run in CI; the VM-booting suite cannot.

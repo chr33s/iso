@@ -8,7 +8,40 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Changed
+
+- **Apple `container` baseline 1.7.1** (was 1.4.1 minimum, 1.5.0 pinned in
+  `mise.toml`). The runtime now pins the guest kernel container 1.7.1 installs,
+  `vmlinux-6.18.56-208-debug` (Kata 4.3.1, sha256 `98a1005f…f7511`), in place
+  of `vmlinux-6.18.15-186`. Existing hosts run `container system kernel set
+  --recommended`, then `iso setup`; the kernel is part of the NET-HANDOFF-1
+  tuple, so brokered hosts record new evidence.
+
+### Fixed
+
+- `iso setup` image builds failed with `APPLE_IDENTITY_CONFLICT` on container
+  1.7, which saves `local/x` as `docker.io/local/x`. `iso-sandbox image import
+  --name` re-tags exactly that registry-qualified alias; any other mismatch is
+  still refused.
+
 ### Added
+
+- **iso-ci:** runner scale-set pools (`provisioning_mode: scaleset`) with
+  scale-to-zero, a default-deny job policy checked against GitHub's run record
+  before a job is acquired (fork pull requests, public repositories, events,
+  actors), one queue across pools with room reservation for the oldest starved
+  job, `exclusive_host` profiles that drain their host, owner reservations and
+  the two-macOS-VM ceiling counted from iso-sandbox VM leases
+  (`~/.iso/run/leases`), per-allocation supervisor processes that keep
+  registrations and VM sessions across controller restarts, and `serve
+  --record-protocol-trace`. Non-elastic scale sets (all an App can create)
+  gate jobs on assignment and start no runner while a refused or unvetted job
+  is assigned; public repositories need an elastic scale set. C-T19–C-T22 and
+  C-T24 passed live on an organization pool; see the [operator
+  guide](docs/ci.md#scale-sets-and-shared-hosts) and the qualification
+  record.
+- **iso-sandbox:** each VM owner writes and holds a lease file describing the
+  running VM (`iso.vm-lease/v1`).
 
 - **macOS guests (experimental, unreleased build):** paravirtualized Core AI.
   `"coreai": {"accelerators": ["gpu", "neural_engine"],

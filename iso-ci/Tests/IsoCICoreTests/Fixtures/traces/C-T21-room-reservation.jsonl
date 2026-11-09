@@ -1,0 +1,11 @@
+{"tick": 0, "type": "config_loaded", "hosts": {"local": {"cpus": 8, "memory_mib": 32768, "max_vms": 4}}, "pools": {"small": {"mode": "scaleset", "cpus": 2, "max": 4}, "big": {"mode": "scaleset", "cpus": 8, "max": 1}}}
+{"tick": 1, "type": "scaleset_message", "pool": "small", "kind": "JobAvailable", "job_id": "s1"}
+{"tick": 1, "type": "expect", "placed": ["s1"], "vms": 1}
+{"tick": 2, "type": "scaleset_message", "pool": "big", "kind": "JobAvailable", "job_id": "j0"}
+{"tick": 2, "type": "expect", "placed": [], "vms": 1, "waiting": {"j0": "QUEUED_WAITING_ROOM"}}
+{"tick": 3, "type": "scaleset_message", "pool": "small", "kind": "JobAvailable", "job_id": "j1"}
+{"tick": 3, "type": "scaleset_message", "pool": "small", "kind": "JobAvailable", "job_id": "j2"}
+{"tick": 3, "type": "scaleset_message", "pool": "small", "kind": "JobAvailable", "job_id": "j3"}
+{"tick": 3, "type": "expect", "placed": [], "vms": 1, "waiting": {"j0": "QUEUED_WAITING_ROOM", "j1": "QUEUED_BEHIND_RESERVATION", "j2": "QUEUED_BEHIND_RESERVATION", "j3": "QUEUED_BEHIND_RESERVATION"}}
+{"tick": 4, "type": "vm_exited", "job_id": "s1", "exit_code": 0}
+{"tick": 4, "type": "expect", "placed": ["j0"], "vms": 1, "waiting": {"j1": "QUEUED_WAITING_ROOM", "j2": "QUEUED_BEHIND_RESERVATION", "j3": "QUEUED_BEHIND_RESERVATION"}}

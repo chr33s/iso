@@ -75,6 +75,66 @@ acceptance-test qualification:
   removes the socket on unregister.
 - Root package: the host tests for `host.capabilities`, `run.retain` and the
   client bridge, and 18 fault-injection cases that the tests detect.
+- C-T19–C-T24 (scale-to-zero, pre-assignment fork/event/public refusal,
+  room reservation, exclusive drain, the two-macOS-VM ceiling with an
+  interactive lease, restart re-adoption) as replayed protocol traces in
+  `Tests/IsoCICoreTests/Fixtures/traces`, plus unit tests for the scheduler,
+  job policy, scale-set client and listener, lease probing and the real
+  `flock` hand-off to a supervisor process (`AllocationSupervisorTests`), and
+  eight `ci-*` faults in `scripts/swift-host-fault-injection.py` (job policy
+  fork, public and scope checks, the public opt-in bound, the Actions host
+  check, host-budget approval, supervisor descriptor inheritance and lock
+  ownership) that these tests detect. The live cases are in the next section.
+
+## Scale sets, scheduling and supervisors (live, 2026-11-09)
+
+**Environment.** Controller: this Mac (debug `iso-ci` build of the working
+tree). Worker: `mba`, macOS 27.3, Apple `container` 1.7.1, bundle
+`iso-2b4fb88a53b0` (iso 0.8.0, guest kernel `vmlinux-6.18.56-208-debug`), with
+NET-HANDOFF-1 evidence re-recorded for that tuple (brokered suite 47/47,
+N-T05 5/5, N-T08 synthetic pass, `ci-runner` checks 19/19, N-T12 two-Mac gate
+19/19 with a debug client; N-T16 and the N-T12 sleep/reboot cases carried).
+GitHub: organization App `iso-ci-c82ef0` installed on `iso-ci`, runner group
+`Default`, workflow `iso-ci-scaleset.yml` in the private repository
+`iso-ci/test`. Host budget: 8 vCPU, 16 GiB, `max_vms: 3`, owner reservation
+2 vCPU / 4 GiB (CI ceiling 6 vCPU). Pools: `iso-ci-small` (2 vCPU),
+`iso-ci-big` (6 vCPU), `iso-ci-excl` (2 vCPU, `exclusive_host`) as scale sets
+with `min_runners: 0`, and a warm pool `iso-ci-warm`. The scale sets were
+non-elastic (see defects below). Controller events and `serve
+--record-protocol-trace` output were kept for every case.
+
+| Case | Result |
+|---|---|
+| C-T19 | With no VM on `mba`, one `workflow_dispatch` job produced exactly one allocation (VM ready 10 s after creation, runner registered 8 s later), GitHub assigned it, the run succeeded, the VM was destroyed and verified, and `mba` returned to zero VMs. |
+| C-T20 | A `repository_dispatch` job (not in `allowed_events`) was refused on assignment (`JOB_REJECTED_EVENT`), no VM booted, and `iso-ci status` reported that no runner starts while it is assigned. An allowed job dispatched meanwhile got no runner (zero VMs after 60 s). After the refused run was cancelled, the allowed job got a fresh VM and succeeded. A fork pull request could not be produced live (an account cannot fork its own repository); fork refusal is covered by fixtures and faults. |
+| C-T21 | With a 2 vCPU job running, the 6 vCPU job waited as `QUEUED_WAITING_ROOM` and three later 2 vCPU jobs, which would have fit, as `QUEUED_BEHIND_RESERVATION`. The large job's VM was created one second after the first VM was released; the small jobs started only after the large job ended. All five runs succeeded. |
+| C-T22 | With an idle warm runner and a 2 vCPU job running, an exclusive job set `mba` to `DRAINING_FOR_EXCLUSIVE`, retired the idle runner at once (registration deleted, VM released) and waited. When the running job's VM was released, `mba` became `EXCLUSIVE_BUSY`, the exclusive job ran alone while the warm pool's request waited, and `mba` returned to `NORMAL` afterwards, when the warm runner was replaced. |
+| C-T23 | Not run live: macOS CI profiles never activate (macOS guests need a NIC), and external leases are read only on the controller's own Mac. Covered by fixtures. |
+| C-T24 | The controller was stopped (SIGTERM) one second after an allocation was created, with its supervisor in `provisioning`. The supervisor kept running: the VM became ready and the runner registered while no controller ran. The restarted controller re-adopted it (`supervisor.readopted`, phase `holding`), with no registration uncertainty and no release; GitHub assigned the job, the run succeeded and the VM was released. A clean controller restart also re-adopted an idle warm runner's supervisor. |
+
+The live run exposed and fixed these defects:
+
+- Creating a scale set with `isElastic` was refused (403, "needs Administer
+  Permissions") for both a personal-account App and an organization App with
+  the documented permissions; the same request without `isElastic` succeeds.
+  iso-ci now tries elastic first and falls back to non-elastic.
+- On a non-elastic scale set GitHub sends `JobAssigned` without
+  `JobAvailable` and with `runnerRequestId` 0, so the pre-acquisition gate
+  never ran. Jobs are now keyed by job id and gated on assignment; a refused
+  or unvetted assigned job blocks every new runner; public repositories
+  require an elastic scale set.
+- A second runner started while a job's own runner was assigned but not yet
+  reported started, and tracked entries GitHub had already re-assigned left
+  three idle runners after C-T21. Demand is now one runner per waiting and
+  running job, bounded by GitHub's per-message statistics.
+- A controller stopped without deleting its message sessions left them
+  receiving the scale set's next job on GitHub's side, stranding it. The
+  controller now deletes its sessions on SIGTERM/SIGINT (seen live as
+  `controller.stopped`, followed by a clean start).
+- macOS 27.3 with container 1.7: `iso setup` refused its own images
+  (`APPLE_IDENTITY_CONFLICT`, container 1.7 saves `local/x` as
+  `docker.io/local/x`); fixed in `iso-sandbox image import --name`. The guest
+  kernel pin moved to container 1.7.1's kernel.
 
 ## Live acceptance cases
 
@@ -110,6 +170,11 @@ development Mac), **repository** (repository pool), **organization**
 
 - Custom runner groups with workflow restrictions need a paid GitHub plan and
   were not exercised; the free organization's `Default` group was.
+- Scale sets ran live only non-elastic (no Administer permission was
+  available); the elastic acquisition path, fork-pull-request refusal,
+  public-repository scale-set pools and C-T23 have fixture-level evidence
+  only. Public-repository scale-set pools are a separate support claim that
+  has not been qualified live.
 - Public and fork execution, and privileged release execution, are qualified
   by refusal, as specification section 10 requires until enforceable controls
   exist. GitHub does not let the installation verify fork-approval or per-job
