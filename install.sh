@@ -11,6 +11,9 @@ set -euo pipefail
 #   ./install.sh                          # latest version, uses gh or GITHUB_TOKEN
 #   VERSION=v0.3.0 ./install.sh           # specific version (v0.3.0 or later)
 #   INSTALL_DIR=/usr/local/bin ./install.sh
+#   INSTALL_SKILL=1 ./install.sh          # also install the agent skill into
+#                                         # ~/.claude/skills and ~/.agents/skills
+#                                         # (override with SKILL_DIRS=dir1:dir2)
 
 REPO="chr33s/iso"
 BINARY="iso"
@@ -219,6 +222,24 @@ verify_attestation() {
     die "Attestation verification failed for $(basename "$file") — refusing to install"
 }
 
+# Replace <target>/iso with the skill at <source>. The copy is staged inside
+# the target, outside $TMPDIR, so a failure removes it here.
+install_skill() {
+    local source="$1" target="$2" staged=""
+    if mkdir -p "$target" \
+        && staged="$(mktemp -d "${target}/.iso-skill.XXXXXX")" \
+        && cp -R "${source}/." "$staged/" \
+        && chmod 755 "$staged" \
+        && rm -rf "${target:?}/iso" \
+        && mv "$staged" "${target}/iso"; then
+        info "Agent skill installed to ${target}/iso"
+        return 0
+    fi
+    [ -z "$staged" ] || rm -rf "$staged" || true
+    warn "Could not install the agent skill to ${target}/iso"
+    return 1
+}
+
 # --- main -------------------------------------------------------------------
 
 need curl
@@ -278,6 +299,28 @@ done
 
 printf '\n  %s %s installed to %s/%s\n' "$BINARY" "$VERSION" "$INSTALL_DIR" "$BINARY"
 
+# Opt-in: the host agent skill (docs/agent-skill.md), from the same verified
+# archive. Each target's existing `iso` entry is replaced. The binaries are
+# already installed, so a failed target is reported and the rest still run.
+SKILL_SOURCE="${EXTRACTED_DIR}/skills/iso"
+SKILL_FAILED=0
+if [ "${INSTALL_SKILL:-0}" = "1" ]; then
+    # Regular files and directories only: `find` also reports a symlinked root.
+    if [ -f "${SKILL_SOURCE}/SKILL.md" ] \
+        && [ -z "$(find "$SKILL_SOURCE" ! -type f ! -type d)" ]; then
+        IFS=: read -r -a SKILL_TARGETS <<< "${SKILL_DIRS:-${HOME}/.claude/skills:${HOME}/.agents/skills}"
+        for target in "${SKILL_TARGETS[@]}"; do
+            [ -n "$target" ] || continue
+            install_skill "$SKILL_SOURCE" "$target" || SKILL_FAILED=1
+        done
+    else
+        warn "Release ${VERSION} has no regular agent skill; INSTALL_SKILL skipped."
+    fi
+elif [ -f "${SKILL_SOURCE}/SKILL.md" ]; then
+    printf '\nInstall the iso agent skill for Claude Code and Codex:\n'
+    printf '  re-run with INSTALL_SKILL=1 (see docs/agent-skill.md)\n'
+fi
+
 # Check if INSTALL_DIR is on PATH
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;
@@ -287,3 +330,5 @@ case ":${PATH}:" in
         printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
         ;;
 esac
+
+[ "$SKILL_FAILED" = "0" ] || die "${BINARY} ${VERSION} is installed, but the agent skill was not installed everywhere"

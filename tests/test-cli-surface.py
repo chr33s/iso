@@ -51,6 +51,7 @@ def main():
     failures += inventory(paths, options.update_inventory)
     failures += machine_listing(binary, paths)
     failures += completion_coverage(binary, paths)
+    failures += skill_coverage(paths)
     for removed in ["init", "quickstart"]:
         result = subprocess.run([binary, removed], capture_output=True, text=True, timeout=60)
         if result.returncode == 0:
@@ -128,6 +129,25 @@ def completion_coverage(binary, paths):
         missing = sorted(name for name in names if name not in words)
         if missing:
             failures.append(f"{shell} completions miss {missing}")
+    return failures
+
+
+def skill_coverage(paths, skill=ROOT / "skills/iso"):
+    """The shipped agent skill names every public command, and no command that does not exist."""
+    text = "\n".join(path.read_text() for path in sorted(skill.rglob("*.md")))
+    # `iso help` is the argument parser's own command.
+    shown = [path for path in public(paths) if path != ("help",)]
+    failures = []
+    for path in shown:
+        if not re.search(r"\biso " + re.escape(" ".join(path)) + r"(?![\w-])", text):
+            failures.append(f"skills/iso does not mention `iso {' '.join(path)}`")
+    by_path = dict(paths)
+    known = {path[0] for path in shown}
+    known |= {alias for path in shown if len(path) == 1 for alias in by_path[path].get("aliases", [])}
+    # A command is cited as `iso NAME` in backticks or at the start of a code line.
+    cited = set(re.findall(r"(?:`|^)iso ([a-z][a-z-]*)", text, re.M))
+    for name in sorted(cited - known):
+        failures.append(f"skills/iso cites `iso {name}`, which is not a public command")
     return failures
 
 

@@ -40,13 +40,13 @@ swift test --sanitize=undefined --scratch-path .build-ubsan
 
 swift test --package-path iso-policy --force-resolved-versions  # IsoPolicy: compiler, evaluator, windows, approvals
 
-python3 tests/test-release-legal.py           # legal bytes and nested release notices
+python3 tests/test-release-legal.py           # legal bytes, nested notices, agent skill
 python3 tests/test-read-contract.py --swift .build/debug/iso
 python3 tests/test-lifecycle-contract.py --swift .build/debug/iso
 python3 tests/test-data-root-contract.py --swift .build/debug/iso
 python3 tests/test-machine-contract.py --swift .build/debug/iso   # --output json stream purity, codes, no prompts
 python3 tests/test-audit-contract.py --swift .build/debug/iso     # audit JSONL over real pipes, locks, hostile records
-python3 tests/test-cli-surface.py --swift .build/debug/iso   # help, inventory, machine list, completions
+python3 tests/test-cli-surface.py --swift .build/debug/iso   # help, inventory, machine list, completions, agent skill
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
 python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
 ```
@@ -87,8 +87,10 @@ failure does not qualify as a sanitizer pass.
 `test-cli-surface.py` also compares every public command path and each
 accepted spelling (aliases included) with the reviewed inventory in
 `tests/fixtures/contracts/cli-inventory.json`, checks that `iso capabilities`
-advertises exactly the commands documented in `docs/machine-interface.md`, and
-that every public command appears in the bash, zsh and fish completions. After
+advertises exactly the commands documented in `docs/machine-interface.md`,
+that every public command appears in the bash, zsh and fish completions, and
+that the [agent skill](agent-skill.md) names every public command path and
+cites no command that does not exist. After
 an intended flag or command change, review the diff and rerun it with
 `--update-inventory`. Parser contracts (refused combinations, forwarding,
 compatibility spellings) live in `tests/swift/IsoCLITests/ArgumentContractTests.swift`.

@@ -30,7 +30,7 @@ Stages, in order, each explicit:
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
             iso-egress, iso-sandbox, iso-macos-helper, legal notices,
-            BUILD.json), plus a
+            the skills/iso agent skill, BUILD.json), plus a
             `SHA256SUMS` listing
             the archive, next to it in `--out`. `<name>` is `--tag`, else the
             revision. This is the layout `iso update` and install.sh expect.
@@ -58,6 +58,7 @@ BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]
 # Signed here; build-iso-sandbox.sh signs iso-sandbox and iso-macos-helper.
 ADHOC_SIGNED = ["iso", "iso-proxy", "iso-egress"]
 ENTITLEMENTS = "scripts/enhanced-security.entitlements"
+SKILL = Path("skills/iso")
 # Private entitlements need AMFI relaxed on the host; the experimental
 # iso-sandbox-coreai build that carries one is never released
 # (docs/design/paravirtualized-coreai.md).
@@ -231,6 +232,17 @@ def copy_legal_files(staging, bundle):
                 shutil.copy2(source, target)
 
 
+def copy_skill(staging, bundle):
+    """Ship the host agent skill (docs/agent-skill.md) inside the verified archive."""
+    source = staging / SKILL
+    if source.is_symlink() or not (source / "SKILL.md").is_file():
+        raise SystemExit(f"missing agent skill: {SKILL}/SKILL.md")
+    links = sorted(str(p.relative_to(staging)) for p in source.rglob("*") if p.is_symlink())
+    if links:
+        raise SystemExit(f"agent skill must not contain symlinks: {', '.join(links)}")
+    shutil.copytree(source, bundle / SKILL)
+
+
 def archive_bundle(bundle, destination):
     with tarfile.open(destination, "w:gz") as tar:
         for entry in sorted(bundle.rglob("*")):
@@ -286,6 +298,7 @@ def main():
         for binary, source in binaries.items():
             shutil.copy2(source, bundle / binary)
         copy_legal_files(staging, bundle)
+        copy_skill(staging, bundle)
         phase("Ad-hoc sign iso, iso-proxy and iso-egress")
         adhoc_sign(bundle, staging / ENTITLEMENTS)
         if args.sign:

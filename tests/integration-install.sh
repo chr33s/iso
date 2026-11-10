@@ -14,6 +14,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_PATH="$PATH"
+# The installer reads these; a caller's values must not reach the default runs.
+unset INSTALL_SKILL SKILL_DIRS
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -47,6 +49,9 @@ printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$FIXTURE/$ARCHIVE_DIR/is
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-macos-helper"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso" "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
+mkdir -p "$FIXTURE/$ARCHIVE_DIR/skills/iso/references"
+printf '%s\n' 'release-skill' >"$FIXTURE/$ARCHIVE_DIR/skills/iso/SKILL.md"
+printf '%s\n' 'release-reference' >"$FIXTURE/$ARCHIVE_DIR/skills/iso/references/machine-interface.md"
 (cd "$FIXTURE" && tar -czf "$TARBALL" "$ARCHIVE_DIR")
 
 SIGNING_KEY="$TEST_ROOT/release-key"
@@ -160,6 +165,7 @@ fail() {
 
 run_installer() {
     env PATH="$MOCK_BIN:$REAL_PATH" \
+        HOME="$TEST_ROOT/home" \
         VERSION="$VERSION" \
         INSTALL_DIR="$INSTALL_DIR" \
         GITHUB_TOKEN="restricted-token-must-not-reach-bundle-curl" \
@@ -368,6 +374,128 @@ if ! VERSION="v0.2.0" run_installer >"$TEST_ROOT/old.log" 2>&1 \
 else
     fail "v0.2.0 is refused before any download" "$(tail -10 "$TEST_ROOT/old.log")"
 fi
+
+skill_installed() {
+    local target
+    for target in "$@"; do
+        [[ "$(cat "$target/iso/SKILL.md")" == "release-skill" \
+           && "$(cat "$target/iso/references/machine-interface.md")" == "release-reference" ]] \
+            || return 1
+    done
+}
+
+echo "==> Test 9: the agent skill is opt-in"
+rm -rf "${TEST_ROOT:?}/home"
+if run_installer >"$TEST_ROOT/skill-default.log" 2>&1 \
+    && grep -q "INSTALL_SKILL=1" "$TEST_ROOT/skill-default.log" \
+    && [[ ! -e "$TEST_ROOT/home/.claude" && ! -e "$TEST_ROOT/home/.agents" ]]; then
+    pass "default install writes no skill directory and names the opt-in"
+else
+    fail "default install writes no skill directory and names the opt-in" \
+        "$(tail -10 "$TEST_ROOT/skill-default.log")"
+fi
+
+if INSTALL_SKILL=0 run_installer >"$TEST_ROOT/skill-zero.log" 2>&1 \
+    && [[ ! -e "$TEST_ROOT/home/.claude" && ! -e "$TEST_ROOT/home/.agents" ]]; then
+    pass "INSTALL_SKILL=0 writes no skill directory"
+else
+    fail "INSTALL_SKILL=0 writes no skill directory" "$(tail -10 "$TEST_ROOT/skill-zero.log")"
+fi
+
+SKILL_A="$TEST_ROOT/skills-a"
+SKILL_B="$TEST_ROOT/skills b"
+mkdir -p "$SKILL_A/iso" "$SKILL_A/other"
+printf '%s\n' 'stale' >"$SKILL_A/iso/stale.md"
+printf '%s\n' 'keep' >"$SKILL_A/other/SKILL.md"
+# The empty entries are skipped.
+if INSTALL_SKILL=1 SKILL_DIRS=":$SKILL_A::$SKILL_B:" run_installer >"$TEST_ROOT/skill.log" 2>&1 \
+    && skill_installed "$SKILL_A" "$SKILL_B" \
+    && [[ ! -e "$SKILL_A/iso/stale.md" && "$(cat "$SKILL_A/other/SKILL.md")" == "keep" ]] \
+    && [[ -z "$(find "$SKILL_A" "$SKILL_B" -name '.iso-skill.*')" ]]; then
+    pass "INSTALL_SKILL replaces only each target's iso skill"
+else
+    fail "INSTALL_SKILL replaces only each target's iso skill" "$(tail -10 "$TEST_ROOT/skill.log")"
+fi
+
+rm -rf "${TEST_ROOT:?}/home"
+if INSTALL_SKILL=1 run_installer >"$TEST_ROOT/skill-home.log" 2>&1 \
+    && skill_installed "$TEST_ROOT/home/.claude/skills" "$TEST_ROOT/home/.agents/skills"; then
+    pass "INSTALL_SKILL defaults to the Claude Code and shared agent skill directories"
+else
+    fail "INSTALL_SKILL defaults to the Claude Code and shared agent skill directories" \
+        "$(tail -10 "$TEST_ROOT/skill-home.log")"
+fi
+
+# A replaced skill would lose this marker.
+printf '%s\n' 'existing' >"$SKILL_A/iso/marker"
+skill_untouched() {
+    skill_installed "$SKILL_A" && [[ "$(cat "$SKILL_A/iso/marker")" == "existing" ]]
+}
+
+# Each fixture breaks one property of a regular skill; the installer must
+# install the binaries, warn, and leave the existing skill alone.
+SKILL_FIXTURE="$FIXTURE/$ARCHIVE_DIR/skills"
+refuses_skill() {
+    local label="$1" log="$TEST_ROOT/skill-refused.log"
+    repack_fixture
+    if INSTALL_SKILL=1 SKILL_DIRS="$SKILL_A" run_installer >"$log" 2>&1 \
+        && grep -q "has no regular agent skill" "$log" \
+        && skill_untouched; then
+        pass "$label installs the binaries and leaves the existing skill"
+    else
+        fail "$label installs the binaries and leaves the existing skill" "$(tail -10 "$log")"
+    fi
+}
+
+mv "$SKILL_FIXTURE" "$FIXTURE/skills-backup"
+refuses_skill "a release without the skill"
+if run_installer >"$TEST_ROOT/skill-absent-default.log" 2>&1 \
+    && ! grep -q "INSTALL_SKILL=1" "$TEST_ROOT/skill-absent-default.log"; then
+    pass "a release without the skill does not name the opt-in"
+else
+    fail "a release without the skill does not name the opt-in" \
+        "$(tail -10 "$TEST_ROOT/skill-absent-default.log")"
+fi
+mv "$FIXTURE/skills-backup" "$SKILL_FIXTURE"
+
+ln -s /etc/hosts "$SKILL_FIXTURE/iso/references/leak"
+refuses_skill "a skill holding a symlink"
+rm "$SKILL_FIXTURE/iso/references/leak"
+
+mkfifo "$SKILL_FIXTURE/iso/references/pipe"
+refuses_skill "a skill holding a special file"
+rm "$SKILL_FIXTURE/iso/references/pipe"
+
+mv "$SKILL_FIXTURE/iso" "$SKILL_FIXTURE/real"
+ln -s real "$SKILL_FIXTURE/iso"
+refuses_skill "a symlinked skill directory"
+rm "$SKILL_FIXTURE/iso"
+mv "$SKILL_FIXTURE/real" "$SKILL_FIXTURE/iso"
+
+mv "$SKILL_FIXTURE/iso/SKILL.md" "$FIXTURE/skill-md-backup"
+refuses_skill "a skill without SKILL.md"
+mv "$FIXTURE/skill-md-backup" "$SKILL_FIXTURE/iso/SKILL.md"
+repack_fixture
+
+# An entry the installer cannot remove fails that target only: no staging
+# directory is left behind, the other target is installed, and the run fails.
+SKILL_LOCKED="$TEST_ROOT/skills-locked"
+SKILL_C="$TEST_ROOT/skills-c"
+mkdir -p "$SKILL_LOCKED/iso/locked"
+: >"$SKILL_LOCKED/iso/locked/file"
+chmod 555 "$SKILL_LOCKED/iso/locked"
+if ! INSTALL_SKILL=1 SKILL_DIRS="$SKILL_LOCKED:$SKILL_C" run_installer >"$TEST_ROOT/skill-locked.log" 2>&1 \
+    && grep -q "Could not install the agent skill to $SKILL_LOCKED/iso" "$TEST_ROOT/skill-locked.log" \
+    && grep -q "the agent skill was not installed everywhere" "$TEST_ROOT/skill-locked.log" \
+    && [[ -z "$(find "$SKILL_LOCKED" -name '.iso-skill.*')" ]] \
+    && skill_installed "$SKILL_C" \
+    && [[ "$("$INSTALL_DIR/iso")" == "installed-iso" ]]; then
+    pass "a failed skill target is cleaned up, reported, and does not stop the others"
+else
+    fail "a failed skill target is cleaned up, reported, and does not stop the others" \
+        "$(tail -10 "$TEST_ROOT/skill-locked.log")"
+fi
+chmod 755 "$SKILL_LOCKED/iso/locked"
 
 echo
 echo "  $pass_count passed, $fail_count failed"

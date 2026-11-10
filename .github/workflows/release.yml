@@ -93,6 +93,7 @@ jobs:
           test -x "$dir/iso-proxy"
           test -x "$dir/iso-sandbox"
           test -x "$dir/iso-macos-helper"
+          test -f "$dir/skills/iso/SKILL.md"
           "$dir/iso-sandbox" version
           echo "TARBALL=$RUNNER_TEMP/dist/${name}.tar.gz" >> "$GITHUB_ENV"
 

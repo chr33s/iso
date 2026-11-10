@@ -19,7 +19,8 @@ Release tags must point to commits reachable from the `main` branch. A
 release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
 the Swift host `iso`, the credential proxy `iso-proxy`, the egress companion
 `iso-egress`, the
-signed `iso-sandbox` runtime and its macOS guest helper `iso-macos-helper`, plus `BUILD.json`, `LICENSE`, `NOTICE`,
+signed `iso-sandbox` runtime and its macOS guest helper `iso-macos-helper`, the
+`skills/iso/` [agent skill](docs/agent-skill.md), plus `BUILD.json`, `LICENSE`, `NOTICE`,
 `PROVENANCE.md`, `THIRD_PARTY_LICENSES.md`, `fuzz/libfuzzer/LICENSE.TXT`
 and the pinned dependency licenses and notices under `third-party/`.
 
@@ -361,7 +362,7 @@ Apple Silicon machine.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-egress`, `iso-sandbox`, `iso-macos-helper`, the legal files listed above and `BUILD.json`, plus release-level
+     `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,
@@ -376,11 +377,13 @@ Apple Silicon machine.
 
    ```bash
    env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$(mktemp -d)" \
-     VERSION=vX.Y.Z INSTALL_DIR="$(mktemp -d)" bash install.sh
+     VERSION=vX.Y.Z INSTALL_DIR="$(mktemp -d)" \
+     INSTALL_SKILL=1 SKILL_DIRS="$(mktemp -d)" bash install.sh
    ```
 
-   The run must print `SHA256SUMS signature verified.` and
-   `Attestation verified against attestations.jsonl`. A
+   The run must print `SHA256SUMS signature verified.`,
+   `Attestation verified against attestations.jsonl` and
+   `Agent skill installed to`. A
    "Could not use `attestations.jsonl`" line instead means the bundle could not
    be downloaded — the installer cannot tell a missing asset from a failed
    download, so confirm the asset on the release page (step 10's first bullet)

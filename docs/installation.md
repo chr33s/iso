@@ -38,6 +38,15 @@ instead, which it will only do when `gh` is logged in. `install.sh` and `iso
 update` use that API path themselves for releases published without a usable
 bundle.
 
+Archives after v0.9.0 also carry the [agent skill](agent-skill.md) under
+`skills/iso/`. `INSTALL_SKILL=1` installs it from the verified archive into
+`~/.claude/skills/iso` and `~/.agents/skills/iso` (or the colon-separated
+`SKILL_DIRS`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | INSTALL_SKILL=1 bash
+```
+
 ## Switching from upstream
 
 Run the fork installer to install all matching components. An upstream updater

@@ -8,6 +8,15 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Added
+
+- **Agent skill:** `skills/iso/`, an Agent Skill for a host coding agent to
+  operate `iso` through `--output json`, with staged returns and no credential
+  handling ([docs/agent-skill.md](docs/agent-skill.md)). Release archives carry
+  it, `INSTALL_SKILL=1 install.sh` installs it into `~/.claude/skills` and
+  `~/.agents/skills` (`SKILL_DIRS` overrides), and this repository links it as
+  `.agents/skills/iso`.
+
 ## v0.9.0
 
 ### Added

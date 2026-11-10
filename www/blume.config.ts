@@ -101,6 +101,7 @@ export default defineConfig({
                             ],
                         })),
                         "/machine-interface",
+                        "/agent-skill",
                         "/audit",
                     ],
                 },

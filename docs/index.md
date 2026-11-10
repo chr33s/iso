@@ -109,6 +109,8 @@ Apple backend. The credential proxy is the Swift package
 - [`commands.md`](commands.md) — every `iso` subcommand.
 - [`machine-interface.md`](machine-interface.md) — the versioned `--output json`
   contract (`iso.machine/v1`) for editors, CI and other integrations.
+- [`agent-skill.md`](agent-skill.md) — the [`skills/iso/`](../skills/iso/)
+  Agent Skill that lets a host coding agent operate `iso`.
 - [`audit.md`](audit.md) — `iso audit` run history: the `iso.audit/v1` event
   model, retention, cursors and the `iso.audit.stream/v1` JSONL protocol.
 - [`configuration.md`](configuration.md) — `config.jsonc` reference.
@@ -129,7 +131,8 @@ Apple backend. The credential proxy is the Swift package
 ## Agent tooling
 
 - [`.agents/skills/`](../.agents/skills/) — shared review, closeout, fault-injection,
-  integration, and PR-shepherding workflows discovered by Codex and, through
+  integration, and PR-shepherding workflows, plus `iso` (a link to the
+  shipped [`skills/iso/`](agent-skill.md) skill), discovered by Codex and, through
   the `.claude/skills` symlink, Claude Code.
 - [`.github/workflows/review.yml`](../.github/workflows/review.yml)
   — trusted-user, on-demand `@claude` and `@codex` PR reviews (Codex in a

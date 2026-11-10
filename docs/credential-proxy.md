@@ -310,7 +310,8 @@ The SwiftPM product is named `iso-proxy`; the archive installs it under
 the stable `iso-proxy` name understood by existing updaters. The archive
 `iso-<tag|revision>-aarch64-apple-darwin.tar.gz` holds `iso`, `iso-proxy`,
 `iso-egress`, the ad-hoc signed `iso-sandbox`, the macOS guest helper
-`iso-macos-helper`, LICENSE and BUILD.json (source revision and
+`iso-macos-helper`, the `skills/iso/` agent skill, the legal notices and
+BUILD.json (source revision and
 binary digests), with a `SHA256SUMS` beside it. Local checksums do not
 establish release provenance. Signing and notarization are a separate,
 explicit `--sign` stage used by the **Release candidate** workflow, which

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise release legal-file copying and the actual archive writer."""
+"""Exercise release legal-file and agent-skill copying and the actual archive writer."""
 
 import importlib.util
 import json
@@ -73,6 +73,62 @@ class ReleaseLegalTests(unittest.TestCase):
             (staging / ".build/checkouts/example/LICENSE.txt").unlink()
             with self.assertRaisesRegex(SystemExit, "missing dependency license"):
                 RELEASE.copy_legal_files(staging, directory / "bundle")
+
+
+class ReleaseSkillTests(unittest.TestCase):
+    def stage(self, directory):
+        staging = directory / "src"
+        for path in (ROOT / "skills/iso").rglob("*"):
+            if path.is_file():
+                target = staging / path.relative_to(ROOT)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(path.read_bytes())
+        return staging
+
+    def test_archive_carries_skill_bytes(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            staging = self.stage(directory)
+            bundle = directory / "iso-test"
+            bundle.mkdir()
+            RELEASE.copy_skill(staging, bundle)
+            archive = directory / "release.tar.gz"
+            RELEASE.archive_bundle(bundle, archive)
+            expected = sorted(p.relative_to(ROOT) for p in (ROOT / "skills/iso").rglob("*")
+                              if p.is_file())
+            self.assertIn(Path("skills/iso/SKILL.md"), expected)
+            with tarfile.open(archive) as tar:
+                shipped = sorted(Path(m.name).relative_to("iso-test") for m in tar.getmembers()
+                                 if m.isfile())
+                self.assertEqual(shipped, expected)
+                for relative in expected:
+                    self.assertEqual(tar.extractfile(f"iso-test/{relative}").read(),
+                                     (ROOT / relative).read_bytes())
+
+    def test_missing_skill_fails(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            staging = self.stage(directory)
+            (staging / "skills/iso/SKILL.md").unlink()
+            with self.assertRaisesRegex(SystemExit, "missing agent skill"):
+                RELEASE.copy_skill(staging, directory / "bundle")
+
+    def test_symlink_in_skill_fails(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            staging = self.stage(directory)
+            (staging / "skills/iso/references/leak").symlink_to("/etc/passwd")
+            with self.assertRaisesRegex(SystemExit, "must not contain symlinks"):
+                RELEASE.copy_skill(staging, directory / "bundle")
+
+    def test_symlinked_skill_directory_fails(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            staging = self.stage(directory)
+            (staging / "skills/iso").rename(staging / "skills/real")
+            (staging / "skills/iso").symlink_to("real")
+            with self.assertRaisesRegex(SystemExit, "missing agent skill"):
+                RELEASE.copy_skill(staging, directory / "bundle")
 
 
 if __name__ == "__main__":
