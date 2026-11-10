@@ -19,7 +19,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
     // scrypt only (CryptoExtras); every other primitive comes from CryptoKit.
     // See docs/design/embedded-secrets-spec.md section 7.
-    .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.3"),
+    .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.1.0"),
     // Shared policy evaluator, also linked by iso-proxy; a library, not a process.
     .package(path: "iso-policy"),
   ],
