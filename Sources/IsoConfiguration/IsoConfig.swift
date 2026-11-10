@@ -376,6 +376,10 @@ package struct AppleContainerConfig: Sendable, Equatable {
   package let bootTimeout: TimeoutSecs
   package let stopTimeout: TimeoutSecs
   package let buildTimeout: TimeoutSecs
+  /// The kernel sandboxes with a display boot (the `desktop` profile);
+  /// `setup` installs it beside `kernel` when set. Declared last so the
+  /// decoder keeps reading `desktop_kernel` after the timeouts.
+  package let desktopKernel: HostPath?
 }
 
 /// Guest network reach beyond the host (selective-hardening spec §6). Fixed

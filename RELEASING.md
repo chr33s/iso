@@ -20,6 +20,7 @@ release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
 the Swift host `iso`, the credential proxy `iso-proxy`, the egress companion
 `iso-egress`, the
 signed `iso-sandbox` runtime and its macOS guest helper `iso-macos-helper`, the
+Linux `desktop` images' guest files `iso-cu-mcp` and `vmlinux-desktop`, the
 `skills/iso/` [agent skill](docs/agent-skill.md), plus `BUILD.json`, `LICENSE`, `NOTICE`,
 `PROVENANCE.md`, `THIRD_PARTY_LICENSES.md`, `fuzz/libfuzzer/LICENSE.TXT`
 and the pinned dependency licenses and notices under `third-party/`.
@@ -136,6 +137,8 @@ cd "candidate/iso-${REVISION:0:12}-aarch64-apple-darwin"
 for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
   codesign --verify --strict "$binary"
 done
+# The Linux guest files are not Mach-O and carry no signature of their own.
+test -f iso-cu-mcp && test -f vmlinux-desktop
 cat BUILD.json
 ./iso --version
 ./iso-sandbox version
@@ -362,8 +365,9 @@ Apple Silicon machine.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
-     `SHA256SUMS`, `SHA256SUMS.sig` and `attestations.jsonl`,
+     `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `iso-cu-mcp`, `vmlinux-desktop`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
+     `SHA256SUMS`, `SHA256SUMS.sig`, `attestations.jsonl` and the desktop
+     kernel's corresponding source, `iso-vX.Y.Z-vmlinux-desktop-source.tar.gz`,
    - the build-provenance attestation is attached,
    - the binaries are notarized: after extracting the archive,
      `spctl --assess --type open --context context:primary-signature -v iso`

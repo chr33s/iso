@@ -130,8 +130,10 @@ macOS guests have their own real-hardware qualification
 ([design](design/macos-guest-computer-use.md)). It needs a published template
 and the experiment fixture (`experiments/macos-vz-context-probe/build.sh`),
 and covers gates B, L, I, J, O, C, D, E, G, P, H, K, Q, R and S of the macOS
-computer-use plan (`--gates`; `SCALE` adds the one- and two-VM scaling run).
-The Gate Q, D and O fixtures live in `tests/fixtures/macos-guest/` and are
+computer-use plan (`--gates`; `SCALE` adds the one- and two-VM scaling run),
+plus Gate U (guest-driven computer use) and Gate W
+([screen sync](design/computer-use-screen-sync.md) acceptance, on the Gate Q
+fixture's 600 ms transition). The Gate Q, D and O fixtures live in `tests/fixtures/macos-guest/` and are
 built by the driver with `xcrun`; Gate Q also downloads a pinned,
 checksum-verified Electron release on the host and copies it in. At most two
 macOS guests can run on a host at once, a template build included, so run
@@ -565,6 +567,22 @@ what unit tests cannot:
   completes; a restart fences the previous boot's connector; a guest that
   stops its adapter loses SSH with no network fallback; and a guest wedging
   its own shutdown is stopped within the owner's bounded grace;
+- a Linux display (the `display` phase, only with
+  `ISO_TEST_DESKTOP_KERNEL` set to a pinned desktop kernel from
+  `scripts/build-desktop-kernel.sh`): `init` refuses the qualified kernel as
+  the desktop kernel; an image with the `desktop` profile's files and udev
+  masked starts Xorg and openbox; the effective configuration reports one
+  1920×1200 scanout and only vsock 7802; a frame of an alpha-0 X pattern
+  reads back as its exact colours (the capture tripwire); clicks land within
+  0.5 px and keys arrive as US-layout keycodes; `cu wait` settles on a
+  redraw; the guest `iso-cu-mcp` takes a screenshot over vsock 7802, is
+  refused under a host hold, and refuses a boolean for an integer; the live
+  view streams an H.264 frame to a WebSocket viewer
+  (`tests/fixtures/apple-sandbox/live-view-client.py`); a session from
+  before a restart is refused; and a headless sandbox has no display. With
+  `ISO_TEST_DESKTOP_KERNEL` set, the `iso` phase also builds a `desktop`
+  image with `iso setup`, boots it, and checks Firefox, capture, the guest
+  MCP server and stop/start;
 - `iso` itself end to end (the `iso` phase): `setup`, `up`, `status`,
   `exec`, `stop`/`start`, `resize --mem/--vcpus/--size`, rollback of a
   `resize --start` whose boot fails, `commit`, `restore` with host-key
@@ -621,7 +639,7 @@ previous successful `iso-sandbox init` pulled, so the run does not depend on
 reaching ghcr.io; the seed is not re-verified.
 
 Phases: `setup disks machine isolation exposure identity brokered persistence
-resources growth snapshots recovery concurrency iso`. The `iso` phase also
+resources growth snapshots recovery concurrency display iso`. The `iso` phase also
 creates a brokered instance (`network.transport: "brokered"`, `egress:
 "none"`) and checks its NIC-less record, workspace copy and pull over the
 stream, machine-status network digest, refusal under a vmnet configuration,

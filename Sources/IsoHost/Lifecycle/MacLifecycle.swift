@@ -245,15 +245,42 @@ extension AppleBackend {
     }
   }
 
-  /// A running macOS instance's guest computer-use counts for the audit,
-  /// read before it stops; nil when it is off or unreadable.
-  package func guestComputerUseAudit(_ instance: Instance) -> BoundaryAudit.Event? {
-    // Only sandboxes created with it have counts: no extra inspect otherwise.
-    guard let sidecar = try? MachineSidecar.loadIfPresent(instance), sidecar.kind == .macos,
-      sidecar.guestComputerUse != nil,
-      let counts = try? runtime().macInspect(sidecar.machineID).runtime?.guestComputerUse
-    else { return nil }
-    return .guestComputerUse(counts)
+  /// A running instance's computer-use counts for the audit, read before it
+  /// stops: guest computer use when it was created with it, and the live
+  /// view when a stream started this boot. A macOS owner reports them in its
+  /// status, a Linux display owner in `inspect`; a headless Linux instance
+  /// has neither. Empty when neither, or when the owner is unreadable.
+  package func computerUseAudit(_ instance: Instance) -> [BoundaryAudit.Event] {
+    guard let sidecar = try? MachineSidecar.loadIfPresent(instance),
+      let runtime = try? runtime()
+    else { return [] }
+    let guest: MacGuestCUCounts?
+    let liveView: MacLiveViewCounts?
+    switch sidecar.kind {
+    case .macos:
+      guard let status = try? runtime.macInspect(sidecar.machineID).runtime else { return [] }
+      (guest, liveView) = (status.guestComputerUse, status.liveView)
+    case .linux:
+      guard sidecar.display != nil,
+        let status = try? runtime.inspect(sidecar.machineID).runtime
+      else { return [] }
+      (guest, liveView) = (status.guestComputerUse, status.liveView)
+    }
+    return Self.computerUseEvents(
+      createdWithGuestComputerUse: sidecar.guestComputerUse != nil, guest: guest,
+      liveView: liveView)
+  }
+
+  /// The audit events for an owner's counts: guest counts only for an
+  /// instance created with guest computer use, live-view counts only once a
+  /// stream started.
+  static func computerUseEvents(
+    createdWithGuestComputerUse: Bool, guest: MacGuestCUCounts?, liveView: MacLiveViewCounts?
+  ) -> [BoundaryAudit.Event] {
+    var events: [BoundaryAudit.Event] = []
+    if createdWithGuestComputerUse, let guest { events.append(.guestComputerUse(guest)) }
+    if let liveView, liveView.streams > 0 { events.append(.liveView(liveView)) }
+    return events
   }
 
   // MARK: Core AI

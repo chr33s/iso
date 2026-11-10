@@ -64,4 +64,18 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Q0 spike results](macos-computer-use-q0-spike.md).
 - [Process-context experiment](macos-vz-context-headless-experiment-spec.md)
   and [results](macos-vz-context-experiment.md).
-- [Linux computer-use proposal](linux-computer-use-sketch.md).
+- [Linux computer-use proposal](linux-computer-use-sketch.md): the fallback
+  if the virtio-gpu approach's kernel gate fails.
+- [Screen sync](computer-use-screen-sync.md): a damage sequence and a
+  wait operation, so an agent can tell when the screen has settled after
+  input. Implemented and qualified on one host.
+- [Live view and browser takeover](computer-use-live-view.md): a loopback
+  H.264 viewer with takeover under the host hold. Implemented and approved;
+  qualified on one host.
+- [Linux computer use through a virtio-gpu display](linux-desktop-virtio-gpu.md):
+  implemented for Linux guests built with the `desktop` profile. A
+  host-driven display device instead of an in-guest helper: a second,
+  iso-built kernel with the drivers, capture from the view's framebuffer
+  surface, and the macOS guests' input, wait, live-view and guest-access
+  code. Qualified on one host; the release workflows' new steps have not
+  run in CI (§13). It records why an in-guest `voxl` was rejected.

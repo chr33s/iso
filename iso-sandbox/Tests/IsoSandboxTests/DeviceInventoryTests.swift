@@ -71,7 +71,7 @@ struct DeviceInventoryTests {
   @Test func anyConsoleBalloonUSBOrGraphicsDeviceIsRefused() {
     let mutations: [(inout VMDevices) -> Void] = [
       { $0.console = 1 }, { $0.memoryBalloon = 1 }, { $0.usbControllers = 1 },
-      { $0.graphics = 1 },
+      { $0.graphics = [.display] },
     ]
     for mode in [NetworkMode.shared, .hostOnly, .brokered] {
       for mutate in mutations {

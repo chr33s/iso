@@ -44,6 +44,7 @@
   "apple_container": {
     "binary": null,
     "builder": null,
+    "desktop_kernel": null,
     "kernel": null,
     "probe_timeout_seconds": 10,
     "operation_timeout_seconds": 60,

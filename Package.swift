@@ -42,7 +42,10 @@ let package = Package(
         .product(name: "IsoPolicy", package: "iso-policy"),
         .product(name: "IsoGitIndex", package: "iso-policy"),
       ],
-      exclude: ["Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb"]),
+      exclude: [
+        "Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb",
+        "Guest/Resources/desktop-pre.sh", "Guest/Resources/desktop-post.sh",
+      ]),
     .executableTarget(
       name: "IsoCLI",
       dependencies: [

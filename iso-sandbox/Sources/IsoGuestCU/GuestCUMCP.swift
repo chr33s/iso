@@ -9,6 +9,8 @@ package final class GuestCUMCP {
 
   private let send: Send
   private var session: String?
+  /// Whether the host answers `wait`, learned from `status` once.
+  private var supportsWait: Bool?
 
   package static let serverName = "iso-cu"
   package static let version = "1"
@@ -94,6 +96,20 @@ package final class GuestCUMCP {
       "type": "string", "enum": ["left", "right", "middle"],
     ]
   }
+  private static var settle: [String: Any] {
+    [
+      "type": "integer", "minimum": 0, "maximum": GuestCUProtocol.Wait.idleMs.upperBound,
+      "description":
+        "After the action, wait until the screen has been quiet this long (ms; 0, or 50-2000; default \(GuestCUProtocol.Wait.defaultIdleMs)). A blinking caret toggles about every 500 ms, so values of 500 or more may not settle.",
+    ]
+  }
+
+  /// An action tool's input schema, with `settle_ms` added.
+  private static func actionSchema(_ properties: [String: Any], required: [String])
+    -> [String: Any]
+  {
+    schema(properties.merging(["settle_ms": settle]) { a, _ in a }, required: required)
+  }
 
   package static var tools: [[String: Any]] {
     [
@@ -112,7 +128,7 @@ package final class GuestCUMCP {
       [
         "name": "click",
         "description": "Click at a point.",
-        "inputSchema": schema(
+        "inputSchema": actionSchema(
           [
             "x": coordinate, "y": coordinate, "button": button,
             "count": ["type": "integer", "minimum": 1, "maximum": 3], "frameId": frameId,
@@ -121,13 +137,13 @@ package final class GuestCUMCP {
       [
         "name": "move",
         "description": "Move the pointer.",
-        "inputSchema": schema(
+        "inputSchema": actionSchema(
           ["x": coordinate, "y": coordinate, "frameId": frameId], required: ["x", "y", "frameId"]),
       ],
       [
         "name": "drag",
         "description": "Press, move along a path of 2-1000 points, release.",
-        "inputSchema": schema(
+        "inputSchema": actionSchema(
           [
             "path": [
               "type": "array", "minItems": 2, "maxItems": 1000,
@@ -139,7 +155,7 @@ package final class GuestCUMCP {
       [
         "name": "scroll",
         "description": "Scroll at a point by dx, dy pixels.",
-        "inputSchema": schema(
+        "inputSchema": actionSchema(
           [
             "x": coordinate, "y": coordinate, "dx": ["type": "integer"], "dy": ["type": "integer"],
             "frameId": frameId,
@@ -148,7 +164,7 @@ package final class GuestCUMCP {
       [
         "name": "key",
         "description": "Press one key (macOS virtual key code 0-127) with modifiers.",
-        "inputSchema": schema(
+        "inputSchema": actionSchema(
           [
             "keyCode": ["type": "integer", "minimum": 0, "maximum": 127],
             "modifiers": [
@@ -161,9 +177,48 @@ package final class GuestCUMCP {
       [
         "name": "type",
         "description": "Type printable ASCII text (and \\n, \\t) on a US keyboard layout.",
-        "inputSchema": schema(
+        "inputSchema": actionSchema(
           ["text": ["type": "string", "maxLength": 4096], "frameId": frameId],
           required: ["text", "frameId"]),
+      ],
+      [
+        "name": "wait_for_screen",
+        "description":
+          "Wait until the screen (or a region) has settled, then return a screenshot. Video, spinners and other content that never settles ends in a timeout; narrow the region or take the screenshot anyway.",
+        "inputSchema": schema(
+          [
+            "since": [
+              "type": "integer", "minimum": 0,
+              "description":
+                "A damageSeq from an earlier screenshot or action: changes after it count (default: now)",
+            ],
+            "idle_ms": [
+              "type": "integer", "minimum": GuestCUProtocol.Wait.idleMs.lowerBound,
+              "maximum": GuestCUProtocol.Wait.idleMs.upperBound,
+              "description":
+                "Quiet time that counts as settled (default \(GuestCUProtocol.Wait.defaultIdleMs)). A blinking caret toggles about every 500 ms.",
+            ],
+            "timeout_ms": [
+              "type": "integer", "minimum": GuestCUProtocol.Wait.timeoutMs.lowerBound,
+              "maximum": GuestCUProtocol.Wait.timeoutMs.upperBound,
+              "description":
+                "Give up after this long (default \(GuestCUProtocol.Wait.defaultTimeoutMs))",
+            ],
+            "until": [
+              "type": "string", "enum": ["change", "idle"],
+              "description":
+                "change (default): wait for a change after since, then quiet; idle: return once quiet, even with no change",
+            ],
+            "region": schema(
+              [
+                "x": ["type": "integer", "minimum": 0], "y": ["type": "integer", "minimum": 0],
+                "width": ["type": "integer", "minimum": 1],
+                "height": ["type": "integer", "minimum": 1],
+              ], required: ["x", "y", "width", "height"]),
+            "include_screenshot": [
+              "type": "boolean", "description": "Return a screenshot afterwards (default true)",
+            ],
+          ], required: []),
       ],
     ]
   }
@@ -187,16 +242,7 @@ package final class GuestCUMCP {
     switch name {
     case "screenshot":
       let r = try withSession { GuestCURequest(op: .frame, session: $0) }
-      guard let f = r.frame else { throw ToolError(message: "no frame") }
-      return [
-        "content": [
-          ["type": "image", "data": f.png.base64EncodedString(), "mimeType": "image/png"],
-          [
-            "type": "text",
-            "text": "frameId: \(f.frameId) (\(f.width)×\(f.height) pixels, origin top-left)",
-          ],
-        ]
-      ]
+      return ["content": try Self.screenshot(r)]
     case "control_status":
       let r = try checked(try send(GuestCURequest(op: .status)))
       return text(
@@ -207,16 +253,166 @@ package final class GuestCUMCP {
       guard let frame = args["frameId"] as? String else {
         throw ToolError(message: "\(name) needs the frameId of the screenshot it is based on")
       }
+      let settle = try Self.settleMs(args)
       let r = try withSession {
         GuestCURequest(op: .act, session: $0, action: action, basedOnFrame: frame)
       }
-      return text("submitted \(r.submitted ?? 0) input events (submission, not proof of delivery)")
+      var report = "submitted \(r.submitted ?? 0) input events (submission, not proof of delivery)"
+      // An older host sends no damageSeq and has no `wait`.
+      if settle > 0, let since = r.damageSeq {
+        report += "; " + settled(since: since, idleMs: settle)
+      }
+      return text(report)
+    case "wait_for_screen":
+      return try waitForScreen(args)
     default:
       throw ToolError(message: "unknown tool \(name)")
     }
   }
 
   private func text(_ s: String) -> [String: Any] { ["content": [["type": "text", "text": s]]] }
+
+  /// A frame response as MCP content: the image, then its frameId and damageSeq.
+  static func screenshot(_ r: GuestCUResponse) throws -> [[String: Any]] {
+    guard let f = r.frame else { throw ToolError(message: "no frame") }
+    let seq = r.damageSeq.map { ", damageSeq: \($0)" } ?? ""
+    return [
+      ["type": "image", "data": f.png.base64EncodedString(), "mimeType": "image/png"],
+      [
+        "type": "text",
+        "text": "frameId: \(f.frameId) (\(f.width)×\(f.height) pixels, origin top-left)\(seq)",
+      ],
+    ]
+  }
+
+  /// `settle_ms`: 0 turns settling off; otherwise a `wait` quiet time.
+  static func settleMs(_ args: [String: Any]) throws -> Int {
+    guard let value = args["settle_ms"] else { return GuestCUProtocol.Wait.defaultIdleMs }
+    guard let n = Self.integer(value), n == 0 || GuestCUProtocol.Wait.idleMs.contains(n) else {
+      throw ToolError(
+        message:
+          "settle_ms must be 0 or \(GuestCUProtocol.Wait.idleMs.lowerBound)-\(GuestCUProtocol.Wait.idleMs.upperBound)"
+      )
+    }
+    return n
+  }
+
+  /// A JSON number that is a whole integer; nil for anything else.
+  static func integer(_ value: Any?) -> Int? {
+    guard let n = value as? NSNumber, !isBoolean(n) else { return nil }
+    let d = n.doubleValue
+    guard d.rounded() == d, abs(d) < 1e15 else { return nil }
+    return Int(d)
+  }
+
+  /// A JSON `true` or `false`, which Foundation also hands back as an
+  /// `NSNumber`.
+  static func isBoolean(_ n: NSNumber) -> Bool {
+    #if canImport(Darwin)
+      CFGetTypeID(n) == CFBooleanGetTypeID()
+    #else
+      // swift-corelibs-foundation: a JSON boolean is an `NSNumber` of a
+      // `Bool`, whose Objective-C type is `c`; JSON has no char numbers.
+      String(cString: n.objCType) == "c"
+    #endif
+  }
+
+  static func describe(_ w: GuestCUWaitResult, _ seq: UInt64?) -> String {
+    let at = seq.map { " (damageSeq \($0))" } ?? ""
+    switch w.outcome {
+    case .settled: return "screen settled after \(w.elapsedMs) ms\(at)"
+    case .unchanged: return "screen unchanged after \(w.elapsedMs) ms\(at)"
+    case .timedOut:
+      return
+        "screen still changing after \(w.elapsedMs) ms\(at); take a screenshot, or wait_for_screen on a smaller region"
+    }
+  }
+
+  /// The settle wait after an action. The action has already run, so
+  /// nothing here fails the tool call: a refusal is reported in the text.
+  private func settled(since: UInt64, idleMs: Int) -> String {
+    guard let session else { return "settling skipped: no session" }
+    var q = GuestCURequest(op: .wait, session: session)
+    q.since = since
+    q.until = .idle
+    q.idleMs = idleMs
+    q.timeoutMs = GuestCUProtocol.Wait.settleTimeoutMs
+    guard let r = try? send(q) else { return "settling skipped: the host did not answer" }
+    guard r.ok, let w = r.wait else {
+      return "settling skipped: refused (\(r.refusal?.rawValue ?? "error"))"
+    }
+    return Self.describe(w, r.damageSeq)
+  }
+
+  private func hostSupportsWait() throws -> Bool {
+    if let supportsWait { return supportsWait }
+    let r = try checked(try send(GuestCURequest(op: .status)))
+    supportsWait = r.damageSeq != nil
+    return r.damageSeq != nil
+  }
+
+  private func waitForScreen(_ args: [String: Any]) throws -> [String: Any] {
+    guard try hostSupportsWait() else {
+      throw ToolError(message: "wait_for_screen is not supported by this host")
+    }
+    func optionalInteger(_ key: String) throws -> Int? {
+      guard let value = args[key] else { return nil }
+      guard let n = Self.integer(value) else {
+        throw ToolError(message: "\(key) must be an integer")
+      }
+      return n
+    }
+    let since = try optionalInteger("since")
+    if let since, since < 0 { throw ToolError(message: "since must not be negative") }
+    let idle = try optionalInteger("idle_ms")
+    let timeout = try optionalInteger("timeout_ms")
+    var until: GuestCUWaitUntil?
+    if let value = args["until"] {
+      guard let s = value as? String, let u = GuestCUWaitUntil(rawValue: s) else {
+        throw ToolError(message: "until must be change or idle")
+      }
+      until = u
+    }
+    var region: GuestCURegion?
+    if let value = args["region"] {
+      guard let o = value as? [String: Any], Set(o.keys) == GuestCURegion.fields,
+        let x = Self.integer(o["x"]), let y = Self.integer(o["y"]),
+        let w = Self.integer(o["width"]), let h = Self.integer(o["height"])
+      else { throw ToolError(message: "region needs integer x, y, width and height only") }
+      region = GuestCURegion(x: x, y: y, width: w, height: h)
+    }
+    let include = args["include_screenshot"] as? Bool ?? true
+    let r = try withSession {
+      var q = GuestCURequest(op: .wait, session: $0)
+      q.since = since.map(UInt64.init)
+      q.idleMs = idle
+      q.timeoutMs = timeout
+      q.until = until
+      q.region = region
+      return q
+    }
+    guard let w = r.wait else { throw ToolError(message: "no wait result") }
+    var content: [[String: Any]] = [["type": "text", "text": Self.describe(w, r.damageSeq)]]
+    if include, let session {
+      // A separate frame request, against the frame rate.
+      let f = try send(GuestCURequest(op: .frame, session: session))
+      if f.ok {
+        content = try Self.screenshot(f) + content
+      } else if f.refusal == .rateLimited {
+        content.append([
+          "type": "text",
+          "text": "no screenshot: the frame rate limit was reached; take one shortly",
+        ])
+      } else {
+        content.append([
+          "type": "text",
+          "text":
+            "no screenshot: refused (\(f.refusal?.rawValue ?? "error")): \(f.error ?? "no detail")",
+        ])
+      }
+    }
+    return ["content": content]
+  }
 
   static func action(_ name: String, _ args: [String: Any]) throws -> GuestCUAction {
     func number(_ key: String) -> Double? { (args[key] as? NSNumber)?.doubleValue }

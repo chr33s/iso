@@ -1119,7 +1119,8 @@ the release's `SHA256SUMS` (`SHA256SUMS.sig`), verifies the platform tarball's
 SHA-256 against it and, when `gh` is installed, its repository build-provenance
 attestation.
 The updater installs the bundled `iso-sandbox`, `iso-proxy`, `iso-egress` and
-`iso-macos-helper` before replacing the host. Each file replacement is atomic; the set of files is not a single
+`iso-macos-helper` before replacing the host, and the Linux `desktop` images'
+`iso-cu-mcp` and `vmlinux-desktop` when the release carries them. Each file replacement is atomic; the set of files is not a single
 transaction. If a later replacement fails, rerun the installer for the same
 release to restore a matching set. Missing companions are rejected before replacement.
 
@@ -1152,7 +1153,7 @@ See also the [`updates` section](configuration.md#updates-section) of the config
 
 ### `uninstall`
 
-Remove the isolate binary and the companion executables installed beside it (`iso-sandbox`, `iso-macos-helper`, `iso-proxy`, `iso-egress`) and, optionally, its data: owned instances are destroyed and `<data_dir>/backends/apple-container-v1/` and the update-check state are removed. The configuration file, the secret store (`<data_dir>/secrets/`) and other files under `<data_dir>` (default `~/.iso`) are kept. Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
+Remove the isolate binary and the companion executables installed beside it (`iso-sandbox`, `iso-macos-helper`, `iso-proxy`, `iso-egress`, and the Linux `desktop` images' `iso-cu-mcp` and `vmlinux-desktop`) and, optionally, its data: owned instances are destroyed and `<data_dir>/backends/apple-container-v1/` and the update-check state are removed. The configuration file, the secret store (`<data_dir>/secrets/`) and other files under `<data_dir>` (default `~/.iso`) are kept. Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
 
 ```
 iso uninstall [FLAGS]

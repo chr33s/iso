@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
     runs-on: xcode-27
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       TARGET: aarch64-apple-darwin
 
@@ -62,6 +62,11 @@ jobs:
         with:
           version: 2026.10.7
           cache: false
+
+      # The desktop kernel is built in an Apple `container` VM
+      # (scripts/build-desktop-kernel.sh, run by build-release.py).
+      - name: Start the Apple container service
+        run: container system start --enable-kernel-install
 
       # One release entrypoint (spec S-05): builds iso, iso-proxy and
       # iso-sandbox from this exact clean revision with -D ISO_RELEASE_BUILD
@@ -93,9 +98,19 @@ jobs:
           test -x "$dir/iso-proxy"
           test -x "$dir/iso-sandbox"
           test -x "$dir/iso-macos-helper"
+          test -x "$dir/iso-cu-mcp"
+          test -f "$dir/vmlinux-desktop"
+          test -f "$RUNNER_TEMP/dist/${BINARY}-${TAG}-vmlinux-desktop-source.tar.gz"
           test -f "$dir/skills/iso/SKILL.md"
           "$dir/iso-sandbox" version
           echo "TARBALL=$RUNNER_TEMP/dist/${name}.tar.gz" >> "$GITHUB_ENV"
+
+      # The desktop kernel's corresponding source (GPL-2.0) is published as is.
+      - name: Upload the desktop kernel's source
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-kernel-source
+          path: ${{ runner.temp }}/dist/iso-*-vmlinux-desktop-source.tar.gz
 
       # The unsigned archive goes to `sign-macos`; only `dist-*` is published.
       - name: Upload unsigned archive

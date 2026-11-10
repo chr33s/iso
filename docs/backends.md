@@ -48,6 +48,8 @@ It builds the Swift package in release mode, signs it ad hoc with the hardened r
 
 The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.56-208-debug`, sha256 `98a1005f…f7511`, the Kata 4.3.1 kernel `container` 1.7.1 installs) and its init image (`vminit:0.54.0` by digest). `iso setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
 
+Instances of [desktop images](images-and-profiles.md#linux-desktop-images) boot a second kernel with the virtio-gpu and USB input drivers, pinned separately (`KernelPin.desktopAllowed`). Releases install it beside `iso-sandbox` as `vmlinux-desktop`, with `iso-cu-mcp`; from source, build it with `scripts/build-desktop-kernel.sh OUT_DIR` and set `apple_container.desktop_kernel` to `OUT_DIR/vmlinux-desktop`. `scripts/build-iso-sandbox.sh` also builds `iso-cu-mcp` with the Swift Static Linux SDK; on a host that cannot (Xcode's own Swift rather than the swift.org toolchain, or no network to fetch the SDK) it warns and skips it, and only desktop images are unavailable. Every other instance keeps the kernel above; neither kernel is accepted in the other's place.
+
 ### Configuration
 
 ```jsonc
@@ -56,6 +58,7 @@ The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.56-208-debug`, s
     // "binary": "/absolute/path/to/iso-sandbox",
     // "builder": "/absolute/path/to/container",
     // "kernel": "/absolute/path/to/vmlinux",  // must be a kernel the runtime pins
+    // "desktop_kernel": "/absolute/path/to/vmlinux-desktop",  // a pinned desktop kernel, for `desktop` images
     "probe_timeout_seconds": 10,       // version, inspect, list
     "operation_timeout_seconds": 60,   // resource changes, deletes, guest commands
     "create_timeout_seconds": 600,     // create (first unpack of an image), grow, commit, restore, init, maintenance install

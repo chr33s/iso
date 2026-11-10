@@ -75,6 +75,41 @@ iso setup --profile python,node,rust
 
 The Apple backend does not apply a profile's marketplaces and plugins: the image does not include them, and first boot installs only `claude.marketplaces`/`claude.plugins` and `codex.marketplaces`/`codex.plugins` from the configuration. To get a plugin a profile lists, add it and its marketplace (`https://github.com/anthropics/claude-plugins-official`) to the `claude` section.
 
+## Linux desktop images
+
+The built-in `desktop` profile gives instances a display that the host and,
+optionally, the guest's agents can see and drive
+([design](design/linux-desktop-virtio-gpu.md)):
+
+```bash
+iso setup --image desktop --profile desktop,python
+iso up --image desktop
+```
+
+- The image installs Xorg (on the VM's virtio-gpu display, 1920×1200, US
+  keyboard layout), openbox and fonts from Ubuntu, Firefox from Mozilla's
+  apt repository (its key checked against a pinned fingerprint), and
+  `iso-cu-mcp`, the guest's computer-use MCP server, from the iso release.
+- An instance of it is created with a virtio-gpu display and a USB keyboard
+  and pointer, and boots the desktop kernel the release installs beside
+  `iso-sandbox` (or `apple_container.desktop_kernel`); `iso setup` fails if
+  that kernel is missing or is not one the runtime pins. Other instances are unchanged.
+- From a source build, `scripts/build-iso-sandbox.sh` also builds
+  `iso-cu-mcp` (it needs the swift.org toolchain and the Swift Static Linux
+  SDK, which it installs, pinned; without them it warns and skips `iso-cu-mcp`,
+  and setting up a `desktop` image fails until it is built),
+  and `scripts/build-desktop-kernel.sh OUT_DIR` builds the kernel for
+  `apple_container.desktop_kernel`.
+- The host drives the display with `iso-sandbox cu` (frames, actions,
+  `wait`, `hold`, the live view `stream`), as for macOS guests.
+- With [`computer_use.guest_access`](configuration.md#computer_use), the
+  guest's agents get the `iso-cu` MCP server, served by
+  `/usr/local/bin/iso-cu-mcp` over vsock 7802.
+- Apps in the guest use `DISPLAY=:0` (set for login shells).
+
+A configured profile named `desktop` replaces the built-in one, and its
+images get no display.
+
 ## Custom profiles
 
 Define profiles in the configuration under `profiles`:

@@ -150,11 +150,18 @@ package struct BuildContext: Sendable, Equatable {
   package static let maintenanceVersion = "2"
 
   package let files: [(name: String, content: String, mode: UInt32)]
+  /// Binary files the provisioning scripts install, such as the `desktop`
+  /// profile's `iso-cu-mcp`; hashed into the manifest like `files`.
+  package var payloads: [(name: String, bytes: [UInt8], mode: UInt32)] = []
 
   package static func == (a: Self, b: Self) -> Bool {
     a.files.count == b.files.count
       && zip(a.files, b.files).allSatisfy {
         $0.name == $1.name && $0.content == $1.content && $0.mode == $1.mode
+      }
+      && a.payloads.count == b.payloads.count
+      && zip(a.payloads, b.payloads).allSatisfy {
+        $0.name == $1.name && $0.bytes == $1.bytes && $0.mode == $1.mode
       }
   }
 
@@ -178,8 +185,41 @@ package struct BuildContext: Sendable, Equatable {
     ])
   }
 
+  /// The `desktop` profile's MCP server, as installed beside `iso-sandbox`
+  /// and as placed in the build context.
+  package static let computerUseMCP = "iso-cu-mcp"
+
+  /// The pinned desktop kernel `desktop` images boot, as installed beside
+  /// `iso-sandbox`.
+  package static let desktopKernel = "vmlinux-desktop"
+
+  /// `bytes` as the `desktop` profile's payload: refused unless it is an
+  /// arm64 Linux ELF executable, so a host build of the target (which only
+  /// prints an error) never reaches an image.
+  package static func computerUseMCPPayload(_ bytes: [UInt8]) throws(HostError) -> (
+    name: String, bytes: [UInt8], mode: UInt32
+  ) {
+    // ELF magic, 64-bit, little-endian, e_machine EM_AARCH64 (183).
+    guard bytes.count > 20, bytes[0..<4] == [0x7F, 0x45, 0x4C, 0x46], bytes[4] == 2,
+      bytes[5] == 1, bytes[18] == 183, bytes[19] == 0
+    else {
+      throw HostError(
+        "\(computerUseMCP) is not an arm64 Linux executable; rebuild it with scripts/build-iso-sandbox.sh"
+      )
+    }
+    return (computerUseMCP, bytes, 0o755)
+  }
+
   /// Adapters every image built from this context carries.
   package static let guestAdapters = [ImageManifest.vsockSSHAdapter]
+
+  /// The adapters of an image built with `profiles`: the built-in `desktop`
+  /// profile adds ``ImageManifest/virtioDisplayAdapter``. A configured
+  /// profile that shadows it does not, since it may not run a display server.
+  package static func guestAdapters(profiles: [ProfileDefinition]) -> [String] {
+    guestAdapters
+      + (profiles.contains(Profiles.desktopDefinition) ? [ImageManifest.virtioDisplayAdapter] : [])
+  }
 
   /// Stable hash of the context plus identity inputs not in file contents.
   package func manifestID(guestUser: GuestUser, publicKeyFingerprint: String) -> String {
@@ -199,6 +239,12 @@ package struct BuildContext: Sendable, Equatable {
       hash.update(data: Data(file.content.utf8))
       hash.update(data: Data([0]))
     }
+    for payload in payloads {
+      hash.update(data: Data(payload.name.utf8))
+      hash.update(data: Data([0]))
+      withUnsafeBytes(of: payload.mode.bigEndian) { hash.update(bufferPointer: $0) }
+      hash.update(data: Data(SHA256.hash(data: payload.bytes)))
+    }
     return hash.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
@@ -207,6 +253,10 @@ package struct BuildContext: Sendable, Equatable {
     for file in files {
       let path = directory.path + "/" + file.name
       try AtomicFile.createExclusive(Array(file.content.utf8), at: path, mode: mode_t(file.mode))
+    }
+    for payload in payloads {
+      try AtomicFile.createExclusive(
+        payload.bytes, at: directory.path + "/" + payload.name, mode: mode_t(payload.mode))
     }
     return directory
   }

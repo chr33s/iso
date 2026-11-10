@@ -51,7 +51,7 @@ class PrivateEntitlementTests(unittest.TestCase):
             directory = Path(work)
             (directory / "iso-sandbox-coreai").write_bytes(b"")
             with self.assertRaisesRegex(SystemExit, "iso-sandbox-coreai must never be in a release"):
-                RELEASE.verify(directory, "iso 0.0.0", ROOT / RELEASE.ENTITLEMENTS)
+                RELEASE.verify(directory, "iso 0.0.0", ROOT)
 
     def test_coreai_entitlements_extend_the_default_set_by_one_key(self):
         default = plistlib.loads((ROOT / "iso-sandbox/iso-sandbox.entitlements").read_bytes())

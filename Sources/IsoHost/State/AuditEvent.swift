@@ -175,6 +175,7 @@ package enum AuditEventKind: String, Codable, Sendable, CaseIterable {
   case boundaryInputSnapshot = "boundary.input_snapshot"
   case boundaryHandoffFence = "boundary.handoff_fence"
   case boundaryGuestComputerUse = "boundary.guest_computer_use"
+  case boundaryLiveView = "boundary.live_view"
   case macCoreAIAttached = "mac.coreai.attached"
   case macCoreAIProbe = "mac.coreai.probe"
   case hostSecurityReduced = "host.security.reduced"
@@ -643,6 +644,7 @@ extension BoundaryAudit.Event {
     case .inputSnapshot: .boundaryInputSnapshot
     case .handoffFence: .boundaryHandoffFence
     case .guestComputerUse: .boundaryGuestComputerUse
+    case .liveView: .boundaryLiveView
     case .macCoreAIAttached: .macCoreAIAttached
     case .macCoreAIProbe: .macCoreAIProbe
     case .hostSecurityReduced: .hostSecurityReduced
@@ -655,7 +657,8 @@ extension BoundaryAudit.Event {
       .approvalConsumed, .pullHeld, .handoffFence:
       .hostDecision
     case .rawProviderForward, .stop, .pullStage, .pullApply, .pullApplyPartial, .pullDirect,
-      .inputSnapshot, .guestComputerUse, .macCoreAIAttached, .macCoreAIProbe, .hostSecurityReduced:
+      .inputSnapshot, .guestComputerUse, .liveView, .macCoreAIAttached, .macCoreAIProbe,
+      .hostSecurityReduced:
       .hostObservation
     }
   }
@@ -703,7 +706,8 @@ package enum AuditPayload: Sendable, Equatable, Encodable {
       .boundaryPullApply, .boundaryPullApplyPartial, .boundaryPullDirect, .boundaryPolicyBoot,
       .boundaryPolicyProxyClaim, .boundaryPolicyDecision, .boundaryApprovalIssued,
       .boundaryApprovalConsumed, .boundaryPullHeld, .boundaryInputSnapshot, .boundaryHandoffFence,
-      .boundaryGuestComputerUse, .macCoreAIAttached, .macCoreAIProbe, .hostSecurityReduced:
+      .boundaryGuestComputerUse, .boundaryLiveView, .macCoreAIAttached, .macCoreAIProbe,
+      .hostSecurityReduced:
       let object = try data.decode(OutputJSON.self, forKey: key)
       guard case .object = object else {
         throw DecodingError.dataCorruptedError(

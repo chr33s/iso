@@ -16,6 +16,10 @@ package struct MacControlRequest: Codable, Sendable {
     case cuAct = "cu-act"
     case cuHold = "cu-hold"
     case cuRelease = "cu-release"
+    case cuWait = "cu-wait"
+    /// Start the live view (or return the running one's URL) and stop it.
+    case cuStream = "cu-stream"
+    case cuStreamStop = "cu-stream-stop"
   }
   package var op: Op
   package var session: String? = nil
@@ -23,6 +27,12 @@ package struct MacControlRequest: Codable, Sendable {
   package var basedOnFrame: String? = nil
   /// `cu-hold`: how long, in seconds.
   package var seconds: Int? = nil
+  /// `cu-wait`: the same fields as the guest's `wait`.
+  package var since: UInt64? = nil
+  package var idleMs: Int? = nil
+  package var timeoutMs: Int? = nil
+  package var until: GuestCUWaitUntil? = nil
+  package var region: GuestCURegion? = nil
 
   package init(
     op: Op, session: String? = nil, action: CUActionRequest? = nil, basedOnFrame: String? = nil,
@@ -57,6 +67,8 @@ package struct MacStatus: Codable, Sendable {
   /// The guest's last Core AI report; nil when Core AI is off or the guest
   /// has not answered yet.
   package var coreAI: MacCoreAIProbe? = nil
+  /// This boot's live-view counts; nil when no stream has started.
+  package var liveView: MacLiveViewCounters? = nil
 }
 
 /// What the guest helper reported for `coreai_status`. Guest-authored:
@@ -118,6 +130,8 @@ package struct MacFrameInfo: Codable, Sendable {
   package var sha256: String
   package var timestamp: Date
   package var png: Data
+  /// Nil from an owner that predates screen sync.
+  package var damageSeq: UInt64? = nil
 }
 
 package struct MacControlResponse: Codable, Sendable {
@@ -137,6 +151,12 @@ package struct MacControlResponse: Codable, Sendable {
   /// `cu-hold` and `cu-release`: who drives the display afterwards.
   package var controller: GuestCUController? = nil
   package var holdRemainingSeconds: Int? = nil
+  /// `cu-frame`, `cu-act` and `cu-wait`: the display's damage sequence.
+  package var damageSeq: UInt64? = nil
+  package var wait: GuestCUWaitResult? = nil
+  /// `cu-stream`: the viewer URL, with the stream token in its fragment.
+  /// Sent only over the 0600 control socket; never logged.
+  package var streamURL: String? = nil
   package var stopPath: String? = nil
 
   package init(ok: Bool, error: String? = nil) {
@@ -306,7 +326,7 @@ package enum MacOwner {
     app.setActivationPolicy(.prohibited)
     guard let adaptor = vm.makeViewAdaptor() else { throw SandboxError("no view adaptor") }
     let bootId = makeBootID()
-    let screen = MacScreen(adaptor: adaptor) {
+    let screen = VMScreen(adaptor: adaptor, capture: .viewCache) {
       guard let guestBoot = link.guestBoot, store.current.enrollment == .enrolled else {
         return nil
       }
@@ -322,6 +342,8 @@ package enum MacOwner {
       }
     }
     if let guestLink { vm.setSocketListener(guestLink, port: GuestCUProtocol.port) }
+    // Off until `cu stream` asks for it.
+    let liveView = LiveViewSession(screen: screen, log: ownerLog)
     let effective = MacEffectiveConfig.from(
       config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology,
       hostSecurity: hostSecurity)
@@ -374,7 +396,7 @@ package enum MacOwner {
       await handle(
         req, vm: vm, link: link, store: store, screen: screen, effective: effective, bootId: bootId,
         address: address, stopper: stopper, guestLink: guestLink,
-        coreAI: reportedProbe)
+        coreAI: reportedProbe, liveView: liveView)
     } failure: {
       MacControlResponse(ok: false, error: $0)
     }
@@ -389,99 +411,58 @@ package enum MacOwner {
   @MainActor
   static func handle(
     _ req: MacControlRequest, vm: MacVM, link: MacHelperLink, store: MacRecordStore,
-    screen: MacScreen,
+    screen: VMScreen,
     effective: MacEffectiveConfig, bootId: String, address: String, stopper: MacStopper,
-    guestLink: MacGuestCULink? = nil, coreAI: MacCoreAIProbeBox? = nil
+    guestLink: MacGuestCULink? = nil, coreAI: MacCoreAIProbeBox? = nil,
+    liveView: LiveViewSession? = nil
   ) async -> MacControlResponse {
-    do {
-      switch req.op {
-      case .ping:
-        return MacControlResponse(
-          ok: vm.state == "running", error: vm.state == "running" ? nil : vm.state)
-      case .inspect:
-        var r = MacControlResponse(ok: true)
-        r.inspect = effective
-        return r
-      case .status:
-        let confirmed = await verifyPin(link: link, store: store)
-        let pin = store.paths.loadPinnedHostKey()
-        var r = MacControlResponse(ok: true)
-        r.status = MacStatus(
-          vmState: vm.state, vmInstance: vm.instance, bootId: bootId,
-          enrollment: store.current.enrollment, helperConnected: link.isConnected,
-          guestBoot: link.guestBoot, guestBuild: link.guestBuild,
-          helperGeneration: link.generation,
-          sshHostKey: store.current.enrollment == .enrolled ? pin : nil,
-          sshHostKeyConfirmed: confirmed, ipv4: address,
-          topology: screen.topology,
-          guestComputerUse: guestLink.map {
-            var counts = $0.counters
-            counts.preemptions = screen.preemptions
-            return counts
-          },
-          // Only a report from the guest boot now connected.
-          coreAI: coreAI?.current.flatMap {
-            $0.guestBoot != nil && $0.guestBoot == link.guestBoot ? $0 : nil
-          })
-        return r
-      case .stop:
-        var r = MacControlResponse(ok: true)
-        r.stopPath = await stopper.stop()
-        return r
-      case .cuSession:
+    switch req.op {
+    case .ping:
+      return MacControlResponse(
+        ok: vm.state == "running", error: vm.state == "running" ? nil : vm.state)
+    case .inspect:
+      var r = MacControlResponse(ok: true)
+      r.inspect = effective
+      r.inspect?.liveViewListening = liveView?.listening ?? false
+      return r
+    case .status:
+      let confirmed = await verifyPin(link: link, store: store)
+      let pin = store.paths.loadPinnedHostKey()
+      let counts = DesktopStatus(
+        guest: guestLink?.counters, preemptions: screen.preemptions,
+        liveView: liveView?.counters)
+      var r = MacControlResponse(ok: true)
+      r.status = MacStatus(
+        vmState: vm.state, vmInstance: vm.instance, bootId: bootId,
+        enrollment: store.current.enrollment, helperConnected: link.isConnected,
+        guestBoot: link.guestBoot, guestBuild: link.guestBuild,
+        helperGeneration: link.generation,
+        sshHostKey: store.current.enrollment == .enrolled ? pin : nil,
+        sshHostKeyConfirmed: confirmed, ipv4: address,
+        topology: screen.topology,
+        guestComputerUse: counts.guestComputerUse,
+        // Only a report from the guest boot now connected.
+        coreAI: coreAI?.current.flatMap {
+          $0.guestBoot != nil && $0.guestBoot == link.guestBoot ? $0 : nil
+        },
+        liveView: counts.liveView)
+      return r
+    case .stop:
+      liveView?.stop()
+      var r = MacControlResponse(ok: true)
+      r.stopPath = await stopper.stop()
+      return r
+    case .cuSession, .cuFrame, .cuAct, .cuHold, .cuRelease, .cuWait, .cuStream, .cuStreamStop:
+      return await CUService.respond(
+        req, screen: screen, liveView: liveView, vmState: vm.state
+      ) {
         guard await verifyPin(link: link, store: store) else {
           throw SandboxError("guest SSH host key not confirmed against the pin")
         }
         guard store.current.enrollment == .enrolled else {
           throw SandboxError("sandbox is \(store.current.enrollment.rawValue)")
         }
-        let (id, binding) = try screen.newSession()
-        var r = MacControlResponse(ok: true)
-        r.session = id
-        r.binding = binding
-        return r
-      case .cuFrame:
-        let f = try screen.frame(session: req.session)
-        var r = MacControlResponse(ok: true)
-        r.frame = MacFrameInfo(
-          frameId: f.id, seq: f.seq, width: screen.width, height: screen.height,
-          bootId: f.binding.bootId, guestBoot: f.binding.guestBoot,
-          vmInstance: f.binding.vmInstance, sha256: f.sha256, timestamp: f.timestamp, png: f.png)
-        return r
-      case .cuAct:
-        guard let action = req.action else {
-          var e = SandboxError("cu-act needs an action", refusal: .invalidAction)
-          e.beforeInput = true
-          throw e
-        }
-        let n = try await screen.act(
-          session: req.session, request: action, basedOnFrame: req.basedOnFrame)
-        var r = MacControlResponse(ok: true)
-        r.submitted = n
-        return r
-      case .cuHold, .cuRelease:
-        if req.op == .cuHold {
-          let seconds = req.seconds ?? CUControl.defaultHold
-          guard CUControl.holdRange.contains(seconds) else {
-            throw SandboxError(
-              "hold must be \(CUControl.holdRange.lowerBound)-\(CUControl.holdRange.upperBound) seconds"
-            )
-          }
-          screen.hold(seconds: TimeInterval(seconds))
-        } else {
-          screen.release()
-        }
-        var r = MacControlResponse(ok: true)
-        (r.controller, r.holdRemainingSeconds) = screen.controlState
-        return r
       }
-    } catch {
-      var r = MacControlResponse(ok: false, error: "\(error)")
-      if let e = error as? SandboxError, let refusal = e.refusal {
-        r.refusal = refusal
-        r.beforeInput = req.op == .cuAct ? e.beforeInput : nil
-      }
-      return r
     }
   }
 

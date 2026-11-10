@@ -7,7 +7,9 @@
 // network, status, coreai_status (read-only), shutdown. It runs no other
 // commands. Run as
 // `iso-macos-helper cu-mcp`, it is instead the computer-use MCP server
-// (CUMCP.swift).
+// (`GuestCUMCP`, docs/design/guest-driven-computer-use.md §6): it reads MCP
+// messages on stdin, asks the host owner over vsock 7802, and writes
+// replies on stdout, holding no credentials and opening no other connection.
 
 import Darwin
 import Foundation
@@ -16,7 +18,7 @@ import IsoMacProtocol
 // `cu-mcp`: the guest computer-use MCP server, run by an agent as the guest
 // user; it never touches the helper's key or state.
 if CommandLine.arguments.dropFirst().first == "cu-mcp" {
-  runComputerUseMCP()
+  GuestCUMCP.serveStdio()
   exit(0)
 }
 

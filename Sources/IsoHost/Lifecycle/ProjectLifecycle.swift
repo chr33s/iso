@@ -494,13 +494,13 @@ package final class ProjectLifecycle {
     let action: LifecycleAction
     if let running {
       forwards.teardown(running.instance, running.target)
-      let guestComputerUse = context.backend.guestComputerUseAudit(instance)
+      let computerUse = context.backend.computerUseAudit(instance)
       do { try context.backend.stop(running) } catch {
         agents.proxies.stopAll(instance)
         throw error
       }
-      if let guestComputerUse {
-        BoundaryAudit.record(instance, guestComputerUse, diagnostics: context.diagnostics)
+      for event in computerUse {
+        BoundaryAudit.record(instance, event, diagnostics: context.diagnostics)
       }
       BoundaryAudit.record(instance, .stop, diagnostics: context.diagnostics)
       action = .stopped

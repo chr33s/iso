@@ -11,14 +11,17 @@ set -uo pipefail
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity brokered
-#           persistence resources growth snapshots recovery concurrency iso
+#           persistence resources growth snapshots recovery concurrency display iso
+#   ISO_TEST_DESKTOP_KERNEL=PATH: a pinned desktop kernel
+#   (scripts/build-desktop-kernel.sh) for the display phase, which skips
+#   without it.
 #   CYCLES=5 stop/start cycles; CONCURRENCY="1 4 8" sandboxes per round;
 #   KILL_FRACTIONS="50 75 90 95 100 105 110": an interrupted mutation is
 #   killed at these percentages of the time an uninterrupted one took;
 #   ISO_KILL_FRACTIONS="25 50 75" the same for iso's.
 #
-# ISO_TEST_PREBUILT=DIR uses the iso, iso-egress, iso-sandbox and
-# iso-macos-helper of a release bundle in DIR instead of building them, so a
+# ISO_TEST_PREBUILT=DIR uses the iso, iso-egress, iso-sandbox,
+# iso-macos-helper and iso-cu-mcp of a release bundle in DIR instead of building them, so a
 # worker Mac without Xcode can run the suite against the bundle it serves.
 #
 # Needs Apple Silicon, macOS 27+, Xcode 27 (unless ISO_TEST_PREBUILT), jq, and stock Apple `container`
@@ -37,7 +40,7 @@ CONTAINER="$(command -v container || true)"
 "$CONTAINER" --version
 PREBUILT="${ISO_TEST_PREBUILT:-}"
 if [[ -n "$PREBUILT" ]]; then
-    for binary in iso iso-egress iso-sandbox iso-macos-helper; do
+    for binary in iso iso-egress iso-sandbox iso-macos-helper iso-cu-mcp; do
         [[ -x "$PREBUILT/$binary" ]] || { echo "ISO_TEST_PREBUILT has no $binary" >&2; exit 1; }
     done
 fi
@@ -308,7 +311,7 @@ B="$(name b)"
 echo "=== Phase: setup ==="
 mkdir -p "$WORK/bin"
 if if [[ -n "$PREBUILT" ]]; then
-        cp -p "$PREBUILT/iso-sandbox" "$PREBUILT/iso-macos-helper" "$WORK/bin/"
+        cp -p "$PREBUILT/iso-sandbox" "$PREBUILT/iso-macos-helper" "$PREBUILT/iso-cu-mcp" "$WORK/bin/"
     else
         ./scripts/build-iso-sandbox.sh "$WORK"
     fi >"$WORK/build.log" 2>&1; then
@@ -1080,6 +1083,175 @@ if want concurrency; then
     done
 fi
 
+if want display; then
+    echo "=== Phase: display ==="
+    # docs/design/linux-desktop-virtio-gpu.md §11. Needs a pinned desktop
+    # kernel (scripts/build-desktop-kernel.sh) in ISO_TEST_DESKTOP_KERNEL.
+    DESKTOP_KERNEL="${ISO_TEST_DESKTOP_KERNEL:-}"
+    if [[ -z "$DESKTOP_KERNEL" || ! -f "$DESKTOP_KERNEL" ]]; then
+        skip "display phase" "set ISO_TEST_DESKTOP_KERNEL to a pinned desktop kernel"
+    elif [[ ! -f "$WORK/bin/iso-cu-mcp" ]]; then
+        skip "display phase" "iso-cu-mcp was not built (needs the swift.org toolchain and the Static Linux SDK; see $WORK/build.log)"
+    else
+        check "init refuses the qualified kernel as the desktop kernel" \
+            refuses sbx init --kernel "$kernel" --desktop-kernel "$kernel"
+        check "init accepts the pinned desktop kernel" \
+            sbx init --kernel "$kernel" --desktop-kernel "$DESKTOP_KERNEL"
+        # The desktop profile's own files (Sources/IsoHost/Guest/Resources),
+        # on the test image's systemd base with udev masked, as in iso images.
+        DIMAGE="docker.io/local/iso-sandbox-test-display:$RUN"
+        mkdir -p "$WORK/display-image"
+        cp Sources/IsoHost/Guest/Resources/desktop-post.sh "$WORK/bin/iso-cu-mcp" "$WORK/display-image/"
+        printf '%s\n' \
+            'FROM docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3' \
+            'RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus xserver-xorg-core xserver-xorg-input-evdev x11-xserver-utils x11-utils xkb-data openbox fonts-dejavu-core dbus-x11 xinput && rm -rf /var/lib/apt/lists/*' \
+            'COPY desktop-post.sh iso-cu-mcp /opt/' \
+            'RUN bash /opt/desktop-post.sh && install -m 0755 /opt/iso-cu-mcp /usr/local/bin/iso-cu-mcp && systemctl mask systemd-udevd.service systemd-udevd-kernel.socket systemd-udevd-control.socket' \
+            >"$WORK/display-image/Dockerfile"
+        if "$CONTAINER" build --platform linux/arm64 -t "$DIMAGE" "$WORK/display-image" >"$WORK/display-image.log" 2>&1 &&
+            "$CONTAINER" image save --platform linux/arm64 -o "$WORK/display-image.tar" "$DIMAGE" >/dev/null 2>&1 &&
+            sbx2 image import --oci-tar "$WORK/display-image.tar" >/dev/null; then
+            pass "display test image builds and imports"
+        else
+            fail "display test image builds and imports" "see $WORK/display-image.log"
+        fi
+        rm -f "$WORK/display-image.tar"
+        "$CONTAINER" image delete "$DIMAGE" >/dev/null 2>&1
+        D="$(name display)"
+        check "guest computer use needs a display" refuses sbx create "$D" --image "$DIMAGE" \
+            --cpus 2 --memory-mib 2048 --disk-gib 8 --owner "$RUN" --guest-computer-use
+        sbx create "$D" --image "$DIMAGE" --cpus 2 --memory-mib 2048 --disk-gib 8 --owner "$RUN" \
+            --network host-only --display virtio --guest-computer-use >/dev/null
+        check "the record carries the display" test "$(sbx inspect "$D" | jq -r .record.display)" = virtio_display
+        sbx start "$D" >/dev/null
+        up=0
+        for ((i = 0; i < 300; i++)); do
+            if guest "$D" systemctl is-active --quiet iso-display iso-display-wm 2>/dev/null; then up=1; break; fi
+            sleep 0.2
+        done
+        check "Xorg and openbox start without udev" test "$up" = 1
+        # shellcheck disable=SC2016 # jq program text.
+        check "the effective config reports the display and only vsock 7802" \
+            jq -e '.effective | .display == "virtio_display" and .graphicsDevices == [["1920x1200"]] and .vsockPorts == [7802]' \
+            <<<"$(sbx inspect "$D")"
+        check "the guest sees its display, keyboard and pointer" \
+            guest "$D" sh -c 'test -e /dev/dri/card0 && grep -q "Virtual USB Keyboard" /proc/bus/input/devices && grep -q "Virtual USB Digitizer" /proc/bus/input/devices'
+        session="$(sbx2 cu session "$D" | jq -r .session)"
+        # Xorg at depth 24 leaves the alpha byte 0: this frame is the
+        # capture tripwire (§11), exact colours or a failure.
+        guest "$D" su ubuntu -c "DISPLAY=:0 xsetroot -mod 16 16 -fg '#123456' -bg '#abcdef'"
+        sleep 0.5
+        if sbx2 cu frame "$D" --session "$session" --out "$WORK/display.png" >"$WORK/display-frame.json" &&
+            python3 - "$WORK/display.png" <<'PY'
+import struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+i, idat = 8, b""
+while i < len(d):
+    n = struct.unpack(">I", d[i:i + 4])[0]
+    t = d[i + 4:i + 8]
+    if t == b"IHDR":
+        w, h, _, ct = struct.unpack(">IIBB", d[i + 8:i + 18])
+    if t == b"IDAT":
+        idat += d[i + 8:i + 8 + n]
+    i += 12 + n
+raw = zlib.decompress(idat)
+bpp = {2: 3, 6: 4}[ct]
+stride = w * bpp
+rows, prev, pos = [], bytearray(stride), 0
+for _ in range(9):  # rows 0-8, unfiltered
+    f, row = raw[pos], bytearray(raw[pos + 1:pos + 1 + stride])
+    pos += 1 + stride
+    for x in range(stride):
+        a = row[x - bpp] if x >= bpp else 0
+        b, c = prev[x], (prev[x - bpp] if x >= bpp else 0)
+        p = a + b - c
+        paeth = a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else (b if abs(p - b) <= abs(p - c) else c)
+        row[x] = (row[x] + (0, a, b, (a + b) // 2, paeth)[f]) & 255
+    rows.append(row)
+    prev = row
+assert (w, h) == (1920, 1200), (w, h)
+# xsetroot -mod 16 16: grid lines in the foreground, cells in the background.
+assert rows[0][0:3] == bytes.fromhex("123456"), rows[0][:3].hex()
+assert rows[8][8 * bpp:8 * bpp + 3] == bytes.fromhex("abcdef"), rows[8][8 * bpp:8 * bpp + 3].hex()
+PY
+        then
+            pass "a frame reads the guest's exact pixels from the framebuffer surface"
+        else
+            fail "a frame reads the guest's exact pixels from the framebuffer surface" "see $WORK/display.png"
+        fi
+        # A bare desktop: a solid root is a frame, not a missing framebuffer.
+        guest "$D" su ubuntu -c "DISPLAY=:0 xsetroot -solid '#336699'"
+        sleep 0.5
+        check "a uniform screen is still a frame" \
+            sbx2 cu frame "$D" --session "$session" --out "$WORK/display-solid.png"
+        guest "$D" su ubuntu -c 'DISPLAY=:0 setsid xinput test-xi2 --root >/tmp/xi2.log 2>&1 </dev/null &'
+        sleep 0.5
+        for p in 400,300 1500,900 1919,1199; do
+            sbx2 cu act "$D" --session "$session" --action "{\"kind\":\"click\",\"x\":${p%,*},\"y\":${p#*,}}" >/dev/null
+        done
+        sbx2 cu act "$D" --session "$session" --action '{"kind":"type","text":"aZ\n"}' >/dev/null
+        sleep 0.7
+        xi2="$(guest "$D" cat /tmp/xi2.log)"
+        hits=0
+        for p in "400.4" "1500.4" "1919.4"; do grep -q "root: $p" <<<"$xi2" && hits=$((hits + 1)); done
+        check "clicks arrive at their framebuffer coordinates" test "$hits" = 3
+        keys=0
+        for k in 38 50 52 36; do grep -qE "detail: $k\b" <<<"$xi2" && keys=$((keys + 1)); done
+        check "keys arrive as US-layout keycodes" test "$keys" = 4
+        ( sleep 0.4; guest "$D" su ubuntu -c "DISPLAY=:0 xsetroot -mod 8 8 -fg '#ffffff' -bg '#ff00ff'" ) &
+        check "cu wait settles on a guest redraw" \
+            test "$(sbx2 cu wait "$D" --session "$session" --timeout-ms 5000 | jq -r .outcome)" = settled
+        wait
+        # Host actions above took an implicit hold; hand the display back.
+        sbx2 cu release "$D" >/dev/null
+        mcp='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"screenshot"}}'
+        # shellcheck disable=SC2016 # jq program text.
+        guest_in "$D" su ubuntu -c /usr/local/bin/iso-cu-mcp <<<"$mcp" >"$WORK/display-mcp.json"
+        check "the guest MCP server takes a screenshot over vsock 7802" \
+            jq -e '.result.content[0].type == "image" and (.result.isError | not)' "$WORK/display-mcp.json"
+        sbx2 cu hold "$D" --seconds 30 >/dev/null
+        # shellcheck disable=SC2016 # jq program text.
+        check "a host hold refuses the guest" \
+            jq -e '.result.isError == true and (.result.content[0].text | test("host has control"))' \
+            <<<"$(guest_in "$D" su ubuntu -c /usr/local/bin/iso-cu-mcp <<<"$mcp")"
+        sbx2 cu release "$D" >/dev/null
+        # The Linux branch of the server's integer check: a JSON boolean is
+        # not a number.
+        badint='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"wait_for_screen","arguments":{"idle_ms":true}}}'
+        # shellcheck disable=SC2016 # jq program text.
+        check "the guest MCP server refuses a boolean for an integer" \
+            jq -e '.result.isError == true and (.result.content[0].text | test("idle_ms must be an integer"))' \
+            <<<"$(guest_in "$D" su ubuntu -c /usr/local/bin/iso-cu-mcp <<<"$badint")"
+        # `cu stream` prints the viewer URL, its token in the fragment.
+        stream="$(sbx2 cu stream "$D" | head -1)"
+        ( sleep 1; guest "$D" su ubuntu -c "DISPLAY=:0 xsetroot -mod 4 4 -fg '#00ff00' -bg '#0000ff'" ) &
+        check "the live view streams the display to a viewer" \
+            python3 "$FIXTURES/live-view-client.py" "$stream" 20
+        wait
+        # shellcheck disable=SC2016 # jq program text.
+        check "inspect reports the open listener and this boot's counts" \
+            jq -e '.effective.liveViewListening == true and .runtime.liveView.streams == 1 and .runtime.liveView.viewers >= 1 and .runtime.guestComputerUse.frames >= 1' \
+            <<<"$(sbx inspect "$D")"
+        sbx2 cu stream "$D" --stop >/dev/null 2>&1
+        # shellcheck disable=SC2016 # jq program text.
+        check "a stopped stream no longer listens and keeps its counts" \
+            jq -e '.effective.liveViewListening == false and .runtime.liveView.streams == 1' \
+            <<<"$(sbx inspect "$D")"
+        if [[ -n "$(sbx list | jq -r --arg a "$A" '.[] | select(.id == $a) | .id')" ]]; then
+            check "a headless sandbox has no display" refuses sbx2 cu session "$A"
+        fi
+        # Reboot identity: a session does not survive the VM's restart.
+        sbx stop "$D" >/dev/null
+        sbx start "$D" >/dev/null
+        check "a session from the previous boot is refused" \
+            refuses sbx2 cu frame "$D" --session "$session" --out "$WORK/stale.png"
+        check "a new session after the restart works" \
+            test -n "$(sbx2 cu session "$D" | jq -r .session)"
+        sbx stop "$D" >/dev/null
+        sbx delete "$D" --owner "$RUN" >/dev/null
+    fi
+fi
+
 if want iso; then
     echo ""
     echo "=== Phase: iso ==="
@@ -1629,6 +1801,54 @@ if want iso; then
         ttl destroy e2e-ttl >/dev/null 2>&1
     else
         fail "session ttl: iso up boots the instance" "see $WORK/iso-up-ttl.log"
+    fi
+
+    # A `desktop` image end to end (docs/design/linux-desktop-virtio-gpu.md
+    # §11), with a pinned desktop kernel in ISO_TEST_DESKTOP_KERNEL.
+    if [[ -n "${ISO_TEST_DESKTOP_KERNEL:-}" && -f "$ISO_TEST_DESKTOP_KERNEL" ]]; then
+        # shellcheck disable=SC2016 # jq program text.
+        jq --arg dk "$ISO_TEST_DESKTOP_KERNEL" \
+            '.apple_container.desktop_kernel = $dk | .computer_use = {guest_access: true} | .vm.mem_size_mib = 4096 | .vm.template_size_gib = 12' \
+            "$CCFG" >"$WORK/iso-desktop.jsonc"
+        desk() { "$ISO" --config "$WORK/iso-desktop.jsonc" "$@" </dev/null; }
+        mkdir -p "$WORK/project-desk"
+        if desk setup --image desktop --profile desktop >"$WORK/iso-setup-desktop.log" 2>&1 &&
+            desk up "$WORK/project-desk" --image desktop --name e2e-desk --no-agents --no-github \
+                >"$WORK/iso-up-desktop.log" 2>&1; then
+            pass "desktop: iso setup --profile desktop and iso up boot an instance"
+            dside="$CSTATE/instances/e2e-desk/apple-machine.json"
+            # shellcheck disable=SC2016 # jq program text.
+            check "desktop: the sidecar records the display and guest computer use" \
+                jq -e '.display == "virtio_display" and .guest_computer_use.frameRate == 4' "$dside"
+            check "desktop: the guest boots the desktop kernel with its display up" \
+                desk exec e2e-desk -- sh -c 'uname -r | grep -q iso-desktop && test -e /dev/dri/card0 && systemctl is-active --quiet iso-display iso-display-wm'
+            check "desktop: Firefox is Mozilla's package, not Ubuntu's snap shim" \
+                desk exec e2e-desk -- sh -c 'firefox --version | grep -q "^Mozilla Firefox" && ! dpkg-query -W -f="\${Version}" firefox | grep -q snap && ! command -v snap'
+            desk exec e2e-desk -- sh -c "DISPLAY=:0 xsetroot -mod 16 16 -fg '#112233' -bg '#ddeeff'" >/dev/null
+            dm="$(jq -r .machine_id "$dside")"
+            dsess="$("$SANDBOX" cu session --root "$CROOT" "$dm" | jq -r .session)"
+            check "desktop: the host captures the guest's display" \
+                "$SANDBOX" cu frame --root "$CROOT" "$dm" --session "$dsess" --out "$WORK/desk.png"
+            # shellcheck disable=SC2016 # jq program text.
+            check "desktop: the guest MCP server takes a screenshot" \
+                jq -e '.result.content[0].type == "image"' \
+                <<<"$(desk exec e2e-desk -- sh -c 'echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"screenshot\"}}" | /usr/local/bin/iso-cu-mcp')"
+            "$SANDBOX" cu stream --root "$CROOT" "$dm" >/dev/null
+            check "desktop: stop and start pass the gate" \
+                sh -c '"$1" --config "$2" stop e2e-desk && "$1" --config "$2" start e2e-desk --no-agents --no-github' \
+                _ "$ISO" "$WORK/iso-desktop.jsonc"
+            daudit="$(desk audit e2e-desk 2>/dev/null)"
+            check "desktop: iso stop audits guest computer use" \
+                grep -q '"event":"guest_computer_use"' <<<"$daudit"
+            check "desktop: iso stop audits the live view" grep -q '"event":"live_view"' <<<"$daudit"
+        else
+            fail "desktop: iso setup --profile desktop and iso up boot an instance" \
+                "see $WORK/iso-setup-desktop.log, $WORK/iso-up-desktop.log"
+        fi
+        desk destroy e2e-desk >/dev/null 2>&1
+        desk images --delete desktop >/dev/null 2>&1
+    else
+        skip "desktop: iso setup --profile desktop" "set ISO_TEST_DESKTOP_KERNEL"
     fi
 
     check "iso audit shows the recorded boots" grep -q '"event":"boot"' <<<"$(iso audit e2e 2>/dev/null)"

@@ -267,7 +267,7 @@ package struct CUBinding: Codable, Equatable, Sendable {
 }
 
 /// Sessions and recent frames for one owner (Gate H). Pure, so the refusal
-/// rules are unit-testable; `MacScreen` adds the view-specific checks.
+/// rules are unit-testable; `VMScreen` adds the view-specific checks.
 package struct CUSessions: Sendable {
   private var sessions: [String: CUBinding] = [:]
   private var frames: [String: CUBinding] = [:]

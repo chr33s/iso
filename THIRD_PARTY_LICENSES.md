@@ -12,6 +12,20 @@ not replace the licenses or exceptions of third-party components.
   `third-party/<package>/<dependency>/`, with each pin in `SOURCE.json`.
   The root CLI package is named `host` in this directory.
 
+- `iso-cu-mcp` (release bundles): statically linked with the Swift Static
+  Linux SDK 0.1.0 for Swift 6.4.0 (Swift runtime and Foundation, musl,
+  ICU, zlib and the rest of the SDK, under Apache-2.0, MIT, BSD, Zlib and
+  other permissive licenses). The SDK's SPDX SBOM, with each component and
+  its license, ships as `third-party/iso-cu-mcp/sbom.spdx.json`.
+- `vmlinux-desktop` (release bundles): Linux 6.18.5, unmodified, built with
+  the configuration in `third-party/vmlinux-desktop/config`, under
+  GPL-2.0-only WITH Linux-syscall-note. `third-party/vmlinux-desktop/SOURCE.json`
+  names the exact source tarball and its SHA-256. Each release publishes the
+  kernel's corresponding source beside it as
+  `iso-<tag>-vmlinux-desktop-source.tar.gz` (the unmodified tarball, the
+  configuration and the build scripts), listed in `SHA256SUMS` and attested
+  with the archive (PROVENANCE.md).
+
 - `www/public/hairline/kernel.js`: unmodified Hairline skill engine at revision
   `37d2e78dcb333ab30c3338e28ed4a690364ea014` of `lucasmarkes/hairline`.
   `style.css` is its unmodified `HL.css()` output. Both are MIT licensed;

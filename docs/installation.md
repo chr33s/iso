@@ -12,7 +12,8 @@ Install a release, verify its provenance, or build all five executables from sou
 
 The release channel is `chr33s/iso`, built from tagged commits on `main`. Its
 macOS archives install `iso`, `iso-proxy`, `iso-egress`, `iso-sandbox` and
-`iso-macos-helper` together; see [Apple prerequisites](backends.md). Install the
+`iso-macos-helper` together, with the Linux `desktop` images' guest files
+`iso-cu-mcp` and `vmlinux-desktop`; see [Apple prerequisites](backends.md). Install the
 latest release:
 
 ```sh
@@ -66,10 +67,11 @@ python3 scripts/build-release.py --release
 This is the one release build entrypoint. It builds `iso` (this package),
 `iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` from a staged
 copy of the checkout, signs each ad hoc with the hardened runtime and the
-Enhanced Security entitlements, and writes `iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
+Enhanced Security entitlements, builds the Linux `desktop` images' guest files
+`iso-cu-mcp` and `vmlinux-desktop`, and writes `iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
 `.build/release-archive/`. Add `--test` to run every package's tests first.
-Extract the archive and install its executables in the same directory on
-`PATH`. A missing `iso-egress` blocks only filtered boots.
+Extract the archive and install its executables and the two guest files in the
+same directory on `PATH`. A missing `iso-egress` blocks only filtered boots.
 
 For a development build of the host CLI alone:
 

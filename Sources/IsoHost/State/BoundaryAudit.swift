@@ -48,6 +48,9 @@ package enum BoundaryAudit {
     /// A macOS boot's guest-driven computer use, read from its owner at
     /// stop: the frame rate and counts only.
     case guestComputerUse(MacGuestCUCounts)
+    /// A macOS boot's live view, read from its owner at stop: counts only,
+    /// never the token, pixels, coordinates or text.
+    case liveView(MacLiveViewCounts)
     /// A Core AI boot: the accelerator classes its configuration carries,
     /// the template, and the template and runtime builds.
     case macCoreAIAttached(
@@ -104,6 +107,7 @@ package enum BoundaryAudit {
       case .inputSnapshot: "input_snapshot"
       case .handoffFence: "handoff_fence"
       case .guestComputerUse: "guest_computer_use"
+      case .liveView: "live_view"
       case .macCoreAIAttached: "mac_coreai_attached"
       case .macCoreAIProbe: "mac_coreai_probe"
       case .hostSecurityReduced: "host_security_reduced"
@@ -155,11 +159,23 @@ package enum BoundaryAudit {
           ("frame_rate", .uint(UInt64(c.frameRate))), ("sessions", .uint(UInt64(c.sessions))),
           ("frames", .uint(UInt64(c.frames))), ("actions", .uint(UInt64(c.actions))),
           ("status_requests", .uint(UInt64(c.statusRequests))),
+          ("waits", .uint(UInt64(c.waits))),
+          (
+            "wait_outcomes",
+            .object(
+              c.waitOutcomes.keys.sorted().map { ($0, .uint(UInt64(c.waitOutcomes[$0] ?? 0))) })
+          ),
           ("preemptions", .uint(UInt64(c.preemptions))),
           (
             "refusals",
             .object(c.refusals.keys.sorted().map { ($0, .uint(UInt64(c.refusals[$0] ?? 0))) })
           ),
+        ]
+      case .liveView(let c):
+        members += [
+          ("streams", .uint(UInt64(c.streams))), ("viewers", .uint(UInt64(c.viewers))),
+          ("takeovers", .uint(UInt64(c.takeovers))),
+          ("input_events", .uint(UInt64(c.inputEvents))),
         ]
       case .macCoreAIAttached(let accelerators, let template, let templateBuild, let runtime):
         members += [

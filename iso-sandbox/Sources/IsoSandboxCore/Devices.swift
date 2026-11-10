@@ -36,17 +36,37 @@ package struct VMDevices: Sendable, Equatable {
     case other(String)
   }
 
+  /// A graphics device and its displays' sizes in pixels.
+  package enum Graphics: Sendable, Equatable {
+    package struct Size: Sendable, Equatable {
+      package var width: Int
+      package var height: Int
+      package init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+      }
+    }
+    case virtio(scanouts: [Size])
+    /// Any other graphics device, by class name.
+    case other(String)
+
+    /// What a ``DisplayMode/virtioDisplay`` sandbox has.
+    static let display = Graphics.virtio(scanouts: [
+      Size(width: LinuxDisplay.width, height: LinuxDisplay.height)
+    ])
+  }
+
   package var network: [NetworkAttachment]
   package var socket: Int
   package var directorySharing: [DirectorySharing]
   package var console: Int
   package var memoryBalloon: Int
   package var usbControllers: Int
-  package var graphics: Int
+  package var graphics: [Graphics]
 
   package init(
     network: [NetworkAttachment], socket: Int, directorySharing: [DirectorySharing] = [],
-    console: Int = 0, memoryBalloon: Int = 0, usbControllers: Int = 0, graphics: Int = 0
+    console: Int = 0, memoryBalloon: Int = 0, usbControllers: Int = 0, graphics: [Graphics] = []
   ) {
     self.network = network
     self.socket = socket
@@ -58,11 +78,20 @@ package struct VMDevices: Sendable, Equatable {
   }
 
   /// The inventory a Linux sandbox in `mode` must have: one vsock device;
-  /// one vmnet network device, or none for brokered; no console, balloon,
-  /// USB or graphics device; and at most the one virtio-fs device
-  /// `apple/containerization` always attaches, carrying no host directory.
-  /// Anything else fails closed.
-  package func requireExpected(for mode: NetworkMode) throws(SandboxError) {
+  /// one vmnet network device, or none for brokered; no console, balloon or
+  /// USB controller; the graphics `display` expects; and at most the one
+  /// virtio-fs device `apple/containerization` always attaches, carrying no
+  /// host directory. Anything else fails closed.
+  ///
+  /// A headless sandbox has no graphics device. A
+  /// ``DisplayMode/virtioDisplay`` sandbox has exactly one virtio graphics
+  /// device with one ``LinuxDisplay``-sized scanout. Its USB keyboard and
+  /// pointer are not on the live machine, and VZ reports no USB controller
+  /// for them (docs/design/linux-desktop-virtio-gpu.md §3); they are fixed
+  /// by ``VirtioDisplayDevices``.
+  package func requireExpected(for mode: NetworkMode, display: DisplayMode = .headless)
+    throws(SandboxError)
+  {
     let expectedNetwork = mode == .brokered ? 0 : 1
     guard network.count == expectedNetwork, socket == 1 else {
       throw SandboxError(
@@ -76,10 +105,19 @@ package struct VMDevices: Sendable, Equatable {
       ("console", console),
       ("memory balloon", memoryBalloon),
       ("USB controller", usbControllers),
-      ("graphics", graphics),
     ]
     for (name, count) in unexpected where count > 0 {
       throw SandboxError("the VM has \(count) \(name) device(s); expected none")
+    }
+    let expectedGraphics: [Graphics] =
+      switch display {
+      case .headless: []
+      case .virtioDisplay: [.display]
+      }
+    guard graphics == expectedGraphics else {
+      throw SandboxError(
+        "the VM has graphics devices \(graphics); expected \(expectedGraphics) for a \(display.rawValue) sandbox"
+      )
     }
     guard directorySharing.count <= 1 else {
       throw SandboxError(
@@ -128,6 +166,12 @@ package struct VMDevices: Sendable, Equatable {
       console: vm.consoleDevices.count,
       memoryBalloon: vm.memoryBalloonDevices.count,
       usbControllers: vm.usbControllers.count,
-      graphics: vm.graphicsDevices.count)
+      graphics: vm.graphicsDevices.map { device in
+        guard device is VZVirtioGraphicsDevice else { return .other(name(device)) }
+        return .virtio(
+          scanouts: device.displays.map {
+            Graphics.Size(width: Int($0.sizeInPixels.width), height: Int($0.sizeInPixels.height))
+          })
+      })
   }
 }

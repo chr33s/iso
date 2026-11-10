@@ -1,6 +1,7 @@
 import ArgumentParser
 import Containerization
 import Foundation
+import IsoMacProtocol
 import IsoSandboxCore
 
 struct IsoSandbox: AsyncParsableCommand {
@@ -13,6 +14,7 @@ struct IsoSandbox: AsyncParsableCommand {
       Inspect.self, List.self, Set.self, Grow.self, Commit.self, Restore.self, DiskCommand.self,
       MaintenanceCommand.self,
       Logs.self, Delete.self, Reconcile.self, MacOSCommand.self, Connect.self, Streams.self,
+      MacCU.self,
     ]
   )
 }
@@ -37,7 +39,7 @@ struct Version: ParsableCommand {
     let containerization = containerizationVersion
     /// Optional capabilities beyond the Linux sandbox protocol.
     let features =
-      [macGuestsFeature, brokeredTransportFeature]
+      [macGuestsFeature, brokeredTransportFeature, linuxDisplayFeature]
       + (MacAccelerators.compiledIn ? [macCoreAIFeature] : [])
   }
 
@@ -54,13 +56,32 @@ struct Init: AsyncParsableCommand {
   @OptionGroup var root: RootOptions
   @Option(help: "Linux kernel image; its sha256 must be one this runtime was validated with")
   var kernel: String
+  @Option(
+    help:
+      "Kernel for --display virtio sandboxes; its sha256 must be a pinned desktop kernel")
+  var desktopKernel: String?
+
+  struct Output: Encodable {
+    var kernelSha256: String
+    var desktopKernelSha256: String?
+    var initImage: String
+    var root: String
+  }
 
   func run() async throws {
     let r = try root.resolve()
     try r.createDirectories()
-    let (data, sha, install) = try KernelPin.select(root: r, requested: kernel)
+    let (data, sha, install) = try KernelPin.select(
+      installed: r.kernel, requested: kernel, allowed: KernelPin.allowed)
     if install {
       try data.write(to: r.kernel, options: .atomic)
+    }
+    var desktopSha: String?
+    if let desktopKernel {
+      let (data, sha, install) = try KernelPin.select(
+        installed: r.desktopKernel, requested: desktopKernel, allowed: KernelPin.desktopAllowed)
+      if install { try data.write(to: r.desktopKernel, options: .atomic) }
+      desktopSha = sha
     }
     let store = try ImageStore(path: r.imageStore)
     if !FileManager.default.fileExists(atPath: r.initfs.path) {
@@ -81,7 +102,10 @@ struct Init: AsyncParsableCommand {
     for stale in try r.staleInitfs() {
       try FileManager.default.removeItem(at: stale)
     }
-    try printJSON(["kernelSha256": sha, "initImage": Self.initImageDigest, "root": r.root.path])
+    try printJSON(
+      Output(
+        kernelSha256: sha, desktopKernelSha256: desktopSha, initImage: Self.initImageDigest,
+        root: r.root.path))
   }
 }
 
@@ -137,6 +161,23 @@ struct Create: AsyncParsableCommand {
       "shared (NAT to the host's uplinks), host-only (no route beyond the host) or brokered (no network device)"
   )
   var network = "shared"
+  @Option(
+    help:
+      "headless, or virtio (a virtio-gpu display, USB keyboard and pointer; boots the desktop kernel)"
+  )
+  var display = "headless"
+  @Flag(help: "Let the guest drive its own display over vsock 7802 (with --display virtio)")
+  var guestComputerUse = false
+  @Option(help: "Frames per second the guest may take (1-10; with --guest-computer-use)")
+  var guestFrameRate: Int?
+
+  var displayMode: DisplayMode? {
+    switch display {
+    case "headless": .headless
+    case "virtio": .virtioDisplay
+    default: nil
+    }
+  }
 
   var mode: NetworkMode? {
     switch network {
@@ -154,6 +195,13 @@ struct Create: AsyncParsableCommand {
     guard mode != nil else {
       throw ValidationError("--network must be shared, host-only or brokered")
     }
+    guard displayMode != nil else { throw ValidationError("--display must be headless or virtio") }
+    guard guestComputerUse || guestFrameRate == nil else {
+      throw ValidationError("--guest-frame-rate needs --guest-computer-use")
+    }
+    guard !guestComputerUse || displayMode == .virtioDisplay else {
+      throw ValidationError("--guest-computer-use needs --display virtio")
+    }
     _ = try bytes(memoryMib, mib)
     _ = try bytes(diskGib, gib)
   }
@@ -161,10 +209,20 @@ struct Create: AsyncParsableCommand {
   func run() async throws {
     let source: SandboxSource =
       if let image { .image(image) } else { .disk(try SandboxID(fromDisk ?? "")) }
+    let sandboxDisplay: SandboxDisplay =
+      switch displayMode ?? .headless {
+      case .headless: .headless
+      case .virtioDisplay:
+        .virtio(
+          guestComputerUse: guestComputerUse
+            ? try MacGuestComputerUse(
+              frameRate: guestFrameRate ?? GuestCUProtocol.defaultFrameRate)
+            : nil)
+      }
     let record = try await Sandboxes.create(
       root: try root.resolve(), id: try SandboxID(id), owner: owner, source: source, cpus: cpus,
       memoryBytes: try bytes(memoryMib, mib), diskBytes: try bytes(diskGib, gib),
-      network: mode ?? .shared)
+      network: mode ?? .shared, display: sandboxDisplay)
     try printJSON(record)
   }
 }
@@ -196,6 +254,14 @@ struct Run: AsyncParsableCommand {
     abstract: "Own a sandbox VM in the foreground (launchd runs this).", shouldDisplay: false)
   @OptionGroup var root: RootOptions
   @Argument var id: String
+
+  /// The recorded display mode, read before the owner starts; nil when the
+  /// record cannot be read, which `run` then reports.
+  var displayMode: DisplayMode? {
+    guard let root = try? root.resolve(), let id = try? SandboxID(id) else { return nil }
+    return try? root.sandbox(id).loadRecord().displayMode
+  }
+
   func run() async throws {
     let paths = try root.resolve().sandbox(try SandboxID(id))
     do {

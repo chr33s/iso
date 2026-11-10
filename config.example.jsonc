@@ -207,6 +207,7 @@
   //   "binary": "/absolute/path/to/iso-sandbox",
   //   "builder": "/absolute/path/to/container",
   //   "kernel": "/absolute/path/to/vmlinux",
+  //   "desktop_kernel": "/absolute/path/to/vmlinux-desktop",  // for `desktop` images
   //   "probe_timeout_seconds": 10,
   //   "operation_timeout_seconds": 60,
   //   "create_timeout_seconds": 600,

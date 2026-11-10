@@ -216,6 +216,8 @@ package struct Updater: Sendable {
     try SelfReplace.replaceSiblingRuntime(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingGuestHelper(
       extractDirectory, currentExecutable: currentExecutable)
+    try SelfReplace.replaceSiblingLinuxGuestFiles(
+      extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingProxy(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingEgress(extractDirectory, currentExecutable: currentExecutable)
     guard let currentExecutable else {
@@ -562,8 +564,13 @@ package enum SelfReplace {
   static let egressName = "iso-egress"
   static let runtimeName = "iso-sandbox"
   static let guestHelperName = "iso-macos-helper"
-  /// Every executable installed beside `iso`.
-  static let companionNames = [runtimeName, guestHelperName, proxyName, egressName]
+  /// Linux `desktop` images' guest files (docs/design/linux-desktop-virtio-gpu.md
+  /// §13): the MCP server setup puts in the image, and the pinned kernel
+  /// `iso-sandbox init` installs.
+  static let linuxGuestNames = [BuildContext.computerUseMCP, BuildContext.desktopKernel]
+  /// Every file installed beside `iso`.
+  static let companionNames =
+    [runtimeName, guestHelperName, proxyName, egressName] + linuxGuestNames
 
   static func join(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : directory + "/" + name
@@ -694,6 +701,17 @@ package enum SelfReplace {
     }
     let directory = try installDirectory(currentExecutable)
     try atomicReplace(runtime, over: join(directory, runtimeName))
+  }
+
+  /// Replace the Linux `desktop` images' guest files from the same archive.
+  /// Releases before them have none; `build-release.py` requires both.
+  package static func replaceSiblingLinuxGuestFiles(
+    _ extractDirectory: String, currentExecutable: String?
+  ) throws {
+    let directory = try installDirectory(currentExecutable)
+    for name in linuxGuestNames where isRegularArtifact(extractDirectory + "/" + name) {
+      try atomicReplace(extractDirectory + "/" + name, over: join(directory, name))
+    }
   }
 
   /// Replace the macOS guest helper that `iso-sandbox` installs in templates.

@@ -47,20 +47,21 @@ import Testing
     let sha = SHA256.hash(data: Data("pinned".utf8)).map { String(format: "%02x", $0) }.joined()
 
     #expect(throws: SandboxError.self) {
-      try KernelPin.select(root: root, requested: other.path, allowed: [sha])
+      try KernelPin.select(installed: root.kernel, requested: other.path, allowed: [sha])
     }
-    let fresh = try KernelPin.select(root: root, requested: pinned.path, allowed: [sha])
+    let fresh = try KernelPin.select(installed: root.kernel, requested: pinned.path, allowed: [sha])
     #expect(fresh.install && fresh.sha256 == sha)
     try fresh.data.write(to: root.kernel)
 
-    let again = try KernelPin.select(root: root, requested: other.path, allowed: [sha])
+    let again = try KernelPin.select(installed: root.kernel, requested: other.path, allowed: [sha])
     #expect(!again.install && again.sha256 == sha)
     #expect(throws: SandboxError.self) {
-      try KernelPin.select(root: root, requested: pinned.path, allowed: [])
+      try KernelPin.select(installed: root.kernel, requested: pinned.path, allowed: [])
     }
 
     try Data("other".utf8).write(to: root.kernel)
-    let replaced = try KernelPin.select(root: root, requested: pinned.path, allowed: [sha])
+    let replaced = try KernelPin.select(
+      installed: root.kernel, requested: pinned.path, allowed: [sha])
     #expect(replaced.install && replaced.data == Data("pinned".utf8))
   }
 

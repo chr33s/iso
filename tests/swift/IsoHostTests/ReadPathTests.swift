@@ -137,11 +137,11 @@ private func config(_ text: String) throws -> IsoConfig {
   } catch {
     #expect(
       error.message
-        == "Unknown profile: zzz\nAvailable profiles: python, node, c, fuzz, rust, go, a, b, python"
+        == "Unknown profile: zzz\nAvailable profiles: python, node, c, fuzz, rust, go, desktop, a, b, python"
     )
   }
   let (builtin, custom) = Profiles.listing(c)
-  #expect(builtin.map(\.name) == ["python", "node", "c", "fuzz", "rust", "go"])
+  #expect(builtin.map(\.name) == ["python", "node", "c", "fuzz", "rust", "go", "desktop"])
   #expect(builtin[1].summary == "nodejs; pre-install script")
   #expect(
     builtin[4].summary == "post-install script; plugins: rust-analyzer-lsp@claude-plugins-official")

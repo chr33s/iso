@@ -49,6 +49,9 @@ printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$FIXTURE/$ARCHIVE_DIR/is
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-macos-helper"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso-sandbox"
 chmod +x "$FIXTURE/$ARCHIVE_DIR/iso" "$FIXTURE/$ARCHIVE_DIR/iso-proxy"
+# Linux `desktop` images' guest files (optional members of a release).
+printf 'installed-iso-cu-mcp\n' >"$FIXTURE/$ARCHIVE_DIR/iso-cu-mcp"
+printf 'installed-vmlinux-desktop\n' >"$FIXTURE/$ARCHIVE_DIR/vmlinux-desktop"
 mkdir -p "$FIXTURE/$ARCHIVE_DIR/skills/iso/references"
 printf '%s\n' 'release-skill' >"$FIXTURE/$ARCHIVE_DIR/skills/iso/SKILL.md"
 printf '%s\n' 'release-reference' >"$FIXTURE/$ARCHIVE_DIR/skills/iso/references/machine-interface.md"
@@ -196,6 +199,13 @@ for artifact in iso iso-proxy iso-sandbox iso-egress iso-macos-helper; do
         pass "installer installs $artifact"
     else
         fail "installer installs $artifact"
+    fi
+done
+for artifact in iso-cu-mcp vmlinux-desktop; do
+    if [[ "$(cat "$INSTALL_DIR/$artifact" 2>/dev/null)" == "installed-$artifact" ]]; then
+        pass "installer installs the Linux guest file $artifact"
+    else
+        fail "installer installs the Linux guest file $artifact"
     fi
 done
 

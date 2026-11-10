@@ -95,6 +95,15 @@ Apple backend. The credential proxy is the Swift package
   - [`linux-computer-use-sketch.md`](design/linux-computer-use-sketch.md):
     proposal for computer use in Ubuntu guests (Xvfb + XTEST, in-guest loop
     first, bounded host frame channel for qualification);
+  - [`computer-use-screen-sync.md`](design/computer-use-screen-sync.md):
+    display damage sequence and wait operation on the existing computer-use
+    paths (implemented and qualified);
+  - [`computer-use-live-view.md`](design/computer-use-live-view.md):
+    loopback H.264 live view with browser takeover (implemented and
+    qualified);
+  - [`linux-desktop-virtio-gpu.md`](design/linux-desktop-virtio-gpu.md):
+    the chosen approach for Linux computer use: a virtio-gpu display driven
+    by the owner like macOS guests (implemented and qualified on one host);
   - [`editor-providers-spec.md`](design/editor-providers-spec.md):
     `iso code` / `iso zed`, compiled-in editor providers, and the boundary
     between SSH connection targets and managed agent workloads.

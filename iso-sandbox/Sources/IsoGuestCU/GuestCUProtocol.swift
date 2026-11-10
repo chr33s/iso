@@ -32,7 +32,7 @@ package enum CURefusal: String, Codable, Sendable {
 package enum GuestCUProtocol {
   package static let port: UInt32 = 7802
   /// Largest request line the host reads.
-  package static let maxRequest = HelperProtocol.maxLine
+  package static let maxRequest = LineReader.defaultLimit
   /// Largest response line the guest reads: a base64 1920×1200 PNG and its
   /// metadata.
   package static let maxResponse = 16 * 1024 * 1024
@@ -49,6 +49,61 @@ package enum GuestCUProtocol {
   /// Requests per second of any kind, refused ones included.
   package static let requestRate = 100
   package static let typeCharactersPerAction = 64
+
+  /// `wait` bounds (docs/design/computer-use-screen-sync.md §4).
+  package enum Wait {
+    package static let defaultIdleMs = 250
+    package static let idleMs = 50...2000
+    package static let defaultTimeoutMs = 5000
+    package static let timeoutMs = 100...30_000
+    /// What `settle_ms` waits at most after an action.
+    package static let settleTimeoutMs = 3000
+  }
+}
+
+/// What a `wait` waits for.
+package enum GuestCUWaitUntil: String, Codable, Sendable {
+  /// No change in the region for `idleMs`.
+  case idle
+  /// A change after `since`, then `idleMs` of quiet.
+  case change
+}
+
+/// How a `wait` ended.
+package enum GuestCUWaitOutcome: String, Codable, Sendable, CaseIterable {
+  /// Changed after `since`, then quiet for `idleMs`.
+  case settled
+  /// `until: idle` only: quiet for `idleMs` with nothing changed.
+  case unchanged
+  /// `timeoutMs` passed first.
+  case timedOut
+}
+
+/// A rectangle in framebuffer pixels.
+package struct GuestCURegion: Codable, Equatable, Sendable {
+  package var x: Int
+  package var y: Int
+  package var width: Int
+  package var height: Int
+
+  package init(x: Int, y: Int, width: Int, height: Int) {
+    self.x = x
+    self.y = y
+    self.width = width
+    self.height = height
+  }
+
+  static let fields: Set<String> = ["x", "y", "width", "height"]
+}
+
+package struct GuestCUWaitResult: Codable, Equatable, Sendable {
+  package var outcome: GuestCUWaitOutcome
+  package var elapsedMs: Int
+
+  package init(outcome: GuestCUWaitOutcome, elapsedMs: Int) {
+    self.outcome = outcome
+    self.elapsedMs = elapsedMs
+  }
 }
 
 /// Who drives the display now.
@@ -86,11 +141,17 @@ package struct GuestCUAction: Codable, Equatable, Sendable {
 }
 
 package struct GuestCURequest: Codable, Equatable, Sendable {
-  package enum Op: String, Codable, Sendable { case session, frame, act, status }
+  package enum Op: String, Codable, Sendable { case session, frame, act, status, wait }
   package var op: Op
   package var session: String?
   package var action: GuestCUAction?
   package var basedOnFrame: String?
+  /// `wait` only; bounds are checked by the host against its display.
+  package var since: UInt64?
+  package var idleMs: Int?
+  package var timeoutMs: Int?
+  package var until: GuestCUWaitUntil?
+  package var region: GuestCURegion?
 
   package init(
     op: Op, session: String? = nil, action: GuestCUAction? = nil, basedOnFrame: String? = nil
@@ -101,7 +162,9 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
     self.basedOnFrame = basedOnFrame
   }
 
-  static let fields: Set<String> = ["op", "session", "action", "basedOnFrame"]
+  static let fields: Set<String> = [
+    "op", "session", "action", "basedOnFrame", "since", "idleMs", "timeoutMs", "until", "region",
+  ]
 
   /// Whether this request may be sent again on a new connection after the
   /// first got no reply. One the host received in full (`written`) may
@@ -148,12 +211,18 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
         }
       }
     }
+    if let region = object["region"] {
+      guard let r = region as? [String: Any] else { return .failure(.malformed) }
+      if let extra = Set(r.keys).subtracting(GuestCURegion.fields).sorted().first {
+        return .failure(.unknownField("region.\(extra)"))
+      }
+    }
     guard let r = try? JSONDecoder().decode(GuestCURequest.self, from: Data(line)) else {
       return .failure(.malformed)
     }
     switch r.op {
     case .session, .status: break
-    case .frame:
+    case .frame, .wait:
       guard r.session != nil else { return .failure(.missing("session")) }
     case .act:
       guard r.session != nil else { return .failure(.missing("session")) }
@@ -189,6 +258,11 @@ package struct GuestCUResponse: Codable, Equatable, Sendable {
   package var submitted: Int?
   package var controller: GuestCUController?
   package var holdRemainingSeconds: Int?
+  /// The display's damage sequence: on `frame`, `act` (sampled before the
+  /// first input event), `wait` and `status`. Its presence on `status` is
+  /// how a guest learns the host supports `wait`.
+  package var damageSeq: UInt64?
+  package var wait: GuestCUWaitResult?
 
   package init(ok: Bool) { self.ok = ok }
 

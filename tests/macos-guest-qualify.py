@@ -2,7 +2,7 @@
 """Real-hardware qualification of macOS guests in iso-sandbox (gates from
 docs/design/macos-computer-use-qualification-plan.md). macOS 27+ on Apple Silicon only.
 
-    tests/macos-guest-qualify.py --sandbox BIN --template NAME [--root DIR] [--gates B,L,I,J,O,C,D,E,G,P,H,K,U]
+    tests/macos-guest-qualify.py --sandbox BIN --template NAME [--root DIR] [--gates B,L,I,J,O,C,D,E,G,P,H,K,U,W]
                                  [--captures N] [--clicks N] [--keep]
 
 Needs a published template (`iso-sandbox macos template build`) and the
@@ -17,6 +17,7 @@ import json
 import os
 import queue
 import random
+import re
 import secrets
 import select
 import signal
@@ -145,7 +146,7 @@ KEY = {"return": 36, "tab": 48, "escape": 53, "space": 49, "down": 125, "up": 12
        "m": 46, "q": 12, "w": 13, "comma": 43}
 
 
-def build_q_fixtures(out):
+def build_q_app(out):
     app = out / "IsoQFixture.app"
     (app / "Contents" / "MacOS").mkdir(parents=True, exist_ok=True)
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-O", str(GUEST_FIXTURES / "QFixture.swift"), "-o",
@@ -159,6 +160,11 @@ def build_q_fixtures(out):
         "<key>CFBundlePackageType</key><string>APPL</string>"
         "<key>NSPrincipalClass</key><string>NSApplication</string></dict></plist>")
     subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
+    return app
+
+
+def build_q_fixtures(out):
+    build_q_app(out)
     # Electron: the pinned release, checksum-verified on the host and copied
     # in, so the guest needs no network.
     version, digest = ELECTRON
@@ -1258,7 +1264,11 @@ class Run:
             out["after_release"] = m.frame() is not None
             out["status_after_release"] = m.text(m.tool("control_status"))
             # Frames are limited to 1 a second: back-to-back ones are refused.
-            burst = [m.tool("screenshot") for _ in range(3)]
+            burst, out["burst_s"] = [], []
+            for _ in range(3):
+                t = time.time()
+                burst.append(m.tool("screenshot"))
+                out["burst_s"].append(round(time.time() - t, 3))
             out["rate_limited"] = sum(1 for b in burst if "rate_limited" in m.text(b))
         finally:
             m.close()
@@ -1276,6 +1286,95 @@ class Run:
               and counts.get("preemptions", 0) >= 1 and refusals.get("held_by_host", 0) >= 1
               and refusals.get("rate_limited", 0) >= 1)
         self.record("U", "pass" if ok else "fail", **out)
+
+    # ----------------------------------------------------------- Gate W
+
+    def gate_W(self, sid, g):
+        """Screen sync (docs/design/computer-use-screen-sync.md §10, §11),
+        through the guest's MCP server: a click that starts a 600 ms
+        transition then `wait_for_screen` settles 850-1100 ms after the click
+        with a higher damageSeq; a move over static content settles as
+        `unchanged` in under 400 ms; a focused field's blinking caret does
+        not time out at the default idle time. Times are host wall clock
+        around the MCP calls, so they include the SSH round trip. The move
+        runs on the bare desktop, before the fixture opens: a focused field
+        elsewhere on screen would blink."""
+        build_q_app(self.dir)
+        g.scp(Path(self.args.sandbox).resolve().parent / "iso-macos-helper", "iso-macos-helper")
+        g.ssh("pkill -x IsoVZProbe; true", check=False)
+
+        def frames():
+            try:
+                return json.loads(g.ssh(f"cat {QSUPPORT}/state.json", timeout=15))["frames"]
+            except (RuntimeError, ValueError, KeyError):
+                return {}
+
+        def saw(event):
+            text = g.ssh(f"cat {QSUPPORT}/events.jsonl 2>/dev/null; true", timeout=15)
+            return any((e.get("control"), e.get("event")) == ("animate", event)
+                       for e in (json.loads(x) for x in text.splitlines() if x.strip()))
+
+        def seq(text):
+            m = re.search(r"damageSeq:? (\d+)", text)
+            return int(m.group(1)) if m else None
+
+        def centre(r):
+            return {"x": r["x"] + r["w"] / 2, "y": r["y"] + r["h"] / 2}
+
+        out = {}
+        m = GuestMCP(g)
+        try:
+            m.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                 "clientInfo": {"name": "qualify", "version": "1"}})
+            m.notify("notifications/initialized")
+            out["tools"] = sorted(t["name"] for t in m.rpc("tools/list")["result"]["tools"])
+            time.sleep(1.1)
+            shot = m.tool("screenshot")
+            frame_id = m.frame()
+            out["screenshot_damage_seq"] = seq(m.text(shot))
+            # A move over the static desktop wallpaper, right of the widgets.
+            t = time.time()
+            moved = m.tool("move", frameId=frame_id, x=1500, y=900)
+            out["move_s"] = round(time.time() - t, 3)
+            out["move"] = m.text(moved)
+            g.ssh("mkdir -p ~/IsoQ && rm -rf ~/IsoQ/IsoQFixture.app ~/Library/Application\\ Support/IsoQFixture")
+            g.scp(self.dir / "IsoQFixture.app", "IsoQ/")
+            g.ssh("open ~/IsoQ/IsoQFixture.app")
+            f = wait_for(lambda: (lambda fr: fr if {"ak_animate", "ak_field"} <= fr.keys() else None)(frames()),
+                         60, "W fixture layout", 1)
+            time.sleep(2)
+            frame_id = m.frame()
+            # Focus the field (activating the window), then check the caret settles.
+            focus = m.tool("click", frameId=frame_id, **centre(f["ak_field"]))
+            out["focus_click"] = m.text(focus)
+            t = time.time()
+            caret = m.tool("wait_for_screen", until="idle", include_screenshot=False)
+            out["caret_wait"] = m.text(caret)
+            out["caret_wait_s"] = round(time.time() - t, 3)
+            time.sleep(1.1)
+            before = seq(m.text(m.tool("screenshot")))
+            out["before_damage_seq"] = before
+            t = time.time()
+            click = m.tool("click", frameId=frame_id, settle_ms=0, **centre(f["ak_animate"]))
+            waited = m.tool("wait_for_screen", idle_ms=250, include_screenshot=False)
+            out["click_to_settled_s"] = round(time.time() - t, 3)
+            out["click"] = m.text(click)
+            out["wait"] = m.text(waited)
+            out["after_damage_seq"] = seq(m.text(waited))
+            out["animation_started"] = bool(wait_for(lambda: saw("started"), 10, "animate", 0.5))
+        finally:
+            m.close()
+        counts = ((self.rt.run("macos", "inspect", sid).get("runtime") or {}).get("guestComputerUse") or {})
+        out["counts"] = counts
+        ok = ("wait_for_screen" in out["tools"] and out["screenshot_damage_seq"] is not None
+              and "still changing" not in out["focus_click"]
+              and "still changing" not in out["caret_wait"]
+              and "unchanged" in out["move"] and out["move_s"] < 0.4
+              and out["animation_started"] and "settled" in out["wait"]
+              and 0.85 <= out["click_to_settled_s"] <= 1.1
+              and (out["after_damage_seq"] or 0) > (out["before_damage_seq"] or 0)
+              and counts.get("waits", 0) >= 3)
+        self.record("W", "pass" if ok else "fail", **out)
 
     # ----------------------------------------------------------- Gate S
 
@@ -1525,6 +1624,10 @@ def main():
             u = run.create("u", extra=("--guest-computer-use", "--guest-frame-rate", "1"))
             run.gate_U(u, run.boot(u))
             run.rt.run("macos", "stop", u, timeout=600, check=False)
+        if "W" in gates:
+            w = run.create("w", extra=("--guest-computer-use",))
+            run.gate_W(w, run.boot(w))
+            run.rt.run("macos", "stop", w, timeout=600, check=False)
         if "R" in gates:
             # Last: it changes the guest's login policy and stops it.
             r = run.create("r")

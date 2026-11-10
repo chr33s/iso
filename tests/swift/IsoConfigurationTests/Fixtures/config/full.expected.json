@@ -152,6 +152,7 @@
   "apple_container": {
     "binary": "/opt/iso/bin/iso-sandbox",
     "builder": "/home/fixture/bin/container",
+    "desktop_kernel": "/home/fixture/vmlinux-desktop",
     "kernel": "/opt/iso/vmlinux",
     "probe_timeout_seconds": 5,
     "operation_timeout_seconds": 30,

@@ -43,7 +43,28 @@ package enum Profiles {
     .init(
       name: "go", aptPackages: ["golang"], preInstall: nil, postInstall: nil, marketplaces: [],
       plugins: []),
+    desktopDefinition,
   ]
+
+  /// The profile whose images get a virtio-gpu display
+  /// (``ImageManifest/virtioDisplayAdapter``).
+  package static let desktop = "desktop"
+
+  /// No capture, input or encoder package
+  /// (docs/design/linux-desktop-virtio-gpu.md §7): the display path is
+  /// Ubuntu's, the browser is Firefox from Mozilla's pinned apt repository,
+  /// and the `iso-cu` MCP server is iso's own `iso-cu-mcp`, which setup
+  /// places in the build context (``BuildContext/payloads``).
+  package static let desktopDefinition = ProfileDefinition(
+    name: desktop,
+    aptPackages: [
+      "xserver-xorg-core", "xserver-xorg-input-evdev", "x11-xserver-utils", "x11-utils",
+      "xkb-data", "openbox", "fonts-dejavu-core", "fonts-noto-core", "dbus-x11", "firefox",
+    ],
+    preInstall: DesktopResources.preInstall,
+    postInstall: DesktopResources.postInstall
+      + "\ninstall -m 0755 \(BuildContext.contextDirectory)/\(BuildContext.computerUseMCP) \(AgentBootstrap.linuxComputerUseCommand)\n",
+    marketplaces: [], plugins: [])
 
   static func custom(_ name: String, _ profile: CustomProfile) -> ProfileDefinition {
     .init(

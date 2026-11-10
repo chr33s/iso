@@ -2,7 +2,8 @@
 """Verify a downloaded hosted candidate before executing any of its binaries.
 
 Usage: python3 scripts/verify-candidate.py DIRECTORY --revision FULL_SHA
-The directory must contain the candidate tarball, SHA256SUMS and attestations.jsonl.
+The directory must contain the candidate tarball, SHA256SUMS and attestations.jsonl;
+the desktop kernel's source tarball, if also there, is checked against SHA256SUMS.
 This checks distribution integrity; it does not qualify VM or live-provider behavior.
 """
 import argparse
@@ -16,6 +17,7 @@ import tarfile
 import tempfile
 
 BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper")
+LINUX_GUEST_FILES = ("iso-cu-mcp", "vmlinux-desktop")
 MAX_BYTES = 2 * 1024 ** 3
 MAX_MEMBERS = 4096
 REPO = "chr33s/iso"
@@ -34,15 +36,32 @@ def digest(path):
     return value.hexdigest()
 
 
+def source_asset_name(name):
+    """`source_asset_name` in scripts/build-release.py: the desktop kernel's source."""
+    return name.removesuffix("-aarch64-apple-darwin.tar.gz") + "-vmlinux-desktop-source.tar.gz"
+
+
 def checksum(directory, name):
-    lines = (directory / "SHA256SUMS").read_text().splitlines()
-    require(len(lines) == 1, "candidate must have exactly one checksum entry")
-    match = re.fullmatch(r"([0-9a-f]{64})  (.+)", lines[0])
-    require(match is not None and match[2] == name, "unexpected checksum entry")
+    """SHA256SUMS lists the archive and, from a build that ships the desktop
+    kernel, its source tarball, once each and nothing else. The source tarball
+    is not executed and need not be downloaded; when present it must match."""
+    source = source_asset_name(name)
+    listed = {}
+    for line in (directory / "SHA256SUMS").read_text().splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+        require(match is not None and match[2] in (name, source), "unexpected checksum entry")
+        require(match[2] not in listed, "duplicate checksum entry")
+        listed[match[2]] = match[1]
+    require(name in listed, "no checksum entry for the archive")
     archive = directory / name
     require(archive.is_file() and not archive.is_symlink(), "archive must be a regular file")
     require(archive.stat().st_size <= MAX_BYTES, "archive exceeds size budget")
-    require(digest(archive) == match[1], "archive checksum mismatch")
+    require(digest(archive) == listed[name], "archive checksum mismatch")
+    kernel_source = directory / source
+    if source in listed and kernel_source.exists():
+        require(kernel_source.is_file() and not kernel_source.is_symlink(),
+                "kernel source must be a regular file")
+        require(digest(kernel_source) == listed[source], "kernel source checksum mismatch")
     return archive
 
 
@@ -105,6 +124,14 @@ def manifest(bundle, revision):
         require(path.is_file() and not path.is_symlink() and path.stat().st_mode & 0o111,
                 f"missing executable: {binary}")
         require(hashes[binary] == digest(path), f"binary checksum mismatch: {binary}")
+    # Linux guest files (not Mach-O, so not codesigned): checked by hash.
+    guest = data.get("linux_guest_files")
+    require(isinstance(guest, dict) and set(guest) == set(LINUX_GUEST_FILES),
+            "BUILD.json must describe every Linux guest file")
+    for name in LINUX_GUEST_FILES:
+        path = bundle / name
+        require(path.is_file() and not path.is_symlink(), f"missing Linux guest file: {name}")
+        require(guest[name] == digest(path), f"Linux guest file checksum mismatch: {name}")
     return data
 
 
@@ -137,6 +164,11 @@ def verify(directory, revision):
             require(source.is_file() and not source.is_symlink(), "missing regular candidate asset")
             require(0 < source.stat().st_size <= MAX_BYTES, "invalid candidate asset size")
             shutil.copyfile(source, work / filename)
+        # Optional: the artifact may carry the desktop kernel's source tarball.
+        kernel_source = directory / source_asset_name(name + ".tar.gz")
+        if kernel_source.is_file() and not kernel_source.is_symlink():
+            require(0 < kernel_source.stat().st_size <= MAX_BYTES, "invalid candidate asset size")
+            shutil.copyfile(kernel_source, work / kernel_source.name)
         archive = checksum(work, name + ".tar.gz")
         run("gh", "attestation", "verify", str(archive), "--repo", REPO,
             "--bundle", str(work / "attestations.jsonl"),

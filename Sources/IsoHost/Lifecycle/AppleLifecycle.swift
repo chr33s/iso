@@ -33,7 +33,8 @@ extension AppleBackend {
     }
     return .init(
       sandbox: sidecar.machineID, owner: sidecar.ownerID, runtimeRoot: runtime.root,
-      resources: sidecar.resources, egress: config.egress, network: network)
+      resources: sidecar.resources, egress: config.egress, network: network,
+      display: .init(sidecar.display, guestComputerUse: sidecar.guestComputerUse != nil))
   }
 
   /// The pinned target for a gate-approved boot; a brokered one goes
@@ -221,12 +222,13 @@ extension AppleBackend {
     let owner = try Owner.load(config)
     let manifest = try ImageManifest.load(config, instance.image)
     try runtime.verifyImage(manifest)
-    if manifest.guestOS != .macos && config.computerUse.guestAccess {
-      // One configuration serves every instance: Linux ones ignore it.
+    if manifest.guestOS != .macos && !manifest.hasVirtioDisplay && config.computerUse.guestAccess {
+      // One configuration serves every instance: headless Linux ones ignore it.
       diagnostics.warn(
-        "computer_use.guest_access applies to macOS images only; instance '\(instance.name)' (\(instance.image)) runs without it"
+        "computer_use.guest_access applies to macOS and desktop images only; instance '\(instance.name)' (\(instance.image)) runs without it"
       )
     }
+    if manifest.hasVirtioDisplay { try runtime.requireLinuxDisplay() }
     try requireCoreAIImage(manifest, instance: instance)
     if config.network.transport == .brokered {
       // Refused before any record or VM exists: never a downgraded start.
@@ -336,9 +338,12 @@ extension AppleBackend {
       manifest.disk.map { .disk($0.name) } ?? .image(manifest.imageRef)
     try NetworkPolicy.save(config, instance, brokered: brokered)
     try journal.advance(instance, .create(stage: .creatingMachine))
+    let display: LinuxGuestDisplay? = manifest.hasVirtioDisplay ? .virtio : nil
+    let guestComputerUse = display == nil ? nil : MacGuestComputerUse(config.computerUse)
     try runtime.create(
       machine, source: source, cpus: cpus, memoryMiB: memoryMiB, diskGiB: diskGiB, owner: owner.id,
-      egress: config.egress, transport: config.network.transport)
+      egress: config.egress, transport: config.network.transport, display: display,
+      guestComputerUse: guestComputerUse)
     try journal.advance(instance, .create(stage: .machineCreated))
     var sidecar = MachineSidecar(
       schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: owner.id,
@@ -350,6 +355,8 @@ extension AppleBackend {
       hostKeyFingerprint: "", lastObservedOwnerPID: nil, lastObservedIP: nil,
       reenrollHostKey: false,
       createdAt: utcTimestamp(), runtimeIdentity: try runtime.requireQualified())
+    sidecar.display = display
+    sidecar.guestComputerUse = guestComputerUse
     try IsolationGate.verifyRecord(
       try runtime.inspect(machine), try expected(sidecar, runtime, networkPolicy: brokered?.digest))
     let deadline = ContinuousClock.now + runtime.settings.bootTimeout.duration
@@ -917,6 +924,7 @@ extension AppleBackend {
         "Image '\(image)' was built for guest user '\(manifest.guestUser)', but instance '\(instance.name)' uses '\(sidecar.guestUser)'; create a new instance from it instead"
       )
     }
+    try manifest.requireDisplay(sidecar.display, image: image, instance: instance.name)
     let operation = try OperationID("iso-" + randomHex(8))
     let prior = inspection.record.diskGeneration
     _ = try Journal.begin(

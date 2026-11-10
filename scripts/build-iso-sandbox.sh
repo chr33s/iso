@@ -2,16 +2,24 @@
 set -euo pipefail
 
 # Build iso-sandbox, the macOS VM runtime that iso's `apple-container`
-# backend drives, and iso-macos-helper, the agent it installs in macOS guest
-# templates, and install both into PREFIX/bin. PREFIX/bin must be owned by
+# backend drives, iso-macos-helper, the agent it installs in macOS guest
+# templates, and iso-cu-mcp, the MCP server `desktop` Linux images get
+# (scripts/build-iso-cu-mcp.sh, with the Swift Static Linux SDK), and install
+# them into PREFIX/bin. PREFIX/bin must be owned by
 # you or root and not writable by others except the wheel or admin group.
 # Both are signed ad hoc with the hardened runtime and the Enhanced Security
 # entitlements: iso-macos-helper with scripts/enhanced-security.entitlements,
 # iso-sandbox with iso-sandbox.entitlements, which adds virtualization. No sudo.
 #
 # Usage:
-#   scripts/build-iso-sandbox.sh [--experimental-coreai] [PREFIX]
+#   scripts/build-iso-sandbox.sh [--experimental-coreai] [--require-cu-mcp | --skip-cu-mcp] [PREFIX]
 #     PREFIX defaults to ~/.local/opt/iso-sandbox
+#
+# iso-cu-mcp needs the swift.org toolchain and the Static Linux SDK. On a host
+# without them (Xcode's own Swift, or no network to fetch the SDK) it is
+# skipped with a warning and any earlier PREFIX/bin/iso-cu-mcp is removed:
+# everything but `desktop` images works without it. --require-cu-mcp fails
+# instead (release builds); --skip-cu-mcp never builds it.
 #
 # iso finds <PREFIX>/bin/iso-sandbox at the default PREFIX; otherwise set
 #   "apple_container": {"binary": "<PREFIX>/bin/iso-sandbox"}
@@ -24,14 +32,17 @@ set -euo pipefail
 # docs/coreai.md.
 
 coreai=0
+cu_mcp=auto
 prefix=""
 for arg in "$@"; do
     case "${arg}" in
         -h | --help)
-            sed -n '4,24p' "$0" | sed -E 's/^# ?//'
+            sed -n '4,32p' "$0" | sed -E 's/^# ?//'
             exit 0
             ;;
         --experimental-coreai) coreai=1 ;;
+        --require-cu-mcp) cu_mcp=require ;;
+        --skip-cu-mcp) cu_mcp=skip ;;
         -*)
             echo "error: unknown option ${arg}" >&2
             exit 1
@@ -115,6 +126,22 @@ fi
 install_signed iso-macos-helper iso-macos-helper \
     --entitlements "${scripts}/enhanced-security.entitlements"
 install_signed iso-sandbox iso-sandbox --entitlements "${pkg}/iso-sandbox.entitlements"
-
 "${prefix}/bin/iso-sandbox" version
-echo "Installed ${prefix}/bin/iso-sandbox and ${prefix}/bin/iso-macos-helper"
+installed="${prefix}/bin/iso-sandbox and ${prefix}/bin/iso-macos-helper"
+
+# The Linux `desktop` images' MCP server: an ELF binary, so not codesigned.
+# Its prerequisites are checked apart from its build, so that only a host that
+# cannot build it is skipped; a build that fails still fails this script.
+if [[ "${cu_mcp}" == auto ]] && ! "${scripts}/build-iso-cu-mcp.sh" --check; then
+    echo "warning: this host cannot build iso-cu-mcp (see above)" >&2
+    cu_mcp=skip
+fi
+if [[ "${cu_mcp}" == skip ]]; then
+    # Never leave one from an earlier build beside a newer runtime.
+    rm -f "${prefix}/bin/iso-cu-mcp" "${prefix}/bin/iso-cu-mcp.sbom.spdx.json"
+    echo "warning: iso-cu-mcp not built: \`desktop\` images cannot be set up from this PREFIX" >&2
+    echo "Installed ${installed}"
+    exit 0
+fi
+"${scripts}/build-iso-cu-mcp.sh" "${prefix}/bin/iso-cu-mcp"
+echo "Installed ${installed}, and ${prefix}/bin/iso-cu-mcp"

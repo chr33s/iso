@@ -23,7 +23,7 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   #expect(try c.openGuest("g2", at: t0) == "g1")
   #expect(refusal { try c.requireGuest("g1", at: t0) } == .unknownSession)
 
-  #expect(c.hold(for: 60, at: t0) == "g2")
+  #expect(c.hold(.explicit, for: 60, at: t0) == "g2")
   #expect(c.controller(at: t0) == .host)
   #expect(c.holdRemaining(at: t0.addingTimeInterval(0.5)) == 60)
   #expect(refusal { try c.requireGuest("g2", at: t0) } == .heldByHost)
@@ -39,12 +39,27 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
 
 @Test func holdsExtendButNeverShortenAndReleaseEndsThem() {
   var c = CUControl()
-  _ = c.hold(for: 300, at: t0)
+  _ = c.hold(.explicit, for: 300, at: t0)
   // The implicit 60 s hold of host input keeps a longer explicit hold.
-  _ = c.hold(for: CUControl.implicitHold, at: t0.addingTimeInterval(10))
+  _ = c.hold(.implicit, for: CUControl.implicitHold, at: t0.addingTimeInterval(10))
   #expect(c.holdRemaining(at: t0.addingTimeInterval(10)) == 290)
-  _ = c.hold(for: 600, at: t0.addingTimeInterval(10))
+  _ = c.hold(.explicit, for: 600, at: t0.addingTimeInterval(10))
   #expect(c.holdRemaining(at: t0.addingTimeInterval(10)) == 600)
+  c.release()
+  #expect(c.controller(at: t0.addingTimeInterval(10)) == .idle)
+}
+
+@Test func aViewersReleaseEndsTheImplicitHoldAndKeepsAnExplicitOne() {
+  var c = CUControl()
+  _ = c.hold(.implicit, for: CUControl.implicitHold, at: t0)
+  c.releaseImplicit()
+  #expect(c.controller(at: t0) == .idle)
+  // A `cu hold` taken before the viewer took control outlives its release.
+  _ = c.hold(.explicit, for: 3600, at: t0)
+  _ = c.hold(.implicit, for: CUControl.implicitHold, at: t0.addingTimeInterval(10))
+  c.releaseImplicit()
+  #expect(c.controller(at: t0.addingTimeInterval(10)) == .host)
+  #expect(c.holdRemaining(at: t0.addingTimeInterval(10)) == 3590)
   c.release()
   #expect(c.controller(at: t0.addingTimeInterval(10)) == .idle)
 }
@@ -408,6 +423,7 @@ private func texts(_ result: [String: Any]) -> [String] {
   #expect(
     Set(tools) == [
       "screenshot", "control_status", "click", "move", "drag", "scroll", "key", "type",
+      "wait_for_screen",
     ])
   // No tool holds a button down.
   #expect(!tools.contains("down") && !tools.contains("up"))

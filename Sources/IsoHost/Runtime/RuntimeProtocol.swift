@@ -74,6 +74,8 @@ package struct SandboxRecord: Sendable, Equatable, Codable {
   package let network: String
   /// ISO 8601 end of the current session, absent without a session TTL.
   package let expiresAt: String?
+  /// `virtio_display` for a sandbox with a display; absent when headless.
+  package var display: String? = nil
 
   /// The session deadline, if one is recorded and parses.
   package var sessionDeadline: Date? {
@@ -220,6 +222,8 @@ package struct Effective: Sendable, Equatable, Decodable {
   package let virtualization: Bool
   /// Nil exactly when none of the brokered members is reported (vmnet).
   package let brokered: EffectiveBrokered?
+  /// Nil exactly when none of the display members is reported (headless).
+  package let display: EffectiveDisplay?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, imageReference, imageDigest, cpus, memoryBytes, rootfs, mounts, interfaces
@@ -227,6 +231,7 @@ package struct Effective: Sendable, Equatable, Decodable {
     case virtualization
     case transport, networkDevices, socketDevices, channelPolicy, channelPolicyDigest
     case networkPolicy
+    case display, graphicsDevices, vsockPorts, liveViewListening
   }
 
   package init(from decoder: any Decoder) throws {
@@ -261,6 +266,17 @@ package struct Effective: Sendable, Equatable, Decodable {
     } else {
       brokered = nil
     }
+    if [CodingKeys.display, .graphicsDevices, .vsockPorts, .liveViewListening]
+      .contains(where: c.contains)
+    {
+      display = EffectiveDisplay(
+        display: try c.decode(String.self, forKey: .display),
+        graphicsDevices: try c.decode([[String]].self, forKey: .graphicsDevices),
+        vsockPorts: try c.decode([UInt32].self, forKey: .vsockPorts),
+        liveViewListening: try c.decodeIfPresent(Bool.self, forKey: .liveViewListening) ?? false)
+    } else {
+      display = nil
+    }
   }
 }
 
@@ -275,6 +291,8 @@ package struct SandboxInspection: Sendable, Equatable, Decodable {
   package let status: SandboxStatus
   package let live: LiveState?
   package let effective: Effective?
+  /// A running display sandbox's per-boot counts; absent otherwise.
+  package let runtime: LinuxDesktopStatus?
   package let disk: DiskUsage
 
   package var ipv4: IPv4Address? { live?.ipv4 }

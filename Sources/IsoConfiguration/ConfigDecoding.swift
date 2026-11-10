@@ -826,7 +826,8 @@ enum ConfigDecoder {
   }
 
   static let appleContainerKeys: Set<String> = [
-    "binary", "builder", "kernel", "probe_timeout_seconds", "operation_timeout_seconds",
+    "binary", "builder", "kernel", "desktop_kernel", "probe_timeout_seconds",
+    "operation_timeout_seconds",
     "create_timeout_seconds", "boot_timeout_seconds", "stop_timeout_seconds",
     "build_timeout_seconds",
   ]
@@ -852,7 +853,8 @@ enum ConfigDecoder {
       createTimeout: try r.defaulted("create_timeout_seconds", d.createTimeout, Parse.timeout),
       bootTimeout: try r.defaulted("boot_timeout_seconds", d.bootTimeout, Parse.timeout),
       stopTimeout: try r.defaulted("stop_timeout_seconds", d.stopTimeout, Parse.timeout),
-      buildTimeout: try r.defaulted("build_timeout_seconds", d.buildTimeout, Parse.timeout))
+      buildTimeout: try r.defaulted("build_timeout_seconds", d.buildTimeout, Parse.timeout),
+      desktopKernel: try r.optional("desktop_kernel", hostPath))
   }
 }
 
@@ -869,5 +871,5 @@ extension AppleContainerConfig {
     binary: nil, builder: nil, kernel: nil, probeTimeout: try! TimeoutSecs(10),
     operationTimeout: try! TimeoutSecs(60), createTimeout: try! TimeoutSecs(600),
     bootTimeout: try! TimeoutSecs(120), stopTimeout: try! TimeoutSecs(90),
-    buildTimeout: try! TimeoutSecs(3600))
+    buildTimeout: try! TimeoutSecs(3600), desktopKernel: nil)
 }

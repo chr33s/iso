@@ -22,6 +22,8 @@ package struct InspectOutput: Encodable, Sendable {
   package var status: SandboxStatus
   package var live: LiveState?
   package var effective: EffectiveConfig?
+  /// A running display sandbox's per-boot counts; absent otherwise.
+  package var runtime: DesktopStatus?
   package var disk: DiskSummary
 }
 
@@ -112,11 +114,12 @@ package enum Sandboxes {
   package static func create(
     root: SandboxRoot, id: SandboxID, owner: String, source: SandboxSource, cpus: Int,
     memoryBytes: UInt64, diskBytes: UInt64,
-    network: NetworkMode = .shared
+    network: NetworkMode = .shared, display: SandboxDisplay = .headless
   ) async throws -> SandboxRecord {
     let operation = try OperationLock.shared(root)
     defer { withExtendedLifetime(operation) {} }
     try root.requireInitialized()
+    _ = try Owner.kernel(root: root, display: display.mode)
     guard cpus >= 1, memoryBytes >= 256 * 1024 * 1024, diskBytes >= 1024 * 1024 * 1024 else {
       throw SandboxError("cpus must be >= 1, memory >= 256 MiB, disk >= 1 GiB")
     }
@@ -134,7 +137,7 @@ package enum Sandboxes {
         return try await populate(
           root: root, paths: paths, id: id, owner: owner, source: source, cpus: cpus,
           memoryBytes: memoryBytes, diskBytes: diskBytes,
-          network: network)
+          network: network, display: display)
       } catch {
         try? FileManager.default.removeItem(at: paths.dir)
         throw error
@@ -145,7 +148,7 @@ package enum Sandboxes {
   static func populate(
     root: SandboxRoot, paths: SandboxPaths, id: SandboxID, owner: String, source: SandboxSource,
     cpus: Int, memoryBytes: UInt64,
-    diskBytes: UInt64, network: NetworkMode
+    diskBytes: UInt64, network: NetworkMode, display: SandboxDisplay = .headless
   ) async throws -> SandboxRecord {
 
     let imageReference: String
@@ -188,7 +191,7 @@ package enum Sandboxes {
         baseDisk: baseDisk,
         environment: environment, cpus: cpus, memoryBytes: memoryBytes, diskBytes: diskBytes,
         subnetIndex: index,
-        createdAt: Date(), network: network)
+        createdAt: Date(), network: network, display: display)
       // Writing the record commits the create.
       try paths.save(r)
       record = r
@@ -349,12 +352,13 @@ package enum Sandboxes {
     let paths = root.sandbox(id)
     let record = try paths.loadRecord()
     let s = status(paths)
-    let effective =
+    let owner =
       s == .running
-      ? try? ControlSocket.call(paths.control, .init(op: .inspect), timeout: 10).inspect : nil
+      ? try? ControlSocket.call(paths.control, .init(op: .inspect), timeout: 10) : nil
     let (logical, allocated) = Disks.sizes(paths.rootfs)
     return InspectOutput(
-      record: record, status: s, live: s == .stopped ? nil : paths.loadLive(), effective: effective,
+      record: record, status: s, live: s == .stopped ? nil : paths.loadLive(),
+      effective: owner?.inspect, runtime: owner?.desktop,
       disk: DiskSummary(name: "rootfs", logicalBytes: logical, allocatedBytes: allocated))
   }
 

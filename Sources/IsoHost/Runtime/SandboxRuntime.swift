@@ -379,6 +379,30 @@ package enum BinaryResolver {
   /// `admin`); Homebrew's prefix is `admin`-group-writable.
   static let rootEquivalentGroups: Set<gid_t> = [0, 80]
 
+  /// An executable installed beside the runtime binary
+  /// (docs/design/linux-desktop-virtio-gpu.md §13), held to the runtime's
+  /// own ownership and permission checks; nil when absent or refused.
+  package static func executableBeside(_ runtimeBinary: String?, _ name: String) -> String? {
+    guard let path = beside(runtimeBinary, name) else { return nil }
+    var status = stat()
+    guard lstat(path, &status) == 0 else { return nil }
+    return try? check(path).get()
+  }
+
+  /// A regular file (not a symlink) installed beside the runtime binary, or
+  /// nil. The desktop kernel is checked against its pin by `iso-sandbox
+  /// init`, not here.
+  package static func regularFileBeside(_ runtimeBinary: String?, _ name: String) -> String? {
+    guard let path = beside(runtimeBinary, name) else { return nil }
+    var status = stat()
+    guard lstat(path, &status) == 0 else { return nil }
+    return (status.st_mode & S_IFMT) == S_IFREG ? path : nil
+  }
+
+  private static func beside(_ runtimeBinary: String?, _ name: String) -> String? {
+    runtimeBinary.map { ($0 as NSString).deletingLastPathComponent + "/" + name }
+  }
+
   /// Runtime beside the running host first, then fixed install locations.
   package static func defaultRuntimes(
     home: String?, executable: String?, name: String = "iso-sandbox"

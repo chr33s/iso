@@ -16,7 +16,7 @@ server in the guest that forwards every request over vsock to the VM's owner
 on the host. The owner captures frames and injects input exactly as it does
 for host callers today: through the VM's own virtual USB pointer and Mac
 keyboard (`VZUSBScreenCoordinatePointingDeviceConfiguration`,
-`VZMacKeyboardConfiguration`), driven by `MacScreen`.
+`VZMacKeyboardConfiguration`), driven by `VMScreen`.
 
 The guest therefore needs no Accessibility, Screen Recording or Input
 Monitoring grant, no restricted entitlement, and no SIP change, and the
@@ -130,9 +130,9 @@ Newline-delimited JSON, one request then one response.
 
   | `op` | Fields | Host operation |
   | --- | --- | --- |
-  | `session` | — | `MacScreen.newGuestSession()` |
-  | `frame` | `session` | `MacScreen.frame(session:origin: .guest)` |
-  | `act` | `session`, `action` (`CUActionRequest` field names), `basedOnFrame` (required) | `MacScreen.act(…, origin: .guest)` |
+  | `session` | — | `VMScreen.newGuestSession()` |
+  | `frame` | `session` | `VMScreen.frame(session:origin: .guest)` |
+  | `act` | `session`, `action` (`CUActionRequest` field names), `basedOnFrame` (required) | `VMScreen.act(…, origin: .guest)` |
   | `status` | — | Controller state: `controller` (`idle`, `guest`, `host`) and `holdRemainingSeconds` (integer, 0 unless `host`) |
 
   `status` returns only those two fields: no host session ids, no
@@ -352,7 +352,7 @@ the control socket.
   (`GuestCURequest.mayResend`).
 - `LineReader`: lines found whatever the read boundaries.
 
-The `MacScreen` paths (implicit hold on host input, watching without a
+The `VMScreen` paths (implicit hold on host input, watching without a
 hold, a revoked session stopping an action) need a VM and are covered by
 Gate U only.
 
@@ -480,11 +480,11 @@ refund rule in §5.3.
 
 | Piece | Where |
 | --- | --- |
-| Wire types, refusal codes, MCP mapping | `iso-sandbox/Sources/IsoMacProtocol/GuestCUProtocol.swift`, `GuestCUMCP.swift` |
+| Wire types, refusal codes, MCP mapping | `iso-sandbox/Sources/IsoGuestCU/GuestCUProtocol.swift`, `GuestCUMCP.swift` |
 | Control and limits (pure) | `iso-sandbox/Sources/IsoSandboxCore/MacOS/CUControl.swift` |
 | Listener, counts | `iso-sandbox/Sources/IsoSandboxCore/MacOS/MacGuestCULink.swift` |
-| Holds, guest sessions | `MacScreen.swift`; `cu-hold`/`cu-release` in `MacOwner.swift`; CLI `macos cu hold|release`, `macos create --guest-computer-use [--guest-frame-rate N]` |
-| Guest stdio server | `iso-sandbox/Sources/IsoMacHelper/CUMCP.swift` |
+| Holds, guest sessions | `VMScreen.swift`; `cu-hold`/`cu-release` in `MacOwner.swift`; CLI `macos cu hold|release`, `macos create --guest-computer-use [--guest-frame-rate N]` |
+| Guest stdio server | `iso-sandbox/Sources/IsoGuestCU/GuestCUConnection.swift` (`iso-macos-helper cu-mcp`, Linux `iso-cu-mcp`) |
 | `iso` | `ComputerUseConfig` (`IsoConfig.swift`, `ConfigDecoding.swift`), `MacLifecycle.swift`, `IsolationGate.verifyMacEffective`, `AgentBootstrap.withGuestComputerUse`, `BoundaryAudit.guestComputerUse` |
 | Tests | `MacGuestComputerUseTests.swift` (iso-sandbox); `LoaderTests`, `MacGateTests`, `BoundaryAuditTests` (iso); `macos-guest-*` faults; Gate U |
 

@@ -104,9 +104,13 @@ records a refused or held return (`stage_id`, typed `reason` such as
 selection by counts only (`snapshot_id`, classifier, selected, bytes, omitted,
 deleted-tracked), `boundary.handoff_fence` records an instance fenced
 after an unconfirmed restart cleanup, and `boundary.guest_computer_use`
-records a macOS boot's guest-driven computer use when `iso stop` stops it
+records the guest-driven computer use of a boot (a macOS guest, or a Linux
+desktop instance) when `iso stop` stops it
 (`frame_rate`, and counts of `sessions`, `frames`, `actions`,
-`status_requests`, host-hold `preemptions` and `refusals` by code). For a
+`status_requests`, screen-sync `waits` and `wait_outcomes` by outcome,
+host-hold `preemptions` and `refusals` by code), and
+`boundary.live_view` records a boot's [live view](design/computer-use-live-view.md)
+when a stream started (`streams`, `viewers`, `takeovers`, `input_events`). For a
 [Core AI](coreai.md) instance, each boot records `mac.coreai.attached`
 (accelerator device classes, template, template and runtime builds),
 `host.security.reduced` (the owner found AMFI relaxed on the host) and,

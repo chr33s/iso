@@ -15,7 +15,10 @@ Stages, in order, each explicit:
 2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`),
             the filtered-egress companion (`iso-egress`), and the Apple
             runtime (`iso-sandbox`, with the macOS guest agent
-            `iso-macos-helper`). Every binary is signed ad hoc with the
+            `iso-macos-helper`), plus the Linux `desktop` images' guest
+            files: `iso-cu-mcp` (Static Linux SDK) and `vmlinux-desktop`
+            (scripts/build-desktop-kernel.sh, which fetches the pinned Linux
+            source and needs Apple `container`). Every macOS binary is signed ad hoc with the
             hardened runtime and the Enhanced Security entitlements
             (scripts/enhanced-security.entitlements; iso-sandbox's come from
             iso-sandbox/iso-sandbox.entitlements, signed by
@@ -29,10 +32,11 @@ Stages, in order, each explicit:
             other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
-            iso-egress, iso-sandbox, iso-macos-helper, legal notices,
-            the skills/iso agent skill, BUILD.json), plus a
-            `SHA256SUMS` listing
-            the archive, next to it in `--out`. `<name>` is `--tag`, else the
+            iso-egress, iso-sandbox, iso-macos-helper, iso-cu-mcp,
+            vmlinux-desktop, legal notices,
+            the skills/iso agent skill, BUILD.json), the desktop kernel's
+            corresponding source as `iso-<name>-vmlinux-desktop-source.tar.gz`,
+            and a `SHA256SUMS` listing both, next to it in `--out`. `<name>` is `--tag`, else the
             revision. This is the layout `iso update` and install.sh expect.
 
 Nothing is published or uploaded; publication and attestation belong to the
@@ -41,6 +45,7 @@ workflow that runs this.
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import platform
@@ -57,6 +62,8 @@ TRIPLE = "aarch64-apple-darwin"
 BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]
 # Signed here; build-iso-sandbox.sh signs iso-sandbox and iso-macos-helper.
 ADHOC_SIGNED = ["iso", "iso-proxy", "iso-egress"]
+# Linux guest files (ELF, not codesigned): checked by content instead.
+LINUX_GUEST_FILES = ["iso-cu-mcp", "vmlinux-desktop"]
 ENTITLEMENTS = "scripts/enhanced-security.entitlements"
 SKILL = Path("skills/iso")
 # Private entitlements need AMFI relaxed on the host; the experimental
@@ -135,9 +142,13 @@ def build(staging, configuration, release, prefix):
     run(["swift", "build", "--package-path", egress_package, *common], staging)
     egress = Path(run(["swift", "build", "--package-path", egress_package, *common, "--show-bin-path"],
                       staging, capture=True).strip())
-    phase("Build and ad-hoc sign iso-sandbox and iso-macos-helper")
-    run([staging / "scripts/build-iso-sandbox.sh", prefix], staging)
+    phase("Build and ad-hoc sign iso-sandbox and iso-macos-helper; build iso-cu-mcp")
+    run([staging / "scripts/build-iso-sandbox.sh", "--require-cu-mcp", prefix], staging)
+    phase("Build the desktop kernel")
+    run([staging / "scripts/build-desktop-kernel.sh", prefix / "kernel"], staging)
     return {
+        "iso-cu-mcp": prefix / "bin/iso-cu-mcp",
+        "vmlinux-desktop": prefix / "kernel/vmlinux-desktop",
         "iso": host / "iso",
         "iso-proxy": proxy / "iso-proxy",
         "iso-egress": egress / "iso-egress",
@@ -181,8 +192,9 @@ def check_entitlements(name, granted, required):
         raise SystemExit(f"{name} carries private entitlement(s) {', '.join(private)}")
 
 
-def verify(directory, expected_version, entitlements):
-    required = plistlib.loads(entitlements.read_bytes())
+def verify(directory, expected_version, source):
+    """Check the bundle against `source`, the tree it was built from."""
+    required = plistlib.loads((source / ENTITLEMENTS).read_bytes())
     for name in UNRELEASED:
         if (directory / name).exists():
             raise SystemExit(f"{name} must never be in a release")
@@ -192,10 +204,39 @@ def verify(directory, expected_version, entitlements):
             raise SystemExit(f"{name} is missing or not executable")
         run(["codesign", "--verify", "--strict", path], directory)
         check_entitlements(name, signed_entitlements(path, directory), required)
+    verify_linux_guest_files(directory, source)
     version = run([directory / "iso", "--version"], directory, capture=True).strip()
     if version != expected_version:
         raise SystemExit(f"expected `iso --version` to print {expected_version!r}, got {version!r}")
     run([directory / "iso-sandbox", "version"], directory, capture=True)
+
+
+def desktop_kernel_pins(source):
+    """The SHA-256s in KernelPin.desktopAllowed (iso-sandbox Layout.swift)."""
+    layout = (source / "iso-sandbox/Sources/IsoSandboxCore/Layout.swift").read_text()
+    block = layout[layout.index("package static let desktopAllowed"):]
+    block = block[:block.index("]")]
+    return {line.strip().strip('",') for line in block.splitlines()
+            if line.strip().startswith('"') and len(line.strip().strip('",')) == 64}
+
+
+def desktop_kernel_source_pins(source):
+    """The Linux version, tarball URL and hashes scripts/build-desktop-kernel.sh pins."""
+    script = (source / "scripts/build-desktop-kernel.sh").read_text()
+    pins = {key: script.split(f"{key}=", 1)[1].split("\n", 1)[0].strip('"')
+            for key in ("KVER", "SOURCE_URL", "SOURCE_SHA256", "BASE_CONFIG_SHA256")}
+    pins["SOURCE_URL"] = pins["SOURCE_URL"].replace("${KVER}", pins["KVER"])
+    return pins
+
+
+def verify_linux_guest_files(directory, source):
+    """An arm64 Linux executable, and the pinned desktop kernel."""
+    mcp = (directory / "iso-cu-mcp").read_bytes()
+    if not (mcp[:6] == b"\x7fELF\x02\x01" and mcp[18:20] == b"\xb7\x00"):
+        raise SystemExit("iso-cu-mcp is not an arm64 Linux executable")
+    kernel = sha256(directory / "vmlinux-desktop")
+    if kernel not in desktop_kernel_pins(source):
+        raise SystemExit(f"vmlinux-desktop (sha256 {kernel}) is not a pinned desktop kernel")
 
 
 def sha256(path):
@@ -230,6 +271,61 @@ def copy_legal_files(staging, bundle):
                 target = destination / source.relative_to(checkout)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+
+
+def copy_linux_guest_legal(prefix, staging, bundle):
+    """The Linux guest files' notices: the Static Linux SDK's SBOM for
+    iso-cu-mcp, and the desktop kernel's configuration and source pins
+    (GPL-2.0; PROVENANCE.md)."""
+    mcp = bundle / "third-party" / "iso-cu-mcp"
+    mcp.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(prefix / "bin/iso-cu-mcp.sbom.spdx.json", mcp / "sbom.spdx.json")
+    kernel = bundle / "third-party" / "vmlinux-desktop"
+    kernel.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(prefix / "kernel/vmlinux-desktop.config", kernel / "config")
+    pins = desktop_kernel_source_pins(staging)
+    pins["license"] = "GPL-2.0-only WITH Linux-syscall-note"
+    pins["source_asset"] = source_asset_name(bundle.name)
+    (kernel / "SOURCE.json").write_text(json.dumps(pins, indent=2) + "\n")
+
+
+def source_asset_name(bundle_name):
+    """The release asset with the desktop kernel's corresponding source."""
+    return bundle_name.removesuffix(f"-{TRIPLE}") + "-vmlinux-desktop-source.tar.gz"
+
+
+def write_kernel_source(prefix, staging, destination):
+    """The desktop kernel's corresponding source (GPL-2.0 §3): the exact Linux
+    tarball, the configuration it was built with, and the scripts and build
+    image that build it, as one archive published beside the release."""
+    root = destination.name.removesuffix(".tar.gz")
+    version = desktop_kernel_source_pins(staging)["KVER"]
+    tarball = f"linux-{version}.tar.xz"
+    members = {
+        tarball: prefix / "kernel" / tarball,
+        "vmlinux-desktop.input.config": prefix / "kernel/vmlinux-desktop.input.config",
+        "vmlinux-desktop.config": prefix / "kernel/vmlinux-desktop.config",
+        "scripts/build-desktop-kernel.sh": staging / "scripts/build-desktop-kernel.sh",
+        "iso-sandbox/kernel/desktop.config": staging / "iso-sandbox/kernel/desktop.config",
+        "iso-sandbox/kernel/build.sh": staging / "iso-sandbox/kernel/build.sh",
+        "iso-sandbox/kernel/Dockerfile": staging / "iso-sandbox/kernel/Dockerfile",
+    }
+    readme = (f"The corresponding source of vmlinux-desktop (Linux {version}, GPL-2.0-only\n"
+              f"WITH Linux-syscall-note) in this iso release. {tarball} is the\n"
+              "unmodified upstream tarball; vmlinux-desktop.input.config is the\n"
+              "configuration given to `make olddefconfig`, vmlinux-desktop.config the result.\n"
+              "From an iso checkout, scripts/build-desktop-kernel.sh --source\n"
+              f"{tarball} OUT rebuilds it.\n")
+    with tarfile.open(destination, "w:gz") as tar:
+        info = tarfile.TarInfo(f"{root}/README")
+        info.size = len(readme.encode())
+        tar.addfile(info, io.BytesIO(readme.encode()))
+        for name, source in members.items():
+            info = tar.gettarinfo(source, arcname=f"{root}/{name}")
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            with source.open("rb") as handle:
+                tar.addfile(info, handle)
 
 
 def copy_skill(staging, bundle):
@@ -298,6 +394,7 @@ def main():
         for binary, source in binaries.items():
             shutil.copy2(source, bundle / binary)
         copy_legal_files(staging, bundle)
+        copy_linux_guest_legal(work / "runtime", staging, bundle)
         copy_skill(staging, bundle)
         phase("Ad-hoc sign iso, iso-proxy and iso-egress")
         adhoc_sign(bundle, staging / ENTITLEMENTS)
@@ -305,13 +402,14 @@ def main():
             phase("Sign and notarize (Developer ID)")
             run([ROOT / "scripts/macos-sign-notarize.sh", bundle], work, signing=True)
         phase("Verify binaries")
-        verify(bundle, expected_version, staging / ENTITLEMENTS)
+        verify(bundle, expected_version, staging)
         manifest = {
             "format": 1, "name": name, "version": version, "tag": args.tag,
             "configuration": configuration, "release_build": args.release,
             "source_revision": revision, "source_dirty": dirty,
             "architecture": "arm64", "minimum_macos": "27.0",
             "binaries": {binary: sha256(bundle / binary) for binary in BINARIES},
+            "linux_guest_files": {name: sha256(bundle / name) for name in LINUX_GUEST_FILES},
             "tested": args.test, "developer_id_signed": args.sign,
         }
         (bundle / "BUILD.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -322,8 +420,12 @@ def main():
         staged = args.out / f".{name}.tar.gz.partial"
         archive_bundle(bundle, staged)
         os.replace(staged, archive)
-        (args.out / "SHA256SUMS").write_text(f"{sha256(archive)}  {archive.name}\n")
-        print(f"{archive}\n{args.out / 'SHA256SUMS'}")
+        phase("Archive the desktop kernel's source")
+        source_asset = args.out / source_asset_name(name)
+        write_kernel_source(work / "runtime", staging, source_asset)
+        (args.out / "SHA256SUMS").write_text(
+            f"{sha256(archive)}  {archive.name}\n{sha256(source_asset)}  {source_asset.name}\n")
+        print(f"{archive}\n{source_asset}\n{args.out / 'SHA256SUMS'}")
     return 0
 
 

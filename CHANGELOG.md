@@ -10,12 +10,60 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Added
 
+- **Linux desktop images:** a built-in `desktop` profile (Xorg, openbox
+  and fonts from Ubuntu, Firefox from Mozilla's pinned apt repository) whose
+  instances get a virtio-gpu display and a USB keyboard and pointer, and
+  boot a second, separately pinned kernel built by
+  `scripts/build-desktop-kernel.sh`. Releases now carry that kernel
+  (`vmlinux-desktop`) and `iso-cu-mcp`, the guest MCP server built with the
+  Swift Static Linux SDK, and install them beside `iso-sandbox`;
+  `apple_container.desktop_kernel` overrides the kernel. The host drives them with
+  `iso-sandbox cu` (frames read from the VM view's framebuffer surface,
+  input, `wait`, `hold`, the live view), and `computer_use.guest_access`
+  now also gives their agents the `iso-cu` MCP server over vsock 7802. The
+  runtime adds `init --desktop-kernel`, `create --display virtio` and the
+  `linux-display` feature; the isolation gate checks a display instance's
+  display, scanout and vsock ports, and headless instances are unchanged
+  ([design](docs/design/linux-desktop-virtio-gpu.md)). `iso stop` audits a
+  desktop instance's guest computer use and live view as it does a macOS
+  guest's. `scripts/build-iso-sandbox.sh` skips `iso-cu-mcp`, with a
+  warning, on a host without the swift.org toolchain or the Static Linux
+  SDK (`--require-cu-mcp` fails instead).
+
 - **Agent skill:** `skills/iso/`, an Agent Skill for a host coding agent to
   operate `iso` through `--output json`, with staged returns and no credential
   handling ([docs/agent-skill.md](docs/agent-skill.md)). Release archives carry
   it, `INSTALL_SKILL=1 install.sh` installs it into `~/.claude/skills` and
   `~/.agents/skills` (`SKILL_DIRS` overrides), and this repository links it as
   `.agents/skills/iso`.
+- **Computer use, screen sync:** macOS frames and actions report a per-boot
+  `damageSeq`, and a new `wait` operation (guest vsock 7802 and
+  `iso-sandbox macos cu wait`) returns once the display, or a region of it,
+  has been quiet for `idleMs` (`settled`, `unchanged` or `timedOut`). The
+  guest `iso-cu` MCP server's input tools settle by default
+  (`settle_ms`, 250 ms; 0 turns it off), and a new `wait_for_screen` tool
+  waits and then takes one screenshot. The owner samples the display only on
+  frames, before actions and while a wait runs; one wait runs per sandbox,
+  for at most 30 s, and a host hold ends a guest's wait. The boundary audit
+  adds `waits` and `wait_outcomes` to `boundary.guest_computer_use`
+  ([design](docs/design/computer-use-screen-sync.md)).
+- **Computer use, live view:** `iso-sandbox macos cu stream <name>` starts an
+  opt-in browser view of a macOS guest and prints a
+  `http://127.0.0.1:<port>/#<token>` URL; `--stop` ends it, as do 60 s with
+  no viewer and the VM stopping. The owner encodes the display to H.264 with
+  VideoToolbox only while a viewer is connected, and the embedded page
+  decodes it with WebCodecs. **Take control** takes the host hold (ending
+  the guest's session), each input extends it to 60 s, and held keys are
+  released on release or disconnect. This adds a host loopback listener,
+  gated by a 256-bit token and exact `Host` and `Origin` checks; `inspect`
+  reports `liveViewListening` and the audit records `boundary.live_view`
+  counts. The stream is Constrained Baseline with a low-delay SPS, so
+  browser hardware decoders show each frame as it arrives
+  ([design](docs/design/computer-use-live-view.md)).
+- **Computer use, frames:** the owner renders the guest display straight at
+  framebuffer pixels instead of at the window's 2× backing and scaling
+  down, cutting a frame or damage sample from ~75 ms to ~6 ms on a Retina
+  host.
 
 ### Changed
 

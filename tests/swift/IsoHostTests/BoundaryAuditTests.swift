@@ -40,23 +40,55 @@ private func auditInstance() throws -> Instance {
   let instance = try auditInstance()
   defer { try? FileManager.default.removeItem(atPath: instance.directory) }
   let json = #"""
-    {"frameRate":4,"sessions":2,"frames":30,"actions":12,"statusRequests":1,"preemptions":1,
+    {"frameRate":4,"sessions":2,"frames":30,"actions":12,"statusRequests":1,"waits":5,
+     "waitOutcomes":{"settled":4,"timedOut":1,"other":2},"preemptions":1,
      "refusals":{"held_by_host":3,"rate_limited":1,"Bad Code!":9}}
     """#
   let counts = try JSONDecoder().decode(MacGuestCUCounts.self, from: Data(json.utf8))
   #expect(counts.refusals == ["held_by_host": 3, "rate_limited": 1])
+  #expect(counts.waitOutcomes == ["settled": 4, "timedOut": 1])
   let time = Date(timeIntervalSince1970: 1_800_000_000)
   BoundaryAudit.record(instance, .guestComputerUse(counts), now: time)
   #expect(
     try canonicalJSON(try BoundaryAudit.lines(instance)[0])
       == canonicalJSON(
-        #"{"time":"2027-01-15T08:00:00Z","event":"guest_computer_use","frame_rate":4,"sessions":2,"frames":30,"actions":12,"status_requests":1,"preemptions":1,"refusals":{"held_by_host":3,"rate_limited":1}}"#
+        #"{"time":"2027-01-15T08:00:00Z","event":"guest_computer_use","frame_rate":4,"sessions":2,"frames":30,"actions":12,"status_requests":1,"waits":5,"wait_outcomes":{"settled":4,"timedOut":1},"preemptions":1,"refusals":{"held_by_host":3,"rate_limited":1}}"#
       ))
   #expect(BoundaryAudit.Event.guestComputerUse(counts).auditKind == .boundaryGuestComputerUse)
   // A negative count is refused at decode, never trapped on when recorded.
   let negative = json.replacingOccurrences(of: #""frames":30"#, with: #""frames":-1"#)
   #expect(throws: DecodingError.self) {
     try JSONDecoder().decode(MacGuestCUCounts.self, from: Data(negative.utf8))
+  }
+  let negativeWaits = json.replacingOccurrences(of: #""waits":5"#, with: #""waits":-5"#)
+  #expect(throws: DecodingError.self) {
+    try JSONDecoder().decode(MacGuestCUCounts.self, from: Data(negativeWaits.utf8))
+  }
+  // An owner from before screen sync reports no waits.
+  let older = #"""
+    {"frameRate":4,"sessions":2,"frames":30,"actions":12,"statusRequests":1,"preemptions":1,
+     "refusals":{}}
+    """#
+  let previous = try JSONDecoder().decode(MacGuestCUCounts.self, from: Data(older.utf8))
+  #expect(previous.waits == 0 && previous.waitOutcomes.isEmpty)
+}
+
+@Test func liveViewIsAuditedAsCountsOnly() throws {
+  let instance = try auditInstance()
+  defer { try? FileManager.default.removeItem(atPath: instance.directory) }
+  let json = #"{"streams":2,"viewers":3,"takeovers":1,"inputEvents":40}"#
+  let counts = try JSONDecoder().decode(MacLiveViewCounts.self, from: Data(json.utf8))
+  let time = Date(timeIntervalSince1970: 1_800_000_000)
+  BoundaryAudit.record(instance, .liveView(counts), now: time)
+  #expect(
+    try canonicalJSON(try BoundaryAudit.lines(instance)[0])
+      == canonicalJSON(
+        #"{"time":"2027-01-15T08:00:00Z","event":"live_view","streams":2,"viewers":3,"takeovers":1,"input_events":40}"#
+      ))
+  #expect(BoundaryAudit.Event.liveView(counts).auditKind == .boundaryLiveView)
+  let negative = json.replacingOccurrences(of: #""viewers":3"#, with: #""viewers":-3"#)
+  #expect(throws: DecodingError.self) {
+    try JSONDecoder().decode(MacLiveViewCounts.self, from: Data(negative.utf8))
   }
 }
 

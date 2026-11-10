@@ -225,10 +225,14 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   package var lifecycle: InstanceLifecycle = .reusable
   /// Absent for Linux guests, so their records are unchanged.
   package var guestOS: GuestOS? = nil
-  /// macOS guests: guest-driven computer use as the sandbox was created;
-  /// absent when off. Bootstrap and stop follow this, not the current
-  /// configuration, which may have changed since.
+  /// macOS guests and Linux guests with a display: guest-driven computer
+  /// use as the sandbox was created; absent when off. Bootstrap and stop
+  /// follow this, not the current configuration, which may have changed
+  /// since.
   package var guestComputerUse: MacGuestComputerUse? = nil
+  /// Linux guests: the display the sandbox was created with; absent when
+  /// headless, so a headless instance's record is unchanged.
+  package var display: LinuxGuestDisplay? = nil
   /// macOS guests: paravirtualized Core AI as the sandbox was created;
   /// absent when off.
   package var coreAI: MacCoreAIRecord? = nil
@@ -301,6 +305,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     case guestOS = "guest_os"
     case guestComputerUse = "guest_computer_use"
     case coreAI = "coreai"
+    case display
   }
 
   /// Persist explicit nulls for optional observations.
@@ -326,6 +331,7 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     try c.encodeIfPresent(guestOS, forKey: .guestOS)
     try c.encodeIfPresent(guestComputerUse, forKey: .guestComputerUse)
     try c.encodeIfPresent(coreAI, forKey: .coreAI)
+    try c.encodeIfPresent(display, forKey: .display)
   }
 }
 

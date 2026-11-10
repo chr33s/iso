@@ -156,7 +156,7 @@ func normalized(_ c: IsoConfig) -> JSONValue {
     ]),
     "apple_container": .object([
       "binary": string(a.binary?.path), "builder": string(a.builder?.path),
-      "kernel": string(a.kernel?.path),
+      "kernel": string(a.kernel?.path), "desktop_kernel": string(a.desktopKernel?.path),
       "probe_timeout_seconds": int(a.probeTimeout.seconds),
       "operation_timeout_seconds": int(a.operationTimeout.seconds),
       "create_timeout_seconds": int(a.createTimeout.seconds),

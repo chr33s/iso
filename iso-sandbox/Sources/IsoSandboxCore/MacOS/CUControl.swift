@@ -7,7 +7,26 @@ import IsoMacProtocol
 /// released or expires. Pure, so the arbitration rules are unit-testable.
 package struct CUControl: Sendable {
   private(set) var guestSession: String?
-  private var holdUntil: Date?
+  /// When each kind of hold ends; the display is held until the later one.
+  private var explicitUntil: Date?
+  private var implicitUntil: Date?
+
+  /// Who took a hold, which decides who may end it early.
+  package enum Hold: Sendable {
+    /// `cu hold`: ended by `cu release` or its expiry, and by nothing else.
+    case explicit
+    /// Taken by host input or a live-view viewer in control; a viewer's
+    /// release ends it too.
+    case implicit
+  }
+
+  private var holdUntil: Date? {
+    switch (explicitUntil, implicitUntil) {
+    case (let a?, let b?): max(a, b)
+    case (let a?, nil): a
+    case (nil, let b): b
+    }
+  }
 
   /// The hold host input takes before it sends anything.
   package static let implicitHold: TimeInterval = 60
@@ -30,14 +49,24 @@ package struct CUControl: Sendable {
   }
 
   /// Starts or extends a host hold; returns the guest session it ends.
-  package mutating func hold(for seconds: TimeInterval, at now: Date) -> String? {
+  package mutating func hold(_ kind: Hold, for seconds: TimeInterval, at now: Date) -> String? {
     let until = now.addingTimeInterval(seconds)
-    holdUntil = max(holdUntil ?? until, until)
+    switch kind {
+    case .explicit: explicitUntil = max(explicitUntil ?? until, until)
+    case .implicit: implicitUntil = max(implicitUntil ?? until, until)
+    }
     defer { guestSession = nil }
     return guestSession
   }
 
-  package mutating func release() { holdUntil = nil }
+  /// `cu release`: ends every hold.
+  package mutating func release() {
+    explicitUntil = nil
+    implicitUntil = nil
+  }
+
+  /// A viewer's release: ends the implicit hold; a `cu hold` runs on.
+  package mutating func releaseImplicit() { implicitUntil = nil }
 
   private static let held = SandboxError("the host holds computer use", refusal: .heldByHost)
 

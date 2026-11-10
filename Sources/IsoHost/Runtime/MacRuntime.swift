@@ -68,11 +68,15 @@ package struct MacEffective: Sendable, Equatable, Decodable {
   /// A Core AI sandbox's owner preflight: whether AMFI is relaxed on the
   /// host. Nil for any other sandbox.
   package let hostSecurityReduced: Bool?
+  /// Whether a loopback live-view listener is open now (`cu stream`, opt-in
+  /// and token-gated); absent from owners that predate it: none.
+  package let liveViewListening: Bool
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, template, cpus, memoryBytes, displays, pointingDevices, keyboards, storage, network
     case macAddress, vsockPorts, directoryShares, audioDevices, serialPorts, usbControllers
     case clipboard, ownerTopology, guestComputerUse, accelerators, hostSecurityReduced
+    case liveViewListening
   }
 
   package init(from decoder: any Decoder) throws {
@@ -97,6 +101,7 @@ package struct MacEffective: Sendable, Equatable, Decodable {
     guestComputerUse = try c.decodeIfPresent(MacGuestComputerUse.self, forKey: .guestComputerUse)
     accelerators = try c.decodeIfPresent([String].self, forKey: .accelerators) ?? []
     hostSecurityReduced = try c.decodeIfPresent(Bool.self, forKey: .hostSecurityReduced)
+    liveViewListening = try c.decodeIfPresent(Bool.self, forKey: .liveViewListening) ?? false
   }
 }
 
@@ -179,10 +184,13 @@ package struct MacRuntimeStatus: Sendable, Equatable, Decodable {
   /// The guest's Core AI report for this boot; absent until it answers, or
   /// when Core AI is off. An invalid report is dropped.
   package let coreAI: MacCoreAIProbe?
+  /// This boot's live-view counts; absent when no stream started. An
+  /// invalid report is dropped.
+  package let liveView: MacLiveViewCounts?
 
   enum CodingKeys: String, CodingKey {
     case vmState, bootId, enrollment, helperConnected, sshHostKey, sshHostKeyConfirmed, ipv4
-    case guestComputerUse, coreAI
+    case guestComputerUse, coreAI, liveView
   }
 
   package init(from decoder: any Decoder) throws {
@@ -196,7 +204,52 @@ package struct MacRuntimeStatus: Sendable, Equatable, Decodable {
     ipv4 = try c.decode(String.self, forKey: .ipv4)
     guestComputerUse = try? c.decodeIfPresent(MacGuestCUCounts.self, forKey: .guestComputerUse)
     coreAI = (try? c.decodeIfPresent(MacCoreAIProbe.self, forKey: .coreAI)) ?? nil
+    liveView = (try? c.decodeIfPresent(MacLiveViewCounts.self, forKey: .liveView)) ?? nil
   }
+}
+
+/// The owner's per-boot live-view counts (`runtime.liveView`).
+package struct MacLiveViewCounts: Sendable, Equatable, Decodable {
+  package let streams: Int
+  package let viewers: Int
+  package let takeovers: Int
+  package let inputEvents: Int
+
+  package init(streams: Int, viewers: Int, takeovers: Int, inputEvents: Int) {
+    self.streams = streams
+    self.viewers = viewers
+    self.takeovers = takeovers
+    self.inputEvents = inputEvents
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case streams, viewers, takeovers, inputEvents
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      streams: try nonNegative(c, .streams), viewers: try nonNegative(c, .viewers),
+      takeovers: try nonNegative(c, .takeovers), inputEvents: try nonNegative(c, .inputEvents))
+  }
+}
+
+/// An owner-reported count: required unless `fallback` is given (for a key an
+/// older owner omits), and never negative.
+private func nonNegative<Key: CodingKey>(
+  _ c: KeyedDecodingContainer<Key>, _ key: Key, default fallback: Int? = nil
+) throws -> Int {
+  let value =
+    if let fallback {
+      try c.decodeIfPresent(Int.self, forKey: key) ?? fallback
+    } else {
+      try c.decode(Int.self, forKey: key)
+    }
+  guard value >= 0 else {
+    throw DecodingError.dataCorruptedError(
+      forKey: key, in: c, debugDescription: "a count is never negative")
+  }
+  return value
 }
 
 /// The owner's per-boot guest computer-use counts (`runtime.guestComputerUse`).
@@ -206,41 +259,47 @@ package struct MacGuestCUCounts: Sendable, Equatable, Decodable {
   package let frames: Int
   package let actions: Int
   package let statusRequests: Int
+  /// Screen-sync waits that ran to an outcome; 0 from an owner without them.
+  package let waits: Int
+  /// Waits by outcome (`settled`, `unchanged`, `timedOut`); anything else is dropped.
+  package let waitOutcomes: [String: Int]
   package let preemptions: Int
   /// Refusal codes as the owner names them; anything else is dropped.
   package let refusals: [String: Int]
 
+  /// The outcomes the runtime's `wait` reports.
+  static let outcomes: Set<String> = ["settled", "unchanged", "timedOut"]
+
   package init(
     frameRate: Int, sessions: Int, frames: Int, actions: Int, statusRequests: Int,
-    preemptions: Int, refusals: [String: Int]
+    waits: Int = 0, waitOutcomes: [String: Int] = [:], preemptions: Int, refusals: [String: Int]
   ) {
     self.frameRate = frameRate
     self.sessions = sessions
     self.frames = frames
     self.actions = actions
     self.statusRequests = statusRequests
+    self.waits = waits
+    self.waitOutcomes = waitOutcomes.filter { Self.outcomes.contains($0.key) && $0.value >= 0 }
     self.preemptions = preemptions
     self.refusals = refusals.filter { Self.isCode($0.key) && $0.value >= 0 }
   }
 
   enum CodingKeys: String, CodingKey {
-    case frameRate, sessions, frames, actions, statusRequests, preemptions, refusals
+    case frameRate, sessions, frames, actions, statusRequests, waits, waitOutcomes, preemptions
+    case refusals
   }
 
   package init(from decoder: any Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
-    for key in [CodingKeys.frameRate, .sessions, .frames, .actions, .statusRequests, .preemptions]
-    where try c.decode(Int.self, forKey: key) < 0 {
-      throw DecodingError.dataCorruptedError(
-        forKey: key, in: c, debugDescription: "a count is never negative")
-    }
     self.init(
-      frameRate: try c.decode(Int.self, forKey: .frameRate),
-      sessions: try c.decode(Int.self, forKey: .sessions),
-      frames: try c.decode(Int.self, forKey: .frames),
-      actions: try c.decode(Int.self, forKey: .actions),
-      statusRequests: try c.decode(Int.self, forKey: .statusRequests),
-      preemptions: try c.decode(Int.self, forKey: .preemptions),
+      frameRate: try nonNegative(c, .frameRate), sessions: try nonNegative(c, .sessions),
+      frames: try nonNegative(c, .frames), actions: try nonNegative(c, .actions),
+      statusRequests: try nonNegative(c, .statusRequests),
+      // Absent from an owner that predates screen sync.
+      waits: try nonNegative(c, .waits, default: 0),
+      waitOutcomes: try c.decodeIfPresent([String: Int].self, forKey: .waitOutcomes) ?? [:],
+      preemptions: try nonNegative(c, .preemptions),
       refusals: try c.decode([String: Int].self, forKey: .refusals))
   }
 

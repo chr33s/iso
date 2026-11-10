@@ -15,6 +15,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper")
+# Linux `desktop` images' guest files, installed beside the binaries. They are
+# not Mach-O, so they carry no signature or notarization of their own.
+GUEST_FILES = ("iso-cu-mcp", "vmlinux-desktop")
 
 
 def version(value):
@@ -42,7 +45,10 @@ def command(args, env, timeout=300):
     return result.stdout + result.stderr
 
 
-def check_bundle(work, tag, env):
+def check_bundle(work, tag, env, guest_files=True):
+    for name in GUEST_FILES if guest_files else ():
+        if not (work / "bin" / name).is_file():
+            raise ValueError(f"installed bundle missing {name}")
     for binary in BINARIES:
         path = work / "bin" / binary
         if not path.is_file() or not os.access(path, os.X_OK):
@@ -67,14 +73,16 @@ def accept(work, initial, target, download_timeout):
     for marker in ("SHA256SUMS signature verified.", "Attestation verified against attestations.jsonl"):
         if marker not in installed:
             raise ValueError("installer did not confirm credential-free bundled verification")
-    check_bundle(work, initial, env)
+    # A starting release that predates the guest files installs none.
+    check_bundle(work, initial, env, guest_files=initial == target)
     executable = work / "bin/iso"
-    before = {name: (work / "bin" / name).stat().st_ino for name in BINARIES}
+    before = {name: (work / "bin" / name).stat().st_ino for name in BINARIES + GUEST_FILES
+              if (work / "bin" / name).exists()}
     command([executable, "update", "--version", target, "--force", "--yes"], env,
             timeout=download_timeout)
     check_bundle(work, target, env)
     if any((work / "bin" / name).stat().st_ino == inode for name, inode in before.items()):
-        raise ValueError("update did not replace every installed binary")
+        raise ValueError("update did not replace every installed file")
     # The existing uninstall contract removes the CLI and optionally its data;
     # it does not promise removal of companion executables from the directory.
     command([executable, "uninstall", "--yes", "--keep-data"], env)

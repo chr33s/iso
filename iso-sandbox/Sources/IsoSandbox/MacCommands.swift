@@ -192,11 +192,15 @@ struct MacReconcile: AsyncParsableCommand {
   func run() async throws { try printJSON(try MacSandboxes.reconcile(root: try root.resolve())) }
 }
 
-/// Computer use against a running macOS sandbox.
+/// Computer use against a running macOS sandbox or Linux sandbox with a
+/// display; `macos cu` and the top-level `cu` are the same command.
 struct MacCU: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "cu", abstract: "Computer use: sessions, frames, actions, dialog responses.",
-    subcommands: [Session.self, Frame.self, Act.self, Respond.self, Hold.self, Release.self])
+    subcommands: [
+      Session.self, Frame.self, Act.self, Wait.self, Respond.self, Hold.self, Release.self,
+      Stream.self,
+    ])
 
   static func check(_ r: MacControlResponse) throws -> MacControlResponse {
     guard r.ok else { throw SandboxError(r.error ?? "refused") }
@@ -231,6 +235,7 @@ struct MacCU: AsyncParsableCommand {
     var sha256: String
     var timestamp: Date
     var path: String
+    var damageSeq: UInt64?
   }
 
   struct Frame: AsyncParsableCommand {
@@ -252,7 +257,7 @@ struct MacCU: AsyncParsableCommand {
           frameId: f.frameId, seq: f.seq, width: f.width, height: f.height, bootId: f.bootId,
           guestBoot: f.guestBoot, vmInstance: f.vmInstance, sha256: f.sha256,
           timestamp: f.timestamp,
-          path: url.path))
+          path: url.path, damageSeq: f.damageSeq))
     }
   }
 
@@ -273,7 +278,56 @@ struct MacCU: AsyncParsableCommand {
         try MacSandboxes.cu(
           root: try root.resolve(), id: try SandboxID(id),
           .init(op: .cuAct, session: session, action: request, basedOnFrame: basedOnFrame)))
-      try printJSON(["submitted": r.submitted ?? 0])
+      try printJSON(ActOutput(submitted: r.submitted ?? 0, damageSeq: r.damageSeq))
+    }
+  }
+
+  struct ActOutput: Encodable {
+    var submitted: Int
+    /// Sampled just before the first input event; nil from an older owner.
+    var damageSeq: UInt64?
+  }
+
+  struct WaitOutput: Encodable {
+    var outcome: GuestCUWaitOutcome
+    var elapsedMs: Int
+    var damageSeq: UInt64
+  }
+
+  struct Wait: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Wait until the display (or a region of it) has been quiet for --idle-ms.")
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    @Option var session: String
+    @Option(help: "The damageSeq to measure change from (default: now)") var since: UInt64?
+    @Option(help: "Quiet time that counts as settled (50-2000)") var idleMs: Int?
+    @Option(help: "Give up after this long (100-30000)") var timeoutMs: Int?
+    @Option(help: "idle: quiet from now; change: a change first, then quiet") var until:
+      GuestCUWaitUntil?
+    @Option(help: "Only watch x,y,width,height (framebuffer pixels)") var region: String?
+
+    static func parseRegion(_ s: String) throws -> GuestCURegion {
+      let parts = s.split(separator: ",", omittingEmptySubsequences: false).map {
+        Int($0.trimmingCharacters(in: .whitespaces))
+      }
+      guard parts.count == 4, let x = parts[0], let y = parts[1], let w = parts[2], let h = parts[3]
+      else { throw ValidationError("--region must be x,y,width,height") }
+      return GuestCURegion(x: x, y: y, width: w, height: h)
+    }
+
+    func run() async throws {
+      var req = MacControlRequest(op: .cuWait, session: session)
+      req.since = since
+      req.idleMs = idleMs
+      req.timeoutMs = timeoutMs
+      req.until = until
+      req.region = try region.map(Self.parseRegion)
+      let r = try check(try MacSandboxes.cu(root: try root.resolve(), id: try SandboxID(id), req))
+      guard let w = r.wait, let seq = r.damageSeq else {
+        throw SandboxError("no wait result (the owner predates cu wait)")
+      }
+      try printJSON(WaitOutput(outcome: w.outcome, elapsedMs: w.elapsedMs, damageSeq: seq))
     }
   }
 
@@ -315,6 +369,29 @@ struct MacCU: AsyncParsableCommand {
     }
   }
 
+  struct Stream: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Start a loopback live view of the display and print its URL (or --stop it).",
+      discussion: """
+        The URL carries a one-time token in its fragment: anyone on this Mac with the URL can \
+        watch, and take control under a host hold. The stream ends after 60 s with no viewer, \
+        on --stop, and when the VM stops.
+        """)
+    @OptionGroup var root: RootOptions
+    @Argument var id: String
+    @Flag(help: "Stop the running stream") var stop = false
+    func run() async throws {
+      let r = try check(
+        try MacSandboxes.cu(
+          root: try root.resolve(), id: try SandboxID(id),
+          .init(op: stop ? .cuStreamStop : .cuStream)))
+      if stop { return }
+      guard let url = r.streamURL else { throw SandboxError("no stream URL") }
+      // Stdout only: the token is never written to a log.
+      print(url)
+    }
+  }
+
   struct Respond: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       abstract:
@@ -348,6 +425,7 @@ struct MacCU: AsyncParsableCommand {
 }
 
 extension CUDialogMode: ExpressibleByArgument {}
+extension GuestCUWaitUntil: ExpressibleByArgument {}
 
 /// `count * unit`, refusing overflow instead of trapping.
 func bytes(_ count: UInt64, _ unit: UInt64) throws -> UInt64 {

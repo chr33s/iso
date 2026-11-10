@@ -160,6 +160,13 @@ private func option(_ call: [String], _ name: String) -> String? {
     try backend.restoreDisk(try backend.asStopped(instance), image: snapshot)
   }
   #expect(!install.calls().contains { $0.first == "restore" })
+  // A desktop disk under this headless instance would boot with no display.
+  committed.guestAdapters = BuildContext.guestAdapters(profiles: [Profiles.desktopDefinition])
+  try committed.save(install.config, snapshot)
+  #expect(throws: HostError.self) {
+    try backend.restoreDisk(try backend.asStopped(instance), image: snapshot)
+  }
+  #expect(!install.calls().contains { $0.first == "restore" })
 }
 
 @Test func aRemoteRelayReachesABrokeredGuestOnlyThroughTheConnector() throws {

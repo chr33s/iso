@@ -275,6 +275,17 @@ private func coreAIMac(_ accelerators: [String], attached: [String], reduced: Bo
   #expect(throws: RuntimeError.self) { try inspection(with("effective", "sharedFolder", "/")) }
 }
 
+@Test func anOpenLiveViewIsReportedAndAcceptedExplicitly() throws {
+  #expect(try inspection(runningMac()).effective?.liveViewListening == false)
+  let streaming = with("effective", "liveViewListening", true)
+  #expect(try inspection(streaming).effective?.liveViewListening == true)
+  _ = try gate(streaming)
+  #expect(throws: RuntimeError.self) {
+    try inspection(with("effective", "liveViewListening", "yes"))
+  }
+  #expect(throws: RuntimeError.self) { try inspection(with("effective", "liveViewPort", 6901)) }
+}
+
 @Test func linuxSidecarsKeepTheirShapeAndMacOnesRecordTheirKind() throws {
   let sidecar = MachineSidecar(
     schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: macOwner,
@@ -422,12 +433,15 @@ private func refusal(_ object: [String: Any], _ egress: EgressMode = .open) -> R
       "package static let port: UInt32 = \(IsolationGate.macVsockPorts(guestComputerUse: false)[0])\n"
     ))
   let guestCU = try String(
-    contentsOf: root.appending(path: "iso-sandbox/Sources/IsoMacProtocol/GuestCUProtocol.swift"),
+    contentsOf: root.appending(path: "iso-sandbox/Sources/IsoGuestCU/GuestCUProtocol.swift"),
     encoding: .utf8)
   #expect(
     guestCU.contains(
       "package static let port: UInt32 = \(IsolationGate.macVsockPorts(guestComputerUse: true)[1])\n"
     ))
+  // The Linux display gate expects the same guest computer-use port.
+  #expect(
+    IsolationGate.guestComputerUsePort == IsolationGate.macVsockPorts(guestComputerUse: true)[1])
   #expect(
     guestCU.contains(
       "package static let defaultFrameRate = \(ComputerUseConfig.defaultFrameRate)\n"))

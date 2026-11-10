@@ -134,12 +134,34 @@ package struct MacGuestCUCounters: Codable, Equatable, Sendable {
   package var frames = 0
   package var actions = 0
   package var statusRequests = 0
+  /// Waits that ran to an outcome, and how many ended in each.
+  package var waits = 0
+  package var waitOutcomes: [String: Int] = [:]
   /// Guest sessions a host hold ended; filled in by the owner.
   package var preemptions = 0
   /// Refused requests by refusal code (`other` when there is none).
   package var refusals: [String: Int] = [:]
 
   package init(frameRate: Int) { self.frameRate = frameRate }
+
+  enum CodingKeys: String, CodingKey {
+    case frameRate, sessions, frames, actions, statusRequests, waits, waitOutcomes, preemptions
+    case refusals
+  }
+
+  /// An owner from before `wait` reports no wait counts.
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    frameRate = try c.decode(Int.self, forKey: .frameRate)
+    sessions = try c.decode(Int.self, forKey: .sessions)
+    frames = try c.decode(Int.self, forKey: .frames)
+    actions = try c.decode(Int.self, forKey: .actions)
+    statusRequests = try c.decode(Int.self, forKey: .statusRequests)
+    waits = try c.decodeIfPresent(Int.self, forKey: .waits) ?? 0
+    waitOutcomes = try c.decodeIfPresent([String: Int].self, forKey: .waitOutcomes) ?? [:]
+    preemptions = try c.decode(Int.self, forKey: .preemptions)
+    refusals = try c.decode([String: Int].self, forKey: .refusals)
+  }
 
   mutating func count(_ op: GuestCURequest.Op?, _ r: GuestCUResponse) {
     guard r.ok else {
@@ -151,6 +173,9 @@ package struct MacGuestCUCounters: Codable, Equatable, Sendable {
     case .frame: frames += 1
     case .act: actions += 1
     case .status: statusRequests += 1
+    case .wait:
+      waits += 1
+      if let outcome = r.wait?.outcome { waitOutcomes[outcome.rawValue, default: 0] += 1 }
     case nil: break
     }
   }
@@ -163,7 +188,7 @@ private final class ResponseBox: @unchecked Sendable {
 extension MacGuestCULink {
   /// Runs a parsed guest request against the owner's screen, as the guest.
   @MainActor
-  package static func serve(_ request: GuestCURequest, screen: MacScreen) async -> GuestCUResponse {
+  package static func serve(_ request: GuestCURequest, screen: VMScreen) async -> GuestCUResponse {
     do {
       switch request.op {
       case .session:
@@ -176,19 +201,28 @@ extension MacGuestCULink {
         var r = GuestCUResponse(ok: true)
         r.frame = GuestCUFrame(
           frameId: f.id, width: screen.width, height: screen.height, png: f.png)
+        r.damageSeq = f.damageSeq
         return r
       case .act:
         guard let action = request.action, let converted = try? hostAction(action) else {
           return .refused("invalid action", .invalidAction, beforeInput: true)
         }
         var r = GuestCUResponse(ok: true)
-        r.submitted = try await screen.act(
+        (r.submitted, r.damageSeq) = try await screen.act(
           session: request.session, request: converted, basedOnFrame: request.basedOnFrame,
           origin: .guest)
         return r
       case .status:
         var r = GuestCUResponse(ok: true)
         (r.controller, r.holdRemainingSeconds) = screen.controlState
+        r.damageSeq = screen.damageSeq
+        return r
+      case .wait:
+        var r = GuestCUResponse(ok: true)
+        (r.wait, r.damageSeq) = try await screen.wait(
+          session: request.session, since: request.since, idleMs: request.idleMs,
+          timeoutMs: request.timeoutMs, until: request.until, region: request.region,
+          origin: .guest)
         return r
       }
     } catch let e as SandboxError {

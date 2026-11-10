@@ -16,10 +16,13 @@ SPEC.loader.exec_module(acceptance)
 
 class AcceptanceTests(unittest.TestCase):
     def check_fixture(self, *, missing=None, nonexecutable=None, version="iso 0.7.0 (abc123)\n",
-                      assessment="source=Notarized Developer ID", failure=None):
+                      assessment="source=Notarized Developer ID", failure=None, guest_files=True):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             (work / "bin").mkdir()
+            for name in acceptance.GUEST_FILES:
+                if name != missing:
+                    (work / "bin" / name).write_text("fixture only")
             for name in acceptance.BINARIES:
                 if name != missing:
                     path = work / "bin" / name
@@ -38,7 +41,7 @@ class AcceptanceTests(unittest.TestCase):
                 return ""
 
             with patch.object(acceptance, "command", side_effect=command):
-                acceptance.check_bundle(work, "v0.7.0", {})
+                acceptance.check_bundle(work, "v0.7.0", {}, guest_files=guest_files)
             self.assertEqual(sum(call[0] == "/usr/bin/codesign" for call in calls), len(acceptance.BINARIES))
             self.assertEqual(sum(call[0] == "/usr/sbin/spctl" for call in calls), len(acceptance.BINARIES))
             self.assertEqual(calls[-2][1], "version")
@@ -53,6 +56,13 @@ class AcceptanceTests(unittest.TestCase):
                 self.check_fixture(missing=binary)
             with self.subTest(binary=binary), self.assertRaisesRegex(ValueError, "missing"):
                 self.check_fixture(nonexecutable=binary)
+
+    def test_missing_guest_files_fail_unless_the_release_predates_them(self):
+        for name in acceptance.GUEST_FILES:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "missing " + name):
+                self.check_fixture(missing=name)
+            with self.subTest(name=name, predates=True):
+                self.check_fixture(missing=name, guest_files=False)
 
     def test_signature_or_assessment_failure_propagates(self):
         for tool in ("/usr/bin/codesign", "/usr/sbin/spctl"):
@@ -77,7 +87,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertNotIn("secret", env.values())
         self.assertNotIn("ISO_UPDATE_API_BASE_URL", env)
 
-    def exercise(self, *, omit=None, replace=True, uninstall=True):
+    def exercise(self, *, omit=None, replace=True, replace_guest_files=True, uninstall=True):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             calls = []
@@ -88,13 +98,16 @@ class AcceptanceTests(unittest.TestCase):
                 timeouts.append(timeout)
                 self.assertEqual(env["HOME"], str(root / "home"))
                 if args[0] == "/bin/bash":
-                    for name in acceptance.BINARIES:
+                    for name in acceptance.BINARIES + acceptance.GUEST_FILES:
                         (root / "bin" / name).write_text("first")
                     markers = ["SHA256SUMS signature verified.",
                                "Attestation verified against attestations.jsonl"]
                     return "\n".join(marker for marker in markers if marker != omit)
                 if args[1] == "update" and replace:
-                    for name in acceptance.BINARIES:
+                    names = acceptance.BINARIES
+                    if replace_guest_files:
+                        names += acceptance.GUEST_FILES
+                    for name in names:
                         new = root / "bin" / (name + ".new")
                         new.write_text("second")
                         new.replace(root / "bin" / name)
@@ -122,6 +135,10 @@ class AcceptanceTests(unittest.TestCase):
     def test_skipped_replacement_fails(self):
         with self.assertRaisesRegex(ValueError, "replace every"):
             self.exercise(replace=False)
+
+    def test_skipped_guest_file_replacement_fails(self):
+        with self.assertRaisesRegex(ValueError, "replace every"):
+            self.exercise(replace_guest_files=False)
 
     def test_noop_uninstall_fails(self):
         with self.assertRaisesRegex(ValueError, "retained"):

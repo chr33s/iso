@@ -42,10 +42,12 @@ package enum IsolationGate {
     /// The configured egress policy the sandbox must have been created with.
     package let egress: EgressMode
     package let network: ExpectedNetwork
+    /// Linux sandboxes: the display the instance was created with.
+    package let display: ExpectedDisplay
 
     package init(
       sandbox: MachineName, owner: OwnerID, runtimeRoot: String, resources: Resources,
-      egress: EgressMode, network: ExpectedNetwork = .vmnet
+      egress: EgressMode, network: ExpectedNetwork = .vmnet, display: ExpectedDisplay = .headless
     ) {
       self.sandbox = sandbox
       self.owner = owner
@@ -53,6 +55,7 @@ package enum IsolationGate {
       self.resources = resources
       self.egress = egress
       self.network = network
+      self.display = display
     }
 
     package var transport: NetworkTransport { network.transport }
@@ -91,6 +94,7 @@ package enum IsolationGate {
     try verifyRecorded(
       id: record.id, owner: record.owner, network: record.network,
       resources: Resources(cpus: record.cpus, memoryBytes: record.memoryBytes), expected)
+    try verifyRecordedDisplay(expected.sandbox, record.display, expected.display)
   }
 
   /// The record checks shared by Linux and macOS sandboxes: identity,
@@ -188,6 +192,7 @@ package enum IsolationGate {
       )
     }
     try verifyHostExposure(name, effective, runtimeRoot: expected.runtimeRoot)
+    try verifyDisplay(name, effective, expected.display)
     if case .vmnet(let ip) = route {
       try verifyNetwork(name, effective, ip, egress: expected.egress)
     }

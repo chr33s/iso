@@ -116,6 +116,9 @@ package struct MacEffectiveConfig: Codable, Sendable {
   /// From the Core AI build only: whether the owner found AMFI relaxed on
   /// the host (for a Core AI sandbox, its preflight); nil otherwise.
   package var hostSecurityReduced: Bool? = nil
+  /// Whether a live-view listener is open now (`cu stream`); read at each
+  /// `inspect`, not fixed at boot.
+  package var liveViewListening: Bool = false
 
   /// Read from the configuration the VM booted with and the listeners it
   /// registered, not restated: an extra disk, socket listener, console or

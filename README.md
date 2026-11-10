@@ -29,7 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 ```
 
 It installs all five executables into one directory on `PATH`: `iso`,
-`iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper`. To build from
+`iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper`, with the Linux
+`desktop` images' guest files `iso-cu-mcp` and `vmlinux-desktop`. To build from
 source instead, with Xcode 27:
 
 ```shell

@@ -110,19 +110,60 @@ extension AppleBackend {
     }
   }
 
-  func initializeRuntime(_ runtime: SandboxRuntime) throws {
+  /// The `desktop` profile's `iso-cu-mcp`, installed beside `iso-sandbox`.
+  func desktopComputerUseMCP(_ runtime: SandboxRuntime) throws -> (
+    name: String, bytes: [UInt8], mode: UInt32
+  ) {
+    guard
+      let path = BinaryResolver.executableBeside(
+        runtime.executor.connectorExecutable, BuildContext.computerUseMCP),
+      let bytes = FileManager.default.contents(atPath: path)
+    else {
+      throw HostError(
+        "the desktop profile needs \(BuildContext.computerUseMCP) beside iso-sandbox; reinstall iso, or rebuild with scripts/build-iso-sandbox.sh"
+      )
+    }
+    return try BuildContext.computerUseMCPPayload(Array(bytes))
+  }
+
+  /// The desktop kernel `init` is given, which it checks against its pin:
+  /// the configured one always; the release's, found beside iso-sandbox,
+  /// only for a `desktop` image. A kernel nobody configured must not fail
+  /// the setup of an image that never boots it (a runtime rebuilt with
+  /// other pins, or without the display feature, beside a release's kernel).
+  /// A `desktop` image with neither is refused: `init` checks only a kernel
+  /// it is given, so the image would build and verify headless and fail at
+  /// its first `iso up`.
+  static func desktopKernel(configured: String?, discovered: String?, desktopImage: Bool) throws
+    -> String?
+  {
+    if let kernel = configured ?? (desktopImage ? discovered : nil) { return kernel }
+    guard !desktopImage else {
+      throw HostError(
+        "the desktop profile needs the desktop kernel: there is no vmlinux-desktop beside iso-sandbox and `apple_container.desktop_kernel` is not set. Reinstall iso, or build the kernel with scripts/build-desktop-kernel.sh and set `apple_container.desktop_kernel` (docs/backends.md)"
+      )
+    }
+    return nil
+  }
+
+  func initializeRuntime(_ runtime: SandboxRuntime, desktopImage: Bool) throws {
     guard
       let kernel = config.appleContainer.kernel?.path
         ?? environment["HOME"].map({
           $0 + "/Library/Application Support/com.apple.container/kernels/default.kernel-arm64"
         })
     else { throw HostError("no kernel path: set `apple_container.kernel`") }
+    let desktopKernel = try Self.desktopKernel(
+      configured: config.appleContainer.desktopKernel?.path,
+      discovered: BinaryResolver.regularFileBeside(
+        runtime.executor.connectorExecutable, BuildContext.desktopKernel),
+      desktopImage: desktopImage)
     do {
       try StateStore.ensurePrivateDirectory(runtime.root)
-      try runtime.initialize(kernel: kernel)
+      try runtime.initialize(kernel: kernel, desktopKernel: desktopKernel)
     } catch {
       throw RuntimeError.unavailable(
-        "failed to initialize the sandbox runtime with kernel \(kernel): \(oneLine(error)). The kernel is installed by Apple `container` (`container system start`), or set `apple_container.kernel` to a validated kernel."
+        "failed to initialize the sandbox runtime with kernel \(kernel)\(desktopKernel.map { " and desktop kernel \($0)" } ?? ""): \(oneLine(error)). The kernel is installed by Apple `container` (`container system start`), or set `apple_container.kernel` to a validated kernel; `apple_container.desktop_kernel` must be a pinned desktop kernel (docs/backends.md)."
       )
     }
   }
@@ -174,7 +215,8 @@ extension AppleBackend {
       try setupMac(options, ipsw: ipsw, runtime: runtime, owner: owner)
       return
     }
-    try initializeRuntime(runtime)
+    let desktopImage = options.profiles.contains(Profiles.desktopDefinition)
+    try initializeRuntime(runtime, desktopImage: desktopImage)
     try ensureMaintenance(runtime, owner: owner, options: options)
 
     let publicKeyPath = config.sshKeyPath.path + ".pub"
@@ -188,9 +230,12 @@ extension AppleBackend {
         "VM access key \(publicKeyPath) \(error.description.replacingOccurrences(of: "APPLE_HOST_KEY_CHANGED: guest host public key ", with: "")); delete it and rerun `iso setup` to regenerate it"
       )
     }
-    let context = BuildContext.render(
+    var context = BuildContext.render(
       publicKey: publicKey, profiles: options.profiles, guestUser: options.guestUser,
       ociFeatures: options.ociFeatures)
+    if desktopImage {
+      context.payloads = [try desktopComputerUseMCP(runtime)]
+    }
     let manifestID = context.manifestID(
       guestUser: options.guestUser, publicKeyFingerprint: fingerprint)
     let previous = ImageManifest.loadLenient(config, options.image, diagnostics: diagnostics)
@@ -237,7 +282,8 @@ extension AppleBackend {
       schemaVersion: StateSchema.version, backend: StateSchema.backend, imageRef: reference,
       digest: digest, disk: nil,
       manifestID: manifestID, baseImage: BuildContext.baseImage, platform: BuildContext.platform,
-      guestUser: options.guestUser, created: created, guestAdapters: BuildContext.guestAdapters
+      guestUser: options.guestUser, created: created,
+      guestAdapters: BuildContext.guestAdapters(profiles: options.profiles)
     ).save(config, options.image)
     try saveTemplateRecord(options, manifestID: manifestID, created: created)
     if let previous { releaseManifest(runtime, owner: owner, manifest: previous, except: nil) }

@@ -270,9 +270,22 @@ package enum MacSandboxes {
 
   // MARK: computer use (client side)
 
+  /// One computer-use request to sandbox `id`'s owner: a macOS sandbox's,
+  /// or a ``DisplayMode/virtioDisplay`` Linux sandbox's through its `cu`
+  /// control op. Both answer in the same form.
   package static func cu(root: SandboxRoot, id: SandboxID, _ req: MacControlRequest) throws
     -> MacControlResponse
   {
+    let linux = root.sandbox(id)
+    if FileManager.default.fileExists(atPath: linux.record.path) {
+      guard try linux.loadRecord().displayMode == .virtioDisplay else {
+        throw SandboxError("\(id) has no display")
+      }
+      let r = try ControlSocket.call(
+        linux.control, .init(op: .cu, cu: req), timeout: replyTimeout(req))
+      guard r.ok, let answer = r.cu else { throw SandboxError(r.error ?? "no reply") }
+      return answer
+    }
     let paths = root.macSandbox(id)
     _ = try paths.loadRecord()
     return try call(paths, req, timeout: replyTimeout(req))
@@ -280,7 +293,7 @@ package enum MacSandboxes {
 
   /// The owner replies to `cu-act` only after the whole action is sent, so
   /// the wait grows with the action: each key event and each drag point is
-  /// followed by a pause (12 ms and 8 ms in `MacScreen.act`). A maximal
+  /// followed by a pause (12 ms and 8 ms in `VMScreen.act`). A maximal
   /// typed text (4096 shifted characters, about 200 s) still fits.
   static func replyTimeout(_ req: MacControlRequest) -> TimeInterval {
     var seconds: TimeInterval = 120

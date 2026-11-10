@@ -24,16 +24,33 @@ package enum Owner {
   /// The created VM's live inventory, read and checked against `mode`
   /// before the guest's init runs. Any failure stops the VM unbooted.
   static func checkDevices(
-    of id: SandboxID, mode: NetworkMode, read: () async throws -> VMDevices,
-    stop: () async -> Void
+    of id: SandboxID, mode: NetworkMode, display: DisplayMode = .headless,
+    read: () async throws -> VMDevices, stop: () async -> Void
   ) async throws -> VMDevices {
     do {
       let devices = try await read()
-      try devices.requireExpected(for: mode)
+      try devices.requireExpected(for: mode, display: display)
       return devices
     } catch {
       await stop()
       throw SandboxError("sandbox \(id) stopped unbooted: \(error)")
+    }
+  }
+
+  /// The kernel a sandbox with `display` boots. A desktop kernel is
+  /// installed separately from the qualified one and is re-checked against
+  /// its own pin at every boot.
+  static func kernel(root: SandboxRoot, display: DisplayMode) throws -> URL {
+    switch display {
+    case .headless:
+      return root.kernel
+    case .virtioDisplay:
+      let url = root.desktopKernel
+      guard KernelPin.isPinned(url, allowed: KernelPin.desktopAllowed) else {
+        throw SandboxError(
+          "no pinned desktop kernel in \(root.root.path); run `iso-sandbox init --desktop-kernel`")
+      }
+      return url
     }
   }
 
@@ -57,11 +74,13 @@ package enum Owner {
     // Held (never closed) for the owner's life, like the claim.
     _ = VMLease.hold(
       sandbox: id.rawValue, guestOS: "linux", cpus: record.cpus, memoryBytes: record.memoryBytes)
-    let vmm = VZVirtualMachineManager(
-      kernel: Kernel(path: root.kernel, platform: .linuxArm),
-      initialFilesystem: .block(
-        format: "ext4", source: root.initfs.path, destination: "/", options: ["ro"])
-    )
+    let display = record.displayMode
+    let vmm = display.manager(
+      VZVirtualMachineManager(
+        kernel: Kernel(path: try kernel(root: root, display: display), platform: .linuxArm),
+        initialFilesystem: .block(
+          format: "ext4", source: root.initfs.path, destination: "/", options: ["ro"])
+      ))
     // One vmnet network per sandbox: the sandbox is the only peer on it. A
     // brokered sandbox gets none, and no network device at all.
     var network: (any Network)?
@@ -91,7 +110,8 @@ package enum Owner {
     // whose live inventory differs from the expected one never starts.
     try await container.create()
     let devices = try await checkDevices(
-      of: id, mode: record.network, read: { try await VMDevices.read(container) },
+      of: id, mode: record.network, display: display,
+      read: { try await VMDevices.read(container) },
       stop: { try? await container.stop() })
     try await container.start()
 
@@ -100,6 +120,17 @@ package enum Owner {
       ipv4: interface?.ipv4Address.address.description,
       ipv6: interface?.ipv6Address?.address.description,
       bootId: makeBootID())
+    var desktop: LinuxDesktop?
+    if display == .virtioDisplay {
+      do {
+        desktop = try await LinuxDesktop.attach(
+          container, bootId: live.bootId, guestComputerUse: record.guestComputerUse,
+          log: { log($0) })
+      } catch {
+        try? await container.stop()
+        throw SandboxError("sandbox \(id) stopped: its display did not attach: \(error)")
+      }
+    }
     let broker: StreamBroker? =
       record.network == .brokered
       ? StreamBroker(
@@ -143,15 +174,23 @@ package enum Owner {
         await lifecycle.requestHalt()
       }
     }
-    let effective = effectiveConfig(
+    var reported = effectiveConfig(
       record: record, config: config, rootfs: rootfs, devices: devices)
+    if let desktop { reported.vsockPorts = await desktop.listenerPorts }
+    let effective = reported
+    let attached = desktop
     let sessionDeadline = record.expiresAt
     try ControlSocket.serve(at: paths.control) { request in
       switch request.op {
       case .ping:
         return ControlResponse(ok: true)
       case .inspect:
-        return ControlResponse(ok: true, inspect: effective)
+        var response = ControlResponse(ok: true, inspect: effective)
+        if let attached {
+          response.inspect?.liveViewListening = await attached.liveView.listening
+          response.desktop = await attached.status
+        }
+        return response
       case .exec:
         if let sessionDeadline, Date() >= sessionDeadline {
           return ControlResponse(ok: false, error: "the boot's session has expired")
@@ -166,6 +205,7 @@ package enum Owner {
           return ControlResponse(ok: false, error: "\(error)")
         }
       case .stop:
+        await attached?.stop()
         await lifecycle.requestHalt()
         await lifecycle.waitStopped()
         return ControlResponse(ok: true)
@@ -178,6 +218,15 @@ package enum Owner {
           return ControlResponse(ok: false, error: "invalid session label")
         }
         return ControlResponse(ok: true, streams: broker.close(session: request.session))
+      case .cu:
+        guard let attached else { return ControlResponse(ok: false, error: "no display") }
+        guard let cu = request.cu else { return ControlResponse(ok: false, error: "empty cu") }
+        if let sessionDeadline, Date() >= sessionDeadline {
+          return ControlResponse(ok: false, error: "the boot's session has expired")
+        }
+        var response = ControlResponse(ok: true)
+        response.cu = await attached.respond(cu)
+        return response
       }
     }
 
@@ -357,6 +406,17 @@ package enum Owner {
       initArgv: config.process.arguments,
       virtualization: config.virtualization
     )
+    if record.displayMode != .headless {
+      effective.display = record.displayMode.rawValue
+      effective.graphicsDevices = devices.graphics.map { device in
+        switch device {
+        case .virtio(let scanouts): scanouts.map { "\($0.width)x\($0.height)" }
+        case .other(let name): [name]
+        }
+      }
+      effective.vsockPorts = []
+      effective.liveViewListening = false
+    }
     if record.network == .brokered {
       let policy = ChannelPolicy.current
       effective.transport = NetworkMode.brokered.rawValue

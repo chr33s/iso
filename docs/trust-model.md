@@ -517,7 +517,8 @@ is read by other programs, so it is a disclosure boundary like stderr:
 - **Port-forwards bind to `127.0.0.1` only** (`PortForwards.swift`): both the
   collision probe and the `ssh -L 127.0.0.1:<host>:127.0.0.1:<guest>` spec.
   There are **no `0.0.0.0` binds** anywhere in the tree. A new listener must
-  bind loopback explicitly.
+  bind loopback explicitly. The macOS live view is the one host listener a
+  browser reaches directly; see [macOS guests](#macos-guests) (live view).
 - **Guest VMs cannot reach each other by IP.** Each sandbox has its own vmnet
   network; see [Apple sandbox backend](#apple-sandbox-backend) for how that is
   demonstrated. **Accepted by design:** vmnet guests *can* reach the host's
@@ -978,14 +979,17 @@ is untrusted, and the whole VM is the boundary.
   the listener only for sandboxes created with `--guest-computer-use`
   (`iso`: `computer_use.guest_access`), and the isolation gate accepts 7802
   only when the record says so. Requests are tainted: lines of at most
-  64 KiB, a closed four-operation set (`session`, `frame`, `act`, `status`)
-  that refuses unknown fields, `basedOnFrame` required on every action, the
-  same action validation and frame binding as host callers, at most 2
-  connections, and per-sandbox rate limits (the configured 1–10 frames and
-  20 actions a second, and 100 requests a second of any kind, refused ones
+  64 KiB, a closed five-operation set (`session`, `frame`, `act`, `status`,
+  `wait`) that refuses unknown fields, `basedOnFrame` required on every
+  action, `wait` bounded (one at a time per sandbox, at most 30 s, a region
+  inside the display, cancelled by a host hold), the same action validation
+  and frame binding as host callers, at most 2 connections, and per-sandbox
+  rate limits (the configured 1–10 frames and 20 actions a second, a `wait`
+  costing one action, and 100 requests a second of any kind, refused ones
   included). Responses carry only the guest's own framebuffer and
-  fixed-shape metadata; `status` reveals only whether the host holds control
-  and for how long. Input is synthesized into that VM's view only. The host
+  fixed-shape metadata (including its display's damage sequence); `status`
+  reveals only whether the host holds control, for how long, and that
+  sequence. Input is synthesized into that VM's view only. The host
   always wins: any host action, or `cu hold`, ends the guest's session and
   refuses new ones until it is released or expires. Any guest process may
   connect; the guest is one principal and could drive its own desktop
@@ -1001,6 +1005,44 @@ is untrusted, and the whole VM is the boundary.
   answers only guest dialogs, and a guest can spoof one: this is an
   automation reliability contract inside the VM boundary, not a new
   boundary.
+- **Live view (`cu stream`).** A host network listener, approved under the
+  stop-and-confirm rule
+  ([design](design/computer-use-live-view.md)); this entry is the
+  authoritative statement of its rules and limits. Off by default: the owner
+  binds `127.0.0.1` on an ephemeral port only when `iso-sandbox macos cu
+  stream` asks over the control socket, and closes it on `--stop`, after
+  60 s with no viewer, and when the VM stops; `inspect` reports
+  `liveViewListening` and the isolation gate accepts that field explicitly.
+  Unlike the control socket, a loopback port is reachable by every process
+  and local user on the Mac, so a per-start 256-bit token is the only gate:
+  it travels in the URL fragment (sent to no server, in no `Referer`),
+  arrives as the first WebSocket message within 5 s, is compared in
+  constant time, and never appears in argv, logs or the audit. Before any
+  token is read, `Host` must be exactly `127.0.0.1:<port>` (DNS rebinding)
+  and the socket's `Origin` exactly `http://127.0.0.1:<port>` (cross-site
+  WebSocket hijacking). The page is iso's own, embedded, loads nothing from
+  elsewhere, and is served with `Content-Security-Policy: default-src
+  'self'`, `X-Frame-Options: DENY`, `Cache-Control: no-store` and
+  `Referrer-Policy: no-referrer`. The stream is H.264 encoded by the owner
+  from the same bitmap as frames, so no guest-authored bytes reach the
+  browser. At most 16 connections are served at once, counted before any
+  byte is read, so unauthenticated connections cannot use up the owner's
+  threads or descriptors; past that a connection is closed unread. An HTTP
+  request head is at most 8 KiB, and a viewer whose socket accepts nothing
+  for 10 s is disconnected. At most
+  two viewers; client messages are at most 4 KiB, a closed set that refuses
+  unknown fields, and limited to 100 a second, with a separate 100 a second
+  for what lets go of input (key up, button up, release of control), so a
+  release is not dropped behind a burst of moves; rejections are logged by
+  kind only, at most 20 a minute. A viewer starts
+  view-only; **Take control** takes the host hold (ending the guest's
+  session) and each input extends it to 60 s, so a closed tab cannot hold a
+  display. Viewer input is a second closed set (bounded pointer, scroll, a
+  fixed `KeyboardEvent.code` table, `type`-rule text for paste) synthesized
+  into that VM's view only; nothing touches the host pasteboard or event
+  system, and held keys and buttons are released on release, disconnect,
+  hold expiry and stream stop. Remote viewing through `iso host` is not
+  offered. The audit records `boundary.live_view` counts only.
 - **Control socket.** It sits in the per-user `iso-sbx` directory, mode 0600,
   and accepts only the owning uid (`getpeereid`), as for Linux owners.
 - **Stop and TTL.** A guest cannot wedge a stop. Each host write to the
@@ -1041,6 +1083,51 @@ is untrusted, and the whole VM is the boundary.
   directory. The guest probe uses `/usr/bin/perl`'s alarm and `/bin/cat`,
   which both guest systems have. Command-line tools use the forwarded proxy
   variables; GUI applications do not read them and fail closed.
+
+## Linux guests with a display
+
+Instances of `desktop` images ([design](design/linux-desktop-virtio-gpu.md))
+reuse the macOS guests' computer-use paths above, with these differences:
+
+- **Devices.** The VM gains a virtio-gpu scanout, a USB keyboard and a USB
+  screen-coordinate pointer, added by the owner from the sandbox record's
+  display mode, never from guest data. The live inventory must show exactly
+  that one graphics device and scanout; a headless sandbox still refuses
+  any. The hypervisor-exposed surface (virtio-gpu, xHCI) is
+  Virtualization.framework's.
+- **Kernel.** These VMs boot a second, iso-built kernel pinned by SHA-256
+  separately from the qualified one (`KernelPin.desktopAllowed`), re-checked
+  at every boot. Neither pin admits the other kernel.
+- **Frames (guest → host).** The owner reads the IOSurface VZ renders the
+  scanout into: it checks the surface's size and pixel format, which VZ
+  sets, copies a fixed-size buffer and forces the alpha byte. It parses
+  nothing guest-authored. The lookup depends on `VZVirtualMachineView`'s
+  private structure; a miss refuses the frame (`blank_frame`) and never
+  falls back to another capture.
+- **Binding.** A Linux guest cannot reboot inside its VM, so a session's
+  guest boot is the owner's host-generated boot ID; nothing guest-reported
+  takes part.
+- **Guest computer use (vsock 7802).** As for macOS guests, and only for a
+  sandbox created with it; the isolation gate requires `vsockPorts` to be
+  exactly `[7802]` then and `[]` otherwise. The guest's MCP server is
+  `iso-cu-mcp`, iso's own code from the verified release; it runs in the
+  guest and is untrusted there like any guest process.
+- **Live view and audit.** The live view is the macOS guests' listener,
+  under the same rules; a display owner's `inspect` reports
+  `liveViewListening` and, as `runtime`, this boot's guest computer-use and
+  live-view counts, which `iso stop` records as
+  `boundary.guest_computer_use` and `boundary.live_view`. A headless
+  instance reports and records neither.
+- **Image.** Ubuntu packages for the display path, and Firefox from
+  Mozilla's apt repository: its key must match a pinned fingerprint and
+  Mozilla's packages are pinned above Ubuntu's (build-time trust, like the
+  NodeSource and Docker repositories). No capture, input or encoder package.
+  Setup copies `iso-cu-mcp` into the build context only if it is an arm64
+  Linux ELF, and hashes it into the image identity.
+- **Release.** The archive carries `iso-cu-mcp` and `vmlinux-desktop`
+  (not codesigned: they are Linux files), covered by the archive's
+  signature and checksums and by `BUILD.json`'s hashes; the release build
+  refuses an unpinned kernel.
 
 ## `iso update` trust chain
 

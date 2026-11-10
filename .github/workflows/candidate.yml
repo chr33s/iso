@@ -15,7 +15,7 @@ jobs:
   candidate:
     needs: ci
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 120
     environment: release
     permissions:
       contents: read
@@ -32,6 +32,11 @@ jobs:
         with:
           version: 2026.10.7
           cache: false
+
+      # The desktop kernel is built in an Apple `container` VM
+      # (scripts/build-desktop-kernel.sh, run by build-release.py).
+      - name: Start the Apple container service
+        run: container system start --enable-kernel-install
 
       - name: Build, test, sign, and notarize same-revision Swift candidate
         env:

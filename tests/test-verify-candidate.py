@@ -30,12 +30,32 @@ class CandidateTests(unittest.TestCase):
             path = self.bundle / binary
             path.write_bytes(b"fixture executable, never run\n")
             path.chmod(0o700)
+        for name in candidate.LINUX_GUEST_FILES:
+            (self.bundle / name).write_bytes(b"fixture guest file\n")
         self.data = dict(format=1, name=NAME, source_revision=REVISION, source_dirty=False,
                          release_build=True, tested=True, developer_id_signed=True,
                          configuration="release", architecture="arm64", minimum_macos="27.0",
                          tag=None, version="0.7.0", binaries={
-                             binary: candidate.digest(self.bundle / binary) for binary in candidate.BINARIES})
+                             binary: candidate.digest(self.bundle / binary) for binary in candidate.BINARIES},
+                         linux_guest_files={
+                             name: candidate.digest(self.bundle / name)
+                             for name in candidate.LINUX_GUEST_FILES})
         self.write_manifest()
+
+    def test_linux_guest_files_are_checked_by_hash(self):
+        candidate.manifest(self.bundle, REVISION)
+        for name in candidate.LINUX_GUEST_FILES:
+            with self.subTest(name=name):
+                path = self.bundle / name
+                original = path.read_bytes()
+                path.write_bytes(b"tampered")
+                with self.assertRaisesRegex(ValueError, "Linux guest file checksum mismatch"):
+                    candidate.manifest(self.bundle, REVISION)
+                path.write_bytes(original)
+        del self.data["linux_guest_files"]["vmlinux-desktop"]
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "every Linux guest file"):
+            candidate.manifest(self.bundle, REVISION)
 
     def write_manifest(self):
         (self.bundle / "BUILD.json").write_text(json.dumps(self.data))
@@ -99,9 +119,38 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             candidate.checksum(self.root, archive.name)
         sums.write_text(original)
+        sums.write_text(original + "0" * 64 + "  other.tar.gz\n")
+        with self.assertRaisesRegex(ValueError, "unexpected checksum entry"):
+            candidate.checksum(self.root, archive.name)
+        sums.write_text("")
+        with self.assertRaisesRegex(ValueError, "no checksum entry"):
+            candidate.checksum(self.root, archive.name)
+        sums.write_text(original)
         archive.write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             candidate.checksum(self.root, archive.name)
+
+    def test_checksum_accepts_the_kernel_source_entry_build_release_writes(self):
+        archive = self.archive()
+        source = self.root / f"iso-{REVISION[:12]}-vmlinux-desktop-source.tar.gz"
+        self.assertEqual(candidate.source_asset_name(archive.name), source.name)
+        sums = self.root / "SHA256SUMS"
+        sums.write_text(sums.read_text() + "1" * 64 + "  " + source.name + "\n")
+        # Listed but not downloaded, as candidate.yml uploads it.
+        self.assertEqual(candidate.checksum(self.root, archive.name), archive)
+        with redirect_stdout(io.StringIO()), patch.object(candidate, "run"), \
+                patch.object(candidate, "signing"):
+            candidate.verify(self.root, REVISION)
+        # Present: it must match its entry.
+        source.write_bytes(b"kernel source")
+        with self.assertRaisesRegex(ValueError, "kernel source checksum mismatch"):
+            candidate.checksum(self.root, archive.name)
+        with patch.object(candidate, "run") as run:
+            with self.assertRaisesRegex(ValueError, "kernel source checksum mismatch"):
+                candidate.verify(self.root, REVISION)
+            run.assert_not_called()
+        sums.write_text(sums.read_text().replace("1" * 64, candidate.digest(source)))
+        self.assertEqual(candidate.checksum(self.root, archive.name), archive)
 
     def test_attestation_pins_and_execution_order(self):
         self.archive()

@@ -4,14 +4,41 @@ import Foundation
 import IsoMacProtocol
 import Virtualization
 
-/// The owner's computer-use surface (Gates C–H): a `VZVirtualMachineView` in
-/// an ordered-out window (V5), sessions bound to the VM and guest boot,
-/// frames in framebuffer pixels, and input synthesized into the view. Nothing
-/// is posted to the host event system and the owner never activates.
+/// The owner's computer-use surface (Gates C–H), for macOS and Linux
+/// guests alike: a `VZVirtualMachineView` in an ordered-out window (V5),
+/// sessions bound to the VM and guest boot, frames in framebuffer pixels,
+/// and input synthesized into the view, which VZ forwards to the guest's
+/// keyboard and pointer (a USB keyboard maps the Mac key codes to HID
+/// usages). Nothing is posted to the host event system and the owner never
+/// activates.
 @MainActor
-package final class MacScreen {
+package final class VMScreen {
+  /// How a frame is read from the view.
+  package enum Capture: Sendable {
+    /// `cacheDisplay(in:to:)` of the view: macOS guests, until the surface
+    /// read is tested against one.
+    case viewCache
+    /// The IOSurface VZ renders the framebuffer into, alpha byte ignored
+    /// (``FramebufferSurface``): Linux guests, whose XRGB framebuffer
+    /// `cacheDisplay` treats as transparent
+    /// (docs/design/linux-desktop-virtio-gpu.md §3).
+    case framebufferSurface
+
+    /// Whether a uniform frame means the framebuffer was not observed. The
+    /// view cache renders a missing framebuffer as one flat colour and
+    /// reports nothing; the surface read throws when there is no surface,
+    /// so a uniform frame from it is what the guest drew (a bare desktop).
+    var refusesUniformFrames: Bool {
+      switch self {
+      case .viewCache: true
+      case .framebufferSurface: false
+      }
+    }
+  }
+
   package let width = MacDisplay.width
   package let height = MacDisplay.height
+  private let capture: Capture
   private let view: VZVirtualMachineView
   private let window: NSWindow
   private var table = CUSessions()
@@ -20,10 +47,21 @@ package final class MacScreen {
   /// One action at a time: actions suspend between steps, and two in flight
   /// would interleave on the single pointer and keyboard.
   private var acting = false
+  /// The display's damage, sampled only on frames, before actions and while
+  /// a wait runs (docs/design/computer-use-screen-sync.md §3).
+  private var damage = DamageGrid(width: MacDisplay.width, height: MacDisplay.height)
+  /// The framebuffer-sized render target, reused so that each sample
+  /// compares bytes drawn the same way.
+  private var renderContext: CGContext?
+  private var waits = CUWaitSlots()
   /// Supplies the current binding; nil while the guest helper is not connected.
   private let current: () -> CUBinding?
 
-  package init(adaptor: VZVirtualMachineViewAdaptor, current: @escaping () -> CUBinding?) {
+  package init(
+    adaptor: VZVirtualMachineViewAdaptor, capture: Capture,
+    current: @escaping () -> CUBinding?
+  ) {
+    self.capture = capture
     self.current = current
     let v = VZVirtualMachineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
     v.adaptor = adaptor
@@ -42,6 +80,7 @@ package final class MacScreen {
 
   package var topology: String {
     "V5 ordered-out window (\(window.isVisible ? "visible!" : "not visible"))"
+      + (capture == .framebufferSurface ? ", framebuffer surface" : "")
   }
 
   // MARK: sessions
@@ -71,14 +110,18 @@ package final class MacScreen {
   package private(set) var preemptions = 0
 
   /// Starts or extends a host hold, ending the guest's session.
-  package func hold(seconds: TimeInterval) {
-    if let guest = control.hold(for: seconds, at: Date()) {
+  package func hold(_ kind: CUControl.Hold, seconds: TimeInterval) {
+    if let guest = control.hold(kind, for: seconds, at: Date()) {
       table.revoke(guest)
       preemptions += 1
     }
   }
 
+  /// `cu release`: ends every hold.
   package func release() { control.release() }
+
+  /// A live-view viewer's release: a `cu hold` taken from the CLI runs on.
+  package func releaseImplicitHold() { control.releaseImplicit() }
 
   package var controlState: (controller: GuestCUController, holdRemainingSeconds: Int) {
     let now = Date()
@@ -103,28 +146,75 @@ package final class MacScreen {
     package var sha256: String
     package var binding: CUBinding
     package var timestamp: Date
+    package var damageSeq: UInt64
+  }
+
+  /// This boot's damage sequence; it restarts at 0 with each owner.
+  package var damageSeq: UInt64 { damage.seq }
+
+  /// Renders the view at framebuffer pixels, whatever the window's backing
+  /// scale (Gate F), and samples damage from the result. A uniform render is
+  /// still sampled; only `frame` refuses it, and only from the view cache.
+  private func render() throws -> CGContext {
+    let ctx = try context()
+    guard let data = ctx.data else { throw SandboxError("no drawing buffer") }
+    switch capture {
+    case .viewCache: try cacheView(into: ctx)
+    case .framebufferSurface:
+      do {
+        try FramebufferSurface.read(
+          under: view, width: width, height: height, into: data, bytesPerRow: ctx.bytesPerRow)
+      } catch {
+        // Never a `cacheDisplay` fallback: it drops every pixel the guest
+        // wrote with alpha 0.
+        throw SandboxError("framebuffer not observed: \(error)", refusal: .blankFrame)
+      }
+    }
+    try damage.sample(UnsafeRawBufferPointer(start: data, count: ctx.bytesPerRow * height))
+    return ctx
+  }
+
+  /// The framebuffer-sized RGBX render target, made once.
+  private func context() throws -> CGContext {
+    if let renderContext { return renderContext }
+    guard
+      let made = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+    else { throw SandboxError("no drawing context") }
+    made.interpolationQuality = .high
+    // The context is reused: each draw must replace every pixel, or what a
+    // transparent (missing) framebuffer leaves untouched is the last frame.
+    made.setBlendMode(.copy)
+    renderContext = made
+    return made
+  }
+
+  private func cacheView(into ctx: CGContext) throws {
+    // Cached straight at framebuffer pixels: the window's own backing (2x
+    // on a Retina host) costs ~45 ms to cache and ~30 ms to scale back
+    // down, against ~5 ms here (docs/design/computer-use-screen-sync.md §9).
+    guard
+      let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: 0, bitsPerPixel: 0)
+    else { throw SandboxError("no bitmap for the view") }
+    rep.size = view.bounds.size
+    view.cacheDisplay(in: view.bounds, to: rep)
+    guard let source = rep.cgImage else { throw SandboxError("no image from the view") }
+    ctx.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
   }
 
   package func frame(session: String?, origin: CUOrigin = .host) throws -> Frame {
     if origin == .guest { try control.requireGuest(session, at: Date()) }
     let bound = try check(session)
-    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-      throw SandboxError("no bitmap for the view")
-    }
-    view.cacheDisplay(in: view.bounds, to: rep)
-    guard let source = rep.cgImage else { throw SandboxError("no image from the view") }
-    // Framebuffer pixels whatever the window's backing scale (Gate F).
-    guard
-      let ctx = CGContext(
-        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-        space: CGColorSpace(name: CGColorSpace.sRGB)!,
-        bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
-    else { throw SandboxError("no drawing context") }
-    ctx.interpolationQuality = .high
-    ctx.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
-    guard let image = ctx.makeImage() else { throw SandboxError("no frame image") }
-    // A uniform frame is how a missing framebuffer looks: refuse it.
-    if let range = Self.channelRange(image), range <= 3 {
+    // A copy: later renders into the context do not change it.
+    guard let image = try render().makeImage() else { throw SandboxError("no frame image") }
+    // A uniform frame is how a missing framebuffer looks in the view cache:
+    // refuse it.
+    if capture.refusesUniformFrames, let range = Self.channelRange(image), range <= 3 {
       throw SandboxError(
         "blank frame (channel range \(range)): framebuffer not observed", refusal: .blankFrame)
     }
@@ -134,7 +224,128 @@ package final class MacScreen {
     return Frame(
       id: id, seq: seq, png: png,
       sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(), binding: bound,
-      timestamp: Date())
+      timestamp: Date(), damageSeq: damage.seq)
+  }
+
+  // MARK: live view
+
+  /// One stream frame: the same render and damage sample as `frame`, with
+  /// no session and no PNG. `body` reads the RGBX pixels, with the damage
+  /// sequence after this sample, before the next render can change them.
+  package func streamFrame(
+    _ body: (UnsafeRawPointer, _ bytesPerRow: Int, _ damageSeq: UInt64) throws -> Void
+  ) throws {
+    let ctx = try render()
+    guard let data = ctx.data else { throw SandboxError("no drawing buffer") }
+    try body(data, ctx.bytesPerRow, damage.seq)
+  }
+
+  /// Whether an action or typed viewer text is being sent.
+  package var isActing: Bool { acting }
+
+  /// The last viewer button press, for click counts.
+  private var viewerPress: (button: CUButton, point: CUPoint, at: TimeInterval, count: Int)?
+
+  /// Sends one raw viewer input (docs/design/computer-use-live-view.md §7)
+  /// into the view, as actions are. `held` is the viewer's state after it.
+  /// Viewers send only under a host hold, so no guest session is checked. A
+  /// release is sent even while an action runs: a key left down is worse
+  /// than an interleaved up.
+  package func viewerSend(_ input: LiveViewInput, held: LiveViewHeld) throws {
+    guard input.isRelease || !acting else {
+      throw SandboxError("a host action is in progress", refusal: .busy)
+    }
+    switch input {
+    case .move(let p):
+      if let b = held.buttons.min(by: { $0.rawValue < $1.rawValue }) {
+        try dragged(p, b)
+      } else {
+        try move(p)
+      }
+    case .button(let p, let b, let down):
+      let now = ProcessInfo.processInfo.systemUptime
+      var count = 1
+      if let last = viewerPress, last.button == b, now - last.at < 0.5,
+        abs(last.point.x - p.x) < 4, abs(last.point.y - p.y) < 4
+      {
+        count = down ? min(last.count + 1, 3) : last.count
+      }
+      if down { viewerPress = (b, p, now, count) }
+      try button(p, b, down: down, clickCount: count)
+    case .scroll(let p, let dx, let dy):
+      try move(p)
+      try scroll(dx: dx, dy: dy)
+    case .key(let code, let down):
+      let kind: CUKeyEvent.Kind =
+        LiveViewKeys.modifier(keyCode: code) != nil ? .flags : (down ? .down : .up)
+      try send(CUKeyEvent(kind: kind, keyCode: code, characters: "", flags: held.flags))
+    }
+  }
+
+  /// Types viewer text (a paste) under the `type` action's rules, holding
+  /// off host actions until it is done.
+  package func viewerType(_ text: String) async throws {
+    guard !acting else { throw SandboxError("a host action is in progress", refusal: .busy) }
+    acting = true
+    defer { acting = false }
+    try await sendKeys(CUKeys.events(forText: text)) {
+      try await Task.sleep(for: .milliseconds(12))
+    }
+  }
+
+  /// Sends `keys` in order with `pause` after each; a failure part-way
+  /// releases what they pressed.
+  private func sendKeys(_ keys: [CUKeyEvent], pause: () async throws -> Void) async throws {
+    var sent = 0
+    do {
+      for e in keys {
+        try send(e)
+        sent += 1
+        try await pause()
+      }
+    } catch {
+      for e in CUKeys.releases(after: keys.prefix(sent)) { try? send(e) }
+      throw error
+    }
+  }
+
+  // MARK: wait
+
+  /// Waits for `region` to settle (docs/design/computer-use-screen-sync.md
+  /// §4), sampling at `ScreenWait.tickMs`. One wait runs at a time for the
+  /// host and one for the guest; a host
+  /// hold or a broken binding ends a guest's wait with its refusal. Host
+  /// callers take no hold by waiting. Returns the result and the `seq` after.
+  package func wait(
+    session: String?, since: UInt64?, idleMs: Int?, timeoutMs: Int?,
+    until: GuestCUWaitUntil?, region: GuestCURegion?, origin: CUOrigin = .host
+  ) async throws -> (GuestCUWaitResult, damageSeq: UInt64) {
+    func admitted() throws {
+      if origin == .guest { try control.requireGuest(session, at: Date()) }
+      _ = try check(session)
+    }
+    try admitted()
+    let parameters = try ScreenWait.Parameters.validated(
+      since: since, idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region,
+      width: width, height: height, current: damage.seq)
+    try waits.take(origin)
+    defer { waits.free(origin) }
+    _ = try render()
+    let start = ContinuousClock.now
+    let result = try await ScreenWait.run(
+      ScreenWait(parameters, since: parameters.since ?? damage.seq),
+      first: damage.latest(in: parameters.region),
+      elapsedMs: {
+        let d = (ContinuousClock.now - start).components
+        return Int(d.seconds) * 1000 + Int(d.attoseconds / 1_000_000_000_000_000)
+      },
+      sleep: { try await Task.sleep(for: .milliseconds(ScreenWait.tickMs)) },
+      check: admitted,
+      sample: {
+        _ = try render()
+        return damage.latest(in: parameters.region)
+      })
+    return (result, damage.seq)
   }
 
   static func channelRange(_ image: CGImage) -> Int? {
@@ -169,12 +380,14 @@ package final class MacScreen {
 
   /// Runs one validated action. `basedOnFrame`, if given, must be a frame
   /// captured under this session's binding. A failure part-way releases every
-  /// button and key the action pressed.
+  /// button and key the action pressed. Returns the input events submitted
+  /// and the damage sequence sampled just before the first of them.
   package func act(
     session: String?, request: CUActionRequest, basedOnFrame: String?, origin: CUOrigin = .host
-  ) async throws -> Int {
+  ) async throws -> (submitted: Int, damageSeq: UInt64) {
     let bound: CUBinding
     let action: CUAction
+    let damageSeq: UInt64
     do {
       if origin == .guest { try control.requireGuest(session, at: Date()) }
       bound = try check(session)
@@ -183,19 +396,21 @@ package final class MacScreen {
         throw SandboxError("\(error)", refusal: .invalidAction)
       }
       guard !acting else { throw SandboxError("another action is in progress", refusal: .busy) }
+      // The baseline a settle wait after this action is anchored to.
+      _ = try render()
+      damageSeq = damage.seq
     } catch var e as SandboxError {
       e.beforeInput = true
       throw e
     }
     // Host input never interleaves with the guest's: it takes a hold first.
-    if origin == .host { hold(seconds: CUControl.implicitHold) }
+    if origin == .host { hold(.implicit, seconds: CUControl.implicitHold) }
     acting = true
     defer { acting = false }
     var pressed: [CUButton] = []
     var last = CUPoint(x: 0, y: 0)
-    var keys: [CUKeyEvent] = []
-    var sentKeys = 0
     do {
+      var keys: [CUKeyEvent] = []
       switch action {
       case .move(let p):
         try move(p)
@@ -239,17 +454,13 @@ package final class MacScreen {
       case .type(let text):
         keys = CUKeys.events(forText: text)
       }
-      for e in keys {
-        try send(e)
-        sentKeys += 1
-        try await step(session, ms: 12)
-      }
-      return max(1, keys.count)
+      // Each key re-checks the session; a failure releases the keys sent.
+      try await sendKeys(keys) { try await step(session, ms: 12) }
+      return (max(1, keys.count), damageSeq)
     } catch {
-      // Interrupted: release whatever this action holds.
-      // Released where the pointer is, not elsewhere on screen.
+      // Interrupted: release whatever buttons this action holds, where the
+      // pointer is, not elsewhere on screen.
       for b in pressed { try? button(last, b, down: false) }
-      for e in CUKeys.releases(after: keys.prefix(sentKeys)) { try? send(e) }
       throw error
     }
   }

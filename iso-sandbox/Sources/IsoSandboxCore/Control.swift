@@ -9,6 +9,9 @@ package struct ControlRequest: Codable, Sendable {
     case ping, exec, stop, inspect
     /// Brokered sandboxes: list, or close, the owner's open guest streams.
     case streams, closeStreams
+    /// ``DisplayMode/virtioDisplay`` sandboxes: one computer-use request,
+    /// in the macOS owner's form (``CUService``).
+    case cu
   }
   package var op: Op
   package var argv: [String]? = nil
@@ -16,16 +19,19 @@ package struct ControlRequest: Codable, Sendable {
   package var timeoutSeconds: Int64? = nil
   /// `closeStreams`: only this session's streams; nil closes every stream.
   package var session: String? = nil
+  /// `cu`: the request.
+  package var cu: MacControlRequest? = nil
 
   package init(
     op: Op, argv: [String]? = nil, stdin: Data? = nil, timeoutSeconds: Int64? = nil,
-    session: String? = nil
+    session: String? = nil, cu: MacControlRequest? = nil
   ) {
     self.op = op
     self.argv = argv
     self.stdin = stdin
     self.timeoutSeconds = timeoutSeconds
     self.session = session
+    self.cu = cu
   }
 }
 
@@ -38,6 +44,37 @@ package struct ControlResponse: Codable, Sendable {
   package var inspect: EffectiveConfig? = nil
   /// `streams` and `closeStreams`: the streams open before the call.
   package var streams: [StreamSummary]? = nil
+  /// `cu`: the answer, refusals included; `ok` above is the transport's.
+  package var cu: MacControlResponse? = nil
+  /// `inspect` of a ``DisplayMode/virtioDisplay`` sandbox: this boot's counts.
+  package var desktop: DesktopStatus? = nil
+}
+
+/// A display owner's per-boot computer-use counts (`runtime` in `inspect`),
+/// for the host's audit, as the macOS owner's `status` reports them: counts
+/// only, no pixels, coordinates, text or token.
+package struct DesktopStatus: Codable, Equatable, Sendable {
+  /// Nil unless the sandbox was created with guest-driven computer use.
+  package var guestComputerUse: MacGuestCUCounters?
+  /// Nil until a live-view stream has started this boot.
+  package var liveView: MacLiveViewCounters?
+
+  package init(guestComputerUse: MacGuestCUCounters?, liveView: MacLiveViewCounters?) {
+    self.guestComputerUse = guestComputerUse
+    self.liveView = liveView
+  }
+
+  /// Guest counts carry the screen's preemptions; live-view counts are
+  /// reported only once a stream has started.
+  package init(guest: MacGuestCUCounters?, preemptions: Int, liveView: MacLiveViewCounters?) {
+    self.init(
+      guestComputerUse: guest.map {
+        var counts = $0
+        counts.preemptions = preemptions
+        return counts
+      },
+      liveView: liveView.flatMap { $0.streams > 0 ? $0 : nil })
+  }
 }
 
 /// What the running VM was actually configured with, read back from the
@@ -83,6 +120,15 @@ package struct EffectiveConfig: Codable, Sendable {
   package var channelPolicyDigest: String? = nil
   /// The host's network-policy digest this boot was started with.
   package var networkPolicy: String? = nil
+  /// Present only for a ``DisplayMode/virtioDisplay`` sandbox, so a
+  /// headless sandbox's report is unchanged: its display mode, each live
+  /// graphics device's scanout sizes (`WxH`, or the class name of a
+  /// non-virtio device), the vsock ports the owner listens on, and whether
+  /// its loopback live-view listener is open now.
+  package var display: String? = nil
+  package var graphicsDevices: [[String]]? = nil
+  package var vsockPorts: [UInt32]? = nil
+  package var liveViewListening: Bool? = nil
 }
 
 package enum ControlSocket {

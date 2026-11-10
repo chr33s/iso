@@ -622,15 +622,28 @@ package struct AgentBootstrap: Sendable {
   package static let computerUseServer = "iso-cu"
   /// The guest helper, installed in every macOS template, runs the server.
   package static let computerUseCommand = "/usr/local/libexec/iso-macos-helper"
+  /// The same server in a Linux image built with the `desktop` profile.
+  package static let linuxComputerUseCommand = "/usr/local/bin/iso-cu-mcp"
 
-  /// A macOS instance created with guest computer use also gives its agents
-  /// the `iso-cu` MCP server (docs/design/guest-driven-computer-use.md).
-  /// The instance's sidecar decides, which mirrors the sandbox record that
-  /// decides the vsock listener (synced at start), not the current
-  /// configuration.
+  /// The `iso-cu` server's command line for `sidecar`'s guest, or nil when
+  /// the instance was created without guest computer use.
+  static func computerUseServer(_ sidecar: MachineSidecar) -> (command: String, args: [String])? {
+    guard sidecar.guestComputerUse != nil else { return nil }
+    switch sidecar.kind {
+    case .macos: return (computerUseCommand, ["cu-mcp"])
+    case .linux: return sidecar.display == nil ? nil : (linuxComputerUseCommand, [])
+    }
+  }
+
+  /// An instance created with guest computer use (a macOS guest, or a Linux
+  /// guest with a display) also gives its agents the `iso-cu` MCP server
+  /// (docs/design/guest-driven-computer-use.md,
+  /// docs/design/linux-desktop-virtio-gpu.md §8). The instance's sidecar
+  /// decides, which mirrors the sandbox record that decides the vsock
+  /// listener, not the current configuration.
   func withGuestComputerUse(_ instance: Instance) throws -> AgentBootstrap {
-    guard let sidecar = try MachineSidecar.loadIfPresent(instance), sidecar.kind == .macos,
-      sidecar.guestComputerUse != nil
+    guard let sidecar = try MachineSidecar.loadIfPresent(instance),
+      let server = Self.computerUseServer(sidecar)
     else { return self }
     let name = Self.computerUseServer
     guard config.claude.mcpServers[name] == nil, config.codex.mcpServers[name] == nil else {
@@ -639,7 +652,7 @@ package struct AgentBootstrap: Sendable {
     }
     return AgentBootstrap(
       config: config.addingMCPServer(
-        name, .stdio(command: Self.computerUseCommand, args: ["cu-mcp"], env: [:])),
+        name, .stdio(command: server.command, args: server.args, env: [:])),
       client: client, environment: environment, home: home, resolver: resolver, proxies: proxies,
       github: github, diagnostics: diagnostics, secrets: secrets, placement: placement)
   }

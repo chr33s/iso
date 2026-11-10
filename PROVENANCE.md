@@ -24,3 +24,29 @@ JSON files use adjacent `.license` files because JSON has no comment syntax.
 New fork-specific implementations do not acquire upstream-derivation notices
 merely because they implement new features in this project. LLVM libFuzzer
 remains unmodified with its own license and exceptions.
+
+## Desktop guest kernel
+
+`scripts/build-desktop-kernel.sh` builds the kernel `desktop` instances boot
+([design](docs/design/linux-desktop-virtio-gpu.md) §5) from:
+
+- Linux 6.18.5, `linux-6.18.5.tar.xz` from cdn.kernel.org, sha256
+  `189d1f409cef8d0d234210e04595172df392f8cb297e14b447ed95720e2fd940`
+  (GPL-2.0);
+- apple/containerization 0.54.0 `kernel/config-arm64`, sha256
+  `dedb03de6d686534efbca3a90bac304721e818bd96bc421b4d2213724a4e260b`
+  (Apache-2.0), with the options in `iso-sandbox/kernel/desktop.config`;
+- `iso-sandbox/kernel/build.sh`, derived from that release's
+  `kernel/build.sh` (Apache-2.0; notice in the file), run in
+  `iso-sandbox/kernel/Dockerfile` on the guest images' pinned Ubuntu 24.04
+  base, with the toolchain from the Ubuntu archive snapshot dated in that
+  file.
+
+With gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1) the resulting
+`vmlinux-desktop` has sha256
+`c8a260548646e0863547d2207c24e12b8444ed7731b5b24222908fd154e1201c`, pinned in
+`KernelPin.desktopAllowed` (`iso-sandbox/Sources/IsoSandboxCore/Layout.swift`).
+Release archives carry it as `vmlinux-desktop`, with its configuration
+and source pins under `third-party/vmlinux-desktop/`, and publish its
+corresponding source as `iso-<tag>-vmlinux-desktop-source.tar.gz`; the
+release build refuses a kernel whose sha256 is not pinned.

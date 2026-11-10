@@ -24,10 +24,13 @@ extension SandboxRuntime {
   }
 
   /// Validates the kernel against the runtime's pinned list and prepares
-  /// its state root.
-  package func initialize(kernel: String) throws(RuntimeError) {
+  /// its state root. `desktopKernel`, for sandboxes with a display, is
+  /// validated against the runtime's desktop pins and installed beside it.
+  package func initialize(kernel: String, desktopKernel: String? = nil) throws(RuntimeError) {
+    if desktopKernel != nil { try requireLinuxDisplay() }
     _ = try checked(
-      ["init"], ["--kernel", kernel], deadline: createDeadline, limit: Self.textLimit)
+      ["init"], ["--kernel", kernel] + (desktopKernel.map { ["--desktop-kernel", $0] } ?? []),
+      deadline: createDeadline, limit: Self.textLimit)
   }
 
   package enum Source: Sendable {
@@ -39,8 +42,19 @@ extension SandboxRuntime {
   /// runtime must advertise ``RuntimeProtocol/brokeredFeature``.
   package func create(
     _ name: MachineName, source: Source, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
-    owner: OwnerID, egress: EgressMode, transport: NetworkTransport = .vmnet
+    owner: OwnerID, egress: EgressMode, transport: NetworkTransport = .vmnet,
+    display: LinuxGuestDisplay? = nil, guestComputerUse: MacGuestComputerUse? = nil
   ) throws(RuntimeError) {
+    var screen: [String] = []
+    if display == .virtio {
+      try requireLinuxDisplay()
+      screen = ["--display", "virtio"]
+      if let guestComputerUse {
+        screen += [
+          "--guest-computer-use", "--guest-frame-rate", String(guestComputerUse.frameRate),
+        ]
+      }
+    }
     let network: [String]
     switch transport {
     case .vmnet: network = egress.requiresHostOnlyNetwork ? ["--network", "host-only"] : []
@@ -59,7 +73,7 @@ extension SandboxRuntime {
         "--cpus", String(cpus), "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
         "--owner",
         owner.rawValue,
-      ] + network,
+      ] + network + screen,
       deadline: createDeadline,
       limit: Self.jsonLimit, cancellable: true)
   }

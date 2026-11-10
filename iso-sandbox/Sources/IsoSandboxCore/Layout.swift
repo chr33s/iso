@@ -14,6 +14,9 @@ package let brokeredTransportFeature = "brokered-transport"
 /// `macos create --coreai` attaches paravirtualized Core AI accelerators
 /// (docs/design/paravirtualized-coreai.md).
 package let macCoreAIFeature = "macos-coreai"
+/// `version` capability: `init --desktop-kernel`, `create --display virtio`
+/// and `cu` against Linux sandboxes (docs/design/linux-desktop-virtio-gpu.md).
+package let linuxDisplayFeature = "linux-display"
 package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.54.0"
 
@@ -47,6 +50,11 @@ package struct SandboxRoot: Sendable {
 
   package var imageStore: URL { root.appendingPathComponent("store", isDirectory: true) }
   package var kernel: URL { root.appendingPathComponent("vmlinux") }
+  /// The kernel ``DisplayMode/virtioDisplay`` sandboxes boot, installed by
+  /// `init --desktop-kernel` (``KernelPin/desktopAllowed``). Absent from a
+  /// root that has no desktop sandboxes.
+  package var desktopKernel: URL { root.appendingPathComponent("vmlinux-desktop") }
+
   /// Keyed by the containerization release so a root initialized by an
   /// earlier release is re-initialized: its vminit guest agent must match
   /// the linked library.
@@ -301,6 +309,39 @@ package enum NetworkMode: String, Codable, Sendable, CaseIterable {
   package var usesSubnet: Bool { self != .brokered }
 }
 
+/// Whether a Linux sandbox has a display. Fixed at create
+/// (docs/design/linux-desktop-virtio-gpu.md §4).
+package enum DisplayMode: String, Codable, Sendable, CaseIterable {
+  /// No graphics, keyboard or pointing device, and the qualified kernel.
+  case headless
+  /// One virtio-gpu scanout at ``LinuxDisplay`` geometry, a USB keyboard
+  /// and a USB screen-coordinate pointer, and the desktop kernel.
+  case virtioDisplay = "virtio_display"
+}
+
+/// A Linux sandbox's display with what only a display allows, so guest
+/// computer use on a headless sandbox is not expressible.
+package enum SandboxDisplay: Sendable, Equatable {
+  case headless
+  /// ``DisplayMode/virtioDisplay``; `guestComputerUse` is nil when the
+  /// guest may not drive it.
+  case virtio(guestComputerUse: MacGuestComputerUse?)
+
+  package var mode: DisplayMode {
+    switch self {
+    case .headless: .headless
+    case .virtio: .virtioDisplay
+    }
+  }
+
+  package var guestComputerUse: MacGuestComputerUse? {
+    switch self {
+    case .headless: nil
+    case .virtio(let guestComputerUse): guestComputerUse
+    }
+  }
+}
+
 /// Durable description of a persistent sandbox. Deliberately has no field
 /// for host mounts, socket relays, published ports, or agent forwarding:
 /// those states are not expressible.
@@ -339,14 +380,23 @@ package struct SandboxRecord: Codable, Sendable {
   /// policy, set by `start --network-policy` and cleared by a `start`
   /// without it. A stream request must present it (``StreamBroker``).
   package var networkPolicy: String?
+  /// Absent for a headless sandbox, so its record is unchanged; read it
+  /// through ``displayMode``.
+  package private(set) var display: DisplayMode?
+  /// Guest-driven computer use on vsock 7802, fixed at create; nil when
+  /// off. Only a ``DisplayMode/virtioDisplay`` sandbox has it: the
+  /// initializer takes both as one ``SandboxDisplay``, and a record that
+  /// says otherwise does not decode.
+  package private(set) var guestComputerUse: MacGuestComputerUse?
 
+  package var displayMode: DisplayMode { display ?? .headless }
   package var subnet: String? { subnetIndex.map(Self.subnet) }
   package static func subnet(_ index: Int) -> String { "10.231.\(index).0/24" }
 
   package init(
     id: SandboxID, owner: String, imageReference: String, imageDigest: String, baseDisk: String?,
     environment: [String], cpus: Int, memoryBytes: UInt64, diskBytes: UInt64, subnetIndex: Int?,
-    createdAt: Date, network: NetworkMode = .shared
+    createdAt: Date, network: NetworkMode = .shared, display: SandboxDisplay = .headless
   ) {
     self.id = id
     self.owner = owner
@@ -360,6 +410,37 @@ package struct SandboxRecord: Codable, Sendable {
     self.subnetIndex = subnetIndex
     self.createdAt = createdAt
     self.network = network
+    self.display = display == .headless ? nil : display.mode
+    self.guestComputerUse = display.guestComputerUse
+  }
+
+  /// As synthesized, and refuses guest computer use without a display.
+  package init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(SandboxID.self, forKey: .id)
+    owner = try c.decode(String.self, forKey: .owner)
+    imageReference = try c.decode(String.self, forKey: .imageReference)
+    imageDigest = try c.decode(String.self, forKey: .imageDigest)
+    baseDisk = try c.decodeIfPresent(String.self, forKey: .baseDisk)
+    environment = try c.decode([String].self, forKey: .environment)
+    cpus = try c.decode(Int.self, forKey: .cpus)
+    memoryBytes = try c.decode(UInt64.self, forKey: .memoryBytes)
+    diskBytes = try c.decode(UInt64.self, forKey: .diskBytes)
+    subnetIndex = try c.decodeIfPresent(Int.self, forKey: .subnetIndex)
+    createdAt = try c.decode(Date.self, forKey: .createdAt)
+    diskGeneration = try c.decode(Int.self, forKey: .diskGeneration)
+    lastOperation = try c.decodeIfPresent(OperationID.self, forKey: .lastOperation)
+    network = try c.decode(NetworkMode.self, forKey: .network)
+    expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
+    networkPolicy = try c.decodeIfPresent(String.self, forKey: .networkPolicy)
+    display = try c.decodeIfPresent(DisplayMode.self, forKey: .display)
+    guestComputerUse = try c.decodeIfPresent(
+      MacGuestComputerUse.self, forKey: .guestComputerUse)
+    guard displayMode == .virtioDisplay || guestComputerUse == nil else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .guestComputerUse, in: c,
+        debugDescription: "guest computer use recorded without a display")
+    }
   }
 }
 
@@ -404,25 +485,46 @@ package enum KernelPin {
     "98a1005f8cc395e99b85775b9dce2b239190520b102bf549f4225104dcd7f511"
   ]
 
-  /// The kernel for `root`, validated against `allowed`. A root keeps a
-  /// kernel it was initialized with while that kernel is still pinned, so a
-  /// newer kernel installed elsewhere later does not break re-running init;
+  /// Kernels a ``DisplayMode/virtioDisplay`` sandbox may boot: iso's own
+  /// build of containerization's `config-arm64` plus `kernel/desktop.config`
+  /// (docs/design/linux-desktop-virtio-gpu.md §5, PROVENANCE.md). Disjoint
+  /// from `allowed`, so neither kernel can stand in for the other.
+  package static let desktopAllowed: Set<String> = [
+    // scripts/build-desktop-kernel.sh: Linux 6.18.5
+    // (sha256:189d1f409cef8d0d234210e04595172df392f8cb297e14b447ed95720e2fd940),
+    // containerization 0.54.0 kernel/config-arm64 + kernel/desktop.config,
+    // gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1).
+    "c8a260548646e0863547d2207c24e12b8444ed7731b5b24222908fd154e1201c"
+  ]
+
+  /// The kernel to install at `installed` (the root's `kernel` or
+  /// `desktopKernel`), validated against `allowed`. A root keeps a kernel
+  /// it was initialized with while that kernel is still pinned, so a newer
+  /// kernel installed elsewhere later does not break re-running init;
   /// otherwise `requested` replaces it. `install` is true when the kernel
   /// must be written.
-  package static func select(
-    root: SandboxRoot, requested: String, allowed: Set<String> = allowed
-  ) throws -> (data: Data, sha256: String, install: Bool) {
-    func pinned(_ path: String) throws -> (Data, String) {
-      let data = try Data(contentsOf: URL(fileURLWithPath: path))
-      let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-      guard allowed.contains(sha) else {
-        throw SandboxError("kernel \(path) (sha256 \(sha)) is not a validated kernel")
-      }
-      return (data, sha)
+  package static func select(installed: URL, requested: String, allowed: Set<String>) throws -> (
+    data: Data, sha256: String, install: Bool
+  ) {
+    if let (data, sha) = try? pinned(installed.path, allowed: allowed) {
+      return (data, sha, false)
     }
-    if let (data, sha) = try? pinned(root.kernel.path) { return (data, sha, false) }
-    let (data, sha) = try pinned(requested)
+    let (data, sha) = try pinned(requested, allowed: allowed)
     return (data, sha, true)
+  }
+
+  /// Whether `url` holds a kernel in `allowed`.
+  package static func isPinned(_ url: URL, allowed: Set<String>) -> Bool {
+    (try? pinned(url.path, allowed: allowed)) != nil
+  }
+
+  private static func pinned(_ path: String, allowed: Set<String>) throws -> (Data, String) {
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    let sha = sha256Hex(data)
+    guard allowed.contains(sha) else {
+      throw SandboxError("kernel \(path) (sha256 \(sha)) is not a validated kernel")
+    }
+    return (data, sha)
   }
 }
 

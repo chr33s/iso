@@ -36,7 +36,7 @@ after hand edits.
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline", "revoked_grant_ids": [...]}`, both members optional. `preset` sets defaults for the hardening settings; see [security presets](#security-presets). `revoked_grant_ids` lists saved instance grants to withdraw, by the 16-lowercase-hex IDs `iso policy effective` shows; duplicates are rejected, and an ID no instance records only draws a warning. See [`iso policy effective`](commands.md#policy-effective). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
-| `computer_use` | object | unset (off) | macOS guests only: `{"guest_access": true, "guest_frame_rate": 4}` lets an agent in the guest drive its own display. See [computer_use](#computer_use). |
+| `computer_use` | object | unset (off) | macOS guests and Linux [desktop images](images-and-profiles.md#linux-desktop-images): `{"guest_access": true, "guest_frame_rate": 4}` lets an agent in the guest drive its own display. See [computer_use](#computer_use). |
 | `coreai` | object | unset (off) | Experimental, macOS guests only: paravirtualized Core AI accelerators. Weakens the host. See [coreai](#coreai). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
@@ -535,6 +535,7 @@ See [Apple sandbox configuration](backends.md#configuration) for how each value 
 | `binary` | string (absolute path) | search order in [backends.md](backends.md) | `iso-sandbox` runtime binary. |
 | `builder` | string (absolute path) | search order in [backends.md](backends.md) | `container` binary used only to build images. |
 | `kernel` | string (absolute path) | the kernel stock Apple `container` installs | Guest kernel; must be one the runtime pins. |
+| `desktop_kernel` | string (absolute path) | `vmlinux-desktop` beside `iso-sandbox`, when present | Kernel for instances of [desktop images](images-and-profiles.md#linux-desktop-images); must be a desktop kernel the runtime pins. `iso setup` installs it beside `kernel`: a configured one on every setup, the default only when setting up a desktop image. |
 | `probe_timeout_seconds` | integer | `10` | `version`, `inspect`, `list`. |
 | `operation_timeout_seconds` | integer | `60` | Resource changes, deletes, guest commands. |
 | `create_timeout_seconds` | integer | `600` | Create, grow, commit, restore, init, maintenance install. |
@@ -792,16 +793,21 @@ restarts after 8 MiB, and the owner log holds only the runtime's own lines.
 { "computer_use": { "guest_access": true, "guest_frame_rate": 4 } }
 ```
 
-macOS images only: a Linux instance runs without it, with a warning at
-creation. With `guest_access`, the instance's sandbox is created with a
-second host vsock listener (port 7802), and the guest's Claude Code and
-Codex get an MCP server named `iso-cu`
-(`/usr/local/libexec/iso-macos-helper cu-mcp`). Its
+macOS images and Linux images built with the `desktop` profile
+([desktop images](images-and-profiles.md#linux-desktop-images)); any other
+Linux instance runs without it, with a warning at creation. With
+`guest_access`, the instance's sandbox is created with a host vsock
+listener on port 7802, and the guest's Claude Code and Codex get an MCP
+server named `iso-cu` (`/usr/local/libexec/iso-macos-helper cu-mcp` on
+macOS, `/usr/local/bin/iso-cu-mcp` on Linux). Its
 tools take frames of the guest's display and send pointer and keyboard
 input to it, injected by the host through the VM's virtual keyboard and
 pointer, as host computer use is: the guest needs no Accessibility or
 Screen Recording permission. `guest_frame_rate` (1–10, default 4; only with
 `guest_access`) caps frames per second; actions are capped at 20 a second.
+Input tools wait for the screen to settle afterwards (`settle_ms`, default
+250 ms), and `wait_for_screen` waits for a region to settle before taking a
+screenshot; see [screen sync](design/computer-use-screen-sync.md).
 
 The setting is fixed when the instance is created, and the instance keeps
 both the listener and the MCP server registration it was created with;

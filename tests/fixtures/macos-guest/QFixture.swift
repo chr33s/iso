@@ -112,6 +112,7 @@ final class ContextTarget: NSTextField {
   var views: [String: NSView] = [:]
   var sheet: NSWindow?
   var child: NSWindow?
+  let box = NSView()
 
   func label(_ s: String) -> NSTextField {
     let f = NSTextField(labelWithString: s)
@@ -185,6 +186,17 @@ final class ContextTarget: NSTextField {
     target.stringValue = "AK Drop Here"
     target.isEditable = false
     place("ak_drop", target, height: 40)
+    // Gate W (screen sync): a button that starts a 600 ms transition, in
+    // the right-hand column so the other controls keep their places.
+    let animate = NSButton(title: "AK Animate", target: self, action: #selector(animate))
+    animate.frame = NSRect(x: 300, y: 712, width: 200, height: 28)
+    root.addSubview(animate)
+    views["ak_animate"] = animate
+    box.frame = NSRect(x: 300, y: 640, width: 40, height: 40)
+    box.wantsLayer = true
+    box.layer?.backgroundColor = NSColor.systemRed.cgColor
+    root.addSubview(box)
+    views["ak_box"] = box
     window.setFrameTopLeftPoint(NSPoint(x: 40, y: (NSScreen.main?.frame.height ?? 1200) - 60))
     window.makeKeyAndOrderFront(nil)
   }
@@ -200,6 +212,24 @@ final class ContextTarget: NSTextField {
   }
 
   @objc func pressed() { Fixture.shared.event("appkit", "button", "pressed") }
+
+  /// Moves the box 8 points a frame at 60 Hz for 600 ms, then stops.
+  @objc func animate() {
+    Fixture.shared.event("appkit", "animate", "started")
+    let start = ProcessInfo.processInfo.systemUptime
+    box.setFrameOrigin(NSPoint(x: 300, y: 640))
+    Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
+      MainActor.assumeIsolated {
+        let t = ProcessInfo.processInfo.systemUptime - start
+        guard t < 0.6 else {
+          timer.invalidate()
+          Fixture.shared.event("appkit", "animate", "finished", t)
+          return
+        }
+        self.box.setFrameOrigin(NSPoint(x: 300 + (t / 0.6) * 200, y: 640))
+      }
+    }
+  }
   @objc func checked(_ b: NSButton) {
     Fixture.shared.event("appkit", "check", "set", b.state == .on)
   }
@@ -342,7 +372,8 @@ struct SwiftUIFixture: View {
 
 let page = """
   <!doctype html><html><body style="font: 16px -apple-system; padding: 20px">
-  <p><input id="wk_field" placeholder="WK Field" style="font-size:16px"></p>
+  <p><input id="wk_field" placeholder="WK Field" style="font-size:16px"
+    autocorrect="off" autocapitalize="off" spellcheck="false"></p>
   <p><button id="wk_button" style="font-size:16px">WK Button</button></p>
   <p><label><input id="wk_check" type="checkbox"> WK Check</label></p>
   <p><select id="wk_select" style="font-size:16px"><option>One</option><option>Two</option><option>Three</option></select></p>

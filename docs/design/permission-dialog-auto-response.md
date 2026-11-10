@@ -120,10 +120,10 @@ dialogs.
 
 | Existing capability | Evidence | Consequence for this feature |
 | --- | --- | --- |
-| Guest framebuffer and virtual keyboard/pointer | `MacScreen` owns an ordered-out VM view and calls its input methods. [R1] | Reuse the current path; no new desktop automation driver for the MVP. |
+| Guest framebuffer and virtual keyboard/pointer | `VMScreen` owns an ordered-out VM view and calls its input methods. [R1] | Reuse the current path; no new desktop automation driver for the MVP. |
 | Session identity | `CUBinding` includes owner boot, VM instance, guest boot, helper generation, and display dimensions. [R4] | Invalidate pending responses whenever that binding changes. |
 | Frame-associated actions | `basedOnFrame` is optional and checks a retained frame's binding. The table retains 64 frames. [R4] | Require a frame for responder actions, and add a separate freshness/revalidation rule. |
-| Action serialization | `MacScreen.acting` prevents overlapping actions. [R1] | This does not reserve the entire observation–decision–verification interval. |
+| Action serialization | `VMScreen.acting` prevents overlapping actions. [R1] | This does not reserve the entire observation–decision–verification interval. |
 | Submission acknowledgement | `submitted` counts events handed to the view, without proving delivery. [R5] | Verify the operation; do not treat a successful RPC as a resolved prompt. |
 | A real TCC test | Gate R (at the inspected revision) opens Terminal, requests Desktop access, finds Allow, clicks, and checks command completion. [R3] | Promote the scenario into a stricter prompt fixture; do not promote its first-text-match heuristic unchanged. |
 | OCR fixture | `frame-ocr.swift` uses Vision and returns text, confidence, and pixel bounds. [R6] | Start with local bounded recognition over the existing frames. |
@@ -309,7 +309,7 @@ All new names below are proposals.
 | Controller | Host orchestration under `Sources/IsoHost/` | Add `ComputerUse/DialogResponder.swift` with a small explicit state machine. |
 | Recognition | `tests/fixtures/macos-guest/frame-ocr.swift` | Extract a bounded detector; add a versioned catalog of real prompt fixtures. |
 | Decisions | Host configuration, beside current validated policy concepts | Add typed prompt family, semantic effect, policy snapshot, and rule matching; reject unknown fields. |
-| Input ownership | `iso-sandbox/Sources/IsoSandboxCore/MacOS/MacScreen.swift` | Enforce the declared controller model; add an owner lease only when multi-client support is required. |
+| Input ownership | `iso-sandbox/Sources/IsoSandboxCore/VMScreen.swift` | Enforce the declared controller model; add an owner lease only when multi-client support is required. |
 | Session/frame contract | `CUModel.swift`, `MacOwner.swift` | Retain binding checks; add explicit response/lease metadata only as needed. Keep acknowledgement distinct from verification. |
 | CLI | `iso-sandbox/Sources/IsoSandbox/MacCommands.swift` | Keep transport commands small. Any higher-level observe/respond command is new and should be labeled accordingly. |
 | Unit tests | `iso-sandbox/Tests/IsoSandboxTests/MacComputerUseTests.swift` and host tests | Cover classification, policy, lifecycle invalidation, uncertainty, and concurrency behavior. |
