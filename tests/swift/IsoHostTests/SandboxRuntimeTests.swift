@@ -46,25 +46,27 @@ final class ScriptedRuntime: RuntimeExecutor {
 }
 
 let qualifiedVersion =
-  #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
+  #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#
 
 @Test func qualificationAcceptsOnlyTheValidatedRuntime() throws {
   let good = try RuntimeProtocol.parseVersion(Array(qualifiedVersion.utf8))
   #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.5.0"))
   let current =
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#
   #expect(
     try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(current.utf8))).contains(
       "protocol 5"))
   for bad in [
-    #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#,
-    #"{"name":"container","version":"1","protocol":4,"containerization":"0.45.0"}"#,
-    #"{"name":"iso-sandbox","version":"0.3.0","protocol":3,"containerization":"0.45.0"}"#,
-    #"{"name":"iso-sandbox","version":"0.2.0","protocol":2,"containerization":"0.45.0"}"#,
-    #"{"name":"iso-sandbox","version":"1","protocol":1,"containerization":"0.45.0"}"#,
+    #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.54.0"}"#,
+    #"{"name":"container","version":"1","protocol":4,"containerization":"0.54.0"}"#,
+    #"{"name":"iso-sandbox","version":"0.3.0","protocol":3,"containerization":"0.54.0"}"#,
+    #"{"name":"iso-sandbox","version":"0.2.0","protocol":2,"containerization":"0.54.0"}"#,
+    #"{"name":"iso-sandbox","version":"1","protocol":1,"containerization":"0.54.0"}"#,
     #"{"name":"iso-sandbox","version":"1","protocol":4,"containerization":"0.46.0"}"#,
     // The current protocol does not excuse another containerization release.
     #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.46.0"}"#,
+    // Nor the previously pinned one.
+    #"{"name":"iso-sandbox","version":"0.1.0","protocol":5,"containerization":"0.45.0"}"#,
   ] {
     #expect(throws: RuntimeError.self) {
       try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(bad.utf8)))
@@ -79,9 +81,9 @@ let qualifiedVersion =
     try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as! [String: Any]
   let name = try MachineName("iso-0a1b2c3d-00112233445566ff")
   let protocol4 =
-    #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.45.0"}"#
+    #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.54.0"}"#
   let protocol5 =
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0"}"#
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#
   func runtime(_ version: String, _ inspect: [String: Any]) -> SandboxRuntime {
     let text = String(
       data: try! JSONSerialization.data(withJSONObject: inspect), encoding: .utf8)!

@@ -12,7 +12,7 @@ Results file (JSON):
   {
     "tuple": {
       "host_os": "27.0.0", "iso_version": "0.6.0",
-      "runtime": "iso-sandbox 0.6.0 (containerization 0.45.0, protocol 5)",
+      "runtime": "iso-sandbox 0.6.0 (containerization 0.54.0, protocol 5)",
       "transport": "brokered", "image": "default@sha256:<image manifest digest hex>",
       "guest_kernel": "<kernel identity>", "broker": "iso-egress 0.6.0"
     },

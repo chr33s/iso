@@ -15,7 +15,7 @@ package let brokeredTransportFeature = "brokered-transport"
 /// (docs/design/paravirtualized-coreai.md).
 package let macCoreAIFeature = "macos-coreai"
 package let runtimeVersion = "0.1.0"
-package let containerizationVersion = "0.45.0"
+package let containerizationVersion = "0.54.0"
 
 /// On-disk layout of one runtime state root. Everything the runtime owns
 /// lives under `root`; nothing is read from or written to Apple Container's
@@ -47,7 +47,19 @@ package struct SandboxRoot: Sendable {
 
   package var imageStore: URL { root.appendingPathComponent("store", isDirectory: true) }
   package var kernel: URL { root.appendingPathComponent("vmlinux") }
-  package var initfs: URL { root.appendingPathComponent("initfs.ext4") }
+  /// Keyed by the containerization release so a root initialized by an
+  /// earlier release is re-initialized: its vminit guest agent must match
+  /// the linked library.
+  package var initfs: URL {
+    root.appendingPathComponent("initfs-\(containerizationVersion).ext4")
+  }
+  /// `init` removes every other release's init filesystem.
+  package func staleInitfs() throws -> [URL] {
+    try FileManager.default.contentsOfDirectory(atPath: root.path)
+      .filter { $0.hasPrefix("initfs") && $0.hasSuffix(".ext4") }
+      .map { root.appendingPathComponent($0) }
+      .filter { $0.lastPathComponent != initfs.lastPathComponent }
+  }
   package var sandboxes: URL { root.appendingPathComponent("sandboxes", isDirectory: true) }
   /// Unpacked image root filesystems, cloned into new sandboxes.
   package var bases: URL { root.appendingPathComponent("bases", isDirectory: true) }

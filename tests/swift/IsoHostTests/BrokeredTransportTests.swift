@@ -452,7 +452,7 @@ private let route = BrokeredRoute(
 
 @Test func runtimeCallsCarryTheBrokeredArguments() throws {
   let brokeredVersion =
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.45.0","features":["macos-guests","brokered-transport"]}"#
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0","features":["macos-guests","brokered-transport"]}"#
   for (version, supported) in [(brokeredVersion, true), (qualifiedVersion, false)] {
     let scripted = ScriptedRuntime { arguments in
       arguments == ["version"] ? ScriptedRuntime.ok(version) : ScriptedRuntime.ok("{}")

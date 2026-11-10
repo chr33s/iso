@@ -179,7 +179,7 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
   defer { close(fds[0]) }
   let writer = fds[1]
-  func send(_ chunk: String) {
+  @Sendable func send(_ chunk: String) {
     _ = chunk.utf8CString.withUnsafeBufferPointer {
       write(writer, $0.baseAddress, chunk.utf8.count)
     }

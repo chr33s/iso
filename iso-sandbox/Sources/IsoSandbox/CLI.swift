@@ -49,7 +49,7 @@ struct Init: AsyncParsableCommand {
     abstract: "Create the state root: pinned kernel and init filesystem.")
   static let initImage = "\(Disks.initImagePrefix):\(containerizationVersion)"
   static let initImageDigest =
-    "sha256:aa6ab59d0938f7fadb54ac27e80959bdd2f1dafa8050011086d5f8ab1350fd6c"
+    "sha256:ab76bf71fbedcbf67a54dc5f37b0acefd68b1ba090d93f752f8e27c9961a685c"
 
   @OptionGroup var root: RootOptions
   @Option(help: "Linux kernel image; its sha256 must be one this runtime was validated with")
@@ -76,6 +76,10 @@ struct Init: AsyncParsableCommand {
       guard rename(tmp.path, r.initfs.path) == 0 else {
         throw SandboxError("rename initfs: errno \(errno)")
       }
+    }
+    // A running VM keeps its open initfs; only the directory entry goes.
+    for stale in try r.staleInitfs() {
+      try FileManager.default.removeItem(at: stale)
     }
     try printJSON(["kernelSha256": sha, "initImage": Self.initImageDigest, "root": r.root.path])
   }

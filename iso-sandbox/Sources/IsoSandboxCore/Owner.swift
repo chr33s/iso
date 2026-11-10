@@ -80,7 +80,10 @@ package enum Owner {
     let console = try ConsoleLog(url: paths.bootLog)
     let config = machineConfiguration(
       record: record, interface: interface, bootLog: .fileHandle(console.writer))
-    let container = try LinuxContainer(id.rawValue, rootfs: rootfs, vmm: vmm, configuration: config)
+    let container = try LinuxContainer(
+      id.rawValue, rootfs: rootfs, vmm: vmm,
+      vm: machineResources(cpus: record.cpus, memoryBytes: record.memoryBytes),
+      configuration: config)
     // `create` boots the VM into the framework's init; the guest's own
     // init runs only at `start`, so the device check below precedes any
     // guest-authored code. It runs for every network mode: the framework
@@ -273,6 +276,13 @@ package enum Owner {
           "subnet \(SandboxRecord.subnet(failed)) unavailable (\(error)); moved to \(SandboxRecord.subnet(next))"
         )
       })
+  }
+
+  /// The VM around a container with these cgroup limits: one more vCPU and
+  /// ``VMResources/guestMemoryOverhead`` for the guest kernel and vminitd.
+  /// Containerization sizes the VM only from this, never from the limits.
+  static func machineResources(cpus: Int, memoryBytes: UInt64) -> VMResources {
+    VMResources(cpus: cpus + 1, memoryInBytes: memoryBytes + VMResources.guestMemoryOverhead)
   }
 
   /// `interface` is nil exactly for a brokered sandbox.

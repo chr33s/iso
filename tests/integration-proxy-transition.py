@@ -50,7 +50,7 @@ def seed_initfs(state):
     if seed:
         runtime = Path(state) / "runtime"
         runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
-        shutil.copyfile(seed, runtime / "initfs.ext4")
+        shutil.copyfile(seed, runtime / "initfs-0.54.0.ext4")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
