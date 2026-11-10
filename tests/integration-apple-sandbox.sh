@@ -317,8 +317,10 @@ else
     fail "iso-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 5 on containerization 0.45.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "5 0.45.0"
+check "version reports protocol 5 on containerization 0.54.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "5 0.54.0"
+# The runtime keys its init filesystem by containerization release.
+INITFS="initfs-0.54.0.ext4"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&
     "$CONTAINER" image save --platform linux/arm64 -o "$WORK/image.tar" "$IMAGE" >/dev/null 2>&1; then
     pass "test image builds"
@@ -331,7 +333,7 @@ kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/ker
 # skips its download when the registry is unreachable. The seed is not
 # re-verified; use only a file a successful `iso-sandbox init` produced.
 if [[ -n "${ISO_TEST_INITFS:-}" ]]; then
-    mkdir -p "$ROOT" && cp "$ISO_TEST_INITFS" "$ROOT/initfs.ext4"
+    mkdir -p "$ROOT" && cp "$ISO_TEST_INITFS" "$ROOT/$INITFS"
 fi
 check "init accepts the pinned kernel" sbx init --kernel "$kernel"
 check "init refuses an unpinned kernel" refuses "$SANDBOX" init --root "$WORK/other" --kernel "$FIXTURES/image/Dockerfile"
@@ -745,7 +747,11 @@ if want resources; then
     v="$(verify "$A")"
     # The runtime adds one vCPU of its own.
     check "CPU change applies at the next start" test "$(jq -r .nproc <<<"$v")" = 3
-    check "memory change applies at the next start" test "$(jq -r .mem_kb <<<"$v")" -lt $((4200 * 1024))
+    # MemTotal is the requested 4096 MiB plus the runtime's overhead, less
+    # what the guest kernel reserves; the library default is 1024 MiB.
+    mem_kb="$(jq -r .mem_kb <<<"$v")"
+    check "memory change applies at the next start" \
+        test "$mem_kb" -gt $((3800 * 1024)) -a "$mem_kb" -lt $((4300 * 1024))
     check "the disk keeps its identity" test "$(jq -r .machine_id <<<"$v")" = "$mid"
     check "set refuses a running sandbox" refuses sbx set "$A" --cpus 1
     sbx stop "$A"
@@ -1101,8 +1107,8 @@ if want iso; then
     # The setup phase already pulled vminit and checked its digest. Seeding
     # its init filesystem lets `iso-sandbox init` skip a second 69 MB pull,
     # which can outlast setup's deadline on a slow route to GitHub's CDN.
-    if [[ -f "$ROOT/initfs.ext4" ]]; then
-        mkdir -p "$CROOT" && cp "$ROOT/initfs.ext4" "$CROOT/initfs.ext4"
+    if [[ -f "$ROOT/$INITFS" ]]; then
+        mkdir -p "$CROOT" && cp "$ROOT/$INITFS" "$CROOT/$INITFS"
     fi
     if { if [[ -n "$PREBUILT" ]]; then
             mkdir -p "$(dirname "$ISO")" && cp -p "$PREBUILT/iso" "$ISO"

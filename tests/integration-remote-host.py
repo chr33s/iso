@@ -892,7 +892,7 @@ def seed_initfs(state):
     if seed:
         runtime = Path(state) / "runtime"
         runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
-        shutil.copyfile(seed, runtime / "initfs.ext4")
+        shutil.copyfile(seed, runtime / "initfs-0.54.0.ext4")
 
 def first_line(process, timeout=120):
     """The first stdout line of `process`, or "" when none arrives within

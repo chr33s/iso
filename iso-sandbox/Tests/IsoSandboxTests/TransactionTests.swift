@@ -1,3 +1,4 @@
+import Containerization
 import ContainerizationEXT4
 import Foundation
 import SystemPackage
@@ -487,13 +488,37 @@ import Testing
     #expect(try paths.readRecordFile().diskBytes == 8 << 30)
   }
 
+  /// A root holding only an earlier release's init filesystem is not
+  /// initialized, and `init` would remove that file but keep the current one.
+  @Test func initfsIsKeyedByContainerizationRelease() throws {
+    let r = try root()
+    try Data().write(to: r.kernel)
+    try FileManager.default.createDirectory(at: r.imageStore, withIntermediateDirectories: true)
+    let legacy = r.root.appendingPathComponent("initfs.ext4")
+    let previous = r.root.appendingPathComponent("initfs-0.45.0.ext4")
+    try Data().write(to: legacy)
+    try Data().write(to: previous)
+    #expect(throws: SandboxError.self) { try r.requireInitialized() }
+    try Data().write(to: r.initfs)
+    try r.requireInitialized()
+    #expect(Set(try r.staleInitfs()) == [legacy, previous])
+  }
+
+  /// The VM gets the record's resources plus the guest's own overhead, not
+  /// containerization's 4 vCPU / 1 GiB default.
+  @Test func machineIsSizedFromTheRecord() {
+    let vm = Owner.machineResources(cpus: 2, memoryBytes: 4096 << 20)
+    #expect(vm.cpus == 3)
+    #expect(vm.memoryInBytes == (4096 << 20) + VMResources.guestMemoryOverhead)
+  }
+
   /// `install` refuses a bad version or the init image before touching
   /// `maintenance/`.
   @Test func maintenanceInstallRefusesBadInputs() async throws {
     let r = try initializedRoot()
     for (reference, version) in [
       ("local/m:1", ""), ("local/m:1", String(repeating: "a", count: 65)),
-      (Disks.initImagePrefix + ":0.45.0", "1"),
+      (Disks.initImagePrefix + ":" + containerizationVersion, "1"),
     ] {
       do {
         _ = try await Maintenance.install(root: r, reference: reference, version: version)

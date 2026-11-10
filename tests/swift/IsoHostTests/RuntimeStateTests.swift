@@ -22,7 +22,7 @@ private let ownerID = try! OwnerID("0a1b2c3d00112233445566778899aabb")
   let version = try RuntimeProtocol.parseVersion(try fixture("version.json"))
   #expect(version.name == "iso-sandbox")
   #expect(version.protocol == 5)
-  #expect(version.containerization == "0.45.0")
+  #expect(version.containerization == "0.54.0")
   #expect(throws: RuntimeError.self) {
     try RuntimeProtocol.parseVersion(Array(#"{"name":"x"}"#.utf8))
   }

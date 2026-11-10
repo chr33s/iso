@@ -13,7 +13,7 @@ name: On-Demand Review
 # concurrency group, so a workflow-wide group would cancel unrelated requests.
 # jactionlint ignore=dangerous-triggers,concurrency-limits
 on:
-  issue_comment:
+  issue_comment: # zizmor: ignore[dangerous-triggers] -- the gate job admits only trusted authors
     types: [created]
   pull_request_review_comment:
     types: [created]

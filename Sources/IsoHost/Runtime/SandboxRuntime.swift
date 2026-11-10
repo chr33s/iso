@@ -184,7 +184,7 @@ package struct FilteredBoot: Sendable, Equatable {
 package struct SandboxRuntime: Sendable {
   package static let jsonLimit = 1 << 20
   package static let textLimit = 256 << 10
-  package static let containerization = "0.45.0"
+  package static let containerization = "0.54.0"
 
   let executor: any RuntimeExecutor
   /// Canonical runtime state root, passed as `--root` on every call.

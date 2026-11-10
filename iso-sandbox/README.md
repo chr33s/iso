@@ -2,7 +2,7 @@
 
 The macOS VM runtime behind isolate's opt-in `apple-container` build: persistent
 Linux sandboxes on [`apple/containerization`](https://github.com/apple/containerization)
-0.45.0 (pinned exactly in `Package.swift`). isolate drives it through the JSON CLI
+0.54.0 (pinned exactly in `Package.swift`). isolate drives it through the JSON CLI
 below; see [`docs/backends.md`](../docs/backends.md) for the isolate side and
 [`docs/trust-model.md`](../docs/trust-model.md) for the isolation contract.
 
@@ -43,7 +43,7 @@ pass output through.
 
 ```text
 version                                   {name, version, protocol, containerization}
-init --kernel K                           pinned kernel (sha256 allowlist) + vminit 0.45.0 initfs
+init --kernel K                           pinned kernel (sha256 allowlist) + vminit 0.54.0 initfs
 image import --oci-tar T | image list | image delete REF
 create ID (--image REF | --from-disk NAME) --cpus N --memory-mib M --disk-gib G --owner O
        [--network shared|host-only|brokered]

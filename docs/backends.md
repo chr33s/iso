@@ -38,15 +38,15 @@ Host Docker is not needed. Docker runs *inside* the guest.
 scripts/build-iso-sandbox.sh            # installs ~/.local/opt/iso-sandbox/bin/iso-sandbox
 ```
 
-It builds the Swift package in release mode, signs it ad hoc with the hardened runtime, the Enhanced Security entitlements and `com.apple.security.virtualization` (`iso-sandbox/iso-sandbox.entitlements`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. `--experimental-coreai` instead installs the unreleased `iso-sandbox-coreai`, whose private entitlement needs a host with AMFI relaxed; see [`coreai.md`](coreai.md). isolate accepts protocol 5 with containerization 0.45.0 and refuses any other protocol or containerization version.
+It builds the Swift package in release mode, signs it ad hoc with the hardened runtime, the Enhanced Security entitlements and `com.apple.security.virtualization` (`iso-sandbox/iso-sandbox.entitlements`), and installs it without `sudo`. It refuses an existing `bin/` that is owned by neither you nor root, world-writable, or group-writable by a group other than `wheel` or `admin`. Pass a different prefix as the first argument and set `apple_container.binary` to match. Rebuild after pulling changes to `iso-sandbox`. `--experimental-coreai` instead installs the unreleased `iso-sandbox-coreai`, whose private entitlement needs a host with AMFI relaxed; see [`coreai.md`](coreai.md). isolate accepts protocol 5 with containerization 0.54.0 and refuses any other protocol or containerization version.
 
 ### Supported combinations
 
 | iso-sandbox | containerization | macOS | Hardware | Evidence |
 |---|---|---|---|---|
-| 0.1.0 (protocol 5) | 0.45.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
+| 0.1.0 (protocol 5) | 0.54.0 | 27.0 | Apple Silicon | Requires the `network` mode and live `bootId`. Filtered egress also binds the live owner identity to its boot policy. Full filtered qualification remains open ([evidence](testing.md#local-filtered-vm-evidence-partial)). |
 
-The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.56-208-debug`, sha256 `98a1005f…f7511`, the Kata 4.3.1 kernel `container` 1.7.1 installs) and its init image (`vminit:0.45.0` by digest). `iso setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
+The runtime also pins its guest kernel by sha256 (`vmlinux-6.18.56-208-debug`, sha256 `98a1005f…f7511`, the Kata 4.3.1 kernel `container` 1.7.1 installs) and its init image (`vminit:0.54.0` by digest). `iso setup` fails with `APPLE_RUNTIME_UNAVAILABLE` on any other kernel.
 
 ### Configuration
 
@@ -110,7 +110,7 @@ explicit `apple_container.binary` still takes precedence. `iso update` targets
 
 `iso setup`:
 
-1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 5, containerization 0.45.0), and creates `owner.json` and the VM-access key pair.
+1. Checks the platform, resolves and qualifies iso-sandbox (`iso-sandbox version`: protocol 5, containerization 0.54.0), and creates `owner.json` and the VM-access key pair.
 2. Initializes the runtime root: copies the kernel after checking its pinned sha256, and pulls the pinned init image. Unless the runtime already has the current maintenance image, builds it (Ubuntu with e2fsprogs; log in `maintenance-build.log`), installs it with `iso-sandbox maintenance install`, and deletes the store copy.
 3. Renders a minimal build context in a private temporary directory: a Dockerfile `FROM ubuntu:24.04` pinned by digest, the Apple provisioning script (packages, profiles, OCI features, guest user, Claude Code, Codex, Docker), and a machine-setup script. The context contains the isolate **public** key only. There are no build arguments and no secrets.
 4. Checks that the builder's service is running, then runs `container build --platform linux/arm64 -t local/iso-<owner>:<hash>-<nonce>`, with output in `images/<name>/build.log`. Every build gets a fresh tag, so a rebuild never retags an image in use.
@@ -213,7 +213,7 @@ Runtime and builder commands run with a cleared environment: only `HOME`, `USER`
 
 ### Validation status
 
-Validated on macOS 27.0 (Apple M5 Max) with iso-sandbox 0.1.0 and containerization 0.45.0; see the table above.
+Validated on macOS 27.0 (Apple M5 Max) with iso-sandbox 0.1.0 and containerization 0.45.0, and on 2026-11-10 with containerization 0.54.0 (full integration suite: 298 passed, 2 opt-in skips); see the table above.
 
 - **Runtime ([`tests/integration-apple-sandbox.sh`](../tests/integration-apple-sandbox.sh); the selection experiment is in [`design/apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md)):**
   - Peer isolation: a root guest cannot reach another sandbox by TCP, UDP, or ICMP over IPv4 or IPv6. That holds with forged on-link routes, static neighbour entries, spoofed source addresses, and broadcast/multicast, and after restarts; the host reaches each listener as the positive control.

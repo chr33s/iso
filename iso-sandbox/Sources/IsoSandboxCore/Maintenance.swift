@@ -227,6 +227,7 @@ package enum Maintenance {
       format: "ext4", source: toolsClone.path, destination: "/", options: [])
     let container = try LinuxContainer(
       "m-\(UUID().uuidString.prefix(12).lowercased())", rootfs: rootfs, vmm: vmm,
+      vm: Owner.machineResources(cpus: config.cpus, memoryBytes: config.memoryInBytes),
       configuration: config)
     try await container.create()
     try await container.start()

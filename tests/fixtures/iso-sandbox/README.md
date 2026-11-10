@@ -1,7 +1,7 @@
 # iso-sandbox fixtures
 
 Representative protocol-5 output from `iso-sandbox` 0.5.0 with
-containerization 0.45.0, used by host runtime-boundary tests.
+containerization 0.54.0, used by host runtime-boundary tests.
 
 - `version.json` — runtime version and qualified protocol/dependency.
 - `inspect-stopped.json` — a created, stopped sandbox.

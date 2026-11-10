@@ -17,6 +17,19 @@ SPDX-License-Identifier: Apache-2.0
   `~/.agents/skills` (`SKILL_DIRS` overrides), and this repository links it as
   `.agents/skills/iso`.
 
+### Changed
+
+- **Apple runtime:** iso-sandbox links `apple/containerization` 0.54.0 (was
+  0.45.0) and pins `vminit:0.54.0` by digest; the host qualifies only
+  containerization 0.54.0. The runtime keys its init filesystem by
+  containerization release (`initfs-<version>.ext4`), so the next `iso setup`
+  pulls and verifies the new init image and removes the old one. Linux VMs
+  keep the 0.45.0 sizing (requested vCPUs plus one, requested memory plus
+  128 MiB): 0.54.0 sizes the VM separately and would otherwise boot every
+  VM at its 4 vCPU / 1 GiB default.
+- **Dependencies:** swift-crypto 5.0.3, swift-nio 2.104.0, swift-nio-ssl
+  2.37.5, and updated GitHub Actions pins.
+
 ## v0.9.0
 
 ### Added

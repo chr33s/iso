@@ -58,7 +58,7 @@ def main():
     argv = sys.argv[1:]
     log(argv)
     if argv[:1] == ["version"]:
-        version = {"name": "iso-sandbox", "version": "0.5.0", "protocol": 5, "containerization": "0.45.0"}
+        version = {"name": "iso-sandbox", "version": "0.5.0", "protocol": 5, "containerization": "0.54.0"}
         features = [] if mode().get("noMacFeature") else ["macos-guests"]
         if not mode().get("noBrokeredFeature"):
             features.append("brokered-transport")
