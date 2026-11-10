@@ -476,16 +476,17 @@ class ReleaseBinaryTests(unittest.TestCase):
             workflow, re.S)[1]
         script = "\n".join(line[10:] for line in block.splitlines())
         name = 'iso-v9.8.7-aarch64-apple-darwin'
-        for version, has_proxy, has_runtime, has_helper, expected in [
-                ('iso 9.8.7 (abc1234)', True, True, True, 0),
-                ('iso 9.8.7-dev (abc1234+dirty)', True, True, True, 1),
-                ('iso 9.8.6 (abc1234)', True, True, True, 1),
-                ('iso 9.8.7 (abc1235)', True, True, True, 1),
-                ('iso 9.8.7 (abc1234)', False, True, True, 1),
-                ('iso 9.8.7 (abc1234)', True, False, True, 1),
-                ('iso 9.8.7 (abc1234)', True, True, False, 1)]:
+        for version, has_proxy, has_runtime, has_helper, has_skill, expected in [
+                ('iso 9.8.7 (abc1234)', True, True, True, True, 0),
+                ('iso 9.8.7-dev (abc1234+dirty)', True, True, True, True, 1),
+                ('iso 9.8.6 (abc1234)', True, True, True, True, 1),
+                ('iso 9.8.7 (abc1235)', True, True, True, True, 1),
+                ('iso 9.8.7 (abc1234)', False, True, True, True, 1),
+                ('iso 9.8.7 (abc1234)', True, False, True, True, 1),
+                ('iso 9.8.7 (abc1234)', True, True, False, True, 1),
+                ('iso 9.8.7 (abc1234)', True, True, True, False, 1)]:
             with self.subTest(version=version, proxy=has_proxy, runtime=has_runtime,
-                              helper=has_helper), \
+                              helper=has_helper, skill=has_skill), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 bundle = root / 'bundle' / name
@@ -500,6 +501,9 @@ class ReleaseBinaryTests(unittest.TestCase):
                 for binary, text in binaries.items():
                     (bundle / binary).write_text(text)
                     (bundle / binary).chmod(0o755)
+                if has_skill:
+                    (bundle / 'skills' / 'iso').mkdir(parents=True)
+                    (bundle / 'skills' / 'iso' / 'SKILL.md').write_text('---\nname: iso\n---\n')
                 (root / 'dist').mkdir()
                 with tarfile.open(root / 'dist' / f'{name}.tar.gz', 'w:gz') as tar:
                     tar.add(bundle, arcname=name)
