@@ -13,8 +13,8 @@ let package = Package(
     .executable(name: "iso-proxy", targets: ["IsoProxy"])
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
-    .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.36.1"),
+    .package(url: "https://github.com/apple/swift-nio.git", exact: "2.104.0"),
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.37.5"),
     .package(url: "https://github.com/swift-server/async-http-client.git", exact: "1.36.2"),
     // The policy evaluator shared with the host CLI; a library, not a process.
     .package(path: "../iso-policy"),
