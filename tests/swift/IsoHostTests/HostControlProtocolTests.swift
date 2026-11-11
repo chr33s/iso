@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 @Suite struct HostControlProtocolTests {
   let host = HostID.generate()

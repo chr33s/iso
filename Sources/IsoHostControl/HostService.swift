@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 import Synchronization
 
 /// Process entrypoints behind `iso host-agent` (spec 3.3) and the launchd

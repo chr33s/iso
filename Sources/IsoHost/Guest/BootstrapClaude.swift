@@ -373,7 +373,7 @@ func oneLineError(_ error: any Error) -> String {
 
 extension AgentBootstrap {
   /// A proxy started here is torn down if a later step fails.
-  func bootstrapClaude(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
+  package func bootstrapClaude(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
     let claude = config.claude
     let claudeBinary = persistedGuestUser(instance.image).claudeBinary
     if mode == .firstBoot {

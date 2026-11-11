@@ -3,6 +3,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 
 /// Internal host-control entrypoints (docs/design/local-and-remote-hosts-spec.md
 /// section 3.3). None accepts a guest command or a filesystem operation; request

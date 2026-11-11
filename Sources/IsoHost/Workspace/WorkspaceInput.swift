@@ -153,7 +153,7 @@ package struct InputReport: Equatable {
   var unsupported: [String] = []
   /// Tracked files deleted on the host, eligible for removal from the
   /// guest copy by a push (never reserved, excluded or secret-named).
-  var deletedTracked: [String] = []
+  package var deletedTracked: [String] = []
 }
 
 /// An immutable copy of one root's selected entries in private host state.

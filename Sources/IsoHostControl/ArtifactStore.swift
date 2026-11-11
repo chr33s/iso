@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import IsoCore
+import IsoHost
 import Synchronization
 
 /// Kinds of host-owned artifacts. Each fixes its size bound and whether its

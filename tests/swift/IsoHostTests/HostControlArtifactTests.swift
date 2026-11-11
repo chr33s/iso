@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 @Suite struct HostControlArtifactTests {
   let owner = try! OwnerID(String(repeating: "ab", count: 16))

@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// The fixed internal entrypoints an SSH frontend may invoke.
 package enum HostAgentEntrypoint: String, Sendable {

@@ -246,7 +246,7 @@ package struct BrokeredConnector: Sendable, Equatable {
   package let root: String
 
   /// The ProxyCommand line. ssh runs it through a shell and expands `%`, so
-  /// every path must be plain (``ClientSessionCoordinator/requireRouteSafe(_:)``).
+  /// every path must be plain (``RoutePath/requireSafe(_:)``).
   package func proxyCommand(machine: MachineName, route: BrokeredRoute) throws -> String {
     try requireRouteSafe()
     let command = command(machine: machine, route: route)
@@ -254,8 +254,8 @@ package struct BrokeredConnector: Sendable, Equatable {
   }
 
   package func requireRouteSafe() throws {
-    try ClientSessionCoordinator.requireRouteSafe(executable)
-    try ClientSessionCoordinator.requireRouteSafe(root)
+    try RoutePath.requireSafe(executable)
+    try RoutePath.requireSafe(root)
   }
 
   /// The connector as an executable and arguments, for the relay's direct spawn.

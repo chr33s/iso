@@ -3,6 +3,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 
 /// Execution-host enrollment, inspection and remote VM lifecycle
 /// (docs/design/local-and-remote-hosts-spec.md sections 5 and 13).

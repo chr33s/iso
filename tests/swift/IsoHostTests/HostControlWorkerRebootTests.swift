@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 // A boot that ended outside the service (a worker reboot or a crashed owner)
 // must not leave the ledger claiming `running`: found by the two-Mac N-T12

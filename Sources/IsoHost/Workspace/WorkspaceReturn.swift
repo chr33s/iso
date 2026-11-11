@@ -587,7 +587,7 @@ final class ApplyProgressLog {
 /// a deliberately constructed environment, and a qualification check of
 /// each tool's ownership and family before any receive. A tool that fails
 /// is refused, never substituted from `PATH`.
-struct InboundReceivers: Sendable {
+package struct InboundReceivers: Sendable {
   let tar: String
   let rsync: String
   let ssh: String

@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 @Test(arguments: ["auto", "required"])
 func remoteAgentsAlwaysRunWithTheProxyRequired(mode: String) throws {

@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 import IsoPolicy
 import Synchronization
 
@@ -265,7 +266,7 @@ package final class ClientSessionCoordinator: Sendable {
     }
     // These paths reach ssh's ProxyCommand (run by a shell) and rsync's -e.
     for path in [executable, base, ClientSessionKey.path(config)] {
-      try ClientSessionCoordinator.requireRouteSafe(path)
+      try RoutePath.requireSafe(path)
     }
     let descriptor = SessionDescriptor(
       host: host.enrollment.alias, sshAlias: host.enrollment.sshAlias,
@@ -399,26 +400,13 @@ extension ClientSessionCoordinator {
     }
     let key = ClientSessionKey.path(config)
     for path in [executable, descriptorPath, key, knownHostsPath] {
-      try Self.requireRouteSafe(path)
+      try RoutePath.requireSafe(path)
     }
     var target = SSHTarget(
       host: sshAlias, port: 22, user: grant.guestUser, keyPath: key, knownHosts: knownHostsPath,
       alias: sshAlias)
     target.proxyCommand = "\(executable) host-agent connect --descriptor \(descriptorPath)"
     return target
-  }
-}
-
-extension ClientSessionCoordinator {
-  /// Paths inside a ProxyCommand (shell-run, `%`-expanded) and rsync `-e`
-  /// must be plain: `[A-Za-z0-9/._-]` only.
-  package static func requireRouteSafe(_ path: String) throws {
-    guard !path.isEmpty, path.unicodeScalars.allSatisfy({ $0 == "/" || isSafeNameCharacter($0) })
-    else {
-      throw HostError(
-        "\(path) has characters the remote guest route cannot carry; use a data_dir and iso path of [A-Za-z0-9/._-]"
-      )
-    }
   }
 }
 
@@ -795,7 +783,7 @@ package enum CoordinatorRecord {
     let knownHosts =
       SessionDescriptor.directory(config) + "/" + record.session.rawValue + ".known_hosts"
     for path in [executable, descriptor, knownHosts, ClientSessionKey.path(config)] {
-      try ClientSessionCoordinator.requireRouteSafe(path)
+      try RoutePath.requireSafe(path)
     }
     var target = SSHTarget(
       host: record.alias, port: 22, user: record.guestUser,

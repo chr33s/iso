@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 import Synchronization
 
 /// Worker-owned byte relays to verified guest SSH endpoints (spec 9.1).

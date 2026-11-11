@@ -5,6 +5,7 @@ import IsoSecrets
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 // The brokered transport (docs/design/brokered-network-isolation.md): the
 // gate's NIC-less proof, digest parity with the runtime, the per-boot policy

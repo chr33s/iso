@@ -46,10 +46,18 @@ let package = Package(
         "Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb",
         "Guest/Resources/desktop-pre.sh", "Guest/Resources/desktop-post.sh",
       ]),
+    // The iso.host/v1 execution-host layer (wire, supervisor, service, client
+    // bindings) over IsoHost; nothing in IsoHost may depend on it.
+    .target(
+      name: "IsoHostControl",
+      dependencies: [
+        "IsoCore", "IsoConfiguration", "IsoHost", "IsoSecrets",
+        .product(name: "IsoPolicy", package: "iso-policy"),
+      ]),
     .executableTarget(
       name: "IsoCLI",
       dependencies: [
-        "IsoCore", "IsoConfiguration", "IsoHost", "IsoSecrets",
+        "IsoCore", "IsoConfiguration", "IsoHost", "IsoHostControl", "IsoSecrets",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "IsoPolicy", package: "iso-policy"),
       ]),
@@ -72,7 +80,9 @@ let package = Package(
       path: "tests/swift/IsoConfigurationTests", resources: [.copy("Fixtures")]),
     .testTarget(
       name: "IsoHostTests",
-      dependencies: ["IsoHost", .product(name: "IsoPolicy", package: "iso-policy")],
+      dependencies: [
+        "IsoHost", "IsoHostControl", .product(name: "IsoPolicy", package: "iso-policy"),
+      ],
       path: "tests/swift/IsoHostTests"),
     .testTarget(
       name: "IsoSecretsTests", dependencies: ["IsoSecrets"], path: "tests/swift/IsoSecretsTests"),

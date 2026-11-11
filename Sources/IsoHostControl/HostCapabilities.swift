@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// `host.capabilities`: what this host can do now and the evidence behind it
 /// (docs/design/brokered-network-isolation.md, NET-HANDOFF-1). A capability

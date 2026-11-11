@@ -9,7 +9,7 @@ package final class AppleBackend: Sendable {
   package static let name = "apple-container"
 
   package let config: IsoConfig
-  let environment: [String: String]
+  package let environment: [String: String]
   package let diagnostics: Diagnostics
   let executable: String?
   /// Resolved and qualified once per process; a resolution failure is not

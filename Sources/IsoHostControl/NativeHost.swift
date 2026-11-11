@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 package enum NativeFailure: Error, Sendable, Equatable {
   /// The runtime cannot be reached or is not qualified; nothing was attempted.

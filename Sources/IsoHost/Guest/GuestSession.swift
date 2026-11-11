@@ -41,7 +41,7 @@ package struct EnvForward: Sendable, CustomStringConvertible {
   /// The guest command for `remote` with these variables. `terminal` is the
   /// caller's TERM intent; a normalized TERM replaces a requested one before
   /// encoding, so it still wins as it did before aliasing.
-  func prepare(_ remote: String, terminal: GuestTerminal) throws -> PreparedGuestCommand {
+  package func prepare(_ remote: String, terminal: GuestTerminal) throws -> PreparedGuestCommand {
     guard !names.isEmpty else { return PreparedGuestCommand(remote: remote, aliases: []) }
     guard names.count <= Self.maxEntries else {
       throw HostError(
@@ -110,14 +110,14 @@ package struct EnvForward: Sendable, CustomStringConvertible {
 
 /// What a guest PTY's TERM should be: the caller's requested value, or iso's
 /// normalized host-derived terminal type.
-enum GuestTerminal: Sendable, Equatable {
+package enum GuestTerminal: Sendable, Equatable {
   case requested
   case normalized(String)
 }
 
 /// A guest command with its matched wrapper, `SendEnv` options and alias
 /// values. Only `EnvForward.prepare` builds one, so the three cannot drift.
-struct PreparedGuestCommand: Sendable {
+package struct PreparedGuestCommand: Sendable {
   let remote: String
   private let aliases: [(name: String, value: Secret<String>)]
 
@@ -140,7 +140,7 @@ struct PreparedGuestCommand: Sendable {
 
   /// The ssh argv and environment, refused before spawning when they would
   /// not fit the host's argument space.
-  func launch(
+  package func launch(
     _ target: SSHTarget, base: [String: String], pty: Bool
   ) throws -> (arguments: [String], environment: [String: String]) {
     // A fixed escape character keeps `Enter ~.` working whatever the

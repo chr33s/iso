@@ -1,5 +1,6 @@
 import Foundation
 import IsoCore
+import IsoHost
 import Synchronization
 
 /// The volatile live-access registry for one supervisor epoch (spec 9.2–9.4).

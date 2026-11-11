@@ -5,6 +5,7 @@ import IsoSecrets
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 // Brokered create, restart, refusal, restore/commit and relay selection
 // through `AppleBackend` against the stateful fake runtime

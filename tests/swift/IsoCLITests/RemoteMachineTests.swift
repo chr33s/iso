@@ -1,6 +1,7 @@
 import Foundation
 import IsoCore
 import IsoHost
+import IsoHostControl
 import Testing
 
 @testable import IsoCLI

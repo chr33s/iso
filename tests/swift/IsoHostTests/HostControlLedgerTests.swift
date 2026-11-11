@@ -5,6 +5,7 @@ import Synchronization
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 @Suite struct HostControlLedgerTests {
   @Test func duplicateCreateReturnsTheSameAllocation() throws {

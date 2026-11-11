@@ -3,6 +3,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 /// S1 (SSH-01/02): every managed SSH role, as the real `/usr/bin/ssh`
 /// resolves it (`ssh -G` prints the effective configuration without

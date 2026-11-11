@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// Disposable-run admission and execution (spec 12). Child VM work uses the
 /// ordinary lifecycle ledger under identities reserved at `run.create`.

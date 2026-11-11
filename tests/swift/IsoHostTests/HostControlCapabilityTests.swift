@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 /// `host.capabilities`: NET-HANDOFF-1 is advertised only with a brokered
 /// transport, a brokered runtime and current evidence for this tuple.

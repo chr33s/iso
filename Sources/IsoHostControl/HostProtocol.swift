@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// `iso.host/v1` request and response envelopes (spec section 6). This is the
 /// internal host-control protocol; it is separate from `iso.machine/v1`.

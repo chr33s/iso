@@ -1,5 +1,6 @@
 import Foundation
 import IsoCore
+import IsoHost
 
 /// Streaming policy check of a POSIX tar archive staged on the worker
 /// (spec 11.4): absolute members, traversal, unsafe links, duplicate or

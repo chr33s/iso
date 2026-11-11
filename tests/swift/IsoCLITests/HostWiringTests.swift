@@ -3,6 +3,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 import Synchronization
 import Testing
 

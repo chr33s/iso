@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// Typed results of `iso.host/v1` methods (spec 6.2–6.3, 7.6). Each type
 /// encodes to and decodes from its wire form so client and server share one

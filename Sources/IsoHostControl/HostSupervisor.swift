@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 import Synchronization
 
 /// The host-owned service behind every production host-control request

@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 import Synchronization
 
 /// Where one installation's private sockets live (spec 3.3): a per-user

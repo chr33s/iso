@@ -5,6 +5,7 @@ import Synchronization
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 /// A controllable clock: wall and monotonic time advance only on `advance`.
 final class ManualClock: HostClock {

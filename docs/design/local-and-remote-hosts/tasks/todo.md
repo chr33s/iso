@@ -38,8 +38,8 @@ Implement the typed host-control contract and closed v1 wire decoder, initially 
 **Likely files:**
 
 - **P** `Sources/IsoCore/HostIdentity.swift`
-- **P** `Sources/IsoHost/HostControl/HostControl.swift`
-- **P** `Sources/IsoHost/HostControl/HostProtocol.swift`
+- **P** `Sources/IsoHostControl/HostControl.swift`
+- **P** `Sources/IsoHostControl/HostProtocol.swift`
 - **P** `tests/swift/IsoHostTests/HostControlProtocolTests.swift`
 
 **Acceptance criteria:**
@@ -58,8 +58,8 @@ Introduce the per-user supervisor and local socket transport. Wire the fixed int
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/LocalHostControl.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/LocalHostControl.swift`
 - **P** `Sources/IsoCLI/Commands/HostAgentCommands.swift`
 - **E** `Sources/IsoCLI/IsoCommand.swift`
 - **P** `tests/integration-remote-host.py`
@@ -87,7 +87,7 @@ Add the fixed remote control frontend and client transport before adding broad h
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/SSHHostControl.swift`
+- **P** `Sources/IsoHostControl/SSHHostControl.swift`
 - **P** `Sources/IsoCLI/Commands/HostAgentCommands.swift`
 - **P** `tests/swift/IsoHostTests/HostControlSSHTests.swift`
 - **P** `tests/integration-remote-host.py`
@@ -108,8 +108,8 @@ Implement the production operation ledger and allocation reservation, then use i
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/OperationStore.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/OperationStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
 - **E** `Sources/IsoHost/Lifecycle/AppleLifecycle.swift`
 - **P** `tests/swift/IsoHostTests/HostControlLedgerTests.swift`
 
@@ -129,8 +129,8 @@ Extend the accepted-operation path to native start, inspection, and stop while r
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/OperationStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/OperationStore.swift`
 - **E** `Sources/IsoHost/Lifecycle/AppleLifecycle.swift`
 - **P** `tests/swift/IsoHostTests/HostControlLifecycleTests.swift`
 
@@ -157,8 +157,8 @@ Complete crash/lost-reply reconciliation around the native lifecycle journal, in
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/OperationStore.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/OperationStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
 - **E** `Sources/IsoHost/Lifecycle/AppleLifecycle.swift`
 - **P** `tests/swift/IsoHostTests/HostControlRecoveryTests.swift`
 - **P** `tests/integration-remote-host.py`
@@ -179,8 +179,8 @@ Implement live access admission independently from durable mutation receipts, in
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/AccessSessions.swift`
-- **P** `Sources/IsoHost/HostControl/HostProtocol.swift`
+- **P** `Sources/IsoHostControl/AccessSessions.swift`
+- **P** `Sources/IsoHostControl/HostProtocol.swift`
 - **P** `Sources/IsoHost/Guest/ClientSessionCoordinator.swift`
 - **P** `tests/swift/IsoHostTests/HostControlAccessTests.swift`
 
@@ -200,8 +200,8 @@ Build the revocable byte relay and close Q1 with a real native-proof-to-guest fi
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/GuestRelay.swift`
-- **P** `Sources/IsoHost/HostControl/AccessSessions.swift`
+- **P** `Sources/IsoHostControl/GuestRelay.swift`
+- **P** `Sources/IsoHostControl/AccessSessions.swift`
 - **P** `Sources/IsoCLI/Commands/HostAgentCommands.swift`
 - **P** `tests/swift/IsoHostTests/HostControlRelayTests.swift`
 - **P** `tests/integration-remote-host.py`
@@ -254,7 +254,7 @@ Add the public host registry and resolve a selected host once per command, keepi
 - **P** `Sources/IsoCLI/Commands/HostCommands.swift`
 - **E** `Sources/IsoCLI/IsoCommand.swift`
 - **E** `Sources/IsoHost/Support/CommandContext.swift`
-- **P** `Sources/IsoHost/HostControl/HostRegistry.swift`
+- **P** `Sources/IsoHostControl/HostRegistry.swift`
 - **P** `tests/swift/IsoHostTests/HostSelectionTests.swift`
 
 **Acceptance criteria:**
@@ -273,9 +273,9 @@ Introduce the bounded artifact path used by image inputs and later result export
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/ArtifactStore.swift`
-- **P** `Sources/IsoHost/HostControl/HostProtocol.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/ArtifactStore.swift`
+- **P** `Sources/IsoHostControl/HostProtocol.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
 - **P** `tests/swift/IsoHostTests/HostControlArtifactTests.swift`
 
 **Acceptance criteria:**
@@ -303,8 +303,8 @@ Connect setup/image preparation to host-owned artifact inputs and durable image 
 
 - **E** `Sources/IsoHost/Lifecycle/AppleSetup.swift`
 - **E** `Sources/IsoHost/Runtime/RuntimeOperations.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/OperationStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/OperationStore.swift`
 - **P** `tests/swift/IsoHostTests/HostControlImageTests.swift`
 
 **Acceptance criteria:**
@@ -326,7 +326,7 @@ Route project lifecycle through the resolved host client while keeping local wor
 - **E** `Sources/IsoHost/Lifecycle/ProjectLifecycle.swift`
 - **E** `Sources/IsoHost/Lifecycle/UpWorkflow.swift`
 - **E** `Sources/IsoHost/Support/CommandContext.swift`
-- **P** `Sources/IsoHost/HostControl/ClientBindings.swift`
+- **P** `Sources/IsoHostControl/ClientBindings.swift`
 - **P** `tests/swift/IsoHostTests/RemoteProjectWorkflowTests.swift`
 
 **Acceptance criteria:**
@@ -449,7 +449,7 @@ Preserve copy, one-time mount sync, and guest Git-clone semantics while making e
 - **E** `Sources/IsoHost/Workspace/Workspace.swift`
 - **E** `Sources/IsoHost/Workspace/ProjectDirectory.swift`
 - **E** `Sources/IsoHost/Guest/GuestSession.swift`
-- **P** `Sources/IsoHost/HostControl/ClientBindings.swift`
+- **P** `Sources/IsoHostControl/ClientBindings.swift`
 - **P** `tests/swift/IsoHostTests/RemoteWorkspaceTransferTests.swift`
 
 **Acceptance criteria:**
@@ -471,7 +471,7 @@ Extend staged-return identity without tying completed client data to worker VM l
 - **E** `Sources/IsoHost/Workspace/WorkspaceStage.swift`
 - **E** `Sources/IsoHost/Workspace/WorkspaceStageApply.swift`
 - **E** `Sources/IsoHost/Workspace/WorkspaceStageReview.swift`
-- **P** `Sources/IsoHost/HostControl/ClientBindings.swift`
+- **P** `Sources/IsoHostControl/ClientBindings.swift`
 - **P** `tests/swift/IsoHostTests/RemoteWorkspaceStageTests.swift`
 
 **Acceptance criteria:**
@@ -565,8 +565,8 @@ Create a worker-owned RunID and recovery record before allocation, then implemen
 
 - **E** `Sources/IsoHost/Lifecycle/RunSession.swift`
 - **E** `Sources/IsoHost/Lifecycle/RunWorkflow.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/HostRunStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/HostRunStore.swift`
 - **P** `tests/swift/IsoHostTests/RemoteRunOwnershipTests.swift`
 
 **Acceptance criteria:**
@@ -592,9 +592,9 @@ Handle lease-loss and already-stopped result sources with restricted recovery, b
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/HostRunStore.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/ArtifactStore.swift`
+- **P** `Sources/IsoHostControl/HostRunStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/ArtifactStore.swift`
 - **E** `Sources/IsoHost/Lifecycle/RunSession.swift`
 - **P** `tests/swift/IsoHostTests/RemoteRunRecoveryTests.swift`
 
@@ -614,10 +614,10 @@ Complete the local-only host-service routes before migration can switch a legacy
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/HostControl.swift`
-- **P** `Sources/IsoHost/HostControl/HostProtocol.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/LocalNativeCapabilities.swift`
+- **P** `Sources/IsoHostControl/HostControl.swift`
+- **P** `Sources/IsoHostControl/HostProtocol.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/LocalNativeCapabilities.swift`
 - **P** `tests/swift/IsoHostTests/HostControlLocalCapabilitiesTests.swift`
 
 **Acceptance criteria:**
@@ -636,8 +636,8 @@ Implement the stopped-boundary metadata migration with a single activation owner
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/HostMigration.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/HostMigration.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
 - **E** `Sources/IsoHost/State/StateStore.swift`
 - **P** `Sources/IsoCLI/Commands/HostCommands.swift`
 - **P** `tests/swift/IsoHostTests/HostControlMigrationTests.swift`
@@ -665,9 +665,9 @@ Add the narrow cancellation contract without inventing an independent cancellati
 
 **Likely files:**
 
-- **P** `Sources/IsoHost/HostControl/OperationStore.swift`
-- **P** `Sources/IsoHost/HostControl/HostSupervisor.swift`
-- **P** `Sources/IsoHost/HostControl/HostProtocol.swift`
+- **P** `Sources/IsoHostControl/OperationStore.swift`
+- **P** `Sources/IsoHostControl/HostSupervisor.swift`
+- **P** `Sources/IsoHostControl/HostProtocol.swift`
 - **P** `tests/swift/IsoHostTests/HostControlCancellationTests.swift`
 - **E** `scripts/swift-host-fault-injection.py`
 

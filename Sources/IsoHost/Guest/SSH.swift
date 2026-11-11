@@ -22,6 +22,21 @@ package struct SSHTarget: Sendable, Equatable {
   package var proxyCommand: String? = nil
   var handoffCheck: (@Sendable () throws -> Void)? = nil
 
+  package init(
+    host: String, port: UInt16, user: GuestUser, keyPath: String, knownHosts: String,
+    alias: String, proxyCommand: String? = nil,
+    handoffCheck: (@Sendable () throws -> Void)? = nil
+  ) {
+    self.host = host
+    self.port = port
+    self.user = user
+    self.keyPath = keyPath
+    self.knownHosts = knownHosts
+    self.alias = alias
+    self.proxyCommand = proxyCommand
+    self.handoffCheck = handoffCheck
+  }
+
   /// Connection identity excludes the process-local validator. Boot/policy and
   /// signer identity are compared separately by WorkloadHandoff.
   package static func == (lhs: Self, rhs: Self) -> Bool {
@@ -36,7 +51,7 @@ package struct SSHTarget: Sendable, Equatable {
     return target
   }
 
-  func requireHandoff() throws {
+  package func requireHandoff() throws {
     do { try handoffCheck?() } catch { throw GuestHandoffFailure(cause: error) }
   }
 

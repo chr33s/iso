@@ -493,7 +493,7 @@ package struct WorkspaceTransfer: Sendable {
   /// path is kept unless the guest repository tracks it unchanged from its
   /// HEAD: the clean check cannot see an edit to a file the guest never
   /// committed, and that edit may be the only copy.
-  func removeDeletedTracked(
+  package func removeDeletedTracked(
     _ target: SSHTarget, _ guest: GuestPath, _ paths: [String], force: Bool
   ) throws {
     guard !paths.isEmpty else { return }
@@ -566,7 +566,7 @@ package struct WorkspaceTransfer: Sendable {
   /// changed (the guest repository is synthetic and receives no `.git`).
   /// A branch with an upstream is a real clone (`--git-repo`) and is never
   /// committed to. Best effort; untracked guest files are left alone.
-  func commitPushedSnapshot(_ target: SSHTarget, _ guest: GuestPath) {
+  package func commitPushedSnapshot(_ target: SSHTarget, _ guest: GuestPath) {
     let command = RemoteCommand().literal("cd ").arg(guest.rawValue).literal(
       " && [ -d .git ] && command -v git >/dev/null 2>&1 && ! git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 && git add -u && { git diff --cached --quiet || git -c user.name=iso -c user.email=iso@localhost -c commit.gpgsign=false commit -qm 'iso: pushed snapshot of the host workspace'; }"
     )
@@ -618,7 +618,7 @@ package struct WorkspaceTransfer: Sendable {
       configuredPolicy: configuredPolicy)
   }
 
-  func stage(
+  package func stage(
     instance: Instance, target: SSHTarget, directory: String?, limits: StageLimits,
     configuredPolicy: CompiledPolicy? = nil, receivers: InboundReceivers = .system
   ) throws -> StageManifest {
@@ -1084,7 +1084,7 @@ package struct WorkspaceTransfer: Sendable {
   /// not a repository, or clean with nothing unpushed. Failures, malformed
   /// output and a broken upstream block too; `--force` is the explicit
   /// authority to overwrite guest work.
-  func checkGuestClean(_ target: SSHTarget, _ guest: GuestPath) throws {
+  package func checkGuestClean(_ target: SSHTarget, _ guest: GuestPath) throws {
     switch try guestState(target, guest) {
     case .notRepository, .clean: return
     case .dirty(let detail):

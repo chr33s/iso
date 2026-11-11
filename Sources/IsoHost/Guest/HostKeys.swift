@@ -10,7 +10,7 @@ import IsoCore
 /// (never `ssh-keyscan`) and pinned per instance.
 package struct HostPublicKey: Sendable, Equatable {
   package let base64: String
-  let blob: [UInt8]
+  package let blob: [UInt8]
 
   /// One non-blank line: `ssh-ed25519 <base64> [comment]`, whose blob is
   /// the 51-byte ed25519 wire encoding. The comment is dropped.

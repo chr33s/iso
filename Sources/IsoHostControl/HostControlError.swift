@@ -1,5 +1,6 @@
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// The closed host-control error contract (spec section 6.4). Callers branch
 /// on `code` and `retry`, never on message text.

@@ -8,7 +8,7 @@
 
 ## Implementation status
 
-Recorded 2026-10-10 against the working tree that added `Sources/IsoHost/HostControl/`.
+Recorded 2026-10-10 against the working tree that added `Sources/IsoHostControl/`.
 "Implemented" means code plus focused tests in `tests/swift/IsoHostTests/HostControl*Tests.swift`;
 it never means a native Mac-to-Mac gate passed. The two-Mac runner
 [`tests/integration-remote-host.py`](../../tests/integration-remote-host.py) records every native
@@ -1057,14 +1057,14 @@ Proposed placement:
 | Path | Responsibility |
 | --- | --- |
 | Sources/IsoCore/HostIdentity.swift | Validated host/instance/operation/session IDs |
-| Sources/IsoHost/HostControl/HostControl.swift | Typed client boundary and observations |
-| Sources/IsoHost/HostControl/HostProtocol.swift | Bounded wire model/decoder |
-| Sources/IsoHost/HostControl/HostSupervisor.swift | Durable dispatch and recovery |
-| Sources/IsoHost/HostControl/OperationStore.swift | Versioned operation/instance/tombstone records |
-| Sources/IsoHost/HostControl/LocalHostControl.swift | Local socket adapter |
-| Sources/IsoHost/HostControl/SSHHostControl.swift | Fixed-command SSH frontend transport |
-| Sources/IsoHost/HostControl/GuestRelay.swift | Enforceable per-session byte route |
-| Sources/IsoHost/HostControl/AccessSessions.swift | Volatile grants/epoch/lease registry |
+| Sources/IsoHostControl/HostControl.swift | Typed client boundary and observations |
+| Sources/IsoHostControl/HostProtocol.swift | Bounded wire model/decoder |
+| Sources/IsoHostControl/HostSupervisor.swift | Durable dispatch and recovery |
+| Sources/IsoHostControl/OperationStore.swift | Versioned operation/instance/tombstone records |
+| Sources/IsoHostControl/LocalHostControl.swift | Local socket adapter |
+| Sources/IsoHostControl/SSHHostControl.swift | Fixed-command SSH frontend transport |
+| Sources/IsoHostControl/GuestRelay.swift | Enforceable per-session byte route |
+| Sources/IsoHostControl/AccessSessions.swift | Volatile grants/epoch/lease registry |
 | Sources/IsoHost/Guest/ClientSessionCoordinator.swift | Client broker/tunnel/lease lifetime |
 | Sources/IsoCLI/Commands/HostCommands.swift | Enrollment, inspection, migration |
 | Sources/IsoCLI/Commands/HostAgentCommands.swift | Internal frontend/daemon/relay entrypoints |

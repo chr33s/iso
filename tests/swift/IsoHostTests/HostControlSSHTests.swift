@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 @Suite struct LocalHostControlTests {
   func serve(_ f: SupervisorFixture) throws -> HostControlPaths {

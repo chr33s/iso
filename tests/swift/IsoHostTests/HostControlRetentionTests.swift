@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 /// `run.retain`: host-owned live and stopped-disk retention of disposable runs.
 @Suite struct HostControlRetentionTests {

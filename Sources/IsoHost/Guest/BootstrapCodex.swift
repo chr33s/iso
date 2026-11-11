@@ -225,7 +225,7 @@ enum CodexConfigFiles {
 
 extension AgentBootstrap {
   /// Fail-closed proxy start is torn down if a later step fails.
-  func bootstrapCodex(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
+  package func bootstrapCodex(_ session: SSHSession, instance: Instance, mode: BootMode) throws {
     var modelState = try ModelState.loadOrDefault(instance)
     try CodexChecks.ensureRemoteAuthConsistent(config, instance: instance, modelState: modelState)
     let proxy = try startAgentProxy(

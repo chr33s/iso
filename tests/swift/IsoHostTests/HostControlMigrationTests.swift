@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 /// The production `AppleNativeHost` adapter and migration, driven through the
 /// real `AppleBackend` against the stateful fake runtime.

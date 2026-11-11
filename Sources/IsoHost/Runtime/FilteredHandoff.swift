@@ -12,7 +12,7 @@ package enum FilteredHandoff {
     package let bootID: String
     package let policyHash: String
 
-    init(bootID: String, policyHash: String) {
+    package init(bootID: String, policyHash: String) {
       schemaVersion = 1
       backend = StateSchema.backend
       self.bootID = bootID

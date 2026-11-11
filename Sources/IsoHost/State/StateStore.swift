@@ -35,7 +35,8 @@ package enum StateStore {
 
   /// Reads `fd` to end of file, retrying on `EINTR`, and fails once more
   /// than `limit` bytes have arrived.
-  static func readBounded(_ fd: Int32, path: String, limit: Int, tooLarge: String) throws(HostError)
+  package static func readBounded(_ fd: Int32, path: String, limit: Int, tooLarge: String)
+    throws(HostError)
     -> [UInt8]
   {
     var bytes: [UInt8] = []
@@ -57,7 +58,7 @@ package enum StateStore {
     try AtomicFile.write(try encode(value, path: path), to: path, mode: .atMost(0o600))
   }
 
-  static func encode(_ value: some Encodable, path: String) throws(HostError) -> [UInt8] {
+  package static func encode(_ value: some Encodable, path: String) throws(HostError) -> [UInt8] {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     do {
@@ -67,7 +68,8 @@ package enum StateStore {
     }
   }
 
-  static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], path: String) throws(HostError)
+  package static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], path: String)
+    throws(HostError)
     -> T
   {
     do {
@@ -86,7 +88,7 @@ package enum StateStore {
     guard chmod(path, 0o700) == 0 else { throw .posix("Failed to restrict", path) }
   }
 
-  static func removeIfPresent(_ path: String) throws(HostError) {
+  package static func removeIfPresent(_ path: String) throws(HostError) {
     if unlink(path) != 0 && errno != ENOENT { throw .posix("Failed to remove", path) }
   }
 }
@@ -126,7 +128,7 @@ package enum StateSchema {
 
   /// Check the header before decoding the rest, so a record from another
   /// schema fails with its own explanation rather than a field error.
-  static func decode<T: Decodable>(
+  package static func decode<T: Decodable>(
     _ type: T.Type, _ bytes: [UInt8], path: String, want: UInt32 = version
   )
     throws -> T
@@ -505,6 +507,13 @@ package struct Instance: Sendable, Equatable {
   package let directory: String
   /// Golden image this instance was created from.
   package let image: ImageName
+
+  package init(name: InstanceName, index: InstanceIndex, directory: String, image: ImageName) {
+    self.name = name
+    self.index = index
+    self.directory = directory
+    self.image = image
+  }
 
   struct Meta: Codable {
     let name: InstanceName

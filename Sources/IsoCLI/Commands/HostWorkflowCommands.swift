@@ -3,6 +3,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 import IsoSecrets
 
 /// Remote project workflows through the owned relay: create-or-reuse,

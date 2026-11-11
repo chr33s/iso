@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// Worker-owned disposable runs (spec 12). A run record exists before its VM
 /// is created, names its reserved child operations, and holds one of the

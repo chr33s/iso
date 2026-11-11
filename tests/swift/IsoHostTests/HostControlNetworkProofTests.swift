@@ -4,6 +4,7 @@ import IsoCore
 import Testing
 
 @testable import IsoHost
+@testable import IsoHostControl
 
 // Spec 6.2's network proof over `iso.host/v1`: present only for a running
 // brokered boot, bound to that boot, and closed to anything a client does not

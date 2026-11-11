@@ -9,14 +9,14 @@ import IsoCore
 /// A child that outlives the call: its own process group (so Ctrl-C to
 /// iso does not reach it), stdout to `/dev/null`, stderr to a log. It is
 /// reaped by `poll` once it exits, or killed and reaped by `kill`.
-struct DetachedChild {
-  enum Input { case null, pipe }
+package struct DetachedChild {
+  package enum Input { case null, pipe }
 
-  let pid: pid_t
+  package let pid: pid_t
   private var stdinWriter: Int32
   private var reaped = false
 
-  static func spawn(
+  package static func spawn(
     executable: String, arguments: [String], environment: [String: String], stdin: Input,
     stderr: Int32, inherit: [(Int32, Int32)] = [], workingDirectory: String? = nil
   ) throws -> DetachedChild {

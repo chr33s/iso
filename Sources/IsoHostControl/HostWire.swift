@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// Byte-level framing and value handling for `iso.host/v1`
 /// (docs/design/local-and-remote-hosts-spec.md section 6.1). Frames are UTF-8 JSON

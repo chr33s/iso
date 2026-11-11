@@ -2,6 +2,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 
 /// `iso.machine/v1` documents. Within a version, fields are only ever added;
 /// a field documented as nullable is always present (`null`, never omitted).

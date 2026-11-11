@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 
 /// Versioned host-control records under `<data_dir>/host-control` (spec 7.1).
 /// Every write goes through `StateStore`/`AtomicFile`; reads never follow a

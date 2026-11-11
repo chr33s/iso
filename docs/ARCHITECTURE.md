@@ -49,7 +49,7 @@ blocks only filtered boots.
 
 ```
 iso/
-├── Package.swift            # host package: IsoCore, IsoConfiguration, IsoSecrets, IsoHost, IsoCLI
+├── Package.swift            # host package: IsoCore, IsoConfiguration, IsoSecrets, IsoHost, IsoHostControl, IsoCLI
 ├── Sources/
 │   ├── IsoCore/            # validated values, AtomicFile/FileLock; no subprocess or network side effects
 │   ├── IsoConfiguration/   # JSONC scanning, preflight, decoding, config edits
@@ -60,7 +60,6 @@ iso/
 │   │   ├── Processes/     # spawning, signal propagation, detached child ownership
 │   │   ├── Guest/         # SSH, bootstrap, images, agents, proxy startup; Resources/
 │   │   ├── Editor/        # compiled-in editor providers; sandboxed editor sessions
-│   │   ├── HostControl/   # execution-host protocol, supervisor, run/artifact stores, relays
 │   │   ├── Policy/        # policy state, grant ledger, workspace policy, effective report
 │   │   ├── Credentials/   # credential resolution, Keychain, GitHub and proxy config
 │   │   ├── Workspace/     # transfer and staged-return workflows
@@ -68,6 +67,7 @@ iso/
 │   │   ├── State/         # persistence, config writes and boundary audit
 │   │   ├── Update/        # verified releases, versioning and uninstall
 │   │   └── Support/       # command context, diagnostics and bounded parsing
+│   ├── IsoHostControl/     # execution-host protocol, supervisor, run/artifact stores, relays
 │   └── IsoCLI/             # Argument Parser executable `iso`
 │       ├── Commands/      # argument parsing, prompts, dispatch and presentation
 │       └── Support/       # typed CLI response models
@@ -86,8 +86,9 @@ iso/
 
 Target dependencies: `IsoConfiguration`, `IsoSecrets` and `IsoHost` depend
 on `IsoCore`; `IsoSecrets` also uses swift-crypto's `CryptoExtras`;
-`IsoHost` also depends on `IsoConfiguration` and `IsoSecrets`; `IsoCLI` assembles them with
-Swift Argument Parser. Both external dependencies are pinned in
+`IsoHost` also depends on `IsoConfiguration` and `IsoSecrets`;
+`IsoHostControl` sits above `IsoHost`, which never depends on it; `IsoCLI`
+assembles them with Swift Argument Parser. Both external dependencies are pinned in
 `Package.resolved`. Internal cross-target APIs use `package` access; types used
 within a target stay `internal`. The four packages publish executable products.
 Folders group related code without creating additional module boundaries.
@@ -145,8 +146,13 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit NAME`), `AuditEvent` (the typed `iso.audit/v1` event model), `AuditStore` (`<stateRoot>/audit/v1`: JSONL segments, one retention checkpoint, lock-free snapshots), `AuditReader` (run summaries, VM-context selection, cursors and coverage for every renderer), `AuditRecorder` (`AuditInvocation`, fed by `RunWorkflow`, the agent commands and `InteractiveSSH.attach`). See [audit.md](audit.md) |
 | Persistent state | `StateStore` (versioned records under `<data_dir>/backends/apple-container-v1`; writes through `IsoCore`'s `AtomicFile` and `FileLock`), `ConfigStore` (locked config edits), `DataRoot` (real-directory guard) |
 | Isolation | `IsolationGate` (effective VM configuration checked before a guest is handed out; its `Ready` proof carries a `GuestRoute`: a vmnet address or a brokered connector route), `BrokeredTransport` (the NIC-less transport: expected channel policy and digest, per-boot `BrokeredNetworkPolicy`, `BrokeredConnector` ProxyCommand, `BrokeredView` status), `NetworkPolicy` (creation-time egress and transport, per-boot brokered policy record), `WorkloadHandoff` (filtered and brokered prepared-session and guest-operation identity continuity), `HostKeys` (ed25519 pins read over the runtime channel) |
-| Host control | `HostControl/`: the `iso.host/v1` wire (`HostWire`, `HostProtocol`, `HostControlError`), the per-user `HostSupervisor` (durable `OperationStore` ledger with physical cleanup reservations, reconciliation, cancellation, deadline sweep, disposable `HostRuns`/`RunStore` with `run.retain`), `HostCapabilities` (`host.capabilities` and the NET-HANDOFF-1 evidence report), the volatile `AccessSessions` registry, the revocable `GuestRelay`, `ArtifactStore`/`ArchiveValidator`, the `NativeHost` seam (`AppleNativeHost` reuses `AppleBackend`), `LocalHostControl` (private sockets, client), `SSHHostControl` (fixed-entrypoint transport, enrollment registry), `HostService` (daemon, stdio frontends, launchd user service), `ClientBindings` (host-qualified bindings, session coordinator) and `HostMigration`. See [design/local-and-remote-hosts-spec.md](design/local-and-remote-hosts-spec.md) |
 | Support | `CommandContext` (validated config and injected host services), `Diagnostics` (stderr), `Prompt`, bounded guest JSON parsing/editing, `ParserStack` (8 MiB stack for recursive untrusted-input parsers) |
+
+### `IsoHostControl`
+
+The execution-host layer, a separate target so the compiler enforces its
+direction: it uses `IsoHost` only through `package` API, cannot construct a
+liveness proof, and nothing in `IsoHost` imports it. It holds the `iso.host/v1` wire (`HostWire`, `HostProtocol`, `HostControlError`), the per-user `HostSupervisor` (durable `OperationStore` ledger with physical cleanup reservations, reconciliation, cancellation, deadline sweep, disposable `HostRuns`/`RunStore` with `run.retain`), `HostCapabilities` (`host.capabilities` and the NET-HANDOFF-1 evidence report), the volatile `AccessSessions` registry, the revocable `GuestRelay`, `ArtifactStore`/`ArchiveValidator`, the `NativeHost` seam (`AppleNativeHost` reuses `AppleBackend`), `LocalHostControl` (private sockets, client), `SSHHostControl` (fixed-entrypoint transport, enrollment registry), `HostService` (daemon, stdio frontends, launchd user service), `ClientBindings` (host-qualified bindings, session coordinator) and `HostMigration`. See [design/local-and-remote-hosts-spec.md](design/local-and-remote-hosts-spec.md)
 
 ### `IsoCLI`
 

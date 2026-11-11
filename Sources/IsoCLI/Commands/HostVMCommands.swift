@@ -3,6 +3,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 
 /// Remote VM lifecycle through the host service. Every mutation has a
 /// durable operation id; `--operation-id` retries the same one.
