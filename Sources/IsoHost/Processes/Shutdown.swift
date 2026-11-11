@@ -38,7 +38,6 @@ package enum Shutdown {
     if isRequested { throw HostError("Interrupted by signal — cleaning up") }
   }
 
-  /// Test seam.
   static func reset() { requested.store(false, ordering: .relaxed) }
   static func request() { requested.store(true, ordering: .relaxed) }
 }

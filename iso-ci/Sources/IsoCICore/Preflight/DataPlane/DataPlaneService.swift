@@ -1,16 +1,6 @@
 import Foundation
 
 /// The single scoped preflight endpoint (spec sections 3 and 9).
-///
-/// Protocol flavour: the official runner's run-service ("V2") flow, chosen
-/// because every route is plain REST/twirp (no legacy VSS location service)
-/// and the job message is fetched with `acquirejob`. Target runner:
-/// v2.338.0 (the approved image pin); read against v2.338.0 and v2.329.0,
-/// whose routes and bodies used here differ only in `DELETE /broker/session`
-/// gaining a `sessionId` query (accepted with or without). Supported range
-/// claimed by reading: v2.329.0–v2.338.0. Not qualified against a running
-/// runner binary (see iso-ci/PROVENANCE.md).
-///
 /// It serves
 /// only the protocol surface the `local-actions/v1` manifest certifies for
 /// the official runner v2.338.0 (run-service flavour: broker session and
@@ -30,14 +20,12 @@ package actor DataPlaneService {
   package struct Settings: Sendable {
     package var maxConcurrentPerAllocation = 16
     package var maxRequestsPerMinute = 1_200
-    /// Unauthenticated or failed-auth requests across the whole endpoint.
     package var maxAnonymousPerSecond = 20
     package var pollInterval: Duration = .seconds(1)
     package var pollTimeout: Duration = .seconds(30)
     package var urlLifetime: Int64 = 3_600
     package var runnerTokenLifetime: Int64 = 3_600
     package var maxBlocksPerBlob = 50_000
-    /// Distinct blobs (logs, artifacts) one allocation may stage.
     package var maxBlobsPerAllocation = 256
     package var maxCacheReservations = 32
     /// Distinct client assertions one allocation may exchange within one
@@ -137,7 +125,6 @@ package actor DataPlaneService {
 
   // MARK: Registration (controller → endpoint)
 
-  /// The socket name the in-process endpoint reports (it binds none).
   package static let inProcessSocket = "in-process"
 
   @discardableResult
@@ -164,7 +151,6 @@ package actor DataPlaneService {
     }
   }
 
-  /// Delivers a JobCancel message on the next poll (abort, expiry).
   package func cancel(_ allocation: AllocationID) {
     slots[allocation]?.cancelled = true
   }
@@ -203,7 +189,6 @@ package actor DataPlaneService {
     return .error(status, message)
   }
 
-  /// Admission against the allocation's concurrency, rate and traffic budgets.
   private func admit(_ allocation: AllocationID, _ request: DataPlaneRequest) -> DataPlaneResponse?
   {
     guard var slot = slots[allocation] else { return .error(401, "allocation is not registered") }
@@ -282,8 +267,6 @@ package actor DataPlaneService {
 
   // MARK: OAuth
 
-  /// `POST /_apis/oauth2/token` (client-credentials grant with a JWT bearer
-  /// client assertion, as `VssOAuthJwtBearerClientCredential` sends it).
   private func oauthToken(_ request: DataPlaneRequest) async -> DataPlaneResponse {
     let refusal = DataPlaneResponse.json(401, ["error": "invalid_client"])
     guard request.body.count <= 32 << 10 else { return anonymousRefusal(413, "request too large") }
@@ -321,8 +304,6 @@ package actor DataPlaneService {
       ])
   }
 
-  /// The OAuth error body for a refused client, unless the anonymous budget
-  /// is exhausted: then its 429 is returned as is.
   static func oauthRefusal(_ budget: DataPlaneResponse) -> DataPlaneResponse {
     budget.status == 429 ? budget : .json(401, ["error": "invalid_client"])
   }
@@ -493,7 +474,6 @@ package actor DataPlaneService {
     return .empty(200)
   }
 
-  /// TaskResult as the runner serializes it (string or integer).
   static func conclusion(_ value: JSONValue?) -> String? {
     switch value {
     case .integer(let number)?:
@@ -579,7 +559,6 @@ package actor DataPlaneService {
 
   // MARK: Launch (action resolution) and archives
 
-  /// `POST /actions/build/{plan}/jobs/{job}/runnerresolve/actions`.
   private func resolveActions(_ allocation: AllocationID, _ request: DataPlaneRequest) async
     -> DataPlaneResponse
   {
@@ -672,7 +651,6 @@ package actor DataPlaneService {
     }
   }
 
-  /// Asks the controller for an authorized export and serves it.
   private func export(
     _ allocation: AllocationID, _ call: DataPlaneCall, type: String,
     extraHeaders: [(String, String)] = []
@@ -856,7 +834,6 @@ package actor DataPlaneService {
     }
   }
 
-  /// Applies a single `Range: bytes=a-b` to a file response.
   private func ranged(_ response: DataPlaneResponse, _ request: DataPlaneRequest)
     -> DataPlaneResponse
   {
@@ -1014,7 +991,6 @@ package actor DataPlaneService {
     }
   }
 
-  /// `<BlockList><Latest|Committed|Uncommitted>id</…>…</BlockList>`, in order.
   static func blockList(_ body: [UInt8]) -> [String]? {
     guard body.count <= 8 << 20, let text = String(validating: body, as: UTF8.self) else {
       return nil
@@ -1148,7 +1124,6 @@ package actor DataPlaneService {
     }
   }
 
-  /// `bytes start-end/*` (or `/total`).
   static func contentRange(_ header: String) -> (UInt64, UInt64)? {
     guard header.hasPrefix("bytes ") else { return nil }
     let range = header.dropFirst(6).split(separator: "/").first ?? ""

@@ -744,7 +744,6 @@ package final class AllocationDriver: EnvironmentProvider, @unchecked Sendable {
   }
 }
 
-/// An image name bound to its content digest.
 package struct ImageIdentity: Sendable, Equatable {
   package let name: String
   package let digest: Digest

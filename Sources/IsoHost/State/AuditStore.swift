@@ -5,7 +5,6 @@ import IsoCore
 /// The bounds `<stateRoot>/audit/v1` keeps (docs/audit.md#retention).
 package struct AuditRetention: Sendable, Equatable {
   package var maxAge: TimeInterval = 7 * 24 * 3600
-  /// Segments plus checkpoint.
   package var maxBytes = 128 << 20
   package var segmentBytes = 4 << 20
   /// Reserved inside `maxBytes` for replacing the checkpoint.
@@ -156,9 +155,7 @@ package struct AuditSnapshot: Sendable {
   package let checkpoint: AuditCheckpoint?
   package let head: UInt64
   package let events: [AuditEvent]
-  /// Read-health findings in the retained range.
   package let health: [AuditGap]
-  /// Capture is being refused right now.
   package let degraded: AuditGap?
 
   package var through: UInt64 { checkpoint?.throughSequence ?? 0 }

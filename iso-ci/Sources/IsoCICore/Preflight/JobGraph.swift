@@ -1,6 +1,5 @@
 import Foundation
 
-/// One expanded job's lifecycle state inside a preflight run.
 package enum JobState: String, Sendable, Codable, CaseIterable {
   case pending, running, succeeded, failed, cancelled, skipped
 
@@ -12,7 +11,6 @@ package enum JobState: String, Sendable, Codable, CaseIterable {
   }
 }
 
-/// A finished (or running) job's state and its job outputs.
 package struct JobOutcome: Sendable, Equatable, Codable {
   package var state: JobState
   package var outputs: [String: String]
@@ -33,15 +31,10 @@ package struct JobTransition: Sendable, Equatable, Hashable {
   }
 }
 
-/// What the orchestrator should do next.
 package struct ScheduleDecision: Sendable, Equatable {
-  /// Jobs whose needs finished and whose `if:` evaluated true.
   package var ready: [String] = []
-  /// Jobs whose `if:` evaluated false.
   package var skip: [JobTransition] = []
-  /// Jobs whose `if:` could not be evaluated (GitHub fails the job).
   package var fail: [JobTransition] = []
-  /// Pending or running jobs to cancel (fail-fast, run cancellation).
   package var cancel: [JobTransition] = []
 
   package var isEmpty: Bool { ready.isEmpty && skip.isEmpty && fail.isEmpty && cancel.isEmpty }
@@ -73,8 +66,6 @@ package struct JobGraph: Sendable {
     }
   }
 
-  /// Aggregated result of all legs of one workflow job id, or nil while any
-  /// leg is unfinished.
   package func aggregateResult(jobID: String, outcomes: [String: JobOutcome]) -> String? {
     let legs = plan.jobs.filter { $0.jobID == jobID }
     var results: [String] = []
@@ -193,7 +184,6 @@ package struct JobGraph: Sendable {
     return decision
   }
 
-  /// The run's conclusion once every job is terminal.
   package func conclusion(outcomes: [String: JobOutcome]) -> RunConclusion {
     var sawCancelled = false
     var sawFailure = false

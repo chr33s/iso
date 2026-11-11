@@ -10,7 +10,6 @@ package protocol PlacementPolicy: Sendable {
   ) throws(CIError) -> (choice: Name?, refusals: [PlacementRefusal])
 }
 
-/// Delegates to the shared deterministic filter-and-select.
 package struct DefaultPlacementPolicy: PlacementPolicy {
   package init() {}
 

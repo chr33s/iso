@@ -78,7 +78,6 @@ import Testing
     #expect(roomy.placements.map(\.request) == ["big", "small"])
   }
 
-  /// The queue order is (enqueued_at, id) across pools, not submission order.
   @Test func queueOrderIsAgeThenID() {
     let decision = Scheduler.schedule(
       requests: [Self.request("b", at: 5), Self.request("a", at: 5), Self.request("z", at: 1)],
@@ -86,7 +85,6 @@ import Testing
     #expect(decision.placements.map(\.request) == ["z", "a"])
   }
 
-  /// Owner reservation and interactive VMs come off the ceiling.
   @Test func ownerReservationAndExternalUseReduceTheCeiling() {
     let external = ExternalUsage(cpus: 2, memoryMiB: 4_096, vms: 1)
     let capacity = HostCapacity(
@@ -102,7 +100,6 @@ import Testing
     #expect(decision.placements.map(\.request) == ["fits"])
   }
 
-  /// A request larger than every ceiling never reserves (it would block
   /// the host forever).
   @Test func impossibleRequestsDoNotReserve() {
     let decision = Scheduler.schedule(
@@ -144,7 +141,6 @@ import Testing
     #expect(after.placements.map(\.request) == ["later"])
   }
 
-  /// The exclusive job picks the host that drains fastest and keeps it.
   @Test func exclusiveJobKeepsItsDrainingHost() {
     let request = Self.request("x", at: 1, cpus: 4, exclusive: true, hosts: ["a", "b"])
     let first = Scheduler.schedule(
@@ -165,7 +161,6 @@ import Testing
     #expect(second.placements.isEmpty)
   }
 
-  /// A drain that moves to another host releases the first one.
   @Test func oneExclusiveRequestDrainsOneHost() {
     let request = Self.request("x", at: 1, cpus: 4, exclusive: true, hosts: ["a", "b"])
     let first = Scheduler.schedule(
@@ -211,7 +206,6 @@ import Testing
     #expect(decision.waiting["j"] == .noHost("local: qualification expired"))
   }
 
-  /// Preflight placement honours the board's drains and reservations.
   @Test func boardRefusesPlacementOutsideTheQueue() {
     let board = SchedulerBoard()
     var snapshot = SchedulerBoard.Snapshot()
@@ -262,9 +256,7 @@ import Testing
     let budget = HostBudget(maxVMs: 2, cpus: 12, memoryMiB: 32_768, diskGiB: 256)
     let usage = probe.usage(host: "local", budget: budget, own: ["iso-ci-1"])
     #expect(usage == ExternalUsage(cpus: 6, memoryMiB: 8_192, vms: 2, macOSVMs: 1))
-    // Only the local host's leases are readable.
     #expect(probe.usage(host: "remote", budget: budget, own: []) == .none)
-    // A released lease stops counting.
     close(mac)
     #expect(probe.usage(host: "local", budget: budget, own: ["iso-ci-1"]).macOSVMs == 0)
   }

@@ -2,11 +2,8 @@ import Foundation
 
 /// How strongly a security-relevant property is established (spec section 10).
 package enum AuthorityGuaranteeStatus: String, Sendable, Codable, CaseIterable {
-  /// Checked against GitHub or iso state now.
   case verified
-  /// Asserted by the operator; iso-ci cannot check it.
   case operatorAttested = "operator_attested"
-  /// Not established; never assumed.
   case unavailable
 }
 
@@ -14,7 +11,6 @@ package struct AuthorityGuarantee: Sendable, Equatable, Codable {
   package let name: String
   package let status: AuthorityGuaranteeStatus
   package let detail: String
-  /// Admission requires this guarantee to be verified.
   package let required: Bool
 
   package init(
@@ -150,7 +146,6 @@ package enum PoolActivation {
       reasons.append("installation \(pool.installation) is not connected; run `iso-ci setup`")
       return inactive()
     }
-    // Installation identity and permissions.
     let info: GitHubInstallationInfo
     do { info = try reader.installation(installation.installationID) } catch {
       reasons.append("installation could not be verified: \(error.message)")

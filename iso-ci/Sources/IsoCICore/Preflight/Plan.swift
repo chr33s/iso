@@ -8,7 +8,6 @@ import Foundation
 /// A workflow value as written: literals, or expressions the runner (or the
 /// controller, for job-level fields) evaluates later.
 package indirect enum TemplateValue: Sendable, Equatable, Hashable, Codable {
-  /// A literal string with no `${{ }}`.
   case string(String)
   /// An expression. A whole-value `${{ x }}` is stored as `x`; a string that
   /// mixes literal text and expressions is stored as the equivalent
@@ -25,7 +24,6 @@ package indirect enum TemplateValue: Sendable, Equatable, Hashable, Codable {
     return nil
   }
 
-  /// Whether this value or any nested value is an expression.
   package var containsExpression: Bool {
     switch self {
     case .expression: true
@@ -46,13 +44,9 @@ package struct TemplateEntry: Sendable, Equatable, Hashable, Codable {
   }
 }
 
-/// A `uses:` reference.
 package enum ActionReference: Sendable, Equatable, Hashable, Codable {
-  /// `owner/repo[/path]@ref`.
   case repository(owner: String, repository: String, path: String?, ref: String)
-  /// `docker://image`.
   case docker(image: String)
-  /// `./path` inside the workspace.
   case local(path: String)
 
   package var displayName: String {
@@ -64,7 +58,6 @@ package enum ActionReference: Sendable, Equatable, Hashable, Codable {
     }
   }
 
-  /// `owner/repo` for repository actions.
   package var nameWithOwner: String? {
     if case .repository(let owner, let repository, _, _) = self { return "\(owner)/\(repository)" }
     return nil
@@ -87,7 +80,6 @@ package struct ResolvedAction: Sendable, Equatable, Hashable, Codable {
   }
 }
 
-/// What a step does.
 package enum StepKind: Sendable, Equatable, Codable {
   case run(script: TemplateValue, shell: TemplateValue?, workingDirectory: TemplateValue?)
   case uses(ActionReference, with: [TemplateEntry])
@@ -101,16 +93,13 @@ package enum StepKind: Sendable, Equatable, Codable {
 }
 
 package struct StepPlan: Sendable, Equatable, Codable {
-  /// The step's context name (`id:` or a generated `__N`).
   package let contextName: String
   package let name: TemplateValue?
   package let kind: StepKind
   package let env: [TemplateEntry]
-  /// The step `if:` as expression text (default `success()`).
   package let condition: String
   package let continueOnError: TemplateValue
   package let timeoutMinutes: TemplateValue?
-  /// True for steps iso-ci inserted; always shown in logs and results.
   package let synthetic: Bool
 
   package init(
@@ -158,7 +147,6 @@ package struct RunDefaults: Sendable, Equatable, Codable {
   }
 }
 
-/// `strategy` values a job sees in its `strategy` context.
 package struct StrategyContext: Sendable, Equatable, Codable {
   package let failFast: Bool
   package let jobIndex: Int
@@ -173,9 +161,7 @@ package struct StrategyContext: Sendable, Equatable, Codable {
   }
 }
 
-/// One expanded job (a matrix combination is its own job).
 package struct JobPlan: Sendable, Equatable, Codable {
-  /// Unique within the plan: the job id plus a canonical matrix suffix.
   package let key: String
   package let jobID: String
   package let displayName: String
@@ -233,7 +219,6 @@ package struct JobPlan: Sendable, Equatable, Codable {
 /// the source snapshot and patch revision.
 package struct WorkflowPlan: Sendable, Equatable, Codable {
   package let name: String
-  /// Repository-relative workflow path (for example `.github/workflows/ci.yml`).
   package let workflowPath: String
   package let workflowDigest: Digest
   /// The simulated triggering event name and its payload.
@@ -241,13 +226,10 @@ package struct WorkflowPlan: Sendable, Equatable, Codable {
   package let eventPayload: JSONValue
   package let env: [TemplateEntry]
   package let defaults: RunDefaults
-  /// Expanded jobs in a deterministic topological order.
   package let jobs: [JobPlan]
   package let manifestID: String
   package let manifestDigest: Digest
-  /// Repository actions the plan uses (before resolution to commits).
   package let actions: [ActionReference]
-  /// Explicit platform mappings applied (runs-on label → platform).
   package let platformMappings: [String: String]
 
   package init(

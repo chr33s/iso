@@ -1,6 +1,5 @@
 import Foundation
 
-/// The outcome of one reconciliation pass, for status and events.
 package struct ReconcileReport: Sendable, Equatable {
   package var pool: Name
   package var created: [AllocationID] = []
@@ -8,7 +7,6 @@ package struct ReconcileReport: Sendable, Equatable {
   package var released: [AllocationID] = []
   package var retained: [AllocationID] = []
   package var uncertain: [AllocationID] = []
-  /// Bounded, nonsecret messages with their error codes.
   package var errors: [String] = []
   /// Why no capacity was added this pass, when none was.
   package var admissionPaused: String?
@@ -26,7 +24,6 @@ package struct ReconcileReport: Sendable, Equatable {
 /// Operator pool controls (spec section 8). They only change desired state;
 /// the reconciler carries it out.
 package enum PoolControl {
-  /// Stop replenishment without killing assigned work.
   package static func pause(_ pool: Name, store: ControllerStore) throws(CIError) {
     try set(pool, .paused, reason: "paused by operator", store: store)
   }
@@ -44,7 +41,6 @@ package enum PoolControl {
     try set(pool, .removing, reason: "offboarding requested", store: store)
   }
 
-  /// Explicit abort of one allocation: externally stop it even if assigned.
   package static func abort(_ allocation: AllocationID, store: ControllerStore) throws(CIError) {
     try store.update(allocation) {
       $0.desired = .stop
@@ -125,17 +121,14 @@ package final class ConnectedPoolReconciler: Sendable {
     self.clock = clock
   }
 
-  /// A unique, controller-scoped runner name (persisted before any JIT).
   package static func runnerName(controller: ControllerID, allocation: AllocationID) -> String {
     "iso-ci-\(controller.short)-\(allocation.rawValue)"
   }
 
-  /// Per-pass context.
   package struct Pass {
     var report: ReconcileReport
     var githubHealthy = true
     var hostsDown: Set<Name> = []
-    /// Hosts that refused admission this pass; placement tries the others.
     var refusedHosts: Set<Name> = []
     var jobs: [GitHubJobInfo]?
     var runnerInfo: [AllocationID: GitHubRunnerInfo] = [:]
@@ -223,7 +216,6 @@ package final class ConnectedPoolReconciler: Sendable {
     }
   }
 
-  /// Offboarding completion and the pass's error event.
   package func finish(_ prepared: inout PreparedPass) -> ReconcileReport {
     if prepared.state == .removing, ((try? store.openAllocations(pool: pool)) ?? []).isEmpty {
       try? PoolControl.set(
@@ -437,7 +429,6 @@ package final class ConnectedPoolReconciler: Sendable {
       ])
   }
 
-  /// Runner-process health from the guest, distinct from GitHub's conclusion.
   private func observeRunnerProcess(
     _ id: AllocationID, pool: PoolConfiguration, pass: inout Pass
   ) {
@@ -1140,7 +1131,6 @@ package final class ConnectedPoolReconciler: Sendable {
     return true
   }
 
-  /// The pool's runner group, read once per pass.
   private func runnerGroup(_ pool: PoolConfiguration, pass: inout Pass) -> Int64? {
     if let cached = pass.groupID { return cached }
     do {
@@ -1245,7 +1235,6 @@ package final class ConnectedPoolReconciler: Sendable {
     return true
   }
 
-  /// Delivers the bootstrap material on stdin and starts the runner.
   private func startRunner(
     _ id: AllocationID, _ jit: GitHubJITConfig, _ profile: ResolvedProfile, pass: inout Pass
   ) -> Bool {
@@ -1274,7 +1263,6 @@ package final class ConnectedPoolReconciler: Sendable {
     return true
   }
 
-  /// Verifies GitHub's view of the registration: name, labels and group.
   private func verifyRegistration(
     _ id: AllocationID, _ jit: GitHubJITConfig, name: String, groupID: Int64,
     scope: GitHubRunnerScope, pool: PoolConfiguration, profile: ResolvedProfile,

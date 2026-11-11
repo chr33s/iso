@@ -568,7 +568,6 @@ package enum SelfReplace {
   /// §13): the MCP server setup puts in the image, and the pinned kernel
   /// `iso-sandbox init` installs.
   static let linuxGuestNames = [BuildContext.computerUseMCP, BuildContext.desktopKernel]
-  /// Every file installed beside `iso`.
   static let companionNames =
     [runtimeName, guestHelperName, proxyName, egressName] + linuxGuestNames
 

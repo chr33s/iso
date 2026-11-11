@@ -74,7 +74,6 @@ package enum SmokeVerification {
     }
   }
 
-  /// Throws unless both jobs ran, on distinct allocations, VMs and runners.
   package static func verify(_ first: Observation, _ second: Observation) throws(CIError) {
     guard let firstJob = first.jobID, let secondJob = second.jobID, firstJob != secondJob else {
       throw CIError(.admissionRefused, "two distinct smoke jobs must be observed")

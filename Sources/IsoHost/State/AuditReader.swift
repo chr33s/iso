@@ -101,7 +101,6 @@ package struct AuditRunSummary: Codable, Sendable, Equatable {
     return ids
   }
 
-  /// Folds in one more event of this run.
   mutating func observed(_ event: AuditEvent) {
     lastSequence = event.sequence
     lastRecordedAt = event.recordedAt
@@ -418,7 +417,6 @@ package struct AuditCoverage: Encodable, Sendable, Equatable {
   package let sources: [Source]
   package let gaps: [AuditGap]
   package let retained: Retained
-  /// Run detail only.
   @EncodedNull package private(set) var vmContext: VMContext?
 
   enum CodingKeys: String, CodingKey {
@@ -487,7 +485,6 @@ package struct AuditPage: Sendable {
   package let selection: AuditSelection
   package let asOf: AuditAsOf
   package let coverage: AuditCoverage
-  /// Run detail only.
   package let run: AuditRunView?
   package let items: [AuditItem]
   package let nextCursor: AuditCursor?

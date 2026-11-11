@@ -9,7 +9,6 @@ import NIOPosix
 /// It binds one Unix socket per registered allocation inside the sockets
 /// directory and reports the socket's name in the registration reply.
 package enum DataPlaneChild {
-  /// Serves until the controller closes the channel or sends `shutdown`.
   package static func run(socketDirectory: String, stagingDirectory: String) async throws(CIError) {
     let channel = DataPlaneChannel(input: 0, output: 1)
     let pending = DataPlanePendingCalls()
@@ -74,7 +73,6 @@ package enum DataPlaneChild {
     Bool, JSONValue
   ) {
     var checks: [String: JSONValue] = [:]
-    // Positive control: the staging directory is usable.
     let control = stagingDirectory + "/selftest-" + randomHex(bytes: 4)
     let fd = open(control, O_WRONLY | O_CREAT | O_EXCL, 0o600)
     checks["staging_writable"] = .bool(fd >= 0)
@@ -87,7 +85,6 @@ package enum DataPlaneChild {
     let probe = open(probePath, O_RDONLY)
     checks["probe_denied"] = .bool(probe < 0 && Self.isDenial(errno))
     if probe >= 0 { close(probe) }
-    // No write outside staging.
     let outside =
       (probePath as NSString).deletingLastPathComponent + "/.iso-ci-jail-probe-"
       + randomHex(bytes: 4)
@@ -104,7 +101,6 @@ package enum DataPlaneChild {
     unlink(link)
     checks["hardlink_denied"] = .bool(Darwin.link(probePath, link) != 0)
     unlink(link)
-    // No outbound TCP, even to loopback.
     let socketFD = socket(AF_INET, SOCK_STREAM, 0)
     var denied = true
     if socketFD >= 0 {
@@ -123,7 +119,6 @@ package enum DataPlaneChild {
       close(socketFD)
     }
     checks["tcp_denied"] = .bool(denied)
-    // No process execution.
     var pid: pid_t = 0
     let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/usr/bin/true"), nil]
     defer { free(argv[0]) }
@@ -142,8 +137,6 @@ package enum DataPlaneChild {
   static func isDenial(_ code: Int32) -> Bool { code == EPERM || code == EACCES }
 }
 
-/// The child's backend: every call becomes a request frame the controller
-/// authorizes and answers.
 final class ChannelBackend: DataPlaneBackend {
   let channel: DataPlaneChannel
   let pending: DataPlanePendingCalls
@@ -206,7 +199,6 @@ extension DataPlaneChild {
   }
 }
 
-/// One endpoint socket per allocation, all served from one event loop group.
 actor AllocationSockets {
   private let directory: String
   private let service: DataPlaneService
@@ -219,7 +211,6 @@ actor AllocationSockets {
     self.service = service
   }
 
-  /// Binds a fresh socket for `allocation`; returns its 16-hex name.
   func open(_ allocation: AllocationID) async throws(CIError) -> String {
     guard servers[allocation] == nil else {
       throw CIError(.conflict, "allocation already has a socket")

@@ -21,18 +21,15 @@ import Testing
     let harness = try await DPHarness()
     let snapshot = try harness.store.importBytes(Array("snapshot".utf8), kind: .snapshot)
     let (allocation, registration, _) = try await harness.register(snapshot: snapshot)
-    // A controller-private directory with a 32-hex-named file in it.
     let victim = harness.root + "/victim"
     try PrivateFiles.ensureDirectory(victim)
     let secretName = randomHex(bytes: 16)
     try PrivateFiles.write(Array("controller secret".utf8), to: victim + "/" + secretName)
     let child = harness.childStaging
-    // The child swaps in/ and out/ for symlinks into the victim directory.
     #expect(rename(child + "/in", child + "/in.orig") == 0)
     #expect(rename(child + "/out", child + "/out.orig") == 0)
     #expect(symlink(victim, child + "/in") == 0)
     #expect(symlink(victim, child + "/out") == 0)
-    // Reading "in/<name>" must not read (or delete) the victim file.
     await #expect(throws: CIError.self) {
       try await harness.broker.call(
         allocation, .logCommit(kind: .job, step: nil, file: secretName, lines: 1))
@@ -41,13 +38,11 @@ import Testing
       try PrivateFiles.read(victim + "/" + secretName, limit: 64) == Array("controller secret".utf8)
     )
     #expect(await harness.broker.logs(allocation).isEmpty)
-    // Exports land in the directory opened before the swap, never in victim/.
     let before = try FileManager.default.contentsOfDirectory(atPath: victim)
     let exported = try await harness.broker.call(allocation, .openSnapshot(snapshot))
     let name = try #require(exported["file"]?.stringValue)
     #expect(try FileManager.default.contentsOfDirectory(atPath: victim) == before)
     #expect(try PrivateFiles.read(child + "/out.orig/" + name, limit: 64) == Array("snapshot".utf8))
-    // A symlinked entry inside the real in/ is refused, and the target survives.
     let link = randomHex(bytes: 16)
     #expect(symlink(victim + "/" + secretName, child + "/in.orig/" + link) == 0)
     await #expect(throws: CIError.self) {
@@ -62,7 +57,6 @@ import Testing
     let root = scratchDirectory("dp-staging")
     defer { PrivateFiles.removeTree(root) }
     try PrivateFiles.ensureDirectory(root)
-    // `in` is a symlink to a directory: refused before any child runs.
     try PrivateFiles.ensureDirectory(root + "/elsewhere")
     #expect(symlink(root + "/elsewhere", root + "/in") == 0)
     #expect(throws: CIError.self) { try StagingDirectories(root: root) }
@@ -79,13 +73,11 @@ import Testing
     let first = await harness.request(
       "POST", base + "caches", bearer: token, json: ["key": "a", "version": "v"])
     let firstID = try #require(first.json?["cacheId"]?.intValue)
-    // One byte at the end of the budget charges the whole high-water mark.
     #expect(
       await harness.request(
         "PATCH", base + "caches/\(firstID)", bearer: token, body: [1],
         headers: ["Content-Range": "bytes \(limit - 1)-\(limit - 1)/*"]
       ).status == 204)
-    // A hole cannot be committed.
     #expect(
       await harness.request(
         "POST", base + "caches/\(firstID)", bearer: token, json: ["size": .integer(Int64(limit))]
@@ -110,7 +102,6 @@ import Testing
     let reserve = await harness.request(
       "POST", base + "caches", bearer: token, json: ["key": "k", "version": "v"])
     let id = try #require(reserve.json?["cacheId"]?.intValue)
-    // Parallel toolkit uploads may arrive out of order.
     for (range, data) in [("bytes 5-9/*", "WORLD"), ("bytes 0-4/*", "HELLO")] {
       #expect(
         await harness.request(
@@ -160,7 +151,6 @@ import Testing
     limits.outputBytes = 100
     limits.logBytes = 50
     let (allocation, _, _) = try await harness.register(limits: limits)
-    // Logs: bytes, not segment count, are bounded.
     _ = try await harness.broker.call(
       allocation,
       .logCommit(
@@ -173,7 +163,6 @@ import Testing
           kind: .job, step: nil, file: try Self.stage(harness, [UInt8](repeating: 2, count: 20)),
           lines: 1))
     }
-    // Outputs: artifacts and caches share the output budget.
     let first = try #require(
       try await harness.broker.call(allocation, .artifactCreate(name: "one"))["id"]?.intValue)
     _ = try await harness.broker.call(
@@ -270,14 +259,11 @@ import Testing
       "jobId": .string(idA.jobID.uuidString.lowercased()),
     ]).canonical
     #expect(await on(allocationA, "POST", "/run/renewjob", bearer: jobTokenA, body: renew) == 200)
-    // A's job token on B's socket.
     #expect(await on(allocationB, "POST", "/run/renewjob", bearer: jobTokenA, body: renew) == 403)
-    // A's iso token on B's socket.
     #expect(
       await on(
         allocationB, "GET", "/_iso/snapshot/\(snapshot.rawValue)", bearer: runnerA.config.isoToken)
         == 401)
-    // A's OAuth assertion on B's socket.
     let assertion = DPHarness.assertion(
       key: runnerA.key, clientID: runnerA.clientID, audience: runnerA.audience,
       now: Int64(harness.clock.now()))
@@ -310,7 +296,6 @@ import Testing
     #expect(statuses.filter { $0 == 404 }.count == 2)
     #expect(statuses.filter { $0 == nil }.count == 1)
     #expect(clock.now - sentAt < .seconds(4))
-    // Capacity is available again once an admitted connection closes.
     if let admitted = statuses.firstIndex(of: 404) { clients[admitted] = nil }
     try await Task.sleep(for: .milliseconds(200))
     let fourth = try DataPlaneProcessTests.UnixHTTPClient(path: path)
@@ -318,7 +303,6 @@ import Testing
     #expect(fourth.receive()?.0 == 404)
     await server.close()
 
-    // Silent clients are closed after the header deadline.
     let silentPath = DataPlaneProcessTests.shortSocketPath()
     var short = DataPlaneHTTPServer.Limits()
     short.headerTimeout = .milliseconds(300)
@@ -361,7 +345,6 @@ import Testing
     ] {
       await #expect(throws: CIError.self) { try await harness.broker.call(allocation, call) }
     }
-    // A late completion produces no notice.
     await harness.broker.event(
       allocation,
       .completed(.init(conclusion: "succeeded", outputs: [:], steps: [], annotations: [])))

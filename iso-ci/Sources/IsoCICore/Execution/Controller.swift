@@ -9,7 +9,6 @@ package protocol ControllerService: Sendable {
   func reconcile(now: EpochSeconds)
   func handle(_ request: ControlRequest) -> Result<JSONValue, CIError>?
   func status() -> JSONValue
-  /// Releases external sessions before the controller exits.
   func shutdown()
 }
 
@@ -17,7 +16,6 @@ extension ControllerService {
   package func shutdown() {}
 }
 
-/// Converts an `Encodable` record to `JSONValue` for control replies.
 package func jsonValue<T: Encodable>(_ value: T) -> JSONValue {
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -57,7 +55,6 @@ package final class Controller: Sendable {
 
   package func add(_ service: any ControllerService) { services.withLock { $0.append(service) } }
 
-  /// Takes the ownership lock and serves until the process is stopped.
   package func run() throws(CIError) -> Never {
     try root.prepare()
     guard let lock = try OwnershipLock.attempt(path: root.lock) else {

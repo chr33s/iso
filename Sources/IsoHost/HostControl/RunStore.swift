@@ -75,7 +75,6 @@ package struct RunStore: Sendable {
     /// The first live retention; later requests never extend past it plus
     /// ``RunStore/maxLiveRetentionSeconds``.
     package var liveRetentionStartedAt: UInt64?
-    /// The run transition currently executing, if any.
     package var activeOperation: HostOperationID?
   }
 
@@ -114,7 +113,6 @@ package struct RunStore: Sendable {
     }.sorted()
   }
 
-  /// Runs holding a retention slot.
   package func slotsInUse() -> Int {
     runIDs().filter { (try? load($0))?.phase.holdsSlot ?? true }.count
   }
@@ -142,7 +140,6 @@ package struct RunStore: Sendable {
   }
 }
 
-/// `run.inspect` result.
 package struct RunObservation: Sendable, Equatable {
   package let runID: RunID
   package let generation: UInt64

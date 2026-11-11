@@ -129,7 +129,6 @@ import Testing
     let (digest, size) = try objects.commit(upload)
     #expect(size == 5)
     #expect(digest == Digest(hashing: "hello"))
-    // Knowing the digest is not authorization.
     #expect(throws: CIError.self) {
       _ = try objects.authorizedPath(subject: "attempt:b", kind: .artifact, digest: digest)
     }
@@ -168,7 +167,6 @@ import Testing
     #expect(
       try objects.cacheReserve(
         scope: scope, key: "deps-Linux-abc", version: "v1", subject: "a2", limit: 64) == nil)
-    // Incomplete publication is invisible.
     #expect(try objects.cacheLookup(scope: scope, keys: ["deps-Linux-abc"], version: "v1") == nil)
     try objects.write(reserved.upload, offset: 0, bytes: Array("payload".utf8))
     #expect(throws: CIError.self) {
@@ -184,7 +182,6 @@ import Testing
     #expect(try objects.cacheLookup(scope: scope, keys: ["deps-linux-"], version: "v1") == nil)
     #expect(try objects.cacheLookup(scope: scope, keys: ["x", "DEPS-"], version: "v1") == nil)
     #expect(try objects.cacheLookup(scope: other, keys: ["deps-Linux-abc"], version: "v1") == nil)
-    // First writer wins: no overwrite of a published entry.
     #expect(
       try objects.cacheReserve(
         scope: scope, key: "deps-Linux-abc", version: "v1", subject: "a3", limit: 64) == nil)
@@ -279,7 +276,6 @@ import Testing
       }
     }
     #expect(!opened.withLock { $0 })
-    // Other requests still run in process.
     #expect(throws: CIError.self) { _ = try dispatcher.call("status", [:]) }
     #expect(opened.withLock { $0 })
   }

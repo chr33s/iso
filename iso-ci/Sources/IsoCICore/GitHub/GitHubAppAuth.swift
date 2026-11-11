@@ -9,13 +9,11 @@ import Synchronization
 package final class GitHubAppAuth: Sendable {
   /// GitHubJWT lifetime; GitHub accepts at most 10 minutes.
   package static let jwtLifetime: EpochSeconds = 540
-  /// Backdating for clock drift.
   package static let jwtBackdate: EpochSeconds = 60
   /// Installation tokens are refreshed this long before expiry.
   package static let refreshMargin: EpochSeconds = 300
 
   package let appID: Int64
-  /// The GitHubJWT issuer: the App's client id when known, else its numeric id.
   package let issuer: String
   private let credentialReference: String
   private let credentials: any CredentialStore
@@ -35,7 +33,6 @@ package final class GitHubAppAuth: Sendable {
     self.clock = clock
   }
 
-  /// A fresh App GitHubJWT (iat backdated 60s, exp at most 9 minutes ahead).
   package func jwt() throws(CIError) -> RedactedSecret {
     guard
       let pem = try credentials.load(CredentialKind.appPrivateKey.reference(credentialReference))
@@ -62,7 +59,6 @@ package final class GitHubAppAuth: Sendable {
     return issued.token
   }
 
-  /// Drops cached tokens (after revocation or a 401).
   package func invalidate() { cache.withLock { $0.removeAll() } }
 
   static func cacheKey(_ id: Int64, _ repositories: [String]?, _ permissions: [String: String]?)
@@ -132,7 +128,6 @@ package struct GitHubAppPrivateKey: @unchecked Sendable {
   }
 }
 
-/// A minimal DER reader for PKCS#8 unwrapping.
 private struct DERReader {
   let bytes: [UInt8]
   var index = 0
@@ -166,7 +161,6 @@ private struct DERReader {
   }
 }
 
-/// RS256 JSON Web Tokens for GitHub App authentication.
 package enum GitHubJWT {
   package static func sign(issuer: String, now: EpochSeconds, key: GitHubAppPrivateKey)
     throws(CIError)
@@ -250,7 +244,6 @@ package struct InstallationTokenScope: Sendable, Equatable {
     }
   }
 
-  /// Reading an organization's runner groups.
   package static let runnerGroupsRead = Self(nil, ["organization_self_hosted_runners": "read"])
 
   /// Reading workflow runs and jobs for correlation: Actions read on the one

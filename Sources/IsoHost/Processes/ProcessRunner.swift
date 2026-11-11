@@ -279,9 +279,7 @@ package struct ProcessRunner: Sendable {
   /// descriptor number another thread now owns.
   package final class PipedChild: Sendable {
     package let pid: pid_t
-    /// Write end of the child's stdin.
     package let input: Int32
-    /// Read end of the child's stdout.
     package let output: Int32
     private let terminated = Mutex(false)
 

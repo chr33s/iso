@@ -4,7 +4,6 @@ import Synchronization
 /// The GitHub-side reads a scale-set listener needs, scoped to its pool's
 /// installation; faked in tests.
 package protocol ScaleSetAuthority: Sendable {
-  /// A fresh Actions service admin connection for `scope`.
   func connect(_ scope: GitHubRunnerScope, now: EpochSeconds) throws(CIError)
     -> ActionsServiceConnection
   func runnerGroupID(_ scope: GitHubScope) throws(CIError) -> Int64
@@ -41,9 +40,7 @@ package struct InstallationScaleSetAuthority: ScaleSetAuthority {
   }
 }
 
-/// A job GitHub assigned to this scale set that no runner has started.
 package struct PendingScaleSetJob: Sendable, Equatable {
-  /// `ScaleSetJobMessage.key`.
   package let key: String
   package let requestID: Int64
   package let enqueuedAt: EpochSeconds
@@ -62,17 +59,14 @@ package struct PendingScaleSetJob: Sendable, Equatable {
   }
 }
 
-/// What a scale-set pool's reconciler sees of its listener.
 package struct ScaleSetDemand: Sendable, Equatable {
   package var scaleSetID: Int64?
-  /// Assigned, not yet started, oldest first.
   package var pending: [PendingScaleSetJob] = []
   package var statistics = ScaleSetStatistics()
   package var connected = false
   package var lastError: String?
   package var acquired = 0
   package var rejected = 0
-  /// Jobs a runner has started and not completed, seen in this session.
   package var running = 0
   package var elastic = false
   /// Assigned jobs refused by the job policy (non-elastic scale sets).
@@ -118,7 +112,6 @@ package struct ScaleSetDemand: Sendable, Equatable {
   }
 }
 
-/// The interface a scale-set pool's reconciler and controller use.
 package protocol ScaleSetFeed: Sendable {
   func demand() -> ScaleSetDemand
   /// A scale-set JIT runner configuration (not idempotent; a lost reply is
@@ -475,7 +468,6 @@ package final class ScaleSetListener: ScaleSetFeed {
 
   // MARK: Loop
 
-  /// Polls on a background thread until `stop()`.
   package func start() {
     loop.withLock { thread in
       guard thread == nil else { return }

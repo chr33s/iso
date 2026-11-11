@@ -10,7 +10,6 @@ import Synchronization
 // guest-authored: every name, link target, mode and size read from it is
 // untrusted, and no receiver ever writes the destination.
 
-/// A staged object, as the guest left it.
 package enum StageObject: Sendable, Equatable, Codable {
   case file(size: UInt64, sha256: String, mode: UInt16)
   case directory
@@ -266,7 +265,6 @@ package struct StageLocation: Sendable {
     try FileLock(path: (root as NSString).deletingLastPathComponent + "/.stage.lock")
   }
 
-  /// Runs `body` under the stage lock.
   func locked<T>(_ body: () throws(HostError) -> T) throws(HostError) -> T {
     let lock = try lock()
     defer { lock.release() }
@@ -448,7 +446,6 @@ package struct StageLocation: Sendable {
   }
 }
 
-/// One completed stage directory.
 package struct CompletedStage: Sendable {
   package let id: String
   let directory: String
@@ -481,7 +478,6 @@ package struct CompletedStage: Sendable {
   }
 }
 
-/// The selected stage and its validated manifest.
 package struct SelectedStage: Sendable {
   package let stage: CompletedStage
   package let manifest: StageManifest
@@ -909,7 +905,6 @@ struct StageBuilder {
     }
   }
 
-  /// Whether `path` is a link in the planned final tree.
   private func finalObjectIsLink(_ path: String) throws -> Bool {
     if let object = staged[path] {
       if case .symlink = object { return true }

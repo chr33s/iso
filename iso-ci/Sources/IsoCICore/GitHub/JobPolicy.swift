@@ -7,9 +7,7 @@ package enum JobRejection: String, Sendable, Codable, CaseIterable {
   case forkPullRequest = "JOB_REJECTED_FORK_PR"
   case event = "JOB_REJECTED_EVENT"
   case actor = "JOB_REJECTED_ACTOR"
-  /// The job is outside the pool's GitHub scope.
   case scope = "JOB_REJECTED_SCOPE"
-  /// Its facts could not be read or did not agree with the offer.
   case unverifiable = "JOB_REJECTED_UNVERIFIABLE"
 }
 
@@ -26,7 +24,6 @@ package struct JobFacts: Sendable, Equatable {
   package var repositoryPrivate: Bool
   package var event: String
   package var actor: String?
-  /// Who started this attempt (a re-run's actor), when GitHub says.
   package var triggeringActor: String?
   /// The repository the run's head commit came from; nil when GitHub
   /// reports none.
@@ -48,7 +45,6 @@ package struct JobFacts: Sendable, Equatable {
     self.headRepositoryIsFork = headRepositoryIsFork
   }
 
-  /// `GET /repos/{owner}/{repo}/actions/runs/{id}`.
   package init(run json: JSONValue) throws(CIError) {
     guard let repository = json["repository"], let id = repository["id"]?.intValue,
       let name = repository["full_name"]?.stringValue,

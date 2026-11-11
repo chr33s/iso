@@ -72,7 +72,6 @@ extension UUIDIdentifier {
 
 // MARK: - iso-ci identities
 
-/// One owned environment request (spec section 5).
 package struct AllocationID: UUIDIdentifier {
   package static let kind = "allocation id"
   package let rawValue: String
@@ -86,21 +85,18 @@ package struct ControlOperationID: UUIDIdentifier {
   package init(unchecked rawValue: String) { self.rawValue = rawValue }
 }
 
-/// One local preflight run (a compiled workflow graph).
 package struct PreflightRunID: UUIDIdentifier {
   package static let kind = "preflight run id"
   package let rawValue: String
   package init(unchecked rawValue: String) { self.rawValue = rawValue }
 }
 
-/// One whole-job attempt inside a preflight run.
 package struct JobAttemptID: UUIDIdentifier {
   package static let kind = "job attempt id"
   package let rawValue: String
   package init(unchecked rawValue: String) { self.rawValue = rawValue }
 }
 
-/// The controller installation identity (one per operator data root).
 package struct ControllerID: UUIDIdentifier {
   package static let kind = "controller id"
   package let rawValue: String
@@ -210,7 +206,6 @@ package struct BootID: Hashable, Sendable, CustomStringConvertible, Codable {
   }
 }
 
-/// A lowercase SHA-256 hex digest.
 package struct Digest: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
   package let rawValue: String
 
@@ -295,7 +290,6 @@ package struct Name: Hashable, Comparable, Sendable, CustomStringConvertible, Co
   }
 }
 
-/// `OWNER/REPOSITORY` as GitHub spells it.
 package struct RepositoryName: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
   package let owner: String
   package let name: String
@@ -368,7 +362,6 @@ package struct RunnerLabel: Hashable, Comparable, Sendable, CustomStringConverti
   }
 }
 
-/// Seconds since the Unix epoch on the controller clock.
 package typealias EpochSeconds = UInt64
 
 /// Injectable time so reconciliation and budget tests are deterministic.
@@ -381,7 +374,6 @@ package struct SystemClock: CIClock {
   package func now() -> EpochSeconds { EpochSeconds(Date().timeIntervalSince1970) }
 }
 
-/// 256 bits from the system CSPRNG as lowercase hex.
 package func randomHex(bytes count: Int = 32) -> String {
   var bytes = [UInt8](repeating: 0, count: count)
   arc4random_buf(&bytes, bytes.count)
@@ -404,7 +396,6 @@ extension BootID: WireParsable {
   package init(parsing raw: String) throws(CIError) { try self.init(raw) }
 }
 
-/// Accepts bare hex or `sha256:<hex>`.
 extension Digest: WireParsable {
   package init(parsing raw: String) throws(CIError) { try self.init(prefixed: raw) }
 }

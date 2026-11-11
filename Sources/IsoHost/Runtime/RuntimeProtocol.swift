@@ -70,7 +70,6 @@ package struct SandboxRecord: Sendable, Equatable, Codable {
   package let diskGeneration: UInt64
   /// The last `set`, `grow`, or `restore` the runtime committed.
   package let lastOperation: OperationID?
-  /// The runtime always reports the effective network mode.
   package let network: String
   /// ISO 8601 end of the current session, absent without a session TTL.
   package let expiresAt: String?
@@ -194,7 +193,6 @@ package struct EffectiveChannelPolicy: Sendable, Equatable, Codable {
 /// any is present, so a partial report fails to decode.
 package struct EffectiveBrokered: Sendable, Equatable {
   package let transport: String
-  /// The owner's reading of the live VM.
   package let networkDevices: UInt32
   package let socketDevices: UInt32
   package let channelPolicy: EffectiveChannelPolicy
@@ -285,7 +283,6 @@ package struct DiskUsage: Sendable, Equatable, Codable {
   package let allocatedBytes: UInt64
 }
 
-/// `iso-sandbox inspect <id>`.
 package struct SandboxInspection: Sendable, Equatable, Decodable {
   package let record: SandboxRecord
   package let status: SandboxStatus

@@ -15,14 +15,10 @@ package final class DataPlaneHTTPServer: Sendable {
   package struct Limits: Sendable {
     package var maxHeaderBytes = 64 << 10
     package var maxJSONBody = 1 << 20
-    /// Cache chunks (toolkit default 32 MiB) and blob blocks.
     package var maxUploadBody = 33 << 20
-    /// Connections per allocation socket.
     package var maxConnections = 16
     package var idleTimeout: TimeAmount = .seconds(120)
-    /// The request line and headers must arrive within this time.
     package var headerTimeout: TimeAmount = .seconds(10)
-    /// The whole request (head and body) must arrive within this time.
     package var requestTimeout: TimeAmount = .seconds(300)
 
     package init() {}
@@ -114,7 +110,6 @@ final class DataPlaneHTTPHandler: ChannelInboundHandler, RemovableChannelHandler
     self.limits = limits
   }
 
-  /// Closes the connection unless `deadline` is cancelled first.
   private func arm(_ context: ChannelHandlerContext, _ timeout: TimeAmount) {
     deadline?.cancel()
     let channel = context.channel

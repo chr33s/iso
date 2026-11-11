@@ -2,7 +2,6 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Which content a snapshot captures.
 package enum SnapshotSource: String, Sendable, Equatable, Codable, CaseIterable {
   /// Tracked paths as they are in the working tree, unstaged edits
   /// included, plus untracked paths an `include` selects.
@@ -15,25 +14,18 @@ package enum SnapshotSource: String, Sendable, Equatable, Codable, CaseIterable 
   case staged
 }
 
-/// What a snapshot capture includes and how it is bounded.
 package struct SnapshotOptions: Sendable, Equatable {
-  /// Working tree (the default) or the staged index.
   package var source: SnapshotSource = .workingTree
   /// Patterns selecting untracked files to include. Nothing untracked is
   /// selected implicitly: no ignore file is read.
   package var include: [String] = []
-  /// Extra exclusions on top of (or instead of) the defaults.
   package var exclude: [String] = []
-  /// Apply `SnapshotOptions.defaultExcludes` (local credential files).
   package var useDefaultExcludes = true
-  /// Repository-relative workflow path whose digest is recorded.
   package var workflowPath: String?
-  /// Where the archive is written (a private directory).
   package var outputDirectory: String
   package var maxFiles = 100_000
   package var maxFileBytes: UInt64 = 1 << 30
   package var maxTotalBytes: UInt64 = 4 << 30
-  /// Captures retried when the tree changes underneath; then it fails.
   package var maxAttempts = 3
 
   package init(outputDirectory: String) { self.outputDirectory = outputDirectory }
@@ -192,8 +184,6 @@ package enum SnapshotCapture {
     return found
   }
 
-  /// Whether a tracked file is missing or its size or modification time
-  /// differs from what the index recorded.
   static func indexDisagrees(_ entries: [GitIndex.Entry], root: Int32) -> Bool {
     entries.contains { entry in
       var status = stat()
@@ -212,8 +202,6 @@ package enum SnapshotCapture {
     fstatat(root, path, &status, AT_SYMLINK_NOFOLLOW_ANY) == 0 ? 0 : errno
   }
 
-  /// The target of the symlink at `path`, read through a parent directory
-  /// opened without following any link.
   static func linkTarget(_ root: Int32, _ path: String) -> String? {
     let parts = path.split(separator: "/", omittingEmptySubsequences: false)
     let name = String(parts.last ?? "")
@@ -231,7 +219,6 @@ package enum SnapshotCapture {
     return String(decoding: buffer.prefix(count).map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 
-  /// Whether the index was written after HEAD last moved (staged changes).
   static func indexNewerThanHead(_ layout: GitIndex.Layout) -> Bool {
     var index = stat()
     guard lstat(layout.gitDirectory + "/index", &index) == 0 else { return false }
@@ -271,7 +258,6 @@ package enum SnapshotCapture {
       && path.split(separator: "/").first != ".git"
   }
 
-  /// Whether `path` matches any exclusion pattern.
   package static func excluded(_ path: String, patterns: [String]) -> Bool {
     let components = path.split(separator: "/").map(String.init)
     for pattern in patterns {
@@ -463,7 +449,6 @@ package enum SnapshotCapture {
     let dirty =
       !includedUntracked.isEmpty || indexDisagrees(indexEntries, root: rootFD)
       || indexNewerThanHead(layout) || resetAfterIndex(layout)
-    // Concurrent-modification checks: every captured path, HEAD and the index.
     for (path, before) in observed {
       var status = stat()
       guard inspect(rootFD, path, &status) == 0, Observed(status) == before else {
@@ -474,7 +459,6 @@ package enum SnapshotCapture {
     let workflowDigest = options.workflowPath.flatMap { workflow in
       files.first { $0.path == workflow && $0.kind == .file }?.sha256
     }
-    // Verification lists the overlay step consumes.
     let regular = files.filter { $0.kind == .file }
     let sums = regular.map { "\($0.sha256?.rawValue ?? "")  \($0.path)\n" }.joined()
     try writer.addData(name: "checks/sha256sums", mode: 0o644, bytes: Array(sums.utf8))
@@ -507,7 +491,6 @@ package enum SnapshotCapture {
       capturedAt: SystemClock().now(), attempts: attempt)
   }
 
-  /// Git's SHA-1 object id for a blob holding `content`.
   static func gitBlobID(_ content: [UInt8]) -> [UInt8] {
     var hasher = Insecure.SHA1()
     hasher.update(data: Array("blob \(content.count)\u{0}".utf8))

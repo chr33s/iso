@@ -18,7 +18,6 @@ struct HostCommand: ParsableCommand {
     ])
 }
 
-/// Shared loading for host commands.
 struct HostCommandEnvironment {
   let config: IsoConfig
   let environment: [String: String]

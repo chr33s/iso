@@ -152,7 +152,6 @@ package final class ControllerStore: Sendable {
     return try Self.decode(AllocationRecord.self, try row.required("record"))
   }
 
-  /// Unsettled allocations (optionally for one pool or host), oldest first.
   package func openAllocations(pool: Name? = nil, host: Name? = nil) throws(CIError)
     -> [AllocationRecord]
   {
@@ -177,7 +176,6 @@ package final class ControllerStore: Sendable {
         [.text(preflightRun.rawValue)]))
   }
 
-  /// Recent allocations (settled included), newest first.
   package func recentAllocations(limit: Int) throws(CIError) -> [AllocationRecord] {
     try decodeAll(
       try db.query(
@@ -193,7 +191,6 @@ package final class ControllerStore: Sendable {
     return out
   }
 
-  /// Read-modify-write of one allocation inside a transaction.
   @discardableResult
   package func update(
     _ id: AllocationID, _ change: (inout AllocationRecord) throws(CIError) -> Void
@@ -465,7 +462,6 @@ package final class ControllerStore: Sendable {
     return sequence
   }
 
-  /// Events after `cursor` (exclusive), optionally for one subject.
   package func events(after cursor: Int64, subject: String? = nil, limit: Int = 200) throws(CIError)
     -> [EventRecord]
   {

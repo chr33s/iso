@@ -26,12 +26,10 @@ import Testing
     #expect(String(decoding: bootstrap.command.stdin, as: UTF8.self) == encoded)
     #expect(!bootstrap.command.argv.joined().contains(encoded))
     #expect(!bootstrap.command.recordOutput)
-    // The JIT intent was persisted and confirmed.
     let intents = try h.store.intents(allocation: allocation.id)
     #expect(intents.map(\.kind) == [.githubJITCreate])
     #expect(intents.first?.status == .confirmed)
     #expect(!(try h.store.events(after: 0).map(\.message).joined().contains(encoded)))
-    // Second pass: the starting allocation fills the idle slot.
     let second = h.reconciler.reconcile()
     #expect(second.created.isEmpty)
     #expect(second.deficit == 0)
@@ -130,7 +128,6 @@ import Testing
       h.runners.state.withLock { $0.loseNextJITReply = true }
       h.reconciler.reconcile()
     }
-    // The last lost reply is resolved, and the attempts are exhausted.
     h.reconciler.reconcile()
     #expect(h.runners.state.withLock { $0.deleted } == [100, 101, 102])
     #expect(try h.store.allocation(id)?.vmCleanup == .verified)
@@ -163,7 +160,6 @@ import Testing
     // Repeated failed lookups escalate to supervised resolution.
     for _ in 0..<ConnectedPoolReconciler.maxRegistrationLookups { h.reconciler.reconcile() }
     #expect(try h.store.allocation(allocation.id)?.uncertainty?.contains("supervised") == true)
-    // The operator asserts no registration exists; the VM is then released.
     try h.reconciler.superviseRegistration(allocation.id, runnerID: nil)
     h.runners.state.withLock { $0.lookupFailure = nil }
     h.reconciler.reconcile()
@@ -206,7 +202,6 @@ import Testing
     h.reconciler.reconcile()
     #expect(try h.store.allocation(id)?.job?.jobID == 1)
     #expect(try h.store.allocation(id)?.execution == .running)
-    // The assigned runner no longer counts as idle, so a replacement exists.
     #expect(try h.open().count == 2)
     try PoolControl.drain("validation", store: h.store)
     h.reconciler.reconcile()
@@ -220,7 +215,6 @@ import Testing
     #expect(after.execution == .interrupted)
     #expect(after.vmCleanup == .verified)
     #expect(h.runners.state.withLock { $0.deleted }.contains(100))
-    // The GitHub conclusion is never invented.
     #expect(after.job?.conclusion == nil)
   }
 
@@ -255,7 +249,6 @@ import Testing
     #expect(report.retired == [allocation.id])
     #expect(try h.store.allocation(allocation.id)?.vmCleanup == .verified)
     #expect(h.runners.state.withLock { $0.deleted } == [100])
-    // Fresh capacity replaces it; the old VM is never reused.
     #expect(report.created.count == 1)
     #expect(report.created.first != allocation.id)
   }
@@ -314,8 +307,6 @@ import Testing
     let first = try #require(try h.open().first)
     h.runners.assign(jobID: 1, toRunnerNamed: first.runnerName!, repository: h.repository)
     h.reconciler.reconcile()
-    // Fresh replacement capacity was created as soon as the first runner
-    // was assigned.
     let secondID = try #require(try h.open().first { $0.id != first.id }?.id)
     h.provider.state.withLock { $0.runnerStatus[first.id] = "exited 0" }
     h.runners.complete(jobID: 1, conclusion: "success")
@@ -348,7 +339,6 @@ import Testing
     #expect(retained.execution == .succeeded)
     #expect(retained.job?.conclusion == "failure")
     #expect(retained.desired == .retainLive)
-    // Retention is finite: it ends with a release.
     h.clock.advance(h.limits.liveRetentionSeconds + 1)
     h.reconciler.reconcile()
     #expect(try h.store.allocation(allocation.id)?.vmCleanup == .verified)
@@ -405,7 +395,6 @@ import Testing
     h.reconciler.reconcile()
     let busy = try #require(try h.open().first)
     h.runners.assign(jobID: 3, toRunnerNamed: busy.runnerName!, repository: h.repository)
-    // The assignment creates fresh idle capacity.
     h.reconciler.reconcile()
     let idle = try #require(try h.open().first { $0.id != busy.id })
     try PoolControl.set("validation", .inactive, reason: "routing exclusivity lost", store: h.store)

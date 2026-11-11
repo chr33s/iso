@@ -3,11 +3,8 @@ import Foundation
 /// A transport-neutral HTTP request as the endpoint sees it.
 package struct DataPlaneRequest: Sendable, Equatable {
   package let method: String
-  /// Percent-decoded path, without the query.
   package let path: String
-  /// Percent-decoded query parameters (first value wins).
   package let query: [String: String]
-  /// Lowercased header names (last value wins).
   package let headers: [String: String]
   package let body: [UInt8]
   /// The allocation whose own socket carried this request; every credential
@@ -43,7 +40,6 @@ package struct DataPlaneRequest: Sendable, Equatable {
     return source.removingPercentEncoding
   }
 
-  /// `application/x-www-form-urlencoded` body fields.
   package var formFields: [String: String] {
     var fields: [String: String] = [:]
     let text = String(decoding: body, as: UTF8.self)
@@ -64,7 +60,6 @@ package struct DataPlaneRequest: Sendable, Equatable {
     return String(value.dropFirst(7)).trimmingCharacters(in: .whitespaces)
   }
 
-  /// The password of `Authorization: Basic x-access-token:<token>`.
   package var basicAccessToken: String? {
     guard let value = headers["authorization"], value.lowercased().hasPrefix("basic "),
       let decoded = Data(
@@ -78,7 +73,6 @@ package struct DataPlaneRequest: Sendable, Equatable {
 package struct DataPlaneResponse: Sendable, Equatable {
   package enum Body: Sendable, Equatable {
     case bytes([UInt8])
-    /// A private file the server opens, unlinks and streams.
     case file(path: String, offset: UInt64, length: UInt64)
   }
 
@@ -128,7 +122,6 @@ package struct DataPlaneResponse: Sendable, Equatable {
     json(status, ["message": .string(CIError.bounded(message))])
   }
 
-  /// Twirp error body (`{"code","msg"}`).
   package static func twirp(_ status: Int, _ code: String, _ message: String) -> DataPlaneResponse {
     json(status, ["code": .string(code), "msg": .string(CIError.bounded(message))])
   }

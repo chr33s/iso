@@ -28,7 +28,11 @@ const design = [
     "macos-computer-use-q0-spike",
     "macos-vz-context-experiment",
     "macos-vz-context-headless-experiment-spec",
+    "computer-use-screen-sync",
+    "computer-use-live-view",
     "linux-computer-use-sketch",
+    "linux-desktop-virtio-gpu",
+    "paravirtualized-coreai",
 ].map((slug) => `/design/${slug}`);
 
 export default defineConfig({
@@ -71,6 +75,7 @@ export default defineConfig({
                         "/editor",
                         "/ci",
                         "/backends",
+                        "/coreai",
                         "/shell-completion",
                     ],
                 },

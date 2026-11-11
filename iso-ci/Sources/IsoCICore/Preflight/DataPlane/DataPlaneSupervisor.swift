@@ -19,7 +19,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
     /// are limited to 104 bytes.
     package let socket: String
     package let staging: String
-    /// A controller-private file the self-test must fail to read.
     package let probe: String
 
     package init(executable: String, socket: String, staging: String, probe: String) {
@@ -29,7 +28,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
       self.probe = probe
     }
 
-    /// Where the child binds one socket per allocation.
     package var socketDirectory: String { (socket as NSString).deletingLastPathComponent + "/dp" }
   }
 
@@ -56,8 +54,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
     self.paths = paths
   }
 
-  /// Runs the self-test, starts the child, waits for `ready` and attaches
-  /// it to `broker`.
   package static func launch(paths: Paths, broker: DataPlaneBroker) async throws(CIError)
     -> DataPlaneSupervisor
   {
@@ -137,7 +133,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
 
   package var failure: CIError? { state.withLock { $0.failure } }
   package var isRunning: Bool { state.withLock { !$0.exited && $0.failure == nil } }
-  /// The last bytes the child wrote to stderr (bounded diagnostics).
   package var diagnostics: String {
     String(decoding: stderrTail.bytes.withLock { $0 }, as: UTF8.self)
   }
@@ -170,7 +165,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
     terminate()
   }
 
-  /// Signals the child once; reaps it on a background thread.
   package func terminate() {
     let pid = state.withLock { state -> pid_t in
       guard !state.exited, state.pid > 0 else { return 0 }
@@ -208,7 +202,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
 
   // MARK: Confinement
 
-  /// Arguments for `sandbox-exec` applying the profile to the executable.
   package static func sandboxArguments(_ paths: Paths, _ arguments: [String]) -> [String] {
     [
       sandboxExec, "-p", DataPlaneSeatbelt.profile, "-D", "EXE=\(paths.executable)",
@@ -284,7 +277,6 @@ package final class DataPlaneSupervisor: DataPlaneEndpointLink, Sendable {
     var attributes: posix_spawnattr_t?
     posix_spawnattr_init(&attributes)
     defer { posix_spawnattr_destroy(&attributes) }
-    // Every descriptor other than 0-2 is closed in the child.
     posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
     let argv = sandboxArguments(paths, arguments).map { strdup($0) } + [nil]
     defer { for pointer in argv { free(pointer) } }
@@ -333,7 +325,6 @@ final class TailBuffer: Sendable {
   let bytes = Mutex<[UInt8]>([])
 }
 
-/// A bounded in-flight counter (lock-protected).
 final class InFlightCounter: Sendable {
   let count = Mutex(0)
 

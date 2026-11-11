@@ -154,7 +154,6 @@ package enum LeaseDirectory {
   }
 }
 
-/// Counts processes of Virtualization.framework's per-VM XPC service.
 package enum VirtualizationProcesses {
   static let serviceName = "com.apple.Virtualization.VirtualMachine"
 
@@ -205,7 +204,6 @@ package struct HostCapacity: Sendable, Equatable {
     return budget.memoryMiB > reserved ? budget.memoryMiB - reserved : 0
   }
 
-  /// The budget CI admission checks against.
   package var effectiveBudget: HostBudget {
     HostBudget(
       maxVMs: budget.maxVMs, cpus: cpuCeiling, memoryMiB: memoryCeilingMiB,

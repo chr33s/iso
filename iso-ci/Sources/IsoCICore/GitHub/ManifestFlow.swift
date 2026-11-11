@@ -5,7 +5,6 @@ import Foundation
 /// separate operator step that `verifyInstallation` then validates. There is
 /// no PAT or `gh` fallback.
 package enum ManifestFlow {
-  /// Which runner-management permission the App needs.
   package enum ScopeKind: String, Sendable, CaseIterable {
     case repository
     case organization
@@ -43,7 +42,6 @@ package enum ManifestFlow {
     "https://github.com/apps/\(slug)/installations/new"
   }
 
-  /// The local page that submits the manifest to GitHub.
   package static func formPage(manifest: JSONValue, action: String) -> String {
     """
     <!doctype html><html><head><meta charset="utf-8"><title>iso-ci GitHub App</title></head>
@@ -198,7 +196,6 @@ package enum ManifestFlow {
     return record
   }
 
-  /// Removes an App's credentials from the store (explicit offboarding only).
   package static func removeCredentials(app: GitHubAppRecord, credentials: any CredentialStore)
     throws(CIError)
   {
@@ -220,7 +217,6 @@ package final class ManifestCallbackServer: @unchecked Sendable {
   private var listener: Int32
   package let port: UInt16
   private let state: String
-  /// The unguessable path of the local form page.
   package let formPath = "/" + randomHex(bytes: 16)
 
   package init(state: String) throws(CIError) {
@@ -323,7 +319,6 @@ package final class ManifestCallbackServer: @unchecked Sendable {
     throw CIError(.timeout, "the GitHub App manifest flow timed out")
   }
 
-  /// The request target and `Host` header of one GET request.
   static func readRequest(_ fd: Int32) -> (target: String, host: String)? {
     var buffer: [UInt8] = []
     var chunk = [UInt8](repeating: 0, count: 1_024)

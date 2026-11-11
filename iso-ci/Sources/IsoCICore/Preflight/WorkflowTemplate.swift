@@ -1,6 +1,5 @@
 import Foundation
 
-/// One static compatibility problem, reported before any allocation.
 package struct CompatibilityDiagnostic: Sendable, Equatable, Hashable, Codable,
   CustomStringConvertible
 {
@@ -68,7 +67,6 @@ package struct ExpressionField: Sendable, Equatable {
   package static let stepField = ExpressionField(stepContexts, hashFiles: true)
 }
 
-/// A `${{ }}` segmentation of one string.
 package enum TemplateSegment: Sendable, Equatable {
   case literal(String)
   case expression(String)
@@ -172,7 +170,6 @@ package struct TemplateConverter {
     return "format('\(template)', \(expressions.joined(separator: ", ")))"
   }
 
-  /// Parses and validates one expression for `field`.
   @discardableResult
   package mutating func validate(_ text: String, field: ExpressionField, line: Int, path: String)
     -> ExpressionNode?
@@ -210,7 +207,6 @@ package struct TemplateConverter {
     return node
   }
 
-  /// A scalar or nested value; mapping keys must be literal.
   package mutating func value(_ node: YAMLNode, field: ExpressionField, path: String)
     -> TemplateValue
   {
@@ -261,7 +257,6 @@ package struct TemplateConverter {
     return .expression(expression)
   }
 
-  /// A mapping of literal keys to values (env, with, outputs).
   package mutating func entries(_ node: YAMLNode, field: ExpressionField, path: String)
     -> [TemplateEntry]
   {

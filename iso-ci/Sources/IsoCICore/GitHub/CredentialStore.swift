@@ -8,17 +8,14 @@ import Synchronization
 /// worker requests or guests.
 package protocol CredentialStore: Sendable {
   func store(_ secret: [UInt8], reference: String) throws(CIError)
-  /// nil when no secret is stored under `reference`.
   func load(_ reference: String) throws(CIError) -> [UInt8]?
   func remove(_ reference: String) throws(CIError)
 }
 
-/// The kinds of secret stored per App.
 package enum CredentialKind: String, Sendable {
   case appPrivateKey = "app-private-key"
   case webhookSecret = "webhook-secret"
 
-  /// The store reference for `kind` under an App's credential reference.
   package func reference(_ base: String) -> String { base + "/" + rawValue }
 }
 
@@ -94,7 +91,6 @@ package struct KeychainCredentialStore: CredentialStore {
   }
 }
 
-/// In-memory store for tests and dry runs.
 package final class MemoryCredentialStore: CredentialStore {
   private let secrets = Mutex<[String: [UInt8]]>([:])
 

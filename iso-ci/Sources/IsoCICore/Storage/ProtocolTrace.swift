@@ -19,7 +19,6 @@ package final class ProtocolTrace: Sendable {
   private let state: Mutex<State>
   package let path: String
 
-  /// Opens (creating 0600, refusing a symlink) and appends to `path`.
   package init(path: String) throws(CIError) {
     guard path.hasPrefix("/") else {
       throw CIError.invalid("--record-protocol-trace needs an absolute path")
@@ -60,6 +59,5 @@ package final class ProtocolTrace: Sendable {
     }
   }
 
-  /// Starts the next tick; every record of one controller pass shares one.
   package func advance() { state.withLock { $0.tick += 1 } }
 }

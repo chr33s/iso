@@ -19,7 +19,6 @@ package enum ActionsService {
   }
 }
 
-/// Runner counts GitHub reports with each session message.
 package struct ScaleSetStatistics: Sendable, Equatable, Codable {
   package var availableJobs: Int64 = 0
   package var acquiredJobs: Int64 = 0
@@ -42,11 +41,9 @@ package struct ScaleSetStatistics: Sendable, Equatable, Codable {
     idleRunners = json["totalIdleRunners"]?.intValue ?? 0
   }
 
-  /// Jobs assigned to the scale set that no runner has started.
   package var waitingJobs: Int64 { max(0, assignedJobs - runningJobs) }
 }
 
-/// One job event inside a `RunnerScaleSetJobMessages` batch.
 package struct ScaleSetJobMessage: Sendable, Equatable {
   package enum Kind: String, Sendable, CaseIterable {
     case available = "JobAvailable"
@@ -129,7 +126,6 @@ package struct ScaleSetJobMessage: Sendable, Equatable {
   }
 }
 
-/// One message from the session queue.
 package struct ScaleSetMessage: Sendable, Equatable {
   package let id: Int64
   package let type: String
@@ -221,7 +217,6 @@ package struct ScaleSetSession: Sendable {
   }
 }
 
-/// The Actions service admin connection for one scope.
 package struct ActionsServiceConnection: Sendable {
   package let url: URL
   package let token: RedactedSecret
@@ -248,7 +243,6 @@ package final class ScaleSetClient: Sendable {
 
   package init(http: any GitHubHTTP) { self.http = http }
 
-  /// Registration token → Actions service admin connection.
   package func connect(
     scope: GitHubRunnerScope, api: GitHubAPI, installationToken: RedactedSecret, now: EpochSeconds
   ) throws(CIError) -> ActionsServiceConnection {

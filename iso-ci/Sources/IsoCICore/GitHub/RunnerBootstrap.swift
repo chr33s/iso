@@ -4,10 +4,8 @@ import Foundation
 /// reaches the guest only on stdin: it never appears in host argv, in these
 /// templates, or in recorded output.
 package enum RunnerBootstrap {
-  /// The guest state directory (relative to the guest user's home).
   package static let stateDirectory = ".iso-ci"
 
-  /// How the runner reaches the network.
   package enum LaunchMode: Sendable, Equatable {
     /// GitHub-connected: the runner and its containers use the egress
     /// companion; with Docker, through the bridge base iso configures on
@@ -20,7 +18,6 @@ package enum RunnerBootstrap {
     case preflight(docker: Bool, guestPort: UInt16)
   }
 
-  /// Why the start command failed, by its exit status.
   package enum StartFailure: Int32, Sendable, CaseIterable {
     case alreadyStarted = 3
     case emptyJIT = 4
@@ -129,7 +126,6 @@ package enum RunnerBootstrap {
       stdin: jit.bytes, timeoutSeconds: 180, outputLimit: 16 << 10, recordOutput: false)
   }
 
-  /// The version file the approved image writes next to the runner.
   package static let versionFile = ".iso-ci-runner-version"
 
   /// Reads the installed official runner version (before any JIT material
@@ -152,7 +148,6 @@ package enum RunnerBootstrap {
     return text
   }
 
-  /// Prints `running`, `exited <status>` or `absent`.
   package static func status() -> GuestCommand {
     let script = """
       state="$HOME/\(stateDirectory)"
@@ -167,7 +162,6 @@ package enum RunnerBootstrap {
   package enum ProcessState: Sendable, Equatable {
     case running
     case exited(Int32)
-    /// Started, but gone without recording a status.
     case vanished
     case absent
   }

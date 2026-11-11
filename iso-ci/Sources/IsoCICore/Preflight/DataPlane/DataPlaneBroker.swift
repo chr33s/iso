@@ -13,7 +13,6 @@ package protocol DataPlaneEndpointLink: Sendable {
 
 extension DataPlaneService: DataPlaneEndpointLink {}
 
-/// Everything the controller decides for one preflight allocation.
 package struct DataPlaneRegistration: Sendable {
   package var allocation: AllocationID
   package var attempt: JobAttemptID
@@ -22,7 +21,6 @@ package struct DataPlaneRegistration: Sendable {
   package var plan: WorkflowPlan
   package var job: JobPlan
   package var contexts: JobMessageBuilder.Contexts
-  /// Mapped workflow secrets explicitly authorized for this run.
   package var secrets: [String: String]
   package var snapshot: Digest?
   package var actions: [ResolvedAction]
@@ -82,7 +80,6 @@ package struct GuestEndpointConfig: Sendable {
   package let runnerName: String
 }
 
-/// A stored log segment of one attempt.
 package struct DataPlaneLogReference: Sendable, Equatable {
   package let kind: DataPlaneCall.LogKind
   package let step: String?
@@ -90,7 +87,6 @@ package struct DataPlaneLogReference: Sendable, Equatable {
   package let lines: UInt64
 }
 
-/// An event surfaced to the orchestrator, with the attempt's logs so far.
 package struct DataPlaneNotice: Sendable {
   package let allocation: AllocationID
   package let attempt: JobAttemptID
@@ -132,7 +128,6 @@ package actor DataPlaneBroker: DataPlaneBackend {
   private var entries: [AllocationID: Entry] = [:]
   private var nextCacheID: Int64 = 1
   private let continuation: AsyncStream<DataPlaneNotice>.Continuation
-  /// Job progress and completions, in arrival order.
   package nonisolated let notices: AsyncStream<DataPlaneNotice>
 
   package init(store: ObjectStore, childStaging: String, scripts: any SyntheticStepScripts) {
@@ -154,7 +149,6 @@ package actor DataPlaneBroker: DataPlaneBackend {
     self.socketDirectory = socketDirectory
   }
 
-  /// `[0-9a-f]{16}`: the only socket names the controller accepts.
   package static func isSocketName(_ name: String) -> Bool {
     name.utf8.count == 16 && Array(name.utf8).allSatisfy(isLowerHex)
   }
@@ -435,7 +429,6 @@ package actor DataPlaneBroker: DataPlaneBackend {
     }
   }
 
-  /// Output bytes (caches and artifacts) this attempt may still commit.
   func outputRemaining(_ entry: Entry) -> UInt64 {
     let limit = entry.registration.limits.outputBytes
     return limit - min(entry.outputStored, limit)

@@ -201,9 +201,7 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
   }
 }
 
-/// How the host reaches a gate-approved guest.
 package enum GuestRoute: Sendable, Equatable {
-  /// The guest's address on its dedicated vmnet network.
   case vmnet(IPv4Address)
   /// The runtime connector, bound to this boot and its verified digests.
   case brokered(BrokeredRoute)

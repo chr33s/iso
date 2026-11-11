@@ -28,7 +28,6 @@ package enum PolicyInstanceIdentity {
     return record.instanceID
   }
 
-  /// Caller holds the policy lock.
   static func loadOrCreate(_ instance: Instance) throws(HostError) -> String {
     if let existing = try load(instance) { return existing }
     let id = randomHex(16)
@@ -135,7 +134,6 @@ package struct PolicyBinding: Codable, Equatable, Sendable {
   }
 }
 
-/// What a governed operation sees for an instance.
 package enum ActivePolicy: Sendable {
   /// No binding: a boot that predates policy bindings, or no boot yet.
   case unbound

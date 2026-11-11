@@ -1,6 +1,5 @@
 import Foundation
 
-/// Exchanges one `iso.host/v1` frame for one reply frame.
 package protocol HostTransport: Sendable {
   /// `frame` includes its newline. Throws `.hostUnreachable` when no reply
   /// arrived; the client decides whether a mutation became uncertain.

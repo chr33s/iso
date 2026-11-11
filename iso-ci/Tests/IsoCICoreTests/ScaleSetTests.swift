@@ -129,8 +129,6 @@ final class FakeActionsService: Sendable {
     GitHubHTTPResponse(status: 200, body: Array(text.utf8))
   }
 
-  /// Queues one message; its statistics count assigned and running jobs
-  /// after the batch, as GitHub's do.
   func enqueue(_ jobs: [JSONValue], statistics override: JSONValue? = nil) {
     state.withLock { state in
       for job in jobs {
@@ -211,7 +209,6 @@ final class FakeActionsService: Sendable {
     let events = try store.events(after: 0, subject: "pool:validation")
     let rejection = try #require(events.first { $0.kind == "job.rejected" })
     #expect(rejection.data["code"] == JobRejection.forkPullRequest.rawValue)
-    // Assignment creates demand, dated by GitHub's queue time; start ends it.
     service.enqueue([FakeActionsService.job("JobAssigned", request: 1)])
     #expect(listener.step())
     let pending = listener.demand().pending
@@ -254,7 +251,6 @@ final class FakeActionsService: Sendable {
     #expect(listener.demand().admissionBlock?.contains("JOB_REJECTED_FORK_PR") == true)
     #expect(service.state.withLock { $0.acquired.isEmpty })
     #expect(try store.events(after: 0).contains { $0.kind == "job.rejected" })
-    // The refused job leaving the queue lifts the block.
     service.enqueue([message("JobCompleted", "b", run: 43, event: "pull_request")])
     #expect(listener.step())
     #expect(listener.demand().admissionBlock == nil)
@@ -324,7 +320,6 @@ final class FakeActionsService: Sendable {
   @Test func jitRegistrationOpensNoSecondSession() throws {
     let service = FakeActionsService()
     let (listener, _) = try Self.listener(service, FakeScaleSetAuthority())
-    // Registration never creates the scale set; the controller's listener does.
     #expect(throws: CIError.self) {
       try listener.generateJIT(name: "iso-ci-x", workFolder: "_work")
     }
@@ -383,7 +378,6 @@ final class FakeActionsService: Sendable {
       return
     }
     #expect(state?.phase == .starting && state?.pool == "validation")
-    // A second launch for the same allocation is refused.
     #expect(throws: CIError.self) {
       try first.launch(id, pool: "validation", poolDigest: Digest(hashing: "pool"))
     }
@@ -392,7 +386,6 @@ final class FakeActionsService: Sendable {
     let adoption = restarted.adopt()
     #expect(adoption.live.keys.contains(id) && adoption.ended.isEmpty)
     #expect(restarted.status(id).ownsStartup)
-    // The supervisor exits: the kernel releases the lock.
     let pid = try #require(Self.childPID(holding: first.files.lock(id)))
     kill(pid, SIGKILL)
     var status: Int32 = 0

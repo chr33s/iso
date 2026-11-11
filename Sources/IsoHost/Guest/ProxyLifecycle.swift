@@ -6,7 +6,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-// Host-side lifecycle of the credential proxy (issue #411) and of the
+// Host-side lifecycle of the credential proxy and of the
 // local-model reverse tunnels. One `iso-proxy` process and one `ssh -R`
 // tunnel run per (VM, provider), both tracked by PID files in the instance
 // directory. The proxy binds host loopback, runs under `sandbox-exec`, and

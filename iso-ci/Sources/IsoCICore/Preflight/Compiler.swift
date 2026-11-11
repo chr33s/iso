@@ -14,7 +14,6 @@ package struct SnapshotReference: Sendable, Equatable, Hashable, Codable {
   }
 }
 
-/// A compile result with its non-fatal warnings and fatal diagnostics.
 package struct CompileReport: Sendable, Equatable {
   package let plan: WorkflowPlan?
   package let diagnostics: [CompatibilityDiagnostic]
@@ -436,7 +435,6 @@ private struct CompilerSession {
     return plans
   }
 
-  /// Kahn's algorithm, ties broken by definition order.
   func topologicalOrder(_ jobs: [ParsedJob]) -> [ParsedJob]? {
     var remaining = jobs
     var done: Set<String> = []
@@ -1090,7 +1088,6 @@ private struct CompilerSession {
       continueOnError: .bool(false), timeoutMinutes: nil, synthetic: true)
   }
 
-  /// Validates the approved checkout's inputs; returns its workspace path.
   mutating func checkCheckout(_ with: [TemplateEntry], line: Int, path: String) -> String {
     var checkoutPath = "."
     for entry in with {

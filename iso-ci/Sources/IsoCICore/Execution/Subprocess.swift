@@ -11,7 +11,6 @@ package enum Subprocess {
     package let stdout: [UInt8]
     package let stderr: [UInt8]
     package let timedOut: Bool
-    /// True when stdout or stderr exceeded its limit and was truncated.
     package let truncated: Bool
 
     package var succeeded: Bool { status == 0 && !timedOut }
@@ -73,7 +72,6 @@ package enum Subprocess {
     return out
   }
 
-  /// Runs to completion (or the deadline) and captures bounded output.
   package static func run(_ request: Request) throws(CIError) -> Output {
     guard request.executable.hasPrefix("/") else {
       throw CIError.invalid("subprocess executable must be an absolute path")
@@ -157,7 +155,6 @@ package enum Subprocess {
 
   /// Which process group a spawned child joins.
   package enum ProcessGroup: Sendable {
-    /// A new group, so the whole tree can be signalled at once.
     case own
     /// The caller's group: an interactive child that must stay in the
     /// terminal's foreground group, or tty access stops it (SIGTTOU/SIGTTIN).
@@ -258,7 +255,6 @@ private final class OutputCollector: @unchecked Sendable {
 
   init(limit: Int) { self.limit = limit }
 
-  /// Stops every drain within one poll interval, EOF or not.
   func abandon() {
     lock.lock()
     abandoned = true

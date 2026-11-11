@@ -55,7 +55,6 @@ import Testing
     let harness = try await DPHarness()
     let (_, _, runner) = try await harness.register()
     let (_, token, _) = try await harness.acquire(runner)
-    // The recorded toolkit sequence (reserve, chunked PATCH, commit).
     let fixture = try DataPlaneProtocolTests.fixture("toolkit-cache-v1.json")
     let reserve = await harness.request(
       "POST", Self.cacheBase + "caches", bearer: token, json: fixture["reserve"])
@@ -81,14 +80,11 @@ import Testing
     #expect(
       try await Self.restore(harness, token: token, keys: "Linux-npm-abc", version: "a1b2")
         == "hello world")
-    // Restore-key prefix match.
     #expect(
       try await Self.restore(
         harness, token: token, keys: "Linux-npm-zzz,Linux-npm-", version: "a1b2") == "hello world")
-    // The primary key is exact-only.
     #expect(
       try await Self.restore(harness, token: token, keys: "Linux-npm-", version: "a1b2") == nil)
-    // Version mismatch is a miss.
     #expect(
       try await Self.restore(harness, token: token, keys: "Linux-npm-abc", version: "other") == nil)
     // First writer wins: the same key/version cannot be overwritten (poisoning).
@@ -112,7 +108,6 @@ import Testing
         "PATCH", Self.cacheBase + "caches/\(id)", bearer: token, body: Array("abc".utf8),
         headers: ["Content-Range": "bytes 0-2/*"]
       ).status == 204)
-    // Never committed: invisible.
     #expect(try await Self.restore(harness, token: token, keys: "half", version: "v") == nil)
     // A commit whose size does not match the uploaded content is refused.
     #expect(
@@ -203,11 +198,9 @@ import Testing
     let (_, _, runnerA) = try await harness.register(scope: DPHarness.scope("octo/demo"))
     let (_, tokenA, _) = try await harness.acquire(runnerA)
     #expect(await Self.save(harness, token: tokenA, key: "k", version: "v", data: "a") == 204)
-    // Another repository.
     let (_, _, runnerB) = try await harness.register(scope: DPHarness.scope("octo/other"))
     let (_, tokenB, _) = try await harness.acquire(runnerB)
     #expect(try await Self.restore(harness, token: tokenB, keys: "k", version: "v") == nil)
-    // Same repository, privileged authority class.
     let (_, _, runnerC) = try await harness.register(
       scope: DPHarness.scope("octo/demo", authority: "privileged"))
     let (_, tokenC, _) = try await harness.acquire(runnerC)
@@ -304,7 +297,6 @@ import Testing
     #expect(
       try await Self.download(harness, token: token, registration: registration, name: "dist")
         == content)
-    // Delete is not part of the certified surface.
     #expect(
       await harness.request(
         "POST", "/twirp/github.actions.results.api.v1.ArtifactService/DeleteArtifact",
@@ -398,16 +390,13 @@ import Testing
         "workflow_job_run_backend_id": .string(id.jobID.uuidString.lowercased()),
       ])
     let target = DPHarness.target(try #require(response.json?["logs_url"]?.stringValue))
-    // Tampered signature.
     #expect(
       await harness.request("PUT", target.replacingOccurrences(of: "sig=", with: "sig=A")).status
         == 403)
-    // Tampered path (another resource with the same signature).
     #expect(
       await harness.request(
         "PUT", target.replacingOccurrences(of: "/logs/job-job", with: "/logs/step-job")
       ).status == 403)
-    // Extended expiry.
     let expires = try #require(
       URLComponents(string: "http://x" + target)?.queryItems?.first { $0.name == "se" }?.value)
     #expect(
@@ -415,7 +404,6 @@ import Testing
         "PUT", target.replacingOccurrences(of: "se=\(expires)", with: "se=\(Int64(expires)! + 999)")
       )
       .status == 403)
-    // Valid now, expired later.
     #expect(await harness.request("PUT", target, body: Array("x".utf8)).status == 201)
     harness.clock.advance(4_000)
     #expect(await harness.request("PUT", target, body: Array("y".utf8)).status == 403)

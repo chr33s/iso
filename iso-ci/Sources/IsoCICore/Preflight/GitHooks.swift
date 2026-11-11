@@ -1,9 +1,7 @@
 import Darwin
 import Foundation
 
-/// The Git hooks `iso-ci hooks` manages.
 package enum GitHookKind: String, Sendable, Equatable, Codable, CaseIterable {
-  /// Runs before a commit on the protected branch, against the staged index.
   case preCommit = "pre-commit"
   /// Runs before a push to the protected branch, against the checked-out
   /// commit (refused when it is not what is being pushed).
@@ -16,9 +14,7 @@ package struct ManagedHookSettings: Sendable, Equatable, Codable {
   package static let defaultTimeoutSeconds = 1_800
 
   package var hook: GitHookKind
-  /// The protected branch: other branches skip the hook.
   package var branch: String
-  /// Repository-relative workflow file.
   package var workflow: String
   package var event: String
   package var snapshot: SnapshotSource
@@ -156,7 +152,6 @@ package enum GitHooks {
       """
   }
 
-  /// The settings a managed hook was written with; nil for any other file.
   package static func settings(fromScript text: String) -> ManagedHookSettings? {
     let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
     guard lines.count > 2, lines[1] == Substring(marker),
@@ -173,30 +168,23 @@ package enum GitHooks {
   // MARK: Hooks directory
 
   package enum HooksPathSource: String, Sendable, Equatable {
-    /// The repository's own `core.hooksPath`.
     case local
-    /// `core.hooksPath` from the user's or system Git configuration.
     case global
-    /// Git's default, `<git dir>/hooks` (not versioned).
     case none
   }
 
   package struct Repository: Sendable, Equatable {
     package let layout: GitIndex.Layout
-    /// The configured `core.hooksPath` and where it came from.
     package let hooksPath: String?
     package let hooksPathSource: HooksPathSource
-    /// The `core.hooksPath` iso-ci recorded setting, if any.
     package let ownedHooksPath: String?
 
-    /// The directory Git runs hooks from.
     package var hooksDirectory: String {
       guard let hooksPath else { return layout.commonDirectory + "/hooks" }
       return GitHooks.resolve(hooksPath, root: layout.root)
     }
   }
 
-  /// The repository around `path`, with its configuration read as data.
   package static func repository(
     containing path: String, environment: [String: String] = ProcessInfo.processInfo.environment
   ) throws(CIError) -> Repository {
@@ -229,7 +217,6 @@ package enum GitHooks {
     return GitConfigFile.lastValue(bytes, section: section, subsection: nil, key: key)
   }
 
-  /// A `core.hooksPath` value as Git resolves it for a working tree.
   static func resolve(_ value: String, root: String) -> String {
     if value.hasPrefix("/") { return (value as NSString).standardizingPath }
     if value == "~" || value.hasPrefix("~/") {
@@ -250,14 +237,11 @@ package enum GitHooks {
     package let hooksDirectory: String
     package let hookPath: String
     package let existing: Existing
-    /// `core.hooksPath` iso-ci will set (repository-relative), or nil.
     package let setsHooksPath: String?
-    /// Where an unmanaged hook is moved before it is replaced (`--force`).
     package let backupPath: String?
     package let content: String
   }
 
-  /// What `install` would do, refusing anything it would silently break.
   package static func planInstall(
     repository: Repository, settings: ManagedHookSettings, directory: String?, force: Bool
   ) throws(CIError) -> InstallPlan {
@@ -446,8 +430,6 @@ package enum GitHooks {
       ? .managed : .unmanaged
   }
 
-  /// Hooks Git would run from `directory`: executable entries whose name is
-  /// not a `.sample` or iso-ci backup.
   static func activeHooks(in directory: String) -> [String] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
     return names.filter { name in
@@ -464,13 +446,11 @@ package enum GitHooks {
   }
 }
 
-/// Changes the repository's own Git configuration (`git config --local`).
 package protocol GitConfigWriter {
   func set(_ key: String, _ value: String) throws(CIError)
   func unset(_ key: String) throws(CIError)
 }
 
-/// `git config --local` run with a fixed environment in the repository.
 package struct GitCommandConfigWriter: GitConfigWriter {
   let git: String
   let root: String

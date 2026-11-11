@@ -76,7 +76,6 @@ package final class DataPlaneChannel: Sendable {
   }
 }
 
-/// Outstanding request/reply correlation with a bounded number in flight.
 package final class DataPlanePendingCalls: Sendable {
   private struct State {
     var next: Int64 = 1

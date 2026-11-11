@@ -4,8 +4,6 @@ import Synchronization
 
 @testable import IsoCICore
 
-/// A settable clock for deterministic reconciliation tests.
-
 /// Generates a 2048-bit RSA key and returns it as a PKCS#1 PEM plus the
 /// public key for verification.
 func makeGitHubTestRSAKey() throws -> (pem: String, publicKey: SecKey) {
@@ -21,7 +19,6 @@ func makeGitHubTestRSAKey() throws -> (pem: String, publicKey: SecKey) {
   return ("-----BEGIN RSA PRIVATE KEY-----\n\(body)\n-----END RSA PRIVATE KEY-----\n", publicKey)
 }
 
-/// The test App and its credentials.
 struct GitHubTestApp {
   let record: GitHubAppRecord
   let credentials: MemoryCredentialStore
@@ -160,7 +157,6 @@ final class GitHubFakeRunners: RunnerService {
     return job
   }
 
-  /// GitHub assigns `job` to the runner named `runnerName` and marks it busy.
   func assign(jobID: Int64, toRunnerNamed runnerName: String, repository: RepositoryName) {
     state.withLock { state in
       guard let runner = state.runners.values.first(where: { $0.name == runnerName }) else {
@@ -177,7 +173,6 @@ final class GitHubFakeRunners: RunnerService {
     }
   }
 
-  /// The job completes and GitHub removes the ephemeral runner.
   func complete(jobID: Int64, conclusion: String) {
     state.withLock { state in
       guard let index = state.jobs.firstIndex(where: { $0.id == jobID }) else { return }
@@ -336,7 +331,6 @@ final class GitHubFakeProvider: EnvironmentProvider {
   }
 }
 
-/// Picks the first candidate (placement is tested separately).
 struct GitHubFirstHostPlacement: PlacementPolicy {
   func choose(
     candidates: [Name], profile: ResolvedProfile, configuration: CIConfiguration,

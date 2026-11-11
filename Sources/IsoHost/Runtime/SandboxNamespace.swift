@@ -38,7 +38,6 @@ package struct SandboxNamespace: Sendable {
     }
   }
 
-  /// The runtime's state directory for one sandbox.
   package func directory(_ name: MachineName) -> String {
     Self.directory(root: runtime.root, name, kind)
   }
@@ -67,7 +66,6 @@ package struct SandboxNamespace: Sendable {
     }
   }
 
-  /// Delete, then confirm it is gone from the listing.
   package func delete(_ name: MachineName, owner: OwnerID) throws {
     switch kind {
     case .linux: try runtime.delete(name, owner: owner)

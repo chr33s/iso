@@ -45,7 +45,6 @@ struct DevcontainerCheck: ParsableCommand {
   @Flag(help: "Emit machine-readable JSON on stdout instead of the text report on stderr")
   var json = false
 
-  /// Reads no configuration, as the baseline did.
   func run() throws {
     try IsoCLI.run {
       let environment = ConfigEnvironment.process.variables

@@ -30,7 +30,6 @@ package enum UpdateChannel {
   /// verification (and says so on stderr).
   package static let apiBaseVariable = "ISO_UPDATE_API_BASE_URL"
 
-  /// The prebuilt target this host installs.
   package static func targetTriple() throws(HostError) -> String {
     #if os(macOS) && arch(arm64)
       return "aarch64-apple-darwin"
@@ -72,7 +71,6 @@ package enum UpdateChannel {
   }
 }
 
-/// The subset of GitHub's release JSON the updater reads.
 package struct Release: Sendable, Equatable, Decodable {
   package let tag: String
   package let assets: [Asset]
@@ -188,13 +186,10 @@ func isASCIIWhitespace(_ scalar: Unicode.Scalar) -> Bool {
   scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "\u{0C}" || scalar == "\r"
 }
 
-/// How release metadata and assets are fetched.
 enum AuthStrategy: Equatable {
-  /// The `gh` CLI, already authenticated to github.com.
   case gh
   /// curl with `GITHUB_TOKEN` as a bearer token, passed on stdin.
   case curlBearer(String)
-  /// curl without credentials.
   case curlBare
 
   /// The API override forces bare curl: the local fixture speaks neither gh

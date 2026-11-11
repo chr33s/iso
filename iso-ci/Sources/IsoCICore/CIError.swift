@@ -98,7 +98,6 @@ package struct CIError: Error, Sendable, Equatable, CustomStringConvertible {
   }
 }
 
-/// Converts any thrown error into a `CIError`, keeping typed ones intact.
 package func ciError(_ error: any Error, _ code: CIError.Code = .internalError) -> CIError {
   (error as? CIError) ?? CIError(code, "\(error)")
 }

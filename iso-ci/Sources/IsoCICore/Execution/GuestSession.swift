@@ -237,7 +237,6 @@ package final class GuestSession: @unchecked Sendable {
 
   private var sshBase: [String] { ["-F", directory + "/ssh_config"] }
 
-  /// Runs one bounded command; stdin carries any secret-bearing material.
   package func run(_ command: GuestCommand) throws(CIError) -> GuestCommandResult {
     if let failure { throw CIError(.hostRefused, "the guest session ended: \(failure.message)") }
     let output = try Subprocess.run(
@@ -297,7 +296,6 @@ package final class GuestSession: @unchecked Sendable {
     }
   }
 
-  /// Closes the grant (best effort when unreachable) and removes the files.
   package func close() {
     state.withLock { $0.stopped = true }
     stopForwarders()
@@ -305,7 +303,6 @@ package final class GuestSession: @unchecked Sendable {
     PrivateFiles.removeTree(directory)
   }
 
-  /// The ssh argv an operator's interactive debug session uses.
   package var interactiveArguments: [String] { sshBase + [alias] }
   package var sshExecutable: String { ssh }
 }

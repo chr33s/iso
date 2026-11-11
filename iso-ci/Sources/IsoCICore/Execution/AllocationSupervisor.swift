@@ -2,20 +2,14 @@ import Darwin
 import Foundation
 import Synchronization
 
-/// Where an allocation's supervisor is in its work.
 package enum SupervisionPhase: String, Sendable, Codable, CaseIterable {
-  /// Spawned; not yet provisioning.
   case starting
-  /// Admission, VM creation and brokered proof.
   case provisioning
-  /// JIT registration, runner start and registration verification.
   case registering
   /// Started; the supervisor holds the VM's access session while the
   /// controller runs the steady-state lifecycle.
   case holding
-  /// The VM is gone and cleanup is verified (or never needed).
   case finished
-  /// Startup failed; the controller releases what remains.
   case failed
 
   /// Phases in which only the supervisor may act on the allocation.
@@ -50,9 +44,7 @@ package struct SupervisorState: Sendable, Equatable, Codable {
 }
 
 package enum SupervisorStatus: Sendable, Equatable {
-  /// No supervisor holds the lock (never had one, or it exited).
   case unsupervised
-  /// A live process holds the allocation's lock.
   case live(SupervisorState?)
 
   package var ownsStartup: Bool {
@@ -63,17 +55,14 @@ package enum SupervisorStatus: Sendable, Equatable {
   package var isLive: Bool { if case .live = self { true } else { false } }
 }
 
-/// Whether a supervisor process owns an allocation.
 package protocol SupervisorDirectory: Sendable {
   func status(_ allocation: AllocationID) -> SupervisorStatus
 }
 
-/// Starts the work of a newly persisted connected allocation.
 package protocol AllocationLauncher: Sendable {
   func launch(_ allocation: AllocationID, pool: Name, poolDigest: Digest) throws(CIError)
 }
 
-/// One allocation's lock and state files.
 package struct AllocationFiles: Sendable, Equatable {
   package let directory: String
 
@@ -106,7 +95,6 @@ package struct AllocationFiles: Sendable, Equatable {
     return fd
   }
 
-  /// The allocation ids that have a lock file.
   package func lockedAllocations() -> [AllocationID] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
     return names.sorted().compactMap { name in
@@ -118,9 +106,7 @@ package struct AllocationFiles: Sendable, Equatable {
 
 /// The result of the controller's startup scan.
 package struct SupervisorAdoption: Sendable, Equatable {
-  /// Allocations a live supervisor still owns; re-adopted as they are.
   package var live: [AllocationID: SupervisorState?] = [:]
-  /// Allocations whose supervisor is gone, with its last state.
   package var ended: [AllocationID: SupervisorState?] = [:]
 
   package init() {}

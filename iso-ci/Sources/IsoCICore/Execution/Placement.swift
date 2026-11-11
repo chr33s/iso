@@ -28,7 +28,6 @@ package struct HostLoad: Sendable, Equatable {
     return usage
   }
 
-  /// Whether one more `reservation` fits `budget` and the host's slot count.
   package func admits(_ reservation: ResourceReservation, budget: HostBudget?, slots: UInt64)
     -> Bool
   {
@@ -40,7 +39,6 @@ package struct HostLoad: Sendable, Equatable {
   }
 }
 
-/// Why a host was not chosen, for status output.
 package struct PlacementRefusal: Sendable, Equatable {
   package let host: Name
   package let reason: String

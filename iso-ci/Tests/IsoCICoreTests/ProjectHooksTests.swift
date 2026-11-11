@@ -119,7 +119,6 @@ import Testing
           try FileManager.default.createSymbolicLink(
             atPath: repo + "/link", withDestinationPath: "bin/run.sh")
         }, undo: restore)?.contains("link") == true)
-    // An intent-to-add placeholder stages no content.
     try write(repo + "/later.txt", "later\n")
     #expect(
       try refusal(
@@ -127,9 +126,7 @@ import Testing
         undo: {
           try git(["rm", "-q", "--cached", "later.txt"], repo)
         })?.contains("later.txt") == true)
-    // Untracked paths are never part of a staged snapshot.
     #expect(throws: CIError.self) { try capture(repo, source: .staged, include: ["later.txt"]) }
-    // The same working tree captures without complaint as a working-tree snapshot.
     try write(repo + "/a.txt", "unstaged\n")
     #expect(try capture(repo, source: .workingTree).manifest.isDirty)
   }
@@ -291,7 +288,6 @@ import Testing
     let missing = try commit(nil, "three")
     #expect(missing.status != 0)
     #expect(String(decoding: missing.stderr, as: UTF8.self).contains("iso-ci is required"))
-    // Another branch skips the hook, even without iso-ci.
     try git(["checkout", "-q", "-b", "feature"], repo)
     #expect(try commit(nil, "four").status == 0)
     #expect(try commit(failing.bin, "five").status == 0)
@@ -321,7 +317,6 @@ import Testing
     // A commit other than the checkout cannot be checked.
     try git(["checkout", "-q", "-b", "other", "HEAD~1"], repo)
     #expect(try git(["push", "-q", "origin", "main:main"], repo, env: env).status != 0)
-    // Pushing another branch skips the hook.
     #expect(
       try git(["push", "-q", "origin", "other"], repo, env: ["PATH": "/usr/bin:/bin"]).status == 0)
   }

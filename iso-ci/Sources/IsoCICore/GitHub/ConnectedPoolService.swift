@@ -26,7 +26,6 @@ package final class ConnectedPoolService: ControllerService {
   private let supervision: AllocationSupervision?
   private let trace: ProtocolTrace?
 
-  /// Makes (and starts) the listener for a scale-set pool.
   package typealias ScaleSetFeedFactory =
     @Sendable (Name, PoolConfiguration, InstallationRecord) throws(CIError) -> any ScaleSetFeed
 
@@ -60,7 +59,6 @@ package final class ConnectedPoolService: ControllerService {
     /// The pool digest each listener was built from; a change (policy,
     /// scope, scale set) replaces the listener.
     var feedDigests: [Name: Digest] = [:]
-    /// When each pool's job-less demand (warm or minimum runners) began.
     var demandSince: [Name: EpochSeconds] = [:]
     var modes: [Name: HostMode] = [:]
     var adopted = false
@@ -271,7 +269,6 @@ package final class ConnectedPoolService: ControllerService {
     return decision
   }
 
-  /// The trace record of one scheduling round (shared with the replayer).
   package static func record(
     _ decision: CapacityDecision, requests: [ScheduleRequest], trace: ProtocolTrace?
   ) {
@@ -390,7 +387,6 @@ package final class ConnectedPoolService: ControllerService {
     for feed in stale { feed.stop() }
   }
 
-  /// Stops every listener (controller shutdown).
   package func stopListeners() { stopFeeds(except: []) }
 
   package func shutdown() { stopListeners() }
@@ -463,7 +459,6 @@ package final class ConnectedPoolService: ControllerService {
   /// overridden by automatic activation.
   private static func isAutomatic(_ state: PoolState) -> Bool { state == .active }
 
-  /// Why the pool cannot be active, or nil.
   private func activationGate(
     _ name: Name, _ pool: PoolConfiguration, configuration: CIConfiguration, now: EpochSeconds
   ) -> String? {

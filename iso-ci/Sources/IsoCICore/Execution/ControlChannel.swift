@@ -86,7 +86,6 @@ package struct ControlResponse: Sendable, Equatable {
   }
 }
 
-/// Reads one newline-terminated line (without it), bounded by `limit`.
 package func readLine(_ fd: Int32, limit: Int) -> [UInt8]? {
   var line: [UInt8] = []
   var byte: UInt8 = 0
@@ -160,7 +159,6 @@ package func connectUnix(_ path: String) -> Int32? {
   return fd
 }
 
-/// Serves the control socket; each request is dispatched to `handler`.
 package final class ControlServer: Sendable {
   private let path: String
   private let handler: @Sendable (ControlRequest) -> Result<JSONValue, CIError>
@@ -241,7 +239,6 @@ package final class ControlServer: Sendable {
   }
 }
 
-/// The CLI side of the control channel.
 package struct ControlClient: Sendable {
   package let path: String
   package let timeout: Int

@@ -9,11 +9,8 @@ package enum GitIndex {
   package typealias Entry = GitIndexFile.Entry
 
   package struct Layout: Sendable, Equatable {
-    /// The working-tree root.
     package let root: String
-    /// The repository's administrative directory (`.git` or a gitfile's).
     package let gitDirectory: String
-    /// Shared refs for a linked worktree, else `gitDirectory`.
     package let commonDirectory: String
   }
 
@@ -59,7 +56,6 @@ package enum GitIndex {
     }
   }
 
-  /// The commit HEAD names, from `HEAD`, loose refs and `packed-refs`.
   package static func head(_ layout: Layout) throws(CIError) -> String {
     guard let bytes = try? PrivateFiles.read(layout.gitDirectory + "/HEAD", limit: 4096),
       let text = String(validating: bytes, as: UTF8.self)?.trimmingCharacters(
@@ -114,7 +110,6 @@ package enum GitIndex {
       bytes, section: "remote", subsection: "origin", key: "url")
   }
 
-  /// Stage-0 entries, read by the shared inert reader (`IsoGitIndex`).
   package static func entries(_ layout: Layout) throws(CIError) -> [Entry] {
     // Only an absent index means "nothing tracked"; an index that exists
     // but cannot be read fails the capture instead of looking clean.

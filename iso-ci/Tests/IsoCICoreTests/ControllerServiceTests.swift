@@ -183,11 +183,9 @@ import Testing
         ControlRequest(method: "retry", params: ["allocation": .string(build.id.rawValue)]))
     ).get()
     #expect(retried["number"] == .integer(2))
-    // The downstream job is re-queued so the run settles on the new result.
     #expect(retried["requeued"] == ["test"])
     let requeued = try fixture.store.preflightJobs(run: run, as: JobAttemptRecord.self)
     #expect(requeued.contains { $0.jobKey == "test" && $0.number == 2 && $0.state == .pending })
-    // Retrying the superseded attempt again is refused.
     guard
       case .failure(let error)? = fixture.service.handle(
         ControlRequest(method: "retry", params: ["allocation": .string(build.id.rawValue)]))
@@ -230,7 +228,6 @@ import Testing
       stored += String(decoding: bytes, as: UTF8.self)
     }
     #expect(!stored.contains("s3cr3t-value"))
-    // The scan reaches the run record itself (it names the secret).
     #expect(stored.contains("\"TOKEN\""))
     let events = try fixture.store.events(after: 0)
     #expect(
@@ -296,7 +293,6 @@ import Testing
     let value = try #require(submit(fixture, secrets: ["TOKEN": "s3cr3t-value"])).get()
     let run = try PreflightRunID(try #require(value["run"]?.stringValue))
     #expect(fixture.service.holdsSecrets(run))
-    // No eligible host: build fails, test is skipped, and the run settles.
     var settled = false
     for tick in 0..<50 where !settled {
       fixture.service.reconcile(now: 1_000 + EpochSeconds(tick))
@@ -365,7 +361,6 @@ import Testing
     #expect(options.useDefaultExcludes)
     #expect(options.workflowPath == record.plan.workflowPath)
 
-    // A record from before patterns were kept cannot be patched safely.
     var json = try JSONEncoder().encode(record)
     var object = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
     object.removeValue(forKey: "include")

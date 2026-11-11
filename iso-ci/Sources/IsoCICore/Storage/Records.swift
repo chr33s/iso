@@ -9,19 +9,12 @@ package enum AllocationKind: String, Sendable, Codable, CaseIterable {
   case preflight
 }
 
-/// What the controller wants to happen to an allocation next.
 package enum DesiredDisposition: String, Sendable, Codable, CaseIterable {
-  /// Keep (or get) the environment ready and let it run its job.
   case active
-  /// Retire when idle; let assigned work finish within its bounds.
   case drain
-  /// Externally stop now (abort, expiry, revocation).
   case stop
-  /// Keep the VM running for debugging until a host deadline.
   case retainLive = "retain_live"
-  /// Keep the stopped disk and results until a host deadline.
   case retainStopped = "retain_stopped"
-  /// Destroy and verify cleanup.
   case release
 }
 
@@ -105,7 +98,6 @@ package struct GitHubJobRef: Sendable, Equatable, Codable {
   package var jobName: String
   package var htmlURL: String?
   package var status: String
-  /// GitHub's conclusion; nil while the API cannot confirm one.
   package var conclusion: String?
 
   package init(
@@ -187,7 +179,6 @@ package struct AllocationRecord: Sendable, Equatable, Codable {
   package var desired: DesiredDisposition
   package var execution: ExecutionOutcome
   package var export: ExportOutcome
-  /// The staged result archive, once exported.
   package var resultDigest: Digest?
   /// Stop plus export grace from the profile, bounding the host's completion.
   package var completionGraceSeconds: EpochSeconds?
@@ -243,7 +234,6 @@ package struct AllocationRecord: Sendable, Equatable, Codable {
     vmCleanup != .verified
   }
 
-  /// Whether a GitHub registration may still exist and must be resolved.
   package var holdsRegistration: Bool {
     switch registration {
     case .intended, .uncertain, .registered, .assigned, .removalPending: true
@@ -251,7 +241,6 @@ package struct AllocationRecord: Sendable, Equatable, Codable {
     }
   }
 
-  /// Fully settled: nothing left to observe, release or verify.
   package var isSettled: Bool { !holdsResources && !holdsRegistration }
 
   /// The UI phase is derived from independent observations, never stored.
@@ -293,15 +282,11 @@ package struct IntentRecord: Sendable, Equatable, Codable {
   }
 
   package enum Status: String, Sendable, Codable, CaseIterable {
-    /// Persisted; not yet sent.
     case pending
-    /// Sent; awaiting a reply or confirmation.
     case sent
-    /// The external system confirmed the effect.
     case confirmed
     /// Sent and the outcome could not be established.
     case uncertain
-    /// The external system refused it (no effect).
     case refused
   }
 
@@ -312,7 +297,6 @@ package struct IntentRecord: Sendable, Equatable, Codable {
   package var attempts: Int
   package let createdAt: EpochSeconds
   package var updatedAt: EpochSeconds
-  /// Nonsecret parameters needed to retry or reconcile the same identity.
   package var parameters: [String: String]
   package var outcome: String?
 
@@ -334,13 +318,10 @@ package struct IntentRecord: Sendable, Equatable, Codable {
 /// Pool lifecycle chosen by the operator; replenishment follows it.
 package enum PoolState: String, Sendable, Codable, CaseIterable {
   case active
-  /// Stop replenishment; never kill assigned work.
   case paused
-  /// Stop replenishment and retire idle capacity.
   case draining
   /// Configuration invalid, unqualified or unapproved: no admission.
   case inactive
-  /// Offboarding requested: remove owned resources.
   case removing
   case removed
 }

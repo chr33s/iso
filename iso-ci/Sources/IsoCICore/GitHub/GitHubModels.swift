@@ -179,7 +179,6 @@ package struct GitHubJITConfig: Sendable {
 package struct GitHubRunnerInfo: Sendable, Equatable {
   package let id: Int64
   package let name: String
-  /// `online` or `offline`.
   package let status: String
   package let busy: Bool
   package let labels: [String]
@@ -214,7 +213,6 @@ package struct GitHubRunnerInfo: Sendable, Equatable {
 package struct GitHubRunnerGroupInfo: Sendable, Equatable {
   package let id: Int64
   package let name: String
-  /// `all`, `selected` or `private`.
   package let visibility: String
   package let allowsPublicRepositories: Bool
   package let restrictedToWorkflows: Bool
@@ -248,7 +246,6 @@ package struct GitHubJobInfo: Sendable, Equatable {
   package let runAttempt: Int64
   package let repository: RepositoryName
   package let name: String
-  /// `queued`, `in_progress`, `completed`, `waiting`, ...
   package let status: String
   package let conclusion: String?
   package let runnerID: Int64?

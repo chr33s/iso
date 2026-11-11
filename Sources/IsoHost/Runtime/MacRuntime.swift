@@ -7,7 +7,6 @@ import IsoCore
 /// reported identifiers are checked against the one requested, and the
 /// effective configuration the gate reads rejects unknown fields.
 
-/// `macos inspect` `record`.
 package struct MacRecord: Sendable, Equatable, Decodable {
   package let id: String
   package let owner: String
@@ -117,7 +116,6 @@ package struct MacCoreAIRecord: Sendable, Equatable, Codable {
     a?.accelerators.sorted() == b?.accelerators.sorted()
   }
 
-  /// What `config` asks new sandboxes to be created with.
   package init?(_ config: CoreAIConfig?) {
     guard let config else { return nil }
     accelerators = config.accelerators.map(\.rawValue)
@@ -162,7 +160,6 @@ package struct MacGuestComputerUse: Sendable, Equatable, Codable {
 
   package init(frameRate: Int) { self.frameRate = frameRate }
 
-  /// What `config` asks new sandboxes to be created with.
   package init?(_ config: ComputerUseConfig) {
     guard let rate = config.guestFrameRate else { return nil }
     frameRate = rate
@@ -309,7 +306,6 @@ package struct MacGuestCUCounts: Sendable, Equatable, Decodable {
   }
 }
 
-/// `iso-sandbox macos inspect <id>`.
 package struct MacInspection: Sendable, Equatable, Decodable {
   package let record: MacRecord
   package let status: SandboxStatus

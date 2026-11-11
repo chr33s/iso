@@ -37,12 +37,10 @@ package indirect enum YAMLNode: Sendable, Equatable {
     return nil
   }
 
-  /// The value under `key` in a mapping (keys compare as written).
   package subscript(key: String) -> YAMLNode? {
     mapping?.first { $0.key.value == key }?.value
   }
 
-  /// A plain empty / `null` / `~` scalar.
   package var isNull: Bool { scalar?.isNull ?? false }
 
   /// YAML 1.2 core-schema conversion: quoted scalars stay strings; plain
@@ -200,7 +198,6 @@ private struct YAMLParser {
   static func isSpace(_ byte: UInt8?) -> Bool { byte == 0x20 }
   static func isBlank(_ byte: UInt8?) -> Bool { byte == nil || byte == 0x20 || byte == 0x09 }
 
-  /// Whether the rest of the current line from `col` is blank or a comment.
   func restIsEmpty() -> Bool {
     var c = col
     while let b = byte(line, c), b == 0x20 || b == 0x09 { c += 1 }
@@ -341,14 +338,12 @@ private struct YAMLParser {
     return byte(line, c) == UInt8(ascii: ":") && Self.isBlank(byte(line, c + 1))
   }
 
-  /// Whether the current line, from `col`, is `key: ...` (a mapping entry).
   func lineHasMappingKey() throws(CIError) -> Bool {
     var probe = self
     guard (try? probe.mappingKey()) != nil else { return false }
     return true
   }
 
-  /// Scans a mapping key at (line, col) through its `:` indicator.
   mutating func mappingKey() throws(CIError) -> YAMLScalar {
     let keyLine = line
     guard let b = current else { throw fail("expected a mapping key") }
@@ -408,7 +403,6 @@ private struct YAMLParser {
     return .mapping(pairs, line: startLine)
   }
 
-  /// The value after `key:`; (line, col) is just past the colon.
   mutating func mappingValue(indent: Int) throws(CIError) -> YAMLNode {
     skipInlineSpaces()
     if restIsEmpty() {
@@ -421,7 +415,6 @@ private struct YAMLParser {
       if col == indent, current == UInt8(ascii: "-"), Self.isBlank(peek(1)) {
         return try blockSequence(indent: indent)
       }
-      // Empty value: leave the cursor on the next entry.
       return .scalar(YAMLScalar(value: "", style: .plain, line: valueLine))
     }
     guard let b = current else { throw fail("expected a value") }
@@ -458,7 +451,6 @@ private struct YAMLParser {
           items.append(.scalar(YAMLScalar(value: "", style: .plain, line: itemLine)))
         }
       } else {
-        // Compact nested node: its indentation is the column it starts at.
         items.append(try blockNode(parentIndent: indent))
       }
       guard try nextContentLine(from: line) else { break }
@@ -519,7 +511,6 @@ private struct YAMLParser {
     return YAMLScalar(value: text, style: .plain, line: startLine)
   }
 
-  /// One line of a plain scalar from `col`, up to a comment or end of line.
   mutating func plainLineSegment() throws(CIError) -> String {
     var out: [UInt8] = []
     while let b = current {
@@ -534,7 +525,6 @@ private struct YAMLParser {
     return String(decoding: out, as: UTF8.self)
   }
 
-  /// Single- or double-quoted scalar; may fold across lines unless `singleLine`.
   mutating func quotedScalar(parentIndent: Int, singleLine: Bool) throws(CIError) -> YAMLScalar {
     let startLine = line + 1
     guard let quote = current else { throw fail("expected a quoted scalar") }
@@ -635,7 +625,6 @@ private struct YAMLParser {
     return Array(String(scalar).utf8)
   }
 
-  /// `|` / `>` block scalar with optional chomping and indentation indicators.
   mutating func blockScalar(parentIndent: Int) throws(CIError) -> YAMLScalar {
     let startLine = line + 1
     let folded = current == UInt8(ascii: ">")
@@ -843,7 +832,6 @@ private struct YAMLParser {
 }
 
 extension UInt8 {
-  /// Hex digit value of an ASCII byte.
   fileprivate init?(ascii byte: UInt8) {
     switch byte {
     case UInt8(ascii: "0")...UInt8(ascii: "9"): self = byte - UInt8(ascii: "0")

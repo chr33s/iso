@@ -31,10 +31,8 @@ package enum Base64URL {
 /// design; the controller keeps only the public half (PKCS#1 DER).
 package struct RunnerKeyPair: Sendable {
   package let publicKeyDER: [UInt8]
-  /// The runner's `RSAParametersSerializable` JSON (base64 byte arrays).
   package let rsaParametersJSON: [UInt8]
 
-  /// A fresh 2048-bit key from the system generator.
   package static func generate() throws(CIError) -> RunnerKeyPair {
     let (privateKey, publicDER) = try generateKey()
     var error: Unmanaged<CFError>?
@@ -59,7 +57,6 @@ package struct RunnerKeyPair: Sendable {
     return (privateKey, Array(publicData))
   }
 
-  /// Rebuilds the private key from the runner JSON (tests).
   package static func privateKey(fromRunnerJSON json: [UInt8]) throws(CIError) -> SecKey {
     let value = try StrictJSON.parse(json, limits: JSONLimits(maxBytes: 16 << 10))
     func field(_ name: String) throws(CIError) -> [UInt8] {
@@ -116,7 +113,6 @@ package struct RSAPrivateParameters: Sendable, Equatable {
     inverseQ = DER.leftPad(DER.unsigned(try sequence.integer()), to: half)
   }
 
-  /// `{"d","dp","dq","exponent","inverseQ","modulus","p","q"}` as base64.
   package var runnerJSON: [UInt8] {
     func b64(_ bytes: [UInt8]) -> JSONValue { .string(Data(bytes).base64EncodedString()) }
     return JSONValue.object([
@@ -126,7 +122,6 @@ package struct RSAPrivateParameters: Sendable, Equatable {
   }
 }
 
-/// Minimal DER for PKCS#1 RSA keys (read and write INTEGER/SEQUENCE).
 package enum DER {
   package struct Reader {
     private let bytes: [UInt8]
@@ -196,7 +191,6 @@ package enum DER {
   }
 }
 
-/// A decoded JSON Web Token (header, claims, signed input, signature).
 package struct JWTParts: Sendable {
   package let header: JSONValue
   package let claims: JSONValue
@@ -307,11 +301,8 @@ package struct ClientAssertionVerifier: Sendable {
 /// claims (the artifact toolkit takes its backend ids from `scp`).
 package struct EndpointTokenAuthority: Sendable {
   package enum Purpose: String, Sendable, CaseIterable {
-    /// The runner listener's broker/run-service access token.
     case runner
-    /// The job token (`ACTIONS_RUNTIME_TOKEN`, results, launch, run service).
     case job
-    /// Action archive downloads.
     case actions
   }
 
@@ -357,7 +348,6 @@ package struct EndpointTokenAuthority: Sendable {
     return Claims(allocation: allocation, purpose: purpose, expiresAt: expires)
   }
 
-  /// `sig` for a signed URL path bound to an allocation and expiry.
   package func signature(path: String, allocation: AllocationID, expiresAt: Int64) -> String {
     let input = Array("\(allocation.rawValue)\n\(expiresAt)\n\(path)".utf8)
     return Base64URL.encode(Array(HMAC<SHA256>.authenticationCode(for: input, using: key)))

@@ -67,7 +67,6 @@ struct Setup: ParsableCommand {
       let root = global.dataRoot
       try root.prepare()
 
-      // Hosts: existing local or enrolled iso hosts only.
       var enabled: [JSONValue] = []
       for alias in hosts {
         let value = try global.call("host.enable", ["host": .string(alias)])
@@ -92,7 +91,6 @@ struct Setup: ParsableCommand {
         }
       }
 
-      // Approve descriptor digests (shown before recording).
       if approve {
         let preview = try global.call("approve", ["dry_run": true])
         for row in preview["descriptors"]?.arrayValue ?? [] {
@@ -103,7 +101,6 @@ struct Setup: ParsableCommand {
         report["approvals"] = try global.call("approve", ["dry_run": false])
       }
 
-      // GitHub App: manifest flow or an operator-owned App.
       if createApp {
         let state = randomHex(bytes: 32)
         let server = try ManifestCallbackServer(state: state)
@@ -221,7 +218,6 @@ struct Setup: ParsableCommand {
           throw CIError(.conflict, "\(smokeWorkflow) exists; choose another path")
         }
         do {
-          // A fresh repository usually has no .github/workflows yet.
           let target = URL(fileURLWithPath: absolutePath(smokeWorkflow))
           try FileManager.default.createDirectory(
             at: target.deletingLastPathComponent(), withIntermediateDirectories: true)

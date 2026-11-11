@@ -19,7 +19,6 @@ package struct InputRevision: Sendable, Equatable, Codable {
   package let snapshot: Digest
   package let dirty: Bool
   package let capturedAt: EpochSeconds
-  /// The attempt whose retained workspace received this revision (patch).
   package let patchedAttempt: JobAttemptID?
 
   package init(
@@ -48,7 +47,6 @@ package struct PreflightRunRecord: Sendable, Equatable, Codable {
   package let pinnedHost: Name?
   package let profile: Name
   package let inputs: [String: String]
-  /// Names only: values live in controller memory for the run's lifetime.
   package let secretNames: [String]
   package let retainOnFailure: FailureRetention
   package var notes: [String]
@@ -96,7 +94,6 @@ package enum JobAttemptState: String, Sendable, Codable, CaseIterable {
   case failed
   case cancelled
   case skipped
-  /// The environment was lost before a result: never presented as failed or passed.
   case interrupted
 
   package var isTerminal: Bool {
@@ -128,13 +125,9 @@ package struct JobAttemptRecord: Sendable, Equatable, Codable {
   package let number: Int
   package var state: JobAttemptState
   package var allocation: AllocationID?
-  /// The input revision this attempt received at its materialization
-  /// boundary, plus any later patch revisions applied to its workspace.
   package var inputRevision: Int
   package var patchRevisions: [Int]
-  /// Dependency attempts whose outputs/artifacts this attempt consumed.
   package var dependencyAttempts: [JobAttemptID]
-  /// True when dependencies ran on a different input revision.
   package var mixedInputs: Bool
   package var outputs: [String: String]
   package var steps: [StepOutcome]
@@ -164,6 +157,5 @@ package struct JobAttemptRecord: Sendable, Equatable, Codable {
     logObjects = []
   }
 
-  /// The ObjectStore subject this attempt authenticates as.
   package var subject: String { "attempt:\(id)" }
 }

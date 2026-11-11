@@ -32,13 +32,11 @@ package struct ScheduleRequest: Sendable, Equatable {
   }
 }
 
-/// A CI allocation that holds resources on a host.
 package struct ScheduledAllocation: Sendable, Equatable {
   package let id: AllocationID
   package let reservation: ResourceReservation
   package let exclusive: Bool
   package let guestOS: GuestOS
-  /// A ready warm runner with no job, which may be retired to drain a host.
   package let idle: Bool
 
   package init(
@@ -53,7 +51,6 @@ package struct ScheduledAllocation: Sendable, Equatable {
   }
 }
 
-/// What the scheduler knows about one host this tick.
 package struct SchedulerHost: Sendable, Equatable {
   package let name: Name
   package let capacity: HostCapacity
@@ -99,9 +96,7 @@ package struct RoomReservation: Sendable, Equatable, Codable {
 
 package enum HostMode: Sendable, Equatable {
   case normal
-  /// Retiring idle runners and placing nothing until the host is empty.
   case drainingForExclusive(jobID: String)
-  /// An exclusive allocation is booting or running alone.
   case exclusiveBusy
 
   package var label: String {
@@ -115,17 +110,11 @@ package enum HostMode: Sendable, Equatable {
   package var admitsPlacement: Bool { self == .normal }
 }
 
-/// Why a request was not placed this tick.
 package enum WaitReason: Sendable, Equatable {
-  /// Two macOS VMs already run on every candidate host.
   case vzSlot
-  /// Holds the room reservation on `host` and waits for capacity there.
   case room(host: Name)
-  /// Waits behind an earlier job's room reservation.
   case behindReservation(host: Name, jobID: String)
-  /// Its host is draining (for this job or another exclusive job).
   case draining(host: Name)
-  /// No candidate host is eligible, or none could ever fit it.
   case noHost(String)
 
   package var code: String {
@@ -150,12 +139,10 @@ package enum WaitReason: Sendable, Equatable {
 }
 
 package struct CapacityDecision: Sendable, Equatable {
-  /// Requests to start now, in queue order, with their host.
   package var placements: [(request: String, host: Name)] = []
   package var waiting: [String: WaitReason] = [:]
   package var reservations: [Name: RoomReservation] = [:]
   package var modes: [Name: HostMode] = [:]
-  /// Idle allocations to retire so a host can drain for an exclusive job.
   package var retire: [AllocationID] = []
 
   package init() {}

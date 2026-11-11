@@ -62,7 +62,6 @@ final class TraceFeed: ScaleSetFeed {
 
   func stop() {}
 
-  /// Delivers queued messages; GitHub assigns every job it let us acquire.
   /// Returns the request ids acquired.
   @discardableResult
   func drain() -> [Int64] {
@@ -326,7 +325,6 @@ final class TraceReplayer {
       launcher: supervision, supervisors: supervision ?? InlineSupervision(), trace: trace)
   }
 
-  /// One controller pass, composed as `ConnectedPoolService.reconcile` does.
   func round() {
     var prepared: [(Name, ConnectedPoolReconciler, ConnectedPoolReconciler.PreparedPass)] = []
     for name in configuration.pools.keys.sorted() {
@@ -380,7 +378,6 @@ final class TraceReplayer {
     return open.joined(separator: ",") + "|\(pending)|\(lastDecision.waiting.count)"
   }
 
-  /// The fake host reports Linux; a macOS profile's VM reports macOS.
   func markGuests() {
     for allocation in (try? store.openAllocations()) ?? [] {
       guard let pool = allocation.pool, let instance = allocation.instance,

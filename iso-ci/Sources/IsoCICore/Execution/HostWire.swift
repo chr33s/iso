@@ -36,9 +36,7 @@ package enum HostMethod: String, Sendable, CaseIterable {
 
 /// The capability names a host advertises through `host.capabilities`.
 package enum HostCapabilityName: String, Sendable, CaseIterable {
-  /// The brokered execution handoff (spec section 2).
   case netHandoff1 = "net-handoff-1"
-  /// Host-owned live and stopped-disk run retention (`run.retain`).
   case runRetention1 = "run-retention-1"
 }
 
@@ -147,15 +145,11 @@ package struct VMSpec: Sendable, Equatable, Codable {
   }
 }
 
-/// Retention requested through `run.retain` (host-owned, finite, budgeted).
 package enum RetentionMode: String, Sendable, Codable, CaseIterable {
-  /// Keep the VM running for debugging until a host-enforced deadline.
   case live
-  /// Keep the stopped disk and staged results until a host-enforced deadline.
   case stopped
 }
 
-/// One typed request body. Parameter spellings match the host decoder.
 package enum HostRequestBody: Sendable, Equatable {
   case hello(clientBuild: String)
   case hostCapabilities
@@ -284,7 +278,6 @@ package struct AccessOpenRequest: Sendable, Equatable {
   }
 }
 
-/// One request envelope. `hostID`/`ownerID` are absent only on `hello`.
 package struct HostRequest: Sendable, Equatable {
   package let requestID: RequestID
   package let hostID: HostID?
@@ -317,7 +310,6 @@ package struct HostRequest: Sendable, Equatable {
   package var frame: [UInt8] { wire.frame }
 }
 
-/// An error the host returned, kept typed for retry decisions.
 package struct HostReplyError: Sendable, Equatable {
   package let code: String
   package let message: String
@@ -428,7 +420,6 @@ package struct RunNetworkPolicy: Sendable, Equatable, Codable {
   package let localServices: [String]
   package let channelPolicy: Digest
 
-  /// No provider, developer-local-service or private-network grant.
   package var isGrantFree: Bool { providerGrants.isEmpty && localServices.isEmpty }
 }
 
@@ -808,7 +799,6 @@ package struct AccessGrant: Sendable, Equatable {
   }
 }
 
-/// The relay preamble: one JSON line selecting a live grant.
 package func relayPreamble(session: SessionID, bearer: String, epoch: DaemonEpoch) -> [UInt8] {
   JSONValue.object([
     "protocol": .string(HostProtocol.v1), "session_id": .string(session.rawValue),

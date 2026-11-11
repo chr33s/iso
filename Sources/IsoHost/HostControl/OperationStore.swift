@@ -50,7 +50,6 @@ package struct OperationStore: Sendable {
   // MARK: - Installation
 
   package enum ActivationState: String, Codable, Sendable {
-    /// Normal dispatch.
     case active
     /// A migration handoff is prepared; only activation may run.
     case prepared
@@ -158,7 +157,6 @@ package struct OperationStore: Sendable {
     package var expiresAt: UInt64?
     package var activeOperation: HostOperationID?
     package var lastObservedAt: UInt64?
-    /// Set for a disposable run's child VM.
     package var runID: RunID?
 
     /// The same record with a new create shape (after resize or restore).

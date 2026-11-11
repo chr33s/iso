@@ -1,6 +1,5 @@
 import IsoCore
 
-/// What a listing reports for one instance.
 package enum InstanceHealth: Sendable {
   case stopped
   case running

@@ -6,17 +6,14 @@ import Foundation
 /// names the construct, never the evaluated data.
 package indirect enum ExpressionNode: Sendable, Equatable, Hashable {
   case literal(JSONValue)
-  /// A top-level named value (`github`, `matrix`, …), lowercased.
   case context(String)
   case property(ExpressionNode, String)
   case index(ExpressionNode, ExpressionNode)
-  /// `a.*` / `a[*]`: an object filter producing an array.
   case wildcard(ExpressionNode)
   case not(ExpressionNode)
   case binary(ExpressionOperator, ExpressionNode, ExpressionNode)
   case and(ExpressionNode, ExpressionNode)
   case or(ExpressionNode, ExpressionNode)
-  /// A function call; the name is lowercased.
   case call(String, [ExpressionNode])
 }
 
@@ -29,7 +26,6 @@ package enum ExpressionOperator: String, Sendable, Equatable, Hashable {
   case greaterOrEqual = ">="
 }
 
-/// Functions in the subset with their arity bounds.
 package enum ExpressionFunction: String, Sendable, CaseIterable {
   case contains, startswith, endswith, format, join, tojson, fromjson, hashfiles
   case success, always, cancelled, failure
@@ -53,7 +49,6 @@ package enum ExpressionFunction: String, Sendable, CaseIterable {
   }
 }
 
-/// The named values (contexts) in the subset.
 package enum ExpressionContextName: String, Sendable, CaseIterable, Hashable {
   case github, env, vars, job, jobs, steps, runner, secrets, strategy, matrix, needs, inputs
 }
@@ -63,7 +58,6 @@ package enum Expression {
   package static let maxDepth = 50
   package static let maxTokens = 2_048
 
-  /// Parses one expression (without `${{ }}`).
   package static func parse(_ text: String) throws(CIError) -> ExpressionNode {
     guard text.utf8.count <= maxLength else { throw fail("expression is too long") }
     var lexer = ExpressionLexer(Array(text.utf8))
@@ -81,7 +75,6 @@ package enum Expression {
 }
 
 extension ExpressionNode {
-  /// Every top-level context this expression reads.
   package var contexts: Set<String> {
     var out: Set<String> = []
     visit { node in
@@ -90,7 +83,6 @@ extension ExpressionNode {
     return out
   }
 
-  /// Every function this expression calls (lowercased).
   package var functions: Set<String> {
     var out: Set<String> = []
     visit { node in

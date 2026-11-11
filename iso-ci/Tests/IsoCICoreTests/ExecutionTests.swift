@@ -78,7 +78,6 @@ import Testing
     return record
   }
 
-  // C-T01: the qualified handoff and current admission are required; no NIC fallback.
   @Test func admissionFailsClosedWithoutNetHandoff() throws {
     for capabilities in [
       FakeHost.qualifiedCapabilities(advertise: false, allowed: Self.reviewedHosts),
@@ -86,7 +85,6 @@ import Testing
       FakeHost.qualifiedCapabilities(allowed: Self.reviewedHosts, expiresAt: 10),
       FakeHost.qualifiedCapabilities(providers: ["anthropic"], allowed: Self.reviewedHosts),
       FakeHost.qualifiedCapabilities(allowed: ["github.com"]),
-      // Evidence for another image (or another digest) does not qualify this one.
       FakeHost.qualifiedCapabilities(
         allowed: Self.reviewedHosts, image: "default@sha256:" + String(repeating: "0", count: 64)),
       FakeHost.qualifiedCapabilities(
@@ -138,7 +136,6 @@ import Testing
     #expect(after.readyAt != nil)
     #expect(after.networkProof?.networkPolicy == admission.expectedNetworkPolicy)
     #expect(after.provenance.qualificationDigest == admission.qualificationDigest)
-    // Idempotent: a second call does not create another VM.
     try harness.driver.provision(record.id, profile: harness.profile, admission: admission)
     #expect(harness.host.state.withLock { $0.creates } == 1)
   }

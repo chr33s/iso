@@ -142,12 +142,13 @@ export const references = [
                 slug: "vm",
                 title: "VM and runtime settings",
                 summary:
-                    "Configure CPU, memory, disks, the guest user, and Apple runtime timeouts.",
+                    "Configure CPU, memory, disks, the guest user, Apple runtime timeouts, and experimental Core AI accelerators.",
                 sections: [
                     "vm-section",
                     "guest-user",
                     "guest-path",
                     "apple_container-section",
+                    "coreai",
                 ],
             },
             {

@@ -93,7 +93,6 @@ package enum StateStore {
 
 /// Header shared by every versioned record.
 package enum StateSchema {
-  /// Literal backend tag stored in every record.
   package static let backend = "apple-container"
   /// Current instance record, journal, and image manifest contract.
   package static let version: UInt32 = 2
@@ -335,7 +334,6 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   }
 }
 
-/// A sandbox's CPU count and memory.
 package struct Resources: Sendable, Equatable, Codable, CustomStringConvertible {
   package let cpus: UInt32
   package let memoryBytes: UInt64
@@ -818,14 +816,12 @@ extension Instance {
   }
 }
 
-/// `n` random bytes from the system CSPRNG, lowercase hex.
 package func randomHex(_ count: Int) -> String {
   var bytes = [UInt8](repeating: 0, count: count)
   arc4random_buf(&bytes, count)
   return bytes.map { String(format: "%02x", $0) }.joined()
 }
 
-/// `YYYY-MM-DDTHH:MM:SSZ` in UTC.
 package func utcTimestamp(_ date: Date = Date()) -> String {
   let formatter = ISO8601DateFormatter()
   formatter.formatOptions = [.withInternetDateTime]

@@ -21,7 +21,6 @@ package final class ObjectStore: Sendable {
     case read
   }
 
-  /// A writable private staging file for one upload.
   package struct Upload: Sendable, Equatable {
     package let id: String
     package let kind: Kind
@@ -112,7 +111,6 @@ package final class ObjectStore: Sendable {
 
   // MARK: Uploads
 
-  /// Starts a private upload for `subject`, bounded by `limit` bytes.
   package func beginUpload(kind: Kind, subject: String, limit: UInt64) throws(CIError) -> Upload {
     guard limit > 0, limit <= Self.maxObjectBytes else {
       throw CIError.invalid("upload limit out of range")
@@ -143,7 +141,6 @@ package final class ObjectStore: Sendable {
       limit: row.uint("size_limit") ?? 0)
   }
 
-  /// Appends bytes at `offset` (sequential or rewrite), enforcing the limit.
   package func write(_ upload: Upload, offset: UInt64, bytes: [UInt8]) throws(CIError) {
     guard offset + UInt64(bytes.count) <= upload.limit else {
       throw CIError(.budgetExceeded, "upload exceeds its size limit")
@@ -190,7 +187,6 @@ package final class ObjectStore: Sendable {
     _ = try? db.query("DELETE FROM uploads WHERE id = ?", [.text(upload.id)])
   }
 
-  /// Imports a controller-produced file (for example a snapshot archive).
   package func importFile(_ path: String, kind: Kind, limit: UInt64 = maxObjectBytes)
     throws(CIError) -> (digest: Digest, size: UInt64)
   {
@@ -217,7 +213,6 @@ package final class ObjectStore: Sendable {
     let target = path(digest)
     try PrivateFiles.ensureDirectory((target as NSString).deletingLastPathComponent)
     if access(target, F_OK) != 0 {
-      // Same filesystem: rename is the atomic publication point.
       if link(file, target) != 0 && errno != EEXIST {
         guard rename(file, target) == 0 || errno == EEXIST else {
           throw CIError.storage("cannot publish an object")
@@ -274,7 +269,6 @@ package final class ObjectStore: Sendable {
     ).first?.uint("size")
   }
 
-  /// Grants `subject` read access to one existing object of `kind`.
   package func grant(subject: String, kind: Kind, digest: Digest) throws(CIError) {
     guard try exists(kind: kind, digest: digest) else {
       throw CIError(.notFound, "no such \(kind.rawValue) object")
@@ -295,7 +289,6 @@ package final class ObjectStore: Sendable {
     try db.query("DELETE FROM object_grants WHERE subject = ?", [.text(subject)])
   }
 
-  /// The object's path for an authorized subject; refuses without a grant.
   package func authorizedPath(subject: String, kind: Kind, digest: Digest) throws(CIError) -> String
   {
     guard try isGranted(subject: subject, kind: kind, digest: digest) else {
@@ -565,7 +558,6 @@ package final class ObjectStore: Sendable {
     return try artifactEntry(row)
   }
 
-  /// Finalized artifacts of `run`, optionally filtered by name.
   package func artifacts(run: String, name: String? = nil) throws(CIError) -> [ArtifactEntry] {
     var sql = "SELECT * FROM artifacts WHERE run = ? AND finalized = 1"
     var bindings: [Database.Value] = [.text(run)]
@@ -596,7 +588,6 @@ package final class ObjectStore: Sendable {
   }
 }
 
-/// Incremental SHA-256 over chunks (CryptoKit wrapper).
 package struct StreamingSHA256 {
   private var hasher = SHA256Box()
 
@@ -613,7 +604,6 @@ private struct SHA256Box {
   mutating func update(_ bytes: [UInt8]) { state.update(data: bytes) }
 
   func finalize() -> Digest {
-    // A freshly formatted hex digest always validates.
     Digest(unchecked: state.finalize().map { String(format: "%02x", $0) }.joined())
   }
 }

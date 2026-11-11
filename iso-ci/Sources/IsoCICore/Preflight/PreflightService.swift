@@ -15,7 +15,6 @@ package func blocking<T: Sendable>(_ body: @escaping @Sendable () async -> T) ->
   return box.withLock { $0! }
 }
 
-/// Synthetic-step scripts keyed by the snapshot digest the broker passes.
 package final class SnapshotScriptRegistry: SyntheticStepScripts {
   private let references = Mutex<[Digest: SnapshotReference]>([:])
 
@@ -31,7 +30,6 @@ package final class SnapshotScriptRegistry: SyntheticStepScripts {
   }
 }
 
-/// Approved action archives the operator imported (`iso-ci actions import`).
 package enum ApprovedActions {
   static func key(_ nameWithOwner: String, _ ref: String) -> String {
     "action:\(nameWithOwner)@\(ref)"
@@ -77,7 +75,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     /// Mapped secret values, per run, in controller memory only.
     var secrets: [PreflightRunID: [String: String]] = [:]
     var launching: Set<JobAttemptID> = []
-    /// Allocations a `finish` is currently stopping or retaining.
     var finishing: Set<AllocationID> = []
     var consuming = false
   }
@@ -99,7 +96,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       store: objects, childStaging: root.staging + "/dataplane", scripts: scripts)
   }
 
-  /// Whether mapped secret values for `run` are still in controller memory.
   func holdsSecrets(_ run: PreflightRunID) -> Bool {
     state.withLock { $0.secrets[run] != nil }
   }
@@ -232,7 +228,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     guard !workflowPath.hasPrefix("/"), !workflowPath.split(separator: "/").contains("..") else {
       throw CIError.invalid("the workflow must be inside the repository")
     }
-    // Capture the immutable snapshot before compiling against it.
     var options = SnapshotOptions(outputDirectory: root.staging + "/snapshots")
     // Only untracked paths matching an explicit include are captured.
     options.include = include
@@ -336,7 +331,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     return record
   }
 
-  /// Total bytes of one attempt's stored runner logs returned at once.
   package static let jobLogLimit = 4 << 20
 
   /// The stored runner logs of one job attempt (the latest unless
@@ -399,7 +393,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     try store.preflightJobs(run: id, as: JobAttemptRecord.self)
   }
 
-  /// The latest attempt per job key.
   private func latest(_ attempts: [JobAttemptRecord]) -> [String: JobAttemptRecord] {
     var out: [String: JobAttemptRecord] = [:]
     for attempt in attempts where (out[attempt.jobKey]?.number ?? 0) < attempt.number {
@@ -556,7 +549,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
       if let refreshed = try? attempts(record.id) { current = latest(refreshed) }
     }
     let graph = JobGraph(plan: record.plan)
-    // The graph counts running jobs itself: pass the configured total.
     let limit = Int(((try? loadConfiguration().get())?.preflight?.maxParallelJobs) ?? 1)
     let decision = graph.schedule(
       outcomes: outcomes(current), runCancelled: record.state == .aborting,
@@ -581,7 +573,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
         launch(record.id, attempt.id)
       }
     }
-    // Settle the run once every job has a terminal outcome.
     guard let refreshed = try? attempts(record.id) else { return }
     let conclusion = graph.conclusion(outcomes: outcomes(latest(refreshed)))
     if conclusion != .inProgress, latest(refreshed).values.allSatisfy({ $0.state.isTerminal }) {
@@ -655,7 +646,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     let reference = SnapshotReference(
       baseCommit: revision.baseCommit, digest: revision.snapshot, isDirty: revision.dirty)
     scripts.register(reference)
-    // Placement, admission and a fresh clean VM.
     let candidates = record.pinnedHost.map { [$0] } ?? preflight.hosts
     let placement = try HostPlacement.select(
       candidates: candidates, profile: profile, configuration: configuration, store: store,
@@ -747,8 +737,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     try store.event("run:\(runID)", "job.running", "\(job.key) runner started on \(host)")
   }
 
-  /// Registers one attempt's job with the data plane: its contexts, approved
-  /// actions, mapped secrets and cache scope, and the guest-side endpoint.
   private func registerEndpoint(
     _ record: PreflightRunRecord, runID: PreflightRunID, attempt: JobAttemptRecord, job: JobPlan,
     allocation: AllocationRecord, profile: ResolvedProfile, revision: InputRevision,
@@ -805,7 +793,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     return try registered.get()
   }
 
-  /// The cache partition a job of `record` registers with the data plane.
   static func cacheScope(
     _ record: PreflightRunRecord, run: PreflightRunID, secretsMapped: Bool,
     profile: ResolvedProfile, host: Name
@@ -858,8 +845,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
 
   private func graph(_ record: PreflightRunRecord) -> JobGraph { JobGraph(plan: record.plan) }
 
-  /// The profile's boot allowance: how long a started runner may take to
-  /// acquire its job.
   private func bootAllowance(_ record: PreflightRunRecord) -> EpochSeconds {
     let config = try? loadConfiguration().get()
     let limits = config.flatMap { $0.limits[$0.profiles[record.profile]?.limits ?? "x"] }
@@ -922,8 +907,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     }
   }
 
-  /// Cancels the runner's job, then stops the VM and revokes the
-  /// allocation's endpoint access and object grants.
   private func stop(_ allocation: AllocationID) {
     let broker = self.broker
     blocking { await broker.cancel(allocation) }
@@ -1023,8 +1006,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     }
   }
 
-  /// The runner's job workspace (`WorkFolder` `_work`) under the image's
-  /// configured runner directory.
   static func workspace(runnerDirectory: String, repository: String) -> String {
     let name = repository.split(separator: "/").last.map(String.init) ?? "repository"
     return "\(runnerDirectory)/_work/\(name)/\(name)"
@@ -1194,8 +1175,6 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     return options
   }
 
-  /// Transfers a new validated snapshot into a retained, non-running
-  /// environment and records it as a new input revision.
   private func patch(_ params: JSONValue) throws(CIError) -> JSONValue {
     var r = try ObjectReader(params, field: "params")
     let id = try r.parsed("allocation", as: AllocationID.self)

@@ -81,13 +81,9 @@ package enum AuditProducer: String, Codable, Sendable {
 }
 
 package enum AuditEvidence: String, Codable, Sendable {
-  /// What the host was asked to do.
   case hostRequest = "host_request"
-  /// What the host saw happen.
   case hostObservation = "host_observation"
-  /// A grant, policy verdict or approval the host made.
   case hostDecision = "host_decision"
-  /// The store's own statement about its recording (a gap).
   case storeRecord = "store_record"
 }
 
@@ -150,7 +146,6 @@ package enum AuditSubject: Sendable, Hashable, Codable {
   }
 }
 
-/// The closed event-kind discriminator.
 package enum AuditEventKind: String, Codable, Sendable, CaseIterable {
   case invocationRequested = "invocation.requested"
   case invocationEnvironment = "invocation.environment"
@@ -203,11 +198,8 @@ package enum AuditFacts {
   package enum Lifecycle: String, Codable, Sendable {
     /// `iso run`: reuses or creates a retained instance.
     case persistent
-    /// `iso run --rm`.
     case disposable
-    /// `iso claude` / `iso codex` on a running instance.
     case existing
-    /// `iso claude-agents`.
     case attachment
   }
 

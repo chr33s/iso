@@ -14,7 +14,6 @@ import Testing
     return base + "dp-" + randomHex(bytes: 4) + ".sock"
   }
 
-  /// A minimal HTTP/1.1 client over a Unix socket; returns (status, headers, body) per request.
   final class UnixHTTPClient {
     let fd: Int32
     var pending: [UInt8] = []
@@ -96,7 +95,6 @@ import Testing
     var status = stat()
     #expect(stat(path, &status) == 0 && status.st_mode & 0o077 == 0)
     let client = try UnixHTTPClient(path: path)
-    // Unauthorized and malformed requests are refused without echoing input.
     client.send("POST", "/_apis/oauth2/token", body: Array("grant_type=nope".utf8))
     let refused = try #require(client.receive())
     #expect(refused.0 == 401)
@@ -118,7 +116,6 @@ import Testing
     #expect(download.0 == 200)
     #expect(download.2.count == 300_000)
     #expect(Digest(hashing: download.2) == snapshot)
-    // The exported clone is gone once served.
     let leftovers =
       (try? FileManager.default.contentsOfDirectory(atPath: harness.childStaging + "/out")) ?? []
     #expect(leftovers.isEmpty)
@@ -224,16 +221,12 @@ import Testing
     #expect(arguments[2] == DataPlaneSeatbelt.profile)
     #expect(arguments.contains("EXE=/opt/iso-ci/iso-ci"))
     #expect(arguments.last == "_dataplane")
-    // The profile denies by default and grants no outbound network.
     #expect(DataPlaneSeatbelt.profile.contains("(deny default)"))
     #expect(!DataPlaneSeatbelt.profile.contains("network-outbound"))
     #expect(!DataPlaneSeatbelt.profile.contains("(allow default)"))
-    // Metadata is not readable host-wide.
     #expect(!DataPlaneSeatbelt.profile.contains("(allow file-read-metadata)"))
-    // No links: the controller and guest forwards are never redirected.
     #expect(DataPlaneSeatbelt.profile.contains("(deny file-write-create (vnode-type SYMLINK))"))
     #expect(DataPlaneSeatbelt.profile.contains("(deny file-link)"))
-    // Sockets are only bindable in the per-allocation socket directory.
     #expect(arguments.contains("STAGING=/private\(base)/s"))
     #expect(arguments.contains("SOCKETS=/private\(base)/iso-ci-1/dp"))
     #expect(paths.socketDirectory == base + "/iso-ci-1/dp")

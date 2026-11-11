@@ -32,7 +32,6 @@ package enum JobMessageBuilder {
 
   /// Guest-side addresses of the single scoped endpoint.
   package struct Endpoint: Sendable, Equatable {
-    /// `http://<host>:<port>/` as the runner (and its containers) see it.
     package let base: String
     /// `github.server_url`: a `.localhost` name so toolkits do not treat the
     /// endpoint as GHES (they never contact it through this name).
@@ -49,7 +48,6 @@ package enum JobMessageBuilder {
     package var oauth: String { base + "_apis/oauth2/token" }
   }
 
-  /// Identity of one attempt in runner terms.
   package struct Identity: Sendable, Equatable {
     package let planID: UUID
     package let jobID: UUID
@@ -61,7 +59,6 @@ package enum JobMessageBuilder {
       timelineID = Self.derived(attempt.rawValue + "/timeline")
     }
 
-    /// A stable UUID derived from a string (step and timeline ids).
     package static func derived(_ seed: String) -> UUID {
       let digest = Array(Digest(hashing: seed).rawValue.utf8)
       var bytes = [UInt8](repeating: 0, count: 16)
@@ -242,7 +239,6 @@ package enum JobMessageBuilder {
     ["value": .string(value), "isSecret": .bool(secret)]
   }
 
-  /// Secret names as GitHub allows them: `[A-Za-z_][A-Za-z0-9_]*`.
   package static func isSecretName(_ name: String) -> Bool {
     guard (1...100).contains(name.utf8.count), let first = name.unicodeScalars.first,
       !("0"..."9").contains(first), !name.uppercased().hasPrefix("GITHUB_")
@@ -337,7 +333,6 @@ package enum JobMessageBuilder {
 
   // MARK: Template tokens and context data
 
-  /// A `TemplateValue` in the runner's template-token JSON form.
   package static func token(_ value: TemplateValue) -> JSONValue {
     switch value {
     case .string(let text): return .string(text)
@@ -358,7 +353,6 @@ package enum JobMessageBuilder {
     }
   }
 
-  /// A JSON value in the runner's pipeline-context-data JSON form.
   package static func contextValue(_ value: JSONValue) -> JSONValue {
     switch value {
     case .null, .bool, .integer, .double, .string: return value

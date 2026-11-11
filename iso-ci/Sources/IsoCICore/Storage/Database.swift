@@ -41,7 +41,6 @@ package final class Database: @unchecked Sendable {
     CIError.storage("\(context): \(String(cString: sqlite3_errmsg(db)))")
   }
 
-  /// Runs one or more statements without bindings or results.
   package func execute(_ sql: String) throws(CIError) {
     lock.lock()
     defer { lock.unlock() }
@@ -53,7 +52,6 @@ package final class Database: @unchecked Sendable {
     }
   }
 
-  /// A bound value. Text and blobs are copied by SQLite (SQLITE_TRANSIENT).
   package enum Value: Sendable, Equatable {
     case null
     case int(Int64)
@@ -66,7 +64,6 @@ package final class Database: @unchecked Sendable {
     package init(_ value: Bool) { self = .int(value ? 1 : 0) }
   }
 
-  /// One result row, read by column name.
   package struct Row: Sendable {
     package let values: [String: Value]
 
@@ -102,7 +99,6 @@ package final class Database: @unchecked Sendable {
 
   private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-  /// Runs one statement with positional bindings; returns all rows.
   @discardableResult
   package func query(_ sql: String, _ bindings: [Value] = []) throws(CIError) -> [Row] {
     lock.lock()

@@ -6,7 +6,6 @@ import IsoCore
 /// unchanged from the untyped error it replaces.
 package struct HostFailure: Error, Equatable, Sendable, CustomStringConvertible {
   package enum Reason: Equatable, Sendable {
-    /// No instance matches the selection (or none exist).
     case instanceNotFound
     /// More than one instance matches; `resolution` names the argument of
     /// the failing command that picks one, nil when none does.

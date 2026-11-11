@@ -61,7 +61,6 @@ extension SandboxRuntime {
   }
 }
 
-/// The `iso up` line for a Core AI instance.
 package enum CoreAIReport: Equatable, Sendable {
   case ok(String)
   /// Fewer kinds than requested, or no report: the instance still starts.

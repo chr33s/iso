@@ -89,7 +89,6 @@ import Testing
             "parameters"]?["AccessToken"]?.stringValue
       }
     }
-    // The completion reached the controller once, with the reported outputs.
     let completion = await dpNextNotice(harness.broker) {
       if case .completed = $0.event { return true }
       return false
@@ -186,21 +185,17 @@ import Testing
     let good = DPHarness.assertion(
       key: runner.key, clientID: runner.clientID, audience: runner.audience, now: now)
     #expect(await token(good) == 200)
-    // Replay of the same jti.
     #expect(await token(good) == 401)
-    // Expired.
     #expect(
       await token(
         DPHarness.assertion(
           key: runner.key, clientID: runner.clientID, audience: runner.audience, now: now - 4_000))
         == 401)
-    // Overlong lifetime.
     #expect(
       await token(
         DPHarness.assertion(
           key: runner.key, clientID: runner.clientID, audience: runner.audience, now: now,
           lifetime: 86_400)) == 401)
-    // Wrong audience.
     #expect(
       await token(
         DPHarness.assertion(
@@ -212,7 +207,6 @@ import Testing
         DPHarness.assertion(
           key: other.key, clientID: runner.clientID, audience: runner.audience, now: now))
         == 401)
-    // A random key.
     let (stranger, _) = try RunnerKeyPair.generateKey()
     #expect(
       await token(
@@ -261,7 +255,6 @@ import Testing
         bearer: jobTokenB, json: foreign
       ).status == 403)
     _ = idB
-    // A forged token is refused.
     #expect(
       await harness.request("POST", "/run/renewjob", bearer: jobTokenA + "x", json: renewA).status
         == 401)
@@ -302,7 +295,6 @@ import Testing
     let body = try StrictJSON.parse(
       try #require(cancel.json?["body"]?.stringValue), limits: .guestRequest)
     #expect(body["jobId"]?.stringValue == jobID)
-    // Delivered once.
     #expect(
       await harness.request("GET", "/broker/message?sessionId=\(session)", bearer: token).status
         == 202)

@@ -77,7 +77,6 @@ func padded(_ text: String, _ width: Int) -> String {
   return count >= width ? text : text + String(repeating: " ", count: width - count)
 }
 
-/// Render the error context chain on one line.
 func oneLine(_ error: any Error) -> String {
   error.contextError?.alternate ?? "\(error)"
 }

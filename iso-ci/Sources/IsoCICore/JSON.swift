@@ -55,7 +55,6 @@ package enum JSONValue: Sendable, Equatable, Hashable {
 
   package var canonicalString: String { String(decoding: canonical, as: UTF8.self) }
 
-  /// One JSON Lines frame (canonical encoding plus a newline).
   package var frame: [UInt8] { canonical + [0x0A] }
 
   private static func append(_ value: JSONValue, to out: inout [UInt8]) {
@@ -110,7 +109,6 @@ package enum JSONValue: Sendable, Equatable, Hashable {
     out.append(UInt8(ascii: "\""))
   }
 
-  /// Bridges to Foundation objects (for `Codable` interop and output).
   package var foundation: Any {
     switch self {
     case .null: NSNull()
@@ -159,15 +157,11 @@ package struct JSONLimits: Sendable, Equatable {
     self.maxStringBytes = maxStringBytes ?? maxBytes
   }
 
-  /// Host-control replies (`iso.host/v1` caps a response frame at 1 MiB).
   package static let hostReply = JSONLimits(maxBytes: 1 << 20, maxKeys: 65_536)
-  /// Guest-originated data-plane request bodies.
   package static let guestRequest = JSONLimits(
     maxBytes: 1 << 20, maxDepth: 24, maxKeys: 8_192, maxArrayElements: 8_192)
-  /// GitHub REST responses.
   package static let github = JSONLimits(
     maxBytes: 8 << 20, maxDepth: 32, maxKeys: 262_144, maxArrayElements: 65_536)
-  /// Operator control-channel frames.
   package static let control = JSONLimits(maxBytes: 256 << 10)
 }
 
@@ -457,7 +451,6 @@ package struct ObjectReader {
     return value
   }
 
-  /// A string member that must be one of an enumeration's raw values.
   package mutating func enumeration<T: RawRepresentable>(_ key: String, as type: T.Type)
     throws(CIError) -> T where T.RawValue == String
   {
@@ -546,7 +539,6 @@ package struct ObjectReader {
     do { return try T(parsing: raw) } catch { throw CIError.invalid("invalid \(name(key))") }
   }
 
-  /// Parses a string member with a validating initializer.
   package mutating func parsed<T>(_ key: String, _ make: (String) throws -> T) throws(CIError) -> T
   {
     let raw = try string(key)
@@ -560,10 +552,8 @@ package struct ObjectReader {
     do { return try make(raw) } catch { throw CIError.invalid("invalid \(name(key))") }
   }
 
-  /// Marks members as intentionally ignored (forward-compatible readers).
   package mutating func ignore(_ keys: String...) { for key in keys { consumed.insert(key) } }
 
-  /// Refuses unknown members.
   package func finish() throws(CIError) {
     let unknown = Set(members.keys).subtracting(consumed)
     guard unknown.isEmpty else {

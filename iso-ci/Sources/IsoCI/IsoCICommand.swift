@@ -51,7 +51,6 @@ struct GlobalOptions: ParsableArguments {
     }
   }
 
-  /// Valid once `validate()` has accepted the options.
   var dataRoot: DataRoot {
     (try? DataRoot.resolve(root, environment: ProcessInfo.processInfo.environment))
       ?? DataRoot(path: NSHomeDirectory() + "/.iso-ci")
@@ -70,7 +69,6 @@ struct GlobalOptions: ParsableArguments {
     }
   }
 
-  /// Runs `body`, printing a typed error and exiting non-zero on failure.
   func run(_ body: () throws(CIError) -> Void) throws {
     do throws(CIError) { try body() } catch {
       Output.failure(error, json: json)
@@ -92,7 +90,6 @@ enum Output {
     FileHandle.standardOutput.write(Data((text + "\n").utf8))
   }
 
-  /// Diagnostics go to stderr.
   static func note(_ text: String) {
     FileHandle.standardError.write(Data(("iso-ci: " + text + "\n").utf8))
   }
@@ -103,7 +100,6 @@ enum Output {
         Data(JSONValue.object(["ok": false, "error": error.json]).canonical + [0x0A]))
     } else {
       note("\(error.code.rawValue): \(error.message)")
-      // Details (for example every compatibility problem) in key order.
       for key in error.details.keys.sorted() { note("  \(error.details[key] ?? "")") }
     }
   }
@@ -461,7 +457,6 @@ struct Run: ParsableCommand {
         conclusion = state["run"]?["conclusion"]
       }
     }
-    // A followed run that did not succeed exits non-zero.
     if follow, conclusion != .string("success") { throw ExitCode(1) }
   }
 }
@@ -498,7 +493,6 @@ struct Logs: ParsableCommand {
     }
   }
 
-  /// With `--json`, each batch of events is one enveloped line.
   static func print(_ value: JSONValue, json: Bool) {
     Output.emit(value, json: json) { value in
       for event in value["events"]?.arrayValue ?? [] {
@@ -509,7 +503,6 @@ struct Logs: ParsableCommand {
     }
   }
 
-  /// Streams events until the target settles; returns its final state.
   @discardableResult
   /// Streams events until `target` settles and returns its state; nil when
   /// `deadline` passes first.

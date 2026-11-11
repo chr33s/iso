@@ -35,7 +35,6 @@ package struct PreflightRunnerConfig: Sendable {
     ]
   }
 
-  /// The files the runner writes into its root directory.
   package var files: [String: [UInt8]] {
     [
       ".runner": runnerFile.canonical, ".credentials": credentialsFile.canonical,

@@ -6,7 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Background update-check state (`update-check.json`).
 package struct UpdateState: Sendable, Equatable {
   package var lastCheckedAt: UInt64
   package var latestKnownVersion: String?

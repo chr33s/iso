@@ -40,26 +40,18 @@ package struct CIConfiguration: Sendable, Equatable, Codable {
 
 /// An approved runner image on iso hosts.
 package struct ImageDescriptor: Sendable, Equatable, Codable {
-  /// The iso image name the host builds or holds.
   package var isoImage: String
   /// The required image digest, sent as `image_digest` on `run.create` and
   /// matched against the host's qualification evidence.
   package var digest: Digest
-  /// The official runner version the image must contain.
   package var runnerVersion: String
-  /// Whether the image carries the qualified guest-local Docker daemon.
   package var docker: Bool
-  /// The guest user the image's runner and tools are installed for.
   package var runnerDirectory: String
   /// Hosts whose own qualified build of this image has another digest.
-  /// Each host builds the image from its own build context, so builds on
-  /// two Macs differ; every listed digest is part of what the operator
-  /// approves. Keyed by host alias.
   package var hostDigests: [String: Digest]? = nil
 
   package var digestOfDescriptor: Digest { descriptorDigest(self) }
 
-  /// The digest a VM on `host` must boot (and that host's evidence must name).
   package func digest(on host: Name) -> Digest { hostDigests?[host.rawValue] ?? digest }
 }
 
@@ -70,7 +62,6 @@ package struct NetworkPolicyDescriptor: Sendable, Equatable, Codable {
   /// The reviewed endpoint profile that must be covered by the host's
   /// approved allowlist. Guest-requested hosts are never auto-allowed.
   package var requiredHosts: [HostRule]
-  /// Whether this profile carries the single scoped preflight endpoint.
   package var preflightService: Bool
 
   package var digestOfDescriptor: Digest { descriptorDigest(self) }
@@ -83,7 +74,6 @@ package enum ExecutionMode: String, Sendable, Codable, CaseIterable {
 
 package struct CompatibilityDescriptor: Sendable, Equatable, Codable {
   package var mode: ExecutionMode
-  /// Built-in compatibility manifest identifier (preflight only).
   package var manifest: String?
 
   package var digestOfDescriptor: Digest { descriptorDigest(self) }
@@ -98,13 +88,11 @@ package struct LimitsDescriptor: Sendable, Equatable, Codable {
   package var bootSeconds: UInt64
   package var idleSeconds: UInt64
   package var jobSeconds: UInt64
-  /// Host-enforced VM deadline (the run TTL).
   package var hardDeadlineSeconds: UInt64
   package var stopGraceSeconds: UInt64
   package var exportGraceSeconds: UInt64
   package var outputBytes: UInt64
   package var logBytes: UInt64
-  /// Preflight data-plane traffic budget per allocation (bytes both ways).
   package var trafficBytes: UInt64
   package var liveRetentionSeconds: UInt64
   package var stoppedRetentionSeconds: UInt64
@@ -131,7 +119,6 @@ package struct HostBudget: Sendable, Equatable, Codable {
     ownerReservedCPUs != nil || ownerReservedMemoryMiB != nil || trackExternalMacOSVMs != nil
   }
 
-  /// Kept for the desktop owner; never admitted to CI. Absent means 0.
   package var ownerReservedCPUs: UInt32? = nil
   package var ownerReservedMemoryMiB: UInt64? = nil
   /// Also count Virtualization.framework VM processes that hold no iso
@@ -254,7 +241,6 @@ package struct JobPolicy: Sendable, Equatable, Codable {
 
 /// A GitHub runner scale set the pool registers and long-polls.
 package struct ScaleSetConfiguration: Sendable, Equatable, Codable {
-  /// The scale set's name; workflows target it with `runs-on`.
   package var name: String
   package var minRunners: UInt32
   package var maxRunners: UInt32
@@ -274,9 +260,7 @@ package struct PoolConfiguration: Sendable, Equatable, Codable {
   package var installation: Name
   package var scope: GitHubScope
   package var labels: [RunnerLabel]
-  /// For a scale set, its `max_runners`.
   package var maxLiveVMs: UInt32
-  /// For a scale set, its `min_runners`.
   package var desiredIdleVMs: UInt32
   package var retentionOnFailure: FailureRetention
   /// Present only for `provisioning_mode: scaleset`, so warm pools keep
@@ -311,7 +295,6 @@ package struct PreflightConfiguration: Sendable, Equatable, Codable {
   package var maxParallelJobs: UInt32
 }
 
-/// SHA-256 of the canonical JSON encoding of a descriptor.
 package func descriptorDigest<T: Encodable>(_ value: T) -> Digest {
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -352,7 +335,6 @@ extension CIConfiguration {
       let image = ImageDescriptor(
         isoImage: try d.isoName("iso_image"),
         digest: try { () throws(CIError) -> Digest in
-          // Required: caches, provenance and qualification bind the exact image.
           let raw = try d.string("digest")
           do { return try Digest(prefixed: raw) } catch {
             throw CIError.config("\(path).digest is not a sha256 digest")
@@ -684,7 +666,6 @@ extension CIConfiguration {
       name: name, minRunners: minimum, maxRunners: maximum, jobPolicy: policy)
   }
 
-  /// Every reference resolves and every mode matches its use.
   package func validateReferences() throws(CIError) {
     for (name, image) in images {
       for host in (image.hostDigests ?? [:]).keys.sorted()
@@ -756,7 +737,6 @@ extension CIConfiguration {
     }
   }
 
-  /// The digest pinning everything a pool depends on.
   package func poolDigest(_ name: Name) -> Digest? {
     guard let pool = pools[name], let profile = profiles[pool.profile] else { return nil }
     var members: [String: JSONValue] = [
@@ -788,7 +768,6 @@ extension CIConfiguration {
     }
   }
 
-  /// The descriptors a profile depends on, for approval checks.
   package func descriptors(of profileName: Name) -> [(ApprovalRecord.Kind, Name, Digest)] {
     guard let profile = profiles[profileName] else { return [] }
     var out: [(ApprovalRecord.Kind, Name, Digest)] = [
@@ -810,9 +789,6 @@ extension CIConfiguration {
   }
 }
 
-/// iso's filtered-egress host rules (`HostRule` in IsoCore): an exact
-/// hostname, or `*.<suffix>` for names whole labels below a suffix of at
-/// least three labels (never the suffix itself).
 /// An egress allowlist entry, mirroring base iso's `HostRule` (IsoCore): an
 /// exact hostname, or `*.<suffix>` for names one or more whole labels below
 /// a suffix of at least three labels (never the suffix itself). It encodes
@@ -845,7 +821,6 @@ package enum HostRule: Hashable, Sendable, Codable, CustomStringConvertible {
 
   package var description: String { rawValue }
 
-  /// Whether this rule admits the exact name `host`.
   package func matches(_ host: String) -> Bool {
     switch self {
     case .exact(let name): host == name
@@ -1023,7 +998,6 @@ package struct ConfigReader {
     try ConfigReader(try node(key), path: name(key))
   }
 
-  /// A mapping of names to entries; absent means empty.
   package mutating func namedMap<T>(
     _ key: String, _ make: (YAMLNode, String) throws(CIError) -> T
   ) throws(CIError) -> [Name: T] {

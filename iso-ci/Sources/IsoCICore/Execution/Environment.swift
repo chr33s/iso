@@ -75,7 +75,6 @@ package struct GuestCommand: Sendable, Equatable {
     self.recordOutput = recordOutput
   }
 
-  /// One shell word per argument.
   package var rendered: String { argv.map(shellQuote).joined(separator: " ") }
 }
 
@@ -127,10 +126,8 @@ package protocol EnvironmentProvider: Sendable {
   func provision(_ allocation: AllocationID, profile: ResolvedProfile, admission: Admission)
     throws(CIError)
 
-  /// Refreshes host observations into the allocation record.
   func observe(_ allocation: AllocationID) throws(CIError)
 
-  /// Runs one bounded command in the guest over the VM-bound SSH session.
   func execute(_ allocation: AllocationID, _ command: GuestCommand) throws(CIError)
     -> GuestCommandResult
 
@@ -152,7 +149,6 @@ package protocol EnvironmentProvider: Sendable {
   func release(_ allocation: AllocationID) throws(CIError)
 }
 
-/// POSIX single-quote one shell word.
 package func shellQuote(_ word: String) -> String {
   if !word.isEmpty,
     word.unicodeScalars.allSatisfy({

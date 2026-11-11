@@ -19,10 +19,8 @@ package enum OverlayScripts {
   package static let endpointVariable = "ISO_CI_ENDPOINT"
   package static let tokenVariable = "ISO_CI_TOKEN"
 
-  /// The route the data plane serves the snapshot archive on.
   package static func route(_ digest: Digest) -> String { "/_iso/snapshot/\(digest.rawValue)" }
 
-  /// The script for a synthetic step kind; nil for user steps.
   package static func script(for kind: StepKind, snapshot: SnapshotReference) -> String? {
     switch kind {
     case .syntheticCheckout(let path): checkout(snapshot: snapshot, path: path)
@@ -102,7 +100,6 @@ package enum OverlayScripts {
       """
   }
 
-  /// Applies the snapshot tree over the workspace and verifies it.
   package static func overlay(snapshot: SnapshotReference, path: String) -> String {
     let state = snapshot.isDirty ? "dirty working tree" : "clean tree"
     return prelude(snapshot, path: path)

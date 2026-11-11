@@ -96,7 +96,6 @@ import Testing
     #expect(byPath["link"]?.kind == .symlink)
     #expect(byPath["link"]?.target == "a.txt")
     #expect(manifest.workflowDigest == Digest(hashing: "on: push\n"))
-    // The archive digest is the streamed digest of the file.
     let bytes = try Data(contentsOf: URL(fileURLWithPath: result.archivePath))
     #expect(Digest(hashing: bytes) == result.digest)
     #expect(result.size == UInt64(bytes.count))
@@ -123,7 +122,6 @@ import Testing
     } throws: { error in
       (error as? CIError)?.code == .compatibilityRejected
     }
-    // Nothing was left behind, and nothing outside was archived.
     let left = (try? FileManager.default.contentsOfDirectory(atPath: options.outputDirectory)) ?? []
     #expect(left.isEmpty)
     // A relative link that stays inside the tree is refused the same way:
@@ -513,13 +511,11 @@ import Testing
     let overlay = try step(OverlayScripts.overlay(snapshot: reference, path: "sub"), guest)
     #expect(overlay.succeeded, "\(text(overlay))")
     #expect(FileManager.default.fileExists(atPath: guest.workspace + "/sub/new.txt"))
-    // A corrupted materialization source fails verification loudly.
     let cache = guest.temp + "/iso-ci-snapshot-" + result.digest.rawValue
     try write(cache + "/x/tree/a.txt", "tampered\n")
     let tampered = try step(OverlayScripts.overlay(snapshot: reference, path: "sub"), guest)
     #expect(!tampered.succeeded)
     #expect(text(tampered).contains("verification failed"))
-    // A snapshot whose bytes do not match the digest is refused.
     try FileManager.default.removeItem(atPath: cache)
     try write(
       root + "/endpoint" + OverlayScripts.route(result.digest), "not the snapshot")

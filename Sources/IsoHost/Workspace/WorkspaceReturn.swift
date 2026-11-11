@@ -192,7 +192,6 @@ final class ReceiveAttempt {
 /// A destination checked against the control roots and bound by identity
 /// (RET-02). Never constructed from guest data.
 package struct ReturnDestination: Sendable, Equatable {
-  /// Canonical and absolute.
   package let path: String
   package let binding: DestinationBinding
 
@@ -326,7 +325,6 @@ package struct ReturnDestination: Sendable, Equatable {
     }
   }
 
-  /// `device:inode` of an open directory.
   static func identity(_ fd: Int32) -> String? {
     var info = stat()
     guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
@@ -347,7 +345,6 @@ package struct ReturnDestination: Sendable, Equatable {
   }
 }
 
-/// A destination opened for one operation.
 enum VerifiedDestination {
   case existing(Descriptor)
   /// Must still be absent; an authorized apply creates it.

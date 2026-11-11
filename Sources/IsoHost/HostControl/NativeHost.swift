@@ -2,7 +2,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// A native runtime failure as the supervisor must treat it.
 package enum NativeFailure: Error, Sendable, Equatable {
   /// The runtime cannot be reached or is not qualified; nothing was attempted.
   case unavailable(String)
@@ -15,7 +14,6 @@ package enum NativeFailure: Error, Sendable, Equatable {
 /// The guest SSH endpoint chosen from current native proof.
 package struct GuestEndpoint: Sendable, Equatable {
   package enum Route: Sendable, Equatable {
-    /// The guest's vmnet address.
     case tcp(address: IPv4Address, port: UInt16)
     /// A brokered guest: the runtime's stream connector, bound to the
     /// gate-approved boot and digests. It has no address to dial.
@@ -44,7 +42,6 @@ package protocol NativeHost: Sendable {
     throws(NativeFailure)
   /// Boots with a fixed deadline the runtime owner enforces independently.
   func start(_ instance: InstanceID, runtime: MachineName, expiresAt: Date?) throws(NativeFailure)
-  /// Stops through the runtime, without guest cooperation.
   func stop(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
   /// Deletes the exact owned runtime object and its worker-side records.
   func delete(_ instance: InstanceID, runtime: MachineName, owner: OwnerID) throws(NativeFailure)
@@ -68,7 +65,6 @@ package protocol NativeHost: Sendable {
   /// boot, then its recorded boot policy. Nil for other egress modes.
   func filteredPolicy(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
     -> FilteredGrantPolicy?
-  /// The unprivileged guest account clients log in as.
   func guestUser(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) -> GuestUser
   /// The guest's pinned SSH host key line (`ssh-ed25519 <base64>`).
   func guestHostKey(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) -> String
@@ -98,7 +94,6 @@ package protocol FilteredEgressCompanion: Sendable {
   func stop(_ instance: Instance)
 }
 
-/// The production companion, through ``ProxyLauncher``.
 package struct ProcessEgressCompanion: FilteredEgressCompanion {
   let launcher: ProxyLauncher
   let environment: [String: String]

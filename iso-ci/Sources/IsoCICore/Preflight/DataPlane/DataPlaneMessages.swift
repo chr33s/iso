@@ -8,7 +8,6 @@ import Foundation
 /// controller against its own allocation registry.
 package enum DataPlaneWire {
   package static let version = "iso-ci.dataplane/v1"
-  /// Registration carries the job message; everything else is small.
   package static let maxFrameBytes = 4 << 20
   package static let limits = JSONLimits(
     maxBytes: maxFrameBytes, maxDepth: 64, maxKeys: 65_536, maxArrayElements: 16_384)
@@ -24,7 +23,6 @@ package enum DataPlaneWire {
 package struct DataPlaneGrant: Sendable, Equatable {
   package let allocation: AllocationID
   package let attempt: JobAttemptID
-  /// The runner OAuth client id (random per allocation).
   package let clientID: String
   package let runnerPublicKeyDER: [UInt8]
   package let isoVerifier: Digest
@@ -32,9 +30,7 @@ package struct DataPlaneGrant: Sendable, Equatable {
   package let guestPort: UInt16
   package let planID: String
   package let jobID: String
-  /// The job message with the access-token placeholder.
   package let jobMessage: JSONValue
-  /// Absolute expiry of every token minted for this allocation.
   package let expiresAt: Int64
   package let trafficBytes: UInt64
   package let uploadBytes: UInt64
@@ -111,20 +107,15 @@ package struct DataPlaneGrant: Sendable, Equatable {
 /// allocation. Every parameter is validated on decode.
 package enum DataPlaneCall: Sendable, Equatable {
   case resolveActions([ActionRequest])
-  /// Export an approved action archive (by its resolved commit).
   case openAction(nameWithOwner: String, commit: String)
-  /// Export the snapshot granted to this attempt.
   case openSnapshot(Digest)
   case cacheLookup(keys: [String], version: String)
-  /// Export a cache entry returned by a previous lookup.
   case openCache(handle: String)
   case cacheReserve(key: String, version: String)
-  /// Commit a reserved cache entry from a staged child file.
   case cacheCommit(cacheID: Int64, file: String, size: UInt64)
   case artifactCreate(name: String)
   case artifactFinalize(id: Int64, file: String, size: UInt64, hash: Digest?)
   case artifactList(nameFilter: String?, idFilter: Int64?)
-  /// Export a finalized artifact of this run by id (after authorization).
   case openArtifact(id: Int64)
   case logCommit(kind: LogKind, step: String?, file: String, lines: UInt64)
 
@@ -313,9 +304,7 @@ package enum DataPlaneEvent: Sendable, Equatable {
     package let id: String
     package let number: Int64
     package let name: String
-    /// `pending`, `in_progress`, `completed` or `unknown`.
     package let status: String
-    /// `success`, `failure`, `cancelled`, `skipped` or nil.
     package let conclusion: String?
 
     package init(id: String, number: Int64, name: String, status: String, conclusion: String?) {
@@ -441,13 +430,11 @@ package enum DataPlaneEvent: Sendable, Equatable {
   }
 }
 
-/// One frame on the channel.
 package enum DataPlaneFrame: Sendable, Equatable {
   // controller → child (`register` is acknowledged with a `reply`)
   case register(id: Int64, grant: DataPlaneGrant)
   case unregister(AllocationID)
   case cancel(AllocationID)
-  /// Either direction: the answer to `register` or to a `request`.
   case reply(id: Int64, result: Result<JSONValue, CIError>)
   case shutdown
   // child → controller
@@ -534,8 +521,6 @@ package enum DataPlaneFrame: Sendable, Equatable {
   }
 }
 
-/// What the endpoint needs from the controller. `DataPlaneBroker` serves it
-/// directly (in-process tests) or through the channel (confined child).
 package protocol DataPlaneBackend: Sendable {
   func call(_ allocation: AllocationID, _ call: DataPlaneCall) async throws(CIError) -> JSONValue
   func event(_ allocation: AllocationID, _ event: DataPlaneEvent) async

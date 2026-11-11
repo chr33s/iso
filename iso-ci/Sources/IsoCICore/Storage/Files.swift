@@ -95,7 +95,6 @@ package enum PrivateFiles {
     unlink(path)
   }
 
-  /// Removes a directory tree created by iso-ci; never follows symlinks.
   package static func removeTree(_ path: String) {
     try? FileManager.default.removeItem(atPath: path)
   }
@@ -108,7 +107,6 @@ package final class OwnershipLock: @unchecked Sendable {
 
   private init(fd: Int32) { self.fd = fd }
 
-  /// Returns nil when another process holds the lock.
   package static func attempt(path: String) throws(CIError) -> OwnershipLock? {
     let fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else { throw CIError.storage("cannot open the ownership lock") }
@@ -163,7 +161,6 @@ package struct DataRoot: Sendable, Equatable {
   package var keys: String { path + "/keys" }
   package var sessions: String { path + "/sessions" }
   package var logs: String { path + "/logs" }
-  /// Per-allocation supervisor locks and state (`<id>.lock`, `<id>.state.json`).
   package var allocations: String { path + "/run/allocations" }
 
   /// Control sockets need a short path: a per-user temporary directory

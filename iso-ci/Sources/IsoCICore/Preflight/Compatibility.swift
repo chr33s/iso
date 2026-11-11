@@ -13,11 +13,9 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
   package struct RunnerBinding: Sendable, Equatable, Codable {
     package let minimumVersion: String
     package let maximumVersion: String
-    /// The approved image descriptor name this manifest was qualified with.
     package let imageIdentity: String
     package let platform: String
 
-    /// Whether `version` (an exact `X.Y.Z`) lies in the bound range.
     package func admits(_ version: String) -> Bool {
       func parts(_ text: String) -> [Int]? {
         let numbers = text.split(separator: ".", omittingEmptySubsequences: false).map {
@@ -46,7 +44,6 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
     /// accepted too but delivery requires an imported archive of that commit.
     package let majorVersion: String
     package let kind: ActionKind
-    /// `node20`, `node24` or `composite`.
     package let runtime: String
     package let inputs: [String]
     /// Inputs whose presence is outside the subset (rejected when set).
@@ -71,8 +68,6 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
     actions.first { $0.nameWithOwner.lowercased() == nameWithOwner.lowercased() }
   }
 
-  /// Whether `ref` is acceptable for `action`: the major tag, a semver tag
-  /// within it, or a full 40-hex commit.
   package static func refAccepted(_ ref: String, for action: ApprovedAction) -> Bool {
     if ref == action.majorVersion || ref.hasPrefix(action.majorVersion + ".") {
       let rest = ref.dropFirst(action.majorVersion.count)

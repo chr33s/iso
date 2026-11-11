@@ -3,11 +3,8 @@ import Foundation
 /// How one GitHub request authenticates. Values are secrets.
 package enum GitHubAuthorization: Sendable {
   case none
-  /// An App GitHubJWT (App-level endpoints only).
   case app(RedactedSecret)
-  /// An installation access token.
   case installation(RedactedSecret)
-  /// A runner registration token (`/actions/runner-registration` only).
   case remoteAuth(RedactedSecret)
 
   var header: String? {
@@ -47,7 +44,6 @@ package final class GitHubAPI: Sendable {
     self.maxBackoffSeconds = maxBackoffSeconds
   }
 
-  /// One parsed response.
   package struct Reply: Sendable {
     package let status: Int
     package let headers: [String: String]
@@ -284,7 +280,6 @@ extension GitHubAPI {
     return (RedactedSecret(token), EpochSeconds(max(0, date.timeIntervalSince1970)))
   }
 
-  /// Repositories the installation can access (capped).
   package func installationRepositories(token: RedactedSecret) throws(CIError) -> (
     repositories: [GitHubRepositoryInfo], truncated: Bool
   ) {
@@ -296,7 +291,6 @@ extension GitHubAPI {
     return (out, page.truncated)
   }
 
-  /// `POST /app-manifests/{code}/conversions` (unauthenticated, single use).
   package func convertManifest(code: String) throws(CIError) -> GitHubManifestConversion {
     guard (1...200).contains(code.utf8.count),
       code.unicodeScalars.allSatisfy({ isSafeNameScalar($0) })
@@ -306,8 +300,6 @@ extension GitHubAPI {
       idempotent: false, expect: [201])
     return try GitHubManifestConversion(json: try required(reply))
   }
-
-  // Runners
 
   package func generateJITConfig(
     scope: GitHubRunnerScope, name: String, runnerGroupID: Int64, labels: [String],
@@ -374,7 +366,6 @@ extension GitHubAPI {
           auth: .installation(token))))
   }
 
-  /// Runners in `scope`, optionally filtered by exact name.
   package func runners(scope: GitHubRunnerScope, name: String?, token: RedactedSecret)
     throws(CIError)
     -> [GitHubRunnerInfo]
@@ -389,7 +380,6 @@ extension GitHubAPI {
     return out
   }
 
-  /// One runner, or nil when GitHub no longer has it.
   package func runner(scope: GitHubRunnerScope, id: Int64, token: RedactedSecret) throws(CIError)
     -> GitHubRunnerInfo?
   {
@@ -404,7 +394,6 @@ extension GitHubAPI {
     }
   }
 
-  /// Deletes one runner by id. Returns false when it was already gone.
   @discardableResult
   package func deleteRunner(scope: GitHubRunnerScope, id: Int64, token: RedactedSecret)
     throws(CIError) -> Bool
@@ -429,8 +418,6 @@ extension GitHubAPI {
     for item in page.items { out.append(try GitHubRunnerGroupInfo(json: item)) }
     return out
   }
-
-  // Jobs and runs
 
   /// With `newest`, only the first page of that many runs (newest first).
   package func workflowRuns(
@@ -466,8 +453,6 @@ extension GitHubAPI {
           .get, url: try url("/repos/\(repository.owner)/\(repository.name)/actions/jobs/\(id)"),
           auth: .installation(token))), repository: repository)
   }
-
-  // Repository and Actions policy reads (authority validation)
 
   package func repository(_ repository: RepositoryName, token: RedactedSecret) throws(CIError)
     -> GitHubRepositoryInfo

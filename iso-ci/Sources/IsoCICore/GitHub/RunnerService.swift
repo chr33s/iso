@@ -13,10 +13,8 @@ package protocol RunnerService: Sendable {
     scope: GitHubRunnerScope, name: String, runnerGroupID: Int64, labels: [String],
     workFolder: String
   ) throws(CIError) -> GitHubJITConfig
-  /// Runners with exactly this name in exactly this scope.
   func runners(scope: GitHubRunnerScope, named name: String) throws(CIError) -> [GitHubRunnerInfo]
   func runner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> GitHubRunnerInfo?
-  /// False when the runner was already gone.
   func deleteRunner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> Bool
   /// Queued and in-progress jobs visible in the scope, bounded; used only to
   /// correlate jobs with runners through runner_id/runner_name.
@@ -28,7 +26,6 @@ package protocol RunnerService: Sendable {
   func job(repository: RepositoryName, id: Int64) throws(CIError) -> GitHubJobInfo
 }
 
-/// `RunnerService` over the GitHub REST API with installation tokens.
 package final class InstallationRunnerService: RunnerService {
   package static let maxCorrelationRepositories = 20
   package static let maxCorrelationRuns = 20
@@ -105,7 +102,6 @@ package final class InstallationRunnerService: RunnerService {
     return jobs
   }
 
-  /// The one repository a repository-scoped pool's tokens are narrowed to.
   static func repository(_ scope: GitHubScope) -> RepositoryName? {
     guard case .repository(let repository) = scope else { return nil }
     return repository

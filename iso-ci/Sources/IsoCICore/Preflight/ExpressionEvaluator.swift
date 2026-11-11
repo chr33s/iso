@@ -1,12 +1,8 @@
 import Foundation
 
-/// The status a job-level or step-level `if:` is evaluated against.
 package struct ExpressionStatus: Sendable, Equatable {
-  /// No dependency (or previous step) failed or was cancelled.
   package var success: Bool
-  /// A dependency (or previous step) failed.
   package var failure: Bool
-  /// The run was cancelled.
   package var cancelled: Bool
 
   package init(success: Bool, failure: Bool, cancelled: Bool) {
@@ -63,7 +59,6 @@ package enum ExpressionEvaluator {
     try eval(node, contexts, depth: 0).json
   }
 
-  /// Evaluates an `if:` condition to a boolean (GitHub truthiness).
   package static func condition(_ text: String, _ contexts: ExpressionContexts) throws(CIError)
     -> Bool
   {
@@ -159,7 +154,6 @@ package enum ExpressionEvaluator {
     }
   }
 
-  /// Case-insensitive member lookup (exact match preferred).
   static func member(_ value: JSONValue, _ name: String) -> JSONValue {
     guard case .object(let members) = value else { return .null }
     if let exact = members[name] { return exact }
@@ -352,7 +346,6 @@ package enum ExpressionEvaluator {
     }
   }
 
-  /// `format('{0} {{literal}}', x)`.
   package static func format(_ template: String, _ arguments: [String]) throws(CIError) -> String {
     var out = ""
     let characters = Array(template)
@@ -394,7 +387,6 @@ package enum ExpressionEvaluator {
     return out
   }
 
-  /// `toJSON` output: two-space indentation, sorted keys.
   package static func prettyJSON(_ value: JSONValue, indent: Int = 0) -> String {
     let pad = String(repeating: "  ", count: indent)
     let inner = String(repeating: "  ", count: indent + 1)

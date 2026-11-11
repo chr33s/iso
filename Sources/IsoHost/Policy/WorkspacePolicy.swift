@@ -44,13 +44,11 @@ package enum WorkspacePolicy {
     return (binding, policy)
   }
 
-  /// The canonical attached workspace, from host state only.
   static func attachedWorkspace(_ instance: Instance) throws -> String? {
     guard let path = try WorkspaceState.load(instance)?.source.hostPath else { return nil }
     return canonicalPath(path) ?? (path as NSString).standardizingPath
   }
 
-  /// `device:inode` of an open directory.
   static func identity(fd: Int32) -> String? {
     var info = stat()
     guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }

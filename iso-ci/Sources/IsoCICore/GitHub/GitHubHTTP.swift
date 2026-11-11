@@ -45,7 +45,6 @@ package struct GitHubHTTPRequest: Sendable {
 
 package struct GitHubHTTPResponse: Sendable, Equatable {
   package let status: Int
-  /// Lowercased header names.
   package let headers: [String: String]
   package let body: [UInt8]
 
@@ -154,7 +153,6 @@ package final class ScriptedGitHubHTTP: GitHubHTTP {
     state.withLock { $0.handlers.insert(handler, at: 0) }
   }
 
-  /// Responds to `method path` (path without query) with `status` and `json`.
   package func route(
     _ method: GitHubHTTPMethod, _ path: String, status: Int = 200, json: String = "{}",
     headers: [String: String] = [:]
@@ -179,7 +177,6 @@ package final class ScriptedGitHubHTTP: GitHubHTTP {
   }
 }
 
-/// Records requested waits instead of sleeping.
 package final class RecordingGitHubSleeper: GitHubSleeper {
   private let waits = Mutex<[Double]>([])
   package init() {}
