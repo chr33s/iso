@@ -7,10 +7,13 @@ Checks what the former pre-commit-hooks checked, without rewriting files:
 trailing whitespace, a missing final newline, YAML that does not parse (via
 `yq`), files over 500 KiB, and leftover merge-conflict markers. By default it
 checks the files staged for commit; `--all` checks every tracked file, and
-explicit paths check just those. Exit status 1 lists every problem.
+explicit paths check just those. Whenever a `Package.swift` is among the
+checked files, it also requires every manifest to pin a shared dependency at
+the same version. Exit status 1 lists every problem.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -70,6 +73,25 @@ def check(path):
     return problems
 
 
+PIN = re.compile(r'\.package\(\s*url:\s*"([^"]+)",\s*exact:\s*"([^"]+)"')
+
+
+def pin_problems():
+    """A dependency pinned by several manifests must have one version."""
+    versions = {}
+    for manifest in tracked():
+        if Path(manifest).name != "Package.swift":
+            continue
+        for url, version in PIN.findall((ROOT / manifest).read_text()):
+            versions.setdefault(url, {}).setdefault(version, []).append(manifest)
+    problems = []
+    for url, pins in sorted(versions.items()):
+        if len(pins) > 1:
+            detail = "; ".join(f"{v} in {', '.join(m)}" for v, m in sorted(pins.items()))
+            problems.append(f"{url}: pinned at different versions ({detail})")
+    return problems
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--all", action="store_true", help="check every tracked file")
@@ -80,6 +102,10 @@ def main():
     for path in paths:
         for problem in check(path):
             print(f"{path}: {problem}")
+            failed = True
+    if any(Path(path).name == "Package.swift" for path in paths):
+        for problem in pin_problems():
+            print(problem)
             failed = True
     return 1 if failed else 0
 
