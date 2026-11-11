@@ -24,11 +24,11 @@ a bug through.
   pinned Xcode toolchain, macOS 27 deployment target.
 - Strict memory safety is an error (the `strictMemorySafety` setting declared
   in the root, `iso-policy`, `iso-proxy` and `iso-egress` manifests) in
-  `IsoCore`, `IsoConfiguration`, `IsoFuzzHarnesses`, `IsoPolicy`, `IsoGitIndex`,
-  `IsoProxyCore`, `IsoProxyTransport`, `IsoProxy`, `IsoEgressCore` and
-  `IsoEgress`: the shared core, configuration and policy code (and the fuzz
-  harnesses that drive it), and the proxy and egress companions that relay
-  guest traffic. Keep `unsafe` acknowledgments on the smallest audited
+  `IsoCore`, `IsoConfiguration`, `IsoSecrets`, `IsoFuzzHarnesses`, `IsoPolicy`,
+  `IsoGitIndex`, `IsoProxyCore`, `IsoProxyTransport`, `IsoProxy`,
+  `IsoEgressCore` and `IsoEgress`: the shared core, configuration, secret-store
+  and policy code (and the fuzz harnesses that drive it), and the proxy and
+  egress companions that relay guest traffic. Keep `unsafe` acknowledgments on the smallest audited
   C/Foundation call, with the buffer bounds and pointer lifetime documented.
   Mark a type `@safe` only when it owns its raw pointer and lends it out solely
   within a scoped call, and say why in its doc comment (`ResolvedAddresses` in

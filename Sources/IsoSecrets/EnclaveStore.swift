@@ -86,7 +86,8 @@ package struct EnclaveStore: Sendable {
       created.append(storePath)
       _ = try unlock(passphrase)
     } catch {
-      for path in created { unlink(path) }
+      // Each path is a C string borrowed for the call only.
+      for path in created { unsafe unlink(path) }
       throw error
     }
   }
@@ -224,8 +225,9 @@ package struct EnclaveStore: Sendable {
     let parent = (directory as NSString).deletingLastPathComponent
     for path in [parent, directory] {
       var info = stat()
-      if lstat(path, &info) != 0 {
-        guard errno == ENOENT, mkdir(path, 0o700) == 0 else {
+      // Paths are C strings borrowed for each call; lstat/fstat write one value.
+      if unsafe lstat(path, &info) != 0 {
+        guard errno == ENOENT, unsafe mkdir(path, 0o700) == 0 else {
           throw .io("Failed to create \(path)")
         }
       }
@@ -235,7 +237,7 @@ package struct EnclaveStore: Sendable {
 
   func checkDirectory() throws(EnclaveStoreError) {
     var info = stat()
-    guard lstat(directory, &info) == 0 else {
+    guard unsafe lstat(directory, &info) == 0 else {
       if errno == ENOENT { throw .notInitialized }
       throw .io("Failed to inspect \(directory)")
     }
@@ -246,7 +248,8 @@ package struct EnclaveStore: Sendable {
   /// A regular file owned by the current user and not group/world writable,
   /// read without following links and bounded by the store limit.
   func readPrivateFile(_ path: String) throws(EnclaveStoreError) -> [UInt8] {
-    let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+    // The path is a C string borrowed for the call only.
+    let fd = unsafe open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else {
       if errno == ENOENT { throw .notInitialized }
       if errno == ELOOP { throw .unsafePermissions(path) }
@@ -254,7 +257,7 @@ package struct EnclaveStore: Sendable {
     }
     defer { close(fd) }
     var info = stat()
-    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid(),
+    guard unsafe fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid(),
       info.st_mode & 0o022 == 0
     else { throw .unsafePermissions(path) }
     guard info.st_size <= StoreLimits.fileBytes else {
@@ -263,7 +266,10 @@ package struct EnclaveStore: Sendable {
     var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
     var offset = 0
     while offset < bytes.count {
-      let count = bytes[offset...].withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+      // read(2) writes at most the remaining `count` bytes of the slice.
+      let count = bytes[offset...].withUnsafeMutableBytes {
+        unsafe read(fd, $0.baseAddress, $0.count)
+      }
       if count < 0 && errno == EINTR { continue }
       guard count > 0 else { throw .io("Failed to read \(path)") }
       offset += count
@@ -283,13 +289,14 @@ package struct EnclaveStore: Sendable {
   /// and required to be a private regular file like the other state files.
   func acquireLock() throws(EnclaveStoreError) -> StoreLock {
     try checkDirectory()
-    let fd = open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    // The lock path is a C string borrowed for the call only.
+    let fd = unsafe open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else {
       if errno == ELOOP { throw .unsafePermissions(lockPath) }
       throw .io("Failed to open \(lockPath)")
     }
     var info = stat()
-    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid(),
+    guard unsafe fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid(),
       info.st_mode & 0o022 == 0
     else {
       close(fd)

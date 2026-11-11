@@ -32,7 +32,8 @@ let package = Package(
     // The local secret store; must not depend on IsoHost (VM/runtime code).
     .target(
       name: "IsoSecrets",
-      dependencies: ["IsoCore", .product(name: "CryptoExtras", package: "swift-crypto")]),
+      dependencies: ["IsoCore", .product(name: "CryptoExtras", package: "swift-crypto")],
+      swiftSettings: strictMemorySafety),
     // The .sb files are canonical copies of the embedded profiles
     // (SeatbeltProfile.swift); companion test scripts pass them to sandbox-exec.
     .target(

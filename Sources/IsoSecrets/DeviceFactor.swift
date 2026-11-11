@@ -30,11 +30,10 @@ package struct SecureEnclaveFactor: DeviceFactor {
     representation: [UInt8], publicKey: P256.KeyAgreement.PublicKey
   ) {
     guard SecureEnclave.isAvailable else { throw .secureEnclaveUnavailable }
-    var error: Unmanaged<CFError>?
     guard
       let access = SecAccessControlCreateWithFlags(
         nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .userPresence],
-        &error)
+        nil)
     else { throw .io("Failed to create Secure Enclave access control") }
     do {
       let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: access)
@@ -83,7 +82,9 @@ struct DeviceKeyFile: Codable, Equatable {
   }
 
   static func digest(_ bytes: [UInt8]) -> String {
-    SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    let digits = Array("0123456789abcdef")
+    return String(
+      SHA256.hash(data: bytes).flatMap { [digits[Int($0 >> 4)], digits[Int($0 & 0xf)]] })
   }
 
   /// The verified representation, or `enclaveKeyUnavailable`.
@@ -110,7 +111,8 @@ enum SealedDeviceUnlockKey {
     do {
       let shared = try ephemeral.sharedSecretFromKeyAgreement(with: recipient)
       let wrap = wrapKey(shared, ephemeral: ephemeral.publicKey)
-      let plaintext = duk.withUnsafeBytes { Data($0) }
+      // The key bytes are copied out within the closure; the buffer does not escape.
+      let plaintext = unsafe duk.withUnsafeBytes { unsafe Data($0) }
       let box = try AES.GCM.seal(plaintext, using: wrap, nonce: nonce)
       return [version] + Array(ephemeral.publicKey.x963Representation) + Array(box.nonce)
         + Array(box.ciphertext) + Array(box.tag)
