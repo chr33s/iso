@@ -1,0 +1,57 @@
+name: Nightly
+
+# Gates too slow for every push: the host tests under each sanitizer and the
+# fault-injection check (docs/testing.md).
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  sanitizers:
+    name: Host tests (${{ matrix.sanitizer }} sanitizer)
+    runs-on: xcode-27
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread, undefined]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
+      - name: Host tests under the ${{ matrix.sanitizer }} sanitizer
+        shell: bash
+        env:
+          SANITIZER: ${{ matrix.sanitizer }}
+        run: |
+          swift test --sanitize="$SANITIZER" --scratch-path ".build-$SANITIZER" \
+            --force-resolved-versions
+
+  fault-injection:
+    name: Host fault injection
+    runs-on: xcode-27
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
+      - name: Tests detect every injected fault
+        run: python3 scripts/swift-host-fault-injection.py
