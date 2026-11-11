@@ -110,7 +110,10 @@ desktop instance) when `iso stop` stops it
 `status_requests`, screen-sync `waits` and `wait_outcomes` by outcome,
 host-hold `preemptions` and `refusals` by code), and
 `boundary.live_view` records a boot's [live view](design/computer-use-live-view.md)
-when a stream started (`streams`, `viewers`, `takeovers`, `input_events`). For a
+when a stream started (`streams`, `viewers`, `takeovers`, `input_events`).
+Both are the owner's counts as `iso stop` observed them when it found the
+instance running; a boot that ends any other way (session expiry, guest
+poweroff, an owner crash, a failed stop) records neither. For a
 [Core AI](coreai.md) instance, each boot records `mac.coreai.attached`
 (accelerator device classes, template, template and runtime builds),
 `host.security.reduced` (the owner found AMFI relaxed on the host) and,

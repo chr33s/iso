@@ -292,12 +292,15 @@ for artifact in "$BINARY" iso-sandbox iso-macos-helper iso-proxy iso-egress; do
         || die "Release is missing a regular ${artifact} binary"
 done
 mkdir -p "$INSTALL_DIR"
-# Linux `desktop` images' MCP server and kernel; releases before them have
-# none, so they are installed only when present (build-release.py requires them).
+# Linux `desktop` images' MCP server and kernel. A release before them has
+# none (build-release.py requires them); its install removes any copy another
+# release left, so none stays beside a runtime it was not built with.
 for artifact in iso-cu-mcp vmlinux-desktop; do
     if [ -f "${EXTRACTED_DIR}/${artifact}" ] && [ ! -L "${EXTRACTED_DIR}/${artifact}" ]; then
         mv "${EXTRACTED_DIR}/${artifact}" "${INSTALL_DIR}/${artifact}"
         chmod 0755 "${INSTALL_DIR}/${artifact}"
+    else
+        rm -f "${INSTALL_DIR}/${artifact}"
     fi
 done
 for artifact in iso-sandbox iso-macos-helper iso-proxy iso-egress "$BINARY"; do

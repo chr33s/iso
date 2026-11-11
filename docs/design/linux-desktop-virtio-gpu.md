@@ -395,7 +395,9 @@ Decisions made while building (2026-11-10):
   `iso-<tag>-vmlinux-desktop-source.tar.gz`, checksummed and attested with
   the archive.
 - Firefox comes from Mozilla's apt repository: Ubuntu's `firefox` and
-  `chromium` are snap shims, which do not run in iso guests.
+  `chromium` are snap shims, which do not run in iso guests. Only `firefox`
+  is taken from that repository; its other packages are pinned so apt never
+  installs them.
 - iso images mask udev, so Xorg runs the evdev driver on a configuration
   written at boot that names the hypervisor's USB devices, not libinput.
 - `iso-cu-mcp` is the same `GuestCUMCP` as `iso-macos-helper cu-mcp`,

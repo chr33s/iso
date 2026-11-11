@@ -81,3 +81,21 @@ private func eventually(
   #expect(exit.fired == 0)
   #expect(container.received == [Owner.systemdHalt.rawValue, Signal.kill.rawValue])
 }
+
+/// Whatever asks for the halt (a control `stop`, a signal, session expiry),
+/// what must not outlive it is ended once, as it begins.
+@Test func aHaltEndsWhatMustNotOutliveItHoweverItWasAsked() async throws {
+  let container = FakeContainer(wedged: false)
+  let ended = ExitFlag()
+  let onHalt: @Sendable () async -> Void = { ended.fire() }
+  let lifecycle = Lifecycle(
+    container: container, onHalt: onHalt, haltGrace: .seconds(30), killGrace: .seconds(30),
+    forceExit: {})
+  #expect(ended.fired == 0)
+  await lifecycle.requestHalt()
+  await lifecycle.requestHalt()
+  #expect(try await eventually { ended.fired == 1 })
+  try await Task.sleep(for: .milliseconds(100))
+  #expect(ended.fired == 1)
+  await lifecycle.markStopped()
+}

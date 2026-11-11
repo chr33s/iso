@@ -171,6 +171,45 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
   #expect(dropped?.guestComputerUse?.frames == 30 && dropped?.liveView == nil)
 }
 
+/// `iso stop` audits the counts in the observation that proved the
+/// instance running: it spends no second `inspect` on reading them.
+@Test func theStopAuditReadsTheCountsFromTheObservationOfTheRunningOwner() throws {
+  let liveView = ["streams": 2, "viewers": 3, "takeovers": 1, "inputEvents": 7]
+  let observed = AppleBackend.Observed.linux(try inspect(runtime: ["liveView": liveView]))
+  #expect(observed.computerUse.guest == nil)
+  #expect(
+    observed.computerUse.liveView
+      == MacLiveViewCounts(streams: 2, viewers: 3, takeovers: 1, inputEvents: 7))
+  // A headless owner reports none, and an instance observed without them
+  // audits nothing.
+  let headless = AppleBackend.Observed.linux(try inspect(runtime: nil)).computerUse
+  #expect(headless.guest == nil && headless.liveView == nil)
+  #expect(AppleBackend.ComputerUseCounts.none.liveView == nil)
+}
+
+/// `computer_use` is fixed when an instance is created; a desktop instance
+/// started under a different setting is told, as a macOS one is.
+@Test func aDesktopInstanceStartedUnderAChangedComputerUseSettingIsWarned() throws {
+  let on = ComputerUseConfig(guestFrameRate: 4)
+  func changed(
+    _ created: MacGuestComputerUse?, _ configured: ComputerUseConfig, _ display: LinuxGuestDisplay?
+  ) -> Bool {
+    AppleBackend.computerUseChanged(created: created, configured: configured, display: display)
+  }
+  // Created without it, now configured: the instance keeps running without.
+  #expect(changed(nil, on, .virtio))
+  // Created with it, now off or at another frame rate.
+  #expect(changed(MacGuestComputerUse(frameRate: 4), .off, .virtio))
+  #expect(changed(MacGuestComputerUse(frameRate: 4), ComputerUseConfig(guestFrameRate: 8), .virtio))
+  // Unchanged, either way.
+  #expect(!changed(MacGuestComputerUse(frameRate: 4), on, .virtio))
+  #expect(!changed(nil, .off, .virtio))
+  // A headless instance never had the setting.
+  #expect(!changed(nil, on, nil))
+  let name = try InstanceName("alpha")
+  #expect(AppleBackend.computerUseChangedWarning(name).contains("instance 'alpha'"))
+}
+
 @Test func computerUseCountsBecomeAuditEvents() {
   let guest = MacGuestCUCounts(
     frameRate: 4, sessions: 1, frames: 3, actions: 2, statusRequests: 0, preemptions: 0,
@@ -258,6 +297,23 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
   #expect(
     DesktopResources.postInstall
       == (try String(contentsOf: guest.appending(path: "desktop-post.sh"), encoding: .utf8)))
+}
+
+/// Only `firefox` is taken from Mozilla's repository; a wider pin would let
+/// that repository replace any Ubuntu package in the image.
+@Test func theMozillaRepositoryIsPinnedToTheBrowserAlone() throws {
+  let pre = DesktopResources.preInstall
+  let body = try #require(
+    pre.components(separatedBy: "<<'ISO_MOZILLA_EOF'\n").dropFirst().first?
+      .components(separatedBy: "\nISO_MOZILLA_EOF\n").first)
+  let stanzas = body.components(separatedBy: "\n\n").map { $0.components(separatedBy: "\n") }
+  #expect(
+    stanzas == [
+      ["Package: firefox", "Pin: origin packages.mozilla.org", "Pin-Priority: 1000"],
+      ["Package: *", "Pin: origin packages.mozilla.org", "Pin-Priority: -1"],
+    ])
+  // The one package the profile installs from there is the pinned one.
+  #expect(Profiles.desktopDefinition.aptPackages.contains("firefox"))
 }
 
 /// The smallest header `computerUseMCPPayload` accepts: a 64-bit
@@ -404,7 +460,7 @@ private let desktopManifest = manifest(
   try FileManager.default.createDirectory(at: extract, withIntermediateDirectories: true)
   try FileManager.default.createDirectory(at: install, withIntermediateDirectories: true)
   let current = install.appending(path: "iso").path
-  // A release without them leaves the install alone.
+  // A release without them installs none.
   try SelfReplace.replaceSiblingLinuxGuestFiles(extract.path, currentExecutable: current)
   #expect(!FileManager.default.fileExists(atPath: install.appending(path: "iso-cu-mcp").path))
   for name in SelfReplace.linuxGuestNames {

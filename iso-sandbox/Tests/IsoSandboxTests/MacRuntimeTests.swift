@@ -791,6 +791,33 @@ func aStopOfARunningVMRunsTheSequenceOnceForEveryCaller() async {
   #expect(timeline.exit == nil)
 }
 
+/// The live view ends with every stop, not only the control socket's: the
+/// stopper ends it first, whoever asked (TTL, signal or control request).
+@Test(.timeLimit(.minutes(1)))
+func everyStopEndsWhatMustNotOutliveItBeforeTheSequence() async {
+  let order = Mutex<[String]>([])
+  let stopper = MacStopper(
+    exitGrace: 3600, forceExit: {},
+    beforeStop: { order.withLock { $0.append("before") } },
+    sequence: {
+      order.withLock { $0.append("sequence") }
+      return "guest_helper_shutdown"
+    })
+  #expect(await !stopper.isStopping)
+  await stopper.started()
+  #expect(await stopper.stop() == "guest_helper_shutdown")
+  #expect(order.withLock { $0 } == ["before", "sequence"])
+  // No stream starts once a stop has been asked for.
+  #expect(await stopper.isStopping)
+  #expect(
+    CUService.StreamAdmission.deciding(vmState: "running", halting: true)
+      == .refused(state: "stopping"))
+  #expect(CUService.StreamAdmission.deciding(vmState: "running", halting: false) == .accepting)
+  #expect(
+    CUService.StreamAdmission.deciding(vmState: "starting", halting: false)
+      == .refused(state: "starting"))
+}
+
 /// A stop (TTL, signal or control request) while the VM is still starting
 /// is not lost: it waits for the start, then runs, and the exit's grace
 /// counts from the sequence's start, not the request's.

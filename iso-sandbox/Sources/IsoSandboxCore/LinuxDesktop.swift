@@ -17,6 +17,8 @@ package final class LinuxDesktop {
   /// Nil unless the sandbox was created with guest-driven computer use.
   let guestLink: MacGuestCULink?
   private var accepting: Task<Void, Never>?
+  /// Set when the owner begins to halt: no live view starts after it.
+  private var halting = false
 
   private init(screen: VMScreen, liveView: LiveViewSession, guestLink: MacGuestCULink?) {
     self.screen = screen
@@ -85,10 +87,16 @@ package final class LinuxDesktop {
   /// screen's own: the guest has no helper whose identity a session could
   /// pin.
   func respond(_ request: MacControlRequest) async -> MacControlResponse {
-    await CUService.respond(request, screen: screen, liveView: liveView, vmState: "running") {}
+    await CUService.respond(
+      request, screen: screen, liveView: liveView,
+      streams: .deciding(vmState: "running", halting: halting)
+    ) {}
   }
 
+  /// The owner is halting, however it was asked (`stop`, a signal, session
+  /// expiry, guest poweroff): the live view ends now and none starts again.
   func stop() {
+    halting = true
     liveView.stop()
     accepting?.cancel()
   }

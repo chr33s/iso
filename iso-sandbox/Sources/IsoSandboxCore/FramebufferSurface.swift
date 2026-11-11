@@ -66,6 +66,16 @@ enum FramebufferSurface {
     bytesPerRow: Int
   ) throws(Failure) {
     guard let surface = find(under: view) else { throw .notFound }
+    try read(surface, width: width, height: height, into: destination, bytesPerRow: bytesPerRow)
+  }
+
+  /// Copies `surface` into `destination`, which holds `width` by `height`
+  /// pixels and no more: a surface of any other size or pixel format is
+  /// refused, never copied or scaled.
+  static func read(
+    _ surface: IOSurfaceRef, width: Int, height: Int,
+    into destination: UnsafeMutableRawPointer, bytesPerRow: Int
+  ) throws(Failure) {
     let w = IOSurfaceGetWidth(surface)
     let h = IOSurfaceGetHeight(surface)
     guard w == width, h == height else { throw .geometry(width: w, height: h) }

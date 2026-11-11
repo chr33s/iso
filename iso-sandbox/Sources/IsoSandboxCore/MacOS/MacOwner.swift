@@ -348,7 +348,8 @@ package enum MacOwner {
       config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology,
       hostSecurity: hostSecurity)
 
-    let stopper = MacStopper(vm: vm, link: link) {
+    let endLiveView: @Sendable () async -> Void = { await liveView.stop() }
+    let stopper = MacStopper(vm: vm, link: link, beforeStop: endLiveView) {
       // The last resort, as a Linux owner's: the stop sequence did not end
       // the VM in time. Exiting this process ends it; a clean exit is not
       // restarted by launchd.
@@ -448,13 +449,14 @@ package enum MacOwner {
         liveView: counts.liveView)
       return r
     case .stop:
-      liveView?.stop()
+      // The stop sequence ends the live view, as on every other way to it.
       var r = MacControlResponse(ok: true)
       r.stopPath = await stopper.stop()
       return r
     case .cuSession, .cuFrame, .cuAct, .cuHold, .cuRelease, .cuWait, .cuStream, .cuStreamStop:
       return await CUService.respond(
-        req, screen: screen, liveView: liveView, vmState: vm.state
+        req, screen: screen, liveView: liveView,
+        streams: .deciding(vmState: vm.state, halting: await stopper.isStopping)
       ) {
         guard await verifyPin(link: link, store: store) else {
           throw SandboxError("guest SSH host key not confirmed against the pin")
@@ -566,6 +568,9 @@ actor MacStopper {
   static let exitGraceSeconds: TimeInterval = 240
 
   private let sequence: @Sendable () async -> String
+  /// Run first whenever a sequence begins, for what must not outlive a
+  /// stop however it was asked for (the live view).
+  private let beforeStop: @Sendable () async -> Void
   private let exitGrace: TimeInterval
   private let forceExit: @Sendable () -> Void
   private let exitTimer = ExitTimer()
@@ -577,15 +582,20 @@ actor MacStopper {
   init(
     exitGrace: TimeInterval = MacStopper.exitGraceSeconds,
     forceExit: @escaping @Sendable () -> Void,
+    beforeStop: @escaping @Sendable () async -> Void = {},
     sequence: @escaping @Sendable () async -> String
   ) {
     self.exitGrace = exitGrace
     self.forceExit = forceExit
+    self.beforeStop = beforeStop
     self.sequence = sequence
   }
 
-  init(vm: MacVM, link: MacHelperLink, forceExit: @escaping @Sendable () -> Void) {
-    self.init(forceExit: forceExit) {
+  init(
+    vm: MacVM, link: MacHelperLink, beforeStop: @escaping @Sendable () async -> Void = {},
+    forceExit: @escaping @Sendable () -> Void
+  ) {
+    self.init(forceExit: forceExit, beforeStop: beforeStop) {
       await vm.stop {
         await Task.detached { link.requestShutdown() }.value
       }
@@ -602,6 +612,9 @@ actor MacStopper {
     waiters = []
     for waiter in resumed { waiter.resume() }
   }
+
+  /// Whether a stop is asked for or under way: nothing new starts then.
+  var isStopping: Bool { pending || result != nil }
 
   /// A sequence that found the VM not running (`none (...)`) is not
   /// remembered, so a later request runs it again.
@@ -628,7 +641,9 @@ actor MacStopper {
   /// so exiting is the one step nothing can block.
   private func begin() -> Task<String, Never> {
     let sequence = self.sequence
+    let beforeStop = self.beforeStop
     let t = Task {
+      await beforeStop()
       let path = await sequence()
       MacOwner.log("stop path: \(path)")
       return path

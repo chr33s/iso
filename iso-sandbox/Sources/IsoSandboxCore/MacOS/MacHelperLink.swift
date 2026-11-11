@@ -329,15 +329,17 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
 /// writes at most `chunk` bytes: no more than a writable socket's send
 /// low-water mark, so the write completes without blocking. (Darwin ignores
 /// `MSG_DONTWAIT` on Unix stream sockets, and `O_NONBLOCK` would change the
-/// descriptor's mode for its reader too, which shares it through `dup`.)
+/// descriptor's mode for its reader too, which shares it through `dup`.) A
+/// caller whose descriptor is already non-blocking may pass a larger `chunk`.
 package enum BoundedWrite {
   static let chunk = 512
 
   /// True when every byte was written before `deadline`; false on timeout,
   /// error, or a closed peer. A partial write is not undone.
-  package static func all(_ fd: Int32, _ bytes: [UInt8], deadline: ContinuousClock.Instant)
-    -> Bool
-  {
+  package static func all(
+    _ fd: Int32, _ bytes: [UInt8], deadline: ContinuousClock.Instant,
+    chunk: Int = BoundedWrite.chunk
+  ) -> Bool {
     var offset = 0
     while offset < bytes.count {
       let remaining = deadline - .now

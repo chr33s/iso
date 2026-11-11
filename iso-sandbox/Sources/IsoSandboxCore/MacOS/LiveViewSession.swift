@@ -1,5 +1,6 @@
 import Foundation
 import IsoMacProtocol
+import Synchronization
 
 /// Per-boot live-view counts for `status` and the host's audit: no token,
 /// pixels, coordinates or text.
@@ -36,6 +37,11 @@ package final class LiveViewSession {
   /// changed. A browser decoder holds a frame until the next one arrives,
   /// so a keyframe alone on a static screen would never be shown.
   private var trailing = false
+  /// The paste being typed, if any. It runs apart from the viewer's
+  /// connection thread, so that viewer's release or disconnect is still
+  /// read, and ends with the viewer's control.
+  private var typing: Task<Void, Never>?
+  private var typingGeneration = 0
   package private(set) var counters = MacLiveViewCounters()
 
   package init(screen: VMScreen, log: @escaping @Sendable (String) -> Void) {
@@ -65,6 +71,7 @@ package final class LiveViewSession {
     guard let server else { return }
     idle?.cancel()
     idle = nil
+    stopTyping()
     releaseHeld()
     control = LiveViewControl()
     server.stop()
@@ -78,6 +85,9 @@ package final class LiveViewSession {
   // MARK: viewers (called through the bridge, on the main actor)
 
   fileprivate func joined(_ viewer: Int) {
+    // A viewer that authenticated as the stream stopped is not counted: its
+    // socket is already closed, and it would hold off the next idle stop.
+    guard server != nil else { return }
     viewers.insert(viewer)
     counters.viewers += 1
     idle?.cancel()
@@ -101,6 +111,7 @@ package final class LiveViewSession {
 
   fileprivate func left(_ viewer: Int) {
     viewers.remove(viewer)
+    if control.controller == viewer { stopTyping() }
     // A closed tab releases what it held but not the hold: it expires.
     for input in control.disconnect(viewer, held: &held) {
       try? screen.viewerSend(input, held: held)
@@ -126,6 +137,7 @@ package final class LiveViewSession {
       return nil
     case .release:
       if control.release(viewer) {
+        stopTyping()
         releaseHeld()
         // Only the hold viewers take: a `cu hold` from the CLI runs on.
         screen.releaseImplicitHold()
@@ -142,8 +154,41 @@ package final class LiveViewSession {
       return await deliver { try screen.viewerSend(input, held: next) }
     case .text(let text):
       if case .drop(let reply) = admitInput(viewer, releasing: false, at: now) { return reply }
-      return await deliver { try await screen.viewerType(text) }
+      guard typing == nil else { return Self.error("busy: a paste is still being typed") }
+      type(text, for: viewer)
+      return nil
     }
+  }
+
+  /// Types a paste without holding up the viewer's later messages. Each key
+  /// is sent only while the viewer still controls, and extends its control
+  /// as any input does, so a long paste neither outlives a release, a
+  /// disconnect or a stream stop, nor runs on after the hold lapsed.
+  private func type(_ text: String, for viewer: Int) {
+    typingGeneration += 1
+    let generation = typingGeneration
+    typing = Task { [weak self] in
+      guard let self else { return }
+      let reply = await self.deliver {
+        try await self.screen.viewerType(text) { try self.continueTyping(viewer) }
+      }
+      if self.typingGeneration == generation { self.typing = nil }
+      if let reply, !Task.isCancelled { self.server?.send(text: reply, to: viewer) }
+    }
+  }
+
+  private func continueTyping(_ viewer: Int) throws {
+    let now = Date()
+    guard control.admit(viewer, at: now) == .accepted else {
+      throw SandboxError("the viewer no longer has control")
+    }
+    screen.hold(.implicit, seconds: CUControl.implicitHold)
+    lastInput = now
+  }
+
+  private func stopTyping() {
+    typing?.cancel()
+    typing = nil
   }
 
   private enum InputAdmission {
@@ -159,6 +204,7 @@ package final class LiveViewSession {
     case .viewOnly:
       return .drop(reply: nil)
     case .expired:
+      stopTyping()
       releaseHeld()
       broadcastState()
       return .drop(reply: nil)
@@ -196,14 +242,21 @@ package final class LiveViewSession {
     while !Task.isCancelled, !viewers.isEmpty {
       let now = Date()
       if control.lapse(at: now) != nil {
+        stopTyping()
         releaseHeld()
         broadcastState()
+      }
+      // No encoder on this host: nothing to sample for. The loop still
+      // runs, slowly, for the lapse check above.
+      guard let encoder else {
+        try? await Task.sleep(for: .milliseconds(1000 / LiveView.staticFrameRate))
+        continue
       }
       let key = bridge?.takeKeyframe() ?? false
       do {
         try screen.streamFrame { data, bytesPerRow, seq in
           if seq != lastSeq { lastChange = now }
-          guard let encoder, key || trailing || seq != lastSeq else { return }
+          guard key || trailing || seq != lastSeq else { return }
           let keyframe = key || lastSeq == nil
           try encoder.encode(rgbx: data, bytesPerRow: bytesPerRow, keyframe: keyframe)
           trailing = keyframe
@@ -261,20 +314,20 @@ package final class LiveViewSession {
 }
 
 /// The server's way into the session: each call runs on the main actor while
-/// the connection thread waits, so one viewer's messages stay in order.
-private final class Bridge: LiveViewHost, @unchecked Sendable {
-  nonisolated(unsafe) weak var session: LiveViewSession?
-  private let lock = NSLock()
-  private var keyframe = false
+/// the connection thread waits, so one viewer's messages stay in order. A
+/// paste is the exception: it is started, not awaited.
+private final class Bridge: LiveViewHost, Sendable {
+  private weak let session: LiveViewSession?
+  private let keyframe = Mutex(false)
 
   init(session: LiveViewSession) { self.session = session }
 
-  func requestKeyframe() { lock.withLock { keyframe = true } }
+  func requestKeyframe() { keyframe.withLock { $0 = true } }
 
   func takeKeyframe() -> Bool {
-    lock.withLock {
-      defer { keyframe = false }
-      return keyframe
+    keyframe.withLock {
+      defer { $0 = false }
+      return $0
     }
   }
 

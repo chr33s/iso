@@ -212,6 +212,9 @@ printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$TMPDIR/build/${FAKE_DIR
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso" "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
+# Linux `desktop` images' guest files (optional members of a release).
+printf 'installed-iso-cu-mcp\n' >"$TMPDIR/build/${FAKE_DIR}/iso-cu-mcp"
+printf 'installed-vmlinux-desktop\n' >"$TMPDIR/build/${FAKE_DIR}/vmlinux-desktop"
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
 write_sums
 
@@ -275,6 +278,14 @@ if [[ "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress ]]; then
 else
     fail "update installs the egress companion"
 fi
+
+for artifact in iso-cu-mcp vmlinux-desktop; do
+    if [[ "$(cat "$TMPDIR/bin/$artifact" 2>/dev/null)" == "installed-$artifact" ]]; then
+        pass "update installs the Linux guest file $artifact"
+    else
+        fail "update installs the Linux guest file $artifact"
+    fi
+done
 
 # Confirm the update-check file landed in the test tempdir. Search $TMPDIR, not
 # $HOME: if the HOME export were dropped, a leak into the real home would still
@@ -463,6 +474,28 @@ if "$ISO_BIN" update --yes >"$TMPDIR/complete.log" 2>&1 \
 else
     fail "complete release replaces every binary" "$(tail -5 "$TMPDIR/complete.log")"
 fi
+
+echo "==> Test 8: a release without the Linux guest files removes installed copies"
+mkdir "$TMPDIR/guest-backup"
+mv "$TMPDIR/build/${FAKE_DIR}/iso-cu-mcp" "$TMPDIR/build/${FAKE_DIR}/vmlinux-desktop" \
+    "$TMPDIR/guest-backup/"
+repack_release_fixture
+seed_install
+for artifact in iso-cu-mcp vmlinux-desktop; do
+    printf '%s\n' "stale-$artifact" >"$TMPDIR/bin/$artifact"
+done
+if "$ISO_BIN" update --yes >"$TMPDIR/no-guest-files.log" 2>&1 \
+    && [[ "$("$ISO_BIN")" == "MARKER: fake-replacement-binary" \
+       && ! -e "$TMPDIR/bin/iso-cu-mcp" && ! -e "$TMPDIR/bin/vmlinux-desktop" ]]; then
+    pass "installed guest files the release does not carry are removed"
+else
+    fail "installed guest files the release does not carry are removed" \
+        "$(tail -5 "$TMPDIR/no-guest-files.log"; ls -l "$TMPDIR/bin")"
+fi
+mv "$TMPDIR/guest-backup/iso-cu-mcp" "$TMPDIR/guest-backup/vmlinux-desktop" \
+    "$TMPDIR/build/${FAKE_DIR}/"
+rmdir "$TMPDIR/guest-backup"
+repack_release_fixture
 
 echo
 echo "  $pass_count passed, $fail_count failed"

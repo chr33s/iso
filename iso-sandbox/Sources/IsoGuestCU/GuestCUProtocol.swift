@@ -49,6 +49,9 @@ package enum GuestCUProtocol {
   /// Requests per second of any kind, refused ones included.
   package static let requestRate = 100
   package static let typeCharactersPerAction = 64
+  /// Deepest a request nests: the request, its action, the action's path,
+  /// one point. A deeper line is refused before any parser reads it.
+  package static let maxNesting = 4
 
   /// `wait` bounds (docs/design/computer-use-screen-sync.md §4).
   package enum Wait {
@@ -174,6 +177,8 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
 
   package enum ParseError: Error, Equatable {
     case tooLong, notJSON
+    /// Nested past ``GuestCUProtocol/maxNesting``; never parsed.
+    case tooDeep
     case unknownField(String)
     case malformed
     case missing(String)
@@ -184,6 +189,7 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
       switch self {
       case .tooLong: "too long"
       case .notJSON: "not JSON"
+      case .tooDeep: "nested too deep"
       case .unknownField: "unknown field"
       case .malformed: "malformed"
       case .missing(let field): "missing \(field)"
@@ -194,6 +200,9 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
   /// A guest-authored line, refused unless it is exactly one known request.
   package static func parse(_ line: [UInt8]) -> Result<GuestCURequest, ParseError> {
     guard line.count <= GuestCUProtocol.maxRequest else { return .failure(.tooLong) }
+    guard !JSONNesting.exceeds(line, limit: GuestCUProtocol.maxNesting) else {
+      return .failure(.tooDeep)
+    }
     guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
     else { return .failure(.notJSON) }
     if let extra = Set(object.keys).subtracting(fields).sorted().first {

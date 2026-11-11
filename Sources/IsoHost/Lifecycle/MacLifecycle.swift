@@ -11,6 +11,14 @@ extension AppleBackend {
   /// One runtime inspection of a sandbox, whatever its guest OS, gated as
   /// that inspection: status, boot and gate never come from different
   /// snapshots.
+  /// An owner's per-boot computer-use counts, as one observation saw them.
+  package struct ComputerUseCounts: Sendable {
+    package let guest: MacGuestCUCounts?
+    package let liveView: MacLiveViewCounts?
+
+    static let none = ComputerUseCounts(guest: nil, liveView: nil)
+  }
+
   package enum Observed: Sendable {
     case linux(SandboxInspection)
     case macos(MacInspection, template: MachineName)
@@ -33,6 +41,18 @@ extension AppleBackend {
       switch self {
       case .linux(let i): i.live?.pid
       case .macos(let i, _): i.live?.pid
+      }
+    }
+
+    /// The owner's per-boot computer-use counts in this observation. A
+    /// macOS owner reports them in its status, a Linux display owner in
+    /// `inspect`; a headless Linux instance has neither.
+    package var computerUse: ComputerUseCounts {
+      switch self {
+      case .linux(let i):
+        ComputerUseCounts(guest: i.runtime?.guestComputerUse, liveView: i.runtime?.liveView)
+      case .macos(let i, _):
+        ComputerUseCounts(guest: i.runtime?.guestComputerUse, liveView: i.runtime?.liveView)
       }
     }
 
@@ -216,9 +236,7 @@ extension AppleBackend {
     if sidecar.syncCoreAI(from: inspection.record) || guestChanged { try sidecar.save(instance) }
     if inspection.record.guestComputerUse != MacGuestComputerUse(config.computerUse) {
       // Fixed at create: the record, not this configuration, decides.
-      diagnostics.warn(
-        "computer_use differs from what instance '\(instance.name)' was created with; recreate it for the change to take effect"
-      )
+      diagnostics.warn(Self.computerUseChangedWarning(instance.name))
     }
     // The record, not the configuration, decides: a Core AI instance boots
     // through the experimental build even after `coreai` is removed.
@@ -245,30 +263,16 @@ extension AppleBackend {
     }
   }
 
-  /// A running instance's computer-use counts for the audit, read before it
-  /// stops: guest computer use when it was created with it, and the live
-  /// view when a stream started this boot. A macOS owner reports them in its
-  /// status, a Linux display owner in `inspect`; a headless Linux instance
-  /// has neither. Empty when neither, or when the owner is unreadable.
-  package func computerUseAudit(_ instance: Instance) -> [BoundaryAudit.Event] {
-    guard let sidecar = try? MachineSidecar.loadIfPresent(instance),
-      let runtime = try? runtime()
-    else { return [] }
-    let guest: MacGuestCUCounts?
-    let liveView: MacLiveViewCounts?
-    switch sidecar.kind {
-    case .macos:
-      guard let status = try? runtime.macInspect(sidecar.machineID).runtime else { return [] }
-      (guest, liveView) = (status.guestComputerUse, status.liveView)
-    case .linux:
-      guard sidecar.display != nil,
-        let status = try? runtime.inspect(sidecar.machineID).runtime
-      else { return [] }
-      (guest, liveView) = (status.guestComputerUse, status.liveView)
-    }
-    return Self.computerUseEvents(
-      createdWithGuestComputerUse: sidecar.guestComputerUse != nil, guest: guest,
-      liveView: liveView)
+  /// A running instance's computer-use counts for the audit: guest computer
+  /// use when it was created with it, and the live view when a stream
+  /// started this boot. They are the counts in the observation that proved
+  /// the instance running, moments before it stops: no second `inspect`
+  /// (a subprocess, and for macOS a guest-helper round trip) is spent on
+  /// instances that never used either.
+  package func computerUseAudit(_ running: Running) -> [BoundaryAudit.Event] {
+    Self.computerUseEvents(
+      createdWithGuestComputerUse: running.sidecar.guestComputerUse != nil,
+      guest: running.computerUse.guest, liveView: running.computerUse.liveView)
   }
 
   /// The audit events for an owner's counts: guest counts only for an

@@ -4,6 +4,8 @@
 No VMs or provider requests are made. Run on a clean supported Mac for clean-machine
 distribution evidence. A same-version forced update exercises first-release
 replacement; pass --from-version for a later cross-version upgrade acceptance.
+A starting release whose updater predates the Linux guest files gets the
+documented second forced update before the bundle is checked.
 """
 import argparse
 import json
@@ -78,8 +80,14 @@ def accept(work, initial, target, download_timeout):
     executable = work / "bin/iso"
     before = {name: (work / "bin" / name).stat().st_ino for name in BINARIES + GUEST_FILES
               if (work / "bin" / name).exists()}
-    command([executable, "update", "--version", target, "--force", "--yes"], env,
-            timeout=download_timeout)
+    update = [executable, "update", "--version", target, "--force", "--yes"]
+    command(update, env, timeout=download_timeout)
+    # An updater that predates the guest files (v0.9.0 and earlier) installs
+    # none. The documented step is one forced update by the new binary.
+    second_update = (not any(name in before for name in GUEST_FILES)
+                     and not all((work / "bin" / name).is_file() for name in GUEST_FILES))
+    if second_update:
+        command(update, env, timeout=download_timeout)
     check_bundle(work, target, env)
     if any((work / "bin" / name).stat().st_ino == inode for name, inode in before.items()):
         raise ValueError("update did not replace every installed file")
@@ -91,6 +99,8 @@ def accept(work, initial, target, download_timeout):
     return {"installed": initial, "updated": target,
             "update_kind": "same-version replacement" if initial == target else "cross-version upgrade",
             "credential_free_install": True, "all_binaries_replaced": True,
+            "guest_files": ("installed by a second forced update; the starting updater predates them"
+                            if second_update else "installed by the update"),
             "uninstall": "CLI removed", "vm_and_provider_acceptance": "not exercised"}
 
 

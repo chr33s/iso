@@ -76,8 +76,12 @@ results. If S1 fails at 10 Hz, this proposal stops.
   before each keyframe.
 - **Pixels.** The stream is encoded by the owner from the view's bitmap, as
   PNG frames are. The browser never receives guest-authored bytes.
-- **Backpressure.** Each viewer has a bounded queue. On overflow the owner
-  drops that viewer's frames up to the next keyframe and forces one. A
+- **Backpressure.** Each viewer has a bounded queue (8 MiB). On overflow the
+  owner drops that viewer's frames up to the next keyframe, and asks for
+  that keyframe once, when the viewer's queue has drained: the encode is
+  shared, so asking on every overflow would make every frame a keyframe
+  for every viewer while one is behind. Pongs and state text are never
+  dropped, so a viewer whose queue they would overfill is disconnected. A
   viewer that stops reading for 10 s is disconnected.
 
 ## 5. Listener (stop-and-confirm)
@@ -117,12 +121,17 @@ viewer sends raw events, so this needs a second, equally closed path into
 | `pointer` | `kind` (`move`, `down`, `up`), `x`, `y`, `button` | Framebuffer pixels in range; button enum |
 | `scroll` | `x`, `y`, `dx`, `dy` | In range; deltas bounded |
 | `key` | `kind` (`down`, `up`), `code` | `KeyboardEvent.code` looked up in a fixed table of Mac virtual key codes; anything else is dropped |
-| `text` | `text` | The existing `type` rules: ASCII, at most 4096 characters |
+| `text` | `text` | The existing `type` rules: ASCII, at most 2000 characters (each may take two bytes of JSON, and a message is at most 4 KiB) |
 | `control` | `take` \| `release` | |
 
 - **Paste** is the `text` message: the page reads the browser's paste event
   and the owner types it. The owner never touches `NSPasteboard`, and
-  nothing flows from the guest to the host clipboard.
+  nothing flows from the guest to the host clipboard. A paste takes 12 ms a
+  key event, so a long one runs for over a minute: it is typed apart from
+  the viewer's connection, each key is sent only while that viewer still
+  controls and extends its control as any input does, and a release, a
+  disconnect, a lapse or a stream stop ends it and lets go of what it
+  pressed. A second paste while one is being typed is refused `busy`.
 - **Ordering.** Viewer input is refused `busy` while a host `cu act` is in
   flight, except a key or button up: the browser has already let go, so a
   refused up would leave it down in the guest. A guest action in flight is ended by the hold, which already

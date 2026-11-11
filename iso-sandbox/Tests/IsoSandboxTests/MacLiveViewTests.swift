@@ -275,7 +275,9 @@ private final class FakeHost: LiveViewHost, @unchecked Sendable {
     return #"{"type":"state"}"#
   }
   func left(_ viewer: Int) { lock.withLock { log.append("left \(viewer)") } }
-  func needKeyframe() {}
+  func needKeyframe() { lock.withLock { keyframes += 1 } }
+  private var keyframes = 0
+  var keyframeRequests: Int { lock.withLock { keyframes } }
   var events: [String] { lock.withLock { log } }
 }
 
@@ -552,4 +554,222 @@ private func hex(_ s: String) -> [UInt8] {
   let escaped = LiveViewSPS.escape(raw)
   #expect(escaped == [0, 0, 3, 1, 5, 0, 0, 3, 0, 0, 3, 3, 0, 0, 3, 2, 9])
   #expect(LiveViewSPS.unescape(escaped) == raw)
+}
+
+// MARK: listener bounds
+
+/// An authenticated viewer's socket, joined.
+private func viewer(_ server: LiveViewServer, _ token: LiveViewToken, joined count: Int = 1)
+  throws -> Int32
+{
+  let fd = try connect(server.port)
+  send(fd, Array(handshake(server.port).utf8))
+  _ = receive(fd) { String(decoding: $0, as: UTF8.self).contains("\r\n\r\n") }
+  send(fd, masked(0x1, Array(#"{"type":"auth","token":"\#(token.value)"}"#.utf8)))
+  for _ in 0..<150 where server.viewerCount < count { usleep(20_000) }
+  return fd
+}
+
+private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool {
+  let deadline = Date().addingTimeInterval(seconds)
+  while Date() < deadline {
+    if condition() { return true }
+    usleep(20_000)
+  }
+  return condition()
+}
+
+@Test func aDeeplyNestedMessageIsRefusedBeforeAnyParserReadsIt() throws {
+  // Brackets in strings and after escapes do not nest.
+  #expect(!JSONNesting.exceeds(Array(#"{"a":"[[[{{{","b":"\"[{"}"#.utf8), limit: 1))
+  #expect(!JSONNesting.exceeds(Array(#"{"a":[{"b":[]}],"c":{}}"#.utf8), limit: 4))
+  #expect(JSONNesting.exceeds(Array(#"{"a":[{"b":[]}]}"#.utf8), limit: 3))
+  #expect(JSONNesting.exceeds(Array("[[".utf8), limit: 1))
+  // Every viewer message is one flat object.
+  let nested = String(repeating: #"{"a":"#, count: 480)
+  #expect(nested.utf8.count <= LiveView.maxMessage)
+  #expect(parse(nested) == .failure(.tooDeep))
+  #expect(parse(#"{"type":"auth","token":{"a":1}}"#) == .failure(.tooDeep))
+  #expect(parse(#"{"type":"auth","token":"t"}"#) == .success(.auth("t")))
+
+  // The same bytes before authentication, on a connection thread: the
+  // viewer is refused and the listener (and its process) goes on serving.
+  let host = FakeHost()
+  let token = try LiveViewToken.random()
+  let server = try LiveViewServer(token: token, host: host, log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try connect(server.port)
+  send(fd, Array(handshake(server.port).utf8))
+  _ = receive(fd) { String(decoding: $0, as: UTF8.self).contains("\r\n\r\n") }
+  send(fd, masked(0x1, Array(nested.utf8)))
+  #expect(receive(fd).isEmpty)
+  close(fd)
+  let good = try viewer(server, token)
+  defer { close(good) }
+  #expect(server.viewerCount == 1)
+  #expect(host.events == ["joined 1"])
+}
+
+@Test func theLargestPasteFitsOneMessage() throws {
+  // Tabs and newlines take two bytes of JSON each: the worst case.
+  let worst = String(repeating: "\t", count: LiveView.maxPaste)
+  let message = try JSONSerialization.data(withJSONObject: ["type": "text", "text": worst])
+  #expect(message.count <= LiveView.maxMessage)
+  #expect(parse(String(decoding: message, as: UTF8.self)) == .success(.text(worst)))
+  let over = try JSONSerialization.data(
+    withJSONObject: ["type": "text", "text": String(repeating: "a", count: LiveView.maxPaste + 1)])
+  #expect(parse(String(decoding: over, as: UTF8.self)) == .failure(.outOfRange))
+  // The page cuts a paste to the same number.
+  #expect(LiveViewPage.script.contains(".slice(0, \(LiveView.maxPaste));"))
+}
+
+@Test func pingsAreSmallAndChargedToTheMessageBudget() throws {
+  var small = masked(0x9, [UInt8](repeating: 1, count: LiveView.maxControlFrame))
+  #expect(try WSFrame.decode(&small) == .ping([UInt8](repeating: 1, count: 125)))
+  var large = masked(0x9, [UInt8](repeating: 1, count: LiveView.maxControlFrame + 1))
+  var refusal: WSFrame.DecodeError?
+  do { _ = try WSFrame.decode(&large) } catch { refusal = error }
+  #expect(refusal == .controlTooLarge)
+  var limits = LiveViewLimits(now: t0)
+  let pings = (0...LiveView.messageRate).map { _ in limits.admitPing(at: t0) }
+  #expect(pings == Array(repeating: true, count: LiveView.messageRate) + [false])
+  let afterPings = limits.admit(.success(.take), at: t0)
+  #expect(!afterPings)
+
+  // On the wire: a flood of pings gets a bounded number of pongs.
+  let token = try LiveViewToken.random()
+  let server = try LiveViewServer(token: token, host: FakeHost(), log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try viewer(server, token)
+  defer { close(fd) }
+  let flood = 4 * LiveView.messageRate
+  send(fd, (0..<flood).flatMap { _ in masked(0x9, [1, 2, 3, 4]) })
+  var quiet = timeval(tv_sec: 1, tv_usec: 0)
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &quiet, socklen_t(MemoryLayout<timeval>.size))
+  let pongs = receive(fd).count / 6
+  #expect(pongs >= LiveView.messageRate / 2 && pongs < 2 * LiveView.messageRate)
+}
+
+@Test func aViewersMessagesAreRateLimitedOnTheWire() throws {
+  let host = FakeHost()
+  let token = try LiveViewToken.random()
+  let server = try LiveViewServer(token: token, host: host, log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try viewer(server, token)
+  defer { close(fd) }
+  let flood = 4 * LiveView.messageRate
+  let take = masked(0x1, Array(#"{"type":"control","action":"take"}"#.utf8))
+  send(fd, (0..<flood).flatMap { _ in take })
+  var quiet = timeval(tv_sec: 1, tv_usec: 0)
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &quiet, socklen_t(MemoryLayout<timeval>.size))
+  _ = receive(fd)
+  let handled = host.events.filter { $0.hasPrefix("message") }.count
+  #expect(handled >= LiveView.messageRate / 2 && handled < 2 * LiveView.messageRate)
+}
+
+@Test func onlyTwoViewersJoin() throws {
+  let host = FakeHost()
+  let token = try LiveViewToken.random()
+  let server = try LiveViewServer(token: token, host: host, log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let first = try viewer(server, token, joined: 1)
+  let second = try viewer(server, token, joined: 2)
+  defer { for fd in [first, second] { close(fd) } }
+  #expect(server.viewerCount == LiveView.maxViewers)
+  let third = try connect(server.port)
+  defer { close(third) }
+  send(third, Array(handshake(server.port).utf8))
+  _ = receive(third) { String(decoding: $0, as: UTF8.self).contains("\r\n\r\n") }
+  send(third, masked(0x1, Array(#"{"type":"auth","token":"\#(token.value)"}"#.utf8)))
+  let refusal = String(decoding: receive(third), as: UTF8.self)
+  #expect(refusal.contains(LiveViewServer.viewerLimitRejection))
+  #expect(server.viewerCount == LiveView.maxViewers)
+  #expect(host.events == ["joined 1", "joined 2"])
+}
+
+@Test func aRequestHeadPastTheLimitIsDroppedUnanswered() throws {
+  // Parsed: a well-formed head one byte too long.
+  let padding = String(repeating: "a", count: LiveView.maxRequestHead)
+  let long = Array("GET / HTTP/1.1\r\nHost: 127.0.0.1:6000\r\nX-Pad: \(padding)\r\n\r\n".utf8)
+  #expect(LiveViewHTTPRequest.parse(long) == nil)
+  // Read: bytes with no end are not collected up to the token deadline.
+  let server = try LiveViewServer(token: try .random(), host: FakeHost(), log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try connect(server.port)
+  defer { close(fd) }
+  send(fd, Array(("GET / HTTP/1.1\r\nX-Pad: " + padding + padding).utf8))
+  let start = Date()
+  #expect(receive(fd).isEmpty)
+  #expect(Date().timeIntervalSince(start) < 2)
+}
+
+@Test func aSlowViewerLosesFramesAndAsksForOneKeyframeOnceItHasCaughtUp() throws {
+  // The rule, by itself.
+  let limit = LiveView.queueLimit
+  #expect(LiveViewQueue.offer(1, keyframe: false, queued: limit - 1, dropping: false) == .queue)
+  #expect(LiveViewQueue.offer(2, keyframe: false, queued: limit - 1, dropping: false) == .drop)
+  #expect(LiveViewQueue.offer(1, keyframe: false, queued: 0, dropping: true) == .drop)
+  #expect(LiveViewQueue.offer(1, keyframe: true, queued: 0, dropping: true) == .queue)
+  #expect(LiveViewQueue.offer(2, keyframe: true, queued: limit - 1, dropping: true) == .drop)
+
+  let host = FakeHost()
+  let token = try LiveViewToken.random()
+  let server = try LiveViewServer(token: token, host: host, log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try viewer(server, token)
+  defer { close(fd) }
+  // A viewer that reads nothing: its queue fills and later frames are
+  // dropped. No keyframe is asked for while it is still behind, however
+  // many frames overflow: each would be larger than what it cannot take.
+  let frame = [UInt8](repeating: 7, count: 2 * 1024 * 1024)
+  for i in 0..<20 { server.broadcast(frame, keyframe: false, micros: UInt64(i)) }
+  #expect(host.keyframeRequests == 0)
+  // It reads again and its queue drains: one keyframe is asked for.
+  _ = receive(fd)
+  #expect(eventually { host.keyframeRequests == 1 })
+  usleep(300_000)
+  #expect(host.keyframeRequests == 1)
+  // That keyframe is queued, and frames flow again.
+  server.broadcast([9, 9], keyframe: true, micros: 99)
+  let resumed = receive(fd) { $0.count >= 14 }
+  #expect(resumed.count >= 14 && resumed[3] == 1 && Array(resumed.suffix(2)) == [9, 9])
+  #expect(host.keyframeRequests == 1)
+  #expect(server.viewerCount == 1)
+}
+
+@Test func aViewerThatAcceptsNothingIsDisconnected() throws {
+  let host = FakeHost()
+  let token = try LiveViewToken.random()
+  let server = try LiveViewServer(
+    token: token, host: host, stalledViewer: 0.5, log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try viewer(server, token)
+  defer { close(fd) }
+  let frame = [UInt8](repeating: 7, count: 2 * 1024 * 1024)
+  for i in 0..<4 { server.broadcast(frame, keyframe: false, micros: UInt64(i)) }
+  #expect(eventually { host.events.contains("left 1") })
+  #expect(server.viewerCount == 0)
+}
+
+@Test func repliesAViewerDoesNotReadAreNotBufferedWithoutBound() throws {
+  let host = FakeHost()
+  let token = try LiveViewToken.random()
+  // The default stall deadline (10 s) is longer than this test waits: what
+  // disconnects the viewer here is its queue.
+  let server = try LiveViewServer(token: token, host: host, log: { _ in })
+  server.start()
+  defer { server.stop() }
+  let fd = try viewer(server, token)
+  defer { close(fd) }
+  let text = String(repeating: "x", count: 1024 * 1024)
+  for _ in 0..<24 { server.send(text: text, to: 1) }
+  #expect(eventually { host.events.contains("left 1") })
+  #expect(server.viewerCount == 0)
 }

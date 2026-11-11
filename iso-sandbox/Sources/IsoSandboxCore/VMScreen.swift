@@ -53,6 +53,11 @@ package final class VMScreen {
   /// The framebuffer-sized render target, reused so that each sample
   /// compares bytes drawn the same way.
   private var renderContext: CGContext?
+  /// The bitmap the view is cached into, reused: a fresh 9 MB one for
+  /// every sample is most of a millisecond of allocation and page faults.
+  private var viewBitmap: NSBitmapImageRep?
+  /// When the render target was last filled, for samplers that share one.
+  private var renderedAt: ContinuousClock.Instant?
   private var waits = CUWaitSlots()
   /// Supplies the current binding; nil while the guest helper is not connected.
   private let current: () -> CUBinding?
@@ -155,9 +160,16 @@ package final class VMScreen {
   /// Renders the view at framebuffer pixels, whatever the window's backing
   /// scale (Gate F), and samples damage from the result. A uniform render is
   /// still sampled; only `frame` refuses it, and only from the view cache.
-  private func render() throws -> CGContext {
+  /// A sample no older than `maxAge` is returned as it is: the live view
+  /// and each wait poll on their own clocks, and one capture serves those
+  /// that fall together. Frames and action baselines always capture.
+  private func render(maxAge: Duration = .zero) throws -> CGContext {
     let ctx = try context()
+    let now = ContinuousClock.now
+    if let renderedAt, maxAge > .zero, now - renderedAt < maxAge { return ctx }
     guard let data = ctx.data else { throw SandboxError("no drawing buffer") }
+    // A capture that fails leaves the target half-drawn: never shared.
+    renderedAt = nil
     switch capture {
     case .viewCache: try cacheView(into: ctx)
     case .framebufferSurface:
@@ -171,8 +183,13 @@ package final class VMScreen {
       }
     }
     try damage.sample(UnsafeRawBufferPointer(start: data, count: ctx.bytesPerRow * height))
+    renderedAt = now
     return ctx
   }
+
+  /// How old a sample the polling samplers share: half a tick, so sharing
+  /// never costs one of them a whole period.
+  static let sharedSampleAge = Duration.milliseconds(ScreenWait.tickMs / 2)
 
   /// The framebuffer-sized RGBX render target, made once.
   private func context() throws -> CGContext {
@@ -195,16 +212,26 @@ package final class VMScreen {
     // Cached straight at framebuffer pixels: the window's own backing (2x
     // on a Retina host) costs ~45 ms to cache and ~30 ms to scale back
     // down, against ~5 ms here (docs/design/computer-use-screen-sync.md §9).
-    guard
-      let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
-        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-        bytesPerRow: 0, bitsPerPixel: 0)
-    else { throw SandboxError("no bitmap for the view") }
+    let rep = try bitmap()
+    // Cleared first, as a new bitmap is: what a missing framebuffer leaves
+    // undrawn must read as transparent, not as the last frame.
+    if let pixels = rep.bitmapData { memset(pixels, 0, rep.bytesPerRow * rep.pixelsHigh) }
     rep.size = view.bounds.size
     view.cacheDisplay(in: view.bounds, to: rep)
     guard let source = rep.cgImage else { throw SandboxError("no image from the view") }
     ctx.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+  }
+
+  private func bitmap() throws -> NSBitmapImageRep {
+    if let viewBitmap { return viewBitmap }
+    guard
+      let made = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: 0, bitsPerPixel: 0)
+    else { throw SandboxError("no bitmap for the view") }
+    viewBitmap = made
+    return made
   }
 
   package func frame(session: String?, origin: CUOrigin = .host) throws -> Frame {
@@ -235,7 +262,7 @@ package final class VMScreen {
   package func streamFrame(
     _ body: (UnsafeRawPointer, _ bytesPerRow: Int, _ damageSeq: UInt64) throws -> Void
   ) throws {
-    let ctx = try render()
+    let ctx = try render(maxAge: Self.sharedSampleAge)
     guard let data = ctx.data else { throw SandboxError("no drawing buffer") }
     try body(data, ctx.bytesPerRow, damage.seq)
   }
@@ -283,30 +310,21 @@ package final class VMScreen {
   }
 
   /// Types viewer text (a paste) under the `type` action's rules, holding
-  /// off host actions until it is done.
-  package func viewerType(_ text: String) async throws {
+  /// off host actions until it is done. `proceed` runs after each key, as
+  /// an action re-checks its session: when it throws (the viewer's control
+  /// ended) the paste stops and what it pressed is released.
+  package func viewerType(_ text: String, proceed: () throws -> Void) async throws {
     guard !acting else { throw SandboxError("a host action is in progress", refusal: .busy) }
     acting = true
     defer { acting = false }
     try await sendKeys(CUKeys.events(forText: text)) {
       try await Task.sleep(for: .milliseconds(12))
+      try proceed()
     }
   }
 
-  /// Sends `keys` in order with `pause` after each; a failure part-way
-  /// releases what they pressed.
   private func sendKeys(_ keys: [CUKeyEvent], pause: () async throws -> Void) async throws {
-    var sent = 0
-    do {
-      for e in keys {
-        try send(e)
-        sent += 1
-        try await pause()
-      }
-    } catch {
-      for e in CUKeys.releases(after: keys.prefix(sent)) { try? send(e) }
-      throw error
-    }
+    try await CUKeys.deliver(keys, send: { try send($0) }, pause: pause)
   }
 
   // MARK: wait
@@ -342,7 +360,7 @@ package final class VMScreen {
       sleep: { try await Task.sleep(for: .milliseconds(ScreenWait.tickMs)) },
       check: admitted,
       sample: {
-        _ = try render()
+        _ = try render(maxAge: Self.sharedSampleAge)
         return damage.latest(in: parameters.region)
       })
     return (result, damage.seq)

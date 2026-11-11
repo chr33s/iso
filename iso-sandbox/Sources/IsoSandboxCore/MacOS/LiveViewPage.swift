@@ -175,7 +175,7 @@ package enum LiveViewPage {
         e.preventDefault();
         for (const c of ["MetaLeft", "MetaRight"]) keyUp(c);
         const text = (e.clipboardData.getData("text/plain") || "").replace(/\\r\\n?/g, "\\n")
-          .replace(/[^\\x20-\\x7e\\n\\t]/g, "").slice(0, 4096);
+          .replace(/[^\\x20-\\x7e\\n\\t]/g, "").slice(0, \(LiveView.maxPaste));
         if (text) send({ type: "text", text });
       });
       window.addEventListener("blur", () => {

@@ -322,6 +322,45 @@ private let withoutBundle = Release(
   #expect(readText(install + "/iso-macos-helper") == "helper")
 }
 
+@Test func linuxGuestFilesFollowTheArchive() throws {
+  let extract = try temporaryDirectory("extract")
+  let install = try temporaryDirectory("install")
+  defer {
+    try? FileManager.default.removeItem(atPath: extract)
+    try? FileManager.default.removeItem(atPath: install)
+  }
+  let current = install + "/iso"
+  try writeUpdateFile(current, "iso-binary")
+  #expect(SelfReplace.linuxGuestNames == ["iso-cu-mcp", "vmlinux-desktop"])
+  // Neither installed nor carried: nothing to do, and no error.
+  try SelfReplace.replaceSiblingLinuxGuestFiles(extract, currentExecutable: current)
+  #expect(try FileManager.default.contentsOfDirectory(atPath: install) == ["iso"])
+  // A release that carries one installs it and removes the other's stale copy.
+  for name in SelfReplace.linuxGuestNames {
+    try writeUpdateFile(install + "/" + name, "stale \(name)")
+  }
+  try writeUpdateFile(extract + "/iso-cu-mcp", "new server")
+  try SelfReplace.replaceSiblingLinuxGuestFiles(extract, currentExecutable: current)
+  #expect(readText(install + "/iso-cu-mcp") == "new server")
+  #expect(!pathExists(install + "/vmlinux-desktop"))
+  // A member that is not a regular file counts as not carried.
+  try FileManager.default.removeItem(atPath: extract + "/iso-cu-mcp")
+  try FileManager.default.createSymbolicLink(
+    atPath: extract + "/iso-cu-mcp", withDestinationPath: current)
+  try SelfReplace.replaceSiblingLinuxGuestFiles(extract, currentExecutable: current)
+  #expect(try FileManager.default.contentsOfDirectory(atPath: install) == ["iso"])
+  #expect(readText(current) == "iso-binary")
+  // An installed copy that cannot be removed is an error, not a silent skip.
+  try FileManager.default.createDirectory(
+    atPath: install + "/vmlinux-desktop", withIntermediateDirectories: false)
+  do {
+    try SelfReplace.replaceSiblingLinuxGuestFiles(extract, currentExecutable: current)
+    Issue.record("left an unremovable vmlinux-desktop in place without an error")
+  } catch {
+    #expect("\(error)".contains("which this release does not carry"))
+  }
+}
+
 @Test func proxyReplacementSwapsTheSibling() throws {
   let extract = try temporaryDirectory("extract")
   let install = try temporaryDirectory("install")
@@ -747,6 +786,25 @@ private let untouched = [
         ).last!,
       ])
     #expect(fixture.calls[1].hasSuffix("/" + fixture.tarballName))
+  }
+
+  /// The run path: a release's guest files are installed with its binaries,
+  /// and a release without them leaves none from another release behind.
+  @Test func updateMakesTheLinuxGuestFilesMatchTheRelease() throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    let guestFiles = ["iso-cu-mcp": "new-server", "vmlinux-desktop": "new-kernel"]
+    let desktopRelease = fullRelease.merging(guestFiles) { $1 }
+    try fixture.publish(desktopRelease)
+    try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+    #expect(fixture.installed == desktopRelease)
+
+    for name in guestFiles.keys {
+      try writeUpdateFile(fixture.install + "/" + name, "from-another-release")
+    }
+    try fixture.publish(fullRelease)
+    try fixture.updater(log: DiagnosticsLog()).run(.init(force: true, skipConfirm: true))
+    #expect(fixture.installed == fullRelease)
   }
 
   @Test func checksumMismatchLeavesEveryBinaryUntouched() throws {

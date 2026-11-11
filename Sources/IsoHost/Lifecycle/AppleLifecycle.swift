@@ -378,6 +378,19 @@ extension AppleBackend {
   /// is re-enrolled).
   /// `guestEnvironment` is the environment the caller records for this
   /// boot; nil keeps the recorded one.
+  /// Whether `computer_use` now differs from what a Linux instance was
+  /// created with. Only a desktop instance has the setting; a headless one
+  /// ignores it, and is told so when it is created.
+  static func computerUseChanged(
+    created: MacGuestComputerUse?, configured: ComputerUseConfig, display: LinuxGuestDisplay?
+  ) -> Bool {
+    display != nil && created != MacGuestComputerUse(configured)
+  }
+
+  static func computerUseChangedWarning(_ instance: InstanceName) -> String {
+    "computer_use differs from what instance '\(instance)' was created with; recreate it for the change to take effect"
+  }
+
   package func startExisting(
     _ instance: Instance, expiresAt: Date? = nil, guestEnvironment: [EnvVarName: EnvValue]? = nil
   ) throws {
@@ -411,6 +424,12 @@ extension AppleBackend {
     case .booting:
       throw RuntimeError.operationUncertain(
         "sandbox \(sidecar.machineID) is booting; wait for it to settle")
+    }
+    if Self.computerUseChanged(
+      created: sidecar.guestComputerUse, configured: config.computerUse, display: sidecar.display)
+    {
+      // Fixed at create, as for a macOS guest: the record decides.
+      diagnostics.warn(Self.computerUseChangedWarning(instance.name))
     }
     // Every start path (start, restart, resize --start, reprovision, host
     // service) records a new immutable policy snapshot and epoch here: under

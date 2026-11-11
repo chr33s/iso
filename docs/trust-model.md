@@ -123,8 +123,12 @@ capability.
   `DevcontainerJSON.swift` / `DevcontainerModel.swift` parse devcontainer JSON
   that may originate from a remote repo. Its values configure the guest; they
   must never reach a host `cmd:` evaluation or host shell. Recursive parsers of
-  untrusted input (devcontainer JSON, guest JSON, Codex TOML) run on a fixed
-  8 MiB stack (`withParserStack`) below their depth caps.
+  untrusted input in `iso` (devcontainer JSON, guest JSON, Codex TOML) run on
+  a fixed 8 MiB stack (`withParserStack`) below their depth caps. The
+  runtime's owner, which parses guest request lines and live-view messages
+  on 512 KiB connection threads, instead refuses input nested deeper than
+  its closed request types can be (`JSONNesting`: four levels for a guest
+  request, one for a viewer message) before any parser reads it.
 - **Downloaded update artifacts.** `Update.swift` tarball + `SHA256SUMS` from the
   release host — gated by a maintainer signature over `SHA256SUMS`, the
   checksum and (best-effort) Sigstore attestation.
@@ -667,7 +671,10 @@ visible exception, not general host access.
   never dial the guest. The stream socket is a `0600` Unix socket in the
   per-user `0700` runtime directory, checked with `getpeereid`; the guest has
   no path to it. Host-side vsock listeners exist only transiently for
-  framework process stdio and file copies (`exec`, host-key read); no
+  framework process stdio and file copies (`exec`, host-key read), plus, for
+  a `desktop` instance created with guest computer use, the owner's
+  persistent listener on port 7802
+  ([Linux guests with a display](#linux-guests-with-a-display)); no
   listener routes to a host command, file, socket or another VM, and the
   integration suite probes host CID ports and sibling CIDs from guest root.
 - **The adapter is convenience, not enforcement.** The guest's
@@ -741,7 +748,9 @@ exposure, and isolate verifies the effective configuration anyway
   network mode the owner reads the live `VZVirtualMachine` after `create`,
   before the guest's own init runs, and stops it unbooted unless it has
   exactly one socket device, one vmnet network device (none for brokered), no
-  console, memory-balloon, USB or graphics device, and at most the one
+  console, memory-balloon, USB or graphics device (a `desktop` instance is
+  the exception, with exactly the display, keyboard and pointer listed under
+  [Linux guests with a display](#linux-guests-with-a-display)), and at most the one
   virtio-fs device `apple/containerization` always attaches, sharing no host
   directory (`VMDevices.requireExpected`). The runtime's `SandboxRecord` has no field for a host
   mount, socket relay, published port, or agent forwarding, and its VM
@@ -1011,7 +1020,9 @@ is untrusted, and the whole VM is the boundary.
   authoritative statement of its rules and limits. Off by default: the owner
   binds `127.0.0.1` on an ephemeral port only when `iso-sandbox macos cu
   stream` asks over the control socket, and closes it on `--stop`, after
-  60 s with no viewer, and when the VM stops; `inspect` reports
+  60 s with no viewer, and when the VM begins to stop, however that was
+  asked (control `stop`, a signal, session expiry, guest poweroff), after
+  which none starts; `inspect` reports
   `liveViewListening` and the isolation gate accepts that field explicitly.
   Unlike the control socket, a loopback port is reachable by every process
   and local user on the Mac, so a per-start 256-bit token is the only gate:
@@ -1029,20 +1040,33 @@ is untrusted, and the whole VM is the boundary.
   byte is read, so unauthenticated connections cannot use up the owner's
   threads or descriptors; past that a connection is closed unread. An HTTP
   request head is at most 8 KiB, and a viewer whose socket accepts nothing
-  for 10 s is disconnected. At most
-  two viewers; client messages are at most 4 KiB, a closed set that refuses
-  unknown fields, and limited to 100 a second, with a separate 100 a second
+  for 10 s is disconnected. A viewer that falls behind loses frames up to
+  the next keyframe, asked for once when its queue has drained; replies it
+  does not read (pongs, state) are never buffered past the same 8 MiB, it
+  is disconnected instead. At most
+  two viewers; client messages are at most 4 KiB, a closed set of flat
+  objects that refuses unknown fields and deeper nesting unparsed (the
+  first, unauthenticated message included), and limited to 100 a second,
+  pings (at most 125 bytes) among them, with a separate 100 a second
   for what lets go of input (key up, button up, release of control), so a
   release is not dropped behind a burst of moves; rejections are logged by
   kind only, at most 20 a minute. A viewer starts
   view-only; **Take control** takes the host hold (ending the guest's
   session) and each input extends it to 60 s, so a closed tab cannot hold a
   display. Viewer input is a second closed set (bounded pointer, scroll, a
-  fixed `KeyboardEvent.code` table, `type`-rule text for paste) synthesized
+  fixed `KeyboardEvent.code` table, `type`-rule text for paste, at most
+  2000 characters a message) synthesized
   into that VM's view only; nothing touches the host pasteboard or event
   system, and held keys and buttons are released on release, disconnect,
-  hold expiry and stream stop. Remote viewing through `iso host` is not
-  offered. The audit records `boundary.live_view` counts only.
+  hold expiry and stream stop. A paste is typed a key at a time, each key
+  only while its viewer still controls, so it ends with a release, a
+  disconnect or a stream stop. Remote viewing through `iso host` is not
+  offered. The audit records `boundary.live_view` counts only, and only
+  when `iso stop` stops the instance: a boot that ends another way (session
+  expiry, guest poweroff, an owner crash, a failed stop) leaves no
+  `boundary.live_view` or `boundary.guest_computer_use` record, because
+  the counts live in the owner and `iso-sandbox cu stream` is not an `iso`
+  command.
 - **Control socket.** It sits in the per-user `iso-sbx` directory, mode 0600,
   and accepts only the owning uid (`getpeereid`), as for Linux owners.
 - **Stop and TTL.** A guest cannot wedge a stop. Each host write to the
@@ -1119,15 +1143,24 @@ reuse the macOS guests' computer-use paths above, with these differences:
   `boundary.guest_computer_use` and `boundary.live_view`. A headless
   instance reports and records neither.
 - **Image.** Ubuntu packages for the display path, and Firefox from
-  Mozilla's apt repository: its key must match a pinned fingerprint and
-  Mozilla's packages are pinned above Ubuntu's (build-time trust, like the
-  NodeSource and Docker repositories). No capture, input or encoder package.
+  Mozilla's apt repository: its key must match a pinned fingerprint, and
+  apt takes only `firefox` from it (pinned above Ubuntu's) and never
+  installs its other packages (build-time trust in that one package, like
+  the NodeSource and Docker repositories). No capture, input or encoder package.
   Setup copies `iso-cu-mcp` into the build context only if it is an arm64
   Linux ELF, and hashes it into the image identity.
 - **Release.** The archive carries `iso-cu-mcp` and `vmlinux-desktop`
   (not codesigned: they are Linux files), covered by the archive's
   signature and checksums and by `BUILD.json`'s hashes; the release build
-  refuses an unpinned kernel.
+  refuses an unpinned kernel. `install.sh` and `iso update` install both
+  files when the archive carries them and remove installed copies when it
+  does not. Building them fetches, at release or source build only and
+  never from an installed `iso`: the kernel tarball from `cdn.kernel.org`
+  (SHA-256 pinned), the Static Linux SDK from `download.swift.org`
+  (checksum pinned), the build image from Docker Hub with packages from
+  `snapshot.ubuntu.com` and `ports.ubuntu.com` (digest pinned), and Apple
+  container's default kernel for the build VM (`container system start
+  --enable-kernel-install` in the release and candidate workflows).
 
 ## `iso update` trust chain
 

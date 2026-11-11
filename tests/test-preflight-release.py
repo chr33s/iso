@@ -6,9 +6,16 @@
 """Exercise release preflight dispatch and version gates without building VMs."""
 import importlib.util
 import base64
+import contextlib
+import fnmatch
+import hashlib
+import io
+import json
 import os
+import plistlib
 import re
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -17,6 +24,9 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
+RELEASE_SPEC = importlib.util.spec_from_file_location('release', ROOT / 'scripts/build-release.py')
+RELEASE = importlib.util.module_from_spec(RELEASE_SPEC)
+RELEASE_SPEC.loader.exec_module(RELEASE)
 
 # Stand-in for every Python gate: records its path and arguments.
 PYTHON_STUB = '''import os, sys
@@ -476,45 +486,38 @@ class ReleaseBinaryTests(unittest.TestCase):
             workflow, re.S)[1]
         script = "\n".join(line[10:] for line in block.splitlines())
         name = 'iso-v9.8.7-aarch64-apple-darwin'
-        ok = ('iso 9.8.7 (abc1234)', True, True, True, True, True)
-        for version, has_proxy, has_runtime, has_helper, has_skill, has_linux, expected in [
-                (*ok, 0),
-                ('iso 9.8.7-dev (abc1234+dirty)', True, True, True, True, True, 1),
-                ('iso 9.8.6 (abc1234)', True, True, True, True, True, 1),
-                ('iso 9.8.7 (abc1235)', True, True, True, True, True, 1),
-                ('iso 9.8.7 (abc1234)', False, True, True, True, True, 1),
-                ('iso 9.8.7 (abc1234)', True, False, True, True, True, 1),
-                ('iso 9.8.7 (abc1234)', True, True, False, True, True, 1),
-                ('iso 9.8.7 (abc1234)', True, True, True, False, True, 1),
-                # No Linux guest files or kernel source asset.
-                ('iso 9.8.7 (abc1234)', True, True, True, True, False, 1)]:
-            with self.subTest(version=version, proxy=has_proxy, runtime=has_runtime,
-                              helper=has_helper, skill=has_skill, linux=has_linux), \
+        members = ('iso-proxy', 'iso-sandbox', 'iso-macos-helper', 'skill',
+                   'iso-cu-mcp', 'vmlinux-desktop', 'kernel-source')
+        cases = [('iso 9.8.7 (abc1234)', None, 0),
+                 ('iso 9.8.7-dev (abc1234+dirty)', None, 1),
+                 ('iso 9.8.6 (abc1234)', None, 1),
+                 ('iso 9.8.7 (abc1235)', None, 1)]
+        # Each member alone: one check must not stand in for another's.
+        cases += [('iso 9.8.7 (abc1234)', member, 1) for member in members]
+        for version, missing, expected in cases:
+            with self.subTest(version=version, missing=missing), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 bundle = root / 'bundle' / name
                 bundle.mkdir(parents=True)
-                binaries = {'iso': f"#!/bin/sh\nprintf '%s\\n' '{version}'\n"}
-                if has_proxy:
-                    binaries['iso-proxy'] = '#!/bin/sh\nexit 0\n'
-                if has_runtime:
-                    binaries['iso-sandbox'] = '#!/bin/sh\nexit 0\n'
-                if has_helper:
-                    binaries['iso-macos-helper'] = '#!/bin/sh\nexit 0\n'
-                if has_linux:
-                    binaries['iso-cu-mcp'] = 'elf\n'
+                binaries = {'iso': f"#!/bin/sh\nprintf '%s\\n' '{version}'\n",
+                            'iso-proxy': '#!/bin/sh\nexit 0\n',
+                            'iso-sandbox': '#!/bin/sh\nexit 0\n',
+                            'iso-macos-helper': '#!/bin/sh\nexit 0\n',
+                            'iso-cu-mcp': 'elf\n'}
                 for binary, text in binaries.items():
-                    (bundle / binary).write_text(text)
-                    (bundle / binary).chmod(0o755)
-                if has_skill:
+                    if binary != missing:
+                        (bundle / binary).write_text(text)
+                        (bundle / binary).chmod(0o755)
+                if missing != 'skill':
                     (bundle / 'skills' / 'iso').mkdir(parents=True)
                     (bundle / 'skills' / 'iso' / 'SKILL.md').write_text('---\nname: iso\n---\n')
-                if has_linux:
+                if missing != 'vmlinux-desktop':
                     (bundle / 'vmlinux-desktop').write_text('kernel\n')
                 (root / 'dist').mkdir()
                 with tarfile.open(root / 'dist' / f'{name}.tar.gz', 'w:gz') as tar:
                     tar.add(bundle, arcname=name)
-                if has_linux:
+                if missing != 'kernel-source':
                     (root / 'dist' / 'iso-v9.8.7-vmlinux-desktop-source.tar.gz').write_bytes(b'src')
                 github_env = root / 'github-env'
                 result = subprocess.run(
@@ -527,6 +530,199 @@ class ReleaseBinaryTests(unittest.TestCase):
                 if expected == 0:
                     self.assertEqual(github_env.read_text(),
                                      f"TARBALL={root}/dist/{name}.tar.gz\n")
+
+    def test_kernel_source_is_uploaded_where_the_publish_job_collects(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        upload = re.search(
+            r"      - name: Upload the desktop kernel's source\n.*?"
+            r"          name: (\S+)\n          path: \$\{\{ runner\.temp \}\}/dist/(\S+)\n",
+            workflow, re.S)
+        artifact, path = upload[1], upload[2]
+        publish = workflow[workflow.index('      - name: Download all artifacts'):]
+        pattern = re.search(r"          pattern: (\S+)\n", publish)[1]
+        checksummed = re.search(r"run: sha256sum (\S+) > SHA256SUMS", publish)[1]
+        attested = re.search(r'subject-path: "(\S+)"', publish)[1]
+        asset = RELEASE.source_asset_name(f'iso-v9.8.7-{RELEASE.TRIPLE}')
+        self.assertEqual(asset, 'iso-v9.8.7-vmlinux-desktop-source.tar.gz')
+        # Published only if the artifact matches the publish job's pattern,
+        # and checksummed and attested only if the file matches its globs.
+        self.assertTrue(fnmatch.fnmatchcase(artifact, pattern), (artifact, pattern))
+        for glob in (path, checksummed, attested):
+            self.assertTrue(fnmatch.fnmatchcase(asset, glob), (asset, glob))
+
+
+def arm64_elf():
+    """The smallest header build-release.py accepts as iso-cu-mcp."""
+    header = bytearray(64)
+    header[:6] = b'\x7fELF\x02\x01'
+    header[18:20] = b'\xb7\x00'
+    return bytes(header)
+
+
+class LinuxGuestFileTests(unittest.TestCase):
+    KERNEL = b'synthetic desktop kernel\n'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def source(self, pinned=True):
+        """A source tree with the files the bundle checks read."""
+        source = self.root / 'src'
+        layout = source / 'iso-sandbox/Sources/IsoSandboxCore/Layout.swift'
+        layout.parent.mkdir(parents=True)
+        pin = hashlib.sha256(self.KERNEL).hexdigest() if pinned else 'a' * 64
+        layout.write_text('enum KernelPin {\n  package static let desktopAllowed: Set<String> = [\n'
+                          f'    "{pin}"\n  ]\n}}\n')
+        entitlements = source / RELEASE.ENTITLEMENTS
+        entitlements.parent.mkdir(parents=True)
+        entitlements.write_bytes((ROOT / RELEASE.ENTITLEMENTS).read_bytes())
+        return source
+
+    def bundle(self, mcp=None, kernel=None):
+        bundle = self.root / 'bundle'
+        bundle.mkdir()
+        for name in RELEASE.BINARIES:
+            (bundle / name).write_text('#!/bin/sh\n')
+            (bundle / name).chmod(0o755)
+        (bundle / 'iso-cu-mcp').write_bytes(arm64_elf() if mcp is None else mcp)
+        (bundle / 'vmlinux-desktop').write_bytes(self.KERNEL if kernel is None else kernel)
+        return bundle
+
+    def test_the_checked_in_runtime_pins_a_desktop_kernel(self):
+        pins = RELEASE.desktop_kernel_pins(ROOT)
+        self.assertTrue(pins)
+        for pin in pins:
+            self.assertRegex(pin, r'^[0-9a-f]{64}$')
+
+    def test_guest_file_content_checks(self):
+        source = self.source()
+        RELEASE.verify_linux_guest_files(self.bundle(), source)
+        macho = b'\xcf\xfa\xed\xfe' + bytes(60)
+        x86_64 = bytearray(arm64_elf())
+        x86_64[18:20] = b'\x3e\x00'
+        for mcp in (macho, bytes(x86_64), b''):
+            with self.subTest(mcp=mcp[:20]):
+                shutil.rmtree(self.root / 'bundle')
+                with self.assertRaisesRegex(SystemExit, 'iso-cu-mcp is not an arm64 Linux'):
+                    RELEASE.verify_linux_guest_files(self.bundle(mcp=mcp), source)
+        shutil.rmtree(self.root / 'bundle')
+        with self.assertRaisesRegex(SystemExit, 'vmlinux-desktop .* is not a pinned desktop kernel'):
+            RELEASE.verify_linux_guest_files(self.bundle(kernel=b'another kernel\n'), source)
+
+    def verify(self, bundle, source):
+        """`verify` with the signing tools stubbed out; guest-file checks are real."""
+        required = plistlib.loads((ROOT / RELEASE.ENTITLEMENTS).read_bytes())
+
+        def run(argv, cwd, signing=False, capture=False):
+            return 'iso 9.8.7 (abc1234)\n' if str(argv[-1]) == '--version' else ''
+
+        with mock.patch.object(RELEASE, 'run', side_effect=run), \
+                mock.patch.object(RELEASE, 'signed_entitlements', return_value=required):
+            RELEASE.verify(bundle, 'iso 9.8.7 (abc1234)', source)
+
+    def test_bundle_verification_checks_the_guest_files(self):
+        self.verify(self.bundle(), self.source())
+        shutil.rmtree(self.root / 'bundle')
+        with self.assertRaisesRegex(SystemExit, 'iso-cu-mcp is not an arm64 Linux'):
+            self.verify(self.bundle(mcp=b'#!/bin/sh\n'), self.root / 'src')
+        shutil.rmtree(self.root / 'bundle')
+        shutil.rmtree(self.root / 'src')
+        with self.assertRaisesRegex(SystemExit, 'is not a pinned desktop kernel'):
+            self.verify(self.bundle(), self.source(pinned=False))
+
+    def test_the_runtime_build_requires_the_mcp_server_and_the_kernel(self):
+        staging, prefix = self.root / 'src', self.root / 'runtime'
+        commands = []
+
+        def run(argv, cwd, signing=False, capture=False):
+            commands.append([str(a) for a in argv])
+            return str(self.root / 'bin') + '\n' if capture else None
+
+        with mock.patch.object(RELEASE, 'run', side_effect=run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            built = RELEASE.build(staging, 'release', True, prefix)
+        # Without the flag a host that lacks the Static Linux SDK skips iso-cu-mcp.
+        self.assertIn([str(staging / 'scripts/build-iso-sandbox.sh'), '--require-cu-mcp',
+                       str(prefix)], commands)
+        self.assertIn([str(staging / 'scripts/build-desktop-kernel.sh'), str(prefix / 'kernel')],
+                      commands)
+        self.assertEqual(built['iso-cu-mcp'], prefix / 'bin/iso-cu-mcp')
+        self.assertEqual(built['vmlinux-desktop'], prefix / 'kernel/vmlinux-desktop')
+        self.assertEqual(set(built), set(RELEASE.BINARIES + RELEASE.LINUX_GUEST_FILES))
+        flag = (ROOT / 'scripts/build-iso-sandbox.sh').read_text()
+        self.assertIn('--require-cu-mcp)', flag)
+
+    def test_manifest_and_checksums_cover_the_guest_files_and_the_kernel_source(self):
+        out = self.root / 'out'
+        fixture = self.root / 'fixture'
+        fixture.mkdir()
+        contents = {name: f'{name}\n'.encode() for name in RELEASE.BINARIES}
+        contents.update({'iso-cu-mcp': arm64_elf(), 'vmlinux-desktop': self.KERNEL})
+        for name, data in contents.items():
+            (fixture / name).write_bytes(data)
+        verified = []
+
+        def stage_source(staging, stamp):
+            for relative in ('scripts/build-desktop-kernel.sh', 'iso-sandbox/kernel/desktop.config',
+                             'iso-sandbox/kernel/build.sh', 'iso-sandbox/kernel/Dockerfile'):
+                (staging / relative).parent.mkdir(parents=True, exist_ok=True)
+                (staging / relative).write_bytes((ROOT / relative).read_bytes())
+
+        def build(staging, configuration, release, prefix):
+            (prefix / 'bin').mkdir(parents=True)
+            (prefix / 'kernel').mkdir()
+            (prefix / 'bin/iso-cu-mcp.sbom.spdx.json').write_text('{}\n')
+            version = RELEASE.desktop_kernel_source_pins(staging)['KVER']
+            for name in (f'linux-{version}.tar.xz', 'vmlinux-desktop.input.config',
+                         'vmlinux-desktop.config'):
+                (prefix / 'kernel' / name).write_text(name + '\n')
+            return {name: fixture / name for name in contents}
+
+        with mock.patch.object(RELEASE.platform, 'system', return_value='Darwin'), \
+                mock.patch.object(RELEASE.platform, 'machine', return_value='arm64'), \
+                mock.patch.object(RELEASE.platform, 'mac_ver', return_value=('27.0', '', '')), \
+                mock.patch.object(RELEASE, 'source_state', return_value=('a' * 40, False)), \
+                mock.patch.object(RELEASE, 'stage_source', side_effect=stage_source), \
+                mock.patch.object(RELEASE, 'build', side_effect=build), \
+                mock.patch.object(RELEASE, 'copy_legal_files'), \
+                mock.patch.object(RELEASE, 'copy_skill'), \
+                mock.patch.object(RELEASE, 'adhoc_sign'), \
+                mock.patch.object(RELEASE, 'verify',
+                                  side_effect=lambda bundle, *_: verified.append(
+                                      sorted(p.name for p in bundle.iterdir() if p.is_file()))), \
+                mock.patch.object(sys, 'argv', ['build-release.py', '--release', '--out', str(out)]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(RELEASE.main(), 0)
+
+        name = f"iso-{'a' * 12}-{RELEASE.TRIPLE}"
+        archive = out / f'{name}.tar.gz'
+        source_asset = out / f"iso-{'a' * 12}-vmlinux-desktop-source.tar.gz"
+        # The bundle is verified with every member in place, before BUILD.json.
+        self.assertEqual(verified, [sorted(contents)])
+        with tarfile.open(archive) as tar:
+            manifest = json.load(tar.extractfile(f'{name}/BUILD.json'))
+            for member, data in contents.items():
+                self.assertEqual(tar.extractfile(f'{name}/{member}').read(), data)
+            pins = json.load(tar.extractfile(f'{name}/third-party/vmlinux-desktop/SOURCE.json'))
+        digest = lambda data: hashlib.sha256(data).hexdigest()
+        self.assertEqual(manifest['linux_guest_files'],
+                         {member: digest(contents[member]) for member in RELEASE.LINUX_GUEST_FILES})
+        self.assertEqual(manifest['binaries'],
+                         {member: digest(contents[member]) for member in RELEASE.BINARIES})
+        self.assertEqual(pins['source_asset'], source_asset.name)
+        # Both published files are checksummed, so both are signed and verified.
+        self.assertEqual((out / 'SHA256SUMS').read_text(),
+                         f'{digest(archive.read_bytes())}  {archive.name}\n'
+                         f'{digest(source_asset.read_bytes())}  {source_asset.name}\n')
+        with tarfile.open(source_asset) as tar:
+            names = tar.getnames()
+        root = source_asset.name.removesuffix('.tar.gz')
+        version = RELEASE.desktop_kernel_source_pins(ROOT)['KVER']
+        for member in (f'linux-{version}.tar.xz', 'vmlinux-desktop.config',
+                       'vmlinux-desktop.input.config', 'scripts/build-desktop-kernel.sh'):
+            self.assertIn(f'{root}/{member}', names)
 
 
 if __name__ == '__main__':

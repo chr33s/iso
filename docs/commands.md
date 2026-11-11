@@ -1119,10 +1119,18 @@ the release's `SHA256SUMS` (`SHA256SUMS.sig`), verifies the platform tarball's
 SHA-256 against it and, when `gh` is installed, its repository build-provenance
 attestation.
 The updater installs the bundled `iso-sandbox`, `iso-proxy`, `iso-egress` and
-`iso-macos-helper` before replacing the host, and the Linux `desktop` images'
-`iso-cu-mcp` and `vmlinux-desktop` when the release carries them. Each file replacement is atomic; the set of files is not a single
+`iso-macos-helper` before replacing the host. It installs the Linux `desktop`
+images' `iso-cu-mcp` and `vmlinux-desktop` when the release carries them and
+removes the installed copies when it does not, so neither stays beside a
+runtime from another release. Each file replacement is atomic; the set of files is not a single
 transaction. If a later replacement fails, rerun the installer for the same
 release to restore a matching set. Missing companions are rejected before replacement.
+
+The updater that runs is the installed one. v0.9.0 and earlier do not know
+the two `desktop` files, so an update from one of them installs neither and
+`iso setup --profile desktop` then fails asking for a reinstall. Run
+`iso update --force` once after such an update (or rerun `install.sh`): the
+new updater installs them.
 
 No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `iso update` uses it, which helps avoid GitHub API rate limits.
 

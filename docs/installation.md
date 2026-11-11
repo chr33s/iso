@@ -83,7 +83,10 @@ swift build --force-resolved-versions   # .build/debug/iso
 `./scripts/build-iso-sandbox.sh`; see
 [Apple backend setup](backends.md#macos--apple-sandbox) for prerequisites.
 A source build updates by pulling and rebuilding; an installed release
-updates with [`iso update`](commands.md#update) from `chr33s/iso`.
+updates with [`iso update`](commands.md#update) from `chr33s/iso`. After
+updating from v0.9.0 or earlier, run `iso update --force` once: those
+updaters do not install `iso-cu-mcp` and `vmlinux-desktop`, which the
+`desktop` profile needs.
 
 
 Continue with [getting started](getting-started.md#first-run).

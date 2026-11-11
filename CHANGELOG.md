@@ -11,7 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 ### Added
 
 - **Linux desktop images:** a built-in `desktop` profile (Xorg, openbox
-  and fonts from Ubuntu, Firefox from Mozilla's pinned apt repository) whose
+  and fonts from Ubuntu, Firefox alone from Mozilla's pinned apt repository) whose
   instances get a virtio-gpu display and a USB keyboard and pointer, and
   boot a second, separately pinned kernel built by
   `scripts/build-desktop-kernel.sh`. Releases now carry that kernel
@@ -50,12 +50,15 @@ SPDX-License-Identifier: Apache-2.0
 - **Computer use, live view:** `iso-sandbox macos cu stream <name>` starts an
   opt-in browser view of a macOS guest and prints a
   `http://127.0.0.1:<port>/#<token>` URL; `--stop` ends it, as do 60 s with
-  no viewer and the VM stopping. The owner encodes the display to H.264 with
+  no viewer and the VM beginning to stop, however that was asked. The owner encodes the display to H.264 with
   VideoToolbox only while a viewer is connected, and the embedded page
   decodes it with WebCodecs. **Take control** takes the host hold (ending
   the guest's session), each input extends it to 60 s, and held keys are
-  released on release or disconnect. This adds a host loopback listener,
-  gated by a 256-bit token and exact `Host` and `Origin` checks; `inspect`
+  released on release or disconnect; a paste (at most 2000 characters) ends
+  with its viewer's control. This adds a host loopback listener,
+  gated by a 256-bit token and exact `Host` and `Origin` checks, whose
+  messages are flat, rate limited (pings included) and refused unparsed
+  when nested, and whose per-viewer queue is bounded; `inspect`
   reports `liveViewListening` and the audit records `boundary.live_view`
   counts. The stream is Constrained Baseline with a low-delay SPS, so
   browser hardware decoders show each frame as it arrives
@@ -67,6 +70,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Changed
 
+- **Update:** `install.sh` and `iso update` remove an installed
+  `iso-cu-mcp` or `vmlinux-desktop` that the release being installed does
+  not carry. After updating from v0.9.0 or earlier, run `iso update --force`
+  once so the new updater installs the `desktop` guest files.
+- **Guest computer use:** a request line nested deeper than a request can
+  be is refused before it is parsed.
 - **Apple runtime:** iso-sandbox links `apple/containerization` 0.54.0 (was
   0.45.0) and pins `vminit:0.54.0` by digest; the host qualifies only
   containerization 0.54.0. The runtime keys its init filesystem by

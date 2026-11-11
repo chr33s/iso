@@ -13,6 +13,15 @@ package enum LiveView {
   package static let maxViewers = 2
   /// Largest WebSocket message a viewer may send.
   package static let maxMessage = 4096
+  /// Deepest a viewer message nests: every one is a flat object. A deeper
+  /// message is refused before any parser reads it.
+  package static let maxNesting = 1
+  /// Largest ping a viewer may send (RFC 6455 §5.5: control frames carry at
+  /// most 125 bytes).
+  package static let maxControlFrame = 125
+  /// Characters of pasted text in one message. Every character may take two
+  /// bytes of JSON, so the largest paste still fits `maxMessage`.
+  package static let maxPaste = 2000
   /// Largest HTTP request head the owner reads.
   package static let maxRequestHead = 8192
   /// A viewer must authenticate this soon after the upgrade.
@@ -29,7 +38,10 @@ package enum LiveView {
   /// Bytes queued for one viewer before its frames are dropped to the next
   /// keyframe.
   package static let queueLimit = 8 * 1024 * 1024
-  /// Viewer messages a second (input and control), as for guest actions.
+  /// Bytes per write of a viewer's queue: a video frame is tens to hundreds
+  /// of kilobytes, far more than the helper lines `BoundedWrite` defaults to.
+  package static let writeChunk = 64 * 1024
+  /// Viewer messages a second (input, control and pings), as for guest actions.
   /// Releases (key up, button up, release of control) are counted apart, at
   /// the same rate: see ``LiveViewLimits``.
   package static let messageRate = 100
@@ -66,6 +78,10 @@ package struct LiveViewLimits: Sendable {
     }
   }
 
+  /// Whether to answer a ping: charged to the message budget, so pongs are
+  /// bounded like every other reply.
+  package mutating func admitPing(at now: Date) -> Bool { messages.take(1, at: now) }
+
   /// Whether to handle `parsed`; a refused message is dropped unanswered.
   package mutating func admit(
     _ parsed: Result<LiveViewMessage, LiveViewMessage.ParseError>, at now: Date
@@ -74,6 +90,18 @@ package struct LiveViewLimits: Sendable {
       return releases.take(1, at: now)
     }
     return messages.take(1, at: now)
+  }
+}
+
+/// What becomes of one encoded frame offered to one viewer's queue (§4): a
+/// viewer that cannot keep up loses frames up to the next keyframe that
+/// fits, never the process's memory.
+package enum LiveViewQueue {
+  package enum Offer: Equatable, Sendable { case queue, drop }
+
+  package static func offer(_ bytes: Int, keyframe: Bool, queued: Int, dropping: Bool) -> Offer {
+    if dropping && !keyframe { return .drop }
+    return queued + bytes > LiveView.queueLimit ? .drop : .queue
   }
 }
 
@@ -199,6 +227,8 @@ package enum WSFrame: Equatable, Sendable {
     case tooLarge
     /// Fragmented messages are not used by the viewer page.
     case fragmented
+    /// A close, ping or pong over 125 bytes (RFC 6455 §5.5).
+    case controlTooLarge
     case reserved
     case badOpcode
     case notUTF8
@@ -224,6 +254,7 @@ package enum WSFrame: Equatable, Sendable {
       throw .tooLarge
     }
     guard length <= LiveView.maxMessage else { throw .tooLarge }
+    guard b0 & 0x08 == 0 || length <= LiveView.maxControlFrame else { throw .controlTooLarge }
     guard buffer.count >= offset + 4 + length else { return nil }
     let mask = Array(buffer[offset..<offset + 4])
     var payload = Array(buffer[(offset + 4)..<(offset + 4 + length)])
@@ -286,6 +317,8 @@ package enum LiveViewMessage: Equatable, Sendable {
 
   package enum ParseError: Error, Equatable {
     case tooLong, notJSON, malformed
+    /// Nested past ``LiveView/maxNesting``; never parsed.
+    case tooDeep
     case unknownType
     case unknownField
     /// A `KeyboardEvent.code` outside the table: dropped, not an error.
@@ -306,6 +339,9 @@ package enum LiveViewMessage: Equatable, Sendable {
     -> Result<LiveViewMessage, ParseError>
   {
     guard text.utf8.count <= LiveView.maxMessage else { return .failure(.tooLong) }
+    guard !JSONNesting.exceeds(text.utf8, limit: LiveView.maxNesting) else {
+      return .failure(.tooDeep)
+    }
     guard let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
     else { return .failure(.notJSON) }
     guard let type = o["type"] as? String, let allowed = fields[type] else {
@@ -357,6 +393,7 @@ package enum LiveViewMessage: Equatable, Sendable {
       return .success(.input(.key(keyCode: keyCode, down: kind == "down")))
     case "text":
       guard let s = o["text"] as? String else { return .failure(.malformed) }
+      guard s.count <= LiveView.maxPaste else { return .failure(.outOfRange) }
       var r = CUActionRequest(kind: "type")
       r.text = s
       guard (try? r.validated(width: width, height: height)) != nil else {
@@ -472,19 +509,24 @@ package struct LiveViewHeld: Equatable, Sendable {
 /// host hold; each accepted input extends it; a viewer whose 60 s ran out
 /// is view-only again and its held input is released.
 package struct LiveViewControl: Equatable, Sendable {
-  package private(set) var controller: Int?
-  private var until: Date?
+  /// The controlling viewer and when its control lapses: both or neither.
+  private var holder: (viewer: Int, until: Date)?
 
   package init() {}
+
+  package var controller: Int? { holder?.viewer }
+
+  package static func == (a: LiveViewControl, b: LiveViewControl) -> Bool {
+    a.holder?.viewer == b.holder?.viewer && a.holder?.until == b.holder?.until
+  }
 
   package enum Take: Equatable, Sendable { case taken, otherViewerControls }
 
   package mutating func take(_ viewer: Int, at now: Date) -> Take {
-    if let controller, controller != viewer, let until, until > now {
+    if let holder, holder.viewer != viewer, holder.until > now {
       return .otherViewerControls
     }
-    controller = viewer
-    until = now.addingTimeInterval(CUControl.implicitHold)
+    holder = (viewer, now.addingTimeInterval(CUControl.implicitHold))
     return .taken
   }
 
@@ -498,22 +540,20 @@ package struct LiveViewControl: Equatable, Sendable {
   }
 
   package mutating func admit(_ viewer: Int, at now: Date) -> Admit {
-    guard controller == viewer, let until else { return .viewOnly }
-    guard until > now else {
-      controller = nil
-      self.until = nil
+    guard let holder, holder.viewer == viewer else { return .viewOnly }
+    guard holder.until > now else {
+      self.holder = nil
       return .expired
     }
-    self.until = now.addingTimeInterval(CUControl.implicitHold)
+    self.holder = (viewer, now.addingTimeInterval(CUControl.implicitHold))
     return .accepted
   }
 
   /// The viewer whose control ran out by `now`, now view-only; nil if none.
   package mutating func lapse(at now: Date) -> Int? {
-    guard let controller, let until, until <= now else { return nil }
-    self.controller = nil
-    self.until = nil
-    return controller
+    guard let holder, holder.until <= now else { return nil }
+    self.holder = nil
+    return holder.viewer
   }
 
   /// A viewer left: what to send to let go of its held input. Nothing
@@ -525,9 +565,8 @@ package struct LiveViewControl: Equatable, Sendable {
 
   /// True when `viewer` controlled (so the caller releases its input).
   package mutating func release(_ viewer: Int) -> Bool {
-    guard controller == viewer else { return false }
-    controller = nil
-    until = nil
+    guard holder?.viewer == viewer else { return false }
+    holder = nil
     return true
   }
 }

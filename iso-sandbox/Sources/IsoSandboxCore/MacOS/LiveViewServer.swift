@@ -12,7 +12,8 @@ package protocol LiveViewHost: AnyObject, Sendable {
   func message(_ viewer: Int, _ message: LiveViewMessage) -> String?
   /// A viewer left, however it went.
   func left(_ viewer: Int)
-  /// A viewer's queue overflowed: the next frame should be a keyframe.
+  /// A viewer that dropped frames has sent what it had queued: the next
+  /// frame should be a keyframe, which now fits.
   func needKeyframe()
 }
 
@@ -26,6 +27,9 @@ package protocol LiveViewHost: AnyObject, Sendable {
 /// bounded, closed and rate limited. The token is never logged.
 package final class LiveViewServer: @unchecked Sendable {
   package let port: UInt16
+  /// The address the listener is bound to, read back from the socket.
+  package let address: String
+  private let stalledViewer: TimeInterval
   private let listener: Int32
   private let token: LiveViewToken
   private let log: @Sendable (String) -> Void
@@ -51,6 +55,10 @@ package final class LiveViewServer: @unchecked Sendable {
     var queued = 0
     /// Frames are dropped until the next keyframe after an overflow.
     var dropping = false
+    /// The keyframe that ends `dropping` has been asked for: once per
+    /// overflow, when the queue has drained, so a slow viewer cannot make
+    /// every frame a keyframe for everyone.
+    var keyframeRequested = false
     var closed = false
 
     init(id: Int, fd: Int32) {
@@ -60,8 +68,11 @@ package final class LiveViewServer: @unchecked Sendable {
   }
 
   package init(
-    token: LiveViewToken, host: any LiveViewHost, log: @escaping @Sendable (String) -> Void
+    token: LiveViewToken, host: any LiveViewHost,
+    stalledViewer: TimeInterval = LiveView.stalledViewer,
+    log: @escaping @Sendable (String) -> Void
   ) throws {
+    self.stalledViewer = stalledViewer
     self.token = token
     self.host = host
     self.log = log
@@ -91,9 +102,11 @@ package final class LiveViewServer: @unchecked Sendable {
     }
     listener = fd
     port = UInt16(bigEndian: got.sin_port)
+    address = String(cString: inet_ntoa(got.sin_addr))
   }
 
-  package var url: String { "http://127.0.0.1:\(port)/#\(token.value)" }
+  /// The viewer's URL, at the address the socket is really bound to.
+  package var url: String { "http://\(address):\(port)/#\(token.value)" }
 
   package var viewerCount: Int { lock.withLock { viewers.count } }
 
@@ -120,6 +133,10 @@ package final class LiveViewServer: @unchecked Sendable {
         }
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+        // Non-blocking, so a write larger than the helper-line chunk cannot
+        // block past its deadline; every read and write polls first. The
+        // descriptor is this connection's alone (no `dup`).
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         Thread.detachNewThread { [self] in
           defer { slots.leave() }
           serve(fd)
@@ -143,25 +160,30 @@ package final class LiveViewServer: @unchecked Sendable {
   package func broadcast(_ annexB: [UInt8], keyframe: Bool, micros: UInt64) {
     let payload: [UInt8] = [1, keyframe ? 1 : 0] + LiveView.bigEndian(micros) + annexB
     let frame = WSFrame.encode(opcode: 0x2, payload)
-    var overflowed = false
+    var drained = false
     for v in lock.withLock({ Array(viewers.values) }) {
       v.ready.lock()
-      if v.dropping && !keyframe {
-        v.ready.unlock()
-        continue
-      }
-      if v.queued + frame.count > LiveView.queueLimit {
-        v.dropping = true
-        overflowed = true
-      } else {
+      switch LiveViewQueue.offer(
+        frame.count, keyframe: keyframe, queued: v.queued, dropping: v.dropping)
+      {
+      case .queue:
         v.dropping = false
+        v.keyframeRequested = false
         v.queue.append(frame)
         v.queued += frame.count
         v.ready.signal()
+      case .drop:
+        v.dropping = true
+        // Nothing queued means the writer will not run to ask for the
+        // keyframe, so ask here; otherwise the writer asks once it drains.
+        if v.queue.isEmpty && !v.keyframeRequested {
+          v.keyframeRequested = true
+          drained = true
+        }
       }
       v.ready.unlock()
     }
-    if overflowed { host?.needKeyframe() }
+    if drained { host?.needKeyframe() }
   }
 
   /// Queues state text for one viewer, or for all when `viewer` is nil.
@@ -173,16 +195,26 @@ package final class LiveViewServer: @unchecked Sendable {
     for v in targets { enqueue(v, frame) }
   }
 
+  /// Queues a pong or state text. These are never dropped, so a viewer
+  /// whose queue they would overfill is disconnected: it is not reading,
+  /// and its queue is memory of the process that runs the VM.
   private func enqueue(_ v: Viewer, _ frame: [UInt8]) {
     v.ready.lock()
-    v.queue.append(frame)
-    v.queued += frame.count
-    v.ready.signal()
+    let fits = v.queued + frame.count <= LiveView.queueLimit
+    if fits {
+      v.queue.append(frame)
+      v.queued += frame.count
+      v.ready.signal()
+    }
     v.ready.unlock()
+    if !fits {
+      reject("viewer queue full")
+      shutdown(v.fd, SHUT_RDWR)
+    }
   }
 
   /// Writes a viewer's queue; a viewer that accepts nothing for
-  /// `LiveView.stalledViewer` is disconnected.
+  /// `stalledViewer` is disconnected.
   private func write(_ v: Viewer) {
     while true {
       v.ready.lock()
@@ -193,13 +225,17 @@ package final class LiveViewServer: @unchecked Sendable {
       }
       let next = v.queue.removeFirst()
       v.queued -= next.count
+      let caughtUp = v.dropping && v.queue.isEmpty && !v.keyframeRequested
+      if caughtUp { v.keyframeRequested = true }
       v.ready.unlock()
       let sent = BoundedWrite.all(
-        v.fd, next, deadline: ContinuousClock.now + .seconds(LiveView.stalledViewer))
+        v.fd, next, deadline: ContinuousClock.now + .seconds(stalledViewer),
+        chunk: LiveView.writeChunk)
       if !sent {
         shutdown(v.fd, SHUT_RDWR)
         return
       }
+      if caughtUp { host?.needKeyframe() }
     }
   }
 
@@ -257,6 +293,7 @@ package final class LiveViewServer: @unchecked Sendable {
       if polled == 0 { continue }
       var chunk = [UInt8](repeating: 0, count: 4096)
       let n = Darwin.read(fd, &chunk, chunk.count)
+      if n < 0, errno == EAGAIN || errno == EINTR { continue }
       guard n > 0 else { return false }
       buffer += chunk[..<n]
       return true
@@ -307,7 +344,7 @@ package final class LiveViewServer: @unchecked Sendable {
       return v
     }
     guard let viewer else {
-      reject("viewer limit reached")
+      reject(LiveViewServer.viewerLimitRejection)
       _ = BoundedWrite.all(
         fd,
         WSFrame.encode(
@@ -337,7 +374,10 @@ package final class LiveViewServer: @unchecked Sendable {
     while let frame = next(until: .distantFuture) {
       switch frame {
       case .close: return
-      case .ping(let p): enqueue(viewer, WSFrame.encode(opcode: 0xA, p))
+      case .ping(let p):
+        // Charged like any message: a flood of pings gets no flood of pongs.
+        guard limits.admitPing(at: Date()) else { continue }
+        enqueue(viewer, WSFrame.encode(opcode: 0xA, p))
       case .pong: continue
       case .binary:
         reject("binary message")
@@ -357,6 +397,8 @@ package final class LiveViewServer: @unchecked Sendable {
       }
     }
   }
+
+  static let viewerLimitRejection = "viewer limit reached"
 
   /// Logs a rejection's kind (never client bytes), at most 20 a minute.
   private func reject(_ why: String) {

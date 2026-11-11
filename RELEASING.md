@@ -404,6 +404,10 @@ Apple Silicon machine.
    credentials, GitHub tokens, proxy variables, and update-origin overrides
    stripped. The first-release path forces a same-version replacement; later
    releases can use `--from-version vA.B.C` for cross-version upgrade acceptance.
+   A starting release whose updater predates `iso-cu-mcp` and
+   `vmlinux-desktop` (v0.9.0 and earlier) installs neither, so the script
+   then runs the documented second `iso update --force` and reports it as
+   `guest_files`.
    The install and update steps each download a full release and may take up
    to `--download-timeout` seconds (default 1800); other steps keep 300.
    It creates no VM and performs no provider calls. Run it on a clean supported

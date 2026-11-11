@@ -702,14 +702,24 @@ package enum SelfReplace {
     try atomicReplace(runtime, over: join(directory, runtimeName))
   }
 
-  /// Replace the Linux `desktop` images' guest files from the same archive.
-  /// Releases before them have none; `build-release.py` requires both.
+  /// Make the Linux `desktop` images' guest files match the archive. A
+  /// release that carries one as a regular file installs it; one that does
+  /// not (a release before them; `build-release.py` requires both) removes
+  /// the installed copy, so none from another release stays beside the new
+  /// runtime.
   package static func replaceSiblingLinuxGuestFiles(
     _ extractDirectory: String, currentExecutable: String?
   ) throws {
     let directory = try installDirectory(currentExecutable)
-    for name in linuxGuestNames where isRegularArtifact(extractDirectory + "/" + name) {
-      try atomicReplace(extractDirectory + "/" + name, over: join(directory, name))
+    for name in linuxGuestNames {
+      let installed = join(directory, name)
+      if isRegularArtifact(extractDirectory + "/" + name) {
+        try atomicReplace(extractDirectory + "/" + name, over: installed)
+      } else if unlink(installed) != 0, errno != ENOENT {
+        throw ContextError(
+          "Failed to remove \(installed), which this release does not carry",
+          cause: HostError(rustIOError(errno)))
+      }
     }
   }
 

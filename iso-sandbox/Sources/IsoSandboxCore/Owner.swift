@@ -152,7 +152,9 @@ package enum Owner {
     let liveFile = paths.live
     let controlSocket = paths.control
     let streamSocket = paths.streams
-    let lifecycle = Lifecycle(container: container, streams: broker) {
+    let attached = desktop
+    let endDisplay: @Sendable () async -> Void = { await attached?.stop() }
+    let lifecycle = Lifecycle(container: container, streams: broker, onHalt: endDisplay) {
       log("guest did not stop: exiting the owner to end the VM")
       try? FileManager.default.removeItem(at: liveFile)
       unlink(controlSocket.path)
@@ -178,7 +180,6 @@ package enum Owner {
       record: record, config: config, rootfs: rootfs, devices: devices)
     if let desktop { reported.vsockPorts = await desktop.listenerPorts }
     let effective = reported
-    let attached = desktop
     let sessionDeadline = record.expiresAt
     try ControlSocket.serve(at: paths.control) { request in
       switch request.op {
@@ -205,7 +206,7 @@ package enum Owner {
           return ControlResponse(ok: false, error: "\(error)")
         }
       case .stop:
-        await attached?.stop()
+        // The halt ends the live view, as on every other way to it.
         await lifecycle.requestHalt()
         await lifecycle.waitStopped()
         return ControlResponse(ok: true)
@@ -245,6 +246,8 @@ package enum Owner {
     // The machine ends when its init exits: a halt request or a guest poweroff.
     let status = try? await container.wait()
     log("init exited status=\(status?.exitCode ?? -1)")
+    // A guest poweroff is no halt request: end the live view here too.
+    await attached?.stop()
     do {
       try await container.stop()
     } catch {
@@ -469,6 +472,9 @@ actor Lifecycle {
   private let container: any HaltableContainer
   /// Closed when a halt begins: no stream outlives a stop request.
   private let streams: StreamBroker?
+  /// Run when a halt begins, for what else must not outlive it (the
+  /// display's live view). Not awaited: it must not delay the halt.
+  private let onHalt: @Sendable () async -> Void
   private var halting = false
   private var stopped = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -479,12 +485,14 @@ actor Lifecycle {
   init(
     container: any HaltableContainer,
     streams: StreamBroker? = nil,
+    onHalt: @escaping @Sendable () async -> Void = {},
     haltGrace: Duration = .seconds(Owner.haltGraceSeconds),
     killGrace: Duration = .seconds(Owner.killGraceSeconds),
     forceExit: @escaping @Sendable () -> Void
   ) {
     self.container = container
     self.streams = streams
+    self.onHalt = onHalt
     self.haltGrace = haltGrace
     self.killGrace = killGrace
     self.forceExit = forceExit
@@ -502,6 +510,8 @@ actor Lifecycle {
     halting = true
     Owner.log("halt requested")
     streams?.shutdownAll()
+    let onHalt = self.onHalt
+    Task { await onHalt() }
     let container = self.container
     let forceExit = self.forceExit
     Task {

@@ -88,7 +88,8 @@ iso up --image desktop
 
 - The image installs Xorg (on the VM's virtio-gpu display, 1920×1200, US
   keyboard layout), openbox and fonts from Ubuntu, Firefox from Mozilla's
-  apt repository (its key checked against a pinned fingerprint), and
+  apt repository (its key checked against a pinned fingerprint; apt takes
+  only `firefox` from it and never installs its other packages), and
   `iso-cu-mcp`, the guest's computer-use MCP server, from the iso release.
 - An instance of it is created with a virtio-gpu display and a USB keyboard
   and pointer, and boots the desktop kernel the release installs beside

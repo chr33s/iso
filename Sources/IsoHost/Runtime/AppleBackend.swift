@@ -93,6 +93,21 @@ package final class AppleBackend: Sendable {
     package let ready: IsolationGate.Ready
     package let target: SSHTarget
     let handoffIdentity: WorkloadHandoff.Identity?
+    /// The owner's computer-use counts when it was observed running, for
+    /// the stop-time audit.
+    package let computerUse: ComputerUseCounts
+
+    init(
+      instance: Instance, sidecar: MachineSidecar, ready: IsolationGate.Ready, target: SSHTarget,
+      handoffIdentity: WorkloadHandoff.Identity?, computerUse: ComputerUseCounts = .none
+    ) {
+      self.instance = instance
+      self.sidecar = sidecar
+      self.ready = ready
+      self.target = target
+      self.handoffIdentity = handoffIdentity
+      self.computerUse = computerUse
+    }
   }
 
   /// Owner, no pending journal, sidecar, and ownership check.
@@ -217,13 +232,13 @@ package final class AppleBackend: Sendable {
         scope: .guest(target), proof: proof)
       let expected = Running(
         instance: instance, sidecar: sidecar, ready: ready, target: target,
-        handoffIdentity: handoffIdentity)
+        handoffIdentity: handoffIdentity, computerUse: observed.computerUse)
       let checkedTarget = WorkloadHandoff.bind(expected) {
         try self.asRunning(instance, proof: proof)
       }
       return Running(
         instance: instance, sidecar: sidecar, ready: ready, target: checkedTarget,
-        handoffIdentity: handoffIdentity)
+        handoffIdentity: handoffIdentity, computerUse: observed.computerUse)
     } catch let failure as ReadinessFailure {
       throw InstanceUnhealthy(instance.name, cause: failure.cause)
     } catch {

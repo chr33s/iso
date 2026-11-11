@@ -374,6 +374,31 @@ else
     fail "complete release installs successfully" "$(tail -10 "$TEST_ROOT/complete.log")"
 fi
 
+echo "==> Test 7a: a release without the Linux guest files removes installed copies"
+mkdir "$FIXTURE/guest-backup"
+mv "$FIXTURE/$ARCHIVE_DIR/iso-cu-mcp" "$FIXTURE/guest-backup/iso-cu-mcp"
+# A member that is not a regular file counts as absent.
+mv "$FIXTURE/$ARCHIVE_DIR/vmlinux-desktop" "$FIXTURE/guest-backup/vmlinux-desktop"
+ln -s iso "$FIXTURE/$ARCHIVE_DIR/vmlinux-desktop"
+repack_fixture
+seed_install
+for artifact in iso-cu-mcp vmlinux-desktop; do
+    printf '%s\n' "stale-$artifact" >"$INSTALL_DIR/$artifact"
+done
+if run_installer >"$TEST_ROOT/no-guest-files.log" 2>&1 \
+    && [[ "$("$INSTALL_DIR/iso")" == installed-iso \
+       && ! -e "$INSTALL_DIR/iso-cu-mcp" && ! -L "$INSTALL_DIR/iso-cu-mcp" \
+       && ! -e "$INSTALL_DIR/vmlinux-desktop" && ! -L "$INSTALL_DIR/vmlinux-desktop" ]]; then
+    pass "installed guest files the release does not carry are removed"
+else
+    fail "installed guest files the release does not carry are removed" \
+        "$(tail -10 "$TEST_ROOT/no-guest-files.log"; ls -l "$INSTALL_DIR")"
+fi
+rm "$FIXTURE/$ARCHIVE_DIR/vmlinux-desktop"
+mv "$FIXTURE/guest-backup/iso-cu-mcp" "$FIXTURE/guest-backup/vmlinux-desktop" "$FIXTURE/$ARCHIVE_DIR/"
+rmdir "$FIXTURE/guest-backup"
+repack_fixture
+
 echo "==> Test 8: releases before iso-macos-helper point to their own installer"
 seed_install
 : >"$GH_LOG"

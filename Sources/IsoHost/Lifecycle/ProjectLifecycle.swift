@@ -494,7 +494,7 @@ package final class ProjectLifecycle {
     let action: LifecycleAction
     if let running {
       forwards.teardown(running.instance, running.target)
-      let computerUse = context.backend.computerUseAudit(instance)
+      let computerUse = context.backend.computerUseAudit(running)
       do { try context.backend.stop(running) } catch {
         agents.proxies.stopAll(instance)
         throw error

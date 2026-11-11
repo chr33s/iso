@@ -7,15 +7,28 @@ import IsoMacProtocol
 /// first with its own guest-identity checks.
 @MainActor
 package enum CUService {
+  /// Whether the owner starts a new live view now.
+  package enum StreamAdmission: Equatable, Sendable {
+    case accepting
+    /// Not while the VM is in `state` (starting, stopping, stopped).
+    case refused(state: String)
+
+    /// A new stream starts only in a running VM that is not being halted.
+    package static func deciding(vmState: String, halting: Bool) -> StreamAdmission {
+      if halting { return .refused(state: "stopping") }
+      return vmState == "running" ? .accepting : .refused(state: vmState)
+    }
+  }
+
   /// Answers one computer-use request. `admit` runs before a session opens;
-  /// a new live view starts only while `vmState` is `running`.
+  /// a new live view starts only when `streams` accepts one.
   package static func respond(
-    _ req: MacControlRequest, screen: VMScreen, liveView: LiveViewSession?, vmState: String,
-    admit: () async throws -> Void
+    _ req: MacControlRequest, screen: VMScreen, liveView: LiveViewSession?,
+    streams: StreamAdmission, admit: () async throws -> Void
   ) async -> MacControlResponse {
     do {
       return try await answer(
-        req, screen: screen, liveView: liveView, vmState: vmState, admit: admit)
+        req, screen: screen, liveView: liveView, streams: streams, admit: admit)
     } catch {
       return failure(error, op: req.op)
     }
@@ -32,8 +45,8 @@ package enum CUService {
   }
 
   private static func answer(
-    _ req: MacControlRequest, screen: VMScreen, liveView: LiveViewSession?, vmState: String,
-    admit: () async throws -> Void
+    _ req: MacControlRequest, screen: VMScreen, liveView: LiveViewSession?,
+    streams: StreamAdmission, admit: () async throws -> Void
   ) async throws -> MacControlResponse {
     var r = MacControlResponse(ok: true)
     switch req.op {
@@ -60,7 +73,7 @@ package enum CUService {
         session: req.session, request: action, basedOnFrame: req.basedOnFrame)
     case .cuStream:
       guard let liveView else { throw SandboxError("no live view in this owner") }
-      guard vmState == "running" else { throw SandboxError("sandbox is \(vmState)") }
+      if case .refused(let state) = streams { throw SandboxError("sandbox is \(state)") }
       r.streamURL = try liveView.start()
     case .cuStreamStop:
       liveView?.stop()
