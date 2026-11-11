@@ -295,6 +295,13 @@ import Testing
 
   static func check(receipt value: JSONValue, name: String, id: Identity) throws {
     let receipt = try OperationReceipt(wire: value)
+    // A receipt is a closed object: a member the client does not know is refused.
+    guard case .object(var members) = value else {
+      Issue.record("\(name): the receipt is not an object")
+      return
+    }
+    members["unreviewed"] = true
+    #expect(throws: CIError.self, "\(name)") { try OperationReceipt(wire: .object(members)) }
     #expect(receipt.operationID == id.operation && receipt.method == "run.create", "\(name)")
     switch name {
     case "operation.get/accepted":

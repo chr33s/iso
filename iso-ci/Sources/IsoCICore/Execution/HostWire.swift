@@ -733,7 +733,8 @@ package struct OperationReceipt: Sendable, Equatable {
     completedAt = try r.optionalUnsigned("completed_at")
     r.ignore(
       "accepted_at", "generation", "boot_id", "expires_at", "cancel_requested", "run_id",
-      "substep")
+      "substep", "historical")
+    try r.finish()
   }
 
   package init(
