@@ -33,6 +33,12 @@ A distribution holds five executables. The first four are host processes;
 | `iso-egress` | [`iso-egress/`](../iso-egress) | Confined CONNECT companion for filtered egress; no provider credentials |
 | `iso-macos-helper` | [`iso-sandbox/`](../iso-sandbox) | Guest agent that `iso-sandbox macos template build` installs in macOS templates; never runs on the host |
 
+Two more executables sit outside that set. `iso-cu-mcp`
+([`iso-sandbox/`](../iso-sandbox)) is an arm64 Linux binary the release ships
+as a guest file for computer use; it never runs on the host. `iso-ci`
+([`iso-ci/`](../iso-ci), [`ci.md`](ci.md)) is the separately installed GitHub
+Actions companion, which base iso never requires.
+
 The host drives the runtime over its JSON CLI and starts companions through
 their startup protocols; it never links those packages. The one shared code
 is the [`iso-policy/`](../iso-policy) package, never a process of its own. Its
@@ -80,6 +86,11 @@ iso/
 │                            #   (LinuxDisplay, LinuxDesktop, FramebufferSurface; kernel/ builds the desktop kernel)
 ├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
 ├── iso-egress/             # Swift filtered-egress companion: destination policy, leases, CONNECT
+├── iso-policy/             # shared libraries: IsoPolicy (evaluator), IsoGitIndex (inert index reader)
+├── iso-ci/                 # separately installed GitHub Actions companion; speaks iso.host/v1
+├── skills/                  # the distributable `iso` agent skill
+├── experiments/             # throwaway spikes; not built, tested or shipped
+├── www/                     # project website
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)
 └── docs/                    # this tree
 ```
@@ -251,7 +262,8 @@ and a guest command that exits non-zero passes its own status through (see
 ## Data flow: host → guest
 
 The lifecycle is **setup → up/start → shell → stop → destroy**. A first boot
-(`UpCommands.swift`, `startInstance` / `provisionFirstBoot`) runs roughly:
+(`IsoHost/Lifecycle/ProjectLifecycle.swift`, `startInstance` /
+`provisionFirstBoot`) runs roughly:
 
 1. **Resolve** the repository (`--git-repo`, workspace origin, first mount) and
    optionally prompt for a GitHub PAT.
