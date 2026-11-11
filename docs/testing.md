@@ -494,7 +494,11 @@ still held. Serial runs have not shown it. The cause is not yet identified
 `posix_spawn` did not remove it).
 
 Parser fixtures in `tests/fixtures/iso-sandbox/` are real `iso-sandbox`
-output; the directory's README says how they were captured.
+output; the directory's README says how they were captured. Both sides test
+against them: the host decodes them through `RuntimeProtocol`, and the
+runtime's `HostFixtureConformanceTests` checks that `version.json` names its
+`protocolVersion` and that each `inspect-*.json` round-trips through its own
+record, live-state and effective-configuration types.
 
 The brokered transport has unit coverage on both sides of the seam:
 `iso-sandbox/Tests/IsoSandboxTests/BrokeredTests.swift` (stream admission by
@@ -671,7 +675,28 @@ under ledger exhaustion, reconciliation without a second allocation or boot,
 cancellation before the first effect, volatile grants (epoch, bearer verifier,
 issued-ID cap, lease), relay revocation, hostile archives, and disposable-run
 retention. They do **not** qualify a real VM, launchd, SSH pinning across hosts,
-or timing; that is the two-Mac gate:
+or timing; that is the two-Mac gate (below).
+
+`iso.host/v1` is implemented once in the host and once in `iso-ci`, so both
+packages test against the same golden fixtures in
+`tests/fixtures/host-wire/v1/` (one `<name><TAB><canonical frame>` per line).
+`responses.jsonl` is written by the host's encoders and decoded by iso-ci's
+`HostResponse.decode` and typed results; `requests.jsonl` is written by
+iso-ci's `HostRequest` encoder and decoded by the host, which also checks that
+its own re-encoding and recomputed policy hash match the client's bytes. Each
+side asserts byte equality with the file it writes, so a wire change fails
+until the fixture is regenerated and the other package's suite passes against
+it:
+
+```bash
+swift test --force-resolved-versions --filter HostWireConformanceTests
+swift test --package-path iso-ci --force-resolved-versions --filter HostWireConformanceTests
+# After a reviewed wire change, rewrite the side that changed, then rerun both:
+ISO_UPDATE_FIXTURES=1 swift test --force-resolved-versions --filter HostWireConformanceTests
+ISO_UPDATE_FIXTURES=1 swift test --package-path iso-ci --force-resolved-versions --filter HostWireConformanceTests
+```
+
+The two-Mac gate:
 
 ```bash
 python3 tests/integration-remote-host.py --remote MAC_ALIAS --agent-path /usr/local/bin/iso \

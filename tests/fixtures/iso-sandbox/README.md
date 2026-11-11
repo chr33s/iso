@@ -20,3 +20,14 @@ The sandbox ID is `iso-0a1b2c3d-00112233445566ff`, the owner is
 `/Users/me/.iso/backends/apple-container-v1/runtime`. Tests substitute their
 own values. Update these fixtures with runtime contract changes and bump the
 protocol for incompatible changes.
+
+Both sides test against these files. The host decodes them through
+`RuntimeProtocol` (`tests/swift/IsoHostTests`). The runtime's
+`HostFixtureConformanceTests` (`iso-sandbox/Tests/IsoSandboxTests`) checks that
+`version.json` names its `protocolVersion` and containerization release, that
+each `inspect-*.json` decodes with its record, live-state and
+effective-configuration types and re-encodes to the same JSON value, and that
+the brokered fixture carries its current channel policy and digest. A new
+`inspect-*.json` must be added to that suite's list. `version.json`'s
+`version` is a representative release number, not the runtime's
+`runtimeVersion`, and it omits the `features` array.
