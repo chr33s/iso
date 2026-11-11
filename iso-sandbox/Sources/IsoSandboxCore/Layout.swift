@@ -20,6 +20,20 @@ package let linuxDisplayFeature = "linux-display"
 package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.54.0"
 
+/// What `iso-sandbox version` prints.
+package struct VersionInfo: Encodable {
+  package let name = "iso-sandbox"
+  package let version = runtimeVersion
+  package let `protocol` = protocolVersion
+  package let containerization = containerizationVersion
+  /// Optional capabilities beyond the Linux sandbox protocol.
+  package let features =
+    [macGuestsFeature, brokeredTransportFeature, linuxDisplayFeature]
+    + (MacAccelerators.compiledIn ? [macCoreAIFeature] : [])
+
+  package init() {}
+}
+
 /// On-disk layout of one runtime state root. Everything the runtime owns
 /// lives under `root`; nothing is read from or written to Apple Container's
 /// stores.

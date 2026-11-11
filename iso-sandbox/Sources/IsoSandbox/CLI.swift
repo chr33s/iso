@@ -32,18 +32,7 @@ let gib: UInt64 = 1024 * mib
 struct Version: ParsableCommand {
   static let configuration = CommandConfiguration(abstract: "Print version and protocol as JSON.")
 
-  struct Info: Encodable {
-    let name = "iso-sandbox"
-    let version = runtimeVersion
-    let `protocol` = protocolVersion
-    let containerization = containerizationVersion
-    /// Optional capabilities beyond the Linux sandbox protocol.
-    let features =
-      [macGuestsFeature, brokeredTransportFeature, linuxDisplayFeature]
-      + (MacAccelerators.compiledIn ? [macCoreAIFeature] : [])
-  }
-
-  func run() throws { try printJSON(Info()) }
+  func run() throws { try printJSON(VersionInfo()) }
 }
 
 struct Init: AsyncParsableCommand {

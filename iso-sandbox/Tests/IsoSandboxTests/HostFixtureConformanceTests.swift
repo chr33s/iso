@@ -37,15 +37,17 @@ import Testing
       .filter { $0.hasPrefix("inspect-") && $0.hasSuffix(".json") }.sorted()
   }
 
-  @Test func theVersionFixtureNamesThisRuntimesContract() throws {
-    let version = try Self.json(
+  /// `version.json` is what `iso-sandbox version` prints from a default
+  /// build; the experimental Core AI build adds one feature to it.
+  @Test func theVersionFixtureIsWhatVersionPrints() throws {
+    let fixture = try Self.json(
       try Data(contentsOf: Self.directory.appending(path: "version.json")))
-    #expect(version["name"] as? String == "iso-sandbox")
-    #expect(version["protocol"] as? Int == protocolVersion)
-    #expect(version["containerization"] as? String == containerizationVersion)
-    // `version` is a representative release number the host only displays,
-    // so it is not compared with `runtimeVersion`.
-    #expect(version["version"] is String)
+    let printed = try #require(
+      try Self.json(JSONEncoder.pretty.encode(VersionInfo())).mutableCopy() as? NSMutableDictionary)
+    let features = try #require(printed["features"] as? [String])
+    printed["features"] = features.filter { $0 != macCoreAIFeature }
+    #expect(printed == fixture)
+    #expect(fixture["protocol"] as? Int == protocolVersion)
   }
 
   /// Each fixture decodes with the runtime's record, live-state and

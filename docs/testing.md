@@ -498,8 +498,8 @@ still held. Serial runs have not shown it. The cause is not yet identified
 Parser fixtures in `tests/fixtures/iso-sandbox/` are real `iso-sandbox`
 output; the directory's README says how they were captured. Both sides test
 against them: the host decodes them through `RuntimeProtocol`, and the
-runtime's `HostFixtureConformanceTests` checks that `version.json` names its
-`protocolVersion` and that each `inspect-*.json` round-trips through its own
+runtime's `HostFixtureConformanceTests` checks that `version.json` equals what its
+`version` command encodes and that each `inspect-*.json` round-trips through its own
 record, live-state and effective-configuration types.
 
 The brokered transport has unit coverage on both sides of the seam:
