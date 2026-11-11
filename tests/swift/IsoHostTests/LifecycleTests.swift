@@ -450,10 +450,10 @@ struct FakeInstallation {
 }
 
 @Test func durationsPrintLikeRustDebug() {
-  #expect(rustDuration(.seconds(120)) == "120s")
-  #expect(rustDuration(.milliseconds(119_558)) == "119.558s")
-  #expect(rustDuration(.milliseconds(250)) == "250ms")
-  #expect(rustDuration(.microseconds(1500)) == "1.5ms")
+  #expect(compactDuration(.seconds(120)) == "120s")
+  #expect(compactDuration(.milliseconds(119_558)) == "119.558s")
+  #expect(compactDuration(.milliseconds(250)) == "250ms")
+  #expect(compactDuration(.microseconds(1500)) == "1.5ms")
 }
 
 @Test func egressNoneCreatesAHostOnlySandboxAndPinsIt() throws {

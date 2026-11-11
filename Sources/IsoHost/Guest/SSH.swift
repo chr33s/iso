@@ -389,7 +389,7 @@ extension SSHClient {
     guard let ssh = sshExecutable() else {
       throw HostError("Failed to run SSH command: ssh not found on PATH")
     }
-    diagnostics.log(.info, "Probing SSH readiness (timeout: \(rustDuration(timeout)))")
+    diagnostics.log(.info, "Probing SSH readiness (timeout: \(compactDuration(timeout)))")
     let control = controlPath(target)
     let options =
       target.sshOptions + [
@@ -430,11 +430,11 @@ extension SSHClient {
       guard ContinuousClock.now - start < timeout else {
         guard anyAttemptCompleted else {
           throw HostError(
-            "SSH not ready after \(rustDuration(timeout)): no connection attempt completed within \(rustDuration(attemptDeadline)). If this runs as the iso host service, macOS Local Network privacy may be holding this iso binary's connections; allow it under System Settings → Privacy & Security → Local Network"
+            "SSH not ready after \(compactDuration(timeout)): no connection attempt completed within \(compactDuration(attemptDeadline)). If this runs as the iso host service, macOS Local Network privacy may be holding this iso binary's connections; allow it under System Settings → Privacy & Security → Local Network"
           )
         }
         throw HostError(
-          "SSH not ready after \(rustDuration(timeout)) — sshd may not be running in the guest")
+          "SSH not ready after \(compactDuration(timeout)) — sshd may not be running in the guest")
       }
       Thread.sleep(
         forTimeInterval: Double(delay.components.seconds) + Double(delay.components.attoseconds)

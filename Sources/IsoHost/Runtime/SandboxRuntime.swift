@@ -53,9 +53,9 @@ extension RuntimeExecutor {
   }
 }
 
-/// Rust `Duration` `{:?}` for the whole-second and millisecond values iso
-/// uses: `10s`, `200ms`.
-func rustDuration(_ duration: Duration) -> String {
+/// A duration in its largest whole unit with a trimmed fraction: `10s`,
+/// `200ms`, `1.5ms`.
+func compactDuration(_ duration: Duration) -> String {
   let (seconds, attoseconds) = duration.components
   let nanos = attoseconds / 1_000_000_000
   func fraction(_ whole: Int64, _ part: Int64, _ digits: Int, _ unit: String) -> String {
@@ -121,7 +121,7 @@ package struct ProcessRuntimeExecutor: RuntimeExecutor {
         "`\(described)` was cancelled; its effect is unknown and will be reconciled on retry")
     } catch .timedOut {
       throw .operationUncertain(
-        "`\(described)` did not finish within \(rustDuration(deadline)); its effect is unknown and will be reconciled on retry"
+        "`\(described)` did not finish within \(compactDuration(deadline)); its effect is unknown and will be reconciled on retry"
       )
     } catch .spawn(let code) {
       throw .failed("Failed to run \(binary): \(String(cString: strerror(code)))")
@@ -160,7 +160,7 @@ package struct ProcessRuntimeExecutor: RuntimeExecutor {
           "`\(described)` was cancelled; its effect is unknown and will be reconciled on retry")
       case .timedOut:
         throw RuntimeError.operationUncertain(
-          "`\(described)` did not finish within \(rustDuration(deadline ?? .zero)); its effect is unknown and will be reconciled on retry"
+          "`\(described)` did not finish within \(compactDuration(deadline ?? .zero)); its effect is unknown and will be reconciled on retry"
         )
       case .spawn(let code):
         throw RuntimeError.failed("Failed to run \(binary): \(String(cString: strerror(code)))")
