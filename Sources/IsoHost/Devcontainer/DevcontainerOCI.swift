@@ -142,7 +142,7 @@ package struct ResolvedFeature: Sendable, Equatable {
   /// base64 and runs its `install.sh` with the options exported.
   package var installSnippet: String {
     var out = "\necho '  [guest] Installing devcontainer Feature '"
-    out += shellSingleQuote(installed.reference) + "\n"
+    out += shellEscape(installed.reference) + "\n"
     out += "(\n"
     out += "feature_dir=$(mktemp -d)\n"
     out += "trap 'rm -rf \"$feature_dir\"' EXIT\n"
@@ -156,7 +156,7 @@ package struct ResolvedFeature: Sendable, Equatable {
     out += "export _REMOTE_USER=\"$GUEST_USER\"\n"
     out += "export _REMOTE_USER_HOME=\"/home/$GUEST_USER\"\n"
     for (key, value) in options {
-      out += "export \(optionEnvironmentName(key))=\(shellSingleQuote(value))\n"
+      out += "export \(optionEnvironmentName(key))=\(shellEscape(value))\n"
     }
     out += "cd \"$feature_dir\"\n"
     out += "./install.sh\n"
@@ -171,10 +171,6 @@ func optionEnvironmentName(_ key: String) -> String {
       guard character.isASCII, character.isLetter || character.isNumber else { return "_" }
       return Character(character.uppercased())
     })
-}
-
-func shellSingleQuote(_ value: String) -> String {
-  "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
 // MARK: - Registry resolution
