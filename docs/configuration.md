@@ -32,7 +32,7 @@ after hand edits.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `data_dir` | string (path) | `~/.iso` | Directory for VM artifacts: images, instances, keys. |
-| `ssh_port` | integer | `22` | SSH port on the guest VM. Must be > 0. |
+| `ssh_port` | integer | `22` | Accepted and validated (must be > 0) for compatibility, but unused: iso always connects to guest port 22. |
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline", "revoked_grant_ids": [...]}`, both members optional. `preset` sets defaults for the hardening settings; see [security presets](#security-presets). `revoked_grant_ids` lists saved instance grants to withdraw, by the 16-lowercase-hex IDs `iso policy effective` shows; duplicates are rejected, and an ID no instance records only draws a warning. See [`iso policy effective`](commands.md#policy-effective). |
 | `limits` | object | unset | Host-enforced budgets. See [limits](#limits). |
@@ -504,7 +504,7 @@ Custom installation profiles for `iso setup --profile <name>`. Each profile decl
 | `marketplaces` | array of strings | `[]` | Plugin marketplace sources for this profile. Same format as `claude.marketplaces`. Shown by `iso profiles`; the Apple backend does not register them. |
 | `plugins` | array of strings | `[]` | Plugins for this profile. Same format as `claude.plugins`. Shown by `iso profiles`; the Apple backend does not install them (list them in `claude.plugins`). |
 
-Custom profiles compose with built-in ones (`python`, `node`, `c`, `fuzz`, `rust`, `go`). Combine them with commas: `iso setup --profile python,node,my-tools`.
+Custom profiles compose with built-in ones (`python`, `node`, `c`, `fuzz`, `rust`, `go`, `desktop`). Combine them with commas: `iso setup --profile python,node,my-tools`.
 
 ## `forward_ports` field
 
