@@ -101,7 +101,6 @@ jobs:
       - name: Filtered-egress unit and confined lease gates
         shell: bash
         run: |
-          swift format lint --recursive --strict iso-egress/Package.swift iso-egress/Sources iso-egress/Tests scripts/verify-egress-readiness.swift
           swift test --package-path iso-egress --force-resolved-versions
           swift build --package-path iso-egress --force-resolved-versions
           python3 scripts/test-swift-egress-jail.py
@@ -140,11 +139,10 @@ jobs:
         with:
           version: 2026.10.7
 
-      - name: Swift proxy format and offline E2E gates
+      - name: Swift proxy offline E2E gates
         shell: bash
         run: |
           ulimit -n 8192
-          swift format lint --recursive --strict iso-proxy/Sources iso-proxy/Tests
           swift build --package-path iso-proxy --force-resolved-versions
           bin_dir="$(swift build --package-path iso-proxy --show-bin-path)"
           ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy" \

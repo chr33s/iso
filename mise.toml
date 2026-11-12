@@ -82,12 +82,13 @@ ISO_PROXY_E2E_BINARY="$proxy_bin_dir/iso-proxy" swift test --package-path iso-pr
 """
 
 [tasks.check-egress]
-description = "Filtered egress tests, confinement, lease, and mutation gates"
+description = "Filtered egress tests, confinement, lease, pressure, and mutation gates"
 run = """
 swift test --package-path iso-egress --force-resolved-versions
 swift build --package-path iso-egress --force-resolved-versions
 python3 scripts/test-swift-egress-jail.py
 python3 scripts/test-swift-egress-lease.py
+python3 scripts/test-swift-egress-pressure.py
 python3 scripts/test-swift-egress-mutations.py
 """
 
