@@ -96,7 +96,7 @@ package struct WorkspaceState: Sendable, Equatable {
     do {
       try AtomicFile.write(
         Array(String(json.rendered().dropLast()).utf8), to: instance.workspaceStatePath,
-        mode: .preserveExisting(default: 0o644))
+        mode: .preserveExisting(default: 0o600))
     } catch {
       throw ContextError("Failed to write workspace.json", cause: error)
     }

@@ -62,7 +62,7 @@ package struct DevcontainerPreferences: Sendable, Equatable {
     ]).rendered()
     do {
       try AtomicFile.write(
-        Array(json.dropLast().utf8), to: path, mode: .preserveExisting(default: 0o644))
+        Array(json.dropLast().utf8), to: path, mode: .preserveExisting(default: 0o600))
     } catch {
       throw ContextError("Failed to write \(path)", cause: error)
     }
@@ -186,7 +186,7 @@ package struct DevcontainerState: Sendable, Equatable {
     do {
       try AtomicFile.write(
         Array(json.dropLast().utf8), to: instance.devcontainerStatePath,
-        mode: .preserveExisting(default: 0o644))
+        mode: .preserveExisting(default: 0o600))
     } catch {
       throw ContextError("Failed to write devcontainer_state.json", cause: error)
     }

@@ -302,7 +302,7 @@ extension AppleBackend {
     ).path
     do {
       try AtomicFile.write(
-        Array(try encoder.encode(record)), to: path, mode: .preserveExisting(default: 0o644))
+        Array(try encoder.encode(record)), to: path, mode: .preserveExisting(default: 0o600))
     } catch {
       throw ContextError("Failed to write \(path)", cause: error)
     }

@@ -211,7 +211,7 @@ package enum TemplateStore {
     do {
       try AtomicFile.write(
         Array(try encoder.encode(template.withCreated(created))), to: path,
-        mode: .preserveExisting(default: 0o644))
+        mode: .preserveExisting(default: 0o600))
     } catch {
       throw ContextError("Failed to write \(path)", cause: error)
     }

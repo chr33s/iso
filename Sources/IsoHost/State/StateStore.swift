@@ -717,7 +717,7 @@ extension Instance {
     do {
       try AtomicFile.write(
         Array(json.rendered().dropLast().utf8), to: directory + "/instance.json",
-        mode: .preserveExisting(default: 0o644))
+        mode: .preserveExisting(default: 0o600))
     } catch {
       throw ContextError("Failed to write instance.json", cause: error)
     }
