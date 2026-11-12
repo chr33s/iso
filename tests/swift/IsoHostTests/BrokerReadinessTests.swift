@@ -177,7 +177,7 @@ func brokerReadinessRejectsSignedWrongFieldsAndForgery(change: String) throws {
       upstream: .init(credential: CredentialReference("cmd:printf synthetic")!, auth: .bearer),
       target: guest.target, readinessPolicy: .init(bootID: boot, policyHash: hash))
   }
-  #expect(oneLineError(error).contains("authenticated openai companion probe failed"))
+  #expect(oneLine(error).contains("authenticated openai companion probe failed"))
   // The probe the broker saw presented the capability it was started with.
   let startup = try OrderedJSON.parse(try #require(readFile(guest.root + "/proxy-stdin")))
   guard case .string(let token)? = startup["capability_token"] else {

@@ -273,7 +273,7 @@ extension AgentBootstrap {
       } else if wantsKeyring {
         do { try removeGuestCodexAuthJSON(session.target) } catch {
           diagnostics.warn(
-            "Could not remove a possible stale plaintext ~/.codex/auth.json from the guest; Codex account auth stores credentials in the guest keyring, so any such file is unused but still readable: \(oneLineError(error))"
+            "Could not remove a possible stale plaintext ~/.codex/auth.json from the guest; Codex account auth stores credentials in the guest keyring, so any such file is unused but still readable: \(oneLine(error))"
           )
         }
       }
@@ -319,13 +319,13 @@ extension AgentBootstrap {
         return try CodexConfigFiles.extractPluginState(existing)
       } catch {
         diagnostics.warn(
-          "Could not parse guest ~/.codex/config.toml to preserve installed Codex marketplaces/plugins across the config refresh; they may be dropped and need reinstalling: \(oneLineError(error))"
+          "Could not parse guest ~/.codex/config.toml to preserve installed Codex marketplaces/plugins across the config refresh; they may be dropped and need reinstalling: \(oneLine(error))"
         )
         return nil
       }
     } catch {
       diagnostics.warn(
-        "Could not read guest ~/.codex/config.toml to preserve installed Codex marketplaces/plugins across the config refresh: \(oneLineError(error))"
+        "Could not read guest ~/.codex/config.toml to preserve installed Codex marketplaces/plugins across the config refresh: \(oneLine(error))"
       )
       return nil
     }

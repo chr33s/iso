@@ -101,7 +101,7 @@ package enum AgentUpdate {
       var latest: SemanticVersion?
       if agent == .codex {
         do { latest = SemanticVersion.first(in: try latestCodexTag()) } catch {
-          diagnostics.debug("Failed to look up latest Codex release: \(oneLineError(error))")
+          diagnostics.debug("Failed to look up latest Codex release: \(oneLine(error))")
         }
       }
       return checkLine(
@@ -150,7 +150,7 @@ package enum AgentUpdate {
         throw failure
       } catch {
         failed = true
-        out("\(agent.display): update failed — \(oneLineError(error))")
+        out("\(agent.display): update failed — \(oneLine(error))")
       }
     }
     if failed { throw HostError("one or more agents failed to update") }

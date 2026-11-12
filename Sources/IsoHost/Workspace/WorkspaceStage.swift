@@ -1024,25 +1024,13 @@ struct StageBuilder {
       if count == 0 { break }
       let slice = chunk[0..<count]
       hasher.update(data: slice)
-      if let output { try writeAll(output, Array(slice), path: path) }
+      if let output { try AtomicFile.writeAll(output, Array(slice), path) }
     }
     return hex(hasher.finalize())
   }
 
   static func hex(_ digest: SHA256.Digest) -> String {
     digest.map { String(format: "%02x", $0) }.joined()
-  }
-
-  static func writeAll(_ fd: Int32, _ bytes: [UInt8], path: String) throws {
-    var offset = 0
-    while offset < bytes.count {
-      let written = bytes[offset...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-      if written < 0 {
-        if errno == EINTR { continue }
-        throw HostError.posix("Failed to write", path)
-      }
-      offset += written
-    }
   }
 
   /// The destination object at `path` below the directory `root`, resolved

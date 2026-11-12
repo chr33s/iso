@@ -241,7 +241,7 @@ package enum BoundaryAudit {
       let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
       guard fd >= 0 else { throw HostError.posix("Failed to open", path) }
       defer { close(fd) }
-      try StageBuilder.writeAll(fd, line, path: path)
+      try AtomicFile.writeAll(fd, line, path)
     } catch {
       diagnostics?.debug("boundary audit write failed (non-fatal): \(error)")
     }

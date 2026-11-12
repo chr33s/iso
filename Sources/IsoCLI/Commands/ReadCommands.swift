@@ -78,10 +78,6 @@ func padded(_ text: String, _ width: Int) -> String {
   return count >= width ? text : text + String(repeating: " ", count: width - count)
 }
 
-func oneLine(_ error: any Error) -> String {
-  error.contextError?.alternate ?? "\(error)"
-}
-
 enum InstanceState: String {
   /// `unhealthy`: the sandbox runs, but its filtered readiness proof failed.
   case running, stopped, unhealthy, unknown

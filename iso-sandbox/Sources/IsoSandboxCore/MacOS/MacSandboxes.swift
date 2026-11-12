@@ -26,14 +26,7 @@ package enum MacSandboxes {
   }
 
   static func ownerHoldsLock(_ paths: MacSandboxPaths) -> Bool {
-    let fd = open(paths.lock.path, O_RDWR | O_CLOEXEC)
-    guard fd >= 0 else { return errno != ENOENT }
-    defer { close(fd) }
-    if flock(fd, LOCK_EX | LOCK_NB) == 0 {
-      flock(fd, LOCK_UN)
-      return false
-    }
-    return true
+    Sandboxes.ownerHoldsLock(at: paths.lock.path)
   }
 
   package static func status(_ paths: MacSandboxPaths) -> SandboxStatus {

@@ -133,7 +133,7 @@ package struct ImageManifest: Sendable, Equatable, Codable {
   }
 }
 
-/// anyhow `{:#}`-style single line for any error.
+/// One line for any error: a context chain joined, else its description.
 package func oneLine(_ error: any Error) -> String {
   error.contextError?.alternate ?? "\(error)"
 }

@@ -58,7 +58,12 @@ package enum Sandboxes {
   /// means no owner; a lock that cannot be probed counts as held, so a
   /// sandbox is never taken for stopped on an error.
   static func ownerHoldsLock(_ paths: SandboxPaths) -> Bool {
-    let fd = open(paths.lock.path, O_RDWR | O_CLOEXEC)
+    ownerHoldsLock(at: paths.lock.path)
+  }
+
+  /// The same probe for any owner lock path (Linux and macOS sandboxes).
+  static func ownerHoldsLock(at path: String) -> Bool {
+    let fd = open(path, O_RDWR | O_CLOEXEC)
     guard fd >= 0 else { return errno != ENOENT }
     defer { close(fd) }
     if flock(fd, LOCK_EX | LOCK_NB) == 0 {

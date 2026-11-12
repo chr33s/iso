@@ -185,8 +185,8 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
     try launcher.syncModelTunnels(instance, target: guest.target, wanted: [11434: tunnel])
   }
   #expect(
-    oneLineError(error).contains("Failed to tunnel local model 127.0.0.1:11434 into the guest"))
-  #expect(oneLineError(error).contains("request failed"))
+    oneLine(error).contains("Failed to tunnel local model 127.0.0.1:11434 into the guest"))
+  #expect(oneLine(error).contains("request failed"))
   #expect(ProxyLauncher.recordedModelTunnels(instance).isEmpty)
 }
 
@@ -375,7 +375,7 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
     try guest.proxies(iso: iso).start(
       instance, provider: .anthropic, upstream: unresolved, target: guest.target)
   }
-  #expect(oneLineError(error).contains("aborting VM start (fail-closed)"))
+  #expect(oneLine(error).contains("aborting VM start (fail-closed)"))
   #expect(!FileManager.default.fileExists(atPath: guest.root + "/proxy-stdin"))
 
   // No proxy binary next to iso.
@@ -402,7 +402,7 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
     try guest.proxies(iso: iso).start(
       instance, provider: .openai, upstream: upstream, target: guest.target)
   }
-  #expect(oneLineError(error).contains("reverse SSH tunnel"))
+  #expect(oneLine(error).contains("reverse SSH tunnel"))
   for path in [
     ProxyLauncher.pidPath(instance, "openai"), ProxyLauncher.forwardPIDPath(instance, "openai"),
     ProxyLauncher.tokenPath(instance, "openai"),
@@ -417,7 +417,7 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
     try guest.proxies(iso: iso).start(
       instance, provider: .anthropic, upstream: upstream, target: guest.target)
   }
-  #expect(oneLineError(error).contains("before its control socket became ready"))
+  #expect(oneLine(error).contains("before its control socket became ready"))
 }
 
 @Test func proxyOverridesResolveAndLiteralsFailClosed() throws {
@@ -509,8 +509,8 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
     try ProxyProvisioning.storeInKeychain(
       service: "s", account: "a", secret: Secret("sk-x"), environment: [:], tool: tool)
   }
-  #expect(oneLineError(refused).contains("Failed to write secret to macOS Keychain"))
-  #expect(!oneLineError(refused).contains("sk-x"))
+  #expect(oneLine(refused).contains("Failed to write secret to macOS Keychain"))
+  #expect(!oneLine(refused).contains("sk-x"))
   #expect(throws: (any Error).self) {
     try ProxyProvisioning.storeInKeychain(
       service: "s", account: "a", secret: Secret("sk-x"), environment: [:], tool: root + "/missing")

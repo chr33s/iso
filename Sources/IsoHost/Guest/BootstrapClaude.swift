@@ -346,7 +346,7 @@ enum ClaudeSettings {
       merged = try merge(try existing.get(), localEnv: localEnv)
     } catch {
       diagnostics.warn(
-        "Could not read or merge existing ~/.claude/settings.json (\(oneLineError(error))); replacing it with managed defaults"
+        "Could not read or merge existing ~/.claude/settings.json (\(oneLine(error))); replacing it with managed defaults"
       )
       merged = managedDefaults(localEnv)
     }
@@ -364,11 +364,6 @@ enum ClaudeSettings {
     members.insert("hasCompletedOnboarding", .bool(true))
     return OrderedJSON.object(members).pretty + "\n"
   }
-}
-
-/// anyhow `{:#}`.
-func oneLineError(_ error: any Error) -> String {
-  error.contextError?.alternate ?? "\(error)"
 }
 
 extension AgentBootstrap {
@@ -509,7 +504,7 @@ extension AgentBootstrap {
       return raw.trimmingUnicodeWhitespace().isEmpty ? nil : raw
     } catch {
       diagnostics.debug(
-        "Could not read ~/.claude.json (\(oneLineError(error))); treating as absent")
+        "Could not read ~/.claude.json (\(oneLine(error))); treating as absent")
       return nil
     }
   }
