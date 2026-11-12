@@ -24,6 +24,9 @@ package struct InspectOutput: Encodable, Sendable {
   package var effective: EffectiveConfig?
   /// A running display sandbox's per-boot counts; absent otherwise.
   package var runtime: DesktopStatus?
+  /// Counts of recent boots that have ended, oldest first; absent when
+  /// none was recorded.
+  package var endedBoots: [BootCounts]?
   package var disk: DiskSummary
 }
 
@@ -351,14 +354,19 @@ package enum Sandboxes {
   package static func inspect(root: SandboxRoot, id: SandboxID) throws -> InspectOutput {
     let paths = root.sandbox(id)
     let record = try paths.loadRecord()
+    // Before the status and live.json (see ``BootCountsLog/ended(_:live:)``).
+    let recorded = BootCountsLog.load(paths.bootCounts)
     let s = status(paths)
     let owner =
       s == .running
       ? try? ControlSocket.call(paths.control, .init(op: .inspect), timeout: 10) : nil
     let (logical, allocated) = Disks.sizes(paths.rootfs)
+    let live = s == .stopped ? nil : paths.loadLive()
     return InspectOutput(
-      record: record, status: s, live: s == .stopped ? nil : paths.loadLive(),
+      record: record, status: s, live: live,
       effective: owner?.inspect, runtime: owner?.desktop,
+      // A crashed owner's live.json names a boot that has ended.
+      endedBoots: BootCountsLog.ended(recorded, live: s == .crashed ? nil : live?.bootId),
       disk: DiskSummary(name: "rootfs", logicalBytes: logical, allocatedBytes: allocated))
   }
 

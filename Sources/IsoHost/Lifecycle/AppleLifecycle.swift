@@ -425,6 +425,10 @@ extension AppleBackend {
       throw RuntimeError.operationUncertain(
         "sandbox \(sidecar.machineID) is booting; wait for it to settle")
     }
+    // Before the new boot's binding below: the counts are an earlier boot's.
+    auditEndedBoots(
+      instance, createdWithGuestComputerUse: sidecar.guestComputerUse != nil,
+      inspection.endedBoots?.boots ?? [])
     if Self.computerUseChanged(
       created: sidecar.guestComputerUse, configured: config.computerUse, display: sidecar.display)
     {

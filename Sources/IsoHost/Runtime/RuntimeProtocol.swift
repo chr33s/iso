@@ -290,6 +290,8 @@ package struct SandboxInspection: Sendable, Equatable, Decodable {
   package let effective: Effective?
   /// A running display sandbox's per-boot counts; absent otherwise.
   package let runtime: LinuxDesktopStatus?
+  /// Counts of recent boots that have ended; absent when none was recorded.
+  package let endedBoots: EndedBoots?
   package let disk: DiskUsage
 
   package var ipv4: IPv4Address? { live?.ipv4 }

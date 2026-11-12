@@ -8,6 +8,9 @@ package struct MacInspectOutput: Encodable, Sendable {
   package var live: MacLiveState?
   package var effective: MacEffectiveConfig?
   package var runtime: MacStatus?
+  /// Counts of recent boots that have ended, oldest first; absent when
+  /// none was recorded.
+  package var endedBoots: [BootCounts]?
   package var sshHostKey: String?
 }
 
@@ -203,6 +206,8 @@ package enum MacSandboxes {
   package static func inspect(root: SandboxRoot, id: SandboxID) throws -> MacInspectOutput {
     let paths = root.macSandbox(id)
     let record = try paths.loadRecord()
+    // Before the status and live.json (see ``BootCountsLog/ended(_:live:)``).
+    let recorded = BootCountsLog.load(paths.bootCounts)
     let s = status(paths)
     var effective: MacEffectiveConfig?
     var runtime: MacStatus?
@@ -210,9 +215,12 @@ package enum MacSandboxes {
       effective = try? call(paths, .init(op: .inspect), timeout: 10).inspect
       runtime = try? call(paths, .init(op: .status), timeout: 20).status
     }
+    let live = s == .stopped ? nil : paths.loadLive()
     return MacInspectOutput(
-      record: record, status: s, live: s == .stopped ? nil : paths.loadLive(), effective: effective,
+      record: record, status: s, live: live, effective: effective,
       runtime: runtime,
+      // A crashed owner's live.json names a boot that has ended.
+      endedBoots: BootCountsLog.ended(recorded, live: s == .crashed ? nil : live?.bootId),
       sshHostKey: record.enrollment == .enrolled ? paths.loadPinnedHostKey() : nil)
   }
 

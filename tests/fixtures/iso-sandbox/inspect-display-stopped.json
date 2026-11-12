@@ -1,0 +1,52 @@
+{
+  "disk": {
+    "allocatedBytes": 723562496,
+    "logicalBytes": 8724152320,
+    "name": "rootfs"
+  },
+  "endedBoots": [
+    {
+      "bootId": "0b68218771cc83471ac032b3298af192",
+      "guestComputerUse": {
+        "actions": 0,
+        "frameRate": 4,
+        "frames": 1,
+        "preemptions": 1,
+        "refusals": {
+          "held_by_host": 1
+        },
+        "sessions": 1,
+        "statusRequests": 2,
+        "waitOutcomes": {},
+        "waits": 0
+      },
+      "liveView": {
+        "inputEvents": 0,
+        "streams": 1,
+        "takeovers": 0,
+        "viewers": 1
+      }
+    }
+  ],
+  "record": {
+    "cpus": 2,
+    "createdAt": "2026-11-12T01:55:07Z",
+    "diskBytes": 8589934592,
+    "diskGeneration": 0,
+    "display": "virtio_display",
+    "environment": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ],
+    "guestComputerUse": {
+      "frameRate": 4
+    },
+    "id": "iso-0a1b2c3d-00112233445566ff",
+    "imageDigest": "sha256:107c24e24c4840ed93c34bb79026c88180bd44b329b32c1ef1958a9273816b69",
+    "imageReference": "local/iso-desktop:fx",
+    "memoryBytes": 2147483648,
+    "network": "host_only",
+    "owner": "0a1b2c3d00112233445566778899aabb",
+    "subnetIndex": 5
+  },
+  "status": "stopped"
+}

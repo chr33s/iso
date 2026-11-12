@@ -10,6 +10,14 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Added
 
+- **Audit of boots that ended on their own:** `boundary.guest_computer_use`
+  and `boundary.live_view` were recorded only when `iso stop` stopped a
+  running instance, so a boot ended by session expiry, guest poweroff, an
+  owner crash or a failed stop left no record. A display or macOS owner now
+  writes its changed counts to the sandbox's `boot-counts.json` every 30 s
+  and when it stops, `inspect` lists ended boots as `endedBoots`, and the
+  next `iso` command that inspects the instance records each boot once
+  ([audit](docs/audit.md)).
 - **Linux desktop images:** a built-in `desktop` profile (Xorg, openbox
   and fonts from Ubuntu, Firefox alone from Mozilla's pinned apt repository) whose
   instances get a virtio-gpu display and a USB keyboard and pointer, and

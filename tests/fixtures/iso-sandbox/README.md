@@ -19,6 +19,10 @@ containerization 0.54.0, used by host runtime-boundary tests.
   reference rewritten as below): the display, its one scanout, vsock 7802,
   an open live-view listener, and this boot's computer-use counts under
   `runtime`.
+- `inspect-display-stopped.json` — the same sandbox once that boot has
+  ended, derived from the running fixture as the runtime prints it then:
+  no live state, effective configuration or `runtime`, and the boot with
+  its counts under `endedBoots`.
 
 The record has an explicit `network` mode, and running live state has a
 nonempty `bootId`. Missing required fields must fail decoding. Optional operation

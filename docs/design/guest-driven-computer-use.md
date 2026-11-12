@@ -324,7 +324,9 @@ the control socket.
   invalid report (a negative count) is dropped at decode, so the boot's
   audit event is lost but `inspect` itself still succeeds. No
   pixels, coordinates or typed text. A boot that ends any other way (TTL,
-  crash, `iso-sandbox` directly) is not recorded.
+  guest poweroff, an owner crash) is recorded from the counts its owner
+  last wrote, at the next `iso` command that inspects the instance
+  ([audit](../audit.md)).
 
 ## 9. Testing
 
@@ -437,9 +439,13 @@ Implemented 2026-10-31 as specified, with these choices:
 The sections above describe what was built. Where it differs from the
 approved draft:
 
-- **Instance record decides (§8).** Bootstrap and the stop-time audit
+- **Instance record decides (§8).** Bootstrap and the audit
   follow the setting recorded in `apple-machine.json` at create, as the
   listener does; the draft keyed them on the current configuration.
+- **Ended boots are audited (§8).** The draft recorded only a boot that
+  `iso stop` stopped. Owners now keep their counts in the sandbox's
+  `boot-counts.json` and `inspect` lists ended boots, so a boot that
+  ended on its own is recorded at the next inspection, once.
 - **Linux instances warn (§8)** instead of refusing, since one
   configuration serves every instance.
 - **Guest server in the helper (§6.1).** The draft had a separate

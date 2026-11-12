@@ -1244,8 +1244,36 @@ PY
             check "a headless sandbox has no display" refuses sbx2 cu session "$A"
         fi
         # Reboot identity: a session does not survive the VM's restart.
+        ended="$(jq -r .live.bootId "$WORK/display-inspect.json")"
         sbx stop "$D" >/dev/null
+        # Kept with --keep: the source of
+        # tests/fixtures/iso-sandbox/inspect-display-stopped.json.
+        sbx inspect "$D" >"$WORK/display-stopped-inspect.json"
+        # shellcheck disable=SC2016 # jq program text.
+        check "a stopped display sandbox lists the boot that ended, with its last counts" \
+            jq -e --arg boot "$ended" \
+            '.status == "stopped" and (.endedBoots | map(.bootId)) == [$boot] and .endedBoots[0].liveView.streams == 1 and .endedBoots[0].guestComputerUse.frames >= 1' \
+            "$WORK/display-stopped-inspect.json"
         sbx start "$D" >/dev/null
+        # shellcheck disable=SC2016 # jq program text.
+        check "the boot now running is not among the ended ones" \
+            jq -e --arg boot "$ended" \
+            '.status == "running" and .live.bootId != $boot and (.endedBoots | map(.bootId)) == [$boot]' \
+            <<<"$(sbx inspect "$D")"
+        # An owner crash: launchd restarts the owner, and the crashed boot is
+        # listed from what it wrote while it ran.
+        crashed="$(sbx inspect "$D" | jq -r .live.bootId)"
+        kill -9 "$(sbx inspect "$D" | jq .live.pid)"
+        for _ in $(seq 60); do
+            now="$(sbx inspect "$D" | jq -r 'select(.status == "running") | .live.bootId // empty')"
+            [[ -n "$now" && "$now" != "$crashed" ]] && break
+            sleep 1
+        done
+        # shellcheck disable=SC2016 # jq program text.
+        check "a crashed owner's boot is listed once its owner is restarted" \
+            jq -e --arg ended "$ended" --arg crashed "$crashed" \
+            '.status == "running" and (.endedBoots | map(.bootId)) == [$ended, $crashed]' \
+            <<<"$(sbx inspect "$D")"
         check "a session from the previous boot is refused" \
             refuses sbx2 cu frame "$D" --session "$session" --out "$WORK/stale.png"
         check "a new session after the restart works" \
@@ -1863,6 +1891,24 @@ PY
             check "desktop: iso stop audits guest computer use" \
                 grep -q '"event":"guest_computer_use"' <<<"$daudit"
             check "desktop: iso stop audits the live view" grep -q '"event":"live_view"' <<<"$daudit"
+            # A boot `iso stop` never sees: the guest powers itself off.
+            desk exec e2e-desk -- sudo systemd-run --quiet --on-active=1 \
+                --timer-property=AccuracySec=1ms systemctl poweroff >/dev/null 2>&1
+            for _ in $(seq 150); do
+                [[ "$("$SANDBOX" inspect --root "$CROOT" "$dm" | jq -r .status)" == stopped ]] && break
+                sleep 0.2
+            done
+            cu_events() { desk audit e2e-desk 2>/dev/null | grep -c '"event":"guest_computer_use"'; }
+            check "desktop: a boot the guest powered off is not audited until iso looks" \
+                test "$(cu_events)" = 1
+            check "desktop: the instance starts again after the guest's poweroff" \
+                desk start e2e-desk --no-agents --no-github
+            check "desktop: the powered-off boot's guest computer use is recorded" \
+                test "$(cu_events)" = 2
+            desk stop e2e-desk >/dev/null 2>&1
+            desk stop e2e-desk >/dev/null 2>&1
+            check "desktop: each boot's guest computer use is recorded once" \
+                test "$(cu_events)" = 3
         else
             fail "desktop: iso setup --profile desktop and iso up boot an instance" \
                 "see $WORK/iso-setup-desktop.log, $WORK/iso-up-desktop.log"

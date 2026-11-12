@@ -356,8 +356,13 @@ package enum MacOwner {
     let controlPath = paths.control
     let livePath = paths.live
     let ownerLog: @Sendable (String) -> Void = { log($0) }
+    let bootId = makeBootID()
+    let counts = BootCountsRecorder(url: paths.bootCounts, bootId: bootId, log: ownerLog)
     let vm = MacVM(configuration: config, label: id.rawValue, log: ownerLog) { reason in
       log("vm stopped: \(reason); owner exiting")
+      // A guest poweroff is no stop request: its last counts are written
+      // here, within the delay below.
+      Task { @MainActor in counts.record() }
       try? FileManager.default.removeItem(at: livePath)
       // The vmnet network lives in this process and ends with it. A short
       // delay lets an in-flight `stop` reply reach its caller; the exit is
@@ -372,7 +377,6 @@ package enum MacOwner {
     let app = NSApplication.shared
     app.setActivationPolicy(.prohibited)
     guard let adaptor = vm.makeViewAdaptor() else { throw SandboxError("no view adaptor") }
-    let bootId = makeBootID()
     let screen = VMScreen(adaptor: adaptor, capture: .viewCache) {
       guard let guestBoot = link.guestBoot, store.current.enrollment == .enrolled else {
         return nil
@@ -395,7 +399,14 @@ package enum MacOwner {
       config, record: record, vsockPorts: vm.listenerPorts, topology: screen.topology,
       hostSecurity: hostSecurity)
 
-    let endLiveView: @Sendable () async -> Void = { await liveView.stop() }
+    counts.counts = {
+      DesktopStatus(
+        guest: guestLink?.counters, preemptions: screen.preemptions, liveView: liveView.counters)
+    }
+    let endLiveView: @Sendable () async -> Void = {
+      await liveView.stop()
+      await counts.record()
+    }
     let stopper = MacStopper(vm: vm, link: link, beforeStop: endLiveView) {
       // The last resort, as a Linux owner's: the stop sequence did not end
       // the VM in time. Exiting this process ends it; a clean exit is not
@@ -416,6 +427,9 @@ package enum MacOwner {
       let live = MacLiveState(pid: getpid(), startedAt: Date(), bootId: bootId, ipv4: address)
       try? JSONEncoder.pretty.encode(live).write(to: paths.live, options: .atomic)
       log("started pid=\(live.pid) ipv4=\(address) instance=\(vm.instance)")
+      // After live.json: until then `inspect` would take this boot's counts
+      // for an ended boot's.
+      counts.recordPeriodically()
       // A stop or expiry that arrived while starting runs now.
       await stopper.started()
     }

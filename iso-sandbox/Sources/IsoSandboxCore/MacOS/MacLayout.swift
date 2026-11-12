@@ -92,6 +92,8 @@ package struct MacSandboxPaths: Sendable {
   let locks: URL
   package var record: URL { dir.appendingPathComponent("record.json") }
   package var live: URL { dir.appendingPathComponent("live.json") }
+  /// Recent boots' computer-use counts (see ``BootCountsLog``).
+  package var bootCounts: URL { dir.appendingPathComponent("boot-counts.json") }
   package var disk: URL { dir.appendingPathComponent("disk.img") }
   package var aux: URL { dir.appendingPathComponent("aux.img") }
   package var machineID: URL { dir.appendingPathComponent("machine-id.bin") }

@@ -312,6 +312,8 @@ package struct MacInspection: Sendable, Equatable, Decodable {
   package let live: MacLive?
   package let effective: MacEffective?
   package let runtime: MacRuntimeStatus?
+  /// Counts of recent boots that have ended; absent when none was recorded.
+  package let endedBoots: EndedBoots?
   /// The pinned guest host key, present once the sandbox has enrolled.
   package let sshHostKey: String?
 }

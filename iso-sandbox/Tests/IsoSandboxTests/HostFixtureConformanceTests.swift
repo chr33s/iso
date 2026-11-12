@@ -20,12 +20,13 @@ import Testing
     var live: LiveState?
     var effective: EffectiveConfig?
     var runtime: DesktopStatus?
+    var endedBoots: [BootCounts]?
     var disk: DiskSummary
 
     var output: InspectOutput {
       InspectOutput(
         record: record, status: status, live: live, effective: effective, runtime: runtime,
-        disk: disk)
+        endedBoots: endedBoots, disk: disk)
     }
   }
 
@@ -59,8 +60,8 @@ import Testing
     let names = try Self.inspectFixtures()
     #expect(
       names == [
-        "inspect-brokered-running.json", "inspect-display-running.json", "inspect-running.json",
-        "inspect-stopped.json",
+        "inspect-brokered-running.json", "inspect-display-running.json",
+        "inspect-display-stopped.json", "inspect-running.json", "inspect-stopped.json",
       ])
     for name in names {
       let data = try Data(contentsOf: Self.directory.appending(path: name))
@@ -95,6 +96,23 @@ import Testing
     #expect(guest.frameRate == fixture.record.guestComputerUse?.frameRate)
     #expect(guest.frames >= 1 && guest.sessions >= 1)
     #expect(try #require(runtime.liveView).streams == 1)
+  }
+
+  /// The stopped display fixture lists the boot that ended, with the counts
+  /// its owner last wrote: the same boot and counts as the running fixture.
+  @Test func theStoppedDisplayFixtureListsTheBootThatEnded() throws {
+    func fixture(_ name: String) throws -> InspectFixture {
+      try JSONDecoder.iso.decode(
+        InspectFixture.self, from: try Data(contentsOf: Self.directory.appending(path: name)))
+    }
+    let running = try fixture("inspect-display-running.json")
+    let stopped = try fixture("inspect-display-stopped.json")
+    #expect(
+      try Self.json(JSONEncoder.pretty.encode(stopped.record))
+        == Self.json(JSONEncoder.pretty.encode(running.record)))
+    #expect(running.endedBoots == nil && stopped.runtime == nil)
+    let live = try #require(running.live)
+    #expect(stopped.endedBoots == [BootCounts(bootId: live.bootId, try #require(running.runtime))])
   }
 
   @Test func theBrokeredFixtureCarriesThisRuntimesChannelPolicy() throws {

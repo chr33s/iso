@@ -105,15 +105,23 @@ selection by counts only (`snapshot_id`, classifier, selected, bytes, omitted,
 deleted-tracked), `boundary.handoff_fence` records an instance fenced
 after an unconfirmed restart cleanup, and `boundary.guest_computer_use`
 records the guest-driven computer use of a boot (a macOS guest, or a Linux
-desktop instance) when `iso stop` stops it
+desktop instance)
 (`frame_rate`, and counts of `sessions`, `frames`, `actions`,
 `status_requests`, screen-sync `waits` and `wait_outcomes` by outcome,
 host-hold `preemptions` and `refusals` by code), and
 `boundary.live_view` records a boot's [live view](design/computer-use-live-view.md)
 when a stream started (`streams`, `viewers`, `takeovers`, `input_events`).
-Both are the owner's counts as `iso stop` observed them when it found the
-instance running; a boot that ends any other way (session expiry, guest
-poweroff, an owner crash, a failed stop) records neither. For a
+Both are one boot's counts as its owner reported them, recorded once per
+boot. `iso stop` records them as it observed them when it found the
+instance running. A boot that ends any other way (session expiry, guest
+poweroff, an owner crash, a failed stop) is recorded from the counts its
+owner last wrote (every 30 s while they change, and when it stops, so a
+crashed owner's record can miss its last 30 s), by the next `iso` command
+that inspects the instance: before `iso start` boots it again, or when a
+command checks whether it is running (`stop`, `shell`, `run`). Such an
+event carries the time it was recorded, not the time the boot ended, and
+the runtime keeps the counts of the eight most recent boots that had any.
+For a
 [Core AI](coreai.md) instance, each boot records `mac.coreai.attached`
 (accelerator device classes, template, template and runtime builds),
 `host.security.reduced` (the owner found AMFI relaxed on the host) and,

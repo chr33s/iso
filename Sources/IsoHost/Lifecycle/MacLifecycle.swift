@@ -13,10 +13,12 @@ extension AppleBackend {
   /// snapshots.
   /// An owner's per-boot computer-use counts, as one observation saw them.
   package struct ComputerUseCounts: Sendable {
+    /// The boot they count; nil only without an observation.
+    package let bootID: String?
     package let guest: MacGuestCUCounts?
     package let liveView: MacLiveViewCounts?
 
-    static let none = ComputerUseCounts(guest: nil, liveView: nil)
+    static let none = ComputerUseCounts(bootID: nil, guest: nil, liveView: nil)
   }
 
   package enum Observed: Sendable {
@@ -50,9 +52,19 @@ extension AppleBackend {
     package var computerUse: ComputerUseCounts {
       switch self {
       case .linux(let i):
-        ComputerUseCounts(guest: i.runtime?.guestComputerUse, liveView: i.runtime?.liveView)
+        ComputerUseCounts(
+          bootID: bootID, guest: i.runtime?.guestComputerUse, liveView: i.runtime?.liveView)
       case .macos(let i, _):
-        ComputerUseCounts(guest: i.runtime?.guestComputerUse, liveView: i.runtime?.liveView)
+        ComputerUseCounts(
+          bootID: bootID, guest: i.runtime?.guestComputerUse, liveView: i.runtime?.liveView)
+      }
+    }
+
+    /// Recent boots that ended, with the counts their owners last wrote.
+    package var endedBoots: [EndedBoot] {
+      switch self {
+      case .linux(let i): i.endedBoots?.boots ?? []
+      case .macos(let i, _): i.endedBoots?.boots ?? []
       }
     }
 
@@ -234,6 +246,9 @@ extension AppleBackend {
     // audit follow the listener.
     let guestChanged = sidecar.syncGuestComputerUse(from: inspection.record)
     if sidecar.syncCoreAI(from: inspection.record) || guestChanged { try sidecar.save(instance) }
+    auditEndedBoots(
+      instance, createdWithGuestComputerUse: sidecar.guestComputerUse != nil,
+      inspection.endedBoots?.boots ?? [])
     if inspection.record.guestComputerUse != MacGuestComputerUse(config.computerUse) {
       // Fixed at create: the record, not this configuration, decides.
       diagnostics.warn(Self.computerUseChangedWarning(instance.name))
@@ -263,16 +278,42 @@ extension AppleBackend {
     }
   }
 
-  /// A running instance's computer-use counts for the audit: guest computer
-  /// use when it was created with it, and the live view when a stream
-  /// started this boot. They are the counts in the observation that proved
-  /// the instance running, moments before it stops: no second `inspect`
-  /// (a subprocess, and for macOS a guest-helper round trip) is spent on
-  /// instances that never used either.
-  package func computerUseAudit(_ running: Running) -> [BoundaryAudit.Event] {
-    Self.computerUseEvents(
+  /// Audits the computer use of the boot `iso stop` just stopped: guest
+  /// computer use when the instance was created with it, and the live view
+  /// when a stream started. They are the counts in the observation that
+  /// proved the instance running, moments before it stopped: no second
+  /// `inspect` (a subprocess, and for macOS a guest-helper round trip) is
+  /// spent on instances that never used either.
+  package func auditComputerUse(_ running: Running) {
+    let events = Self.computerUseEvents(
       createdWithGuestComputerUse: running.sidecar.guestComputerUse != nil,
       guest: running.computerUse.guest, liveView: running.computerUse.liveView)
+    // Only a well-formed boot id is remembered; without one the counts are
+    // still recorded.
+    guard let boot = running.computerUse.bootID, EndedBoot.isBootID(boot) else {
+      for event in events {
+        BoundaryAudit.record(running.instance, event, diagnostics: diagnostics)
+      }
+      return
+    }
+    ComputerUseAudit.record(running.instance, boot: boot, events, diagnostics: diagnostics)
+  }
+
+  /// Audits boots that ended without `iso stop` reading their counts
+  /// (session expiry, guest poweroff, an owner crash, a failed stop), from
+  /// what their owners last wrote. Each boot is recorded once, at the first
+  /// observation after it ended.
+  func auditEndedBoots(
+    _ instance: Instance, createdWithGuestComputerUse: Bool, _ boots: [EndedBoot]
+  ) {
+    for boot in boots {
+      ComputerUseAudit.record(
+        instance, boot: boot.bootID,
+        Self.computerUseEvents(
+          createdWithGuestComputerUse: createdWithGuestComputerUse,
+          guest: boot.guestComputerUse, liveView: boot.liveView),
+        diagnostics: diagnostics)
+    }
   }
 
   /// The audit events for an owner's counts: guest counts only for an

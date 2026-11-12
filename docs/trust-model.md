@@ -1061,12 +1061,18 @@ is untrusted, and the whole VM is the boundary.
   hold expiry and stream stop. A paste is typed a key at a time, each key
   only while its viewer still controls, so it ends with a release, a
   disconnect or a stream stop. Remote viewing through `iso host` is not
-  offered. The audit records `boundary.live_view` counts only, and only
-  when `iso stop` stops the instance: a boot that ends another way (session
-  expiry, guest poweroff, an owner crash, a failed stop) leaves no
-  `boundary.live_view` or `boundary.guest_computer_use` record, because
-  the counts live in the owner and `iso-sandbox cu stream` is not an `iso`
-  command.
+  offered. The audit records `boundary.live_view` counts only, once per
+  boot: as `iso stop` observed them, or, for a boot that ends another way
+  (session expiry, guest poweroff, an owner crash, a failed stop), as its
+  owner last wrote them. An owner writes its changed
+  `boundary.live_view` and `boundary.guest_computer_use` counts to the
+  sandbox's `boot-counts.json` every 30 s and when it stops; `inspect`
+  lists the boots that have ended as `endedBoots`, and the next `iso`
+  command that inspects the instance records each one it has not recorded
+  (`computer-use-audited.json` in the instance directory holds the boot
+  ids). The list is read with the bounds of a running owner's report, and
+  nothing in it fails the inspection. `iso-sandbox cu stream` is not an
+  `iso` command, so nothing is recorded while the boot runs.
 - **Control socket.** It sits in the per-user `iso-sbx` directory, mode 0600,
   and accepts only the owning uid (`getpeereid`), as for Linux owners.
 - **Stop and TTL.** A guest cannot wedge a stop. Each host write to the
@@ -1140,8 +1146,9 @@ reuse the macOS guests' computer-use paths above, with these differences:
   under the same rules; a display owner's `inspect` reports
   `liveViewListening` and, as `runtime`, this boot's guest computer-use and
   live-view counts, which `iso stop` records as
-  `boundary.guest_computer_use` and `boundary.live_view`. A headless
-  instance reports and records neither.
+  `boundary.guest_computer_use` and `boundary.live_view`; a boot that ends
+  without `iso stop` is recorded from `endedBoots`, as a macOS guest's is.
+  A headless instance reports and records neither.
 - **Image.** Ubuntu packages for the display path, and Firefox from
   Mozilla's apt repository: its key must match a pinned fingerprint, and
   apt takes only `firefox` from it (pinned above Ubuntu's) and never

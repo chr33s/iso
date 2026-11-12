@@ -793,6 +793,69 @@ private func macSetup(_ install: FakeInstallation, image: ImageName) throws {
   #expect(try backend.runtime().macTemplates().isEmpty)
 }
 
+/// Sets what the fake runtime's `inspect` lists as ended boots: one live
+/// view each, as an owner that stopped on its own would have written.
+private func setEndedBoots(_ backend: AppleBackend, _ section: String, _ boots: [String]) throws {
+  let path = URL(fileURLWithPath: try backend.runtime().root + "/fake-state.json")
+  var state = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+  var sandboxes = state[section] as! [String: [String: Any]]
+  for id in sandboxes.keys {
+    sandboxes[id]?["endedBoots"] = boots.map {
+      [
+        "bootId": $0,
+        "liveView": ["streams": 1, "viewers": 2, "takeovers": 0, "inputEvents": 5],
+      ] as [String: Any]
+    }
+  }
+  state[section] = sandboxes
+  try JSONSerialization.data(withJSONObject: state).write(to: path)
+}
+
+private func liveViewEvents(_ instance: Instance) throws -> Int {
+  try BoundaryAudit.load(instance).filter { $0["event"] as? String == "live_view" }.count
+}
+
+/// A boot that ended without `iso stop` (its session expired, the guest
+/// powered off, its owner crashed) is audited from what its owner last
+/// wrote: before the next boot starts, or by the next command that proves
+/// the instance running, and once however often it is listed.
+@Test(arguments: ["sandboxes", "macSandboxes"])
+func aBootThatEndedOnItsOwnIsAuditedOnceByTheNextStartOrInspection(section: String) throws {
+  let mac = section == "macSandboxes"
+  let install = try FakeInstallation(
+    extra: mac ? #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"# : "")
+  defer { install.remove() }
+  let backend = install.backend
+  let image = mac ? try ImageName("mac") : ImageName.default
+  if mac {
+    try macSetup(install, image: image)
+  } else {
+    try backend.setup(
+      SetupOptions(
+        rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  }
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("ended"), image: image, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  try backend.stop(try #require(try backend.asRunning(instance)))
+  #expect(try liveViewEvents(instance) == 0)
+
+  let expired = String(repeating: "a", count: 32)
+  try setEndedBoots(backend, section, [expired])
+  try backend.startExisting(instance)
+  #expect(try liveViewEvents(instance) == 1)
+  // Still listed while the next boot runs.
+  _ = try #require(try backend.asRunning(instance))
+  #expect(try liveViewEvents(instance) == 1)
+  // An owner that crashed and was restarted: seen with the instance running.
+  try setEndedBoots(backend, section, [expired, String(repeating: "b", count: 32)])
+  let running = try #require(try backend.asRunning(instance))
+  #expect(try liveViewEvents(instance) == 2)
+  try backend.stop(running)
+  #expect(try backend.asRunning(instance) == nil)
+  #expect(try liveViewEvents(instance) == 2)
+}
+
 @Test func macOSStartRefusesAChangedPinnedHostKey() throws {
   let install = try FakeInstallation(extra: #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#)
   defer { install.remove() }

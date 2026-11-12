@@ -94,7 +94,7 @@ package final class AppleBackend: Sendable {
     package let target: SSHTarget
     let handoffIdentity: WorkloadHandoff.Identity?
     /// The owner's computer-use counts when it was observed running, for
-    /// the stop-time audit.
+    /// the audit `iso stop` records.
     package let computerUse: ComputerUseCounts
 
     init(
@@ -214,6 +214,9 @@ package final class AppleBackend: Sendable {
     let sidecar = try ownedSidecar(instance)
     let runtime = try runtime()
     let observed = try observe(runtime, sidecar)
+    auditEndedBoots(
+      instance, createdWithGuestComputerUse: sidecar.guestComputerUse != nil,
+      observed.endedBoots)
     switch observed.status {
     case .stopped: return nil
     case .crashed, .booting:

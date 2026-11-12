@@ -170,7 +170,17 @@ package enum Owner {
     let controlSocket = paths.control
     let streamSocket = paths.streams
     let attached = desktop
-    let endDisplay: @Sendable () async -> Void = { await attached?.stop() }
+    // After live.json: until then `inspect` would take this boot's counts
+    // for an ended boot's.
+    let counts = attached.map { desktop in
+      BootCountsRecorder(
+        url: paths.bootCounts, bootId: live.bootId, log: { log($0) }, counts: { desktop.status })
+    }
+    await counts?.recordPeriodically()
+    let endDisplay: @Sendable () async -> Void = {
+      await attached?.stop()
+      await counts?.record()
+    }
     let lifecycle = Lifecycle(container: container, streams: broker, onHalt: endDisplay) {
       log("guest did not stop: exiting the owner to end the VM")
       try? FileManager.default.removeItem(at: liveFile)
@@ -271,6 +281,7 @@ package enum Owner {
     log("init exited status=\(status?.exitCode ?? -1)")
     // A guest poweroff is no halt request: end the live view here too.
     await attached?.stop()
+    await counts?.record()
     do {
       try await container.stop()
     } catch {

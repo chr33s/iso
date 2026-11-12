@@ -78,7 +78,8 @@ package struct EffectiveDisplay: Sendable, Equatable {
 }
 
 /// A display sandbox owner's per-boot computer-use counts (`runtime` in
-/// `inspect`), read before a stop for the audit. An invalid report (a
+/// `inspect`), read before a stop for the audit (an ended boot's are in
+/// ``EndedBoots``). An invalid report (a
 /// negative count) is dropped: only the audit loses it.
 package struct LinuxDesktopStatus: Sendable, Equatable, Decodable {
   /// Absent when the sandbox was created without guest-driven computer use.

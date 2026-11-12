@@ -45,11 +45,12 @@ package enum BoundaryAudit {
     case approvalConsumed(approvalID: String, reason: PolicyReason)
     /// A stage apply that stopped partway; the receipt stays consumed.
     case pullApplyPartial(applied: Int)
-    /// A macOS boot's guest-driven computer use, read from its owner at
-    /// stop: the frame rate and counts only.
+    /// A boot's guest-driven computer use, as its owner reported it (to
+    /// `iso stop`, or in its log of ended boots): the frame rate and counts
+    /// only.
     case guestComputerUse(MacGuestCUCounts)
-    /// A macOS boot's live view, read from its owner at stop: counts only,
-    /// never the token, pixels, coordinates or text.
+    /// A boot's live view, as its owner reported it: counts only, never the
+    /// token, pixels, coordinates or text.
     case liveView(MacLiveViewCounts)
     /// A Core AI boot: the accelerator classes its configuration carries,
     /// the template, and the template and runtime builds.

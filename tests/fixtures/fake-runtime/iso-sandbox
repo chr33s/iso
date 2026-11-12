@@ -129,6 +129,9 @@ def inspect(root, sandbox):
                             + f":10.231.{sandbox['subnet']}.0/24"}],
             "socketRelays": 0, "publishedPorts": 0, "sshAgentForwarding": False, "maskedPaths": [],
             "readonlyPaths": [], "initArgv": ["/sbin/init"], "virtualization": False}
+    # Boots whose owners wrote counts; a test sets them in the state file.
+    if sandbox.get("endedBoots"):
+        result["endedBoots"] = sandbox["endedBoots"]
     return result
 
 
@@ -185,6 +188,8 @@ def mac_inspect(root, sandbox):
         elif sandbox.get("coreAI"):
             result["runtime"]["coreAI"] = {"availableKinds": ["cpu", "gpu", "neuralEngine"],
                                            "delegateEnabled": True, "guestBoot": "guest-boot"}
+    if sandbox.get("endedBoots"):
+        result["endedBoots"] = sandbox["endedBoots"]
     return result
 
 

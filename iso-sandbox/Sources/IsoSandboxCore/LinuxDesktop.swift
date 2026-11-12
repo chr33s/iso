@@ -77,7 +77,8 @@ package final class LinuxDesktop {
   /// The vsock ports the host side listens on, for the effective config.
   var listenerPorts: [UInt32] { guestLink == nil ? [] : [GuestCUProtocol.port] }
 
-  /// This boot's counts, for `inspect` and so the host's stop-time audit.
+  /// This boot's counts, for `inspect`, the boot-counts log and so the
+  /// host's audit.
   var status: DesktopStatus {
     DesktopStatus(
       guest: guestLink?.counters, preemptions: screen.preemptions, liveView: liveView.counters)
