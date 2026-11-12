@@ -399,6 +399,11 @@ Decisions made while building (2026-11-10):
   the owner starts. The owner then checks that choice against the record
   it loads and refuses to boot a display sandbox under the plain dispatch
   loop (`Owner.requireLoop`).
+- The release workflows build the kernel on an arm64 Linux runner with
+  Docker, from the same pinned inputs and build image
+  (`.github/workflows/desktop-kernel.yml`): GitHub's hosted macOS runners
+  cannot start Apple `container`'s build VM. The release build checks the
+  kernel against `KernelPin.desktopAllowed` wherever it was built.
 - Firefox comes from Mozilla's apt repository: Ubuntu's `firefox` and
   `chromium` are snap shims, which do not run in iso guests. Only `firefox`
   is taken from that repository; its other packages are pinned so apt never

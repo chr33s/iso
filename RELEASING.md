@@ -46,7 +46,14 @@ build entrypoint. Its stages are explicit and run in order:
    Each is signed ad hoc with the hardened runtime and the Enhanced Security
    entitlements in `scripts/enhanced-security.entitlements` (`iso-sandbox`
    uses `iso-sandbox/iso-sandbox.entitlements`, which adds the virtualization
-   entitlement, and is signed by `scripts/build-iso-sandbox.sh`).
+   entitlement, and is signed by `scripts/build-iso-sandbox.sh`). The Linux
+   `desktop` guest files are built here too: `iso-cu-mcp` with the Swift
+   Static Linux SDK, and `vmlinux-desktop` by
+   `scripts/build-desktop-kernel.sh`, which needs Apple `container` with
+   its service running. `--desktop-kernel DIR` uses that script's output
+   from `DIR` instead, after checking the kernel against
+   `KernelPin.desktopAllowed` and the Linux tarball against its pinned
+   SHA-256.
 3. **test** (`--test`) — every package's tests in the staging copy.
 4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
    signing and notarization; see [macOS signing](#macos-signing).
@@ -74,6 +81,14 @@ that runs it. It requires Apple Silicon macOS 27+.
 - **`candidate.yml`** builds a signed same-revision candidate with
   `scripts/build-release.py --release --test --sign` in the `release`
   environment and attests it.
+- **`desktop-kernel.yml`**, called by the candidate and release workflows,
+  builds `vmlinux-desktop` on an arm64 Linux runner with Docker
+  (`scripts/build-desktop-kernel.sh --engine docker --pinned`) and hands it
+  to the macOS build job as an artifact. GitHub's hosted macOS runners
+  cannot start the `container` build VM, so the macOS job does not build
+  the kernel; it passes the artifact to `build-release.py
+  --desktop-kernel`, which checks it against the pins of the revision
+  being built.
 - **`release.yml`** runs when a `v*` tag is pushed. It gates on CI, builds
   the macOS ARM64 archive, signs and notarizes it, generates `SHA256SUMS`,
   attests build provenance, extracts the `## vX.Y.Z` section from

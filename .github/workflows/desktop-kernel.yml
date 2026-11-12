@@ -1,0 +1,38 @@
+name: Desktop kernel
+
+# The kernel Linux `desktop` instances boot, for the release and candidate
+# workflows. On GitHub's hosted macOS runner, Apple `container` fails to
+# start its build VM ("Virtualization is not available on this hardware"),
+# so the kernel is built here, natively on arm64 Linux with Docker, from
+# the same pinned inputs and build image.
+# The build is reproducible: `--pinned` fails unless the result is a kernel
+# KernelPin.desktopAllowed pins, and scripts/build-release.py checks the
+# downloaded kernel and source tarball against the same pins again.
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the pinned desktop kernel
+        run: scripts/build-desktop-kernel.sh --engine docker --pinned "$RUNNER_TEMP/desktop-kernel"
+
+      # Not a `dist-*` artifact: the release job publishes the kernel only
+      # inside the archive, and its source as the build job's own asset.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-kernel
+          path: ${{ runner.temp }}/desktop-kernel
+          if-no-files-found: error
+          retention-days: 1

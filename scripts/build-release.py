@@ -3,7 +3,7 @@
 
     python3 scripts/build-release.py [--release] [--test] [--tag vX.Y.Z]
                                      [--expected-revision SHA] [--sign]
-                                     [--out DIR]
+                                     [--desktop-kernel DIR] [--out DIR]
 
 Stages, in order, each explicit:
 
@@ -18,7 +18,13 @@ Stages, in order, each explicit:
             `iso-macos-helper`), plus the Linux `desktop` images' guest
             files: `iso-cu-mcp` (Static Linux SDK) and `vmlinux-desktop`
             (scripts/build-desktop-kernel.sh, which fetches the pinned Linux
-            source and needs Apple `container`). Every macOS binary is signed ad hoc with the
+            source and needs Apple `container`). `--desktop-kernel DIR`
+            takes that script's output from DIR instead of running it: the
+            release workflows build the kernel on an arm64 Linux runner,
+            because GitHub's hosted macOS runners cannot start the
+            `container` build VM. Either way the kernel must be one
+            KernelPin.desktopAllowed pins, and a prebuilt one must come
+            with the pinned source tarball. Every macOS binary is signed ad hoc with the
             hardened runtime and the Enhanced Security entitlements
             (scripts/enhanced-security.entitlements; iso-sandbox's come from
             iso-sandbox/iso-sandbox.entitlements, signed by
@@ -126,7 +132,31 @@ def stage_source(staging, stamp):
     revision_file.write_text(stamped)
 
 
-def build(staging, configuration, release, prefix):
+def copy_desktop_kernel(directory, source, destination):
+    """The output of scripts/build-desktop-kernel.sh, built elsewhere: the
+    pinned kernel and the pinned Linux tarball, with both configurations."""
+    pins = desktop_kernel_source_pins(source)
+    tarball = f"linux-{pins['KVER']}.tar.xz"
+    names = ["vmlinux-desktop", "vmlinux-desktop.config", "vmlinux-desktop.input.config", tarball]
+    for name in names:
+        path = directory / name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"--desktop-kernel has no {name}")
+    kernel = sha256(directory / "vmlinux-desktop")
+    if kernel not in desktop_kernel_pins(source):
+        raise SystemExit(f"vmlinux-desktop (sha256 {kernel}) is not a pinned desktop kernel")
+    if sha256(directory / tarball) != pins["SOURCE_SHA256"]:
+        raise SystemExit(f"{tarball} is not the pinned Linux source")
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        shutil.copy2(directory / name, destination / name)
+
+
+def build(staging, configuration, release, prefix, desktop_kernel=None):
+    if desktop_kernel is not None:
+        # Before the Swift builds: a wrong kernel fails in seconds.
+        phase("Check the prebuilt desktop kernel")
+        copy_desktop_kernel(desktop_kernel, staging, prefix / "kernel")
     phase("Build iso (Swift host)")
     flags = ["-Xswiftc", "-DISO_RELEASE_BUILD"] if release else []
     common = ["-c", configuration, "--force-resolved-versions"]
@@ -144,8 +174,9 @@ def build(staging, configuration, release, prefix):
                       staging, capture=True).strip())
     phase("Build and ad-hoc sign iso-sandbox and iso-macos-helper; build iso-cu-mcp")
     run([staging / "scripts/build-iso-sandbox.sh", "--require-cu-mcp", prefix], staging)
-    phase("Build the desktop kernel")
-    run([staging / "scripts/build-desktop-kernel.sh", prefix / "kernel"], staging)
+    if desktop_kernel is None:
+        phase("Build the desktop kernel")
+        run([staging / "scripts/build-desktop-kernel.sh", prefix / "kernel"], staging)
     return {
         "iso-cu-mcp": prefix / "bin/iso-cu-mcp",
         "vmlinux-desktop": prefix / "kernel/vmlinux-desktop",
@@ -359,6 +390,8 @@ def main():
     parser.add_argument("--tag", help="release tag vX.Y.Z; must match the package version")
     parser.add_argument("--expected-revision", help="require this exact clean revision before and after")
     parser.add_argument("--sign", action="store_true", help="Developer ID sign and notarize (needs MACOS_*/NOTARY_* secrets)")
+    parser.add_argument("--desktop-kernel", type=Path, metavar="DIR",
+                        help="a scripts/build-desktop-kernel.sh output directory to use instead of building the kernel")
     parser.add_argument("--out", type=Path, default=ROOT / ".build/release-archive")
     args = parser.parse_args()
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -386,7 +419,8 @@ def main():
         staging = work / "src"
         phase(f"Stage source at {revision[:12]}{' (dirty)' if dirty else ''}")
         stage_source(staging, stamp)
-        binaries = build(staging, configuration, args.release, work / "runtime")
+        binaries = build(staging, configuration, args.release, work / "runtime",
+                         args.desktop_kernel and args.desktop_kernel.resolve())
         if args.test:
             test(staging)
         bundle = work / "bundle" / name

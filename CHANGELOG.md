@@ -76,6 +76,13 @@ SPDX-License-Identifier: Apache-2.0
   once so the new updater installs the `desktop` guest files.
 - **Guest computer use:** a request line nested deeper than a request can
   be is refused before it is parsed.
+- **Release builds:** the release and candidate workflows build the desktop
+  kernel in a job on an arm64 Linux runner, because GitHub's hosted macOS
+  runners cannot start Apple `container`'s build VM (the candidate workflow
+  failed there). `scripts/build-desktop-kernel.sh` takes `--engine
+  container|docker` and `--pinned`, and `scripts/build-release.py
+  --desktop-kernel DIR` uses a kernel built earlier after checking it and
+  its source tarball against the pins.
 - **Apple runtime:** the owner of a Linux display sandbox refuses to boot
   if it was started without the AppKit loop that renders the display,
   rather than run a VM whose frames never arrive. The guest computer-use

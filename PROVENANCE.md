@@ -49,4 +49,7 @@ With gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1) the resulting
 Release archives carry it as `vmlinux-desktop`, with its configuration
 and source pins under `third-party/vmlinux-desktop/`, and publish its
 corresponding source as `iso-<tag>-vmlinux-desktop-source.tar.gz`; the
-release build refuses a kernel whose sha256 is not pinned.
+release build refuses a kernel whose sha256 is not pinned. The script runs
+the build image under Apple `container` on a Mac or Docker on arm64 Linux
+(`--engine`); the release workflows use the latter and require the pinned
+hash (`--pinned`).

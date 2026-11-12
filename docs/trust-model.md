@@ -1158,9 +1158,16 @@ reuse the macOS guests' computer-use paths above, with these differences:
   never from an installed `iso`: the kernel tarball from `cdn.kernel.org`
   (SHA-256 pinned), the Static Linux SDK from `download.swift.org`
   (checksum pinned), the build image from Docker Hub with packages from
-  `snapshot.ubuntu.com` and `ports.ubuntu.com` (digest pinned), and Apple
-  container's default kernel for the build VM (`container system start
-  --enable-kernel-install` in the release and candidate workflows).
+  `snapshot.ubuntu.com` and `ports.ubuntu.com` (digest pinned), and, when
+  no Swift checkout holds it, the base kernel configuration from the
+  `apple/containerization` revision `iso-sandbox/Package.resolved` pins
+  (SHA-256 pinned). The release and candidate workflows build the kernel in
+  a separate job on an arm64 Linux runner
+  (`.github/workflows/desktop-kernel.yml`), because GitHub's hosted macOS
+  runners cannot start a build VM; that job fails on a kernel that is not
+  pinned, and `scripts/build-release.py --desktop-kernel` checks the
+  kernel and its source tarball against the pins again before it archives
+  them. A local build runs the same script under Apple `container`.
 
 ## `iso update` trust chain
 

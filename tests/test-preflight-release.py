@@ -550,6 +550,51 @@ class ReleaseBinaryTests(unittest.TestCase):
         for glob in (path, checksummed, attested):
             self.assertTrue(fnmatch.fnmatchcase(asset, glob), (asset, glob))
 
+    def test_release_and_candidate_take_the_kernel_from_the_linux_job(self):
+        kernel = (ROOT / '.github/workflows/desktop-kernel.yml').read_text()
+        self.assertIn('runs-on: ubuntu-24.04-arm\n', kernel)
+        uploaded = re.search(r"          name: (\S+)\n          path: \$\{\{ runner\.temp \}\}/(\S+)\n",
+                             kernel)
+        # The job itself fails on a kernel that is not pinned.
+        self.assertIn(f'--engine docker --pinned "$RUNNER_TEMP/{uploaded[2]}"\n', kernel)
+        for name, job in (('release.yml', 'build'), ('candidate.yml', 'candidate')):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / '.github/workflows' / name).read_text()
+                self.assertRegex(workflow, r"\n  kernel:\n(?:    .*\n)*?"
+                                 r"    uses: \$/\.github/workflows/desktop-kernel\.yml\n")
+                needs = re.search(rf"\n  {job}:\n    needs: \[(.*?)\]\n", workflow)[1]
+                self.assertIn('kernel', needs.split(', '))
+                steps = workflow[workflow.index(f"\n  {job}:\n"):]
+                download = re.search(
+                    r"download-artifact@\S+ # \S+\n        with:\n          name: (\S+)\n"
+                    r"          path: \$\{\{ runner\.temp \}\}/(\S+)\n", steps)
+                self.assertEqual(download[1], uploaded[1])
+                self.assertIn(f'--desktop-kernel "$RUNNER_TEMP/{download[2]}"', steps)
+                # A hosted macOS runner cannot start the `container` build VM.
+                self.assertNotIn('container system start', workflow)
+        # The kernel is published only inside the archive.
+        publish = (ROOT / '.github/workflows/release.yml').read_text()
+        publish = publish[publish.index('      - name: Download all artifacts'):]
+        pattern = re.search(r"          pattern: (\S+)\n", publish)[1]
+        self.assertFalse(fnmatch.fnmatchcase(uploaded[1], pattern))
+
+    def test_the_kernel_script_checks_its_pins_and_engine(self):
+        script = ROOT / 'scripts/build-desktop-kernel.sh'
+        with tempfile.TemporaryDirectory() as directory:
+            for arguments, message in ((['--engine', 'podman', directory], '--engine must be container or docker'),
+                                       ([], 'OUT_DIR is required')):
+                result = subprocess.run(['bash', script, *arguments], capture_output=True, text=True,
+                                        timeout=10)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stderr)
+        # `--pinned` reads the same block build-release.py reads.
+        layout = (ROOT / 'iso-sandbox/Sources/IsoSandboxCore/Layout.swift').read_text()
+        listed = subprocess.run(['sed', '-n', r'/package static let desktopAllowed/,/\]/p'],
+                                input=layout, capture_output=True, text=True, check=True).stdout
+        for pin in RELEASE.desktop_kernel_pins(ROOT):
+            self.assertIn(f'"{pin}"', listed)
+        self.assertNotIn('static let allowed', listed)
+
 
 def arm64_elf():
     """The smallest header build-release.py accepts as iso-cu-mcp."""
@@ -654,6 +699,71 @@ class LinuxGuestFileTests(unittest.TestCase):
         flag = (ROOT / 'scripts/build-iso-sandbox.sh').read_text()
         self.assertIn('--require-cu-mcp)', flag)
 
+    def prebuilt_kernel(self, source, kernel=None, tarball=b'linux source\n', omit=None):
+        """A build-desktop-kernel.sh output directory, and the tree that pins it."""
+        script = source / 'scripts/build-desktop-kernel.sh'
+        script.parent.mkdir(parents=True, exist_ok=True)
+        pinned_source = hashlib.sha256(b'linux source\n').hexdigest()
+        script.write_text('KVER=9.9.9\n'
+                          'SOURCE_URL="https://kernel.invalid/linux-${KVER}.tar.xz"\n'
+                          f'SOURCE_SHA256={pinned_source}\n'
+                          'BASE_CONFIG_SHA256=' + 'b' * 64 + '\n')
+        directory = self.root / 'prebuilt'
+        directory.mkdir()
+        files = {'vmlinux-desktop': self.KERNEL if kernel is None else kernel,
+                 'vmlinux-desktop.config': b'final\n', 'vmlinux-desktop.input.config': b'input\n',
+                 'linux-9.9.9.tar.xz': tarball}
+        for name, content in files.items():
+            if name != omit:
+                (directory / name).write_bytes(content)
+        return directory
+
+    def test_a_prebuilt_kernel_replaces_the_kernel_build(self):
+        staging, prefix = self.source(), self.root / 'runtime'
+        directory = self.prebuilt_kernel(staging)
+        commands = []
+
+        def run(argv, cwd, signing=False, capture=False):
+            commands.append([str(a) for a in argv])
+            return str(self.root / 'bin') + '\n' if capture else None
+
+        with mock.patch.object(RELEASE, 'run', side_effect=run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            built = RELEASE.build(staging, 'release', True, prefix, directory)
+        self.assertFalse([c for c in commands if 'build-desktop-kernel.sh' in c[0]])
+        self.assertEqual(built['vmlinux-desktop'].read_bytes(), self.KERNEL)
+        # Everything the bundle's legal notices and the source asset read.
+        self.assertEqual(sorted(p.name for p in (prefix / 'kernel').iterdir()),
+                         ['linux-9.9.9.tar.xz', 'vmlinux-desktop', 'vmlinux-desktop.config',
+                          'vmlinux-desktop.input.config'])
+
+    def test_a_prebuilt_kernel_must_be_the_pinned_kernel_and_source(self):
+        cases = [(dict(kernel=b'another kernel\n'), 'is not a pinned desktop kernel'),
+                 (dict(tarball=b'another source\n'), 'linux-9.9.9.tar.xz is not the pinned Linux source'),
+                 (dict(omit='vmlinux-desktop.config'), '--desktop-kernel has no vmlinux-desktop.config'),
+                 (dict(omit='linux-9.9.9.tar.xz'), '--desktop-kernel has no linux-9.9.9.tar.xz')]
+        for arguments, message in cases:
+            with self.subTest(arguments=arguments):
+                shutil.rmtree(self.root / 'src', ignore_errors=True)
+                shutil.rmtree(self.root / 'prebuilt', ignore_errors=True)
+                staging = self.source()
+                directory = self.prebuilt_kernel(staging, **arguments)
+                with mock.patch.object(RELEASE, 'run') as run, \
+                        contextlib.redirect_stdout(io.StringIO()), \
+                        self.assertRaisesRegex(SystemExit, message):
+                    RELEASE.build(staging, 'release', True, self.root / 'runtime', directory)
+                # Refused before anything is built.
+                run.assert_not_called()
+                self.assertFalse((self.root / 'runtime/kernel').exists())
+
+    def test_a_prebuilt_kernel_must_not_be_a_link(self):
+        staging = self.source()
+        directory = self.prebuilt_kernel(staging, omit='vmlinux-desktop')
+        (self.root / 'elsewhere').write_bytes(self.KERNEL)
+        (directory / 'vmlinux-desktop').symlink_to(self.root / 'elsewhere')
+        with self.assertRaisesRegex(SystemExit, '--desktop-kernel has no vmlinux-desktop'):
+            RELEASE.copy_desktop_kernel(directory, staging, self.root / 'runtime/kernel')
+
     def test_manifest_and_checksums_cover_the_guest_files_and_the_kernel_source(self):
         out = self.root / 'out'
         fixture = self.root / 'fixture'
@@ -670,7 +780,7 @@ class LinuxGuestFileTests(unittest.TestCase):
                 (staging / relative).parent.mkdir(parents=True, exist_ok=True)
                 (staging / relative).write_bytes((ROOT / relative).read_bytes())
 
-        def build(staging, configuration, release, prefix):
+        def build(staging, configuration, release, prefix, desktop_kernel=None):
             (prefix / 'bin').mkdir(parents=True)
             (prefix / 'kernel').mkdir()
             (prefix / 'bin/iso-cu-mcp.sbom.spdx.json').write_text('{}\n')
