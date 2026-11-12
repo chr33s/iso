@@ -15,9 +15,6 @@ import IsoCore
 package enum SecretStore {
   /// Service name for GitHub PATs; the account is the `owner/repo` slug.
   package static let githubPATService = "iso-github-pat"
-  /// Provider proxy credentials. A per-VM override appends `-<vm>`.
-  package static let anthropicService = "iso-anthropic"
-  package static let openAIService = "iso-openai"
   /// Human label for `github status`; `keychainToken` is its JSON form.
   package static let keychainLabel = "macOS Keychain"
   package static let keychainToken = "macos_keychain"

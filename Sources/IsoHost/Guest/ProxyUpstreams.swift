@@ -112,6 +112,3 @@ extension ProxyState {
     }
   }
 }
-
-/// A running proxy: the guest-facing URL and the capability token the
-/// guest presents. The token is not a provider credential.

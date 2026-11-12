@@ -1274,9 +1274,3 @@ package final class PreflightService: ControllerService, @unchecked Sendable {
     ]
   }
 }
-
-extension Subprocess.Output {
-  var stdoutTextTrimmed: String {
-    String(decoding: stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-}

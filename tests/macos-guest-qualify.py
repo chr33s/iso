@@ -21,7 +21,6 @@ import re
 import secrets
 import select
 import signal
-import shutil
 import subprocess
 import sys
 import threading

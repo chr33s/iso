@@ -245,30 +245,6 @@ enum HostFiles {
     }
   }
 
-  static func copyTree(_ source: String, to destination: String, depth: Int = 0) throws {
-    guard depth < maxDepth else { throw HostError("Failed to read \(source): too deeply nested") }
-    do {
-      try FileManager.default.createDirectory(
-        atPath: destination, withIntermediateDirectories: true)
-    } catch {
-      throw HostError("Failed to create \(destination)")
-    }
-    let names: [String]
-    do { names = try FileManager.default.contentsOfDirectory(atPath: source).sorted() } catch {
-      throw HostError("Failed to read \(source)")
-    }
-    for name in names {
-      let from = source + "/" + name
-      let to = destination + "/" + name
-      if isDirectory(from) {
-        try copyTree(from, to: to, depth: depth + 1)
-      } else {
-        do { try copyFile(from, to: to) } catch {
-          throw ContextError("Failed to copy \(from) -> \(to)", cause: error)
-        }
-      }
-    }
-  }
 }
 
 // MARK: - MCP server definitions

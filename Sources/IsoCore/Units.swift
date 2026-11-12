@@ -30,7 +30,6 @@ package struct MiB: Hashable, Comparable, Sendable, CustomStringConvertible {
     guard let mib = MiB(n) else { throw ValidationError("MiB must be > 0, got '\(text)'") }
     return mib
   }
-  package var gibibytes: Double { Double(value) / 1024 }
   package var description: String { String(value) }
   package static func < (a: Self, b: Self) -> Bool { a.value < b.value }
 }

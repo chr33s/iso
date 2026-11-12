@@ -6,8 +6,6 @@ import Testing
 
 @testable import IsoHost
 
-private func envNames(_ env: EnvForward) -> [String] { env.names }
-
 // MARK: - Environment forwarding (prepare_env_forwarding)
 
 @Test func proxyAndAccountModesSuppressRawProviderKeysFromEverySource() throws {

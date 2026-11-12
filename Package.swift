@@ -52,7 +52,7 @@ let package = Package(
     .target(
       name: "IsoHostControl",
       dependencies: [
-        "IsoCore", "IsoConfiguration", "IsoHost", "IsoSecrets",
+        "IsoCore", "IsoConfiguration", "IsoHost",
         .product(name: "IsoPolicy", package: "iso-policy"),
       ]),
     .executableTarget(
@@ -60,7 +60,6 @@ let package = Package(
       dependencies: [
         "IsoCore", "IsoConfiguration", "IsoHost", "IsoHostControl", "IsoSecrets",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        .product(name: "IsoPolicy", package: "iso-policy"),
       ]),
     // tests/ also holds the integration scripts; Swift tests live under
     // tests/swift (a separate Tests/ would alias it on case-insensitive disks).

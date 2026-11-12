@@ -381,7 +381,7 @@ extension SSHClient {
   /// Short control-socket path (macOS caps Unix socket paths at 104 bytes),
   /// distinct per host, port and pinned alias.
   package func controlPath(_ target: SSHTarget) -> String {
-    let directory = environment["XDG_RUNTIME_DIR"] ?? NSTemporaryDirectory()
+    let directory = NSTemporaryDirectory()
     var hash: UInt32 = 2_166_136_261
     for byte in "\(target.host):\(target.port):\(target.alias)".utf8 {
       hash = (hash ^ UInt32(byte)) &* 16_777_619

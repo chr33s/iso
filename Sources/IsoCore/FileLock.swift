@@ -165,10 +165,3 @@ package func openRegularFile(_ path: String, _ flags: Int32) throws(HostError) -
   }
   return fd
 }
-
-/// Runs `body` while holding the sibling lock of `target`.
-package func withSiblingLock<T>(_ target: String, _ body: () throws -> T) throws -> T {
-  let lock = try FileLock.sibling(of: target)
-  defer { lock.release() }
-  return try body()
-}

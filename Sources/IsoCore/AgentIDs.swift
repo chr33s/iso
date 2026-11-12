@@ -134,7 +134,6 @@ package struct HexID: Hashable, Sendable, CustomStringConvertible, Codable {
 }
 
 package typealias RunSessionID = HexID
-package typealias AgentLaunchID = HexID
 
 /// Literal guest defaults a definition may set. Anything else — provider
 /// variables, proxy variables, loaders, SSH — is not representable.

@@ -517,7 +517,6 @@ package struct LimitsConfig: Sendable, Equatable {
 
   package init(sessionTTL: SessionTTL?) { self.sessionTTL = sessionTTL }
 
-  package static let none = LimitsConfig(sessionTTL: nil)
   /// DEF-01: an 8h boot lifetime unless configured otherwise.
   package static let defaults = LimitsConfig(sessionTTL: .eightHours)
 }

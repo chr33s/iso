@@ -37,7 +37,4 @@ package enum Shutdown {
   package static func check() throws(HostError) {
     if isRequested { throw HostError("Interrupted by signal — cleaning up") }
   }
-
-  static func reset() { requested.store(false, ordering: .relaxed) }
-  static func request() { requested.store(true, ordering: .relaxed) }
 }

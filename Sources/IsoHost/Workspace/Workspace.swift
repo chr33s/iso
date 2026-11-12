@@ -45,9 +45,6 @@ package struct Mount: Sendable, Equatable {
     hostPath = canonical
     guestPath = guest
   }
-
-  /// Contains a `.git` entry (a repository or linked worktree).
-  package var hostIsGitRepo: Bool { FileManager.default.fileExists(atPath: hostPath + "/.git") }
 }
 
 /// `realpath(3)`: absolute, symlinks resolved; nil when the path is missing.

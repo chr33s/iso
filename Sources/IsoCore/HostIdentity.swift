@@ -126,13 +126,6 @@ package struct RunID: UUIDIdentifier {
   package init(unchecked rawValue: String) { self.rawValue = rawValue }
 }
 
-/// A client-local mapping of a project to a qualified instance.
-package struct WorkspaceBindingID: UUIDIdentifier {
-  package static let kind = "workspace binding id"
-  package let rawValue: String
-  package init(unchecked rawValue: String) { self.rawValue = rawValue }
-}
-
 /// A host-owned staging handle; random, never a path.
 package struct ArtifactHandle: UUIDIdentifier {
   package static let kind = "artifact handle"
