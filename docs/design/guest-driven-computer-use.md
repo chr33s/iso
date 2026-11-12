@@ -452,8 +452,6 @@ approved draft:
   `iso-cu-mcp` binary, which would have been a new release artifact through
   the signed release, notarize and `iso update` verification chain. The
   helper's `cu-mcp` subcommand needs none of that.
-- **Audit at `iso stop` only (§8).** Per-boot counts are read from the
-  owner just before an `iso stop`; other ends of a boot are not recorded.
 - **Gate from the record (§8).** The gate checks the listener against the
   sandbox record rather than the current configuration, which may have
   changed since the instance was created.

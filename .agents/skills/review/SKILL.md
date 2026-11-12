@@ -51,7 +51,7 @@ Gather once and share with every reviewer:
   changed comments.
 
 Omit generated files such as `Package.resolved`, embedded resources, recorded
-parity baselines, and snapshots from the
+contract fixtures, and snapshots from the
 verbatim packet, but record their names and sizes and inspect them where a
 cross-file invariant depends on them.
 

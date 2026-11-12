@@ -31,7 +31,7 @@ navigational; durable detail lives in [`docs/`](docs/).
   boundary).
 - [`docs/code-style.md`](docs/code-style.md) — Swift authoring conventions and
   review checklists.
-- [`docs/testing.md`](docs/testing.md) — package tests, sanitizers, parity,
+- [`docs/testing.md`](docs/testing.md) — package tests, sanitizers, contracts,
   fault injection, fuzzing, integration.
 - [`docs/platform-notes.md`](docs/platform-notes.md) — Docker networking, scp
   `~` caveat, diagnostics on stderr.
@@ -71,8 +71,8 @@ Silicon. Python 3.11+ for the host contract and integration scripts.
 ```bash
 swift build                                                   # debug build → .build/debug/iso
 swift test --force-resolved-versions                          # host package tests
-swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
-swift test --sanitize=address --scratch-path .build-address   # also thread, undefined
+mise run lint                                                 # swift format lint --strict, every package
+swift test --sanitize=address --scratch-path .build-asan      # also thread, undefined
 swift test --package-path iso-policy --force-resolved-versions  # shared policy library
 swift test --package-path iso-proxy --force-resolved-versions   # credential proxy
 swift test --package-path iso-egress --force-resolved-versions  # filtered egress

@@ -71,11 +71,12 @@ No workspace state is recorded. `push` and `pull` will not work without a `works
 
 Creating a project VM with `iso up` writes a `workspace.json` in the instance directory:
 
-| Field        | Description                                                    |
-|-------------|----------------------------------------------------------------|
-| `host_path`  | Absolute path on the host for local workspace and mount sources |
-| `guest_path` | Path inside the guest VM (always `/workspace`)                 |
-| `source`     | How the workspace was created: `workspace`, `mount`, or `git_repo` |
+| Field              | Description                                                    |
+|--------------------|----------------------------------------------------------------|
+| `guest_path`       | Path inside the guest VM (always `/workspace`)                 |
+| `source.kind`      | How the workspace was created: `workspace`, `mount`, or `git_repo` |
+| `source.host_path` | Absolute path on the host (`workspace` and `mount` sources)    |
+| `source.url`       | Repository URL (`git_repo` sources)                            |
 
 `push` and `pull` read this file to resolve default paths.
 

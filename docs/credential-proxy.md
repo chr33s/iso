@@ -205,7 +205,9 @@ and proxy-off modes require none.
 
 Filtered startup uses protocol version 2 with a readiness identity. Nonfiltered
 startup keeps version 1 without that identity; the HTTP 401 warm-up remains but
-is not filtered-session authentication. Existing filtered sessions must
+is not filtered-session authentication. A boot with a
+[`policy`](policy.md) authorization block uses version 3, which always carries
+the readiness identity. Existing filtered sessions must
 stop/restart with matching host and proxy binaries. Each reverse tunnel records
 its identity (`proxy-<name>-fwd.identity.json`: master PID, its unique control
 path and guest destination), and every proof requires the recorded PID

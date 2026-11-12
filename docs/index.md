@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 System-of-record map for `iso`. The root [`AGENTS.md`](../AGENTS.md) is the
 short navigational entrypoint; durable detail lives here.
 
-This is the `chr33s/iso` fork of Trail of Bits’ isolate. Supported hosts are
+This is the `chr33s/iso` fork of Trail of Bits’ coop. Supported hosts are
 **macOS 27+ on Apple Silicon only**; guests run Linux, or macOS from an image
 built with `iso setup --guest macos`
 ([macOS guests](images-and-profiles.md#macos-guests)). The host CLI is Swift

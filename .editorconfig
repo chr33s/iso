@@ -23,7 +23,7 @@ indent_size = 2
 [*.{yml,yaml}]
 indent_size = 2
 
-# TOML (mise.toml, parity fixtures): 2-space indent.
+# TOML (mise.toml): 2-space indent.
 [*.toml]
 indent_size = 2
 

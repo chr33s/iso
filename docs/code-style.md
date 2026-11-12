@@ -35,7 +35,7 @@ a bug through.
   `iso-egress`). A new shipped target in `iso-policy`, `iso-proxy` or
   `iso-egress` gets the setting too; test, test-support and benchmark targets
   do not. A new root target follows its layer: on for core and configuration
-  code, off for host, CLI and secrets.
+  code, off for host and CLI.
 - Commit every `Package.resolved`; build and test with
   `--force-resolved-versions` so an unexpected resolution change fails.
   Add a dependency only with a reviewed reason; the host depends only on
@@ -43,10 +43,7 @@ a bug through.
 - `swift format lint --strict` must be clean for every package:
 
   ```sh
-  swift format lint --strict -r Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints
-  swift format lint --recursive --strict iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests
-  swift format lint --recursive --strict iso-egress/Package.swift iso-egress/Sources iso-egress/Tests
-  swift format lint --recursive --strict iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests
+  mise run lint
   ```
 
 - Tests use Swift Testing (`import Testing`, `@Test`, `#expect`/`#require`).
