@@ -1,7 +1,7 @@
 # isolate: Selective Sandlock-Inspired Hardening
 
 **Status:** Approved (2026-09-28)  
-**Target:** `chr33s/iso` Swift fork (`swift` branch), macOS 27+ on Apple Silicon  
+**Target:** `chr33s/iso` Swift fork, macOS 27+ on Apple Silicon  
 **Scope:** Security features worth borrowing from Sandlock without attempting feature parity or changing isolate's VM-first trust model  
 **Date:** 2026-09-28
 

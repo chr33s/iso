@@ -1,6 +1,6 @@
 # `iso audit` run history: design and implementation status
 
-**Status:** implemented on `audit-run-history` (first release: local capture,
+**Status:** implemented (first release: local capture,
 store, reader and renderers). Agent adapter reports, structured proxy/egress
 observations and remote provenance remain planned and appear as `unsupported`
 coverage sources. The supported contract is [`../audit.md`](../audit.md); this

@@ -89,7 +89,7 @@ iso/
 ├── iso-policy/             # shared libraries: IsoPolicy (evaluator), IsoGitIndex (inert index reader)
 ├── iso-ci/                 # separately installed GitHub Actions companion; speaks iso.host/v1
 ├── skills/                  # the distributable `iso` agent skill
-├── experiments/             # throwaway spikes; not built, tested or shipped
+├── experiments/             # spikes; not shipped (macos-vz-context-probe builds the macOS guest qualification fixture)
 ├── www/                     # project website
 ├── scripts/guest/           # guest-image provisioning scripts (embedded at build)
 └── docs/                    # this tree

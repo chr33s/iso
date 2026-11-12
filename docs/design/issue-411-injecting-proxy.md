@@ -425,8 +425,7 @@ Ordered, independently shippable:
    and [`../credential-proxy.md`](../credential-proxy.md) for the shipped
    mechanism and its accepted limitations (port-scoped not host-scoped; UDP
    unrestricted on Linux; enabled Landlock on host kernel ≥5.13, TCP scoping
-   from ≥6.7). The [tiered-jail design](proxy-jail-graceful-degradation.md)
-   describes the required floor and best-effort restrictions.
+   from ≥6.7).
 4. **GitHub (separate, later).** No base-URL override exists for `gh`/`git`, and
    #73 already documented that URL/path filtering cannot constrain `gh api
    graphql`. Injection (token never crosses to the guest) is still worthwhile as

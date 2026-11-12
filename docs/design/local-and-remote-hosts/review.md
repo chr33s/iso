@@ -28,7 +28,7 @@ implementation applies; none changes the trust model.
 Unit and in-process supervisor tests cover the state machines (ledger,
 reservations, access registry, relay closure over local sockets, artifacts,
 runs, cancellation). Migration preview is exercised only manually. Q1–Q4 still require the real two-Mac fixture
-from `mac-validation/runbook.md`; nothing here claims those gates passed.
+described in the specification; nothing here claims those gates passed.
 
 ## Implementation review (2026-10-10)
 

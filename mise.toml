@@ -48,7 +48,7 @@ run = "python3 scripts/hygiene.py"
 
 [tasks.lint]
 description = "swift format lint --strict over every Swift package"
-run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-ci/Package.swift iso-ci/Sources iso-ci/Tests scripts/verify-egress-readiness.swift experiments/macos-computer-use-q0/Package.swift experiments/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-ci/Package.swift iso-ci/Sources iso-ci/Tests scripts/verify-egress-readiness.swift experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
 
 [tasks.lint-shell]
 description = "shellcheck over every tracked shell script"

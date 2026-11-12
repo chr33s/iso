@@ -1272,17 +1272,11 @@ The repository's pre-merge security-boundary review rule remains applicable to a
 
 ## 20. Deliverables and implementation handoff
 
-The accompanying package contains:
-
-- This implementation specification.
-- tasks/plan.md: dependency-ordered implementation sequence and gate ownership.
-- tasks/todo.md: focused tasks with acceptance and verification.
-- prototype/: executable Python model/transport prototype and scenario runner.
-- mac-validation/: read-only host probe and real-Mac qualification runbook.
-- validation-report.md: observed prototype results and explicit unrun gates.
-- prototype/evidence.json, prototype/validation-trace.jsonl, prototype/mutation-evidence.json, and mac-validation/probe-evidence-linux.json: captured outputs with their validation limits.
-
-Before production implementation, place the reviewed specification under docs/design/ and keep any prototype experiment on a dedicated branch or spike directory. The current deliverable does not modify the GitHub repository or publish an issue/PR.
+The pre-implementation package this specification was delivered with (task
+plan, Python prototype, Mac validation runbook and their evidence) was removed
+after the implementation landed; it is in the Git history. The native evidence
+files and the implementation review remain under
+[`local-and-remote-hosts/`](local-and-remote-hosts/).
 
 ## Sources
 

@@ -34,8 +34,7 @@ and [trust model](../trust-model.md) for supported behavior.
 - [`iso audit` run history](iso-audit.md): the design review behind the
   `iso.audit/v1` store, reader and JSONL stream, implementation notes, and the
   evidence for each essential check.
-- [Credential proxy proposal](issue-411-injecting-proxy.md) and
-  [proxy jail compatibility](proxy-jail-graceful-degradation.md).
+- [Credential proxy proposal](issue-411-injecting-proxy.md).
 - [Sandboxy-inspired features](sandboxy-inspired-features-spec.md): draft
   proposal only; it records no implementation or qualification.
 
@@ -64,8 +63,8 @@ and [trust model](../trust-model.md) for supported behavior.
 - [Q0 spike results](macos-computer-use-q0-spike.md).
 - [Process-context experiment](macos-vz-context-headless-experiment-spec.md)
   and [results](macos-vz-context-experiment.md).
-- [Linux computer-use proposal](linux-computer-use-sketch.md): the fallback
-  if the virtio-gpu approach's kernel gate fails.
+- [Linux computer-use proposal](linux-computer-use-sketch.md): superseded by
+  the implemented virtio-gpu display; kept as the record of the alternative.
 - [Screen sync](computer-use-screen-sync.md): a damage sequence and a
   wait operation, so an agent can tell when the screen has settled after
   input. Implemented and qualified on one host.

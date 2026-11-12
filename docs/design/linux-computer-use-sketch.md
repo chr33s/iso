@@ -1,8 +1,8 @@
 # Linux-guest computer use: sketch
 
-**Status:** Proposal (not implemented). Since 2026-11-10 the chosen
-approach is the [virtio-gpu display](linux-desktop-virtio-gpu.md); this
-sketch is its fallback.
+**Status:** Superseded (not implemented). The
+[virtio-gpu display](linux-desktop-virtio-gpu.md) was chosen on 2026-11-10 and
+is implemented; this sketch is kept as the record of the alternative.
 **Date:** 2026-10-05
 **Target:** `chr33s/iso` Ubuntu guests on the Apple sandbox backend
 **Depends on:** [macOS computer-use Q0 spike](macos-computer-use-q0-spike.md),

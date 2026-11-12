@@ -1,6 +1,6 @@
 # IsoPolicy v1 — implementation specification
 
-**Status:** Implemented in the `feat/iso-policy` branch; see §19 for where the
+**Status:** Implemented; see §19 for where the
 implementation made a choice the contract left open.  
 **Target:** `chr33s/iso`  
 **Repository baseline:** `47d17ba2524b145b229abcf42c85f8b5f0071e65` (`main` inspected on 2026-10-13).  

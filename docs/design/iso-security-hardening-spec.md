@@ -758,7 +758,7 @@ The P0 return recommendations go beyond a literal coop port: descriptor-bound de
 
 ## 14. Review and sign-off
 
-Implemented on branch `security-hardening` (base `58fb040`). The maintainer
+Implemented (base `58fb040`). The maintainer
 reviewed and approved the stop-and-confirm items on 2026-10-21:
 
 1. New receive subprocesses (`/usr/bin/bsdtar`, `/usr/bin/rsync` openrsync)

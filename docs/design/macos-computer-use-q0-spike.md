@@ -7,8 +7,8 @@
 
 > This record has the results of the plan's "minimal go/no-go spike" (Q0.1–Q0.5)
 > and the design constraints they set. It does not qualify any gate (A–T). The
-> harness is in [`experiments/macos-computer-use-q0/`](../../experiments/macos-computer-use-q0/);
-> it is not part of the shipped product or the package gates.
+> harness (`experiments/macos-computer-use-q0/`) was removed once the spike
+> was complete; it is in the Git history.
 
 ## Verdict
 
@@ -44,7 +44,7 @@ macOS 27.0.1 (26A434) from `UniversalMac_27.0.1_26A434_Restore.ipsw`; Xcode 27.0
 
 ## Harness
 
-Run it on a macOS 27 Apple Silicon host. VM state goes in `$Q0_STATE`
+The harness ran on a macOS 27 Apple Silicon host. VM state goes in `$Q0_STATE`
 (default `~/.iso-q0`):
 
 ```sh
