@@ -64,6 +64,27 @@ package enum GuestCUProtocol {
   }
 }
 
+/// A `wait` as its caller asked for it, before the host checks it against
+/// its display. On the wire these are flat members of the request.
+package struct GuestCUWaitFields: Equatable, Sendable {
+  package var since: UInt64?
+  package var idleMs: Int?
+  package var timeoutMs: Int?
+  package var until: GuestCUWaitUntil?
+  package var region: GuestCURegion?
+
+  package init(
+    since: UInt64? = nil, idleMs: Int? = nil, timeoutMs: Int? = nil,
+    until: GuestCUWaitUntil? = nil, region: GuestCURegion? = nil
+  ) {
+    self.since = since
+    self.idleMs = idleMs
+    self.timeoutMs = timeoutMs
+    self.until = until
+    self.region = region
+  }
+}
+
 /// What a `wait` waits for.
 package enum GuestCUWaitUntil: String, Codable, Sendable {
   /// No change in the region for `idleMs`.
@@ -163,6 +184,12 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
     self.session = session
     self.action = action
     self.basedOnFrame = basedOnFrame
+  }
+
+  /// The `wait` members.
+  package var wait: GuestCUWaitFields {
+    GuestCUWaitFields(
+      since: since, idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region)
   }
 
   static let fields: Set<String> = [

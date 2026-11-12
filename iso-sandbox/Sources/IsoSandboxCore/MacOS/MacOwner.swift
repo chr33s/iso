@@ -44,6 +44,53 @@ package struct MacControlRequest: Codable, Sendable {
     self.basedOnFrame = basedOnFrame
     self.seconds = seconds
   }
+
+  /// The `cu-wait` members.
+  package var wait: GuestCUWaitFields {
+    GuestCUWaitFields(
+      since: since, idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region)
+  }
+
+  /// Who answers this request: the owner itself, or the computer-use
+  /// service both guest families share.
+  package enum Route: Sendable {
+    case owner(OwnerOp)
+    case computerUse(CURequest)
+  }
+  package enum OwnerOp: Sendable { case ping, inspect, status, stop }
+
+  package var route: Route {
+    switch op {
+    case .ping: .owner(.ping)
+    case .inspect: .owner(.inspect)
+    case .status: .owner(.status)
+    case .stop: .owner(.stop)
+    case .cuSession: .computerUse(CURequest(.session, self))
+    case .cuFrame: .computerUse(CURequest(.frame, self))
+    case .cuAct: .computerUse(CURequest(.act, self))
+    case .cuHold: .computerUse(CURequest(.hold, self))
+    case .cuRelease: .computerUse(CURequest(.release, self))
+    case .cuWait: .computerUse(CURequest(.wait, self))
+    case .cuStream: .computerUse(CURequest(.stream, self))
+    case .cuStreamStop: .computerUse(CURequest(.streamStop, self))
+    }
+  }
+}
+
+/// A computer-use request: a ``MacControlRequest`` whose operation is one
+/// ``CUService`` answers. Made only by ``MacControlRequest/route``, so an
+/// owner operation (`stop`, `inspect`) cannot reach the service.
+package struct CURequest: Sendable {
+  package enum Op: Sendable, CaseIterable {
+    case session, frame, act, hold, release, wait, stream, streamStop
+  }
+  package let op: Op
+  package let fields: MacControlRequest
+
+  fileprivate init(_ op: Op, _ fields: MacControlRequest) {
+    self.op = op
+    self.fields = fields
+  }
 }
 
 package struct MacStatus: Codable, Sendable {
@@ -417,16 +464,16 @@ package enum MacOwner {
     guestLink: MacGuestCULink? = nil, coreAI: MacCoreAIProbeBox? = nil,
     liveView: LiveViewSession? = nil
   ) async -> MacControlResponse {
-    switch req.op {
-    case .ping:
+    switch req.route {
+    case .owner(.ping):
       return MacControlResponse(
         ok: vm.state == "running", error: vm.state == "running" ? nil : vm.state)
-    case .inspect:
+    case .owner(.inspect):
       var r = MacControlResponse(ok: true)
       r.inspect = effective
       r.inspect?.liveViewListening = liveView?.listening ?? false
       return r
-    case .status:
+    case .owner(.status):
       let confirmed = await verifyPin(link: link, store: store)
       let pin = store.paths.loadPinnedHostKey()
       let counts = DesktopStatus(
@@ -448,14 +495,14 @@ package enum MacOwner {
         },
         liveView: counts.liveView)
       return r
-    case .stop:
+    case .owner(.stop):
       // The stop sequence ends the live view, as on every other way to it.
       var r = MacControlResponse(ok: true)
       r.stopPath = await stopper.stop()
       return r
-    case .cuSession, .cuFrame, .cuAct, .cuHold, .cuRelease, .cuWait, .cuStream, .cuStreamStop:
+    case .computerUse(let request):
       return await CUService.respond(
-        req, screen: screen, liveView: liveView,
+        request, screen: screen, liveView: liveView,
         streams: .deciding(vmState: vm.state, halting: await stopper.isStopping)
       ) {
         guard await verifyPin(link: link, store: store) else {

@@ -19,36 +19,36 @@ package struct ScreenWait: Sendable {
     /// `GuestCUProtocol.Wait`, `region` inside the display with a positive
     /// size, and `since` no later than `current`.
     package static func validated(
-      since: UInt64?, idleMs: Int?, timeoutMs: Int?, until: GuestCUWaitUntil?,
-      region: GuestCURegion?, width: Int, height: Int, current: UInt64
+      _ fields: GuestCUWaitFields, width: Int, height: Int, current: UInt64
     ) throws -> Parameters {
       func refuse(_ why: String) -> SandboxError {
         var e = SandboxError(why, refusal: .invalidAction)
         e.beforeInput = true
         return e
       }
-      let idle = idleMs ?? GuestCUProtocol.Wait.defaultIdleMs
+      let idle = fields.idleMs ?? GuestCUProtocol.Wait.defaultIdleMs
       guard GuestCUProtocol.Wait.idleMs.contains(idle) else {
         throw refuse(
           "idleMs must be \(GuestCUProtocol.Wait.idleMs.lowerBound)-\(GuestCUProtocol.Wait.idleMs.upperBound)"
         )
       }
-      let timeout = timeoutMs ?? GuestCUProtocol.Wait.defaultTimeoutMs
+      let timeout = fields.timeoutMs ?? GuestCUProtocol.Wait.defaultTimeoutMs
       guard GuestCUProtocol.Wait.timeoutMs.contains(timeout) else {
         throw refuse(
           "timeoutMs must be \(GuestCUProtocol.Wait.timeoutMs.lowerBound)-\(GuestCUProtocol.Wait.timeoutMs.upperBound)"
         )
       }
-      if let r = region {
+      if let r = fields.region {
         guard r.width >= 1, r.height >= 1, r.x >= 0, r.y >= 0, r.width <= width,
           r.height <= height, r.x <= width - r.width, r.y <= height - r.height
         else { throw refuse("region must lie inside \(width)×\(height)") }
       }
-      if let since, since > current {
+      if let since = fields.since, since > current {
         throw refuse("since \(since) is later than the current damageSeq \(current)")
       }
       return Parameters(
-        since: since, idleMs: idle, timeoutMs: timeout, until: until ?? .change, region: region)
+        since: fields.since, idleMs: idle, timeoutMs: timeout, until: fields.until ?? .change,
+        region: fields.region)
     }
   }
 

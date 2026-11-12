@@ -318,7 +318,7 @@ extension IsolationGate {
   /// (a separate package), and with guest-driven computer use
   /// `GuestCUProtocol.port`: the only ports a macOS guest may have.
   static func macVsockPorts(guestComputerUse: Bool) -> [UInt32] {
-    guestComputerUse ? [7801, 7802] : [7801]
+    guestComputerUse ? [7801, guestComputerUsePort] : [7801]
   }
 
   package static func macDiskPath(runtimeRoot: String, sandbox: MachineName) -> String {

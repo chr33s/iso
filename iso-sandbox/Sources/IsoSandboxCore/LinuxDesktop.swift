@@ -86,7 +86,7 @@ package final class LinuxDesktop {
   /// One host computer-use request. No session check precedes the
   /// screen's own: the guest has no helper whose identity a session could
   /// pin.
-  func respond(_ request: MacControlRequest) async -> MacControlResponse {
+  func respond(_ request: CURequest) async -> MacControlResponse {
     await CUService.respond(
       request, screen: screen, liveView: liveView,
       streams: .deciding(vmState: "running", halting: halting)

@@ -108,3 +108,51 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
   #expect(throws: FramebufferSurface.Failure.format(other)) { try read(foreign) }
   #expect(pixels.allSatisfy { $0 == 0xAA })
 }
+
+// MARK: shared limits and routing
+
+@Test func refusalsFromAnUntrustedPeerAreLoggedWithinABudget() {
+  let t0 = Date(timeIntervalSince1970: 1_000)
+  var budget = RejectionBudget(now: t0)
+  for _ in 0..<RejectionBudget.perMinute {
+    let admitted = budget.admit(at: t0)
+    #expect(admitted.emit && admitted.suppressed == 0)
+  }
+  // Past the budget nothing is logged until the minute is over.
+  for second in [0.0, 30, 60] {
+    let admitted = budget.admit(at: t0.addingTimeInterval(second))
+    #expect(!admitted.emit && admitted.suppressed == 0)
+  }
+  // The next minute's first refusal is logged and says what was dropped.
+  let next = budget.admit(at: t0.addingTimeInterval(60.5))
+  #expect(next.emit && next.suppressed == 3)
+  let after = budget.admit(at: t0.addingTimeInterval(61))
+  #expect(after.emit && after.suppressed == 0)
+}
+
+@Test func onlyComputerUseOperationsReachTheComputerUseService() {
+  // The owner answers these itself; none can be asked through `cu`.
+  for op in [MacControlRequest.Op.ping, .inspect, .status, .stop] {
+    guard case .owner = MacControlRequest(op: op).route else {
+      Issue.record("\(op.rawValue) routed to the computer-use service")
+      continue
+    }
+  }
+  let routed: [(MacControlRequest.Op, CURequest.Op)] = [
+    (.cuSession, .session), (.cuFrame, .frame), (.cuAct, .act), (.cuHold, .hold),
+    (.cuRelease, .release), (.cuWait, .wait), (.cuStream, .stream), (.cuStreamStop, .streamStop),
+  ]
+  #expect(routed.count == CURequest.Op.allCases.count)
+  for (op, expected) in routed {
+    var request = MacControlRequest(op: op, session: "s", seconds: 3)
+    request.idleMs = 100
+    guard case .computerUse(let cu) = request.route else {
+      Issue.record("\(op.rawValue) was not routed to the computer-use service")
+      continue
+    }
+    #expect(cu.op == expected)
+    // The request's members travel with it.
+    #expect(cu.fields.session == "s" && cu.fields.seconds == 3)
+    #expect(cu.fields.wait == GuestCUWaitFields(idleMs: 100))
+  }
+}

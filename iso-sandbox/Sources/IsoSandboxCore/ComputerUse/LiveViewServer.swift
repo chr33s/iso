@@ -38,8 +38,7 @@ package final class LiveViewServer: @unchecked Sendable {
   private var viewers: [Int: Viewer] = [:]
   private var nextViewer = 1
   private var stopped = false
-  private var rejections = 0
-  private var rejectionWindow = Date()
+  private var rejections = RejectionBudget()
   /// Connections being served, authenticated or not: a loopback port is
   /// open to every local process, and each connection holds a thread and a
   /// descriptor of the process that runs the VM.
@@ -400,16 +399,10 @@ package final class LiveViewServer: @unchecked Sendable {
 
   static let viewerLimitRejection = "viewer limit reached"
 
-  /// Logs a rejection's kind (never client bytes), at most 20 a minute.
+  /// Logs a rejection's kind (never client bytes), within the budget.
   private func reject(_ why: String) {
-    let emit: Bool = lock.withLock {
-      if Date().timeIntervalSince(rejectionWindow) > 60 {
-        rejections = 0
-        rejectionWindow = Date()
-      }
-      rejections += 1
-      return rejections <= 20
-    }
+    let (emit, suppressed) = lock.withLock { rejections.admit() }
+    if suppressed > 0 { log("live view: \(suppressed) more rejections not logged") }
     if emit { log("live view: \(why)") }
   }
 }

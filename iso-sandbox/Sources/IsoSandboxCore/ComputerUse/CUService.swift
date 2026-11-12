@@ -23,7 +23,7 @@ package enum CUService {
   /// Answers one computer-use request. `admit` runs before a session opens;
   /// a new live view starts only when `streams` accepts one.
   package static func respond(
-    _ req: MacControlRequest, screen: VMScreen, liveView: LiveViewSession?,
+    _ req: CURequest, screen: VMScreen, liveView: LiveViewSession?,
     streams: StreamAdmission, admit: () async throws -> Void
   ) async -> MacControlResponse {
     do {
@@ -35,27 +35,28 @@ package enum CUService {
   }
 
   /// A refused request, keeping the refusal code clients branch on.
-  package static func failure(_ error: any Error, op: MacControlRequest.Op) -> MacControlResponse {
+  package static func failure(_ error: any Error, op: CURequest.Op) -> MacControlResponse {
     var r = MacControlResponse(ok: false, error: "\(error)")
     if let e = error as? SandboxError, let refusal = e.refusal {
       r.refusal = refusal
-      r.beforeInput = op == .cuAct ? e.beforeInput : nil
+      r.beforeInput = op == .act ? e.beforeInput : nil
     }
     return r
   }
 
   private static func answer(
-    _ req: MacControlRequest, screen: VMScreen, liveView: LiveViewSession?,
+    _ request: CURequest, screen: VMScreen, liveView: LiveViewSession?,
     streams: StreamAdmission, admit: () async throws -> Void
   ) async throws -> MacControlResponse {
+    let req = request.fields
     var r = MacControlResponse(ok: true)
-    switch req.op {
-    case .cuSession:
+    switch request.op {
+    case .session:
       try await admit()
       let (id, binding) = try screen.newSession()
       r.session = id
       r.binding = binding
-    case .cuFrame:
+    case .frame:
       let f = try screen.frame(session: req.session)
       r.frame = MacFrameInfo(
         frameId: f.id, seq: f.seq, width: screen.width, height: screen.height,
@@ -63,7 +64,7 @@ package enum CUService {
         vmInstance: f.binding.vmInstance, sha256: f.sha256, timestamp: f.timestamp, png: f.png,
         damageSeq: f.damageSeq)
       r.damageSeq = f.damageSeq
-    case .cuAct:
+    case .act:
       guard let action = req.action else {
         var e = SandboxError("cu-act needs an action", refusal: .invalidAction)
         e.beforeInput = true
@@ -71,17 +72,15 @@ package enum CUService {
       }
       (r.submitted, r.damageSeq) = try await screen.act(
         session: req.session, request: action, basedOnFrame: req.basedOnFrame)
-    case .cuStream:
+    case .stream:
       guard let liveView else { throw SandboxError("no live view in this owner") }
       if case .refused(let state) = streams { throw SandboxError("sandbox is \(state)") }
       r.streamURL = try liveView.start()
-    case .cuStreamStop:
+    case .streamStop:
       liveView?.stop()
-    case .cuWait:
-      (r.wait, r.damageSeq) = try await screen.wait(
-        session: req.session, since: req.since, idleMs: req.idleMs, timeoutMs: req.timeoutMs,
-        until: req.until, region: req.region)
-    case .cuHold:
+    case .wait:
+      (r.wait, r.damageSeq) = try await screen.wait(session: req.session, req.wait)
+    case .hold:
       let seconds = req.seconds ?? CUControl.defaultHold
       guard CUControl.holdRange.contains(seconds) else {
         throw SandboxError(
@@ -90,11 +89,9 @@ package enum CUService {
       }
       screen.hold(.explicit, seconds: TimeInterval(seconds))
       (r.controller, r.holdRemainingSeconds) = screen.controlState
-    case .cuRelease:
+    case .release:
       screen.release()
       (r.controller, r.holdRemainingSeconds) = screen.controlState
-    case .ping, .inspect, .status, .stop:
-      throw SandboxError("\(req.op.rawValue) is not a computer-use request")
     }
     return r
   }

@@ -335,8 +335,7 @@ package final class VMScreen {
   /// hold or a broken binding ends a guest's wait with its refusal. Host
   /// callers take no hold by waiting. Returns the result and the `seq` after.
   package func wait(
-    session: String?, since: UInt64?, idleMs: Int?, timeoutMs: Int?,
-    until: GuestCUWaitUntil?, region: GuestCURegion?, origin: CUOrigin = .host
+    session: String?, _ fields: GuestCUWaitFields, origin: CUOrigin = .host
   ) async throws -> (GuestCUWaitResult, damageSeq: UInt64) {
     func admitted() throws {
       if origin == .guest { try control.requireGuest(session, at: Date()) }
@@ -344,8 +343,7 @@ package final class VMScreen {
     }
     try admitted()
     let parameters = try ScreenWait.Parameters.validated(
-      since: since, idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region,
-      width: width, height: height, current: damage.seq)
+      fields, width: width, height: height, current: damage.seq)
     try waits.take(origin)
     defer { waits.free(origin) }
     _ = try render()

@@ -274,9 +274,9 @@ import Testing
   @MainActor @Test func refusalsKeepTheirCode() {
     var e = SandboxError("busy", refusal: .busy)
     e.beforeInput = true
-    let act = CUService.failure(e, op: .cuAct)
+    let act = CUService.failure(e, op: .act)
     #expect(!act.ok && act.refusal == .busy && act.beforeInput == true)
-    let frame = CUService.failure(e, op: .cuFrame)
+    let frame = CUService.failure(e, op: .frame)
     #expect(frame.refusal == .busy && frame.beforeInput == nil)
   }
 }

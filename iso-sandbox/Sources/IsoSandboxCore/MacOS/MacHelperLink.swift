@@ -168,23 +168,12 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
 
   package var pendingCount: Int { lock.withLock { pending } }
 
-  private var rejections = 0
-  private var rejectionWindow = Date()
+  private var rejections = RejectionBudget()
 
-  /// Logs a rejection, at most 20 a minute: a guest must not be able to
-  /// grow the host log without bound by reconnecting.
+  /// Logs a rejection, within the budget: a guest must not be able to grow
+  /// the host log without bound by reconnecting.
   private func reject(_ why: String) {
-    let (emit, suppressed): (Bool, Int) = lock.withLock {
-      if Date().timeIntervalSince(rejectionWindow) > 60 {
-        let dropped = max(0, rejections - 20)
-        rejections = 0
-        rejectionWindow = Date()
-        rejections += 1
-        return (true, dropped)
-      }
-      rejections += 1
-      return (rejections <= 20, 0)
-    }
+    let (emit, suppressed) = lock.withLock { rejections.admit() }
     if suppressed > 0 { log("helper rejections: \(suppressed) more not logged") }
     if emit { log("helper rejected: \(GuestText.printable(why))") }
   }

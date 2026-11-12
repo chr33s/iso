@@ -221,7 +221,13 @@ package enum Owner {
         return ControlResponse(ok: true, streams: broker.close(session: request.session))
       case .cu:
         guard let attached else { return ControlResponse(ok: false, error: "no display") }
-        guard let cu = request.cu else { return ControlResponse(ok: false, error: "empty cu") }
+        guard let fields = request.cu else { return ControlResponse(ok: false, error: "empty cu") }
+        // Only a computer-use operation: this owner answers `stop` and
+        // `inspect` as its own control operations, never through `cu`.
+        guard case .computerUse(let cu) = fields.route else {
+          return ControlResponse(
+            ok: false, error: "\(fields.op.rawValue) is not a computer-use request")
+        }
         if let sessionDeadline, Date() >= sessionDeadline {
           return ControlResponse(ok: false, error: "the boot's session has expired")
         }

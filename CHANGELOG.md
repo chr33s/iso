@@ -76,8 +76,10 @@ SPDX-License-Identifier: Apache-2.0
   once so the new updater installs the `desktop` guest files.
 - **Guest computer use:** a request line nested deeper than a request can
   be is refused before it is parsed.
-- **Apple runtime:** the computer-use sources shared by macOS and Linux
-  owners moved to `iso-sandbox/Sources/IsoSandboxCore/ComputerUse/`.
+- **Apple runtime:** the guest computer-use and live-view listeners now
+  log how many refusals a minute's limit dropped, as the guest-helper
+  listener does. The computer-use sources shared by macOS and Linux owners
+  moved to `iso-sandbox/Sources/IsoSandboxCore/ComputerUse/`.
 - **Apple runtime:** iso-sandbox links `apple/containerization` 0.54.0 (was
   0.45.0) and pins `vminit:0.54.0` by digest; the host qualifies only
   containerization 0.54.0. The runtime keys its init filesystem by

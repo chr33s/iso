@@ -85,7 +85,7 @@ private func parameters(
   region: GuestCURegion? = nil
 ) throws -> ScreenWait.Parameters {
   try ScreenWait.Parameters.validated(
-    since: nil, idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region,
+    GuestCUWaitFields(idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region),
     width: MacDisplay.width, height: MacDisplay.height, current: 0)
 }
 
@@ -131,7 +131,7 @@ private func simulate(_ p: ScreenWait.Parameters, changes: [Int]) async throws
   try sample(&g, frame(64, 64))
   let watched = region(0, 0, 16, 16)
   let p = try ScreenWait.Parameters.validated(
-    since: nil, idleMs: 100, timeoutMs: 400, until: .change, region: watched, width: 64,
+    GuestCUWaitFields(idleMs: 100, timeoutMs: 400, until: .change, region: watched), width: 64,
     height: 64, current: g.seq)
   var w = ScreenWait(p, since: g.seq)
   #expect(w.feed(elapsedMs: 0, latest: g.latest(in: watched)) == nil)
@@ -172,7 +172,7 @@ private func simulate(_ p: ScreenWait.Parameters, changes: [Int]) async throws
   ) -> CURefusal? {
     refusal {
       _ = try ScreenWait.Parameters.validated(
-        since: since, idleMs: idleMs, timeoutMs: timeoutMs, until: nil, region: region,
+        GuestCUWaitFields(since: since, idleMs: idleMs, timeoutMs: timeoutMs, region: region),
         width: 1920, height: 1200, current: 7)
     }
   }

@@ -15,8 +15,7 @@ package final class MacGuestCULink: NSObject, VZVirtioSocketListenerDelegate, @u
   private let lock = NSLock()
   private var connections = 0
   private var limits: GuestCULimits
-  private var rejections = 0
-  private var rejectionWindow = Date()
+  private var rejections = RejectionBudget()
   private var tally: MacGuestCUCounters
 
   package init(
@@ -113,16 +112,10 @@ package final class MacGuestCULink: NSObject, VZVirtioSocketListenerDelegate, @u
     return (request.op, response)
   }
 
-  /// Logs a rejection, at most 20 a minute.
+  /// Logs a rejection, within the budget.
   private func reject(_ why: String) {
-    let emit: Bool = lock.withLock {
-      if Date().timeIntervalSince(rejectionWindow) > 60 {
-        rejections = 0
-        rejectionWindow = Date()
-      }
-      rejections += 1
-      return rejections <= 20
-    }
+    let (emit, suppressed) = lock.withLock { rejections.admit() }
+    if suppressed > 0 { log("guest computer use rejections: \(suppressed) more not logged") }
     if emit { log("guest computer use rejected: \(GuestText.printable(why))") }
   }
 }
@@ -220,9 +213,7 @@ extension MacGuestCULink {
       case .wait:
         var r = GuestCUResponse(ok: true)
         (r.wait, r.damageSeq) = try await screen.wait(
-          session: request.session, since: request.since, idleMs: request.idleMs,
-          timeoutMs: request.timeoutMs, until: request.until, region: request.region,
-          origin: .guest)
+          session: request.session, request.wait, origin: .guest)
         return r
       }
     } catch let e as SandboxError {
