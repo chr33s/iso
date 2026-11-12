@@ -309,7 +309,7 @@ All new names below are proposals.
 | Controller | Host orchestration under `Sources/IsoHost/` | Add `ComputerUse/DialogResponder.swift` with a small explicit state machine. |
 | Recognition | `tests/fixtures/macos-guest/frame-ocr.swift` | Extract a bounded detector; add a versioned catalog of real prompt fixtures. |
 | Decisions | Host configuration, beside current validated policy concepts | Add typed prompt family, semantic effect, policy snapshot, and rule matching; reject unknown fields. |
-| Input ownership | `iso-sandbox/Sources/IsoSandboxCore/VMScreen.swift` | Enforce the declared controller model; add an owner lease only when multi-client support is required. |
+| Input ownership | `iso-sandbox/Sources/IsoSandboxCore/ComputerUse/VMScreen.swift` | Enforce the declared controller model; add an owner lease only when multi-client support is required. |
 | Session/frame contract | `CUModel.swift`, `MacOwner.swift` | Retain binding checks; add explicit response/lease metadata only as needed. Keep acknowledgement distinct from verification. |
 | CLI | `iso-sandbox/Sources/IsoSandbox/MacCommands.swift` | Keep transport commands small. Any higher-level observe/respond command is new and should be labeled accordingly. |
 | Unit tests | `iso-sandbox/Tests/IsoSandboxTests/MacComputerUseTests.swift` and host tests | Cover classification, policy, lifecycle invalidation, uncertainty, and concurrency behavior. |

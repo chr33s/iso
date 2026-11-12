@@ -382,7 +382,7 @@ Where the built system is described now:
   `iso-sandbox/kernel/`, [PROVENANCE.md](../../PROVENANCE.md) and
   [THIRD_PARTY_LICENSES.md](../../THIRD_PARTY_LICENSES.md).
 - **Code:** `iso-sandbox` `LinuxDisplay.swift`, `LinuxDesktop.swift`,
-  `FramebufferSurface.swift`, `Devices.swift`; host
+  `ComputerUse/FramebufferSurface.swift`, `Devices.swift`; host
   `Sources/IsoHost/Runtime/LinuxDisplay.swift`; tests and faults
   `linux-display-*` in `scripts/swift-host-fault-injection.py`.
 

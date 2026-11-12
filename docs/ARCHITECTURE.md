@@ -82,8 +82,8 @@ iso/
 ├── fuzz/                    # libFuzzer harnesses (Targets/, Entrypoints/), corpus, vendored libFuzzer
 ├── iso-sandbox/            # Swift VM runtime: Linux sandboxes on Apple Containerization;
 │                            #   macOS guests (IsoSandboxCore/MacOS, IsoMacProtocol, iso-macos-helper);
-│                            #   computer use for both (VMScreen, CUService) and Linux displays
-│                            #   (LinuxDisplay, LinuxDesktop, FramebufferSurface; kernel/ builds the desktop kernel)
+│                            #   computer use and the live view for both (IsoSandboxCore/ComputerUse);
+│                            #   Linux displays (LinuxDisplay, LinuxDesktop; kernel/ builds the desktop kernel)
 ├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
 ├── iso-egress/             # Swift filtered-egress companion: destination policy, leases, CONNECT
 ├── iso-policy/             # shared libraries: IsoPolicy (evaluator), IsoGitIndex (inert index reader)

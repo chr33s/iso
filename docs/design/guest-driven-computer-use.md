@@ -481,8 +481,8 @@ refund rule in §5.3.
 | Piece | Where |
 | --- | --- |
 | Wire types, refusal codes, MCP mapping | `iso-sandbox/Sources/IsoGuestCU/GuestCUProtocol.swift`, `GuestCUMCP.swift` |
-| Control and limits (pure) | `iso-sandbox/Sources/IsoSandboxCore/MacOS/CUControl.swift` |
-| Listener, counts | `iso-sandbox/Sources/IsoSandboxCore/MacOS/MacGuestCULink.swift` |
+| Control and limits (pure) | `iso-sandbox/Sources/IsoSandboxCore/ComputerUse/CUControl.swift` |
+| Listener, counts | `iso-sandbox/Sources/IsoSandboxCore/ComputerUse/MacGuestCULink.swift` |
 | Holds, guest sessions | `VMScreen.swift`; `cu-hold`/`cu-release` in `MacOwner.swift`; CLI `macos cu hold|release`, `macos create --guest-computer-use [--guest-frame-rate N]` |
 | Guest stdio server | `iso-sandbox/Sources/IsoGuestCU/GuestCUConnection.swift` (`iso-macos-helper cu-mcp`, Linux `iso-cu-mcp`) |
 | `iso` | `ComputerUseConfig` (`IsoConfig.swift`, `ConfigDecoding.swift`), `MacLifecycle.swift`, `IsolationGate.verifyMacEffective`, `AgentBootstrap.withGuestComputerUse`, `BoundaryAudit.guestComputerUse` |
