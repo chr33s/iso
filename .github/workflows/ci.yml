@@ -98,32 +98,86 @@ jobs:
       - name: Integration test — iso uninstall
         run: ./tests/integration-uninstall.sh
 
+      - name: SwiftPM pins unchanged
+        run: git diff --exit-code -- '*Package.resolved'
+
+  # Independent of the host job: each builds its own package, so they run in
+  # parallel on separate runners. Release calls this workflow and needs all.
+  sandbox:
+    name: Apple runtime
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
       - name: iso-sandbox build and unit tests
         run: swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
 
+      - name: SwiftPM pins unchanged
+        run: git diff --exit-code -- '*Package.resolved'
+
+  egress:
+    name: Filtered egress
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
       - name: Filtered-egress unit and confined lease gates
-        shell: bash
-        run: |
-          swift test --package-path iso-egress --force-resolved-versions
-          swift build --package-path iso-egress --force-resolved-versions
-          python3 scripts/test-swift-egress-jail.py
-          python3 scripts/test-swift-egress-lease.py
-          python3 scripts/test-swift-egress-pressure.py
-          python3 scripts/test-swift-egress-mutations.py
+        run: mise run check-egress
+
+      - name: SwiftPM pins unchanged
+        run: git diff --exit-code -- '*Package.resolved'
+
+  iso-ci:
+    name: iso-ci companion
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
 
       # Fixture and unit tests only: no live GitHub, VM or runner qualification.
       - name: iso-ci companion build and tests
         run: mise run check-ci
 
+      - name: SwiftPM pins unchanged
+        run: git diff --exit-code -- '*Package.resolved'
+
+  fuzz:
+    name: Fuzz smoke
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke
         shell: bash
         run: scripts/fuzz.sh smoke 30
-
-      # Every companion package above built with --force-resolved-versions;
-      # none of them may have rewritten its committed pins.
-      - name: Companion SwiftPM pins unchanged
-        run: git diff --exit-code -- '*Package.resolved'
 
   # The proxy intentionally targets macOS 27 system trust. macos-latest does
   # not guarantee that SDK/runtime; xcode-27 is GitHub's macOS 27 preview image.

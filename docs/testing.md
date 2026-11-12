@@ -899,8 +899,8 @@ output are checked for disclosure.
 
 ### Swift proxy CI gate
 
-The `swift-proxy` job in `.github/workflows/ci.yml` uses GitHub's `xcode-27`
-macOS 27 preview runner. It checks strict Swift formatting, the full pinned
+The `proxy` job in `.github/workflows/ci.yml` uses GitHub's `xcode-27`
+macOS 27 preview runner. It runs the full pinned
 package test suite, the confined-process gate without live provider TLS, and the
 Swift forwarding and early-disconnect corpora. The job raises its
 file-descriptor limit for the 256-stream workloads. Release builds depend on
