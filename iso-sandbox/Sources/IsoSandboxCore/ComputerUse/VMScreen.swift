@@ -624,3 +624,5 @@ final class UnconstrainedWindow: NSWindow {
     frameRect
   }
 }
+
+extension VMScreen: LiveViewScreen {}

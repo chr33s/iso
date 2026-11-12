@@ -13,6 +13,25 @@ package struct MacLiveViewCounters: Codable, Equatable, Sendable {
   package init() {}
 }
 
+/// What a live view needs of the display it shows: its size, the host
+/// hold, viewer input and frames. ``VMScreen`` is the one production
+/// conformance; tests drive a session through a fake.
+@MainActor
+package protocol LiveViewScreen: AnyObject {
+  var width: Int { get }
+  var height: Int { get }
+  /// A host action is being delivered; viewer input waits for it.
+  var isActing: Bool { get }
+  func hold(_ kind: CUControl.Hold, seconds: TimeInterval)
+  func releaseImplicitHold()
+  func viewerSend(_ input: LiveViewInput, held: LiveViewHeld) throws
+  /// Types `text`, calling `proceed` before each key; a throw ends it.
+  func viewerType(_ text: String, proceed: () throws -> Void) async throws
+  func streamFrame(
+    _ body: (UnsafeRawPointer, _ bytesPerRow: Int, _ damageSeq: UInt64) throws -> Void
+  ) throws
+}
+
 /// One VM's live view (docs/design/computer-use-live-view.md): off until
 /// `start`, then a loopback listener whose viewers get the display as
 /// H.264 and may take control under the host hold. It samples and encodes
@@ -20,7 +39,7 @@ package struct MacLiveViewCounters: Codable, Equatable, Sendable {
 /// `LiveView.idleStop` with none.
 @MainActor
 package final class LiveViewSession {
-  private let screen: VMScreen
+  private let screen: any LiveViewScreen
   private let log: @Sendable (String) -> Void
   private var server: LiveViewServer?
   private var bridge: Bridge?
@@ -44,7 +63,7 @@ package final class LiveViewSession {
   private var typingGeneration = 0
   package private(set) var counters = MacLiveViewCounters()
 
-  package init(screen: VMScreen, log: @escaping @Sendable (String) -> Void) {
+  package init(screen: any LiveViewScreen, log: @escaping @Sendable (String) -> Void) {
     self.screen = screen
     self.log = log
   }
@@ -84,7 +103,7 @@ package final class LiveViewSession {
 
   // MARK: viewers (called through the bridge, on the main actor)
 
-  fileprivate func joined(_ viewer: Int) {
+  func joined(_ viewer: Int) {
     // A viewer that authenticated as the stream stopped is not counted: its
     // socket is already closed, and it would hold off the next idle stop.
     guard server != nil else { return }
@@ -109,7 +128,7 @@ package final class LiveViewSession {
     server?.send(text: state(for: viewer), to: viewer)
   }
 
-  fileprivate func left(_ viewer: Int) {
+  func left(_ viewer: Int) {
     viewers.remove(viewer)
     if control.controller == viewer { stopTyping() }
     // A closed tab releases what it held but not the hold: it expires.
@@ -122,7 +141,7 @@ package final class LiveViewSession {
     if server != nil { scheduleIdleStop() }
   }
 
-  fileprivate func handle(_ viewer: Int, _ message: LiveViewMessage) async -> String? {
+  func handle(_ viewer: Int, _ message: LiveViewMessage) async -> String? {
     let now = Date()
     switch message {
     case .auth:

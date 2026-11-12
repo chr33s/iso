@@ -130,6 +130,16 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
   #expect(after.emit && after.suppressed == 0)
 }
 
+@Test func theLiveViewListenerAddressIsLoopback() {
+  // The address alone: a listener bound anywhere else must never open,
+  // even in a test.
+  let address = LiveViewServer.bindAddress
+  #expect(address.sin_family == sa_family_t(AF_INET))
+  #expect(address.sin_addr.s_addr == INADDR_LOOPBACK.bigEndian)
+  #expect(address.sin_addr.s_addr != INADDR_ANY)
+  #expect(address.sin_port == 0)
+}
+
 @Test func onlyComputerUseOperationsReachTheComputerUseService() {
   // The owner answers these itself; none can be asked through `cu`.
   for op in [MacControlRequest.Op.ping, .inspect, .status, .stop] {

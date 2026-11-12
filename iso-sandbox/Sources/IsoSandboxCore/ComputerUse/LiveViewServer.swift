@@ -79,12 +79,7 @@ package final class LiveViewServer: @unchecked Sendable {
     guard fd >= 0 else { throw SandboxError("no socket for the live view") }
     var one: Int32 = 1
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-    var addr = sockaddr_in()
-    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-    addr.sin_family = sa_family_t(AF_INET)
-    addr.sin_port = 0
-    // Loopback only, never a wildcard.
-    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    var addr = Self.bindAddress
     let bound = withUnsafePointer(to: &addr) {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
         bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
@@ -102,6 +97,17 @@ package final class LiveViewServer: @unchecked Sendable {
     listener = fd
     port = UInt16(bigEndian: got.sin_port)
     address = String(cString: inet_ntoa(got.sin_addr))
+  }
+
+  /// Where the listener binds: IPv4 loopback only, never a wildcard, on a
+  /// port the kernel picks.
+  static var bindAddress: sockaddr_in {
+    var addr = sockaddr_in()
+    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = 0
+    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    return addr
   }
 
   /// The viewer's URL, at the address the socket is really bound to.
