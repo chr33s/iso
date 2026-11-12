@@ -25,7 +25,7 @@ set -euo pipefail
 
 case "${1:-}" in
     -h | --help)
-        sed -n '4,23p' "$0" | sed -E 's/^# ?//'
+        sed -n '4,24p' "$0" | sed -E 's/^# ?//'
         exit 0
         ;;
     "")

@@ -25,7 +25,7 @@ SDK_SHA256=47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
 
 case "${1:-}" in
     -h | --help | "")
-        sed -n '4,18p' "$0" | sed -E 's/^# ?//'
+        sed -n '4,19p' "$0" | sed -E 's/^# ?//'
         [[ -n "${1:-}" ]] && exit 0 || exit 1
         ;;
 esac

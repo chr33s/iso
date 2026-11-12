@@ -269,5 +269,5 @@ case "${1:-}" in
   merge) shift; cmd_merge "$@" ;;
   minimize) shift; cmd_minimize "$@" ;;
   qualify) cmd_qualify ;;
-  *) sed -n '2,15p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,19p' "$0" >&2; exit 2 ;;
 esac

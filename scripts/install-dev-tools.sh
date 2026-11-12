@@ -16,7 +16,7 @@ set -euo pipefail
 case "${1:-}" in
     "" | --all) ;;
     -h | --help)
-        sed -n '4,13p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '8,14p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *)
