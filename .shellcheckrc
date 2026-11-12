@@ -1,0 +1,4 @@
+# Guest provisioning fragments under scripts/guest/ and
+# Sources/IsoHost/Guest/Resources/ are embedded into a bash script and carry no
+# shebang of their own.
+disable=SC2148

@@ -63,6 +63,7 @@ PYTHON_GATES = [
     'scripts/test-swift-egress-pressure.py',
     'tests/integration-filtered-broker-readiness.py',
     'scripts/test-swift-egress-mutations.py',
+    'scripts/test-proxy-contract.py', 'scripts/test-swift-proxy-mutations.py',
 ]
 SHELL_GATES = [
     'tests/integration-install.sh', 'tests/integration-update.sh',
@@ -159,6 +160,8 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('swift build --package-path iso-proxy --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-proxy --show-bin-path', calls)
         self.assertIn(f'proxy-e2e-binary={self.root}/.build/proxy-test/iso-proxy', calls)
+        self.assertIn(f'test-proxy-contract.py --swift {self.root}/.build/proxy-test/iso-proxy', calls)
+        self.assertIn('test-swift-proxy-mutations.py', calls)
         self.assertIn('swift test --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('mise run check-ci', calls)
@@ -174,7 +177,8 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
         for gate in ('swift build --package-path iso-proxy --force-resolved-versions',
                      'swift build --package-path iso-proxy --show-bin-path',
-                     'swift test --package-path iso-proxy --force-resolved-versions'):
+                     'swift test --package-path iso-proxy --force-resolved-versions',
+                     'test-proxy-contract.py', 'test-swift-proxy-mutations.py'):
             with self.subTest(gate=gate):
                 result = self.run_preflight('--quick', fail=gate)
                 self.assertNotEqual(result.returncode, 0)

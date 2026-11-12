@@ -55,3 +55,19 @@ jobs:
 
       - name: Tests detect every injected fault
         run: python3 scripts/swift-host-fault-injection.py
+
+  proxy-mutations:
+    name: Credential proxy mutations
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
+      - name: Proxy tests kill every policy and parser-limit mutation
+        run: python3 scripts/test-swift-proxy-mutations.py

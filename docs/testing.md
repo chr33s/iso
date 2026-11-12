@@ -882,6 +882,7 @@ bytes after six seconds. Both require HTTP 408 and peer closure within 9–13
 seconds, proving that partial progress does not reset the initial ten-second
 deadline. The suite takes about 40 seconds plus startup time. These requests
 use denied methods and cannot issue a model operation.
+`mise run check-proxy`, the CI proxy job and release preflight run it.
 
 The same harness also holds 256 idle guest sockets and requires eight excess
 sockets to close without sending any HTTP bytes. It completes all held sockets
@@ -1564,7 +1565,8 @@ switch counts against reported mutants and rejects absent instrumentation.
 
 The targeted `scripts/test-swift-proxy-mutations.py` remains a separate check
 for the spec's mandatory deny/method/path/header/equality regressions and the
-three explicit HTTP parser limits.
+three explicit HTTP parser limits. `mise run check-proxy`, release preflight
+and the nightly workflow run it.
 
 ## Fuzzing
 

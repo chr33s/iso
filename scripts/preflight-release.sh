@@ -194,7 +194,9 @@ run_swift_proxy() {
   swift build --package-path iso-proxy --force-resolved-versions || return
   bin_dir="$(swift build --package-path iso-proxy --show-bin-path)" || return
   ISO_PROXY_E2E_BINARY="$bin_dir/iso-proxy" \
-    swift test --package-path iso-proxy --force-resolved-versions
+    swift test --package-path iso-proxy --force-resolved-versions || return
+  python3 scripts/test-proxy-contract.py --swift "$bin_dir/iso-proxy" || return
+  python3 scripts/test-swift-proxy-mutations.py
 }
 
 run_swift_egress() {

@@ -27,6 +27,8 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="iso-proxy-muter-"))
     package = work / "package"
     shutil.copytree(PACKAGE, package, ignore=shutil.ignore_patterns(".build", ".swiftpm", "muter_tmp"))
+    # iso-proxy/Package.swift depends on the sibling package at ../iso-policy.
+    shutil.copytree(ROOT / "iso-policy", work / "iso-policy", ignore=shutil.ignore_patterns(".build", ".swiftpm"))
     hashes = {name: hashlib.sha256((package / "Sources/IsoProxyCore" / name).read_bytes()).hexdigest()
               for name in FILES}
     (work / "source-sha256.json").write_text(json.dumps(hashes, indent=2) + "\n")

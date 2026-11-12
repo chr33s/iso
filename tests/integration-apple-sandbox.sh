@@ -1853,6 +1853,7 @@ if want iso; then
                 jq -e '.display == "virtio_display" and .guest_computer_use.frameRate == 4' "$dside"
             check "desktop: the guest boots the desktop kernel with its display up" \
                 desk exec e2e-desk -- sh -c 'uname -r | grep -q iso-desktop && test -e /dev/dri/card0 && systemctl is-active --quiet iso-display iso-display-wm'
+            # shellcheck disable=SC2016 # Expand in the inner shell.
             check "desktop: Firefox is Mozilla's package, not Ubuntu's snap shim" \
                 desk exec e2e-desk -- sh -c 'firefox --version | grep -q "^Mozilla Firefox" && ! dpkg-query -W -f="\${Version}" firefox | grep -q snap && ! command -v snap'
             # The apt pin (desktop-pre.sh): Mozilla's repository is preferred
@@ -1884,6 +1885,7 @@ PY
                 jq -e '.result.content[0].type == "image"' \
                 <<<"$(desk exec e2e-desk -- sh -c 'echo "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"screenshot\"}}" | /usr/local/bin/iso-cu-mcp')"
             "$SANDBOX" cu stream --root "$CROOT" "$dm" >/dev/null
+            # shellcheck disable=SC2016 # Expand in the inner shell.
             check "desktop: stop and start pass the gate" \
                 sh -c '"$1" --config "$2" stop e2e-desk && "$1" --config "$2" start e2e-desk --no-agents --no-github' \
                 _ "$ISO" "$WORK/iso-desktop.jsonc"

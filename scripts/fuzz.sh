@@ -35,6 +35,7 @@ TIMEOUT_SECONDS=10
 RSS_LIMIT_MB=2048
 MALLOC_LIMIT_MB=1024
 
+# shellcheck disable=SC2054 # The comma is part of one flag value.
 SWIFT_FLAGS=(
   -O -g -parse-as-library -swift-version 6 -package-name iso
   -target arm64-apple-macosx27.0
@@ -219,8 +220,9 @@ SWIFT
     -only_ascii=1 "$q/corpus" > "$q/discover.log" 2>&1 || status=$?
   grep -q "ERROR: AddressSanitizer: heap-use-after-free" "$q/discover.log" \
     || die "qualification: fault not found (status $status); see $q/discover.log"
-  local crash
-  crash="$(ls "$q"/artifacts/crash-* | head -1)"
+  local crashes=("$q"/artifacts/crash-*)
+  local crash="${crashes[0]}"
+  [ -e "$crash" ] || die "qualification: no crash artifact in $q/artifacts"
   echo "found: $(basename "$crash")" >&2
 
   echo "== 4: replay and minimize the saved crash" >&2

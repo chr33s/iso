@@ -50,6 +50,10 @@ run = "python3 scripts/hygiene.py"
 description = "swift format lint --strict over every Swift package"
 run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-ci/Package.swift iso-ci/Sources iso-ci/Tests scripts/verify-egress-readiness.swift experiments/macos-computer-use-q0/Package.swift experiments/macos-computer-use-q0/Sources experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
 
+[tasks.lint-shell]
+description = "shellcheck over every tracked shell script"
+run = "git ls-files -z '*.sh' | xargs -0 shellcheck"
+
 [tasks.build]
 description = "Build the Swift host"
 run = "swift build --force-resolved-versions"
@@ -73,12 +77,14 @@ description = "Apple runtime build and unit tests"
 run = "swift test --package-path iso-sandbox --force-resolved-versions --no-parallel"
 
 [tasks.check-proxy]
-description = "Credential proxy build, unit tests, and offline process gates"
+description = "Credential proxy build, unit tests, offline process, refusal-contract and mutation gates"
 run = """
 ulimit -n 8192
 swift build --package-path iso-proxy --force-resolved-versions
 proxy_bin_dir="$(swift build --package-path iso-proxy --show-bin-path)"
 ISO_PROXY_E2E_BINARY="$proxy_bin_dir/iso-proxy" swift test --package-path iso-proxy --force-resolved-versions
+python3 scripts/test-proxy-contract.py --swift "$proxy_bin_dir/iso-proxy"
+python3 scripts/test-swift-proxy-mutations.py
 """
 
 [tasks.check-egress]
