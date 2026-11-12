@@ -20,13 +20,13 @@ case it cannot execute as `blocked`.
 | T02 identities, bounded wire | Implemented | `IsoCore/HostIdentity.swift`, `HostWire.swift`, `HostProtocol.swift`, `HostControlError.swift` |
 | T03 persistent local service | Implemented (daemon, exclusive service lock, private sockets with provenance by socket, peer-uid check, launchd user service, new epoch per start) | `HostSupervisor.swift`, `LocalHostControl.swift`, `HostService.swift` |
 | T04 pinned SSH frontend | Implemented | `SSHHostControl.swift` |
-| T05–T07 ledger, lifecycle, recovery | Implemented; `AppleNativeHost` reuses `AppleBackend` under each VM's recorded network policy, with a reserved runtime name and a fixed boot deadline; exercised end to end against the stateful fake runtime | `OperationStore.swift`, `HostSupervisor.swift`, `NativeHost.swift` |
+| T05–T07 ledger, lifecycle, recovery | Implemented; `AppleNativeHost` reuses `AppleBackend` under each VM's recorded network policy, with a reserved runtime name and a fixed boot deadline; exercised end to end against the stateful fake runtime | `OperationStore.swift`, `HostSupervisor.swift`, `HostAdmission.swift`, `HostExecution.swift`, `NativeHost.swift` |
 | T08 volatile access | Implemented | `AccessSessions.swift` |
 | T09 owned relay | Implemented | `GuestRelay.swift`, `HostService.swift` |
 | T10 configuration realms | Implemented | `IsoConfiguration/ExecutionHostConfig.swift` |
 | T11 enrollment, placement | Implemented | `HostCommands.swift`, `ClientBindings.swift` |
 | T12 artifacts | Implemented | `ArtifactStore.swift`, `ArchiveValidator.swift` |
-| T13 image setup on the worker | Implemented: `image.ensure` runs the worker's own setup as a durable, idempotent, one-per-image operation; `vm.create`/`run.create` require a worker-verified image | `HostSupervisor.swift`, `NativeHost.swift`, `iso host image` |
+| T13 image setup on the worker | Implemented: `image.ensure` runs the worker's own setup as a durable, idempotent, one-per-image operation; `vm.create`/`run.create` require a worker-verified image | `HostAdmission.swift`, `HostExecution.swift`, `NativeHost.swift`, `iso host image` |
 | T14 project lifecycle on a selected host | Implemented as `iso host up HOST [PATH]` (create-or-reuse by host-qualified binding, start, push); `unknown` never triggers recreation | `HostWorkflowCommands.swift` |
 | T15 status/machine output | Implemented: `iso list --all-hosts` with additive host fields and `host_failures`; `capabilities` gains a static `host_control` block | `ReadCommands.swift`, `MachineResponses.swift` |
 | T16 shared route | Implemented: `SSHTarget.proxyCommand` carries the relay, so ssh/scp/rsync/tar and tunnels use one pinned route | `SSH.swift`, `ClientBindings.swift` |
@@ -40,7 +40,7 @@ case it cannot execute as `blocked`.
 | T24–T25 disposable runs | Implemented end to end: service-side run ownership and `iso host run` / `run-results` (verified download into a client stage, then acknowledgment) | `RunStore.swift`, `HostRuns.swift`, `HostWorkflowCommands.swift` |
 | T26 local capabilities through the service | Implemented for service-managed instances: resize, commit and restore dispatch locally and are refused over SSH; macOS computer use is not dispatched (macOS guests are not service-managed) | `HostSupervisor.swift`, `iso host vm resize/commit/restore local …` |
 | T27 migration | Implemented: preview; `--activate` prepares a durable handoff under the mutation lock and releases it; the service completes activation-only under its ownership lock (rechecks stopped boundary, journals, writers and identities), adopts stopped Linux instances (marker + records + `local` bindings), fences the owner record against older binaries and commits; resumable after a crash; `--rollback` before completion. Adopted instances are mutated only by the service (the legacy path refuses); macOS and disposable-run instances stay legacy | `HostMigration.swift`, `AppleBackend.requireWriter` |
-| T28 cancellation | Implemented | `HostSupervisor.swift` |
+| T28 cancellation | Implemented | `HostExecution.swift` |
 | T29 docs | Implemented | `docs/` |
 | T30 release gates | Fault-injection entries for every new refusal; native Q1 runner. Native results: see below | `scripts/swift-host-fault-injection.py` |
 

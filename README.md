@@ -91,7 +91,9 @@ To let an agent in a macOS guest see and drive its own display, set
 `"computer_use": {"guest_access": true}` before creating the instance. The
 agent gets an `iso-cu` MCP server; the host injects its input through the VM's
 virtual keyboard and pointer and can take the display back at any time. See
-[`computer_use`](docs/configuration.md#computer_use).
+[`computer_use`](docs/configuration.md#computer_use). Linux images built with the
+`desktop` profile get the same display, input and `iso-cu` server; see
+[Linux desktop images](docs/images-and-profiles.md#linux-desktop-images).
 
 ### Remote Macs
 

@@ -187,8 +187,9 @@ reported to the guest; streams are CLI only, with no configuration field.
 
 ## 11. Implementation notes
 
-The code is `iso-sandbox/Sources/IsoSandboxCore/MacOS/LiveView*.swift`
-(tests: `MacLiveViewTests.swift`; faults `macos-live-view-*` in
+The code is `iso-sandbox/Sources/IsoSandboxCore/ComputerUse/LiveView*.swift`
+(tests: `MacLiveViewTests.swift` and `LiveViewSessionTests.swift`; faults
+`live-view-*` and `macos-live-view-*` in
 `scripts/swift-host-fault-injection.py`). The listener's rules and limits
 are in the [trust model](../trust-model.md#macos-guests); the audit
 counters are in [audit](../audit.md). Where the build departs from the

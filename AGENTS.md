@@ -95,8 +95,9 @@ and the remaining checks are in [`docs/testing.md`](docs/testing.md).
 
 The pre-commit hook runs `mise run pre-commit` ([`mise.toml`](mise.toml);
 install the pinned tools and the hook with `./scripts/install-dev-tools.sh`):
-`scripts/hygiene.py` (whitespace, final newline, YAML, large-file and
-merge-conflict checks on staged files), `swift format lint --strict`,
+`scripts/hygiene.py` (whitespace, final newline, YAML, large-file,
+merge-conflict and, when a `Package.swift` is staged, matching shared
+dependency pins across manifests), `swift format lint --strict`,
 `swift build --force-resolved-versions` and `swift test --force-resolved-versions`. CI installs the same `mise.toml` tools with `jdx/mise-action` (pin its
 `version` to a mise release that satisfies `min_version`) and runs the
 same tasks over every tracked file. For guest-visible and
