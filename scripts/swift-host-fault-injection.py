@@ -202,7 +202,7 @@ FAULTS = [
      "    _ = release(viewer)\n    return []",
      "aDisconnectReleasesTheControllersHeldInputOnly"),
     ("macos-guest-cu-gate-listener", "Sources/IsoHost/Runtime/IsolationGate.swift",
-     "guestComputerUse ? [7801, 7802] : [7801]", "[7801, 7802]",
+     "guestComputerUse ? [7801, guestComputerUsePort] : [7801]", "[7801, guestComputerUsePort]",
      "guestComputerUseMustMatchTheRecordAndOpenOnlyItsListener"),
     ("macos-guest-cu-gate-record", "Sources/IsoHost/Runtime/IsolationGate.swift",
      "guard effective.guestComputerUse == inspection.record.guestComputerUse else {",
@@ -678,7 +678,7 @@ FAULTS = [
      "workloadExitBecomesTheProcessStatus"),
     ("destroy-all-with-name", "Sources/IsoCLI/Commands/LifecycleCommands.swift",
      "    if all, let name {", "    if all, false, let name {",
-     "destroyAllRefusesANameBeforeAnyWork"),
+     "conflictingOperationsAreUsageErrors"),
     ("scanner-strings", "Sources/IsoConfiguration/JSONCScanner.swift",
      "if byte == quote { state = .string }", "_ = quote",
      "commentMarkersInsideStringsAreData"),
@@ -2219,7 +2219,7 @@ FAULTS = [
 ]
 
 
-TOP_LEVEL_SKIPS = {".git", ".build", "target", "iso-proxy", "iso-egress"}
+TOP_LEVEL_SKIPS = {".git", ".build", "iso-proxy", "iso-egress"}
 
 
 def skip_top_level(directory, names):
@@ -2227,7 +2227,7 @@ def skip_top_level(directory, names):
         return set(names) & {".build", ".swiftpm"}
     if Path(directory) != ROOT:
         return set()
-    return {name for name in names if name in TOP_LEVEL_SKIPS or name.startswith((".build-", "mutants.out"))}
+    return {name for name in names if name in TOP_LEVEL_SKIPS or name.startswith(".build-")}
 
 
 def test_package(relative):
@@ -2248,12 +2248,12 @@ def run_tests(scratch, test_filter, package="."):
 
 
 def passed_count(result):
-    return result.stdout.count("\u2714 Test ") + result.stdout.count("✔ Test ")
+    return result.stdout.count("✔ Test ")
 
 
 def failed_a_test(result):
     """A test ran and failed — not a compile error, which proves nothing."""
-    return result.returncode != 0 and ("✘ Test " in result.stdout or "\u2718 Test " in result.stdout)
+    return result.returncode != 0 and "✘ Test " in result.stdout
 
 
 def run_fault(scratch, fault, verbose):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the five mandatory Swift policy mutations from the port spec.
+"""Exercise the targeted Swift proxy policy and parser-limit mutations.
 
 Mutations are applied to a scratch copy of iso-proxy (with the iso-policy
 dependency and the proxy test fixtures it reads), so the working tree is never
@@ -21,10 +21,10 @@ MUTATIONS = [
      'nonces.count == 1, Self.hex(nonces[0].value, count: 16) != nil', 'nonces.count == 1'),
     ("broker method check removed", "IsoProxyCore/Readiness.swift", 'method == "GET",', 'true,'),
     ("broker exact URI check removed", "IsoProxyCore/Readiness.swift", 'uri == path,', 'true,'),
-    ("broker closed headers removed", "IsoProxyCore/Readiness.swift", 'headers.count == 3', 'true'),
+    ("broker closed headers removed", "IsoProxyCore/Readiness.swift", 'headers.count == 4', 'true'),
     ("broker provider identity changed", "IsoProxyCore/Readiness.swift", 'self.provider = provider', 'self.provider = .anthropic'),
     ("broker version separation removed", "IsoProxyCore/ProxyConfig.swift",
-     '(wire.version == 1 && wire.readiness == nil)', '(wire.version == 1)'),
+     'guard wire.readiness == nil, wire.authorization == nil else {', 'guard wire.authorization == nil else {'),
     ("deny becomes allow", "IsoProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',
      'guard method == "POST" else { return true }'),
     ("POST becomes any method", "IsoProxyCore/OperationPolicy.swift", 'guard method == "POST" else { return false }',

@@ -459,10 +459,6 @@ private struct VisibleGroup: ParsableCommand {
   #expect(throws: ExitCode.failure) { try IsoCLI.run { throw HostError("x") } }
 }
 
-@Test func destroyAllRefusesANameBeforeAnyWork() {
-  #expect(throws: (any Error).self) { try IsoCommand.parseAsRoot(["destroy", "vm-a", "--all"]) }
-}
-
 @Test func editorAllowIsRefusedWhenTheConfiguredSecurityIsUnsafe() throws {
   let unsafe = EditorConfig(security: .unsafe, allow: [])
   let allow = try EditorSecurityOptions.parse(["--editor-allow", "clipboard"])
