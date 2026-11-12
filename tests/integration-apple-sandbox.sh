@@ -1228,10 +1228,13 @@ PY
         check "the live view streams the display to a viewer" \
             python3 "$FIXTURES/live-view-client.py" "$stream" 20
         wait
+        # Kept with --keep: the source of
+        # tests/fixtures/iso-sandbox/inspect-display-running.json.
+        sbx inspect "$D" >"$WORK/display-inspect.json"
         # shellcheck disable=SC2016 # jq program text.
         check "inspect reports the open listener and this boot's counts" \
             jq -e '.effective.liveViewListening == true and .runtime.liveView.streams == 1 and .runtime.liveView.viewers >= 1 and .runtime.guestComputerUse.frames >= 1' \
-            <<<"$(sbx inspect "$D")"
+            "$WORK/display-inspect.json"
         sbx2 cu stream "$D" --stop >/dev/null 2>&1
         # shellcheck disable=SC2016 # jq program text.
         check "a stopped stream no longer listens and keeps its counts" \
@@ -1824,6 +1827,25 @@ if want iso; then
                 desk exec e2e-desk -- sh -c 'uname -r | grep -q iso-desktop && test -e /dev/dri/card0 && systemctl is-active --quiet iso-display iso-display-wm'
             check "desktop: Firefox is Mozilla's package, not Ubuntu's snap shim" \
                 desk exec e2e-desk -- sh -c 'firefox --version | grep -q "^Mozilla Firefox" && ! dpkg-query -W -f="\${Version}" firefox | grep -q snap && ! command -v snap'
+            # The apt pin (desktop-pre.sh): Mozilla's repository is preferred
+            # for `firefox` and can supply nothing else, here another package
+            # it publishes.
+            desk exec e2e-desk -- sh -c 'sudo apt-get update -qq >/dev/null 2>&1; apt-cache policy firefox firefox-esr' \
+                >"$WORK/desk-apt-policy.txt" 2>&1
+            check "desktop: Mozilla's repository supplies firefox and no other package" \
+                python3 -I - "$WORK/desk-apt-policy.txt" <<'PY'
+import re, sys
+stanzas = dict(re.findall(r"^(\S+):\n((?:[ \t].*\n?)+)", open(sys.argv[1]).read(), re.M))
+mozilla = r"\n +-?\d+ https://packages\.mozilla\.org/apt "
+firefox, other = stanzas.get("firefox", ""), stanzas.get("firefox-esr", "")
+# The installed version is pinned at 1000 and is Mozilla's.
+installed = re.search(r"^ \*\*\* \S+ 1000" + mozilla, firefox, re.M)
+# Every version of the other package is pinned at -1: no candidate.
+versions = re.findall(r"^ {5}\S+ (-?\d+)$", other, re.M)
+refused = (re.search(r"^  Candidate: \(none\)$", other, re.M) and versions
+           and set(versions) == {"-1"} and re.search(mozilla, other))
+sys.exit(0 if installed and refused else 1)
+PY
             desk exec e2e-desk -- sh -c "DISPLAY=:0 xsetroot -mod 16 16 -fg '#112233' -bg '#ddeeff'" >/dev/null
             dm="$(jq -r .machine_id "$dside")"
             dsess="$("$SANDBOX" cu session --root "$CROOT" "$dm" | jq -r .session)"

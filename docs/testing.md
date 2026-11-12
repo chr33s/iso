@@ -587,8 +587,9 @@ what unit tests cannot:
   (`tests/fixtures/apple-sandbox/live-view-client.py`); a session from
   before a restart is refused; and a headless sandbox has no display. With
   `ISO_TEST_DESKTOP_KERNEL` set, the `iso` phase also builds a `desktop`
-  image with `iso setup`, boots it, and checks Firefox, capture, the guest
-  MCP server and stop/start;
+  image with `iso setup`, boots it, and checks Firefox, that apt prefers
+  Mozilla's repository for `firefox` and takes no other package from it,
+  capture, the guest MCP server and stop/start;
 - `iso` itself end to end (the `iso` phase): `setup`, `up`, `status`,
   `exec`, `stop`/`start`, `resize --mem/--vcpus/--size`, rollback of a
   `resize --start` whose boot fails, `commit`, `restore` with host-key

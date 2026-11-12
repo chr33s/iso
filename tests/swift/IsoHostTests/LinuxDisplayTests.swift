@@ -171,6 +171,37 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
   #expect(dropped?.guestComputerUse?.frames == 30 && dropped?.liveView == nil)
 }
 
+/// A running display sandbox as the runtime printed it, captured from a
+/// real boot (tests/fixtures/iso-sandbox/README.md) and held to the
+/// runtime's own types by its `HostFixtureConformanceTests`: not a report
+/// this suite patched together.
+@Test func aCapturedDisplayReportPassesTheGateAndCarriesItsCounts() throws {
+  let bytes = Array(
+    try Data(contentsOf: fixture.appending(path: "inspect-display-running.json")))
+  let parsed = try RuntimeProtocol.parseInspect(bytes, expected: sandbox)
+  // Captured with host-only networking, so under an egress mode that has it.
+  func expecting(_ display: IsolationGate.ExpectedDisplay) -> IsolationGate.Expected {
+    .init(
+      sandbox: sandbox, owner: owner, runtimeRoot: root,
+      resources: Resources(cpus: 2, memoryBytes: 2048 * 1024 * 1024), egress: .none,
+      display: display)
+  }
+  _ = try IsolationGate.verifyEffective(parsed, expecting(.virtio(guestComputerUse: true)))
+  #expect(throws: RuntimeError.self) {
+    try IsolationGate.verifyEffective(parsed, expecting(.virtio(guestComputerUse: false)))
+  }
+  #expect(throws: RuntimeError.self) {
+    try IsolationGate.verifyEffective(parsed, expecting(.headless))
+  }
+  // The counts `iso stop` audits, as that owner reported them mid-stream.
+  let counts = AppleBackend.Observed.linux(parsed).computerUse
+  #expect(counts.guest?.frameRate == 4 && counts.guest?.sessions == 1)
+  #expect(counts.guest?.frames == 1 && counts.guest?.preemptions == 1)
+  #expect(counts.guest?.refusals == ["held_by_host": 1])
+  #expect(
+    counts.liveView == MacLiveViewCounts(streams: 1, viewers: 1, takeovers: 0, inputEvents: 0))
+}
+
 /// `iso stop` audits the counts in the observation that proved the
 /// instance running: it spends no second `inspect` on reading them.
 @Test func theStopAuditReadsTheCountsFromTheObservationOfTheRunningOwner() throws {

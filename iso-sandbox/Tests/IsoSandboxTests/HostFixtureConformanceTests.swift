@@ -1,4 +1,5 @@
 import Foundation
+import IsoMacProtocol
 import Testing
 
 @testable import IsoSandboxCore
@@ -57,7 +58,10 @@ import Testing
   @Test func inspectFixturesRoundTripThroughTheRuntimeTypes() throws {
     let names = try Self.inspectFixtures()
     #expect(
-      names == ["inspect-brokered-running.json", "inspect-running.json", "inspect-stopped.json"])
+      names == [
+        "inspect-brokered-running.json", "inspect-display-running.json", "inspect-running.json",
+        "inspect-stopped.json",
+      ])
     for name in names {
       let data = try Data(contentsOf: Self.directory.appending(path: name))
       let fixture: InspectFixture
@@ -71,6 +75,26 @@ import Testing
       #expect((fixture.status == .running) == (fixture.live != nil), "\(name)")
       #expect((fixture.status == .running) == (fixture.effective != nil), "\(name)")
     }
+  }
+
+  /// The display fixture is what a display owner with guest computer use
+  /// reports mid-stream: this runtime's display mode, geometry and port,
+  /// and the counts the host audits.
+  @Test func theDisplayFixtureCarriesThisRuntimesDisplayAndCounts() throws {
+    let data = try Data(
+      contentsOf: Self.directory.appending(path: "inspect-display-running.json"))
+    let fixture = try JSONDecoder.iso.decode(InspectFixture.self, from: data)
+    let effective = try #require(fixture.effective)
+    #expect(fixture.record.displayMode == .virtioDisplay)
+    #expect(effective.display == DisplayMode.virtioDisplay.rawValue)
+    #expect(effective.graphicsDevices == [["\(LinuxDisplay.width)x\(LinuxDisplay.height)"]])
+    #expect(effective.vsockPorts == [GuestCUProtocol.port])
+    #expect(effective.liveViewListening == true)
+    let runtime = try #require(fixture.runtime)
+    let guest = try #require(runtime.guestComputerUse)
+    #expect(guest.frameRate == fixture.record.guestComputerUse?.frameRate)
+    #expect(guest.frames >= 1 && guest.sessions >= 1)
+    #expect(try #require(runtime.liveView).streams == 1)
   }
 
   @Test func theBrokeredFixtureCarriesThisRuntimesChannelPolicy() throws {

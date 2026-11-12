@@ -12,6 +12,14 @@ containerization 0.54.0, used by host runtime-boundary tests.
   interface or address, the owner's live device counts, and the runtime's
   channel policy and digest, which the host recomputes and must match.
 
+- `inspect-display-running.json` — a running `--display virtio
+  --guest-computer-use` sandbox mid-stream, captured from the `display`
+  phase of `tests/integration-apple-sandbox.sh` (kept as
+  `display-inspect.json` with `--keep`; identifiers, paths and the image
+  reference rewritten as below): the display, its one scanout, vsock 7802,
+  an open live-view listener, and this boot's computer-use counts under
+  `runtime`.
+
 The record has an explicit `network` mode, and running live state has a
 nonempty `bootId`. Missing required fields must fail decoding. Optional operation
 and expiration values reflect whether that operation or TTL exists.
