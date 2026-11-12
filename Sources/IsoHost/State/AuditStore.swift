@@ -2,7 +2,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// The bounds `<stateRoot>/audit/v1` keeps (docs/audit.md#retention).
+/// The bounds `<stateRoot>/audit/v1` keeps (docs/audit.md#storage-and-retention).
 package struct AuditRetention: Sendable, Equatable {
   package var maxAge: TimeInterval = 7 * 24 * 3600
   package var maxBytes = 128 << 20

@@ -1,3 +1,7 @@
+// Derived from trailofbits/coop.
+// Modified by chr33s: ported/adapted for the Swift implementation.
+// SPDX-License-Identifier: Apache-2.0
+
 // iso configuration (JSONC: JSON plus // and /* */ comments).
 // `iso setup --config-only` writes this template to ~/.iso/config.jsonc.
 // Uncomment members to override defaults; an empty object gives the defaults.
@@ -52,8 +56,8 @@
   //     }
   //   },
   //   // Route Claude Code at a host-side model; enable per VM with
-  //   // `iso model <vm> local`. A localhost host is rewritten to the
-  //   // guest's view of the host.
+  //   // `iso model set local <vm>`. A localhost endpoint is reached over a
+  //   // per-instance reverse SSH tunnel.
   //   "local_model": {
   //     "host_url": "http://localhost:11434",
   //     "model": "qwen2.5-coder:32b"
@@ -74,9 +78,11 @@
 
   // Host-side credential-injecting proxy. `iso proxy setup [--openai]`
   // stores the credential in the macOS Keychain and writes the `cmd:`
-  // reference here. Credentials must be `cmd:` references; literal values are
-  // rejected. Cannot be combined with codex auth "chatgpt".
+  // reference here. Credentials must be `cmd:` or `vault:NAME` (iso secrets)
+  // references; literal values are rejected. Cannot be combined with codex auth "chatgpt".
   // "proxy": {
+  //   "mode": "auto",             // "required": never forward a raw provider key;
+  //                               // "off": start no proxy
   //   "anthropic": {
   //     "credential": "cmd:security find-generic-password -s iso-anthropic -a anthropic -w",
   //     "auth": "api_key"         // "api_key" (x-api-key) or "bearer" (setup-token)
@@ -98,6 +104,99 @@
   // "post_start": "make dev-setup",          // runs in the guest after each boot
   // "forward_ports": [3000, "8080:18080", { "guest": 5432, "label": "db" }],
 
+  // Defaults for egress, proxy.mode and workspace.pull.mode: "provider-only"
+  // (the default: no egress, proxy required, staged pulls), "offline", or
+  // "networked" (needs network.transport "vmnet"). Explicit fields still win.
+  // "security": {
+  //   "preset": "provider-only",
+  //   // Saved instance grants (start-time --env entries, port forwards) to
+  //   // withdraw, by the IDs `iso policy effective` shows.
+  //   "revoked_grant_ids": ["0123456789abcdef"]
+  // },
+
+  // Host-enforced session length per boot ("30m", "8h", or seconds; 8h when
+  // omitted; "unlimited" for an ordinary local instance only).
+  // "limits": { "session_ttl": "8h" },
+
+  // macOS guests and Linux `desktop` images: let an agent drive its own display
+  // through the `iso-cu` MCP server (frames per second 1-10, default 4).
+  // Fixed per instance at creation. See docs/configuration.md.
+  // "computer_use": { "guest_access": true, "guest_frame_rate": 4 },
+
+  // EXPERIMENTAL, macOS guests only: paravirtualized Core AI (GPU and Neural
+  // Engine) through private Virtualization API. Needs macOS 27.3 host and guest,
+  // a template built with `iso setup --guest macos --coreai`, and the unreleased
+  // iso-sandbox-coreai build, whose private entitlement loads only with AMFI
+  // relaxed: that weakens the whole host. Fixed per instance at creation.
+  // See docs/coreai.md.
+  // "coreai": { "accelerators": ["gpu", "neural_engine"], "acknowledge_reduced_host_security": true },
+
+  // "none" (default), "filtered", or "open" (vmnet only); fixed per instance
+  // at creation. Guest→host SSH tunnels still work. See docs/configuration.md.
+  // "egress": "none",
+  // With "filtered", only these hosts (exact, or `*.<suffix>`) are reachable; none when empty.
+  // "egress_filter": { "allowed_hosts": ["api.github.com"] },
+
+  // "brokered" (default) creates new instances with no network device: SSH
+  // and every iso tunnel run over a fixed vsock stream, and egress is "none"
+  // or "filtered" only. "vmnet" is one vmnet network device, an explicit
+  // choice that macOS guests and open egress need. Fixed per instance at
+  // creation. See docs/configuration.md.
+  // "network": { "transport": "vmnet" },
+
+  // `iso pull` return path. "stage" pulls into a host-side stage for review;
+  // nothing reaches the local directory until `iso pull --apply`.
+  // "workspace": {
+  //   "pull": {
+  //     "mode": "stage",            // or "direct"
+  //     "max_files": 50000,
+  //     "max_bytes": "1GiB",
+  //     "max_file_bytes": "256MiB"
+  //   },
+  //   // What `iso up` / `iso push` send: tracked files (or "paths"), never .git
+  //   // or credential-looking names unless listed in "secret_allow".
+  //   "input": { "mode": "tracked", "paths": [], "exclude": [], "secret_allow": [] }
+  // },
+
+  // Default-deny authorization over provider credential use, proxied requests
+  // and staged workspace applies (docs/policy.md). "off", "shadow" (report
+  // only) or "enforce". Fixed per VM boot: edits apply at the next boot.
+  // Enforcing provider actions requires proxy.mode "required"; enforcing
+  // workspace.pull.apply requires workspace.pull.mode "stage". Quotas count
+  // admitted proxy requests and reset at each new boot; approvals are an
+  // inline confirmation at `iso pull --apply`.
+  // "policy": {
+  //   "version": 1,
+  //   "mode": "enforce",
+  //   "actions": ["credential.use", "proxy.request", "workspace.pull.apply"],
+  //   "rules": [
+  //     { "id": "use-anthropic", "effect": "permit", "action": "credential.use", "resources": ["provider:anthropic"] },
+  //     { "id": "request-anthropic", "effect": "permit", "action": "proxy.request", "resources": ["provider:anthropic"] },
+  //     { "id": "apply-attached-workspace", "effect": "permit", "action": "workspace.pull.apply", "resources": ["workspace:attached"] }
+  //   ],
+  //   "guards": [
+  //     { "id": "anthropic-admission-limit", "action": "proxy.request", "resources": ["provider:anthropic"],
+  //       "require": { "rate_limit": { "max_requests": 100, "within_seconds": 60 } } },
+  //     { "id": "review-before-apply", "action": "workspace.pull.apply", "resources": ["workspace:attached"],
+  //       "require": { "approval_within": { "seconds": 900 } } }
+  //   ]
+  // },
+
+  // Local editor: "sandboxed" (default, Seatbelt-confined) or "unsafe" (the
+  // editor's own CLI). "allow" widens the sandbox: "clipboard", "internet".
+  // "editor": { "security": "sandboxed", "allow": [] },
+
+  // Execution hosts: remote Macs that `iso host` commands name explicitly
+  // (`iso host up NAME`). "local" is implicit and cannot be redefined.
+  // Enroll with `iso host add NAME --ssh ALIAS --agent-path PATH`.
+  // "execution": {
+  //   "default_host": "local",
+  //   "hosts": {
+  //     "build-mac": { "transport": "ssh", "ssh_alias": "build-mac", "agent_path": "/usr/local/bin/iso" }
+  //   },
+  //   "remote": { "broker": "client", "default_session_ttl": "8h" }
+  // },
+
   // "updates": {
   //   "mode": "notify",           // "off" or "notify"
   //   "check_interval_hours": 24
@@ -108,6 +207,7 @@
   //   "binary": "/absolute/path/to/iso-sandbox",
   //   "builder": "/absolute/path/to/container",
   //   "kernel": "/absolute/path/to/vmlinux",
+  //   "desktop_kernel": "/absolute/path/to/vmlinux-desktop",  // for `desktop` images
   //   "probe_timeout_seconds": 10,
   //   "operation_timeout_seconds": 60,
   //   "create_timeout_seconds": 600,

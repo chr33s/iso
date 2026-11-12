@@ -77,8 +77,8 @@ struct TemplateRecord: Encodable {
 }
 
 extension AppleBackend {
-  /// Oldest macOS release whose vmnet networks the runtime supports.
-  static let minimumMacOSMajor = 26
+  /// The supported host floor (every package manifest sets macOS 27).
+  static let minimumMacOSMajor = 27
 
   func checkPlatform() throws {
     #if !arch(arm64)

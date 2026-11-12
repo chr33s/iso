@@ -130,6 +130,7 @@
     "binary": "/opt/iso/bin/iso-sandbox",
     "builder": "~/bin/container",
     "kernel": "/opt/iso/vmlinux",
+    "desktop_kernel": "~/vmlinux-desktop",
     "probe_timeout_seconds": 5,
     "operation_timeout_seconds": 30,
     "create_timeout_seconds": 900,
