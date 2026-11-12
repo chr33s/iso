@@ -22,4 +22,3 @@ __pycache__/
 /experiments/*/.swiftpm/
 /fuzz/artifacts/
 
-/target/

@@ -401,7 +401,7 @@ package final class AppleBackend: Sendable {
       try out.finish { try emit(decode($0)) }
       err.finish { stderr(decode($0)) }
       guard termination == .exited(0) else {
-        throw HostError("`iso-sandbox logs` exited with \(Self.rustExitCode(termination))")
+        throw HostError("`iso-sandbox logs` \(Self.exitDescription(termination))")
       }
       return
     }
@@ -417,10 +417,10 @@ package final class AppleBackend: Sendable {
     try splitter.finish { try emit(decode($0)) }
   }
 
-  static func rustExitCode(_ termination: ProcessRunner.Termination) -> String {
+  static func exitDescription(_ termination: ProcessRunner.Termination) -> String {
     switch termination {
-    case .exited(let code): "Some(\(code))"
-    case .signaled: "None"
+    case .exited(let code): "exited with status \(code)"
+    case .signaled: "was terminated by a signal"
     }
   }
 

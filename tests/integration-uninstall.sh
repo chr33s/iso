@@ -79,10 +79,7 @@ mkdir -p "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$HOME/.ssh"
 # Where iso writes the background update-check state. Must mirror
 # `UpdateCheckState` in Sources/IsoHost/Update/UpdateCheck.swift
 # (~/Library/Application Support/iso/update-check.json on macOS).
-case "$(uname -s)" in
-    Darwin) STATE_FILE="$HOME/Library/Application Support/iso/update-check.json" ;;
-    *)      STATE_FILE="$XDG_STATE_HOME/iso/update-check.json" ;;
-esac
+STATE_FILE="$HOME/Library/Application Support/iso/update-check.json"
 
 seed_state() {
     mkdir -p "$(dirname "$STATE_FILE")"
@@ -92,15 +89,9 @@ JSON
 }
 
 # Match the owned state and SSH namespace of this target's default backend.
-if [[ "$(uname -s)" == Darwin ]]; then
-    DATA_DIR="$HOME/.iso/backends/apple-container-v1"
-    CONFIG_DIR="$HOME/.iso"
-    SSH_PREFIX="iso"
-else
-    DATA_DIR="$HOME/.iso"
-    CONFIG_DIR="$HOME/.iso"
-    SSH_PREFIX="iso"
-fi
+DATA_DIR="$HOME/.iso/backends/apple-container-v1"
+CONFIG_DIR="$HOME/.iso"
+SSH_PREFIX="iso"
 
 seed_data_dir() {
     local data_dir="$DATA_DIR"
