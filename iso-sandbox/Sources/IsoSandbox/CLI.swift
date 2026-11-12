@@ -254,7 +254,9 @@ struct Run: AsyncParsableCommand {
   func run() async throws {
     let paths = try root.resolve().sandbox(try SandboxID(id))
     do {
-      try await Owner.run(root: try root.resolve(), id: try SandboxID(id))
+      try await Owner.run(
+        root: try root.resolve(), id: try SandboxID(id),
+        mainLoop: Entry.mainLoop.withLock { $0 })
     } catch {
       // Exit 0 so launchd does not respawn a configuration error; `start`
       // reports the marker instead.

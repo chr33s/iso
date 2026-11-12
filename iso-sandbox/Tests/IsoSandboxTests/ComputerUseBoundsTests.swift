@@ -166,3 +166,10 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
     #expect(cu.fields.wait == GuestCUWaitFields(idleMs: 100))
   }
 }
+
+@Test func aDisplayOwnerDoesNotBootWithoutTheLoopThatRendersIt() throws {
+  #expect(throws: Never.self) { try Owner.requireLoop(.dispatch, for: .headless) }
+  #expect(throws: Never.self) { try Owner.requireLoop(.appKit, for: .headless) }
+  #expect(throws: Never.self) { try Owner.requireLoop(.appKit, for: .virtioDisplay) }
+  #expect(throws: SandboxError.self) { try Owner.requireLoop(.dispatch, for: .virtioDisplay) }
+}

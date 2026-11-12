@@ -2,11 +2,16 @@ import AppKit
 import ArgumentParser
 import Foundation
 import IsoSandboxCore
+import Synchronization
 
 /// Process entry. Synchronous so that `macos run` can own the AppKit main
 /// loop on the main thread; every other command runs the async command tree.
 @main
 enum Entry {
+  /// The loop `main` runs below, set before any command starts so that an
+  /// owner can check it against the record it loads (``Owner/requireLoop``).
+  static let mainLoop = Mutex<Owner.MainLoop>(.dispatch)
+
   static func main() {
     // Everything this binary writes (records, disks, logs, the owner it
     // runs under launchd) is for this user alone.
@@ -33,16 +38,18 @@ enum Entry {
       }
       exit(0)
     }
+    // An owner whose VM has a display renders it in a view, which needs
+    // the AppKit main loop; every other command, and every headless owner,
+    // keeps the plain dispatch loop.
+    let display =
+      args.count >= 3 && args[1] == "run"
+      && (try? Run.parse(Array(args.dropFirst(2))))?.displayMode == .virtioDisplay
+    if display { mainLoop.withLock { $0 = .appKit } }
     Task {
       await IsoSandbox.main(nil)
       exit(0)
     }
-    // An owner whose VM has a display renders it in a view, which needs
-    // the AppKit main loop; every other command, and every headless owner,
-    // keeps the plain dispatch loop.
-    if args.count >= 3, args[1] == "run",
-      (try? Run.parse(Array(args.dropFirst(2))))?.displayMode == .virtioDisplay
-    {
+    if display {
       let app = NSApplication.shared
       app.setActivationPolicy(.prohibited)
       app.run()

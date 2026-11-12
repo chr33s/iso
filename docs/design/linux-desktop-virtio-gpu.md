@@ -394,6 +394,11 @@ Decisions made while building (2026-11-10):
   publishes the kernel's corresponding source (GPL-2.0),
   `iso-<tag>-vmlinux-desktop-source.tar.gz`, checksummed and attested with
   the archive.
+- The owner of a display sandbox runs AppKit's main loop, which the view
+  needs to draw; `iso-sandbox run` chooses the loop from the record before
+  the owner starts. The owner then checks that choice against the record
+  it loads and refuses to boot a display sandbox under the plain dispatch
+  loop (`Owner.requireLoop`).
 - Firefox comes from Mozilla's apt repository: Ubuntu's `firefox` and
   `chromium` are snap shims, which do not run in iso guests. Only `firefox`
   is taken from that repository; its other packages are pinned so apt never

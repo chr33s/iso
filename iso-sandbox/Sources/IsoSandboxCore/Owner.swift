@@ -54,7 +54,23 @@ package enum Owner {
     }
   }
 
-  package static func run(root: SandboxRoot, id: SandboxID) async throws {
+  /// The loop the process runs on its main thread. A display is rendered
+  /// in a view, which draws only under AppKit's.
+  package enum MainLoop: Sendable { case dispatch, appKit }
+
+  /// The entry point picks the loop from the record before the owner
+  /// starts, in a read of its own. If the record this owner then loads has
+  /// a display the loop cannot render, the owner does not boot: it would
+  /// run a VM whose frames never arrive.
+  static func requireLoop(_ loop: MainLoop, for display: DisplayMode) throws {
+    guard display == .headless || loop == .appKit else {
+      throw SandboxError(
+        "this sandbox has a display, but its owner started without the AppKit loop that renders it; start it again"
+      )
+    }
+  }
+
+  package static func run(root: SandboxRoot, id: SandboxID, mainLoop: MainLoop) async throws {
     try root.requireInitialized()
     let paths = root.sandbox(id)
     signal(SIGPIPE, SIG_IGN)
@@ -75,6 +91,7 @@ package enum Owner {
     _ = VMLease.hold(
       sandbox: id.rawValue, guestOS: "linux", cpus: record.cpus, memoryBytes: record.memoryBytes)
     let display = record.displayMode
+    try requireLoop(mainLoop, for: display)
     let vmm = display.manager(
       VZVirtualMachineManager(
         kernel: Kernel(path: try kernel(root: root, display: display), platform: .linuxArm),
