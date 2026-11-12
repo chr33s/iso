@@ -298,6 +298,10 @@ anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 CI cannot boot VMs; the VM suites and longer campaigns run on a macOS 27+
 Apple Silicon machine.
 
+The nightly workflow (`.github/workflows/nightly.yml`) also runs the host tests
+under each sanitizer, host fault injection and the credential proxy mutation
+check on `main`; check its latest run before tagging.
+
 ## Release checklist
 
 1. **Land all release content on `main`.** Open PRs merged, `main` green in CI.

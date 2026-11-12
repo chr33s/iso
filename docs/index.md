@@ -46,70 +46,8 @@ Apple backend. The credential proxy is the Swift package
   caveat, diagnostics on stderr.
 - [`xcode-security-settings.md`](xcode-security-settings.md) — Enhanced
   Security entitlements and other security build-setting decisions.
-- [`design/`](design/index.md) — decision records:
-  - [`apple-sandbox-runtime.md`](design/apple-sandbox-runtime.md): why the
-    Apple backend runs its own runtime;
-  - [`apple-sandbox-transactions.md`](design/apple-sandbox-transactions.md):
-    its mutation invariants, disk-update recovery, per-sandbox locking, and
-    maintenance image.
-  - [`local-and-remote-hosts-spec.md`](design/local-and-remote-hosts-spec.md):
-    host control — the per-user service, durable operations, access grants,
-    owned relays, remote execution hosts — and its implementation status;
-  - [`brokered-network-isolation.md`](design/brokered-network-isolation.md):
-    the NIC-less brokered transport (SSH over a runtime-owned vsock stream),
-    its specification (ISO-NET-001), requirement mapping, native evidence
-    and open qualification items;
-  - [`iso-ci-specification.md`](design/iso-ci-specification.md): the
-    separately installed GitHub Actions companion (connected runner pools and
-    local preflight) and its implementation status;
-  - [`iso-ci-qualification.md`](design/iso-ci-qualification.md): the
-    companion's recorded live evidence and the defects it exposed;
-  - [`embedded-secrets-spec.md`](design/embedded-secrets-spec.md): the
-    Secure Enclave-bound local secret store, `--env-file` and `{vault:}`
-    references;
-  - [`selective-hardening-spec.md`](design/selective-hardening-spec.md):
-    staged workspace return, `proxy.mode`, egress modes, budgets, and audit;
-  - [`iso-security-hardening-spec.md`](design/iso-security-hardening-spec.md):
-    host-boundary hardening and secure defaults — selected-content input,
-    Git-free staged return, grant provenance and revocation;
-  - [`iso-policy.md`](design/iso-policy.md): the IsoPolicy v1 contract —
-    permit/forbid evaluation, admission quotas, single-use staged approvals,
-    boot binding and proxy startup version 3;
-  - [`sandboxy-inspired-features-spec.md`](design/sandboxy-inspired-features-spec.md):
-    one-command sessions, declarative agents, image inspection, and
-    destination-filtered egress. Filtered-egress qualification remains incomplete.
-  - [`macos-computer-use-qualification-plan.md`](design/macos-computer-use-qualification-plan.md):
-    the release gates (A–T) for macOS-guest computer use;
-  - [`macos-vz-context-headless-experiment-spec.md`](design/macos-vz-context-headless-experiment-spec.md):
-    the experiment spec for which host context a macOS VM owner needs;
-  - [`macos-computer-use-q0-spike.md`](design/macos-computer-use-q0-spike.md):
-    go/no-go spike results for macOS-guest computer use (display, input,
-    boot identity) and the owner-topology constraints they set;
-  - [`macos-guest-computer-use.md`](design/macos-guest-computer-use.md):
-    macOS guests in `iso-sandbox` (templates, clones, helper channel,
-    computer use) and their qualification status;
-  - [`macos-vz-context-experiment.md`](design/macos-vz-context-experiment.md):
-    which host process/session context a macOS VM owner and its view need
-    (headless runtime in `user/$UID`; computer use needs a window, not a
-    visible one);
-  - [`linux-computer-use-sketch.md`](design/linux-computer-use-sketch.md):
-    proposal for computer use in Ubuntu guests (Xvfb + XTEST, in-guest loop
-    first, bounded host frame channel for qualification);
-  - [`computer-use-screen-sync.md`](design/computer-use-screen-sync.md):
-    display damage sequence and wait operation on the existing computer-use
-    paths (implemented and qualified);
-  - [`computer-use-live-view.md`](design/computer-use-live-view.md):
-    loopback H.264 live view with browser takeover (implemented and
-    qualified);
-  - [`linux-desktop-virtio-gpu.md`](design/linux-desktop-virtio-gpu.md):
-    the chosen approach for Linux computer use: a virtio-gpu display driven
-    by the owner like macOS guests (implemented and qualified on one host);
-  - [`editor-providers-spec.md`](design/editor-providers-spec.md):
-    `iso code` / `iso zed`, compiled-in editor providers, and the boundary
-    between SSH connection targets and managed agent workloads.
-  - [`editor-hardening.md`](design/editor-hardening.md): the sandboxed
-    local editor (Seatbelt enclave, ephemeral SSH identity, supervision), its
-    threat model, and where the implementation departs from the design.
+- [`design/`](design/index.md) — decision records, specifications and
+  qualification evidence; its index lists every record with its status.
 
 ## For users
 

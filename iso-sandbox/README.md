@@ -1,7 +1,7 @@
 # iso-sandbox
 
-The macOS VM runtime behind isolate's opt-in `apple-container` build: persistent
-Linux sandboxes on [`apple/containerization`](https://github.com/apple/containerization)
+The macOS VM runtime behind isolate, its only backend: persistent Linux
+sandboxes (and macOS guests) on [`apple/containerization`](https://github.com/apple/containerization)
 0.54.0 (pinned exactly in `Package.swift`). isolate drives it through the JSON CLI
 below; see [`docs/backends.md`](../docs/backends.md) for the isolate side and
 [`docs/trust-model.md`](../docs/trust-model.md) for the isolation contract.
@@ -29,8 +29,11 @@ swift test --package-path iso-sandbox --no-parallel
 ./tests/integration-apple-sandbox.sh      # boots real VMs; ~10 min
 ```
 
-The binary needs only the `com.apple.security.virtualization` entitlement and is
-signed ad hoc. This fork requires macOS 27+ on Apple Silicon, Xcode 27, and Swift 6.4.
+`scripts/build-iso-sandbox.sh` signs the binary ad hoc with the hardened
+runtime and `iso-sandbox.entitlements` (the Enhanced Security entitlements plus
+`com.apple.security.virtualization`), and `iso-macos-helper` with
+`scripts/enhanced-security.entitlements`. The opt-in Core AI build uses
+`iso-sandbox-coreai.entitlements`. This fork requires macOS 27+ on Apple Silicon, Xcode 27, and Swift 6.4.
 The package deploys to macOS 27 and uses its task cancellation shielding API for
 guest-process cleanup.
 
@@ -76,6 +79,19 @@ delete ID --owner O                       refuses another owner's sandbox
 reconcile                                 clear crashed owners, finish interrupted creates, deletes,
                                           disk updates, and commits (the sweep is skipped while an
                                           operation runs)
+```
+
+macOS guests and computer use have their own command groups; see
+[`docs/images-and-profiles.md`](../docs/images-and-profiles.md#macos-guests)
+and `iso-sandbox macos --help` / `iso-sandbox cu --help`:
+
+```text
+macos template build|list|delete          install macOS from a restore image and publish a template
+macos create|start|stop|inspect|list|delete|reconcile
+                                          clone a template into a sandbox and run it under launchd
+cu session|frame|act|wait|respond|hold|release|stream
+                                          computer use on a running display: sessions, frames,
+                                          actions, dialog responses, host hold, loopback live view
 ```
 
 Status is `running`, `booting` (owner up, control channel not yet answering),

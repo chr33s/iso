@@ -6,26 +6,22 @@ SPDX-License-Identifier: Apache-2.0
 
 # Security Policy
 
-This fork adds the Swift credential proxy and Apple runtime described in
-[the trust model](docs/trust-model.md). The upstream reporting channels below
-belong to Trail of Bits and cover upstream code; they are not a promise that
-Trail of Bits maintains this fork. For fork-specific changes, arrange a private
-report with the fork maintainer through their
-[GitHub profile](https://github.com/chr33s); do not publish exploit details.
+This is the `chr33s/iso` fork of Trail of Bits' coop. It adds the Swift host,
+credential proxy and Apple runtime described in
+[the trust model](docs/trust-model.md). Trail of Bits does not maintain this
+fork.
 
 ## Reporting a Vulnerability
 
 Do not report security vulnerabilities through public GitHub issues, pull
 requests, or discussions.
 
-Report them privately through either channel:
+Report them privately through **GitHub private vulnerability reporting**: open
+a report at <https://github.com/chr33s/iso/security/advisories/new>. It stays
+visible only to the maintainer until a fix is published.
 
-- **GitHub private vulnerability reporting** — open a report at
-  <https://github.com/trailofbits/coop/security/advisories/new>. It stays
-  visible only to the maintainers until a fix is published.
-- **Trail of Bits security contact** — follow the process in
-  <https://www.trailofbits.com/.well-known/security.txt> (encrypted upload via
-  SendSafely, or email dan@trailofbits.com).
+If the issue also affects upstream coop, report it there as well, through
+<https://github.com/trailofbits/coop/security/advisories/new>.
 
 Include as much of the following as you can:
 
@@ -35,12 +31,12 @@ Include as much of the following as you can:
 - Steps to reproduce, a proof of concept, or the affected code path.
 - Any suggested remediation.
 
-## Upstream response
+## Response
 
 We coordinate disclosure with the reporter. Once a fix is ready we publish it in
 a release and credit you unless you ask us not to.
 
-## Upstream supported versions
+## Supported versions
 
 isolate ships as a rolling release. Only the latest release receives security
 fixes. Fixes land on `main` and go out in the next tagged release; there are no

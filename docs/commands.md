@@ -115,6 +115,8 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--env-file <path>` | A `.env` file of guest env vars (`KEY=value`, quoted values, `export`, comments; `{vault:NAME}` references). Parsed strictly, never by a shell. `--env` wins over it |
 | `--devcontainer <path>` | Explicit path to a `devcontainer.json` to use (skips discovery and prompt) |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation |
+| `--egress <mode>` | Egress mode when creating an instance: `open`, `none`, or `filtered` |
+| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered` |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any VM work |
 | `--json` | With `--dry-run`, emit the resolved plan as JSON on stdout (`{ report, profiles, guest_user, vm }`) instead of the text report on stderr |
 
@@ -176,7 +178,7 @@ iso setup [FLAGS]
 | `--vcpus <N>` | Number of vCPUs (overrides config) |
 | `--mem <MiB>` | Memory in MiB (overrides config) |
 | `--rebuild` | Force rebuild of template rootfs |
-| `--profile <list>` | Install profiles, repeatable or comma-separated: `python`, `node`, `c`, `fuzz`, `rust`, `go`. An empty name (`a,,b`) is refused |
+| `--profile <list>` | Install profiles, repeatable or comma-separated: `python`, `node`, `c`, `fuzz`, `rust`, `go`, `desktop`. An empty name (`a,,b`) is refused |
 | `--extra-packages <list>` | Accepted for compatibility; the Apple backend ignores it with a warning (use a [custom profile](configuration.md#profiles-section)) |
 | `--post-install <path>` | Accepted for compatibility; the Apple backend ignores it with a warning (use a custom profile's `post_install`) |
 | `--template-size <GiB>` | Template rootfs size in GiB (default: 8) |
@@ -189,6 +191,7 @@ iso setup [FLAGS]
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any setup work. |
 | `--guest <OS>` | `linux` (default) or `macos`. See [macOS guests](images-and-profiles.md#macos-guests). |
 | `--ipsw <path>` | macOS restore image to install; required with `--guest macos`. |
+| `--coreai` | Experimental: build the macOS template with the paravirtualized Core AI feature flag (macOS 27.3+; with `--guest macos`). |
 
 ```
 iso setup --profile python,node --template-size 12
@@ -268,6 +271,8 @@ instances, pass the instance name.
 | `--env-file <path>` | A `.env` file of guest env vars, as for `up`. |
 | `--devcontainer <path>` | Dry-run translation aid; normal restarts reject devcontainer creation options. |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation (escape hatch for CI). |
+| `--egress <mode>` | Egress mode when creating an instance: `open`, `none`, or `filtered` |
+| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered` |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any VM work. |
 | `--json` | With `--dry-run`, emit the resolved plan as JSON on stdout instead of the text report on stderr. |
 
@@ -295,6 +300,8 @@ Open an interactive shell in the VM, or run a single command non-interactively.
 ```
 iso shell [NAME] [FLAGS] [-- COMMAND...]
 ```
+
+Alias: `ssh`.
 
 | Flag | Description |
 |------|-------------|
@@ -447,6 +454,7 @@ Alias: `ls`.
 | Flag | Description |
 |------|-------------|
 | `--json` | Emit the legacy unversioned JSON array (`[{ "name", "state" }, …]`) instead of the text table. Cannot be combined with `--output json` |
+| `--all-hosts` | Also list every enrolled remote host; unreachable hosts are reported, not hidden |
 
 With the global `--output json`, prints one `iso.machine/v1` document instead; see [machine-interface.md](machine-interface.md#list).
 
@@ -1083,19 +1091,19 @@ remote Mac needs `iso setup` and the same `iso` build at the enrolled path.
 | `iso host add NAME [--ssh ALIAS] [--agent-path PATH]` | Contact the host's fixed `host-agent` entrypoint over pinned SSH, verify its installation identity, and enroll it |
 | `iso host list` / `inspect NAME` | List enrollments (no network) / contact the host and show identity, epoch and runtime qualification |
 | `iso host disable NAME` / `enable NAME` / `remove NAME` | Refuse new work (observation and cleanup still work) / allow it / forget the enrollment (remote VMs untouched) |
-| `iso host image HOST [--image NAME] [--profile P]… [--rebuild]` | Build or confirm a Linux image on the host from the host's own build context and profile definitions; `vm create` requires it |
-| `iso host vm create HOST NAME [--image --vcpus --mem --disk --egress]` | Create a stopped Linux VM (`--mem` in MiB, `--disk` in GiB); prints the durable operation id. Fixed defaults (2 vCPUs, 4096 MiB, 16 GiB) do not follow the configuration file. `--cpus`, `--memory-mib` and `--disk-gib` are the older spellings and are still accepted |
+| `iso host image HOST [--image NAME] [--profile P]… [--guest-user NAME] [--rebuild] [--operation-id ID]` | Build or confirm a Linux image on the host from the host's own build context and profile definitions; `vm create` requires it |
+| `iso host vm create HOST NAME [--image --vcpus --mem --disk --egress --operation-id]` | Create a stopped Linux VM (`--mem` in MiB, `--disk` in GiB); prints the durable operation id. Fixed defaults (2 vCPUs, 4096 MiB, 16 GiB) do not follow the configuration file. `--cpus`, `--memory-mib` and `--disk-gib` are the older spellings and are still accepted |
 | `iso host vm start HOST NAME [--ttl 8h]` / `stop` / `destroy` | Lifecycle with verified native state; `--operation-id ID` retries the same operation after a lost reply. A start whose boot is unhealthy fails and is stopped; `destroy` also ends an operation left reconciling (for example on a crashed VM) |
 | `iso host vm list HOST` / `inspect HOST NAME` | Fresh observations; an unreachable host reports `unknown`, never `stopped` |
 | `iso host shell HOST NAME [-- CMD…]` | Open an access session and ssh through the host's owned relay with the guest key pinned. Exits with the session's status; a session ended by a signal exits 1 |
 | `iso host session HOST NAME [--detach\|--stop]` (not both) | Hold a renewed session and print an `ssh -F …` line; `--detach` keeps a coordinator after the command exits, which other `iso host` commands reuse |
-| `iso host up HOST [PATH] [--name --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project. Unlike local `iso up`, every run pushes PATH, including onto a reused VM. On a reused VM an explicit `--egress` must match the egress the VM was created with; a mismatch (or a host that does not report it) is refused, never applied by recreating the VM |
+| `iso host up HOST [PATH] [--name --image --ttl --egress]` | Create or reuse a project VM on the host, start it, and push the project. Unlike local `iso up`, every run pushes PATH, including onto a reused VM. On a reused VM an explicit `--egress` must match the egress the VM was created with; a mismatch (or a host that does not report it) is refused, never applied by recreating the VM |
 | `iso host push HOST NAME [--dir]` / `pull HOST NAME [--dir] [--apply --stage-id ID [--approve-sensitive PATH]…]` | One-way copy into `/workspace` / stage changes through the relay, then apply them (applying needs no host). `--apply` requires the exact `--stage-id`; `--stage-id` and `--approve-sensitive` need `--apply`, and `--dir` is refused with it because a stage's destination is fixed when it is staged. `--force` and `--exclude-git` are deprecated and have no effect |
 | `iso host agent HOST NAME claude\|codex [-- ARGS]` | Run an agent in the VM; provider credentials stay in this client's confined proxy, reached through the relay. The agent always runs as `proxy.mode = "required"` (recognized provider variables are withheld and Codex `auth.json` is not staged), is refused under `proxy.mode = "off"`, and does not get MCP servers whose headers are resolved on this client or servers in this client's `~/.codex/config.toml` that set `http_headers` |
 | `iso host editor HOST NAME code\|zed [--guest-path PATH]` | A sandboxed editor through the relay; `--path` is the older spelling of `--guest-path` |
 | `iso host forward HOST NAME --forward-port GUEST[:HOST]…` | Client-loopback forwards (127.0.0.1 only) that end with the session. `--forward-port 3000:13000` forwards guest port 3000 to client port 13000, as `iso up --forward-port` does. The older positional form `LOCAL[:GUEST]` (note the reversed order: `13000:3000`) is still accepted; the two forms cannot be mixed |
-| `iso host run HOST [--dir] -- CMD…` / `run-results HOST RUN [--recover\|--discard]` | A disposable run: export `~/iso-results` before stop, download and verify, then acknowledge. A host receipt that is not `succeeded` (a failed acknowledgement, recovery or discard) exits 1 even though the request reached the host |
-| `iso host vm resize local NAME [--vcpus --mem --disk]` / `commit\|restore local NAME --image IMAGE` | Stopped-VM maintenance through the local service (refused for remote hosts). `resize --disk` is an absolute size in GiB; relative sizes (`+20`) are only for local `iso resize`. The older positional IMAGE is still accepted; giving both is refused |
+| `iso host run HOST [--dir --image --ttl --egress --output-limit-mib] -- CMD…` / `run-results HOST RUN [--recover\|--discard] [--output-limit-mib]` | A disposable run: export `~/iso-results` before stop, download and verify, then acknowledge. A host receipt that is not `succeeded` (a failed acknowledgement, recovery or discard) exits 1 even though the request reached the host |
+| `iso host vm resize local NAME [--vcpus --mem --disk]` / `commit\|restore local NAME --image IMAGE` (each takes `--operation-id ID`) | Stopped-VM maintenance through the local service (refused for remote hosts). `resize --disk` is an absolute size in GiB; relative sizes (`+20`) are only for local `iso resize`. The older positional IMAGE is still accepted; giving both is refused |
 | `iso host operation HOST ID [--cancel]` | Show an accepted operation's receipt, or cancel it before its first effect |
 | `iso host migrate local [--activate\|--rollback]` (not both) | Preview; with `--activate`, hand stopped Linux instances to the host service (it completes activation; nothing is stopped). Adopted instances are then managed as `iso host vm … local NAME`; older iso builds refuse the activated root. `--rollback` undoes a migration that has not completed |
 
