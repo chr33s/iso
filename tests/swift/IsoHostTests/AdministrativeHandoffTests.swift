@@ -9,7 +9,6 @@ import Testing
 
 extension FakeGuest {
   var returns: StageLocation { StageLocation(root: root + "/returns") }
-  /// The fake guest's own tools stand in for the qualified receivers.
   var receivers: InboundReceivers {
     InboundReceivers(
       tar: root + "/bin/tar", rsync: root + "/bin/rsync", ssh: root + "/bin/ssh",

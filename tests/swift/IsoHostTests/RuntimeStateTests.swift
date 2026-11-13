@@ -265,7 +265,6 @@ private let sidecarJSON = """
     sidecarJSON.replacingOccurrences(of: "\"schema_version\": 2", with: "\"schema_version\": 3"),
     MachineSidecar.path(instance))
   #expect(throws: RuntimeError.self) { try MachineSidecar.loadIfPresent(instance) }
-  // A record owned by another installation is refused.
   try write(sidecarJSON, MachineSidecar.path(instance))
   let sidecar = try #require(try MachineSidecar.loadIfPresent(instance))
   let otherOwner = Owner(

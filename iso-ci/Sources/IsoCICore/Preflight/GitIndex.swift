@@ -273,7 +273,6 @@ package enum GitConfigFile {
       throw Malformed()
     }
 
-    /// A value up to the end of its line (Git's `parse_value`).
     mutating func value() throws(Malformed) -> [UInt8] {
       var out: [UInt8] = []
       var quoted = false

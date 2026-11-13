@@ -18,12 +18,9 @@ private func hint(_ argv: [String]) -> String? {
   #expect(hint(["shel"]) == "Did you mean 'shell'?")
   #expect(hint(["audti"]) == "Did you mean 'audit'?")
   #expect(hint(["--config", "/x.jsonc", "stp"]) == "Did you mean 'stop'?")
-  // Nested groups suggest among their own subcommands.
   #expect(hint(["host", "pul", "x", "y"]) == "Did you mean 'pull'?")
-  // Too far from anything, or equally close to several: no guess.
   #expect(hint(["zzzzzz"]) == nil)
   #expect(hint(["s"]) == nil)
-  // A real command with a stray argument is not a spelling problem.
   #expect(hint(["pull", "a", "b"]) == nil)
 }
 

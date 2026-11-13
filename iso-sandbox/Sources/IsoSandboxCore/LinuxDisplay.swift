@@ -11,10 +11,9 @@ package enum LinuxDisplay {
   package static let height = MacDisplay.height
 }
 
-/// The display devices of a ``DisplayMode/virtioDisplay`` sandbox, added to
-/// the finished `VZVirtualMachineConfiguration` just before it is
-/// validated. A fixed value: nothing in it comes from the guest or the
-/// image.
+/// The display devices of a ``DisplayMode/virtioDisplay`` sandbox, added to the
+/// finished `VZVirtualMachineConfiguration` just before it is validated.
+/// A fixed value: nothing in it comes from the guest or the image.
 struct VirtioDisplayDevices: VZInstanceExtension {
   func configureVZ(
     _ config: inout VZVirtualMachineConfiguration, allocator: any AddressAllocator<Character>,
@@ -39,9 +38,9 @@ struct VirtioDisplayDevices: VZInstanceExtension {
 }
 
 /// `LinuxContainer` builds its VM configuration without `extensions`
-/// (containerization 0.54.0, `LinuxContainer.swift:794`); this manager
-/// appends them before creating the VM. Only the display mode's own
-/// extensions are ever passed.
+/// (containerization 0.54.0, `LinuxContainer.swift:794`); this manager appends
+/// them before creating the VM.
+/// Only the display mode's own extensions are ever passed.
 struct ExtendingManager: VirtualMachineManager {
   let inner: VZVirtualMachineManager
   let extensions: [any Sendable]

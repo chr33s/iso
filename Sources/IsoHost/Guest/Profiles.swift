@@ -46,15 +46,12 @@ package enum Profiles {
     desktopDefinition,
   ]
 
-  /// The profile whose images get a virtio-gpu display
-  /// (``ImageManifest/virtioDisplayAdapter``).
   package static let desktop = "desktop"
 
-  /// No capture, input or encoder package
-  /// (docs/design/linux-desktop-virtio-gpu.md §7): the display path is
-  /// Ubuntu's, the browser is Firefox from Mozilla's pinned apt repository,
-  /// and the `iso-cu` MCP server is iso's own `iso-cu-mcp`, which setup
-  /// places in the build context (``BuildContext/payloads``).
+  /// No capture, input or encoder package (docs/design/linux-desktop-virtio-gpu.md
+  /// §7): the display path is Ubuntu's, the browser is Firefox from Mozilla's
+  /// pinned apt repository, and `iso-cu-mcp` comes from the build context
+  /// (``BuildContext/payloads``).
   package static let desktopDefinition = ProfileDefinition(
     name: desktop,
     aptPackages: [
@@ -77,7 +74,6 @@ package enum Profiles {
     config.profiles.keys.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
   }
 
-  /// A configured profile shadows the built-in of the same name.
   package static func lookup(_ name: String, config: IsoConfig) throws(HostError)
     -> ProfileDefinition
   {
@@ -109,7 +105,6 @@ package enum Profiles {
     return parts.isEmpty ? "(empty)" : "(" + parts.joined(separator: ", ") + ")"
   }
 
-  /// `(none)`, the only line, or `first ... (N lines)`.
   package static func scriptSummary(_ script: String?) -> String {
     guard let script, !script.isEmpty else { return "(none)" }
     let lines = rustLines(script)

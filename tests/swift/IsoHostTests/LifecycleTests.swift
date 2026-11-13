@@ -274,7 +274,6 @@ struct FakeInstallation {
     install.config.overridingEgress(.filtered, extraHosts: [try ExactHostname("example.com")]))
   #expect(throws: ContextError.self) { try changed.asRunning(instance) }
 
-  // A different egress mode is a policy error for the listing too.
   let unfiltered = backend.reconfigured(install.config.overridingEgress(.open, extraHosts: []))
   #expect(throws: HostError.self) { try unfiltered.probeHealth(instance) }
   #expect(throws: (any Error).self) { try changed.probeHealth(instance) }
@@ -507,7 +506,6 @@ struct FakeInstallation {
   let expires = try #require(Int64(start[index + 1]))
   #expect(expires >= before + 7200 && expires <= before + 7200 + 60)
 
-  // A restart begins a new window too.
   let running = try #require(try backend.asRunning(instance))
   try backend.stop(running)
   _ = install.calls()
@@ -572,7 +570,6 @@ struct FakeInstallation {
   #expect(!calls.contains("-L"), "port forwards were spawned before readiness")
   #expect(try PortForwards.load(instance) == [try PortForward(guest: 8080, host: port)])
 
-  // `up` does not report the running but unproven instance as reused.
   let project = install.root + "/project"
   try FileManager.default.createDirectory(atPath: project, withIntermediateDirectories: true)
   try WorkspaceState(guestPath: guestWorkspace, source: .workspace(hostPath: project))
@@ -671,7 +668,6 @@ private func refuseStops(_ install: FakeInstallation) throws -> String {
   try FileManager.default.removeItem(atPath: failStop)
   try lifecycle.stop(instance)
 
-  // The guest now presents a key other than the pinned one.
   let sidecar = try MachineSidecar.load(instance)
   try HostKeyPin.apply(
     .reenrollAfterRestore, instance: instance, machine: sidecar.machineID,
@@ -710,10 +706,8 @@ private func macSetup(_ install: FakeInstallation, image: ImageName) throws {
   #expect(manifest.guestOS == .macos)
   #expect(manifest.guestUser == MacProvision.guestUser)
   try install.backend.runtime().verifyImage(manifest)
-  // Unchanged inputs: no second build.
   try macSetup(install, image: image)
   #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "build"]) })
-  // A different restore image: rebuilt.
   let other = install.root + "/other.ipsw"
   FileManager.default.createFile(atPath: other, contents: Data("other".utf8))
   try install.backend.setup(
@@ -844,7 +838,6 @@ func aBootThatEndedOnItsOwnIsAuditedOnceByTheNextStartOrInspection(section: Stri
   try setEndedBoots(backend, section, [expired])
   try backend.startExisting(instance)
   #expect(try liveViewEvents(instance) == 1)
-  // Still listed while the next boot runs.
   _ = try #require(try backend.asRunning(instance))
   #expect(try liveViewEvents(instance) == 1)
   // An owner that crashed and was restarted: seen with the instance running.
@@ -950,13 +943,11 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   let backend = install.backend
   let image = try ImageName("mac")
   try macSetup(install, image: image)
-  // Pending for a few inspects, then enrolled: the boot waits for it.
   try macMode(install, ["pendingInspects": 3])
   let waited = try Instance.allocate(
     install.config, name: InstanceName("macw"), image: image, workspacePath: nil)
   try backend.createAndStart(waited, diskGiB: nil)
   #expect(try backend.asRunning(waited) != nil)
-  // A guest that stops during boot fails the create.
   try macMode(install, ["stopDuringBoot": true])
   let stopped = try Instance.allocate(
     install.config, name: InstanceName("macs"), image: image, workspacePath: nil)
@@ -1001,12 +992,10 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   }
   #expect(throws: HostError.self) { try setup(image, user: try GuestUser("vscode")) }
   #expect(throws: HostError.self) { try setup(image, restore: install.root + "/missing.ipsw") }
-  // A template recording another script than iso supplied is refused and removed.
   try macMode(install, ["provisionSha": String(repeating: "0", count: 64)])
   #expect(throws: RuntimeError.self) { try setup(image) }
   #expect(try backend.runtime().macTemplates().isEmpty)
   #expect(try ImageManifest.loadIfPresent(install.config, image) == nil)
-  // A runtime without macOS support is refused before anything is built.
   try macMode(install, ["noMacFeature": true])
   let unsupported = AppleBackend(
     config: install.config,
@@ -1020,7 +1009,6 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
         rebuild: false, profiles: [], image: image, guestUser: .default, builderTimeout: nil,
         macOSRestoreImage: ipsw))
   }
-  // An image keeps its guest OS unless replaced with --rebuild.
   try macMode(install, [:])
   try backend.setup(
     SetupOptions(
@@ -1108,7 +1096,6 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   let index = try #require(start.firstIndex(of: "--expires-at"))
   let expires = try #require(Int64(start[index + 1]))
   #expect(expires >= before + 7200 && expires <= before + 7200 + 60)
-  // A restart begins a new window too.
   try backend.stop(try #require(try backend.asRunning(instance)))
   _ = install.calls()
   let restarted = Int64(Date().timeIntervalSince1970)
@@ -1152,10 +1139,8 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   try instance.save()
   try backend.createAndStart(instance, diskGiB: nil)
   let booted = try #require(try PolicyBinding.load(instance))
-  // Starting a running instance is refused, and its boot keeps its epoch.
   #expect(throws: (any Error).self) { try backend.startExisting(instance) }
   #expect(try PolicyBinding.load(instance) == booted)
-  // A real restart records a new epoch.
   let running = try #require(try backend.asRunning(instance))
   try backend.stop(running)
   try backend.startExisting(instance)
@@ -1188,7 +1173,6 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
 @Test func anUnconfirmedRestartRollbackFencesTheInstance() throws {
   let install = try FakeInstallation(extra: #", "egress": "filtered""#)
   defer { install.remove() }
-  // The runtime refuses `stop` while the flag file exists.
   let bin = install.root + "/bin"
   try FileManager.default.moveItem(atPath: bin + "/iso-sandbox", toPath: bin + "/iso-sandbox-real")
   try Data(
@@ -1232,7 +1216,6 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   let fence = try BoundaryAudit.load(instance).last { $0["event"] as? String == "handoff_fence" }
   #expect(fence?["reason"] as? String == "restart_cleanup_unconfirmed")
 
-  // A confirmed stop reconciles it.
   try FileManager.default.removeItem(atPath: bin + "/fail-stop")
   try backend.stopUnproven(instance)
   #expect(try backend.asRunning(instance) == nil)
@@ -1303,7 +1286,6 @@ private func capturing(_ install: FakeInstallation) -> (AppleBackend, CapturedLi
   #expect(manifest.manifestID.hasSuffix("-coreai"))
   #expect(manifest.imageRef.hasSuffix("-coreai"))
   try install.backend.runtime().verifyImage(manifest)
-  // Unchanged inputs: no second build.
   try macCoreAISetup(install, image: image)
   #expect(!install.calls().contains { $0.starts(with: ["macos", "template", "build"]) })
   // The same restore image without --coreai is a different template.

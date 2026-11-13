@@ -2,11 +2,11 @@ import Foundation
 
 /// Runs `body` on a dedicated thread with an 8 MiB stack and waits for it.
 ///
-/// The recursive parsers for untrusted documents (devcontainer JSON, guest
-/// JSON, Codex TOML) cap their nesting at serde's limits, but a cap only
-/// bounds stack use if the frames fit: a caller on a small secondary stack
-/// (Swift Testing's 512 KiB threads, or larger frames under a sanitizer)
-/// could still overflow. With a fixed stack the cap holds for every caller.
+/// The recursive parsers for untrusted documents (devcontainer JSON, guest JSON,
+/// Codex TOML) cap nesting at serde's limits, but a cap bounds stack use only if
+/// the frames fit: a small secondary stack (Swift Testing's 512 KiB threads, or
+/// larger sanitizer frames) could still overflow. A fixed stack makes the cap
+/// hold for every caller.
 func withParserStack<T, E: Error>(_ body: () throws(E) -> T) throws(E) -> T {
   var outcome: Result<T, E>?
   withoutActuallyEscaping(body) { escapable in

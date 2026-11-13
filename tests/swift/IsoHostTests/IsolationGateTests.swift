@@ -217,13 +217,11 @@ private func egressClass(_ object: [String: Any], _ egress: EgressMode) throws -
   #expect(try gate(try bytes(hostOnly(shared)), egress: .filtered).sandbox == gateSandbox)
   #expect(try egressClass(hostOnly(shared), .open) == .network)
   #expect(try egressClass(shared, .filtered) == .network)
-  // A shared (NAT) sandbox never satisfies egress none.
   #expect(try egressClass(shared, .none) == .network)
   // A host-only record whose VM reports a shared interface is refused.
   var mixed = hostOnly(shared)
   setPath(&mixed, ["effective", "interfaces", 0, "network"], "vmnet-shared:10.231.2.0/24")
   #expect(try egressClass(mixed, .none) == .network)
-  // An unknown record mode is not guessed at.
   var unknown = shared
   setPath(&unknown, ["record", "network"], "bridged")
   #expect(try egressClass(unknown, .open) == .unqualified)

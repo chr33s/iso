@@ -5,10 +5,9 @@ import IsoCore
 /// The narrow runtime-client interface (S-01): one concrete Apple backend,
 /// with this seam only so tests can script `iso-sandbox` responses.
 package protocol RuntimeExecutor: Sendable {
-  /// Run the runtime with `arguments`; output is returned whatever the exit
-  /// status. A thrown error means the outcome is unknown.
-  /// `cancellable` lets Ctrl-C (`Shutdown`) abort the call; only create and
-  /// boot are, so cleanup after an interrupt still runs to completion.
+  /// Run the runtime with `arguments`; output is returned whatever the exit status,
+  /// and a thrown error means the outcome is unknown. `cancellable` lets Ctrl-C
+  /// abort the call (only create and boot), so cleanup still runs to completion.
   func run(_ arguments: [String], deadline: Duration, outputLimit: Int, cancellable: Bool)
     throws(RuntimeError) -> ProcessRunner.Output
 
@@ -177,10 +176,9 @@ package struct FilteredBoot: Sendable, Equatable {
   package let livePath: String
 }
 
-/// A resolved, qualified-or-not `iso-sandbox`. Qualification failure is
-/// kept rather than raised so cleanup of owned resources can still run on
-/// an unqualified runtime; anything that boots or hands out a guest calls
-/// `requireQualified()` first.
+/// A resolved, qualified-or-not `iso-sandbox`. Qualification failure is kept, not
+/// raised, so cleanup of owned resources can run on an unqualified runtime;
+/// anything that boots or hands out a guest calls `requireQualified()` first.
 package struct SandboxRuntime: Sendable {
   package static let jsonLimit = 1 << 20
   package static let textLimit = 256 << 10
@@ -217,11 +215,9 @@ package struct SandboxRuntime: Sendable {
     }
   }
 
-  /// Resolve the configured or installed runtime for `config`. With
-  /// `coreai`, the installed default is the experimental
-  /// `iso-sandbox-coreai` build instead.
-  /// `tool` forces the experimental build, for an instance created with
-  /// Core AI whatever the configuration says now.
+  /// Resolve the configured or installed runtime for `config`; with `coreai`, the
+  /// installed default is the experimental build. `tool` forces it for an instance
+  /// created with Core AI whatever the config says now.
   package static func open(
     _ config: IsoConfig, environment: [String: String], executable: String?,
     tool forced: BinaryResolver.Tool? = nil
@@ -347,10 +343,9 @@ package struct SandboxRuntime: Sendable {
   }
 }
 
-/// Resolves `iso-sandbox` (and the stock `container` builder) to an
-/// absolute, host-owned executable. Only the user's configuration and fixed
-/// install locations are consulted — never `PATH` or anything a project
-/// supplies — so a project cannot choose the runtime.
+/// Resolves `iso-sandbox` (and the stock `container` builder) to an absolute,
+/// host-owned executable from user config and fixed install locations only, never
+/// `PATH` or project content, so a project cannot choose the runtime.
 package enum BinaryResolver {
   package enum Tool: Sendable {
     case runtime

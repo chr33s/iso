@@ -2,10 +2,10 @@ import CryptoKit
 import Foundation
 import IsoCore
 
-/// The maintainer keys that may sign a release's `SHA256SUMS`, compiled in so
-/// that no runtime lookup (not even `github.com/<user>.keys`) can change them.
-/// Rotation ships as a release signed by a key already listed here whose
-/// binary lists the next key; a key is dropped only in a later release.
+/// The maintainer keys that may sign a release's `SHA256SUMS`, compiled in so no
+/// runtime lookup (not even `github.com/<user>.keys`) can change them. Rotation
+/// ships as a release signed by a listed key whose binary lists the next key; a
+/// key is dropped only in a later release.
 package enum ReleaseSigners {
   /// Namespace passed to `ssh-keygen -Y sign -n`; a signature made for any
   /// other purpose with the same key does not verify here.
@@ -20,15 +20,14 @@ package enum ReleaseSigners {
   static var trusted: [SignerKey] { keys.map { try! SignerKey(parsing: $0) } }
 }
 
-/// Release archives withdrawn after publication. Neither a Sigstore bundle nor
-/// an `SSHSIG` can be revoked once a client holds it, so a bad release is
-/// withdrawn by listing its archive digest here in the next release; with
-/// anti-rollback, an updated binary then never installs it again.
+/// Release archives withdrawn after publication. A Sigstore bundle or `SSHSIG`
+/// cannot be revoked once held, so a bad release is withdrawn by listing its
+/// archive digest here in the next release; anti-rollback then keeps an updated
+/// binary from installing it.
 package enum ReleaseRevocations {
   package static let digests: Set<SHA256Hex> = []
 }
 
-/// An ed25519 public key in OpenSSH wire form.
 struct SignerKey: Sendable, Equatable {
   /// The 51-byte `string "ssh-ed25519" || string key` blob.
   let blob: [UInt8]

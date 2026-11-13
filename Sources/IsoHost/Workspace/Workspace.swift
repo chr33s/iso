@@ -272,11 +272,10 @@ package struct WorkspaceTransfer: Sendable {
     diagnostics.log(.info, "Workspace transferred to guest")
   }
 
-  /// Receives the guest workspace into an incoming stage tree with the
-  /// qualified host tar. `.git` is never requested (the inventory refuses
-  /// it anyway); holes stay holes, so a sparse guest file cannot expand on
-  /// the host before the budgets run; no owner, ACL, flag or extended
-  /// attribute is applied.
+  /// Receives the guest workspace into an incoming stage tree with the qualified
+  /// host tar. `.git` is never requested; holes stay holes so a sparse guest file
+  /// cannot expand on the host before the budgets run; no owner, ACL, flag or
+  /// extended attribute is applied.
   func tarReceive(
     _ target: SSHTarget, guest: GuestPath, into attempt: ReceiveAttempt,
     receivers: InboundReceivers, cancel: (@Sendable () -> Bool)? = nil
@@ -352,11 +351,10 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// Receives with the qualified host rsync into an incoming stage tree.
-  /// Hard links and holes are kept, so a file linked many times or a
-  /// sparse file cannot expand on the host before the budgets run; the
-  /// stage walk then rejects the hard links. No owner, group or device is
-  /// created, and `.git` is never requested.
+  /// Receives with the qualified host rsync into an incoming stage tree. Hard links
+  /// and holes are kept so neither can expand on the host before the budgets run
+  /// (the stage walk rejects hard links). No owner, group or device is created and
+  /// `.git` is never requested.
   func rsyncReceive(
     _ target: SSHTarget, guest: GuestPath, into attempt: ReceiveAttempt,
     receivers: InboundReceivers, cancel: (@Sendable () -> Bool)? = nil
@@ -483,13 +481,12 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// Removes from the guest copy the tracked files the host deleted
-  /// (INPUT-01 outbound removal intent). Each path came from the host's own
-  /// index, passed the selection rules and is named in the output. Only
-  /// files and links are removed, never a directory. Without `force`, a
-  /// path is kept unless the guest repository tracks it unchanged from its
-  /// HEAD: the clean check cannot see an edit to a file the guest never
-  /// committed, and that edit may be the only copy.
+  /// Removes from the guest copy the tracked files the host deleted (INPUT-01
+  /// outbound removal intent). Each path came from the host's own index, passed the
+  /// selection rules and is named in the output; only files and links go. Without
+  /// `force`, a path is kept unless the guest repository tracks it unchanged from
+  /// HEAD: the clean check cannot see an edit to a never-committed file, which may
+  /// be the only copy.
   package func removeDeletedTracked(
     _ target: SSHTarget, _ guest: GuestPath, _ paths: [String], force: Bool
   ) throws {
@@ -558,11 +555,10 @@ package struct WorkspaceTransfer: Sendable {
     )
   }
 
-  /// After a push into a clean guest repository, commits the pushed tracked
-  /// changes so the next push's clean check sees only what the guest itself
-  /// changed (the guest repository is synthetic and receives no `.git`).
-  /// A branch with an upstream is a real clone (`--git-repo`) and is never
-  /// committed to. Best effort; untracked guest files are left alone.
+  /// After a push into a clean guest repository, commits the pushed tracked changes
+  /// so the next push's clean check sees only what the guest itself changed (the
+  /// repository is synthetic, no `.git` is sent). A branch with an upstream is a
+  /// real clone (`--git-repo`) and is never committed to. Best effort.
   package func commitPushedSnapshot(_ target: SSHTarget, _ guest: GuestPath) {
     let command = RemoteCommand().literal("cd ").arg(guest.rawValue).literal(
       " && [ -d .git ] && command -v git >/dev/null 2>&1 && ! git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 && git add -u && { git diff --cached --quiet || git -c user.name=iso -c user.email=iso@localhost -c commit.gpgsign=false commit -qm 'iso: pushed snapshot of the host workspace'; }"
@@ -581,10 +577,9 @@ package struct WorkspaceTransfer: Sendable {
     return roots
   }
 
-  /// `iso pull` in direct mode: receive and validate into a stage, then
-  /// apply it in the same invocation through the one installer. Without
-  /// `force` only a plan of additions applies; otherwise the whole stage
-  /// is kept for review and this throws.
+  /// `iso pull` in direct mode: receive and validate into a stage, then apply it in
+  /// the same invocation through the one installer. Without `force` only a plan of
+  /// additions applies; otherwise the stage is kept for review and this throws.
   package func pull(
     _ running: AppleBackend.Running, directory: String?, force: Bool, limits: StageLimits,
     configuredPolicy: CompiledPolicy? = nil
@@ -602,10 +597,9 @@ package struct WorkspaceTransfer: Sendable {
     return result
   }
 
-  /// `iso diff`, `iso pull --review`, `iso pull` in stage mode, and the
-  /// first half of a direct pull: receive into a fresh incoming stage
-  /// (never the destination), validate it, and select it. A failed receive
-  /// leaves the previously selected stage in place.
+  /// `iso diff`, `iso pull --review`, stage-mode pull and the first half of a direct
+  /// pull: receive into a fresh incoming stage (never the destination), validate
+  /// and select it. A failed receive leaves the previously selected stage.
   package func stage(
     _ running: AppleBackend.Running, directory: String?, limits: StageLimits,
     configuredPolicy: CompiledPolicy? = nil
@@ -680,10 +674,9 @@ package struct WorkspaceTransfer: Sendable {
     return manifest
   }
 
-  /// One apply attempt of one exact stage (RET-09/11). `replace` is the
-  /// overwrite authority for permitted nonsensitive replacements (an
-  /// explicit `--apply --stage-id`, or `--force` on a direct pull);
-  /// `sensitive` names every execution-sensitive entry being approved.
+  /// One apply attempt of one exact stage (RET-09/11). `replace` is the overwrite
+  /// authority for permitted nonsensitive replacements (`--apply --stage-id`, or
+  /// `--force` on a direct pull); `sensitive` names every approved sensitive entry.
   package struct ApplyRequest: Sendable {
     package let stageID: String
     package var replace: Bool
@@ -699,10 +692,9 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// Checks a request's authority against the plan before anything is
-  /// written or locked: exact stage, applicability, overwrite authority and
-  /// exactly-named sensitive grants. Missing authority holds the whole
-  /// stage.
+  /// Checks a request's authority against the plan before anything is written or
+  /// locked: exact stage, applicability, overwrite authority and exactly-named
+  /// sensitive grants. Missing authority holds the whole stage.
   static func authorize(_ request: ApplyRequest, _ manifest: StageManifest, instance: String) throws
   {
     let review = StageReview(manifest: manifest, tree: "")
@@ -745,11 +737,10 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// `iso pull --apply --stage-id`, and the second half of a direct pull:
-  /// applies exactly the selected stage through the one installer, then
-  /// removes it. Under a policy governing `workspace.pull.apply` the
-  /// governed path runs instead (`applyGovernedStage`); `confirm` is the
-  /// trusted host-terminal confirmation, nil when none is available.
+  /// `iso pull --apply --stage-id` and the second half of a direct pull: applies
+  /// exactly the selected stage through the one installer, then removes it. Under a
+  /// policy governing `workspace.pull.apply` `applyGovernedStage` runs instead;
+  /// `confirm` is the host-terminal confirmation, nil when unavailable.
   package func applyStage(
     _ instance: Instance, _ request: ApplyRequest, configuredPolicy: CompiledPolicy? = nil,
     confirm: StageConfirmation? = nil
@@ -823,10 +814,10 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// The common final section of every apply, under the locks: complete
-  /// preflight (destination identity, every old observation and parent,
-  /// gitfiles, every staged byte, receiver quiescence), the durable begin
-  /// record that consumes this attempt, then the writes.
+  /// The common final section of every apply, under the locks: complete preflight
+  /// (destination identity, old observations and parents, gitfiles, staged bytes,
+  /// receiver quiescence), the durable begin record that consumes this attempt,
+  /// then the writes.
   func install(
     _ instance: Instance, _ selected: SelectedStage, _ request: ApplyRequest,
     location: StageLocation, receipt: String?, beforeBegin: () throws -> Void = {}
@@ -896,9 +887,9 @@ package struct WorkspaceTransfer: Sendable {
   }
 
   /// Shadow mode: the hypothetical decision, without prompting, minting or
-  /// consuming an approval, or changing the apply.
-  /// Applies the same stage-binding checks the enforcing path would, so a
-  /// stage enforcement would refuse is never reported as allowed.
+  /// consuming an approval, or changing the apply. It applies the same
+  /// stage-binding checks as enforcement, so a refused stage is never reported
+  /// allowed.
   func reportShadowApply(
     _ instance: Instance, manifest: StageManifest, binding: PolicyBinding, policy: CompiledPolicy
   ) {
@@ -977,10 +968,9 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// What a guest preflight reported about the workspace a push would
-  /// overwrite (PUSH). Only `notRepository` and `clean` permit an ordinary
-  /// push. This protects a cooperative guest's work; a hostile guest can
-  /// report anything.
+  /// What a guest preflight reported about the workspace a push would overwrite
+  /// (PUSH). Only `notRepository` and `clean` permit an ordinary push; this protects
+  /// a cooperative guest's work, a hostile guest can report anything.
   package enum GuestWorkspaceState: Equatable, Sendable {
     case notRepository
     /// Clean; `upstream` is false when no tracking branch is configured,
@@ -997,10 +987,9 @@ package struct WorkspaceTransfer: Sendable {
     }
   }
 
-  /// The preflight script: every Git step's status is checked, a `.git`
-  /// file (worktree, submodule) counts as a repository, and a configured
-  /// but unresolvable upstream is unknown, not clean. The output ends with
-  /// `ISO-END`, so truncated or interrupted output is never clean.
+  /// The preflight script: every Git step's status is checked, a `.git` file
+  /// (worktree, submodule) counts as a repository, and an unresolvable upstream is
+  /// unknown, not clean. Output ends with `ISO-END`, so truncation is never clean.
   static func guestStateCommand(_ guest: GuestPath) -> RemoteCommand {
     RemoteCommand().literal("if [ ! -d ").arg(guest.rawValue).literal(
       " ]; then echo ISO-NOT-REPO; echo ISO-END; exit 0; fi; cd "
@@ -1017,7 +1006,6 @@ package struct WorkspaceTransfer: Sendable {
         + #"else echo ISO-NO-UPSTREAM; fi; fi; echo ISO-END"#)
   }
 
-  /// Parses the preflight output; anything malformed is unknown.
   static func parseGuestState(_ output: ProcessRunner.Output) -> GuestWorkspaceState {
     guard output.termination.succeeded else {
       return .unknown("the guest check exited with \(output.termination)")
@@ -1077,10 +1065,9 @@ package struct WorkspaceTransfer: Sendable {
     return Self.parseGuestState(output)
   }
 
-  /// Blocks a push unless the guest workspace is known safe to overwrite:
-  /// not a repository, or clean with nothing unpushed. Failures, malformed
-  /// output and a broken upstream block too; `--force` is the explicit
-  /// authority to overwrite guest work.
+  /// Blocks a push unless the guest workspace is known safe to overwrite: not a
+  /// repository, or clean with nothing unpushed. Failures, malformed output and a
+  /// broken upstream block too; `--force` is the explicit authority to overwrite.
   package func checkGuestClean(_ target: SSHTarget, _ guest: GuestPath) throws {
     switch try guestState(target, guest) {
     case .notRepository, .clean: return

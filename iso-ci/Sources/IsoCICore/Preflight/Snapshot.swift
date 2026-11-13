@@ -54,7 +54,6 @@ package struct SnapshotFile: Sendable, Equatable, Codable {
 
   package let path: String
   package let kind: Kind
-  /// 0o644 or 0o755 for files; 0o777 for symlinks.
   package let mode: Int
   package let size: UInt64
   package let sha256: Digest?

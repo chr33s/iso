@@ -2,10 +2,10 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-// The `iso.audit/v1` event model (docs/audit.md): one immutable, typed event
-// per host observation, request or decision. Producers submit an
-// `AuditRecord`; only `AuditStore.append` assigns identity, order and time,
-// and the record's case fixes its producer, evidence class and subject.
+// The `iso.audit/v1` event model (docs/audit.md): one immutable, typed event per
+// host observation, request or decision. Producers submit an `AuditRecord`; only
+// `AuditStore.append` assigns identity, order and time, and the case fixes its
+// producer, evidence class and subject.
 
 // MARK: - Identities
 
@@ -189,9 +189,7 @@ package enum AuditFacts {
   }
 
   package enum Role: String, Codable, Sendable {
-    /// iso launches and supervises the workload.
     case managed
-    /// An attachment to state iso does not own (`claude-agents`).
     case administrative
   }
 
@@ -480,7 +478,6 @@ package enum AuditFacts {
   package enum TransportFailure: String, Codable, Sendable {
     /// The pre-launch readiness recheck refused the handoff.
     case revalidationFailed = "revalidation_failed"
-    /// Launch or supervision failed; no exit status was observed.
     case sessionError = "session_error"
   }
 
@@ -655,7 +652,6 @@ extension BoundaryAudit.Event {
     }
   }
 
-  /// The legacy record's members.
   var members: [(String, OutputJSON)] {
     guard case .object(let members) = json(at: Date()) else { return [] }
     return members
@@ -724,7 +720,6 @@ package enum AuditPayload: Sendable, Equatable, Encodable {
   }
 }
 
-/// An iso-owned value as dynamic JSON, for rendering beside other members.
 package func auditJSON(_ value: some Encodable) throws -> OutputJSON {
   let bytes = try JSONEncoder().encode(value)
   return try JSONDecoder().decode(OutputJSON.self, from: bytes)
@@ -786,7 +781,6 @@ package struct AuditEvent: Sendable, Equatable, Codable {
     }
   }
 
-  /// Compact JSON, the stored line without its newline.
   package func encoded() throws -> [UInt8] {
     Array(try JSONOutput.render(self, pretty: false).utf8)
   }

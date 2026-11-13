@@ -7,10 +7,6 @@ import Testing
 @testable import IsoHost
 @testable import IsoHostControl
 
-// Brokered create, restart, refusal, restore/commit and relay selection
-// through `AppleBackend` against the stateful fake runtime
-// (tests/fixtures/fake-runtime/iso-sandbox).
-
 private let brokeredNone = #", "network": {"transport": "brokered"}, "egress": "none""#
 
 private func installed(_ extra: String = brokeredNone, mode: [String: Bool] = [:]) throws
@@ -110,7 +106,6 @@ private func option(_ call: [String], _ name: String) -> String? {
     #expect(try Journal.loadIfPresent(instance) == nil, "\(name)")
   }
 
-  // A runtime without the feature.
   let old = try installed(mode: ["noBrokeredFeature": true])
   defer { old.remove() }
   try expectRefusedBeforeCreate(old, old.backend, "no-feature", because: "brokered-transport")
@@ -119,7 +114,6 @@ private func option(_ call: [String], _ name: String) -> String? {
     brokeredNone
       + #", "claude": {"local_model": {"host_url": "http://192.168.1.5:11434", "model": "m"}}"#)
   defer { install.remove() }
-  // A local model the guest would have to reach directly.
   try expectRefusedBeforeCreate(
     install, install.backend, "lan-model", because: "BROKERED_UNSUPPORTED"
   ) { instance in
@@ -127,11 +121,9 @@ private func option(_ call: [String], _ name: String) -> String? {
     model.mode = .local
     try model.save(instance)
   }
-  // `--egress open` on a brokered configuration.
   try expectRefusedBeforeCreate(
     install, install.backend.reconfigured(install.config.overridingEgress(.open)), "open",
     because: #"egress "open" is invalid"#)
-  // An image that predates the guest adapter.
   let manifest = try ImageManifest.load(install.config, .default)
   #expect(manifest.supportsBrokered)
   var stripped = manifest
@@ -161,7 +153,6 @@ private func option(_ call: [String], _ name: String) -> String? {
     try backend.restoreDisk(try backend.asStopped(instance), image: snapshot)
   }
   #expect(!install.calls().contains { $0.first == "restore" })
-  // A desktop disk under this headless instance would boot with no display.
   committed.guestAdapters = BuildContext.guestAdapters(profiles: [Profiles.desktopDefinition])
   try committed.save(install.config, snapshot)
   #expect(throws: HostError.self) {
@@ -224,7 +215,6 @@ private func option(_ call: [String], _ name: String) -> String? {
   #expect(proof.networkPolicy == advertised.digest)
   #expect(native.imageDigest(.default) == (try ImageManifest.load(install.config, .default)).digest)
 
-  // A vmnet worker advertises no run policy.
   let vmnet = try installed("")
   defer { vmnet.remove() }
   let plain = AppleNativeHost(backend: vmnet.backend).networkCapability()
@@ -232,7 +222,6 @@ private func option(_ call: [String], _ name: String) -> String? {
   #expect(plain.runPolicies.isEmpty)
 }
 
-/// Records filtered-egress companion calls; `failure` makes `start` throw.
 private final class RecordingEgress: FilteredEgressCompanion, @unchecked Sendable {
   private let lock = NSLock()
   private var events: [String] = []
@@ -268,7 +257,6 @@ private func hostVM(_ install: FakeInstallation, _ native: AppleNativeHost, egre
   let egress = RecordingEgress()
   let native = AppleNativeHost(backend: install.backend, egress: egress)
   let (id, machine) = try hostVM(install, native, egress: .filtered)
-  // The enrollment boot inside create needs no companion.
   #expect(egress.calls.isEmpty)
   try native.start(id, runtime: machine, expiresAt: nil)
   let name = AppleNativeHost.instanceName(id)
@@ -276,7 +264,6 @@ private func hostVM(_ install: FakeInstallation, _ native: AppleNativeHost, egre
   try native.stop(id, runtime: machine)
   #expect(egress.calls.last == "stop \(name)")
   try native.delete(id, runtime: machine, owner: try Owner.load(install.config).id)
-  // Delete stops the companion again, whether or not the VM was running.
   #expect(egress.calls == ["start \(name) filtered", "stop \(name)", "stop \(name)"])
 }
 

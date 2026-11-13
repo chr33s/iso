@@ -8,9 +8,7 @@ package struct CIError: Error, Sendable, Equatable, CustomStringConvertible {
     case invalidRequest = "INVALID_REQUEST"
     case invalidConfiguration = "INVALID_CONFIGURATION"
     case unsupported = "UNSUPPORTED"
-    /// A required host capability (for example NET-HANDOFF-1) is absent.
     case capabilityMissing = "CAPABILITY_MISSING"
-    /// Qualification evidence is missing, stale or does not cover the tuple.
     case qualificationMissing = "QUALIFICATION_MISSING"
     case admissionRefused = "ADMISSION_REFUSED"
     case hostUnreachable = "HOST_UNREACHABLE"

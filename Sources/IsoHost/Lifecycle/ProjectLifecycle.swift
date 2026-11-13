@@ -66,10 +66,9 @@ package final class ProjectLifecycle {
     config = try Devcontainer.applyToConfig(config, translation)
   }
 
-  /// CLI `--env` over `--env-file` over devcontainer `containerEnv`, folded
-  /// into the guest variables of this command; the merged set is what gets
-  /// persisted. `{vault:}` references are persisted as references and
-  /// resolved per session, never folded in as values.
+  /// CLI `--env` over `--env-file` over devcontainer `containerEnv`, merged into the
+  /// guest variables and persisted. `{vault:}` references persist as references and
+  /// resolve per session, never folded in as values.
   package func mergeRuntimeGuestEnvironment(
     cli: [(EnvVarName, EnvValue)], envFile: String?,
     devcontainer: [(name: EnvVarName, value: String)]?
@@ -90,13 +89,11 @@ package final class ProjectLifecycle {
     return merged
   }
 
-  /// Resolves every `{vault:}` reference before any VM work, so a wrong
-  /// passphrase or a missing secret fails the command up front, and in one
-  /// unlock: `--env`, proxy credentials (configured and per-VM) and the
-  /// GitHub PAT for `repo`. The values stay in the process's resolver cache
-  /// for this command's sessions, so nothing later prompts again.
-  /// `noAgents`: an agent-free boot needs no provider credential, so none
-  /// is resolved (READY-01); only its own references are.
+  /// Resolves every `{vault:}` reference before any VM work, in one unlock, so a
+  /// wrong passphrase or missing secret fails up front: `--env`, proxy credentials
+  /// (configured and per-VM) and the GitHub PAT for `repo`. Values stay in the
+  /// resolver cache for this command's sessions. `noAgents` resolves no provider
+  /// credential (READY-01), only its own references.
   package func preflightReferences(
     _ entries: [EnvVarName: EnvValue], instance: Instance? = nil, repo: RepoSlug? = nil,
     noAgents: Bool = false
@@ -123,8 +120,6 @@ package final class ProjectLifecycle {
     }
   }
 
-  /// Literal entries become this command's guest variables; references are
-  /// left to the session overlay.
   package func foldGuestEnvironment(_ entries: [EnvVarName: EnvValue]) {
     config = config.applyingDevcontainer(
       vcpus: nil, memory: nil, postStart: nil,
@@ -209,11 +204,10 @@ package final class ProjectLifecycle {
     try provisionFirstBoot(instance, options, repo: repo, forwardSet: forwardSet)
   }
 
-  /// A guest carrying only its image: state, agents, then the workspace
-  /// and mounts, then the post-start hook (only after provisioning
-  /// succeeded), then forwards. Shared by a fresh start and a reprovision. The
-  /// managed alias and port forwards use the target bootstrap proved, so
-  /// neither reaches a filtered guest before its composite readiness.
+  /// A guest carrying only its image: state, agents, workspace and mounts, then the
+  /// post-start hook (only after provisioning succeeded), then forwards. Shared by
+  /// fresh start and reprovision. The alias and forwards use the target bootstrap
+  /// proved, so neither reaches a filtered guest before composite readiness.
   package func provisionFirstBoot(
     _ instance: Instance, _ options: CreationRequest, repo: RepoSlug?, forwardSet: [PortForward]
   ) throws {
@@ -311,7 +305,6 @@ package final class ProjectLifecycle {
     return target
   }
 
-  /// Keeps an alias the user installed current; never installs one.
   func warnGrantReconciliation(_ instance: Instance, _ grants: GrantLedger.Reconciled) {
     if !grants.withheld.isEmpty {
       diagnostics.warn(
@@ -390,10 +383,9 @@ package final class ProjectLifecycle {
       .info, "Instance '\(instance.name)' restarted — SSH: \(target.endpointDescription)")
   }
 
-  /// After a restart boots but provisioning or readiness fails: revoke what
-  /// the attempt started (forwards, proxies, tunnels), then stop the VM with
-  /// its disk kept. If the stop cannot be confirmed, fence the instance so no
-  /// workload is handed to it until `iso stop` reconciles it.
+  /// After a restart boots but provisioning or readiness fails: revoke what the
+  /// attempt started (forwards, proxies, tunnels), then stop the VM keeping its
+  /// disk, fencing the instance if the stop cannot be confirmed.
   func rollBackRestart(_ instance: Instance, cause: any Error) {
     diagnostics.log(.error, "Restart of '\(instance.name)' failed: \(oneLine(cause)); stopping it")
     if let target = try? backend.sshTarget(instance) { forwards.teardown(instance, target) }
@@ -470,10 +462,9 @@ package final class ProjectLifecycle {
       )
     }
   }
-  /// Forwards go down before the VM (their control master exits while SSH
-  /// still answers); the credential proxy and model tunnels are stopped on
-  /// every path.
-  /// `.unchanged` when the instance was already stopped.
+  /// Forwards go down before the VM (their control master exits while SSH still
+  /// answers); the proxy and model tunnels stop on every path. `.unchanged` when
+  /// already stopped.
   @discardableResult
   package func stop(_ instance: Instance) throws -> LifecycleAction {
     context.diagnostics.log(.info, "Stopping instance '\(instance.name)'")

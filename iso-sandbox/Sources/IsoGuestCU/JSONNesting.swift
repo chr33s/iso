@@ -1,12 +1,8 @@
-/// A bound on JSON nesting, checked before a recursive parser sees the
-/// bytes. `JSONSerialization` descends once per `{` or `[`; on a 512 KiB
-/// connection thread a few hundred nested objects overflow the stack, and
-/// the VM runs in that process. The closed request types here nest a
-/// handful of levels at most, so anything deeper is refused unparsed.
+/// A bound on JSON nesting, checked before a recursive parser sees the bytes: a few hundred
+/// nested objects overflow a 512 KiB connection thread's stack, so deeper input is refused unparsed.
 package enum JSONNesting {
-  /// Whether `bytes` open more than `limit` objects or arrays at once.
-  /// Brackets inside strings do not count. The scan is linear and never
-  /// recurses; text that is not JSON is left for the parser to refuse.
+  /// Whether `bytes` open more than `limit` objects or arrays at once. Brackets inside strings
+  /// do not count.
   package static func exceeds(_ bytes: some Sequence<UInt8>, limit: Int) -> Bool {
     var depth = 0
     var inString = false

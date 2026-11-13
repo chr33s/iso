@@ -30,7 +30,6 @@ package func isSafeNameScalar(_ scalar: Unicode.Scalar) -> Bool {
   }
 }
 
-/// A type decoded from one wire string through its validating initializer.
 package protocol WireParsable {
   init(parsing raw: String) throws(CIError)
 }
@@ -117,7 +116,6 @@ package struct InstanceID: UUIDIdentifier {
   package init(unchecked rawValue: String) { self.rawValue = rawValue }
 }
 
-/// A client-chosen durable host mutation identity, persisted before sending.
 package struct HostOperationID: UUIDIdentifier {
   package static let kind = "host operation id"
   package let rawValue: String
@@ -160,7 +158,6 @@ package struct ArtifactHandle: UUIDIdentifier {
   package init(unchecked rawValue: String) { self.rawValue = rawValue }
 }
 
-/// 32 lowercase hex characters naming one iso installation's resources.
 package struct OwnerID: Hashable, Sendable, CustomStringConvertible, Codable {
   package let rawValue: String
   package init(_ value: String) throws(CIError) {
@@ -184,7 +181,6 @@ package struct OwnerID: Hashable, Sendable, CustomStringConvertible, Codable {
   }
 }
 
-/// A runtime-reported boot identity: `[A-Za-z0-9._-]`, 1-128 bytes.
 package struct BootID: Hashable, Sendable, CustomStringConvertible, Codable {
   package let rawValue: String
   package init(_ value: String) throws(CIError) {
@@ -218,7 +214,6 @@ package struct Digest: Hashable, Comparable, Sendable, CustomStringConvertible, 
     rawValue = lowered
   }
 
-  /// Accepts `sha256:<hex>` as well as bare hex.
   package init(prefixed value: String) throws(CIError) {
     try self.init(value.hasPrefix("sha256:") ? String(value.dropFirst(7)) : value)
   }
@@ -333,7 +328,6 @@ package struct RepositoryName: Hashable, Comparable, Sendable, CustomStringConve
   }
 }
 
-/// A self-hosted runner label: 1-100 bytes, no commas or control characters.
 package struct RunnerLabel: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
   package let rawValue: String
 
@@ -344,7 +338,6 @@ package struct RunnerLabel: Hashable, Comparable, Sendable, CustomStringConverti
     rawValue = value
   }
 
-  /// GitHub compares labels case-insensitively.
   package var normalized: String { rawValue.lowercased() }
   package var description: String { rawValue }
   package static func < (a: Self, b: Self) -> Bool { a.normalized < b.normalized }
@@ -364,7 +357,6 @@ package struct RunnerLabel: Hashable, Comparable, Sendable, CustomStringConverti
 
 package typealias EpochSeconds = UInt64
 
-/// Injectable time so reconciliation and budget tests are deterministic.
 package protocol CIClock: Sendable {
   func now() -> EpochSeconds
 }
@@ -380,7 +372,6 @@ package func randomHex(bytes count: Int = 32) -> String {
   return bytes.map { String(format: "%02x", $0) }.joined()
 }
 
-/// Constant-time comparison for bearer verifiers.
 package func constantTimeEqual(_ a: [UInt8], _ b: [UInt8]) -> Bool {
   guard a.count == b.count else { return false }
   var difference: UInt8 = 0

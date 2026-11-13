@@ -7,7 +7,6 @@ package protocol ScaleSetAuthority: Sendable {
   func connect(_ scope: GitHubRunnerScope, now: EpochSeconds) throws(CIError)
     -> ActionsServiceConnection
   func runnerGroupID(_ scope: GitHubScope) throws(CIError) -> Int64
-  /// GitHub's workflow run record, which the job policy decides on.
   func runFacts(_ repository: RepositoryName, run: Int64) throws(CIError) -> JobFacts
 }
 
@@ -69,7 +68,6 @@ package struct ScaleSetDemand: Sendable, Equatable {
   package var rejected = 0
   package var running = 0
   package var elastic = false
-  /// Assigned jobs refused by the job policy (non-elastic scale sets).
   package var blocked: [JobRejection] = []
 
   package init() {}

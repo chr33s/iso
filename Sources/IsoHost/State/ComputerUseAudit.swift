@@ -2,13 +2,10 @@ import Foundation
 import IsoCore
 
 /// The boots whose computer-use counts an instance's audit already holds
-/// (`computer-use-audited.json`). A boot's counts reach the host twice: from
-/// its running owner when `iso stop` stops it, and afterwards from the
-/// owner's log of ended boots (`endedBoots` in `inspect`), which is how a
-/// boot the host did not stop is audited at all. Host-owned control state.
+/// (`computer-use-audited.json`). Counts arrive from the running owner at
+/// `iso stop` and later from its ended-boots log (`endedBoots` in `inspect`),
+/// the only way a boot the host did not stop is audited. Host-owned state.
 package enum ComputerUseAudit {
-  /// More than the runtime's log holds, so a boot still listed there is
-  /// still known here.
   static let limit = 32
 
   static func path(_ instance: Instance) -> String {
@@ -20,10 +17,9 @@ package enum ComputerUseAudit {
     var boots: [String]
   }
 
-  /// Records `events` for `boot` unless that boot was recorded before.
-  /// Best effort, as every audit write: when the record of audited boots
-  /// cannot be read, nothing is recorded now and a later observation of the
-  /// boot's ended counts tries again. An unparseable record counts as empty.
+  /// Records `events` for `boot` unless it was recorded before. Best effort: when
+  /// the audited-boots record cannot be read nothing is recorded now and a later
+  /// observation retries; an unparseable record counts as empty.
   package static func record(
     _ instance: Instance, boot: String, _ events: [BoundaryAudit.Event],
     diagnostics: Diagnostics? = nil

@@ -28,7 +28,6 @@ package final class FileLock: Sendable {
       }
     }
     // The lock file carries no content; ownership is attached to its descriptor.
-    // The C path is borrowed for this call only.
     let fd = unsafe open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
     guard fd >= 0 else { throw .posix("Failed to create lock file", path) }
     while flock(fd, LOCK_EX) != 0 {
@@ -53,7 +52,6 @@ package final class FileLock: Sendable {
         throw HostError("Failed to create directory \(parent)")
       }
     }
-    // The C path is borrowed for this call only.
     let fd = unsafe open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw .posix("Failed to create lock file", path) }
     while flock(fd, LOCK_EX | LOCK_NB) != 0 {
@@ -66,9 +64,8 @@ package final class FileLock: Sendable {
     return FileLock(descriptor: fd)
   }
 
-  /// Locks an owner-only `path` opened without following a symlink, waiting
-  /// at most `timeout`; nil when another holder keeps it that long. For
-  /// best-effort writers that must not stall the operation they describe.
+  /// Locks an owner-only `path` (no symlink follow), waiting at most `timeout`;
+  /// nil if still held. For best-effort writers that must not stall.
   package static func bounded(path: String, timeout: Duration) throws(HostError) -> FileLock? {
     guard let fd = try openRegularFile(path, O_WRONLY | O_CREAT) else {
       throw .posix("Failed to open lock file", path, ENOENT)
@@ -101,16 +98,13 @@ package final class FileLock: Sendable {
     return parent.isEmpty ? lockName : parent + "/" + lockName
   }
 
-  /// `sibling(of:)` for a directory that a holder may remove: the directory
-  /// is never created, and once the lock is held the path must still name
-  /// the locked file. Nil when the directory is gone, or was removed (with
-  /// the lock) while this process waited, so a waiter never ends up holding
-  /// an unlinked lock beside a new owner of a recreated path.
+  /// `sibling(of:)` for a directory a holder may remove: never created, and the
+  /// path must still name the locked file once held. Nil if the directory is
+  /// gone, so a waiter never holds an unlinked lock beside a recreated path.
   package static func siblingInExistingDirectory(of target: String) throws(HostError)
     -> FileLock?
   {
     let path = siblingPath(of: target)
-    // The C path is borrowed for this call only.
     let fd = unsafe open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
     guard fd >= 0 else {
       let code = errno
@@ -158,7 +152,6 @@ package func openRegularFile(_ path: String, _ flags: Int32) throws(HostError) -
     throw .posix("Failed to open", path, code)
   }
   var status = stat()
-  // fstat writes one initialized stat value, borrowed for this call.
   guard unsafe fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
     close(fd)
     throw HostError("\(path) is not a regular file")

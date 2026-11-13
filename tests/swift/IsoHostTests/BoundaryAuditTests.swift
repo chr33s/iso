@@ -64,7 +64,6 @@ private func auditInstance() throws -> Instance {
   #expect(throws: DecodingError.self) {
     try JSONDecoder().decode(MacGuestCUCounts.self, from: Data(negativeWaits.utf8))
   }
-  // An owner from before screen sync reports no waits.
   let older = #"""
     {"frameRate":4,"sessions":2,"frames":30,"actions":12,"statusRequests":1,"preemptions":1,
      "refusals":{}}
@@ -191,7 +190,6 @@ private func auditInstance() throws -> Instance {
   let loose = BoundaryAudit.suggestConfig(raw).joined(separator: "\n")
   #expect(loose.contains(#"// "proxy": { "mode": "required" }"#))
   #expect(loose.contains(#"// "egress": "none""#))
-  // Unknown events never change the suggestion.
   #expect(BoundaryAudit.suggestConfig(Array(raw.prefix(2))).joined(separator: "\n") == loose)
 }
 

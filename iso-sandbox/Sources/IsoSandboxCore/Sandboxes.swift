@@ -36,9 +36,9 @@ package struct ReconcileAction: Codable, Sendable {
   package var action: String
 }
 
-/// Sandbox lifecycle operations. Every mutation of a sandbox's disk or
-/// record runs under its mutation guard and requires it to be stopped with
-/// no live owner.
+/// Sandbox lifecycle operations.
+/// Every mutation of a sandbox's disk or record runs under its mutation guard and requires it
+/// stopped with no live owner.
 package enum Sandboxes {
   // MARK: status
 
@@ -53,9 +53,9 @@ package enum Sandboxes {
       ? .running : .booting
   }
 
-  /// Whether some process holds the owner lock (an owner between launch
-  /// and writing live.json, or a wedged one). Only a missing lock file
-  /// means no owner; a lock that cannot be probed counts as held, so a
+  /// Whether some process holds the owner lock (an owner between launch and
+  /// writing live.json, or a wedged one).
+  /// Only a missing lock file means no owner; a lock that cannot be probed counts as held, so a
   /// sandbox is never taken for stopped on an error.
   static func ownerHoldsLock(_ paths: SandboxPaths) -> Bool {
     ownerHoldsLock(at: paths.lock.path)
@@ -73,9 +73,9 @@ package enum Sandboxes {
     return true
   }
 
-  /// Why the owner lock cannot be probed, or nil when it can (or is
-  /// absent). Such a sandbox reads as held forever, so callers report this
-  /// cause instead of a status the lock never proved.
+  /// Why the owner lock cannot be probed, or nil when it can (or is absent).
+  /// Such a sandbox reads as held forever, so callers report this cause instead of a status the
+  /// lock never proved.
   static func lockProbeFailure(_ paths: SandboxPaths) -> String? {
     let fd = open(paths.lock.path, O_RDWR | O_CLOEXEC)
     guard fd < 0 else {
@@ -93,12 +93,11 @@ package enum Sandboxes {
     guard s == .stopped else { throw SandboxError("\(id) is \(s.rawValue); stop it first") }
   }
 
-  /// Runs `body` holding `paths`' mutation guard, so no other mutation of
-  /// the sandbox and no owner (started by `start` or respawned by launchd)
-  /// can interleave with it; see ``Owner/claim(root:id:)``. Unless `settle`
-  /// is false, a disk update a crash interrupted is finished or discarded
-  /// first. Checks that the sandbox is stopped belong inside `body`, so the
-  /// whole check-and-mutate interval is guarded.
+  /// Runs `body` holding `paths`' mutation guard, so no other mutation of the
+  /// sandbox and no owner (started by `start` or respawned by launchd) can
+  /// interleave with it; see ``Owner/claim(root:id:)``.
+  /// Unless `settle` is false, an interrupted disk update is finished or discarded first. Stopped-
+  /// checks belong inside `body`, so the whole check-and-mutate interval is guarded.
   static func mutating<T>(_ paths: SandboxPaths, settle: Bool = true, _ body: () async throws -> T)
     async throws -> T
   {
@@ -327,8 +326,8 @@ package enum Sandboxes {
   }
 
   /// Halt systemd cleanly, wait for the owner to exit, and unload its job.
-  /// Idempotent: stopping a stopped sandbox succeeds. Not guarded: it
-  /// changes no disk or record, and must work while an owner is starting.
+  /// Idempotent: stopping a stopped sandbox succeeds.
+  /// Not guarded: it changes no disk or record, and must work while an owner is starting.
   package static func stop(root: SandboxRoot, id: SandboxID, timeout: TimeInterval) async throws {
     let paths = root.sandbox(id)
     _ = try paths.loadRecord()
@@ -377,8 +376,8 @@ package enum Sandboxes {
 
   // MARK: resources and disks
 
-  /// Change CPU/memory, applied at the next start. With `expect`, refuses
-  /// unless the record's last operation is still `expect`, so a caller
+  /// Change CPU/memory, applied at the next start.
+  /// With `expect`, refuses unless the record's last operation is still `expect`, so a caller
   /// undoing its own change never overwrites a newer one.
   package static func setResources(
     root: SandboxRoot, id: SandboxID, cpus: Int?, memoryBytes: UInt64?,
@@ -467,10 +466,10 @@ package enum Sandboxes {
         ".tmp-\(name.rawValue)-\(UUID().uuidString.prefix(8)).ext4")
       defer { try? FileManager.default.removeItem(at: tmp) }
       try clone(paths.rootfs, to: tmp)
-      // The reset runs iso-built tools against the disk as data, so the
-      // guest's own binaries cannot interfere with it. It removes only the
-      // identity left on disk: a guest that authored the disk can still
-      // re-create its old identity when a clone boots.
+      // The reset runs iso-built tools against the disk as data, so the guest's
+      // own binaries cannot interfere with it.
+      // It removes only the identity left on disk: a guest that authored the disk can still re-
+      // create its old identity when a clone boots.
       _ = try await Maintenance.resetIdentity(root: root, scratch: root.disks, disk: tmp)
       let meta = DiskMetadata(
         imageReference: record.imageReference, imageDigest: record.imageDigest,
@@ -488,10 +487,8 @@ package enum Sandboxes {
     }
   }
 
-  /// Replace a stopped sandbox's disk with a clone of committed disk `name`
-  /// or a fresh copy of an image, grown back to the sandbox's size if that
-  /// is larger. The new disk has no host keys, so the next boot generates
-  /// new ones.
+  /// Replace a stopped sandbox's disk with a clone of committed disk `name` or a
+  /// fresh copy of an image, grown back to the sandbox's size if that is larger.
   package static func restore(
     root: SandboxRoot, id: SandboxID, source: SandboxSource, operation: OperationID? = nil
   ) async throws
@@ -595,9 +592,9 @@ package enum Sandboxes {
     }
   }
 
-  /// Clear crashed owners' state, finish interrupted disk updates and
-  /// deletes, and remove uncommitted creates and leftover scratch files. A
-  /// sandbox whose guard is held is left for a later run.
+  /// Clear crashed owners' state, finish interrupted disk updates and deletes,
+  /// and remove uncommitted creates and leftover scratch files. A sandbox whose guard
+  /// is held is left for a later run.
   package static func reconcile(root: SandboxRoot) throws -> [ReconcileAction] {
     var out: [ReconcileAction] = []
     // The sweep below must not race an in-flight offline operation; while

@@ -24,6 +24,5 @@ import Testing
   ] {
     #expect(throws: ValidationError.self, "\(bad)") { try ExactHostname(bad) }
   }
-  // A trailing dot is normalized away.
   #expect(try ExactHostname("example.com.").rawValue == "example.com")
 }

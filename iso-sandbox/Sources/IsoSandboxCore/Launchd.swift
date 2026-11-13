@@ -1,12 +1,9 @@
 import Foundation
 
 /// Supervision of sandbox owners by launchd.
-///
-/// The VM lives inside its owner process, so each running sandbox is one
-/// launchd job loaded from a plist in the sandbox directory (never in
-/// `~/Library/LaunchAgents`, so nothing starts at login). The job requests
-/// relaunch after abnormal exits; the owner exits 0 on a clean halt and on its
-/// own startup errors, so neither requests a relaunch.
+/// Each running sandbox is one job loaded from a plist in the sandbox directory (never
+/// `~/Library/LaunchAgents`), relaunched after abnormal exits; the owner exits 0 on a clean halt
+/// and on its own startup errors, so neither relaunches.
 package enum Launchd {
   static let launchctl = "/bin/launchctl"
 

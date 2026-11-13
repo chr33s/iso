@@ -185,7 +185,6 @@ private func exchange(
   #expect(denied.response.hasPrefix("HTTP/1.1 429"))
   #expect(denied.response.lowercased().contains("retry-after: 60\r\n"))
   #expect(!denied.forwarded)
-  // The denial released its ordinary capacity lease.
   #expect(requests.acquire() != nil)
   // Bounded diagnostics name the guard, never the request.
   let logged = lines.withLock { $0 }

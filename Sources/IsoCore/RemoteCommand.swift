@@ -20,12 +20,9 @@ package func shellEscape(_ value: String) -> String {
   return String(escaped)
 }
 
-/// A remote shell command assembled from trusted literal fragments and
-/// untrusted values, each escaped exactly once. `ssh` joins its command
-/// words and hands them to the guest shell, so this is the only way a
-/// dynamic value may reach it: forgetting to escape and escaping twice are
-/// both unrepresentable. Parts are concatenated verbatim; literals carry
-/// their own spacing.
+/// A remote shell command from trusted literals and untrusted values, each
+/// escaped exactly once (`ssh` hands the joined words to the guest shell), so
+/// missing or double escaping is unrepresentable. Literals carry their own spacing.
 package struct RemoteCommand: Sendable, Equatable, CustomStringConvertible {
   package private(set) var rendered = ""
 

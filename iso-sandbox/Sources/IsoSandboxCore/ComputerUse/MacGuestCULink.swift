@@ -4,11 +4,10 @@ import IsoMacProtocol
 import Virtualization
 
 /// The host side of guest-driven computer use, on vsock 7802
-/// (docs/design/guest-driven-computer-use.md §5). Registered only for
-/// sandboxes created with it. Every request line is tainted: it is parsed
-/// into a closed request, admitted against per-sandbox rate limits, and
-/// answered by `handle`, which runs the same frame and action paths as host
-/// callers. Any guest process may connect: the whole guest is one principal.
+/// (docs/design/guest-driven-computer-use.md §5).
+/// Registered only for sandboxes created with it. Every request line is tainted: parsed into a
+/// closed request, rate limited, then answered by `handle`. Any guest process may connect: the
+/// whole guest is one principal.
 package final class MacGuestCULink: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
   private let handle: @Sendable (GuestCURequest) async -> GuestCUResponse
   private let log: @Sendable (String) -> Void

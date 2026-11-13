@@ -6,10 +6,9 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Host tools found on `PATH` (`curl`, `gh`, `git`, `open`, `stty`), run
-/// with an explicit environment. Captured runs return stdout of a successful
-/// exit, discard stderr, and produce error texts
-/// naming the command line without its secret inputs (those go on stdin).
+/// Host tools found on `PATH` (`curl`, `gh`, `git`, `open`, `stty`), run with an
+/// explicit environment. Captured runs return stdout of a successful exit;
+/// error texts name the command line without secret inputs (those go on stdin).
 package struct HostTools: Sendable {
   /// Bound host-tool calls so an unresponsive child cannot hang the command.
   package static let deadline: Duration = .seconds(300)
@@ -48,7 +47,6 @@ package struct HostTools: Sendable {
         deadline: Self.deadline, input: input))
   }
 
-  /// Rust `Cmd::capture`: stdout of a successful run as UTF-8.
   func capture(_ name: String, _ arguments: [String], input: [UInt8]? = nil) throws -> String {
     let describe = ([name] + arguments).joined(separator: " ")
     let output: ProcessRunner.Output
@@ -77,10 +75,9 @@ package struct HostTools: Sendable {
     return token.isEmpty ? nil : Secret(token)
   }
 
-  /// The GitHub slug of `directory`'s `origin` remote. Nil when the
-  /// directory is missing, is not a repository, has no origin, or origin is
-  /// not on github.com. Git's repository-selecting variables are removed so
-  /// a hook context cannot redirect the lookup.
+  /// The GitHub slug of `directory`'s `origin`, or nil if absent or not on
+  /// github.com. Git's repository-selecting variables are removed so a hook
+  /// context cannot redirect the lookup.
   package func detectWorkspaceRepo(_ directory: String) throws -> RepoSlug? {
     guard FileManager.default.fileExists(atPath: directory) else { return nil }
     var clean = environment
@@ -303,7 +300,6 @@ package struct GitHubAPI: Sendable {
   }
 }
 
-/// Rust `ParseIntError` text for a `u16` parse.
 func rustParseIntError(_ digits: String) -> String {
   if digits.isEmpty { return "cannot parse integer from empty string" }
   let body = digits.hasPrefix("+") ? digits.dropFirst() : Substring(digits)
@@ -315,12 +311,9 @@ func rustParseIntError(_ digits: String) -> String {
 
 // MARK: - Submodules
 
-/// Depth-1 submodules of a parent repository (from `.gitmodules` served by
-/// GitHub, so untrusted: URLs are sanitized wherever they are shown),
-/// classified for PAT coverage:
-/// same resource owner (one PAT can cover them), other owners (one PAT per
-/// owner), and URLs not on github.com. Buckets are sorted and deduplicated
-/// so the wizard's output is stable.
+/// Depth-1 submodules of a parent (from GitHub-served `.gitmodules`, so
+/// untrusted: URLs are sanitized wherever shown), bucketed for PAT coverage:
+/// same owner, other owners, non-github.com. Sorted and deduplicated.
 package struct SubmoduleDiscovery: Equatable, Sendable {
   /// Same owner as the parent; the parent itself excluded.
   package var sameOwner: [RepoSlug] = []

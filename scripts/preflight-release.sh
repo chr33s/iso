@@ -7,13 +7,8 @@ set -euo pipefail
 
 # Release preflight for iso.
 #
-# Runs every check that gates a release from one machine, mirroring the CI
-# jobs (hygiene, the `mise run lint`/`check-policy`/`check-ci` tasks CI runs,
-# build, test, workflow lint, the contract and regression scripts, the
-# lightweight integration scripts) so a doomed tag is never pushed, and adds
-# the checks CI does not perform:
-#   - Swift package version (Sources/IsoHost/Update/UpdateVersion.swift) / CHANGELOG
-#     / git-tag agreement
+# Runs every check that gates a release from one machine, mirroring the CI jobs, so a doomed tag
+# is never pushed, and adds the checks CI does not perform:
 #   - the release archive, built through scripts/build-release.py exactly as
 #     release.yml builds it (a break otherwise first surfaces on the tag,
 #     which burns the version under immutable releases)
@@ -64,8 +59,7 @@ warn() {
 }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# step "Name" cmd args... — runs cmd, records a failure on non-zero exit but
-# keeps going so one preflight run reports every problem.
+# step "Name" cmd args... — records a failure on non-zero exit but keeps going.
 step() {
   local name="$1"
   shift
@@ -112,9 +106,8 @@ check_versions() {
   tag="v$v"
   printf 'Package version: %s  (release tag: %s)\n' "$v" "$tag"
 
-  # release.yml extracts notes with an exact whole-line match ($0 == "## vX.Y.Z"),
-  # so the header must match exactly — a trailing date would pass a looser check
-  # here yet make the release run find no notes. Mirror that exact-match.
+  # release.yml matches the notes header as an exact whole line ($0 == "## vX.Y.Z"); a trailing
+  # date would pass a looser check here yet leave the release with no notes.
   if ! grep -qxF "## $tag" CHANGELOG.md; then
     printf 'CHANGELOG.md has no exact "## %s" header — promote "## Unreleased" (header must be exactly "## %s", no trailing text)\n' "$tag" "$tag"
     return 1

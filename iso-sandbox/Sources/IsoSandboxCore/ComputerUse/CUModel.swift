@@ -207,10 +207,9 @@ package enum CUKeys {
     return out
   }
 
-  /// Sends `keys` in order with `pause` after each. A failure part-way, a
-  /// `pause` that throws included, stops there and releases what was
-  /// pressed, so an interrupted action or paste leaves no key down. Runs on
-  /// the caller's actor: the closures are the caller's own.
+  /// Sends `keys` in order with `pause` after each.
+  /// A failure part-way (a throwing `pause` included) stops and releases what was pressed, so no
+  /// key is left down.
   package static func deliver(
     _ keys: [CUKeyEvent], isolation: isolated (any Actor)? = #isolation,
     send: (CUKeyEvent) throws -> Void, pause: () async throws -> Void

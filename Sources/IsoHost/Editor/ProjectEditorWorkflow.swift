@@ -14,7 +14,6 @@ package struct ProjectEditorWorkflow {
     self.launcher = launcher
   }
 
-  /// What the workflow settled on; no key material or workload state.
   package struct Outcome: Sendable {
     package let up: UpOutcome
     package let alias: SSHAlias
@@ -59,7 +58,6 @@ package struct ProjectEditorWorkflow {
     }
   }
 
-  /// Publishes the alias and launches exactly `provider`.
   func open(
     _ provider: any EditorProvider, outcome: UpOutcome, running: AppleBackend.Running,
     guestPath: GuestPath, mode: EditorLaunchMode

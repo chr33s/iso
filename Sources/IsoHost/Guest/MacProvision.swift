@@ -6,7 +6,6 @@ import IsoCore
 /// and conventions iso's guest commands already use on Linux, and installs
 /// the agents from the same upstream installers as the Linux image.
 package enum MacProvision {
-  /// The account `iso-sandbox` provisions in every macOS template.
   package static let guestUser = try! GuestUser("iso")
   /// GitHub CLI release pinned by checksum, as the Linux image pins its apt
   /// repository key.

@@ -9,7 +9,6 @@ import Testing
 // depth, interrupted key sequences, and the framebuffer copy.
 
 @Test func aGuestRequestNestedPastItsDeepestFormIsRefusedUnparsed() {
-  // The deepest request there is: a drag's path of points.
   let drag = Array(
     #"{"op":"act","session":"s","basedOnFrame":"f","action":{"kind":"drag","path":[{"x":1,"y":2},{"x":3,"y":4}]}}"#
       .utf8)
@@ -19,7 +18,6 @@ import Testing
     return
   }
   #expect(request.action?.path?.count == 2)
-  // One level more, in a field the closed set allows.
   let deeper = Array(#"{"op":"act","action":{"path":[{"x":{"a":1}}]}}"#.utf8)
   #expect(GuestCURequest.parse(deeper) == .failure(.tooDeep))
   // What overflowed a connection thread's stack in `JSONSerialization`.
@@ -43,12 +41,10 @@ import Testing
   struct Ended: Error {}
   let keys = CUKeys.events(forText: "Ab")
   var sent: [CUKeyEvent] = []
-  // Delivered whole when nothing interrupts.
   try await CUKeys.deliver(keys, send: { sent.append($0) }, pause: {})
   #expect(sent == keys)
-  // A pause that throws (a paste whose viewer lost control, an action
-  // whose session broke) stops there and lets go of what is down.
   sent = []
+  // A pause that throws (viewer lost control, session broke) stops there and lets go of what is down.
   var pauses = 0
   await #expect(throws: Ended.self) {
     try await CUKeys.deliver(
@@ -85,13 +81,10 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
     try FramebufferSurface.read(
       s, width: width, height: height, into: destination, bytesPerRow: width * 4)
   }
-  // The expected surface is copied: alpha forced opaque.
   let good = try #require(
     surface(width: width, height: height, format: FramebufferSurface.pixelFormat))
   try read(good)
   #expect(pixels[3] == 0xFF && pixels[0] == 0)
-  // A larger one would overrun the fixed-size destination; a smaller one
-  // would leave stale rows. Neither is read.
   pixels.initializeMemory(as: UInt8.self, repeating: 0xAA)
   let wide = try #require(
     surface(width: width * 2, height: height, format: FramebufferSurface.pixelFormat))
@@ -123,7 +116,6 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
     let admitted = budget.admit(at: t0.addingTimeInterval(second))
     #expect(!admitted.emit && admitted.suppressed == 0)
   }
-  // The next minute's first refusal is logged and says what was dropped.
   let next = budget.admit(at: t0.addingTimeInterval(60.5))
   #expect(next.emit && next.suppressed == 3)
   let after = budget.admit(at: t0.addingTimeInterval(61))
@@ -141,7 +133,6 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
 }
 
 @Test func onlyComputerUseOperationsReachTheComputerUseService() {
-  // The owner answers these itself; none can be asked through `cu`.
   for op in [MacControlRequest.Op.ping, .inspect, .status, .stop] {
     guard case .owner = MacControlRequest(op: op).route else {
       Issue.record("\(op.rawValue) routed to the computer-use service")
@@ -161,7 +152,6 @@ private func surface(width: Int, height: Int, format: OSType) -> IOSurfaceRef? {
       continue
     }
     #expect(cu.op == expected)
-    // The request's members travel with it.
     #expect(cu.fields.session == "s" && cu.fields.seconds == 3)
     #expect(cu.fields.wait == GuestCUWaitFields(idleMs: 100))
   }

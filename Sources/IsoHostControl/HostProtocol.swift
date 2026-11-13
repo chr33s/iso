@@ -51,7 +51,6 @@ package enum HostMethod: String, CaseIterable, Sendable {
   case macosComputerUseRead = "macos.computerUse.read"
   case macosComputerUseInput = "macos.computerUse.input"
 
-  /// Durable mutations carry an envelope `operation_id` and go through the ledger.
   package var isDurableMutation: Bool {
     switch self {
     case .imageEnsure, .vmCreate, .vmStart, .vmStop, .vmDestroy, .runCreate, .runComplete,
@@ -219,9 +218,8 @@ package struct VMSpec: Hashable, Sendable {
   }
 }
 
-/// `image.ensure`: build (or confirm) a named image on the worker from the
-/// worker's own build context and profile definitions. No client path,
-/// command or file travels; profiles are names the worker resolves.
+/// `image.ensure`: build or confirm a named image from the worker's own build context and
+/// profiles. No client path or command travels.
 package struct ImageRequest: Sendable, Equatable {
   package static let maxProfiles = 16
   package let image: ImageName
@@ -290,7 +288,6 @@ package enum RetentionMode: String, Sendable, CaseIterable, Codable {
   case stopped
 }
 
-/// Purpose a live access session is admitted for.
 package enum AccessPurpose: String, Sendable, CaseIterable {
   case ssh
   case editor
@@ -313,7 +310,6 @@ package struct AccessBearer: Sendable, Equatable {
     rawValue = value
   }
 
-  /// 256 bits from the system CSPRNG.
   package static func generate() -> AccessBearer {
     var bytes = [UInt8](repeating: 0, count: 32)
     arc4random_buf(&bytes, bytes.count)
@@ -337,16 +333,13 @@ package struct ClientPublicKey: Sendable, Equatable {
     }
   }
 
-  /// `ssh-ed25519 <base64>`, without any comment.
   package var line: String { "ssh-ed25519 " + key.base64 }
   /// The binding identity compared on every use of a grant.
   package var fingerprint: SHA256Hex { SHA256Hex(digest: SHA256.hash(data: key.blob)) }
 }
 
-/// Typed request parameters, one case per method.
 package enum HostRequestBody: Sendable, Equatable {
   case hello(protocols: [String], clientBuild: String)
-  /// What this host can do now and the evidence behind it; params are `{}`.
   case hostCapabilities
   case vmList(cursor: InstanceID?, limit: UInt32)
   case vmInspect(QualifiedInstance)
@@ -414,7 +407,6 @@ package enum HostRequestBody: Sendable, Equatable {
     }
   }
 
-  /// The instance a mutation targets, when it names one.
   package var target: QualifiedInstance? {
     switch self {
     case .vmInspect(let instance), .vmStart(let instance, _, _, _), .vmStop(let instance, _),
@@ -761,7 +753,6 @@ package struct AccessOpenRequest: Sendable, Equatable {
   }
 }
 
-/// One decoded request. `hostID`/`ownerID` are absent only on `hello`.
 package struct HostRequest: Sendable, Equatable {
   package let requestID: RequestID
   package let hostID: HostID?

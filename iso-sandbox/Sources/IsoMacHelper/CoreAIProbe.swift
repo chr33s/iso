@@ -1,16 +1,13 @@
 import Foundation
 import IOKit
 
-/// The guest side of `coreai_status` (docs/design/paravirtualized-coreai.md):
-/// which Core AI compute kinds this guest can use and whether the
-/// paravirtualized delegate's feature flag is on. Read-only.
+/// The guest side of `coreai_status` (docs/design/paravirtualized-coreai.md): which Core AI
+/// compute kinds this guest can use and whether the paravirtualized delegate's feature flag is
+/// on.
 enum CoreAIProbe {
   static let flagPath = "/Library/Preferences/FeatureFlags/Domain/ParavirtualizedCoreAI.plist"
 
-  /// IOKit classes whose presence means the kind is backed by a
-  /// paravirtual device. `PVAIDevice` is the guest GPU device the 27.3
-  /// finding names; the Neural Engine class is the one Apple Silicon's
-  /// driver registers. Both are confirmed in qualification (Gate AI).
+  /// IOKit classes whose presence means the kind is backed by a paravirtual device.
   static let deviceClasses: [(kind: String, classes: [String])] = [
     ("gpu", ["PVAIDevice"]),
     ("neuralEngine", ["H11ANEIn"]),

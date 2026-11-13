@@ -4,9 +4,9 @@ import Synchronization
 import Virtualization
 import vmnet
 
-/// Builds and publishes macOS templates (Gates A, B, M). A template is
-/// built in `macos/templates/.build-<uuid>` and published by one rename only
-/// after the guest shut itself down cleanly; any failure deletes the build.
+/// Builds and publishes macOS templates (Gates A, B, M).
+/// A template is built in `macos/templates/.build-<uuid>` and published by one rename only after
+/// the guest shut itself down cleanly; any failure deletes the build.
 package enum MacTemplates {
   package static let guestUser = "iso"
   package static let helperGuestPath = "/usr/local/libexec/iso-macos-helper"
@@ -177,8 +177,8 @@ package enum MacTemplates {
     p.enablesRemoteLogin = true
     try options.setGuestProvisioning(p)
     // The installer's VM releases the auxiliary-storage lock when it is
-    // deallocated, which can trail its teardown briefly. A VM whose start
-    // failed cannot be started again, so each attempt gets a new one.
+    // deallocated, which can trail its teardown briefly.
+    // A VM whose start failed cannot be started again, so each attempt gets a new one.
     var vm: MacVM
     var attempt = 0
     while true {
@@ -260,12 +260,11 @@ package enum MacTemplates {
       enable_pv_delegate -dict Enabled -bool true
     """
 
-  /// Run as root in the guest during the build. Ends by removing the SSH
-  /// host keys, so every clone generates its own at enrollment. With
-  /// `provision`, the operator's script runs as root after the runtime's own
-  /// setup and before that cleanup; its failure fails the build. With
-  /// `coreAI`, the Core AI feature flag is written before the operator's
-  /// script.
+  /// Run as root in the guest during the build. Ends by removing the SSH host
+  /// keys, so every clone generates its own at enrollment.
+  /// With `provision`, the operator's script runs as root after the runtime's setup and before that
+  /// cleanup, and its failure fails the build; with `coreAI`, the feature flag is written before
+  /// it.
   static func guestSetupScript(provision: Bool = false, coreAI: Bool = false) -> String {
     """
     #!/bin/sh

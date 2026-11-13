@@ -20,13 +20,11 @@ package let linuxDisplayFeature = "linux-display"
 package let runtimeVersion = "0.1.0"
 package let containerizationVersion = "0.54.0"
 
-/// What `iso-sandbox version` prints.
 package struct VersionInfo: Encodable {
   package let name = "iso-sandbox"
   package let version = runtimeVersion
   package let `protocol` = protocolVersion
   package let containerization = containerizationVersion
-  /// Optional capabilities beyond the Linux sandbox protocol.
   package let features =
     [macGuestsFeature, brokeredTransportFeature, linuxDisplayFeature]
     + (MacAccelerators.compiledIn ? [macCoreAIFeature] : [])
@@ -34,23 +32,21 @@ package struct VersionInfo: Encodable {
   package init() {}
 }
 
-/// On-disk layout of one runtime state root. Everything the runtime owns
-/// lives under `root`; nothing is read from or written to Apple Container's
-/// stores.
+/// On-disk layout of one runtime state root. Everything the runtime owns lives
+/// under `root`; nothing is read from or written to Apple Container's stores.
 package struct SandboxRoot: Sendable {
   package let root: URL
 
-  /// `path` must be absolute. An existing root is canonicalized with
-  /// realpath(3), so paths the runtime reports (e.g. the rootfs source in
-  /// the effective config) compare exactly with the caller's canonical form.
+  /// `path` must be absolute.
+  /// An existing root is canonicalized so paths the runtime reports compare exactly with the
+  /// caller's.
   package init(_ path: String) throws {
     guard path.hasPrefix("/") else { throw SandboxError("--root must be an absolute path") }
     root = URL(fileURLWithPath: Self.canonical(path), isDirectory: true)
   }
 
-  /// realpath(3) of `path`, or of its parent plus the last component when
-  /// `path` does not exist yet, so a root reads the same before and after
-  /// it is created.
+  /// realpath(3) of `path`, or of its parent plus the last component when `path`
+  /// does not exist yet, so a root reads the same before and after it is created.
   static func canonical(_ path: String) -> String {
     if let real = realpath(path, nil) {
       defer { free(real) }
@@ -64,9 +60,8 @@ package struct SandboxRoot: Sendable {
 
   package var imageStore: URL { root.appendingPathComponent("store", isDirectory: true) }
   package var kernel: URL { root.appendingPathComponent("vmlinux") }
-  /// The kernel ``DisplayMode/virtioDisplay`` sandboxes boot, installed by
-  /// `init --desktop-kernel` (``KernelPin/desktopAllowed``). Absent from a
-  /// root that has no desktop sandboxes.
+  /// The kernel ``DisplayMode/virtioDisplay`` sandboxes boot, installed by `init
+  /// --desktop-kernel` (``KernelPin/desktopAllowed``).
   package var desktopKernel: URL { root.appendingPathComponent("vmlinux-desktop") }
 
   /// Keyed by the containerization release so a root initialized by an
@@ -83,18 +78,15 @@ package struct SandboxRoot: Sendable {
       .filter { $0.lastPathComponent != initfs.lastPathComponent }
   }
   package var sandboxes: URL { root.appendingPathComponent("sandboxes", isDirectory: true) }
-  /// Unpacked image root filesystems, cloned into new sandboxes.
   package var bases: URL { root.appendingPathComponent("bases", isDirectory: true) }
-  /// Disks saved by `commit`, cloned by `create --from-disk` and `restore`.
   package var disks: URL { root.appendingPathComponent("disks", isDirectory: true) }
   package var subnetState: URL { root.appendingPathComponent("subnets.json") }
   package var allocationLock: URL { root.appendingPathComponent("subnets.lock") }
   package var operationLock: URL { root.appendingPathComponent("operations.lock") }
-  /// Lock files for sandboxes, committed disks, and the maintenance
-  /// artifact (see ``FileLock``). They are never removed, so every process
-  /// locks the same file for a given name, even across a delete.
+  /// Lock files for sandboxes, committed disks, and the maintenance artifact (see
+  /// ``FileLock``).
+  /// Never removed, so every process locks the same file for a name, even across a delete.
   package var locks: URL { root.appendingPathComponent("locks", isDirectory: true) }
-  /// The installed maintenance artifact (see ``MaintenanceArtifact``).
   package var maintenance: URL { root.appendingPathComponent("maintenance", isDirectory: true) }
 
   package func sandbox(_ id: SandboxID) -> SandboxPaths {
@@ -119,12 +111,10 @@ package struct SandboxRoot: Sendable {
     }
   }
 
-  /// Every committed sandbox's `record.json`. A directory without a record
-  /// is an uncommitted create and is skipped; a record that exists but
-  /// cannot be read is an error, so listings and subnet allocation fail
-  /// closed rather than forget a sandbox. A staged disk update is not
-  /// applied: it never changes the identity, owner, or subnet these
-  /// callers read, and one left unreadable must not hide every sandbox.
+  /// Every committed sandbox's `record.json`.
+  /// A directory without a record is an uncommitted create and is skipped; an unreadable record is
+  /// an error, so listings and subnet allocation fail closed. A staged disk update is not applied
+  /// here.
   package func allRecords() throws -> [SandboxRecord] {
     guard FileManager.default.fileExists(atPath: sandboxes.path) else { return [] }
     return try FileManager.default.contentsOfDirectory(atPath: sandboxes.path).sorted().compactMap {
@@ -136,10 +126,9 @@ package struct SandboxRoot: Sendable {
     }
   }
 
-  /// Creates the state directories and makes each private: a real
-  /// directory (not a symlink) owned by this user, mode 0700. One that
-  /// already existed with a wider mode is narrowed; one owned by another
-  /// user, or a symlink, is refused.
+  /// Creates the state directories and makes each private: a real directory (not
+  /// a symlink) owned by this user, mode 0700.
+  /// A wider existing mode is narrowed; another user's directory or a symlink is refused.
   package func createDirectories() throws {
     for dir in [root, sandboxes, bases, disks, locks, maintenance] {
       try FileManager.default.createDirectory(
@@ -166,16 +155,13 @@ package struct SandboxPaths: Sendable {
   let locks: URL
   package var record: URL { dir.appendingPathComponent("record.json") }
   package var live: URL { dir.appendingPathComponent("live.json") }
-  /// Recent boots' computer-use counts (see ``BootCountsLog``).
   package var bootCounts: URL { dir.appendingPathComponent("boot-counts.json") }
   package var rootfs: URL { dir.appendingPathComponent("rootfs.ext4") }
   package var bootLog: URL { dir.appendingPathComponent("boot.log") }
   package var ownerLog: URL { dir.appendingPathComponent("owner.log") }
   package var lock: URL { dir.appendingPathComponent("owner.lock") }
   package var launchdPlist: URL { dir.appendingPathComponent("launchd.plist") }
-  /// Written by an owner that failed before its VM ran; read by `start`.
   package var ownerFailed: URL { dir.appendingPathComponent("owner.failed") }
-  /// A staged disk update (see ``DiskUpdate``).
   package var pendingDiskUpdate: URL { dir.appendingPathComponent("disk-update.pending.json") }
   /// Serializes every mutation of this sandbox, and an owner's claim to
   /// it, across processes (see ``Sandboxes/mutating(_:settle:_:)``).
@@ -195,10 +181,10 @@ package struct SandboxPaths: Sendable {
     Self.controlDirectory.appendingPathComponent("\(Self.stableHash(dir.path)).streams.sock")
   }
 
-  /// `iso-sbx` in the per-user temporary directory, which is private to
-  /// the user from boot: in shared `/tmp`, another user could pre-create
-  /// the directory and block every sandbox. Read with confstr(3) because
-  /// launchd jobs may not inherit `TMPDIR`.
+  /// `iso-sbx` in the per-user temporary directory, which is private to the user
+  /// from boot: in shared `/tmp`, another user could pre-create the directory and
+  /// block every sandbox.
+  /// Read with confstr(3) because launchd jobs may not inherit `TMPDIR`.
   package static let controlDirectory: URL = {
     var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
     let n = confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count)
@@ -219,10 +205,9 @@ package struct SandboxPaths: Sendable {
     return String(h, radix: 16)
   }
 
-  /// The committed record. A disk update whose disk is already installed
-  /// is committed even if a crash interrupted its record write, so its
-  /// staged record is returned. Nothing is written here: only a guarded
-  /// mutation settles the update (``DiskUpdate/settle(_:)``).
+  /// The committed record.
+  /// A disk update whose disk is already installed counts as committed, so its staged record is
+  /// returned; only a guarded mutation settles it (``DiskUpdate/settle(_:)``).
   package func loadRecord() throws -> SandboxRecord {
     let lock = try FileLock.acquire(recordLock, .shared)
     defer { withExtendedLifetime(lock) {} }
@@ -231,7 +216,6 @@ package struct SandboxPaths: Sendable {
     return try DiskUpdate.isPublished(pending, self) ? pending.record : record
   }
 
-  /// `record.json` as written, ignoring any staged disk update.
   func readRecordFile() throws -> SandboxRecord {
     try JSONDecoder.iso.decode(SandboxRecord.self, from: Data(contentsOf: record))
   }
@@ -312,7 +296,6 @@ package struct OperationID: RawRepresentable, Codable, Hashable, Sendable, Custo
 
 /// How a sandbox reaches beyond its VM. Fixed at create.
 package enum NetworkMode: String, Codable, Sendable, CaseIterable {
-  /// NAT to the host's uplinks (vmnet shared mode).
   case shared
   /// No route beyond the host: vmnet host mode with NAT44, NAT66, the DNS
   /// proxy, router advertisements and DHCP disabled.
@@ -328,7 +311,6 @@ package enum NetworkMode: String, Codable, Sendable, CaseIterable {
 /// Whether a Linux sandbox has a display. Fixed at create
 /// (docs/design/linux-desktop-virtio-gpu.md §4).
 package enum DisplayMode: String, Codable, Sendable, CaseIterable {
-  /// No graphics, keyboard or pointing device, and the qualified kernel.
   case headless
   /// One virtio-gpu scanout at ``LinuxDisplay`` geometry, a USB keyboard
   /// and a USB screen-coordinate pointer, and the desktop kernel.
@@ -358,16 +340,15 @@ package enum SandboxDisplay: Sendable, Equatable {
   }
 }
 
-/// Durable description of a persistent sandbox. Deliberately has no field
-/// for host mounts, socket relays, published ports, or agent forwarding:
-/// those states are not expressible.
+/// Durable description of a persistent sandbox.
+/// Deliberately no field for host mounts, socket relays, published ports or agent forwarding: those
+/// states are not expressible.
 package struct SandboxRecord: Codable, Sendable {
   package var id: SandboxID
   /// Caller-chosen ownership tag; `delete` refuses a mismatch.
   package var owner: String
   package var imageReference: String
   package var imageDigest: String
-  /// Committed disk this sandbox was cloned from, if any.
   package var baseDisk: String?
   /// Init process environment, captured from the image config at create
   /// time so a start never depends on the image store.
@@ -389,20 +370,19 @@ package struct SandboxRecord: Codable, Sendable {
   /// The network boundary selected when this sandbox was created.
   package var network: NetworkMode
   /// Host wall-clock end of the current boot's session, set by `start
-  /// --expires-at` and cleared by a `start` without it. The owner halts
-  /// the VM at this time and refuses to boot past it.
+  /// --expires-at` and cleared by a `start` without it.
+  /// The owner halts the VM at this time and refuses to boot past it.
   package var expiresAt: Date?
-  /// Brokered sandboxes: the host's digest of the current boot's network
-  /// policy, set by `start --network-policy` and cleared by a `start`
-  /// without it. A stream request must present it (``StreamBroker``).
+  /// Brokered sandboxes: the host's digest of the current boot's network policy,
+  /// set by `start --network-policy` and cleared by a `start` without it.
+  /// A stream request must present it (``StreamBroker``).
   package var networkPolicy: String?
   /// Absent for a headless sandbox, so its record is unchanged; read it
   /// through ``displayMode``.
   package private(set) var display: DisplayMode?
-  /// Guest-driven computer use on vsock 7802, fixed at create; nil when
-  /// off. Only a ``DisplayMode/virtioDisplay`` sandbox has it: the
-  /// initializer takes both as one ``SandboxDisplay``, and a record that
-  /// says otherwise does not decode.
+  /// Guest-driven computer use on vsock 7802, fixed at create; nil when off.
+  /// Only a ``DisplayMode/virtioDisplay`` sandbox has it; a record that says otherwise does not
+  /// decode.
   package private(set) var guestComputerUse: MacGuestComputerUse?
 
   package var displayMode: DisplayMode { display ?? .headless }
@@ -471,7 +451,6 @@ package struct LiveState: Codable, Sendable {
   package var bootId: String
 }
 
-/// Lowercase hex sha256, the form of every digest this runtime reports.
 package func sha256Hex(_ data: Data) -> String {
   SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
@@ -501,10 +480,10 @@ package enum KernelPin {
     "98a1005f8cc395e99b85775b9dce2b239190520b102bf549f4225104dcd7f511"
   ]
 
-  /// Kernels a ``DisplayMode/virtioDisplay`` sandbox may boot: iso's own
-  /// build of containerization's `config-arm64` plus `kernel/desktop.config`
-  /// (docs/design/linux-desktop-virtio-gpu.md §5, PROVENANCE.md). Disjoint
-  /// from `allowed`, so neither kernel can stand in for the other.
+  /// Kernels a ``DisplayMode/virtioDisplay`` sandbox may boot: iso's own build of
+  /// containerization's `config-arm64` plus `kernel/desktop.config`
+  /// (docs/design/linux-desktop-virtio-gpu.md §5, PROVENANCE.md).
+  /// Disjoint from `allowed`, so neither kernel can stand in for the other.
   package static let desktopAllowed: Set<String> = [
     // scripts/build-desktop-kernel.sh: Linux 6.18.5
     // (sha256:189d1f409cef8d0d234210e04595172df392f8cb297e14b447ed95720e2fd940),
@@ -514,11 +493,9 @@ package enum KernelPin {
   ]
 
   /// The kernel to install at `installed` (the root's `kernel` or
-  /// `desktopKernel`), validated against `allowed`. A root keeps a kernel
-  /// it was initialized with while that kernel is still pinned, so a newer
-  /// kernel installed elsewhere later does not break re-running init;
-  /// otherwise `requested` replaces it. `install` is true when the kernel
-  /// must be written.
+  /// `desktopKernel`), validated against `allowed`.
+  /// A root keeps a kernel it was initialized with while still pinned; otherwise `requested`
+  /// replaces it.
   package static func select(installed: URL, requested: String, allowed: Set<String>) throws -> (
     data: Data, sha256: String, install: Bool
   ) {
@@ -529,7 +506,6 @@ package enum KernelPin {
     return (data, sha, true)
   }
 
-  /// Whether `url` holds a kernel in `allowed`.
   package static func isPinned(_ url: URL, allowed: Set<String>) -> Bool {
     (try? pinned(url.path, allowed: allowed)) != nil
   }
@@ -571,7 +547,6 @@ package final class FileLock {
 
   private init(fd: Int32) { self.fd = fd }
 
-  /// Blocks until the lock is granted.
   package static func acquire(_ url: URL, _ mode: Mode) throws -> FileLock {
     let fd = try openLockFile(url)
     while flock(fd, mode.operation) != 0 {
@@ -583,7 +558,6 @@ package final class FileLock {
     return FileLock(fd: fd)
   }
 
-  /// Waits without blocking a thread, for callers on Swift concurrency.
   package static func acquire(_ url: URL, _ mode: Mode, polling interval: Duration) async throws
     -> FileLock
   {
@@ -620,12 +594,10 @@ package final class FileLock {
   deinit { close(fd) }
 }
 
-/// Serializes offline operations against `reconcile`'s sweep of scratch
-/// files and uncommitted creates. Operations hold it shared (distinct
-/// sandboxes run concurrently; ``Sandboxes/mutating(_:settle:_:)``
-/// serializes each one); the sweep needs it exclusively.
+/// Serializes offline operations against `reconcile`'s sweep of scratch files and
+/// uncommitted creates.
+/// Operations hold it shared; the sweep needs it exclusively.
 package enum OperationLock {
-  /// Blocks until no sweep is running.
   package static func shared(_ root: SandboxRoot) throws -> FileLock {
     try FileLock.acquire(root.operationLock, .shared)
   }
@@ -663,7 +635,6 @@ extension JSONEncoder {
 }
 
 extension JSONEncoder {
-  /// Single-line JSON with ISO 8601 dates, for socket replies.
   package static var wire: JSONEncoder {
     let e = JSONEncoder()
     e.outputFormatting = [.sortedKeys]

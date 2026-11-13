@@ -32,7 +32,6 @@ package struct ModelState: Sendable, Equatable {
       && !codexKeyringMaterialized
   }
 
-  /// Configuration wins over the saved endpoint; independent of `mode`.
   package func resolvedClaude(_ claude: AgentConfig) -> LocalModel? {
     claude.localModel ?? claudeEndpoint
   }
@@ -101,7 +100,6 @@ package struct ModelState: Sendable, Equatable {
     return try LocalModel(hostURL: url, model: model, authToken: token)
   }
 
-  /// Owner-only: a prompted `auth_token` is stored here.
   package func save(_ instance: Instance, diagnostics: Diagnostics? = nil) throws {
     let path = instance.modelStatePath
     if isDefault {
@@ -120,7 +118,6 @@ package struct ModelState: Sendable, Equatable {
     diagnostics?.debug("Wrote model state to \(path)")
   }
 
-  /// `serde_json::to_string_pretty` of the Rust record.
   var rendered: String {
     var members: [(String, OutputJSON)] = [("mode", .string(mode.rawValue))]
     if let claudeEndpoint { members.append(("claude_endpoint", Self.json(claudeEndpoint))) }
@@ -146,9 +143,7 @@ extension LocalModel {
 // MARK: - Materialized agent configuration
 
 package enum ModelRouting {
-  /// Codex `model_provider` id iso writes.
   package static let codexLocalProvider = "iso_local"
-  /// The variable Codex reads the `iso_local` provider key from.
   package static let codexLocalEnvKey = "ISO_LOCAL_API_KEY"
 
   /// Claude `settings.json` `env` for a local endpoint: every model tier is
@@ -170,7 +165,6 @@ package enum ModelRouting {
     return env
   }
 
-  /// Proxy mode is transparent: only the base URL and the capability token.
   package static func claudeProxyEnvBlock(baseURL: String, capabilityToken: String) -> [String:
     String]
   {
@@ -241,10 +235,9 @@ package struct LocalEndpointPlan: Sendable, Equatable {
 package enum LocalEndpoints {
   static let privilegedPortOffset: UInt16 = 40_000
 
-  /// Non-loopback URLs pass through. `localhost` and `127.0.0.1` keep their
-  /// host (and so the TLS name); another 127/8 address becomes `127.0.0.1`
-  /// only for plain HTTP. A privileged port moves up by 40000. IPv6
-  /// loopback is refused (the tunnel listens on IPv4).
+  /// Non-loopback URLs pass through. `localhost`/`127.0.0.1` keep their host (and
+  /// TLS name); another 127/8 address becomes `127.0.0.1` for plain HTTP only. A
+  /// privileged port moves up by 40000. IPv6 loopback is refused (IPv4 tunnel).
   package static func plan(_ hostURL: URL) throws -> LocalEndpointPlan {
     let url = EndpointURL(hostURL)
     let shown = url.serialized

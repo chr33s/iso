@@ -3,22 +3,18 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// `host.capabilities`: what this host can do now and the evidence behind it
-/// (docs/design/brokered-network-isolation.md, NET-HANDOFF-1). A capability
-/// is advertised only while every condition for it holds; anything missing
-/// leaves it out, never in with a caveat.
+/// `host.capabilities`: what this host can do now and the evidence (docs/design/brokered-
+/// network-isolation.md, NET-HANDOFF-1). A capability is advertised only while every
+/// condition holds.
 package enum HostCapabilityName: String, Sendable, CaseIterable {
   /// The brokered execution handoff: NIC-less boots under a published run
   /// policy, backed by current qualification evidence for this tuple.
   case netHandoff1 = "net-handoff-1"
-  /// Host-owned live and stopped-disk run retention (`run.retain`).
   case runRetention1 = "run-retention-1"
 }
 
-/// Native facts behind `host.capabilities`, read fresh on every call.
 package struct NetworkCapability: Sendable, Equatable {
   package let transport: NetworkTransport
-  /// The runtime is qualified and advertises the brokered transport feature.
   package let runtimeBrokered: Bool
   /// The brokered boot policy a fresh `run.create` VM gets per egress mode;
   /// empty for vmnet, and a mode whose policy cannot be resolved is absent.
@@ -39,11 +35,8 @@ package struct NetworkCapability: Sendable, Equatable {
 }
 
 extension BrokeredNetworkPolicy {
-  /// The policy a fresh host-control VM boots with under `config` (whose
-  /// egress is the requested mode): a new instance has no per-VM proxy
-  /// override, recorded guest environment or model choice, so its grants
-  /// come from configuration alone — exactly what `vm.create` and
-  /// `run.create` resolve at first boot.
+  /// The policy a fresh VM boots with under `config`: no per-VM proxy override, guest
+  /// environment or model choice, so grants come from configuration alone.
   package static func freshRun(_ config: IsoConfig) throws -> BrokeredNetworkPolicy {
     guard let index = InstanceIndex(0) else { throw HostError("instance index 0 is out of range") }
     // A directory that is never created: every per-instance record is absent.
@@ -61,14 +54,13 @@ package func hostOSVersion() -> String {
   return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
 }
 
-/// An operator-installed NET-HANDOFF-1 evidence manifest
-/// (`<host-control root>/qualification/net-handoff-1.json`). It names the
-/// exact tuple that passed N-T01–N-T16 and when that evidence expires.
+/// An operator-installed NET-HANDOFF-1 evidence manifest (`<host-control
+/// root>/qualification/net-handoff-1.json`) naming the tuple that passed N-T01–N-T16 and its
+/// expiry.
 package struct QualificationManifest: Sendable, Equatable {
   package static let schema = "iso.qualification/v1"
   package static let capability = "NET-HANDOFF-1"
   package static let maxBytes = 64 << 10
-  /// Every tuple key a manifest must name.
   package static let tupleKeys = [
     "host_os", "iso_version", "runtime", "transport", "image", "guest_kernel", "broker",
   ]
@@ -175,7 +167,6 @@ package struct QualificationManifest: Sendable, Equatable {
   }
 }
 
-/// The qualification of this host's current tuple.
 package struct QualificationReport: Sendable, Equatable {
   package enum Status: String, Sendable, Equatable {
     case qualified
@@ -245,7 +236,6 @@ package struct QualificationReport: Sendable, Equatable {
   }
 }
 
-/// The `host.capabilities` result.
 package struct HostCapabilitiesResult: Sendable, Equatable {
   package let capabilities: [HostCapabilityName]
   package let network: NetworkCapability
@@ -335,7 +325,6 @@ package struct HostCapabilitiesResult: Sendable, Equatable {
 }
 
 extension HostSupervisor {
-  /// `host.capabilities`, recomputed from live facts on every call.
   package func capabilities(transport: HostTransportKind) -> HostCapabilitiesResult {
     let network = native.networkCapability()
     let report = QualificationReport.evaluate(

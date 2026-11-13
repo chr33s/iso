@@ -180,9 +180,9 @@ package enum ControlSocket {
 
   /// Per-connection bounds of an owner's control socket.
   package struct Limits: Sendable {
-    /// Connections handled at once, including ones still sending their
-    /// request; past it a connection is closed unread. Each in-flight
-    /// `exec` holds one, so this also bounds concurrent execs.
+    /// Connections handled at once, including ones still sending their request;
+    /// past it a connection is closed unread.
+    /// Each in-flight `exec` holds one, so this also bounds concurrent execs.
     package var maxConnections: Int
     /// The whole request line must arrive within this long of the
     /// connection being accepted (an 8 MiB `exec -i` stdin over a local
@@ -235,8 +235,8 @@ package enum ControlSocket {
           encoded.append(0x0A)
           let out = encoded
           // A blocking write (bounded by the send timeout), so off the pool.
-          // `FileHandle.write` retries a timed-out write forever; `write(2)`
-          // returns, and a write that makes no progress ends the reply.
+          // `FileHandle.write` retries a timed-out write forever; `write(2)` returns, and a write
+          // that makes no progress ends the reply.
           Thread.detachNewThread {
             defer { slots.leave() }
             _ = Splice.writeAll(handle.fileDescriptor, out)
@@ -369,11 +369,10 @@ package enum ControlSocket {
     case closed
   }
 
-  /// Reads one request/response line of at most `limit` bytes (excluding
-  /// the newline). `FileHandle.read(upToCount:)` blocks until the full
-  /// count arrives, so read(2) directly. Past `deadline` (checked between
-  /// reads; the socket's receive timeout bounds each read) the line is
-  /// abandoned as `.closed`.
+  /// Reads one request/response line of at most `limit` bytes (excluding the
+  /// newline).
+  /// `FileHandle.read(upToCount:)` blocks until the full count arrives, so read(2) directly; past
+  /// `deadline` the line is abandoned as `.closed`.
   static func readLine(
     _ handle: FileHandle, limit: Int?, deadline: ContinuousClock.Instant? = nil
   ) -> ReadResult {

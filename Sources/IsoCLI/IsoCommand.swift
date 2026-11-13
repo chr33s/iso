@@ -9,7 +9,6 @@ import IsoCore
 import IsoHost
 import IsoSecrets
 
-/// Host CLI entrypoint and supported command tree.
 @main
 struct IsoCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -194,9 +193,8 @@ protocol GitHubUserProbe {
 
 extension GitHubAPI: GitHubUserProbe {}
 
-/// What `validate` found. A configuration that fails to load throws before
-/// a report exists; a stored secret left alone without `--probe` is not
-/// checked, which is neither a pass nor a failure.
+/// What `validate` found. A load failure throws before a report exists; an
+/// unprobed stored secret is neither a pass nor a failure.
 struct ValidateOutcome: Equatable {
   /// Requested checks that failed: a PAT that does not resolve, or a probe
   /// that did not authenticate.
@@ -224,11 +222,9 @@ struct ValidateOutcome: Equatable {
 }
 
 enum ValidateReport {
-  /// Environmental checks, then each PAT entry resolved explicitly (the one
-  /// place `validate` runs `cmd:` references). A
-  /// `vault:` entry is left unresolved unless `probe` is set, which unlocks
-  /// the secret store once for all of them and checks each resolved token
-  /// against `GET /user`.
+  /// Environmental checks, then each PAT entry resolved (the one place
+  /// `validate` runs `cmd:` references). `vault:` entries resolve only with
+  /// `probe`, which unlocks the store once and checks each token via `GET /user`.
   @discardableResult
   static func run(
     config: IsoConfig, resolver: CredentialResolver, fileSystem: some ConfigFileSystem,

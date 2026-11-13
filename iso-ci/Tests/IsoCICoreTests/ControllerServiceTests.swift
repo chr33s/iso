@@ -114,7 +114,6 @@ import Testing
     #expect(attempts.first { $0.jobKey == "test" }?.state == .pending)
   }
 
-  // C-T10: an explicit include selects only matching untracked paths.
   @Test func includeSelectsOnlyMatchingUntrackedPaths() throws {
     let fixture = try Self.fixture(workflow: Self.simple)
     for name in ["included.txt", "untracked.txt"] {

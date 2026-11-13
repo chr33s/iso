@@ -5,15 +5,11 @@ import Foundation
 package enum HandshakeDecision: Equatable, Sendable {
   /// Enrolled on both sides and the MAC verifies.
   case authenticated
-  /// The host has not enrolled this clone: send `enroll`. Also when the
-  /// guest already holds a key, which an enrollment interrupted after the
-  /// guest saved its key but before the host saved the record leaves
-  /// behind; the host has pinned nothing yet, so enrolling again trusts no
-  /// more than a first enrollment does.
+  /// The host has not enrolled this clone: send `enroll`.
+  /// Also when the guest already holds a key from an interrupted enrollment; re-enrolling trusts no more.
   case enroll
-  /// Wrong MAC, malformed hello, or an enrollment claim that disagrees with
-  /// the host: drop this connection only. An unauthenticated claim never
-  /// changes host state, or any guest process could disable the sandbox.
+  /// Wrong MAC, malformed hello, or an enrollment claim that disagrees with the host: drop this
+  /// connection only; an unauthenticated claim never changes host state.
   case reject(String)
 }
 

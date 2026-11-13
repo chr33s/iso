@@ -48,7 +48,6 @@ import Testing
     boot.record()
     #expect(!FileManager.default.fileExists(atPath: log.path))
     #expect(ended(live: nil) == nil)
-    // Nor one whose display does not exist yet.
     BootCountsRecorder(url: log, bootId: "b", log: { _ in }).record()
     #expect(!FileManager.default.fileExists(atPath: log.path))
   }
@@ -60,12 +59,10 @@ import Testing
     counts.now = Self.streamed(viewers: 1)
     boot.record()
     #expect(ended(live: nil) == [BootCounts(bootId: "a", counts.now)])
-    // Unchanged: the file is left alone.
     try FileManager.default.setAttributes(
       [.modificationDate: Date(timeIntervalSince1970: 1)], ofItemAtPath: log.path)
     boot.record()
     #expect(try modified() == Date(timeIntervalSince1970: 1))
-    // Changed: the boot's one entry is replaced, not added to.
     counts.now = Self.streamed(viewers: 2)
     boot.record()
     #expect(ended(live: nil) == [BootCounts(bootId: "a", counts.now)])
@@ -84,7 +81,6 @@ import Testing
 
     let earlier = BootCounts(bootId: "crashed", crashed.now)
     #expect(ended(live: "running") == [earlier])
-    // Once it has ended too (its owner gone, whatever live.json says), both.
     #expect(
       ended(live: nil) == [earlier, BootCounts(bootId: "running", running.now)])
     #expect(ended(live: "crashed")?.map(\.bootId) == ["running"])

@@ -7,11 +7,6 @@ import ScreenCaptureKit
 /// `analyze-frame <png> --layout <fixture-state.json>`: decode what the host
 /// actually observed. Runs as its own process, after capture, so the owner's
 /// return values never vouch for themselves.
-///
-/// Output: token and frame counter decoded from the barcodes (each cell
-/// classified by its nearest calibration cell, which tolerates colour-space
-/// conversion), the grid corners located from the magenta markers in the
-/// pixels, and a blank-frame measure.
 func analyzeFrame(_ args: Arguments) -> Never {
   guard let path = args.positional.first, let layoutPath = args.value("--layout"),
     let ld = FileManager.default.contents(atPath: layoutPath),
@@ -57,7 +52,6 @@ func analyzeFrame(_ args: Arguments) -> Never {
     let o = (cy * w + cx) * 4
     return [Int(px[o]), Int(px[o + 1]), Int(px[o + 2])]
   }
-  /// Median of a 3x3 sample around a guest-pixel coordinate.
   func sample(_ gx: Double, _ gy: Double) -> [Int] {
     let x = Int(gx * sx)
     let y = Int(gy * sy)

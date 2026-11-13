@@ -1,11 +1,11 @@
 import Darwin
 import Foundation
 
-/// `~/.iso/run/leases/<sandbox>.json` (`iso.vm-lease/v1`): what one running
-/// VM uses, written by its owner process and held under an exclusive
-/// `flock` until that process exits. Other local tools (iso-ci's scheduler)
-/// count live leases toward a Mac's shared CPU, memory and two-macOS-VM
-/// ceilings; a lease whose lock is free is stale and ignored.
+/// `~/.iso/run/leases/<sandbox>.json` (`iso.vm-lease/v1`): what one running VM
+/// uses, written by its owner process and held under an exclusive `flock` until
+/// that process exits.
+/// Other local tools (iso-ci's scheduler) count live leases toward a Mac's shared CPU, memory and
+/// two-macOS-VM ceilings; a lease whose lock is free is stale and ignored.
 package enum VMLease {
   package static let schema = "iso.vm-lease/v1"
 
@@ -16,9 +16,9 @@ package enum VMLease {
       .appendingPathComponent(".iso/run/leases", isDirectory: true)
   }
 
-  /// Writes and locks the lease; the returned descriptor must stay open
-  /// for the VM's lifetime. Best effort: the VM runs without one (it is
-  /// then not counted) rather than failing to boot.
+  /// Writes and locks the lease; the returned descriptor must stay open for the
+  /// VM's lifetime.
+  /// Best effort: the VM runs without one (then not counted) rather than failing to boot.
   package static func hold(
     sandbox: String, guestOS: String, cpus: Int, memoryBytes: UInt64, directory: URL = directory
   ) -> Int32? {

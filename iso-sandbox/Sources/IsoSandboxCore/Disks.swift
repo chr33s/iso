@@ -16,12 +16,9 @@ package struct DiskSummary: Codable, Sendable {
 
 /// OCI images, unpacked base disks, and committed disks.
 package enum Disks {
-  /// Load an OCI archive (as written by `container image save`) into the
-  /// private image store.
-  /// Docker-style normalization of a reference's name: a first component
-  /// without a `.` or `:` (and not `localhost`) is on `docker.io`, and a
-  /// single-component name there is under `library/`. The tag or digest is
-  /// kept as written.
+  /// Docker-style normalization of a reference's name: a first component without a
+  /// `.` or `:` (and not `localhost`) is on `docker.io`, and a single-component name
+  /// there is under `library/`. The tag or digest is kept as written.
   package static func normalizedReference(_ reference: String) -> String {
     var parts = reference.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
     let first = parts.first ?? ""
@@ -34,11 +31,11 @@ package enum Disks {
     return parts.joined(separator: "/")
   }
 
-  /// Loads an OCI archive. With `name`, the archive must hold exactly that
-  /// image: a builder that recorded it under its registry-qualified form
-  /// (container 1.7 saves `local/x` as `docker.io/local/x`) is re-tagged to
-  /// `name` and the alias removed. Anything else is returned as loaded, for
-  /// the caller to refuse.
+  /// Loads an OCI archive (as written by `container image save`) into the private
+  /// image store. With `name`, the archive must hold exactly that image: a builder
+  /// that recorded it registry-qualified (container 1.7 saves `local/x` as
+  /// `docker.io/local/x`) is re-tagged to `name` and the alias removed; anything
+  /// else is returned as loaded, for the caller to refuse.
   package static func importImage(root: SandboxRoot, ociTar: URL, name: String? = nil)
     async throws -> [ImageSummary]
   {

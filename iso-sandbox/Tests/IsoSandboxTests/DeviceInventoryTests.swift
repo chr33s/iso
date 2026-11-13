@@ -3,9 +3,7 @@ import Testing
 
 @testable import IsoSandboxCore
 
-/// The live-VM inventory every Linux sandbox must have, checked without a
-/// VM. `apple/containerization` always attaches one virtio-fs device
-/// (tag "virtiofs") with an empty multiple-directory share.
+/// The live-VM inventory every Linux sandbox must have, checked without a VM.
 struct DeviceInventoryTests {
   static let frameworkShare = VMDevices.DirectorySharing.virtioFS(
     tag: "virtiofs", share: .multiple(directories: 0))
@@ -94,7 +92,6 @@ struct DeviceInventoryTests {
         of: id, mode: .brokered, read: { console }, stop: { stops.withLock { $0 += 1 } })
     }
     #expect(stops.withLock { $0 } == 1)
-    // A shared-mode inventory is wrong for brokered.
     await #expect(throws: SandboxError.self) {
       try await Owner.checkDevices(
         of: id, mode: .brokered, read: { Self.expected(.shared) },

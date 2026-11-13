@@ -6,8 +6,6 @@ import Testing
 
 @testable import IsoHost
 
-/// Scripted `iso-sandbox`: maps an argument vector to canned output and
-/// records every call.
 final class ScriptedRuntime: RuntimeExecutor {
   private let reply: @Sendable ([String]) -> Result<ProcessRunner.Output, RuntimeError>
   let calls = Mutex<[[String]]>([])
@@ -135,7 +133,6 @@ let qualifiedVersion =
   }
   let runtime = SandboxRuntime(executor: executor, root: "/r", settings: .defaults)
   #expect(throws: RuntimeError.self) { try runtime.requireQualified() }
-  // Read-only listing still works, for cleanup of owned resources.
   #expect(try runtime.list().isEmpty)
   #expect(executor.calls.withLock { $0 } == [["version"], ["list", "--root", "/r"]])
 }
@@ -240,7 +237,6 @@ let qualifiedVersion =
     try BinaryResolver.resolve(configured: binary, defaults: [], tool: .runtime)
   }
   chmod(directory, 0o755)
-  // The configured path is the only candidate; defaults are not consulted.
   #expect(throws: RuntimeError.self) {
     try BinaryResolver.resolve(
       configured: directory + "/missing", defaults: [binary], tool: .runtime)

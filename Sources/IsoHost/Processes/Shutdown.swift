@@ -2,14 +2,12 @@ import Foundation
 import IsoCore
 import Synchronization
 
-/// SIGINT/SIGTERM handling for long lifecycle operations: the first signal
-/// sets a sticky flag instead of terminating, so an interrupted create or
-/// boot can clean up. The flag stays set for the rest of the process.
-/// Outside such a scope, `ChildGroups` handlers apply.
+/// SIGINT/SIGTERM handling for long lifecycle operations: the first signal sets a
+/// sticky flag instead of terminating so an interrupted create or boot can clean
+/// up. Outside such a scope `ChildGroups` handlers apply.
 package enum Shutdown {
   static let requested = Atomic<Bool>(false)
 
-  /// Install the handlers; returns a guard that restores the previous ones.
   package static func install() -> Guard {
     let handler: @convention(c) (Int32) -> Void = { _ in
       Shutdown.requested.store(true, ordering: .relaxed)

@@ -333,7 +333,6 @@ package enum ConnectGate {
     return Array(text.utf8)
   }
 
-  /// The host to connect, or a denial. The caller connects only on success.
   package static func connectTarget(_ head: [UInt8], allow: EgressAllowlist, capability: String)
     -> ConnectDecision
   {

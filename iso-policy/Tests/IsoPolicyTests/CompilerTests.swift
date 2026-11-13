@@ -8,7 +8,6 @@ import Testing
   let compiled = try compile(source)
   #expect(compiled.canonicalBytes == (try fixture("example-policy.canonical.json")))
   #expect(compiled.digest == String(decoding: try fixture("example-policy.digest"), as: UTF8.self))
-  // Canonical bytes decode to the same compiled policy, byte for byte.
   #expect(try PolicyCanonical.decode(compiled.canonicalBytes) == compiled)
 }
 
@@ -73,7 +72,6 @@ import Testing
         .replacingOccurrences(
           of: "\"resources\"", with: "\"when\":{},\"resources\""))
       == "policy.rules[0].when: unknown field")
-  // A hostile key is not echoed.
   #expect(
     reason(
       policyJSON().replacingOccurrences(of: "\"guards\"", with: "\"\\u001b[31m\":1,\"guards\""))
@@ -180,7 +178,6 @@ import Testing
   // Four guards per scope, each at full capacity: exactly 40,000 slots.
   let four = (1...4).map { rateGuard("g\($0)", max: 10_000, within: 1) }.joined(separator: ",")
   #expect(compileError(policyJSON(guards: four)) == nil)
-  // Guards scoped to different instances do not share a proxy.
   let scoped = (1...8).map {
     rateGuard("g\($0)", max: 1, within: 1, instances: [$0 <= 4 ? "one" : "two"])
   }.joined(separator: ",")

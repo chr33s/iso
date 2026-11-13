@@ -4,9 +4,7 @@ import IsoHost
 import Synchronization
 
 /// The volatile live-access registry for one supervisor epoch (spec 9.2–9.4).
-/// Nothing here is persisted: a restart creates a new epoch and every grant
-/// from the previous one is gone. Only a SHA-256 verifier of each client
-/// bearer is retained.
+/// Nothing persists: a restart drops every grant; only SHA-256 bearer verifiers are kept.
 package final class AccessSessions: Sendable {
   package struct Limits: Sendable, Equatable {
     package var leaseSeconds: UInt64
@@ -16,7 +14,6 @@ package final class AccessSessions: Sendable {
     package static let standard = Limits(leaseSeconds: 30, maxLive: 64, maxIssued: 65_536)
   }
 
-  /// What the grant was issued against; compared on every use.
   package struct Binding: Sendable, Equatable {
     package let instance: QualifiedInstance
     package let bootID: BootID
@@ -27,7 +24,6 @@ package final class AccessSessions: Sendable {
     package let purpose: AccessPurpose
     package let guestHostKey: String
     package let guestUser: GuestUser
-    /// The authorized key itself (public), for best-effort removal on close.
     package let clientPublicKey: ClientPublicKey
     package let filteredPolicy: FilteredGrantPolicy?
   }
@@ -178,7 +174,6 @@ package final class AccessSessions: Sendable {
     return binding
   }
 
-  /// Whether a live grant on `instance` still uses `key`.
   package func keyInUse(instance: InstanceID, key: SHA256Hex) -> Bool {
     sweep()
     return state.withLock { state in
@@ -189,7 +184,6 @@ package final class AccessSessions: Sendable {
     }
   }
 
-  /// Validates a relay preamble against a live grant; returns its binding.
   package func admitRelay(session: SessionID, bearer: AccessBearer, epoch expected: DaemonEpoch)
     throws(HostControlError) -> Binding
   {
@@ -205,7 +199,6 @@ package final class AccessSessions: Sendable {
     return try result.get()
   }
 
-  /// Whether any live grant controls `instance` (disposable-run lease).
   package func hasLiveSession(instance: InstanceID) -> Bool {
     sweep()
     return state.withLock { state in
@@ -220,7 +213,6 @@ package final class AccessSessions: Sendable {
     return state.withLock { state in state.sessions[session]?.phase == .live }
   }
 
-  /// Revokes every live grant on `instance` (stop, destroy, policy loss).
   package func revoke(instance: InstanceID) {
     let ids = state.withLock { state in
       var ids: [SessionID] = []

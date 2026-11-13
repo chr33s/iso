@@ -27,7 +27,6 @@ extension ProxyProvider {
   }
 }
 
-/// The upstream a VM's proxy uses for one provider.
 package struct EffectiveUpstream: Sendable, Equatable {
   package let credential: CredentialReference
   package let auth: ProxyAuthScheme
@@ -74,10 +73,9 @@ extension ProxyState {
     )
   }
 
-  /// Record a per-VM override. The other provider's member is carried over
-  /// as stored (it may be a literal awaiting remediation, which is neither
-  /// read into a credential nor printed); unknown members are dropped, as
-  /// the Rust round trip did. Owner-only.
+  /// Record a per-VM override. The other provider's member is carried over as
+  /// stored (possibly a literal awaiting remediation; never read or printed);
+  /// unknown members are dropped, as the Rust round trip did. Owner-only.
   package static func setOverride(
     _ instance: Instance, provider: ProxyProvider, credential: CredentialReference,
     auth: ProxyAuthScheme

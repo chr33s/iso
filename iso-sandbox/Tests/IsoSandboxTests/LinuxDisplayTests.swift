@@ -84,7 +84,6 @@ import Testing
     let height = 2
     let sourceRow = 16  // padded, as IOSurface rows may be
     var source = [UInt8](repeating: 0xEE, count: sourceRow * height)
-    // B, G, R, A per pixel; alpha 0 as Xorg at depth 24 writes it.
     let pixels: [(UInt8, UInt8, UInt8, UInt8)] = [
       (0x00, 0x00, 0xFF, 0x00), (0x00, 0xFF, 0x00, 0x00), (0xFF, 0x00, 0x00, 0x7F),
       (0x10, 0x20, 0x30, 0xFF), (0x01, 0x02, 0x03, 0x00), (0xAA, 0xBB, 0xCC, 0x00),
@@ -142,7 +141,6 @@ import Testing
     let object = try JSONSerialization.jsonObject(with: json) as! [String: Any]
     #expect(object["display"] == nil)
     #expect(object["guestComputerUse"] == nil)
-    // A record written before display modes reads as headless.
     #expect(try JSONDecoder.iso.decode(SandboxRecord.self, from: json).displayMode == .headless)
   }
 
@@ -185,7 +183,6 @@ import Testing
     defer { try? FileManager.default.removeItem(at: root.root) }
     #expect(root.kernel != root.desktopKernel)
     #expect(try Owner.kernel(root: root, display: .headless) == root.kernel)
-    // Missing, then present but not a pinned desktop kernel.
     #expect(throws: SandboxError.self) { try Owner.kernel(root: root, display: .virtioDisplay) }
     try Data("not a kernel".utf8).write(to: root.desktopKernel)
     #expect(throws: SandboxError.self) { try Owner.kernel(root: root, display: .virtioDisplay) }
@@ -201,7 +198,6 @@ import Testing
     let installed = try KernelPin.select(
       installed: root.desktopKernel, requested: candidate.path, allowed: [sha])
     #expect(installed.install && installed.sha256 == sha)
-    // The qualified kernel's pin does not admit it.
     #expect(throws: SandboxError.self) {
       try KernelPin.select(
         installed: root.kernel, requested: candidate.path, allowed: KernelPin.allowed)
@@ -225,7 +221,6 @@ import Testing
         record: record, config: config, rootfs: rootfs,
         devices: Self.devices(display == .headless ? [] : [.virtio(scanouts: [Self.scanout])]))
     }
-    // The listener state is part of every display report, and of no other.
     #expect(try effective(.virtio(guestComputerUse: nil)).liveViewListening == false)
     let headless = try effective(.headless)
     #expect(headless.liveViewListening == nil)
@@ -233,8 +228,6 @@ import Testing
       !String(decoding: try JSONEncoder.wire.encode(headless), as: UTF8.self)
         .contains("liveViewListening"))
 
-    // Guest counts carry the screen's preemptions; live-view counts appear
-    // once a stream has started.
     var guest = MacGuestCUCounters(frameRate: 4)
     guest.frames = 7
     var liveView = MacLiveViewCounters()

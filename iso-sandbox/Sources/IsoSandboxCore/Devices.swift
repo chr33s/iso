@@ -2,16 +2,10 @@ import Containerization
 import Foundation
 import Virtualization
 
-/// Devices on the live `VZVirtualMachine`, not the configuration iso asked
-/// for, read after `create` and before the guest's own init runs. The
-/// brokered contract's network-device count is this reading, and every
-/// sandbox, whatever its network mode, must match `requireExpected`.
-///
-/// The live machine exposes directory-sharing, console, memory-balloon,
-/// USB-controller, graphics, network and socket devices (the macOS 27 SDK's
-/// `VZVirtualMachine`); storage, serial ports and entropy are visible only
-/// on the configuration the framework built, which `Owner` does not hand
-/// it any of beyond the root disks and the boot console.
+/// Devices on the live `VZVirtualMachine`, not the configuration iso asked for,
+/// read after `create` and before the guest's own init runs.
+/// The brokered contract's network-device count is this reading, and every sandbox, whatever its
+/// network mode, must match `requireExpected`.
 package struct VMDevices: Sendable, Equatable {
   /// A network device's attachment, as found on the live device.
   package enum NetworkAttachment: Sendable, Equatable {
@@ -77,18 +71,12 @@ package struct VMDevices: Sendable, Equatable {
     self.graphics = graphics
   }
 
-  /// The inventory a Linux sandbox in `mode` must have: one vsock device;
-  /// one vmnet network device, or none for brokered; no console, balloon or
-  /// USB controller; the graphics `display` expects; and at most the one
-  /// virtio-fs device `apple/containerization` always attaches, carrying no
-  /// host directory. Anything else fails closed.
-  ///
-  /// A headless sandbox has no graphics device. A
-  /// ``DisplayMode/virtioDisplay`` sandbox has exactly one virtio graphics
-  /// device with one ``LinuxDisplay``-sized scanout. Its USB keyboard and
-  /// pointer are not on the live machine, and VZ reports no USB controller
-  /// for them (docs/design/linux-desktop-virtio-gpu.md §3); they are fixed
-  /// by ``VirtioDisplayDevices``.
+  /// The inventory a Linux sandbox in `mode` must have: one vsock device; one
+  /// vmnet network device, or none for brokered; no console, balloon or USB
+  /// controller; the graphics `display` expects; and at most the one virtio-fs
+  /// device `apple/containerization` always attaches, carrying no host directory.
+  /// Anything else fails closed; a virtioDisplay sandbox's USB keyboard and pointer are not on the
+  /// live machine (see ``VirtioDisplayDevices``).
   package func requireExpected(for mode: NetworkMode, display: DisplayMode = .headless)
     throws(SandboxError)
   {

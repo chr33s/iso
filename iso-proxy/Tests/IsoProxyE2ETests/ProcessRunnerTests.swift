@@ -24,6 +24,5 @@ import Testing
     "cleanup must kill and reap without waiting for the workload")
   #expect(try child.poll() != nil)
   #expect(kill(child.pid, 0) == -1 && errno == ESRCH)
-  // Cleanup is idempotent after reaping.
   child.cleanup()
 }

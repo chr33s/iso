@@ -201,7 +201,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   model.claudeEndpoint = try LocalModel(
     hostURL: "http://127.0.0.1:11434", model: "m", authToken: nil)
   try model.save(instance)
-  // `--no-agents` starts no tunnel; none is required.
   try ModelTunnelReadiness.require(instance, config: config, scope: .guest(guest.target))
 
   let tunnel = ReverseTunnel(
@@ -227,7 +226,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   model.mode = .local
   try model.save(instance)
 
-  // A dead tunnel fails both scopes.
   kill(pid, SIGTERM)
   var status: Int32 = 0
   #expect(waitpid(pid, &status, 0) == pid)
@@ -368,7 +366,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   let instance = try testInstance(guest.root + "/instance", index: 200)
   let upstream = EffectiveUpstream(credential: CredentialReference("cmd:printf k")!, auth: .apiKey)
 
-  // Unresolvable credential: nothing is spawned.
   var iso = try guest.installProxyStubs()
   let unresolved = EffectiveUpstream(credential: CredentialReference("cmd:exit 4")!, auth: .apiKey)
   var error = try #require(throws: (any Error).self) {
@@ -378,7 +375,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   #expect(oneLine(error).contains("aborting VM start (fail-closed)"))
   #expect(!FileManager.default.fileExists(atPath: guest.root + "/proxy-stdin"))
 
-  // No proxy binary next to iso.
   error = try #require(throws: (any Error).self) {
     try guest.proxies(iso: guest.root + "/elsewhere/iso").start(
       instance, provider: .anthropic, upstream: upstream, target: guest.target)
@@ -520,7 +516,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
 @Test func recordedPIDsAreSignalledOnlyWhileTheyNameTheProcess() {
   #expect(ProxyLauncher.RecordedProcess.isSSH("/usr/bin/ssh -N -T host"))
   #expect(!ProxyLauncher.RecordedProcess.isSSH("/bin/zsh -c ssh"))
-  // This test process is alive but was never recorded as a proxy.
   #expect(!ProxyLauncher.isRecorded(getpid(), pidPath: "/nonexistent/proxy.pid", expect: .proxy))
 }
 
@@ -574,7 +569,6 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   let bystander = Process()
   // bash itself, not the /bin/sh trampoline, so the image stays the same.
   bystander.executableURL = URL(fileURLWithPath: "/bin/bash")
-  // SIGTERM ends its sleep too, so the child does not outlive the test.
   bystander.arguments = [
     "-c", "trap 'kill $! 2>/dev/null; exit' TERM; /bin/sleep 30 & wait", "/opt/iso/bin/iso-proxy",
     "/opt/iso/iso-egress",

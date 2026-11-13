@@ -7,25 +7,16 @@ set -euo pipefail
 
 # End-to-end test for `iso uninstall`.
 #
-# Runs the uninstall flow with HOME pointed at a throwaway tempdir, so the
-# tests never touch the developer's real ~/.iso. Verifies:
-#
+# Runs the uninstall flow with HOME at a throwaway tempdir (no VM, no network). Verifies:
 #   1. --yes --keep-data removes the binary and leaves the data dir alone.
-#   2. --yes --purge removes binary, data dir, update-check state, and
-#      any iso SSH config blocks.
-#   3. Non-interactive (non-TTY) without --yes exits non-zero with a hint.
-#   4. The dev-build guard refuses to remove a binary that lives in a SwiftPM
-#      build tree (`.build/{debug,release}` or `.build/<triple>/{debug,release}`).
-#
-# Run manually:   ./tests/integration-uninstall.sh
-# Run in CI:      same (fast — no VM, no network)
+#   2. --yes --purge removes binary, data dir, update-check state, and iso SSH config blocks.
+#   3. Non-interactive without --yes exits non-zero with a hint.
+#   4. The dev-build guard refuses to remove a binary in a SwiftPM build tree.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# iso gates interactive prompts on stdin being a TTY. Detach it so a future
-# prompt-bearing case can't block on real keystrokes in an interactive shell
-# (CI is already non-TTY and would never catch it).
+# iso gates interactive prompts on stdin being a TTY; detach it so a prompt-bearing case cannot block on keystrokes.
 exec </dev/null
 
 # ── Temp workspace ───────────────────────────────────────────────────────────
@@ -55,10 +46,8 @@ fail() {
 }
 
 # ── Build a binary and copy it out of the build tree ────────────────────────
-#
-# The dev-build guard refuses binaries under a SwiftPM build tree, so
-# success-path tests use a copy in $TMPDIR/bin; Test 4 copies it into
-# build-tree-shaped paths. ISO_SWIFT_SCRATCH_PATH overrides `.build`.
+# The dev-build guard refuses binaries under a SwiftPM build tree, so success-path tests use a copy
+# in $TMPDIR/bin; Test 4 copies it into build-tree-shaped paths. ISO_SWIFT_SCRATCH_PATH overrides `.build`.
 
 echo "==> Building iso..."
 SWIFT_SCRATCH="${ISO_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
@@ -96,7 +85,6 @@ SSH_PREFIX="iso"
 seed_data_dir() {
     local data_dir="$DATA_DIR"
     mkdir -p "$data_dir/images" "$data_dir/instances"
-    # Write a config so configPathIsUnderDataDirectory has something to look at.
     mkdir -p "$CONFIG_DIR"
     printf '{}\n' > "$CONFIG_DIR/config.jsonc"
 }
@@ -119,7 +107,6 @@ Host github.com
 EOF
 }
 
-# Fresh copy of the binary at $TMPDIR/bin/iso for each test that removes it.
 fresh_binary() {
     cp "$STABLE_BIN" "$TMPDIR/bin/iso"
 }

@@ -635,7 +635,6 @@ package actor DataPlaneService {
     }
   }
 
-  /// `GET /_iso/snapshot/<digest>` with `Authorization: Bearer $ISO_CI_TOKEN`.
   private func snapshot(_ request: DataPlaneRequest) async -> DataPlaneResponse {
     guard request.method == "GET", let bearer = request.bearer,
       let allocation = slots.first(where: {

@@ -104,7 +104,6 @@ private func instance() throws -> Instance {
       instance, provider: .anthropic, configured: nil, diagnostics: sink.diagnostics)
   }
   #expect(try ProxyAuthorizationStartup.expected(instance, provider: .anthropic) == startup)
-  // A new boot is the explicit reset.
   try PolicyBoot.begin(instance, configured: policy, diagnostics: sink.diagnostics)
   #expect(
     try PolicyBoot.claimProxyLaunch(
@@ -182,7 +181,6 @@ private func instance() throws -> Instance {
   #expect(!serialized.contains("synthetic-credential"))
   let readiness = try #require(object["readiness"] as? [String: Any])
   #expect(Set(readiness.keys) == ["privateKeyHex"])
-  // Off-mode launches keep version 1.
   let legacy = ProxyLauncher.wireConfig(
     listen: "127.0.0.1:1", capabilityToken: Secret(String(repeating: "a", count: 64)),
     provider: .anthropic, auth: .apiKey, credential: Secret("x"))
@@ -397,7 +395,6 @@ private func instance() throws -> Instance {
   #expect(after.grants.first { $0.scope == "DROP" }.map { $0.id != dropID } == true)
   #expect(after.grants.first { $0.scope == "OLD" }?.origin == .command)
   #expect(r.appliedEnvironment[old] == .literal("3") && r.withheld.isEmpty)
-  // Another instance's ID is not an error here.
   _ = try GrantLedger.reconcile(
     instance, revoked: ["fedcba9876543210"], environment: r.savedEnvironment,
     forwards: r.savedForwards, fresh: [], knownElsewhere: ["fedcba9876543210"])
@@ -419,7 +416,6 @@ private func instance() throws -> Instance {
   #expect(ledger.grants.first { $0.scope == "14000:4000" }?.origin == .legacy)
   let givenID = try #require(ledger.grants.first { $0.scope == "13000:3000" }).id
 
-  // Revoking a forward grant by ID drops it from both sets.
   r = try GrantLedger.reconcile(
     instance, revoked: [givenID], environment: [:], forwards: r.savedForwards, fresh: [])
   #expect(r.appliedForwards.isEmpty)

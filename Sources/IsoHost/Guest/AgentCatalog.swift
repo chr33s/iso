@@ -120,7 +120,6 @@ package enum AgentCatalog {
     return (definition, bytes)
   }
 
-  /// Persist the already-validated definition. Does not re-read `sourcePath`.
   package static func install(
     _ definition: AgentDefinition, config: IsoConfig, replace: Bool
   ) throws -> InstalledAgent {
@@ -208,7 +207,6 @@ package enum AgentCatalog {
 }
 
 extension AgentDefinitionID {
-  /// Built-in descriptors are compiled literals, not parsed input.
   fileprivate init(unchecked raw: String) {
     // The literals "claude" and "codex" satisfy the validating initializer.
     self = try! AgentDefinitionID(raw)

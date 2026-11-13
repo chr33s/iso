@@ -2,10 +2,9 @@ import Foundation
 import IsoCore
 
 /// Renders a stage for review: a summary, one line per change, then text
-/// diffs. Every guest-derived string passes through `neutralizeControls`,
-/// and nothing here runs a subprocess (no Git, pager, diff or editor).
-/// Content is read descriptor-relative without following links and must
-/// match the manifest's hashes; a mismatch marks the view stale.
+/// diffs. Guest-derived strings pass through `neutralizeControls`; nothing here
+/// runs a subprocess. Content is read descriptor-relative without following
+/// links and must match the manifest's hashes, else the view is stale.
 package struct StageReview {
   package let manifest: StageManifest
   let tree: String
@@ -89,10 +88,9 @@ package struct StageReview {
       .joined(separator: " ")
   }
 
-  /// Unified-style diffs for small UTF-8 text files.
-  /// With `markOmitted`, every changed file whose diff is not shown gets an
-  /// explicit line saying so, so an approval never covers content silently.
-  /// `stale` is set when content no longer matches the manifest.
+  /// Unified-style diffs for small UTF-8 text files. With `markOmitted`, every
+  /// changed file whose diff is not shown gets an explicit line, so an approval never
+  /// covers content silently. `stale` is set when content no longer matches.
   package func textDiffs(markOmitted: Bool = false) -> [String] {
     var stale = false
     return textDiffs(markOmitted: markOmitted, stale: &stale)
@@ -190,7 +188,6 @@ package struct StageReview {
     return (bytes, digest)
   }
 
-  /// Lines of UTF-8 text without NUL bytes.
   static func lines(_ bytes: [UInt8]) -> [String]? {
     guard !bytes.contains(0), let text = String(validating: bytes, as: UTF8.self) else {
       return nil

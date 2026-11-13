@@ -2,15 +2,11 @@ import Foundation
 import Virtualization
 
 /// Paravirtualized Core AI accelerators for macOS guests
-/// (docs/design/paravirtualized-coreai.md). The devices are private
-/// Virtualization.framework API that loads only with
-/// `com.apple.private.virtualization`, so every reference to them is
-/// compiled only into the experimental `iso-sandbox-coreai` build
-/// (`-DISO_COREAI`). The default build attaches nothing and reads back
-/// nothing, so its Gate O check is unchanged.
-///
-/// Classes and selectors are resolved at run time: absent means
-/// unavailable, never a crash.
+/// (docs/design/paravirtualized-coreai.md).
+/// The devices are private Virtualization.framework API needing `com.apple.private.virtualization`,
+/// so they compile only into the experimental `iso-sandbox-coreai` build (`-DISO_COREAI`); the
+/// default build attaches and reads back nothing. Classes and selectors resolve at run time: absent
+/// means unavailable, never a crash.
 package enum MacAccelerators {
   /// Whether this binary was built with Core AI support.
   package static var compiledIn: Bool {

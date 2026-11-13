@@ -83,7 +83,6 @@ package struct ScaleSetJobMessage: Sendable, Equatable {
     self.result = result
   }
 
-  /// Nil for kinds this controller does not act on.
   package init?(json: JSONValue) {
     guard let raw = json["messageType"]?.stringValue, let kind = Kind(rawValue: raw),
       let request = json["runnerRequestId"]?.intValue

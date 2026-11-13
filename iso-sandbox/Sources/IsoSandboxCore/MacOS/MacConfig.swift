@@ -4,10 +4,10 @@ import IsoMacProtocol
 import Virtualization
 
 /// Builds a macOS guest's `VZVirtualMachineConfiguration`: one display, one
-/// absolute pointing device, one keyboard, one vmnet network device, one
-/// vsock device, the clone's own disk, entropy, and only for a Core AI
-/// sandbox its requested accelerators. Nothing else: no directory shares,
-/// audio, serial ports, USB, clipboard or host sockets (Gate O).
+/// absolute pointing device, one keyboard, one vmnet network device, one vsock
+/// device, the clone's own disk, entropy, and only for a Core AI sandbox its
+/// requested accelerators.
+/// Nothing else: no directory shares, audio, serial ports, USB, clipboard or host sockets (Gate O).
 package enum MacConfig {
   package static func hardwareModel(_ url: URL) throws -> VZMacHardwareModel {
     guard let data = try? Data(contentsOf: url),
@@ -121,10 +121,9 @@ package struct MacEffectiveConfig: Codable, Sendable {
   package var liveViewListening: Bool = false
 
   /// Read from the configuration the VM booted with and the listeners it
-  /// registered, not restated: an extra disk, socket listener, console or
-  /// network attachment shows up here and fails the host's gate. The vmnet
-  /// mode is not queryable from a network object, so it comes from the
-  /// record; the subnet is the network's own.
+  /// registered, not restated: an extra disk, socket listener, console or network
+  /// attachment shows up here and fails the host's gate.
+  /// The vmnet mode is not queryable, so it comes from the record; the subnet is the network's own.
   static func from(
     _ c: VZVirtualMachineConfiguration, record: MacSandboxRecord, vsockPorts: [UInt32],
     topology: String, hostSecurity: MacHostSecurity.Report? = nil

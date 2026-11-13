@@ -8,10 +8,8 @@ import Foundation
   import Glibc
 #endif
 
-/// One connection from a guest to its host owner's computer-use listener
-/// (vsock 7802), reopened once when it fails. The same code serves macOS
-/// guests (`iso-macos-helper cu-mcp`) and Linux guests (`iso-cu-mcp`); only
-/// the socket address differs.
+/// One connection from a guest to its host owner's computer-use listener (vsock 7802), reopened
+/// once when it fails.
 package final class GuestCUConnection {
   private var fd: Int32 = -1
   private var reader: LineReader?
@@ -24,7 +22,6 @@ package final class GuestCUConnection {
 
   private func connectHost() throws {
     #if os(Linux)
-      // <linux/vm_sockets.h>: the C library modules do not export it.
       struct SockaddrVM {
         var family = sa_family_t(GuestCUConnection.afVsock)
         var reserved1: UInt16 = 0
@@ -112,9 +109,8 @@ package final class GuestCUConnection {
 }
 
 extension GuestCUMCP {
-  /// The MCP server on stdin and stdout over a vsock connection to the
-  /// host; returns when stdin closes. It holds no credentials and opens no
-  /// other connection.
+  /// The MCP server on stdin and stdout over a vsock connection to the host; returns when stdin
+  /// closes. It holds no credentials and opens no other connection.
   package static func serveStdio() {
     signal(SIGPIPE, SIG_IGN)
     let connection = GuestCUConnection()

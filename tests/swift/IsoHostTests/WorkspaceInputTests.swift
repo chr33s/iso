@@ -19,8 +19,6 @@ private func git(_ directory: String, _ arguments: String...) throws {
   }
 }
 
-/// One snapshot state directory for the run: each capture makes its own
-/// entry inside it, which the snapshot removes.
 private let inputState = try! scratchDirectory("inputs")
 
 private var hasGit: Bool { FileManager.default.isExecutableFile(atPath: "/usr/bin/git") }
@@ -71,7 +69,6 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   corrupt[7] = 9
   #expect(throws: GitIndexInventory.Unsupported.self) { try GitIndexInventory.parse(corrupt) }
   guard hasGit else { return }
-  // Submodules and unmerged entries need explicit path selection.
   let root = try scratchDirectory("conflict")
   defer { removeScratch(root) }
   try git(root, "init", "-q")
@@ -135,7 +132,6 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   #expect(snapshot.report.secrets == [".env"])
   #expect(snapshot.report.deletedTracked == ["deleted.txt"])
 
-  // A named exception sends the one file, nothing more.
   let allowed = try capture(
     root,
     WorkspaceInputConfig(
@@ -228,7 +224,6 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   #expect(throws: HostError.self) { try capture(second, input, budget: budget) }
   try writeFile(first + "/big", String(repeating: "y", count: 11))
   #expect(throws: HostError.self) { try capture(first, input) }
-  // Each file fits, but together they exceed the total.
   let total = try scratchDirectory("r3")
   defer { removeScratch(total) }
   for i in 0..<2 { try writeFile(total + "/h\(i)", String(repeating: "z", count: 10)) }
@@ -281,7 +276,6 @@ func trackedPathsComeFromTheIndexWithoutRunningGit(version: String) throws {
   let input = WorkspaceInputConfig(
     mode: .paths, paths: [.init(path: ".", recursive: true)], exclude: [], secretAllow: [],
     limits: .ceilings)
-  // No ssh is reachable, so the send itself fails after the audit record.
   let transfer = WorkspaceTransfer(
     client: SSHClient(environment: ["PATH": root + "/no-bin"], tools: .searchPath),
     diagnostics: Diagnostics(verbosity: 0) { _ in })

@@ -1,11 +1,9 @@
 import Foundation
 
 /// Allocates one `10.231.N.0/24` per sandbox across the whole state root.
-///
-/// vmnet keeps a subnet reserved after its owning process dies uncleanly and
-/// refuses to recreate it, so a subnet that fails to come up is quarantined
-/// for a while rather than retried at once. Quarantine is bounded in size
-/// and time, so a leak can never exhaust the range permanently.
+/// vmnet keeps a subnet reserved after its owner dies uncleanly and refuses to recreate it, so a
+/// failing subnet is quarantined (bounded in size and time, so a leak never exhausts the range)
+/// rather than retried at once.
 package struct SubnetAllocator: Sendable {
   package static let range = 1...250
   package static let quarantineTTL: TimeInterval = 24 * 60 * 60
@@ -100,11 +98,11 @@ package struct SubnetAllocator: Sendable {
   }
 
   /// Calls `attempt` with `index`, then with a replacement each time it throws.
-  /// vmnet refuses a subnet it still holds for a dead owner, and a host can
-  /// hold dozens after crashes, so this tries every free subnet in the range:
-  /// each refused one is quarantined and never offered to this call again,
-  /// even after the bounded quarantine evicts it. `commit` persists each
-  /// replacement before the lock is released; `refused` reports each move.
+  /// vmnet refuses a subnet it still holds for a dead owner, and a host can hold
+  /// dozens after crashes, so this tries every free subnet in the range: each
+  /// refused one is quarantined and never offered to this call again, even after
+  /// the bounded quarantine evicts it.
+  /// `commit` persists each replacement before the lock is released.
   package func open<Opened>(
     from index: Int, for id: SandboxID,
     attempt open: (_ index: Int) throws -> Opened,

@@ -96,10 +96,9 @@ package enum WorkspacePolicy {
       workspaceIdentity: attached, destinationIdentity: destinationIdentity)
   }
 
-  /// Version 2 of the mutation-plan digest: the stage ID, return policy,
-  /// instance and policy binding, destination path and binding, gitfile
-  /// observations, and every path, operation, old-object expectation,
-  /// content hash, mode, link target and sensitive classification,
+  /// Version 2 of the mutation-plan digest: stage ID, return policy, instance and
+  /// policy binding, destination, gitfile observations, and every path, operation,
+  /// old-object expectation, hash, mode, link target and sensitivity,
   /// length-prefixed so no two plans encode alike.
   package static func manifestDigest(_ manifest: StageManifest) -> String {
     var lines = ["iso-stage-plan-v2"]
@@ -177,10 +176,9 @@ package enum WorkspacePolicy {
     )
   }
 
-  /// The backend state root holding `owner.json`, above both local instances
-  /// (`instances/NAME`) and remote-host shadows (`host-workspaces/HOST/ID`),
-  /// so every return into one destination shares one lock. Without that
-  /// marker (a scratch layout), the directory above `instances/`.
+  /// The backend state root holding `owner.json`, above local instances and
+  /// remote-host shadows, so every return into one destination shares one lock.
+  /// Without that marker (scratch layout), the directory above `instances/`.
   static func stateRoot(of instance: Instance) -> String {
     var directory = instance.directory as NSString
     for _ in 0..<4 {
@@ -195,7 +193,6 @@ package enum WorkspacePolicy {
 
 }
 
-/// Raised for a refused governed apply; carries the decision's reason.
 package struct PolicyDenied: Error, CustomStringConvertible {
   package let reason: PolicyReason
   package let detail: String
@@ -203,14 +200,12 @@ package struct PolicyDenied: Error, CustomStringConvertible {
 }
 
 extension WorkspaceTransfer {
-  /// An enforcing `workspace.pull.apply` (docs/design/iso-policy.md §8.2):
-  /// verify the stage against the current boot, render and confirm it at
-  /// the host terminal without holding a lock, then take the policy,
-  /// per-user apply and stage locks in that order, re-verify everything,
-  /// consume the single-use receipt in the same critical section as the
-  /// durable attempt record, and install through the common installer. A
-  /// denial writes nothing. Named sensitive grants never stand in for the
-  /// terminal confirmation.
+  /// An enforcing `workspace.pull.apply` (docs/design/iso-policy.md §8.2): verify
+  /// the stage against the current boot, confirm at the host terminal without a
+  /// lock, then take policy, per-user apply and stage locks in order, re-verify,
+  /// consume the single-use receipt with the durable attempt record, and install
+  /// through the common installer. A denial writes nothing; named sensitive grants
+  /// never replace the terminal confirmation.
   func applyGovernedStage(
     _ instance: Instance, _ request: ApplyRequest, binding: PolicyBinding,
     policy: CompiledPolicy, confirm: StageConfirmation?

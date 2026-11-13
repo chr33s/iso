@@ -88,7 +88,6 @@ package final class DataPlanePendingCalls: Sendable {
 
   package init() {}
 
-  /// Registers a waiter and sends via `send`; resolves with the reply.
   package func call(_ send: (Int64) throws(CIError) -> Void) async throws(CIError) -> JSONValue {
     let id: Int64
     do {

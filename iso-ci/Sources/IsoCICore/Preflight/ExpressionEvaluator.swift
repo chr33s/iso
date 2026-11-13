@@ -221,7 +221,6 @@ package enum ExpressionEvaluator {
     }
   }
 
-  /// GitHub's string conversion (used by format, join, contains, …).
   package static func toText(_ value: JSONValue) -> String {
     switch value {
     case .null: ""

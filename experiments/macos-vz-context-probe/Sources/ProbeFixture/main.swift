@@ -2,15 +2,8 @@
 //
 //   open -n IsoVZProbe.app --args --token <hex8>
 //
-// One full-screen window with: the run token and a frame counter (incremented
-// every 250 ms) as text and as 4x4 colour barcodes under a calibration row; a
-// 10x10 grid (cells A01..J10) with magenta corner markers; a text field; a
-// key/modifier display; a drag source with targets D01..D08; a scroll region.
-//
-// Writes ~/Library/Application Support/IsoVZProbe/state.json atomically on every
-// tick and every input event, and appends every input event to events.jsonl
-// there. Geometry is in screen pixels with a top-left origin. Everything the
-// host trusts comes from these files, not from the host's own return values.
+// Everything the host trusts comes from state.json/events.jsonl (written atomically
+// under ~/Library/Application Support/IsoVZProbe), not from the host's own return values.
 
 import AppKit
 
@@ -466,6 +459,5 @@ let app = NSApplication.shared
 let delegate = MainActor.assumeIsolated { Delegate() }
 app.delegate = delegate
 app.setActivationPolicy(.regular)
-// A login-time relaunch would race the harness and leave a stale instance (default token) in front.
 app.disableRelaunchOnLogin()
 app.run()

@@ -3,12 +3,11 @@ import IsoConfiguration
 import IsoCore
 import IsoSecrets
 
-/// Provenance for an instance's saved command grants (POL-01): the
-/// start-time guest environment entries and port forwards that later
-/// starts re-apply. Each has an opaque ID, its capability and scope, where
-/// it came from and how long it lasts. `security.revoked_grant_ids`
-/// withdraws one by ID; the tombstone is recorded here, owner-only, before
-/// the instance is handed out again, and survives removing the setting.
+/// Provenance for an instance's saved command grants (POL-01): the start-time
+/// guest environment entries and port forwards later starts re-apply, each with
+/// an opaque ID, capability, scope, origin and lifetime. `security.revoked_grant_ids`
+/// withdraws one; the tombstone is recorded here (owner-only) before the instance
+/// is handed out again and survives removing the setting.
 package struct GrantLedger: Codable, Equatable, Sendable {
   package enum Capability: String, Codable, Sendable {
     case guestEnvironment = "guest_env"
@@ -79,10 +78,9 @@ package struct GrantLedger: Codable, Equatable, Sendable {
   static func scope(_ name: EnvVarName) -> String { name.rawValue }
   static func scope(_ forward: PortForward) -> String { "\(forward.host):\(forward.guest)" }
 
-  /// What a reconciliation hands to the boot (`applied`), what stays in the
-  /// saved files (`saved`: still includes withheld legacy entries, so
-  /// nothing is erased), and the legacy entries withheld until they are
-  /// given again on the command line.
+  /// What a reconciliation hands to the boot (`applied`), what stays in the saved
+  /// files (`saved`, still including withheld legacy entries so nothing is erased),
+  /// and the legacy entries withheld until given again on the command line.
   package struct Reconciled: Sendable {
     package var appliedEnvironment: [EnvVarName: EnvValue]
     package var appliedForwards: [PortForward]
@@ -94,11 +92,10 @@ package struct GrantLedger: Codable, Equatable, Sendable {
     package var unknownRevoked: [String]
   }
 
-  /// Saved guest environment names a session may forward: each needs a
-  /// command grant that neither the ledger nor `revoked` withdraws. Legacy
-  /// and revoked entries stay in `guest_env.json` but reach no session, so
-  /// a revocation holds from the next handoff, not the next restart. An
-  /// unreadable ledger fails closed.
+  /// Saved guest environment names a session may forward: each needs a command
+  /// grant neither the ledger nor `revoked` withdraws. Legacy and revoked entries
+  /// stay in `guest_env.json` but reach no session, so a revocation holds from the
+  /// next handoff. An unreadable ledger fails closed.
   package static func sessionEnvironment(_ instance: Instance, revoked: [String]) throws
     -> Set<String>
   {
@@ -110,13 +107,11 @@ package struct GrantLedger: Codable, Equatable, Sendable {
       }.map(\.scope))
   }
 
-  /// Applies `revoked` (tombstoning each active grant and dropping its
-  /// entry), records provenance for every saved entry without a grant
-  /// (`fresh` entries came from this command, the rest are legacy), and
-  /// withholds every legacy grant: an entry saved without provenance is
-  /// applied again only when it is given again explicitly, which records it
-  /// as a new command grant (POL-01). Saved before any handoff. An ID that
-  /// names no grant of any instance is returned in `unknownRevoked`.
+  /// Applies `revoked` (tombstoning active grants and dropping their entries),
+  /// records provenance for saved entries without a grant (`fresh` ones came from
+  /// this command, the rest are legacy), and withholds every legacy grant until
+  /// it is given again explicitly (POL-01). Saved before any handoff. An ID naming
+  /// no grant of any instance is returned in `unknownRevoked`.
   package static func reconcile(
     _ instance: Instance, revoked: [String], environment: [EnvVarName: EnvValue],
     forwards: [PortForward], fresh: Set<String>, knownElsewhere: Set<String> = [],

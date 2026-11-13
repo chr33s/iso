@@ -49,7 +49,6 @@ import Testing
     // Runtime qualification changed after acceptance (A28).
     f.native.set { $0.qualified = false }
     #expect(try f.receipt(.vmCreate(spec), operation: op).state == .succeeded)
-    // A genuinely new request now fails admission.
     #expect(failure(f.call(.vmCreate(spec), operation: .generate())) == .hostRuntimeUnqualified)
   }
 
@@ -59,7 +58,6 @@ import Testing
     let f = try SupervisorFixture(settings: settings)
     defer { f.cleanup() }
     let (instance, _) = try f.running()
-    // Fill ordinary capacity with an unrelated create (rejected once full).
     var refused = false
     for index in 0..<4 {
       if failure(f.call(.vmCreate(try f.spec(name: "fill\(index)")), operation: .generate()))
@@ -118,7 +116,6 @@ import Testing
           .vmStart(instance, expectedGeneration: 1, ttlSeconds: 25 * 3_600, policy: policy),
           operation: .generate()))
         == .invalidRequest)
-    // Remote start without TTL gets the finite default.
     let start = try f.receipt(
       .vmStart(instance, expectedGeneration: 1, ttlSeconds: nil, policy: policy))
     let accepted = try #require(try f.supervisor.store.loadOperation(start.operationID))
@@ -312,7 +309,6 @@ import Testing
     #expect(try VMObservation(wire: f.call(.vmInspect(instance)).get()).state == .destroyed)
     #expect(f.native.calls("create") == 1)
     #expect(f.native.vm(instance.runtimeID) == nil)
-    // Destroy again is a no-op observation.
     #expect(try f.receipt(.vmDestroy(instance, expectedGeneration: 2)).disposition == .unchanged)
   }
 
@@ -448,7 +444,6 @@ import Testing
     let destroy = try f.receipt(.vmDestroy(instance, expectedGeneration: 1))
     #expect(destroy.disposition == .accepted)
     #expect(try f.operation(start.operationID).state == .failed)
-    // The superseded operation's ledger slot is released with it.
     #expect(!f.supervisor.store.hasReservation(.finalize(start.operationID)))
     f.supervisor.runPending()
     #expect(try f.operation(destroy.operationID).state == .succeeded)
@@ -473,7 +468,6 @@ import Testing
     #expect(try f.supervisor.store.loadOperation(op) == nil)
     f.supervisor.runPending()
     #expect(f.native.calls("start") == 0)
-    // The unaccepted start holds nothing: the same id is admitted afresh.
     #expect(try f.supervisor.store.loadInstance(instance.instanceID)?.activeOperation == nil)
     let retried = try f.receipt(start, operation: op)
     #expect(retried.disposition == .accepted)
@@ -547,7 +541,6 @@ import Testing
     #expect(throws: HostControlError.self) { try f.receipt(.vmCreate(f.spec()), operation: op) }
     #expect(chmod(operations, 0o700) == 0)
     #expect(f.supervisor.store.instanceIDs().count == 1)
-    // Retried with the same id before any repair pass: one instance remains.
     let retried = try f.receipt(.vmCreate(f.spec()), operation: op)
     #expect(retried.disposition == .accepted)
     #expect(f.supervisor.store.instanceIDs() == [try #require(retried.instance).instanceID])
@@ -697,7 +690,6 @@ import Testing
     let cancelled = try OperationReceipt(
       wire: f.call(.operationCancel(target: created.operationID)).get())
     #expect(cancelled.state == .cancelled)
-    // Repeated cancellation returns the same disposition.
     let again = try OperationReceipt(
       wire: f.call(.operationCancel(target: created.operationID)).get())
     #expect(again.state == .cancelled)
@@ -775,7 +767,6 @@ import Testing
     #expect(try f.operation(op).state == .reconciling)
     f.supervisor.runPending()
     #expect(try f.operation(op).state == .succeeded)
-    // Same id after success: history, no third build.
     #expect(try f.receipt(body, operation: op).disposition == .existing)
     #expect(f.native.state.withLock { $0.builds } == 2)
     _ = try f.receipt(body)
@@ -835,7 +826,6 @@ import Testing
     let after = try VMObservation(wire: f.call(.vmInspect(instance), transport: .local).get())
     #expect(after.generation == 2)
     #expect(after.policyHash != (try f.spec().policyHash))
-    // The old policy no longer starts it; the new one does.
     #expect(
       failure(
         f.call(

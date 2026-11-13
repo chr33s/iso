@@ -2,10 +2,9 @@ import Foundation
 import IsoCore
 import Security
 
-/// Who must have signed a companion (`iso-proxy`, `iso-egress`) before a
-/// release build of iso hands it a credential or a capability. In both cases
-/// the companion must also pass `CompanionSignature.checkOwnership`. Debug
-/// builds do not check: they run freshly built, unsigned companions.
+/// Who must have signed a companion (`iso-proxy`, `iso-egress`) before a release
+/// build hands it a credential or capability; it must also pass `checkOwnership`.
+/// Debug builds do not check (freshly built, unsigned companions).
 enum CompanionSigner: Equatable, Sendable {
   /// iso carries this team: the companion must carry a Developer ID
   /// signature of the same team.
@@ -14,7 +13,6 @@ enum CompanionSigner: Equatable, Sendable {
   /// included).
   case adHoc
 
-  /// The running iso's own signer.
   static func current() throws -> CompanionSigner {
     var code: SecCode?
     var status = SecCodeCopySelf([], &code)
@@ -38,10 +36,10 @@ enum CompanionSigner: Equatable, Sendable {
     return .adHoc
   }
 
-  /// The requirement a companion must satisfy; nil means any valid
-  /// signature. For a team it is Apple's Developer ID designated requirement:
-  /// the Developer ID intermediate (`6.2.6`) and leaf (`6.1.13`) markers rule
-  /// out the same team's Apple Development and Distribution certificates.
+  /// The requirement a companion must satisfy; nil means any valid signature. For
+  /// a team, Apple's Developer ID designated requirement: the intermediate
+  /// (`6.2.6`) and leaf (`6.1.13`) markers exclude the team's Apple Development
+  /// and Distribution certificates.
   var requirement: String? {
     switch self {
     case .team(let team):
@@ -54,16 +52,12 @@ enum CompanionSigner: Equatable, Sendable {
 }
 
 enum CompanionSignature {
-  /// Release builds verify a companion before spawning it; debug builds keep
-  /// the regular-file check alone.
   static func verifyForRelease(_ path: String) throws {
     #if ISO_RELEASE_BUILD
       try verify(path, signer: try CompanionSigner.current())
     #endif
   }
 
-  /// Strict validation of the file `path` resolves to against `signer`,
-  /// after the ownership check.
   static func verify(_ requested: String, signer: CompanionSigner) throws {
     guard let path = canonicalPath(requested) else {
       throw HostError.posix("Failed to resolve", requested)
@@ -95,11 +89,10 @@ enum CompanionSignature {
     }
   }
 
-  /// Run for every signer. The companion must be an executable regular file
-  /// (not a symlink) owned by root or this user, with no group or other write
-  /// bit. Each ancestor directory up to `/` must be owned by root or this user
-  /// and must not be other-writable unless it is sticky; group-writable
-  /// ancestors (such as a `root:admin` 0775 directory) are accepted.
+  /// Run for every signer: an executable regular file (not a symlink) owned by root
+  /// or this user with no group/other write bit, under ancestors owned by root or
+  /// this user and not other-writable unless sticky (group-writable ancestors such
+  /// as `root:admin` 0775 are accepted).
   static func checkOwnership(_ path: String, uid: uid_t = getuid()) throws {
     var status = stat()
     guard lstat(path, &status) == 0 else { throw HostError.posix("Failed to inspect", path) }

@@ -33,10 +33,9 @@ enum BrokerReadiness {
     }
   }
 
-  /// The broker answers only a holder of its guest capability. The guest
-  /// already holds it, so the guest-loopback probe discloses nothing new.
-  /// A proxy an older iso started asks for none, and refuses a probe that
-  /// carries one; see ``capabilities(_:provider:)``.
+  /// The broker answers only a holder of its guest capability. The guest already
+  /// holds it, so the loopback probe discloses nothing new. An older iso's proxy
+  /// asks for none and refuses a probe carrying one; see ``capabilities(_:provider:)``.
   static func request(nonce: String, capability: Secret<String>?) -> [UInt8] {
     let authorization = capability.map { "Authorization: Bearer \($0.expose())\r\n" } ?? ""
     return Array(
@@ -48,11 +47,10 @@ enum BrokerReadiness {
     ProxyLauncher.capabilityToken(instance, provider: provider)
   }
 
-  /// The probes to try, in order: with the persisted capability, then
-  /// without one, for a proxy an older iso started (which persisted no
-  /// Anthropic token, and rejects any probe that carries a capability). A
-  /// current proxy refuses the bare probe, so readiness still fails
-  /// closed; every reply is verified against the persisted key either way.
+  /// Probes in order: with the persisted capability, then without, for a proxy an
+  /// older iso started (no Anthropic token, rejects a capability). A current proxy
+  /// refuses the bare probe, so readiness fails closed; replies are verified against
+  /// the persisted key either way.
   static func capabilities(_ instance: Instance, provider: ProxyProvider) -> [Secret<String>?] {
     capability(instance, provider: provider).map { [$0, nil] } ?? [nil]
   }

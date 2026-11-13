@@ -3,7 +3,6 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// Access sessions and guest relays (spec 9).
 extension HostSupervisor {
   func accessOpen(_ request: AccessOpenRequest) throws(HostControlError) -> AccessGrant {
     // Epoch first: a delayed open from an old epoch never creates a session.

@@ -3,15 +3,13 @@ import AppKit
 import IOSurface
 import QuartzCore
 
-/// Reads a guest's framebuffer from the IOSurface VZ sets as the `contents`
-/// of the layer under a `VZVirtualMachineView` (its private
-/// `_VZFramebufferView`, macOS 27.2), ignoring the alpha byte
-/// (docs/design/linux-desktop-virtio-gpu.md §3, §6).
-///
-/// The pixels are the hypervisor's copy of the guest's scanout. The owner
-/// parses nothing guest-authored here: it checks the surface's geometry and
-/// format, which VZ sets, and copies a fixed-size buffer. The structure is
-/// undocumented, so every miss is a typed failure and never a fallback.
+/// Reads a guest's framebuffer from the IOSurface VZ sets as the `contents` of
+/// the layer under a `VZVirtualMachineView` (its private `_VZFramebufferView`,
+/// macOS 27.2), ignoring the alpha byte (docs/design/linux-desktop-virtio-gpu.md
+/// §3, §6).
+/// The owner parses nothing guest-authored: it checks the VZ-set geometry and format and copies a
+/// fixed-size buffer. The structure is undocumented, so every miss is a typed failure, never a
+/// fallback.
 enum FramebufferSurface {
   /// `'BGRA'`: the format VZ gives the surface for an XRGB8888 scanout.
   static let pixelFormat: OSType = 0x4247_5241

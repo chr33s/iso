@@ -1,10 +1,9 @@
 import Foundation
 
-// Guest permission-dialog responder (docs/design/permission-dialog-auto-response.md).
-// Recognition, policy and the response transaction are pure here; the
-// transport (frames, OCR, one click) is injected so every outcome is
-// unit-testable. Recognized text is guest-rendered data: it selects a
-// candidate but never widens what the caller's expectation allows.
+// Guest permission-dialog responder
+// (docs/design/permission-dialog-auto-response.md).
+// Recognized text is guest-rendered data: it selects a candidate but never widens what the caller's
+// expectation allows.
 
 /// One recognized text line, in frame pixels (top-left origin).
 package struct CUTextLine: Equatable, Sendable {

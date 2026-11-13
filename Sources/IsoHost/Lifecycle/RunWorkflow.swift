@@ -15,7 +15,6 @@ package struct RunWorkflow {
   package let prepare: Bool
   package let forwarded: [String]
   package let configPath: String?
-  /// Records this invocation's evidence; nil records nothing (dry runs).
   package let audit: AuditInvocation?
 
   package init(
@@ -59,7 +58,6 @@ package struct RunWorkflow {
     }
   }
 
-  /// `stage` tracks where a failure before the handoff happened.
   func execute(
     stage: inout AuditFacts.Stage, confirmPreparation: (String) -> Bool,
     report: (Event) -> Void
@@ -331,7 +329,6 @@ package struct RunWorkflow {
     }
   }
 
-  /// Everything between a proven-running instance and the agent handoff.
   func prepareHandoff(
     _ planned: AgentLaunchPlan, running: AppleBackend.Running, action: AuditFacts.StartAction,
     session record: RunSessionRecord?, started: ContinuousClock.Instant,

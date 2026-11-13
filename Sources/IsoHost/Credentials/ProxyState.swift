@@ -45,7 +45,6 @@ package struct ProxyState: Sendable, Equatable {
     return names
   }
 
-  /// Missing file → empty. Credentials must be references, never literal secrets.
   package static func load(_ instance: Instance) throws -> ProxyState {
     let path = instance.proxyStatePath
     guard let data = FileManager.default.contents(atPath: path) else {

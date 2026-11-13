@@ -40,7 +40,6 @@ package enum Subprocess {
     }
   }
 
-  /// A minimal environment for tools: PATH, HOME, LANG; nothing secret.
   package static func baseEnvironment(
     _ source: [String: String] = ProcessInfo.processInfo.environment
   )
@@ -153,7 +152,6 @@ package enum Subprocess {
   /// How long output is still read after the child exits or is killed.
   static let drainGrace: DispatchTimeInterval = .seconds(2)
 
-  /// Which process group a spawned child joins.
   package enum ProcessGroup: Sendable {
     case own
     /// The caller's group: an interactive child that must stay in the

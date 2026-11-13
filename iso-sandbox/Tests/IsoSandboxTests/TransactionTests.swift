@@ -58,9 +58,8 @@ import Testing
     String(decoding: try Data(contentsOf: paths.rootfs), as: UTF8.self)
   }
 
-  /// Interrupt a grow's publication at each boundary; reads, repeated
-  /// settles, and reconcile always see the old disk with the old record or
-  /// the new disk with the new record.
+  /// Interrupt a grow's publication at each boundary; reads, repeated settles, and reconcile
+  /// always see the old disk with the old record or the new disk with the new record.
   @Test(arguments: DiskUpdate.Fault.allCases)
   func interruptedPublicationRecoversToOneSide(_ fault: DiskUpdate.Fault) throws {
     let r = try root()
@@ -97,7 +96,6 @@ import Testing
     #expect(try !DiskUpdate.settle(paths), "recovery is idempotent")
     try consistent()
     #expect(!FileManager.default.fileExists(atPath: paths.pendingDiskUpdate.path))
-    // Interrupted before staging, the scratch disk is plain scratch.
     #expect(FileManager.default.fileExists(atPath: work.path) == (fault == .beforeStaging))
     _ = try Sandboxes.reconcile(root: r)
     #expect(!FileManager.default.fileExists(atPath: work.path))
@@ -121,9 +119,9 @@ import Testing
     #expect(seen == 16 << 30)
   }
 
-  /// Only a scratch name directly in the sandbox directory is discarded
-  /// from a staged update that never published, as for a staged commit,
-  /// even when the staged inode names the file it points at.
+  /// Only a scratch name directly in the sandbox directory is discarded from a staged update
+  /// that never published, as for a staged commit, even when the staged inode names the file it
+  /// points at.
   @Test(arguments: ["record.json", "../b/rootfs.ext4", "../b/record.json"])
   func anUnpublishedUpdateNeverRemovesANonScratchWorkName(_ work: String) throws {
     let r = try root()
@@ -292,7 +290,6 @@ import Testing
     try await delete.value
     #expect(held == nil)
     #expect(!FileManager.default.fileExists(atPath: paths.dir.path))
-    // A mutation queued behind the delete finds nothing to act on.
     await #expect(throws: (any Error).self) {
       try await Sandboxes.setResources(root: r, id: try SandboxID("a"), cpus: 2, memoryBytes: nil)
     }
@@ -380,7 +377,6 @@ import Testing
     let clone = r.root.appendingPathComponent("clone.ext4")
     try Maintenance.cloneTools(root: r, to: clone)
     #expect(try Data(contentsOf: clone) == Data("tools".utf8))
-    // The image store is not consulted: the artifact lives outside it.
     #expect(!r.maintenance.path.hasPrefix(r.imageStore.path))
   }
 
@@ -454,7 +450,6 @@ import Testing
   /// Staged state that contradicts itself or the sandbox is an error.
   @Test func contradictoryStagedStatesAreErrors() throws {
     let r = try root()
-    // A staged update for another sandbox.
     let a = try stoppedSandbox(r, "a")
     _ = try interruptedGrow(a, at: .afterStaging)
     let b = try stoppedSandbox(r, "b")

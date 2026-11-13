@@ -6,8 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Codex account-auth and proxy consistency checks shared by bootstrap and
-/// `iso codex`.
 package enum CodexChecks {
   package static let missingGuestCLIMessage =
     "Codex CLI is not installed in the guest.\nThe golden image may have been built before Codex support was added, or the install failed silently.\nIf you want to skip Codex bootstrap for now, retry with `--no-agents`.\nOtherwise run `iso setup --rebuild` to rebuild the image."
@@ -71,13 +69,11 @@ enum CodexConfigFiles {
   static let allowedFiles = ["AGENTS.md", "auth.json"]
   static let allowedDirectories = ["prompts"]
   static let configFile = "config.toml"
-  /// Guest-owned tables carried across iso's rewrite of `config.toml`.
   static let preservedGuestTables = ["marketplaces", "plugins", "projects"]
 
-  /// `auth.json` is dropped in proxy mode (the capability token replaces
-  /// it), under `proxy.mode = "required"` or `egress = "none"` (it can hold a
-  /// raw OpenAI key even when OpenAI has no proxy), and in ChatGPT account
-  /// mode (the guest keyring holds credentials).
+  /// `auth.json` is dropped in proxy mode (the capability token replaces it),
+  /// under `proxy.mode = "required"` or `egress = "none"` (it can hold a raw
+  /// OpenAI key), and in ChatGPT account mode (the guest keyring holds credentials).
   static func allowedFiles(
     proxyActive: Bool, proxyMode: ProxyMode, egress: EgressMode, auth: CodexAuthMode
   ) -> [String] {
@@ -98,10 +94,9 @@ enum CodexConfigFiles {
     sourceHasBootstrapContent(source) || !mcpServers.isEmpty || hasPlugins || auth == .chatgpt
   }
 
-  /// Whether this boot rewrites the guest `config.toml` (and so must first
-  /// read the guest's plugin tables to carry them over).
-  /// A remote guest is always rewritten, so values an earlier build staged
-  /// there do not outlive the next agent run.
+  /// Whether this boot rewrites the guest `config.toml` (so must first read its
+  /// plugin tables). A remote guest is always rewritten so values an earlier build
+  /// staged do not outlive the next agent run.
   static func needsRewrite(
     source: String?, mcpServers: [String: MCPServer], local: TOMLTable?, managesLocal: Bool,
     auth: CodexAuthMode, keyringMaterialized: Bool, placement: AgentPlacement
@@ -132,8 +127,6 @@ enum CodexConfigFiles {
     return updated
   }
 
-  /// The guest's own plugin/project tables; nil when there are none, an
-  /// error when the file is present but not TOML.
   static func extractPluginState(_ configTOML: String) throws -> TOMLTable? {
     let parsed: TOMLTable
     do { parsed = try TOMLTable.parse(configTOML) } catch {
@@ -146,10 +139,9 @@ enum CodexConfigFiles {
     return preserved.isEmpty ? nil : preserved
   }
 
-  /// Stage allowlisted files and, when a rewrite is due, the merged
-  /// `config.toml`: host base, managed MCP servers, the local/proxy
-  /// provider block, the iso-owned keyring key, and the guest's own
-  /// plugin tables (host copies of those are dropped).
+  /// Stage allowlisted files and, when a rewrite is due, the merged `config.toml`:
+  /// host base, managed MCP servers, provider block, iso-owned keyring key and the
+  /// guest's own plugin tables (host copies are dropped).
   static func stage(
     source: String?, mcpServers: [String: TOMLValue], local: TOMLTable?, managesLocal: Bool,
     preserved: TOMLTable?, proxyActive: Bool, proxyMode: ProxyMode, egress: EgressMode,
@@ -291,7 +283,6 @@ extension AgentBootstrap {
     }
   }
 
-  /// Local mode wins over proxy mode; nil when neither applies.
   func codexProviderTable(_ state: ModelState, proxy: ProxyHandle?) throws -> TOMLTable? {
     if let endpoint = LocalEndpoints.active(state, state.resolvedCodex(config.codex)) {
       let plan = try LocalEndpoints.plan(endpoint.hostURL)

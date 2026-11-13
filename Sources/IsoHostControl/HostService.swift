@@ -11,7 +11,6 @@ package enum HostService {
     config.stateRoot.appending("host-control").path
   }
 
-  /// `iso host-agent daemon`: owns the installation until it exits.
   package static func runDaemon(
     config: IsoConfig, environment: [String: String], installation expected: HostID?,
     diagnostics: Diagnostics
@@ -86,7 +85,6 @@ package enum HostService {
     return try relay(socketPath: paths.relay, preamble: preamble)
   }
 
-  /// Admits `preamble` on a local relay socket, then splices stdio with it.
   package static func relay(socketPath: String, preamble: [UInt8]) throws -> Int32 {
     guard let socket = connectUnix(socketPath) else {
       throw HostError("the host-control relay is not accepting connections")
@@ -110,9 +108,8 @@ package enum HostService {
     "dev.iso.host-control." + hostID.rawValue.replacingOccurrences(of: "-", with: "").prefix(12)
   }
 
-  /// Starts the per-user service when its socket is not answering and
-  /// returns its socket paths. The plist lives in the data root (not
-  /// LaunchAgents) and is loaded into the background user domain.
+  /// Starts the per-user service when its socket is not answering and returns its socket
+  /// paths. The plist lives in the data root, loaded into the background user domain.
   package static func ensureRunning(config: IsoConfig, configPath: String?) throws
     -> HostControlPaths
   {
@@ -178,10 +175,9 @@ package enum HostService {
     throw HostError("the host-control service did not start; see \(log)")
   }
 
-  /// Unloads the service (used by `iso host migrate`) and waits until its
-  /// process has released the ownership lock: until then it still answers
-  /// its socket, and a following ``ensureRunning(config:configPath:)`` would
-  /// reach the exiting service instead of starting a new one.
+  /// Unloads the service and waits for it to release the ownership lock; until then it
+  /// still answers its socket and ``ensureRunning(config:configPath:)`` would reach the
+  /// exiting service.
   package static func stop(config: IsoConfig, waitingForExit: Duration = .seconds(10)) throws {
     let owner = try Owner.load(config)
     let store = try OperationStore(root: root(config))
@@ -209,11 +205,9 @@ package enum HostService {
 }
 
 extension Socket {
-  /// Splices a socket with this process's stdin/stdout and returns when
-  /// either side ends. The relay runs as an ssh ProxyCommand: stdin EOF means
-  /// ssh is gone, so the guest side gets a short grace to finish rather than
-  /// an unbounded wait (an orphaned relay would otherwise keep its caller's
-  /// inherited stderr open).
+  /// Splices a socket with stdin/stdout until either side ends. As an ssh ProxyCommand,
+  /// stdin EOF means ssh is gone, so the guest side gets a short grace instead of an
+  /// unbounded wait.
   static func splice(
     _ socket: Int32, stdio: (Int32, Int32), grace: DispatchTimeInterval = .seconds(5)
   ) {
@@ -286,7 +280,6 @@ package struct SessionDescriptor: Codable, Sendable {
     try StateStore.writeControlFile(self, to: Self.path(config, session))
   }
 
-  /// Reads a descriptor that this user owns and nobody else can read.
   package static func load(path: String) throws(HostError) -> SessionDescriptor {
     var status = stat()
     guard lstat(path, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG,
@@ -298,10 +291,8 @@ package struct SessionDescriptor: Codable, Sendable {
     return try StateStore.decode(SessionDescriptor.self, bytes, path: path)
   }
 
-  /// `iso host-agent connect`: ssh's ProxyCommand. Opens the fixed remote
-  /// relay entrypoint and feeds it the preamble on stdin, then this process's
-  /// stdin; guest SSH bytes flow end to end with the guest pin verified by
-  /// the outer ssh.
+  /// `iso host-agent connect`, ssh's ProxyCommand: opens the fixed remote relay entrypoint,
+  /// feeds it the preamble then stdin; the outer ssh verifies the guest pin.
   package func connect(environment: [String: String]) throws -> Int32 {
     let bearer = try AccessBearer(self.bearer)
     guard let ssh = SSHClient(environment: environment).sshExecutable() else {
@@ -323,10 +314,8 @@ package struct SessionDescriptor: Codable, Sendable {
 }
 
 extension HostService {
-  /// `iso host-agent client` to an enrolled host: the pinned management SSH
-  /// to its fixed entrypoint, carrying this process's stdio. For a relay the
-  /// preamble line is read from stdin and written to ssh first; nothing from
-  /// stdin reaches argv.
+  /// `iso host-agent client`: the pinned management SSH to the fixed entrypoint carrying
+  /// stdio. A relay's preamble line goes to ssh first; nothing from stdin reaches argv.
   package static func bridgeRemote(
     ssh: String, alias: HostAlias, agent: AgentPath, entry: HostAgentEntrypoint,
     environment: [String: String], input: Int32 = 0, output: Int32 = 1,
@@ -361,6 +350,5 @@ extension HostService {
     }
   }
 
-  /// Bound on the ssh stderr a relay bridge keeps for its diagnostic.
   package static let bridgeDiagnosticBytes = 2_048
 }

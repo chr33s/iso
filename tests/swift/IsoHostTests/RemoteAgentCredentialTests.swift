@@ -103,7 +103,6 @@ func theAgentConfigKeepsTheProxyRequiredOnEveryEgress(egress: EgressMode) throws
   let directory = NSTemporaryDirectory() + "remote-agent-\(UUID().uuidString)"
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let shadow = try testInstance(directory)
-  // No proxy running: nothing is forwarded.
   #expect(!RemoteAgent.codex.agentEnvironment(shadow).contains(ModelRouting.codexLocalEnvKey))
   let token = ProxyLauncher.tokenPath(shadow, ProxyProvider.openai.rawValue)
   #expect(FileManager.default.createFile(atPath: token, contents: Data("cap-token\n".utf8)))

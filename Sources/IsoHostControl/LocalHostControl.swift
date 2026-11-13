@@ -4,9 +4,8 @@ import IsoCore
 import IsoHost
 import Synchronization
 
-/// Where one installation's private sockets live (spec 3.3): a per-user
-/// temporary directory with a bounded name derived from the installation
-/// identity, so a long data-root path never meets the socket path limit.
+/// Where one installation's private sockets live (spec 3.3): a bounded name derived from the
+/// installation identity, so a long data-root path never meets the socket path limit.
 package struct HostControlPaths: Sendable, Equatable {
   package let directory: String
 
@@ -86,9 +85,8 @@ package final class LocalHostServer: Sendable {
       relay: try Self.listen(paths.relay))
   }
 
-  /// Accept loops; returns as soon as any listener fails for good, so the
-  /// service exits (and launchd restarts it) rather than keep its lock with
-  /// a socket nobody accepts on.
+  /// Accept loops; returns once any listener fails for good so the service exits and
+  /// launchd restarts it, rather than hold its lock with a dead socket.
   package func serve(_ listeners: Listeners) {
     let stopped = DispatchSemaphore(value: 0)
     for (listener, kind) in [
@@ -213,7 +211,6 @@ func unixAddress(_ path: String) -> sockaddr_un? {
   return address
 }
 
-/// Connects to a supervisor socket after checking its directory.
 package func connectUnix(_ path: String) -> Int32? {
   guard var address = unixAddress(path) else { return nil }
   let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -233,14 +230,12 @@ package func connectUnix(_ path: String) -> Int32? {
   return fd
 }
 
-/// Exchanges one frame for one response over some transport.
 package protocol HostTransport: Sendable {
   /// `frame` includes its newline. Throws `.hostUnreachable` when no reply
   /// arrived; the caller decides whether a mutation became uncertain.
   func exchange(_ frame: [UInt8]) throws(HostControlError) -> [UInt8]
 }
 
-/// The local supervisor's control socket.
 package struct LocalHostTransport: HostTransport {
   package let paths: HostControlPaths
 
@@ -263,10 +258,8 @@ package struct LocalHostTransport: HostTransport {
   }
 }
 
-/// Typed calls over a transport with response validation (spec 6.2).
 package struct HostControlClient: Sendable {
   package let transport: any HostTransport
-  /// The enrolled identity; nil only while enrolling.
   package let expected: (host: HostID, owner: OwnerID)?
 
   package init(transport: any HostTransport, expected: (host: HostID, owner: OwnerID)?) {
@@ -311,7 +304,6 @@ package struct HostControlClient: Sendable {
     return try response.outcome.get()
   }
 
-  /// Polls `operation.get` until terminal or `timeout`; never re-sends the mutation.
   package func wait(_ operation: HostOperationID, timeout: Duration) throws(HostControlError)
     -> OperationReceipt
   {

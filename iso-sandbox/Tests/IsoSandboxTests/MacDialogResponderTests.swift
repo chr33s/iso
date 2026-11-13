@@ -64,7 +64,6 @@ private func terminalDesktop(_ r: CUDialogResponse = .allow) throws -> CUExpecta
 }
 
 @Test func lookalikesAndIncompleteDialogsAreNotConsent() {
-  // A lone Allow, anywhere, is not a dialog.
   #expect(CUDialogClassifier.classify([line("Allow", 1000, 520)]) == .none)
   // A prompt without its deny button.
   #expect(
@@ -75,13 +74,11 @@ private func terminalDesktop(_ r: CUDialogResponse = .allow) throws -> CUExpecta
   far[4].x = 100
   far[4].y = 1100
   #expect(CUDialogClassifier.classify(far) == .ambiguous(.buttonsNotFound))
-  // Two prompts, or two Allow buttons near one prompt.
   #expect(
     CUDialogClassifier.classify(tccLines() + tccLines(dy: 300)) == .ambiguous(.multiplePrompts))
   #expect(
     CUDialogClassifier.classify(tccLines() + [line("Allow", 1060, 560, w: 50)])
       == .ambiguous(.multiplePrompts))
-  // An unknown folder or an unparsable sentence.
   #expect(
     CUDialogClassifier.classify(tccLines(folder: "Pictures")) == .ambiguous(.unparsedPrompt))
 }
@@ -163,7 +160,6 @@ private func terminalDesktop(_ r: CUDialogResponse = .allow) throws -> CUExpecta
   ] {
     #expect(throws: (any Error).self) { try decode(bad) }
   }
-  // Each requester refusal on its own.
   for bad in [
     "", String(repeating: "a", count: 65), "Term\ninal", "a\"b", " Terminal", "Visual  Studio",
     "a\u{201C}b",
@@ -179,11 +175,9 @@ private func terminalDesktop(_ r: CUDialogResponse = .allow) throws -> CUExpecta
 }
 
 @Test func anAllowBehindTheAlertIsNotItsButton() {
-  // OCR missed the alert's own Allow; a window behind has one within reach.
   var lines = tccLines().filter { $0.text != "Allow" }
   lines.append(line("Allow", 1100, 780, w: 50))
   #expect(CUDialogClassifier.classify(lines) == .ambiguous(.buttonsNotFound))
-  // Stacked buttons, centred on one another, are a pair.
   var stacked = tccLines().filter { $0.text != "Allow" && $0.text != "Don\u{2019}t Allow" }
   stacked += [line("Allow", 860, 520, w: 200), line("Don\u{2019}t Allow", 860, 560, w: 200)]
   guard case .consent = CUDialogClassifier.classify(stacked) else {
@@ -237,7 +231,6 @@ private func failure(_ f: CUTransportFailure?) -> String { f.map { "\($0)" } ?? 
   }
   #expect(MacCUDialogTransport.frameFailure(refused(.blankFrame)) == nil)
   #expect(MacCUDialogTransport.frameFailure(refused(nil)) == nil)
-  // Clicks: refused before input is not attempted; anything else may be.
   #expect(
     failure(MacCUDialogTransport.clickFailure(refused(.busy, beforeInput: true))) == "refused")
   #expect(
@@ -284,7 +277,6 @@ private func failure(_ f: CUTransportFailure?) -> String { f.map { "\($0)" } ?? 
     Issue.record("blocked by text outside the alert")
     return
   }
-  // With no consent prompt on screen, it still blocks.
   #expect(CUDialogClassifier.classify([sidebar]) == .blocked(.authentication))
 }
 
@@ -315,7 +307,6 @@ private final class ScriptedTransport: CUDialogTransport {
 
   func observe(_ purpose: CUObservePurpose) async throws(CUTransportFailure) -> CUObservedFrame? {
     observed += 1
-    // The last step repeats once the script runs out.
     let step = steps.count > 1 ? steps.removeFirst() : steps[0]
     switch step {
     case .frame(let o, let age):
@@ -363,7 +354,6 @@ private func report(
   let (r, t) = try await run([.blank, .frame(.none), .frame(dialog), .frame(dialog), .frame(.none)])
   #expect(r == report(.responded, attempted: true))
   #expect(t.clicks.count == 1)
-  // Based on the re-observation, not the frame the decision came from.
   #expect(t.clicks.first?.0 == allow)
   #expect(t.clicks.first?.1 == "f4")
 }
@@ -385,21 +375,17 @@ private func report(
   let (r, t) = try await run([.frame(partial), .frame(dialog), .frame(dialog), .frame(.none)])
   #expect(r.outcome == .responded)
   #expect(t.clicks.count == 1)
-  // Still ambiguous when the wait runs out: reported, not clicked.
   let (late, lt) = try await run([.frame(partial)])
   #expect(late == report(.needsUser, .buttonsNotFound))
   #expect(lt.clicks.isEmpty)
 }
 
 @Test func aDialogThatChangesBeforeTheClickIsNotClicked() async throws {
-  // Moved past the tolerance, replaced by another app's prompt at the same
-  // place, gone, or not observed.
   for second in [ScriptedTransport.Step.frame(moved), .frame(finder), .frame(.none), .blank] {
     let (r, t) = try await run([.frame(dialog), second, .frame(.none)])
     #expect(r == report(.needsUser, .dialogChanged))
     #expect(t.clicks.isEmpty)
   }
-  // Within the tolerance it is the same dialog.
   let (r, t) = try await run([
     .frame(dialog), .frame(CUDialogClassifier.classify(tccLines(dy: 6))), .frame(.none),
   ])
@@ -411,7 +397,6 @@ private func report(
   let (stale, st) = try await run([.frame(dialog), .frame(dialog, age: 6)])
   #expect(stale.reason == .observationStale)
   #expect(st.clicks.isEmpty)
-  // Timestamps travel in whole seconds: 5.9 s still counts as 5.
   let (fresh, ft) = try await run([.frame(dialog), .frame(dialog, age: 5.9), .frame(.none)])
   #expect(fresh.outcome == .responded)
   #expect(ft.clicks.count == 1)
@@ -427,7 +412,6 @@ private func report(
 }
 
 @Test func onlyPositiveEvidenceCountsAsGone() async throws {
-  // Blank and ambiguous frames after the click are not "gone".
   for after in [ScriptedTransport.Step.blank, .frame(.ambiguous(.buttonsNotFound)), .frame(dialog)]
   {
     let (r, t) = try await run([.frame(dialog), .frame(dialog), after])
@@ -435,7 +419,6 @@ private func report(
     #expect(t.clicks.count == 1)
     #expect(t.observed == 5)
   }
-  // A different request in its place means ours is gone.
   let (r, _) = try await run([.frame(dialog), .frame(dialog), .frame(finder)])
   #expect(r.outcome == .responded)
 }
@@ -484,7 +467,6 @@ private func report(
 @Test func noDialogWithinTheWaitNeedsTheUser() async throws {
   let (r, t) = try await run([.frame(.none)])
   #expect(r == report(.needsUser, .noSupportedDialog))
-  // At 0, 1, 2 and 3 s of a 3 s wait.
   #expect(t.observed == 4)
   #expect(t.clicks.isEmpty)
 }

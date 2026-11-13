@@ -74,10 +74,8 @@ struct PolicyShow: ParsableCommand {
 }
 
 /// The trusted host-terminal confirmation for a governed `iso pull --apply`.
-/// Nil (so the apply reports `approval_required`) in machine-output mode or
-/// without an interactive terminal. The review is written to, and the
-/// answer read from, the controlling terminal: piped input, environment
-/// variables and `--force` cannot approve.
+/// Nil (apply reports `approval_required`) in machine mode or without a terminal.
+/// Review and answer use the controlling terminal: pipes, env and `--force` cannot approve.
 enum TerminalStageConfirmation {
   static func make(global: GlobalOptions, instance: Instance) -> StageConfirmation? {
     guard global.output != .json, isatty(STDIN_FILENO) == 1, isatty(STDERR_FILENO) == 1 else {

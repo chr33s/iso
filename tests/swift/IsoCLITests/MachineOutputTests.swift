@@ -11,7 +11,6 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
   .appending(path: "../../fixtures/machine/v1").standardized
 
 /// Semantic comparison: member order and whitespace are not part of the
-/// contract.
 private func json(_ data: Data) throws -> NSObject {
   try #require(JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? NSObject)
 }
@@ -206,7 +205,6 @@ private let copyWorkspace = WorkspaceState(
     (failed as? NSDictionary)?["details"] as? NSDictionary == [
       "providers": ["zed"], "name": NSNull(), "action": NSNull(),
     ])
-  // Any other failure after the lifecycle step still names the instance.
   let alias = try encoded(MachineFailure(FailureAfterLifecycle(created, cause: HostError("x"))))
   #expect((alias as? NSDictionary)?["code"] as? String == "OPERATION_FAILED")
   #expect(
@@ -236,7 +234,6 @@ private let copyWorkspace = WorkspaceState(
         "capabilities", "list", "status", "up", "start", "stop", "destroy", "code", "zed",
         "ssh-config", "audit",
       ])
-  // Workload streams stay out of v1.
   for command: any ParsableCommand.Type in [
     Shell.self, Exec.self, Logs.self, ClaudeCommand.self, CodexCommand.self, RunCommand.self,
   ] {
@@ -365,7 +362,6 @@ private let copyWorkspace = WorkspaceState(
   ] {
     #expect(throws: (any Error).self, "\(argv)") { try IsoCommand.parseAsRoot(argv) }
   }
-  // Legacy JSON keeps working beside the default text format.
   #expect(try IsoCommand.parseAsRoot(["list", "--json", "--output", "text"]) is List)
   #expect(try IsoCommand.parseAsRoot(["status", "--output", "json", "--quiet"]) is Status)
 }
@@ -385,7 +381,6 @@ private let copyWorkspace = WorkspaceState(
     failure.reason
       == .interactionRequired(
         .passphrase(descriptorVariable: PassphraseInput.descriptorVariable)))
-  // Automation's descriptor still works without a terminal.
   var fds: [Int32] = [0, 0]
   #expect(pipe(&fds) == 0)
   #expect(write(fds[1], "pw\n", 3) == 3)
@@ -437,7 +432,6 @@ private struct PassphraseRequired: SecretReferenceResolver {
   let details = try #require(untyped["details"] as? NSDictionary)
   #expect(details == ["destroyed": [["name": "project-a", "image": "default"]]] as NSDictionary)
 
-  // A typed cause keeps its code and its own details beside `destroyed`.
   let typed = MachineFailure(
     PartialDestroy(
       destroyed: removed,
@@ -447,6 +441,5 @@ private struct PassphraseRequired: SecretReferenceResolver {
   #expect(
     try encoded(typed.details!)
       == ["name": "b", "destroyed": [["name": "project-a", "image": "default"]]] as NSDictionary)
-  // Text mode prints only the cause, as before.
   #expect("\(PartialDestroy(destroyed: removed, cause: HostError("boom")))" == "boom")
 }

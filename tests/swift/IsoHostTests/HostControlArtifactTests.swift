@@ -142,7 +142,6 @@ import Testing
     }
     archive += [UInt8](repeating: 0, count: 1024)
     #expect(try ArchiveValidator.validate(bytes: archive).members == members)
-    // The tree still sees every implied ancestor.
     let conflict =
       tarArchive([("a/b/c/d", [1])], extra: [tarHeader(name: "a/b", size: 0, type: "0")])
     #expect(throws: HostControlError.self) { try ArchiveValidator.validate(bytes: conflict) }
@@ -307,7 +306,6 @@ import Testing
     #expect(state.phase == .stopping)
     #expect(state.artifact != nil)
     #expect(f.native.vm(runtime) != .stopped)
-    // Once the stop works, the next pass publishes with a retention deadline.
     f.native.set { $0.stopRefused = false }
     f.supervisor.runPending()
     state = try inspect(f, run)
@@ -354,7 +352,6 @@ import Testing
     #expect(chmod(runsRoot, 0o500) == 0)
     #expect(throws: HostControlError.self) { try runCreate(f, RunID.generate()) }
     #expect(chmod(runsRoot, 0o700) == 0)
-    // The child create was undone with it, and no ledger slot is held.
     #expect(f.supervisor.store.operationIDs().isEmpty)
     #expect(f.supervisor.store.usedSlots() == 0)
     #expect(f.supervisor.store.instanceIDs().isEmpty)
@@ -373,7 +370,6 @@ import Testing
     #expect(f.supervisor.store.operationIDs().isEmpty)
     #expect(f.supervisor.store.instanceIDs().isEmpty)
     #expect(f.native.calls("create") == 0)
-    // The run id is free again.
     #expect(try runCreate(f, run).disposition == .accepted)
   }
 
@@ -406,7 +402,6 @@ import Testing
     let instance = try #require(state.instanceID)
     let runtime = try #require(try f.supervisor.store.loadInstance(instance)?.runtimeID)
     #expect(f.native.vm(runtime) == .stopped)
-    // The client downloads without booting the VM.
     let chunk = try f.call(.artifactRead(handle: handle, offset: 0, length: 512)).get()
     #expect(chunk["data"] != nil)
     // A wrong digest cannot acknowledge.
@@ -445,7 +440,6 @@ import Testing
     f.supervisor.runPending()
     #expect(f.native.calls("create") == 0)
     #expect(f.supervisor.runs.slotsInUse() == 0)
-    // Only the cancelled records and the tombstone remain.
     #expect(f.supervisor.store.usedSlots() <= before + 3)
   }
 
@@ -491,7 +485,6 @@ import Testing
     // Time passes before recovery: a recomputed deadline would differ.
     f.clock.advance(.seconds(120))
     let recover = try f.receipt(.runResultsRecover(run: run, expectedGeneration: state.generation))
-    // The allowance is durable at admission.
     #expect(try inspect(f, run).recoveryUsed)
     f.supervisor.runPending()
     #expect(try f.operation(recover.operationID).state == .succeeded)

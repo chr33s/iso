@@ -497,8 +497,6 @@ package struct AuditPage: Sendable {
 package struct AuditReader: Sendable {
   package static let defaultLimit = 100
   package static let maxLimit = 1000
-  /// Serialized bytes of the items (and, for JSONL, control records) one
-  /// page may carry; fewer items are returned to stay within it.
   package static let pageBytes = 1 << 20
 
   package let store: AuditStore
@@ -541,13 +539,11 @@ package struct AuditReader: Sendable {
     } while next != nil
   }
 
-  /// The live reader behind `--follow`, text and JSONL alike: drains each
-  /// snapshot whose `H` advanced, then waits for the store to change.
-  /// `snapshot` receives the first page of each such snapshot; `page` every
-  /// page, the events in it not yet delivered, and where to continue. A
-  /// passed-in cursor that predates a new association fails with
-  /// `resetRequired`; once this follower has delivered records it re-reads
-  /// from the start instead.
+  /// The live reader behind `--follow`: drains each snapshot whose `H` advanced,
+  /// then waits for the store to change. `snapshot` receives each snapshot's first
+  /// page, `page` every page's undelivered events and where to continue. A cursor
+  /// predating a new association fails with `resetRequired`; once this follower
+  /// has delivered records it re-reads from the start instead.
   package func follow(
     _ id: AuditRunID, after: AuditCursor?, limit: Int, byteBudget: Int = pageBytes,
     poll: Duration = .milliseconds(500), until stop: () -> Bool = { false },
@@ -570,7 +566,6 @@ package struct AuditReader: Sendable {
             selection, after: cursor, limit: limit, byteBudget: byteBudget, in: folded)
           external = false
           if first {
-            // An unchanged snapshot is an idle poll.
             if current.asOf.sequence == lastHead && cursor?.kind == .rolling { break }
             try snapshot(current)
             first = false

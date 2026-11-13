@@ -1,11 +1,8 @@
 import Foundation
 import Virtualization
 
-/// One VM on its own serial queue: construction, state observation, delegate,
-/// start and the stop sequence. `vm-run` and `vm-view` both use it, so the only
-/// difference between the two owners is the view. Every VZ call happens on
-/// `queue`; `instance` is new for every VM, so a session bound to one VM cannot
-/// act on its replacement.
+/// One VM on its own serial queue; every VZ call runs on `queue`, and `instance` is new for
+/// every VM so a session bound to one cannot act on its replacement.
 final class VMHost: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
   let queue: DispatchQueue
   let log: EventLog
@@ -71,7 +68,6 @@ final class VMHost: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
     queue.sync { vm.map { VZVirtualMachineViewAdaptor(virtualMachine: $0) } }
   }
 
-  /// Start and wait for `running`. Result: `result` pass/fail, `error`, `seconds`.
   func start() async -> [String: Any] {
     let t0 = Date()
     var r: [String: Any] = await withCheckedContinuation { cont in

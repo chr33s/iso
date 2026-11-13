@@ -5,11 +5,9 @@
 import IsoConfiguration
 import IsoCore
 
-/// A `devcontainer.json` value as the baseline decoded it (`serde_json`
-/// with `preserve_order`). Objects keep every member in document order;
-/// consumers merge repeated keys per the target type (`mergedMembers`,
-/// `sortedMembers`) or reject them for modeled fields. Numbers keep
-/// serde_json's classes: unsigned and negative integers, otherwise `f64`.
+/// A `devcontainer.json` value as the baseline (`serde_json`, `preserve_order`)
+/// decoded it: objects keep every member in document order, consumers merge or
+/// reject repeated keys per target type, numbers keep serde_json's classes.
 /// Offsets locate the value in the scanned bytes for diagnostics.
 package struct DevcontainerJSON: Sendable, Equatable {
   package indirect enum Value: Sendable, Equatable {

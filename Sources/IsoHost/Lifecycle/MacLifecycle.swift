@@ -2,15 +2,11 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// macOS guests on the same backend: `iso-sandbox macos …` sandboxes
-/// cloned from a template that `iso setup --guest macos` built. The guest's
-/// SSH host key comes from the runtime, which pinned it over the
-/// authenticated guest-helper channel and has the helper confirm it on
-/// every boot; the host never trusts a key on first use.
+/// macOS guests on the same backend: `iso-sandbox macos …` sandboxes cloned from
+/// a template `iso setup --guest macos` built. The runtime pins the SSH host key
+/// over the authenticated guest-helper channel and has the helper confirm it each
+/// boot; the host never trusts a key on first use.
 extension AppleBackend {
-  /// One runtime inspection of a sandbox, whatever its guest OS, gated as
-  /// that inspection: status, boot and gate never come from different
-  /// snapshots.
   /// An owner's per-boot computer-use counts, as one observation saw them.
   package struct ComputerUseCounts: Sendable {
     /// The boot they count; nil only without an observation.
@@ -87,7 +83,6 @@ extension AppleBackend {
     }
   }
 
-  /// A macOS instance records its template as its image reference.
   static func macTemplate(_ sidecar: MachineSidecar) throws(RuntimeError) -> MachineName {
     do { return try MachineName(sidecar.imageRef) } catch {
       throw .identityConflict(
@@ -278,12 +273,9 @@ extension AppleBackend {
     }
   }
 
-  /// Audits the computer use of the boot `iso stop` just stopped: guest
-  /// computer use when the instance was created with it, and the live view
-  /// when a stream started. They are the counts in the observation that
-  /// proved the instance running, moments before it stopped: no second
-  /// `inspect` (a subprocess, and for macOS a guest-helper round trip) is
-  /// spent on instances that never used either.
+  /// Audits the computer use of the boot `iso stop` just stopped (guest computer
+  /// use, live view), from the counts in the observation that proved it running:
+  /// no second `inspect` is spent on instances that never used either.
   package func auditComputerUse(_ running: Running) {
     let events = Self.computerUseEvents(
       createdWithGuestComputerUse: running.sidecar.guestComputerUse != nil,
@@ -299,10 +291,9 @@ extension AppleBackend {
     ComputerUseAudit.record(running.instance, boot: boot, events, diagnostics: diagnostics)
   }
 
-  /// Audits boots that ended without `iso stop` reading their counts
-  /// (session expiry, guest poweroff, an owner crash, a failed stop), from
-  /// what their owners last wrote. Each boot is recorded once, at the first
-  /// observation after it ended.
+  /// Audits boots that ended without `iso stop` reading their counts (expiry,
+  /// poweroff, owner crash, failed stop) from what their owners last wrote, once
+  /// per boot at the first observation after it ended.
   func auditEndedBoots(
     _ instance: Instance, createdWithGuestComputerUse: Bool, _ boots: [EndedBoot]
   ) {
@@ -366,10 +357,9 @@ extension AppleBackend {
     return coreAI
   }
 
-  /// After a macOS sandbox has booted and passed the gate: a reduced host
-  /// (which only the Core AI build reports) is audited for every boot; for a
-  /// Core AI sandbox, also the `up` line and its audit events. Never fails
-  /// the boot: the guest is otherwise sound, and a missing kind is a warning.
+  /// After a macOS sandbox boots and passes the gate: a reduced host (Core AI build
+  /// only) is audited every boot; a Core AI sandbox also gets the `up` line and its
+  /// events. Never fails the boot: a missing kind is a warning.
   func reportHostAndCoreAI(_ instance: Instance, runtime: SandboxRuntime, machine: MachineName) {
     guard var inspection = try? runtime.macInspect(machine) else { return }
     if inspection.effective?.hostSecurityReduced == true {
@@ -409,7 +399,6 @@ extension AppleBackend {
 
   // MARK: Delete
 
-  /// Stop and delete `machine` through the namespace that holds it.
   func deleteListedSandbox(
     _ sandboxes: SandboxNamespace, _ instance: Instance, machine: MachineName, owner: Owner,
     journal: inout Journal?

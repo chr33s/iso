@@ -47,10 +47,9 @@ package struct DevcontainerReport: Sendable, Equatable, Encodable {
     entries.append(Entry(key: key, status: status, source: source, value: value, note: note))
   }
 
-  /// Plain-text table for stderr. Column widths are byte lengths and
-  /// padding counts characters, as the baseline's `{:<w$}` did. Cells come
-  /// from an untrusted file, so control characters other than newline and
-  /// tab, and format characters, are shown as `?`.
+  /// Plain-text table for stderr. Widths are byte lengths, padding counts
+  /// characters (as the baseline's `{:<w$}`). Cells are untrusted: control
+  /// characters other than newline/tab, and format characters, show as `?`.
   package func render() -> String {
     var out = ""
     if let sourcePath { out += "devcontainer.json: \(displaySafe(sourcePath))\n" }

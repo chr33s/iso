@@ -3,12 +3,10 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// The fixed internal entrypoints an SSH frontend may invoke.
 package enum HostAgentEntrypoint: String, Sendable {
   case serve
   case relay
 
-  /// The remote command: the enrolled path plus fixed arguments only.
   package func remoteCommand(_ agent: AgentPath) -> String {
     RemoteCommand().arg(agent.rawValue).literal(" host-agent \(rawValue) --stdio").rendered
   }
@@ -115,7 +113,6 @@ package struct HostEnrollment: Codable, Sendable, Equatable {
   }
 }
 
-/// Enrolled hosts under `<state root>/hosts`, one file per alias.
 package struct HostRegistry: Sendable {
   let directory: String
 
@@ -147,9 +144,8 @@ package struct HostRegistry: Sendable {
     return records
   }
 
-  /// Saves a new enrollment. A second alias for the same installation is
-  /// allowed (one identity); re-enrolling an alias under a different
-  /// identity requires removing it first.
+  /// Saves a new enrollment. A second alias for the same installation is allowed; re-
+  /// enrolling an alias under a different identity requires removing it first.
   package func save(_ record: HostEnrollment, replacing: Bool = false) throws(HostError) {
     try StateStore.ensurePrivateDirectory(directory)
     if let existing = try load(record.alias), !replacing {

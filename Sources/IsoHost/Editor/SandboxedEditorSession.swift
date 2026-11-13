@@ -20,7 +20,6 @@ package struct SandboxedEditorSession {
   var enclaveParent: () throws -> String = { try EditorEnclave.sessionsDirectory() }
   var sandboxExec = "/usr/bin/sandbox-exec"
 
-  /// Why supervision stopped.
   enum End {
     case exited
     case tunnelClosed
@@ -166,7 +165,6 @@ package struct SandboxedEditorSession {
     }
   }
 
-  /// Best effort: the private key is deleted with the enclave anyway.
   func revoke(_ comment: String) {
     let command = RemoteCommand()
       .literal("f=~/.ssh/authorized_keys; [ -f \"$f\" ] || exit 0; { grep -vF -- ")

@@ -110,8 +110,6 @@ final class DPHarness: Sendable {
       synthetic: false),
   ]
 
-  /// Registers one allocation and decodes its runner material as the
-  /// guest would receive it.
   func register(
     run: PreflightRunID = PreflightRunID.generate(),
     attempt: JobAttemptID = JobAttemptID.generate(),
@@ -208,7 +206,6 @@ final class DPHarness: Sendable {
     return (runnerToken, jobToken, job)
   }
 
-  /// Turns an absolute signed URL into a request target.
   static func target(_ url: String) -> String {
     guard let range = url.range(of: "://") else { return url }
     let rest = url[range.upperBound...]

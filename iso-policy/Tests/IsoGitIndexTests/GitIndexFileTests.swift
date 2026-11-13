@@ -128,7 +128,6 @@ private struct IndexBuilder {
   #expect(
     refusal(IndexBuilder(version: 2, items: [.init(path: "d", mode: 0o040000)]).bytes())
       == .sparseIndex)
-  // A count larger than the entries present runs off the end.
   var short = Array(IndexBuilder(version: 2, items: [.init(path: "a")]).bytes().dropLast(20))
   short[11] = 2
   #expect(refusal(short + Array(Insecure.SHA1.hash(data: short))) == .truncated)
@@ -140,7 +139,6 @@ private struct IndexBuilder {
   let signed = IndexBuilder(version: 4, items: [.init(path: "b.txt")]).bytes()
   let skipped = Array(signed.dropLast(20)) + [UInt8](repeating: 0, count: 20)
   #expect(try GitIndexFile.parse(skipped).map(\.path) == ["b.txt"])
-  // Structural checks still apply to an unverified index.
   var short = Array(skipped.dropLast(20))
   short[11] = 2
   #expect(refusal(short + [UInt8](repeating: 0, count: 20)) == .truncated)
@@ -185,9 +183,7 @@ private let splitIndexFixture =
 @Test func malformedExtensionsAreRefused() {
   let base = Array(IndexBuilder(version: 4, items: [.init(path: "a")]).bytes().dropLast(20))
   func signed(_ body: [UInt8]) -> [UInt8] { body + Array(Insecure.SHA1.hash(data: body)) }
-  // A length running past the trailer.
   #expect(refusal(signed(base + Array("TREE".utf8) + [0, 0, 1, 0])) == .badExtension)
-  // A header cut short.
   #expect(refusal(signed(base + Array("TRE".utf8))) == .badExtension)
   // The largest length cannot overflow the bound.
   #expect(refusal(signed(base + Array("TREE".utf8) + [0xFF, 0xFF, 0xFF, 0xFF])) == .badExtension)

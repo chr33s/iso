@@ -39,7 +39,6 @@ import Testing
     let op = HostOperationID.generate()
     let receipt = try OperationReceipt(wire: client.call(.vmCreate(try f.spec()), operation: op))
     #expect(receipt.disposition == .accepted)
-    // A second frontend sees the same durable operation.
     let other = HostControlClient(
       transport: LocalHostTransport(paths: paths), expected: (hello.hostID, hello.ownerID))
     #expect(try OperationReceipt(wire: other.call(.operationGet(op))).operationID == op)
@@ -92,7 +91,6 @@ import Testing
     _ = write(fd, "not json\n", 9)
     var byte: UInt8 = 0
     #expect(read(fd, &byte, 1) == 0)
-    // The service still answers new streams.
     let client = HostControlClient(transport: LocalHostTransport(paths: paths), expected: nil)
     #expect(try client.hello(clientBuild: "test").hostID == f.hostID)
   }
@@ -210,7 +208,6 @@ import Testing
   @Test func requestBytesTravelOnStdinNotArgv() throws {
     let script = FileManager.default.temporaryDirectory.appending(path: "fake-ssh-\(UUID())").path
     defer { unlink(script) }
-    // A fake ssh that echoes stdin back as the reply and records argv.
     let argvLog = script + ".argv"
     defer { unlink(argvLog) }
     try Data("#!/bin/sh\nprintf '%s\\n' \"$@\" > '\(argvLog)'\ncat\n".utf8).write(
@@ -262,7 +259,6 @@ import Testing
     #expect(options.contains("StrictHostKeyChecking=yes"))
     #expect(options.contains("UserKnownHostsFile=/k/known_hosts"))
     #expect(options.contains("HostKeyAlias=proj.build-mac.iso-remote"))
-    // Route identity is part of connection identity.
     #expect(target != direct)
     #expect(!direct.sshOptions.contains { $0.hasPrefix("ProxyCommand=") })
   }
@@ -302,7 +298,6 @@ import Testing
       name: try InstanceName("proj"), policyHash: HostWire.sha256([]), createdBy: .generate(),
       lastState: nil, lastObservedAt: nil)
     let lock = try CoordinatorRecord.claim(config, binding)
-    // One coordinator per binding.
     #expect(throws: HostControlError.self) { try CoordinatorRecord.claim(config, binding) }
     let descriptor = root + "/descriptor.json"
     try Data("{}".utf8).write(to: URL(fileURLWithPath: descriptor))
@@ -319,7 +314,6 @@ import Testing
     // This test process is not an `iso host session`: its record is not live.
     #expect(CoordinatorRecord.live(config, binding) == nil)
     lock.release()
-    // A new claim clears a stale record.
     try StateStore.writeControlFile(record, to: directory + "/coordinator.json")
     let second = try CoordinatorRecord.claim(config, binding)
     defer { second.release() }

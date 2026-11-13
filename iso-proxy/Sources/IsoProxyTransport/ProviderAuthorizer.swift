@@ -19,7 +19,6 @@ package final class ProviderAuthorizer: Sendable {
   private let clock: any MonotonicClock
   private let diagnostics: PolicyDiagnostics
 
-  /// Nil when the startup document carries no authorization block.
   package convenience init?(config: ProxyConfig) {
     self.init(config: config, clock: SystemMonotonicClock(), log: PolicyDiagnostics.standardError)
   }

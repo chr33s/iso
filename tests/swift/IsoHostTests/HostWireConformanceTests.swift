@@ -56,7 +56,6 @@ import Testing
   ]
   static let qualifiedImageDigest = "sha256:" + String(repeating: "c", count: 64)
 
-  /// A complete evidence manifest with sorted keys, so its digest is stable.
   static func manifestBytes() throws -> [UInt8] {
     var tuple = liveTuple
     tuple["image"] = "ci-runner@" + qualifiedImageDigest
@@ -87,7 +86,6 @@ import Testing
       ], liveTuple: liveTuple)
   }
 
-  /// Every result shape iso-ci decodes, from the host's own encoders.
   static func results() throws -> [(String, Result<JSONValue, HostControlError>)] {
     let id = Identity()
     var cases: [(String, Result<JSONValue, HostControlError>)] = []
@@ -266,7 +264,6 @@ import Testing
     for (want, got) in zip(expected, actual) {
       #expect(got == want, "regenerate with ISO_UPDATE_FIXTURES=1 after a reviewed wire change")
     }
-    // Each committed response is also one the host's own decoder accepts.
     for line in try Self.lines("responses.jsonl") {
       #expect(throws: Never.self, "\(line.name)") { try HostResponse.decode(frame: line.frame) }
     }
@@ -277,7 +274,6 @@ import Testing
     try #require(!lines.isEmpty)
     var methods: Set<HostMethod> = []
     for line in lines {
-      // `<method>` or `<method>/<variant>`.
       let expected = String(line.name.split(separator: "/")[0])
       let request: HostRequest
       do { request = try HostRequest.decode(frame: line.frame) } catch {

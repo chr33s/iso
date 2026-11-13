@@ -41,10 +41,10 @@ package struct StageApplyError: Error, CustomStringConvertible {
   }
 }
 
-/// Installs a validated manifest: complete preflight before the first
-/// mutation, then each change through the verified destination handle,
-/// descriptor-relative, never following a link, rechecking the expected
-/// old object immediately before each replacement.
+/// Installs a validated manifest: complete preflight before the first mutation,
+/// then each change through the verified destination handle, descriptor-relative,
+/// never following a link, rechecking the expected old object before each
+/// replacement.
 struct StageApplier {
   let manifest: StageManifest
   let tree: String
@@ -271,7 +271,6 @@ struct StageApplier {
     }
   }
 
-  /// Opens `components` below `root` one at a time, refusing links.
   static func openDirectory(_ root: Int32, _ components: [String], label: String) throws -> Int32 {
     var directory = root
     for component in components {

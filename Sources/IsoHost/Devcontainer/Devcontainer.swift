@@ -65,7 +65,6 @@ package struct DevcontainerTranslation: Sendable {
   package var memory: MiB?
   package var disk: GiB?
   package var postStart: String?
-  /// Byte order of name (Rust `BTreeMap`).
   package var guestEnvironment: [(name: EnvVarName, value: String)] = []
   package var forwardPorts: [PortForward] = []
   package var mounts: [Mount] = []
@@ -80,10 +79,8 @@ package struct DevcontainerTranslation: Sendable {
 }
 
 package enum Devcontainer {
-  /// Where discovery looks inside a workspace or mount root.
   package static let defaultRelativePath = ".devcontainer/devcontainer.json"
 
-  /// Rust `IsoConfig::devcontainer_preferences_path`.
   package static func preferencesPath(_ config: IsoConfig) -> String {
     config.stateRoot.appending("devcontainer_preferences.json").path
   }
@@ -603,7 +600,6 @@ package enum Devcontainer {
       guestEnvironment: t.guestEnvironment)
   }
 
-  /// The CLI disk wins; otherwise the translation's.
   package static func effectiveDisk(cli: GiB?, _ t: DevcontainerTranslation) -> GiB? {
     cli ?? t.disk
   }
@@ -617,7 +613,6 @@ package enum Devcontainer {
   }
 }
 
-/// Rust `Path::join` for a relative component.
 func joinPath(_ base: String, _ component: String) -> String {
   if base.isEmpty { return component }
   return base.hasSuffix("/") ? base + component : base + "/" + component

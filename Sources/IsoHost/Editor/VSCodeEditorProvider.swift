@@ -2,7 +2,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Visual Studio Code over Remote-SSH.
 package struct VSCodeEditorProvider: EditorProvider {
   package let id = EditorProviderID.code
   package let displayName = "Visual Studio Code"

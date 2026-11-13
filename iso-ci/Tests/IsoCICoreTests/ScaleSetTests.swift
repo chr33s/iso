@@ -32,7 +32,6 @@ final class FakeScaleSetAuthority: ScaleSetAuthority {
 final class FakeActionsService: Sendable {
   struct State {
     var scaleSetExists = false
-    /// Whether the App may create an elastic scale set (Administer).
     var elasticAllowed = true
     var elastic = false
     /// Each queued message's body and the statistics GitHub reports with it.

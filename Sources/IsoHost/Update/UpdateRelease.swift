@@ -11,7 +11,6 @@ import IsoCore
 package enum UpdateChannel {
   package static let repository = "chr33s/iso"
   package static let defaultAPIBase = "https://api.github.com"
-  /// Release asset holding the Sigstore provenance bundle.
   package static let bundleAsset = "attestations.jsonl"
   package static let checksumAsset = "SHA256SUMS"
   /// `ssh-keygen -Y sign` output over `SHA256SUMS`; see `ReleaseSigners`.
@@ -24,10 +23,9 @@ package enum UpdateChannel {
   package static func signerIdentity(tag: String) -> String {
     "https://github.com/\(repository)/\(signerWorkflow)@refs/tags/\(tag)"
   }
-  /// Test-only: point metadata and downloads at a local fixture. Honored
-  /// only by update-fixture builds (`-D ISO_UPDATE_FIXTURES`); a production
-  /// build refuses to update while it is set. Disables attestation
-  /// verification (and says so on stderr).
+  /// Test-only: point metadata and downloads at a local fixture. Honored only by
+  /// update-fixture builds (`-D ISO_UPDATE_FIXTURES`); a production build refuses to
+  /// update while it is set. Disables attestation verification (said on stderr).
   package static let apiBaseVariable = "ISO_UPDATE_API_BASE_URL"
 
   package static func targetTriple() throws(HostError) -> String {
@@ -43,12 +41,10 @@ package enum UpdateChannel {
     #endif
   }
 
-  /// Release workflow naming: `iso-<tag>-<triple>.tar.gz`.
   package static func assetName(tag: String, triple: String) -> String {
     "iso-\(tag)-\(triple).tar.gz"
   }
 
-  /// The directory the archive unpacks to: `iso-<tag>-<triple>/`.
   package static func archiveDirectory(tag: String, triple: String) -> String {
     "iso-\(tag)-\(triple)"
   }
@@ -121,10 +117,10 @@ package struct Release: Sendable, Equatable, Decodable {
     }
   }
 
-  /// An asset is used only when it is the one asset of that name and its
-  /// URL is exactly this repository's download URL for this tag and name:
-  /// no other host, user info, port, query, fragment or encoded path. A
-  /// fixture origin (tests only) must prefix the URL instead.
+  /// An asset is used only when it is the one asset of that name and its URL is
+  /// exactly this repository's download URL for this tag and name (no other host,
+  /// user info, port, query, fragment or encoded path). A test-only fixture origin
+  /// must prefix the URL instead.
   package func requireBound(_ asset: Asset, fixtureBase: String?) throws {
     guard assets.filter({ $0.name == asset.name }).count == 1 else {
       throw HostError("Release \(tag) lists \(asset.name) more than once; refusing it")
@@ -152,12 +148,11 @@ package struct Release: Sendable, Equatable, Decodable {
 }
 
 package enum Checksums {
-  /// The digest for `file` in a `sha256sum`-style listing. Accepts
-  /// `<hash>  <file>` and `<hash> *<file>`, skips blank and `#` lines and
-  /// malformed digests. A non-blank line without whitespace ends the search
-  /// (baseline). A listing that names `file` more than once is refused:
-  /// tools disagree on which entry wins, so a signed listing with two
-  /// entries could vouch for a digest its signer never checked.
+  /// The digest for `file` in a `sha256sum`-style listing: `<hash>  <file>` and
+  /// `<hash> *<file>`; blank, `#` and malformed-digest lines are skipped, and a
+  /// non-blank line without whitespace ends the search (baseline). A listing naming
+  /// `file` more than once is refused: tools disagree on which wins, so a signed
+  /// listing could vouch for a digest its signer never checked.
   package static func parse(_ content: String, file: String) -> SHA256Hex? {
     var found: SHA256Hex?
     var entries = 0
@@ -181,7 +176,6 @@ package enum Checksums {
   }
 }
 
-/// Rust `char::is_ascii_whitespace`.
 func isASCIIWhitespace(_ scalar: Unicode.Scalar) -> Bool {
   scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "\u{0C}" || scalar == "\r"
 }
@@ -206,13 +200,9 @@ enum AuthStrategy: Equatable {
 
 /// Whether the release's provenance bundle can be used; decided before IO.
 enum BundleDecision: Equatable {
-  /// The API override is set; verification is skipped.
   case testMode
-  /// `gh` is absent; nothing can verify an attestation.
   case noGh
-  /// The release publishes no bundle asset.
   case noAsset
-  /// Download the bundle from this asset.
   case fetch(Release.Asset)
 
   static func decide(_ release: Release, apiOverridden: Bool, ghPresent: Bool) -> BundleDecision {
@@ -222,7 +212,6 @@ enum BundleDecision: Equatable {
   }
 }
 
-/// Why verification fell back to the attestations API.
 enum APIReason: Equatable {
   case noAsset
   case downloadFailed

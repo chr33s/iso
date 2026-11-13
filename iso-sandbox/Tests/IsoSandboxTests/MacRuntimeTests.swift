@@ -270,7 +270,6 @@ private let binding = CUBinding(
   other.bootId = "owner2"
   #expect(throws: SandboxError.self) { try t.requireFrame(fid, from: other) }
   #expect(throws: SandboxError.self) { try t.requireFrame("owner1-99", from: binding) }
-  // Old frames age out.
   for _ in 0..<CUSessions.keptFrames { _ = t.recordFrame(binding) }
   #expect(throws: SandboxError.self) { try t.requireFrame(fid, from: binding) }
 }
@@ -397,13 +396,11 @@ private func fakeTemplate(_ root: SandboxRoot, _ name: String = "t") throws -> S
   let ma = try Data(contentsOf: root.macSandbox(a.id).machineID)
   let mb = try Data(contentsOf: root.macSandbox(b.id).machineID)
   #expect(ma != mb)
-  // One identifier namespace: a second create of the same id is refused.
   await #expect(throws: SandboxError.self) {
     try await MacSandboxes.create(
       root: root, id: id, owner: "o", template: t, cpus: 4, memoryBytes: 8 << 30, network: .shared,
       authorizedKey: hostKey)
   }
-  // A Linux sandbox directory with the same id also blocks it.
   try FileManager.default.createDirectory(
     at: root.sandbox(try SandboxID("m3")).dir, withIntermediateDirectories: true)
   await #expect(throws: SandboxError.self) {
@@ -536,7 +533,6 @@ private func fakeTemplate(_ root: SandboxRoot, _ name: String = "t") throws -> S
 @Test func aTemplateDeleteWaitsForACreateCloningIt() async throws {
   let root = try tempRoot()
   let t = try fakeTemplate(root)
-  // A create in progress holds the template shared.
   var creating: FileLock? = try FileLock.acquire(root.macTemplateLock(t), .shared)
   let delete = Task.detached { try MacTemplates.delete(root: root, name: t) }
   try await Task.sleep(for: .milliseconds(300))
@@ -637,8 +633,8 @@ private func answerStatus(_ guest: inout GuestEnd, with key: String) -> Bool {
     return
   }
   #expect(second != first)
-  // A reply for the earlier request (late, after its timeout) is ignored.
   var stale = HelperMessage(type: .statusReply)
+  // A reply for the earlier request (late, after its timeout) is ignored.
   stale.id = first
   stale.sshHostKey = "ssh-ed25519 " + Data(repeating: 1, count: 51).base64EncodedString()
   guest.send(stale)
@@ -693,7 +689,6 @@ func aBoundedWriteToAPeerThatNeverReadsGivesUpAtTheDeadline() {
     fds[0], Array("{}\n".utf8), deadline: .now + .milliseconds(300))
   #expect(!sent)
   #expect(ContinuousClock.now - started < .seconds(3))
-  // The descriptor's blocking mode is untouched.
   #expect(fcntl(fds[0], F_GETFL) & O_NONBLOCK == 0)
 }
 
@@ -706,7 +701,6 @@ func aHelperRequestToAGuestThatStopsReadingReturnsWithinItsTimeout() async {
     Issue.record("socketpair")
     return
   }
-  // The test keeps its own handle on the host end to fill it.
   let host = dup(fds[0])
   defer { close(host) }
   guard link.accept(fd: fds[0], retaining: nil) else {
@@ -730,7 +724,6 @@ func aHelperRequestToAGuestThatStopsReadingReturnsWithinItsTimeout() async {
   let acknowledged = await Task.detached { link.requestShutdown(timeout: 0.5) }.value
   #expect(!acknowledged)
   #expect(ContinuousClock.now - started < .seconds(5))
-  // A timed-out write drops the connection rather than leave half a line.
   #expect(await waitFor { !link.isConnected })
 }
 
@@ -807,7 +800,6 @@ func everyStopEndsWhatMustNotOutliveItBeforeTheSequence() async {
   await stopper.started()
   #expect(await stopper.stop() == "guest_helper_shutdown")
   #expect(order.withLock { $0 } == ["before", "sequence"])
-  // No stream starts once a stop has been asked for.
   #expect(await stopper.isStopping)
   #expect(
     CUService.StreamAdmission.deciding(vmState: "running", halting: true)
@@ -818,9 +810,9 @@ func everyStopEndsWhatMustNotOutliveItBeforeTheSequence() async {
       == .refused(state: "starting"))
 }
 
-/// A stop (TTL, signal or control request) while the VM is still starting
-/// is not lost: it waits for the start, then runs, and the exit's grace
-/// counts from the sequence's start, not the request's.
+/// A stop (TTL, signal or control request) while the VM is still starting is not lost: it waits
+/// for the start, then runs, and the exit's grace counts from the sequence's start, not the
+/// request's.
 @Test(.timeLimit(.minutes(1)))
 func aStopWhileStartingRunsOnceStartedWithTheExitArmedFromThere() async throws {
   let timeline = StopTimeline()
@@ -831,7 +823,6 @@ func aStopWhileStartingRunsOnceStartedWithTheExitArmedFromThere() async throws {
       try? await Task.sleep(for: .seconds(3600))
       return "never"
     })
-  // The caller goes away: the request is still remembered.
   let caller = Task { await stopper.stop() }
   try await Task.sleep(for: .milliseconds(500))
   caller.cancel()

@@ -51,7 +51,6 @@ private func hello(boot: String = "B1", enrolled: Bool, mac: String? = nil) -> H
   let badNet =
     #"{"v":1,"type":"network","network":{"address":"10.0.0.2; rm -rf /","prefix":24,"gateway":"10.0.0.1","dns":[]}}"#
   #expect(HelperMessage.parse(line(badNet)) == .failure(.malformed))
-  // Request numbers: absent (older helpers) or 0...Int32.max.
   #expect(HelperMessage.parse(line(#"{"v":1,"type":"ack"}"#)).isSuccess)
   #expect(HelperMessage.parse(line(#"{"v":1,"type":"ack","id":2147483647}"#)).isSuccess)
   #expect(HelperMessage.parse(line(#"{"v":1,"type":"ack","id":-1}"#)) == .failure(.malformed))
@@ -101,7 +100,6 @@ private func hello(boot: String = "B1", enrolled: Bool, mac: String? = nil) -> H
     Handshake.decide(
       hostEnrolled: true, hostKey: k, hello: hello(enrolled: true, mac: good), nonce: nonce)
       == .authenticated)
-  // A replayed MAC from another boot or nonce, a forged key, or none at all.
   #expect(
     Handshake.decide(
       hostEnrolled: true, hostKey: k, hello: hello(boot: "B2", enrolled: true, mac: good),

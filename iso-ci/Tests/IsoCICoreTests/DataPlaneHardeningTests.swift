@@ -8,7 +8,6 @@ import Testing
 /// cross-allocation starvation (P3-5), controller flood (P3-16), and
 /// revocation on unregister.
 @Suite struct DataPlaneHardeningTests {
-  /// Writes a file into the child's `in/` directory as the child would.
   static func stage(_ harness: DPHarness, _ bytes: [UInt8]) throws -> String {
     let name = randomHex(bytes: 16)
     try PrivateFiles.write(bytes, to: harness.childStaging + "/in/" + name)

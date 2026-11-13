@@ -7,7 +7,6 @@ package struct ScheduleRequest: Sendable, Equatable {
   package let id: String
   package let enqueuedAt: EpochSeconds
   package let pool: Name
-  /// Hosts the pool may use, in configuration order.
   package let candidates: [Name]
   package let reservation: ResourceReservation
   package let exclusive: Bool
@@ -57,7 +56,6 @@ package struct SchedulerHost: Sendable, Equatable {
   /// Physical slots the host reports (0 = unknown, not limiting).
   package let slots: UInt64
   package let allocations: [ScheduledAllocation]
-  /// Why the host takes no new work at all (disabled, unqualified), or nil.
   package let ineligible: String?
 
   package init(
@@ -321,7 +319,6 @@ package enum Scheduler {
     }
   }
 
-  /// Mutable per-host accounting within one tick.
   private struct HostTick {
     let host: SchedulerHost
     var mode: HostMode = .normal
@@ -400,7 +397,6 @@ package final class SchedulerBoard: Sendable {
     state.withLock { $0.external[host] = usage }
   }
 
-  /// Why a placement outside the queue (preflight) may not use `host` now.
   package func refusal(
     host: Name, adding need: ResourceReservation, load: HostLoad, budget: HostBudget
   )

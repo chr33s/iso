@@ -100,7 +100,6 @@ import Testing
     #expect(
       code(#"{\#(envelope),"protocol":"iso.host/v1","method":"vm.nuke","params":{}}"#)
         == .invalidRequest)
-    // Unknown closed field.
     #expect(
       code(
         #"{\#(envelope),"protocol":"iso.host/v1","method":"vm.list","params":{"limit":5,"extra":1}}"#
@@ -109,7 +108,6 @@ import Testing
       code(
         #"{\#(envelope),"protocol":"iso.host/v1","method":"vm.list","params":{"limit":5},"x":1}"#)
         == .invalidRequest)
-    // Bounds and types.
     #expect(
       code(#"{\#(envelope),"protocol":"iso.host/v1","method":"vm.list","params":{"limit":0}}"#)
         == .invalidRequest)
@@ -119,7 +117,6 @@ import Testing
     #expect(
       code(#"{\#(envelope),"protocol":"iso.host/v1","method":"vm.list","params":{"limit":2.0}}"#)
         == .invalidRequest)
-    // Mutations require an operation id; reads refuse one.
     let instance =
       #"{"host_id":"\#(host)","owner_id":"\#(owner)","instance_id":"\#(InstanceID.generate())","runtime_id":"iso-cdcdcdcd-0011223344556677","guest_os":"linux"}"#
     #expect(
@@ -130,7 +127,6 @@ import Testing
       code(
         #"{\#(envelope),"protocol":"iso.host/v1","method":"vm.list","operation_id":"\#(HostOperationID.generate())","params":{"limit":5}}"#
       ) == .invalidRequest)
-    // host/owner are required beyond hello.
     #expect(
       code(
         #"{"request_id":"\#(id)","protocol":"iso.host/v1","method":"vm.list","params":{"limit":5}}"#
@@ -159,7 +155,6 @@ import Testing
       _ = try decoded.validated(for: request, expected: (host, otherOwner))
       Issue.record("changed owner was accepted")
     } catch { #expect(error.code == .ownerMismatch) }
-    // A response carrying both result and error is refused.
     let both =
       #"{"protocol":"iso.host/v1","request_id":"\#(request.requestID)","host_id":"\#(host)","owner_id":"\#(owner)","daemon_epoch":"\#(epoch)","result":{},"error":{"code":"INVALID_REQUEST","message":"","retry":"unsupported","details":{}}}"#
     #expect(throws: HostControlError.self) { try HostResponse.decode(frame: frame(both)) }

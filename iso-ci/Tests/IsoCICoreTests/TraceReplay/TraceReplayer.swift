@@ -62,7 +62,6 @@ final class TraceFeed: ScaleSetFeed {
 
   func stop() {}
 
-  /// Returns the request ids acquired.
   @discardableResult
   func drain() -> [Int64] {
     while listener.step(), service.state.withLock({ !$0.queue.isEmpty }) {}
@@ -96,7 +95,6 @@ final class TraceReplayer {
   var feeds: [Name: TraceFeed] = [:]
   var modes: [Name: HostMode] = [:]
   var demandSince: [Name: EpochSeconds] = [:]
-  /// Trace job id ↔ scale-set runner request id.
   var requests: [String: (pool: Name, id: Int64)] = [:]
   var jobAllocations: [String: AllocationID] = [:]
   var placed: [String] = []
@@ -358,7 +356,6 @@ final class TraceReplayer {
     assignJobs()
   }
 
-  /// Rounds until nothing changes (bounded), advancing the clock between.
   func settle() {
     var last = ""
     for _ in 0..<8 {

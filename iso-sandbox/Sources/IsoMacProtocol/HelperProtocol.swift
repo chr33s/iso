@@ -4,10 +4,9 @@ import Foundation
 // platform-neutral `IsoGuestCU`, which the Linux guest server also builds.
 @_exported import IsoGuestCU
 
-/// The vsock protocol between a macOS guest's `iso-macos-helper` and its
-/// host owner: one JSON object per line, bounded, version 1. The host speaks
-/// first on every connection (`challenge`); see
-/// docs/design/macos-guest-computer-use.md.
+/// The vsock protocol between a macOS guest's `iso-macos-helper` and its host owner: one JSON
+/// object per line, bounded, version 1.
+/// The host speaks first on every connection (`challenge`).
 package enum HelperProtocol {
   package static let version = 1
   package static let port: UInt32 = 7801
@@ -108,10 +107,8 @@ package struct HelperNetwork: Codable, Equatable, Sendable {
 /// and a different `v` fail the connection.
 package struct HelperMessage: Codable, Equatable, Sendable {
   package enum Kind: String, Codable, Sendable {
-    // host → guest
     case challenge, enroll, network, status, shutdown
     case coreAIStatus = "coreai_status"
-    // guest → host
     case hello, enrolled
     case statusReply = "status_reply"
     case coreAIStatusReply = "coreai_status_reply"
@@ -136,9 +133,8 @@ package struct HelperMessage: Codable, Equatable, Sendable {
   /// whether the paravirtualized delegate's feature flag is on.
   package var availableKinds: [String]? = nil
   package var delegateEnabled: Bool? = nil
-  /// A host request's number, echoed in its reply, so a reply that arrives
-  /// after its request timed out cannot answer the next one. Absent from
-  /// helpers that predate it.
+  /// A host request's number, echoed in its reply, so a reply that arrives after its request
+  /// timed out cannot answer the next one. Absent from helpers that predate it.
   package var id: Int? = nil
 
   enum CodingKeys: String, CodingKey {

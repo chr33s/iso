@@ -2,11 +2,8 @@ import Foundation
 import IsoMacProtocol
 
 /// Which parts of a display changed, and when
-/// (docs/design/computer-use-screen-sync.md §3). Fed whole RGBX frames; each
-/// sample is compared with the previous one tile by tile over every byte, so
-/// a change is never missed. `seq` rises by one for each sample that changed
-/// any tile, and each tile remembers the `seq` it last changed at. Pure, so
-/// it is unit-testable with synthetic buffers.
+/// (docs/design/computer-use-screen-sync.md §3).
+/// Tiles are compared over every byte, so a change is never missed.
 package struct DamageGrid: Sendable {
   package static let tile = 16
   package let width: Int

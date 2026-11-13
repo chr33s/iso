@@ -47,9 +47,8 @@ import Testing
   }
 
   @Test func channelPolicyDigestIsPinned() {
-    // The host recomputes this digest from its own copy of the policy
-    // (BrokeredChannel in Sources/IsoHost); both sides pin the same value.
     #expect(
+      // The host recomputes this digest from its own policy copy; both sides pin the same value.
       ChannelPolicy.current.digest
         == "1beae82700a50cad9663c46faaea554ae4a815f5330c82cdcaa412b5c6a59301")
     #expect(ChannelPolicy.current.endpoints.map(\.guestPort) == [2222])
@@ -88,7 +87,6 @@ import Testing
     #expect(b.admit(request(channel: digest), now: now).failure == nil)
     b.release()
     b.release()
-    // Three admissions in this window already: the fourth waits for it to pass.
     #expect(b.admit(request(channel: digest), now: now).failure == .rateLimited)
     #expect(
       b.admit(request(channel: digest), now: now + .seconds(tight.windowSeconds)).failure == nil)
@@ -157,7 +155,6 @@ import Testing
     #expect(effective.networkDevices == 0 && effective.socketDevices == 1)
     #expect(effective.channelPolicyDigest == ChannelPolicy.current.digest)
     #expect(effective.networkPolicy == Self.policy)
-    // A vmnet sandbox reports none of the brokered fields.
     record.network = .shared
     let vmnet = Owner.effectiveConfig(
       record: record, config: config, rootfs: rootfs,
@@ -210,7 +207,6 @@ import Testing
     var buffer = [UInt8](repeating: 0, count: 4)
     #expect(read(guest, &buffer, 4) == 4 && buffer == Array("ping".utf8))
     #expect(b.open.map(\.session) == ["s1"])
-    // The client's half-close reaches the guest; the guest can still reply.
     shutdown(client, SHUT_WR)
     #expect(read(guest, &buffer, 4) == 0)
     #expect(Splice.writeAll(guest, Array("pong".utf8)))
@@ -242,7 +238,6 @@ import Testing
     ControlSocket.setReceiveTimeout(one, 5)
     var byte: UInt8 = 0
     #expect(read(one, &byte, 1) == 0)
-    // The other session's stream still works.
     let guestTwo = try #require(guests.withLock { $0.last })
     #expect(Splice.writeAll(guestTwo, [0x2A]))
     ControlSocket.setReceiveTimeout(two, 5)
@@ -258,15 +253,12 @@ import Testing
     let b = broker(policy: slow)
     _ = try b.admit(request(channel: slow.digest)).get()
     b.release()
-    // The second request in the same window waits for it to pass.
     let started = ContinuousClock.now
     let endpoint = b.admitWaiting(
       request(channel: slow.digest), until: .now + .seconds(5), conn: -1)
     #expect(endpoint?.purpose == "ssh")
     #expect(ContinuousClock.now - started >= .milliseconds(900))
     b.release()
-    // The window is full again; past the deadline the request is refused
-    // (the reply goes to an invalid descriptor).
     #expect(b.admitWaiting(request(channel: slow.digest), until: .now, conn: -1) == nil)
   }
 
@@ -274,7 +266,6 @@ import Testing
     let b = broker()
     _ = try b.admit(request(session: "s")).get()
     #expect(b.close(session: "s").isEmpty)
-    // Its still-dialing stream is refused at registration, and new ones at admission.
     #expect(b.register(client: -1, guest: -1, purpose: "ssh", session: "s") == nil)
     #expect(b.admit(request(session: "s")).failure == .stopping)
     #expect(b.admit(request(session: "t")).failure == nil)
@@ -287,12 +278,8 @@ import Testing
       close(pair[0])
       close(pair[1])
     }
-    // One byte every 50 ms for 2 s, never a newline, then EOF: each read
-    // succeeds well inside any per-read timeout, so only the total deadline
-    // can end the line early. Without it the read lasts until the EOF.
-    // The writer outlives this test, so it owns its own descriptor: writing
-    // to `pair[0]` after the defer closed it would hit whatever later test
-    // reused that number.
+    // One byte every 50 ms for 2 s, never a newline, then EOF: each read succeeds well inside
+    // any per-read timeout, so only the total deadline can end the line early.
     let writer = dup(pair[0])
     var one: Int32 = 1
     setsockopt(writer, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
@@ -365,7 +352,6 @@ import Testing
     let encoded = String(decoding: try Data(contentsOf: paths.record), as: UTF8.self)
     #expect(!encoded.contains("subnetIndex"))
     #expect(!NetworkMode.brokered.usesSubnet)
-    // A record written by this runtime round-trips its mode and boot policy.
     var record = try paths.loadRecord()
     record.networkPolicy = Self.policy
     try paths.save(record)

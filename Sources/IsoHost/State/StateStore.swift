@@ -6,13 +6,12 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// The persistent-state layer for host-owned records under
-/// `<data_dir>/backends/apple-container-v1`. Records are versioned JSON,
-/// read without following symlinks, written atomically and never widened
-/// beyond owner-only. Schema and ownership checks reject incompatible records.
-/// Runtime-owned storage is never touched here.
+/// Persistent state for host-owned records under
+/// `<data_dir>/backends/apple-container-v1`: versioned JSON, read without
+/// following symlinks, written atomically, never wider than owner-only; schema
+/// and ownership checks reject incompatible records. Runtime-owned storage is
+/// never touched here.
 package enum StateStore {
-  /// Largest control file accepted.
   static let maxControlFile = 1 << 20
 
   /// Read a managed control file without following a symlink at its path.
@@ -53,7 +52,6 @@ package enum StateStore {
     }
   }
 
-  /// Pretty JSON plus a trailing newline, replaced atomically, owner-only.
   package static func writeControlFile(_ value: some Encodable, to path: String) throws(HostError) {
     try AtomicFile.write(try encode(value, path: path), to: path, mode: .atMost(0o600))
   }
@@ -226,10 +224,9 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
   package var lifecycle: InstanceLifecycle = .reusable
   /// Absent for Linux guests, so their records are unchanged.
   package var guestOS: GuestOS? = nil
-  /// macOS guests and Linux guests with a display: guest-driven computer
-  /// use as the sandbox was created; absent when off. Bootstrap and stop
-  /// follow this, not the current configuration, which may have changed
-  /// since.
+  /// macOS guests and Linux guests with a display: guest-driven computer use as the
+  /// sandbox was created; absent when off. Bootstrap and stop follow this, not the
+  /// current configuration.
   package var guestComputerUse: MacGuestComputerUse? = nil
   /// Linux guests: the display the sandbox was created with; absent when
   /// headless, so a headless instance's record is unchanged.
@@ -266,7 +263,6 @@ package struct MachineSidecar: Sendable, Equatable, Codable {
     return try StateSchema.decodeSidecar(bytes, path: path)
   }
 
-  /// Mark a created sandbox as owned by a disposable session.
   package func markingDisposable() -> MachineSidecar {
     var copy = self
     copy.lifecycle = .disposable
@@ -578,10 +574,9 @@ package enum InstanceStore {
     return instances.sorted { $0.index < $1.index }
   }
 
-  /// The strict view allocation uses (ALLOC): every entry occupies its
-  /// name whatever its type or readability, and an entry whose index cannot
-  /// be read refuses allocation instead of looking free. Listing stays
-  /// tolerant; this does not.
+  /// The strict view allocation uses (ALLOC): every entry occupies its name whatever
+  /// its type or readability, and an entry with an unreadable index refuses
+  /// allocation instead of looking free. Listing stays tolerant.
   static func reservations(_ config: IsoConfig) throws -> (
     instances: [Instance], names: Set<String>
   ) {
@@ -657,10 +652,10 @@ package enum InstanceStore {
     }
   }
 
-  /// Serialize mutations of one instance through its shared lock path. The
-  /// lock lives in the instance directory, which `destroy` removes while
-  /// holding it: locking never recreates that directory, and a waiter whose
-  /// instance was destroyed meanwhile fails instead of acting on it.
+  /// Serialize mutations of one instance through its shared lock path. The lock
+  /// lives in the instance directory, which `destroy` removes while holding it:
+  /// locking never recreates it, and a waiter whose instance was destroyed fails
+  /// instead of acting on it.
   package static func lock(_ instance: Instance) throws(HostError) -> FileLock {
     guard let lock = try FileLock.siblingInExistingDirectory(of: MachineSidecar.path(instance))
     else { throw HostError("Instance '\(instance.name)' no longer exists") }
@@ -723,10 +718,9 @@ extension Instance {
     }
   }
 
-  /// A new instance record under the instances directory lock: the next
-  /// index after the highest (else the lowest free), and the name given,
-  /// derived from the workspace basename (`-2`, `-3`… on collision), or the
-  /// index.
+  /// A new instance record under the instances directory lock: the next index after
+  /// the highest (else the lowest free), and the given name, derived from the
+  /// workspace basename (`-2`, `-3`… on collision), or the index.
   package static func allocate(
     _ config: IsoConfig, name: InstanceName?, image: ImageName, workspacePath: String?
   ) throws -> Instance {

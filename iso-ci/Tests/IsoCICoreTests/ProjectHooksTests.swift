@@ -199,7 +199,6 @@ import Testing
     let preCommit = try #require(statuses.first { $0.hook == .preCommit })
     #expect(preCommit.state == .managed && preCommit.hasBackup && preCommit.settings == settings)
 
-    // Reinstalling a managed hook updates it in place.
     let again = try GitHooks.planInstall(
       repository: repository,
       settings: ManagedHookSettings(hook: .preCommit, timeoutSeconds: 60), directory: nil,

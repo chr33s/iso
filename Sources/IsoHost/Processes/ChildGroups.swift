@@ -2,12 +2,10 @@ import Foundation
 import os
 
 /// Process groups of the children `ProcessRunner` spawns into their own
-/// group. A terminal's Ctrl-C reaches only the foreground group, so without
-/// this a signal that terminates iso would orphan them (a `pull` tar pipe
-/// would keep writing into the host directory). The handlers installed at
-/// startup forward the signal to every live group, then let it terminate
-/// iso as it would have. `Shutdown.install()` supersedes them for its
-/// scope (cleanup runs to completion there) and restores them after.
+/// group. Ctrl-C reaches only the foreground group, so without this a signal
+/// terminating iso would orphan them (a `pull` tar pipe would keep writing
+/// into the host directory). Startup handlers forward the signal to every live
+/// group, then terminate iso; `Shutdown.install()` supersedes them for its scope.
 package enum ChildGroups {
   static let capacity = 256
   nonisolated(unsafe) static let slots: UnsafeMutablePointer<Int32> = {

@@ -95,7 +95,6 @@ private struct Directories: ConfigFileSystem {
       $0.hasPrefix(
         "  github.pat.\"c/broken\": FAILED to resolve token (Secret command failed (exit 3)")
     })
-  // The broken entry is a failed check: the summary and status say so.
   #expect(report == ValidateOutcome(failed: 1, notChecked: 0))
   #expect(streams.stdout.last == "Config loads, but 1 requested check failed")
   #expect(!streams.stdout.joined().contains("SYNTHETIC"))
@@ -123,7 +122,6 @@ private func vaultPATConfig() throws -> IsoConfig {
     fileSystem: Directories(existing: []), output: streams)
   #expect(secrets.calls.isEmpty)
   #expect(streams.stdout.filter { $0.contains("not resolved") }.count == 2)
-  // Not checked is neither a pass nor a failure.
   #expect(report == ValidateOutcome(failed: 0, notChecked: 2) && report.succeeded)
   #expect(streams.stdout.last == "Config OK (2 stored secrets not checked; run with --probe)")
 }
@@ -230,8 +228,6 @@ func rustLinesForTest(_ text: String) -> [String] {
   // A home-directory path given as --project (with no DIR) is refused, not
   // silently replaced by the current directory; ordinary guest paths that
   // also exist on macOS are not.
-  // The home is the configuration environment's, checked when the command
-  // runs, not the process's at parse time.
   let home = FileManager.default.temporaryDirectory.appending(path: "iso-home-\(UUID())").path
   try FileManager.default.createDirectory(
     atPath: home + "/project", withIntermediateDirectories: true)

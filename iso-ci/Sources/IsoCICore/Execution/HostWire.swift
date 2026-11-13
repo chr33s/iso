@@ -34,7 +34,6 @@ package enum HostMethod: String, Sendable, CaseIterable {
   }
 }
 
-/// The capability names a host advertises through `host.capabilities`.
 package enum HostCapabilityName: String, Sendable, CaseIterable {
   case netHandoff1 = "net-handoff-1"
   case runRetention1 = "run-retention-1"
@@ -412,7 +411,6 @@ package struct HelloResult: Sendable, Equatable {
   }
 }
 
-/// A brokered boot policy the host applies to `run.create` VMs.
 package struct RunNetworkPolicy: Sendable, Equatable, Codable {
   package let digest: Digest
   package let publicEgressHosts: [String]?
@@ -423,7 +421,6 @@ package struct RunNetworkPolicy: Sendable, Equatable, Codable {
   package var isGrantFree: Bool { providerGrants.isEmpty && localServices.isEmpty }
 }
 
-/// `host.capabilities`: what the host can do now, and the evidence for it.
 package struct HostCapabilities: Sendable, Equatable {
   package enum QualificationStatus: String, Sendable, Codable {
     case qualified, missing, mismatch, expired
@@ -441,7 +438,6 @@ package struct HostCapabilities: Sendable, Equatable {
   package let advertised: Set<String>
   package let transport: String?
   package let fallbackForbidden: Bool
-  /// Keyed by egress mode (`none`, `filtered`).
   package let runPolicies: [EgressMode: RunNetworkPolicy]
   package let qualification: Qualification?
   package let retentionModes: Set<RetentionMode>

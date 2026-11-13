@@ -7,7 +7,6 @@ package struct EditorBundleIdentity: Sendable, Equatable {
   package let bundleName: String
   package let identifier: String
   package let teamIdentifier: String
-  /// Relative to the bundle.
   package let executable: String
 
   var requirement: String {
@@ -17,10 +16,8 @@ package struct EditorBundleIdentity: Sendable, Equatable {
 
 /// An editor bundle at a fixed path, verified before launch; never from `PATH`.
 package struct TrustedEditorApp: Sendable, Equatable {
-  /// Canonical bundle path.
   package let bundle: String
   package let executable: String
-  /// `CFBundleShortVersionString`.
   package let version: String
 
   package static func candidates(_ identity: EditorBundleIdentity, home: String?) -> [String] {
@@ -91,7 +88,6 @@ package struct TrustedEditorApp: Sendable, Equatable {
 }
 
 package enum CodeSignature {
-  /// Strict validation, including resources and nested code.
   package static func verify(_ bundle: String, _ identity: EditorBundleIdentity) throws {
     var code: SecStaticCode?
     var status = SecStaticCodeCreateWithPath(URL(fileURLWithPath: bundle) as CFURL, [], &code)

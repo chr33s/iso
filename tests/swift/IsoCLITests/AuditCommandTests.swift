@@ -121,7 +121,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
     #expect(records.count == sink.lines.count)
     #expect(records.allSatisfy { $0["schema"] as? String == "iso.audit.stream/v1" })
     #expect(sink.types.first == "state" && sink.types.last == "progress")
-    // Control records do not count toward the item limit.
     #expect(sink.types.filter { $0 == "event" }.count == min(2, 5 - seen.count))
     seen += records.compactMap { ($0["event"] as? [String: Any])?["event_id"] as? String }
     let progress = try #require(records.last)
@@ -151,7 +150,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   }
   #expect(fromJSON == fromJSONL && fromJSON.count == 3)
   #expect(document["next_cursor"] as? String == (sink.records.last?["cursor"] as? String))
-  // Nullable members are present as null.
   let asOf = try #require(document["as_of"] as? [String: Any])
   #expect(asOf.keys.contains("journal_id"))
   let environment = try #require(
@@ -177,7 +175,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(
     sink.types == [
       "state", "event", "progress", "event", "progress",
-      // An unrelated record still advances the snapshot.
       "state", "progress",
       "state", "event", "progress",
     ])
@@ -185,7 +182,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(progress.map { $0["snapshot_exhausted"] as? Bool } == [false, true, true, true])
   let last = try AuditCursor(token: try #require(progress.last?["cursor"] as? String))
   #expect(last.kind == .rolling && last.head == 4)
-  // Resuming from the rolling cursor replays nothing.
   let resumed = try AuditReader(store: store).page(.run(run), after: last, mode: .follow)
   #expect(resumed.items.isEmpty)
 }
@@ -199,7 +195,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(throws: HostError.self) {
     try writer.page(AuditReader(store: store), .run(run), after: nil, limit: 10)
   }
-  // The pipe recovers: an error record the writer attempted would now land.
   sink.failAfter = nil
   writer.fail(HostError("Broken pipe"))
   #expect(sink.types == ["state", "event"])
@@ -240,7 +235,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(ids.count == 9 && Set(ids).count == 9)
   var info = stat()
   #expect(stat(path, &info) == 0 && info.st_mode & 0o777 == 0o600)
-  // Never overwrites, and leaves the existing file alone.
   let before = try Data(contentsOf: URL(fileURLWithPath: path))
   #expect(throws: HostError.self) {
     try AuditExport.write(AuditReader(store: store), run, to: path)
@@ -313,7 +307,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
       .init(
         command: .claude, role: .managed, lifecycle: .existing, requestedAgent: "claude",
         requestedInstance: nil, permissionMode: .bypass, isoVersion: "iso test")))
-  // Recorded before the run's boot is known.
   try store.append(stop(vm, boot))
   var out: [String] = []
   var ticks = 0
@@ -337,9 +330,7 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   let timeline = out.filter { $0.hasPrefix("  #") }
   #expect(timeline.count == 3)
   #expect(Set(timeline).count == timeline.count)
-  // The earlier VM record joins once the boot is known.
   #expect(timeline.contains { $0.hasPrefix("  #2 ") && $0.contains("VM context") })
-  // A resumed text view starts after its cursor.
   let resumeFrom = try #require(try reader.page(.run(run), after: nil, limit: 1).nextCursor)
   var resumed: [String] = []
   var stopAfter = 0
@@ -385,7 +376,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
       .init(
         command: .run, role: .managed, lifecycle: .disposable, requestedAgent: "claude",
         requestedInstance: nil, permissionMode: .bypass, isoVersion: "iso test")))
-  // The VM starts and records its boot before the run's environment.
   try store.append(stop(vm, boot))
   let sink = Sink()
   var ticks = 0
@@ -411,7 +401,6 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   let events = sink.records.compactMap { $0["event"] as? [String: Any] }
   let ids = events.compactMap { $0["event_id"] as? String }
   #expect(ids.count == 3 && Set(ids).count == 3)
-  // The boot's earlier record arrives with its relationship once known.
   #expect(
     sink.records.contains {
       $0["relationship"] as? String == "vm_context"

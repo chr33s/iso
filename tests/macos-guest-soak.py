@@ -172,8 +172,6 @@ class Soak:
         q.wait_for(back, 600, "respawn", 3)
         if vm.act({"kind": "move", "x": 5, "y": 5}, session=old) is not None:
             self.stats["stale_boot_accepted"] += 1
-        # A respawned owner may move to another subnet when the previous
-        # vmnet network is not yet released; read the address again.
         q.wait_for(lambda: vm.g.refresh() and vm.g.ok(), 300, "ssh", 3)
         vm.restart_fixture()
         self.stats["owner_crashes"] += 1

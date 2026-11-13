@@ -46,7 +46,6 @@ package struct DevcontainerPreferences: Sendable, Equatable {
     }
   }
 
-  /// An empty set removes the file.
   package func save(_ path: String) throws {
     if projects.isEmpty {
       if FileManager.default.fileExists(atPath: path) {
@@ -84,14 +83,12 @@ package struct DevcontainerPreferences: Sendable, Equatable {
     return projects[key] == true ? key : nil
   }
 
-  /// Opted-out project keys in byte order.
   package var ignoredProjects: [String] {
     projects.filter(\.value).keys.sorted {
       Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8))
     }
   }
 
-  /// The canonical project path.
   package static func key(_ project: String) throws -> String {
     guard let canonical = canonicalPath(project) else {
       throw ContextError(
@@ -125,7 +122,6 @@ package struct DevcontainerPreferences: Sendable, Equatable {
 
 // MARK: - Applied file record
 
-/// The devcontainer file applied when an instance was created.
 package struct AppliedDevcontainer: Sendable, Equatable, Codable {
   package enum Source: String, Sendable, Equatable, Codable {
     case localFile = "local_file"
@@ -133,7 +129,6 @@ package struct AppliedDevcontainer: Sendable, Equatable, Codable {
   }
 
   package let path: String
-  /// Lowercase hex SHA-256 of the file text.
   package let contentHash: String
   package var source: Source
 
@@ -162,7 +157,6 @@ package struct AppliedDevcontainer: Sendable, Equatable, Codable {
     ])
   }
 
-  /// Nil for remote contents or a file that no longer exists.
   func currentHash() throws -> String? {
     guard source == .localFile else { return nil }
     guard let handle = FileHandle(forReadingAtPath: path) else {
@@ -175,7 +169,6 @@ package struct AppliedDevcontainer: Sendable, Equatable, Codable {
   }
 }
 
-/// `devcontainer_state.json`, written per instance after start.
 package struct DevcontainerState: Sendable, Equatable {
   package let applied: AppliedDevcontainer
 
@@ -217,7 +210,6 @@ package struct DevcontainerState: Sendable, Equatable {
       "devcontainer.json changed since instance '\(instanceName)' was created: \(applied.path). The existing VM was not changed. Destroy and recreate it to apply creation-time devcontainer changes such as features, hostRequirements, mounts, image/build, or remoteUser. Restart-time values from the old file, including containerEnv, forwardPorts, and postStartCommand, are not re-applied automatically."
   }
 
-  /// Rust `warn_if_applied_devcontainer_changed`: failures only warn.
   package static func warnIfChanged(_ instance: Instance, diagnostics: Diagnostics) {
     let state: DevcontainerState
     do {

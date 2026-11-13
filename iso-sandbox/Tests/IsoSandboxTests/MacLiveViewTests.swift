@@ -75,7 +75,6 @@ private let upgrade = [
   #expect(
     LiveViewRoute.decide(try #require(request("/etc/passwd")), port: 6000)
       == .refused(status: 404, reason: .notFound))
-  // A repeated header is not a request.
   #expect(request("/", extra: ["Host: 127.0.0.1:6000"]) == nil)
   #expect(LiveViewHTTPRequest.parse(Array("GET / HTTP/1.0\r\n\r\n".utf8)) == nil)
 }
@@ -229,7 +228,6 @@ private func parse(_ s: String) -> Result<LiveViewMessage, LiveViewMessage.Parse
   let lapsed = d.lapse(at: t0.addingTimeInterval(61))
   let after = d.admit(1, at: t0.addingTimeInterval(62))
   #expect(lapsed == 1 && after == .viewOnly)
-  // A lapsed controller does not keep another viewer out.
   var e = LiveViewControl()
   _ = e.take(1, at: t0)
   let second = e.take(2, at: t0.addingTimeInterval(61))
@@ -342,7 +340,6 @@ private func handshake(_ port: UInt16, host: String? = nil, origin: String? = ni
   #expect(html.contains("X-Frame-Options: DENY") && html.contains("Cache-Control: no-store"))
   #expect(!html.contains(token.value))
 
-  // Another origin is refused before any token is read.
   let cross = try connect(server.port)
   send(cross, Array(handshake(server.port, origin: "http://evil.example").utf8))
   #expect(String(decoding: receive(cross), as: UTF8.self).hasPrefix("HTTP/1.1 403"))
@@ -361,7 +358,6 @@ private func handshake(_ port: UInt16, host: String? = nil, origin: String? = ni
   close(wrong)
   #expect(host.events.isEmpty)
 
-  // The right token joins; messages reach the host; closing leaves.
   let good = try connect(server.port)
   send(good, Array(handshake(server.port).utf8))
   let reply = String(
@@ -404,7 +400,6 @@ private func handshake(_ port: UInt16, host: String? = nil, origin: String? = ni
   // Idle connections, each holding a slot until the token deadline.
   let idle = try (0..<LiveView.maxConnections).map { _ in try connect(server.port) }
   defer { for fd in idle { close(fd) } }
-  // The accept thread takes them in order: wait for the last to be served.
   let page = Array("GET / HTTP/1.1\r\nHost: 127.0.0.1:\(server.port)\r\n\r\n".utf8)
   var refused = false
   for _ in 0..<50 where !refused {
@@ -417,7 +412,6 @@ private func handshake(_ port: UInt16, host: String? = nil, origin: String? = ni
   // Past the limit a connection is closed unanswered, well inside the 5 s
   // an unauthenticated one may otherwise sit for.
   #expect(refused)
-  // A freed slot serves again.
   close(idle[0])
   var served = false
   for _ in 0..<100 where !served {
@@ -445,7 +439,6 @@ private func handshake(_ port: UInt16, host: String? = nil, origin: String? = ni
     .success(.input(.key(keyCode: 0, down: true))), .success(.take), .failure(.malformed),
   ]
   #expect(others.map { limits.admit($0, at: t0) } == [false, false, false])
-  // What lets go of input still goes through.
   let releases: [LiveViewMessage] = [
     .input(.key(keyCode: 0, down: false)), .input(.button(p, .left, down: false)), .release,
   ]
@@ -491,7 +484,6 @@ func theHardwareEncoderEmitsAnAnnexBKeyframeWithParameterSets() throws {
   let first = try #require(chunks.value.first)
   #expect(first.1)
   #expect(Array(first.0.prefix(4)) == [0, 0, 0, 1])
-  // The first unit is the SPS (type 7).
   #expect(first.0.count > 5 && first.0[4] & 0x1F == 7)
 }
 
@@ -519,8 +511,6 @@ private func hex(_ s: String) -> [UInt8] {
 }
 
 @Test func theEncodersSPSGainsALowDelayVUIAndKeepsEverythingElse() throws {
-  // VideoToolbox's SPS on a macOS 27 host: Constrained Baseline, level 5.0,
-  // 120×75 macroblocks, one reference frame, no VUI.
   let sps = hex("2742c032ab403c012f20")
   let out = LiveViewSPS.withLowDelay(sps)
   #expect(out != sps)
@@ -534,7 +524,6 @@ private func hex(_ s: String) -> [UInt8] {
   #expect(r.ue() == 1)  // max_num_ref_frames
   #expect(r.bits(1) == 0)
   #expect(r.ue() == 119 && r.ue() == 74)  // 120×75 macroblocks
-  // frame_mbs_only, direct_8x8, cropping
   #expect(r.bits(1) == 1 && r.bits(1) == 1 && r.bits(1) == 0)
   #expect(r.bits(1) == 1)  // vui_parameters_present_flag
   #expect(r.bits(8) == 0)  // no aspect, overscan, signal, chroma, timing, HRD, pic_struct
@@ -543,7 +532,6 @@ private func hex(_ s: String) -> [UInt8] {
   #expect(r.ue() == 0)  // max_num_reorder_frames
   #expect(r.ue() == 1)  // max_dec_frame_buffering
   #expect(r.bits(1) == 1)  // rbsp_stop_one_bit
-  // Idempotent: an SPS with VUI is left alone, as is anything else.
   #expect(LiveViewSPS.withLowDelay(out) == out)
   #expect(LiveViewSPS.withLowDelay([0x68, 0xCE, 0x3C, 0x80]) == [0x68, 0xCE, 0x3C, 0x80])
   #expect(LiveViewSPS.withLowDelay([0x27, 0x42]) == [0x27, 0x42])
@@ -580,20 +568,17 @@ private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool 
 }
 
 @Test func aDeeplyNestedMessageIsRefusedBeforeAnyParserReadsIt() throws {
-  // Brackets in strings and after escapes do not nest.
   #expect(!JSONNesting.exceeds(Array(#"{"a":"[[[{{{","b":"\"[{"}"#.utf8), limit: 1))
   #expect(!JSONNesting.exceeds(Array(#"{"a":[{"b":[]}],"c":{}}"#.utf8), limit: 4))
   #expect(JSONNesting.exceeds(Array(#"{"a":[{"b":[]}]}"#.utf8), limit: 3))
   #expect(JSONNesting.exceeds(Array("[[".utf8), limit: 1))
-  // Every viewer message is one flat object.
   let nested = String(repeating: #"{"a":"#, count: 480)
   #expect(nested.utf8.count <= LiveView.maxMessage)
   #expect(parse(nested) == .failure(.tooDeep))
   #expect(parse(#"{"type":"auth","token":{"a":1}}"#) == .failure(.tooDeep))
   #expect(parse(#"{"type":"auth","token":"t"}"#) == .success(.auth("t")))
 
-  // The same bytes before authentication, on a connection thread: the
-  // viewer is refused and the listener (and its process) goes on serving.
+  // The same bytes before authentication: the viewer is refused and the listener goes on serving.
   let host = FakeHost()
   let token = try LiveViewToken.random()
   let server = try LiveViewServer(token: token, host: host, log: { _ in })
@@ -612,7 +597,6 @@ private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool 
 }
 
 @Test func theLargestPasteFitsOneMessage() throws {
-  // Tabs and newlines take two bytes of JSON each: the worst case.
   let worst = String(repeating: "\t", count: LiveView.maxPaste)
   let message = try JSONSerialization.data(withJSONObject: ["type": "text", "text": worst])
   #expect(message.count <= LiveView.maxMessage)
@@ -620,7 +604,6 @@ private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool 
   let over = try JSONSerialization.data(
     withJSONObject: ["type": "text", "text": String(repeating: "a", count: LiveView.maxPaste + 1)])
   #expect(parse(String(decoding: over, as: UTF8.self)) == .failure(.outOfRange))
-  // The page cuts a paste to the same number.
   #expect(LiveViewPage.script.contains(".slice(0, \(LiveView.maxPaste));"))
 }
 
@@ -692,11 +675,9 @@ private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool 
 }
 
 @Test func aRequestHeadPastTheLimitIsDroppedUnanswered() throws {
-  // Parsed: a well-formed head one byte too long.
   let padding = String(repeating: "a", count: LiveView.maxRequestHead)
   let long = Array("GET / HTTP/1.1\r\nHost: 127.0.0.1:6000\r\nX-Pad: \(padding)\r\n\r\n".utf8)
   #expect(LiveViewHTTPRequest.parse(long) == nil)
-  // Read: bytes with no end are not collected up to the token deadline.
   let server = try LiveViewServer(token: try .random(), host: FakeHost(), log: { _ in })
   server.start()
   defer { server.stop() }
@@ -709,7 +690,6 @@ private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool 
 }
 
 @Test func aSlowViewerLosesFramesAndAsksForOneKeyframeOnceItHasCaughtUp() throws {
-  // The rule, by itself.
   let limit = LiveView.queueLimit
   #expect(LiveViewQueue.offer(1, keyframe: false, queued: limit - 1, dropping: false) == .queue)
   #expect(LiveViewQueue.offer(2, keyframe: false, queued: limit - 1, dropping: false) == .drop)
@@ -724,18 +704,14 @@ private func eventually(_ seconds: Double = 5, _ condition: () -> Bool) -> Bool 
   defer { server.stop() }
   let fd = try viewer(server, token)
   defer { close(fd) }
-  // A viewer that reads nothing: its queue fills and later frames are
-  // dropped. No keyframe is asked for while it is still behind, however
-  // many frames overflow: each would be larger than what it cannot take.
+  // A viewer that reads nothing: later frames drop, and no keyframe is asked for while it is behind.
   let frame = [UInt8](repeating: 7, count: 2 * 1024 * 1024)
   for i in 0..<20 { server.broadcast(frame, keyframe: false, micros: UInt64(i)) }
   #expect(host.keyframeRequests == 0)
-  // It reads again and its queue drains: one keyframe is asked for.
   _ = receive(fd)
   #expect(eventually { host.keyframeRequests == 1 })
   usleep(300_000)
   #expect(host.keyframeRequests == 1)
-  // That keyframe is queued, and frames flow again.
   server.broadcast([9, 9], keyframe: true, micros: 99)
   let resumed = receive(fd) { $0.count >= 14 }
   #expect(resumed.count >= 14 && resumed[3] == 1 && Array(resumed.suffix(2)) == [9, 9])

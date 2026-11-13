@@ -1,15 +1,7 @@
-// iso-macos-helper — the guest side of a macOS sandbox's management channel.
-// Installed in the template as a root LaunchDaemon, so it runs before login.
-//
-// It connects to the host owner on vsock port 7801 and answers its
-// challenge (see IsoMacProtocol and docs/design/macos-guest-computer-use.md).
-// It acts only on the closed message set: enroll (first boot of a clone),
-// network, status, coreai_status (read-only), shutdown. It runs no other
-// commands. Run as
-// `iso-macos-helper cu-mcp`, it is instead the computer-use MCP server
-// (`GuestCUMCP`, docs/design/guest-driven-computer-use.md §6): it reads MCP
-// messages on stdin, asks the host owner over vsock 7802, and writes
-// replies on stdout, holding no credentials and opening no other connection.
+// iso-macos-helper — the guest side of a macOS sandbox's management channel. Installed in the
+// template as a root LaunchDaemon, so it runs before login.
+// It acts only on the closed message set (enroll, network, status, coreai_status, shutdown), runs
+// no other commands, and as `cu-mcp` holds no credentials and opens no other connection.
 
 import Darwin
 import Foundation
@@ -187,9 +179,8 @@ func session(_ fd: Int32) {
       return
     }
     switch m.type {
-    // Only the host can send `enroll` (the helper dials the host's vsock
-    // listener), and only while its record is pending: a key left by an
-    // interrupted enrollment is replaced.
+    // Only the host can send `enroll` (the helper dials the host's vsock listener), and only
+    // while its record is pending: a key left by an interrupted enrollment is replaced.
     case .enroll:
       do {
         let pub = try enroll(m)
@@ -223,7 +214,6 @@ func session(_ fd: Int32) {
       _ = send(fd, reply(.ack, to: m))
       run("/sbin/shutdown", ["-h", "now"])
     default:
-      // Requests before enrollment, or guest-side types.
       _ = send(fd, reply(.error, message: "unexpected \(m.type.rawValue)"))
       return
     }

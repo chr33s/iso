@@ -8,7 +8,6 @@ package struct SetupOptions: Sendable {
   package var profiles: [ProfileDefinition]
   package var image: ImageName
   package var guestUser: GuestUser
-  /// Overrides `apple_container.build_timeout_seconds` for this run.
   package var builderTimeout: Duration?
   /// devcontainer Features resolved from the registry, installed in order.
   package var ociFeatures: [ResolvedFeature]
@@ -40,7 +39,6 @@ package struct SetupOptions: Sendable {
   package static let preparationRequiredPrefix = "PREPARATION_REQUIRED"
 }
 
-/// `template-config.json` as the Apple backend writes it.
 struct TemplateRecord: Encodable {
   let version: UInt32
   let created: String
@@ -77,7 +75,6 @@ struct TemplateRecord: Encodable {
 }
 
 extension AppleBackend {
-  /// The supported host floor (every package manifest sets macOS 27).
   static let minimumMacOSMajor = 27
 
   func checkPlatform() throws {
@@ -92,7 +89,6 @@ extension AppleBackend {
     }
   }
 
-  /// `<state root>/vm_key`: the iso VM-access key, generated once.
   func ensureSSHKey() throws {
     let key = config.sshKeyPath.path
     guard !FileManager.default.fileExists(atPath: key) else { return }
@@ -110,7 +106,6 @@ extension AppleBackend {
     }
   }
 
-  /// The `desktop` profile's `iso-cu-mcp`, installed beside `iso-sandbox`.
   func desktopComputerUseMCP(_ runtime: SandboxRuntime) throws -> (
     name: String, bytes: [UInt8], mode: UInt32
   ) {
@@ -126,14 +121,11 @@ extension AppleBackend {
     return try BuildContext.computerUseMCPPayload(Array(bytes))
   }
 
-  /// The desktop kernel `init` is given, which it checks against its pin:
-  /// the configured one always; the release's, found beside iso-sandbox,
-  /// only for a `desktop` image. A kernel nobody configured must not fail
-  /// the setup of an image that never boots it (a runtime rebuilt with
-  /// other pins, or without the display feature, beside a release's kernel).
-  /// A `desktop` image with neither is refused: `init` checks only a kernel
-  /// it is given, so the image would build and verify headless and fail at
-  /// its first `iso up`.
+  /// The desktop kernel `init` checks against its pin: the configured one always,
+  /// the release's (beside iso-sandbox) only for a `desktop` image, so a kernel
+  /// nobody configured cannot fail an image that never boots it. A `desktop` image
+  /// with neither is refused: `init` checks only a given kernel, so it would build
+  /// headless and fail at its first `iso up`.
   static func desktopKernel(configured: String?, discovered: String?, desktopImage: Bool) throws
     -> String?
   {
@@ -406,7 +398,6 @@ func sha256Hex(_ bytes: [UInt8]) -> String {
   SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
 }
 
-/// SHA-256 of a file's contents, read in chunks (restore images are many GiB).
 func sha256Hex(fileAt path: String) throws -> String {
   guard let handle = FileHandle(forReadingAtPath: path) else {
     throw HostError("Failed to read \(path)")

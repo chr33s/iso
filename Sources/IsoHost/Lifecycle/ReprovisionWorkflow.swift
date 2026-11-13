@@ -2,10 +2,10 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Wipe the guest and bring the instance back with the settings iso
-/// persisted: name, index, image, disk size, workspace association, port
-/// forwards and guest variables. Everything that can fail cheaply runs
-/// before the disk is replaced; after it, every error says how to finish.
+/// Wipe the guest and bring the instance back with its persisted settings (name,
+/// index, image, disk size, workspace, forwards, guest variables). Everything that
+/// can fail cheaply runs before the disk is replaced; after it, errors say how to
+/// finish.
 package struct ReprovisionWorkflow {
   package let lifecycle: ProjectLifecycle
   package let name: InstanceName?

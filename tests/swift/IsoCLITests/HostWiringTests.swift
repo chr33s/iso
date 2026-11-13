@@ -112,10 +112,8 @@ private func hostUp(_ fixture: Fixture, _ flags: [String]) throws -> HostUp {
   replies.inspect.withLock { $0 = fixture.observation(.running, egress: .open) }
   let mismatch = try hostUp(fixture, ["--egress", "filtered"])
   #expect(throws: HostError.self) { _ = try mismatch.prepare(fixture.env, fixture.remote) }
-  // Only the observation went to the host: no start, no session, no push.
   #expect(fixture.host.methods == ["vm.inspect"])
 
-  // The matching value, and no value at all, reuse the VM.
   for flags in [["--egress", "open"], []] {
     let (binding, _) = try hostUp(fixture, flags).prepare(fixture.env, fixture.remote)
     #expect(binding.name.rawValue == "proj")

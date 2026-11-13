@@ -1,8 +1,7 @@
 import Foundation
 
-/// Exact JSON number. Integer literals keep their exact value; literals
-/// written with a fraction or exponent stay `decimal` even when integral, so
-/// a typed integer field can reject `2.0` as the baseline did.
+/// Exact JSON number. Fraction/exponent literals stay `decimal` even when
+/// integral, so a typed integer field rejects `2.0`.
 package enum JSONNumber: Hashable, Sendable, CustomStringConvertible {
   case integer(Int64)
   case unsigned(UInt64)

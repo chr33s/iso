@@ -5,7 +5,6 @@
 import Foundation
 import IsoCore
 
-/// Require the default data directory to be a real directory when present.
 package enum DataRoot {
   /// Run before any command that reads state; explicit `--config` paths are
   /// untouched.
@@ -14,7 +13,6 @@ package enum DataRoot {
     try checkRoot(home + "/.iso")
   }
 
-  /// A real directory, or absent.
   static func checkRoot(_ root: String) throws {
     var status = stat()
     guard lstat(root, &status) == 0 else {

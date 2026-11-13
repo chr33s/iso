@@ -41,7 +41,6 @@ private func upsert(
   #expect(result["proxy"]?["openai"]?["extra"] == .number(.integer(1)))
   #expect(result["proxy"]?["openai"]?["credential"] == .string(reference.command.expose()))
   #expect(result["proxy"]?["openai"]?["auth"] == .string("bearer"))
-  // Exact integer above 2^53 survives the edit.
   guard case .array(let nested)? = result["claude"]?["future_feature"]?["nested"],
     case .object(let deep) = nested[5]
   else {
@@ -68,12 +67,10 @@ private func upsert(
   #expect(throws: ConfigError.self) { try upsert(#"{"proxy": []}"#) }
   #expect(throws: ConfigError.self) { try upsert(#"{"proxy": {"openai": "x"}}"#) }
   #expect(throws: ConfigError.self) { try upsert(#"{"a": 1,}"#) }
-  // The edit result must itself be a valid configuration.
   #expect(throws: ConfigError.self) { try upsert(#"{"unknown_setting": "/x"}"#) }
   #expect(throws: ConfigError.self) {
     try upsert(#"{"proxy": {"anthropic": {"credential": "literal"}}}"#)
   }
-  // An invalid integer spelling is not silently normalized into a valid one.
   #expect(throws: ConfigError.self) { try upsert(#"{"ssh_port": 2.2e1}"#) }
 }
 

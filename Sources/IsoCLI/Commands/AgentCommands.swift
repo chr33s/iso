@@ -26,7 +26,6 @@ extension CommandContext {
 }
 
 extension CommandContext {
-  /// Starts recording one invocation and names its run on stderr.
   func beginAudit(_ request: AuditFacts.Request) -> AuditInvocation {
     AuditInvocation.begin(
       store: AuditStore(config: config), request: request, diagnostics: diagnostics,
@@ -448,10 +447,8 @@ struct ModelCommand: ParsableCommand {
   }
 }
 
-/// The pre-`show`/`set` grammar, `iso model [NAME] [local|remote]`, kept as
-/// a hidden default until it is retired. Bare `iso model` is not deprecated.
-/// Its name reads as the usage placeholder in Argument Parser hints and is
-/// not a valid instance name, so no instance can select it.
+/// The pre-`show`/`set` grammar `iso model [NAME] [local|remote]`, a hidden
+/// default until retired. Its name is not a valid instance name, so none can select it.
 struct ModelLegacy: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "[NAME]", abstract: "iso model [NAME] [local|remote]",

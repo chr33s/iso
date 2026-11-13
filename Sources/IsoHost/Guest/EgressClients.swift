@@ -2,18 +2,13 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Guest clients that never see an iso session's proxy variables, pointed at
-/// this boot's filtered-egress companion: the Docker daemon (image pulls),
-/// and containers and builds on Docker's default bridge (through a guest
-/// bridge on its gateway, since a container's loopback is not the guest's).
-/// git is set to send its proxy credentials up front. `/etc/environment`
-/// (read by every PAM session, including non-interactive ssh commands)
-/// carries the same proxy variables, so sessions opened through host
-/// control — whose client cannot read the worker's capability — use it too.
-/// Convenience only, as on every filtered guest: the companion enforces the
-/// allowlist, and a guest that ignores or rewrites this gains nothing.
+/// Guest clients that never see a session's proxy variables, pointed at this
+/// boot's filtered-egress companion: the Docker daemon, and containers/builds on
+/// Docker's default bridge (via a guest bridge on its gateway). git sends proxy
+/// credentials up front; `/etc/environment` carries the same variables for
+/// sessions opened through host control. Convenience only: the companion
+/// enforces the allowlist, so a guest that rewrites this gains nothing.
 enum EgressClients {
-  /// Docker's default bridge gateway, where containers reach the guest.
   static let dockerGateway = "172.17.0.1"
 
   /// Written by guest root. The proxy URL, which carries the per-boot
@@ -72,7 +67,6 @@ enum EgressClients {
     RemoteCommand().literal("sudo sh -c ").arg(script(port: port, user: user))
   }
 
-  /// The proxy URL guest sessions already receive (`applyFilteredProxy`).
   static func proxyURL(capability: String, port: UInt16) -> String {
     "http://iso:\(capability)@127.0.0.1:\(port)"
   }

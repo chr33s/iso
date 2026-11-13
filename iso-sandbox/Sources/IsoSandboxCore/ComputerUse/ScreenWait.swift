@@ -2,10 +2,7 @@ import Foundation
 import IsoMacProtocol
 
 /// One wait for a region of the display to settle
-/// (docs/design/computer-use-screen-sync.md §4). A pure state machine fed
-/// `(elapsed, latest seq in the region)` after each sample; `run` drives it
-/// with injected sampling, sleeping and binding checks, so tests use a fake
-/// clock.
+/// (docs/design/computer-use-screen-sync.md §4).
 package struct ScreenWait: Sendable {
   /// A caller's wait, validated against the display.
   package struct Parameters: Equatable, Sendable {
@@ -102,10 +99,9 @@ package struct ScreenWait: Sendable {
   }
 }
 
-/// One wait at a time per sandbox for each origin. The guest link serves
-/// two connections, each blocking a thread for its request, and the guest's
-/// slot keeps one free for `status`. The host has its own, so a guest that
-/// waits in a loop cannot refuse the host's `cu wait`.
+/// One wait at a time per sandbox for each origin.
+/// The guest link serves two connections and the guest's slot keeps one free for `status`; the host
+/// has its own, so a looping guest cannot refuse the host's `cu wait`.
 package struct CUWaitSlots: Sendable {
   private var held: Set<CUOrigin> = []
 

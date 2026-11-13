@@ -48,7 +48,6 @@ import Testing
     #expect(
       try OperationReceipt(wire: call(s, .operationGet(created.operationID)).get()).state
         == .succeeded)
-    // The native record is an ordinary instance directory with a pinned key.
     let native = try #require(
       try InstanceStore.list(install.config).first {
         $0.name.rawValue == "hc-" + instance.instanceID.rawValue
@@ -113,10 +112,8 @@ import Testing
     try #require(preview.eligible, "\(preview.blockers)")
     let prepared = try HostMigration.prepare(config: install.config, preview: preview)
     #expect(prepared.state == .prepared)
-    // Between prepare and completion nothing but hello is dispatched.
     let pending = try supervisor(install)
     #expect(failure(call(pending, .vmList(cursor: nil, limit: 10))) == .migrationRequired)
-    // The service completes activation (resumable: running it twice is harmless).
     try HostMigration.complete(
       config: install.config, backend: install.backend, diagnostics: diagnostics,
       otherWriters: noWriters)
@@ -131,7 +128,6 @@ import Testing
         Owner.self, ownerBytes, path: "owner.json", want: StateSchema.ownerVersion)
     }
     #expect(try Owner.load(install.config).isFenced)
-    // The legacy path can no longer mutate it; the service can.
     let adopted = try #require(try ServiceAdoption.load(instance))
     #expect(throws: HostError.self) { try install.backend.stopUnproven(instance) }
     let s = try supervisor(install)
@@ -175,7 +171,6 @@ import Testing
     #expect(throws: HostError.self) { try ServiceAdoption.load(instance) }
     let refusal = #expect(throws: (any Error).self) { try install.backend.stopUnproven(instance) }
     #expect("\(refusal.map { "\($0)" } ?? "")".contains("unreadable host-control marker"))
-    // Only an absent marker reads as not adopted.
     ServiceAdoption.remove(instance)
     #expect(try ServiceAdoption.load(instance) == nil)
   }
@@ -193,7 +188,6 @@ import Testing
     #expect(throws: HostControlError.self) {
       try HostMigration.prepare(config: install.config, preview: running)
     }
-    // Migration never stopped it.
     #expect(install.backend.isRunning(instance))
     try install.backend.stopUnproven(instance)
     let ready = try HostMigration.preview(

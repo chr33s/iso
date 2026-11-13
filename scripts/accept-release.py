@@ -91,8 +91,7 @@ def accept(work, initial, target, download_timeout):
     check_bundle(work, target, env)
     if any((work / "bin" / name).stat().st_ino == inode for name, inode in before.items()):
         raise ValueError("update did not replace every installed file")
-    # The existing uninstall contract removes the CLI and optionally its data;
-    # it does not promise removal of companion executables from the directory.
+    # The uninstall contract does not promise removal of companion executables.
     command([executable, "uninstall", "--yes", "--keep-data"], env)
     if executable.exists():
         raise ValueError("uninstall retained the CLI executable")

@@ -5,8 +5,6 @@ import Testing
 
 @testable import IsoHost
 
-/// Scratch layout for return tests: an instance under `state/` (its control
-/// roots), a destination beside it, and an `outside` sentinel tree.
 private struct ReturnFixture {
   let root: String
   let instance: Instance
@@ -90,7 +88,6 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
   #expect(client.executable(named: "git") == bin + "/git")
   let transfer = WorkspaceTransfer(
     client: client, diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
-  // Positive control: the fake git does leave a marker when run.
   _ = try ProcessRunner().capture(
     .init(executable: bin + "/git", arguments: [], environment: [:], deadline: .seconds(5)))
   #expect(FileManager.default.fileExists(atPath: marker))
@@ -130,25 +127,21 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 }
 
 @Test func standardGitfilesAreProtectedAndCustomTargetsRefused() throws {
-  // A linked worktree whose git directory is outside the destination.
   let f = try ReturnFixture()
   defer { f.cleanup() }
   try writeFile(f.destination + "/.git", "gitdir: \(f.outside)/repo/.git/worktrees/wt\n")
   let manifest = try f.stage(["a.txt": "a"])
   #expect(manifest.applicable)
   #expect(manifest.gitfiles.map(\.path) == [".git"])
-  // A gitfile rewritten after review is drift.
   try writeFile(f.destination + "/.git", "gitdir: elsewhere\n")
   #expect(returnError { _ = try f.apply(manifest.id) }?.kind == .drift)
   #expect(!FileManager.default.fileExists(atPath: f.destination + "/a.txt"))
 
-  // A submodule's gitfile pointing beneath the protected .git is supported.
   let g = try ReturnFixture()
   defer { g.cleanup() }
   try writeFile(g.destination + "/sub/.git", "gitdir: ../.git/modules/sub\n")
   #expect(try g.stage(["sub/x": "x"]).applicable)
 
-  // A custom git directory inside the destination is not.
   let h = try ReturnFixture()
   defer { h.cleanup() }
   try writeFile(h.destination + "/.git", "gitdir: admin\n")
@@ -204,7 +197,6 @@ private func returnError(_ body: () throws -> Void) -> ReturnError? {
 
 // MARK: - R3: hostile receiver input through the qualified tar
 
-/// A tar archive with one hostile member, built with Python's tarfile.
 private func hostileArchive(_ path: String, _ script: String) throws {
   let python = """
     import io, sys, tarfile
@@ -245,7 +237,6 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
   try hostileArchive(archive, script.replacingOccurrences(of: "OUTSIDE", with: f.outside))
   let guest = f.root + "/guest"
   try FileManager.default.createDirectory(atPath: guest, withIntermediateDirectories: true)
-  // The fake guest "tar cf" emits the hostile archive instead.
   let bin = f.root + "/bin"
   try writeFile(bin + "/tar", "#!/bin/sh\nexec /bin/cat \(archive)\n")
   chmod(bin + "/tar", 0o755)
@@ -430,7 +421,6 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
     Issue.record("expected a create binding")
     return
   }
-  // Missing authorization: no root, no ancestors.
   #expect(returnError { _ = try f.apply(manifest.id) }?.kind == .missingSensitiveGrant)
   #expect(!FileManager.default.fileExists(atPath: f.destination))
   #expect(try f.apply(manifest.id, sensitive: [".envrc"]).sorted() == [".envrc", "a.txt"])
@@ -444,7 +434,6 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   #expect(returnError { _ = try g.apply(second.id) }?.kind == .drift)
   #expect(!FileManager.default.fileExists(atPath: g.destination + "/a.txt"))
 
-  // No implicit ancestors.
   #expect(throws: HostError.self) {
     try ReturnDestination.resolve(f.root + "/missing/parent/dest", controlRoots: [])
   }
@@ -476,7 +465,6 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   let writer = try ProcessRunner().piped(request)
   defer { writer.terminate() }
   #expect(try attempt.awaitQuiescence(timeout: .milliseconds(300)) == nil)
-  // Busy trees are never reclaimed, reused or deleted.
   #expect(throws: ReturnError.self) { try f.location.reclaimIncoming() }
   #expect(FileManager.default.fileExists(atPath: attempt.tree))
   #expect(throws: ReturnError.self) { try f.location.remove() }
@@ -560,7 +548,6 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   #expect(consumed?.kind == .consumed)
   let progress = ApplyAttemptRecord.progress(f.location, stageID: manifest.id)
   #expect(progress.finished == [0] && progress.started == [0, 1] && progress.outcome == "partial")
-  // The retry classifies the recorded effects instead of guessing.
   let text = consumed.map { "\($0)" } ?? ""
   #expect(text.contains("outcome partial; 1 of 2 change(s) finished"))
   #expect(text.contains("interrupted, check by hand: ro/x.txt"))

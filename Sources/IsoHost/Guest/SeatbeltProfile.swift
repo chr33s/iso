@@ -2,12 +2,10 @@
 // Modified by chr33s: ported/adapted for the Swift implementation.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The Seatbelt profile that confines `iso-proxy` (applied with
-/// `sandbox-exec -p`), byte-identical to `Resources/seatbelt-proxy.sb`, which the
-/// integration suite also passes to `iso-proxy --jail-selftest`. Denies
-/// file writes, program execution (except the initial exec of `PROXY_BIN`)
-/// and reads outside system paths, and allows egress only to non-loopback
-/// port 443 and to DNS.
+/// The Seatbelt profile confining `iso-proxy` (`sandbox-exec -p`), byte-identical
+/// to `Resources/seatbelt-proxy.sb` (the integration suite passes that to
+/// `--jail-selftest`). Denies file writes, exec (except the initial `PROXY_BIN`)
+/// and reads outside system paths; egress only to non-loopback 443 and DNS.
 enum SeatbeltProfile {
   static let proxy = #"""
     ;; Derived from trailofbits/coop.
@@ -143,12 +141,10 @@ enum SeatbeltProfile {
 }
 
 extension SeatbeltProfile {
-  /// Confines the host `bsdtar` that unpacks a guest-authored workspace
-  /// stream (`WorkspaceTransfer.tarReceive`). Whatever the stream makes it
-  /// do, the receiver writes only beneath `TREE` (the receive attempt's
-  /// tree), reads only system files, executes nothing but `RECEIVER` itself
-  /// and opens no network connection. The inherited writer-lease descriptor
-  /// is already open and needs no permission.
+  /// Confines the host `bsdtar` unpacking a guest-authored workspace stream
+  /// (`WorkspaceTransfer.tarReceive`): it writes only beneath `TREE`, reads only
+  /// system files, executes only `RECEIVER` and opens no network connection. The
+  /// inherited writer-lease descriptor needs no permission.
   static let tarReceiver = #"""
     (version 1)
     (deny default)

@@ -6,7 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// A devcontainer file found in a repository before it is cloned.
 package struct GitRepoDevcontainer: Sendable, Equatable {
   /// User-facing source, `github.com/<owner>/<repo>/.devcontainer/devcontainer.json`.
   package let displayPath: String

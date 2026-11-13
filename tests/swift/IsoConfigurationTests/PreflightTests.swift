@@ -60,7 +60,6 @@ private func kind(_ text: String, limits: JSONLimits = .configuration) -> JSONPr
   // NFC and NFD spellings are one key to Foundation, so one key here too.
   #expect(kind("{\"\u{E9}\": 1, \"e\u{301}\": 2}") != nil)
   #expect(kind(#"{"\ud83d\ude00": 1, "😀": 2}"#) != nil)
-  // Same key in different objects is fine.
   #expect(kind(#"{"a": {"k": 1}, "b": {"k": 2}}"#) == nil)
 }
 

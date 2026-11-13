@@ -56,8 +56,6 @@ private func workloadLaunchRechecksImmediatelyBeforeSpawning(launch: WorkloadLau
   #expect(!FileManager.default.fileExists(atPath: marker))
 }
 
-/// The shared launch path keeps each wrapper's PTY choice: only the
-/// interactive shell (and a reporting launch that asks) gets `-t` and a TERM.
 @Test(arguments: WorkloadLaunch.allCases)
 private func workloadLaunchesKeepTheirPTYPolicy(launch: WorkloadLaunch) throws {
   let guest = try FakeGuest()
@@ -78,8 +76,6 @@ private func workloadLaunchesKeepTheirPTYPolicy(launch: WorkloadLaunch) throws {
   #expect(lines.last?.hasPrefix(workingDirectory ? "cd " : "'true'") == true)
 }
 
-/// A failed workload carries its own status; only `iso run`'s reporting
-/// launch returns it instead of throwing.
 @Test(arguments: WorkloadLaunch.allCases)
 private func workloadFailuresCarryTheWorkloadStatus(launch: WorkloadLaunch) throws {
   let guest = try FakeGuest()
@@ -126,7 +122,6 @@ private func workloadLaunchesKeepTheirStdinPolicy(launch: WorkloadLaunch) throws
   #expect(WorkloadExit(.signaled(9)).status == 1)
   #expect(WorkloadExit(.signaled(9)).description.contains("signal 9"))
   #expect(WorkloadExit(.exited(0)).status == 1)
-  // The shared rule `iso run`, `host shell`, `host forward` and `host run` use.
   #expect(ProcessRunner.Termination.exited(0).exitStatus == 0)
   #expect(ProcessRunner.Termination.exited(5).exitStatus == 5)
   #expect(ProcessRunner.Termination.signaled(9).exitStatus == 1)
@@ -137,7 +132,6 @@ private func workloadLaunchesKeepTheirStdinPolicy(launch: WorkloadLaunch) throws
   defer { guest.remove() }
   let healthy = Mutex(true)
   let prepared = SSHSession(target: guest.target)
-  // Represents a lifecycle change while resolving the prepared environment.
   healthy.withLock { $0 = false }
   #expect(throws: HostError("test changed during preparation")) {
     _ = try WorkloadSession(session: prepared, supervision: nil) {

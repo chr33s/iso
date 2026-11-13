@@ -92,7 +92,6 @@ private func settle(_ milliseconds: Int = 60) async {
   _ = await live.handle(1, .input(keyDown))
   live.left(1)
   #expect(screen.sent == [keyDown, .key(keyCode: 0, down: false)])
-  // The next viewer may take control at once.
   live.joined(2)
   #expect(await live.handle(2, .take) == nil)
 }
@@ -103,12 +102,10 @@ private func settle(_ milliseconds: Int = 60) async {
   defer { live.stop() }
   live.joined(1)
   _ = await live.handle(1, .take)
-  // The message returns before the text is typed.
   #expect(await live.handle(1, .text(paste)) == nil)
   #expect(screen.typed < paste.count)
   await settle()
   #expect(screen.typed > 0 && screen.typed < paste.count)
-  // One paste at a time, and other input still goes through meanwhile.
   #expect(await live.handle(1, .text("b"))?.contains("busy") == true)
   #expect(await live.handle(1, .input(keyDown)) == nil)
   #expect(screen.sent == [keyDown])
@@ -132,7 +129,6 @@ private func pasteEnds(
   await settle()
   guard screen.typed > 0, screen.typed < paste.count else { return false }
   await end(live)
-  // The key in flight may land; nothing after it.
   let stoppedAt = screen.typed
   await settle()
   return screen.typed <= stoppedAt + 1 && screen.typed < paste.count
@@ -161,7 +157,6 @@ private func pasteEnds(
   let before = screen.typed
   _ = await live.handle(2, .release)
   live.left(2)
-  // Long enough for several keys on a loaded machine.
   await settle(300)
   #expect(screen.typed > before + 1)
 }
@@ -174,12 +169,9 @@ private func pasteEnds(
   _ = await live.handle(1, .input(keyDown))
   live.stop()
   #expect(!live.listening)
-  // What the viewer held is let go as the stream ends.
   #expect(screen.sent == [keyDown, .key(keyCode: 0, down: false)])
-  // A viewer that authenticated as the stream stopped is not counted.
   live.joined(2)
   #expect(live.counters.viewers == 1)
-  // A new stream has no controller left over from the last.
   _ = try live.start()
   defer { live.stop() }
   live.joined(3)

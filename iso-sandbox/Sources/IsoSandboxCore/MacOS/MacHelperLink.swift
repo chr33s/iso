@@ -15,9 +15,8 @@ package protocol MacEnrollmentStore: Sendable {
 }
 
 /// The host side of the helper channel (Gate I), on vsock port 7801.
-/// The host speaks first on each connection; a connection becomes the
-/// active one only after it authenticates (or enrolls a fresh clone). An
-/// unauthenticated connection never replaces the active one.
+/// The host speaks first; a connection becomes active only after it authenticates (or enrolls a
+/// fresh clone), and an unauthenticated one never replaces the active one.
 package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
   private let store: any MacEnrollmentStore
   private let log: @Sendable (String) -> Void
@@ -85,9 +84,9 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
     let sent = BoundedWrite.all(fd, Array(numbered.encodedLine()), deadline: writeDeadline)
     close(fd)
     guard sent else {
-      // A partly written line would corrupt the stream: drop the
-      // connection. Its reader then ends and clears the active link; the
-      // guest helper reconnects and authenticates again.
+      // A partly written line would corrupt the stream: drop the connection.
+      // Its reader then ends and clears the active link; the helper reconnects and authenticates
+      // again.
       lock.withLock {
         outstanding = 0
         if activeID == connectionID, readFD >= 0 { shutdown(readFD, SHUT_RDWR) }
@@ -134,10 +133,10 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
     accept(fd: dup(conn.fileDescriptor), retaining: conn)
   }
 
-  /// Takes ownership of `fd` (a connected stream) and runs the protocol on it
-  /// in its own thread. False when too many connections are pending; the
-  /// caller then refuses the connection and `fd` is closed. `retaining` is
-  /// kept alive with the active connection.
+  /// Takes ownership of `fd` (a connected stream) and runs the protocol on it in
+  /// its own thread.
+  /// False when too many connections are pending; the caller then refuses and `fd` is closed.
+  /// `retaining` is kept alive with the active connection.
   @discardableResult
   package func accept(fd: Int32, retaining object: AnyObject?) -> Bool {
     let id: Int? = lock.withLock {
@@ -313,13 +312,12 @@ package final class MacHelperLink: NSObject, VZVirtioSocketListenerDelegate, @un
   }
 }
 
-/// Writes to a descriptor whose peer may stop reading, without blocking
-/// past a deadline. Each write waits for writability with `poll`, then
-/// writes at most `chunk` bytes: no more than a writable socket's send
-/// low-water mark, so the write completes without blocking. (Darwin ignores
-/// `MSG_DONTWAIT` on Unix stream sockets, and `O_NONBLOCK` would change the
-/// descriptor's mode for its reader too, which shares it through `dup`.) A
-/// caller whose descriptor is already non-blocking may pass a larger `chunk`.
+/// Writes to a descriptor whose peer may stop reading, without blocking past a
+/// deadline.
+/// Each write polls for writability, then writes at most `chunk` bytes (no more than the send low-
+/// water mark, so it cannot block). Darwin ignores `MSG_DONTWAIT` on Unix stream sockets, and
+/// `O_NONBLOCK` would change the mode of a `dup`-shared descriptor its reader uses; a caller with a
+/// non-blocking descriptor may pass a larger `chunk`.
 package enum BoundedWrite {
   static let chunk = 512
 

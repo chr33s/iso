@@ -37,9 +37,8 @@ package enum Owner {
     }
   }
 
-  /// The kernel a sandbox with `display` boots. A desktop kernel is
-  /// installed separately from the qualified one and is re-checked against
-  /// its own pin at every boot.
+  /// The kernel a sandbox with `display` boots.
+  /// A desktop kernel is installed separately and re-checked against its own pin at every boot.
   static func kernel(root: SandboxRoot, display: DisplayMode) throws -> URL {
     switch display {
     case .headless:
@@ -58,10 +57,10 @@ package enum Owner {
   /// in a view, which draws only under AppKit's.
   package enum MainLoop: Sendable { case dispatch, appKit }
 
-  /// The entry point picks the loop from the record before the owner
-  /// starts, in a read of its own. If the record this owner then loads has
-  /// a display the loop cannot render, the owner does not boot: it would
-  /// run a VM whose frames never arrive.
+  /// The entry point picks the loop from the record before the owner starts, in a
+  /// read of its own.
+  /// If the record the owner then loads has a display the loop cannot render, it does not boot
+  /// (frames would never arrive).
   static func requireLoop(_ loop: MainLoop, for display: DisplayMode) throws {
     guard display == .headless || loop == .appKit else {
       throw SandboxError(
@@ -120,11 +119,11 @@ package enum Owner {
       id.rawValue, rootfs: rootfs, vmm: vmm,
       vm: machineResources(cpus: record.cpus, memoryBytes: record.memoryBytes),
       configuration: config)
-    // `create` boots the VM into the framework's init; the guest's own
-    // init runs only at `start`, so the device check below precedes any
-    // guest-authored code. It runs for every network mode: the framework
-    // attaches devices iso did not ask for (a virtio-fs share), and a VM
-    // whose live inventory differs from the expected one never starts.
+    // `create` boots the VM into the framework's init; the guest's own init runs
+    // only at `start`, so the device check below precedes any guest-authored
+    // code.
+    // It runs for every network mode: the framework attaches devices iso did not ask for (a virtio-
+    // fs share), and a VM whose live inventory differs never starts.
     try await container.create()
     let devices = try await checkDevices(
       of: id, mode: record.network, display: display,
@@ -163,9 +162,10 @@ package enum Owner {
       "started pid=\(live.pid) ipv4=\(live.ipv4 ?? "-") ipv6=\(live.ipv6 ?? "-") network=\(record.network.rawValue)"
     )
 
-    // The last resort: both kills below are guest-agent RPCs, which a root
-    // guest can wedge. The VM runs inside this process, so exiting ends it;
-    // a clean exit is not restarted by launchd.
+    // The last resort: both kills below are guest-agent RPCs, which a root guest
+    // can wedge.
+    // The VM runs inside this process, so exiting ends it; a clean exit is not restarted by
+    // launchd.
     let liveFile = paths.live
     let controlSocket = paths.control
     let streamSocket = paths.streams
@@ -298,10 +298,10 @@ package enum Owner {
     try? await Task.sleep(for: .milliseconds(200))
   }
 
-  /// Take `id`'s owner lock for the owner's whole life, under the mutation
-  /// guard, however the owner was launched: an owner never starts
-  /// mid-update, and later mutations see it and refuse. An interrupted disk
-  /// update is settled first. The guard is released on return.
+  /// Take `id`'s owner lock for the owner's whole life, under the mutation guard,
+  /// however the owner was launched: an owner never starts mid-update, and later
+  /// mutations see it and refuse.
+  /// An interrupted disk update is settled first; the guard is released on return.
   static func claim(root: SandboxRoot, id: SandboxID) async throws -> Int32 {
     let paths = root.sandbox(id)
     let guarded = try await FileLock.acquire(
@@ -331,8 +331,8 @@ package enum Owner {
 
   /// vmnet keeps a subnet reserved for hours after its owning process dies
   /// uncleanly, so a restarted sandbox may not get its old subnet back, and
-  /// several neighbours may be taken the same way. Quarantine each refused
-  /// subnet and move on (the address changes; the identity does not).
+  /// several neighbours may be taken the same way.
+  /// Quarantine each refused subnet and move on (the address changes; the identity does not).
   static func makeNetwork(root: SandboxRoot, paths: SandboxPaths, record: inout SandboxRecord)
     throws -> any Network
   {
@@ -532,13 +532,12 @@ actor Lifecycle {
     self.forceExit = forceExit
   }
 
-  /// Ask systemd to shut down cleanly; force the VM down if it has not
-  /// halted within the grace period, and end the owner (and so the VM) if
-  /// the guest agent cannot deliver even that. The guest-agent calls run in
-  /// their own tasks: a wedged agent must not stall the timers. `kill` holds
-  /// the container's state lock across its RPC, so a wedged halt also stalls
-  /// the forced kill; ending the owner is the only step that cannot be
-  /// blocked by the guest.
+  /// Ask systemd to shut down cleanly; force the VM down if it has not halted
+  /// within the grace period, and end the owner (and so the VM) if the guest
+  /// agent cannot deliver even that.
+  /// The guest-agent calls run in their own tasks so a wedged agent cannot stall the timers; `kill`
+  /// holds the container's state lock across its RPC, so a wedged halt also stalls the forced kill,
+  /// and ending the owner is the only step the guest cannot block.
   func requestHalt() {
     guard !halting else { return }
     halting = true
@@ -620,10 +619,10 @@ final class ConsoleLog: Sendable {
     }
   }
 
-  /// Drains `reader` into `out` until EOF. Uses throwing I/O only: the
-  /// legacy FileHandle calls raise uncatchable exceptions (a full host disk
-  /// would kill the owner and its VM). After a write error it keeps
-  /// draining and discards, so the guest console never blocks.
+  /// Drains `reader` into `out` until EOF.
+  /// Throwing I/O only (legacy FileHandle calls raise uncatchable exceptions; a full host disk
+  /// would kill the owner and its VM); after a write error it keeps draining and discards, so the
+  /// guest console never blocks.
   static func copy(from reader: FileHandle, to out: FileHandle, written: Int, limit: Int = limit) {
     var written = written
     var writable = true
@@ -651,10 +650,10 @@ final class ConsoleLog: Sendable {
   }
 }
 
-/// vmnet host mode with no route beyond the host: NAT44, NAT66, the DNS
-/// proxy, router advertisements and DHCP are all disabled on the
-/// configuration the network is created from. The host is the `.1` peer, so
-/// host-initiated SSH (and its tunnels) still reach the guest.
+/// vmnet host mode with no route beyond the host: NAT44, NAT66, the DNS proxy,
+/// router advertisements and DHCP are all disabled on the configuration the
+/// network is created from.
+/// The host is the `.1` peer, so host-initiated SSH (and its tunnels) still reach the guest.
 struct HostOnlyNetwork: Network {
   nonisolated(unsafe) let reference: vmnet_network_ref
   let subnet: CIDRv4

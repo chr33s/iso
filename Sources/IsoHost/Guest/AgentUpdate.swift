@@ -6,10 +6,9 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// `iso agent update`: refresh the agent binaries inside a running VM
-/// without rebuilding the image. Codex is reinstalled as root through its
-/// embedded installer wrapper (script on stdin); Claude Code runs its own
-/// `claude update` as the guest user.
+/// `iso agent update`: refresh agent binaries in a running VM without an image
+/// rebuild. Codex is reinstalled as root via its embedded installer (script on
+/// stdin); Claude Code runs `claude update` as the guest user.
 package enum AgentUpdate {
   package enum Agent: Sendable, Equatable {
     case claude, codex
@@ -22,7 +21,6 @@ package enum AgentUpdate {
     }
   }
 
-  /// No selection means "nothing"; either no flag or both means both.
   package enum Selection: Sendable, Equatable {
     case claude, codex, both
 
@@ -45,7 +43,6 @@ package enum AgentUpdate {
     package var phrase: String { agents.map(\.display).joined(separator: " and ") }
   }
 
-  /// The `openai/codex` release feed the guest binary is compared against.
   package static let codexRepository = "openai/codex"
 
   package enum Outcome: Sendable, Equatable {
@@ -136,8 +133,6 @@ package enum AgentUpdate {
     }
   }
 
-  /// Update each selected agent, reporting every outcome; fails after all
-  /// have run if any failed.
   package static func run(
     _ client: SSHClient, _ session: SSHSession, _ selection: Selection, out: (String) -> Void
   ) throws {
@@ -198,7 +193,6 @@ func paddedText(_ text: String, _ width: Int) -> String {
 }
 
 extension SemanticVersion {
-  /// Nil unless `text` is a whole SemVer 2.0 version.
   package init?(_ text: String) {
     guard let version = try? SemanticVersion(parsing: text) else { return nil }
     self = version

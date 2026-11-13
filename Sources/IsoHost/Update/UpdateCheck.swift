@@ -15,7 +15,6 @@ package struct UpdateState: Sendable, Equatable {
     self.latestKnownVersion = latestKnownVersion
   }
 
-  /// `serde_json::to_string_pretty` of the Rust struct (no trailing newline).
   var rendered: String {
     var text = OutputJSON.object([
       ("last_checked_at", .uint(lastCheckedAt)),
@@ -53,7 +52,6 @@ package struct UpdateState: Sendable, Equatable {
 /// The background update check and the startup notice. Every path is
 /// best-effort and silent on failure; nothing here ever installs anything.
 package enum UpdateCheck {
-  /// `dirs::data_local_dir()/iso/update-check.json` on macOS.
   package static func statePath(home: String?) -> String? {
     guard let home, !home.isEmpty else { return nil }
     return home + "/Library/Application Support/iso/update-check.json"
@@ -138,10 +136,9 @@ package enum UpdateCheck {
     }
   }
 
-  /// Refresh release metadata on a detached thread when the interval has
-  /// elapsed. The timestamp is written before the thread starts so short
-  /// commands, which exit before the request finishes, do not re-trigger
-  /// the check on every run. Returns whether a refresh was started.
+  /// Refresh release metadata on a detached thread when the interval has elapsed.
+  /// The timestamp is written first so short commands that exit before the request
+  /// finishes do not re-trigger it. Returns whether a refresh started.
   @discardableResult
   package static func maybeRunBackgroundCheck(
     _ config: UpdateConfig, updater: Updater, stdinIsTerminal: Bool,

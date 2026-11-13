@@ -3,18 +3,15 @@ import IsoConfiguration
 import IsoCore
 
 extension AppleBackend {
-  /// Smallest template build VM; instances take `vm.vcpus` and `vm.memory`.
   static let macBuildCPUs: UInt32 = 4
   static let macBuildMemoryMiB: UInt64 = 8192
   static let macDefaultDiskGiB: UInt64 = 64
-  /// The runtime's `MacTemplates.coreAISuffix` (iso-sandbox, a separate package).
   static let macCoreAISuffix = "-coreai"
 
-  /// `iso setup --guest macos`: install macOS from the operator's restore
-  /// image into a new runtime template, provisioned by ``MacProvision``,
-  /// and record it as image `options.image`. The template build reaches the
-  /// network through a vmnet network of its own; nothing in the project or
-  /// the host's credentials is given to it.
+  /// `iso setup --guest macos`: install macOS from the operator's restore image into
+  /// a runtime template provisioned by ``MacProvision``, recorded as image
+  /// `options.image`. The build uses its own vmnet network; no project content or
+  /// host credential is given to it.
   func setupMac(_ options: SetupOptions, ipsw: String, runtime: SandboxRuntime, owner: Owner)
     throws
   {

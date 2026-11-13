@@ -6,10 +6,9 @@ import Virtualization
 
 /// The display side of a ``DisplayMode/virtioDisplay`` owner
 /// (docs/design/linux-desktop-virtio-gpu.md §6, §8): the VM's
-/// `VZVirtualMachineView` in an ordered-out window, host computer use over
-/// the control socket, the opt-in live view, and, when the sandbox was
-/// created with it, guest-driven computer use on vsock 7802. The owner runs
-/// the AppKit main loop for it (`Entry`).
+/// `VZVirtualMachineView` in an ordered-out window, host computer use over the
+/// control socket, the opt-in live view, and, when the sandbox was created with
+/// it, guest-driven computer use on vsock 7802.
 @MainActor
 package final class LinuxDesktop {
   let screen: VMScreen
@@ -28,8 +27,8 @@ package final class LinuxDesktop {
 
   /// The binding a Linux guest's sessions hold. A Linux guest cannot reboot
   /// inside its VM: its init exiting ends the container and so this owner.
-  /// The owner's boot is therefore also the guest's boot, and both come
-  /// from the host; nothing guest-reported takes part.
+  /// The owner's boot is also the guest's boot, both from the host; nothing guest-reported takes
+  /// part.
   nonisolated static func binding(bootId: String, vmInstance: String) -> CUBinding {
     CUBinding(
       bootId: bootId, vmInstance: vmInstance, guestBoot: bootId, helperGeneration: 0,
@@ -84,9 +83,8 @@ package final class LinuxDesktop {
       guest: guestLink?.counters, preemptions: screen.preemptions, liveView: liveView.counters)
   }
 
-  /// One host computer-use request. No session check precedes the
-  /// screen's own: the guest has no helper whose identity a session could
-  /// pin.
+  /// One host computer-use request. No session check precedes the screen's own:
+  /// the guest has no helper whose identity a session could pin.
   func respond(_ request: CURequest) async -> MacControlResponse {
     await CUService.respond(
       request, screen: screen, liveView: liveView,

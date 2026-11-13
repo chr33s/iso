@@ -14,11 +14,8 @@ let package = Package(
     .executable(name: "iso-vz-probe-helper", targets: ["ProbeHelper"]),
   ],
   targets: [
-    // Host: context report, headless VM owner, view owner, frame analysis.
     .executableTarget(name: "VZContextProbe"),
-    // Guest: AppKit fixture (token, frame counter, grid, text, keys, drag, scroll).
     .executableTarget(name: "ProbeFixture"),
-    // Guest: vsock boot-identity helper, runs as a guest LaunchDaemon.
     .executableTarget(name: "ProbeHelper"),
   ]
 )

@@ -1,20 +1,12 @@
 import Foundation
 
-/// The one way a sandbox's disk is replaced after create: `grow` and
-/// `restore` both prepare a scratch disk and publish it here, together with
-/// the record that describes it.
-///
-/// Everything that can fail runs on the scratch disk first. Publication then
-/// (1) stages the new record beside the inode of the prepared disk, (2)
-/// renames that disk over `rootfs.ext4`, and (3) writes the record and drops
-/// the staged copy. The rename is the commit point. After an interrupted
-/// publication, an installed disk with the staged inode means step 3 must be
-/// finished; any other disk means the update never happened, and its scratch
-/// disk is discarded. So disk and record always describe the same update.
-///
-/// This recovers deterministically from a process crash at any step. It
-/// makes no claim about sudden power loss: each rename is atomic, but the
-/// steps are not synced to disk as a group.
+/// The one way a sandbox's disk is replaced after create: `grow` and `restore`
+/// both prepare a scratch disk and publish it here, together with the record that
+/// describes it.
+/// Everything that can fail runs on the scratch disk first; the rename over `rootfs.ext4` is the
+/// commit point, and recovery from a crash at any step is deterministic (an installed disk with the
+/// staged inode finishes the update, any other discards it). No claim about sudden power loss: the
+/// steps are not synced as a group.
 package enum DiskUpdate {
   struct Pending: Codable {
     var work: String
@@ -82,9 +74,9 @@ package enum DiskUpdate {
     return true
   }
 
-  /// The staged update and the file it came from, if any. State that
-  /// cannot be read, or that contradicts itself, is an error: guessing
-  /// could pair a disk with another update's record.
+  /// The staged update and the file it came from, if any.
+  /// State that cannot be read or contradicts itself is an error: guessing could pair a disk with
+  /// another update's record.
   static func loadPending(_ paths: SandboxPaths) throws -> (Pending, URL)? {
     guard let data = try read(paths.pendingDiskUpdate) else { return nil }
     do {

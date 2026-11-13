@@ -84,7 +84,6 @@ private func request(_ kind: String, _ build: (inout CUActionRequest) -> Void = 
   let events = CUKeys.chord(keyCode: 1, modifiers: [.command, .shift])
   #expect(events.map(\.kind) == [.flags, .flags, .down, .up, .flags, .flags])
   #expect(events.map(\.keyCode) == [55, 56, 1, 1, 56, 55])
-  // Command alone, then Command+Shift with both device bits and 0x100.
   #expect(events[0].flags == (1 << 20) | 0x8 | 0x100)
   #expect(events[2].flags == (1 << 20) | (1 << 17) | 0x8 | 0x2 | 0x100)
   #expect(events.last?.flags == 0)
@@ -102,12 +101,10 @@ private func request(_ kind: String, _ build: (inout CUActionRequest) -> Void = 
 
 @Test func anInterruptedSequenceIsFullyReleased() {
   let events = CUKeys.chord(keyCode: 12, modifiers: [.command, .option])
-  // Cut after both modifiers and the key-down: release the key, then option, then command.
   let rel = CUKeys.releases(after: events.prefix(3))
   #expect(rel.map(\.kind) == [.up, .flags, .flags])
   #expect(rel.map(\.keyCode) == [12, 58, 55])
   #expect(rel.last?.flags == 0)
-  // A complete sequence leaves nothing to release.
   #expect(CUKeys.releases(after: events[...]).isEmpty)
 }
 
@@ -139,7 +136,6 @@ private func request(_ kind: String, _ build: (inout CUActionRequest) -> Void = 
     $0.text = String(repeating: "A", count: CUActionRequest.maxText)
   }
   let wait = MacSandboxes.replyTimeout(MacControlRequest(op: .cuAct, action: longest))
-  // Shift down, key down, key up, shift up per character, 12 ms apart.
   let typing = Double(CUActionRequest.maxText * 4) * 0.012
   #expect(wait >= typing + 60)
 }

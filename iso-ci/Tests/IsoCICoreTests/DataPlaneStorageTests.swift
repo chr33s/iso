@@ -8,7 +8,6 @@ import Testing
 @Suite struct DataPlaneStorageTests {
   static let cacheBase = "/cache/_apis/artifactcache/"
 
-  /// Reserves, uploads in chunks and commits one cache entry.
   static func save(_ harness: DPHarness, token: String, key: String, version: String, data: String)
     async -> Int
   {
@@ -209,8 +208,6 @@ import Testing
 
   // MARK: Artifacts
 
-  /// Uploads an artifact through the recorded toolkit sequence; returns the
-  /// finalize status.
   static func upload(
     _ harness: DPHarness, token: String, registration: DataPlaneRegistration, name: String = "dist",
     blocks: [String] = ["PK\u{3}\u{4}first-", "second"]
@@ -315,25 +312,21 @@ import Testing
     let run = PreflightRunID.generate()
     let (_, registration, runner) = try await harness.register(run: run)
     let (_, token, _) = try await harness.acquire(runner)
-    // Traversal and separators in names are refused.
     for name in ["../escape", "a/b", "/abs", "a\\b", ".."] {
       #expect(
         try await Self.upload(harness, token: token, registration: registration, name: name).0
           == 400)
     }
-    // A block beyond the output budget is refused.
     let huge = String(repeating: "x", count: Int(DPHarness.limits.outputBytes) + 1)
     #expect(
       try await Self.upload(
         harness, token: token, registration: registration, name: "huge", blocks: [huge]
       ).0 == 413)
-    // Another run never sees this run's artifacts (even with a valid token).
     #expect(try await Self.upload(harness, token: token, registration: registration).0 == 200)
     let (_, other, otherRunner) = try await harness.register()
     let (_, otherToken, _) = try await harness.acquire(otherRunner)
     #expect(
       try await Self.download(harness, token: otherToken, registration: other, name: "dist") == nil)
-    // A forged request naming the first run's backend id is refused.
     let foreign = JobMessageBuilder.Identity(attempt: registration.attempt, run: registration.run)
     #expect(
       await harness.request(
@@ -354,14 +347,12 @@ import Testing
       run: run, attempt: producerAttempt)
     let (_, producerToken, _) = try await harness.acquire(producerRunner)
     #expect(try await Self.upload(harness, token: producerToken, registration: producer).0 == 200)
-    // Dependent job in the same run with explicit provenance: visible.
     let (_, consumer, consumerRunner) = try await harness.register(
       run: run, dependencies: [producerAttempt])
     let (_, consumerToken, _) = try await harness.acquire(consumerRunner)
     #expect(
       try await Self.download(harness, token: consumerToken, registration: consumer, name: "dist")
         != nil)
-    // Same run without that provenance: invisible.
     let (_, stranger, strangerRunner) = try await harness.register(run: run)
     let (_, strangerToken, _) = try await harness.acquire(strangerRunner)
     #expect(

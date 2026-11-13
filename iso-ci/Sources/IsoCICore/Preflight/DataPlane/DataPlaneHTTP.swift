@@ -1,6 +1,5 @@
 import Foundation
 
-/// A transport-neutral HTTP request as the endpoint sees it.
 package struct DataPlaneRequest: Sendable, Equatable {
   package let method: String
   package let path: String

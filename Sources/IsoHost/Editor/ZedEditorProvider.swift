@@ -2,7 +2,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Zed's SSH remote development, through the system `ssh`.
 package struct ZedEditorProvider: EditorProvider {
   package let id = EditorProviderID.zed
   package let displayName = "Zed"

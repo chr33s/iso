@@ -4,10 +4,6 @@ import Virtualization
 
 /// `vm-run`: Phase 1/2 headless owner, following the no-view procedure of spec
 /// §9. No AppKit, no VZVirtualMachineView, no WindowServer connection.
-///
-/// Per cycle: configure → validate → `VMHost` (VM on its serial queue) → start
-/// → running → guest helper hello (vsock) and SSH banner (NAT) → hold → graceful
-/// stop. The owner exits 0 only if every cycle passed.
 final class HeadlessRunner: @unchecked Sendable {
   let bundle: VMBundle
   let log: EventLog
@@ -156,7 +152,6 @@ final class HeadlessRunner: @unchecked Sendable {
     r["guest_ssh_banner"] = banner ?? NSNull()
     r["guest_reachable_seconds"] = Date().timeIntervalSince(t0)
 
-    // Hold: the driver SSHes in and reads guest state while we wait.
     if hold != 0 {
       _ = await waitUntil(hold < 0 ? 86400 : hold, interval: 0.5) {
         stopFile.map { FileManager.default.fileExists(atPath: $0) } == true

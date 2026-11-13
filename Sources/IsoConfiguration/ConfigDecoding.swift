@@ -16,9 +16,8 @@ struct FieldError: Error {
   }
 }
 
-/// Reads one JSON object with explicit absent / null / wrong-type handling.
-/// Mirrors the baseline serde policy per field: optional fields treat `null`
-/// as absent; defaulted and required fields reject `null`.
+/// Reads one JSON object: optional fields treat `null` as absent; defaulted
+/// and required fields reject it.
 struct ObjectReader {
   let path: [JSONPathComponent]
   let members: [String: JSONValue]
@@ -199,8 +198,7 @@ extension JSONValue {
   }
 }
 
-/// Maps a decoded document onto the typed model. Pure: reads only the value
-/// and the injected environment; never touches the filesystem or runs a
+/// Maps a decoded document onto the typed model. Pure: no filesystem, no
 /// credential command.
 func egressFilter(_ reader: ObjectReader) throws(FieldError) -> EgressFilter {
   let mode = try reader.defaulted("egress", EgressMode.open) { value, path throws(FieldError) in
@@ -414,9 +412,8 @@ enum ConfigDecoder {
       })
   }
 
-  /// `workspace.input` (INPUT-01). Unknown keys, invalid selectors,
-  /// duplicates, conflicting exceptions and limits above the v1 ceilings are
-  /// errors; there is no unlimited spelling.
+  /// `workspace.input` (INPUT-01). Invalid or conflicting selectors and
+  /// limits above the v1 ceilings are errors; no unlimited spelling.
   static func workspaceInput(_ root: ObjectReader) throws(FieldError) -> WorkspaceInputConfig {
     guard let workspace = root.members["workspace"] else { return .defaults }
     let w = try ObjectReader(workspace, at: root.child("workspace"))
@@ -514,9 +511,8 @@ enum ConfigDecoder {
     return ComputerUseConfig(guestFrameRate: rate)
   }
 
-  /// `coreai`: `accelerators` is a non-empty, duplicate-free list of `gpu`
-  /// and `neural_engine`, and needs `"acknowledge_reduced_host_security":
-  /// true`. An empty object, or one without `accelerators`, is off.
+  /// `coreai`: non-empty, duplicate-free `accelerators` plus
+  /// `acknowledge_reduced_host_security: true`; an empty object is off.
   static func coreAI(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
     -> CoreAIConfig?
   {
@@ -741,8 +737,7 @@ enum ConfigDecoder {
   ) throws(FieldError) -> ProxyConfig {
     let r = try ObjectReader(value, at: path)
     /// `schemes` lists what the provider accepts upstream; the first is the
-    /// default. OpenAI keys are always Bearer, so `api_key` is refused there
-    /// rather than reaching iso-proxy, which rejects it at startup.
+    /// default. OpenAI is always Bearer, so `api_key` is refused here.
     func upstream(
       _ value: JSONValue, _ path: [JSONPathComponent], _ schemes: [ProxyAuthScheme]
     ) throws(FieldError) -> ProxyUpstream {

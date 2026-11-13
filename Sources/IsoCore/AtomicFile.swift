@@ -37,7 +37,6 @@ package enum AtomicFile {
     }
 
     let temporary = temporaryPath(for: path)
-    // Path arguments here and below are C strings borrowed for the call only.
     let fd = unsafe open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else { throw .posix("Failed to write temp file", temporary) }
     var published = false
@@ -71,7 +70,6 @@ package enum AtomicFile {
       }
     }
     let temporary = temporaryPath(for: path)
-    // Path arguments here and below are C strings borrowed for the call only.
     let fd = unsafe open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else { throw .posix("Failed to write temp file", temporary) }
     defer { unsafe unlink(temporary) }

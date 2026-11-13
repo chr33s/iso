@@ -77,10 +77,8 @@ extension GlobalOptions {
   }
 }
 
-/// Machine mode owns the process's standard descriptors: stdout carries the
-/// one protocol document and nothing else, so everything that would write to
-/// fd 1 (this process or a child) goes to stderr; stdin is `/dev/null`, so no
-/// prompt can wait on it.
+/// Machine mode owns stdio: stdout carries only the protocol document (anything
+/// else writing to fd 1 goes to stderr) and stdin is `/dev/null`, so no prompt waits.
 enum MachineSession {
   /// The original stdout, kept close-on-exec so no child inherits it.
   private static let document = Mutex<Int32?>(nil)
@@ -157,7 +155,6 @@ func rejectUnsupportedMachineOutput(_ command: any ParsableCommand) throws {
   throw ArgumentParser.ValidationError(failure.message)
 }
 
-/// Subcommand names from `root` down to `target`; empty for the root itself.
 func commandPath(_ target: any ParsableCommand.Type, under root: any ParsableCommand.Type)
   -> [String]?
 {

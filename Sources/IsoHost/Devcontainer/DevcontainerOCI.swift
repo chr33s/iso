@@ -413,7 +413,6 @@ package struct FeatureResolver: Sendable {
       .joined(separator: " ")
   }
 
-  /// Rust `Cmd::run`: stdout and stderr stay the caller's.
   func run(_ name: String, _ arguments: [String], redacted: Set<Int> = []) throws {
     let description = Self.describe(name, arguments, redacted: redacted)
     diagnostics?.debug("Running: \(description)")
@@ -435,7 +434,6 @@ package struct FeatureResolver: Sendable {
     }
   }
 
-  /// Rust `Cmd::capture`: stdout returned, stderr discarded.
   func capture(_ name: String, _ arguments: [String]) throws -> String {
     let description = Self.describe(name, arguments, redacted: [])
     diagnostics?.debug("Running (capture): \(description)")
@@ -462,7 +460,6 @@ package struct FeatureResolver: Sendable {
   }
 }
 
-/// Rust `ExitStatus` display.
 func exitStatusText(_ termination: ProcessRunner.Termination) -> String {
   switch termination {
   case .exited(let code): "exit status: \(code)"

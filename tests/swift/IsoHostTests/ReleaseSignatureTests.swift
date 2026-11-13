@@ -11,7 +11,6 @@ func signerKey(_ key: Curve25519.Signing.PrivateKey) -> SignerKey {
   try! SignerKey(blob: SignerKey.prefix + Array(key.publicKey.rawRepresentation))
 }
 
-/// An armored `SSHSIG`, byte for byte what `ssh-keygen -Y sign` writes.
 func sshSign(
   _ message: [UInt8], key: Curve25519.Signing.PrivateKey,
   namespace: String = ReleaseSigners.namespace, hash: String = "sha512",
@@ -93,7 +92,6 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   }
 }
 
-/// Interoperability: a signature made by the real `ssh-keygen -Y sign`.
 @Test func verifiesSignaturesMadeByOpenSSH() throws {
   let directory = try temporaryDirectory("sshsig")
   defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -131,9 +129,6 @@ private let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathCom
   #expect(Set(ReleaseSigners.trusted.map(\.blob)).count == ReleaseSigners.keys.count)
 }
 
-/// The signer list and namespace live in four places with no compiler link:
-/// this binary, the allowed_signers file the signing script checks against,
-/// the installer and the signing script.
 @Test func signerListAgreesAcrossBinaryInstallerAndSigningScript() throws {
   let allowed = try String(
     contentsOfFile: repositoryRoot + "/.github/release-signers", encoding: .utf8)

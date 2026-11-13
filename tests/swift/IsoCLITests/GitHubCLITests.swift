@@ -68,7 +68,6 @@ import Testing
   let bin = FileManager.default.temporaryDirectory.appending(path: "iso-cli-probe-\(UUID())").path
   defer { try? FileManager.default.removeItem(atPath: bin) }
   try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
-  // Answers by token: the fine-grained one authenticates, the other is 401.
   let curl = """
     #!/bin/sh
     input=$(cat)
@@ -104,7 +103,6 @@ import Testing
       == "    probe: FAILED (GET /user returned HTTP 401 (token may be invalid or revoked))")
   // A token that does not resolve is not probed.
   let broken = try #require(lines.firstIndex { $0.hasPrefix("  github.pat.\"c/broken\": FAILED") })
-  // The failed probe and the unresolvable token are both failed checks.
   #expect(lines[broken + 1] == "Config loads, but 2 requested checks failed")
   #expect(report == ValidateOutcome(failed: 2, notChecked: 0))
   #expect(!lines.joined().contains("SYNTHETIC"))

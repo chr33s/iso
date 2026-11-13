@@ -1,10 +1,7 @@
-/// Structural checks that must run before Foundation decodes a document.
-///
-/// Foundation's `JSONDecoder` accepts trailing commas and a byte-order mark,
-/// silently keeps the first of two duplicate keys, and bounds nesting only at
-/// its own internal depth. This pass rejects all of those and enforces the
-/// resource limits before any value is materialized. It validates RFC 8259
-/// grammar strictly but builds no values: decoding stays with Foundation.
+/// Structural checks before Foundation decodes a document. `JSONDecoder`
+/// accepts trailing commas and a BOM, silently keeps the first duplicate key,
+/// and bounds nesting only at its own depth; this pass rejects those and
+/// enforces resource limits, building no values.
 package struct JSONLimits: Sendable, Equatable {
   /// Largest accepted document, in bytes (before comment stripping).
   package var maxBytes: Int

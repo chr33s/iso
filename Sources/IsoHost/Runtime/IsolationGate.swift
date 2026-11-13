@@ -6,10 +6,9 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Runtime qualification's companion: the isolation gate. Before any guest
-/// is handed to a user or agent, the effective configuration the running
-/// VM's owner reports is checked against what iso recorded. No flag or
-/// configuration relaxes these checks.
+/// Runtime qualification's companion: before any guest is handed to a user or
+/// agent, the effective configuration the VM's owner reports is checked against
+/// what iso recorded. No flag or config relaxes these checks.
 package enum IsolationGate {
   /// Kernel pseudo-filesystems a sandbox may mount, as (type, source,
   /// destination). Nothing else — no share, bind, or block device.
@@ -205,10 +204,9 @@ package enum IsolationGate {
     return Ready(sandbox: name, ownerPID: live.pid, route: route)
   }
 
-  /// The brokered half of the gate (NET-01, NET-02): the owner's reading of
-  /// the live VM shows no network device and one socket device, no address
-  /// or interface is reported, the channel policy is exactly iso's, and the
-  /// boot carries the network-policy digest iso started it with.
+  /// The brokered half of the gate (NET-01, NET-02): the live VM shows no network
+  /// device and one socket device, no address or interface, a channel policy exactly
+  /// iso's, and the network-policy digest iso started it with.
   static func verifyBrokered(
     _ name: MachineName, _ live: LiveState, _ effective: Effective, networkPolicy wanted: SHA256Hex
   ) throws(RuntimeError) -> BrokeredRoute {

@@ -143,7 +143,6 @@ final class BootIdentity: NSObject, VZVirtioSocketListenerDelegate, @unchecked S
 
   func reset() { lock.withLock { _hello = nil } }
 
-  /// Ask the guest helper (root, in the guest) to run `shutdown -h now`.
   func requestGuestShutdown() -> Bool {
     lock.withLock {
       guard _writeFD >= 0 else { return false }

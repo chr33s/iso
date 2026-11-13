@@ -10,7 +10,6 @@ package final class GitHubAppAuth: Sendable {
   /// GitHubJWT lifetime; GitHub accepts at most 10 minutes.
   package static let jwtLifetime: EpochSeconds = 540
   package static let jwtBackdate: EpochSeconds = 60
-  /// Installation tokens are refreshed this long before expiry.
   package static let refreshMargin: EpochSeconds = 300
 
   package let appID: Int64

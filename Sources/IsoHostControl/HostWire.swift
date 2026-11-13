@@ -4,10 +4,9 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// Byte-level framing and value handling for `iso.host/v1`
-/// (docs/design/local-and-remote-hosts-spec.md section 6.1). Frames are UTF-8 JSON
-/// Lines; every frame is decoded through the configuration loader's strict
-/// pipeline (UTF-8, duplicate keys, depth, sizes) before any field is read.
+/// Framing for `iso.host/v1` (docs/design/local-and-remote-hosts-spec.md section 6.1): UTF-8
+/// JSON lines, each decoded through the configuration loader's strict pipeline before any
+/// field is read.
 package enum HostWire {
   package static let maxRequestFrame = 64 << 10
   package static let maxResponseFrame = 1 << 20
@@ -44,16 +43,14 @@ package enum HostWire {
     }
   }
 
-  /// Canonical compact encoding: sorted keys, no whitespace, minimal string
-  /// escapes, exact integers. Deterministic for equal values, so request
-  /// digests hash typed content, never incidental formatting.
+  /// Canonical compact encoding (sorted keys, minimal escapes, exact integers), so request
+  /// digests hash typed content, never formatting.
   package static func canonical(_ value: JSONValue) -> [UInt8] {
     var out: [UInt8] = []
     append(value, to: &out)
     return out
   }
 
-  /// `canonical` plus the frame newline.
   package static func frame(_ value: JSONValue) -> [UInt8] {
     canonical(value) + [UInt8(ascii: "\n")]
   }
@@ -196,7 +193,6 @@ package struct WireObject {
     return elements
   }
 
-  /// Rejects members no accessor read (closed v1 structures).
   package func finish() throws(HostControlError) {
     if let extra = members.keys.filter({ !consumed.contains($0) }).sorted().first {
       throw .invalidRequest("unknown field \(name(extra))")
@@ -224,7 +220,6 @@ package struct WireObject {
   }
 }
 
-/// Builds wire objects from typed values.
 package struct WireBuilder {
   package private(set) var members: [String: JSONValue] = [:]
 
@@ -249,7 +244,6 @@ package struct WireBuilder {
   package var value: JSONValue { .object(members) }
 }
 
-/// Wall-clock instants on the wire: whole UNIX seconds.
 package struct WireTime: Hashable, Comparable, Sendable, Codable, CustomStringConvertible {
   package let seconds: UInt64
 

@@ -3,7 +3,6 @@ import IsoConfiguration
 import IsoCore
 import IsoSecrets
 
-/// Parsed options for project creation or affinity-based reconnection.
 package struct UpRequest {
   package var dir: String?
   package var gitRepo: String?
@@ -27,14 +26,12 @@ package struct UpRequest {
   /// `--egress` or `--allow-host` was given; the effective policy is in the
   /// lifecycle's configuration.
   package var egressRequested = false
-  /// The subcommand refusal messages name (`up`, `code`, `zed`).
   package var command = "up"
   package let configTarget: ConfigTarget
 
   package init(configTarget: ConfigTarget) { self.configTarget = configTarget }
 }
 
-/// Project-affinity lookup, image preparation and first-boot orchestration.
 package struct UpWorkflow {
   package let request: UpRequest
   package let lifecycle: ProjectLifecycle
@@ -214,10 +211,9 @@ package struct UpWorkflow {
   }
 
   /// A running instance keeps the egress policy it booted with; a different
-  /// requested mode or allowlist, or a policy record that cannot be read, is
-  /// refused rather than silently ignored. The comparison is the running-guest
-  /// handoff's own (`NetworkPolicy.enforce`). Without a request, the handoff
-  /// checks the configured policy later.
+  /// requested mode or allowlist, or an unreadable policy record, is refused
+  /// (`NetworkPolicy.enforce`). Without a request, the handoff checks the
+  /// configured policy later.
   package func rejectEgressChange(_ instance: Instance) throws {
     guard request.egressRequested else { return }
     do {

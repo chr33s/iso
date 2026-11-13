@@ -6,12 +6,11 @@ import Foundation
 import IsoCore
 
 /// `iso update`: fetch release metadata from the one channel, download the
-/// platform archive, `SHA256SUMS` and its signature, verify the signature
-/// against the compiled-in release signers, the checksum and (with `gh`) the
-/// Sigstore attestation, extract into a private temporary directory, then
-/// replace the runtime, macOS guest helper, proxy, egress companion and finally this binary.
-/// Any failure before
-/// a replacement leaves every installed binary untouched.
+/// archive, `SHA256SUMS` and its signature, verify the signature against the
+/// compiled-in signers, the checksum and (with `gh`) the Sigstore attestation,
+/// extract into a private temp directory, then replace the runtime, macOS guest
+/// helper, proxy, egress companion and finally this binary. Any failure before a
+/// replacement leaves every installed binary untouched.
 package struct Updater: Sendable {
   package struct Options: Sendable, Equatable {
     package var checkOnly = false
@@ -37,7 +36,6 @@ package struct Updater: Sendable {
   package let environment: [String: String]
   package let home: String?
   package let build: IsoBuild
-  /// The running binary (`_NSGetExecutablePath`, as Rust `current_exe`).
   package let currentExecutable: String?
   package let diagnostics: Diagnostics
   let runner: ProcessRunner
@@ -66,10 +64,9 @@ package struct Updater: Sendable {
     fixtureBase = fixtureOrigin
   }
 
-  /// A local fixture origin for metadata and downloads, which disables
-  /// attestation verification. Only tests and update-fixture builds
-  /// (`-D ISO_UPDATE_FIXTURES`) can set it; a production build never reads
-  /// `ISO_UPDATE_API_BASE_URL` as a source.
+  /// A local fixture origin for metadata and downloads, which disables attestation
+  /// verification. Only tests and update-fixture builds (`-D ISO_UPDATE_FIXTURES`)
+  /// can set it; a production build never reads `ISO_UPDATE_API_BASE_URL`.
   var fixtureBase: String? = nil
 
   /// The environment's override, honored only by an update-fixture build.
@@ -429,18 +426,15 @@ package struct Updater: Sendable {
   }
 }
 
-/// Rust `io::Error` Display: `Permission denied (os error 13)`.
 func rustIOError(_ code: Int32) -> String {
   "\(String(cString: strerror(code))) (os error \(code))"
 }
 
-/// Rust `Path::exists`: follows symlinks; a dangling link does not exist.
 func pathExists(_ path: String) -> Bool {
   var status = stat()
   return stat(path, &status) == 0
 }
 
-/// Rust `Path::is_file`: a regular file after following symlinks.
 func isRegularFile(_ path: String) -> Bool {
   var status = stat()
   return stat(path, &status) == 0 && (status.st_mode & S_IFMT) == S_IFREG
@@ -681,7 +675,6 @@ package enum SelfReplace {
     return directory
   }
 
-  /// Validate every companion before replacing the runtime.
   package static func replaceSiblingRuntime(_ extractDirectory: String, currentExecutable: String?)
     throws
   {
@@ -702,11 +695,9 @@ package enum SelfReplace {
     try atomicReplace(runtime, over: join(directory, runtimeName))
   }
 
-  /// Make the Linux `desktop` images' guest files match the archive. A
-  /// release that carries one as a regular file installs it; one that does
-  /// not (a release before them; `build-release.py` requires both) removes
-  /// the installed copy, so none from another release stays beside the new
-  /// runtime.
+  /// Make the Linux `desktop` images' guest files match the archive: a release
+  /// carrying one installs it; one without (a release before them) removes the
+  /// installed copy so none from another release stays beside the new runtime.
   package static func replaceSiblingLinuxGuestFiles(
     _ extractDirectory: String, currentExecutable: String?
   ) throws {
@@ -723,7 +714,6 @@ package enum SelfReplace {
     }
   }
 
-  /// Replace the macOS guest helper that `iso-sandbox` installs in templates.
   package static func replaceSiblingGuestHelper(
     _ extractDirectory: String, currentExecutable: String?
   ) throws {
@@ -735,7 +725,6 @@ package enum SelfReplace {
     try atomicReplace(helper, over: join(directory, guestHelperName))
   }
 
-  /// Replace the required proxy sibling from the same verified archive.
   package static func replaceSiblingProxy(_ extractDirectory: String, currentExecutable: String?)
     throws
   {
@@ -747,7 +736,6 @@ package enum SelfReplace {
     try atomicReplace(proxy, over: join(directory, proxyName))
   }
 
-  /// Replace the required egress sibling from the same verified archive.
   package static func replaceSiblingEgress(_ extractDirectory: String, currentExecutable: String?)
     throws
   {

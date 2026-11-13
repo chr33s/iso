@@ -18,29 +18,22 @@ package enum EmbeddedResources {
     # GUEST_USER is exported by the image build (ImageBuild.swift).
     : "${GUEST_USER:?GUEST_USER must be set by the orchestrator}"
 
-    # Skip if a profile already provided a claude binary (e.g. stub-claude
-    # for testing). Profile post_install scripts run before this script.
-    # Using if/else (not early `exit 0`) because this file is concatenated
-    # with codex.sh into a single shell invocation; an unconditional exit
+    # Skip if a profile already provided a claude binary (e.g. stub-claude). if/else, not `exit 0`:
+    # this file is concatenated with codex.sh and an exit would skip the codex installer.
     # would skip the codex installer too.
     if [ -x "/home/${GUEST_USER}/.local/bin/claude" ]; then
         echo '  [guest] Claude Code CLI already installed, skipping.'
     else
         echo '  [guest] Installing Claude Code CLI...'
 
-        # Download the installer to a file first. The `curl | bash` pattern causes
-        # the installer's `install` subcommand to inherit curl's pipe as stdin,
-        # hanging on interactive prompts in non-interactive contexts (cloud-init,
-        # chroot). Running from a file with stdin from /dev/null avoids this.
+        # Download to a file first: `curl | bash` lets the installer inherit curl's pipe as stdin and
+        # hang on prompts in non-interactive contexts. Run it with stdin from /dev/null.
         INSTALLER=$(mktemp)
         chmod 644 "$INSTALLER"
         trap 'rm -f "$INSTALLER"' EXIT
 
-        # Retry with exponential backoff — transient network errors are common
-        # during cloud-init (DNS not ready, CDN hiccups, etc.). Each attempt is
-        # time-bounded so a stalled transfer fails and retries instead of hanging.
-        # The exit status is read in the failed branch: after `fi`, $? is the
-        # `if` statement's own status (0), not curl's.
+        # Retry with backoff (DNS/CDN hiccups during cloud-init); each attempt is time-bounded. Status is
+        # read in the failed branch: after `fi`, $? is the `if`'s own status, not curl's.
         echo '  [guest] Downloading Claude Code installer...'
         MAX_RETRIES=4
         RETRY_DELAY=5
@@ -95,11 +88,9 @@ package enum EmbeddedResources {
         exit 1
     }
 
-    # iso writes `cli_auth_credentials_store = "keyring"` into the guest Codex
-    # config only under `[codex] auth = "chatgpt"`. Every other mode reads
-    # credentials from auth.json, where the D-Bus/keyring session is pure overhead
-    # (and its password prompt is an outright regression). Gating on the config the
-    # guest actually has lets every Codex entry point route through this wrapper.
+    # Only `[codex] auth = "chatgpt"` makes iso write `cli_auth_credentials_store = "keyring"`;
+    # every other mode reads auth.json, where the keyring session is pure overhead. Gating on the
+    # guest's actual config lets every Codex entry point route through this wrapper.
     keyring_mode_in() {
         local config=$1
         local first_line=""
@@ -116,13 +107,11 @@ package enum EmbeddedResources {
         compgen -G "$KEYRING_DIR/*.keyring" >/dev/null 2>&1
     }
 
-    # secret-tool's stderr from the last probe, so the failure path can report the
-    # real cause instead of only guessing at the password.
+    # secret-tool's stderr from the last probe, so the failure path reports the real cause.
     PROBE_ERROR=""
 
-    # Writing proves the collection is both reachable and unlocked; a lookup can
-    # succeed against a locked collection. The probe item is cleared again so
-    # repeated launches do not accumulate junk in the user's keyring.
+    # Writing proves the collection is reachable and unlocked (a lookup can succeed against a locked
+    # one); the probe item is cleared so repeated launches do not accumulate junk.
     probe_keyring() {
         PROBE_ERROR="$(printf 'ok' \
             | timeout 5 secret-tool store \
@@ -144,10 +133,8 @@ package enum EmbeddedResources {
             die "Codex ChatGPT auth needs an interactive TTY to unlock the guest keyring"
         fi
 
-        # On a fresh guest there is no keyring yet, so this prompt is choosing a
-        # password rather than entering one. Say so, and confirm it — an
-        # unnoticed typo would otherwise lock the credentials behind a password
-        # the user cannot reproduce on the next launch.
+        # On a fresh guest this prompt chooses a password; confirm it, since a typo would lock the
+        # credentials behind a password the user cannot reproduce.
         if [ "$creating" = 1 ]; then
             printf '%s\n' \
                 'codex-account: this VM has no guest keyring yet.' \
@@ -177,17 +164,13 @@ package enum EmbeddedResources {
             fi
         fi
 
-        # Let the daemon's stderr reach the terminal. Once it forks it redirects
-        # its own fd 2, so this surfaces only its startup diagnostics — the probe
-        # below is what reports a wrong password.
+        # Daemon stderr reaches the terminal (startup diagnostics only; the probe reports a wrong password).
         output="$(printf '%s' "$password" \
             | timeout 30 gnome-keyring-daemon --unlock --components=secrets)" \
             || die "failed to unlock the guest keyring"
 
-        # The daemon prints its session env as `NAME=value` lines. Take only
-        # those, and export them: an unfiltered `eval` would execute any GLib
-        # diagnostic the daemon puts on stdout as a command, and a bare
-        # assignment would not reach Codex anyway.
+        # Take only `NAME=value` lines and export them: an unfiltered `eval` would execute any GLib
+        # diagnostic on stdout as a command.
         while IFS= read -r line; do
             case "$line" in
                 [A-Za-z_]*=*) export "${line%%=*}=${line#*=}" ;;
@@ -199,12 +182,9 @@ package enum EmbeddedResources {
         die "$CODEX_BIN is missing; rebuild the iso image"
     fi
 
-    # iso stages and maintains Codex state only in ~/.codex. In ChatGPT account
-    # mode, an explicit CODEX_HOME could put auth.json outside iso's cleanup path
-    # (including under /workspace, which is pulled back to the host). Refuse the
-    # unsupported override before inspecting its config. iso writes the managed
-    # credential-store key as the first line, so a same-named nested key cannot
-    # trigger this guard.
+    # iso manages Codex state only in ~/.codex. An explicit CODEX_HOME could put auth.json outside
+    # iso's cleanup path (including /workspace, which is pulled back to the host), so refuse it.
+    # iso writes the managed credential-store key first, so a nested same-named key cannot trigger this.
     if [ -n "${CODEX_HOME:-}" ] \
         && keyring_mode_in "$HOME/.codex/config.toml"; then
         die "CODEX_HOME is set, but iso manages ~/.codex and it selects the keyring credential store; unset CODEX_HOME for Codex ChatGPT account auth"
@@ -214,8 +194,7 @@ package enum EmbeddedResources {
         exec "$CODEX_BIN" "$@"
     fi
 
-    # The keyring speaks D-Bus, and a headless SSH session has no session bus.
-    # Re-exec under one, using the env guard to avoid recursing forever.
+    # Keyring needs a D-Bus session bus; re-exec under one (env guard prevents recursion).
     if [ "${ISO_CODEX_ACCOUNT_DBUS:-0}" != "1" ]; then
         command -v dbus-run-session >/dev/null 2>&1 \
             || die "dbus-run-session is missing; install dbus-user-session or rebuild the iso image"
@@ -228,30 +207,24 @@ package enum EmbeddedResources {
             || die "$tool is missing; rebuild the iso image with Codex account-auth support"
     done
 
-    # A nested codex-account — an in-guest agent shelling out to `codex-account` or
-    # `codex-yolo` — inherits this bus and its already-unlocked keyring. Unlocking
-    # again there would fail, for the same reason the ordering below matters, so
-    # reuse the session instead of prompting a second time.
+    # A nested codex-account (in-guest agent) inherits this bus and its unlocked keyring; unlocking
+    # again would fail, so reuse the session.
     if [ "${ISO_CODEX_ACCOUNT_UNLOCKED:-0}" = "1" ]; then
         probe_keyring \
             || die "inherited guest Secret Service session is unusable${PROBE_ERROR:+: $PROBE_ERROR}"
     else
-        # Unlock before anything else touches the bus. `gnome-keyring-daemon
-        # --unlock` only creates and unlocks the login collection when it is the
-        # process that starts the daemon; once any daemon owns
-        # `org.freedesktop.secrets` it hands the unlock to the graphical
-        # gcr-prompter, which cannot render on a headless guest and exits
-        # immediately. That includes a daemon the probe itself would D-Bus-activate,
-        # so there is no cheap "is it already unlocked?" check to make first.
+        # Unlock before anything else touches the bus: `gnome-keyring-daemon --unlock` only creates and
+        # unlocks the login collection when it starts the daemon; once any daemon owns
+        # `org.freedesktop.secrets` (even one the probe would D-Bus-activate) it defers to the graphical
+        # gcr-prompter, which cannot render headless.
         unlock_keyring
         probe_keyring \
             || die "guest Secret Service is unavailable${PROBE_ERROR:+: $PROBE_ERROR}; check the keyring password"
         export ISO_CODEX_ACCOUNT_UNLOCKED=1
     fi
 
-    # Codex 0.154.0 can reuse a desktop daemon on another D-Bus session when
-    # there are no explicit config overrides. Keep terminal auth on the keyring
-    # we just unlocked. Prepend the default so caller overrides retain precedence.
+    # Codex 0.154.0 can reuse a desktop daemon on another D-Bus session without explicit config
+    # overrides; pin it to the keyring just unlocked. Prepended so caller overrides win.
     exec "$CODEX_BIN" -c 'cli_auth_credentials_store="keyring"' "$@"
     CODEXACCOUNTEOF
     chmod 755 /usr/local/bin/codex-account
@@ -286,12 +259,11 @@ package enum EmbeddedResources {
         trap 'rm -f "$CODEX_INSTALLER" "$CODEX_LINK_TMP"' EXIT
         chmod 0644 "$CODEX_INSTALLER"
 
-        # curl retries transient failures without running a partially downloaded script.
+        # curl retries transient failures without running a partial script.
         curl -fsSL --retry 3 --retry-all-errors \
             -o "$CODEX_INSTALLER" https://chatgpt.com/codex/install.sh
 
-        # Retain the upstream package layout and guest ownership for `codex update`.
-        # PATH is already managed by iso; the installer need not edit shell profiles.
+        # Keep the upstream layout and guest ownership for `codex update`; iso already manages PATH.
         su - "$GUEST_USER" -c \
             "PATH='${GUEST_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' CODEX_NON_INTERACTIVE=1 sh '$CODEX_INSTALLER'" \
             </dev/null

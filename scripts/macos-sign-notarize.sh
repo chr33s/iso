@@ -51,8 +51,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 umask 077
 work="$(mktemp -d)"
 keychain="${work}/signing.keychain-db"
-# Keep the existing search list for certificate-chain lookup, and restore it
-# even if importing, signing, or notarization fails. Never eval security output.
+# Keep the existing search list for chain lookup and restore it even on failure. Never eval security output.
 original_keychains=()
 search_list_changed=0
 keychain_created=0
@@ -67,8 +66,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Validate before a release spends time building. Suppress decoder/parser output:
-# diagnostics must name the secret to repair without printing its contents.
+# Validate before a release spends time building. Suppress decoder output: diagnostics name the
+# secret to repair without printing its contents.
 if ! printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${work}/cert.p12" 2>/dev/null \
     || [[ ! -s "${work}/cert.p12" ]]; then
     echo "error: MACOS_CERTIFICATE_P12 must be base64 of a nonempty Developer ID Application .p12 file" >&2
@@ -101,8 +100,7 @@ security create-keychain -p "${keychain_password}" "${keychain}"
 keychain_created=1
 security set-keychain-settings -lut 21600 "${keychain}"
 security unlock-keychain -p "${keychain_password}" "${keychain}"
-# --keychain restricts identity selection, but codesign still uses the user's
-# search list to construct the certificate chain.
+# --keychain restricts identity selection, but codesign still uses the search list for the chain.
 search_list_changed=1
 security list-keychains -d user -s "${keychain}" ${original_keychains[@]+"${original_keychains[@]}"}
 if ! security import "${work}/cert.p12" -f pkcs12 -k "${keychain}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
@@ -113,8 +111,7 @@ fi
 security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain}" > /dev/null
 rm -f "${work}/cert.p12"
 
-# Resolve the configured name or SHA-1 to one valid Developer ID Application
-# identity in this keychain. Do not print certificate names or secret values.
+# Resolve the name or SHA-1 to one valid Developer ID Application identity. Print no names or secrets.
 identities="$(security find-identity -v -p codesigning "${keychain}")"
 signing_hash=""
 identity_pattern='^[[:space:]]*[0-9]+\)[[:space:]]+([[:xdigit:]]{40})[[:space:]]+"(Developer ID Application: .*)"$'

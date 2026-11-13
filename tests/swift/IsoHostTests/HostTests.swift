@@ -70,7 +70,6 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   #expect(
     String(decoding: output.stdout, as: UTF8.self).trimmingCharacters(in: .whitespaces)
       .hasPrefix("300000"))
-  // A child that never reads its input still finishes normally.
   let ignored = try ProcessRunner().capture(
     .init(
       executable: "/bin/sh", arguments: ["-c", "exit 4"], environment: [:],
@@ -159,7 +158,6 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
       executable: "/usr/bin/env", arguments: [], environment: ["ISO_ONLY": "1"],
       deadline: .seconds(5)))
   #expect(String(decoding: env.stdout, as: UTF8.self) == "ISO_ONLY=1\n")
-  // Hold extra descriptors open in this process; none may reach the child.
   let held = (0..<4).map { _ in open("/dev/null", O_RDONLY) }
   defer { for fd in held { close(fd) } }
   let paths = held.map { "/dev/fd/\($0)" }.joined(separator: " ")
@@ -296,7 +294,6 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   let target = directory + "/config.jsonc"
   let lock = try FileLock.sibling(of: target)
   #expect(FileManager.default.fileExists(atPath: directory + "/.config.jsonc.lock"))
-  // A separate process (as the Rust host would be) cannot take the lock.
   let probe = try sh(
     "/usr/bin/python3 -c 'import fcntl,sys; f=open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB)' \(directory)/.config.jsonc.lock"
   )

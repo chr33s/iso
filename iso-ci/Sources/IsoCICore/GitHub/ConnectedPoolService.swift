@@ -671,7 +671,6 @@ package final class ConnectedPoolService: ControllerService {
     }
   }
 
-  /// The service answers only its own methods.
   package func owns(_ method: String) -> Bool {
     [
       "pool.pause", "pool.drain", "pool.resume", "pool.remove", "registration.resolve",

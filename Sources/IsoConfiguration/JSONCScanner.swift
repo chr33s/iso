@@ -2,18 +2,16 @@
 // Modified by chr33s: ported/adapted for the Swift implementation.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The one JSONC comment scanner, shared by host configuration and
-/// devcontainer input (S-06). It never interprets JSON values: it replaces
-/// comment bytes with spaces (keeping line breaks, so diagnostics keep their
-/// line numbers) and leaves syntax and value decoding to later stages.
+/// The one JSONC comment scanner (S-06), shared by config and devcontainer
+/// input. It blanks comment bytes (keeping line breaks for diagnostics) and
+/// leaves syntax and values to later stages.
 package enum JSONCSyntaxPolicy: Sendable {
-  /// Host configuration: RFC 8259 JSON plus `//` and non-nesting `/* */`
-  /// comments. An unterminated block comment is an error; trailing commas
-  /// are left in place for the structural preflight to reject.
+  /// Host configuration: JSON plus `//` and non-nesting `/* */` comments.
+  /// Unterminated block comment is an error; trailing commas are left for
+  /// preflight to reject.
   case configuration
-  /// `devcontainer.json`: comments and trailing commas, as the devcontainer
-  /// specification allows. A trailing comma is blanked; an unterminated block
-  /// comment runs to end of input (the baseline Rust scanner's behavior).
+  /// `devcontainer.json`: trailing commas are blanked; an unterminated block
+  /// comment runs to end of input.
   case devcontainer
 }
 

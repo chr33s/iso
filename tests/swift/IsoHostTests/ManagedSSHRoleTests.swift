@@ -96,7 +96,6 @@ import Testing
   @Test func guestCommandsProbesAndTunnelsIgnoreAmbientConfiguration() throws {
     guard FileManager.default.isExecutableFile(atPath: Self.ssh) else { return }
     let guest = target()
-    // Command, capture and readiness probes.
     expectGuestPolicy(try effective(guest.sshOptions + [guest.address]), "guest command")
     // Port forwards, the proxy's reverse tunnel and the editor's outer
     // tunnel: the shared options plus only their own explicit forward.
@@ -115,7 +114,6 @@ import Testing
   @Test func transferRolesCarryTheSameGuestPolicy() throws {
     guard FileManager.default.isExecutableFile(atPath: Self.ssh) else { return }
     let guest = target()
-    // rsync's `-e`, tokenized as openrsync does (spaces; single quotes group).
     var words: [String] = []
     var word = ""
     var quoted = false
@@ -132,7 +130,6 @@ import Testing
     if !word.isEmpty { words.append(word) }
     #expect(words.first == Self.ssh)
     expectGuestPolicy(try effective(Array(words.dropFirst()) + [guest.address]), "rsync -e")
-    // scp hands its options to the ssh named by `-S`; `-P` is ssh's `-p`.
     var scp = guest.scpOptions(ssh: Self.ssh)
     #expect(scp.starts(with: ["-q", "-S", Self.ssh]))
     scp.removeFirst(3)

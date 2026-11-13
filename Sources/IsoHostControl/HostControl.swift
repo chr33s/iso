@@ -3,11 +3,9 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// Typed results of `iso.host/v1` methods (spec 6.2–6.3, 7.6). Each type
-/// encodes to and decodes from its wire form so client and server share one
-/// definition.
+/// Typed results of `iso.host/v1` methods (spec 6.2–6.3, 7.6); each encodes and decodes its
+/// wire form so client and server share one definition.
 
-/// Lifecycle as committed by the host supervisor.
 package enum VMLifecycle: String, Sendable, Codable, CaseIterable {
   case creating
   case stopped
@@ -15,7 +13,6 @@ package enum VMLifecycle: String, Sendable, Codable, CaseIterable {
   case destroyed
 }
 
-/// Native observation of one owned runtime object.
 package enum NativeState: Sendable, Equatable {
   case absent
   case stopped
@@ -33,7 +30,6 @@ package enum ObservedState: String, Codable, Sendable, CaseIterable {
   case destroyed
 }
 
-/// A fresh, reachable snapshot of one instance.
 package struct VMObservation: Sendable, Equatable {
   package let instance: QualifiedInstance
   package let name: InstanceName
@@ -44,7 +40,6 @@ package struct VMObservation: Sendable, Equatable {
   package let expiresAt: WireTime?
   package let observedAt: WireTime
   package let activeOperation: HostOperationID?
-  /// The worker image the instance was created from (absent once destroyed).
   package let image: ImageName?
   /// The VM's network policy (absent once destroyed).
   package let egress: EgressMode?
@@ -124,10 +119,9 @@ package struct VMObservation: Sendable, Equatable {
   }
 }
 
-/// Spec 6.2's network fields for a brokered boot, read from a fresh gate pass
-/// on the worker. An observation, never a credential: access handoff gates the
-/// boot again. Every member is required and the shape is closed, so a client
-/// refuses a proof it does not fully understand.
+/// Spec 6.2's network fields for a brokered boot, from a fresh gate pass on the worker. An
+/// observation, not a credential; the closed shape lets a client refuse a proof it does not
+/// fully understand.
 package struct NetworkProof: Sendable, Equatable {
   package static let transport = "brokered"
   package let bootID: BootID
@@ -191,9 +185,7 @@ package enum OperationState: String, Sendable, Codable, CaseIterable {
   }
 }
 
-/// How an admission was satisfied.
 package enum AdmissionDisposition: String, Sendable, Codable {
-  /// A new durable operation was accepted.
   case accepted
   /// The operation id already existed with the same request; its record is returned.
   case existing
@@ -376,9 +368,8 @@ package enum RuntimeQualification: Sendable, Equatable {
   }
 }
 
-/// The worker's filtered-egress boot identity for a grant: issued only after
-/// the worker's own native proof (owner lock, egress companion, live boot,
-/// recorded policy) holds for this boot.
+/// The worker's filtered-egress boot identity for a grant, issued only after the worker's own
+/// native proof holds for this boot.
 package struct FilteredGrantPolicy: Sendable, Equatable {
   package let bootID: BootID
   package let policyHash: FilteredPolicyHash

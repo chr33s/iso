@@ -7,11 +7,8 @@ import Synchronization
 /// Kinds of host-owned artifacts. Each fixes its size bound and whether its
 /// content must pass `ArchiveValidator` before publication.
 package enum ArtifactKind: String, Sendable, Codable, CaseIterable {
-  /// An OCI/tar image archive for `image.ensure`.
   case imageArchive = "image_archive"
-  /// A bounded build context tarball.
   case buildContext = "build_context"
-  /// Results captured from a disposable run; produced by the worker.
   case runResult = "run_result"
 
   package var maxBytes: UInt64 {
@@ -102,7 +99,6 @@ package final class ArtifactStore: Sendable {
     }
   }
 
-  /// Sequential append; `offset` must equal the bytes already written.
   package func write(owner: OwnerID, handle: ArtifactHandle, offset: UInt64, bytes: [UInt8])
     throws(HostControlError) -> Record
   {
@@ -219,7 +215,6 @@ package final class ArtifactStore: Sendable {
     }
   }
 
-  /// Deletes an artifact only for its retaining holder.
   package func release(owner: OwnerID, handle: ArtifactHandle, by holder: String)
     throws(HostControlError)
   {
@@ -232,7 +227,6 @@ package final class ArtifactStore: Sendable {
     }
   }
 
-  /// Removes unretained artifacts past their expiry.
   package func sweep() {
     whileLocked { sweepLocked() }
   }

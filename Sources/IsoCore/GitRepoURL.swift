@@ -2,10 +2,8 @@
 // Modified by chr33s: ported/adapted for the Swift implementation.
 // SPDX-License-Identifier: Apache-2.0
 
-/// A clone URL given to `iso up --git-repo`, with the `owner/repo` slug
-/// derived once at construction. The slug is nil for clone URLs that are not
-/// GitHub `owner/repo` URLs; such repositories still clone, they just carry
-/// no slug for PAT routing. Persisted as the bare URL string.
+/// A clone URL for `iso up --git-repo` with its `owner/repo` slug derived once.
+/// The slug is nil for non-GitHub URLs (they still clone, without PAT routing).
 package struct GitRepoURL: Hashable, Sendable, CustomStringConvertible, Codable {
   package let url: String
   package let slug: RepoSlug?
@@ -39,9 +37,8 @@ package struct GitRepoURL: Hashable, Sendable, CustomStringConvertible, Codable 
     return rest[..<slash] == "github.com"
   }
 
-  /// Default instance name for a clone: the slug's repo segment, otherwise
-  /// the URL's last path segment without `.git`, mapped to the instance-name
-  /// class, trimmed of `-`, and capped at 60 characters.
+  /// Default instance name: the slug's repo segment, else the last path segment
+  /// without `.git`, mapped to the name class, trimmed of `-`, capped at 60.
   package static func defaultInstanceName(_ url: String) -> InstanceName? {
     var base: Substring
     if let slug = RepoSlug.parse(url: url) {

@@ -56,8 +56,7 @@ cp "${bin}" "${tmp}"
 chmod 0755 "${tmp}"
 mv -f "${tmp}" "${out}"
 trap - EXIT
-# The statically linked SDK components (musl, Foundation, ICU and others)
-# with their licenses, for the release bundle's third-party notices.
+# SDK components (musl, Foundation, ICU...) with licenses, for the bundle's third-party notices.
 bundle_dir="${HOME}/Library/org.swift.swiftpm/swift-sdks/${SDK_ID}.artifactbundle"
 if [[ -f "${bundle_dir}/sbom.spdx.json" ]]; then
     install -m 0644 "${bundle_dir}/sbom.spdx.json" "${out}.sbom.spdx.json"

@@ -264,12 +264,10 @@ public struct CompiledPolicy: Sendable, Equatable {
     mode == .enforce && document.actions.contains(action)
   }
 
-  /// Whether either provider action is enforced.
   public var enforcesProviderActions: Bool {
     enforces(.credentialUse) || enforces(.proxyRequest)
   }
 
-  /// Whether either provider action is governed in `shadow` or `enforce`.
   public var governsProviderActions: Bool {
     !governedActions.isDisjoint(with: [.credentialUse, .proxyRequest])
   }
@@ -472,9 +470,8 @@ public enum PolicyCanonical {
     "sha256:" + SHA256.hash(data: bytes).map { hex($0) }.joined()
   }
 
-  /// Parses canonical bytes and requires they are exactly the canonical
-  /// encoding of what they decode to, so any alternative spelling (spacing,
-  /// key order, `1.0`, duplicate keys, a boolean for a number) is refused.
+  /// Requires the bytes to be exactly the canonical encoding of what they
+  /// decode to, refusing alternative spellings (spacing, key order, `1.0`, duplicates).
   public static func decode(_ bytes: [UInt8]) throws(PolicyError) -> CompiledPolicy {
     guard bytes.count <= PolicySchema.maxCanonicalBytes else {
       throw PolicyError([], "canonical policy exceeds 64 KiB")

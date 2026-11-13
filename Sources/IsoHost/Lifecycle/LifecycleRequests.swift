@@ -2,7 +2,6 @@ import IsoConfiguration
 import IsoCore
 import IsoSecrets
 
-/// Settings applied on either a first boot or a restart.
 package struct BootOptions {
   package var noAgents: Bool
   package var noPrompt: Bool
@@ -12,10 +11,9 @@ package struct BootOptions {
   package var persistedGuestEnvironment: [EnvVarName: EnvValue]
   /// Generic no-auth runs still require the configured provider proxy.
   package var skipAgentBootstrap: Bool
-  /// Grant scopes given by this command (POL-01). Nil: every entry and
-  /// forward of a first start. A reprovision passes only what the
-  /// configuration grants, so saved entries keep their recorded provenance
-  /// and a revoked one is not re-granted.
+  /// Grant scopes given by this command (POL-01). Nil: every entry and forward of a
+  /// first start. A reprovision passes only what the config grants, so saved entries
+  /// keep their provenance and a revoked one is not re-granted.
   package var freshGrantScopes: Set<String>? = nil
 
   package init(
@@ -33,7 +31,6 @@ package struct BootOptions {
   }
 }
 
-/// Inputs that can be applied only while provisioning a fresh guest disk.
 package struct CreationRequest {
   package var boot: BootOptions
   package var workspaceDirectory: String?
@@ -46,7 +43,6 @@ package struct CreationRequest {
   package init(boot: BootOptions) { self.boot = boot }
 }
 
-/// Restart applies boot settings to the guest's existing disk and workspace.
 package struct RestartRequest {
   package var boot: BootOptions
   package init(boot: BootOptions) { self.boot = boot }

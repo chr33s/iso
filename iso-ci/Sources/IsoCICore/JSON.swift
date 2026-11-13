@@ -138,7 +138,6 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
   package init(nilLiteral: ()) { self = .null }
 }
 
-/// Resource limits for one parse. Every parse names its limits explicitly.
 package struct JSONLimits: Sendable, Equatable {
   package var maxBytes: Int
   package var maxDepth: Int

@@ -50,7 +50,6 @@ import Testing
     }
   }
 
-  /// A syntactically valid ed25519 public key line.
   static let clientKey: String = {
     let blob: [UInt8] =
       [0, 0, 0, 11] + Array("ssh-ed25519".utf8) + [0, 0, 0, 32]
@@ -136,7 +135,6 @@ import Testing
   }
 
   @Test func theClientEncoderProducesTheCommittedRequests() throws {
-    // Every method this client declares has a fixture the host decodes.
     #expect(Set(try Self.requests().map(\.1.method)) == Set(HostMethod.allCases))
     let generated = try Self.requestLines()
     let path = Self.directory.appending(path: "requests.jsonl")
@@ -186,7 +184,6 @@ import Testing
       default: Issue.record("\(line.name): no client decoder is checked for this fixture")
       }
     }
-    // Every result type this client decodes has at least one host fixture.
     #expect(
       seen == [
         "hello", "host.capabilities", "vm.inspect", "operation.get", "access.open", "run.inspect",
@@ -206,7 +203,6 @@ import Testing
   static func check(hello value: JSONValue, name: String, id: Identity) throws {
     let hello = try HelloResult(wire: value)
     #expect(hello.hostID == id.host && hello.ownerID == id.owner && hello.epoch == id.epoch)
-    // The host advertises every method this client sends.
     #expect(hello.methods.isSuperset(of: HostMethod.allCases.map(\.rawValue)), "\(name)")
     switch name {
     case "hello":

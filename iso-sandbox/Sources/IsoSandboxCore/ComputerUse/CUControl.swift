@@ -1,10 +1,10 @@
 import Foundation
 import IsoMacProtocol
 
-/// Who drives one VM's display (docs/design/guest-driven-computer-use.md
-/// §5.4): nobody, the guest's one session, or a host hold. The host always
-/// wins: a hold ends the guest session and refuses new ones until it is
-/// released or expires. Pure, so the arbitration rules are unit-testable.
+/// Who drives one VM's display (docs/design/guest-driven-computer-use.md §5.4):
+/// nobody, the guest's one session, or a host hold.
+/// The host always wins: a hold ends the guest session and refuses new ones until released or
+/// expired.
 package struct CUControl: Sendable {
   private(set) var guestSession: String?
   /// When each kind of hold ends; the display is held until the later one.
@@ -142,10 +142,9 @@ package struct GuestCULimits: Sendable {
       ? frames.take(1, at: now) : actions.take(Self.actionCost(request), at: now)
   }
 
-  /// Gives back the frame or action tokens of a request refused before it
-  /// did its work: no frame captured (a blank frame was), no input sent.
-  /// Without this, a session reopened after a host hold would find its
-  /// retry over the frame limit.
+  /// Gives back the frame or action tokens of a request refused before it did its
+  /// work: no frame captured (a blank frame was), no input sent.
+  /// Without it, a session reopened after a host hold would find its retry over the frame limit.
   package mutating func settle(_ request: GuestCURequest, _ response: GuestCUResponse) {
     guard !response.ok, let refusal = response.refusal, refusal != .rateLimited,
       refusal != .blankFrame, request.op != .act || response.beforeInput == true

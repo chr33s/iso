@@ -82,7 +82,6 @@ struct Pull: ParsableCommand {
   var approveSensitive: [String] = []
   @Flag(help: "When reviewing, print only the summary, not text diffs") var stat = false
 
-  /// Whether a plain pull (not --apply / --discard) only stages.
   static func stages(review: Bool, mode: WorkspacePullMode) -> Bool {
     review || mode == .stage
   }

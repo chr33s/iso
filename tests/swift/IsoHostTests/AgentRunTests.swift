@@ -332,7 +332,6 @@ func egressLeaseRejectsMalformedSessionDeadlines(deadlineJSON: String) throws {
   func holds(_ value: inout EgressLease.Supervision, _ companion: Bool, _ tunnel: Bool) -> Bool {
     value.holds(companionAlive: companion, tunnelAlive: tunnel)
   }
-  // Startup spawns the lease before the companion and tunnel exist.
   for _ in 0..<5 { #expect(holds(&supervision, false, false)) }
   #expect(holds(&supervision, true, false))
   #expect(supervision.companionSeen && !supervision.tunnelSeen)

@@ -48,8 +48,8 @@ package enum ConfigLoader {
     return .defaultsOnly(defaultPath: jsonc)
   }
 
-  /// Load the selected file, or defaults when the implicit configuration was absent.
-  /// A missing selected file is an error, including a file removed after selection.
+  /// Load the selected file, or defaults when the implicit one was absent.
+  /// A selected file removed after selection is an error.
   package static func load(
     _ selection: ConfigSelection, environment: ConfigEnvironment,
     limits: JSONLimits = .configuration
@@ -122,7 +122,6 @@ package enum ConfigLoader {
   /// Reads a regular file, at most `limit + 1` bytes (so an oversized file
   /// is detected without reading all of it); nil when it does not exist.
   package static func readSnapshot(_ path: String, limit: Int) throws(ConfigError) -> [UInt8]? {
-    // The C string is borrowed only for open; the resulting descriptor is owned here.
     let descriptor = unsafe open(path, O_RDONLY | O_CLOEXEC)
     if descriptor < 0 {
       let code = errno
@@ -131,7 +130,6 @@ package enum ConfigLoader {
     }
     defer { close(descriptor) }
     var status = stat()
-    // fstat writes exactly one initialized stat value, borrowed for this call.
     guard unsafe fstat(descriptor, &status) == 0 else {
       throw .unreadable(path: path, reason: posixMessage(errno))
     }
@@ -160,13 +158,11 @@ package enum ConfigLoader {
   }
 }
 
-/// Host configuration grants authority, so it is read only from a file that
-/// no other principal can change (POL-01): a regular file owned by this user
-/// or root, not group/other-writable, with no ACL entry allowing anyone to
-/// write it, below directories that satisfy the same rule (a sticky
-/// world-writable directory such as `/tmp` excepted). Symlinks in the
-/// given path are followed when it is opened; the checks apply to the
-/// opened file and the ancestors of its resolved path, not to the links.
+/// Config grants authority, so it is read only from a file no other principal
+/// can change (POL-01): regular, owned by this user or root, not
+/// group/other-writable, no ACL write entry, under directories obeying the
+/// same rule (sticky world-writable like `/tmp` excepted). Checks apply to
+/// the opened file and its resolved ancestors, not to symlinks.
 package enum ConfigTrust {
   static func check(_ descriptor: Int32, status: stat, path: String) throws(ConfigError) {
     let user = geteuid()

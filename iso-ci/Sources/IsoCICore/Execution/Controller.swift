@@ -101,7 +101,6 @@ package final class Controller: Sendable {
     retryCleanupDebt()
   }
 
-  /// How long a host capability snapshot is trusted for placement.
   package static let capabilityRefreshSeconds: UInt64 = 60
 
   /// Placement reads cached snapshots; refresh stale ones so evidence

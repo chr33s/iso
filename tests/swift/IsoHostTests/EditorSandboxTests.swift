@@ -55,7 +55,6 @@ private let callerSecrets = [
   #expect(missing.reason == .editorNotFound([.zed]))
   #expect("\(missing)".contains("/Applications/Zed.app"))
 
-  // Failed verification stops even auto-detection.
   launcher.locateApp = { provider, _ in
     throw HostError("\(provider.displayName) failed verification")
   }
@@ -120,7 +119,6 @@ private func fakeBundle(_ root: String, version: String = "1.2.3") throws -> Str
       == TrustedEditorApp(
         bundle: bundle, executable: bundle + "/Contents/MacOS/zed", version: "1.2.3"))
 
-  // A failed signature check never falls through to the next copy.
   let checked = Mutex<[String]>([])
   #expect(throws: HostError("bad signature")) {
     _ = try TrustedEditorApp.locate(identity, candidates: [bundle, second]) { path, _ in
@@ -130,11 +128,9 @@ private func fakeBundle(_ root: String, version: String = "1.2.3") throws -> Str
   }
   #expect(checked.withLock { $0 } == [bundle])
 
-  // The real verifier refuses an unsigned bundle.
   #expect(throws: HostError.self) { try CodeSignature.verify(bundle, identity) }
   #expect(identity.requirement.contains("certificate leaf[subject.OU] = \"MQ55VZLNZQ\""))
 
-  // Writable by another user: refused before any signature check.
   chmod(bundle + "/Contents/MacOS/zed", 0o775)
   #expect(throws: HostError.self) {
     _ = try TrustedEditorApp.locate(identity, candidates: [bundle]) { _, _ in }
@@ -417,7 +413,6 @@ private struct SessionFixture {
 
   let arguments = fixture.guest.log("sandbox.args")
   #expect(arguments.first == "-p")
-  // The profile is one multi-line argument.
   #expect(arguments.contains("(deny default)"))
   #expect(arguments.contains("APP=\(fixture.app.bundle)"))
   #expect(arguments.contains("MACH_PREFIX=dev.zed.Zed."))
@@ -429,7 +424,6 @@ private struct SessionFixture {
   #expect(!environment.contains(canary) && !environment.contains("SSH_AUTH_SOCK"))
   #expect(environment.contains("HOME=\(fixture.guest.root)/s/iso-ed-"))
 
-  // Key authorized during the session, revoked after; enclave removed.
   let during = readFile(fixture.guest.root + "/keys.during") ?? ""
   #expect(during.contains("restrict,from=\"127.0.0.1,::1\" ssh-ed25519 "))
   #expect(during.contains(" iso-editor-"))

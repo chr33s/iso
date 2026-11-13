@@ -6,10 +6,9 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// `iso proxy setup` provisioning (C-04): the credential goes only to the
-/// macOS Keychain, under the existing service/account names, and the
-/// configuration or per-VM override records the `cmd:` reference that
-/// reads it back. There is no fallback store.
+/// `iso proxy setup` provisioning (C-04): the credential goes only to the macOS
+/// Keychain; the config or per-VM override records the `cmd:` reference that
+/// reads it back. No fallback store.
 package enum ProxyProvisioning {
   package static let securityTool = "/usr/bin/security"
 
@@ -25,7 +24,6 @@ package enum ProxyProvisioning {
     vm.map { "\(provider.keychainService)-\($0)" } ?? provider.keychainService
   }
 
-  /// The Rust `shell_quote`: bare when every character is safe.
   static func shellQuote(_ text: String) -> String {
     let safe =
       !text.isEmpty

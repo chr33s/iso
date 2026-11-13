@@ -7,9 +7,9 @@
 /// `max_dec_frame_buffering = max_num_ref_frames` lets them output each
 /// frame as it arrives. Pure, so it is unit-testable.
 package enum LiveViewSPS {
-  /// `nal` is one SPS NAL unit with its header byte and no start code. An
-  /// SPS that already has VUI, carries scaling matrices, or does not parse
-  /// is returned unchanged.
+  /// `nal` is one SPS NAL unit with its header byte and no start code.
+  /// An SPS that already has VUI, carries scaling matrices, or does not parse is returned
+  /// unchanged.
   package static func withLowDelay(_ nal: [UInt8]) -> [UInt8] {
     guard nal.count > 4, nal[0] & 0x1F == 7 else { return nal }
     let rbsp = unescape(Array(nal.dropFirst()))

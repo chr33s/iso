@@ -64,20 +64,17 @@ private func failure(_ body: () throws -> [String]) -> LaunchFailure? {
   defer { guest.remove() }
   let alias = SSHConfigFile.host(try workloadRunning(guest, identity: nil).instance)
 
-  // Zed missing, VS Code present: `iso zed` reports not found, never opens VS Code.
   let missing = try #require(
     failure { try launch(guest, stubs: ["code": 0], choice: .only(ZedEditorProvider())) })
   #expect(missing.reason == .editorNotFound([.zed]))
   #expect(missing.spawned.isEmpty)
   #expect("\(missing.error)".contains("cli: install"))
 
-  // VS Code missing, Zed present: `iso code` reports not found.
   let code = try #require(
     failure { try launch(guest, stubs: ["zed": 0], choice: .only(VSCodeEditorProvider())) })
   #expect(code.reason == .editorNotFound([.code]))
   #expect(code.spawned.isEmpty)
 
-  // The Zed CLI declines: only Zed's own URL fallback may still run.
   let declined = try #require(
     failure {
       try launch(
@@ -102,14 +99,12 @@ private func failure(_ body: () throws -> [String]) -> LaunchFailure? {
   let alias = SSHConfigFile.host(try workloadRunning(guest, identity: nil).instance)
   let all = EditorChoice.firstAvailable(EditorProviderID.allCases.map(\.provider))
 
-  // VS Code unavailable (no CLI, app launcher misses): Zed opens.
   #expect(
     try launch(guest, stubs: ["open": 1, "zed": 0], choice: all) == [
       "open vscode://vscode-remote/ssh-remote+\(alias)/workspace",
       "zed ssh://\(alias)/workspace",
     ])
 
-  // VS Code started and declined: Zed is never tried.
   let declined = try #require(
     failure { try launch(guest, stubs: ["code": 1, "open": 1, "zed": 0], choice: all) })
   #expect(declined.reason == .editorLaunchFailed(.code))
@@ -209,7 +204,6 @@ private func failure(_ body: () throws -> [String]) -> LaunchFailure? {
   #expect(hung.reason == .editorLaunchFailed(.zed))
   #expect("\(hung.error)".contains("timed out"))
 
-  // Auto-detection: a found editor that hangs stops the chain too.
   let all = EditorChoice.firstAvailable(EditorProviderID.allCases.map(\.provider))
   let hungCode = try #require(
     failure {
@@ -221,8 +215,6 @@ private func failure(_ body: () throws -> [String]) -> LaunchFailure? {
   #expect(!hungCode.spawned.contains { $0.hasPrefix("zed") })
 }
 
-/// `iso zed`'s handoff after the lifecycle step, with the editor stubs on
-/// `PATH` and the alias written under the fake host home.
 private func editorWorkflow(_ guest: FakeGuest) throws -> ProjectEditorWorkflow {
   let home = guest.root + "/hosthome"
   let config = try testConfig(home: home)
@@ -253,7 +245,6 @@ private func editorWorkflow(_ guest: FakeGuest) throws -> ProjectEditorWorkflow 
   let outcome = UpOutcome(action: .created, instance: running.instance)
   let workflow = try editorWorkflow(guest)
   let log = guest.root + "/editor.log"
-  // VS Code is installed, Zed is not.
   try writeFile(
     guest.root + "/editors/code", "#!/bin/sh\necho code >> '\(log)'\nexit 0\n", mode: 0o755)
 

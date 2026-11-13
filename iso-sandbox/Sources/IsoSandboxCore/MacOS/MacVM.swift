@@ -1,9 +1,9 @@
 import Foundation
 import Virtualization
 
-/// One macOS VM on its own serial queue (Gate A). Every VZ call — creation,
-/// installer, start, stop, device access — happens on `queue`, and the
-/// delegate runs there. Each async transition resolves exactly once.
+/// One macOS VM on its own serial queue (Gate A).
+/// Every VZ call (creation, installer, start, stop, device access) and the delegate run on `queue`;
+/// each async transition resolves exactly once.
 package final class MacVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
   package let queue: DispatchQueue
   /// New for every VM object; sessions bound to one VM die with it.
@@ -162,10 +162,10 @@ package final class MacVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendab
     var observation: NSKeyValueObservation?
   }
 
-  /// The graceful stop sequence (Gate K): `requestStop`, then the guest
-  /// helper's shutdown, then `stop()`. Returns the path taken. The helper's
-  /// request is raced against `helperDeadline`: a guest that wedges the
-  /// helper channel only moves the sequence on to the forced stop.
+  /// The graceful stop sequence (Gate K): `requestStop`, then the guest helper's
+  /// shutdown, then `stop()`. Returns the path taken.
+  /// The helper's request is raced against `helperDeadline`: a guest that wedges the helper channel
+  /// only moves the sequence on to the forced stop.
   package func stop(
     // A macOS guest ignored `requestStop` in every qualification run, so its
     // wait is short; the helper's shutdown is the path that works.
@@ -225,9 +225,8 @@ package func waitUntil(
   return cond()
 }
 
-/// `body`'s result, or `fallback` once `timeout` passes, whichever comes
-/// first. `body` is not awaited past the timeout: it keeps running on its
-/// own and its late result is dropped.
+/// `body`'s result, or `fallback` once `timeout` passes, whichever comes first.
+/// `body` is not awaited past the timeout: it keeps running and its late result is dropped.
 package func firstResult<T: Sendable>(
   within timeout: TimeInterval, otherwise fallback: T,
   _ body: @escaping @Sendable () async -> T

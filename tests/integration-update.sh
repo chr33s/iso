@@ -5,24 +5,16 @@
 
 set -euo pipefail
 
-# End-to-end test for `iso update`.
-#
-# Serves a synthetic GitHub-shaped fixture from a local HTTP server and
-# verifies that the update flow downloads, checksums, and atomically
-# replaces the running binary and every companion. Also verifies checksum
-# rollback, `--check` behaviour, and dev-build refusal. The release-kind test
-# binary trusts a throwaway key generated here in place of the compiled-in
-# release signer (see patch_release_signer); SHA256SUMS is signed with it.
-#
-# Run manually:   ./tests/integration-update.sh
-# Run in CI:      same (fast — no VM, no external network)
+# End-to-end test for `iso update` against a synthetic GitHub-shaped fixture on a local HTTP
+# server (no VM, no external network): download, checksum, atomic replace of the binary and
+# companions, checksum rollback, `--check`, dev-build refusal. The release-kind test binary
+# trusts a throwaway key generated here instead of the compiled-in release signer (see
+# patch_release_signer); SHA256SUMS is signed with it.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# iso gates interactive prompts on stdin being a TTY. Detach stdin so a future
-# prompt-bearing case blocks here, not only on an interactive shell (CI already
-# has no TTY). The script itself never reads stdin.
+# iso gates interactive prompts on stdin being a TTY; detach it so a prompt-bearing case blocks here, not only locally.
 exec </dev/null
 
 # ── Platform detection (matches install.sh) ─────────────────────────────────
@@ -151,14 +143,9 @@ full_assets_block() {
 JSON
 }
 
-# ── Build both iso binaries (real HOME, before isolation) ───────────────────
-#
-# Both `swift build` invocations must run before HOME is redirected — SwiftPM
-# uses $HOME for its caches. A build is a release build only when compiled with
-# `-D ISO_RELEASE_BUILD` (as scripts/build-release.py --release does); every
-# other build is a dev build regardless of git state. The release-kind build
-# gets its own scratch path so the flag never invalidates the ordinary one.
-# ISO_SWIFT_SCRATCH_PATH overrides the default `.build` scratch path.
+# Both `swift build` runs must precede the HOME redirect (SwiftPM caches under $HOME). A build is
+# a release build only with `-D ISO_RELEASE_BUILD` (as scripts/build-release.py --release does);
+# the release-kind build gets its own scratch path. ISO_SWIFT_SCRATCH_PATH overrides `.build`.
 
 SWIFT_SCRATCH="${ISO_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/.build}"
 
@@ -173,7 +160,6 @@ build_iso() {
 }
 
 echo "==> Building release binary..."
-# Copy both binaries out of the build tree: tests replace $ISO_BIN in place.
 RELEASE_BIN="$TMPDIR/bin/iso-release"
 cp "$(build_iso "${SWIFT_SCRATCH}-release-kind" -Xswiftc -DISO_RELEASE_BUILD -Xswiftc -DISO_UPDATE_FIXTURES)" "$RELEASE_BIN"
 patch_release_signer "$RELEASE_BIN"
@@ -183,13 +169,8 @@ export ISO_BIN="$TMPDIR/bin/iso"
 echo "==> Building dev binary..."
 cp "$(build_iso "$SWIFT_SCRATCH")" "$TMPDIR/bin/iso-dev"
 
-# ── Isolate test invocations from the real user environment ──────────────────
-#
-# `iso update --yes` records the latest release in an "update-check" file under
-# `$HOME/Library/Application Support/iso`. Against our fixture that would write
-# the synthetic v9.9.9 tag into the real home and trigger bogus "newer version"
-# warnings. Redirecting $HOME is enough; the update path reads nothing else
-# under it.
+# `iso update --yes` writes an update-check file under `$HOME/Library/Application Support/iso`;
+# redirect $HOME so the fixture's synthetic v9.9.9 never reaches the real home.
 export HOME="$TMPDIR/home"
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_DATA_HOME="$HOME/.local/share"
@@ -226,7 +207,6 @@ PORT="$(python3 -c "$PICK_PORT")"
 SERVER_PID=$!
 BASE_URL="http://127.0.0.1:${PORT}"
 
-# Wait for server readiness
 for _ in $(seq 1 30); do
     if curl -fsS "${BASE_URL}/SHA256SUMS" > /dev/null 2>&1; then
         break
@@ -287,9 +267,7 @@ for artifact in iso-cu-mcp vmlinux-desktop; do
     fi
 done
 
-# Confirm the update-check file landed in the test tempdir. Search $TMPDIR, not
-# $HOME: if the HOME export were dropped, a leak into the real home would still
-# be "found".
+# Search $TMPDIR, not $HOME: a dropped HOME export would still "find" a leak into the real home.
 state_under_tmpdir="$(find "$TMPDIR" -name update-check.json -print -quit 2> /dev/null)"
 if [[ -n "$state_under_tmpdir" ]]; then
     pass "update-check state file confined to tempdir"

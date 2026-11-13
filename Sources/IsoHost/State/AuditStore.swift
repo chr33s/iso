@@ -168,9 +168,9 @@ package struct AuditSnapshot: Sendable {
 }
 
 /// `<stateRoot>/audit/v1`: one journal of bounded JSONL segments
-/// (`seg-<first sequence>.jsonl`) and one checkpoint, outside instance
-/// directories so history outlives the VM. Writers append under the store
-/// lock; readers never take it. Owner-only, no-follow, bounded parsing.
+/// (`seg-<first sequence>.jsonl`) and one checkpoint, outside instance directories
+/// so history outlives the VM. Writers append under the store lock; readers never
+/// take it. Owner-only, no-follow, bounded parsing.
 package struct AuditStore: Sendable {
   package static let schema = "iso.audit/v1"
 
@@ -449,10 +449,10 @@ package struct AuditStore: Sendable {
 
   // MARK: - Retention
 
-  /// Retires the oldest sealed segments past the age or byte budget: build
-  /// the checkpoint through their boundary, publish it atomically, and only
-  /// then delete them. A crash in between leaves redundant segments that
-  /// readers skip through `B`. Caller holds the store lock.
+  /// Retires the oldest sealed segments past the age or byte budget: build the
+  /// checkpoint through their boundary, publish it atomically, then delete them. A
+  /// crash between leaves redundant segments readers skip through `B`. Caller holds
+  /// the store lock.
   func maintain(journal: AuditJournalID, now: Date) throws {
     let current = try readCheckpoint(expecting: journal)
     var segments = try listSegments()
@@ -606,10 +606,10 @@ package struct AuditStore: Sendable {
       return AuditSnapshot(
         journalID: nil, checkpoint: nil, head: 0, events: [], health: [], degraded: nil)
     }
-    // Segments are listed before the journal and checkpoint are read: a
-    // writer creates the journal first and publishes a checkpoint before
-    // deleting what it covers, so a listed segment is either still readable,
-    // covered by the checkpoint read after it, or vanishes (and is retried).
+    // Segments are listed before the journal and checkpoint are read: a writer
+    // creates the journal first and publishes a checkpoint before deleting what it
+    // covers, so a listed segment is readable, covered by the later checkpoint, or
+    // vanishes (and is retried).
     let segments = try listSegments()
     var journal: AuditJournalID?
     if let bytes = try StateStore.readControlFile(journalPath) {
@@ -694,7 +694,6 @@ package struct AuditStore: Sendable {
       reason: .captureDegraded, since: marker.since, refusedCount: marker.refused, ongoing: true)
   }
 
-  /// Changes whenever an append or retirement does; cheap enough to poll.
   package func fingerprint() -> String {
     let segments = (try? listSegments()) ?? []
     let last = segments.last.map { "\($0.first):\($0.size)" } ?? "-"

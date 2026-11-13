@@ -2,10 +2,9 @@ import Foundation
 import IsoCore
 
 /// The exact reverse-tunnel `ssh` master a readiness proof relies on: its
-/// PID, the unique control path it was started with (inside a fresh random
-/// directory, so no other process carries it) and its guest destination. A
-/// live PID that is any other process, including another `ssh`, is not this
-/// tunnel.
+/// PID, the unique control path it was started with (in a fresh random directory)
+/// and its guest destination. A live PID that is any other process, including
+/// another `ssh`, is not this tunnel.
 struct TunnelIdentity: Codable, Equatable {
   let schemaVersion: UInt32
   let pid: Int32
@@ -31,7 +30,6 @@ struct TunnelIdentity: Codable, Equatable {
     load(atPath: path(instance, name))
   }
 
-  /// The identity recorded beside a tunnel's `-fwd.pid` file.
   static func load(forPIDFile pidPath: String) -> TunnelIdentity? {
     guard pidPath.hasSuffix("-fwd.pid") else { return nil }
     return load(atPath: String(pidPath.dropLast(".pid".count)) + ".identity.json")
@@ -57,8 +55,6 @@ struct TunnelIdentity: Codable, Equatable {
       && zip(arguments, arguments.dropFirst()).contains { $0 == "-S" && $1 == controlPath }
   }
 
-  /// `pid` is still this master: the recorded PID, and `ps` names it with
-  /// this control path and destination.
   func isRunning(as pid: Int32) -> Bool {
     pid == self.pid && (ProxyLauncher.commandLine(pid).map(matches(commandLine:)) ?? false)
   }

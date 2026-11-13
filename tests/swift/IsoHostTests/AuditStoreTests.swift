@@ -105,7 +105,6 @@ private func drain(_ reader: AuditReader, _ selection: AuditSelection, limit: In
     forwardedVariables: (0..<2000).map { "VARIABLE_NAME_\($0)" })
   #expect(throws: (any Error).self) { try store.append(.handoff(run, huge)) }
   let next = try store.append(.preparationFailed(run, .init(stage: .connect)))
-  // Only the refusal's capture-degraded note sits between them.
   let kinds = try store.snapshot().events.map(\.kind)
   #expect(kinds == [.invocationRequested, .storeRecordingGap, .invocationPreparationFailed])
   #expect(next.sequence == 3)
@@ -228,7 +227,6 @@ private func drain(_ reader: AuditReader, _ selection: AuditSelection, limit: In
   let instance = Instance(
     name: try InstanceName("my-project"), index: InstanceIndex(1)!, directory: directory,
     image: try ImageName("default"))
-  // No VM identity yet: nothing can be attributed.
   BoundaryAudit.record(instance, .stop)
   let store = try #require(AuditStore.forInstance(instance))
   #expect(store.root == root + "/audit/v1")
@@ -247,9 +245,7 @@ private func drain(_ reader: AuditReader, _ selection: AuditSelection, limit: In
   #expect(data["changes"] == .uint(2))
   #expect(data["instance_name"] == .string("my-project"))
   #expect(data["time"] == nil)
-  // The legacy per-instance log is unchanged.
   #expect(try BoundaryAudit.lines(instance).count == 3)
-  // Outside the layout (tests, foreign paths) nothing is attributed.
   let elsewhere = Instance(
     name: instance.name, index: instance.index, directory: root + "/other", image: instance.image)
   #expect(AuditStore.forInstance(elsewhere) == nil)
@@ -303,7 +299,6 @@ private func drain(_ reader: AuditReader, _ selection: AuditSelection, limit: In
   try store.append(.requested(second, request(.codex, lifecycle: .existing)))
   try store.append(.environment(second, environment()))
   try store.append(boundary(vmA, bootA))
-  // Another boot of the same VM, another VM, and an unknown boot: none join.
   try store.append(boundary(vmA, bootA2))
   try store.append(boundary(vmB, bootA))
   try store.append(boundary(vmA, nil))
@@ -394,7 +389,6 @@ private func drain(_ reader: AuditReader, _ selection: AuditSelection, limit: In
     next = page.nextCursor
   }
   #expect(seen == [1, 2, 3, 4, 5, 6])
-  // A fresh read sees the newer records.
   #expect(try drain(reader, .run(run), limit: 100).count == 8)
 }
 
@@ -437,7 +431,6 @@ private func drain(_ reader: AuditReader, _ selection: AuditSelection, limit: In
   #expect(throws: AuditReadError.resetRequired) {
     try reader.page(.run(run), after: rolling, mode: .follow)
   }
-  // Without earlier context records, a new association needs no reset.
   let quiet = AuditRunID.generate()
   try store.append(.requested(quiet, request()))
   let before = try #require(try reader.page(.run(quiet), after: nil).rollingCursor)
@@ -498,7 +491,6 @@ private let small: AuditRetention = {
   for _ in 0..<60 { try store.append(boundary(vmA, bootA)) }
   let snapshot = try store.snapshot()
   let checkpoint = try #require(snapshot.checkpoint)
-  // Put a retired segment back, as if deletion never happened.
   let retired = store.root + "/" + AuditStore.segmentName(1)
   #expect(!FileManager.default.fileExists(atPath: retired))
   let line =
@@ -529,7 +521,6 @@ private let small: AuditRetention = {
   let run = AuditRunID.generate()
   try store.append(.requested(run, request()), now: old)
   for _ in 0..<20 { try store.append(boundary(vmB, nil), now: old) }
-  // Age the sealed segments, then append now.
   for segment in try store.listSegments() {
     try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: segment.path)
   }
@@ -831,7 +822,6 @@ private let small: AuditRetention = {
   for segment in try store.listSegments() {
     try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: segment.path)
   }
-  // Its transport ends today, after its opening detail aged out.
   try store.append(.transportEnded(run, .init(transport: "ssh", termination: .init(.exited(0)))))
   for _ in 0..<5 { try store.append(boundary(vmB, nil)) }
   let snapshot = try store.snapshot()
@@ -863,7 +853,6 @@ private let small: AuditRetention = {
 
 @Test func aRefusalIsCountedOnceWhenTheAppendAfterItsGapFails() throws {
   var retention = AuditRetention()
-  // Every record gets its own segment.
   retention.segmentBytes = 200
   let store = temporaryStore(retention)
   defer { remove(store) }

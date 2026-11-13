@@ -2,10 +2,9 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// The compiled-in editor providers. Not a plugin ABI: a new editor is a
-/// case here, a top-level command and tests. The raw value is the stable id
-/// machine output carries and the command name; case order is `iso editor`'s
-/// auto-detection order.
+/// The compiled-in editor providers; not a plugin ABI. The raw value is the
+/// stable id and command name; case order is `iso editor`'s auto-detection
+/// order.
 package enum EditorProviderID: String, CaseIterable, Sendable {
   case code
   case zed
@@ -18,19 +17,16 @@ package enum EditorProviderID: String, CaseIterable, Sendable {
   }
 }
 
-/// How an editor reaches the guest.
 package enum EditorRemoteTransport: String, Sendable {
   case ssh
 }
 
-/// Whether a project editor command starts the editor.
 package enum EditorLaunchMode: Sendable, Equatable {
   case launch
   /// Prepare the instance and alias only (`--no-launch`).
   case prepareOnly
 }
 
-/// How a strategy's nonzero exit is read.
 package enum NonzeroExitPolicy: Sendable, Equatable {
   /// The editor itself started and declined: only the same provider's
   /// remaining strategies may still run.
@@ -57,7 +53,6 @@ package struct EditorLaunchStrategy: Sendable, Equatable {
   }
 }
 
-/// What a provider may use to prepare a sandboxed session.
 package struct SandboxedEditorContext: Sendable {
   package let enclave: EditorEnclave
   package let app: TrustedEditorApp
@@ -69,7 +64,6 @@ package struct SandboxedEditorContext: Sendable {
   package let hostHome: String?
 }
 
-/// A provider's sandboxed argv and what its transport needs.
 package struct SandboxedEditorPlan: Sendable, Equatable {
   package let arguments: [String]
   /// Options re-enabled on the session key after OpenSSH's `restrict`.
@@ -82,10 +76,9 @@ package struct SandboxedEditorPlan: Sendable, Equatable {
   package var fileTransfer = false
 }
 
-/// Adapts an `SSHConnectionTarget` into an external editor launch. Lifecycle,
-/// isolation, host-key pinning, the SSH alias and (for a sandboxed session)
-/// confinement stay with iso; a provider only chooses argv and editor
-/// settings.
+/// Adapts an `SSHConnectionTarget` into an editor launch. Lifecycle, isolation,
+/// host-key pinning, the SSH alias and confinement stay with iso; a provider
+/// only chooses argv and editor settings.
 package protocol EditorProvider: Sendable {
   var id: EditorProviderID { get }
   var displayName: String { get }

@@ -77,7 +77,6 @@ package enum GitHooks {
 
   // MARK: Script
 
-  /// The hook script: POSIX sh, committed with the project.
   package static func script(_ settings: ManagedHookSettings) -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

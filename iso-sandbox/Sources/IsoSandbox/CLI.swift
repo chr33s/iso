@@ -494,7 +494,6 @@ struct Logs: AsyncParsableCommand {
     while follow {
       try await Task.sleep(for: .milliseconds(500))
       guard let handle = try? FileHandle(forReadingFrom: url) else { continue }
-      // The log restarts at its size cap; follow it from the top.
       if let size = try? handle.seekToEnd(), size < offset { offset = 0 }
       try handle.seek(toOffset: offset)
       if let data = try handle.readToEnd(), !data.isEmpty {

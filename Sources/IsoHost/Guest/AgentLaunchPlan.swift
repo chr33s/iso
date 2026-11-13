@@ -16,7 +16,6 @@ package struct AgentAdapterContract: Sendable, Equatable {
   package let managedFlags: Set<String>
   package let providerName: String?
 
-  /// `argument` sets a managed flag, spelled `--flag` or `--flag=value`.
   package func manages(_ argument: String) -> Bool {
     managedFlags.contains(AgentDispatch.flagName(argument))
   }

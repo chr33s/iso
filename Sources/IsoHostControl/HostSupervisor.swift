@@ -4,16 +4,13 @@ import IsoCore
 import IsoHost
 import Synchronization
 
-/// The host-owned service behind every production host-control request
-/// (spec 3, 7, 8.3). It owns accepted operations, their reservations and
-/// reconciliation, the volatile access registry and relays. Accepted work
-/// runs on its own queue, never on a frontend's process group, so losing a
-/// frontend neither signals nor cancels it.
+/// The host-owned service behind every production host-control request (spec 3, 7, 8.3):
+/// operations, reservations, reconciliation, access registry and relays. Work runs on its own
+/// queue so losing a frontend neither signals nor cancels it.
 package final class HostSupervisor: Sendable {
   package struct Settings: Sendable {
     package var ledger: OperationStore.Limits = .standard
     package var access: AccessSessions.Limits = .standard
-    /// Remote boots must be finite (spec 8.1).
     package var remoteDefaultTTL: UInt64 = 8 * 3_600
     package var remoteMaxTTL: UInt64 = 24 * 3_600
     /// Local boots may be long-lived, but their deadline must stay a date
@@ -97,7 +94,6 @@ package final class HostSupervisor: Sendable {
 
   // MARK: - Lifetime
 
-  /// Startup reconciliation (spec 8.3 steps 4–6) and the periodic loops.
   package func start() {
     repairUnacceptedAdmissions()
     for id in store.operationIDs() {
@@ -116,9 +112,8 @@ package final class HostSupervisor: Sendable {
     enforceDeadlines(observe: true)
     let sweep = settings.sweepInterval
     let reconcile = settings.reconcileInterval
-    // Lease expiry has its own thread: the deadline loop below makes
-    // blocking runtime calls (stops, deletes) that must not hold relays of
-    // a lapsed lease open past its budget.
+    // Lease expiry has its own thread: the deadline loop makes blocking runtime calls that
+    // must not hold a lapsed lease's relays open.
     Thread.detachNewThread { [self] in
       while !state.withLock({ $0.stopping }) {
         Thread.sleep(forTimeInterval: sweep.seconds)
@@ -144,7 +139,6 @@ package final class HostSupervisor: Sendable {
     relays.closeAll()
   }
 
-  /// Runs queued and nonterminal work synchronously (manual dispatch).
   package func runPending() {
     repairUnacceptedAdmissions()
     for id in store.operationIDs() {
@@ -154,11 +148,9 @@ package final class HostSupervisor: Sendable {
     for id in runs.runIDs() { reconcileRun(id) }
   }
 
-  /// The instance's active operation, or nil when that pointer is stale.
-  /// Admissions write the instance before the operation (the commit point),
-  /// so a crash or failed write between them leaves a pointer to an
-  /// operation that was never accepted, and a crash inside a supersede
-  /// leaves one to a terminal operation; neither holds anything.
+  /// The instance's active operation, or nil when the pointer is stale: admissions write
+  /// the instance before the operation, so a crash can leave a pointer to a never-accepted
+  /// or terminal operation, which holds nothing.
   func liveActiveOperation(_ instance: OperationStore.InstanceRecord) throws(HostControlError)
     -> HostOperationID?
   {
@@ -168,11 +160,9 @@ package final class HostSupervisor: Sendable {
     return active
   }
 
-  /// Clears stale active-operation pointers (see ``liveActiveOperation(_:)``).
-  /// A `.creating` instance whose create was never accepted is removed: no
-  /// runtime call can have been made, since execution starts only from an
-  /// operation. An operation file that cannot be read is not "missing": that
-  /// instance is left alone.
+  /// Clears stale active-operation pointers. A `.creating` instance whose create was never
+  /// accepted is removed (no runtime call can have been made). An unreadable operation file
+  /// is not "missing": that instance is left alone.
   func repairUnacceptedAdmissions() {
     state.withLock { locked in
       repairUnacceptedRuns()
@@ -241,7 +231,6 @@ package final class HostSupervisor: Sendable {
 
   // MARK: - Requests
 
-  /// Handles one decoded request from a trusted transport adapter.
   package func handle(_ request: HostRequest, transport: HostTransportKind) -> HostResponse {
     let outcome: Result<JSONValue, HostControlError>
     do {
@@ -254,7 +243,6 @@ package final class HostSupervisor: Sendable {
       outcome: outcome)
   }
 
-  /// The response for a frame whose request id is known but whose body failed.
   package func failure(_ requestID: RequestID, _ error: HostControlError) -> HostResponse {
     HostResponse(
       requestID: requestID, hostID: hostID, ownerID: ownerID, epoch: epoch,
@@ -366,7 +354,6 @@ package final class HostSupervisor: Sendable {
     }
   }
 
-  /// Identity and the methods dispatched over `transport`.
   package func hello(transport: HostTransportKind) -> HelloResult {
     HelloResult(
       protocolVersion: HostProtocol.v1, hostID: hostID, ownerID: ownerID, epoch: epoch,
@@ -396,7 +383,6 @@ package final class HostSupervisor: Sendable {
     }
   }
 
-  /// Loads the authoritative record and compares every supplied identity field.
   func authoritative(_ target: QualifiedInstance) throws(HostControlError)
     -> OperationStore.InstanceRecord
   {

@@ -5,7 +5,6 @@ import Testing
 
 @testable import IsoHost
 
-/// A stage tree and a destination side by side in one scratch directory.
 private struct Fixture {
   let root: String
   var tree: String { root + "/tree" }
@@ -300,7 +299,6 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(diffs.contains("-two"))
   #expect(diffs.contains("+2"))
   #expect(!diffs.contains { $0.contains("stale") })
-  // Content that no longer matches the manifest marks the view stale.
   try f.write("a.txt", "one\nTWO\nthree\n", in: f.destination)
   var stale = false
   _ = review.textDiffs(markOmitted: true, stale: &stale)

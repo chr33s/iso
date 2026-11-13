@@ -14,19 +14,14 @@ package struct ReturnError: Error, CustomStringConvertible, Equatable {
     case unsupportedLayout = "unsupported_layout"
     /// The plan has structural issues (links, metadata, objects).
     case blockedMetadata = "blocked_metadata"
-    /// The destination or stage changed since review.
     case drift
     /// Replacements need `--apply --stage-id` or `--force`.
     case missingOverwriteAuthority = "missing_overwrite_authority"
     /// Sensitive paths need named `--approve-sensitive` grants.
     case missingSensitiveGrant = "missing_sensitive_grant"
-    /// A receiver may still be writing.
     case busyWriter = "busy_writer"
-    /// The destination overlaps iso control state.
     case overlap
-    /// The stage's single apply attempt was already used.
     case consumed
-    /// No such stage, or not the selected one.
     case wrongStage = "wrong_stage"
   }
 
@@ -64,11 +59,10 @@ final class Descriptor: Sendable {
   deinit { close(fd) }
 }
 
-/// The receive lease (RET-03): an exclusive `flock` on a file outside the
-/// receive tree, whose descriptor every local writer inherits. The lock
-/// lives as long as any process holding that open file, so it outlasts a
-/// killed CLI; the tree is quiescent only once a fresh descriptor can take
-/// it.
+/// The receive lease (RET-03): an exclusive `flock` on a file outside the receive
+/// tree whose descriptor every local writer inherits. It lives as long as any
+/// process holds that open file, so it outlasts a killed CLI; the tree is
+/// quiescent only once a fresh descriptor can take it.
 enum ReceiveLease {
   enum Probe {
     /// No writer holds the lease; the returned hold keeps it that way.
@@ -195,11 +189,10 @@ package struct ReturnDestination: Sendable, Equatable {
   package let path: String
   package let binding: DestinationBinding
 
-  /// Resolves `requested` once (deliberate host symlinks are followed
-  /// here, and only here), then binds it: an existing directory by
-  /// identity, or an absent final component below an existing parent.
-  /// Refuses a destination inside git administration or overlapping any of
-  /// `controlRoots`, in either direction; `--force` cannot override this.
+  /// Resolves `requested` once (host symlinks are followed here and only here),
+  /// then binds it: an existing directory by identity, or an absent final component
+  /// below an existing parent. Refuses a destination inside git administration or
+  /// overlapping any of `controlRoots`; `--force` cannot override this.
   package static func resolve(_ requested: String, controlRoots: [String]) throws
     -> ReturnDestination
   {
@@ -473,10 +466,10 @@ enum ReturnApplyLock {
   }
 }
 
-/// The durable record of one apply attempt (RET-08), created exclusively
-/// before the first destination mutation: its existence consumes the
-/// stage's authorization, and its log lets a later run classify effects.
-/// It records what happened, never authority that could be replayed.
+/// The durable record of one apply attempt (RET-08), created exclusively before
+/// the first destination mutation: its existence consumes the stage's
+/// authorization and its log lets a later run classify effects. It records what
+/// happened, never replayable authority.
 struct ApplyAttemptRecord: Codable, Equatable {
   var schema = 1
   let stageID: String
@@ -583,10 +576,9 @@ final class ApplyProgressLog {
   }
 }
 
-/// The host tools that receive guest bytes (RET-04): fixed absolute paths,
-/// a deliberately constructed environment, and a qualification check of
-/// each tool's ownership and family before any receive. A tool that fails
-/// is refused, never substituted from `PATH`.
+/// The host tools that receive guest bytes (RET-04): fixed absolute paths, a
+/// constructed environment, and an ownership/family qualification before any
+/// receive. A failing tool is refused, never substituted from `PATH`.
 package struct InboundReceivers: Sendable {
   let tar: String
   let rsync: String

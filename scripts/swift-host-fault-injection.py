@@ -208,8 +208,7 @@ FAULTS = [
      "guard effective.guestComputerUse == inspection.record.guestComputerUse else {",
      "guard true else {",
      "guestComputerUseMustMatchTheRecordAndOpenOnlyItsListener"),
-    # Paravirtualized Core AI: exactly the recorded accelerators, only after
-    # the owner's reduced-host preflight, and a bounded guest report.
+    # Paravirtualized Core AI: recorded accelerators only, after the reduced-host preflight.
     ("macos-coreai-gate-accelerators", "Sources/IsoHost/Runtime/IsolationGate.swift",
      "guard effective.accelerators.sorted() == accelerators else {", "guard true else {",
      "coreAIAcceleratorsMustMatchTheRecordExactly"),
@@ -308,8 +307,7 @@ FAULTS = [
      "(try? c.decodeIfPresent(MacGuestCUCounts.self, forKey: .guestComputerUse)) ?? nil",
      "nil",
      "aDisplaySandboxReportsItsComputerUseCounts"),
-    # Ended boots (docs/audit.md): a boot the host did not stop is audited
-    # from its owner's log, once.
+    # Ended boots (docs/audit.md): a boot the host did not stop is audited once from the owner's log.
     ("ended-boot-audited-once", "Sources/IsoHost/State/ComputerUseAudit.swift",
      "guard !boots.contains(boot) else { return }",
      "guard !boots.contains(boot) || true else { return }",
@@ -378,8 +376,7 @@ FAULTS = [
     ("update-stale-guest-files", "Sources/IsoHost/Update/Update.swift",
      "} else if unlink(installed) != 0, errno != ENOENT {", "} else if false {",
      "linuxGuestFilesFollowTheArchive"),
-    # Bounds on tainted parser input and on what a viewer or the guest can
-    # make the owner hold: the VM runs in the process these protect.
+    # Bounds on tainted parser input and on what a viewer or the guest can make the owner hold.
     ("live-view-json-depth", "iso-sandbox/Sources/IsoSandboxCore/ComputerUse/LiveViewProtocol.swift",
      "guard !JSONNesting.exceeds(text.utf8, limit: LiveView.maxNesting) else {",
      "guard !JSONNesting.exceeds(text.utf8, limit: 64) else {",
@@ -428,8 +425,7 @@ FAULTS = [
      "guard s.count <= LiveView.maxPaste else { return .failure(.outOfRange) }",
      "guard true else { return .failure(.outOfRange) }",
      "theLargestPasteFitsOneMessage"),
-    # The mutant binds nothing: the filter runs only the test that reads
-    # the address, so no wildcard listener ever opens.
+    # The mutant binds nothing: the filter runs only the test that reads the address.
     ("live-view-loopback-bind", "iso-sandbox/Sources/IsoSandboxCore/ComputerUse/LiveViewServer.swift",
      'addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))',
      "addr.sin_addr = in_addr(s_addr: INADDR_ANY)",
@@ -1149,7 +1145,7 @@ FAULTS = [
     ("audit-append", "Sources/IsoHost/State/BoundaryAudit.swift",
      "O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW", "O_WRONLY | O_CREAT | O_NOFOLLOW",
      "concurrentRecordersLoseNoEvents"),
-    # Run history (docs/audit.md): attribution, privacy, retention and cursors.
+    # Run history (docs/audit.md).
     ("audit-vm-context-exact-boot", "Sources/IsoHost/State/AuditReader.swift",
      "run.boot.map { $0.vm == vm && $0.boot == boot } == true", "run.boot.map { $0.vm == vm } == true",
      "runsSharingAVMNeverAcquireEachOthersEvents"),
@@ -1690,9 +1686,8 @@ FAULTS = [
     ("session-supervision-two-strikes", "Sources/IsoHost/Guest/GuestSession.swift",
      "          guard pending != nil else {", "          guard true else {",
      "supervisedWorkloadEndsWhenItsProofIsLost"),
-    # Host control (docs/design/local-and-remote-hosts-spec.md): retry identity,
-    # reserved cleanup, cancellation boundary, volatile grants, relay revocation,
-    # archive confinement, run retention and execution-host selection.
+    # Host control (docs/design/local-and-remote-hosts-spec.md): retry identity, reserved cleanup,
+    # cancellation, volatile grants, relay revocation, archive confinement, retention, host selection.
     ("host-operation-conflict", "Sources/IsoHostControl/HostAdmission.swift",
      "guard existing.digest == digest, existing.method == method.rawValue else {", "guard true else {",
      "conflictingPayloadHasNoEffect"),
@@ -1922,12 +1917,9 @@ FAULTS = [
     ("policy-canonical-roundtrip", "iso-policy/Sources/IsoPolicy/PolicyCompiler.swift",
      "guard compiled.canonicalBytes == bytes else {", "guard true else {",
      "canonicalDecodeRefusesAlternativeSpellings"),
-    # Brokered transport (docs/design/brokered-network-isolation.md): the
-    # host gate's NIC-less proof, the per-boot policy, lifecycle refusals,
-    # the relay's last hop, and the runtime's stream admission. The owner's
-    # live-device check needs a real VM: unit tests cover the NIC-less
-    # configuration it checks, and the integration `brokered` phase the
-    # reported reading.
+    # Brokered transport (docs/design/brokered-network-isolation.md): NIC-less gate proof, per-boot
+    # policy, lifecycle refusals, relay last hop, stream admission. The live-device check needs a real
+    # VM: unit tests cover the NIC-less configuration; the integration `brokered` phase the reading.
     ("brokered-gate-nic-count", "Sources/IsoHost/Runtime/IsolationGate.swift",
      "guard brokered.networkDevices == 0, brokered.socketDevices == 1 else {",
      "guard brokered.socketDevices == 1 else {",
@@ -2126,8 +2118,6 @@ FAULTS = [
      "          guard kind == .directory else {\n            record(path, \"link\")\n            return\n          }",
      "          _ = kind",
      "pathsBelowASelectedLinkAreNotCopiedThroughIt"),
-    # Coverage for return grants, fences, grants, update binding, config
-    # trust, managed SSH, provider readiness and input budgets.
     ("return-sensitive-operand", "Sources/IsoHost/Workspace/Workspace.swift",
      "      guard sensitive.contains(operand) else {", "      guard true else {",
      "sensitivePathsNeedExactNamedGrants"),
@@ -2260,8 +2250,7 @@ def run_fault(scratch, fault, verbose):
     ident, relative, original, replacement, test_filter = fault
     path = scratch / relative
     source = path.read_text()
-    # A repeated anchor would fault only its first site and leave the others
-    # untested, so each anchor must name exactly one site.
+    # Each anchor must name exactly one site, or a repeat faults only the first and leaves the rest untested.
     count = source.count(original)
     if count == 0:
         return f"{ident}: anchor not found in {relative}"
@@ -2317,8 +2306,7 @@ def main():
             # named fixtures or fuzz/Targets (a package target).
             ignore=skip_top_level,
         )
-        # Control: every filter passes unmodified, so a failure under a fault
-        # is the fault's effect and not a broken copy or a flaky test.
+        # Control: every filter passes unmodified, so a failure under a fault is the fault's effect.
         for package in sorted({test_package(f[1]) for f in faults}):
             filters = "|".join(sorted({f[4] for f in faults if test_package(f[1]) == package}))
             control = run_tests(scratch, filters, package)

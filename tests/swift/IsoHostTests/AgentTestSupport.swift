@@ -5,7 +5,6 @@ import Synchronization
 
 @testable import IsoHost
 
-/// A scratch directory under `/tmp` (short enough for control sockets).
 func scratchDirectory(_ label: String) throws -> String {
   var template = Array("/tmp/iso-\(label)-XXXXXX".utf8CString)
   guard let path = template.withUnsafeMutableBufferPointer({ mkdtemp($0.baseAddress!) }) else {
@@ -260,7 +259,6 @@ struct FakeGuest {
   }
 
   func remove() {
-    // Stop anything a test left running (tunnel masters, proxies).
     for name in (try? FileManager.default.subpathsOfDirectory(atPath: root)) ?? []
     where name.hasSuffix(".pid") {
       if let text = readFile(root + "/" + name), let pid = Int32(text.trimmingUnicodeWhitespace()),
@@ -273,7 +271,6 @@ struct FakeGuest {
   }
 }
 
-/// `github = off`: nothing forwarded.
 struct NoGitHub: GitHubTokenSource {
   func instanceRepo(_ instance: Instance) -> RepoSlug? { nil }
   func activeAssignment(_ instance: Instance) throws -> RepoSlug? { nil }

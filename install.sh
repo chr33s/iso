@@ -32,9 +32,7 @@ die() { printf 'Error: %s\n' "$1" >&2; exit 1; }
 
 info() { printf '  %s\n' "$1"; }
 
-# Failure commentary belongs on the same stream as the `gh` output it explains
-# and the `die` that follows it, so a redirected `curl … | bash` keeps the whole
-# report together and in order.
+# Failure commentary shares a stream with `gh` output and `die` so a redirected `curl | bash` keeps the report ordered.
 warn() { printf '  %s\n' "$1" >&2; }
 
 need() {
@@ -75,8 +73,7 @@ latest_version() {
         gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null && return
     fi
     local url="https://api.github.com/repos/${REPO}/releases/latest"
-    # Pass the auth header on stdin (`-H @-`) so $GITHUB_TOKEN never appears
-    # on argv where it would be visible in /proc/<pid>/cmdline or `set -x`.
+    # Auth header on stdin (`-H @-`) keeps $GITHUB_TOKEN off argv (/proc, `set -x`).
     if [ -n "${GITHUB_TOKEN:-}" ]; then
         printf 'Authorization: token %s\n' "${GITHUB_TOKEN}" \
             | curl -fsSL -H @- "$url" \
@@ -100,8 +97,7 @@ download_asset() {
     local url="https://github.com/${REPO}/releases/download/${VERSION}/${filename}"
 
     info "Downloading ${filename}..."
-    # Pass the auth header on stdin (`-H @-`) so $GITHUB_TOKEN never appears
-    # on argv where it would be visible in /proc/<pid>/cmdline or `set -x`.
+    # Auth header on stdin (`-H @-`) keeps $GITHUB_TOKEN off argv (/proc, `set -x`).
     if [ -n "${GITHUB_TOKEN:-}" ]; then
         printf 'Authorization: token %s\n' "${GITHUB_TOKEN}" \
             | curl -fsSL -H @- -o "$dest" "$url"
@@ -110,14 +106,9 @@ download_asset() {
     fi
 }
 
-# Fetch the release's provenance bundle with no credential attached.
-#
-# Deliberately not `download_asset`: that prefers `gh` and then falls back to
-# curl carrying $GITHUB_TOKEN, which would re-attach the credential `--bundle`
-# exists to avoid. A token with no SSO session for the org would 403 on this one
-# step and drop the whole chain back to the API path, failing with the original
-# error. The bundle is a public release file, so a bare curl reaches it and
-# keeps the path credential-free end to end.
+# Fetch the provenance bundle credential-free. Not `download_asset`: its gh/token fallback
+# would re-attach the credential `--bundle` avoids, and a token without org SSO would 403 here
+# and drop the chain to the API path.
 download_bundle() {
     local dest="$1"
     curl -fsSL -o "$dest" \
@@ -172,34 +163,24 @@ verify_attestation() {
         --source-ref "refs/tags/${VERSION}"
         --deny-self-hosted-runners
     )
-    # Prefer the bundle published with the release: without --bundle, `gh`
-    # refuses to run unauthenticated and then attaches its stored token to the
-    # attestations API call, so a token with no SSO session for the org 403s on
-    # data that is anonymously readable. See the `iso update` trust chain in
-    # docs/trust-model.md for what each transport does and does not pin.
+    # Prefer the release's bundle: without --bundle, `gh` attaches its stored token, which 403s
+    # without org SSO on anonymously readable data. See the `iso update` trust chain in
+    # docs/trust-model.md.
     #
-    # The probe is silenced because a missing bundle is expected on older
-    # releases, so curl's bare "404" would read as a hard error — which means
-    # it cannot tell "not published" from a failed download. The message below
-    # says so rather than picking one. An empty file is rejected here too: `gh`
-    # before 2.56.0 reports success on an empty bundle, having verified nothing.
+    # The probe is silenced (a missing bundle is expected on older releases) and an empty file
+    # is rejected: `gh` before 2.56.0 reports success on an empty bundle.
     if download_bundle "${TMPDIR}/${BUNDLE}" > /dev/null 2>&1 \
         && [ -s "${TMPDIR}/${BUNDLE}" ]; then
-        # Not retried through the API. A digest mismatch — a tampered tarball
-        # published with a matching SHA256SUMS — is caught here and nowhere
-        # else in this script, and a bundle that downloaded but will not verify
-        # is equally a broken download or a `gh` that cannot read it. Switching
-        # transports would mask all three.
+        # Not retried via the API: a digest mismatch (tampered tarball with a matching SHA256SUMS)
+        # is caught only here, and switching transports would mask it.
         gh attestation verify "$file" --repo "$REPO" "${signer_pin[@]}" --bundle "${TMPDIR}/${BUNDLE}" \
             || die "Attestation verification failed for $(basename "$file") — refusing to install"
         info "Attestation verified against ${BUNDLE} — no attestations-API call, no credential."
         return 0
     fi
 
-    # Verifying through the API is exactly what every release did before the
-    # bundle asset existed. Without `--bundle`, `gh` gates the command on being
-    # logged in and attaches its token, so this path needs a credential
-    # authorized for the org — which is why it is the fallback, not the default.
+    # Fallback: without `--bundle` gh requires login and attaches its token, so this needs a
+    # credential authorized for the org.
     info "Could not use ${BUNDLE} for ${VERSION} (not published, download failed, or empty) —"
     info "verifying through the GitHub API instead."
     local out
@@ -208,9 +189,8 @@ verify_attestation() {
         return 0
     fi
     printf '%s\n' "$out" >&2
-    # This path also fails on a network error, a gh too old for the command, or
-    # a genuine provenance mismatch, so only explain the credential requirement
-    # when gh actually reported one of its symptoms.
+    # Also fails on network errors, an old gh, or a real mismatch: explain the credential
+    # requirement only when gh reported its symptoms.
     case "$out" in
         *403* | *SAML* | *"gh auth login"*)
             warn "Verification used the GitHub API because ${BUNDLE} was unavailable for"

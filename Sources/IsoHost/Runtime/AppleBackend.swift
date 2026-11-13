@@ -55,7 +55,6 @@ package final class AppleBackend: Sendable {
       runtime: { () throws(RuntimeError) in try base.runtime() })
   }
 
-  /// Refuses a direct mutation of a service-managed instance.
   func requireWriter(_ instance: Instance) throws {
     guard !serviceWriter else { return }
     let adopted: InstanceID?
@@ -110,7 +109,6 @@ package final class AppleBackend: Sendable {
     }
   }
 
-  /// Owner, no pending journal, sidecar, and ownership check.
   package func ownedSidecar(_ instance: Instance) throws -> MachineSidecar {
     let owner = try Owner.load(config)
     if let journal = try Journal.loadIfPresent(instance) {
@@ -142,10 +140,10 @@ package final class AppleBackend: Sendable {
     }
   }
 
-  /// For listings: `probeRunning` plus, for a running filtered sandbox, the
-  /// host-side half of its readiness proof (boot, policy, owner, companion,
-  /// broker and tunnel processes, and signed direct replies). It never
-  /// connects to the guest; `asRunning` adds the guest-loopback proofs.
+  /// For listings: `probeRunning` plus, for a running filtered sandbox, the host-side
+  /// half of its readiness proof (boot, policy, owner, companion, broker and tunnel
+  /// processes, signed replies). Never connects to the guest; `asRunning` adds
+  /// the guest-loopback proofs.
   package func probeHealth(_ instance: Instance) throws -> InstanceHealth {
     guard try probeRunning(instance) else { return .stopped }
     try NetworkPolicy.enforce(instance, config: config)

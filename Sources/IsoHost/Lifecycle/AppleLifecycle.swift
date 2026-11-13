@@ -3,10 +3,9 @@ import IsoConfiguration
 import IsoCore
 import IsoSecrets
 
-/// Lifecycle mutations of the Apple backend. Each takes the per-instance
-/// lock, journals its runtime calls where an interruption could leave the
-/// runtime and host records disagreeing, and verifies the runtime's report
-/// rather than trusting a call's exit status.
+/// Lifecycle mutations of the Apple backend. Each takes the per-instance lock,
+/// journals runtime calls whose interruption could desync runtime and host
+/// records, and verifies the runtime's report rather than a call's exit status.
 extension AppleBackend {
   func sleep(_ duration: Duration) {
     let (seconds, attoseconds) = duration.components
@@ -170,10 +169,9 @@ extension AppleBackend {
 
   // MARK: Stop and delete
 
-  /// After a failed start: stop, keep the disk.
-  /// `fencing` names an existing instance whose boot failed after it began
-  /// (LIFE-01): if its stop cannot be confirmed it is fenced, so no workload
-  /// is handed to it until `iso stop` reconciles it.
+  /// After a failed start: stop, keep the disk. `fencing` names an existing
+  /// instance whose boot failed (LIFE-01): if the stop cannot be confirmed it is
+  /// fenced so no workload is handed to it until `iso stop` reconciles it.
   func stopAfterFailure(
     _ sandboxes: SandboxNamespace, _ name: MachineName, fencing instance: Instance? = nil
   ) {
@@ -202,16 +200,14 @@ extension AppleBackend {
 
   // MARK: Create
 
-  /// A new session window from `limits.session_ttl`, starting now.
   func sessionExpiry() -> Date? {
     config.limits.sessionTTL.map { Date().addingTimeInterval(TimeInterval($0.seconds)) }
   }
 
-  /// `machine` is a runtime name the caller already reserved and recorded
-  /// (host control); nil generates one. `expiresAt` fixes this boot's
-  /// deadline instead of starting a `session_ttl` window.
-  /// `guestEnvironment` is the environment the caller records for this
-  /// first boot; it decides a brokered boot's provider grants.
+  /// `machine` is a runtime name the caller already reserved (host control); nil
+  /// generates one. `expiresAt` fixes this boot's deadline instead of a
+  /// `session_ttl` window. `guestEnvironment` is recorded for this first boot and
+  /// decides a brokered boot's provider grants.
   package func createAndStart(
     _ instance: Instance, diskGiB explicitDisk: UInt64?, machine reserved: MachineName? = nil,
     expiresAt: Date? = nil, guestEnvironment: [EnvVarName: EnvValue]? = nil
@@ -373,14 +369,8 @@ extension AppleBackend {
 
   // MARK: Start
 
-  /// Boot a stopped instance, finishing an interrupted resource change or
-  /// restore first. The host key must match its pin (or, after `restore`,
-  /// is re-enrolled).
-  /// `guestEnvironment` is the environment the caller records for this
-  /// boot; nil keeps the recorded one.
-  /// Whether `computer_use` now differs from what a Linux instance was
-  /// created with. Only a desktop instance has the setting; a headless one
-  /// ignores it, and is told so when it is created.
+  /// Whether `computer_use` now differs from what a Linux instance was created
+  /// with. Only a desktop instance has the setting; a headless one ignores it.
   static func computerUseChanged(
     created: MacGuestComputerUse?, configured: ComputerUseConfig, display: LinuxGuestDisplay?
   ) -> Bool {
@@ -435,9 +425,8 @@ extension AppleBackend {
       // Fixed at create, as for a macOS guest: the record decides.
       diagnostics.warn(Self.computerUseChangedWarning(instance.name))
     }
-    // Every start path (start, restart, resize --start, reprovision, host
-    // service) records a new immutable policy snapshot and epoch here: under
-    // the instance lock, after the runtime confirmed nothing is running, so a
+    // Every start path records a new immutable policy snapshot and epoch here, under
+    // the instance lock and after the runtime confirmed nothing is running, so a
     // refused start never replaces a live boot's binding or proxy claims.
     try PolicyBoot.begin(instance, configured: config.policy, diagnostics: diagnostics)
     // The new boot's policy, resolved before it starts so the runtime binds
@@ -608,7 +597,6 @@ extension AppleBackend {
     }
   }
 
-  /// `destroy --all`: every image's runtime content, best effort.
   package func destroyShared() {
     guard let images = try? ImageStore.list(config) else { return }
     for image in images {
@@ -710,7 +698,6 @@ extension AppleBackend {
     }
   }
 
-  /// A manifest exists and the runtime still holds what it names.
   package func imageIsBuilt(_ image: ImageName) -> Bool {
     guard let manifest = try? ImageManifest.loadIfPresent(config, image),
       let runtime = try? runtime()
@@ -747,7 +734,6 @@ extension AppleBackend {
     }
   }
 
-  /// `<runtime root>/sandboxes/<machine>/rootfs.ext4`.
   package func diskPath(_ stopped: Stopped) throws -> String {
     IsolationGate.rootfsPath(runtimeRoot: try runtime().root, sandbox: stopped.sidecar.machineID)
   }

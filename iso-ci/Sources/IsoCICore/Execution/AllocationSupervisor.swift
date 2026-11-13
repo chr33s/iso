@@ -12,7 +12,6 @@ package enum SupervisionPhase: String, Sendable, Codable, CaseIterable {
   case finished
   case failed
 
-  /// Phases in which only the supervisor may act on the allocation.
   package var ownsStartup: Bool {
     self == .starting || self == .provisioning || self == .registering
   }
@@ -81,7 +80,6 @@ package struct AllocationFiles: Sendable, Equatable {
       Array(try ControllerStore.encode(value).utf8), to: state(value.allocation))
   }
 
-  /// Opens (creating 0600) a lock file without following a symlink.
   package func openLock(_ id: AllocationID, create: Bool) -> Int32? {
     let fd = open(lock(id), O_RDWR | O_NOFOLLOW | O_CLOEXEC | (create ? O_CREAT : 0), 0o600)
     guard fd >= 0 else { return nil }
@@ -104,7 +102,6 @@ package struct AllocationFiles: Sendable, Equatable {
   }
 }
 
-/// The result of the controller's startup scan.
 package struct SupervisorAdoption: Sendable, Equatable {
   package var live: [AllocationID: SupervisorState?] = [:]
   package var ended: [AllocationID: SupervisorState?] = [:]
@@ -320,7 +317,6 @@ package enum SupervisorMain {
     return .finished
   }
 
-  /// Whether the allocation still needs a held session.
   package static func holds(_ record: AllocationRecord) -> Bool {
     (record.desired == .active || record.desired == .drain) && record.vmCleanup != .verified
       && !record.isSettled && record.observedRunPhase.map { $0 == .running } ?? true

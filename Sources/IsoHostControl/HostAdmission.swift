@@ -136,7 +136,6 @@ extension HostSupervisor {
     try persist { () throws(HostError) in
       try store.reserve(.finalize(accepted.operationID))
       try store.saveInstance(updated)
-      // The accepted intent is the commit point; it is written last.
       try store.saveOperation(accepted)
     }
     return record.receipt(disposition: .accepted, instance: instance.qualified)
@@ -301,7 +300,6 @@ extension HostSupervisor {
       try store.reserve(.destroy(instance))
       try store.reserve(.finalize(record.operationID))
       try store.saveInstance(instanceRecord)
-      // The accepted intent is the commit point; it is written last.
       try store.saveOperation(record)
     }
     return record.receipt(disposition: .accepted, instance: instanceRecord.qualified)
@@ -362,7 +360,6 @@ extension HostSupervisor {
       try store.reserve(.stop(updated.instanceID))
       try store.reserve(.finalize(accepted.operationID))
       try store.saveInstance(updated)
-      // The accepted intent is the commit point; it is written last.
       try store.saveOperation(accepted)
     }
     return record.receipt(disposition: .accepted, instance: instance.qualified)
@@ -389,9 +386,8 @@ extension HostSupervisor {
     case destroy
   }
 
-  /// Stop and destroy use the reservations made when the instance and its
-  /// boot were admitted, so they succeed with the ordinary ledger full.
-  /// Called under the admission lock; `executing` is that lock's set.
+  /// Stop and destroy use reservations made at admission, so they succeed with the ordinary
+  /// ledger full. Called under the admission lock.
   func admitCleanup(
     _ record: inout OperationStore.OperationRecord, _ target: QualifiedInstance, generation: UInt64,
     kind: CleanupKind, executing: Set<HostOperationID>
@@ -410,19 +406,16 @@ extension HostSupervisor {
       if coalesces {
         return current.receipt(disposition: .existingCleanup, instance: instance.qualified)
       }
-      // A destroy supersedes an operation left reconciling (a crashed VM can
-      // keep one there indefinitely), unless it is executing right now: an
-      // execution claims `executing` under this lock before loading its
-      // record, so a later one finds the record terminal. A run's child
-      // operation is governed by its run.
+      // A destroy supersedes an operation left reconciling, unless it is executing now
+      // (execution claims `executing` under this lock first). A run's child operation is
+      // governed by its run.
       guard kind == .destroy, current.state == .reconciling, !executing.contains(active),
         current.runID == nil
       else { throw busy(active) }
       // Checked before superseding, so a refused destroy changes nothing.
       guard instance.generation == generation else { throw generationConflict(instance) }
-      // Written first inside the destroy's own persist below: if that write
-      // fails nothing changes, and a crash after it leaves a pointer to a
-      // terminal operation, which holds nothing.
+      // Written first: if the write fails nothing changes, and a crash after it leaves a
+      // pointer to a terminal operation, which holds nothing.
       var failed = current
       failed.state = .failed
       failed.outcome = "superseded by vm.destroy \(record.operationID)"
@@ -455,7 +448,6 @@ extension HostSupervisor {
         try store.consume(reservation)
         try store.reserve(.finalize(accepted.operationID))
         try store.saveInstance(updated)
-        // The accepted intent is the commit point; it is written last.
         try store.saveOperation(accepted)
       }
     } else {

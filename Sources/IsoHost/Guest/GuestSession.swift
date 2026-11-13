@@ -7,10 +7,9 @@ import IsoConfiguration
 import IsoCore
 import Synchronization
 
-/// Environment variables requested for the guest. Every value is treated as
-/// secret (API keys, tokens), so nothing here prints one. A requested name
-/// never configures the host: `prepare` moves each value under a generated
-/// alias, and a wrapper restores the original name inside the guest.
+/// Environment variables requested for the guest. Every value is secret, so
+/// nothing prints one. `prepare` moves each value under a generated alias and a
+/// wrapper restores the name inside the guest; a name never configures the host.
 package struct EnvForward: Sendable, CustomStringConvertible {
   package private(set) var names: [String] = []
   private var values: [String: Secret<String>] = [:]
@@ -75,10 +74,9 @@ package struct EnvForward: Sendable, CustomStringConvertible {
     }
     let aliases = entries.indices.map { "\(Self.aliasPrefix)\($0)" }
     // Every value is captured into a positional parameter before any name is
-    // exported, so a requested name that matches an alias, or the saved
-    // login shell and command (`$1`, `$2`), cannot disturb the restore.
-    // Names are validated `EnvVarName`s and aliases are iso's own, so both
-    // are literal shell words; values never appear in the script.
+    // exported, so a name matching an alias or the saved shell/command (`$1`, `$2`)
+    // cannot disturb the restore. Names and aliases are validated literal shell
+    // words; values never appear in the script.
     var script = RemoteCommand()
     for index in entries.indices {
       script = script.literal(index == 0 ? "" : " && ").literal("[ \"${\(3 + 2 * index)}\" = s ]")
@@ -126,7 +124,6 @@ package struct PreparedGuestCommand: Sendable {
     self.aliases = aliases.map { (name: $0.0, value: $0.1) }
   }
 
-  /// Exactly the generated aliases, nothing a requested name chose.
   var options: [String] { aliases.flatMap { ["-o", "SendEnv=\($0.name)"] } }
 
   /// The host ssh environment: `base` (an independent host snapshot, kept
@@ -196,10 +193,9 @@ package struct WorkloadSession: Sendable {
     self.revalidate = revalidate
   }
 
-  /// Spawns the workload's ssh under supervision: while it runs, the proof is
-  /// repeated, and a lost proof kills the ssh and its descendants and fails
-  /// with that readiness error instead of letting the session outlive it. A
-  /// session that ended on its own keeps its result.
+  /// Spawns the workload's ssh under supervision: the proof is repeated while it
+  /// runs, and a lost proof kills ssh and its descendants and fails with that
+  /// readiness error. A session that ended on its own keeps its result.
   fileprivate func attached(
     _ client: SSHClient, _ request: ProcessRunner.Request, inheritStdin: Bool
   ) throws -> ProcessRunner.Termination {
@@ -226,15 +222,12 @@ package struct WorkloadSession: Sendable {
   }
 }
 
-/// Re-proves a running workload on its own thread until finished, so a slow
-/// proof never delays reaping the session. Two consecutive failed proofs end
-/// it; one transient probe failure, or a proof briefly in flux while a tunnel
-/// is replaced, does not.
+/// Re-proves a running workload on its own thread until finished, so a slow proof
+/// never delays reaping. Two consecutive failures end it; one transient failure
+/// or a proof in flux while a tunnel is replaced does not.
 final class SessionSupervisor: Sendable {
-  /// The production interval for filtered and brokered workloads.
   static let interval: Duration = .seconds(10)
 
-  /// Only a filtered or brokered instance has a live proof to supervise.
   static func interval(for running: AppleBackend.Running) -> Duration? {
     running.hasLiveProof ? interval : nil
   }
@@ -268,7 +261,6 @@ final class SessionSupervisor: Sendable {
 
   var lost: Bool { state.withLock { $0.failure != nil } }
 
-  /// Stops supervising; the failure that ended the session, if any.
   func finish() -> (any Error)? {
     state.withLock {
       $0.finished = true
@@ -326,7 +318,6 @@ extension SSHClient {
       deadline: Self.captureDeadline, input: input)
   }
 
-  /// Output passes through; fails when the remote command does.
   package func exec(_ target: SSHTarget, _ command: RemoteCommand) throws {
     try target.requireHandoff()
     let termination = try runner.attached(
@@ -335,7 +326,6 @@ extension SSHClient {
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
-  /// Like `exec`, with `env` forwarded.
   package func exec(_ session: SSHSession, _ command: RemoteCommand) throws {
     let launch = try session.env.prepare(command.rendered, terminal: .requested).launch(
       session.target, base: environment, pty: false)
@@ -372,7 +362,6 @@ extension SSHClient {
     }
   }
 
-  /// Whether the command succeeds; output discarded.
   package func succeeds(_ target: SSHTarget, _ command: RemoteCommand) -> Bool {
     (try? succeedsChecked(target, command)) ?? false
   }
@@ -425,8 +414,6 @@ extension SSHClient {
 }
 
 extension ProcessRunner.Termination {
-  /// The one exit-status rule for a forwarded workload: its own code, or 1
-  /// after a signal, whose code is unknown.
   package var exitStatus: Int32 {
     switch self {
     case .exited(let code): code
@@ -462,14 +449,12 @@ package struct WorkloadExit: Error, Equatable, CustomStringConvertible {
 /// session that does not succeed throws `WorkloadExit`, except
 /// `runReporting`, which returns the termination to `iso run`.
 package enum InteractiveSSH {
-  /// Empty `command` opens a login shell at `/workspace`.
   package static func render(_ command: [String]) -> String {
     command.isEmpty
       ? "cd /workspace && exec $SHELL -l"
       : "cd /workspace && " + command.map(shellEscape).joined(separator: " ")
   }
 
-  /// A TERM a stock Ubuntu guest has terminfo for.
   package static func guestTerm(_ environment: [String: String]) -> String {
     let term = environment["TERM"] ?? ""
     return ["xterm", "xterm-256color", "screen", "vt100"].contains(term) ? term : "xterm-256color"
@@ -482,11 +467,10 @@ package enum InteractiveSSH {
       + command.map(shellEscape).joined(separator: " ")
   }
 
-  /// The one launch path behind every wrapper: revalidates the workload,
-  /// then runs ssh under its supervision. With a PTY the guest gets a TERM it
-  /// has terminfo for, and a launch that throws restores the terminal.
-  /// With `audit`, the handoff and the observed transport outcome are
-  /// recorded for that invocation (names only, never values or argv).
+  /// The one launch path behind every wrapper: revalidates the workload, then runs
+  /// ssh under supervision. A PTY gets a TERM the guest has terminfo for, and a
+  /// throwing launch restores the terminal. With `audit`, the handoff and observed
+  /// transport outcome are recorded (names only, never values or argv).
   private static func attach(
     _ client: SSHClient, _ workload: WorkloadSession, remote: String, inheritStdin: Bool,
     allocatePTY: Bool, missingSSH: String, audit: AuditInvocation? = nil
@@ -536,7 +520,6 @@ package enum InteractiveSSH {
     return termination
   }
 
-  /// With a PTY; a failed session leaves the terminal restored.
   package static func run(
     _ client: SSHClient, _ workload: WorkloadSession, _ command: [String], diagnostics: Diagnostics,
     audit: AuditInvocation? = nil

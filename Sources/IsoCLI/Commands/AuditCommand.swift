@@ -353,8 +353,6 @@ enum AuditExport {
     try write(to: path) { page in try reader.pages(.run(id), limit: limit, page) }
   }
 
-  /// `pages` hands every page of one fixed snapshot, in order, to its
-  /// argument.
   static func write(
     to path: String, pages: ((AuditPage) throws -> Void) throws -> Void
   ) throws -> (events: Int, head: UInt64) {

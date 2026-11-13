@@ -77,13 +77,11 @@ fi
 "${build[@]}"
 bin="$("${build[@]}" --show-bin-path)"
 
-# Another user who can write here could swap the binary iso runs. Checked
-# before `install -d`, which would silently reset an existing directory's mode.
+# Another writer could swap the binary iso runs; check before `install -d`, which would silently
+# reset an existing directory's mode.
 if [[ -e "${prefix}/bin" ]]; then
-    # iso's run-time rule (`untrusted_dir`), minus its sticky-directory
-    # exception: group-writable
-    # is allowed only for wheel (0) or admin (80), whose members can already
-    # sudo; Homebrew's /opt/homebrew/bin is admin-writable.
+    # iso's run-time rule (`untrusted_dir`) minus its sticky-directory exception: group-writable
+    # only for wheel (0) or admin (80), who can already sudo (Homebrew's bin is admin-writable).
     read -r bin_uid bin_gid bin_mode < <(stat -L -f '%u %g %Lp' "${prefix}/bin")
     if [[ ! -d "${prefix}/bin" ]] || [[ "${bin_uid}" != "$(id -u)" && "${bin_uid}" != 0 ]] ||
         ((8#${bin_mode} & 8#002)) ||
@@ -95,7 +93,6 @@ if [[ -e "${prefix}/bin" ]]; then
 else
     install -d -m 0755 "${prefix}/bin"
 fi
-# install_signed SOURCE NAME [CODESIGN-ARGS...]: stage, sign and rename into place.
 install_signed() {
     local source="$1" name="$2"
     shift 2
@@ -108,8 +105,7 @@ install_signed() {
     trap - EXIT
 }
 if ((coreai)); then
-    # The guest helper has no Core AI code: keep the one the plain build
-    # installed, so template builds record one helper whichever runtime ran.
+    # No Core AI code in the guest helper: keep the plain build's, so templates record one helper.
     if [[ ! -x "${prefix}/bin/iso-macos-helper" ]]; then
         install_signed iso-macos-helper iso-macos-helper \
             --entitlements "${scripts}/enhanced-security.entitlements"
@@ -129,9 +125,8 @@ install_signed iso-sandbox iso-sandbox --entitlements "${pkg}/iso-sandbox.entitl
 "${prefix}/bin/iso-sandbox" version
 installed="${prefix}/bin/iso-sandbox and ${prefix}/bin/iso-macos-helper"
 
-# The Linux `desktop` images' MCP server: an ELF binary, so not codesigned.
-# Its prerequisites are checked apart from its build, so that only a host that
-# cannot build it is skipped; a build that fails still fails this script.
+# The Linux `desktop` images' MCP server (ELF, not codesigned). Prerequisites are checked apart
+# from the build so only a host that cannot build it is skipped; a failing build still fails.
 if [[ "${cu_mcp}" == auto ]] && ! "${scripts}/build-iso-cu-mcp.sh" --check; then
     echo "warning: this host cannot build iso-cu-mcp (see above)" >&2
     cu_mcp=skip

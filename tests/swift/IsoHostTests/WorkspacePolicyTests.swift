@@ -7,8 +7,6 @@ import Testing
 
 @testable import IsoHost
 
-/// An instance with an attached workspace, a booted policy, and a stage of
-/// one new file, all in scratch directories.
 private struct GovernedFixture {
   let instance: Instance
   let destination: String
@@ -303,7 +301,6 @@ private func denial(_ body: () throws -> Void) -> PolicyReason? {
   variants.append(
     copy(gitfiles: [GitfileObservation(path: ".git", sha256: String(repeating: "1", count: 64))]))
   for variant in variants { #expect(WorkspacePolicy.manifestDigest(variant) != digest) }
-  // Creation time is not part of the plan.
   #expect(WorkspacePolicy.manifestDigest(copy(createdAt: "later")) == digest)
 }
 

@@ -44,7 +44,6 @@ import Testing
     let r = try root()
     try stoppedSandbox(r, "a", disk: 8 << 30)
     for bytes: UInt64 in [4 << 30, 8 << 30] {
-      // The message, not just the type: later steps also throw SandboxError.
       let error = await #expect(throws: SandboxError.self) {
         try await Sandboxes.grow(root: r, id: try SandboxID("a"), diskBytes: bytes)
       }

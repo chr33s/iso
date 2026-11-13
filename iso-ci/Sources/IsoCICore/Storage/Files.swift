@@ -131,7 +131,6 @@ package final class OwnershipLock: @unchecked Sendable {
   deinit { release() }
 }
 
-/// The operator data root layout (default `~/.iso-ci`).
 package struct DataRoot: Sendable, Equatable {
   package let path: String
 

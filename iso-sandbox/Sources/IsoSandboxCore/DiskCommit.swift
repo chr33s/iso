@@ -2,16 +2,10 @@ import Foundation
 
 /// Publishes a committed disk together with its metadata, the same way
 /// ``DiskUpdate`` publishes a sandbox's disk with its record.
-///
-/// Publication (1) stages the metadata beside the inode of the prepared disk
-/// in `disks/.pending-<name>.json`, (2) renames that disk over
-/// `<name>.ext4`, and (3) writes `<name>.json` and drops the staged copy. The
-/// rename is the commit point. After an interrupted publication, an installed
-/// disk with the staged inode means step 3 must be finished; any other disk
-/// (or none) means the commit never happened, so a replaced disk keeps its own
-/// metadata and is never left without it. Holders of the disk's shared lock
-/// read the staged metadata for a published disk (``Sandboxes/loadDiskMetadata(root:name:)``);
-/// only an exclusive holder settles it.
+/// Publication stages metadata beside the prepared disk's inode, renames the disk over
+/// `<name>.ext4` (the commit point), then writes `<name>.json`. After an interruption an installed
+/// disk with the staged inode means finish the write; any other disk means the commit never
+/// happened. Only an exclusive holder settles it.
 enum DiskCommit {
   struct Pending: Codable {
     /// Basename of the prepared disk in `disks/`.

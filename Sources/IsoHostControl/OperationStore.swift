@@ -3,11 +3,9 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// Versioned host-control records under `<data_dir>/host-control` (spec 7.1).
-/// Every write goes through `StateStore`/`AtomicFile`; reads never follow a
-/// symlink and are size-bounded. Callers serialize writers: the supervisor
-/// holds the service-ownership lock for its lifetime, and offline tools
-/// (migration) hold the installation mutation lock.
+/// Versioned host-control records under `<data_dir>/host-control` (spec 7.1), written via
+/// `StateStore`/`AtomicFile`; reads never follow a symlink and are size-bounded. Callers
+/// serialize writers (service-ownership lock, or the mutation lock for offline tools).
 package struct OperationStore: Sendable {
   package static let schema = 1
   /// Every record fits one slot; ordinary capacity and reservations count slots.
@@ -68,7 +66,6 @@ package struct OperationStore: Sendable {
     try read(InstallationRecord.self, installationPath)
   }
 
-  /// Loads the installation identity, creating it once for a fresh root.
   package func installation(owner: OwnerID, now: WireTime) throws(HostError) -> InstallationRecord {
     if let existing = try loadInstallation() {
       guard existing.ownerID == owner else {
@@ -103,7 +100,6 @@ package struct OperationStore: Sendable {
     package let operationID: HostOperationID
     package let method: String
     package let digest: SHA256Hex
-    /// Canonical typed params; the operation is re-decoded from these.
     package let params: String
     package let transport: String
     package let acceptedAt: UInt64
@@ -118,7 +114,6 @@ package struct OperationStore: Sendable {
     package var generation: UInt64?
     package var outcome: String?
     package var completedAt: UInt64?
-    /// The run this operation belongs to, when it is a run child.
     package var runID: RunID?
   }
 
@@ -148,7 +143,6 @@ package struct OperationStore: Sendable {
     package let runtimeID: MachineName
     package let guestOS: GuestOS
     package let name: InstanceName
-    /// Canonical `vm.create` params this instance was created from.
     package let spec: String
     package let createdBy: HostOperationID
     package var generation: UInt64
@@ -160,7 +154,6 @@ package struct OperationStore: Sendable {
     package var lastObservedAt: UInt64?
     package var runID: RunID?
 
-    /// The same record with a new create shape (after resize or restore).
     package func replacingSpec(_ spec: String, policy: SHA256Hex) -> InstanceRecord {
       InstanceRecord(
         hostID: hostID, ownerID: ownerID, instanceID: instanceID, runtimeID: runtimeID,
@@ -269,14 +262,12 @@ package struct OperationStore: Sendable {
     access(reservationPath(reservation), F_OK) == 0
   }
 
-  /// Writes and fsyncs a zero-filled file of the reservation's size.
   package func reserve(_ reservation: Reservation) throws(HostError) {
     guard !hasReservation(reservation) else { return }
     let bytes = [UInt8](repeating: 0, count: reservation.slots * Self.slotBytes)
     try AtomicFile.write(bytes, to: reservationPath(reservation), mode: .atMost(0o600))
   }
 
-  /// Frees the reservation's space for the record about to use it.
   package func consume(_ reservation: Reservation) throws(HostError) {
     try StateStore.removeIfPresent(reservationPath(reservation))
   }

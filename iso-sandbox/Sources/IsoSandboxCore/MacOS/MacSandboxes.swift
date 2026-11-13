@@ -271,9 +271,8 @@ package enum MacSandboxes {
 
   // MARK: computer use (client side)
 
-  /// One computer-use request to sandbox `id`'s owner: a macOS sandbox's,
-  /// or a ``DisplayMode/virtioDisplay`` Linux sandbox's through its `cu`
-  /// control op. Both answer in the same form.
+  /// One computer-use request to sandbox `id`'s owner: a macOS sandbox's, or a
+  /// ``DisplayMode/virtioDisplay`` Linux sandbox's through its `cu` control op.
   package static func cu(root: SandboxRoot, id: SandboxID, _ req: MacControlRequest) throws
     -> MacControlResponse
   {
@@ -292,10 +291,10 @@ package enum MacSandboxes {
     return try call(paths, req, timeout: replyTimeout(req))
   }
 
-  /// The owner replies to `cu-act` only after the whole action is sent, so
-  /// the wait grows with the action: each key event and each drag point is
-  /// followed by a pause (12 ms and 8 ms in `VMScreen.act`). A maximal
-  /// typed text (4096 shifted characters, about 200 s) still fits.
+  /// The owner replies to `cu-act` only after the whole action is sent, so the
+  /// wait grows with the action: each key event and each drag point is followed
+  /// by a pause (12 ms and 8 ms in `VMScreen.act`).
+  /// A maximal typed text (4096 shifted characters, about 200 s) still fits.
   static func replyTimeout(_ req: MacControlRequest) -> TimeInterval {
     var seconds: TimeInterval = 120
     if req.op == .cuAct, let action = req.action {

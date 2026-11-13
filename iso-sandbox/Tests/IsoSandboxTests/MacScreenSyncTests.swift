@@ -42,7 +42,6 @@ private func region(_ x: Int, _ y: Int, _ w: Int, _ h: Int) -> GuestCURegion {
   var g = DamageGrid(width: 64, height: 48)
   try sample(&g, frame(64, 48))
   var px = frame(64, 48)
-  // The last byte of pixel (17, 33): tile (1, 2).
   px[(33 * 64 + 17) * 4 + 3] = 1
   #expect(try sample(&g, px) == 1)
   #expect(g.latest(in: region(16, 32, 16, 16)) == 1)
@@ -54,7 +53,6 @@ private func region(_ x: Int, _ y: Int, _ w: Int, _ h: Int) -> GuestCURegion {
 }
 
 @Test func partialTilesOnTheRightAndBottomEdgesAreTracked() throws {
-  // 40×20: three columns (the last 8 wide) and two rows (the last 4 high).
   var g = DamageGrid(width: 40, height: 20)
   #expect(g.columns == 3 && g.rows == 2)
   try sample(&g, frame(40, 20))
@@ -102,7 +100,6 @@ private func simulate(_ p: ScreenWait.Parameters, changes: [Int]) async throws
 }
 
 @Test func anAnimationSettlesAboutIdleMsAfterItStops() async throws {
-  // A 600 ms transition drawn at 60 Hz.
   let r = try await simulate(try parameters(), changes: Array(stride(from: 16, to: 600, by: 16)))
   #expect(r.outcome == .settled)
   #expect((844...900).contains(r.elapsedMs))
@@ -197,7 +194,6 @@ private func simulate(_ p: ScreenWait.Parameters, changes: [Int]) async throws
   var slots = CUWaitSlots()
   try slots.take(.guest)
   #expect(refusal { try slots.take(.guest) } == .busy)
-  // A waiting guest does not refuse the host's wait.
   try slots.take(.host)
   #expect(refusal { try slots.take(.host) } == .busy)
   slots.free(.guest)
@@ -246,19 +242,16 @@ private struct ReleasedGuestCUResponse: Decodable {
 }
 
 @Test func responsesStayReadableAcrossVersionSkew() throws {
-  // New host, old helper: the new fields are ignored.
   var new = GuestCUResponse(ok: true)
   new.submitted = 3
   new.damageSeq = 9
   new.wait = GuestCUWaitResult(outcome: .settled, elapsedMs: 300)
   let old = try JSONDecoder().decode(ReleasedGuestCUResponse.self, from: new.encodedLine())
   #expect(old.ok && old.submitted == 3)
-  // Old host, new helper: no damageSeq, so no wait support.
   let fromOld = try JSONDecoder().decode(
     GuestCUResponse.self,
     from: Data(#"{"ok":true,"controller":"idle","holdRemainingSeconds":0}"#.utf8))
   #expect(fromOld.damageSeq == nil && fromOld.wait == nil)
-  // An owner from before `wait` reports no wait counts.
   let counts = try JSONDecoder().decode(
     MacGuestCUCounters.self,
     from: Data(
@@ -359,7 +352,6 @@ private func texts(_ result: [String: Any]) -> [String] {
   let server = GuestCUMCP(send: host.send)
   _ = try call(server, "move", ["x": 1, "y": 2, "frameId": "f1", "settle_ms": 0])
   #expect(host.sent.map(\.op) == [.session, .act])
-  // A bad value is refused before the action runs.
   host.sent = []
   for bad: Any in [10, 2001, -1, 2.5, "250", true] {
     let r = try call(server, "move", ["x": 1, "y": 2, "frameId": "f1", "settle_ms": bad])
@@ -402,7 +394,6 @@ private func texts(_ result: [String: Any]) -> [String] {
   #expect(content.first?["type"] as? String == "image")
   #expect(texts(r).contains { $0.contains("frameId: f2") && $0.contains("damageSeq: 6") })
   #expect(texts(r).contains { $0.contains("settled after 280 ms") })
-  // `status` is asked once.
   _ = try call(server, "wait_for_screen", ["include_screenshot": false])
   #expect(host.sent.map(\.op) == [.status, .session, .wait, .frame, .wait])
 }

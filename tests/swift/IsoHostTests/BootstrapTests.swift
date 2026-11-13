@@ -118,7 +118,6 @@ import Testing
     .saveGranted(instance)
   let revokedID = try #require(
     try GrantLedger.load(instance).grants.first { $0.scope == "REVOKED" }?.id)
-  // Saved later without provenance: legacy.
   var state = try #require(try GuestEnvState.tryLoad(instance))
   state.entries[try EnvVarName("LEGACY")] = .literal("3")
   try state.save(instance)
@@ -194,7 +193,6 @@ private func pluginFixture(_ root: String, _ directory: String, _ manifest: Stri
         == #"{"disableAllHooks":false,"outputStyle":"host-style","enabledPlugins":{"identity@skills-dir":\#(enabled)}}"#
     )
   }
-  // Removed bundles keep their recorded identity eligible.
   try FileManager.default.removeItem(atPath: source + "/skills")
   #expect(
     try ClaudeImport.preferences(settings: hostSettings(source), pluginIDs: ids).enabledPlugins[
@@ -475,7 +473,6 @@ private func stageCodex(
     command = "/usr/bin/mcp"
 
     """)
-  // A local VM gets the client's file as it is.
   var staged = try stageCodex(source: source)
   #expect(try #require(readFile(staged.path + "/config.toml")).contains("literal-secret"))
   staged.remove()
@@ -491,7 +488,6 @@ private func stageCodex(
   #expect(config.contains("model = \"gpt-5\""))
   #expect(sink.text.contains("MCP server 'private'"))
 
-  // With only header-bearing servers, the table is gone entirely.
   try writeFile(
     source + "/config.toml",
     "[mcp_servers.private]\nurl = \"https://mcp.example.com/\"\nhttp_headers = { A = \"b\" }\n")
@@ -588,7 +584,6 @@ private func stageCodex(
   #expect(parsed["instructions"] == .string("[not-a-table]\n"))
   staged.remove()
 
-  // Switching back to api_key: a remembered keyring store forces a rewrite that drops it.
   staged = try stageCodex(keyring: true)
   config = try #require(readFile(staged.path + "/config.toml"))
   #expect(!config.contains("cli_auth_credentials_store"))
@@ -1052,7 +1047,6 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
     secrets: secrets)
   _ = try agents.prepareSession(
     instance, target: guest.target, repo: try RepoSlug("org/repo"))
-  // One unlock, and only for what this session uses.
   #expect(secrets.calls == [[try SecretName("db"), try SecretName("pat")]])
 }
 
@@ -1067,7 +1061,6 @@ private final class FakeSecrets: SecretReferenceResolver, @unchecked Sendable {
     config: config, client: guest.client, environment: [:], home: nil, resolver: resolver,
     proxies: guest.proxies(resolver), github: NoGitHub(), diagnostics: guest.sink.diagnostics,
     secrets: nil)
-  // No store and nothing that reads the PAT: the prefetch is a no-op.
   _ = try agents.prepareSession(instance, target: guest.target, repo: try RepoSlug("org/repo"))
   // With `--env` references the existing, clearer error still names the cause.
   try GuestEnvState(entries: [try EnvVarName("DB"): .secret(try SecretName("db"))]).saveGranted(
@@ -1256,7 +1249,6 @@ private func hostSettings(_ source: String) -> [UInt8]? {
     try agents.requireSelectedProvider(instance, adapter: .codex)
   }
   #expect(error.message.contains("openai credential proxy"))
-  // Without a proxy requirement, nothing is demanded.
   try guest.bootstrap(try testConfig("")).requireSelectedProvider(instance, adapter: .codex)
 }
 
@@ -1294,7 +1286,6 @@ extension GuestEnvState {
   let off = try testConfig()
   let server = MCPServer.stdio(
     command: AgentBootstrap.computerUseCommand, args: ["cu-mcp"], env: [:])
-  // Created with it: registered for both agents, whatever the config says now.
   try sidecar(MacGuestComputerUse(frameRate: 4))
   for config in [on, off] {
     let agents = try guest.bootstrap(config).withGuestComputerUse(instance)
@@ -1304,7 +1295,6 @@ extension GuestEnvState {
   // Created without it: never registered, even with the config now on.
   try sidecar(nil)
   #expect(try guest.bootstrap(on).withGuestComputerUse(instance).config.claude.mcpServers.isEmpty)
-  // The name is reserved while it is on.
   try sidecar(MacGuestComputerUse(frameRate: 4))
   let clash = try testConfig(
     #""computer_use": {"guest_access": true}, "claude": {"mcp_servers": {"iso-cu": {"command": "x"}}}"#

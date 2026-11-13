@@ -1,9 +1,9 @@
 import Foundation
 
-/// One boot's computer-use counts as its owner last wrote them: what
-/// `inspect` reports as `runtime` while the boot runs, kept after it so the
-/// host can audit a boot it did not stop (session expiry, guest poweroff,
-/// an owner crash). Counts only: no pixels, coordinates, text or token.
+/// One boot's computer-use counts as its owner last wrote them: what `inspect`
+/// reports as `runtime` while the boot runs, kept after it so the host can audit
+/// a boot it did not stop (session expiry, guest poweroff, an owner crash).
+/// Counts only: no pixels, coordinates, text or token.
 package struct BootCounts: Codable, Equatable, Sendable {
   package var bootId: String
   package var guestComputerUse: MacGuestCUCounters?
@@ -16,9 +16,10 @@ package struct BootCounts: Codable, Equatable, Sendable {
   }
 }
 
-/// A sandbox's `boot-counts.json`: its most recent boots that had counts,
-/// oldest first. More than one, because launchd restarts a crashed owner
-/// before the host has read the crashed boot's counts.
+/// A sandbox's `boot-counts.json`: its most recent boots that had counts, oldest
+/// first.
+/// More than one, because launchd restarts a crashed owner before the host reads the crashed boot's
+/// counts.
 package enum BootCountsLog {
   package static let limit = 8
   /// How often a running owner writes changed counts: what a crash loses.
@@ -30,21 +31,19 @@ package enum BootCountsLog {
     return (try? JSONDecoder.iso.decode([BootCounts].self, from: data)) ?? []
   }
 
-  /// Of `recorded`, the boots that have ended: all but `live`, the boot an
-  /// owner is running now. Nil when there is none. `recorded` must have
-  /// been loaded before `live` was read: an owner writes live.json before
-  /// its counts, so a boot loaded here is then `live` or has ended, never a
-  /// boot that started in between and would be taken for ended.
+  /// Of `recorded`, the boots that have ended: all but `live`, the boot an owner
+  /// is running now. Nil when there is none.
+  /// `recorded` must be loaded before `live` is read: an owner writes live.json before its counts,
+  /// so a boot loaded first is `live` or ended.
   package static func ended(_ recorded: [BootCounts], live: String?) -> [BootCounts]? {
     let boots = recorded.filter { $0.bootId != live }.suffix(limit)
     return boots.isEmpty ? nil : Array(boots)
   }
 }
 
-/// Writes one boot's counts into its sandbox's log. Only an owner writes the
-/// file and one owner runs at a time (the owner lock); reading the counts
-/// and writing them stay on the main actor, so a later write never carries
-/// earlier counts.
+/// Writes one boot's counts into its sandbox's log.
+/// One owner runs at a time (the owner lock); reading and writing counts stay on the main actor, so
+/// a later write never carries earlier counts.
 @MainActor
 package final class BootCountsRecorder {
   private let url: URL

@@ -67,9 +67,8 @@ import Testing
     String(decoding: try Data(contentsOf: url), as: UTF8.self)
   }
 
-  /// Interrupt a replacing commit at each boundary; readers, settles, and
-  /// reconcile always pair the old disk with its metadata or the new disk
-  /// with its own, and never lose the old disk.
+  /// Interrupt a replacing commit at each boundary; readers, settles, and reconcile always pair
+  /// the old disk with its metadata or the new disk with its own, and never lose the old disk.
   @Test(arguments: DiskCommit.Fault.allCases, [true, false])
   func interruptedCommitRecoversToOneSide(_ fault: DiskCommit.Fault, _ replacing: Bool) async throws
   {

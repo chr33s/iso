@@ -96,7 +96,6 @@ private let anthropicOnly = """
     #expect(error?.field == field, "\(text)")
     #expect(error?.reason.contains(reason) == true, "\(String(describing: error))")
   }
-  // Duplicate keys are refused by the existing preflight, inside policy too.
   #expect(throws: ConfigError.self) {
     try ConfigLoader.load(
       bytes:
@@ -125,7 +124,6 @@ private let anthropicOnly = """
   #expect(
     policyError("{\"workspace\": {\"pull\": {\"mode\": \"stage\"}}, \"policy\": \(workspace)}")
       == nil)
-  // Shadow observes; it does not require the enforcing combinations.
   let shadow = providers.replacingOccurrences(of: "enforce", with: "shadow")
   #expect(policyError("{\"proxy\": {\"mode\": \"auto\"}, \"policy\": \(shadow)}") == nil)
 }

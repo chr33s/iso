@@ -3,10 +3,10 @@ import IsoConfiguration
 import IsoCore
 import IsoPolicy
 
-// Host-owned policy state for one instance (docs/design/iso-policy.md §5,
-// §7.4, §11): a stable instance identity, and one immutable boot binding per
-// VM boot with its proxy launch claims. Owner-only, versioned, written
-// atomically under the instance policy lock; never guest-visible.
+// Host-owned policy state for one instance (docs/design/iso-policy.md §5, §7.4,
+// §11): a stable identity and one immutable boot binding per boot with its proxy
+// launch claims. Owner-only, versioned, written atomically under the policy lock;
+// never guest-visible.
 
 /// `<instance>/policy-instance.json`: created once per instance, so a
 /// destroyed and recreated instance with the same name gets a new identity.
@@ -185,7 +185,6 @@ package enum ActivePolicy: Sendable {
   }
 }
 
-/// Boot binding and proxy launch claims.
 package enum PolicyBoot {
   /// Records a new immutable binding for a VM boot that is starting now:
   /// a fresh boot ID and epoch, the configured policy or an explicit `off`.
@@ -215,11 +214,10 @@ package enum PolicyBoot {
     return binding
   }
 
-  /// Claims this boot's single launch slot for `provider` before a proxy is
-  /// spawned. Nil when the policy does not govern provider actions (the
-  /// legacy startup protocol applies). An enforcing slot that is already
-  /// claimed — even by a launch that never finished — is refused: quota
-  /// state is never replaced with empty counters within an enforcing boot.
+  /// Claims this boot's single launch slot for `provider` before a proxy spawns.
+  /// Nil when the policy does not govern provider actions (legacy startup). An
+  /// already-claimed enforcing slot, even from an unfinished launch, is refused:
+  /// quota state is never reset within an enforcing boot.
   package static func claimProxyLaunch(
     _ instance: Instance, provider: ProxyProvider, configured: CompiledPolicy?,
     diagnostics: Diagnostics, now: Date = Date()

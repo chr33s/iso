@@ -122,7 +122,6 @@ private struct Stubs {
   func remove() { try? FileManager.default.removeItem(atPath: root) }
 }
 
-/// A scripted terminal: queued stdin lines, captured stderr.
 private final class ScriptedConsole: Sendable {
   let input: Mutex<[String]>
   let output = Lines()
@@ -198,7 +197,6 @@ private let assignmentConfig = #"""
     #expect(try name("org/b") == nil)
     #expect(try name("org/none") == nil)
     #expect(try name(nil) == nil)
-    // An assignment wins and never falls back to the workspace repo.
     try GitHubAssignment(repo: RepoSlug("org/c")).save(config, instance)
     #expect(try name("org/a") == "tok-c")
   }
@@ -209,7 +207,6 @@ private let assignmentConfig = #"""
       reference.description
         == "cmd:security find-generic-password -s iso-github-pat -a trailofbits-iso -w")
     #expect(KeychainReference.parse(reference.description) == reference)
-    // `cmd:` with leading space parses the same; other commands are opaque.
     #expect(
       KeychainReference.parse("cmd: security find-generic-password -s s -a a -w")
         == KeychainReference(service: "s", account: "a"))
@@ -255,7 +252,6 @@ private let assignmentConfig = #"""
   @Test func secretAccountsUseTheSafeClass() throws {
     #expect(SecretAccount(repo: slug("trailofbits/iso")).rawValue == "trailofbits/iso")
     #expect(SecretAccount(repo: slug("trail-of.bits_1/iso")).rawValue == "trail-of.bits_1/iso")
-    // Distinct repositories never share one Keychain item.
     #expect(SecretAccount(repo: slug("foo-bar/baz")) != SecretAccount(repo: slug("foo/bar-baz")))
     #expect(throws: ValidationError.self) { try SecretAccount("") }
     for bad in ["a/b", "/a", "a b"] {
@@ -343,7 +339,6 @@ private let assignmentConfig = #"""
         == "-sSL -H Accept: application/vnd.github+json -H @- -w \n%{http_code} https://api.github.com/user\n"
     )
     #expect(stubs.read("curl.stdin") == "Authorization: token github_pat_SYNTHETIC\n")
-    // Anonymous requests carry no Authorization header.
     #expect(!api.isPublic(slug("o/private")))
     #expect(
       stubs.read("curl.argv").hasSuffix(
@@ -555,7 +550,6 @@ private let assignmentConfig = #"""
     #expect(fileMode(path) == 0o600)
     #expect(
       try GitHubAssignment.active(cfg, inst, githubDisabled: false)?.repo == slug("org/assigned"))
-    // A rotated entry is used immediately: only the key is stored.
     let tokens = GitHubTokens(
       environment: stubs.environment, diagnostics: Diagnostics(verbosity: 0))
     #expect(
@@ -711,12 +705,10 @@ private let assignmentConfig = #"""
     #expect(secrets.calls.count == 1)
     #expect(view.entries.map(\.probe) == [.ok, .unexpectedFormat])
 
-    // Without --probe nothing is resolved.
     let quiet = OneUnlockSecrets(["one": "github_pat_1", "two": "classic"])
     view = try host(stubs, secrets: quiet).status(cfg, probe: false, instance: nil)
     #expect(quiet.calls.isEmpty)
 
-    // A failed batch (one name missing) still reports each entry.
     let partial = OneUnlockSecrets(["one": "github_pat_1"])
     view = try host(stubs, secrets: partial).status(cfg, probe: true, instance: nil)
     #expect(view.entries.map(\.probe) == [.ok, .resolveFailed])
@@ -857,7 +849,6 @@ private let assignmentConfig = #"""
     )
     #expect(!out.contains("SYNTHETIC"))
     #expect(!stubs.read("curl.argv").contains("SYNTHETIC"))
-    // Rotating the same repo produces the same reference: no rewrite.
     var edited = Data("// keep\n".utf8)
     edited.append(try Data(contentsOf: URL(fileURLWithPath: path)))
     try edited.write(to: URL(fileURLWithPath: path))
@@ -1029,7 +1020,6 @@ private let assignmentConfig = #"""
     #expect(try decide(#"{"github": "auto"}"#) == .skip)
     #expect(try decide(#"{"github": "env"}"#) == .skip)
     #expect(try decide(#"{"github": "off", "setup": {"prompt_for_pat": false}}"#) == .skip)
-    // `--no-github` disables the prompt as well as forwarding.
     #expect(
       PATPromptDecision.resolve(
         try config(#"{"github": "auto"}"#).disablingGitHub(), repo: repo, isTerminal: true,
@@ -1054,7 +1044,6 @@ private let assignmentConfig = #"""
         == "\nNo GitHub credential is configured for a/b (github = \"off\").\nPushes and private-repo operations from the guest will fail.\n\nSet up a scoped fine-grained PAT now? [y/N/never] "
     )
     #expect(logs.text.contains("recorded skip marker for a/b"))
-    // Anything else continues unchanged.
     let declined = try host(stubs, console: ScriptedConsole([""]), logs: logs).maybePrompt(
       cfg, target: ConfigTarget(path: path, format: .jsonc), repo: slug("c/d"), noPrompt: false)
     #expect(declined.github == .off)

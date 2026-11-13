@@ -4,23 +4,16 @@
 
 import Foundation
 
-/// The TOML subset iso needs for Codex's own `~/.codex/config.toml`: the
-/// host file (trusted, user-authored) is merged with iso-managed keys, and
-/// the guest's copy (untrusted) is read only to carry its plugin and
-/// project tables across a rewrite. Host configuration is JSONC; this type
-/// exists only for that Codex file.
-///
-/// Values are kept as data: nothing parsed here is executed or used as a
-/// host path. Tables print with sorted keys in the layout of the Rust
-/// `toml` crate (`BTreeMap` tables): plain values first, then each table
-/// or array of tables in key order, a header only where a table holds
-/// plain values (or is empty).
+/// The TOML subset iso needs for Codex's `~/.codex/config.toml`: the trusted
+/// host file is merged with iso-managed keys, and the untrusted guest copy is
+/// read only to carry its plugin and project tables across a rewrite. Values
+/// are data only, never executed or used as a host path. Tables print with
+/// sorted keys, like the Rust `toml` crate.
 indirect enum TOMLValue: Equatable, Sendable {
   case string(String)
   case integer(Int64)
   case float(Double)
   case boolean(Bool)
-  /// Offset/local date-time, date or time, as written (normalized `T`/`Z`).
   case datetime(String)
   case array([TOMLValue])
   case table(TOMLTable)
@@ -28,7 +21,6 @@ indirect enum TOMLValue: Equatable, Sendable {
   var stringValue: String? { if case .string(let value) = self { value } else { nil } }
   var tableValue: TOMLTable? { if case .table(let value) = self { value } else { nil } }
 
-  /// Non-empty arrays whose every element is a table print as `[[...]]`.
   var arrayOfTables: [TOMLTable]? {
     guard case .array(let elements) = self, !elements.isEmpty else { return nil }
     let tables = elements.compactMap(\.tableValue)
@@ -69,7 +61,6 @@ struct TOMLTable: Equatable, Sendable {
   @discardableResult
   mutating func remove(_ key: String) -> TOMLValue? { entries.removeValue(forKey: key) }
 
-  /// Rust `String` order (bytes).
   var sortedKeys: [String] {
     entries.keys.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
   }
@@ -128,7 +119,6 @@ enum TOMLWriter {
     return bare ? key : string(key)
   }
 
-  /// A basic string; every control character is escaped.
   static func string(_ text: String) -> String {
     var out = "\""
     for scalar in text.unicodeScalars {
@@ -185,8 +175,6 @@ struct TOMLParseError: Error, CustomStringConvertible, Equatable {
 }
 
 extension TOMLTable {
-  /// Parse a TOML 1.1 document. Nesting of arrays and inline tables is
-  /// limited to `TOMLParser.maxDepth`.
   static func parse(_ text: String) throws(TOMLParseError) -> TOMLTable {
     try withParserStack { () throws(TOMLParseError) in
       var parser = TOMLParser(bytes: Array(text.utf8))
@@ -202,13 +190,10 @@ struct TOMLParser {
   var index = 0
   var line = 1
 
-  /// How a table came to exist, which decides whether it may be extended.
   enum Origin {
     case implicit, header, dotted, inline, arrayElement
   }
 
-  /// Mutable build tree: tables remember their origin and arrays created by
-  /// `[[...]]` stay appendable.
   final class Node {
     var origin: Origin
     var children: [String: Entry] = [:]
@@ -292,8 +277,6 @@ struct TOMLParser {
 
   // MARK: Tables
 
-  /// Walk `path` (all but the last key) from `root`, creating implicit
-  /// tables and descending into the last element of a table array.
   func descend(_ root: Node, _ path: ArraySlice<String>) throws(TOMLParseError) -> Node {
     var node = root
     for key in path {
@@ -382,7 +365,6 @@ struct TOMLParser {
 
   // MARK: Keys
 
-  /// `depth` is the nesting the key starts at; each further segment adds one.
   mutating func key(depth: Int) throws(TOMLParseError) -> [String] {
     var parts: [String] = []
     while true {
@@ -452,7 +434,6 @@ struct TOMLParser {
     try newline()
   }
 
-  /// Whitespace, newlines and comments inside arrays and inline tables.
   mutating func skipTrivia() throws(TOMLParseError) {
     while let byte = current {
       if byte == UInt8(ascii: " ") || byte == UInt8(ascii: "\t") {
@@ -532,7 +513,6 @@ struct TOMLParser {
         || byte == UInt8(ascii: ":")
     }
     while let byte = current, isTokenByte(byte) { index += 1 }
-    // A date and time may be separated by one space.
     if index - start == 10, current == UInt8(ascii: " "), index + 1 < bytes.count,
       bytes[index + 1] >= 0x30 && bytes[index + 1] <= 0x39,
       Self.isDate(Array(bytes[start..<index]))
@@ -556,7 +536,6 @@ struct TOMLParser {
       && isDigits(bytes[5..<7]) && bytes[7] == UInt8(ascii: "-") && isDigits(bytes[8..<10])
   }
 
-  /// `HH:MM[:SS[.frac]]` (seconds optional in TOML 1.1).
   static func isTime(_ bytes: ArraySlice<UInt8>) -> Bool {
     let bytes = Array(bytes)
     guard bytes.count >= 5, isDigits(bytes[0..<2]), bytes[2] == UInt8(ascii: ":"),
@@ -777,8 +756,6 @@ struct TOMLParser {
     throw fail("unterminated string")
   }
 
-  /// One UTF-8 scalar of string content; control characters other than tab
-  /// are rejected.
   mutating func plainScalar(into out: inout String.UnicodeScalarView) throws(TOMLParseError) {
     let byte = bytes[index]
     if (byte < 0x20 && byte != UInt8(ascii: "\t")) || byte == 0x7F {

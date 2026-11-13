@@ -10,21 +10,17 @@ let package = Package(
     .executable(name: "iso-sandbox", targets: ["IsoSandbox"]),
     // Installed into macOS guest templates; see docs/design/macos-guest-computer-use.md.
     .executable(name: "iso-macos-helper", targets: ["IsoMacHelper"]),
-    // Installed into Linux `desktop` images; built for Linux with the Static
-    // Linux SDK (scripts/build-iso-cu-mcp.sh).
     .executable(name: "iso-cu-mcp", targets: ["IsoCUMCP"]),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/containerization.git", exact: "0.54.0"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
-    // Already resolved through containerization; named for `FilePath`.
     .package(url: "https://github.com/apple/swift-system.git", exact: "1.8.1"),
   ],
   targets: [
     // Guest-driven computer use, shared by the runtime and both guest
     // servers; Foundation only, so it also builds for Linux.
     .target(name: "IsoGuestCU"),
-    // The macOS-guest helper protocol, shared by the runtime and the guest helper.
     .target(name: "IsoMacProtocol", dependencies: ["IsoGuestCU"]),
     .executableTarget(name: "IsoCUMCP", dependencies: ["IsoGuestCU"]),
     .executableTarget(name: "IsoMacHelper", dependencies: ["IsoMacProtocol"]),

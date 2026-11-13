@@ -4,8 +4,6 @@ import Testing
 
 @testable import IsoHost
 
-/// A readiness `ssh` that hangs `hangs` times before succeeding; `-O exit`
-/// (closing the master) always succeeds.
 private func hangingSSH(_ guest: FakeGuest, hangs: Int) throws {
   try writeFile(
     guest.root + "/bin/ssh",

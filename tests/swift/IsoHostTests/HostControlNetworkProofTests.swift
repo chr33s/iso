@@ -18,7 +18,6 @@ import Testing
   let proof = try #require(running.network)
   #expect(running.state == .running && proof.bootID == running.bootID)
   #expect(proof.externalNICCount == 0)
-  // The proof survives the wire unchanged.
   let wire = running.wire
   guard case .object(let members) = wire, case .object(let network)? = members["network"] else {
     Issue.record("observation has no network object")
@@ -69,7 +68,6 @@ import Testing
   #expect(!decodes { $0["network_policy_digest"] = nil })
   #expect(!decodes { $0["channel_policy_digest"] = .string("not-a-digest") })
   #expect(!decodes { $0["gateway"] = .string("192.168.64.1") })
-  // Nor a proof on a VM that is not running.
   members["network"] = .object(network)
   members["state"] = .string("stopped")
   #expect((try? VMObservation(wire: .object(members))) == nil)

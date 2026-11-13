@@ -1,7 +1,6 @@
 import Foundation
 import Testing
 
-/// Compare the complete JSON value while ignoring object order and whitespace.
 func canonicalJSON(_ text: String?) throws -> Data {
   let text = try #require(text)
   let value = try JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])

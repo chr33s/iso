@@ -7,7 +7,6 @@ import Testing
 @testable import IsoSecrets
 
 /// A software stand-in for the Secure Enclave with the same sealing format.
-/// `representation` is the raw private key.
 private struct SoftwareFactor: DeviceFactor {
   func createKey() throws(EnclaveStoreError) -> (
     representation: [UInt8], publicKey: P256.KeyAgreement.PublicKey
@@ -286,7 +285,6 @@ private func name(_ text: String) -> SecretName { try! SecretName(text) }
   let other = try Scratch()
   defer { other.cleanup() }
   try other.initialize()
-  // Same passphrase, another device key: the DUK does not open.
   let foreign = try Data(contentsOf: URL(fileURLWithPath: other.directory + "/device.sekey"))
   try foreign.write(to: URL(fileURLWithPath: s.directory + "/device.sekey"))
   #expect(throws: EnclaveStoreError.unlockFailed) { try s.store.list(passphrase: passphrase) }

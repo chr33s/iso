@@ -38,7 +38,6 @@ package struct CIConfiguration: Sendable, Equatable, Codable {
   }
 }
 
-/// An approved runner image on iso hosts.
 package struct ImageDescriptor: Sendable, Equatable, Codable {
   package var isoImage: String
   /// The required image digest, sent as `image_digest` on `run.create` and
@@ -57,7 +56,6 @@ package struct ImageDescriptor: Sendable, Equatable, Codable {
 
 /// The brokered network profile CI requests (spec sections 2 and 6).
 package struct NetworkPolicyDescriptor: Sendable, Equatable, Codable {
-  /// `none` or `filtered`; `open` is refused.
   package var egress: EgressMode
   /// The reviewed endpoint profile that must be covered by the host's
   /// approved allowlist. Guest-requested hosts are never auto-allowed.
@@ -239,7 +237,6 @@ package struct JobPolicy: Sendable, Equatable, Codable {
   }
 }
 
-/// A GitHub runner scale set the pool registers and long-polls.
 package struct ScaleSetConfiguration: Sendable, Equatable, Codable {
   package var name: String
   package var minRunners: UInt32
@@ -869,7 +866,6 @@ package func isExactHostname(_ value: String) -> Bool {
   return !labels.allSatisfy { $0.unicodeScalars.allSatisfy { ("0"..."9").contains($0) } }
 }
 
-/// Typed reads over a YAML mapping, refusing unknown keys at `finish()`.
 package struct ConfigReader {
   let pairs: [YAMLPair]
   let path: String

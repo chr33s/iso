@@ -37,31 +37,25 @@ package enum ExportOutcome: String, Sendable, Codable, CaseIterable {
   case requested, pending, exported, failed
 }
 
-/// VM/storage cleanup, independent of execution and registration.
 package enum CleanupOutcome: String, Sendable, Codable, CaseIterable {
   case notStarted = "not_started"
   case pending
-  /// The host verified the VM and its storage are gone.
   case verified
   /// Cleanup was requested and not verified; still consumes budget.
   case debt
 }
 
-/// GitHub runner registration, independent of the VM.
 package enum RegistrationState: String, Sendable, Codable, CaseIterable {
   case notApplicable = "not_applicable"
-  /// The runner name is persisted; no JIT request was sent yet.
   case intended
   /// A JIT request was sent and its reply is unknown; never blindly retried.
   case uncertain
   case registered
-  /// GitHub reports the runner busy or a job assigned to it.
   case assigned
   case removalPending = "removal_pending"
   case removed
 }
 
-/// Host operation identities persisted before their request is sent.
 package struct HostOperations: Sendable, Equatable, Codable {
   package var create: HostOperationID
   package var complete: HostOperationID?
@@ -127,13 +121,11 @@ package struct InputProvenance: Sendable, Equatable, Codable {
   package var compatibilityDigest: Digest?
   package var limitsDigest: Digest?
   package var platform: String
-  /// Preflight only: base commit, snapshot, workflow, actions, patch revision.
   package var baseCommit: String?
   package var snapshotDigest: Digest?
   package var workflowDigest: Digest?
   package var actionsDigest: Digest?
   package var patchRevision: Int?
-  /// Dependency outputs/artifacts consumed, by origin attempt.
   package var dependencyAttempts: [String]
 
   package init(
@@ -200,7 +192,6 @@ package struct AllocationRecord: Sendable, Equatable, Codable {
   package var idleRetireAt: EpochSeconds?
   package var retentionUntil: EpochSeconds?
   package var lastObservedAt: EpochSeconds?
-  /// Why the controller cannot currently decide (unknown, never failed).
   package var uncertainty: String?
   package var diagnostics: [String]
 
@@ -285,7 +276,6 @@ package struct IntentRecord: Sendable, Equatable, Codable {
     case pending
     case sent
     case confirmed
-    /// Sent and the outcome could not be established.
     case uncertain
     case refused
   }
@@ -315,7 +305,6 @@ package struct IntentRecord: Sendable, Equatable, Codable {
   }
 }
 
-/// Pool lifecycle chosen by the operator; replenishment follows it.
 package enum PoolState: String, Sendable, Codable, CaseIterable {
   case active
   case paused
@@ -344,7 +333,6 @@ package struct PoolStatusRecord: Sendable, Equatable, Codable {
   }
 }
 
-/// A host the operator enabled for CI; identity pinned on first contact.
 package struct HostRecord: Sendable, Equatable, Codable {
   package enum State: String, Sendable, Codable {
     case enabled
@@ -369,7 +357,6 @@ package struct HostRecord: Sendable, Equatable, Codable {
   }
 }
 
-/// The persisted subset of `host.capabilities` used for admission and status.
 package struct HostCapabilitiesSnapshot: Sendable, Equatable, Codable {
   package var advertised: [String]
   package var transport: String?
@@ -404,7 +391,6 @@ package struct ApprovalRecord: Sendable, Equatable, Codable {
     case image
     case networkPolicy = "network_policy"
     case compatibility, limits, profile
-    /// A host budget that sets shared-host fields.
     case host
   }
 
@@ -452,7 +438,6 @@ package struct InstallationRecord: Sendable, Equatable, Codable {
   package var appID: Int64
   package var account: String
   package var accountType: String
-  /// `all` or `selected`, as GitHub reports it.
   package var repositorySelection: String
   package var permissions: [String: String]
   package var verifiedAt: EpochSeconds

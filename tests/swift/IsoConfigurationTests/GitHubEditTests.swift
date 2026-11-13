@@ -50,7 +50,6 @@ private func skip(_ text: String?, _ repo: RepoSlug = ab) throws -> GitHubConfig
   #expect(value["ssh_port"] == .number(.integer(2222)))
   #expect(value["vm"]?["vcpu_count"] == .number(.integer(4)))
   #expect(try pat(edit).entries.keys.contains(ab))
-  // Unmodeled members of `github` survive.
   let future = try upsert(#"{"github": {"mode": "pat", "pat": {}, "future": 1}}"#)
   #expect(try document(future)["github"]?["future"] == .number(.integer(1)))
   #expect(throws: ConfigError.self) {
@@ -70,7 +69,6 @@ private func skip(_ text: String?, _ repo: RepoSlug = ab) throws -> GitHubConfig
 @Test func patUpsertClearsTheSkipMarkerForItsRepo() throws {
   let edit = try upsert(#"{"github": {"mode": "pat", "skip": ["a/b", "c/d"]}}"#)
   #expect(try pat(edit).skip == [try RepoSlug("c/d")])
-  // Start at off, record skip, then set up: marker gone, entry present.
   let skipped = try skip(#"{"github": "off"}"#)
   let text = String(decoding: try #require(skipped).bytes, as: UTF8.self)
   let final = try pat(try upsert(text))
@@ -86,7 +84,6 @@ private func skip(_ text: String?, _ repo: RepoSlug = ab) throws -> GitHubConfig
   let remaining = try pat(edit)
   #expect(remaining.entries[ab] == nil)
   #expect(remaining.entries[try RepoSlug("c/d")] != nil)
-  // Nothing to remove: no rewrite, and no `github` member invented.
   #expect(
     try ConfigEditor.removePAT(
       existing: Array(#"{"ssh_port": 22}"#.utf8), format: .jsonc, path: "c", repo: ab,

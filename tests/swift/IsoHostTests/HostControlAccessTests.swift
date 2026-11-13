@@ -47,7 +47,6 @@ extension SupervisorFixture {
     let (instance, observation) = try f.running()
     let request = try f.openRequest(instance, observation)
     let first = try AccessGrant(wire: f.open(request).get())
-    // Lost reply: same session and bearer get the same live metadata back.
     let again = try AccessGrant(wire: f.open(request).get())
     #expect(again.session == first.session)
     #expect(again.issuedAt == first.issuedAt)
@@ -140,7 +139,6 @@ extension SupervisorFixture {
       session: requests[0].session, bearer: requests[0].bearer, epoch: f.supervisor.epoch)
     _ = try f.call(close).get()
     #expect(failure(f.open(try f.openRequest(instance, observation))) == .limitExceeded)
-    // Renewal and close remain available at the cap.
     let renew = HostRequestBody.accessRenew(
       session: requests[1].session, bearer: requests[1].bearer, epoch: f.supervisor.epoch,
       boot: requests[1].expectedBoot, policy: requests[1].policyHash)
@@ -303,7 +301,6 @@ final class EchoServer: @unchecked Sendable {
     #expect(observation.egress == .filtered)
     let grant = try AccessGrant(wire: f.open(try f.openRequest(instance, observation)).get())
     #expect(grant.filteredPolicy?.bootID == observation.bootID)
-    // An open VM's grant carries none.
     let (other, otherObservation) = try f.running(name: "plain")
     let plain = try AccessGrant(wire: f.open(try f.openRequest(other, otherObservation)).get())
     #expect(plain.filteredPolicy == nil)
@@ -317,7 +314,6 @@ final class EchoServer: @unchecked Sendable {
     let recorded = NetworkPolicy.make(config).policyHash
     let parsed = try FilteredPolicyHash(recorded)
     #expect(parsed.rawValue == recorded)
-    // It survives the grant wire.
     var b = WireBuilder()
     b.set("boot_id", "boot-1")
     b.set("policy_hash", recorded)
@@ -346,7 +342,6 @@ final class EchoServer: @unchecked Sendable {
       session: request.session, bearer: request.bearer, epoch: f.supervisor.epoch,
       boot: request.expectedBoot, policy: request.policyHash)
     #expect(failure(f.call(renew)) == .sessionExpired)
-    // No fallback: the session is closed, not degraded.
     #expect(!f.supervisor.sessions.isLive(request.session))
   }
 }

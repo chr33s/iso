@@ -29,7 +29,6 @@ private func endpoint(_ url: String, _ model: String = "m", token: String? = nil
   #expect(loaded.mode == .local)
   #expect(loaded.claudeEndpoint?.model == "qwen")
   #expect(loaded.codexEndpoint == nil)
-  // The complete persisted record stays owner-only.
   #expect(
     try canonicalJSON(readFile(instance.modelStatePath))
       == canonicalJSON(
@@ -79,7 +78,6 @@ private func endpoint(_ url: String, _ model: String = "m", token: String? = nil
   try writeFile(instance.modelStatePath, #"{"mode": "sideways"}"#)
   let error = try #require(throws: (any Error).self) { try ModelState.tryLoad(instance) }
   #expect("\(error)".contains("Failed to parse model.json"))
-  // Unknown fields are ignored, as serde did.
   try writeFile(instance.modelStatePath, #"{"mode": "local", "extra": 1}"#)
   #expect(try ModelState.tryLoad(instance)?.mode == .local)
 }
@@ -436,7 +434,6 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
           ("a", .table(TOMLTable([("b", .integer(1))]))),
           ("c", .array([.integer(1), .integer(2)])),
         ])))
-  // Round trip through the printer keeps the values.
   #expect(try TOMLTable.parse(table.document) == table)
 }
 

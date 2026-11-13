@@ -80,7 +80,6 @@ package struct GitHubRepositoryInfo: Sendable, Equatable {
   package let id: Int64
   package let fullName: String
   package let isPrivate: Bool
-  /// `public`, `private` or `internal`; nil when GitHub did not say.
   package let visibility: String?
   package let isFork: Bool
 
@@ -204,7 +203,6 @@ package struct GitHubRunnerInfo: Sendable, Equatable {
     runnerGroupID = json["runner_group_id"]?.intValue
   }
 
-  /// Case-insensitive label-set comparison, as GitHub routes labels.
   package func hasExactly(_ expected: [String]) -> Bool {
     Set(labels.map { $0.lowercased() }) == Set(expected.map { $0.lowercased() })
   }

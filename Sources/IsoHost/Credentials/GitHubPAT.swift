@@ -50,7 +50,6 @@ package struct WizardConsole: Sendable {
   }
 }
 
-/// A configuration file the GitHub commands edit.
 package struct ConfigTarget: Sendable, Equatable {
   package let path: String
   package let format: ConfigFormat
@@ -120,7 +119,6 @@ package struct GitHubHost: Sendable {
   package let keychain: Keychain
   package let console: WizardConsole
   package let diagnostics: Diagnostics
-  /// Where `setup-pat` without `--repo` looks for an `origin`.
   let workingDirectory: String?
   /// Where `vault:` entries resolve; the command's own store by default.
   let secrets: (any SecretReferenceResolver)?
@@ -179,7 +177,6 @@ package struct GitHubHost: Sendable {
     console.write("\nDone. VM startups for https://github.com/\(repo) will use this token.\n")
   }
 
-  /// The same wizard, noting when there is no entry to replace.
   package func rotatePAT(_ config: IsoConfig, target: ConfigTarget, repo: RepoSlug) throws {
     if config.github?.patEntry(repo) == nil {
       console.write(
@@ -424,9 +421,8 @@ package struct GitHubHost: Sendable {
   // MARK: start-time prompt
 
   /// Before a VM boots: offer the wizard for `repo` when GitHub auth is not
-  /// configured for it. Returns `config` with `github` reloaded from disk
-  /// after the wizard or a `never` answer changed it; other overrides stay.
-  /// A failed wizard asks whether to continue unauthenticated.
+  /// configured. Returns `config` with `github` reloaded after the wizard or a
+  /// `never` answer; a failed wizard asks whether to continue unauthenticated.
   package func maybePrompt(
     _ config: IsoConfig, target: ConfigTarget, repo: RepoSlug?, noPrompt: Bool
   ) throws -> IsoConfig {
@@ -494,7 +490,6 @@ package struct GitHubHost: Sendable {
   }
 }
 
-/// Whether the start-time prompt may be shown.
 package enum PATPromptDecision: Equatable, Sendable {
   case skip
   case prompt
@@ -516,7 +511,6 @@ package enum PATPromptDecision: Equatable, Sendable {
   }
 }
 
-/// `iso github status` model; it never holds a token.
 package struct GitHubStatusView: Sendable, Encodable {
   package enum SelectionSource: String, Sendable, Encodable {
     case assignment
@@ -524,7 +518,6 @@ package struct GitHubStatusView: Sendable, Encodable {
     case repository, auto, env, off
     case noMatchingEntry = "no_matching_entry"
 
-    /// Rust `{:?}`, used by the text report.
     var debugName: String {
       switch self {
       case .assignment: "Assignment"

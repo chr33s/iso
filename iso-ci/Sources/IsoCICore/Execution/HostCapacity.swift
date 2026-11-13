@@ -22,7 +22,6 @@ package struct VMLease: Sendable, Equatable {
     self.memoryMiB = memoryMiB
   }
 
-  /// Strict, bounded parse of one lease file.
   package static func parse(_ bytes: [UInt8]) -> VMLease? {
     guard
       let json = try? StrictJSON.parse(
@@ -70,7 +69,6 @@ package struct NoExternalUsage: ExternalUsageProbe {
   package func usage(host: Name, budget: HostBudget?, own: Set<String>) -> ExternalUsage { .none }
 }
 
-/// The local Mac's lease directory and Virtualization.framework processes.
 package struct LocalExternalUsageProbe: ExternalUsageProbe {
   package let leaseDirectory: String
 

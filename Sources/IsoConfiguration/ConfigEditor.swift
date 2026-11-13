@@ -4,10 +4,9 @@
 
 import Foundation
 
-/// Structural configuration edits. An edit decodes the whole document into
-/// `JSONValue`, changes only the addressed members, and re-encodes, so
-/// unrelated keys in permitted extensible sections survive. Input and output
-/// must satisfy the configuration schema. Comments and formatting do not.
+/// Structural configuration edits: decode to `JSONValue`, change only the
+/// addressed members, re-encode. Unrelated keys survive; comments and
+/// formatting do not. Input and output must satisfy the schema.
 package enum ConfigEditor {
   /// Set `proxy.<provider>` to `{credential, auth}`, keeping any other
   /// members of that object. `existing` nil means the file does not exist.

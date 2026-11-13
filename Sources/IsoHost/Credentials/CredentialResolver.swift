@@ -14,12 +14,10 @@ package protocol SecretReferenceResolver: Sendable {
   func resolve(_ names: Set<SecretName>) throws -> [SecretName: Secret<[UInt8]>]
 }
 
-/// Just-in-time resolution of secret-bearing configuration values. A value
-/// beginning `cmd:` is a trusted, user-authored host command run through
-/// `/bin/sh -c`; its trimmed stdout is the secret. A value `vault:<name>` is
-/// read from the local secret store. Other values pass through unchanged.
-/// Only callers whose operation needs the secret invoke this; configuration
-/// loading never does.
+/// Just-in-time resolution of secret-bearing config values: `cmd:` runs a
+/// trusted, user-authored host command (trimmed stdout is the secret),
+/// `vault:<name>` reads the local store, anything else passes through. Only
+/// callers that need the secret invoke this; config loading never does.
 package struct CredentialResolver: Sendable {
   package static let timeout: Duration = .seconds(10)
 

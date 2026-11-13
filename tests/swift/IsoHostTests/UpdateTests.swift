@@ -110,7 +110,6 @@ private let releaseBuild = IsoBuild(version: "0.6.0", kind: .release, versionStr
     Checksums.parse("\(one)  x.tar.gz\n\(two)  y.tar.gz\n", file: "x.tar.gz")?.rawValue == one)
   let three = String(repeating: "3", count: 64)
   #expect(Checksums.parse("\(three)  x.tar.gz\r\n", file: "x.tar.gz")?.rawValue == three)
-  // Upper-case digests compare equal to the computed lower-case digest.
   #expect(
     Checksums.parse("\(String(repeating: "A", count: 64))  x\n", file: "x")
       == (try SHA256Hex(String(repeating: "a", count: 64))))
@@ -332,10 +331,8 @@ private let withoutBundle = Release(
   let current = install + "/iso"
   try writeUpdateFile(current, "iso-binary")
   #expect(SelfReplace.linuxGuestNames == ["iso-cu-mcp", "vmlinux-desktop"])
-  // Neither installed nor carried: nothing to do, and no error.
   try SelfReplace.replaceSiblingLinuxGuestFiles(extract, currentExecutable: current)
   #expect(try FileManager.default.contentsOfDirectory(atPath: install) == ["iso"])
-  // A release that carries one installs it and removes the other's stale copy.
   for name in SelfReplace.linuxGuestNames {
     try writeUpdateFile(install + "/" + name, "stale \(name)")
   }
@@ -343,7 +340,6 @@ private let withoutBundle = Release(
   try SelfReplace.replaceSiblingLinuxGuestFiles(extract, currentExecutable: current)
   #expect(readText(install + "/iso-cu-mcp") == "new server")
   #expect(!pathExists(install + "/vmlinux-desktop"))
-  // A member that is not a regular file counts as not carried.
   try FileManager.default.removeItem(atPath: extract + "/iso-cu-mcp")
   try FileManager.default.createSymbolicLink(
     atPath: extract + "/iso-cu-mcp", withDestinationPath: current)
@@ -461,7 +457,6 @@ private let withoutBundle = Release(
   #expect(
     try canonicalJSON(readText(path))
       == canonicalJSON("{\n  \"last_checked_at\": 7,\n  \"latest_known_version\": null\n}"))
-  // Missing fields default; malformed content is no state.
   try writeUpdateFile(path, #"{"latest_known_version": "v9.9.9"}"#)
   #expect(
     UpdateCheck.readState(home: home) == UpdateState(lastCheckedAt: 0, latestKnownVersion: "v9.9.9")
@@ -571,7 +566,6 @@ private func updateConfig(_ mode: UpdateMode, hours: UInt64 = 24) throws -> Upda
       try updateConfig(.off, hours: 0), updater: updater, stdinIsTerminal: true
     ) { spawned.append($0) })
   #expect(spawned.isEmpty)
-  // Elapsed: the stamp is written before the refresh runs, keeping the tag.
   #expect(
     UpdateCheck.maybeRunBackgroundCheck(
       try updateConfig(.notify, hours: 0), updater: updater, stdinIsTerminal: true
@@ -580,7 +574,6 @@ private func updateConfig(_ mode: UpdateMode, hours: UInt64 = 24) throws -> Upda
   #expect(
     UpdateCheck.readState(home: home)
       == UpdateState(lastCheckedAt: 1_000_000, latestKnownVersion: "v0.6.1"))
-  // The refresh fails (no curl on PATH) and leaves the state alone.
   spawned[0]()
   #expect(
     UpdateCheck.readState(home: home)
@@ -589,8 +582,6 @@ private func updateConfig(_ mode: UpdateMode, hours: UInt64 = 24) throws -> Upda
 
 // MARK: - End to end against stub tools
 
-/// A release fixture served by a stub `curl` (and optionally a stub `gh`)
-/// on a private PATH; the real network is never reached.
 private struct UpdateFixture {
   let root: String
   var bin: String { root + "/bin" }
@@ -650,7 +641,6 @@ private struct UpdateFixture {
 
   func remove() { try? FileManager.default.removeItem(atPath: root) }
 
-  /// Pack `members` into the release archive and publish matching sums.
   func publish(
     _ members: [String: String], corruptSums: Bool = false, bundle: String? = nil,
     signature: FixtureSignature = .trusted, base: String = "http://fixture",
@@ -712,7 +702,6 @@ private struct UpdateFixture {
     try writeUpdateFile(served + "/repos/chr33s/iso/releases/tags/\(tag)", json)
   }
 
-  /// Serve `text` as SHA256SUMS, signed by the trusted fixture key.
   func serveSums(_ text: String) throws {
     try writeUpdateFile(served + "/SHA256SUMS", text)
     try writeUpdateFile(served + "/SHA256SUMS.sig", try sshSign(Array(text.utf8), key: signingKey))
@@ -788,8 +777,6 @@ private let untouched = [
     #expect(fixture.calls[1].hasSuffix("/" + fixture.tarballName))
   }
 
-  /// The run path: a release's guest files are installed with its binaries,
-  /// and a release without them leaves none from another release behind.
   @Test func updateMakesTheLinuxGuestFilesMatchTheRelease() throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }
@@ -994,7 +981,6 @@ private let untouched = [
     try fixture.publish(
       fullRelease, base: "https://github.com/chr33s/iso/releases/download/v9.9.9")
     let log = DiagnosticsLog()
-    // No gh: checksum-only verification, with the note on stderr.
     try fixture.updater(["GITHUB_TOKEN": "ghp_secret"], log: log).run(.init(skipConfirm: true))
     #expect(fixture.installed == fullRelease)
     #expect(fixture.calls.allSatisfy { !$0.contains("ghp_secret") && $0.contains(" -H @- ") })

@@ -4,11 +4,10 @@ import ContainerizationOCI
 import Foundation
 import SystemPackage
 
-/// The disk maintenance VMs boot from: a small image built for the purpose
-/// (a shell and e2fsprogs), unpacked by `maintenance install` into the
-/// root's `maintenance/` directory. It is kept apart from the image store,
-/// so deleting or replacing an application image never affects it, and its
-/// capacity follows its own content, never an application image's.
+/// The disk maintenance VMs boot from: a small image built for the purpose (a
+/// shell and e2fsprogs), unpacked by `maintenance install` into the root's
+/// `maintenance/` directory.
+/// Kept apart from the image store, so deleting or replacing an application image never affects it.
 package struct MaintenanceArtifact: Codable, Sendable {
   /// Caller-chosen version of the image's recipe; a caller reinstalls
   /// when it wants another.
@@ -23,11 +22,8 @@ package struct MaintenanceArtifact: Codable, Sendable {
 }
 
 /// Offline disk maintenance in a short-lived VM.
-///
-/// The VM boots from a throwaway APFS clone of the installed
-/// ``MaintenanceArtifact``, with no network, and the target disk attached
-/// either as a raw device or mounted at `/isodisk`. The target is data
-/// only: none of its programs run.
+/// The VM boots from a throwaway APFS clone of the artifact with no network; the target disk is
+/// data only and none of its programs run.
 package enum Maintenance {
   enum Attach {
     /// The device node itself, for fsck/resize of an unmounted filesystem.
@@ -53,8 +49,7 @@ package enum Maintenance {
   }
 
   /// Filesystem capacity for an image whose layers total `packed` bytes
-  /// compressed: room for 4x expansion plus 512 MiB, in 64 MiB steps. The
-  /// file is sparse, so unused capacity costs nothing.
+  /// compressed: room for 4x expansion plus 512 MiB, in 64 MiB steps.
   static func capacity(packedBytes packed: UInt64) throws -> UInt64 {
     guard packed <= maxPackedBytes else {
       throw SandboxError(
@@ -80,9 +75,8 @@ package enum Maintenance {
     return try JSONDecoder.iso.decode(MaintenanceArtifact.self, from: Data(contentsOf: url))
   }
 
-  /// Unpack `reference` from the image store as the maintenance boot disk
-  /// and record it as `version`. The store entry is no longer needed
-  /// afterwards; callers may delete it.
+  /// Unpack `reference` from the image store as the maintenance boot disk and
+  /// record it as `version`.
   package static func install(root: SandboxRoot, reference: String, version: String) async throws
     -> MaintenanceArtifact
   {

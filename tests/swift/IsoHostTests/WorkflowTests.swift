@@ -124,7 +124,6 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
     return
   }
   #expect(Set(candidates) == [project.name, twin.name])
-  // No argument of `up` picks one.
   #expect(resolution == nil)
 }
 
@@ -138,7 +137,6 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   var request = UpRequest(configTarget: ConfigTarget(path: root + "/c.jsonc", format: .jsonc))
   request.command = "zed"
 
-  // Not requested, or requested and matching: nothing to refuse.
   try UpWorkflow(request: request, lifecycle: open, target: nil).rejectEgressChange(instance)
   request.egressRequested = true
   try UpWorkflow(request: request, lifecycle: open, target: nil).rejectEgressChange(instance)
@@ -154,7 +152,6 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   request.egressRequested = false
   try UpWorkflow(request: request, lifecycle: none, target: nil).rejectEgressChange(instance)
 
-  // A record that cannot be read is refused, not taken as a match.
   request.egressRequested = true
   try writeFile(NetworkPolicy.path(instance), "{}", mode: 0o600)
   let unreadable = try #require(throws: HostFailure.self) {
@@ -216,8 +213,6 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   #expect(summary.handoff == nil && summary.environment == nil)
 }
 
-/// ALLOC: corrupt, unknown or non-directory entries occupy their names and
-/// refuse allocation rather than being treated as free slots.
 @Test func allocationReservesEveryExistingEntry() throws {
   let root = try scratchDirectory("alloc")
   defer { try? FileManager.default.removeItem(atPath: root) }
@@ -225,16 +220,13 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   let first = try Instance.allocate(
     config, name: try InstanceName("app"), image: .default, workspacePath: nil)
   let instances = config.instancesDirectory.path
-  // Case-colliding and exact names are taken.
   #expect(throws: HostError.self) {
     try Instance.allocate(
       config, name: try InstanceName("APP"), image: .default, workspacePath: nil)
   }
-  // A derived name skips the existing one.
   let derived = try Instance.allocate(config, name: nil, image: .default, workspacePath: "/x/app")
   #expect(derived.name.rawValue == "app-2" && derived.index != first.index)
 
-  // A corrupt record blocks allocation; nothing is reused or overwritten.
   try FileManager.default.createDirectory(
     atPath: instances + "/broken", withIntermediateDirectories: true)
   try writeFile(instances + "/broken/instance.json", "{not json")
@@ -246,7 +238,6 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   #expect(!FileManager.default.fileExists(atPath: instances + "/new"))
   try FileManager.default.removeItem(atPath: instances + "/broken")
 
-  // A symlink or file also occupies its name.
   try FileManager.default.createSymbolicLink(
     atPath: instances + "/linked", withDestinationPath: root)
   #expect(throws: HostError.self) {
@@ -256,7 +247,6 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   try FileManager.default.removeItem(atPath: instances + "/linked")
   _ = try Instance.allocate(
     config, name: try InstanceName("other"), image: .default, workspacePath: nil)
-  // The tolerant listing still works with a corrupt entry present.
   try writeFile(instances + "/stray", "x")
   #expect(try InstanceStore.list(config, skipped: { _, _ in }).count == 3)
 }

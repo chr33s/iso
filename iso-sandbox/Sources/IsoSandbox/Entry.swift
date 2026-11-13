@@ -13,8 +13,7 @@ enum Entry {
   static let mainLoop = Mutex<Owner.MainLoop>(.dispatch)
 
   static func main() {
-    // Everything this binary writes (records, disks, logs, the owner it
-    // runs under launchd) is for this user alone.
+    // Everything this binary writes is for this user alone.
     umask(0o077)
     let args = CommandLine.arguments
     // ssh's password prompt during a macOS template build (MacTemplates):
@@ -28,8 +27,6 @@ enum Entry {
       exit(0)
     }
     if args.count >= 3, args[1] == "macos", args[2] == "run" {
-      // Exit 0 whatever happens, including a bad argument or root, so
-      // launchd does not respawn a configuration error.
       do {
         let command = try MacRun.parse(Array(args.dropFirst(3)))
         try command.run()
@@ -38,9 +35,6 @@ enum Entry {
       }
       exit(0)
     }
-    // An owner whose VM has a display renders it in a view, which needs
-    // the AppKit main loop; every other command, and every headless owner,
-    // keeps the plain dispatch loop.
     let display =
       args.count >= 3 && args[1] == "run"
       && (try? Run.parse(Array(args.dropFirst(2))))?.displayMode == .virtioDisplay

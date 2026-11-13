@@ -106,8 +106,6 @@ package struct SSHConfigFile: Sendable {
     diagnostics.log(.info, "Removed iso SSH config blocks")
   }
 
-  /// `iso ssh-config` / `iso editor`: install the alias and print how to
-  /// use it (stderr).
   @discardableResult
   package func install(_ running: AppleBackend.Running, stderr: (String) -> Void) throws
     -> SSHAlias

@@ -194,7 +194,6 @@ func brokerReadinessRejectsSignedWrongFieldsAndForgery(change: String) throws {
   ] {
     #expect(!FileManager.default.fileExists(atPath: path))
   }
-  // The processes are gone too, not only their pid files.
   for record in ["proxy.process", "tunnel-master.process"] {
     let text = try #require(readFile(guest.root + "/" + record))
     let pid = try #require(pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)))

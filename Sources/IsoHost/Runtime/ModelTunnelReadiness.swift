@@ -2,11 +2,10 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Local-model reverse tunnels compose with the filtered proof. The model
-/// server is the user's own and carries no signing identity, so each tunnel
-/// this boot started must still be its recorded `ssh` process, recorded for
-/// a destination the current model configuration wants (and, with a guest
-/// scope, for this pinned target).
+/// Local-model reverse tunnels compose with the filtered proof. The model server
+/// carries no signing identity, so each tunnel this boot started must still be
+/// its recorded `ssh` process, for a destination the current model config wants
+/// (and, with a guest scope, this pinned target).
 enum ModelTunnelReadiness {
   static func require(_ instance: Instance, config: IsoConfig, scope: FilteredReadiness.Scope)
     throws

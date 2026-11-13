@@ -4,16 +4,14 @@ import Foundation
 import IsoMacProtocol
 import Virtualization
 
-/// The owner's computer-use surface (Gates C–H), for macOS and Linux
-/// guests alike: a `VZVirtualMachineView` in an ordered-out window (V5),
-/// sessions bound to the VM and guest boot, frames in framebuffer pixels,
-/// and input synthesized into the view, which VZ forwards to the guest's
-/// keyboard and pointer (a USB keyboard maps the Mac key codes to HID
-/// usages). Nothing is posted to the host event system and the owner never
-/// activates.
+/// The owner's computer-use surface (Gates C–H), for macOS and Linux guests
+/// alike: a `VZVirtualMachineView` in an ordered-out window (V5), sessions bound
+/// to the VM and guest boot, frames in framebuffer pixels, and input synthesized
+/// into the view, which VZ forwards to the guest's keyboard and pointer (a USB
+/// keyboard maps the Mac key codes to HID usages).
+/// Nothing is posted to the host event system and the owner never activates.
 @MainActor
 package final class VMScreen {
-  /// How a frame is read from the view.
   package enum Capture: Sendable {
     /// `cacheDisplay(in:to:)` of the view: macOS guests, until the surface
     /// read is tested against one.
@@ -24,10 +22,9 @@ package final class VMScreen {
     /// (docs/design/linux-desktop-virtio-gpu.md §3).
     case framebufferSurface
 
-    /// Whether a uniform frame means the framebuffer was not observed. The
-    /// view cache renders a missing framebuffer as one flat colour and
-    /// reports nothing; the surface read throws when there is no surface,
-    /// so a uniform frame from it is what the guest drew (a bare desktop).
+    /// Whether a uniform frame means the framebuffer was not observed.
+    /// The view cache renders a missing framebuffer as one flat colour and reports nothing; the
+    /// surface read throws instead, so a uniform frame from it is what the guest drew.
     var refusesUniformFrames: Bool {
       switch self {
       case .viewCache: true
@@ -111,7 +108,6 @@ package final class VMScreen {
 
   // MARK: control
 
-  /// Guest sessions host holds have ended this boot.
   package private(set) var preemptions = 0
 
   /// Starts or extends a host hold, ending the guest's session.
@@ -122,7 +118,6 @@ package final class VMScreen {
     }
   }
 
-  /// `cu release`: ends every hold.
   package func release() { control.release() }
 
   /// A live-view viewer's release: a `cu hold` taken from the CLI runs on.
@@ -157,12 +152,10 @@ package final class VMScreen {
   /// This boot's damage sequence; it restarts at 0 with each owner.
   package var damageSeq: UInt64 { damage.seq }
 
-  /// Renders the view at framebuffer pixels, whatever the window's backing
-  /// scale (Gate F), and samples damage from the result. A uniform render is
-  /// still sampled; only `frame` refuses it, and only from the view cache.
-  /// A sample no older than `maxAge` is returned as it is: the live view
-  /// and each wait poll on their own clocks, and one capture serves those
-  /// that fall together. Frames and action baselines always capture.
+  /// Renders the view at framebuffer pixels, whatever the window's backing scale
+  /// (Gate F), and samples damage from the result.
+  /// A sample no older than `maxAge` is reused (the live view and waits poll on their own clocks);
+  /// frames and action baselines always capture.
   private func render(maxAge: Duration = .zero) throws -> CGContext {
     let ctx = try context()
     let now = ContinuousClock.now
@@ -191,7 +184,6 @@ package final class VMScreen {
   /// never costs one of them a whole period.
   static let sharedSampleAge = Duration.milliseconds(ScreenWait.tickMs / 2)
 
-  /// The framebuffer-sized RGBX render target, made once.
   private func context() throws -> CGContext {
     if let renderContext { return renderContext }
     guard
@@ -256,9 +248,9 @@ package final class VMScreen {
 
   // MARK: live view
 
-  /// One stream frame: the same render and damage sample as `frame`, with
-  /// no session and no PNG. `body` reads the RGBX pixels, with the damage
-  /// sequence after this sample, before the next render can change them.
+  /// One stream frame: the same render and damage sample as `frame`, with no
+  /// session and no PNG.
+  /// `body` reads the RGBX pixels before the next render can change them.
   package func streamFrame(
     _ body: (UnsafeRawPointer, _ bytesPerRow: Int, _ damageSeq: UInt64) throws -> Void
   ) throws {
@@ -267,17 +259,15 @@ package final class VMScreen {
     try body(data, ctx.bytesPerRow, damage.seq)
   }
 
-  /// Whether an action or typed viewer text is being sent.
   package var isActing: Bool { acting }
 
   /// The last viewer button press, for click counts.
   private var viewerPress: (button: CUButton, point: CUPoint, at: TimeInterval, count: Int)?
 
-  /// Sends one raw viewer input (docs/design/computer-use-live-view.md §7)
-  /// into the view, as actions are. `held` is the viewer's state after it.
-  /// Viewers send only under a host hold, so no guest session is checked. A
-  /// release is sent even while an action runs: a key left down is worse
-  /// than an interleaved up.
+  /// Sends one raw viewer input (docs/design/computer-use-live-view.md §7) into
+  /// the view, as actions are. `held` is the viewer's state after it.
+  /// Viewers send only under a host hold, so no guest session is checked; a release is sent even
+  /// while an action runs (a key left down is worse than an interleaved up).
   package func viewerSend(_ input: LiveViewInput, held: LiveViewHeld) throws {
     guard input.isRelease || !acting else {
       throw SandboxError("a host action is in progress", refusal: .busy)
@@ -309,10 +299,10 @@ package final class VMScreen {
     }
   }
 
-  /// Types viewer text (a paste) under the `type` action's rules, holding
-  /// off host actions until it is done. `proceed` runs after each key, as
-  /// an action re-checks its session: when it throws (the viewer's control
-  /// ended) the paste stops and what it pressed is released.
+  /// Types viewer text (a paste) under the `type` action's rules, holding off
+  /// host actions until it is done.
+  /// `proceed` runs after each key; when it throws (the viewer's control ended) the paste stops and
+  /// what it pressed is released.
   package func viewerType(_ text: String, proceed: () throws -> Void) async throws {
     guard !acting else { throw SandboxError("a host action is in progress", refusal: .busy) }
     acting = true
@@ -329,11 +319,10 @@ package final class VMScreen {
 
   // MARK: wait
 
-  /// Waits for `region` to settle (docs/design/computer-use-screen-sync.md
-  /// §4), sampling at `ScreenWait.tickMs`. One wait runs at a time for the
-  /// host and one for the guest; a host
-  /// hold or a broken binding ends a guest's wait with its refusal. Host
-  /// callers take no hold by waiting. Returns the result and the `seq` after.
+  /// Waits for `region` to settle (docs/design/computer-use-screen-sync.md §4),
+  /// sampling at `ScreenWait.tickMs`.
+  /// One wait runs at a time for the host and one for the guest; a host hold or broken binding ends
+  /// a guest's wait with its refusal, and host callers take no hold by waiting.
   package func wait(
     session: String?, _ fields: GuestCUWaitFields, origin: CUOrigin = .host
   ) async throws -> (GuestCUWaitResult, damageSeq: UInt64) {
@@ -395,9 +384,8 @@ package final class VMScreen {
   // MARK: actions
 
   /// Runs one validated action. `basedOnFrame`, if given, must be a frame
-  /// captured under this session's binding. A failure part-way releases every
-  /// button and key the action pressed. Returns the input events submitted
-  /// and the damage sequence sampled just before the first of them.
+  /// captured under this session's binding.
+  /// A failure part-way releases every button and key the action pressed.
   package func act(
     session: String?, request: CUActionRequest, basedOnFrame: String?, origin: CUOrigin = .host
   ) async throws -> (submitted: Int, damageSeq: UInt64) {

@@ -106,13 +106,11 @@ private func with(_ section: String, _ key: String, _ value: Any) -> [String: An
     }
     return false
   }
-  // The listener without the record's setting, or the setting without it.
   #expect(exposure(with("effective", "vsockPorts", [7801, 7802])))
   var noListener = enabled
   effective["vsockPorts"] = [7801]
   noListener["effective"] = effective
   #expect(exposure(noListener))
-  // A different frame rate than the record's, or a setting the record lacks.
   var faster = enabled
   effective["vsockPorts"] = [7801, 7802]
   effective["guestComputerUse"] = ["frameRate": 10]
@@ -151,7 +149,6 @@ private func coreAIMac(_ accelerators: [String], attached: [String], reduced: Bo
   #expect(exposure(coreAIMac(["gpu"], attached: [gpu, gpu], reduced: true)))
   #expect(exposure(coreAIMac(["gpu"], attached: [gpu], reduced: false)))
   #expect(exposure(coreAIMac(["gpu"], attached: [gpu], reduced: nil)))
-  // An owner that predates Core AI reports no accelerators: off passes.
   #expect(try inspection(runningMac()).effective?.accelerators == [])
   // An unknown or repeated recorded accelerator is refused before boot.
   for bad in [["cpu"], ["gpu", "gpu"], []] {
@@ -319,7 +316,6 @@ private func coreAIMac(_ accelerators: [String], attached: [String], reduced: Bo
   #expect(
     try JSONDecoder().decode(MachineSidecar.self, from: encoded).guestComputerUse
       == mac.guestComputerUse)
-  // An older sidecar learns the record's setting, once.
   var old = mac
   old.guestComputerUse = nil
   let on = try inspection(
@@ -398,7 +394,6 @@ private func refusal(_ object: [String: Any], _ egress: EgressMode = .open) -> R
     Issue.record("a subnet outside the allocator's range is refused")
     return
   }
-  // A clone of another template, consistently reported, is still refused.
   var other = with("record", "template", "iso-0a1b2c3d-ffff")
   var effective = other["effective"] as! [String: Any]
   effective["template"] = "iso-0a1b2c3d-ffff"
@@ -439,7 +434,6 @@ private func refusal(_ object: [String: Any], _ egress: EgressMode = .open) -> R
     guestCU.contains(
       "package static let port: UInt32 = \(IsolationGate.macVsockPorts(guestComputerUse: true)[1])\n"
     ))
-  // The Linux display gate expects the same guest computer-use port.
   #expect(
     IsolationGate.guestComputerUsePort == IsolationGate.macVsockPorts(guestComputerUse: true)[1])
   #expect(
@@ -509,7 +503,6 @@ private func listener(echo: Bool) throws -> UInt16 {
   let echoed = try run(try listener(echo: true))
   #expect(echoed.termination == .exited(0))
   #expect(echoed.stdout == Array("PING\n".utf8))
-  // A companion that accepts but never answers is cut off by the alarm.
   let start = ContinuousClock.now
   let silent = try run(try listener(echo: false))
   #expect(silent.termination != .exited(0) && silent.termination != .exited(127))
@@ -538,7 +531,6 @@ private func listener(echo: Bool) throws -> UInt16 {
     try IsolationGate.verifyMacEffective(
       inspection(object), expected(), template: macTemplate, helper: .pinned)
   }
-  // Reconnecting or slow: no confirmation this time, or no status at all.
   _ = try handoff(with("runtime", "helperConnected", false))
   _ = try handoff(with("runtime", "sshHostKeyConfirmed", false))
   var noStatus = runningMac()
@@ -559,7 +551,6 @@ private func listener(echo: Bool) throws -> UInt16 {
   #expect(throws: RuntimeError.self) {
     try handoff(with("record", "enrollment", "identity_mismatch"))
   }
-  // A boot still needs the helper's confirmation.
   #expect(throws: RuntimeError.self) { try gate(with("runtime", "sshHostKeyConfirmed", false)) }
 }
 

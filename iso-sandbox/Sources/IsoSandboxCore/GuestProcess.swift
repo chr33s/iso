@@ -10,10 +10,9 @@ protocol GuestProcess: Sendable {
 
 extension LinuxProcess: GuestProcess {}
 
-/// How long an `exec` waits for its guest process. Every exec is bounded:
-/// a request without a timeout gets `defaultSeconds`, and none may ask for
-/// more than `maxSeconds`, so no request holds a control connection (and
-/// the owner's task for it) forever.
+/// How long an `exec` waits for its guest process.
+/// Every exec is bounded (default `defaultSeconds`, cap `maxSeconds`), so none holds a control
+/// connection forever.
 package struct ExecTimeout: Sendable, Equatable {
   package static let defaultSeconds: Int64 = 600
   package static let maxSeconds: Int64 = 86_400

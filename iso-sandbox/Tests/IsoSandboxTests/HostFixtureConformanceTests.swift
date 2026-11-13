@@ -4,10 +4,9 @@ import Testing
 
 @testable import IsoSandboxCore
 
-/// Ties this runtime's own types to the fixtures the host's runtime-boundary
-/// tests decode (`tests/fixtures/iso-sandbox/` at the repository root), so a
-/// change to what `inspect` or `version` prints fails here until the fixtures
-/// (and the host parser they exercise) follow.
+/// Ties this runtime's own types to the fixtures the host's runtime-boundary tests decode
+/// (`tests/fixtures/iso-sandbox/` at the repository root), so a change to what `inspect` or
+/// `version` prints fails here until the fixtures (and the host parser they exercise) follow.
 @Suite struct HostFixtureConformanceTests {
   static let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appending(path: "../../../tests/fixtures/iso-sandbox").standardized
@@ -52,10 +51,9 @@ import Testing
     #expect(fixture["protocol"] as? Int == protocolVersion)
   }
 
-  /// Each fixture decodes with the runtime's record, live-state and
-  /// effective-configuration types and encodes, through the encoder
-  /// `inspect` prints with, to the same JSON value: no member the runtime
-  /// does not write, and none it writes missing.
+  /// Each fixture decodes with the runtime's record, live-state and effective-configuration
+  /// types and encodes, through the encoder `inspect` prints with, to the same JSON value: no
+  /// member the runtime does not write, and none it writes missing.
   @Test func inspectFixturesRoundTripThroughTheRuntimeTypes() throws {
     let names = try Self.inspectFixtures()
     #expect(
@@ -78,9 +76,8 @@ import Testing
     }
   }
 
-  /// The display fixture is what a display owner with guest computer use
-  /// reports mid-stream: this runtime's display mode, geometry and port,
-  /// and the counts the host audits.
+  /// The display fixture is what a display owner with guest computer use reports mid-stream:
+  /// this runtime's display mode, geometry and port, and the counts the host audits.
   @Test func theDisplayFixtureCarriesThisRuntimesDisplayAndCounts() throws {
     let data = try Data(
       contentsOf: Self.directory.appending(path: "inspect-display-running.json"))

@@ -244,12 +244,10 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
   for create in [canonical, legacy] {
     #expect(create.cpus == 4 && create.memoryMiB == 8_192 && create.diskGiB == 32)
   }
-  // Fixed service defaults are unchanged by the aliases.
   let defaults: HostVMCreate = try parse(["host", "vm", "create", "h", "vm"])
   #expect(defaults.cpus == 2 && defaults.memoryMiB == 4_096 && defaults.diskGiB == 16)
   let resize: HostVMResize = try parse(["host", "vm", "resize", "local", "vm", "--disk", "40"])
   #expect(resize.diskGiB == 40)
-  // The service's disk is absolute only; relative sizes stay local.
   for bad in [
     ["host", "vm", "resize", "local", "vm", "--disk", "+20"],
     ["host", "vm", "resize", "local", "vm", "--disk-gib", "+20"],
@@ -315,12 +313,10 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
   #expect((try parse(["model", "show"]) as ModelShow).name == nil)
   let set: ModelSet = try parse(["model", "set", "local", "dev"])
   #expect(set.mode == .local && set.name?.rawValue == "dev")
-  // Instances named after the modes stay addressable.
   let local: ModelShow = try parse(["model", "show", "local"])
   #expect(local.name?.rawValue == "local")
   let remote: ModelSet = try parse(["model", "set", "remote", "local"])
   #expect(remote.mode == .remote && remote.name?.rawValue == "local")
-  // The older grammar is the hidden default.
   let legacy: ModelLegacy = try parse(["model", "dev", "remote"])
   #expect(legacy.words == ["dev", "remote"])
   #expect((try parse(["model"]) as ModelLegacy).words.isEmpty)
@@ -331,10 +327,8 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
   ] {
     #expect(throws: (any Error).self, "\(bad)") { try IsoCommand.parseAsRoot(bad) }
   }
-  // The hidden legacy entry cannot be an instance's name.
   #expect(throws: (any Error).self) { try InstanceName(ModelLegacy._commandName) }
   #expect(ModelCommand.helpMessage().contains("show"))
-  // The hidden default never names itself in usage or machine output.
   #expect(commandPath(ModelLegacy.self, under: IsoCommand.self) == ["model"])
   #expect(ModelLegacy._commandName == "[NAME]")
 }
@@ -343,12 +337,10 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
   let show = try InstanceName("show")
   let set = try InstanceName("set")
   let dev = try InstanceName("dev")
-  // An instance named after the keyword exists: the older reading is refused.
   for rest in [[], ["local"], ["remote"]] {
     #expect(ModelCommand.ambiguity("show", rest: rest, instances: [show, dev]) != nil, "\(rest)")
   }
   #expect(ModelCommand.ambiguity("set", rest: ["local"], instances: [set]) != nil)
-  // A form the older grammar could not read, or no such instance: allowed.
   #expect(ModelCommand.ambiguity("show", rest: ["dev"], instances: [show, dev]) == nil)
   #expect(ModelCommand.ambiguity("set", rest: ["remote", "dev"], instances: [set, dev]) == nil)
   #expect(ModelCommand.ambiguity("show", rest: ["local"], instances: [dev]) == nil)
@@ -390,7 +382,6 @@ private struct VisibleGroup: ParsableCommand {
   let names = MachineCommands.all.map { $0.machineName }
   #expect(names.contains("code") && names.contains("zed"))
   #expect(Set(names).count == names.count)
-  // Every advertised path dispatches to that same machine command.
   for command in MachineCommands.all {
     let path = command.machineName.split(separator: " ").map(String.init)
     let parsed = try IsoCommand.parseAsRoot(path)
@@ -398,7 +389,6 @@ private struct VisibleGroup: ParsableCommand {
   }
 }
 
-/// A machine command nested under a hidden group stays unadvertised.
 @Test func hiddenSubtreesAreNotAdvertised() {
   for command in MachineCommands.all {
     var current: (any ParsableCommand.Type)? = IsoCommand.self
@@ -422,7 +412,6 @@ private struct VisibleGroup: ParsableCommand {
   // A devcontainer dry run keeps the lazy store for a git-repo PAT only.
   #expect(!LoadIntent.dryRun(true).checksForUpdates && LoadIntent.dryRun(true).attachesSecretStore)
   #expect(LoadIntent.dryRun(false) == .normal)
-  // Each command's own choice, not just the enum.
   #expect((try parse(["up", "--dry-run"]) as Up).loadIntent == .devcontainerPreview)
   #expect((try parse(["up"]) as Up).loadIntent == .normal)
   #expect((try parse(["start", "--dry-run"]) as Start).loadIntent == .devcontainerPreview)

@@ -3,10 +3,9 @@ import Foundation
 import IsoCore
 
 /// Renews one filtered-egress companion while the recorded sandbox and the
-/// runtime's live boot id still match, and while the companion and egress
-/// tunnel it has seen stay alive. On exit it closes the instance's port
-/// forwards. A restored disk does not restore
-/// `bootId`; the next owner writes a new one.
+/// runtime's live boot id still match and the companion and egress tunnel it has
+/// seen stay alive. On exit it closes the instance's port forwards. A restored
+/// disk does not restore `bootId`; the next owner writes a new one.
 package enum EgressLease {
   package static func stillOwns(directory: String, machineID: String, ownerPID: Int32) -> Bool {
     guard let instance = try? Instance.load(directory: directory),
@@ -67,10 +66,9 @@ package enum EgressLease {
       && livePID == expectedPID && sessionOpen && ownerAlive
   }
 
-  /// What the lease has observed of its companion and egress tunnel. Each
-  /// is required only once seen alive: startup spawns the lease first. A
-  /// probe (`ps`) can fail transiently, so only `missLimit` consecutive
-  /// misses count as loss.
+  /// What the lease has observed of its companion and egress tunnel; each is
+  /// required only once seen alive (startup spawns the lease first). A `ps` probe
+  /// can fail transiently, so only `missLimit` consecutive misses count as loss.
   package struct Supervision: Equatable, Sendable {
     package static let missLimit = 3
     package private(set) var companionSeen = false

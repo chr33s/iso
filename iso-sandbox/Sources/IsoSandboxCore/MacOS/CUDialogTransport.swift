@@ -5,9 +5,9 @@ import IsoMacProtocol
 import Vision
 
 /// The dialog responder's transport over a running owner's control socket:
-/// `cu-frame` plus local text recognition, and one `cu-act` click based on
-/// the frame it was decided on. Recognition runs in this host process, on
-/// the PNG the owner re-encoded at its fixed geometry.
+/// `cu-frame` plus local text recognition, and one `cu-act` click based on the
+/// frame it was decided on. Recognition runs in this host process on the PNG the
+/// owner re-encoded at its fixed geometry.
 package struct MacCUDialogTransport: CUDialogTransport {
   package var root: SandboxRoot
   package var id: SandboxID

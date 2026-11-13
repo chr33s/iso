@@ -4,11 +4,10 @@ import IsoConfiguration
 import IsoCore
 import Synchronization
 
-// Validated workspace return (security-hardening spec §5). Every return
-// mode receives into a fresh host-owned incoming stage, validates it into a
-// manifest, and installs only through `StageApplier`. The stage tree is
-// guest-authored: every name, link target, mode and size read from it is
-// untrusted, and no receiver ever writes the destination.
+// Validated workspace return (security-hardening spec §5). Every mode receives
+// into a fresh host-owned incoming stage, validates it into a manifest, and
+// installs only through `StageApplier`. The tree is guest-authored: every name,
+// link target, mode and size is untrusted, and no receiver writes the destination.
 
 package enum StageObject: Sendable, Equatable, Codable {
   case file(size: UInt64, sha256: String, mode: UInt16)
@@ -80,10 +79,9 @@ package struct GitfileObservation: Sendable, Equatable, Codable {
   package let sha256: String
 }
 
-/// The return-policy version a manifest was validated under. Version 2 is
-/// the structural contract plus RET-11 named grants for known
-/// execution-sensitive paths; it is the only one this build produces or
-/// accepts. A compatibility identifier, not a user-selectable mode.
+/// The return-policy version a manifest was validated under. Version 2 is the
+/// structural contract plus RET-11 named grants for execution-sensitive paths;
+/// the only one this build produces or accepts. Not a user-selectable mode.
 package enum ReturnPolicyVersion: Int, Sendable, Codable {
   case sensitiveGrants = 2
 }
@@ -135,12 +133,10 @@ package struct StageBudgetExceeded: Error, CustomStringConvertible {
   package let description: String
 }
 
-/// Watches an incoming tree while a transfer fills it, so a guest cannot
-/// fill the host volume long before `StageBuilder` enforces the budgets.
-/// Passed as a process `isCancelled` poll; measures at most twice a second,
-/// by allocated bytes so sparse files count for what they cost on the host.
-/// A sampling monitor: it can overshoot by what arrives between samples and
-/// is not a hard disk quota. An inspection failure stops the transfer.
+/// Stops a transfer that fills an incoming tree before `StageBuilder` enforces the
+/// budgets: an `isCancelled` poll at most twice a second by allocated bytes
+/// (sparse files count at host cost). Sampling can overshoot; not a disk quota.
+/// An inspection failure stops the transfer.
 final class StageGrowthGuard: Sendable {
   private struct State: Sendable {
     var lastCheck = ContinuousClock.now - .seconds(1)
@@ -156,7 +152,6 @@ final class StageGrowthGuard: Sendable {
     self.limits = limits
   }
 
-  /// Why the transfer was stopped, once it has been.
   var breachDescription: String? { state.withLock { $0.breach } }
 
   func shouldCancel() -> Bool {
@@ -202,12 +197,10 @@ final class StageGrowthGuard: Sendable {
   }
 }
 
-/// `<instance>/returns/`, owner-only: `selected.json` names the one
-/// selected completed stage (`stages/<id>/{tree,manifest.json,lease}`);
-/// a receive in progress lives in `incoming/<id>/{tree,lease}`; apply
-/// attempts are recorded in `attempts/`. Only `tree/` is ever handed to a
-/// receiver. The lock file sits beside the root, so removing the stage
-/// state never removes it.
+/// `<instance>/returns/`, owner-only: `selected.json` names the one selected stage
+/// (`stages/<id>/{tree,manifest.json,lease}`); receives in progress live in
+/// `incoming/<id>/`; attempts in `attempts/`. Only `tree/` is handed to a receiver.
+/// The lock file sits beside the root so removing stage state never removes it.
 package struct StageLocation: Sendable {
   package let root: String
   /// The single-slot `stage/` directory of earlier builds: never applied,
@@ -293,7 +286,6 @@ package struct StageLocation: Sendable {
     let id: String
   }
 
-  /// The selected completed stage's ID, nil when there is none.
   package func selectedID() throws(HostError) -> String? {
     guard let bytes = try StateStore.readControlFile(selectedPointer) else { return nil }
     let selected = try StateStore.decode(Selected.self, bytes, path: selectedPointer)
@@ -329,7 +321,6 @@ package struct StageLocation: Sendable {
     return SelectedStage(stage: stage, manifest: manifest)
   }
 
-  /// `loadSelected` under the stage lock.
   package func loadSelectedLocked() throws(HostError) -> SelectedStage {
     try locked { () throws(HostError) in try loadSelected() }
   }
@@ -871,11 +862,10 @@ struct StageBuilder {
     return String(validating: buffer[0..<count], as: UTF8.self)
   }
 
-  /// Every component of every link target, the final one included, is
-  /// resolved against the planned final tree (staged objects over the
-  /// preserved destination). The kernel resolves `s/..` through `s`, so a
-  /// component that is itself a link could escape lexical containment; a
-  /// final component that is a link makes a chain. Both, and targets into
+  /// Every component of every link target, the final one included, is resolved
+  /// against the planned final tree (staged objects over the preserved destination).
+  /// The kernel resolves `s/..` through `s`, so a link component could escape
+  /// lexical containment and a final link makes a chain. Both, and targets into
   /// protected administration, make the stage inapplicable.
   mutating func checkLinks() throws {
     for (path, target) in links {
@@ -954,11 +944,10 @@ struct StageBuilder {
     return true
   }
 
-  /// The destination's existing `.git` entries in its root and every
-  /// existing directory the plan touches: directories are protected as
-  /// they are; a standard gitfile pointing outside the returned tree, or
-  /// beneath a protected `.git`, is observed for revalidation; anything
-  /// else makes the destination inapplicable in this release.
+  /// The destination's existing `.git` entries in its root and every directory the
+  /// plan touches: directories are protected as they are; a standard gitfile
+  /// pointing outside the returned tree or beneath a protected `.git` is observed
+  /// for revalidation; anything else makes the destination inapplicable.
   mutating func observeGitAdministration() throws -> [GitfileObservation] {
     var directories: Set<String> = [""]
     for change in changes {
@@ -1033,10 +1022,9 @@ struct StageBuilder {
     digest.map { String(format: "%02x", $0) }.joined()
   }
 
-  /// The destination object at `path` below the directory `root`, resolved
-  /// component by component without following links. A parent that is not
-  /// a directory means the path does not exist yet (the parent is itself a
-  /// change).
+  /// The destination object at `path` below `root`, resolved component by component
+  /// without following links. A non-directory parent means the path does not exist
+  /// yet (the parent is itself a change).
   static func destinationObject(root: Int32, _ path: String, label: String) throws
     -> DestinationObject
   {

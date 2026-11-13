@@ -104,9 +104,8 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/iso-desktop-kernel.XXXXXX")"
 trap 'rm -rf "${work}"' EXIT
 
 if [[ ! -f "${base_config}" ]]; then
-    # No Swift toolchain (the Linux runner): the same file from the
-    # containerization revision iso-sandbox/Package.resolved pins. Its
-    # SHA-256 is checked below either way.
+    # No Swift toolchain (Linux runner): the same file from the containerization revision pinned in
+    # iso-sandbox/Package.resolved; its SHA-256 is checked either way.
     revision="$(python3 -I - "${repo}/iso-sandbox/Package.resolved" <<'PY'
 import json, sys
 pins = json.load(open(sys.argv[1]))["pins"]
@@ -128,8 +127,7 @@ fi
 check_sha "${work}/source.tar.xz" "${SOURCE_SHA256}"
 check_sha "${base_config}" "${BASE_CONFIG_SHA256}"
 
-# The base configuration with each fragment option replacing any setting of
-# the same option.
+# Base configuration with each fragment option replacing any same-named setting.
 python3 -I - "${base_config}" "${kernel_dir}/desktop.config" "${work}/config-arm64" <<'PY'
 import re, sys
 base, fragment, out = sys.argv[1:]
@@ -147,24 +145,21 @@ cp "${kernel_dir}/desktop.config" "${kernel_dir}/build.sh" "${work}/"
 
 image="iso-desktop-kernel-build:$(shasum -a 256 "${kernel_dir}/Dockerfile" | cut -c1-12)"
 "${engine}" build -t "${image}" -f "${kernel_dir}/Dockerfile" "${kernel_dir}"
-# Apple `container` runs the build in a VM that must be sized; Docker on
-# Linux shares the host's processors and memory.
+# Apple `container` needs a sized VM; Docker on Linux shares host CPU and memory.
 limits=()
 if [[ "${engine}" == container ]]; then limits=(--cpus 8 --memory 8g); fi
 "${engine}" run --rm ${limits[@]+"${limits[@]}"} -v "${work}:/kernel" "${image}" /bin/bash /kernel/build.sh
 
 install -m 0644 "${work}/vmlinux-desktop" "${out}/vmlinux-desktop"
 install -m 0644 "${work}/final.config" "${out}/vmlinux-desktop.config"
-# The corresponding source (GPL-2.0): the exact tarball and the merged
-# configuration it was built from.
+# Corresponding source (GPL-2.0): the exact tarball and merged configuration.
 install -m 0644 "${work}/source.tar.xz" "${out}/linux-${KVER}.tar.xz"
 install -m 0644 "${work}/config-arm64" "${out}/vmlinux-desktop.input.config"
 echo "toolchain: $(cat "${work}/toolchain.txt")"
 built="$(shasum -a 256 "${out}/vmlinux-desktop" | cut -d' ' -f1)"
 echo "sha256: ${built}  ${out}/vmlinux-desktop"
 if [[ "${pinned}" -eq 1 ]]; then
-    # The quoted 64-hex strings of KernelPin.desktopAllowed, as
-    # scripts/build-release.py reads them.
+    # Quoted 64-hex strings of KernelPin.desktopAllowed, as build-release.py reads them.
     layout="${repo}/iso-sandbox/Sources/IsoSandboxCore/Layout.swift"
     if ! sed -n '/package static let desktopAllowed/,/\]/p' "${layout}" | grep -qF "\"${built}\""; then
         echo "error: vmlinux-desktop (sha256 ${built}) is not a pinned desktop kernel" >&2

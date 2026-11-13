@@ -4,11 +4,10 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-/// One H.264 stream of the display (docs/design/computer-use-live-view.md
-/// §4): Constrained Baseline, automatic level, real time, no frame reordering, on
-/// the hardware encoder. Frames come from the owner's own render of the
-/// view, never from guest-authored bytes; output is Annex-B with SPS and
-/// PPS before every keyframe.
+/// One H.264 stream of the display (docs/design/computer-use-live-view.md §4):
+/// Constrained Baseline, automatic level, real time, no frame reordering, on the
+/// hardware encoder.
+/// Frames come from the owner's own render, never guest-authored bytes.
 package final class LiveViewEncoder: @unchecked Sendable {
   package typealias Output =
     @Sendable (_ annexB: [UInt8], _ keyframe: Bool, _ micros: UInt64) -> Void

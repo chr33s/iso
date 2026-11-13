@@ -7,13 +7,11 @@ import IsoConfiguration
 import IsoCore
 import IsoSecrets
 
-/// `<instance>/guest_env.json`: the start-time `--env` (and devcontainer
-/// `containerEnv`) entries, overlaid on every later session of the
-/// instance. The configuration's own `guest_env` is re-read each time and
-/// is not stored here. An empty snapshot is not written.
-///
-/// Version 2 holds typed literal, secret-reference and provider-reference entries.
-/// Resolved secret values are never written here.
+/// `<instance>/guest_env.json`: start-time `--env` (and devcontainer
+/// `containerEnv`) entries overlaid on every later session. The config's own
+/// `guest_env` is re-read each time and not stored. Version 2 holds typed
+/// literal, secret-reference and provider-reference entries; resolved secret
+/// values are never written.
 package struct GuestEnvState: Sendable, Equatable {
   package var entries: [EnvVarName: EnvValue] = [:]
 
@@ -33,10 +31,9 @@ package struct GuestEnvState: Sendable, Equatable {
     ProxyProvider.route(forVariable: variable)
   }
 
-  /// A stored secret is either a provider credential (routed to iso-proxy)
-  /// or a guest-visible value, never both: a generic reference naming a
-  /// secret that a proxy credential or provider secret also reads would put
-  /// that credential in the guest.
+  /// A stored secret is a provider credential (routed to iso-proxy) or a
+  /// guest-visible value, never both: a generic reference to a secret a proxy
+  /// credential also reads would put that credential in the guest.
   package static func checkCredentialSeparation(
     _ entries: [EnvVarName: EnvValue], proxyCredentialNames: Set<SecretName>
   ) throws {
@@ -80,7 +77,6 @@ package struct GuestEnvState: Sendable, Equatable {
     entries = literals.mapValues { .literal($0) }
   }
 
-  /// Deterministic byte order of environment names.
   package var sortedEntries: [(EnvVarName, EnvValue)] {
     entries.keys.sorted {
       Array($0.rawValue.utf8).lexicographicallyPrecedes(Array($1.rawValue.utf8))
@@ -200,8 +196,6 @@ package struct GuestEnvState: Sendable, Equatable {
     devcontainer.merging(envFile) { _, file in file }.merging(cli) { _, cli in cli }
   }
 
-  /// `--env KEY=VALUE`; the value may be empty or contain `=`, and may be a
-  /// whole-value `{vault:<name>}` reference.
   package static func parseCLIArgument(_ entry: String) throws -> (EnvVarName, EnvValue) {
     guard let equals = entry.firstIndex(of: "=") else {
       throw HostError("--env expects KEY=VALUE, got '\(entry)' (missing '=')")
@@ -219,7 +213,6 @@ package struct GuestEnvState: Sendable, Equatable {
     }
   }
 
-  /// `--env-file PATH`: a regular file of at most 1 MiB, parsed strictly.
   package static func readEnvFile(_ path: String) throws -> [EnvVarName: EnvValue] {
     let fd = open(path, O_RDONLY | O_CLOEXEC)
     guard fd >= 0 else { throw HostError.posix("Failed to open --env-file", path) }

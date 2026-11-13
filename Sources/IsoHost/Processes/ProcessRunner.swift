@@ -2,12 +2,10 @@ import Foundation
 import IsoCore
 import Synchronization
 
-/// The one subprocess launcher (S-03). Every child is spawned from an
-/// explicit argv (no shell interpolation by this layer), in its own process
-/// group, with an explicit environment. Captured mode drains stdout and stderr
-/// together so neither pipe can fill and block the child, bounds what it keeps,
-/// enforces a deadline, and always reaps the child and closes its descriptors
-/// before returning — including on every error path.
+/// The one subprocess launcher (S-03): explicit argv (no shell interpolation),
+/// own process group, explicit environment. Captured mode drains stdout and
+/// stderr together so neither pipe blocks the child, bounds what it keeps,
+/// enforces a deadline, and reaps the child and closes descriptors on every path.
 package struct ProcessRunner: Sendable {
   package struct Request: Sendable {
     package var executable: String
@@ -220,13 +218,11 @@ package struct ProcessRunner: Sendable {
     return termination
   }
 
-  /// Attached mode, for interactive and pass-through commands: stdout and
-  /// stderr are the caller's own, stdin is the caller's (`inherit`) or
-  /// `input`, and the child stays in the caller's process group so a
-  /// terminal session keeps its TTY and job control. `deadline` replaces
-  /// `request.deadline`, which this mode ignores: nil means none, for
-  /// sessions and transfers (`ssh` bounds its own connection). Waits for the
-  /// child to exit; at the deadline it is killed (`timedOut`).
+  /// Attached mode for interactive and pass-through commands: stdout/stderr are the
+  /// caller's, stdin is the caller's (`inherit`) or `input`, and the child stays in
+  /// the caller's process group to keep its TTY and job control. `deadline`
+  /// replaces `request.deadline` (nil: none, for sessions and transfers); at the
+  /// deadline the child is killed (`timedOut`).
   package func attached(_ request: Request, inheritStdin: Bool, deadline: Duration?)
     throws(Failure) -> Termination
   {
@@ -271,12 +267,11 @@ package struct ProcessRunner: Sendable {
     return try wait(&child, request, deadline: deadline, since: start)
   }
 
-  /// A child in its own process group whose stdin and stdout are pipes held
-  /// by the caller, for byte streams that live as long as a connection. The
-  /// caller owns the descriptors and must `terminate` the child.
-  /// A reference, so `terminate` runs once however many owners call it: a
-  /// second kill could hit a reused process group, and a second close a
-  /// descriptor number another thread now owns.
+  /// A child in its own process group with stdin/stdout pipes held by the caller,
+  /// for connection-lifetime byte streams. The caller owns the descriptors and must
+  /// `terminate`. A reference so `terminate` runs once however many owners call it:
+  /// a second kill could hit a reused group, a second close another thread's
+  /// descriptor.
   package final class PipedChild: Sendable {
     package let pid: pid_t
     package let input: Int32
@@ -369,11 +364,9 @@ package struct ProcessRunner: Sendable {
     return (termination, collected.withLock { $0 })
   }
 
-  /// Like `attached`, but the child's stdin is a pipe that first receives
-  /// `preamble` (a secret-bearing first line, never argv) and then this
-  /// process's own stdin until EOF. stdout and stderr are inherited. Used by
-  /// the host relay helper that `ssh` runs as its ProxyCommand. `input`,
-  /// `output` and `errorOutput` replace this process's stdio.
+  /// Like `attached`, but stdin is a pipe that first receives `preamble` (a
+  /// secret-bearing first line, never argv) and then this process's stdin until
+  /// EOF. Used by the relay helper `ssh` runs as ProxyCommand.
   package func relayed(
     _ request: Request, preamble: [UInt8], input: Int32 = 0, output: Int32 = 1,
     errorOutput: Int32 = 2
@@ -411,7 +404,6 @@ package struct ProcessRunner: Sendable {
     return child.waitIndefinitely()
   }
 
-  /// Waits for an attached child, polling `isCancelled` and `deadline`.
   private func wait(
     _ child: inout ChildProcess, _ request: Request, deadline: Duration?,
     since start: ContinuousClock.Instant
@@ -430,7 +422,6 @@ package struct ProcessRunner: Sendable {
     }
   }
 
-  /// Every live descendant of `pid`, parents before their children.
   static func descendants(of pid: pid_t) -> [pid_t] {
     var found: [pid_t] = []
     var pending = [pid]
@@ -447,7 +438,6 @@ package struct ProcessRunner: Sendable {
     return found
   }
 
-  /// Both ends of a two-process pipeline (`tar cf - | ssh …`).
   package struct PipelineOutput: Sendable {
     package let producer: Termination
     package let consumer: Termination
@@ -455,12 +445,10 @@ package struct ProcessRunner: Sendable {
     package let consumerStderr: [UInt8]
   }
 
-  /// `producer`'s stdout feeds `consumer`'s stdin through a kernel pipe;
-  /// both stderr streams are drained concurrently (so neither child can
-  /// block on a full pipe) and kept up to `outputLimit`; stdout of the
-  /// consumer and stdin of the producer are `/dev/null`. No deadline: a
-  /// transfer takes as long as the data does, and `ssh` bounds a dead
-  /// connection itself. Both children are reaped before this returns.
+  /// `producer`'s stdout feeds `consumer`'s stdin through a kernel pipe; both
+  /// stderr streams drain concurrently and are kept up to `outputLimit`. No
+  /// deadline: a transfer takes as long as the data, and `ssh` bounds a dead
+  /// connection. Both children are reaped before returning.
   package func pipeline(_ producer: Request, _ consumer: Request) throws(Failure) -> PipelineOutput
   {
     var link: [Int32] = [-1, -1]
@@ -619,7 +607,6 @@ package struct ProcessRunner: Sendable {
 /// cleanup: it is a no-op after a successful `wait`.
 struct ChildProcess: ~Copyable {
   let pid: pid_t
-  /// Whether the child leads its own process group (never the caller's).
   let ownsGroup: Bool
   private var reaped = false
 
@@ -699,10 +686,10 @@ func withCStrings<R>(
   return pointers.withUnsafeBufferPointer { body($0.baseAddress!) }
 }
 
-/// Splits a byte stream into `\n`-terminated lines, holding at most `limit`
-/// bytes of any one line: the rest of a longer line is dropped and
-/// ` [line truncated]` appended, so a guest cannot make the host buffer an
-/// unbounded line. A final line without a newline is emitted by `finish`.
+/// Splits a byte stream into `\n`-terminated lines holding at most `limit` bytes
+/// each: the rest of a longer line is dropped with ` [line truncated]` appended,
+/// so a guest cannot make the host buffer an unbounded line. `finish` emits a
+/// final unterminated line.
 package struct BoundedLineSplitter: Sendable {
   package static let truncatedMarker = Array(" [line truncated]".utf8)
   let limit: Int

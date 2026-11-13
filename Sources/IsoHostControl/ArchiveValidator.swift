@@ -2,10 +2,7 @@ import Foundation
 import IsoCore
 import IsoHost
 
-/// Streaming policy check of a POSIX tar archive staged on the worker
-/// (spec 11.4): absolute members, traversal, unsafe links, duplicate or
-/// conflicting members, special files and excess size are refused. Reads
-/// fixed 512-byte blocks; never extracts and never follows a link.
+/// Streaming policy check of a staged POSIX tar (spec 11.4); never extracts, never follows a link.
 package enum ArchiveValidator {
   package struct Limits: Sendable {
     package var maxMembers: Int
@@ -182,9 +179,8 @@ package enum ArchiveValidator {
     return text
   }
 
-  /// The header's own name. Only POSIX ustar (`ustar\0` `00`) has a
-  /// prefix field; old GNU (`ustar  \0`) keeps times there, and v7 has no
-  /// magic. Any other `ustar` variant is refused rather than guessed at.
+  /// The header's own name. Only POSIX ustar has a prefix field (GNU keeps times there);
+  /// other variants are refused.
   private static func headerPath(_ header: [UInt8]) throws(HostControlError) -> String {
     let name = try utf8(Array(header[0..<100].prefix { $0 != 0 }))
     let magic = Array(header[257..<265])
@@ -199,7 +195,6 @@ package enum ArchiveValidator {
     return name
   }
 
-  /// A relative name made only of `.` components (`.`, `./`, `././`).
   static func namesRoot(_ path: String) -> Bool {
     !path.isEmpty && !path.hasPrefix("/")
       && path.split(separator: "/", omittingEmptySubsequences: true).allSatisfy { $0 == "." }
@@ -230,9 +225,8 @@ package enum ArchiveValidator {
     path.precomposedStringWithCanonicalMapping.lowercased()
   }
 
-  /// A symlink target must be relative, never climb with `..`, and never pass
-  /// through an earlier symlink member, so it resolves inside the archive
-  /// without depending on other links.
+  /// A symlink target must be relative, never climb with `..`, and never pass through an
+  /// earlier symlink member.
   private static func checkSymlink(
     _ target: String, member: String, parent: Int?, seen: MemberIndex, limits: Limits
   ) throws(HostControlError) {
@@ -312,10 +306,8 @@ package enum ArchiveValidator {
   }
 }
 
-/// Members seen so far, as a tree of folded path components. Each lookup and
-/// insert costs one step per component, and memory grows with the archive's
-/// distinct components rather than with every prefix string, so deep member
-/// names cannot amplify the archive's size.
+/// Members seen so far as a tree of folded path components, so deep names cannot amplify
+/// memory beyond the archive's size.
 private struct MemberIndex {
   private var kinds: [Character] = ["d"]
   private var children: [[Substring: Int]] = [[:]]
@@ -352,7 +344,6 @@ private struct MemberIndex {
     return node
   }
 
-  /// Records `kind` for the member and `d` for any ancestor not seen before.
   mutating func insert(_ components: [Substring], kind: Character) {
     var node = Self.root
     for part in components {

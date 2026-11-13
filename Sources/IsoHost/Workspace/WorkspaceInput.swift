@@ -3,15 +3,13 @@ import IsoConfiguration
 import IsoCore
 import IsoGitIndex
 
-// Outbound selected-content snapshots (security-hardening spec INPUT-01).
-// Every transfer into the guest — first copy, push, mount sync — sends one
-// immutable host-owned snapshot built from an explicit selection, never the
-// whole directory and never original Git history.
+// Outbound selected-content snapshots (INPUT-01). Every transfer into the guest
+// (copy, push, mount sync) sends one immutable host-owned snapshot built from an
+// explicit selection, never the whole directory or original Git history.
 
-/// The tracked paths of a Git working tree, read from its index file as
-/// inert data: no Git process, no repository configuration, hooks, filters
-/// or helpers. Forms it cannot read safely are refused with a pointer to
-/// explicit path selection.
+/// The tracked paths of a Git working tree, read from its index file as inert
+/// data: no Git process, config, hooks, filters or helpers. Unreadable forms are
+/// refused with a pointer to explicit path selection.
 enum GitIndexInventory {
   static let maxIndexBytes = 256 << 20
 

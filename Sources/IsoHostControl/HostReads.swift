@@ -3,7 +3,6 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// Read-only requests (spec 7.6).
 extension HostSupervisor {
   package func inspect(_ target: QualifiedInstance) throws(HostControlError) -> VMObservation {
     if let tombstone = try? store.loadTombstone(target.instanceID) {

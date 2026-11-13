@@ -19,7 +19,6 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   #expect(try c.openGuest("g1", at: t0) == nil)
   #expect(c.controller(at: t0) == .guest)
   #expect(refusal { try c.requireGuest("g1", at: t0) } == nil)
-  // A second guest session replaces the first.
   #expect(try c.openGuest("g2", at: t0) == "g1")
   #expect(refusal { try c.requireGuest("g1", at: t0) } == .unknownSession)
 
@@ -29,7 +28,6 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   #expect(refusal { try c.requireGuest("g2", at: t0) } == .heldByHost)
   let duringHold = refusal { _ = try c.openGuest("g3", at: t0.addingTimeInterval(59)) }
   #expect(duringHold == .heldByHost)
-  // Expired: the guest may open a new session; the old one stays gone.
   let later = t0.addingTimeInterval(61)
   #expect(c.controller(at: later) == .idle)
   #expect(c.holdRemaining(at: later) == 0)
@@ -40,7 +38,6 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
 @Test func holdsExtendButNeverShortenAndReleaseEndsThem() {
   var c = CUControl()
   _ = c.hold(.explicit, for: 300, at: t0)
-  // The implicit 60 s hold of host input keeps a longer explicit hold.
   _ = c.hold(.implicit, for: CUControl.implicitHold, at: t0.addingTimeInterval(10))
   #expect(c.holdRemaining(at: t0.addingTimeInterval(10)) == 290)
   _ = c.hold(.explicit, for: 600, at: t0.addingTimeInterval(10))
@@ -54,7 +51,6 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   _ = c.hold(.implicit, for: CUControl.implicitHold, at: t0)
   c.releaseImplicit()
   #expect(c.controller(at: t0) == .idle)
-  // A `cu hold` taken before the viewer took control outlives its release.
   _ = c.hold(.explicit, for: 3600, at: t0)
   _ = c.hold(.implicit, for: CUControl.implicitHold, at: t0.addingTimeInterval(10))
   c.releaseImplicit()
@@ -86,7 +82,6 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
     let ok = !b.take(1, at: t0.addingTimeInterval(0.25))
     #expect(ok)
   }
-  // A long idle saves at most one second of tokens.
   let idle = t0.addingTimeInterval(100)
   for _ in 0..<4 {
     do {
@@ -136,13 +131,10 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
   let frame = GuestCURequest(op: .frame, session: "s")
   func admitted() -> Bool { l.admit(frame, at: t0) }
   #expect(admitted())
-  // A host hold refused it: the retry after reopening the session may run.
   l.settle(frame, .refused("held", .heldByHost))
   #expect(admitted())
-  // A blank frame was captured: no refund.
   l.settle(frame, .refused("blank", .blankFrame))
   #expect(!admitted())
-  // An action refused after input started is not refunded either.
   var m = GuestCULimits(frameRate: 1, now: t0)
   var long = GuestCUAction(kind: "type")
   long.text = String(repeating: "a", count: 64 * 20)
@@ -199,14 +191,12 @@ private func refusal(_ body: () throws -> Void) -> CURefusal? {
       write(writer, $0.baseAddress, chunk.utf8.count)
     }
   }
-  // Two lines in one write; the partial third stays buffered across them.
   send("one\ntwo\nthr")
   var reader = LineReader(fd: fds[0], limit: 64)
   var lines: [String] = []
   for _ in 0..<2 {
     if case .line(let l) = reader.next() { lines.append(String(decoding: l, as: UTF8.self)) }
   }
-  // The rest of that line arrives in later reads, while the reader waits.
   let rest = Thread {
     for chunk in ["e", "e\n"] {
       Thread.sleep(forTimeInterval: 0.05)
@@ -425,7 +415,6 @@ private func texts(_ result: [String: Any]) -> [String] {
       "screenshot", "control_status", "click", "move", "drag", "scroll", "key", "type",
       "wait_for_screen",
     ])
-  // No tool holds a button down.
   #expect(!tools.contains("down") && !tools.contains("up"))
   let missing = try rpc(server, ["jsonrpc": "2.0", "id": 3, "method": "resources/list"])
   #expect((missing["error"] as? [String: Any])?["code"] as? Int == -32601)

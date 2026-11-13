@@ -80,9 +80,8 @@ extension HostSupervisor {
     try? store.consume(.run(run))
   }
 
-  /// Run admissions that a crash left half-written: a run whose parent
-  /// operation is missing, or a never-started run child with no run record.
-  /// Called under the admission lock.
+  /// Run admissions a crash left half-written: a run whose parent operation is missing, or
+  /// a never-started child with no run record. Called under the admission lock.
   func repairUnacceptedRuns() {
     for id in runs.runIDs() {
       guard let run = try? runs.load(id), run.phase == .reserved,
@@ -174,10 +173,8 @@ extension HostSupervisor {
     return record.receipt(disposition: .accepted, instance: qualified(record))
   }
 
-  /// `run.retain`: host-owned retention. It draws on ordinary ledger
-  /// capacity (one operation record and its finalize rewrite), not on the
-  /// run's own transition reservation, so it never starves complete or
-  /// cleanup.
+  /// `run.retain`: draws on ordinary ledger capacity, not the run's transition reservation,
+  /// so it never starves complete or cleanup.
   func admitRunRetain(
     _ record: inout OperationStore.OperationRecord, run id: RunID, generation: UInt64,
     mode: RetentionMode
@@ -220,19 +217,14 @@ extension HostSupervisor {
     return record.receipt(disposition: .accepted, instance: qualified(record))
   }
 
-  /// Whether `run` is inside a live retention window now.
   func isLiveRetained(_ run: RunStore.Record) -> Bool {
     run.liveRetentionUntil.map { now.seconds < $0 } ?? false
   }
 
-  /// Applies an admitted `run.retain`. Live retention ends at the earliest of
-  /// the request, the cap counted from the first live retention, and the VM's
-  /// own deadline (never later). It revokes the run's access grants (SSH
-  /// sessions and their relayed streams), so a debugger opens a new explicit
-  /// grant; the boot's immutable network policy (egress, provider and
-  /// local-service grants) and whatever is already in the guest stay until
-  /// the VM stops. Stopped retention only ever moves the deadline later, up
-  /// to its fixed cap.
+  /// Applies an admitted `run.retain`. Live retention ends at the earliest of the request,
+  /// the cap from first retention, and the VM's deadline. It revokes the run's access
+  /// grants; the boot's network policy and guest contents stay until stop. Stopped
+  /// retention only moves the deadline later, up to its cap.
   private func applyRetention(
     _ run: inout RunStore.Record, mode: RetentionMode, seconds: UInt64
   ) -> String {
@@ -397,9 +389,8 @@ extension HostSupervisor {
     }
   }
 
-  /// Captures results from the running guest, then stops and verifies.
-  /// Publishes `results_pending` only for a committed artifact plus a
-  /// verified stop; otherwise `stopped_disk_pending_export`.
+  /// Captures results from the running guest, then stops and verifies; `results_pending`
+  /// only for a committed artifact plus verified stop, else `stopped_disk_pending_export`.
   private func exportAndStop(_ run: inout RunStore.Record, recovering: Bool) {
     guard let instanceID = run.instanceID, let runtime = run.runtimeID else { return }
     var committed = false
@@ -446,10 +437,9 @@ extension HostSupervisor {
     return true
   }
 
-  /// Stops through the runtime; records the first verified stop and the
-  /// fixed retention deadline that never moves afterwards.
-  /// Stops the run's VM. True only once the stop is observed; otherwise the
-  /// run stays `.stopping` and the next reconcile pass retries it.
+  /// Stops the run's VM and records the first verified stop and its fixed retention
+  /// deadline. True only once the stop is observed; otherwise the run stays `.stopping` and
+  /// is retried.
   @discardableResult
   private func stopRunVM(_ run: inout RunStore.Record) -> Bool {
     guard let instanceID = run.instanceID, let runtime = run.runtimeID else { return false }
@@ -540,7 +530,6 @@ extension HostSupervisor {
     try? store.consume(.run(run.runID))
   }
 
-  /// Stop, delete, verify absence and commit the tombstone.
   func destroyNow(_ instance: OperationStore.InstanceRecord, by operation: HostOperationID) -> Bool
   {
     let id = instance.instanceID
@@ -570,7 +559,6 @@ extension HostSupervisor {
     }
   }
 
-  /// Periodic run safety: controller loss, VM deadline and retention expiry.
   func reconcileRun(_ id: RunID) {
     // Claim the run so no transition is admitted while this pass rewrites it.
     let claimed: RunStore.Record? = state.withLock { state in

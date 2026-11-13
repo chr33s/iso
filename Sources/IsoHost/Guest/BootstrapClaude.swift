@@ -9,15 +9,12 @@ import IsoCore
 /// Claude customization import: complete bundles copied as files, plus the
 /// few host preferences that have a companion in that content.
 enum ClaudeImport {
-  /// Top-level content copied verbatim; settings are merged narrowly.
   static let allowedFiles = ["CLAUDE.md", "keybindings.json"]
-  /// Complete recursive bundles (plugin-local hooks and monitors included).
   static let allowedDirectories = [
     "rules", "commands", "skills", "agents", "output-styles", "themes", "workflows",
   ]
   static let stateKey = "_isoImportedPreferences"
 
-  /// Only preferences with a companion in the copied content.
   struct Preferences: Equatable {
     var disableAllHooks: Bool?
     var outputStyle: String?
@@ -170,10 +167,9 @@ enum ClaudeImport {
     return ids
   }
 
-  /// The host settings read as data (host Claude is never run). Invalid
-  /// relevant preferences stop the bootstrap rather than enable anything.
-  /// `settings` comes from the import's confined snapshot; the host path
-  /// is never reopened.
+  /// The host settings read as data (host Claude is never run). Invalid relevant
+  /// preferences stop the bootstrap. `settings` comes from the import's confined
+  /// snapshot; the host path is never reopened.
   static func preferences(settings: [UInt8]?, pluginIDs: Set<String>) throws -> Preferences {
     let body: String
     if let settings {
@@ -353,12 +349,10 @@ enum ClaudeSettings {
     return try ClaudeImport.mergePreferences(merged, imported)
   }
 
-  /// `~/.claude.json` reads as onboarded only with a `true` flag.
   static func onboardingComplete(_ claudeJSON: String) -> Bool {
     (try? OrderedJSON.parse(claudeJSON))?["hasCompletedOnboarding"]?.boolValue ?? false
   }
 
-  /// Keeps an existing object's keys; otherwise starts fresh.
   static func withOnboardingComplete(_ current: String?) -> String {
     var members = current.flatMap { try? OrderedJSON.parse($0) }?.objectMembers ?? .init()
     members.insert("hasCompletedOnboarding", .bool(true))
@@ -411,7 +405,6 @@ extension AgentBootstrap {
     }
   }
 
-  /// Local mode wins over proxy mode; empty when neither applies.
   func claudeLocalEnv(_ state: ModelState, proxy: ProxyHandle?) throws -> [String: String] {
     if let endpoint = LocalEndpoints.active(state, state.resolvedClaude(config.claude)) {
       let plan = try LocalEndpoints.plan(endpoint.hostURL)
@@ -436,7 +429,6 @@ extension AgentBootstrap {
     return snapshot
   }
 
-  /// The caller copies the staged files after settings are written.
   func prepareClaudeImport(_ target: SSHTarget) throws -> StagingDirectory? {
     guard
       let source = configSourceDirectory(
@@ -475,7 +467,6 @@ extension AgentBootstrap {
     return staged
   }
 
-  /// Merge (or, for an unusable file, reset) guest settings; written atomically.
   func writeManagedClaudeSettings(_ target: SSHTarget, localEnv: [String: String]) throws {
     try client.exec(target, RemoteCommand().literal("mkdir -p ~/.claude"))
     let imported = try readImportSnapshot(target).preferences

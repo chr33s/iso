@@ -26,12 +26,11 @@
     trap 'rm -f "$CODEX_INSTALLER" "$CODEX_LINK_TMP"' EXIT
     chmod 0644 "$CODEX_INSTALLER"
 
-    # curl retries transient failures without running a partially downloaded script.
+    # curl retries transient failures without running a partial script.
     curl -fsSL --retry 3 --retry-all-errors \
         -o "$CODEX_INSTALLER" https://chatgpt.com/codex/install.sh
 
-    # Retain the upstream package layout and guest ownership for `codex update`.
-    # PATH is already managed by iso; the installer need not edit shell profiles.
+    # Keep the upstream layout and guest ownership for `codex update`; iso already manages PATH.
     su - "$GUEST_USER" -c \
         "PATH='${GUEST_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' CODEX_NON_INTERACTIVE=1 sh '$CODEX_INSTALLER'" \
         </dev/null

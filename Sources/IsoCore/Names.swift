@@ -2,9 +2,8 @@
 // Modified by chr33s: ported/adapted for the Swift implementation.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Validated identifiers shared by configuration, state and commands. Each is
-/// constructed only through its validating initializer, so holders can use the
-/// value in paths, argv elements and SSH config without re-checking.
+/// Validated identifiers; built only through validating initializers, so holders
+/// can use them in paths, argv and SSH config without re-checking.
 
 /// Safe-name character class `[a-zA-Z0-9_.-]` shared by image names, repo
 /// segments and secret-store names so they cannot drift apart.

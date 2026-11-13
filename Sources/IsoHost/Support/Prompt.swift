@@ -5,10 +5,9 @@
 import Foundation
 import IsoCore
 
-/// Interactive y/N prompt for `iso update` and `iso uninstall`: the
-/// question goes to stderr, the answer comes from stdin. A non-terminal
-/// stdin answers no without reading, so non-interactive callers must opt in
-/// with their own `--yes`.
+/// Interactive y/N prompt for `iso update` and `iso uninstall`: the question goes
+/// to stderr, the answer from stdin. A non-terminal stdin answers no without
+/// reading, so non-interactive callers must pass their own `--yes`.
 package enum Prompt {
   package static var stdinIsTerminal: Bool { isatty(0) == 1 }
 

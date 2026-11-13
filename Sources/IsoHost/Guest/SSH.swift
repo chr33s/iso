@@ -15,10 +15,9 @@ package struct SSHTarget: Sendable, Equatable {
   package let keyPath: String
   package let knownHosts: String
   package let alias: String
-  /// Set for a guest on a remote execution host (the client's relay helper,
-  /// which carries the bytes through the host's owned relay) and for a
-  /// brokered guest (the runtime's stream connector). The host-key pin
-  /// above still applies end to end.
+  /// Set for a guest on a remote execution host (the relay helper) and for a
+  /// brokered guest (the runtime's stream connector). The host-key pin above still
+  /// applies end to end.
   package var proxyCommand: String? = nil
   var handoffCheck: (@Sendable () throws -> Void)? = nil
 
@@ -65,10 +64,9 @@ package struct SSHTarget: Sendable, Equatable {
       connector: nil)
   }
 
-  /// The pinned target for a gate-approved route. A brokered route has no
-  /// address: ssh reaches it only through `connector`, the runtime's fixed
-  /// stream connector, bound to the approved boot and digests. The pinned
-  /// alias is then also the host name, so nothing resolves or dials it.
+  /// The pinned target for a gate-approved route. A brokered route has no address:
+  /// ssh reaches it only through `connector`, bound to the approved boot and
+  /// digests, and the pinned alias is also the host name so nothing resolves it.
   package static func pinned(
     config: IsoConfig, instance: Instance, machine: MachineName, route: GuestRoute,
     user: GuestUser, connector: BrokeredConnector?
@@ -113,7 +111,6 @@ package struct SSHTarget: Sendable, Equatable {
     value.unicodeScalars.contains(where: { $0.properties.isWhitespace }) ? "\"\(value)\"" : value
   }
 
-  /// `-o` values for the pinned host-key policy, in order.
   package var hostKeyOptions: [String] {
     [
       "StrictHostKeyChecking=yes", "UserKnownHostsFile=\(Self.quoteValue(knownHosts))",
@@ -144,15 +141,12 @@ package struct SSHTarget: Sendable, Equatable {
   package var sshOptions: [String] { transportOptions + ["-p", String(port)] }
 
   /// Teardown of an owned control master (SSH-03): no ambient config, and
-  /// `ControlMaster=no` so a missing or replaced socket fails instead of
-  /// opening a new connection. It can only end the session behind
-  /// `control`.
+  /// `ControlMaster=no` so a missing or replaced socket fails rather than opening
+  /// a new connection. It can only end the session behind `control`.
   package func controlExitArguments(_ control: String) -> [String] {
     ["-F", "none", "-o", "ControlMaster=no", "-o", "ControlPath=\(control)", "-O", "exit", address]
   }
   package var address: String { "\(user)@\(host)" }
-  /// For logs: the address ssh dials, or the pinned alias when a
-  /// ProxyCommand carries the connection (no address is dialed).
   package var endpointDescription: String {
     proxyCommand == nil ? "\(host):\(port)" : "\(alias) (proxied stream)"
   }
@@ -161,23 +155,16 @@ package struct SSHTarget: Sendable, Equatable {
 package struct SSHClient: Sendable {
   let environment: [String: String]
   let runner: ProcessRunner
-  /// ssh bounds connection and liveness itself; this caps the whole call.
   package static let captureDeadline: Duration = .seconds(300)
 
-  /// Guest-bound `ssh`, `scp` and `rsync` inherit only this much of the
-  /// host environment. A user's own `SendEnv` (with the guest's
-  /// `AcceptEnv *`) would otherwise carry any host variable — a raw
-  /// provider key in proxy mode — into the guest; values iso forwards on
-  /// purpose are added back, under generated aliases, by `EnvForward`.
-  ///
-  /// `SSH_AUTH_SOCK` (an absolute path only) is kept for SSH to an enrolled
-  /// execution host, whose key may be usable only through the agent, and
-  /// for guest sessions whose ProxyCommand opens that connection. Guest SSH
-  /// never uses it (`IdentityAgent none`) and nothing forwards the agent; it
-  /// is never in `SendEnv`.
-  ///
-  /// `SHELL` is fixed: ssh runs a ProxyCommand with `$SHELL -c`, so the
-  /// caller's shell (and its startup files) never interprets the connector.
+  /// Guest-bound `ssh`, `scp` and `rsync` inherit only this much host environment:
+  /// a user's `SendEnv` (with the guest's `AcceptEnv *`) would otherwise carry any
+  /// host variable, such as a raw provider key, into the guest. Intended values are
+  /// added back under generated aliases by `EnvForward`.
+  /// `SSH_AUTH_SOCK` (absolute path only) is kept for enrolled execution hosts and
+  /// ProxyCommand connections; guest SSH never uses it (`IdentityAgent none`) and
+  /// it is never in `SendEnv`. `SHELL` is fixed because ssh runs ProxyCommand with
+  /// `$SHELL -c`, so the caller's shell never interprets the connector.
   package static func transportEnvironment(_ environment: [String: String]) -> [String: String] {
     let names: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TERM", "LANG"]
     var out = environment.filter { names.contains($0.key) || $0.key.hasPrefix("LC_") }
@@ -190,11 +177,8 @@ package struct SSHClient: Sendable {
     return out
   }
 
-  /// Where managed transports find `ssh`, `scp`, `rsync` and `tar`.
   package enum ToolLookup: Sendable, Equatable {
-    /// The protected system directory only; never `PATH` (SSH-01).
     case system
-    /// The caller's `PATH`: test doubles only.
     case searchPath
 
     /// Optimized (shipped) builds pin the system tools; debug builds keep
@@ -221,7 +205,6 @@ package struct SSHClient: Sendable {
 
   static let systemToolDirectory = "/usr/bin"
 
-  /// The managed `ssh`: `/usr/bin/ssh`, never one earlier on `PATH`.
   package func sshExecutable() -> String? { executable(named: "ssh") }
 
   func executable(named name: String) -> String? {
@@ -291,11 +274,9 @@ package struct ResourceUsage: Sendable, Equatable {
     "load=\(formatFixed(load1m, 2)) mem=\(memPercent)% disk=\(diskPercent)%"
   }
 
-  /// Parses `/proc/loadavg`, `/proc/meminfo` and `df -m /` output, or the
-  /// same line formats a macOS guest prints from sysctl, vm_stat and
-  /// `df -m /System/Volumes/Data`. Values that are absent stay zero
-  /// (baseline behavior, including its quirk of trying later lines for the
-  /// load while it is still `0.0`).
+  /// Parses `/proc/loadavg`, `/proc/meminfo` and `df -m /` output, or the macOS
+  /// guest's sysctl/vm_stat/`df -m /System/Volumes/Data` equivalents. Absent values
+  /// stay zero (baseline behavior, including trying later lines while load is `0.0`).
   package static func parse(_ output: String) -> ResourceUsage {
     var load = 0.0
     var memTotalKiB: UInt64 = 0

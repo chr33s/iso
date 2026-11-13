@@ -61,7 +61,6 @@ package protocol GitHubHTTP: Sendable {
   func send(_ request: GitHubHTTPRequest) throws(CIError) -> GitHubHTTPResponse
 }
 
-/// Waits between retries; injectable so tests never sleep.
 package protocol GitHubSleeper: Sendable {
   func sleep(seconds: Double)
 }

@@ -6,7 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Which editors a launch may open.
 package enum EditorChoice: Sendable {
   /// Exactly this provider (`iso code`, `iso zed`). An editor that is found
   /// but cannot be spawned or times out is a launch failure.
@@ -136,11 +135,10 @@ package struct EditorLauncher: Sendable {
         + "\n\nA sandboxed editor runs the signed application directly; its CLI is not used.")
   }
 
-  /// Tries each chosen provider in order, first printing its advisory
-  /// warnings. Once a provider's editor has failed (see `EditorChoice`), no
-  /// other provider is tried: a different editor must not open unexpectedly.
-  /// Throws `.editorLaunchFailed` in that case and `.editorNotFound` when no
-  /// strategy reached an editor.
+  /// Tries each chosen provider in order, printing its advisory warnings first.
+  /// Once a provider's editor has failed (see `EditorChoice`) no other is tried:
+  /// a different editor must not open unexpectedly. Throws `.editorLaunchFailed`
+  /// then, or `.editorNotFound` when no strategy reached an editor.
   func launchUnsafe(
     _ running: AppleBackend.Running, _ target: SSHConnectionTarget, choice: EditorChoice
   ) throws {

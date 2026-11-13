@@ -342,7 +342,6 @@ package struct ImageBuilder: Sendable {
   }
 }
 
-/// The last `max` bytes of a log, sanitized for display.
 func logTail(_ path: String, _ max: Int) -> String {
   guard let handle = FileHandle(forReadingAtPath: path) else { return "" }
   defer { try? handle.close() }

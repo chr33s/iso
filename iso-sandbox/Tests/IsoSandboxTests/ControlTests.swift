@@ -87,11 +87,9 @@ import Testing
       handler: { (_: ControlRequest) in ControlResponse(ok: true) },
       failure: { ControlResponse(ok: false, error: $0) })
     let held = [try rawConnect(path), try rawConnect(path)]
-    // Let the accept loop claim both slots.
     Thread.sleep(forTimeInterval: 0.3)
     let refused = try rawConnect(path)
     #expect(ControlSocket.readLine(refused, limit: nil) == .closed)
-    // The stalled holders time out, and their slots serve requests again.
     for handle in held { _ = ControlSocket.readLine(handle, limit: nil) }
     Thread.sleep(forTimeInterval: 0.3)
     #expect(try ControlSocket.call(path, .init(op: .ping), timeout: 5).ok)
@@ -134,7 +132,6 @@ import Testing
     try ControlSocket.serveJSON(
       at: path, limits: .init(maxConnections: 1, ioDeadlineSeconds: 1),
       handler: { (request: ControlRequest) in
-        // Far larger than the socket buffers.
         request.op == .exec
           ? ControlResponse(ok: true, stdout: Data(count: 16 << 20)) : ControlResponse(ok: true)
       },

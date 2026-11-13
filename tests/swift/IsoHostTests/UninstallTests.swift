@@ -17,7 +17,6 @@ import Testing
   #expect(
     SSHConfigBlocks.removeMarkerBlocks(("# iso START iso-a\nHost iso-a\n# iso END\n"))
       == "")
-  // CRLF files keep their other lines; trailing blank lines collapse to one newline.
   #expect(SSHConfigBlocks.removeMarkerBlocks("Host k\r\n\n\n") == "Host k\n")
 }
 
@@ -30,7 +29,6 @@ import Testing
   #expect(result.contains("172.16.0.3"))
   let plain = "Host something\n    HostName 1.2.3.4\n"
   #expect(SSHConfigBlocks.removeNamedMarkerBlock(plain, host: "iso-x") == plain)
-  // An END marker outside the named block is kept.
   let stray = ("Host k\n# iso END\n")
   #expect(SSHConfigBlocks.removeNamedMarkerBlock(stray, host: "iso-x") == stray)
 }
@@ -54,7 +52,6 @@ import Testing
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let path = directory + "/config"
   let log = DiagnosticsLog()
-  // Missing file: no-op.
   try SSHConfigBlocks.removeAll(at: path, diagnostics: log.diagnostics)
   #expect(!pathExists(path))
   let unrelated = "Host keep\n    HostName 9.9.9.9\n"
@@ -110,7 +107,6 @@ import Testing
   #expect(Uninstaller.configPathIsUnderDataDirectory(root + "/data/config.jsonc", root + "/data"))
   #expect(
     !Uninstaller.configPathIsUnderDataDirectory(root + "/elsewhere/config.jsonc", root + "/data"))
-  // Neither side exists: lexical, by whole components.
   #expect(
     Uninstaller.configPathIsUnderDataDirectory("/nonexistent/data/config.toml", "/nonexistent/data")
   )
@@ -119,14 +115,11 @@ import Testing
       "/nonexistent/other/config.toml", "/nonexistent/data"))
   #expect(
     !Uninstaller.configPathIsUnderDataDirectory("/nonexistent/database/c", "/nonexistent/data"))
-  // Only one side resolves: can't tell, so the notice is suppressed.
   #expect(Uninstaller.configPathIsUnderDataDirectory("/nonexistent/path/config.toml", root))
 }
 
 // MARK: - End to end
 
-/// A private HOME with owned state, config, an unrelated file, update-check
-/// state and SSH config, plus a removable binary.
 private struct UninstallFixture {
   let root: String
   var home: String { root + "/home" }
@@ -252,7 +245,6 @@ private struct UninstallFixture {
     let fixture = try UninstallFixture()
     defer { fixture.remove() }
     let asked = Mutex<[String]>([])
-    // Decline the binary: nothing changes.
     let log = DiagnosticsLog()
     try fixture.uninstaller(terminal: true, log: log) { prompt in
       asked.withLock { $0.append(prompt) }
@@ -261,7 +253,6 @@ private struct UninstallFixture {
     #expect(asked.withLock { $0 } == ["Remove iso binary at \(fixture.binary)?"])
     #expect(log.contains("Uninstall cancelled"))
     #expect(pathExists(fixture.binary))
-    // Accept the binary, decline the data.
     asked.withLock { $0 = [] }
     try fixture.uninstaller(terminal: true, log: DiagnosticsLog()) { prompt in
       asked.withLock { $0.append(prompt) }

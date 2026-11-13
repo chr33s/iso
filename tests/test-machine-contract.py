@@ -139,11 +139,9 @@ def main():
                 stdout += f"\n({error})"
             check(label, good, f"exit {status}\nstdout: {stdout}\nstderr: {stderr[-600:]}")
 
-        # --quiet: the document alone, nothing on stderr.
         status, stdout, stderr = run(binary, ["status", "nobody", "--output", "json", "--quiet"], home)
         check("--quiet discards stderr", status == 1 and stderr == "" and document(stdout)["ok"] is False, stderr)
 
-        # Text output and legacy --json are unchanged by the new option.
         for args in (["list"], ["list", "--json"], ["status", "--json"]):
             legacy = run(binary, args, home)
             explicit = run(binary, [*args, "--output", "text"], home)

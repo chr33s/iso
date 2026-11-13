@@ -1,9 +1,9 @@
 import Foundation
 
-/// How many refusals a peer the owner does not trust (a guest, a loopback
-/// client) may put in the owner's log: 20 a minute, so reconnecting or
-/// resending cannot grow the log without bound. The first refusal of the
-/// next minute reports how many went unlogged.
+/// How many refusals a peer the owner does not trust (a guest, a loopback client)
+/// may put in the owner's log: 20 a minute, so reconnecting or resending cannot
+/// grow the log without bound.
+/// The first refusal of the next minute reports how many went unlogged.
 package struct RejectionBudget: Sendable {
   package static let perMinute = 20
   private var count = 0

@@ -5,9 +5,8 @@ import IsoHost
 import IsoPolicy
 import Synchronization
 
-/// Client-local association of a display name with one qualified remote
-/// instance (spec 7.1 `ClientBinding`). It never claims authoritative
-/// lifecycle; the worker's records do.
+/// Client-local association of a display name with one qualified remote instance (spec 7.1);
+/// the worker's records stay authoritative.
 package struct ClientBinding: Codable, Sendable, Equatable {
   package var schema = 1
   package let host: HostAlias
@@ -19,7 +18,6 @@ package struct ClientBinding: Codable, Sendable, Equatable {
   package let name: InstanceName
   package let policyHash: SHA256Hex
   package let createdBy: HostOperationID
-  /// The last observed VM state; never an operation's state.
   package var lastState: ObservedState?
   package var lastObservedAt: UInt64?
 
@@ -194,10 +192,9 @@ package enum ClientSessionKey {
   }
 }
 
-/// One live access session held by this client process: opens the grant,
-/// writes the private descriptor and an ssh config that routes through the
-/// owned relay, renews every 10 seconds, and closes and removes its files on
-/// `finish`. Renewal failure is terminal; the session is never revived.
+/// One live access session held by this client process: opens the grant, writes the private
+/// descriptor and ssh config routed through the relay, renews every 10 seconds.
+/// Renewal failure is terminal.
 package final class ClientSessionCoordinator: Sendable {
   package static let renewInterval: Duration = .seconds(10)
 
@@ -304,7 +301,6 @@ package final class ClientSessionCoordinator: Sendable {
       knownHostsPath: base + ".known_hosts")
   }
 
-  /// Renews until `finish` or a renewal failure (which ends the session).
   package func startRenewing(diagnostics: Diagnostics) {
     Thread.detachNewThread { [self] in
       while true {
@@ -326,8 +322,6 @@ package final class ClientSessionCoordinator: Sendable {
 
   package var failure: HostControlError? { state.withLock { $0.failure } }
 
-  /// Closes the grant (best effort when the host is unreachable) and always
-  /// removes the private files.
   package func finish() {
     state.withLock { $0.stopped = true }
     _ = try? host.client.call(
@@ -391,9 +385,8 @@ package struct RemoteListing: Sendable {
 }
 
 extension ClientSessionCoordinator {
-  /// The pinned guest route through this session's relay, usable by every
-  /// existing transport (ssh, scp, rsync, tar). Refuses paths ssh could not
-  /// carry unquoted inside a ProxyCommand or rsync `-e`.
+  /// The pinned guest route through this session's relay for ssh, scp, rsync and tar.
+  /// Refuses paths ssh could not carry unquoted in a ProxyCommand or rsync `-e`.
   package func guestTarget(config: IsoConfig) throws -> SSHTarget {
     guard let executable = Bundle.main.executablePath else {
       throw HostError("cannot resolve the iso executable path")
@@ -410,20 +403,16 @@ extension ClientSessionCoordinator {
   }
 }
 
-/// Client-side state of one remote binding: workspace association and
-/// completed stages live here, independent of the worker VM's lifetime, so a
-/// stage stays reviewable and applicable when the host is offline or the VM
-/// is destroyed.
+/// Client-side state of one remote binding (workspace association, completed stages),
+/// independent of the worker VM so stages stay applicable when the host is offline.
 package enum RemoteWorkspace {
   package static func directory(_ config: IsoConfig, _ binding: ClientBinding) -> String {
     config.stateRoot.appending("host-workspaces").path + "/" + binding.hostID.rawValue + "/"
       + binding.instanceID.rawValue
   }
 
-  /// A client-local instance record whose directory holds `workspace.json`
-  /// and `stage/`; it never names a local VM.
-  /// `ports` reserves a client port slot (credential proxies and tunnels);
-  /// workspace and stage use alone never take one.
+  /// A client-local instance record holding `workspace.json` and `stage/`; it never names a
+  /// local VM. `ports` reserves a client port slot.
   package static func shadow(_ config: IsoConfig, _ binding: ClientBinding, ports: Bool = false)
     throws -> Instance
   {
@@ -445,20 +434,16 @@ package enum RemoteWorkspace {
     return Instance(name: binding.name, index: index, directory: directory, image: .default)
   }
 
-  /// Gives back a binding's client port slot (after destroy or a finished run).
   package static func releasePorts(_ config: IsoConfig, _ binding: ClientBinding) {
     unlink(directory(config, binding) + "/index")
   }
 
-  /// Removes a finished disposable run's client state (not its results stage).
   package static func removeRunState(_ config: IsoConfig, _ binding: ClientBinding) {
     try? FileManager.default.removeItem(atPath: directory(config, binding))
   }
 
-  /// The client-side port slot of a remote binding (credential-proxy and
-  /// tunnel ports derive from it). Chosen once, from the top of the range,
-  /// avoiding local instances and other remote bindings; a later collision
-  /// fails closed when the port is found in use.
+  /// The client-side port slot (proxy and tunnel ports derive from it), chosen once from
+  /// the top of the range; a later collision fails closed.
   static func shadowIndex(_ config: IsoConfig, directory: String) throws -> InstanceIndex {
     let path = directory + "/index"
     if let bytes = try StateStore.readControlFile(path),
@@ -562,21 +547,16 @@ package enum RemoteWorkspace {
   }
 }
 
-/// Interactive Claude and Codex on a remote VM in client-broker mode
-/// (spec 10.2): provider credentials resolve on this client into the
-/// confined credential proxy, which reaches the guest only through a reverse
-/// tunnel inside the session's relayed route. Nothing secret is sent to the
-/// execution host.
+/// Interactive Claude and Codex on a remote VM in client-broker mode (spec 10.2): credentials
+/// resolve on this client into the confined proxy, reaching the guest only through a reverse
+/// tunnel in the relayed route. Nothing secret goes to the execution host.
 package enum RemoteAgent: String, Sendable {
   case claude
   case codex
 
-  /// Prepares the agent through the relayed route and runs it attached;
-  /// returns the remote command's status. Proxies stop when it ends.
-  /// A remote guest reaches provider credentials only through this client's
-  /// proxy: `required` withholds every provider variable and Codex's
-  /// `auth.json`, which `auto` copies when a provider has no proxy. `off`
-  /// starts no proxy, so a remote agent would have no credential path.
+  /// Prepares the agent through the relayed route and runs it attached; returns the remote
+  /// status. `required` withholds every provider variable and Codex `auth.json`; `off`
+  /// starts no proxy, so a remote agent has no credential path.
   package static func brokeredConfig(_ config: IsoConfig) throws -> IsoConfig {
     guard config.proxy.mode != .off else {
       throw HostError(
@@ -588,10 +568,8 @@ package enum RemoteAgent: String, Sendable {
     return config.overridingProxyMode(.required).droppingHeaderedMCPServers()
   }
 
-  /// What the agent's session forwards: Codex reads the client proxy's
-  /// capability token from `ISO_LOCAL_API_KEY` (its provider's `env_key`), as
-  /// the local session sets it. The token opens only this client's proxy,
-  /// reached through the relay; it is guest-visible by design.
+  /// Codex reads the proxy's capability token from `ISO_LOCAL_API_KEY`. It opens only this
+  /// client's proxy via the relay and is guest-visible by design.
   func agentEnvironment(_ shadow: Instance) -> EnvForward {
     var env = EnvForward()
     if self == .codex, let token = ProxyLauncher.capabilityToken(shadow, provider: .openai) {
@@ -600,12 +578,9 @@ package enum RemoteAgent: String, Sendable {
     return env
   }
 
-  /// The configuration a remote agent's broker and bootstrap run under: the
-  /// proxy rule of ``brokeredConfig(_:)`` plus the VM's own egress. For a
-  /// filtered VM the worker's proven boot policy (from the grant) binds the
-  /// broker's signed readiness check, which runs through the relayed guest
-  /// path; without that policy the agent is refused rather than started
-  /// unproven.
+  /// The configuration a remote agent's broker runs under: ``brokeredConfig(_:)`` plus the
+  /// VM's egress. A filtered VM needs the worker's proven boot policy (from the grant);
+  /// without it the agent is refused.
   package static func agentConfig(
     _ config: IsoConfig, filteredPolicy: FilteredGrantPolicy?, vmEgress: EgressMode?
   ) throws -> IsoConfig {
@@ -694,10 +669,9 @@ package enum RemoteAgent: String, Sendable {
   }
 }
 
-/// A coordinator that outlives the command that started it (spec 10.1):
-/// one per binding, holding the binding's coordinator lock for its life and
-/// publishing what other commands need to reuse its session. Reuse is
-/// allowed only while the lock is held and the boot still matches.
+/// A coordinator that outlives its command (spec 10.1): one per binding, holding the
+/// coordinator lock and publishing its session for reuse only while the lock is held and the
+/// boot matches.
 package enum CoordinatorRecord {
   package struct Published: Codable, Sendable, Equatable {
     package var schema = 1
@@ -717,7 +691,6 @@ package enum CoordinatorRecord {
     return (directory + "/coordinator.json", directory + "/coordinator.lock")
   }
 
-  /// Claims the binding's coordinator role for this process's lifetime.
   package static func claim(_ config: IsoConfig, _ binding: ClientBinding) throws -> FileLock {
     _ = try RemoteWorkspace.shadow(config, binding)
     guard let lock = try FileLock.attempt(path: paths(config, binding).lock) else {
@@ -745,11 +718,9 @@ package enum CoordinatorRecord {
     unlink(paths(config, binding).record)
   }
 
-  /// The live coordinator's record, if one holds the lock and its private
-  /// files still exist.
-  /// Never takes the coordinator lock itself, so it cannot race a
-  /// coordinator's claim; liveness is the recorded pid being this user's
-  /// `iso host session` process.
+  /// The live coordinator's record, if one holds the lock and its private files exist.
+  /// Never takes the lock, so it cannot race a claim; liveness is the pid being this user's
+  /// `iso host session`.
   package static func live(_ config: IsoConfig, _ binding: ClientBinding) -> Published? {
     let recordPath = paths(config, binding).record
     guard let bytes = try? StateStore.readControlFile(recordPath),
@@ -764,7 +735,6 @@ package enum CoordinatorRecord {
     return record
   }
 
-  /// Whether `pid` is a live `iso host session` process of this user.
   static func isCoordinator(_ pid: Int32) -> Bool {
     guard pid > 1 else { return false }
     var info = proc_bsdinfo()
@@ -773,7 +743,6 @@ package enum CoordinatorRecord {
     return HostMigration.arguments(of: pid)?.contains(" host session ") ?? false
   }
 
-  /// The relayed guest route through a live coordinator's session.
   package static func target(_ record: Published, config: IsoConfig) throws -> SSHTarget {
     guard let executable = Bundle.main.executablePath else {
       throw HostError("cannot resolve the iso executable path")
@@ -817,10 +786,9 @@ package enum CoordinatorRecord {
   }
 }
 
-/// Client-side completion of a disposable run's results (spec 12.1, 12.3):
-/// download the committed artifact over the artifact channel, verify size and
-/// digest, validate it as an archive, fsync it into a client-owned stage, and
-/// only then acknowledge. The worker never names a client path.
+/// Client-side completion of a disposable run's results (spec 12.1, 12.3): download, verify
+/// size and digest, validate as an archive, fsync into a client-owned stage, then
+/// acknowledge. The worker never names a client path.
 package enum RemoteRunResults {
   package struct Stage: Sendable {
     package let id: StageID

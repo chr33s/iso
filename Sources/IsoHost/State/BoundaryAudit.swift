@@ -3,12 +3,11 @@ import IsoConfiguration
 import IsoCore
 import IsoPolicy
 
-/// Host-owned metadata about what crossed an instance's boundary
-/// (selective-hardening spec §9): which host capabilities a boot granted and
-/// what workspace returns happened. Never values, request bodies, file
-/// contents or tokens — only names, counts, modes and times. One JSON object
-/// per line in `<instance>/audit.jsonl` (owner-only), bounded in size; each
-/// event also goes to the instance-independent `AuditStore`.
+/// Host-owned metadata about what crossed an instance's boundary (selective-
+/// hardening spec §9): host capabilities a boot granted and workspace returns.
+/// Never values, bodies, contents or tokens; only names, counts, modes, times.
+/// One bounded JSON object per line in `<instance>/audit.jsonl` (owner-only);
+/// each event also goes to the instance-independent `AuditStore`.
 package enum BoundaryAudit {
   package static let maxBytes = 1 << 20
 
@@ -33,17 +32,14 @@ package enum BoundaryAudit {
     /// An instance fenced after an unconfirmed restart cleanup (LIFE-01).
     case handoffFence(reason: String)
     case pullDirect
-    /// The immutable policy binding recorded for a new VM boot.
     case policyBoot(mode: PolicyMode, digest: String?, epoch: String, actions: [PolicyAction])
     /// A proxy launch slot claimed, refused, or (shadow) re-simulated.
     case policyProxyClaim(provider: ProxyProvider, generation: String, outcome: ClaimOutcome)
-    /// A host-side policy decision on a governed operation (or a shadow report).
     case policyDecision(
       action: PolicyAction, outcome: DecisionOutcome, decisionID: String, digest: String?,
       shadow: Bool)
     case approvalIssued(approvalID: String, stageID: String)
     case approvalConsumed(approvalID: String, reason: PolicyReason)
-    /// A stage apply that stopped partway; the receipt stays consumed.
     case pullApplyPartial(applied: Int)
     /// A boot's guest-driven computer use, as its owner reported it (to
     /// `iso stop`, or in its log of ended boots): the frame rate and counts
@@ -59,7 +55,6 @@ package enum BoundaryAudit {
     /// The guest's Core AI report after enrollment: kind names and the
     /// delegate flag only.
     case macCoreAIProbe(availableKinds: [String], delegateEnabled: Bool)
-    /// The owner's preflight found AMFI relaxed on the host for this boot.
     case hostSecurityReduced
 
     package enum ClaimOutcome: String, Sendable, Equatable {
@@ -220,10 +215,10 @@ package enum BoundaryAudit {
 
   package static func path(_ instance: Instance) -> String { instance.directory + "/audit.jsonl" }
 
-  /// Best effort: an audit failure never fails the operation it describes.
-  /// Events append under a lock, so concurrent iso processes lose none.
-  /// Past `maxBytes` the older half of the log is dropped; if the log cannot
-  /// be read for that, the new event is dropped rather than the history.
+  /// Best effort: an audit failure never fails the operation it describes. Events
+  /// append under a lock so concurrent iso processes lose none. Past `maxBytes` the
+  /// older half is dropped; if the log cannot be read for that, the new event is
+  /// dropped rather than the history.
   package static func record(
     _ instance: Instance, _ event: Event, now: Date = Date(), diagnostics: Diagnostics? = nil
   ) {

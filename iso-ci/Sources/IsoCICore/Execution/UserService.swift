@@ -12,7 +12,6 @@ package enum UserService {
     NSHomeDirectory() + "/Library/LaunchAgents/" + label(root) + ".plist"
   }
 
-  /// The constraints an operator must know before relying on the service.
   package static let limitations = [
     "runs only while this user is logged in; logout, restart and sleep stop it",
     "the GitHub App key in the login keychain is readable only while the keychain is unlocked, and only by the iso-ci executable you allowed (allow it again after an update)",

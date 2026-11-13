@@ -26,9 +26,8 @@ package enum CURefusal: String, Codable, Sendable {
   }
 }
 
-/// Guest-driven computer use (docs/design/guest-driven-computer-use.md): a
-/// guest process asks its VM's owner for frames and input on vsock 7802.
-/// One JSON object per line, one request then one response.
+/// Guest-driven computer use (docs/design/guest-driven-computer-use.md): a guest process asks
+/// its VM's owner for frames and input on vsock 7802.
 package enum GuestCUProtocol {
   package static let port: UInt32 = 7802
   /// Largest request line the host reads.
@@ -196,10 +195,8 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
     "op", "session", "action", "basedOnFrame", "since", "idleMs", "timeoutMs", "until", "region",
   ]
 
-  /// Whether this request may be sent again on a new connection after the
-  /// first got no reply. One the host received in full (`written`) may
-  /// have run, so an action never goes twice; a failed write delivered at
-  /// most part of a line, which the host cannot act on.
+  /// Whether this request may be sent again on a new connection after the first got no reply.
+  /// A fully written action may have run, so it never goes twice; a partial line cannot be acted on.
   package func mayResend(written: Bool) -> Bool { op != .act || !written }
 
   package enum ParseError: Error, Equatable {
@@ -263,7 +260,6 @@ package struct GuestCURequest: Codable, Equatable, Sendable {
     case .act:
       guard r.session != nil else { return .failure(.missing("session")) }
       guard r.action != nil else { return .failure(.missing("action")) }
-      // Guest actions always name the frame they were decided on.
       guard r.basedOnFrame != nil else { return .failure(.missing("basedOnFrame")) }
     }
     return .success(r)
@@ -294,9 +290,8 @@ package struct GuestCUResponse: Codable, Equatable, Sendable {
   package var submitted: Int?
   package var controller: GuestCUController?
   package var holdRemainingSeconds: Int?
-  /// The display's damage sequence: on `frame`, `act` (sampled before the
-  /// first input event), `wait` and `status`. Its presence on `status` is
-  /// how a guest learns the host supports `wait`.
+  /// The display's damage sequence: on `frame`, `act` (sampled before the first input event),
+  /// `wait` and `status`; its presence on `status` tells a guest the host supports `wait`.
   package var damageSeq: UInt64?
   package var wait: GuestCUWaitResult?
 

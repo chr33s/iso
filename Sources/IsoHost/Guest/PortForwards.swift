@@ -18,7 +18,6 @@ package struct PortForwards: Sendable {
     self.diagnostics = diagnostics
   }
 
-  /// `<instance>/forwards.json`; an empty set removes the file.
   package static func save(
     _ forwards: [PortForward], _ instance: Instance, diagnostics: Diagnostics
   )
@@ -122,10 +121,9 @@ package struct PortForwards: Sendable {
     return result == 0 ? nil : errno
   }
 
-  /// The forward master's control socket: `<instance>/forwards.sock` when it
-  /// fits macOS's 104-byte Unix socket limit with the 17-byte suffix ssh adds
-  /// while binding, else a per-instance name in the user's private temporary
-  /// directory (a long data root would otherwise make every forward fail).
+  /// The forward master's control socket: `<instance>/forwards.sock` when it fits
+  /// macOS's 104-byte limit with ssh's 17-byte bind suffix, else a per-instance
+  /// name in the user's private temp directory.
   static func controlPath(_ instance: Instance) -> String {
     let local = instance.directory + "/forwards.sock"
     if local.utf8.count + 17 < 104 { return local }

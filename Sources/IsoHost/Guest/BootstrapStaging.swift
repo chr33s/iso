@@ -22,7 +22,6 @@ final class StagingDirectory: Sendable {
 
   func remove() { try? FileManager.default.removeItem(atPath: path) }
 
-  /// Entry names, sorted for a deterministic copy order.
   func entries() throws -> [String] {
     do {
       return try FileManager.default.contentsOfDirectory(atPath: path).sorted()
@@ -31,13 +30,11 @@ final class StagingDirectory: Sendable {
     }
   }
 
-  /// Copy the allowlisted `files` and `directories` of `source` in, as one
-  /// confined snapshot of the approved root (IMPORT-01): a link is followed
-  /// only to a regular file or directory inside that root, special files and
-  /// cycles are refused, and the whole import is bounded. `reads` are
-  /// further files read as data (never staged); they are captured here so
-  /// no later step reopens the host path. An overlay: nothing already staged
-  /// is removed.
+  /// Copy the allowlisted `files` and `directories` of `source` in as one confined
+  /// snapshot of the approved root (IMPORT-01): links are followed only to regular
+  /// files/directories inside it, special files and cycles are refused, and the
+  /// import is bounded. `reads` are captured here as data (never staged) so no
+  /// later step reopens the host path. An overlay: nothing staged is removed.
   @discardableResult
   func stage(from source: String, files: [String], directories: [String], reads: [String] = [])
     throws -> [String: [UInt8]]
@@ -147,7 +144,6 @@ struct ConfinedCopy {
     }
   }
 
-  /// The whole root's contents into `destination`, with `tree`'s rules.
   mutating func everything(to destination: String) throws {
     try count(0)
     do {
@@ -170,7 +166,6 @@ struct ConfinedCopy {
     }
   }
 
-  /// A regular file's bytes, nil when absent.
   mutating func read(_ relative: String) throws -> [UInt8]? {
     guard let entry = try resolve(relative) else { return nil }
     guard !entry.directory else {
@@ -194,7 +189,6 @@ struct ConfinedCopy {
 /// Host file copies with `std::fs::copy` semantics: the source is followed
 /// through symlinks, the destination replaced, and permission bits kept.
 enum HostFiles {
-  /// Directory trees deeper than this (a symlink cycle) are refused.
   static let maxDepth = 64
 
   static func isFile(_ path: String) -> Bool {

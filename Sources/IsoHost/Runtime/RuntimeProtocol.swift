@@ -2,19 +2,16 @@ import Foundation
 import IsoCore
 
 /// Typed parsers for `iso-sandbox` JSON output (protocol 5). Runtime output
-/// is untrusted input: every record is decoded into a closed type, reported
-/// identifiers are checked against the one requested, and the effective VM
-/// configuration the isolation gate reads rejects unknown fields, so a
-/// runtime that grows a host-facing setting fails closed.
-/// Stable diagnostic classes; each message starts with the identifier
-/// documented in `docs/backends.md`.
+/// is untrusted: records decode into closed types, identifiers are checked
+/// against the one requested, and the gate's effective config rejects unknown
+/// fields, so a runtime growing a host-facing setting fails closed. Diagnostic
+/// classes are stable; messages start with the identifier in `docs/backends.md`.
 package enum RuntimeError: Error, Equatable, Sendable, CustomStringConvertible {
   case unavailable(String)
   /// Missing, unrecognized, or unexpected runtime output.
   case unqualified(String)
   case networkIsolation(String)
   case hostExposure(String)
-  /// A record names a sandbox or owner other than the one expected.
   case identityConflict(String)
   case hostKeyChanged(String)
   case bootTimeout(String)
@@ -22,7 +19,6 @@ package enum RuntimeError: Error, Equatable, Sendable, CustomStringConvertible {
   case sessionExpired(String)
   /// A call timed out, was cancelled, or overflowed: its effect is unknown.
   case operationUncertain(String)
-  /// The runtime ran and reported failure (no diagnostic class).
   case failed(String)
 
   package var description: String {

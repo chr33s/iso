@@ -91,8 +91,6 @@ package final class AuditInvocation: Sendable {
     }
   }
 
-  // The launch seam (`InteractiveSSH.attach`).
-
   func handoff(pty: Bool, forwarded names: [String]) {
     let excluded = state.withLock { state in
       state.launchObserved = true
@@ -106,7 +104,6 @@ package final class AuditInvocation: Sendable {
           forwardedVariables: names.filter { !excluded.contains($0) }.sorted())))
   }
 
-  /// The isolation recheck refused the handoff: no transport was started.
   func revalidationFailed() {
     state.withLock { $0.launchObserved = true }
     transportFailed(.revalidationFailed)

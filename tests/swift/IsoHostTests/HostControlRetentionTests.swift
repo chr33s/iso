@@ -78,7 +78,6 @@ import Testing
     _ = try retain(f, run, .live, RunStore.maxLiveRetentionSeconds)
     f.clock.advance(.seconds(10_000))
     f.supervisor.runPending()
-    // A renewal inside the window does not move the cap.
     _ = try retain(f, run, .live, RunStore.maxLiveRetentionSeconds)
     #expect(
       try inspect(f, run).liveRetentionUntil?.seconds == start + RunStore.maxLiveRetentionSeconds)
@@ -123,7 +122,6 @@ import Testing
   @Test func aLiveRetainedRunIsReleasedByDiscardAndCompleteStillWorks() throws {
     let f = try SupervisorFixture()
     defer { f.cleanup() }
-    // Discarding a running run without live retention is refused.
     let plain = try create(f)
     let state = try inspect(f, plain)
     #expect(
@@ -140,7 +138,6 @@ import Testing
     #expect(try inspect(f, plain).phase == .destroyed)
     #expect(f.native.vm(runtime) == nil)
 
-    // run.complete still exports during live retention.
     let other = try create(f)
     _ = try retain(f, other, .live, 600)
     _ = try f.receipt(
@@ -163,7 +160,6 @@ import Testing
     #expect(extended > first)
     _ = try retain(f, run, .stopped, 60)
     #expect(try inspect(f, run).retentionDeadline == extended)
-    // A maximal request made later is capped from the first stop.
     let stopped = try #require(try f.supervisor.runs.load(run)?.firstStopAt)
     f.clock.advance(.seconds(7_000))
     _ = try retain(f, run, .stopped, RunStore.maxStoppedRetentionSeconds)
@@ -187,13 +183,11 @@ import Testing
     defer { f.cleanup() }
     let run = try create(f)
     let state = try inspect(f, run)
-    // Stopped retention needs a stopped run.
     #expect(
       failure(
         f.call(
           .runRetain(run: run, expectedGeneration: state.generation, mode: .stopped, seconds: 60),
           operation: .generate())) == .resultsUnavailable)
-    // Stale generation.
     #expect(
       failure(
         f.call(
@@ -208,7 +202,6 @@ import Testing
       run: run, expectedGeneration: state.generation, mode: .live, seconds: 61)
     #expect(failure(f.call(other, operation: id)) == .operationIDConflict)
     f.supervisor.runPending()
-    // An unknown run.
     #expect(
       failure(
         f.call(

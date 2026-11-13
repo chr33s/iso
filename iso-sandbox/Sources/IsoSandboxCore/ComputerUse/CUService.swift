@@ -1,10 +1,10 @@
 import Foundation
 import IsoMacProtocol
 
-/// Host computer-use requests against a ``VMScreen``, shared by the macOS
-/// and Linux owners: the same session, frame, action, wait, hold and
-/// live-view rules for both guest families. Each owner admits a session
-/// first with its own guest-identity checks.
+/// Host computer-use requests against a ``VMScreen``, shared by the macOS and
+/// Linux owners: the same session, frame, action, wait, hold and live-view rules
+/// for both guest families.
+/// Each owner admits a session first with its own guest-identity checks.
 @MainActor
 package enum CUService {
   /// Whether the owner starts a new live view now.

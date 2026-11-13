@@ -292,9 +292,8 @@ struct HostForward: ParsableCommand {
     _ = try parsed()
   }
 
-  /// Every forward as `PortForward(guest:host:)`; the older grammar's
-  /// reversed `LOCAL[:GUEST]` is turned around here and nowhere else. Every
-  /// listener binds 127.0.0.1 on the client, whichever grammar named it.
+  /// Every forward as `PortForward(guest:host:)`; the older reversed
+  /// `LOCAL[:GUEST]` is flipped only here. Listeners always bind 127.0.0.1.
   func parsed() throws -> [PortForward] {
     if !forwardPort.isEmpty { return forwardPort }
     return try ports.map { spec in

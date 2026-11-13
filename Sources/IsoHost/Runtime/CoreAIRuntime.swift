@@ -3,11 +3,10 @@ import IsoConfiguration
 import IsoCore
 import Security
 
-/// The experimental `iso-sandbox-coreai` build that `coreai` needs
-/// (docs/design/paravirtualized-coreai.md): the same runtime built with
-/// `-DISO_COREAI` and signed with `com.apple.private.virtualization`. It is
-/// never released; iso only selects it, and checks it before handing it a
-/// Core AI sandbox.
+/// The experimental `iso-sandbox-coreai` build `coreai` needs
+/// (docs/design/paravirtualized-coreai.md): built with `-DISO_COREAI` and signed
+/// with `com.apple.private.virtualization`. Never released; iso only selects and
+/// checks it before handing it a Core AI sandbox.
 package enum CoreAIRuntime {
   package static let binaryName = "iso-sandbox-coreai"
   package static let entitlement = "com.apple.private.virtualization"
@@ -44,9 +43,7 @@ package enum CoreAIRuntime {
 
 extension SandboxRuntime {
   /// For a Core AI sandbox: this runtime is the experimental build. As for
-  /// companions (`CompanionSignature.verifyForRelease`), only a release
-  /// build of iso reads the signature; a debug build runs freshly built,
-  /// unsigned binaries.
+  /// companions, only a release build of iso reads the signature.
   package func requireCoreAI() throws {
     try requireMacGuests()
     #if ISO_RELEASE_BUILD

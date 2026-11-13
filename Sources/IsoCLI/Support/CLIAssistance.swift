@@ -16,7 +16,6 @@ enum DeprecatedExcludeGit {
 
 /// Deterministic help for ordinary mistakes: a mistyped subcommand gets a
 /// nearest-name suggestion, and conflicting flags are named exactly as given.
-/// Nothing here guesses intent beyond spelling distance.
 enum CommandSuggestion {
   /// "Did you mean 'pull'?" for an unknown subcommand token, when one
   /// sibling name is clearly closest (edit distance at most 2, or a unique

@@ -12,7 +12,6 @@ package enum NativeFailure: Error, Sendable, Equatable {
   case uncertain(String)
 }
 
-/// The guest SSH endpoint chosen from current native proof.
 package struct GuestEndpoint: Sendable, Equatable {
   package enum Route: Sendable, Equatable {
     case tcp(address: IPv4Address, port: UInt16)
@@ -30,10 +29,9 @@ package struct GuestEndpoint: Sendable, Equatable {
   package init(brokered connector: ConnectorCommand) { route = .brokered(connector) }
 }
 
-/// The native lifecycle seam under `HostSupervisor`. Production uses
-/// `AppleNativeHost`, which reuses `AppleBackend` so isolation proof, host-key
-/// pinning and the runtime owner's deadline are unchanged; tests use a fake.
-/// Every call is synchronous and addresses one owned runtime object.
+/// The native lifecycle seam under `HostSupervisor`. Production uses `AppleNativeHost`
+/// (reusing `AppleBackend`); tests use a fake. Each call is synchronous and addresses one
+/// runtime object.
 package protocol NativeHost: Sendable {
   func qualification() -> RuntimeQualification
   func observe(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) -> NativeState
@@ -44,13 +42,11 @@ package protocol NativeHost: Sendable {
   /// Boots with a fixed deadline the runtime owner enforces independently.
   func start(_ instance: InstanceID, runtime: MachineName, expiresAt: Date?) throws(NativeFailure)
   func stop(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
-  /// Deletes the exact owned runtime object and its worker-side records.
   func delete(_ instance: InstanceID, runtime: MachineName, owner: OwnerID) throws(NativeFailure)
   func guestEndpoint(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
     -> GuestEndpoint
-  /// For a running brokered VM: the network proof of a fresh gate pass of
-  /// its current boot (spec 6.2). Nil for vmnet VMs; throws when a brokered
-  /// boot fails the gate.
+  /// For a running brokered VM: the network proof of a fresh gate pass of its boot (spec
+  /// 6.2). Nil for vmnet VMs; throws when the gate fails.
   func networkProof(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
     -> NetworkProof?
   /// Whether `image` is prepared on this worker (its own manifest, verified
@@ -67,9 +63,7 @@ package protocol NativeHost: Sendable {
   func filteredPolicy(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure)
     -> FilteredGrantPolicy?
   func guestUser(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) -> GuestUser
-  /// The guest's pinned SSH host key line (`ssh-ed25519 <base64>`).
   func guestHostKey(_ instance: InstanceID, runtime: MachineName) throws(NativeFailure) -> String
-  /// Adds a client session key to the guest's authorized keys (idempotent).
   func authorizeClientKey(_ instance: InstanceID, runtime: MachineName, key: ClientPublicKey)
     throws(NativeFailure)
   /// Best-effort hygiene only: removal does not terminate existing streams.
@@ -81,15 +75,12 @@ package protocol NativeHost: Sendable {
   /// The configured transport, brokered runtime support, the policy a fresh
   /// run VM would boot with per egress mode, and the live tuple values.
   func networkCapability() -> NetworkCapability
-  /// The current manifest digest of a prepared worker image, if any.
   func imageDigest(_ image: ImageName) -> String?
 }
 
-/// The worker-side filtered-egress companion of a host-control VM: the same
-/// `iso-egress` process, owner lease, Seatbelt confinement, guest-path
-/// readiness proof and recorded boot policy as `iso up --egress filtered`.
-/// `start` runs after every boot of a filtered VM; without it no access grant
-/// can pass the filtered handoff.
+/// The worker-side filtered-egress companion of a host-control VM, same as `iso up --egress
+/// filtered`. `start` runs after every filtered boot; without it no grant passes the filtered
+/// handoff.
 package protocol FilteredEgressCompanion: Sendable {
   func start(_ instance: Instance, backend: AppleBackend) throws
   func stop(_ instance: Instance)
@@ -123,9 +114,8 @@ package struct ProcessEgressCompanion: FilteredEgressCompanion {
 /// relative to the guest user's home.
 package let runResultsDirectory = "iso-results"
 
-/// `NativeHost` over the existing concrete Apple backend. Each host-control
-/// instance keeps its native records in an ordinary instance directory named
-/// `hc-<instance id>`, so `AppleLifecycle`'s journals stay the native layer.
+/// `NativeHost` over the Apple backend; each instance keeps native records in an instance
+/// directory `hc-<instance id>` so `AppleLifecycle`'s journals stay the native layer.
 package struct AppleNativeHost: NativeHost {
   /// The first (enrollment) boot inside `vm.create` is bounded too.
   static let creationBootSeconds: TimeInterval = 15 * 60
@@ -165,9 +155,8 @@ package struct AppleNativeHost: NativeHost {
     return instance
   }
 
-  /// The backend under this VM's creation-time network policy, so start,
-  /// stop and every guest route use the egress the VM was created with,
-  /// not whatever the worker's configuration says today.
+  /// The backend under this VM's creation-time network policy, not whatever the worker's
+  /// configuration says today.
   private func scoped(_ instance: Instance) throws(NativeFailure) -> AppleBackend {
     let recorded: NetworkPolicy?
     do { recorded = try NetworkPolicy.load(instance) } catch {

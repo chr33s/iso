@@ -203,10 +203,8 @@ package struct BootID: Hashable, Sendable, CustomStringConvertible, Codable {
   }
 }
 
-/// A user-chosen execution host name (`execution.hosts` key, `iso host` argument).
-/// `local` is reserved for the implicit local host. Conservative so it is
-/// safe as an ssh argument, a file name and a display label: starts with a
-/// letter or digit, then `[A-Za-z0-9._-]`, at most 64 bytes.
+/// A user-chosen execution host name; `local` is reserved. Starts with a letter
+/// or digit, then `[A-Za-z0-9._-]`, at most 64 bytes: safe as ssh argument and file name.
 package struct HostAlias: Hashable, Comparable, Sendable, CustomStringConvertible, Codable {
   package static let maxLength = 64
   package static let local = HostAlias(unchecked: "local")

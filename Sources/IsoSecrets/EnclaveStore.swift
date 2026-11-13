@@ -25,9 +25,8 @@ package struct SecretMetadata: Sendable, Equatable {
 
 /// The Secure Enclave-bound local secret store (embedded-secrets spec).
 ///
-/// Unlocking needs both the passphrase (scrypt) and the device unlock key
-/// sealed to the device factor; either alone decrypts nothing. Every
-/// operation unlocks once; nothing is cached between calls.
+/// Unlocking needs both passphrase and device unlock key; either alone
+/// decrypts nothing. Every operation unlocks once; nothing is cached.
 package struct EnclaveStore: Sendable {
   package let directory: String
   let factor: any DeviceFactor
@@ -86,7 +85,6 @@ package struct EnclaveStore: Sendable {
       created.append(storePath)
       _ = try unlock(passphrase)
     } catch {
-      // Each path is a C string borrowed for the call only.
       for path in created { unsafe unlink(path) }
       throw error
     }
@@ -225,7 +223,6 @@ package struct EnclaveStore: Sendable {
     let parent = (directory as NSString).deletingLastPathComponent
     for path in [parent, directory] {
       var info = stat()
-      // Paths are C strings borrowed for each call; lstat/fstat write one value.
       if unsafe lstat(path, &info) != 0 {
         guard errno == ENOENT, unsafe mkdir(path, 0o700) == 0 else {
           throw .io("Failed to create \(path)")
@@ -248,7 +245,6 @@ package struct EnclaveStore: Sendable {
   /// A regular file owned by the current user and not group/world writable,
   /// read without following links and bounded by the store limit.
   func readPrivateFile(_ path: String) throws(EnclaveStoreError) -> [UInt8] {
-    // The path is a C string borrowed for the call only.
     let fd = unsafe open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else {
       if errno == ENOENT { throw .notInitialized }
@@ -289,7 +285,6 @@ package struct EnclaveStore: Sendable {
   /// and required to be a private regular file like the other state files.
   func acquireLock() throws(EnclaveStoreError) -> StoreLock {
     try checkDirectory()
-    // The lock path is a C string borrowed for the call only.
     let fd = unsafe open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else {
       if errno == ELOOP { throw .unsafePermissions(lockPath) }

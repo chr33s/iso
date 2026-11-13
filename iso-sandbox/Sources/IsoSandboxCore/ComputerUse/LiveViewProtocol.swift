@@ -42,12 +42,12 @@ package enum LiveView {
   /// of kilobytes, far more than the helper lines `BoundedWrite` defaults to.
   package static let writeChunk = 64 * 1024
   /// Viewer messages a second (input, control and pings), as for guest actions.
-  /// Releases (key up, button up, release of control) are counted apart, at
-  /// the same rate: see ``LiveViewLimits``.
+  /// Releases (key up, button up, release of control) are counted apart, at the same rate:
+  /// see ``LiveViewLimits``.
   package static let messageRate = 100
-  /// TCP connections served at once, most of them not yet authenticated:
-  /// two viewers, their page loads, and room for a browser's parallel
-  /// requests. Past it a connection is closed unread.
+  /// TCP connections served at once, most of them not yet authenticated: two
+  /// viewers, their page loads, and room for a browser's parallel requests.
+  /// Past it a connection is closed unread.
   package static let maxConnections = 16
 
   /// `value` as 8 big-endian bytes.
@@ -56,11 +56,9 @@ package enum LiveView {
   }
 }
 
-/// One viewer's message budget. Everything is charged to `messages` except
-/// what lets go of input, which has its own equal budget: a release is
-/// never dropped because moves and scrolls used the budget up, or the guest
-/// would keep a key or button down. A viewer cannot release more than it
-/// pressed, so honest releases always fit; a flood of them is still bounded.
+/// One viewer's message budget.
+/// Releases (key up, button up, release of control) have their own equal budget so one is never
+/// dropped because moves used the budget up, which would leave a key down.
 package struct LiveViewLimits: Sendable {
   private var messages: TokenBucket
   private var releases: TokenBucket
@@ -505,9 +503,8 @@ package struct LiveViewHeld: Equatable, Sendable {
 
 // MARK: takeover
 
-/// Which viewer controls, and until when (§6). Taking control takes the
-/// host hold; each accepted input extends it; a viewer whose 60 s ran out
-/// is view-only again and its held input is released.
+/// Which viewer controls, and until when (§6).
+/// A viewer whose 60 s ran out is view-only again and its held input is released.
 package struct LiveViewControl: Equatable, Sendable {
   /// The controlling viewer and when its control lapses: both or neither.
   private var holder: (viewer: Int, until: Date)?

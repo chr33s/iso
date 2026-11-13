@@ -4,8 +4,6 @@ import Synchronization
 
 @testable import IsoCICore
 
-/// Generates a 2048-bit RSA key and returns it as a PKCS#1 PEM plus the
-/// public key for verification.
 func makeGitHubTestRSAKey() throws -> (pem: String, publicKey: SecKey) {
   let attributes: [String: Any] = [
     kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits as String: 2048,
@@ -196,8 +194,6 @@ final class GitHubFakeRunners: RunnerService {
   }
 }
 
-/// An `EnvironmentProvider` that mutates allocation records the way the real
-/// driver does, without hosts.
 final class GitHubFakeProvider: EnvironmentProvider {
   struct Call: Equatable {
     let name: String

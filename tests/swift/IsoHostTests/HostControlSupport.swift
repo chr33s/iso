@@ -7,7 +7,6 @@ import Testing
 @testable import IsoHost
 @testable import IsoHostControl
 
-/// A controllable clock: wall and monotonic time advance only on `advance`.
 final class ManualClock: HostClock {
   private let base = Date(timeIntervalSince1970: 1_800_000_000)
   private let baseInstant = ContinuousClock.now
@@ -52,7 +51,6 @@ final class FakeNativeHost: NativeHost {
     /// `proofBoot`, a stale gate reading); others report none.
     var brokered = false
     var proofBoot: BootID?
-    /// What `host.capabilities` reads from the native layer.
     var capability = NetworkCapability(
       transport: .vmnet, runtimeBrokered: false, runPolicies: [:], liveTuple: [:])
     var imageDigests: [ImageName: String] = [:]
@@ -236,7 +234,6 @@ final class FakeNativeHost: NativeHost {
   func imageDigest(_ image: ImageName) -> String? { state.withLock { $0.imageDigests[image] } }
 }
 
-/// A syntactically valid ed25519 public key line for tests.
 func testPublicKey(_ seed: UInt8) -> String {
   let blob: [UInt8] =
     [0, 0, 0, 11] + Array("ssh-ed25519".utf8) + [0, 0, 0, 32]
@@ -286,7 +283,6 @@ extension String {
   }
 }
 
-/// A supervisor on a fresh temporary root with manual dispatch.
 struct SupervisorFixture {
   let root: String
   let owner: OwnerID
@@ -310,7 +306,6 @@ struct SupervisorFixture {
       root: root, owner: self.owner, native: native, clock: clock, settings: configured)
   }
 
-  /// The same root reopened: a new supervisor epoch, same installation.
   func restarted() throws -> SupervisorFixture {
     try SupervisorFixture(root: root, owner: owner, native: native, clock: clock)
   }
@@ -349,7 +344,6 @@ struct SupervisorFixture {
     try OperationReceipt(wire: call(.operationGet(id)).get())
   }
 
-  /// Creates and starts one instance; returns its identity and running observation.
   func running(name: String = "proj", egress: EgressMode = .open) throws -> (
     QualifiedInstance, VMObservation
   ) {

@@ -7,11 +7,10 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// The subset of `devcontainer.json` iso reads, decoded with the baseline's
-/// serde rules: missing and `null` optional keys are absent, a repeated
-/// modeled key is an error, unmodeled keys keep document order (a repeated
-/// one keeps its first position and last value), and `features` /
-/// `containerEnv` are ordered by key bytes with the last duplicate winning.
+/// The subset of `devcontainer.json` iso reads, with the baseline's serde rules:
+/// missing/`null` optional keys are absent, a repeated modeled key is an error,
+/// unmodeled keys keep document order (first position, last value), and
+/// `features`/`containerEnv` sort by key bytes with the last duplicate winning.
 struct RawDevcontainer: Sendable {
   var name: String?
   var image: DevcontainerJSON?
@@ -188,10 +187,9 @@ struct DevcontainerDecoder {
 
 // MARK: - Sizes
 
-/// A `hostRequirements` memory or storage size, stored as non-zero MiB
-/// rounded up from the parsed byte count. Accepts the devcontainer spec's
-/// decimal units (`KB`…`TB`, single-letter aliases), binary units
-/// (`KiB`…`TiB`), `B`, and bare byte counts; units match case-insensitively.
+/// A `hostRequirements` size, stored as non-zero MiB rounded up. Accepts the
+/// spec's decimal (`KB`…`TB`) and binary (`KiB`…`TiB`) units, `B` and bare
+/// bytes; units match case-insensitively.
 package struct MemorySpec: Sendable, Equatable {
   package let mib: MiB
 
@@ -334,7 +332,6 @@ package struct ParsedDevcontainer: Sendable {
   }
 }
 
-/// `fs::read_to_string` with the baseline's error text.
 func readUTF8File(_ path: String) throws -> String {
   guard let handle = FileHandle(forReadingAtPath: path) else {
     throw ContextError("Failed to read \(path)", cause: HostError(ioErrorText(errno)))
@@ -351,12 +348,10 @@ func readUTF8File(_ path: String) throws -> String {
   return text
 }
 
-/// Rust `io::Error` display for an errno.
 func ioErrorText(_ code: Int32) -> String {
   "\(String(cString: strerror(code))) (os error \(code))"
 }
 
-/// anyhow `to_string()`: the outermost message only.
 func topMessage(_ error: any Error) -> String {
   error.contextError?.context ?? "\(error)"
 }

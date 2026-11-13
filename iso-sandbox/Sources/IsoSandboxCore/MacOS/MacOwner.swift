@@ -45,7 +45,6 @@ package struct MacControlRequest: Codable, Sendable {
     self.seconds = seconds
   }
 
-  /// The `cu-wait` members.
   package var wait: GuestCUWaitFields {
     GuestCUWaitFields(
       since: since, idleMs: idleMs, timeoutMs: timeoutMs, until: until, region: region)
@@ -78,8 +77,9 @@ package struct MacControlRequest: Codable, Sendable {
 }
 
 /// A computer-use request: a ``MacControlRequest`` whose operation is one
-/// ``CUService`` answers. Made only by ``MacControlRequest/route``, so an
-/// owner operation (`stop`, `inspect`) cannot reach the service.
+/// ``CUService`` answers.
+/// Made only by ``MacControlRequest/route``, so an owner operation (`stop`, `inspect`) cannot reach
+/// the service.
 package struct CURequest: Sendable {
   package enum Op: Sendable, CaseIterable {
     case session, frame, act, hold, release, wait, stream, streamStop
@@ -103,24 +103,20 @@ package struct MacStatus: Codable, Sendable {
   package var guestBuild: String?
   /// Bumps on every accepted hello and every loss of the active connection.
   package var helperGeneration: Int
-  /// The pinned SSH host key.
   package var sshHostKey: String?
   /// Whether the guest just reported that same key over the authenticated channel.
   package var sshHostKeyConfirmed: Bool
   package var ipv4: String
   package var topology: String
-  /// This boot's guest computer-use counts; nil when it is off.
   package var guestComputerUse: MacGuestCUCounters? = nil
   /// The guest's last Core AI report; nil when Core AI is off or the guest
   /// has not answered yet.
   package var coreAI: MacCoreAIProbe? = nil
-  /// This boot's live-view counts; nil when no stream has started.
   package var liveView: MacLiveViewCounters? = nil
 }
 
-/// What the guest helper reported for `coreai_status`. Guest-authored:
-/// the protocol bounds the kinds; nothing here is trusted beyond display
-/// and audit.
+/// What the guest helper reported for `coreai_status`. Guest-authored: the
+/// protocol bounds the kinds; nothing here is trusted beyond display and audit.
 package struct MacCoreAIProbe: Codable, Equatable, Sendable {
   package var availableKinds: [String]
   package var delegateEnabled: Bool
@@ -133,7 +129,6 @@ package struct MacCoreAIProbe: Codable, Equatable, Sendable {
 final class MacCoreAIProbeBox: @unchecked Sendable {
   private let lock = NSLock()
   private var value: MacCoreAIProbe?
-  /// Set once, before the VM starts.
   weak var link: MacHelperLink?
 
   var current: MacCoreAIProbe? { lock.withLock { value } }
@@ -212,7 +207,6 @@ package struct MacControlResponse: Codable, Sendable {
   }
 }
 
-/// The record-backed enrollment store the helper link writes through.
 final class MacRecordStore: MacEnrollmentStore, @unchecked Sendable {
   let paths: MacSandboxPaths
   let net: HelperNetwork
@@ -298,10 +292,10 @@ package enum MacOwner {
     }
     // The template must still exist: its hardware model is read below.
     _ = try root.macTemplate(record.template).load()
-    // After the previous owner was killed, its VM service can outlive it
-    // briefly, holding the disk images; booting before they are released
-    // fails ("Failed to lock auxiliary storage"). Its vmnet network can
-    // persist longer, in which case the sandbox moves to another subnet.
+    // After the previous owner was killed, its VM service can outlive it briefly,
+    // holding the disk images; booting before they are released fails ("Failed to
+    // lock auxiliary storage").
+    // Its vmnet network can persist longer, in which case the sandbox moves to another subnet.
     try awaitImagesReleased([paths.aux, paths.disk], timeout: 120)
     var network = try makeNetwork(root: root, paths: paths, record: &record)
     guard let iface = try network.createInterface(id.rawValue) as? VmnetNetwork.Interface else {
@@ -318,10 +312,10 @@ package enum MacOwner {
       gateway: iface.ipv4Gateway?.description ?? record.gateway,
       dns: record.network == .shared ? [iface.ipv4Gateway?.description ?? record.gateway] : [])
 
-    // Core AI: the template must carry the guest flag, and the host must be
-    // able to load the private entitlement, before any VM is built.
-    // The Core AI build reports the host's state on every boot, so the
-    // audit shows the weakened window even for sandboxes without Core AI.
+    // Core AI: the template must carry the guest flag, and the host must be able
+    // to load the private entitlement, before any VM is built.
+    // The Core AI build reports the host's state on every boot, so the audit shows the weakened
+    // window even for sandboxes without Core AI.
     var hostSecurity = MacAccelerators.compiledIn ? MacHostSecurity.current() : nil
     if let coreAI = record.coreAI {
       guard try root.macTemplate(record.template).load().hasCoreAIFeatureFlag else {
@@ -364,9 +358,9 @@ package enum MacOwner {
       // here, within the delay below.
       Task { @MainActor in counts.record() }
       try? FileManager.default.removeItem(at: livePath)
-      // The vmnet network lives in this process and ends with it. A short
-      // delay lets an in-flight `stop` reply reach its caller; the exit is
-      // clean, so launchd does not restart the owner.
+      // The vmnet network lives in this process and ends with it.
+      // A short delay lets an in-flight `stop` reply reach its caller; the exit is clean, so
+      // launchd does not restart the owner.
       DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
         unlink(controlPath.path)
         exit(0)
@@ -408,9 +402,9 @@ package enum MacOwner {
       await counts.record()
     }
     let stopper = MacStopper(vm: vm, link: link, beforeStop: endLiveView) {
-      // The last resort, as a Linux owner's: the stop sequence did not end
-      // the VM in time. Exiting this process ends it; a clean exit is not
-      // restarted by launchd.
+      // The last resort, as a Linux owner's: the stop sequence did not end the VM
+      // in time.
+      // Exiting this process ends the VM; a clean exit is not restarted by launchd.
       log("vm did not stop: exiting the owner to end the VM")
       try? FileManager.default.removeItem(at: livePath)
       unlink(controlPath.path)
@@ -529,10 +523,9 @@ package enum MacOwner {
     }
   }
 
-  /// Asks the authenticated guest for its SSH host key; one that differs
-  /// from the pin marks the sandbox `identity_mismatch` (authenticated
-  /// evidence, so it may change host state).
-  /// True only when the guest reported exactly the pinned key.
+  /// Asks the authenticated guest for its SSH host key; one that differs from the
+  /// pin marks the sandbox `identity_mismatch` (authenticated evidence, so it may
+  /// change host state).
   @discardableResult
   static func verifyPin(link: MacHelperLink, store: MacRecordStore) async -> Bool {
     guard link.isConnected, store.current.enrollment == .enrolled,
@@ -619,10 +612,9 @@ package enum MacOwner {
   }
 }
 
-/// Runs the stop sequence once, however many callers ask. A stop that
-/// arrives while the VM is still starting is remembered and runs as soon as
-/// `started()` reports the VM running. The owner is ended if a sequence has
-/// not ended it within `exitGrace` of that sequence's start.
+/// Runs the stop sequence once, however many callers ask.
+/// A stop that arrives while the VM is starting is remembered and runs once `started()` reports it
+/// running; the owner is ended if the sequence has not ended it within `exitGrace`.
 actor MacStopper {
   /// Longer than the whole sequence in `MacVM.stop` (request 15 s, helper
   /// 20 s, helper wait 120 s, forced stop 30 s).
@@ -674,7 +666,6 @@ actor MacStopper {
     for waiter in resumed { waiter.resume() }
   }
 
-  /// Whether a stop is asked for or under way: nothing new starts then.
   var isStopping: Bool { pending || result != nil }
 
   /// A sequence that found the VM not running (`none (...)`) is not

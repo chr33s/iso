@@ -6,10 +6,9 @@ import IsoHost
 /// Execution, reconciliation and cancellation of accepted operations
 /// (spec 7.3–7.4).
 extension HostSupervisor {
-  /// Drives one operation to a terminal state or leaves it reconciling.
-  /// Re-entrant across restarts: every step observes before it acts.
-  /// A run's child create/start runs only from its parent run operation
-  /// (`asRunChild`), so cancelling or failing the parent governs it.
+  /// Drives one operation to a terminal state or leaves it reconciling; re-entrant across
+  /// restarts. A run's child create/start runs only from its parent operation
+  /// (`asRunChild`).
   func execute(_ id: HostOperationID, asRunChild: Bool = false) {
     guard let peek = try? store.loadOperation(id), !peek.state.isTerminal else { return }
     let method = HostMethod(rawValue: peek.method)
@@ -103,9 +102,8 @@ extension HostSupervisor {
       return finish(accepted, .succeeded, outcome: nil, generation: instance.generation)
     }
     guard var record = beginEffect(accepted.operationID, substep: "creating") else { return }
-    // Only a persisted "create_requested" means the runtime may have been asked.
-    // "create_failed" records a refused create before any cleanup, so a
-    // reconciling pass can only fail it, never commit it as created.
+    // Only a persisted "create_requested" means the runtime may have been asked;
+    // "create_failed" can only be failed, never committed.
     let requested = record.substep == "create_requested" || record.substep == "create_failed"
     do {
       var observed = try native.observe(instanceID, runtime: runtime)
@@ -130,9 +128,8 @@ extension HostSupervisor {
           return failCreate(
             record, instance, "create failed with no runtime object: \(createError)")
         }
-        // A retried create never re-allocates. A runtime call interrupted by a
-        // crash may still finish, so the identity stays reserved for an
-        // explicit destroy rather than being tombstoned now.
+        // A retried create never re-allocates; an interrupted runtime call may still
+        // finish, so the identity stays reserved for an explicit destroy.
         var retained = instance
         retained.activeOperation = nil
         try? store.saveInstance(retained)
@@ -329,11 +326,9 @@ extension HostSupervisor {
     finish(record, .succeeded, outcome: nil, generation: instance.generation + 1)
   }
 
-  /// Worker-side deadline enforcement in addition to the runtime owner's:
-  /// expired boots are stopped without a caller operation or ledger slot,
-  /// and a runtime-observed stop is committed.
-  /// `observe` also polls non-expired boots for a runtime-side stop; the
-  /// sub-second loop passes false so only expired boots reach the runtime.
+  /// Worker-side deadline enforcement beside the runtime owner's: expired boots are stopped
+  /// without an operation or ledger slot. `observe` also polls non-expired boots; the sub-
+  /// second loop passes false.
   func enforceDeadlines(observe: Bool = true) {
     for id in store.instanceIDs() {
       guard var instance = try? store.loadInstance(id), instance.lifecycle == .running,

@@ -70,7 +70,6 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
   #expect(
     try select(nil, existing: ["/h/.iso/config.toml"])
       == .defaultsOnly(defaultPath: "/h/.iso/config.jsonc"))
-  // No automatic config.json search.
   #expect(
     try select(nil, existing: ["/h/.iso/config.json"])
       == .defaultsOnly(defaultPath: "/h/.iso/config.jsonc"))
@@ -267,7 +266,6 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
 }
 
 @Test func unknownKeysFollowPerSectionPolicy() throws {
-  // Extensible agent/provider sections preserve their own unknown members.
   #expect(throws: Never.self) {
     try load(
       #"{"claude": {"x": 1}, "proxy": {"x": 1}, "updates": {"x": 1}}"#)
@@ -501,7 +499,6 @@ struct FakeFileSystem: ConfigFileSystem {
       fieldError(#"{"egress": "filtered", "egress_filter": {"allowed_hosts": ["\#(bad)"]}}"#)?.field
         == "egress_filter.allowed_hosts[0]")
   }
-  // Network policy uses the explicit top-level egress field.
   #expect(throws: (any Error).self) { try load(#"{"network": {"egress": "none"}}"#) }
 }
 
@@ -601,12 +598,10 @@ struct FakeFileSystem: ConfigFileSystem {
   let plain = try load("{}")
   #expect(plain.securityPreset == nil && plain.egress == .none && plain.proxy.mode == .required)
   #expect(plain.network.transport == .brokered && plain.workspacePull.mode == .stage)
-  // An explicit networked preset alone does not choose vmnet.
   #expect(throws: (any Error).self) { try load(#"{"security": {"preset": "networked"}}"#) }
   let networked = try load(
     #"{"security": {"preset": "networked"}, "network": {"transport": "vmnet"}}"#)
   #expect(networked.egress == .open && networked.proxy.mode == .auto)
-  // One override leaves the other defaults intact.
   let filtered = try load(#"{"egress": "filtered"}"#)
   #expect(filtered.proxy.mode == .required && filtered.workspacePull.mode == .stage)
   #expect(filtered.claude.configDirectory == .disabled && filtered.editor == .defaults)
@@ -617,7 +612,6 @@ struct FakeFileSystem: ConfigFileSystem {
   let offline = try load(#"{"security": {"preset": "offline"}}"#)
   #expect(
     offline.egress == .none && offline.proxy.mode == .off && offline.workspacePull.mode == .stage)
-  // Explicit fields win over the preset.
   let overridden = try load(
     #"{"security": {"preset": "provider-only"}, "egress": "open", "network": {"transport": "vmnet"}, "proxy": {"mode": "auto"}, "workspace": {"pull": {"max_files": 5}}}"#
   )
@@ -655,7 +649,6 @@ struct FakeFileSystem: ConfigFileSystem {
   chmod(directory, 0o777)
   #expect(!loads())
   chmod(directory, 0o755)
-  // A deliberate dotfile symlink to a trusted target still works.
   let link = directory + "/linked.jsonc"
   try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: path)
   #expect(
@@ -686,7 +679,6 @@ struct FakeFileSystem: ConfigFileSystem {
     #expect(message.contains("is writable by group or others"), "\(target)")
   }
   chmod(open, 0o755)
-  // An ACL granting another principal write access is refused.
   #expect(try ACLFixture.chmodACL(path, "everyone allow write"))
   #expect(refusal(path).contains("an ACL lets others write it"))
 }

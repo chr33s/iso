@@ -2,10 +2,9 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Typed parsers and calls for `iso-sandbox macos …`. As for Linux
-/// sandboxes, runtime output is untrusted: records decode into closed types,
-/// reported identifiers are checked against the one requested, and the
-/// effective configuration the gate reads rejects unknown fields.
+/// Typed parsers and calls for `iso-sandbox macos …`. As for Linux sandboxes,
+/// runtime output is untrusted: closed record types, identifiers checked against
+/// the one requested, and an effective config that rejects unknown fields.
 
 package struct MacRecord: Sendable, Equatable, Decodable {
   package let id: String

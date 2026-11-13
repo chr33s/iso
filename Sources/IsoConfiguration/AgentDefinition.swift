@@ -1,15 +1,14 @@
 import Foundation
 import IsoCore
 
-/// How a defined agent expects its guest terminal to be allocated.
 package enum AgentTerminalMode: String, Sendable, Equatable, CaseIterable {
   case auto
   case required
   case never
 }
 
-/// Image or profile set a definition requests. It selects existing image
-/// machinery; it does not embed an install language.
+/// Image or profile set a definition requests; selects existing image
+/// machinery, no install language.
 package enum AgentEnvironmentSelection: Sendable, Equatable {
   case image(ImageName)
   case profiles([String])
@@ -42,9 +41,9 @@ package struct AgentLaunchSpec: Sendable, Equatable {
   }
 }
 
-/// A validated agent definition. Built-ins and installed files use this same
-/// model. It requests a reviewed adapter and may suggest hosts; it cannot
-/// grant network, credentials, mounts, or host commands.
+/// A validated agent definition (built-ins and installed files alike). It
+/// requests a reviewed adapter; it cannot grant network, credentials, mounts
+/// or host commands.
 package struct AgentDefinition: Sendable, Equatable {
   package static let schemaVersion = 1
   package static let maxArgvEntries = 128
@@ -83,8 +82,7 @@ package struct AgentDefinitionError: Error, Equatable, Sendable, CustomStringCon
 }
 
 extension JSONLimits {
-  /// Parser budgets for one agent-definition file. These are limits, not
-  /// measured performance.
+  /// Parser budgets for one agent-definition file.
   package static let agentDefinition = JSONLimits(
     maxBytes: AgentDefinition.fileBytes, maxDepth: 16, maxKeys: 512, maxArrayElements: 256,
     maxNumberLength: 32, maxStringBytes: AgentDefinition.maxArgvEntryBytes)

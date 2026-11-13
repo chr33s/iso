@@ -4,20 +4,17 @@
 
 import Foundation
 
-/// What this binary is, for `iso update` and the background check. A
-/// release build is produced only by the release entrypoint (S-05), which
-/// compiles with `-D ISO_RELEASE_BUILD`; every other build is a dev build,
-/// which `iso update` refuses to replace and the background check skips.
+/// What this binary is. A release build comes only from the release entrypoint
+/// (S-05, `-D ISO_RELEASE_BUILD`); every other build is a dev build, which
+/// `iso update` refuses to replace and the background check skips.
 package struct IsoBuild: Sendable, Equatable {
   package enum Kind: Sendable, Equatable {
     case dev
     case release
   }
 
-  /// Package version without the dev suffix (Rust `CARGO_PKG_VERSION`).
   package let version: String
   package let kind: Kind
-  /// `--version` text without the leading `iso ` (Rust `ISO_VERSION_STR`).
   package let versionString: String
 
   package init(version: String, kind: Kind, versionString: String) {
@@ -41,10 +38,9 @@ package struct IsoBuild: Sendable, Equatable {
   #endif
 }
 
-/// A semantic version with the Rust `semver` crate's parsing and ordering:
-/// strict `MAJOR.MINOR.PATCH`, no leading zeros in numeric fields or numeric
-/// pre-release identifiers, optional `-pre` and `+build`, and build metadata
-/// taking part in ordering after the pre-release.
+/// A semantic version with the Rust `semver` crate's parsing and ordering: strict
+/// `MAJOR.MINOR.PATCH`, no leading zeros, optional `-pre` and `+build`, with
+/// build metadata ordering after the pre-release.
 package struct SemanticVersion: Sendable, Equatable, Comparable, CustomStringConvertible {
   package let major: UInt64
   package let minor: UInt64
@@ -249,7 +245,6 @@ package struct SemanticVersion: Sendable, Equatable, Comparable, CustomStringCon
 
   private static func error(_ text: String) -> ParseError { ParseError(description: text) }
 
-  /// Rust `QuotedChar`: `'x'` with `escape_debug`.
   private static func quoted(_ character: Character) -> String {
     let inner = String(character).unicodeScalars.map { scalar -> String in
       scalar == "'" ? "\\'" : scalar == "\"" ? "\"" : scalar.escaped(asASCII: false)

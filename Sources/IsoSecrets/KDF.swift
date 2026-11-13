@@ -54,7 +54,6 @@ enum KDF {
   /// `HKDF-SHA256(ikm: passwordKey, salt: DUK, info: "iso/secrets/store-key/v1")`.
   /// Neither factor alone determines the result.
   static func storeKey(passwordKey: SymmetricKey, deviceUnlockKey: SymmetricKey) -> SymmetricKey {
-    // The key bytes are copied out within the closure; the buffer does not escape.
     let salt = unsafe deviceUnlockKey.withUnsafeBytes { unsafe Data($0) }
     return HKDF<SHA256>.deriveKey(
       inputKeyMaterial: passwordKey, salt: salt, info: storeKeyInfo, outputByteCount: 32)
@@ -63,7 +62,6 @@ enum KDF {
 
 func randomBytes(_ count: Int) -> [UInt8] {
   var bytes = [UInt8](repeating: 0, count: count)
-  // `bytes` holds exactly `count` writable bytes, borrowed for this call.
   let status = unsafe SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
   precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
   return bytes

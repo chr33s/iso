@@ -97,7 +97,6 @@ import Testing
     if let actions = expect["actions"]?.arrayValue {
       #expect(plan.actions.map(\.displayName) == actions.compactMap(\.stringValue))
     }
-    // The plan is deterministic.
     let (again, _) = try self.report(name)
     #expect(again.plan?.digest == plan.digest)
   }

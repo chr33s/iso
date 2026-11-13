@@ -16,7 +16,6 @@ package struct ImageManifest: Sendable, Equatable, Codable {
   /// For a committed disk, the image the committed instance was created from.
   package let imageRef: String
   package let digest: String
-  /// Set for an image made by `iso commit`: instances clone this disk.
   package let disk: CommittedDisk?
   package let manifestID: String
   package let baseImage: String
@@ -65,13 +64,10 @@ package struct ImageManifest: Sendable, Equatable, Codable {
 
   package var guestOS: GuestOS { platform == Self.macPlatform ? .macos : .linux }
 
-  /// A macOS template's build and guest helper.
   package static func macDigest(_ template: MacTemplateInfo) -> String {
     "macos:\(template.build):helper-\(template.helperSha256)"
   }
 
-  /// The provisioning script a macOS template was built with, and whether
-  /// its guest has the Core AI feature flag.
   package static func macManifestID(_ template: MacTemplateInfo) -> String {
     macManifestID(
       provisionSHA256: template.provisionSha256 ?? "none", coreAI: template.hasCoreAIFeatureFlag)
@@ -92,7 +88,6 @@ package struct ImageManifest: Sendable, Equatable, Codable {
     config.imagesDirectory.appending(image.rawValue).appending("apple-image.json").path
   }
 
-  /// Nil when absent; a foreign or other-schema manifest is refused.
   package static func loadIfPresent(_ config: IsoConfig, _ image: ImageName) throws
     -> ImageManifest?
   {
@@ -117,7 +112,6 @@ package struct ImageManifest: Sendable, Equatable, Codable {
     return manifest
   }
 
-  /// For paths that replace or remove a manifest: unreadable means absent.
   package static func loadLenient(_ config: IsoConfig, _ image: ImageName, diagnostics: Diagnostics)
     -> ImageManifest?
   {
@@ -139,9 +133,8 @@ package func oneLine(_ error: any Error) -> String {
 }
 
 /// The generated build context: only a Dockerfile and reviewed provisioning
-/// scripts, including the VM-access public key. Never a repository, the
-/// working directory, or the home directory, and never a secret. Its contents
-/// and identity inputs determine the image manifest hash.
+/// scripts, including the VM-access public key; never a repository, the working
+/// or home directory, or a secret. It determines the image manifest hash.
 package struct BuildContext: Sendable, Equatable {
   package static let baseImage =
     "docker.io/library/ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
@@ -185,12 +178,8 @@ package struct BuildContext: Sendable, Equatable {
     ])
   }
 
-  /// The `desktop` profile's MCP server, as installed beside `iso-sandbox`
-  /// and as placed in the build context.
   package static let computerUseMCP = "iso-cu-mcp"
 
-  /// The pinned desktop kernel `desktop` images boot, as installed beside
-  /// `iso-sandbox`.
   package static let desktopKernel = "vmlinux-desktop"
 
   /// `bytes` as the `desktop` profile's payload: refused unless it is an
@@ -210,7 +199,6 @@ package struct BuildContext: Sendable, Equatable {
     return (computerUseMCP, bytes, 0o755)
   }
 
-  /// Adapters every image built from this context carries.
   package static let guestAdapters = [ImageManifest.vsockSSHAdapter]
 
   /// The adapters of an image built with `profiles`: the built-in `desktop`
@@ -221,7 +209,6 @@ package struct BuildContext: Sendable, Equatable {
       + (profiles.contains(Profiles.desktopDefinition) ? [ImageManifest.virtioDisplayAdapter] : [])
   }
 
-  /// Stable hash of the context plus identity inputs not in file contents.
   package func manifestID(guestUser: GuestUser, publicKeyFingerprint: String) -> String {
     var hash = SHA256()
     for part in [
@@ -279,7 +266,6 @@ package struct BuildContext: Sendable, Equatable {
     return directory
   }
 
-  /// `local/iso-<owner8>:`, the repository prefix of every owned image tag.
   package static func ownedRepository(_ owner: OwnerID) -> String { "local/iso-\(owner.short):" }
 
   /// Fresh tag per build: content hash prefix plus a nonce, so a rebuild
@@ -350,10 +336,9 @@ package struct BuildContext: Sendable, Equatable {
 
     """
 
-  /// The brokered transport's guest adapter: one `sshd -i` per vsock
-  /// stream the runtime owner opens on port 2222 (``BrokeredChannel/sshPort``).
-  /// It is convenience, not enforcement: guest root can replace it, and the
-  /// host still pins the SSH host key. A vmnet guest has it too, unused.
+  /// The brokered transport's guest adapter: one `sshd -i` per vsock stream on
+  /// port 2222 (``BrokeredChannel/sshPort``). Convenience, not enforcement: guest
+  /// root can replace it and the host still pins the SSH host key.
   static let vsockSocketUnit = """
     [Unit]
     Description=iso brokered SSH streams (vsock port \(BrokeredChannel.sshPort))

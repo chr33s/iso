@@ -35,7 +35,6 @@ struct Arguments {
   func int(_ name: String, _ fallback: Int) -> Int { value(name).flatMap(Int.init) ?? fallback }
 }
 
-/// JSONL event sink: one object per line, to a file (if given) and stdout.
 final class EventLog: @unchecked Sendable {
   private let lock = NSLock()
   private let handle: FileHandle?
@@ -102,7 +101,6 @@ func errorInfo(_ error: any Error) -> [String: Any] {
   return o
 }
 
-/// Run a tool with stdin closed and a timeout; returns status and combined output.
 func runTool(_ argv: [String], timeout: TimeInterval = 10) -> (status: Int32, output: String) {
   let p = Process()
   p.executableURL = URL(fileURLWithPath: argv[0])
@@ -131,7 +129,6 @@ func runTool(_ argv: [String], timeout: TimeInterval = 10) -> (status: Int32, ou
   return (p.terminationStatus, String(decoding: box.data, as: UTF8.self))
 }
 
-/// Poll `cond` until true or timeout. Returns whether it became true.
 func waitUntil(_ timeout: TimeInterval, interval: TimeInterval = 0.25, _ cond: () -> Bool) async
   -> Bool
 {

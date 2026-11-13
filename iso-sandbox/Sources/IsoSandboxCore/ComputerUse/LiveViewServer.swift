@@ -2,9 +2,9 @@ import Darwin
 import Foundation
 import IsoMacProtocol
 
-/// What the server asks of the owner. Every call is made from a connection
-/// thread, and each blocks that thread until the owner has answered, so one
-/// viewer's messages are handled in order.
+/// What the server asks of the owner.
+/// Each call blocks its connection thread until the owner answers, so one viewer's messages are
+/// handled in order.
 package protocol LiveViewHost: AnyObject, Sendable {
   /// An authenticated viewer joined.
   func joined(_ viewer: Int)
@@ -17,14 +17,12 @@ package protocol LiveViewHost: AnyObject, Sendable {
   func needKeyframe()
 }
 
-/// The live-view listener (docs/design/computer-use-live-view.md §5): one
-/// TCP socket on `127.0.0.1` at an ephemeral port, serving the embedded
-/// viewer and one WebSocket per viewer. Every byte a client sends is
-/// untrusted: requests are routed only after exact `Host` and `Origin`
-/// checks, the first WebSocket message must carry the stream token within
-/// `LiveView.tokenDeadline`, connections are capped at
-/// `LiveView.maxConnections` before any byte is read, and messages are
-/// bounded, closed and rate limited. The token is never logged.
+/// The live-view listener (docs/design/computer-use-live-view.md §5): one TCP
+/// socket on `127.0.0.1` at an ephemeral port, serving the embedded viewer and
+/// one WebSocket per viewer.
+/// Every client byte is untrusted: exact `Host` and `Origin` checks before routing, the stream
+/// token in the first WebSocket message within `LiveView.tokenDeadline`, a connection cap before
+/// any read, bounded and rate-limited messages. The token is never logged.
 package final class LiveViewServer: @unchecked Sendable {
   package let port: UInt16
   /// The address the listener is bound to, read back from the socket.
@@ -138,9 +136,9 @@ package final class LiveViewServer: @unchecked Sendable {
         }
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        // Non-blocking, so a write larger than the helper-line chunk cannot
-        // block past its deadline; every read and write polls first. The
-        // descriptor is this connection's alone (no `dup`).
+        // Non-blocking, so a write larger than the helper-line chunk cannot block
+        // past its deadline; every read and write polls first.
+        // The descriptor is this connection's alone (no `dup`).
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         Thread.detachNewThread { [self] in
           defer { slots.leave() }
@@ -200,9 +198,9 @@ package final class LiveViewServer: @unchecked Sendable {
     for v in targets { enqueue(v, frame) }
   }
 
-  /// Queues a pong or state text. These are never dropped, so a viewer
-  /// whose queue they would overfill is disconnected: it is not reading,
-  /// and its queue is memory of the process that runs the VM.
+  /// Queues a pong or state text.
+  /// Never dropped, so a viewer whose queue they would overfill is disconnected: it is not reading,
+  /// and its queue is owner-process memory.
   private func enqueue(_ v: Viewer, _ frame: [UInt8]) {
     v.ready.lock()
     let fits = v.queued + frame.count <= LiveView.queueLimit

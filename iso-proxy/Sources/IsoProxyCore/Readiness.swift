@@ -34,7 +34,6 @@ package struct BrokerReadiness: Sendable {
     self.authorization = authorization
   }
 
-  /// The largest reply body either version produces.
   package static let maxReplyBytes = 1024
 
   static func hex(_ text: String, count: Int) -> [UInt8]? {

@@ -49,9 +49,8 @@ public protocol MonotonicClock: Sendable {
   func nanoseconds() -> UInt64?
 }
 
-/// `CLOCK_MONOTONIC_RAW`: elapsed time that keeps advancing while the host
-/// sleeps and ignores wall-clock changes, so a quota window or approval does
-/// not stretch across sleep. Values are process-local; never persist them.
+/// `CLOCK_MONOTONIC_RAW`: advances through host sleep and ignores wall-clock
+/// changes, so windows and approvals do not stretch. Process-local; never persist.
 public struct SystemMonotonicClock: MonotonicClock {
   public static let clockID = CLOCK_MONOTONIC_RAW
 
@@ -95,7 +94,6 @@ public struct ProviderAdmissions: Sendable {
     self.windows = windows
   }
 
-  /// Timestamp slots allocated for this proxy.
   public var allocatedSlots: Int { windows.values.reduce(0) { $0 + $1.capacity } }
 
   /// Checks every governed action and every matching rate guard against one

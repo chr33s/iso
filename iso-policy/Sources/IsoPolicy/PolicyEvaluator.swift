@@ -74,7 +74,6 @@ public enum PolicyEvaluator {
       && (instances?.contains(request.instance) ?? true)
   }
 
-  /// The provider-action pair one proxied request checks.
   public static func providerBatch(_ provider: PolicyResource, instance: String)
     -> [PolicyRequest]
   {

@@ -3,9 +3,8 @@ import IsoConfiguration
 import IsoCore
 
 /// What an editor provider may know about a verified running instance: the
-/// managed `iso-<name>` alias and the guest path to open. It carries no key
-/// material, resolved secret or runtime handle, and it is never a substitute
-/// for a `WorkloadSession`.
+/// `iso-<name>` alias and guest path. No key material, secret or runtime
+/// handle; never a substitute for a `WorkloadSession`.
 package struct SSHConnectionTarget: Sendable, Equatable {
   package let instance: InstanceName
   package let guestPath: GuestPath
@@ -22,7 +21,6 @@ package struct SSHConnectionTarget: Sendable, Equatable {
     self.init(instance: running.instance.name, guestPath: guestPath, egress: egress)
   }
 
-  /// A remote guest's target; its connection comes from a live host session.
   package static func remote(name: InstanceName, guestPath: GuestPath, egress: EgressMode) -> Self {
     Self(instance: name, guestPath: guestPath, egress: egress)
   }

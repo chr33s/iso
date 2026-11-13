@@ -34,7 +34,6 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
   package enum ActionKind: String, Sendable, Codable {
     case javascript
     case composite
-    /// Approved checkout: replaced by visible synthetic checkout + overlay.
     case checkoutReplacement = "checkout-replacement"
   }
 
@@ -46,7 +45,6 @@ package struct CompatibilityManifest: Sendable, Equatable, Codable {
     package let kind: ActionKind
     package let runtime: String
     package let inputs: [String]
-    /// Inputs whose presence is outside the subset (rejected when set).
     package let rejectedInputs: [String]
     package let fixtures: [String]
   }

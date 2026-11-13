@@ -165,11 +165,8 @@ package struct JobPlan: Sendable, Equatable, Codable {
   package let key: String
   package let jobID: String
   package let displayName: String
-  /// Job keys this job depends on (all matrix expansions of each `needs`).
   package let needs: [String]
-  /// The workflow job ids named in `needs` (for the `needs` context).
   package let needsJobIDs: [String]
-  /// Job-level `if:` expression text, evaluated by the controller.
   package let condition: String
   package let runsOn: [String]
   package let platform: String
@@ -221,7 +218,6 @@ package struct WorkflowPlan: Sendable, Equatable, Codable {
   package let name: String
   package let workflowPath: String
   package let workflowDigest: Digest
-  /// The simulated triggering event name and its payload.
   package let event: String
   package let eventPayload: JSONValue
   package let env: [TemplateEntry]

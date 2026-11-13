@@ -161,7 +161,6 @@ import Testing
 
 @Suite struct CanonicalRootTests {
   @Test func nonexistentRootResolvesThroughItsParent() throws {
-    // /tmp is a symlink to /private/tmp on macOS.
     let name = "csb-\(UUID().uuidString)"
     let before = try SandboxRoot("/tmp/\(name)/runtime").root.path
     #expect(before == "/private/tmp/\(name)/runtime")

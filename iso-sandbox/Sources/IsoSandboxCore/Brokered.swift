@@ -3,12 +3,11 @@ import Darwin
 import Foundation
 import Synchronization
 
-/// The brokered transport (docs/design/brokered-network-isolation.md): a
-/// sandbox with no network device whose host reaches it only through
-/// streams its owner opens to fixed guest vsock ports. The guest decides
-/// nothing here: a stream request names a purpose, never a port, and is
-/// admitted against the current boot, the host's policy digests and the
-/// owner's limits before any guest connection is made.
+/// The brokered transport (docs/design/brokered-network-isolation.md): a sandbox
+/// with no network device whose host reaches it only through streams its owner
+/// opens to fixed guest vsock ports.
+/// The guest decides nothing: a stream request names a purpose, never a port, and is admitted
+/// against the current boot, policy digests and limits before any guest connection.
 package struct ChannelPolicy: Codable, Sendable, Equatable {
   package struct Endpoint: Codable, Sendable, Equatable {
     package var purpose: String
@@ -226,9 +225,10 @@ package final class StreamBroker: Sendable {
     state.withLock { $0.streams.values.map(\.summary).sorted { $0.openedAt < $1.openedAt } }
   }
 
-  /// Shuts down the matching streams (every stream when `session` is nil)
-  /// and returns what was open. Descriptors close only after their stream
-  /// unregisters, under this same lock, so a number here is never reused.
+  /// Shuts down the matching streams (every stream when `session` is nil) and
+  /// returns what was open.
+  /// Descriptors close only after their stream unregisters, under this lock, so a number is never
+  /// reused.
   @discardableResult
   package func close(session: String?) -> [StreamSummary] {
     state.withLock { state in
@@ -320,9 +320,8 @@ package final class StreamBroker: Sendable {
     Splice.bidirectional(conn, guest, chunk: policy.chunkBytes)
   }
 
-  /// `admit`, waiting out a full admission window until `deadline` instead
-  /// of refusing a burst of legitimate connections (each ssh command is one
-  /// stream). Any other refusal, or the deadline, is replied to and is nil.
+  /// `admit`, waiting out a full admission window until `deadline` instead of
+  /// refusing a burst of legitimate connections (each ssh command is one stream).
   func admitWaiting(_ request: StreamRequest, until deadline: ContinuousClock.Instant, conn: Int32)
     -> ChannelPolicy.Endpoint?
   {
@@ -380,9 +379,8 @@ package final class StreamBroker: Sendable {
   }
 }
 
-/// `iso-sandbox connect`: ssh's ProxyCommand for a brokered sandbox. Carries
-/// stdin and stdout through one admitted stream; diagnostics go to stderr
-/// only, never onto the SSH byte stream.
+/// `iso-sandbox connect`: ssh's ProxyCommand for a brokered sandbox.
+/// Diagnostics go to stderr only, never onto the SSH byte stream.
 package enum StreamConnector {
   package static func run(paths: SandboxPaths, request: StreamRequest) -> Int32 {
     signal(SIGPIPE, SIG_IGN)
@@ -448,9 +446,8 @@ package enum Splice {
     return true
   }
 
-  /// Both directions; each forwards EOF as a write shutdown, so a half-close
-  /// on either side reaches the other while the opposite direction still
-  /// flows. Returns when both have ended.
+  /// Both directions; each forwards EOF as a write shutdown, so a half-close on
+  /// either side reaches the other while the opposite direction still flows.
   package static func bidirectional(_ a: Int32, _ b: Int32, chunk: Int) {
     let done = DispatchGroup()
     for (from, to) in [(a, b), (b, a)] {
@@ -464,9 +461,9 @@ package enum Splice {
     done.wait()
   }
 
-  /// One `\n`-terminated line, read a byte at a time so nothing after it
-  /// is consumed. Nil on EOF, timeout, error, more than `limit` bytes, or
-  /// once `deadline` passes.
+  /// One `\n`-terminated line, read a byte at a time so nothing after it is
+  /// consumed.
+  /// Nil on EOF, timeout, error, more than `limit` bytes, or past `deadline`.
   package static func readLine(
     _ fd: Int32, limit: Int, deadline: ContinuousClock.Instant? = nil
   ) -> [UInt8]? {

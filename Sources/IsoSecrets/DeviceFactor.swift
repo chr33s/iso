@@ -111,7 +111,6 @@ enum SealedDeviceUnlockKey {
     do {
       let shared = try ephemeral.sharedSecretFromKeyAgreement(with: recipient)
       let wrap = wrapKey(shared, ephemeral: ephemeral.publicKey)
-      // The key bytes are copied out within the closure; the buffer does not escape.
       let plaintext = unsafe duk.withUnsafeBytes { unsafe Data($0) }
       let box = try AES.GCM.seal(plaintext, using: wrap, nonce: nonce)
       return [version] + Array(ephemeral.publicKey.x963Representation) + Array(box.nonce)

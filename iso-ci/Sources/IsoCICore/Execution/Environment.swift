@@ -137,7 +137,6 @@ package protocol EnvironmentProvider: Sendable {
   func holdSession(_ allocation: AllocationID, forwards: [ServiceForward]) throws(CIError)
   func closeSession(_ allocation: AllocationID)
 
-  /// Host-owned finite retention (`run.retain`).
   func retain(_ allocation: AllocationID, mode: RetentionMode, seconds: UInt64) throws(CIError)
 
   /// Completes the run: stage permitted results and stop. Execution and

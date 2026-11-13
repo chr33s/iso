@@ -7,29 +7,22 @@ set -euo pipefail
 # GUEST_USER is exported by the image build (ImageBuild.swift).
 : "${GUEST_USER:?GUEST_USER must be set by the orchestrator}"
 
-# Skip if a profile already provided a claude binary (e.g. stub-claude
-# for testing). Profile post_install scripts run before this script.
-# Using if/else (not early `exit 0`) because this file is concatenated
-# with codex.sh into a single shell invocation; an unconditional exit
+# Skip if a profile already provided a claude binary (e.g. stub-claude). if/else, not `exit 0`:
+# this file is concatenated with codex.sh and an exit would skip the codex installer.
 # would skip the codex installer too.
 if [ -x "/home/${GUEST_USER}/.local/bin/claude" ]; then
     echo '  [guest] Claude Code CLI already installed, skipping.'
 else
     echo '  [guest] Installing Claude Code CLI...'
 
-    # Download the installer to a file first. The `curl | bash` pattern causes
-    # the installer's `install` subcommand to inherit curl's pipe as stdin,
-    # hanging on interactive prompts in non-interactive contexts (cloud-init,
-    # chroot). Running from a file with stdin from /dev/null avoids this.
+    # Download to a file first: `curl | bash` lets the installer inherit curl's pipe as stdin and
+    # hang on prompts in non-interactive contexts. Run it with stdin from /dev/null.
     INSTALLER=$(mktemp)
     chmod 644 "$INSTALLER"
     trap 'rm -f "$INSTALLER"' EXIT
 
-    # Retry with exponential backoff — transient network errors are common
-    # during cloud-init (DNS not ready, CDN hiccups, etc.). Each attempt is
-    # time-bounded so a stalled transfer fails and retries instead of hanging.
-    # The exit status is read in the failed branch: after `fi`, $? is the
-    # `if` statement's own status (0), not curl's.
+    # Retry with backoff (DNS/CDN hiccups during cloud-init); each attempt is time-bounded. Status is
+    # read in the failed branch: after `fi`, $? is the `if`'s own status, not curl's.
     echo '  [guest] Downloading Claude Code installer...'
     MAX_RETRIES=4
     RETRY_DELAY=5

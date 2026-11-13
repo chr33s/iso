@@ -80,16 +80,14 @@ def exchange(port, wire, *, eof=False, timing=None):
 
 
 def idle_connection_capacity(port):
-    # Refill the entire production allowance after response completion and
-    # after abrupt guest disconnect. No capability or admitted request is sent.
+    # Refill the production allowance after response completion and abrupt guest disconnect.
     for finish in ["response", "disconnect", "response"]:
         held = []
         deadline = time.monotonic() + 5  # Before the ten-second header timeout.
         try:
             for _ in range(256):
                 held.append(socket.create_connection(("127.0.0.1", port), timeout=1))
-            # Allow accepts to be dispatched across the server event loops.
-            # Later 401 responses prove every held socket actually survived.
+            # Allow accepts to dispatch across event loops; later 401s prove every held socket survived.
             time.sleep(0.05)
             for _ in range(8):
                 with socket.create_connection(("127.0.0.1", port), timeout=1) as excess:
@@ -103,8 +101,7 @@ def idle_connection_capacity(port):
         finally:
             for peer in held:
                 peer.close()
-        # A successful HTTP exchange, rather than TCP connect alone, proves
-        # admission resumes after disconnect/response cleanup.
+        # A full HTTP exchange (not just TCP connect) proves admission resumes after cleanup.
         recovery = time.monotonic() + 2
         while exchange(port, READINESS) != (401, True):
             assert time.monotonic() < recovery, "connection capacity did not recover"
@@ -135,8 +132,7 @@ def fuzz_inputs(seed, count):
                 wire[position:position + 1] = bytes([rng.randrange(256)])
             else:
                 wire[position:position] = rng.choice([b"x", b" ", b"\t"]) * rng.choice([1, 128, 16385])
-        # No fuzz input may contain the valid capability. Thus even mutations
-        # into an allowlisted POST cannot attach the provider credential.
+        # No fuzz input contains the valid capability, so no mutation can attach the provider credential.
         yield bytes(wire[:96 * 1024]).replace(TOKEN.encode(), b"x" * len(TOKEN))
 
 

@@ -82,19 +82,15 @@ package struct IsoConfig: Sendable, Equatable {
   /// The preset whose defaults this configuration was decoded with.
   package let securityPreset: SecurityPreset?
   package let editor: EditorConfig
-  /// Remote execution hosts for `iso host`; global configuration only.
   package let execution: ExecutionConfig
   /// The compiled `policy` object; nil when absent. A running boot uses its
   /// stored snapshot, never this value (docs/design/iso-policy.md §5.2).
   package let policy: CompiledPolicy?
-  /// `network`: the VM transport new instances are created with.
   package let network: NetworkConfig
-  /// `workspace.input`: what an outbound transfer may carry.
   package let workspaceInput: WorkspaceInputConfig
   /// `security.revoked_grant_ids`: saved instance grants to withdraw, by the
   /// opaque IDs `iso policy effective` shows (POL-01).
   package let revokedGrantIDs: [String]
-  /// `computer_use`: guest-driven computer use for macOS guests.
   package let computerUse: ComputerUseConfig
   /// `coreai`: paravirtualized Core AI accelerators for macOS guests; nil
   /// when off (docs/design/paravirtualized-coreai.md).
@@ -229,7 +225,6 @@ package struct LocalModel: Sendable, Equatable {
   }
 }
 
-/// Settings shared by the `claude` and `codex` sections.
 package struct AgentConfig: Sendable, Equatable {
   /// Configured key, or for an absent section the provider's environment
   /// variable (the baseline default). A `cmd:` value is resolved on use.
@@ -259,10 +254,9 @@ package enum ProxyProvider: String, Sendable, CaseIterable, Codable {
   case anthropic
   case openai
 
-  /// Guest variables that carry this provider's credential, with the
-  /// injection scheme each one's value uses. The one table for both
-  /// withholding (none reaches the guest raw with a proxy or under
-  /// `proxy.mode = "required"`) and routing stored secrets to the proxy.
+  /// Guest variables carrying this provider's credential, with their
+  /// injection scheme. The one table for withholding them from the guest
+  /// (proxy or `required`) and routing stored secrets to the proxy.
   package var credentialVariables: [(name: String, auth: ProxyAuthScheme)] {
     switch self {
     case .anthropic:
@@ -299,9 +293,8 @@ package enum ProxyMode: String, Sendable, Equatable {
   case off
 }
 
-/// A provider credential reference. Literal credentials are not
-/// representable: construction requires a `cmd:` command or a `vault:<name>`
-/// reference to the local secret store (C-04, embedded-secrets D-003).
+/// A provider credential reference: a `cmd:` command or `vault:<name>`;
+/// literals are unrepresentable (C-04, embedded-secrets D-003).
 package struct CredentialReference: Sendable, Equatable, CustomStringConvertible {
   /// The reference text (`cmd:…` or `vault:…`), never a secret itself.
   package let command: Secret<String>
@@ -376,9 +369,8 @@ package struct AppleContainerConfig: Sendable, Equatable {
   package let bootTimeout: TimeoutSecs
   package let stopTimeout: TimeoutSecs
   package let buildTimeout: TimeoutSecs
-  /// The kernel sandboxes with a display boot (the `desktop` profile);
-  /// `setup` installs it beside `kernel` when set. Declared last so the
-  /// decoder keeps reading `desktop_kernel` after the timeouts.
+  /// Kernel for display boots (`desktop` profile). Declared last so the
+  /// decoder reads it after the timeouts.
   package let desktopKernel: HostPath?
 }
 
@@ -387,9 +379,8 @@ package struct AppleContainerConfig: Sendable, Equatable {
 package enum EgressMode: String, Sendable, Equatable, CaseIterable {
   /// NAT to the host's uplinks, as before.
   case open
-  /// vmnet host mode: no route beyond the host and no DNS. Host→guest SSH
-  /// and iso's SSH tunnels (credential proxy, local models, port forwards)
-  /// still work; the guest can still reach services on the host itself.
+  /// vmnet host mode: no route beyond the host, no DNS. SSH and iso's
+  /// tunnels still work; the guest can still reach services on the host.
   case none
   /// Host-only VM plus a separate CONNECT companion. Not a credential
   /// control: provider keys still follow `proxy.mode`.
@@ -418,9 +409,8 @@ package struct NetworkConfig: Sendable, Equatable {
   package static let defaults = NetworkConfig(transport: .brokered)
 }
 
-/// Approved hosts for `egress: filtered`: exact hostnames and reviewed
-/// `*.<suffix>` rules (`HostRule`). Empty means no general destinations.
-/// Hints from an agent definition are not part of this set.
+/// Approved hosts for `egress: filtered` (exact or reviewed `*.<suffix>`).
+/// Empty means none; agent-definition hints are not part of this set.
 package struct EgressFilter: Sendable, Equatable {
   package static let maxHosts = 256
   package let allowedHosts: [HostRule]
@@ -463,9 +453,8 @@ package enum SecurityPreset: String, Sendable, Equatable, CaseIterable {
   var pullMode: WorkspacePullMode { self == .networked ? .direct : .stage }
 }
 
-/// `computer_use` (docs/design/guest-driven-computer-use.md): whether an
-/// agent in a macOS guest may drive its own display, and how fast it may
-/// take frames.
+/// `computer_use` (docs/design/guest-driven-computer-use.md): guest display
+/// access and frame rate.
 package struct ComputerUseConfig: Sendable, Equatable {
   /// Frames per second the guest may take; nil when guest access is off.
   package let guestFrameRate: Int?
@@ -482,10 +471,9 @@ package struct ComputerUseConfig: Sendable, Equatable {
   package static let off = ComputerUseConfig(guestFrameRate: nil)
 }
 
-/// `coreai` (docs/design/paravirtualized-coreai.md): which paravirtualized
-/// Core AI accelerators a new macOS instance gets. Present only when
-/// enabled, which also requires acknowledging that the host must run with
-/// AMFI relaxed for the private entitlement that loads them.
+/// `coreai` (docs/design/paravirtualized-coreai.md): accelerators for a new
+/// macOS instance. Present only when enabled, which requires acknowledging
+/// the host must run with AMFI relaxed.
 package struct CoreAIConfig: Sendable, Equatable {
   package enum Accelerator: String, Sendable, CaseIterable {
     case gpu
@@ -535,7 +523,6 @@ package struct EditorConfig: Sendable, Equatable {
   package static let defaults = EditorConfig(security: .sandboxed, allow: [])
 }
 
-/// The local editor's security class.
 package enum EditorSecurity: String, Sendable, Equatable, CaseIterable {
   /// A new, isolated editor instance under Seatbelt, supervised by iso.
   case sandboxed
@@ -578,7 +565,6 @@ package struct StageLimits: Sendable, Equatable {
     maxFileBytes: ByteCount(bytes: 256 << 20)!)
 }
 
-/// `workspace.pull`.
 package struct WorkspacePullConfig: Sendable, Equatable {
   package let mode: WorkspacePullMode
   package let limits: StageLimits
@@ -702,9 +688,8 @@ extension IsoConfig {
       revokedGrantIDs: revokedGrantIDs, computerUse: computerUse, coreAI: coreAI)
   }
 
-  /// Why `egress` cannot run over `network.transport`, or nil. The brokered
-  /// transport has no route for unrestricted egress, so `open` would have
-  /// to mean something weaker than it says.
+  /// Why `egress` cannot run over `network.transport`, or nil. Brokered has
+  /// no route for unrestricted egress, so `open` would mean less than it says.
   package var transportConflict: String? {
     guard network.transport == .brokered, egress == .open else { return nil }
     return
@@ -782,9 +767,8 @@ package struct WorkspaceInputConfig: Sendable, Equatable {
   package static let defaults = WorkspaceInputConfig(
     mode: .tracked, paths: [], exclude: [], secretAllow: [], limits: .ceilings)
 
-  /// A literal, normalized, root-relative selector: no absolute path, no
-  /// `..`, `.` or empty component, no NUL or control character, no glob
-  /// meaning. `"."` alone is the whole-root selection.
+  /// A literal, normalized, root-relative selector: no absolute path, `..`,
+  /// empty/`.` component, control character or glob. `"."` alone is the root.
   package static func validSelector(_ path: String) -> Bool {
     if path == "." { return true }
     guard !path.isEmpty, !path.hasPrefix("/"), !path.hasSuffix("/"), path.utf8.count <= 4096,

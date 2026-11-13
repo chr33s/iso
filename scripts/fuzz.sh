@@ -108,8 +108,7 @@ cmd_build() {
   echo "built: ${TARGETS[*]} in $BUILD" >&2
 }
 
-# SHA-256 over every Swift input of the targets and this script (which holds
-# the compiler flags), so a stale build from another revision is rebuilt.
+# SHA-256 over every Swift input and this script (compiler flags), so a stale build is rebuilt.
 sources_stamp() {
   (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh Sources/IsoCore/*.swift \
     iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift \
@@ -179,9 +178,8 @@ cmd_minimize() { # target crash
   echo "minimized: $2.min" >&2
 }
 
-# Qualification (section 7.1 items 1-5). Builds a throwaway harness in the
-# build directory with deliberate faults reached only through the production
-# parser; nothing here is added to production sources.
+# Qualification (section 7.1 items 1-5): a throwaway harness in the build directory with
+# deliberate faults reached only through the production parser; production sources untouched.
 cmd_qualify() {
   cmd_build
   local q="$BUILD/qualification"

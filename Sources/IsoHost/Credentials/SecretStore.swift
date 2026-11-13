@@ -6,14 +6,11 @@ import Foundation
 import IsoCore
 
 /// Host secret provisioning (C-04): the macOS Keychain is the one built-in
-/// store. A stored secret is referenced from the configuration by a `cmd:`
-/// string that `CredentialResolver` runs on use, so iso never reads it back
-/// itself and no plaintext reaches the configuration file. Any other `cmd:`
-/// reference (1Password, Vault, a file) is the user's own and stays opaque:
-/// iso neither creates nor deletes what it points at. There is no fallback
-/// store; when the Keychain is unavailable, provisioning fails.
+/// store, referenced from config by a `cmd:` string that `CredentialResolver`
+/// runs on use, so no plaintext reaches the config and iso never reads it back.
+/// Other `cmd:` references are the user's own and stay opaque. No fallback
+/// store: provisioning fails when the Keychain is unavailable.
 package enum SecretStore {
-  /// Service name for GitHub PATs; the account is the `owner/repo` slug.
   package static let githubPATService = "iso-github-pat"
   /// Human label for `github status`; `keychainToken` is its JSON form.
   package static let keychainLabel = "macOS Keychain"
@@ -122,7 +119,6 @@ package struct KeychainReference: Equatable, Sendable, CustomStringConvertible {
   }
 }
 
-/// `/usr/bin/security`, the Keychain's command-line interface.
 package struct Keychain: Sendable {
   package static let defaultSecurity = "/usr/bin/security"
 
@@ -151,12 +147,9 @@ package struct Keychain: Sendable {
     }
   }
 
-  /// Create or replace the item and return its reference.
-  ///
-  /// `-w` takes the secret on argv, where local process listings can
-  /// briefly see it (the documented exception in docs/trust-model.md; the
-  /// same applies to `ProxyProvisioning.storeInKeychain`). It never appears
-  /// in iso's own messages.
+  /// Create or replace the item and return its reference. `-w` puts the secret
+  /// on argv, briefly visible to local process listings (the documented exception
+  /// in docs/trust-model.md; same for `ProxyProvisioning.storeInKeychain`).
   package func store(service: String, account: SecretAccount, secret: Secret<String>) throws
     -> KeychainReference
   {

@@ -13,8 +13,8 @@ extension GitHubAuth {
 }
 
 extension IsoConfig {
-  /// The same configuration with `github` replaced (after the PAT wizard or
-  /// a skip marker rewrote it on disk), keeping every command-line override.
+  /// The configuration with `github` replaced after an on-disk rewrite,
+  /// keeping every command-line override.
   package func replacingGitHub(_ github: GitHubAuth?) -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: github, setup: setup,
@@ -27,9 +27,8 @@ extension IsoConfig {
       computerUse: computerUse, coreAI: coreAI)
   }
 
-  /// `up`/`start --no-github`: GitHub auth off and the PAT prompt disabled
-  /// for this command. The caller also passes `githubDisabled` to the VM
-  /// assignment check so a stored assignment is not even read.
+  /// `--no-github`: auth off and PAT prompt disabled for this command; the
+  /// caller also passes `githubDisabled` so a stored assignment is not read.
   package func disablingGitHub() -> IsoConfig {
     IsoConfig(
       dataDirectory: dataDirectory, vm: vm, sshPort: sshPort, github: .off,
@@ -51,11 +50,10 @@ package struct GitHubConfigEdit: Sendable {
   package let holdsLiteralToken: Bool
 }
 
-/// Structural edits of the `github` member, with the Rust wizard's rules:
-/// a non-object `github` (e.g. `"off"`) becomes an object, `mode` is forced
-/// to `"pat"`, and non-object/non-array `pat`/`skip` members are replaced.
-/// Each returns nil when the document would not change, so a repeated
-/// rotation does not rewrite (and strip the comments of) the file.
+/// Structural edits of the `github` member: a non-object `github` becomes an
+/// object, `mode` is forced to `"pat"`, malformed `pat`/`skip` are replaced.
+/// Each returns nil when nothing changes, so a repeat does not rewrite (and
+/// strip the comments of) the file.
 extension ConfigEditor {
   /// Set `github.pat."<repo>" = {"token": token}` and drop `repo` from `skip`.
   package static func upsertPAT(
@@ -93,9 +91,8 @@ extension ConfigEditor {
     }
   }
 
-  /// Record `repo` in `github.skip` (the auto-prompt's `never`). `mode` is
-  /// forced to `"pat"` because the skip list is only read in PAT mode; PAT
-  /// mode without a matching entry forwards no token, as `off` does.
+  /// Record `repo` in `github.skip`. `mode` is forced to `"pat"` because the
+  /// skip list is only read there; PAT without an entry forwards no token.
   package static func addSkipMarker(
     existing: [UInt8]?, format: ConfigFormat, path: String, repo: RepoSlug,
     environment: ConfigEnvironment, limits: JSONLimits = .configuration

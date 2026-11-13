@@ -4,10 +4,8 @@ import IsoCore
 import IsoHost
 import Synchronization
 
-/// Worker-owned byte relays to verified guest SSH endpoints (spec 9.1).
-/// Each stream belongs to one access session; revoking the session shuts
-/// down its sockets, which ends the stream regardless of guest behavior.
-/// The client's SSH still verifies the pinned guest host key end to end.
+/// Worker-owned byte relays to verified guest SSH endpoints (spec 9.1). Revoking an access
+/// session shuts its sockets; the client's SSH still verifies the pinned guest host key.
 package final class RelayRegistry: Sendable {
   package static let maxStreamsPerSession = 16
   package static let maxStreams = 256
@@ -30,7 +28,6 @@ package final class RelayRegistry: Sendable {
 
   package init() {}
 
-  /// Registers a stream, or nil when a session or installation limit is reached.
   func register(_ session: SessionID, client: Int32, connector: pid_t) -> UInt64? {
     state.withLock { state in
       guard state.total < Self.maxStreams,
@@ -77,7 +74,6 @@ package final class RelayRegistry: Sendable {
   package var total: Int { state.withLock { $0.total } }
 }
 
-/// The relay preamble: one bounded JSON line selecting a live grant.
 package struct RelayPreamble: Sendable, Equatable {
   package static let maxBytes = 4_096
   package let session: SessionID
@@ -115,9 +111,8 @@ package struct RelayPreamble: Sendable, Equatable {
 }
 
 extension HostSupervisor {
-  /// Serves one relay connection on the daemon's relay socket: preamble,
-  /// admission against a live grant, status line, then raw bytes to the
-  /// guest endpoint chosen from current native proof. Closes `client`.
+  /// Serves one relay connection: preamble, admission against a live grant, status line,
+  /// then raw bytes to the endpoint from native proof. Closes `client`.
   package func serveRelay(client: Int32) {
     defer { close(client) }
     func status(_ error: HostControlError?) -> Bool {
@@ -152,11 +147,8 @@ extension HostSupervisor {
   }
 }
 
-/// Opens the guest side of a relay through `/usr/bin/nc`. A platform binary
-/// is used deliberately: macOS Local Network privacy refuses connections to
-/// the VM's network from a non-Apple binary running as a background job
-/// (no prompt can be shown), while Apple binaries are exempt. The endpoint
-/// still comes only from native proof; nc gets it as fixed argv.
+/// Opens the guest side via `/usr/bin/nc`: macOS Local Network privacy refuses non-Apple
+/// binaries in background jobs. The endpoint comes only from native proof, as fixed argv.
 package enum GuestConnector {
   static let nc = "/usr/bin/nc"
 
@@ -200,7 +192,6 @@ package enum GuestConnector {
   }
 }
 
-/// Small blocking-socket helpers shared by the control and relay servers.
 package enum Socket {
   /// Reads one `\n`-terminated line (without it), at most `limit` bytes.
   /// Nil on EOF, error or an oversized line.
@@ -217,7 +208,6 @@ package enum Socket {
     }
   }
 
-  /// Copies both directions until each side reaches EOF or fails.
   package static func splice(_ a: Int32, _ b: Int32) {
     let done = DispatchGroup()
     for (from, to) in [(a, b), (b, a)] {
@@ -231,8 +221,6 @@ package enum Socket {
     done.wait()
   }
 
-  /// Copies a socket to a child's stdin and the child's stdout back, until
-  /// either side ends.
   static func splice(_ socket: Int32, child: ProcessRunner.PipedChild) {
     let done = DispatchGroup()
     done.enter()

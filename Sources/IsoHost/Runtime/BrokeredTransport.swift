@@ -3,11 +3,10 @@ import IsoConfiguration
 import IsoCore
 import IsoSecrets
 
-/// The brokered transport (docs/design/brokered-network-isolation.md): a VM
-/// with no network device, reached only through `iso-sandbox connect`, the
-/// runtime's stream connector, as ssh's ProxyCommand. Everything here is
-/// computed on the host from operator-controlled state; the guest supplies
-/// none of it.
+/// The brokered transport (docs/design/brokered-network-isolation.md): a VM with
+/// no network device, reached only through `iso-sandbox connect` as ssh's
+/// ProxyCommand. Everything here is computed on the host from operator-controlled
+/// state; the guest supplies none of it.
 
 extension SHA256Hex {
   /// The digest of `bytes`: the form the runtime binds a boot's streams to
@@ -39,11 +38,10 @@ package enum BrokeredChannel {
   }
 }
 
-/// The immutable per-boot network policy of a brokered VM (spec 6.1),
-/// resolved on the host from configuration and the instance's own records.
-/// Its digest is passed to the runtime at boot; every stream of that boot
-/// must present it, and a handoff refuses a configuration that resolves to
-/// a different one (`POLICY_CHANGE_REQUIRES_RESTART`).
+/// The immutable per-boot network policy of a brokered VM (spec 6.1), resolved on
+/// the host from config and instance records. Its digest goes to the runtime at
+/// boot, every stream must present it, and a handoff refuses a config resolving
+/// to a different one (`POLICY_CHANGE_REQUIRES_RESTART`).
 package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
   package struct PublicEgress: Sendable, Equatable, Codable {
     /// `filtered`: blind CONNECT to the recorded hosts on port 443.
@@ -122,11 +120,10 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
     self.channelPolicy = channelPolicy
   }
 
-  /// The policy `config` resolves to for `instance` now. Refuses what a
-  /// brokered VM cannot carry: open egress, or a local model the guest
-  /// would have to reach directly. `guestEnvironment` is the environment a
-  /// boot is about to record (its `--env` provider secrets decide brokers);
-  /// nil reads the recorded one.
+  /// The policy `config` resolves to for `instance` now. Refuses what a brokered VM
+  /// cannot carry: open egress, or a local model the guest would reach directly.
+  /// `guestEnvironment` is the about-to-be-recorded environment (its `--env`
+  /// provider secrets decide brokers); nil reads the recorded one.
   package static func resolve(
     _ config: IsoConfig, _ instance: Instance,
     guestEnvironment: [EnvVarName: EnvValue]? = nil

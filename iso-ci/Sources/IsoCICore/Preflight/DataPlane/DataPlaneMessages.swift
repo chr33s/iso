@@ -292,7 +292,6 @@ package enum DataPlaneCall: Sendable, Equatable {
   }
 }
 
-/// Job progress the endpoint reports. Values are bounded on decode.
 package enum DataPlaneEvent: Sendable, Equatable {
   case sessionCreated
   case jobAcquired

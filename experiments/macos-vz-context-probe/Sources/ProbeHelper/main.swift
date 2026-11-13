@@ -66,7 +66,6 @@ func hello(nonce: String, key: SymmetricKey) -> Data {
   return d
 }
 
-/// One line from `fd`, at most 256 bytes.
 func readLine(_ fd: Int32) -> String? {
   var out = [UInt8]()
   var c: UInt8 = 0

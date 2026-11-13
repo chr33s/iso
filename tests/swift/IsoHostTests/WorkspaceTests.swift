@@ -151,7 +151,6 @@ private func transfer() -> WorkspaceTransfer {
   try FileManager.default.createDirectory(
     atPath: guest + "/.git", withIntermediateDirectories: true)
   try Data("guest".utf8).write(to: URL(fileURLWithPath: guest + "/.git/HEAD"))
-  // The guest's GNU tar takes --sparse; the host's bsdtar stands in without it.
   let bin = root + "/bin"
   try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
   try Data(
@@ -166,10 +165,8 @@ private func transfer() -> WorkspaceTransfer {
   ).tarReceive(
     try target(), guest: GuestPath(guest), into: attempt, receivers: fakeReceivers())
   #expect(try String(contentsOfFile: attempt.tree + "/lib/a.txt", encoding: .utf8) == "a")
-  // A return never requests git administration.
   #expect(!FileManager.default.fileExists(atPath: attempt.tree + "/.git"))
 
-  // A remote extraction failure reports the remote stderr.
   #expect {
     try transfer().tarPipe(
       try target(), source: source, to: GuestPath(root + "/missing/dir"), excludeGit: false)
@@ -320,9 +317,6 @@ private final class Flag: @unchecked Sendable {
   }
 }
 
-/// Runs `body` on another thread while this one holds the stage lock, and
-/// reports whether it finished, and whether the stage directory existed,
-/// before the lock was released.
 private func runWhileStageIsLocked(
   _ location: StageLocation, _ body: @escaping @Sendable () -> Void
 ) throws -> (finished: Bool, stageExisted: Bool) {

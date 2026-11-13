@@ -27,10 +27,8 @@ private func admissions(
 @Test func windowBoundaryIsExclusive() throws {
   var state = try admissions(rateGuard("limit", max: 1, within: 60))
   #expect(state.checkAndAdmit(now: 10, decisionID: "a").allows)
-  // Exactly W - 1 tick old: still charged.
   #expect(state.checkAndAdmit(now: 10 + 60 * second - 1, decisionID: "b").reason == .quotaExceeded)
   #expect(state.checkAndAdmit(now: 10 + 60 * second - 1, decisionID: "b").retryAfterSeconds == 1)
-  // Exactly W old: expired.
   #expect(state.checkAndAdmit(now: 10 + 60 * second, decisionID: "c").allows)
 }
 

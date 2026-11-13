@@ -6,10 +6,8 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Prefix of every fine-grained PAT.
 package let githubPATPrefix = "github_pat_"
 
-/// The "no entry" error for a repository in PAT mode.
 package func missingPATEntryError(_ repo: RepoSlug) -> String {
   "No GitHub PAT configured for '\(repo)'. Run `iso github setup-pat --repo \(repo)` to add one, or set `github = \"off\"` to disable token forwarding."
 }
@@ -34,10 +32,9 @@ package struct GitHubTokens: Sendable {
     tools.environment["GITHUB_TOKEN"].flatMap { $0.isEmpty ? nil : Secret($0) }
   }
 
-  /// The `GITHUB_TOKEN` to forward into a guest session, or nil for none.
-  /// `repo` selects the PAT-mode entry (an active VM assignment's repo when
-  /// there is one). A missing PAT-mode repo or entry forwards nothing, so
-  /// follow-up commands still work; a failing entry lookup is an error.
+  /// The `GITHUB_TOKEN` to forward into a guest session, or nil. `repo` selects
+  /// the PAT-mode entry (an active VM assignment's repo wins). A missing repo or
+  /// entry forwards nothing; a failing entry lookup is an error.
   package func guestToken(_ github: GitHubAuth?, repo: RepoSlug?) throws -> Secret<String>? {
     switch github ?? .off {
     case .auto: return environmentToken ?? tools.ghAuthToken()
@@ -81,11 +78,10 @@ package struct GitHubTokens: Sendable {
     return token
   }
 
-  /// The token for cloning `url` in the guest (used once, over stdin, never
-  /// left in the guest environment). An active assignment's entry wins and
-  /// never falls back; then a matching PAT-mode entry; otherwise only the
-  /// ambient credentials the mode explicitly selects (AUTH-01): none for
-  /// `off`, an unset mode or PAT mode, so the clone is anonymous.
+  /// The token for cloning `url` in the guest (once, over stdin, never left in
+  /// the guest environment). An active assignment's entry wins and never falls
+  /// back; then a matching PAT entry; ambient credentials only when the mode
+  /// explicitly selects them (AUTH-01), so `off`/unset/PAT clones anonymously.
   package func cloneToken(_ github: GitHubAuth?, url: String, assigned: RepoSlug?) throws
     -> Secret<String>?
   {
@@ -98,7 +94,6 @@ package struct GitHubTokens: Sendable {
     ).map(Secret.init)
   }
 
-  /// The slug of `url` when PAT mode has an entry for it.
   static func clonePATSlug(_ github: GitHubAuth?, url: String) -> RepoSlug? {
     guard case .pat? = github, let slug = RepoSlug.parse(url: url), github?.patEntry(slug) != nil
     else { return nil }
@@ -297,7 +292,6 @@ package struct GitHubAssignment: Equatable, Sendable {
     }
   }
 
-  /// Exactly `{"repo": "<owner/repo>"}`.
   static func decode(_ bytes: [UInt8]) throws -> GitHubAssignment {
     let value = try ConfigLoader.parse(
       bytes, format: .json, path: "github_pat.json", limits: .configuration)
@@ -322,7 +316,6 @@ package struct GitHubAssignment: Equatable, Sendable {
       Array("{\"repo\":\"\(repo)\"}".utf8), to: Self.path(instance), mode: .atMost(0o600))
   }
 
-  /// Unlink the association (never its target); absent is fine.
   package static func remove(_ instance: Instance) throws {
     if unlink(path(instance)) != 0 && errno != ENOENT {
       throw ContextError(
@@ -340,10 +333,9 @@ package struct GitHubAssignment: Equatable, Sendable {
     }
   }
 
-  /// The assignment in force for `instance`. `githubDisabled` (`--no-github`)
-  /// precedes even reading the file. A present assignment must name an
-  /// existing entry and must not be shadowed by a user-set `GITHUB_TOKEN` /
-  /// `GH_TOKEN`; it never falls back.
+  /// The assignment in force for `instance`. `--no-github` precedes even reading
+  /// the file. It must name an existing entry, must not be shadowed by a user-set
+  /// `GITHUB_TOKEN`/`GH_TOKEN`, and never falls back.
   package static func active(_ config: IsoConfig, _ instance: Instance, githubDisabled: Bool)
     throws -> GitHubAssignment?
   {
@@ -431,11 +423,9 @@ package struct HostGitHubTokens: GitHubTokenSource {
   }
 }
 
-/// The one source-retrieval authentication decision (AUTH-01), shared by
-/// guest clones and host devcontainer discovery: ambient host credentials
-/// are used only when the configured mode explicitly selects them. Missing
-/// scope is a refusal or an anonymous request, never a reason to look for a
-/// broader credential.
+/// The one source-retrieval auth decision (AUTH-01), shared by guest clones and
+/// devcontainer discovery: ambient host credentials are used only when the mode
+/// explicitly selects them; missing scope is a refusal or anonymous request.
 package enum GitHubSourceAuth {
   package static func ambient(_ github: GitHubAuth?) -> (gh: Bool, env: Bool) {
     switch github {

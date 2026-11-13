@@ -68,7 +68,6 @@ package struct IsoBridgeTransport: HostTransport {
 package struct HostClient: Sendable {
   package let alias: Name
   package let transport: any HostTransport
-  /// The pinned identity; nil only during first contact.
   package let expected: (host: HostID, owner: OwnerID)?
 
   package init(alias: Name, transport: any HostTransport, expected: (host: HostID, owner: OwnerID)?)

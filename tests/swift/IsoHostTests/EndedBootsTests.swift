@@ -20,7 +20,6 @@ private let guestCounts = MacGuestCUCounts(
 
 private func bootID(_ digit: Character) -> String { String(repeating: digit, count: 32) }
 
-/// The stopped display fixture with `endedBoots` replaced.
 private func stopped(endedBoots: Any?) throws -> SandboxInspection {
   let data = try Data(contentsOf: fixtures.appending(path: "inspect-display-stopped.json"))
   var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -61,7 +60,6 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
         guestComputerUse: try #require(running.runtime?.guestComputerUse),
         liveView: try #require(running.runtime?.liveView))
     ])
-  // The running owner's own boot is not among them.
   #expect(AppleBackend.Observed.linux(running).endedBoots.isEmpty)
   #expect(AppleBackend.Observed.linux(running).computerUse.bootID == running.live?.bootId)
 }
@@ -84,14 +82,11 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
   #expect(
     boots == [
       EndedBoot(bootID: bootID("a"), guestComputerUse: nil, liveView: streamed),
-      // Invalid counts are dropped, as a running owner's are.
       EndedBoot(bootID: bootID("b"), guestComputerUse: nil, liveView: nil),
     ])
-  // Not a list at all.
   for other: Any in ["none", 3, ["bootId": bootID("a")]] {
     #expect(try stopped(endedBoots: other).endedBoots?.boots == [])
   }
-  // Only as many as the runtime keeps, the most recent.
   let many = (0..<EndedBoots.limit + 4).map {
     ["bootId": String(format: "%032x", $0), "liveView": liveView] as [String: Any]
   }
@@ -107,12 +102,10 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
   let first = bootID("1")
   ComputerUseAudit.record(instance, boot: first, [.liveView(streamed)])
   #expect(try events(instance, "live_view").count == 1)
-  // The same boot seen again (every later inspection lists it).
   ComputerUseAudit.record(instance, boot: first, [.liveView(streamed)])
   ComputerUseAudit.record(instance, boot: first, [.guestComputerUse(guestCounts)])
   #expect(try events(instance, "live_view").count == 1)
   #expect(try events(instance, "guest_computer_use").isEmpty)
-  // Another boot is its own record.
   ComputerUseAudit.record(
     instance, boot: bootID("2"), [.guestComputerUse(guestCounts), .liveView(streamed)])
   #expect(try events(instance, "live_view").count == 2)
@@ -126,7 +119,6 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
   let boot = bootID("3")
   ComputerUseAudit.record(instance, boot: boot, [])
   #expect(!FileManager.default.fileExists(atPath: ComputerUseAudit.path(instance)))
-  // So its counts are still recorded if they are seen later.
   ComputerUseAudit.record(instance, boot: boot, [.liveView(streamed)])
   #expect(try events(instance, "live_view").count == 1)
 }
@@ -141,7 +133,6 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
   let kept = try StateStore.decode(
     ComputerUseAudit.Record.self, try #require(try StateStore.readControlFile(path)), path: path)
   #expect(kept.boots == Array(boots.suffix(ComputerUseAudit.limit)))
-  // Every boot the runtime can still list is still known.
   #expect(ComputerUseAudit.limit > EndedBoots.limit)
   let before = try events(instance, "live_view").count
   for boot in boots.suffix(EndedBoots.limit) {
@@ -149,14 +140,12 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
   }
   #expect(try events(instance, "live_view").count == before)
 
-  // An unparseable record counts as empty and is rewritten.
   try Data("{".utf8).write(to: URL(fileURLWithPath: path))
   ComputerUseAudit.record(instance, boot: boots[0], [.liveView(streamed)])
   #expect(try events(instance, "live_view").count == before + 1)
   ComputerUseAudit.record(instance, boot: boots[0], [.liveView(streamed)])
   #expect(try events(instance, "live_view").count == before + 1)
 
-  // One that cannot be read records nothing now, and says so.
   try FileManager.default.removeItem(atPath: path)
   try FileManager.default.createSymbolicLink(atPath: path, withDestinationPath: "/dev/null")
   let sink = LogSink()
@@ -180,7 +169,6 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
   let instance = base.instance
   let expired = EndedBoot(bootID: bootID("e"), guestComputerUse: guestCounts, liveView: streamed)
 
-  // Created without guest computer use: its guest counts are not audited.
   backend.auditEndedBoots(instance, createdWithGuestComputerUse: false, [expired])
   #expect(try events(instance, "live_view").count == 1)
   #expect(try events(instance, "guest_computer_use").isEmpty)
@@ -194,7 +182,6 @@ private func backend(_ root: String, _ sink: LogSink) throws -> AppleBackend {
     computerUse: .init(bootID: stoppedBoot, guest: nil, liveView: streamed))
   backend.auditComputerUse(running)
   #expect(try events(instance, "live_view").count == 2)
-  // Its owner then lists it as ended, with its last counts.
   backend.auditEndedBoots(
     instance, createdWithGuestComputerUse: false,
     [expired, EndedBoot(bootID: stoppedBoot, guestComputerUse: nil, liveView: streamed)])

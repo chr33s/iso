@@ -196,7 +196,6 @@ package final class GitHubAPI: Sendable {
   }
 }
 
-/// Where runners register: one repository or one organization.
 package enum GitHubRunnerScope: Sendable, Equatable, Hashable {
   case repository(RepositoryName)
   case organization(String)

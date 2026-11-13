@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Real-hardware checks for iso-sandbox (iso-sandbox), the runtime
-# behind the `apple-container` build. Unit tests cannot boot VMs; this boots
-# real ones and checks what the backend's isolation contract relies on
-# (docs/trust-model.md): peer isolation between sandboxes, no host mounts,
-# agent sockets, or canary leakage, pinned SSH over the native channel, and
-# the lifecycle (persistence, resources, disk growth, commit/restore, crash
-# recovery and interrupted mutations, concurrency).
+# Real-hardware checks for iso-sandbox: boots real VMs to verify the isolation contract
+# in docs/trust-model.md (peer isolation, no host mounts/agent sockets/canary leakage,
+# pinned SSH) and the lifecycle (persistence, growth, snapshots, crash recovery, concurrency).
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity brokered
@@ -103,7 +99,6 @@ skip() {
 
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 
-# timed_ms CMD...: run CMD and print how long it took, in milliseconds.
 timed_ms() {
     local t0
     t0="$(now_ms)"
@@ -111,7 +106,6 @@ timed_ms() {
     echo $(($(now_ms) - t0))
 }
 
-# delay_s MS PERCENT: PERCENT of MS, as seconds for sleep.
 delay_s() {
     local ms=$(($1 * $2 / 100))
     printf '%d.%03d' $((ms / 1000)) $((ms % 1000))
@@ -123,7 +117,6 @@ check() {
     if "$@"; then pass "$label"; else fail "$label"; fi
 }
 
-# refuses CMD...: CMD must fail.
 refuses() { ! "$@" >/dev/null 2>&1; }
 
 summary() {
@@ -178,7 +171,6 @@ verify() { guest "$1" /usr/local/sbin/iso-test-verify; }
 # peer-probe.sh prints at least this many results; fewer means it failed.
 MIN_PROBES=17
 
-# listeners TARGET: TCP/UDP echo on 7777/7778 as systemd units.
 listeners() {
     guest "$1" sh -c '
         sysctl -qw net.ipv4.icmp_echo_ignore_broadcasts=0
@@ -426,7 +418,6 @@ fi
 if want isolation; then
     echo ""
     echo "=== Phase: isolation ==="
-    # probe ATTACKER TARGET LABEL: every vector blocked, host control reaches the target.
     probe() {
         local label="$3" result reached host n
         listeners "$2"
@@ -538,7 +529,6 @@ if want brokered; then
     ssh-keygen -q -t ed25519 -N '' -C "iso-brokered-$RUN" -f "$BKEY"
     guest_in "$BR" sh -c 'umask 077; mkdir -p /root/.ssh; cat > /root/.ssh/authorized_keys' <"$BKEY.pub"
     echo "$BR.iso $(guest "$BR" cut -d' ' -f1-2 /etc/ssh/ssh_host_ed25519_key.pub)" >"$BKNOWN"
-    # bssh PROXYCOMMAND ARGS...: pinned SSH through the given connector line.
     bssh() {
         local proxy="$1"
         shift
@@ -649,7 +639,6 @@ threading.Event().wait()
     check "N-T04: the owner's stream socket is owner-only in a private directory" \
         test "$(tr '\n' ' ' <<<"$modes")" = "700 600 "
 
-    # Revocation: closing the streams ends a live session at once.
     bssh "$(connect_cmd)" 'sleep 60' &
     sleeper=$!
     sleep 2
@@ -903,7 +892,6 @@ if want recovery; then
     sbx stop "$t"
     sbx commit "$t" txn-base >/dev/null
     rec() { sbx inspect "$t" | jq -r ".record.$1"; }
-    # interrupt DELAY CMD...: run CMD, SIGKILL it after DELAY seconds, reconcile.
     interrupt() {
         local d="$1" pid
         shift
@@ -1290,7 +1278,6 @@ if want iso; then
     sbx stop "$A" >/dev/null 2>&1
     sbx stop "$B" >/dev/null 2>&1
     kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
-    # $1: extra apple_container settings as a JSON object.
     write_cfg() {
         jq -n --arg data "$CDATA" --arg binary "$SANDBOX" --arg builder "$CONTAINER" \
             --arg kernel "$kernel" --rawfile stubs "$FIXTURES/stub-agents.sh" \
@@ -1748,7 +1735,6 @@ if want iso; then
             # shellcheck disable=SC2016 # Expand in the guest.
             check "brokered filtered: guest sessions carry the companion proxy" \
                 test "$(bf exec e2e-bf -- sh -c 'echo "${https_proxy%%@*}" | cut -d: -f1-2')" = "http://iso"
-            # curl_rc ARGS...: curl's stderr and exit status in the guest.
             # shellcheck disable=SC2016 # Expand in the guest.
             curl_rc() { bf exec e2e-bf -- sh -c 'curl -sS -o /dev/null --max-time 30 "$@" 2>&1; echo "rc=$?"' sh "$@"; }
             approved="$(curl_rc https://github.com/)"

@@ -38,7 +38,6 @@ package struct HostPublicKey: Sendable, Equatable {
     self.blob = blob
   }
 
-  /// OpenSSH `SHA256:<base64 without padding>`, as `ssh-keygen -lf` prints.
   package var fingerprint: String {
     "SHA256:"
       + Data(SHA256.hash(data: blob)).base64EncodedString().replacingOccurrences(of: "=", with: "")
@@ -51,9 +50,7 @@ package struct HostPublicKey: Sendable, Equatable {
 
 /// How a freshly read host key is checked against the instance's pin.
 package enum HostKeyTrust: Sendable {
-  /// A new instance: write the pin; refuse if one exists.
   case enroll
-  /// A normal start: the pin must match byte for byte.
   case requirePin
   /// Only after iso itself replaced the disk (`restore`).
   case reenrollAfterRestore

@@ -51,7 +51,6 @@ private func eventually(
   #expect(try await eventually { exit.fired > 0 })
   try await Task.sleep(for: .milliseconds(200))
   #expect(exit.fired == 1)
-  // The halt request, then the forced kill.
   #expect(container.received == [Owner.systemdHalt.rawValue, Signal.kill.rawValue])
 }
 

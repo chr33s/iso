@@ -216,7 +216,6 @@ def main():
         refused = run(binary, home, config, "list", "--output", "jsonl")
         check("other commands refuse --output jsonl", refused.returncode == 2 and refused.stdout == b"", refused)
 
-        # Live following through a pipe.
         viewer = Viewer(binary, home, config, run_id)
         try:
             first = viewer.until_progress()

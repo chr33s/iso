@@ -423,17 +423,14 @@ import Testing
         ])
     #expect(steps[2]["timeoutInMinutes"] == 5)
     #expect(steps[2]["contextName"] == "v")
-    // Repository action reference.
     #expect(
       steps[3]["reference"]
         == [
           "type": "repository", "name": "actions/cache", "ref": "v4", "repositoryType": "GitHub",
           "path": "",
         ])
-    // Secrets are secret variables; the GitHub token is a masked local placeholder.
     #expect(message["variables"]?["NPM_TOKEN"] == ["value": "s3cr3t", "isSecret": true])
     #expect(message["variables"]?["system.github.token"]?["isSecret"] == true)
-    // Context data uses the pipeline-context-data form.
     #expect(message["contextData"]?["github"]?["t"] == 2)
     // No OIDC: no GenerateIdTokenUrl anywhere in the endpoint data.
     let data = try #require(message["resources"]?["endpoints"]?.arrayValue?.first?["data"])

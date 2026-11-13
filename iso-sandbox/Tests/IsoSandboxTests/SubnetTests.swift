@@ -89,7 +89,6 @@ import Testing
     }
     SubnetAllocator.prune(&state, now: now)
     #expect(state.quarantined.count == SubnetAllocator.maxQuarantined)
-    // The oldest entries are the ones dropped.
     #expect(state.quarantined[1] == nil)
   }
 

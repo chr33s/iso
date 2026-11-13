@@ -30,7 +30,6 @@ package enum JobMessageBuilder {
   package static let maxSecrets = 100
   package static let maxSecretBytes = 48 << 10
 
-  /// Guest-side addresses of the single scoped endpoint.
   package struct Endpoint: Sendable, Equatable {
     package let base: String
     /// `github.server_url`: a `.localhost` name so toolkits do not treat the

@@ -33,11 +33,10 @@ extension ImageManifest {
     guestOS == .linux && guestAdapters?.contains(Self.virtioDisplayAdapter) == true
   }
 
-  /// Refuses to put this image's disk under an instance created with a
-  /// different display. The display is fixed at create: a desktop instance
-  /// on a disk without the adapter would bootstrap a computer-use server
-  /// the disk lacks, and a headless one would boot a desktop disk with no
-  /// display.
+  /// Refuses to put this image's disk under an instance created with a different
+  /// display. The display is fixed at create: a desktop instance on a disk without
+  /// the adapter would bootstrap a missing computer-use server, and a headless one
+  /// would boot a desktop disk with no display.
   package func requireDisplay(
     _ display: LinuxGuestDisplay?, image: ImageName, instance: InstanceName
   ) throws {
@@ -78,9 +77,8 @@ package struct EffectiveDisplay: Sendable, Equatable {
 }
 
 /// A display sandbox owner's per-boot computer-use counts (`runtime` in
-/// `inspect`), read before a stop for the audit (an ended boot's are in
-/// ``EndedBoots``). An invalid report (a
-/// negative count) is dropped: only the audit loses it.
+/// `inspect`), read before a stop for the audit (ended boots' are in
+/// ``EndedBoots``). An invalid report (negative count) is dropped.
 package struct LinuxDesktopStatus: Sendable, Equatable, Decodable {
   /// Absent when the sandbox was created without guest-driven computer use.
   package let guestComputerUse: MacGuestCUCounts?

@@ -2,12 +2,11 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// The read-only effective-policy and migration report (POL-01, MIG-01):
-/// what the configuration requests, what an instance recorded at creation
-/// and since, and every relaxation from the secure-default baseline. It
-/// reads host files only: it resolves no secret, runs no credential command,
-/// contacts no provider, and never starts, changes or audits anything.
-/// Unreadable evidence is reported as unknown.
+/// The read-only effective-policy and migration report (POL-01, MIG-01): what the
+/// config requests, what an instance recorded, and every relaxation from the
+/// secure default. Reads host files only: no secret, credential command or
+/// provider contact, and it never starts, changes or audits. Unreadable evidence
+/// is reported as unknown.
 package enum EffectivePolicyReport {
   /// The DEF-01 baseline each requested value is compared with.
   static let baselineTTL: UInt32 = 8 * 3600

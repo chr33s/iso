@@ -8,7 +8,6 @@ package struct ReconcileReport: Sendable, Equatable {
   package var retained: [AllocationID] = []
   package var uncertain: [AllocationID] = []
   package var errors: [String] = []
-  /// Why no capacity was added this pass, when none was.
   package var admissionPaused: String?
   package var live = 0
   package var idle = 0
@@ -74,7 +73,6 @@ package final class ConnectedPoolReconciler: Sendable {
   /// How long to wait for GitHub to confirm a conclusion before deciding
   /// failure retention from the runner process alone.
   package static let conclusionWaitSeconds: EpochSeconds = 120
-  /// Set on a confirmed JIT intent whose registration was deleted again.
   static let removedRunnerParameter = "removed_runner_id"
 
   package let pool: Name
@@ -142,7 +140,6 @@ package final class ConnectedPoolReconciler: Sendable {
     let poolConfig: PoolConfiguration?
     let scope: GitHubRunnerScope?
     let state: PoolState
-    /// Missing capacity, oldest first; empty when admission is paused.
     package var requests: [ScheduleRequest] = []
   }
 

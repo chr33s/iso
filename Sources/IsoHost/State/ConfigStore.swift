@@ -6,10 +6,10 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// Writes to the configuration file. Every edit rereads the file under the
-/// writer lock (so concurrent edits are not lost), edits the structural form,
-/// verifies the result, and replaces the file atomically without widening its
-/// mode. A failure at any step leaves the previous file untouched.
+/// Writes to the configuration file. Every edit rereads it under the writer lock
+/// (no lost concurrent edits), edits the structural form, verifies the result and
+/// replaces the file atomically without widening its mode; any failure leaves the
+/// previous file untouched.
 package enum ConfigStore {
   /// `iso setup --config-only`: write the commented template (or, for a
   /// strict `.json` path, an empty object) if nothing exists. Returns false

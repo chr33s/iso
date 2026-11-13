@@ -4,11 +4,9 @@ import IsoConfiguration
 import IsoCore
 import IsoHost
 
-/// `iso host migrate local` (spec 14): a stopped-boundary, one-time move of a
-/// local data root under the host service. The command previews, then
-/// prepares a durable handoff and releases its locks; the service (holding
-/// its ownership lock) rechecks everything and completes activation before it
-/// dispatches any work. Migration never stops a VM.
+/// `iso host migrate local` (spec 14): a one-time move of a local data root under the host
+/// service, at a stopped boundary. The command previews and prepares a durable handoff; the
+/// service rechecks and activates before dispatching work. Never stops a VM.
 package enum HostMigration {
   package struct LegacyInstance: Sendable, Equatable {
     package let name: InstanceName
@@ -32,7 +30,6 @@ package enum HostMigration {
     package var eligible: Bool { blockers.isEmpty }
   }
 
-  /// The durable handoff between the migrate command and the service.
   package struct MigrationRecord: Codable, Sendable, Equatable {
     package enum State: String, Codable, Sendable {
       case prepared
@@ -164,11 +161,9 @@ package enum HostMigration {
 
   // MARK: - Complete (the service, activation-only)
 
-  /// Completes a prepared migration. The caller holds the service-ownership
-  /// lock; this takes the mutation lock, rechecks the stopped boundary, the
-  /// writers and every planned identity, then adopts each instance, fences
-  /// the owner record against older binaries, and commits active. Each step
-  /// is idempotent, so a crash at any point resumes here.
+  /// Completes a prepared migration under the ownership lock: takes the mutation lock,
+  /// rechecks the stopped boundary and planned identities, adopts instances, fences the
+  /// owner record, commits active. Each step is idempotent, so a crash resumes here.
   package static func complete(
     config: IsoConfig, backend: AppleBackend, diagnostics: Diagnostics,
     otherWriters: () -> [pid_t] = otherIsoProcesses
@@ -266,17 +261,14 @@ package enum HostMigration {
 
   // MARK: - Rollback (before active only)
 
-  /// Undoes a prepared, not yet active migration under the same locks.
-  /// After activation there is no automatic rewind (forward-fix only).
-  /// `waitingForService` bounds the wait for a just-stopped service to
-  /// release its ownership lock.
-  /// Whether rollback should remove `instance`'s marker: it names this
-  /// adoption, or it is unreadable on a name the prepared record lists (left
-  /// in place, it would fence an instance no service manages).
+  /// Whether rollback should remove `instance`'s marker: it names this adoption, or is
+  /// unreadable on a listed name (left in place it would fence an unmanaged instance).
   static func markerIsOurs(_ instance: Instance, _ id: InstanceID) -> Bool {
     do { return try ServiceAdoption.load(instance) == id } catch { return true }
   }
 
+  /// Undoes a prepared, not yet active migration under the same locks; there is no rewind after
+  /// activation. `waitingForService` bounds the wait for the service to release its lock.
   package static func rollback(config: IsoConfig, waitingForService: Duration = .zero) throws {
     guard var record = try loadRecord(config) else {
       throw HostError("no host-control migration is prepared")
@@ -350,8 +342,6 @@ package enum HostMigration {
     return found
   }
 
-  /// A process's executable and arguments, NUL-separated words joined by
-  /// spaces; nil when unreadable.
   static func arguments(of pid: pid_t) -> String? {
     var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
     var size = 0

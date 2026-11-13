@@ -31,7 +31,6 @@ package struct HostControlError: Error, Equatable, Sendable, CustomStringConvert
     case limitExceeded = "LIMIT_EXCEEDED"
     case invalidRequest = "INVALID_REQUEST"
 
-    /// The retry guidance a client follows when the server sends none.
     package var defaultRetry: Retry {
       switch self {
       case .hostUnreachable: .safeReadRetry
@@ -64,7 +63,6 @@ package struct HostControlError: Error, Equatable, Sendable, CustomStringConvert
   package let code: Code
   package let message: String
   package let retry: Retry
-  /// Bounded nonsecret identifiers (operation, instance, session ids).
   package let details: [String: String]
 
   package init(

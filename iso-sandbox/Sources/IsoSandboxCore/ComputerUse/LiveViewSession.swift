@@ -13,9 +13,8 @@ package struct MacLiveViewCounters: Codable, Equatable, Sendable {
   package init() {}
 }
 
-/// What a live view needs of the display it shows: its size, the host
-/// hold, viewer input and frames. ``VMScreen`` is the one production
-/// conformance; tests drive a session through a fake.
+/// What a live view needs of the display it shows: its size, the host hold,
+/// viewer input and frames.
 @MainActor
 package protocol LiveViewScreen: AnyObject {
   var width: Int { get }
@@ -32,11 +31,11 @@ package protocol LiveViewScreen: AnyObject {
   ) throws
 }
 
-/// One VM's live view (docs/design/computer-use-live-view.md): off until
-/// `start`, then a loopback listener whose viewers get the display as
-/// H.264 and may take control under the host hold. It samples and encodes
-/// only while a viewer is connected, and stops after
-/// `LiveView.idleStop` with none.
+/// One VM's live view (docs/design/computer-use-live-view.md): off until `start`,
+/// then a loopback listener whose viewers get the display as H.264 and may take
+/// control under the host hold.
+/// It samples and encodes only while a viewer is connected, and stops after `LiveView.idleStop`
+/// with none.
 @MainActor
 package final class LiveViewSession {
   private let screen: any LiveViewScreen
@@ -52,13 +51,12 @@ package final class LiveViewSession {
   private var lastChange = Date.distantPast
   private var lastInput = Date.distantPast
   private var lastSeq: UInt64?
-  /// Set by a keyframe: the next sample is encoded even if nothing
-  /// changed. A browser decoder holds a frame until the next one arrives,
-  /// so a keyframe alone on a static screen would never be shown.
+  /// Set by a keyframe: the next sample is encoded even if nothing changed.
+  /// A browser decoder holds a frame until the next one arrives.
   private var trailing = false
-  /// The paste being typed, if any. It runs apart from the viewer's
-  /// connection thread, so that viewer's release or disconnect is still
-  /// read, and ends with the viewer's control.
+  /// The paste being typed, if any.
+  /// Runs apart from the connection thread so the viewer's release or disconnect is still read, and
+  /// ends with its control.
   private var typing: Task<Void, Never>?
   private var typingGeneration = 0
   package private(set) var counters = MacLiveViewCounters()
@@ -179,10 +177,9 @@ package final class LiveViewSession {
     }
   }
 
-  /// Types a paste without holding up the viewer's later messages. Each key
-  /// is sent only while the viewer still controls, and extends its control
-  /// as any input does, so a long paste neither outlives a release, a
-  /// disconnect or a stream stop, nor runs on after the hold lapsed.
+  /// Types a paste without holding up the viewer's later messages.
+  /// Each key is sent only while the viewer still controls and extends that control, so a paste
+  /// never outlives a release, disconnect, stream stop or lapsed hold.
   private func type(_ text: String, for viewer: Int) {
     typingGeneration += 1
     let generation = typingGeneration
@@ -332,9 +329,9 @@ package final class LiveViewSession {
   }
 }
 
-/// The server's way into the session: each call runs on the main actor while
-/// the connection thread waits, so one viewer's messages stay in order. A
-/// paste is the exception: it is started, not awaited.
+/// The server's way into the session: each call runs on the main actor while the
+/// connection thread waits, so one viewer's messages stay in order.
+/// A paste is the exception: it is started, not awaited.
 private final class Bridge: LiveViewHost, Sendable {
   private weak let session: LiveViewSession?
   private let keyframe = Mutex(false)

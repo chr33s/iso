@@ -70,7 +70,6 @@ func guestRestoresExactValuesDespiteCollisions(shell: String) throws {
   for line in lines {
     let name = String(line.prefix { $0 != "=" })
     let hex = line.dropFirst(name.count + 2).dropLast()
-    // printenv appends one newline.
     let expected = (values[name] ?? "<missing>") + "\n"
     #expect(hex == expected.utf8.map { String(format: "%02x", $0) }.joined(), "\(name) in \(shell)")
   }
@@ -97,7 +96,6 @@ func aMissingAliasAbortsBeforeTheWorkloadRuns(shell: String) throws {
   // name the guest might also have is not a fallback.
   let result = try runAsGuest(prepared, shell: shell, sent: ["ISO_SSH_ENV_0": "1", "B": ""])
   #expect(result.code == 125 && !result.stdout.contains("ran"))
-  // An intentionally empty value still arrives.
   #expect(try runAsGuest(prepared, shell: shell).stdout == "ran\n")
 }
 
@@ -178,12 +176,8 @@ func aMissingAliasAbortsBeforeTheWorkloadRuns(shell: String) throws {
   #expect(zip(options, options.dropFirst()).contains { $0 == ("-F", "none") })
   #expect(options.contains("PermitLocalCommand=no") && options.contains("IdentityAgent=none"))
   #expect(try target.rsyncSSHCommand(ssh: "/usr/bin/ssh").contains(" -F none "))
-  // scp's nested ssh is pinned, not chosen by PATH or scp's default.
   #expect(target.scpOptions(ssh: "/usr/bin/ssh").starts(with: ["-q", "-S", "/usr/bin/ssh"]))
-  // A ProxyCommand runs under a fixed shell, not the caller's.
   #expect(SSHClient.transportEnvironment(["SHELL": "/opt/evil"])["SHELL"] == "/bin/sh")
-  // rsync's `-e` grammar: a spaced known-hosts path is grouped intact; a
-  // word it cannot carry is refused instead of being split.
   let spaced = SSHTarget(
     host: "127.0.0.1", port: 22, user: .default, keyPath: "/k", knownHosts: "/a b/kh", alias: "g")
   #expect(

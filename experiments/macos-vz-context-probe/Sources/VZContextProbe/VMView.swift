@@ -94,7 +94,6 @@ final class ViewOwner {
   var vmState: String { host?.state ?? "none" }
   var vmInstance: String { host?.instance ?? "none" }
 
-  /// A new VM (new `instance`) on the same bundle; the view switches to it.
   func makeHost() -> VMHost? {
     do {
       let cfg = try makeConfiguration(bundle, cpus: cpus, memoryGiB: memoryGiB)

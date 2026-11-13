@@ -1,9 +1,7 @@
 import Foundation
 
-/// The computer-use MCP server a guest agent runs (`iso-macos-helper
-/// cu-mcp`; docs/design/guest-driven-computer-use.md §6): JSON-RPC 2.0 over
-/// stdio, one message per line, mapped onto the vsock channel's requests.
-/// The transport is injected, so the mapping is unit-testable.
+/// The computer-use MCP server a guest agent runs (`iso-macos-helper cu-mcp`;
+/// docs/design/guest-driven-computer-use.md §6)
 package final class GuestCUMCP {
   package typealias Send = (GuestCURequest) throws -> GuestCUResponse
 
@@ -30,7 +28,6 @@ package final class GuestCUMCP {
     guard let method = message["method"] as? String else {
       return id.map { Self.reply(id: $0, error: (-32600, "invalid request")) }
     }
-    // Notifications (no id) get no reply.
     guard let id else { return nil }
     let params = message["params"] as? [String: Any] ?? [:]
     switch method {
@@ -258,7 +255,6 @@ package final class GuestCUMCP {
         GuestCURequest(op: .act, session: $0, action: action, basedOnFrame: frame)
       }
       var report = "submitted \(r.submitted ?? 0) input events (submission, not proof of delivery)"
-      // An older host sends no damageSeq and has no `wait`.
       if settle > 0, let since = r.damageSeq {
         report += "; " + settled(since: since, idleMs: settle)
       }
@@ -311,8 +307,7 @@ package final class GuestCUMCP {
     #if canImport(Darwin)
       CFGetTypeID(n) == CFBooleanGetTypeID()
     #else
-      // swift-corelibs-foundation: a JSON boolean is an `NSNumber` of a
-      // `Bool`, whose Objective-C type is `c`; JSON has no char numbers.
+      // corelibs: a JSON boolean is an NSNumber of Bool (objCType `c`); JSON has no char numbers.
       String(cString: n.objCType) == "c"
     #endif
   }
@@ -394,7 +389,6 @@ package final class GuestCUMCP {
     guard let w = r.wait else { throw ToolError(message: "no wait result") }
     var content: [[String: Any]] = [["type": "text", "text": Self.describe(w, r.damageSeq)]]
     if include, let session {
-      // A separate frame request, against the frame rate.
       let f = try send(GuestCURequest(op: .frame, session: session))
       if f.ok {
         content = try Self.screenshot(f) + content

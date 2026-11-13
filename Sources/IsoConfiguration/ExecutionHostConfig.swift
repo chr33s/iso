@@ -1,9 +1,8 @@
 import IsoCore
 
-/// `execution`: enrolled remote hosts for `iso host` commands, which each name
-/// their host (spec 5.1). Only the global configuration file may set it;
-/// `local` is the implicit host and cannot be redirected. Enrollment identity
-/// lives in host state, never here.
+/// `execution`: enrolled remote hosts for `iso host` (spec 5.1). Global
+/// config only; `local` is implicit and cannot be redirected. Enrollment
+/// identity lives in host state.
 package struct ExecutionConfig: Sendable, Equatable {
   package let defaultHost: HostAlias
   package let hosts: [HostAlias: RemoteHostConfig]
@@ -21,7 +20,6 @@ package struct ExecutionConfig: Sendable, Equatable {
   }
 }
 
-/// One named remote execution host.
 package struct RemoteHostConfig: Sendable, Equatable {
   package enum Transport: String, Sendable, CaseIterable {
     case ssh
@@ -40,7 +38,6 @@ package struct RemoteHostConfig: Sendable, Equatable {
   }
 }
 
-/// Defaults for remote boots.
 package struct RemoteExecutionConfig: Sendable, Equatable {
   package enum Broker: String, Sendable, CaseIterable {
     /// Provider credentials resolve and stay on the client.

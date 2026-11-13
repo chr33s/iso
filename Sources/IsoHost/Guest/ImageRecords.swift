@@ -6,7 +6,6 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// `sha256:<64 hex>` OCI content digest.
 package struct OCIDigest: Hashable, Sendable, Codable {
   package let hash: SHA256Hex
 
@@ -107,7 +106,6 @@ package struct TemplateConfig: Sendable, Equatable, Codable {
   }
 }
 
-/// A named golden image directory under `<state root>/images`.
 package struct ImageInfo: Sendable, Equatable {
   package let name: ImageName
   package let directory: String
@@ -199,7 +197,6 @@ package enum TemplateStore {
     }
   }
 
-  /// Pretty JSON without a trailing newline; a new file is 0644.
   package static func save(
     _ template: TemplateConfig, recreatedAt created: String, config: IsoConfig, image: ImageName
   )

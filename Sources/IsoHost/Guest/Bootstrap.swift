@@ -24,22 +24,18 @@ package protocol GitHubTokenSource: Sendable {
   func configureGuest(_ client: SSHClient, _ session: SSHSession) throws
 }
 
-/// Whether plugins, MCP servers and `/workspace` still need installing.
 package enum BootMode: Sendable, Equatable {
   case firstBoot
   case restart
 }
 
-/// Guest locations of the agent launchers.
 package enum GuestBinaries {
-  /// Stable system link to the guest user's native Codex launcher.
   package static let codex = GuestPath("/usr/local/bin/codex")
   /// Codex under a guest Secret Service session (ChatGPT account auth).
   package static let codexAccount = GuestPath("/usr/local/bin/codex-account")
 }
 
 extension GuestUser {
-  /// Where the Claude Code installer puts the per-user binary.
   package var claudeBinary: GuestPath { GuestPath("/home/\(rawValue)/.local/bin/claude") }
 }
 
@@ -50,13 +46,10 @@ package enum AgentPlacement: Sendable, Equatable {
   case remote
 }
 
-/// Agent bootstrap, guest sessions and post-start hooks for one command.
 package struct AgentBootstrap: Sendable {
   package let config: IsoConfig
   let client: SSHClient
-  /// The host process environment (`env_forward`, provider key fallbacks).
   let environment: [String: String]
-  /// For the default `~/.claude` / `~/.codex` sources.
   let home: String?
   let resolver: CredentialResolver
   package let proxies: ProxyLauncher
@@ -90,7 +83,6 @@ package struct AgentBootstrap: Sendable {
 
   /// Why a recognized provider variable is withheld from the guest.
   enum WithholdReason: Equatable, CustomStringConvertible {
-    /// The provider runs through its proxy.
     case proxied
     /// `proxy.mode = "required"`: an explicit declaration is an error.
     case required(ProxyProvider)
@@ -110,12 +102,10 @@ package struct AgentBootstrap: Sendable {
     }
   }
 
-  /// Recognized provider variables withheld from the guest. A proxied
-  /// provider withholds all of its variables; `proxy.mode = "required"` and
-  /// `egress = "none"` withhold every provider's; ChatGPT account auth
-  /// withholds `OPENAI_API_KEY`. `policyEnforced` (the boot's stored policy
-  /// enforces a provider action) withholds as `required` does, whatever the
-  /// configuration now says.
+  /// Recognized provider variables withheld from the guest: a proxied provider's
+  /// all of them; every provider's under `proxy.mode = "required"`, `egress =
+  /// "none"` or a stored policy that enforces a provider action; `OPENAI_API_KEY`
+  /// under ChatGPT account auth.
   func withheldVariables(proxyAnthropic: Bool, proxyOpenAI: Bool, policyEnforced: Bool = false)
     -> [String: WithholdReason]
   {
@@ -231,11 +221,10 @@ package struct AgentBootstrap: Sendable {
       || config.proxy.upstream(for: provider) != nil
   }
 
-  /// Refuses a remote-model VM that `proxy.mode = "required"` or
-  /// `egress = "none"` would leave without a provider proxy. `guestEnvironment`
-  /// is the variable set the VM will run with, which is not persisted yet
-  /// before any VM work. Under `proxy.mode = "off"` no proxy can exist, so
-  /// only a local model (or `--no-agents`) passes with `egress = "none"`.
+  /// Refuses a remote-model VM that `proxy.mode = "required"` or `egress =
+  /// "none"` would leave without a provider proxy. `guestEnvironment` is the
+  /// not-yet-persisted variable set. With `proxy.mode = "off"` only a local
+  /// model (or `--no-agents`) passes under `egress = "none"`.
   package func requireProviderProxy(
     _ instance: Instance, noAgents: Bool, guestEnvironment: [EnvVarName: EnvValue]
   ) throws {
@@ -258,10 +247,9 @@ package struct AgentBootstrap: Sendable {
     )
   }
 
-  /// READY-01: the selected adapter's own provider must be brokered where
-  /// remote-model access goes only through the credential proxy; another
-  /// provider's broker does not satisfy it. An adapter without a provider
-  /// (shell, local model) needs none.
+  /// READY-01: where remote-model access goes only through the credential proxy,
+  /// the selected adapter's own provider must be brokered; another provider's
+  /// broker does not satisfy it. Adapters without a provider need none.
   package func requireSelectedProvider(_ instance: Instance, adapter: AgentAdapterContract) throws {
     guard let name = adapter.providerName, let provider = ProxyProvider(rawValue: name),
       config.proxy.mode == .required || config.egress == .none,
@@ -291,8 +279,6 @@ package struct AgentBootstrap: Sendable {
     _ = try secrets.resolve(names)
   }
 
-  /// A session for `target`. With an instance, proxy-mode key suppression,
-  /// the persisted `--env` snapshot and the Codex provider key apply.
   package func prepareSession(_ instance: Instance?, target: SSHTarget, repo: RepoSlug?) throws
     -> SSHSession
   {
@@ -415,8 +401,6 @@ package struct AgentBootstrap: Sendable {
     return out
   }
 
-  /// `open_ssh_session`: the running instance (named, or the only one
-  /// running) and a session with forwarding and the `--env` overlay.
   package func openSession(
     _ backend: AppleBackend, name: InstanceName?, instances: [Instance]
   ) throws -> (AppleBackend.Running, WorkloadSession) {
@@ -460,7 +444,6 @@ package struct AgentBootstrap: Sendable {
     noAgents && auth == .chatgpt && !keyringMaterialized()
   }
 
-  /// Close the previous boot's model tunnels, bootstrap agents, run the post-start hook.
   @discardableResult
   package func bootstrapAndPostStart(
     _ instance: Instance, target: SSHTarget, repo: RepoSlug?, noAgents: Bool,
@@ -575,7 +558,6 @@ package struct AgentBootstrap: Sendable {
     return running.target
   }
 
-  /// The boot's boundary policy, for `iso audit` (names and modes only).
   func recordBoot(_ instance: Instance) {
     let state = try? GuestEnvState.tryLoad(instance)
     let routed = (try? state?.providerSecrets()) ?? [:]
@@ -618,15 +600,10 @@ package struct AgentBootstrap: Sendable {
     try agents.bootstrapCodex(session, instance: instance, mode: mode)
   }
 
-  /// The MCP server name guest-driven computer use registers for the agents.
   package static let computerUseServer = "iso-cu"
-  /// The guest helper, installed in every macOS template, runs the server.
   package static let computerUseCommand = "/usr/local/libexec/iso-macos-helper"
-  /// The same server in a Linux image built with the `desktop` profile.
   package static let linuxComputerUseCommand = "/usr/local/bin/iso-cu-mcp"
 
-  /// The `iso-cu` server's command line for `sidecar`'s guest, or nil when
-  /// the instance was created without guest computer use.
   static func computerUseServer(_ sidecar: MachineSidecar) -> (command: String, args: [String])? {
     guard sidecar.guestComputerUse != nil else { return nil }
     switch sidecar.kind {
@@ -635,12 +612,10 @@ package struct AgentBootstrap: Sendable {
     }
   }
 
-  /// An instance created with guest computer use (a macOS guest, or a Linux
-  /// guest with a display) also gives its agents the `iso-cu` MCP server
-  /// (docs/design/guest-driven-computer-use.md,
-  /// docs/design/linux-desktop-virtio-gpu.md §8). The instance's sidecar
-  /// decides, which mirrors the sandbox record that decides the vsock
-  /// listener, not the current configuration.
+  /// An instance created with guest computer use also gets the `iso-cu` MCP
+  /// server (docs/design/guest-driven-computer-use.md). The instance's sidecar
+  /// decides, mirroring the sandbox record that decides the vsock listener, not
+  /// the current configuration.
   func withGuestComputerUse(_ instance: Instance) throws -> AgentBootstrap {
     guard let sidecar = try MachineSidecar.loadIfPresent(instance),
       let server = Self.computerUseServer(sidecar)
@@ -659,7 +634,6 @@ package struct AgentBootstrap: Sendable {
 
   // MARK: - Shared helpers
 
-  /// The guest user baked into the image, `ubuntu` when unrecorded.
   package func persistedGuestUser(_ image: ImageName) -> GuestUser {
     (try? TemplateStore.load(config, image))?.guestUser ?? .default
   }
@@ -689,7 +663,6 @@ package struct AgentBootstrap: Sendable {
       bakedPlugins: template?.codexPlugins ?? [])
   }
 
-  /// The host directory a `config_dir` names, if it exists.
   func configSourceDirectory(_ directory: ConfigDirectory, defaultName: String, label: String)
     -> String?
   {

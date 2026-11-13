@@ -49,7 +49,7 @@ KNOWN = VM / "known_hosts"
 SOCK = Path(os.environ.get("VZPROBE_SOCK", STATE / "vzprobe.sock"))  # per-user dir, not /tmp
 USER = "iso"
 GUEST_DIR = "Library/Application Support/IsoVZProbe"
-GUEST_DIR_SH = "~/" + GUEST_DIR.replace(" ", "\\ ")  # for remote shell commands
+GUEST_DIR_SH = "~/" + GUEST_DIR.replace(" ", "\\ ")
 LABEL = "dev.iso.vzprobe.owner"
 DOMAINS = {"user": "Background", "gui": "Aqua"}
 CONTEXT_DOMAIN = {"C0": "direct", "C1": "user", "C2": "gui"}
@@ -552,7 +552,7 @@ def phase1_once(context, domain):
             failure = failure or "owner_did_not_exit"
             owner.kill()
         elif not owner.proc:
-            owner.kill()  # bootout the finished job
+            owner.kill()
     evs = events(rd)
     cycle = next((e for e in reversed(evs) if e["event"] == "cycle_result"), None)
     hello = next((e for e in evs if e["event"] == "guest_hello"), None)
@@ -1160,7 +1160,6 @@ def key_batch_b():
         f = k.mods(combo, True)
         k.tap(SPECIAL.get(key, KC.get(key)), "" if key in SPECIAL else key, f)
         k.mods(combo, False)
-    # Interrupted modifier sequence: shift+option down, tap, release in non-LIFO order.
     f = k.mods(["shift", "option"], True)
     k.tap(KC["z"], "Z", f)
     for code, flags in ((56, MOD["option"][1]), (58, 0)):
@@ -1278,7 +1277,6 @@ def cmd_phase3(args):
         focus = {}
 
         def batch(name, fn):
-            # Host state around each batch (spec §13); the owner and its topology already exist.
             before = call({"op": "hostinput"})
             out = fn()
             focus[name] = host_focus_delta(before, call({"op": "hostinput"}))
@@ -1320,7 +1318,6 @@ def cmd_phase3(args):
         return write_result(rd, rid, ctx, label, topo, vm_runtime=vm_runtime_now(), failure_code=failure,
                             **statuses, **fields)
     except Exception as e:  # noqa: BLE001
-        # Keep whatever was measured before the error.
         return write_result(rd, rid, ctx, label, topo, vm_runtime=vm_runtime_now(),
                             failure_code=f"{type(e).__name__}: {e}", **statuses, **fields)
     finally:
@@ -1404,7 +1401,7 @@ def cmd_phase4(args):
             else:
                 rows[name] = {"status": "not_run", "reason": "needs operator (--operator-wait)"}
     except Exception as e:  # noqa: BLE001
-        error = f"{type(e).__name__}: {e}"  # keep the rows measured so far
+        error = f"{type(e).__name__}: {e}"
     finally:
         fx.stop()
         stop = stop_view_owner(owner, rd)
@@ -1474,7 +1471,7 @@ def cmd_e9(args):
         new_boot = _sock_state().get("boot_id")
         out["new_boot_seen"] = bool(new_boot) and new_boot != st0["boot_id"]
         out["accepted_after_boot_change"] = [a for a in attempts if a["ok"] and a["boot"] != st0["boot_id"]]
-        out["attempts"] = attempts  # ordered: the first refusal must be the staleness check
+        out["attempts"] = attempts
         out["refusals"] = sorted({a["error"] for a in attempts if a["error"]})
         # The refusal must be the staleness check, not a generic one.
         first_refusal = next((a["error"] for a in attempts if a["error"]), "")

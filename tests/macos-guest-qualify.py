@@ -537,7 +537,6 @@ class Run:
 
 
     def gate_J(self, sid, g):
-        # Strict pin works; a different but valid key in its place is refused.
         good = g.ok()
         saved = g.known.read_text()
         other = self.dir / "other_host_key"
@@ -596,7 +595,6 @@ class Run:
                 wrong += 1
             elif abs(d["px"][0] - x) > 1.5 or abs(d["px"][1] - y) > 1.5:
                 off += 1
-        # Drag and scroll.
         lay = fx.st["layout"]
         hx = lay["drag_handle"]["x"] + lay["drag_handle"]["w"] / 2
         hy = lay["drag_handle"]["y"] + lay["drag_handle"]["h"] / 2
@@ -687,7 +685,6 @@ class Run:
         g.ssh("sudo /sbin/shutdown -h now", check=False, timeout=20)
         out["guest_shutdown_stopped"] = bool(wait_for(
             lambda: self.rt.run("macos", "inspect", sid)["status"] == "stopped", 300, "stopped after guest shutdown", 2))
-        # Host stop of a running guest: the graceful path, confirmed.
         self.rt.run("macos", "start", sid, timeout=600)
         wait_for(lambda: (self.rt.run("macos", "inspect", sid).get("runtime") or {}).get("helperConnected"), 600,
                  "helper", 3)
@@ -761,12 +758,10 @@ class Run:
         out["guest_pasteboard_works"] = g.ssh("/usr/bin/pbpaste", check=False) == guest_token
         out["guest_clip_not_on_host"] = subprocess.run(["pbpaste"], capture_output=True, timeout=10).stdout.decode(
             errors="replace") != guest_token
-        # Host vsock: only the helper port accepts.
         g.scp(self.dir / "vsock-probe", "vsock-probe")
         vs = json.loads(g.ssh("./vsock-probe " + " ".join(VSOCK_PORTS)))
         out["vsock"] = vs
         out["vsock_only_helper"] = vs.get("7801") == "open" and all(v != "open" for k, v in vs.items() if k != "7801")
-        # Devices: one physical disk, no camera, no audio.
         out["physical_disks"] = sum(1 for line in g.ssh("/usr/sbin/diskutil list physical").splitlines()
                                     if line.startswith("/dev/disk"))
         prof = json.loads(g.ssh("/usr/sbin/system_profiler -json SPCameraDataType SPAudioDataType", timeout=120))
@@ -928,7 +923,6 @@ class Run:
                 cu.at(item)
         check("menu_bar", menu and soon(
             lambda: sum(1 for e in events() if e["control"] == "menu") > 1 or None, 8))
-        # SwiftUI.
         cu.at(f["su_button"]); check("swiftui_button", saw("swiftui", "button", "pressed"))
         cu.at(f["su_field"]); cu.type(tok); check("swiftui_field", saw("swiftui", "field", "text", tok))
         cu.at(f["su_toggle"], dx=0.05); check("swiftui_toggle", saw("swiftui", "toggle", "set", True))
@@ -942,7 +936,6 @@ class Run:
         check("swiftui_slider", saw("swiftui", "slider", "value", lambda v: v > 90))
         cu.at(f["su_editor"]); cu.type("su\nnotes")
         check("swiftui_editor", saw("swiftui", "editor", "text", "su\nnotes"))
-        # WKWebView.
         check("webkit_field", twice("webkit_field", lambda: (cu.at(f["wk_field"]), cu.type(tok)),
                                     lambda: saw("webkit", "field", "text", tok, timeout=4)))
         cu.at(f["wk_button"]); check("webkit_button", saw("webkit", "button", "pressed"))
@@ -955,7 +948,6 @@ class Run:
         cu.at(f["wk_link"]); check("webkit_link", saw("webkit", "link", "followed", "#done"))
         g.ssh("osascript -e 'quit app \"IsoQFixture\"'; true", check=False)
 
-        # Electron, from the pinned release.
         g.scp(zipf, "IsoQ/electron.zip")
         g.scp(GUEST_FIXTURES / "electron-fixture", "IsoQ/")
         g.ssh("cd ~/IsoQ && rm -rf Electron.app && ditto -x -k electron.zip . && "
@@ -973,7 +965,6 @@ class Run:
         check("electron_select", item and saw("electron", "select", "selected", "Three", ev))
         g.ssh("pkill -x Electron; true", check=False)
 
-        # Native apps, each with an oracle outside the app.
         g.ssh("open -a Terminal")
         time.sleep(4)
         cu.type(f"echo {tok} > /tmp/q-terminal.txt\n")
@@ -1125,7 +1116,6 @@ class Run:
         out["setup_assistant_steps"] = panes
         out["desktop_reached"] = gui_ready()
         time.sleep(5)
-        # Lock screen (control-command-Q), then unlock with the password.
         cu.key("q", "command", "control")
         try:
             out["locked"] = bool(wait_for(lambda: locked() or None, 30, "lock", 1))
@@ -1138,7 +1128,6 @@ class Run:
         except TimeoutError:
             out["unlocked"] = False
         time.sleep(3)
-        # Restart dialog from the Apple menu, cancelled.
         boottime = g.ssh("sysctl -n kern.boottime")
         cu.click(18, 12)
         restart = cu.find("Restart...", timeout=10) or cu.find("Restart…", timeout=5)
@@ -1174,7 +1163,6 @@ class Run:
                 lambda: "rc=0" in g.ssh("cat /tmp/r-tcc.txt 2>/dev/null; true"), 20, "tcc", 1))
         except TimeoutError:
             out["tcc_allowed"] = False
-        # Update policy: automatic checks and downloads are off.
         # The policy: nothing downloads or installs on its own. macOS keeps
         # checking (without device management the schedule cannot be turned
         # off), which is recorded.
@@ -1245,7 +1233,6 @@ class Run:
                 out["typed_and_saved"] = bool(wait_for(lambda: token in g.ssh("cat ~/u.txt; true"), 20, "save", 1))
             except TimeoutError:
                 out["typed_and_saved"] = False
-            # Host watching takes no hold.
             time.sleep(1.1)
             host = (self.rt.cu(sid, "session", check=False) or {}).get("session")
             watched = host and self.rt.cu(sid, "frame", "--session", host, "--out", str(self.dir / "u-host.png"),
@@ -1396,7 +1383,6 @@ class Run:
             cpu_idle.append(self.owner_usage(pid)[0])
             time.sleep(1)
         rss0 = self.owner_usage(pid)[1]
-        # Observe request -> complete frame (CLI to PNG on disk).
         frames = []
         for i in range(n):
             t = time.time()
@@ -1405,7 +1391,6 @@ class Run:
         out["frame_p50_ms"], out["frame_p95_ms"] = pct(frames, 0.5), pct(frames, 0.95)
         out["frames_per_second"] = round(n / sum(frames), 2)
         cpu_capture = self.owner_usage(pid)[0]
-        # Action request -> acknowledged (delivered to the VM's view).
         acks = []
         for i in range(n):
             t = time.time()

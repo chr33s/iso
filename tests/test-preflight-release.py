@@ -141,7 +141,6 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                      'zizmor .github/workflows/', 'integration-install.sh ',
                      'integration-update.sh ', 'integration-uninstall.sh '):
             self.assertIn(call, calls)
-        # --quick skips the archive build, the VM suite and fuzzing.
         self.assertFalse([c for c in calls if c.startswith(('build-release.py', 'run-integration.sh', 'fuzz.sh'))])
         self.assertFalse([c for c in calls if c.startswith('integration-filtered-broker-readiness.py')])
         self.assertFalse([c for c in calls if c.startswith(('cargo', 'rustup'))])

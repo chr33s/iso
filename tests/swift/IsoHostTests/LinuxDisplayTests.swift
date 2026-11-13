@@ -65,14 +65,12 @@ private func gate(_ bytes: [UInt8], _ display: IsolationGate.ExpectedDisplay) th
 }
 
 @Test func theGateRefusesADisplayItDidNotExpect() throws {
-  // A display on a headless instance, in its report or its record.
   #expect(throws: RuntimeError.self) {
     try gate(try inspect(display: virtio), .headless)
   }
   #expect(throws: RuntimeError.self) {
     try gate(try inspect(display: nil, recorded: "virtio_display"), .headless)
   }
-  // No display, or a record without one, on a display instance.
   #expect(throws: RuntimeError.self) {
     try gate(try inspect(display: nil, recorded: "virtio_display"), .virtio(guestComputerUse: true))
   }
@@ -123,7 +121,6 @@ private func gate(_ bytes: [UInt8], _ display: IsolationGate.ExpectedDisplay) th
       try inspect(display: display, recorded: "virtio_display"), expected: sandbox
     ).effective?.display?.liveViewListening
   }
-  // Absent from an owner that predates the report: none.
   #expect(try listening(nil) == false)
   #expect(try listening(false) == false)
   #expect(try listening(true) == true)
@@ -133,7 +130,6 @@ private func gate(_ bytes: [UInt8], _ display: IsolationGate.ExpectedDisplay) th
   streaming["liveViewListening"] = true
   _ = try gate(
     try inspect(display: streaming, recorded: "virtio_display"), .virtio(guestComputerUse: true))
-  // A headless sandbox has no listener to report.
   #expect(throws: RuntimeError.self) {
     try RuntimeProtocol.parseInspect(
       try inspect(display: ["liveViewListening": false]), expected: sandbox)
@@ -155,13 +151,11 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
     "preemptions": 2, "refusals": ["held_by_host": 3],
   ]
   let liveView = ["streams": 1, "viewers": 2, "takeovers": 1, "inputEvents": 40]
-  // A headless or stopped sandbox reports none.
   #expect(try inspect(runtime: nil).runtime == nil)
   let both = try inspect(runtime: ["guestComputerUse": guest, "liveView": liveView]).runtime
   #expect(both?.guestComputerUse?.frames == 30 && both?.guestComputerUse?.preemptions == 2)
   #expect(
     both?.liveView == MacLiveViewCounts(streams: 1, viewers: 2, takeovers: 1, inputEvents: 40))
-  // No guest computer use, no stream yet.
   let neither = try inspect(runtime: [String: Any]()).runtime
   #expect(neither != nil && neither?.guestComputerUse == nil && neither?.liveView == nil)
   // An invalid count drops that report only; the inspection still decodes.
@@ -232,10 +226,8 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
   // Created with it, now off or at another frame rate.
   #expect(changed(MacGuestComputerUse(frameRate: 4), .off, .virtio))
   #expect(changed(MacGuestComputerUse(frameRate: 4), ComputerUseConfig(guestFrameRate: 8), .virtio))
-  // Unchanged, either way.
   #expect(!changed(MacGuestComputerUse(frameRate: 4), on, .virtio))
   #expect(!changed(nil, .off, .virtio))
-  // A headless instance never had the setting.
   #expect(!changed(nil, on, nil))
   let name = try InstanceName("alpha")
   #expect(AppleBackend.computerUseChangedWarning(name).contains("instance 'alpha'"))
@@ -257,7 +249,6 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
   // Guest counts only for an instance created with guest computer use.
   #expect(events(false, guest, nil).isEmpty)
   #expect(events(true, nil, nil).isEmpty)
-  // The live view needs no guest computer use, only a stream this boot.
   #expect(events(false, nil, streamed) == [.liveView(streamed)])
   #expect(events(false, nil, unused).isEmpty)
 }
@@ -343,7 +334,6 @@ private func inspect(runtime: Any?) throws -> SandboxInspection {
       ["Package: firefox", "Pin: origin packages.mozilla.org", "Pin-Priority: 1000"],
       ["Package: *", "Pin: origin packages.mozilla.org", "Pin-Priority: -1"],
     ])
-  // The one package the profile installs from there is the pinned one.
   #expect(Profiles.desktopDefinition.aptPackages.contains("firefox"))
 }
 

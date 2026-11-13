@@ -152,7 +152,6 @@ private let sampleDigest =
   let t = try translate(#"{ "forwardPorts": [3000, "8080:9090"] }"#)
   #expect(t.forwardPorts.map(\.guest) == [3000, 8080])
   #expect(t.forwardPorts[1].host == 9090)
-  // Equal ports render bare; different ones as `guest:host`.
   #expect(rows(t, "forwardPorts").first { $0.status == .applied }?.value == "3000,8080:9090")
 }
 
@@ -180,7 +179,6 @@ private let sampleDigest =
   let note = try #require(rows(invalid, "containerEnv").first { $0.status == .invalid }).note
   #expect(note.contains("1BAD") && note.contains("AL SO"))
 
-  // All keys overridden: no zero-count applied/invalid rows.
   let all = try translate(
     #"{ "containerEnv": { "FOO": "x" } }"#, .init(cliGuestEnvKeys: [try EnvVarName("FOO")]))
   #expect(rows(all, "containerEnv").map(\.status) == [.overridden])
@@ -217,7 +215,6 @@ private let sampleDigest =
   )
   #expect(rows(t, "wackyNum").first?.value == "1")
   #expect(rows(t, "wackyStr").first?.value == "hello")
-  // A repeated object key keeps its last value.
   #expect(try canonicalJSON(rows(t, "o").first?.value) == canonicalJSON(#"{"b":3,"a":null}"#))
   let floats = try translate(
     #"{ "f": [2.5, -0, 1e16, 1e-7, 100.0, 123456789012345678901234567890] }"#)
@@ -345,7 +342,6 @@ private func parseError(_ text: String) -> String? {
   let spec = try MemorySpec.parse("1500MiB")
   #expect(spec.mib.value == 1500 && spec.gib.value == 2)
   #expect(try MemorySpec.parse(" 1.5 g ").mib.value == 1431)
-  // MiB counts near UInt32.max round up to GiB without overflowing.
   #expect(try MemorySpec.parse("4294967295MiB").gib.value == 4_194_304)
   #expect(try MemorySpec.parse("4294966273MiB").gib.value == 4_194_304)
 }
@@ -417,7 +413,6 @@ private func parseError(_ text: String) -> String? {
 @Test func reportRenderNeutralizesControlCharacters() throws {
   let t = try translate("{ \"a\": \"\\u001b[31mred\\u202e\" }")
   #expect(t.report.render().contains("?[31mred?"))
-  // JSON keeps the exact value.
   #expect(try JSONOutput.render(t.report).contains("\\u001b[31mred"))
 }
 
@@ -606,7 +601,6 @@ private func instance(_ directory: String) throws -> Instance {
         "{\n  \"applied\": {\n    \"path\": \"/p/devcontainer.json\",\n    \"content_hash\": \"\(sha256("{}"))\",\n    \"source\": \"remote_contents\"\n  }\n}"
       ))
   #expect(try DevcontainerState.load(inst) == state)
-  // A pre-`source` record defaults to a local file.
   try write(
     "{\"applied\":{\"path\":\"/p\",\"content_hash\":\"\(sha256("x"))\"}}",
     inst.devcontainerStatePath)
@@ -779,7 +773,6 @@ private func sampleFeature(archive: [UInt8] = Array("archive-bytes".utf8)) throw
   #expect(
     withFeature
       == plain.replacingOccurrences(of: guest, with: guest + feature.installSnippet))
-  // No features: the build context (and so the image identity) is unchanged.
   #expect(
     BuildContext.render(publicKey: "k", profiles: [], guestUser: user)
       == BuildContext.render(publicKey: "k", profiles: [], guestUser: user, ociFeatures: []))
@@ -1004,7 +997,6 @@ private struct FakePrompter: DevcontainerPrompter {
   var interactive: Bool
   var useFile = true
   var alwaysIgnore = false
-  /// Called as the apply prompt is asked.
   var onPrompt: (@Sendable () -> Void)? = nil
   var isInteractive: Bool { interactive }
   func confirm(_ prompt: String) throws -> Bool { alwaysIgnore }
@@ -1086,11 +1078,9 @@ private func resolver(_ prompter: FakePrompter, _ sink: Sink) -> DevcontainerRes
       onPrompt: { shownAtPrompt.append(preview.value) }), preview)
   #expect(try declining.collect(options, inputs: .init(), stage: .setup) == nil)
   #expect(try DevcontainerPreferences.load(preferences).ignoredProjects == [project])
-  // DEV-01: the translated effects were shown before the answer.
   #expect(!shownAtPrompt.value.isEmpty)
   #expect(shownAtPrompt.value == preview.value)
 
-  // Accepted, the preview is the one report: `resolve` does not repeat it.
   let other = root + "/other"
   try write("{}", other + "/.devcontainer/devcontainer.json")
   let shown = Sink()
@@ -1109,7 +1099,6 @@ private func resolver(_ prompter: FakePrompter, _ sink: Sink) -> DevcontainerRes
     sink.value
       == "Skipping \(file) because a stored devcontainer opt-out is set for project \(project).\nRun `iso devcontainer clear \(project)` to re-enable discovery, or pass --devcontainer \(file) to apply this file once.\n"
   )
-  // An explicit path bypasses the stored opt-out.
   var explicit = options
   explicit.input = .explicit(file)
   #expect(try accepting.collect(explicit, inputs: .init(), stage: .setup) != nil)

@@ -374,10 +374,8 @@ struct HostMigrate: ParsableCommand {
       guard target == "local" else { throw HostError("only `iso host migrate local` is supported") }
       let context = try CommandContext.load(global)
       if rollback {
-        // A service that could not complete activation holds the lock
-        // rollback needs; while activation is pending it serves no work. Any
-        // other state is refused by rollback itself, with the service left
-        // running.
+        // A service that failed activation holds the lock rollback needs and
+        // serves no work; any other state is refused by rollback itself.
         let pending = try HostMigration.loadRecord(context.config)?.state == .prepared
         if pending { try HostService.stop(config: context.config) }
         try HostMigration.rollback(

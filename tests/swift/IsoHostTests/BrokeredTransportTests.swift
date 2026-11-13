@@ -7,17 +7,11 @@ import Testing
 @testable import IsoHost
 @testable import IsoHostControl
 
-// The brokered transport (docs/design/brokered-network-isolation.md): the
-// gate's NIC-less proof, digest parity with the runtime, the per-boot policy
-// record, the connector route and the configuration refusals.
-
 private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
   .appending(path: "../../fixtures/iso-sandbox").standardized
 private let sandbox = try! MachineName("iso-0a1b2c3d-00112233445566ff")
 private let owner = try! OwnerID("0a1b2c3d00112233445566778899aabb")
 private let root = "/Users/me/.iso/backends/apple-container-v1/runtime"
-/// The digests in the captured fixture: the runtime's own channel-policy
-/// digest and the network-policy digest that boot was started with.
 private let runtimeChannelDigest =
   "1beae82700a50cad9663c46faaea554ae4a815f5330c82cdcaa412b5c6a59301"
 private let bootNetworkPolicy = try! SHA256Hex(
@@ -155,7 +149,6 @@ private func refusal(_ body: () throws(RuntimeError) -> IsolationGate.Ready) -> 
 @Test func gateNeverCrossesTransports() throws {
   let brokered = try fixture("inspect-brokered-running.json")
   let vmnet = try fixture("inspect-running.json")
-  // A brokered sandbox under a vmnet configuration, and the reverse.
   #expect(
     refusal { () throws(RuntimeError) in
       try gate(brokered, expected(network: .vmnet, egress: .none))
@@ -497,7 +490,6 @@ private let route = BrokeredRoute(
       .requireBrokeredAdapter(.default)
   }
   try manifest(BuildContext.guestAdapters).requireBrokeredAdapter(.default)
-  // Older manifests decode without the field and simply lack the adapter.
   let legacy = try JSONEncoder().encode(manifest(nil))
   #expect(!String(decoding: legacy, as: UTF8.self).contains("guest_adapters"))
   #expect(try JSONDecoder().decode(ImageManifest.self, from: legacy).supportsBrokered == false)
@@ -549,7 +541,6 @@ private let route = BrokeredRoute(
   setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
   #expect(read(client, &buffer, 4) == 4)
   #expect(buffer == Array("ping".utf8))
-  // Revoking the session ends the connector and the stream.
   f.supervisor.sessions.revoke(instance: instance.instanceID)
   #expect(read(client, &buffer, 4) == 0)
 }
@@ -589,10 +580,8 @@ private func brokeredRunning(_ guest: FakeGuest, boot: String? = nil) throws -> 
     #expect(error.message.hasPrefix("BROKERED_HANDOFF_CHANGED"))
   }
   #expect(throws: HostError.self) { try WorkloadHandoff.require(original) { nil } }
-  // The bound target rechecks before every guest operation.
   let bound = WorkloadHandoff.bind(original) { replacement }
   #expect(throws: GuestHandoffFailure.self) { try bound.requireHandoff() }
-  // A vmnet instance without filtered egress keeps its unsupervised behavior.
   let vmnet = try workloadRunning(guest, identity: nil)
   #expect(!vmnet.hasLiveProof && SessionSupervisor.interval(for: vmnet) == nil)
 }

@@ -6,11 +6,10 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-/// `iso uninstall`: remove this binary and the companion executables
-/// installed beside it and, unless `--keep-data`, the
-/// owned backend state (`<data_dir>/backends/apple-container-v1`) and the
-/// update-check state. Configuration and unrelated files under `data_dir`
-/// are never removed. This build's SSH config blocks are always stripped.
+/// `iso uninstall`: remove this binary and the companions beside it and, unless
+/// `--keep-data`, the owned backend state (`<data_dir>/backends/apple-container-v1`)
+/// and update-check state. Configuration and unrelated files under `data_dir` are
+/// never removed. This build's SSH config blocks are always stripped.
 package struct Uninstaller {
   package struct Options: Sendable, Equatable {
     package var yes: Bool
@@ -27,7 +26,6 @@ package struct Uninstaller {
   package let backend: AppleBackend
   package let configPath: String
   package let home: String?
-  /// The running binary (`_NSGetExecutablePath`, as Rust `current_exe`).
   package let binaryPath: String?
   package let stdinIsTerminal: Bool
   let environment: [String: String]
@@ -259,7 +257,6 @@ package struct Uninstaller {
     return String(cString: resolved)
   }
 
-  /// Rust `Path::starts_with`: whole components only.
   static func componentsStart(_ path: String, with prefix: String) -> Bool {
     func components(_ text: String) -> [Substring] {
       var parts = text.split(separator: "/").filter { $0 != "." }
@@ -285,12 +282,10 @@ package enum SSHConfigBlocks {
     return home + "/.ssh/config"
   }
 
-  /// Every block from `markerPrefix` through `markerEnd` removed.
   package static func removeMarkerBlocks(_ content: String) -> String {
     filter(content) { line in line.hasPrefix(markerPrefix) }
   }
 
-  /// Only the block for `host`.
   package static func removeNamedMarkerBlock(_ content: String, host: String) -> String {
     let marker = "\(markerPrefix) \(host)"
     return filter(content, endOnlyInBlock: true) { $0 == marker }
@@ -332,14 +327,12 @@ package enum SSHConfigBlocks {
     }
   }
 
-  /// Strip every block of this build; rewrite only when something changed.
   package static func removeAll(at path: String, diagnostics: Diagnostics) throws {
     if try rewrite(path, removeMarkerBlocks) {
       diagnostics.log(.info, "Removed iso SSH config blocks")
     }
   }
 
-  /// Strip one instance's block; rewrite only when it was present.
   package static func remove(
     host: String, instanceName: String, at path: String, diagnostics: Diagnostics
   ) throws {
@@ -348,7 +341,6 @@ package enum SSHConfigBlocks {
     }
   }
 
-  /// Whether the file was rewritten.
   private static func rewrite(_ path: String, _ clean: (String) -> String) throws -> Bool {
     guard pathExists(path) else { return false }
     let content: String

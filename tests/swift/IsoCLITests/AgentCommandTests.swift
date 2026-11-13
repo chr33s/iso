@@ -170,7 +170,6 @@ private struct CLIFixture {
   #expect(fixture.streams.stderr.joined().contains("proxy.openai.credential"))
   #expect(!fixture.streams.stderr.joined().contains("sk-synthetic"))
 
-  // Per-VM override: service suffixed with the VM, stored in proxy.json.
   try ProxySetup.run(
     fixture.context, provider: .anthropic, vm: "dev", apiKey: true, target: (configPath, .jsonc),
     token: { Secret("sk-ant-synthetic") }, keychainTool: tool)
@@ -182,7 +181,6 @@ private struct CLIFixture {
       == CredentialReference(
         "cmd:security find-generic-password -s iso-anthropic-dev -a anthropic -w")!)
 
-  // Unknown VM or a failed Keychain write: nothing is written anywhere.
   #expect(throws: (any Error).self) {
     try ProxySetup.run(
       fixture.context, provider: .openai, vm: "ghost", apiKey: false, target: (configPath, .jsonc),
@@ -249,7 +247,6 @@ private func startOptions(_ context: CommandContext) throws -> BootOptions {
     entries, instance: bareInstance, repo: try RepoSlug("org/repo"), noAgents: true)
   #expect(agentFree.calls == [[try SecretName("db"), try SecretName("pat")]])
 
-  // A missing PAT secret fails up front, before any VM work.
   let missing = CountingSecrets(["db": "d", "proxy-key": "k", "per-vm": "v"])
   let (other, strict, otherInstance) = try lifecycleFixture(
     #", "proxy": {"anthropic": {"credential": "vault:proxy-key"}}, "github": {"mode": "pat", "pat": {"org/repo": {"token": "vault:pat"}}}"#,
@@ -276,7 +273,6 @@ private func startOptions(_ context: CommandContext) throws -> BootOptions {
     try lifecycle.restart(instance, RestartRequest(boot: options))
   }
   #expect(restarted.message.contains("no provider proxy is configured"))
-  // Skipping agents skips the requirement, so the backend is reached.
   var noAgents = options
   noAgents.noAgents = true
   let reached = try #require(throws: (any Error).self) {

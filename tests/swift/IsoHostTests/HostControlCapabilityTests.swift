@@ -79,9 +79,7 @@ import Testing
     #expect(value["network_handoff"] == nil)
     #expect(status(value) == "missing")
     #expect(value["limits"]?["max_ttl_seconds"] == .number(.unsigned(24 * 3_600)))
-    // Local requests have no host maximum TTL.
     #expect(try capabilities(f, transport: .local)["limits"]?["max_ttl_seconds"] == nil)
-    // The method is dispatched over both transports.
     #expect(HostSupervisor.methods(for: .ssh).contains(.hostCapabilities))
     #expect(HostSupervisor.methods(for: .local).contains(.hostCapabilities))
   }
@@ -176,7 +174,6 @@ import Testing
     let image = try #require(try capabilities(f)["network_handoff"]?["qualified_image"])
     #expect(image["name"] == .string("default"))
     #expect(image["digest"] == .string(Self.imageDigest))
-    // Valid evidence, but no handoff (the runtime lacks the brokered feature).
     brokered(f, runtime: false)
     #expect(try capabilities(f)["network_handoff"]?["qualified_image"] == nil)
   }

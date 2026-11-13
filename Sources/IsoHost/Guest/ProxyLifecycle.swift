@@ -6,21 +6,18 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 
-// Host-side lifecycle of the credential proxy and of the
-// local-model reverse tunnels. One `iso-proxy` process and one `ssh -R`
-// tunnel run per (VM, provider), both tracked by PID files in the instance
-// directory. The proxy binds host loopback, runs under `sandbox-exec`, and
-// receives its credential on stdin only; the guest gets a synthetic
-// capability token and reaches the proxy through its own tunnel.
+// Host-side lifecycle of the credential proxy and local-model reverse tunnels:
+// one `iso-proxy` and one `ssh -R` tunnel per (VM, provider), tracked by PID
+// files in the instance directory. The proxy binds host loopback under
+// `sandbox-exec` and gets its credential on stdin only; the guest gets a
+// synthetic capability token and reaches it through its own tunnel.
 
 package struct ProxyHandle: Sendable {
   package let baseURL: String
   package let capabilityToken: Secret<String>
 }
 
-/// Starts and stops per-instance proxies and tunnels.
 package struct ProxyLauncher: Sendable {
-  /// SSH authentication plus the guest's forwarding acknowledgment.
   static let tunnelReadyTimeout: Duration = .seconds(30)
   /// The proxy must answer HTTP 401 within this window or the start aborts.
   static let proxyReadyGrace: Duration = .seconds(5)
@@ -28,14 +25,9 @@ package struct ProxyLauncher: Sendable {
   let environment: [String: String]
   let resolver: CredentialResolver
   let diagnostics: Diagnostics
-  /// The running `iso` executable; `iso-proxy` must sit beside it.
   let isoExecutable: String?
-  /// Test seam: the confinement wrapper (`/usr/bin/sandbox-exec`).
   let sandboxExec: String
-  /// Where tunnel control sockets are created (short, private paths).
   let controlRoot: String
-  /// Checks a located companion before it is started: its code signature in
-  /// release builds, nothing in debug builds.
   let verifyCompanion: @Sendable (String) throws -> Void
 
   package init(
@@ -156,7 +148,6 @@ package struct ProxyLauncher: Sendable {
     return ProxyHandle(baseURL: "http://127.0.0.1:\(port)", capabilityToken: token)
   }
 
-  /// Best-effort teardown of one provider's proxy, tunnel and token file.
   package func stop(_ instance: Instance, provider: ProxyProvider) {
     killPIDFile(Self.pidPath(instance, provider.rawValue), label: "proxy", expect: .proxy)
     stopTunnel(instance, provider.rawValue, label: "proxy tunnel")
@@ -170,7 +161,6 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// Every provider proxy, the filtered-egress companion, and every model tunnel.
   package func stopAll(_ instance: Instance) {
     for provider in ProxyProvider.allCases { stop(instance, provider: provider) }
     stopEgress(instance)
@@ -450,10 +440,9 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// The proxy port must be free before the proxy starts: the ports are
-  /// predictable, and a readiness probe answered by another local listener
-  /// would hand the guest's capability token to it. A just-signalled stale
-  /// proxy gets a moment to release it.
+  /// The proxy port must be free before start: ports are predictable, and a probe
+  /// answered by another local listener would hand it the guest's capability
+  /// token. A just-signalled stale proxy gets a moment to release it.
   static func requireFreePort(_ port: UInt16) throws {
     let deadline = ContinuousClock.now + .seconds(2)
     while Self.accepts(port: port) {
@@ -489,7 +478,6 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// Whether something accepts connections on `127.0.0.1:port`.
   static func accepts(port: UInt16) -> Bool {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { return false }
@@ -585,10 +573,9 @@ package struct ProxyLauncher: Sendable {
 
   // MARK: Reverse tunnels
 
-  /// `ssh -N -R 127.0.0.1:<guestPort>:<hostAddress>:<hostPort>` to the
-  /// pinned target, detached and PID-tracked. The master authenticates
-  /// first; `-O forward` then waits for the guest to acknowledge the bind,
-  /// so a clash or refusal fails the start.
+  /// `ssh -N -R 127.0.0.1:<guestPort>:<hostAddress>:<hostPort>` to the pinned
+  /// target, detached and PID-tracked. `-O forward` waits for the guest to
+  /// acknowledge the bind, so a clash or refusal fails the start.
   func spawnReverseForward(
     _ instance: Instance, name: String, target: SSHTarget, guestPort: UInt16,
     hostAddress: IPv4Address, hostPort: UInt16
@@ -706,15 +693,10 @@ package struct ProxyLauncher: Sendable {
     try AtomicFile.write(Array(String(pid).utf8), to: pidPath, mode: .atMost(0o644))
   }
 
-  /// What a recorded PID must still be before it is signalled.
   enum RecordedProcess {
-    /// `iso-proxy` (sandbox-exec replaced itself with it).
     case proxy
-    /// `iso-egress` (sandbox-exec replaced itself with it).
     case egress
-    /// A tunnel `ssh`.
     case ssh
-    /// `iso egress-lease`, the renewal process.
     case lease
 
     /// A tunnel master's command line: `ssh` itself, not a word in another
@@ -726,11 +708,9 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// Whether `pid`, read from `pidPath`, is still the process iso started.
-  /// Companions and the lease must match the identity recorded at spawn. A
-  /// record without one (written by an older iso) counts only when the
-  /// process runs `legacyExecutable`, the canonical path iso would start now;
-  /// without that it is never trusted.
+  /// Whether `pid` from `pidPath` is still the process iso started. It must match
+  /// the identity recorded at spawn; a record without one (older iso) counts only
+  /// when the process runs `legacyExecutable`, else it is never trusted.
   static func isRecorded(
     _ pid: pid_t, pidPath: String, expect: RecordedProcess,
     legacyExecutable: @autoclosure () -> String? = nil
@@ -753,10 +733,9 @@ package struct ProxyLauncher: Sendable {
     return true
   }
 
-  /// Whether the process a PID file names is still the one iso started. A
-  /// record an older iso wrote has no identity file; it counts only when the
-  /// process runs the companion this iso would start (`isoExecutable`, the
-  /// running iso by default).
+  /// Whether the process a PID file names is still the one iso started. A legacy
+  /// record (no identity file) counts only when the process runs the companion this
+  /// iso would start (`isoExecutable`).
   static func recordedProcessAlive(
     _ path: String, expect: RecordedProcess,
     isoExecutable: @autoclosure () -> String? = Bundle.main.executablePath
@@ -769,10 +748,9 @@ package struct ProxyLauncher: Sendable {
       legacyExecutable: legacyExecutable(expect, isoExecutable: isoExecutable()))
   }
 
-  /// The canonical executable iso itself would start for a legacy record.
-  /// Only compared with a running process's image, never launched, so the
-  /// companion's signature is not checked here: a stop mid-upgrade still
-  /// recognises the companion it started.
+  /// The executable iso would start for a legacy record. Only compared with a
+  /// running image, never launched, so the signature is not checked: a stop
+  /// mid-upgrade still recognises the companion it started.
   func legacyExecutable(_ expect: RecordedProcess) -> String? {
     Self.legacyExecutable(expect, isoExecutable: isoExecutable)
   }
@@ -788,7 +766,6 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// The command line of `pid`, nil when no such process.
   static func commandLine(_ pid: Int32) -> String? {
     guard
       let output = try? ProcessRunner().capture(
@@ -800,7 +777,6 @@ package struct ProxyLauncher: Sendable {
     return String(decoding: output.stdout, as: UTF8.self).trimmingUnicodeWhitespace()
   }
 
-  /// A reverse tunnel's master and its recorded identity.
   func stopTunnel(_ instance: Instance, _ name: String, label: String) {
     killPIDFile(Self.forwardPIDPath(instance, name), label: label, expect: .ssh)
     let identity = TunnelIdentity.path(instance, name)
@@ -837,9 +813,8 @@ package struct ProxyLauncher: Sendable {
 
   // MARK: Local-model tunnels
 
-  /// Reconcile the instance's model tunnels with `wanted`: a live tunnel
-  /// with the same target and destination is kept; others are closed;
-  /// missing ones are opened. A forward the guest does not acknowledge
+  /// Reconcile model tunnels with `wanted`: keep a live tunnel with the same target
+  /// and destination, close others, open missing ones. An unacknowledged forward
   /// fails the bootstrap before any URL that depends on it is published.
   package func syncModelTunnels(
     _ instance: Instance, target: SSHTarget, wanted: [UInt16: ReverseTunnel]
@@ -871,7 +846,6 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// Which guest a tunnel serves and where it forwards on the host.
   static func modelTunnelSpec(_ target: SSHTarget, _ tunnel: ReverseTunnel) -> String {
     "\(target.address):\(target.port) \(target.alias) \(tunnel.guestPort):\(tunnel.hostAddress):\(tunnel.hostPort)"
   }

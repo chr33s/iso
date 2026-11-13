@@ -5,9 +5,9 @@ import Virtualization
 
 @testable import IsoSandboxCore
 
-// Paravirtualized Core AI (docs/design/paravirtualized-coreai.md). These run
-// against the default build, which has no Core AI support: nothing is
-// attached, anything requested is refused.
+// Paravirtualized Core AI (docs/design/paravirtualized-coreai.md). These run against the
+// default build, which has no Core AI support: nothing is attached, anything requested is
+// refused.
 
 private let authorized = "ssh-ed25519 " + Data(repeating: 7, count: 51).base64EncodedString()
 
@@ -105,8 +105,6 @@ private func gateOConfiguration() throws -> VZVirtualMachineConfiguration {
   #expect(!MacAccelerators.isAvailable())
   let c = try gateOConfiguration()
   #expect(MacAccelerators.attached(c).isEmpty)
-  // Zero expected, zero attached: the accelerator check passes and the
-  // device check goes on to its last step.
   let off = #expect(throws: SandboxError.self) {
     try MacConfig.requireOnlyExpectedDevices(c, expectedAccelerators: [])
   }
@@ -127,7 +125,6 @@ private func gateOConfiguration() throws -> VZVirtualMachineConfiguration {
     network: .shared, enrollment: .enrolled, authorizedKey: authorized, createdAt: Date(),
     expiresAt: nil, coreAI: try MacCoreAI(accelerators: [.gpu]))
   let effective = MacEffectiveConfig.from(c, record: record, vsockPorts: [7801], topology: "t")
-  // Read back, not restated from the record.
   #expect(effective.accelerators == [])
   #expect(effective.hostSecurityReduced == nil)
   let reduced = MacEffectiveConfig.from(
@@ -150,12 +147,10 @@ private func gateOConfiguration() throws -> VZVirtualMachineConfiguration {
     csrStatus: "System Integrity Protection status: disabled.\n")
   #expect(relaxed.reduced)
   #expect(relaxed.detail == "boot-args amfi_get_out_of_my_way=1, SIP disabled")
-  // A substring is not the argument.
   #expect(!MacHostSecurity.evaluate(bootArgs: "xamfi_get_out_of_my_way=1", csrStatus: "").reduced)
 }
 
 @Test func thePreflightRefusesBeforeAnyVMIsBuilt() {
-  // The default build refuses first, whatever the host.
   let refused = #expect(throws: SandboxError.self) {
     try MacHostSecurity.preflight(
       hostVersion: OperatingSystemVersion(majorVersion: 27, minorVersion: 3, patchVersion: 0),
