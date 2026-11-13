@@ -11,15 +11,14 @@ extension FakeGuest {
   var returns: StageLocation { StageLocation(root: root + "/returns") }
   var receivers: InboundReceivers {
     InboundReceivers(
-      tar: root + "/bin/tar", rsync: root + "/bin/rsync", ssh: root + "/bin/ssh",
+      tar: root + "/bin/tar", ssh: root + "/bin/ssh",
       requireSystemOwnership: false, confinement: .none)
   }
 }
 
 private enum AdministrativeOperation: CaseIterable, Sendable {
   case execTarget, execSession, inputTarget, inputSession, capture, checkedCapture, succeeds, copy
-  case wait, tarPush, tarPull, rsyncPull, dirtyCheck, hook, alias, editor, forward,
-    rsyncProbe
+  case wait, tarPush, tarPull, dirtyCheck, hook, alias, editor, forward
 
   func perform(_ guest: FakeGuest, _ target: SSHTarget) throws {
     let session = SSHSession(target: target)
@@ -43,15 +42,10 @@ private enum AdministrativeOperation: CaseIterable, Sendable {
     case .wait:
       try guest.client.waitUntilReady(
         target, timeout: .milliseconds(100), diagnostics: guest.sink.diagnostics)
-    case .rsyncProbe: #expect(try transfer.guestHasRsync(target))
     case .tarPush:
       try transfer.tarPipe(target, source: guest.root, to: guestWorkspace, excludeGit: false)
     case .tarPull:
       try transfer.tarReceive(
-        target, guest: guestWorkspace, into: ReceiveAttempt(guest.returns),
-        receivers: guest.receivers)
-    case .rsyncPull:
-      try transfer.rsyncReceive(
         target, guest: guestWorkspace, into: ReceiveAttempt(guest.returns),
         receivers: guest.receivers)
     case .dirtyCheck: _ = try transfer.guestState(target, guestWorkspace)
@@ -84,7 +78,7 @@ private func administrativeHandoffsRefuseLateInvalidation(operation: Administrat
   let guest = try FakeGuest()
   defer { guest.remove() }
   let marker = guest.root + "/spawned"
-  for tool in ["ssh", "scp", "rsync", "tar", "code"] {
+  for tool in ["ssh", "scp", "tar", "code"] {
     try writeFile(
       guest.root + "/bin/" + tool,
       """

@@ -208,8 +208,8 @@ package struct ValidatedMounts: Sendable {
   }
 }
 
-/// Copying projects into and out of the guest over the pinned transport:
-/// rsync when the guest has it, a tar pipe otherwise.
+/// Copying projects into and out of the guest over the pinned transport as
+/// tar streams; returns are received by the Seatbelt-confined bsdtar.
 package struct WorkspaceTransfer: Sendable {
   let client: SSHClient
   let diagnostics: Diagnostics
@@ -349,35 +349,6 @@ package struct WorkspaceTransfer: Sendable {
     case (false, false):
       return failure("Remote stderr", ssh) + "\n" + failure("Local tar stderr", tar)
     }
-  }
-
-  /// Receives with the qualified host rsync into an incoming stage tree. Hard links
-  /// and holes are kept so neither can expand on the host before the budgets run
-  /// (the stage walk rejects hard links). No owner, group or device is created and
-  /// `.git` is never requested.
-  func rsyncReceive(
-    _ target: SSHTarget, guest: GuestPath, into attempt: ReceiveAttempt,
-    receivers: InboundReceivers, cancel: (@Sendable () -> Bool)? = nil
-  ) throws {
-    let arguments =
-      [
-        "-rlptzHS", "-e", try target.rsyncSSHCommand(ssh: receivers.ssh),
-        "--exclude=\(returnGitExclude)",
-        "--filter=:- .gitignore",
-      ]
-      + defaultExcludes.map { "--exclude=\($0)" }
-      + ["\(target.address):\(guest)/", "\(attempt.tree)/"]
-    var rsync = request(
-      receivers.rsync, arguments, environment: receivers.environment(client.environment))
-    rsync.isCancelled = cancel
-    rsync.inheritedDescriptors = [attempt.writerDescriptor]
-    try target.requireHandoff()
-    let termination = try runner.attached(rsync, inheritStdin: false, deadline: nil)
-    guard termination.succeeded else { throw HostError("rsync pull failed (\(termination))") }
-  }
-
-  func guestHasRsync(_ target: SSHTarget) throws -> Bool {
-    try client.succeedsChecked(target, RemoteCommand().literal("which rsync"))
   }
 
   static func stateOrDefault(_ instance: Instance, directory: String?, command: String) throws
@@ -630,18 +601,12 @@ package struct WorkspaceTransfer: Sendable {
     let growth = StageGrowthGuard(tree: attempt.tree, limits: limits)
     diagnostics.log(.info, "Staging guest:\(state.guestPath) for \(destination.path)")
     do {
-      // openrsync cannot carry an SSH option holding a quote or backslash
-      // (for example a key under such a directory): use the tar receive.
-      if try guestHasRsync(target), (try? target.rsyncSSHCommand(ssh: receivers.ssh)) != nil {
-        try rsyncReceive(
-          target, guest: state.guestPath, into: attempt, receivers: receivers,
-          cancel: growth.shouldCancel)
-      } else {
-        diagnostics.log(.info, "Receiving with tar (guest rsync unavailable or unusable here)")
-        try tarReceive(
-          target, guest: state.guestPath, into: attempt, receivers: receivers,
-          cancel: growth.shouldCancel)
-      }
+      // Always the Seatbelt-confined tar receiver: an unconfined receiver
+      // (openrsync) would follow a link the guest sent before any check
+      // runs, and the guest must not choose which receiver the host uses.
+      try tarReceive(
+        target, guest: state.guestPath, into: attempt, receivers: receivers,
+        cancel: growth.shouldCancel)
     } catch {
       if let breach = growth.breachDescription { throw StageBudgetExceeded(description: breach) }
       throw error
@@ -654,7 +619,7 @@ package struct WorkspaceTransfer: Sendable {
     }
     defer { _ = quiescent }
     try attempt.checkLayout()
-    // rsync/tar carry the guest's root mode, which may deny us the tree.
+    // tar carries the guest's root mode, which may deny us the tree.
     // A failure surfaces as a clear error when `StageBuilder` opens the tree.
     _ = chmod(attempt.tree, 0o700)
     var builder = StageBuilder(

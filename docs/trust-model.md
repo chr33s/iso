@@ -92,7 +92,7 @@ capability.
   brings guest-authored file contents, filenames and symlinks toward the host:
   the **widest guest→host channel**. Every mode, `direct` included, receives
   into a fresh owner-only `<instance>/returns/incoming/<id>/tree` with the
-  qualified system bsdtar/openrsync (absolute paths, fixed environment,
+  qualified system bsdtar (absolute paths, fixed environment,
   root-owned path chain) under an inherited writer lease; only a quiescent,
   validated receive becomes the selected stage. The walk never follows links;
   rejects special files, hard links, colliding names, escaping or chained
@@ -108,9 +108,10 @@ capability.
   a deny-default profile (`SeatbeltProfile.tarReceiver`): it can write only
   beneath the attempt's tree, read system paths, execute nothing but itself
   and open no network connection; the writer-lease descriptor is inherited
-  already open. The rsync receiver is not sandboxed: it must start `ssh`, and
-  on the brokered transport the runtime connector through `/bin/sh`. The
-  transfer monitor is a sampled budget, not a disk quota.
+  already open. It is the only receiver: returns never use rsync, even when
+  the guest has it, because an unconfined receiver would follow a link the
+  guest sent before any host check runs, and the guest must not choose the
+  host's receiver. The transfer monitor is a sampled budget, not a disk quota.
 - **Committed disks.** `iso commit` turns a guest-mutated disk into an image,
   so the guest authors every file on it. Host-key and machine-id removal runs
   in a maintenance VM, never on the host (see

@@ -114,22 +114,6 @@ import Testing
   @Test func transferRolesCarryTheSameGuestPolicy() throws {
     guard FileManager.default.isExecutableFile(atPath: Self.ssh) else { return }
     let guest = target()
-    var words: [String] = []
-    var word = ""
-    var quoted = false
-    for character in try guest.rsyncSSHCommand(ssh: Self.ssh) {
-      if character == "'" {
-        quoted.toggle()
-      } else if character == " " && !quoted {
-        if !word.isEmpty { words.append(word) }
-        word = ""
-      } else {
-        word.append(character)
-      }
-    }
-    if !word.isEmpty { words.append(word) }
-    #expect(words.first == Self.ssh)
-    expectGuestPolicy(try effective(Array(words.dropFirst()) + [guest.address]), "rsync -e")
     var scp = guest.scpOptions(ssh: Self.ssh)
     #expect(scp.starts(with: ["-q", "-S", Self.ssh]))
     scp.removeFirst(3)

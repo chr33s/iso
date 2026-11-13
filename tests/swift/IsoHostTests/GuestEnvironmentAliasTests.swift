@@ -168,23 +168,15 @@ func aMissingAliasAbortsBeforeTheWorkloadRuns(shell: String) throws {
 }
 
 /// SSH-01: guest transports ignore ambient ssh configuration and, with the
-/// shipped lookup, never take ssh/scp/rsync from `PATH`.
+/// shipped lookup, never take ssh/scp from `PATH`.
 @Test func guestTransportsIgnoreAmbientConfigAndPathTools() throws {
   let target = SSHTarget(
     host: "127.0.0.1", port: 22, user: .default, keyPath: "/k", knownHosts: "/kh", alias: "g")
   let options = target.sshOptions
   #expect(zip(options, options.dropFirst()).contains { $0 == ("-F", "none") })
   #expect(options.contains("PermitLocalCommand=no") && options.contains("IdentityAgent=none"))
-  #expect(try target.rsyncSSHCommand(ssh: "/usr/bin/ssh").contains(" -F none "))
   #expect(target.scpOptions(ssh: "/usr/bin/ssh").starts(with: ["-q", "-S", "/usr/bin/ssh"]))
   #expect(SSHClient.transportEnvironment(["SHELL": "/opt/evil"])["SHELL"] == "/bin/sh")
-  let spaced = SSHTarget(
-    host: "127.0.0.1", port: 22, user: .default, keyPath: "/k", knownHosts: "/a b/kh", alias: "g")
-  #expect(
-    try spaced.rsyncSSHCommand(ssh: "/usr/bin/ssh").contains(" 'UserKnownHostsFile=\"/a b/kh\"' "))
-  let quoted = SSHTarget(
-    host: "127.0.0.1", port: 22, user: .default, keyPath: "/k'", knownHosts: "/kh", alias: "g")
-  #expect(throws: HostError.self) { try quoted.rsyncSSHCommand(ssh: "/usr/bin/ssh") }
   let decoy = try scratchDirectory("decoy")
   defer { try? FileManager.default.removeItem(atPath: decoy) }
   try writeFile(decoy + "/ssh", "#!/bin/sh\n", mode: 0o755)

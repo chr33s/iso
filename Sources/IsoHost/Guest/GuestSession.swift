@@ -281,22 +281,6 @@ extension SSHTarget {
   package func scpOptions(ssh: String) -> [String] {
     ["-q", "-S", ssh] + transportOptions + ["-P", String(port)]
   }
-
-  /// rsync's `-e`, serialized for rsync's own tokenizer (whitespace splits;
-  /// single quotes group and keep `"` literal) rather than a shell's. A word rsync cannot carry
-  /// intact (a `'`, a backslash or a control character) is refused, never mangled.
-  func rsyncSSHCommand(ssh: String) throws -> String {
-    try ([ssh] + sshOptions).map { word in
-      guard
-        !word.isEmpty,
-        !word.unicodeScalars.contains(where: {
-          $0 == "'" || $0 == "\\" || $0.properties.generalCategory == .control
-        })
-      else { throw HostError("an SSH option cannot be passed to rsync intact") }
-      return word.unicodeScalars.contains(where: { $0.properties.isWhitespace || $0 == "\"" })
-        ? "'\(word)'" : word
-    }.joined(separator: " ")
-  }
 }
 
 /// Guest commands over the pinned transport. The rendered remote command

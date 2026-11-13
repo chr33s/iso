@@ -58,7 +58,7 @@ fault-injection check on a schedule; they are not per-push gates. The package te
 temporary state; they never touch `~/.iso`.
 
 `swift test` builds debug, where `SSHClient.ToolLookup.default` is
-`.searchPath` so tests can put `ssh`/`scp`/`rsync`/`tar` doubles on `PATH`.
+`.searchPath` so tests can put `ssh`/`scp`/`tar` doubles on `PATH`.
 Shipped builds default to `.system`, which resolves those tools only from
 `/usr/bin`. That pinning is covered by the test that constructs
 `SSHClient(tools: .system)` explicitly
@@ -69,7 +69,7 @@ package tests in debug.
 
 `ManagedSSHRoleTests` resolves every managed SSH role's real arguments with
 `/usr/bin/ssh -G` under a hostile configuration file placed ahead of them
-(guest command, forwards, brokered route, rsync `-e`, scp, control teardown,
+(guest command, forwards, brokered route, scp, control teardown,
 enrolled-host management), and checks that teardown on a missing control
 socket fails without dialing.
 
@@ -1185,16 +1185,15 @@ post-preparation invalidation, fresh-probe failures, unchanged-identity controls
 owner/target/boot/policy/key/provider-set replacement, and nonfiltered compatibility.
 Ten `workload-*` host faults remove the preparation/launch checks, fresh inspection,
 identity comparisons and compatibility bypass. `AdministrativeHandoffTests` pair
-healthy and revoked controls for 19 SSH/SCP, tar/rsync, forward, hook, alias and editor
+healthy and revoked controls for 16 SSH/SCP, tar, forward, hook, alias and editor
 operations, original-identity retention, nonfiltered compatibility, preparation
 invalidation, and distinct readiness errors in hooks/agent updates. Pure stage
 controls ensure transport proof does not demand future brokers while composite
-proof does. Thirty-six `admin-*` faults remove binding, operation checks, hook
+proof does. Thirty-three `admin-*` faults remove binding, operation checks, hook
 error propagation or the proof-stage distinction. The same VM interposer also
 checks late version-query, workspace-push and staged-pull refusals at probe and
 transfer-launch boundaries, followed by healthy transfer controls; a failed pull
-must not retain a stage. Readiness refusal remains distinct from an unsuccessful
-rsync availability probe. Reverse-forward controls check master/request boundaries
+must not retain a stage. Reverse-forward controls check master/request boundaries
 and PID-file cleanup. The local-to-remote model-state fixture requires future
 brokers to prepare without an ordering deadlock before composite completion.
 Completion controls and faults reject changed owner, target, boot/policy or egress

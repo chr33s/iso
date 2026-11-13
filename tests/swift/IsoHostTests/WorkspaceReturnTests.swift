@@ -251,7 +251,7 @@ func hostileArchivesStayInsideTheReceiveTree(name: String, script: String) throw
   _ = try? transfer.tarReceive(
     target, guest: GuestPath(guest), into: attempt,
     receivers: InboundReceivers(
-      tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: fakeSSH + "/ssh",
+      tar: "/usr/bin/bsdtar", ssh: fakeSSH + "/ssh",
       requireSystemOwnership: false))
   // Checked before inventory, and again after the writers are reaped.
   #expect(f.sentinelIntact, "\(name)")
@@ -301,7 +301,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   let unconfined = try ReceiveAttempt(f.location)
   defer { unconfined.abandon() }
   let open = InboundReceivers(
-    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    tar: "/usr/bin/bsdtar", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true, confinement: .none)
   #expect(try extract(open, into: unconfined))
   #expect(FileManager.default.fileExists(atPath: f.outside + "/escape"))
@@ -318,7 +318,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   try FileManager.default.createSymbolicLink(
     atPath: base + "/link", withDestinationPath: base + "/real")
   let receivers = InboundReceivers(
-    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    tar: "/usr/bin/bsdtar", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true, confinement: .seatbelt(sandboxExec: "/usr/bin/sandbox-exec"))
   let (_, arguments) = try receivers.tarCommand(
     ["xf", "-", "-C", base + "/link/tree"], writableTree: base + "/link/tree")
@@ -360,7 +360,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   try transfer.tarReceive(
     target, guest: GuestPath(guest), into: attempt,
     receivers: InboundReceivers(
-      tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: fakeSSH + "/ssh",
+      tar: "/usr/bin/bsdtar", ssh: fakeSSH + "/ssh",
       requireSystemOwnership: false, confinement: .seatbelt(sandboxExec: bin + "/sandbox-exec")))
   #expect(readFile(attempt.tree + "/a.txt") == "a")
   let argv = try #require(readFile(f.root + "/sandbox-argv"))
@@ -373,19 +373,19 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 @Test func receiversAreQualifiedSystemTools() throws {
   try InboundReceivers.system.qualify(ProcessRunner())
   let impostor = InboundReceivers(
-    tar: "/bin/cat", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh", requireSystemOwnership: true)
+    tar: "/bin/cat", ssh: "/usr/bin/ssh", requireSystemOwnership: true)
   #expect(throws: HostError.self) { try impostor.qualify(ProcessRunner()) }
   let scratch = try scratchDirectory("tools")
   defer { removeScratch(scratch) }
   try writeFile(scratch + "/tar", "#!/bin/sh\n")
   chmod(scratch + "/tar", 0o755)
   let userOwned = InboundReceivers(
-    tar: scratch + "/tar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    tar: scratch + "/tar", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true)
   #expect(throws: HostError.self) { try userOwned.qualify(ProcessRunner()) }
   // The confinement wrapper is held to the same standard as the receivers.
   let userWrapper = InboundReceivers(
-    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    tar: "/usr/bin/bsdtar", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true, confinement: .seatbelt(sandboxExec: scratch + "/tar"))
   #expect(throws: HostError.self) { try userWrapper.qualify(ProcessRunner()) }
   #expect(

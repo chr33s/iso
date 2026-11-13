@@ -198,16 +198,18 @@ applied:
 
 ### Receiving
 
-Receives use only the system `/usr/bin/bsdtar` (bsdtar 3) and
-`/usr/bin/rsync` (openrsync) with a fixed environment and a pinned
-`/usr/bin/ssh`; a tool that is not root-owned and of the qualified family is
-refused, never replaced from `PATH`. Each receive goes to a fresh,
+Receives use only the system `/usr/bin/bsdtar` (bsdtar 3), run under a
+deny-default Seatbelt profile that lets it write only beneath its incoming
+tree, with a fixed environment and a pinned `/usr/bin/ssh`; a tool that is not
+root-owned and of the qualified family is refused, never replaced from `PATH`.
+Pulls never use rsync, even when the guest has it: an unconfined receiver
+would materialize guest-chosen links before any host check runs, and the
+guest must not choose the host's receiver. Each receive goes to a fresh,
 owner-private incoming directory with an unpredictable ID. Its writers inherit
 a lock lease, so a receiver that outlives a killed `iso` keeps the tree busy:
 it is never validated, reused, promoted or deleted until the lease is free. A
 failed receive leaves the previously selected stage in place; at most one
-selected stage and one incoming receive are kept per instance. Receivers are
-ordinary processes, not sandboxed.
+selected stage and one incoming receive are kept per instance.
 
 ### Review and apply
 
@@ -240,7 +242,7 @@ instances and data roots.
 
 ## Default exclusions
 
-Pulls (rsync and tar-pipe receives) and recursive
+Pulls (tar-pipe receives) and recursive
 [`workspace.input`](configuration.md#workspaceinput) `paths` selections skip
 these reproducible build and cache directories:
 
@@ -269,14 +271,10 @@ first copy the guest gets a new repository with one synthetic commit of the
 sent files. `--exclude-git` is a deprecated no-op.
 
 Pulls never request or install `.git` (see
-[Git administration](#git-administration)). When the guest has rsync, a pull
-passes `--filter=':- .gitignore'`, so the guest's `.gitignore` files can skip
-paths it would otherwise send. This only shrinks the transfer; it is not an
-authority, since the guest controls those files and every received entry is
-validated in the stage. The tar-pipe receive does not read `.gitignore`.
+[Git administration](#git-administration)). The tar-pipe receive does not read
+`.gitignore`: ignored guest paths outside the default exclusions are sent and
+count toward the stage budgets, and the review lists them.
 
 ## Checksum verification
 
 Every tar-pipe transfer hashes the archive with SHA-256 on both the sending and receiving sides. A mismatch fails the transfer and reports both hash values. This detects truncated streams, network corruption, and disk errors.
-
-Rsync handles integrity internally. No additional checksumming is layered on top.

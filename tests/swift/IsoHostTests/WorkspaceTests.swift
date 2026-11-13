@@ -29,11 +29,9 @@ private func target(knownHosts: String = "/state/known_hosts") throws -> SSHTarg
 
 /// The fake ssh with the real system receivers, which tests may run. The
 /// real bsdtar runs confined as in production; a script stand-in cannot.
-private func fakeReceivers(tar: String = "/usr/bin/bsdtar", rsync: String = "/usr/bin/rsync")
-  -> InboundReceivers
-{
+private func fakeReceivers(tar: String = "/usr/bin/bsdtar") -> InboundReceivers {
   InboundReceivers(
-    tar: tar, rsync: rsync, ssh: fakeSSH + "/ssh", requireSystemOwnership: false,
+    tar: tar, ssh: fakeSSH + "/ssh", requireSystemOwnership: false,
     confinement: tar == "/usr/bin/bsdtar"
       ? .seatbelt(sandboxExec: "/usr/bin/sandbox-exec") : .none)
 }
@@ -372,10 +370,10 @@ private func finishesWhileStageIsLocked(
 }
 
 /// A guest workspace of ten 20 KiB files, a PATH of only the fake ssh and a
-/// shim directory, and the transfer tool named by `viaRsync` lingering for
-/// 6 s after it has sent everything, so only the growth watch can end the
-/// pull early.
-private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error: (any Error)?) {
+/// shim directory, and the guest's tar lingering for 6 s after it has sent
+/// everything, so only the growth watch can end the pull early. The guest
+/// also has an `rsync`, which must never run: returns always use tar.
+private func stagedPullTakes() throws -> (elapsed: Duration, error: (any Error)?, rsyncRan: Bool) {
   let directory = try scratch()
   defer {
     StageLocation.grantOwnerAccess(directory)
@@ -401,15 +399,8 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
     if [ "$1" = cf ]; then /usr/bin/tar "$@"; status=$?; /bin/sleep 6; exit $status; fi
     exec /usr/bin/tar "$@"
     """)
-  if viaRsync {
-    try shim(
-      "rsync",
-      """
-      for last; do source=$dest; dest=$last; done
-      guest=${source#*:}
-      /bin/cp -R "$guest". "$dest" && /bin/sleep 6
-      """)
-  }
+  let rsyncMarker = directory + "/rsync-ran"
+  try shim("rsync", "/usr/bin/touch '\(rsyncMarker)'; exit 1")
   let guest = directory + "/guest"
   try FileManager.default.createDirectory(atPath: guest, withIntermediateDirectories: true)
   for index in 0..<10 {
@@ -432,18 +423,21 @@ private func stagedPullTakes(viaRsync: Bool) throws -> (elapsed: Duration, error
     do {
       _ = try transfer.stage(
         instance: inst, target: try! target(), directory: nil, limits: limits,
-        receivers: fakeReceivers(
-          tar: bin + "/tar", rsync: viaRsync ? bin + "/rsync" : "/usr/bin/rsync"))
+        receivers: fakeReceivers(tar: bin + "/tar"))
     } catch { outcome.value = error }
   }
   #expect(!held.finished && !held.stageExisted)
   #expect(!location.exists)
-  return (ContinuousClock.now - started, outcome.value)
+  return (
+    ContinuousClock.now - started, outcome.value,
+    FileManager.default.fileExists(atPath: rsyncMarker)
+  )
 }
 
-@Test(arguments: [false, true])
-func stagedTransferWaitsForTheLockAndStopsWhenItOutgrowsTheBudget(viaRsync: Bool) throws {
-  let (elapsed, error) = try stagedPullTakes(viaRsync: viaRsync)
+@Test func stagedTransferWaitsForTheLockAndStopsWhenItOutgrowsTheBudget() throws {
+  let (elapsed, error, rsyncRan) = try stagedPullTakes()
+  // The guest's rsync is never a sender: the confined tar receiver is the only one.
+  #expect(!rsyncRan)
   #expect(elapsed < .seconds(5))
   let breach = try #require(error as? StageBudgetExceeded, "got \(String(describing: error))")
   #expect(breach.description.contains("max_bytes"))
@@ -574,14 +568,17 @@ private func git(_ directory: String, _ arguments: String...) throws {
   }
   let bin = directory + "/bin"
   try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
-  try FileManager.default.createSymbolicLink(
-    atPath: bin + "/which", withDestinationPath: "/usr/bin/which")
-  try Data("#!/bin/sh\nexit 0\n".utf8).write(to: URL(fileURLWithPath: bin + "/rsync"))
-  chmod(bin + "/rsync", 0o755)
-  // The "receiver": fills its tree, then writes next to it.
+  // The guest's tar (GNU's --sparse dropped for the host's bsdtar).
+  try Data(
+    "#!/bin/sh\nfor arg; do shift; [ \"$arg\" = --sparse ] || set -- \"$@\" \"$arg\"; done\nexec /usr/bin/tar \"$@\"\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: bin + "/tar"))
+  chmod(bin + "/tar", 0o755)
+  // The "receiver" (an unconfined tar stand-in): drains the stream, fills
+  // its tree, then writes next to it.
   let receiver = directory + "/receiver"
   try Data(
-    "#!/bin/sh\nfor last; do dest=$last; done\necho x > \"$dest/a.txt\"\necho planted > \"$dest/../manifest.json\"\n"
+    "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = -C ] && dest=$2; shift; done\n/bin/cat > /dev/null\necho x > \"$dest/a.txt\"\necho planted > \"$dest/../manifest.json\"\n"
       .utf8
   ).write(to: URL(fileURLWithPath: receiver))
   chmod(receiver, 0o755)
@@ -598,7 +595,7 @@ private func git(_ directory: String, _ arguments: String...) throws {
   #expect(throws: HostError.self) {
     _ = try transfer.stage(
       instance: inst, target: try target(), directory: nil, limits: .defaults,
-      receivers: fakeReceivers(rsync: receiver))
+      receivers: fakeReceivers(tar: receiver))
   }
   #expect(try StageLocation(inst).selectedID() == nil)
 }

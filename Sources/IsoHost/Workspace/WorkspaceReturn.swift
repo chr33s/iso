@@ -578,10 +578,11 @@ final class ApplyProgressLog {
 
 /// The host tools that receive guest bytes (RET-04): fixed absolute paths, a
 /// constructed environment, and an ownership/family qualification before any
-/// receive. A failing tool is refused, never substituted from `PATH`.
+/// receive. A failing tool is refused, never substituted from `PATH`. The
+/// one receiver is bsdtar under Seatbelt: an unconfined receiver could follow
+/// a link the guest sent before any host check runs.
 package struct InboundReceivers: Sendable {
   let tar: String
-  let rsync: String
   let ssh: String
   /// Whether each tool and its directories must be root-owned and not
   /// writable by others. Only test doubles turn it off.
@@ -590,26 +591,23 @@ package struct InboundReceivers: Sendable {
   let confinement: ReceiverConfinement
 
   /// The tar receiver under Seatbelt: writes beneath its receive tree only.
-  /// The rsync receiver is not confined: it must start `ssh`, and on the
-  /// brokered transport the runtime's connector through `/bin/sh`.
   enum ReceiverConfinement: Sendable, Equatable {
     case seatbelt(sandboxExec: String)
     case none
   }
 
   init(
-    tar: String, rsync: String, ssh: String, requireSystemOwnership: Bool,
+    tar: String, ssh: String, requireSystemOwnership: Bool,
     confinement: ReceiverConfinement = .seatbelt(sandboxExec: "/usr/bin/sandbox-exec")
   ) {
     self.tar = tar
-    self.rsync = rsync
     self.ssh = ssh
     self.requireSystemOwnership = requireSystemOwnership
     self.confinement = confinement
   }
 
   static let system = InboundReceivers(
-    tar: "/usr/bin/bsdtar", rsync: "/usr/bin/rsync", ssh: "/usr/bin/ssh",
+    tar: "/usr/bin/bsdtar", ssh: "/usr/bin/ssh",
     requireSystemOwnership: true)
 
   /// The tar receiver's executable and arguments: `tar <arguments>`, wrapped
@@ -636,8 +634,8 @@ package struct InboundReceivers: Sendable {
     )
   }
 
-  /// The qualified macOS families: bsdtar 3 and openrsync.
-  static let families = ["tar": "bsdtar 3.", "rsync": "openrsync:"]
+  /// The qualified macOS tar family.
+  static let tarFamily = "bsdtar 3."
 
   /// A receiver's environment: the minimal transport environment with a
   /// fixed system `PATH`, so a decompressor or helper a tool might start
@@ -657,27 +655,25 @@ package struct InboundReceivers: Sendable {
       case .seatbelt(let sandboxExec): [sandboxExec]
       case .none: []
       }
-    let key = ([tar, rsync, ssh, String(requireSystemOwnership)] + wrapper).joined(
+    let key = ([tar, ssh, String(requireSystemOwnership)] + wrapper).joined(
       separator: "\0")
     if Self.qualified.withLock({ $0.contains(key) }) { return }
-    for path in [tar, rsync, ssh] + wrapper {
+    for path in [tar, ssh] + wrapper {
       guard path.hasPrefix("/") else { throw unqualified(path, "not an absolute path") }
       guard access(path, X_OK) == 0 else { throw unqualified(path, "not executable") }
       if requireSystemOwnership { try Self.checkSystemOwned(path) }
     }
     if requireSystemOwnership {
-      for (name, path) in [("tar", tar), ("rsync", rsync)] {
-        let output = try? runner.capture(
-          .init(
-            executable: path, arguments: ["--version"],
-            environment: environment(["PATH": "/usr/bin:/bin"]), deadline: .seconds(10)
-          ).with(overflow: .drain))
-        let first =
-          output.map { String(decoding: $0.stdout + $0.stderr, as: UTF8.self) }?
-          .split(separator: "\n").first.map(String.init) ?? ""
-        guard let family = Self.families[name], first.hasPrefix(family) else {
-          throw unqualified(path, "not the qualified \(Self.families[name] ?? name) receiver")
-        }
+      let output = try? runner.capture(
+        .init(
+          executable: tar, arguments: ["--version"],
+          environment: environment(["PATH": "/usr/bin:/bin"]), deadline: .seconds(10)
+        ).with(overflow: .drain))
+      let first =
+        output.map { String(decoding: $0.stdout + $0.stderr, as: UTF8.self) }?
+        .split(separator: "\n").first.map(String.init) ?? ""
+      guard first.hasPrefix(Self.tarFamily) else {
+        throw unqualified(tar, "not the qualified \(Self.tarFamily) receiver")
       }
     }
     Self.qualified.withLock { _ = $0.insert(key) }
@@ -685,7 +681,7 @@ package struct InboundReceivers: Sendable {
 
   private func unqualified(_ path: String, _ reason: String) -> HostError {
     HostError(
-      "Refusing to receive the workspace with \(neutralizeControls(path)): \(reason). Workspace returns use only the system tar, rsync and ssh."
+      "Refusing to receive the workspace with \(neutralizeControls(path)): \(reason). Workspace returns use only the system tar and ssh."
     )
   }
 
