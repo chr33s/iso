@@ -85,8 +85,14 @@ def idle_connection_capacity(port):
         held = []
         deadline = time.monotonic() + 5  # Before the ten-second header timeout.
         try:
-            for _ in range(256):
-                held.append(socket.create_connection(("127.0.0.1", port), timeout=1))
+            while len(held) < 256:
+                try:
+                    held.append(socket.create_connection(("127.0.0.1", port), timeout=1))
+                except ConnectionResetError:
+                    # macOS caps the listen backlog at kern.ipc.somaxconn (128) and resets
+                    # connects that overflow it before the proxy accepts them.
+                    assert time.monotonic() < deadline, f"only {len(held)} sockets connected"
+                    time.sleep(0.01)
             # Allow accepts to dispatch across event loops; later 401s prove every held socket survived.
             time.sleep(0.05)
             for _ in range(8):
