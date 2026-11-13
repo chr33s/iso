@@ -77,9 +77,10 @@ package struct TrustedEditorApp: Sendable, Equatable {
       guard lstat(ancestor, &status) == 0 else {
         throw HostError.posix("Failed to inspect", ancestor)
       }
-      let otherWritable = status.st_mode & 0o002 != 0 && status.st_mode & S_ISVTX == 0
-      guard status.st_uid == 0 || status.st_uid == uid, !otherWritable else {
-        throw HostError("\(ancestor) lets another user replace \(bundle)")
+      if let why = BinaryResolver.untrustedDirectory(
+        mode: status.st_mode, owner: status.st_uid, group: status.st_gid, me: uid)
+      {
+        throw HostError("\(ancestor) \(why), so another user could replace \(bundle)")
       }
       if ancestor == "/" { return }
       ancestor = (ancestor as NSString).deletingLastPathComponent

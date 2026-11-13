@@ -140,6 +140,16 @@ private func fakeBundle(_ root: String, version: String = "1.2.3") throws -> Str
   #expect(throws: HostError.self) {
     _ = try TrustedEditorApp.locate(identity, candidates: [bundle]) { _, _ in }
   }
+  chmod(bundle, 0o755)
+  // A `staff` group-writable ancestor lets any local user swap the bundle.
+  let parent = root + "/first"
+  #expect(chown(parent, getuid(), 20) == 0)
+  chmod(parent, 0o775)
+  #expect(throws: HostError.self) {
+    _ = try TrustedEditorApp.locate(identity, candidates: [bundle]) { _, _ in }
+  }
+  chmod(parent, 0o755)
+  _ = try TrustedEditorApp.locate(identity, candidates: [bundle]) { _, _ in }
 }
 
 // MARK: - Enclave

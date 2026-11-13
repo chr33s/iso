@@ -216,8 +216,12 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   of iso's own team, or, when iso itself is signed ad hoc, any valid signature.
   In both cases the companion must be an executable regular file owned by root
   or the user with no group or other write bit, and every directory above it
-  must be owned by root or the user and not other-writable unless sticky
-  (group-writable directories such as a `root:admin` 0775 one are accepted).
+  must be owned by root or the user and, unless sticky, be neither
+  world-writable nor group-writable by a group other than `wheel` or `admin`
+  (a `root:admin` 0775 one is accepted; a `staff` one is not, since every
+  local user is in `staff`). This is the runtime binaries' rule (see
+  [Apple sandbox backend](#apple-sandbox-backend)); the editor bundle's
+  ancestors follow it too.
   Debug builds skip these checks.
 - **Source retrieval uses only selected credentials.** A guest clone and
   host devcontainer discovery share one decision (`GitHubSourceAuth`): an

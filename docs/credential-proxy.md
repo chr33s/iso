@@ -243,8 +243,8 @@ the recorded `ssh` master. Release builds start only an `iso-proxy` with a
 Developer ID signature of iso's own team (or, for an ad hoc signed iso, any
 valid signature). Either way the binary must be owned by root or the user with
 no group or other write bit, and each directory above it must be owned by root
-or the user and not other-writable unless sticky; group-writable directories
-are accepted.
+or the user and, unless sticky, be neither world-writable nor group-writable
+by a group other than `wheel` or `admin` (the runtime binaries' rule).
 
 It is **jailed** by `sandbox-exec` using the checked-in Seatbelt profile, which
 denies filesystem writes and program execution, limits reads to system paths and

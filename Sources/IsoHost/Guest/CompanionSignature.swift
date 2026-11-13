@@ -90,9 +90,10 @@ enum CompanionSignature {
   }
 
   /// Run for every signer: an executable regular file (not a symlink) owned by root
-  /// or this user with no group/other write bit, under ancestors owned by root or
-  /// this user and not other-writable unless sticky (group-writable ancestors such
-  /// as `root:admin` 0775 are accepted).
+  /// or this user with no group/other write bit, under ancestors that pass the
+  /// runtime binary's rule (`BinaryResolver.untrustedDirectory`): owned by root or
+  /// this user, world-writable only if sticky, group-writable only for
+  /// `wheel`/`admin` (such as `root:admin` 0775).
   static func checkOwnership(_ path: String, uid: uid_t = getuid()) throws {
     var status = stat()
     guard lstat(path, &status) == 0 else { throw HostError.posix("Failed to inspect", path) }
@@ -108,9 +109,10 @@ enum CompanionSignature {
       guard lstat(ancestor, &status) == 0 else {
         throw HostError.posix("Failed to inspect", ancestor)
       }
-      let otherWritable = status.st_mode & 0o002 != 0 && status.st_mode & S_ISVTX == 0
-      guard status.st_uid == 0 || status.st_uid == uid, !otherWritable else {
-        throw HostError("Refusing to start \(path): \(ancestor) lets another user replace it")
+      if let why = BinaryResolver.untrustedDirectory(
+        mode: status.st_mode, owner: status.st_uid, group: status.st_gid, me: uid)
+      {
+        throw HostError("Refusing to start \(path): \(ancestor) \(why)")
       }
       if ancestor == "/" || ancestor.isEmpty { return }
       ancestor = (ancestor as NSString).deletingLastPathComponent

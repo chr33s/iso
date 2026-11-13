@@ -40,10 +40,13 @@ import Testing
   chmod(signed, 0o755)
   chmod(root, 0o777)
   #expect(throws: HostError.self) { try CompanionSignature.verify(signed, signer: .adHoc) }
-  // A group-writable ancestor is accepted; only other-writable ones are refused.
+  // A group-writable ancestor is refused unless its group is root-equivalent:
+  // every local user is in `staff`.
+  #expect(chown(root, getuid(), 20) == 0)
   chmod(root, 0o775)
-  try CompanionSignature.verify(signed, signer: .adHoc)
+  #expect(throws: HostError.self) { try CompanionSignature.verify(signed, signer: .adHoc) }
   chmod(root, 0o755)
+  try CompanionSignature.verify(signed, signer: .adHoc)
   #expect(throws: HostError.self) {
     try CompanionSignature.verify(root + "/missing", signer: .adHoc)
   }
