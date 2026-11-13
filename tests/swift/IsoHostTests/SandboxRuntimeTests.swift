@@ -248,18 +248,18 @@ let qualifiedVersion =
 
 @Test func untrustedDirectoryRules() {
   let me: uid_t = 501
-  #expect(BinaryResolver.untrustedDirectory(mode: 0o755, owner: 0, group: 0, me: me) == nil)
+  #expect(TrustedExecutable.untrustedDirectory(mode: 0o755, owner: 0, group: 0, me: me) == nil)
   #expect(
-    BinaryResolver.untrustedDirectory(mode: 0o755, owner: 502, group: 20, me: me)
+    TrustedExecutable.untrustedDirectory(mode: 0o755, owner: 502, group: 20, me: me)
       == "is owned by another user")
-  #expect(BinaryResolver.untrustedDirectory(mode: 0o1777, owner: 0, group: 0, me: me) == nil)
+  #expect(TrustedExecutable.untrustedDirectory(mode: 0o1777, owner: 0, group: 0, me: me) == nil)
   #expect(
-    BinaryResolver.untrustedDirectory(mode: 0o757, owner: me, group: 20, me: me)
+    TrustedExecutable.untrustedDirectory(mode: 0o757, owner: me, group: 20, me: me)
       == "is world-writable")
   #expect(
-    BinaryResolver.untrustedDirectory(mode: 0o775, owner: me, group: 20, me: me)
+    TrustedExecutable.untrustedDirectory(mode: 0o775, owner: me, group: 20, me: me)
       == "is group-writable")
-  #expect(BinaryResolver.untrustedDirectory(mode: 0o775, owner: 0, group: 80, me: me) == nil)
+  #expect(TrustedExecutable.untrustedDirectory(mode: 0o775, owner: 0, group: 80, me: me) == nil)
 }
 
 @Test func canonicalPathKeepsAMissingTail() throws {

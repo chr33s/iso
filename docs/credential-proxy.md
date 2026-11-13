@@ -241,10 +241,12 @@ signalled only while it is still the process recorded at spawn (its start time
 and executable in `proxy-<name>.identity.json`); tunnel PIDs only while they are
 the recorded `ssh` master. Release builds start only an `iso-proxy` with a
 Developer ID signature of iso's own team (or, for an ad hoc signed iso, any
-valid signature). Either way the binary must be owned by root or the user with
-no group or other write bit, and each directory above it must be owned by root
-or the user and, unless sticky, be neither world-writable nor group-writable
-by a group other than `wheel` or `admin` (the runtime binaries' rule).
+valid signature). Either way the binary (symlinks resolved; the resolved path
+is what starts) must be owned by root or the user with no group or other write
+bit and no ACL entry granting write, and each directory above it must be owned
+by root or the user and, unless sticky, be neither world-writable nor
+group-writable by a group other than `wheel` or `admin`, nor carry such an ACL
+entry (`TrustedExecutable`, the runtime binaries' rule).
 
 It is **jailed** by `sandbox-exec` using the checked-in Seatbelt profile, which
 denies filesystem writes and program execution, limits reads to system paths and

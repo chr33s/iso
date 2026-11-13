@@ -53,37 +53,28 @@ package struct TrustedEditorApp: Sendable, Equatable {
     return nil
   }
 
-  /// Owned by root or this user, writable by no one else, and no ancestor
-  /// lets another user replace them.
+  /// The bundle is a directory owned by root or this user and writable by no
+  /// one else; the executable, inside it, passes `TrustedExecutable` (which
+  /// also covers every ancestor and refuses ACL write grants) and is not a
+  /// symlink.
   static func checkOwnership(_ executable: String, bundle: String) throws {
     let uid = getuid()
-    for path in [executable, bundle] {
-      var status = stat()
-      guard lstat(path, &status) == 0 else { throw HostError.posix("Failed to inspect", path) }
-      let kind = status.st_mode & S_IFMT
-      guard kind == (path == executable ? S_IFREG : S_IFDIR) else {
-        throw HostError("\(path) is not a regular \(path == executable ? "file" : "directory")")
-      }
-      if path == executable, status.st_mode & 0o111 == 0 {
-        throw HostError("\(path) is not executable")
-      }
-      guard status.st_uid == 0 || status.st_uid == uid, status.st_mode & 0o022 == 0 else {
-        throw HostError("\(path) must be owned by root or you and writable by no one else")
-      }
+    var status = stat()
+    guard lstat(bundle, &status) == 0 else { throw HostError.posix("Failed to inspect", bundle) }
+    guard status.st_mode & S_IFMT == S_IFDIR else {
+      throw HostError("\(bundle) is not a regular directory")
     }
-    var ancestor = (bundle as NSString).deletingLastPathComponent
-    while true {
-      var status = stat()
-      guard lstat(ancestor, &status) == 0 else {
-        throw HostError.posix("Failed to inspect", ancestor)
-      }
-      if let why = BinaryResolver.untrustedDirectory(
-        mode: status.st_mode, owner: status.st_uid, group: status.st_gid, me: uid)
-      {
-        throw HostError("\(ancestor) \(why), so another user could replace \(bundle)")
-      }
-      if ancestor == "/" { return }
-      ancestor = (ancestor as NSString).deletingLastPathComponent
+    guard status.st_uid == 0 || status.st_uid == uid, status.st_mode & 0o022 == 0 else {
+      throw HostError("\(bundle) must be owned by root or you and writable by no one else")
+    }
+    let trusted: TrustedExecutable
+    do {
+      trusted = try TrustedExecutable.verify(executable, uid: uid)
+    } catch {
+      throw HostError("\(error.message), so another user could replace \(bundle)")
+    }
+    guard trusted.path == executable else {
+      throw HostError("\(executable) is a symlink, not a regular file")
     }
   }
 }

@@ -214,14 +214,17 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   identity (see below). Release builds start `iso-proxy` and `iso-egress` only
   after Security.framework validates them: carrying a Developer ID signature
   of iso's own team, or, when iso itself is signed ad hoc, any valid signature.
-  In both cases the companion must be an executable regular file owned by root
-  or the user with no group or other write bit, and every directory above it
-  must be owned by root or the user and, unless sticky, be neither
-  world-writable nor group-writable by a group other than `wheel` or `admin`
-  (a `root:admin` 0775 one is accepted; a `staff` one is not, since every
-  local user is in `staff`). This is the runtime binaries' rule (see
-  [Apple sandbox backend](#apple-sandbox-backend)); the editor bundle's
-  ancestors follow it too.
+  In both cases the companion (symlinks resolved; iso starts the resolved
+  path it checked) must be an executable regular file owned by root or the
+  user with no group or other write bit and no extended ACL entry granting
+  write. Every directory above it must be owned by root or the user and,
+  unless sticky, carry no such ACL entry and be neither world-writable nor
+  group-writable by a group other than `wheel` or `admin` (a `root:admin`
+  0775 one is accepted; a `staff` one is not, since every local user is in
+  `staff`). This is the one rule (`TrustedExecutable` in
+  `Sources/IsoCore/`) the runtime binaries (see
+  [Apple sandbox backend](#apple-sandbox-backend)) and the editor's
+  executable also follow.
   Debug builds skip these checks.
 - **Source retrieval uses only selected credentials.** A guest clone and
   host devcontainer discovery share one decision (`GitHubSourceAuth`): an
@@ -448,8 +451,10 @@ an authenticated peer asks the editor to do. Design record:
 - **`sandboxed` (default).** `EditorLauncher` runs the editor as a new,
   iso-owned process tree (`Sources/IsoHost/Editor/`):
   - The application is found only at `/Applications/<App>.app` or
-    `~/Applications/<App>.app`, never from `PATH`. Its executable and bundle
-    must be owned by root or the user and writable by no one else, and its
+    `~/Applications/<App>.app`, never from `PATH`. Its bundle must be owned
+    by root or the user and writable by no one else, its executable must
+    pass the same `TrustedExecutable` rule as the companions (no symlink),
+    and its
     signature must pass strict validation against the compiled-in bundle
     identifier and Developer ID team (`TrustedEditorApp`, Security.framework).
     A bundle that fails a check stops the launch; nothing falls back to
@@ -878,8 +883,9 @@ exposure, and isolate verifies the effective configuration anyway
   owned by the user or root, and must not be world-writable unless it is
   sticky, nor group-writable unless it is sticky or its group is `wheel` or
   `admin` (whose members can already use sudo; Homebrew's prefix is
-  `admin`-writable). The check reads mode bits only; an ACL that grants
-  others write access is not detected. `scripts/build-iso-sandbox.sh` signs the runtime with the
+  `admin`-writable). An extended ACL entry that grants write on the binary,
+  or on a non-sticky ancestor, is refused like the mode bit
+  (`TrustedExecutable`). `scripts/build-iso-sandbox.sh` signs the runtime with the
   hardened runtime and refuses an install `bin/` that is owned by neither
   you nor root, world-writable, or group-writable by a group other than
   `wheel` or `admin`. The runtime runs with umask `077`

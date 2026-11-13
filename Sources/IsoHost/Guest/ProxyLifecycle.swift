@@ -28,7 +28,7 @@ package struct ProxyLauncher: Sendable {
   let isoExecutable: String?
   let sandboxExec: String
   let controlRoot: String
-  let verifyCompanion: @Sendable (String) throws -> Void
+  let verifyCompanion: @Sendable (String) throws -> TrustedExecutable
 
   package init(
     environment: [String: String], resolver: CredentialResolver, diagnostics: Diagnostics,
@@ -42,7 +42,7 @@ package struct ProxyLauncher: Sendable {
   init(
     environment: [String: String], resolver: CredentialResolver, diagnostics: Diagnostics,
     isoExecutable: String?, sandboxExec: String, controlRoot: String,
-    verifyCompanion: @escaping @Sendable (String) throws -> Void = CompanionSignature
+    verifyCompanion: @escaping @Sendable (String) throws -> TrustedExecutable = CompanionSignature
       .verifyForRelease
   ) {
     self.environment = environment
@@ -293,8 +293,8 @@ package struct ProxyLauncher: Sendable {
         "iso-egress not found next to iso at \(directory). Filtered egress cannot start; build iso-egress and place it beside iso. No NAT fallback is used."
       )
     }
-    try verifyCompanion(candidate)
-    return candidate
+    // Start what was verified: a symlinked candidate resolves to its target.
+    return try verifyCompanion(candidate).path
   }
 
   func spawnLease(
@@ -391,8 +391,8 @@ package struct ProxyLauncher: Sendable {
         "Swift proxy iso-proxy not found next to iso at \(directory) — build with scripts/build-release.py or reinstall iso"
       )
     }
-    try verifyCompanion(candidate)
-    return candidate
+    // Start what was verified: a symlinked candidate resolves to its target.
+    return try verifyCompanion(candidate).path
   }
 
   func spawnProxy(_ instance: Instance, name: String, port: UInt16, startup: Secret<[UInt8]>)

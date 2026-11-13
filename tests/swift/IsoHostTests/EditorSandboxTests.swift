@@ -140,6 +140,11 @@ private func fakeBundle(_ root: String, version: String = "1.2.3") throws -> Str
   #expect(throws: HostError.self) {
     _ = try TrustedEditorApp.locate(identity, candidates: [bundle]) { _, _ in }
   }
+  // Sticky passes the ancestor rule, but the bundle itself is still refused.
+  chmod(bundle, 0o1777)
+  #expect(throws: HostError.self) {
+    _ = try TrustedEditorApp.locate(identity, candidates: [bundle]) { _, _ in }
+  }
   chmod(bundle, 0o755)
   // A `staff` group-writable ancestor lets any local user swap the bundle.
   let parent = root + "/first"

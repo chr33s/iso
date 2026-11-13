@@ -370,10 +370,6 @@ package enum BinaryResolver {
     }
   }
 
-  /// Group ids whose members can already act as root on macOS (`wheel`,
-  /// `admin`); Homebrew's prefix is `admin`-group-writable.
-  static let rootEquivalentGroups: Set<gid_t> = [0, 80]
-
   /// An executable installed beside the runtime binary
   /// (docs/design/linux-desktop-virtio-gpu.md §13), held to the runtime's
   /// own ownership and permission checks; nil when absent or refused.
@@ -427,51 +423,7 @@ package enum BinaryResolver {
   }
 
   static func check(_ path: String, uid: uid_t = getuid()) -> Result<String, HostError> {
-    guard path.hasPrefix("/") else { return .failure(HostError("\(path) is not an absolute path")) }
-    guard let resolvedPointer = realpath(path, nil) else {
-      return .failure(HostError("\(path) does not exist"))
-    }
-    let resolved = String(cString: resolvedPointer)
-    free(resolvedPointer)
-    var status = stat()
-    guard stat(resolved, &status) == 0 else {
-      return .failure(HostError("\(resolved) does not exist"))
-    }
-    guard (status.st_mode & S_IFMT) == S_IFREG, status.st_mode & 0o111 != 0 else {
-      return .failure(HostError("\(resolved) is not an executable file"))
-    }
-    guard status.st_uid == 0 || status.st_uid == uid else {
-      return .failure(HostError("\(resolved) is owned by another user"))
-    }
-    guard status.st_mode & 0o022 == 0 else {
-      return .failure(HostError("\(resolved) is group- or world-writable"))
-    }
-    // Whoever can rename entries in a directory on the path can swap the
-    // binary, so every ancestor must be as trustworthy as the file.
-    var directory = (resolved as NSString).deletingLastPathComponent
-    while true {
-      guard stat(directory, &status) == 0 else {
-        return .failure(HostError("Failed to inspect \(directory)"))
-      }
-      if let why = untrustedDirectory(
-        mode: status.st_mode, owner: status.st_uid, group: status.st_gid, me: uid)
-      {
-        return .failure(HostError("\(resolved) is inside \(directory), which \(why)"))
-      }
-      if directory == "/" { break }
-      directory = (directory as NSString).deletingLastPathComponent
-    }
-    return .success(resolved)
-  }
-
-  /// Why a directory lets someone other than root or `me` replace entries
-  /// in it, or nil. A sticky directory only lets users rename their own.
-  static func untrustedDirectory(mode: mode_t, owner: uid_t, group: gid_t, me: uid_t) -> String? {
-    if owner != 0 && owner != me { return "is owned by another user" }
-    if mode & 0o1000 != 0 { return nil }
-    if mode & 0o002 != 0 { return "is world-writable" }
-    if mode & 0o020 != 0 && !rootEquivalentGroups.contains(group) { return "is group-writable" }
-    return nil
+    Result { () throws(HostError) in try TrustedExecutable.verify(path, uid: uid).path }
   }
 
   /// `path` with its longest existing ancestor canonicalized, so it reads

@@ -24,9 +24,11 @@ import Testing
   let signed = root + "/iso-proxy"
   try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: signed)
   chmod(signed, 0o755)
-  try CompanionSignature.verify(signed, signer: .adHoc)
+  let verified = try CompanionSignature.verify(signed, signer: .adHoc)
+  #expect(verified.path == BinaryResolver.canonicalPath(signed))
   try FileManager.default.createSymbolicLink(atPath: root + "/link", withDestinationPath: signed)
-  try CompanionSignature.verify(root + "/link", signer: .adHoc)
+  // A symlink is resolved: what was checked is what starts.
+  #expect(try CompanionSignature.verify(root + "/link", signer: .adHoc) == verified)
   // Another team's requirement is not met.
   #expect(throws: HostError.self) {
     try CompanionSignature.verify(signed, signer: .team("ABCDE12345"))
@@ -67,10 +69,58 @@ import Testing
     sandboxExec: guest.root + "/bin/sandbox-exec", controlRoot: guest.root,
     verifyCompanion: { path in
       checked.withLock { $0.append(path) }
-      try CompanionSignature.verify(path, signer: .adHoc)
+      return try CompanionSignature.verify(path, signer: .adHoc)
     })
   #expect(throws: HostError.self) { try launcher.locateProxyBinary() }
   #expect(throws: HostError.self) { try launcher.locateEgressBinary() }
   #expect(
     checked.withLock { $0 } == [guest.root + "/app/iso-proxy", guest.root + "/app/iso-egress"])
+}
+
+/// An extended ACL that grants write is as dangerous as a write mode bit, on
+/// the companion or on any directory above it.
+@Test func companionsUnderAnACLWriteGrantAreRefused() throws {
+  let root = try scratchDirectory("companion-acl")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let signed = root + "/iso-proxy"
+  try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: signed)
+  chmod(signed, 0o755)
+  _ = try CompanionSignature.verify(signed, signer: .adHoc)
+  try setACL(root, "everyone allow add_file,delete_child")
+  #expect(throws: HostError.self) { try CompanionSignature.verify(signed, signer: .adHoc) }
+  try setACL(root, nil)
+  try setACL(signed, "everyone allow write")
+  #expect(throws: HostError.self) { try CompanionSignature.verify(signed, signer: .adHoc) }
+  try setACL(signed, nil)
+  // A deny entry grants nothing.
+  try setACL(root, "everyone deny delete")
+  _ = try CompanionSignature.verify(signed, signer: .adHoc)
+}
+
+/// The launcher starts the path verification returned, not the candidate.
+@Test func launchersStartTheVerifiedPath() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let iso = try guest.installProxyStubs()
+  try FileManager.default.copyItem(
+    atPath: guest.root + "/app/iso-proxy", toPath: guest.root + "/app/iso-egress")
+  let launcher = ProxyLauncher(
+    environment: [:], resolver: CredentialResolver(environment: [:]),
+    diagnostics: guest.sink.diagnostics, isoExecutable: iso,
+    sandboxExec: guest.root + "/bin/sandbox-exec", controlRoot: guest.root,
+    verifyCompanion: { _ in .unverified("/verified/target") })
+  #expect(try launcher.locateProxyBinary() == "/verified/target")
+  #expect(try launcher.locateEgressBinary() == "/verified/target")
+}
+
+/// `chmod -N` then, when given, `chmod +a ENTRY` on `path`.
+private func setACL(_ path: String, _ entry: String?) throws {
+  for arguments in [["-N", path]] + (entry.map { [["+a", $0, path]] } ?? []) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/chmod")
+    process.arguments = arguments
+    try process.run()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 0)
+  }
 }

@@ -3,7 +3,7 @@ import IsoCore
 import Security
 
 /// Who must have signed a companion (`iso-proxy`, `iso-egress`) before a release
-/// build hands it a credential or capability; it must also pass `checkOwnership`.
+/// build hands it a credential or capability; it must also pass `TrustedExecutable.verify`.
 /// Debug builds do not check (freshly built, unsigned companions).
 enum CompanionSigner: Equatable, Sendable {
   /// iso carries this team: the companion must carry a Developer ID
@@ -52,17 +52,24 @@ enum CompanionSigner: Equatable, Sendable {
 }
 
 enum CompanionSignature {
-  static func verifyForRelease(_ path: String) throws {
+  static func verifyForRelease(_ path: String) throws -> TrustedExecutable {
     #if ISO_RELEASE_BUILD
-      try verify(path, signer: try CompanionSigner.current())
+      return try verify(path, signer: try CompanionSigner.current())
+    #else
+      return .unverified(path)
     #endif
   }
 
-  static func verify(_ requested: String, signer: CompanionSigner) throws {
-    guard let path = canonicalPath(requested) else {
-      throw HostError.posix("Failed to resolve", requested)
+  /// The companion to start: `requested` resolved, owned and unwritable
+  /// (`TrustedExecutable`) and validly signed.
+  static func verify(_ requested: String, signer: CompanionSigner) throws -> TrustedExecutable {
+    let trusted: TrustedExecutable
+    do {
+      trusted = try TrustedExecutable.verify(requested)
+    } catch {
+      throw HostError("Refusing to start \(requested): \(error.message)")
     }
-    try checkOwnership(path)
+    let path = trusted.path
     var code: SecStaticCode?
     var status = SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code)
     guard status == errSecSuccess, let code else {
@@ -87,35 +94,6 @@ enum CompanionSignature {
         "Refusing to start \(path): it is not \(expected) (OSStatus \(status)). Reinstall iso and its companions from one release."
       )
     }
-  }
-
-  /// Run for every signer: an executable regular file (not a symlink) owned by root
-  /// or this user with no group/other write bit, under ancestors that pass the
-  /// runtime binary's rule (`BinaryResolver.untrustedDirectory`): owned by root or
-  /// this user, world-writable only if sticky, group-writable only for
-  /// `wheel`/`admin` (such as `root:admin` 0775).
-  static func checkOwnership(_ path: String, uid: uid_t = getuid()) throws {
-    var status = stat()
-    guard lstat(path, &status) == 0 else { throw HostError.posix("Failed to inspect", path) }
-    guard status.st_mode & S_IFMT == S_IFREG, status.st_mode & 0o111 != 0 else {
-      throw HostError("Refusing to start \(path): it is not an executable regular file")
-    }
-    guard status.st_uid == 0 || status.st_uid == uid, status.st_mode & 0o022 == 0 else {
-      throw HostError(
-        "Refusing to start \(path): it must be owned by root or you and writable by no one else")
-    }
-    var ancestor = (path as NSString).deletingLastPathComponent
-    while true {
-      guard lstat(ancestor, &status) == 0 else {
-        throw HostError.posix("Failed to inspect", ancestor)
-      }
-      if let why = BinaryResolver.untrustedDirectory(
-        mode: status.st_mode, owner: status.st_uid, group: status.st_gid, me: uid)
-      {
-        throw HostError("Refusing to start \(path): \(ancestor) \(why)")
-      }
-      if ancestor == "/" || ancestor.isEmpty { return }
-      ancestor = (ancestor as NSString).deletingLastPathComponent
-    }
+    return trusted
   }
 }

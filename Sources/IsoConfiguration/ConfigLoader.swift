@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import IsoCore
 
 /// Document syntax, chosen by file extension only (never by sniffing).
 package enum ConfigFormat: Sendable, Equatable {
@@ -175,7 +176,9 @@ package enum ConfigTrust {
     guard status.st_mode & 0o022 == 0 else {
       throw untrusted("it is writable by group or others")
     }
-    guard !grantsWrite(descriptor) else { throw untrusted("an ACL lets others write it") }
+    guard !ACLWrite.grants(descriptor: descriptor) else {
+      throw untrusted("an ACL lets others write it")
+    }
     var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
     // F_GETPATH writes a NUL-terminated path into the MAXPATHLEN buffer.
     guard unsafe fcntl(descriptor, F_GETPATH, &buffer) == 0 else {
@@ -200,34 +203,11 @@ package enum ConfigTrust {
       guard info.st_mode & 0o022 == 0 || sticky else {
         throw untrusted("\(directory) is writable by group or others")
       }
-      guard sticky || !grantsWrite(fd) else {
+      guard sticky || !ACLWrite.grants(descriptor: fd) else {
         throw untrusted("an ACL lets others write \(directory)")
       }
       if directory == "/" || directory.isEmpty { return }
       directory = (directory as NSString).deletingLastPathComponent
     }
-  }
-
-  /// Whether an extended ACL allows anyone to write, append, add or delete
-  /// entries, or change ownership or permissions. Deny entries are fine.
-  static func grantsWrite(_ descriptor: Int32) -> Bool {
-    guard let acl = unsafe acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else { return false }
-    defer { unsafe acl_free(UnsafeMutableRawPointer(acl)) }
-    var entry: acl_entry_t? = nil
-    var which = ACL_FIRST_ENTRY.rawValue
-    let writes: [acl_perm_t] = [
-      ACL_WRITE_DATA, ACL_APPEND_DATA, ACL_DELETE, ACL_DELETE_CHILD, ACL_WRITE_ATTRIBUTES,
-      ACL_WRITE_EXTATTRIBUTES, ACL_WRITE_SECURITY, ACL_CHANGE_OWNER,
-    ]
-    while unsafe acl_get_entry(acl, Int32(which), &entry) == 0, let current = unsafe entry {
-      which = ACL_NEXT_ENTRY.rawValue
-      var tag = ACL_UNDEFINED_TAG
-      guard unsafe acl_get_tag_type(current, &tag) == 0, tag == ACL_EXTENDED_ALLOW else { continue }
-      var permissions: acl_permset_t? = nil
-      guard unsafe acl_get_permset(current, &permissions) == 0, let permissions = unsafe permissions
-      else { continue }
-      if writes.contains(where: { unsafe acl_get_perm_np(permissions, $0) == 1 }) { return true }
-    }
-    return false
   }
 }
