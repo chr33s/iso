@@ -308,6 +308,15 @@ package final class ScaleSetListener: ScaleSetFeed {
           "allow_public_repo needs an elastic scale set (GitHub requires Administer permission to create one); scale set \(scaleSet.name) is non-elastic"
         )
       }
+      // Any runner of a non-elastic scale set may take any assigned job,
+      // including one the job policy has not vetted or has refused: no
+      // runner may wait idle ahead of demand there.
+      if !info.elastic && scaleSet.minRunners > 0 {
+        throw CIError(
+          .capabilityMissing,
+          "min_runners above 0 needs an elastic scale set (GitHub requires Administer permission to create one); scale set \(scaleSet.name) is non-elastic, so set min_runners: 0"
+        )
+      }
       state.withLock { $0.scaleSet = info }
       current.1 = info
     }

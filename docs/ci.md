@@ -296,9 +296,12 @@ pools:
     until it leaves the queue (cancel it, or GitHub expires it). A runner
     already started for an approved job can still take a refused job assigned
     while it boots; public repositories therefore need an elastic scale set.
+    An idle runner could take a job before it is vetted, so a non-elastic
+    scale set needs `min_runners: 0` (the listener refuses to run otherwise).
 - The policy is decided on GitHub's own workflow run record (`GET
   /repos/{owner}/{repo}/actions/runs/{id}`), never on the job message alone.
-  A refused job never gets a registration, a host admission or a VM. Each
+  On an elastic scale set a refused job never gets a registration, a host
+  admission or a VM (see the non-elastic race above). Each
   refusal is an event with its code:
   `JOB_REJECTED_PUBLIC_REPO`, `JOB_REJECTED_FORK_PR` (the run's head is
   another repository, or a pull request run names none), `JOB_REJECTED_EVENT`,

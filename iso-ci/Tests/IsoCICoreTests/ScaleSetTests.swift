@@ -307,6 +307,27 @@ final class FakeActionsService: Sendable {
     #expect(!listener.demand().connected)
   }
 
+  /// An idle runner of a non-elastic scale set could take a job the policy
+  /// refused or has not yet vetted, so no runner may wait ahead of demand.
+  @Test func idleRunnersNeedAnElasticScaleSet() throws {
+    for elasticAllowed in [false, true] {
+      let service = FakeActionsService()
+      service.state.withLock { $0.elasticAllowed = elasticAllowed }
+      let store = try ControllerStore.inMemory(clock: FixedClock(value: 1_800_000_000))
+      var pool = try Self.pool()
+      pool.scaleSet?.minRunners = 1
+      let listener = try ScaleSetListener(
+        pool: "validation", configuration: pool, authority: FakeScaleSetAuthority(),
+        client: ScaleSetClient(http: service.http), store: store, owner: "iso-ci-test",
+        clock: FixedClock(value: 1_800_000_000))
+      #expect(listener.step() == elasticAllowed)
+      #expect(listener.demand().connected == elasticAllowed)
+      if !elasticAllowed {
+        #expect(listener.demand().lastError?.contains("min_runners") == true)
+      }
+    }
+  }
+
   @Test func expiredQueueTokenRefreshesTheSession() throws {
     let service = FakeActionsService()
     let (listener, _) = try Self.listener(service, FakeScaleSetAuthority())

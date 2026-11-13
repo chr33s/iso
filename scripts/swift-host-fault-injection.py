@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # (id, file, original text, replacement, swift test filter)
 FAULTS = [
     # iso-ci scale sets, shared-host scheduling and allocation supervisors.
+    ("ci-nonelastic-idle-runners", "iso-ci/Sources/IsoCICore/GitHub/ScaleSetListener.swift",
+     "      if !info.elastic && scaleSet.minRunners > 0 {", "      if false {",
+     "idleRunnersNeedAnElasticScaleSet"),
     ("ci-job-policy-fork", "iso-ci/Sources/IsoCICore/GitHub/JobPolicy.swift",
      "if facts.isFork && !policy.allowForkPRs {", "if false {",
      "forkPullRequestsArePerDefaultRefused"),
