@@ -37,13 +37,25 @@ jobs:
         env:
           SANITIZER: ${{ matrix.sanitizer }}
         run: |
+          extra=()
+          # Swift Build does not link the UBSan runtime that the C
+          # dependencies' instrumentation needs (docs/testing.md).
+          if [[ "$SANITIZER" == undefined ]]; then
+            extra=(-Xlinker "$(xcrun clang --print-runtime-dir)/libclang_rt.ubsan_osx_dynamic.dylib")
+          fi
           swift test --sanitize="$SANITIZER" --scratch-path ".build-$SANITIZER" \
-            --force-resolved-versions
+            --force-resolved-versions ${extra[@]+"${extra[@]}"}
 
+  # One runner takes over two hours for the whole fault list, so it is split
+  # into shards that together cover every fault.
   fault-injection:
-    name: Host fault injection
+    name: Host fault injection (${{ matrix.shard }}/4)
     runs-on: xcode-27
-    timeout-minutes: 120
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,8 +65,10 @@ jobs:
         with:
           version: 2026.10.7
 
-      - name: Tests detect every injected fault
-        run: python3 scripts/swift-host-fault-injection.py
+      - name: Tests detect every injected fault in this shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python3 scripts/swift-host-fault-injection.py --shard "$SHARD/4"
 
   proxy-mutations:
     name: Credential proxy mutations

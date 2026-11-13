@@ -2284,12 +2284,31 @@ def run_fault(scratch, fault, verbose):
         path.write_text(source)
 
 
+def shard(value):
+    """Parse INDEX/COUNT (1-based), e.g. 2/4 for the second of four shards."""
+    try:
+        index, count = (int(part) for part in value.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected INDEX/COUNT, e.g. 2/4") from None
+    if not 1 <= index <= count:
+        raise argparse.ArgumentTypeError("expected 1 <= INDEX <= COUNT")
+    return index, count
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--only", choices=[f[0] for f in FAULTS], help="run a single fault id")
+    parser.add_argument("--shard", type=shard, metavar="INDEX/COUNT",
+                        help="run every COUNT-th fault starting at INDEX; all shards together cover every fault")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     faults = [f for f in FAULTS if not args.only or f[0] == args.only]
+    if args.shard:
+        index, count = args.shard
+        faults = faults[index - 1::count]
+    if not faults:
+        print("no faults selected", file=sys.stderr)
+        return 2
     with tempfile.TemporaryDirectory(prefix="iso-fault-") as directory:
         scratch = Path(directory) / "iso"
         shutil.copytree(

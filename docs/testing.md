@@ -75,7 +75,8 @@ socket fails without dialing.
 
 With Swift 6.4's default Swift Build engine, the undefined-sanitizer build can
 fail to link C dependency instrumentation with missing `__ubsan_handle_*`
-symbols. If that occurs, explicitly link the matching Xcode runtime:
+symbols. If that occurs, explicitly link the matching Xcode runtime (the
+nightly workflow always does):
 
 ```bash
 ubsan_runtime_dir="$(xcrun clang --print-runtime-dir)"
@@ -783,7 +784,12 @@ that still passes without that behavior is not coverage.
 ```bash
 python3 scripts/swift-host-fault-injection.py                 # every fault
 python3 scripts/swift-host-fault-injection.py --only scanner-strings --verbose
+python3 scripts/swift-host-fault-injection.py --shard 2/4      # every fourth fault, from the second
 ```
+
+The whole list takes over two hours on one machine. `--shard INDEX/COUNT`
+runs one slice; the nightly workflow runs four shards in parallel, which
+together cover every fault.
 
 Each entry in the script's `FAULTS` list names an id, a production source
 file, the exact original text, its faulty replacement, and the `swift test`
