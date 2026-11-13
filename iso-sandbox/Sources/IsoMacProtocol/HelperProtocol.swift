@@ -12,6 +12,10 @@ package enum HelperProtocol {
   package static let port: UInt32 = 7801
   /// Largest line either side reads; longer input fails the connection.
   package static let maxLine = LineReader.defaultLimit
+  /// The deepest a message nests (message, `network`, its `dns` array). Deeper
+  /// input is refused before the recursive JSON parser runs on a connection
+  /// thread's 512 KiB stack, before the hello is authenticated.
+  package static let maxNesting = 3
   /// Unauthenticated connections the host keeps at once, and how long each
   /// may take to authenticate.
   package static let maxPending = 4
@@ -171,6 +175,9 @@ package struct HelperMessage: Codable, Equatable, Sendable {
   /// different protocol version, and values outside their bounds.
   package static func parse(_ line: some Collection<UInt8>) -> Result<HelperMessage, HelperError> {
     guard line.count <= HelperProtocol.maxLine else { return .failure(.tooLong) }
+    guard !JSONNesting.exceeds(line, limit: HelperProtocol.maxNesting) else {
+      return .failure(.malformed)
+    }
     guard let m = try? JSONDecoder().decode(HelperMessage.self, from: Data(line)) else {
       return .failure(.malformed)
     }

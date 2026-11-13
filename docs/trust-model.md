@@ -129,7 +129,8 @@ capability.
   runtime's owner, which parses guest request lines and live-view messages
   on 512 KiB connection threads, instead refuses input nested deeper than
   its closed request types can be (`JSONNesting`: four levels for a guest
-  request, one for a viewer message) before any parser reads it.
+  request, three for a macOS helper message, one for a viewer message)
+  before any parser reads it.
 - **Downloaded update artifacts.** `Update.swift` tarball + `SHA256SUMS` from the
   release host — gated by a maintainer signature over `SHA256SUMS`, the
   checksum and (best-effort) Sigstore attestation.

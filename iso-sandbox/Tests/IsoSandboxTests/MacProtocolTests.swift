@@ -58,6 +58,20 @@ private func hello(boot: String = "B1", enrolled: Bool, mac: String? = nil) -> H
     HelperMessage.parse(line(#"{"v":1,"type":"ack","id":2147483648}"#)) == .failure(.malformed))
 }
 
+/// An unauthenticated hello nested past the message's own depth is refused
+/// unparsed: a few hundred levels overflow a connection thread's stack.
+@Test func parseRefusesNestingDeeperThanAMessage() {
+  let network =
+    #"{"v":1,"type":"network","network":{"address":"10.0.0.2","prefix":24,"gateway":"10.0.0.1","dns":["10.0.0.1"]}}"#
+  #expect(HelperMessage.parse(line(network)).isSuccess)
+  let deep =
+    #"{"v":1,"type":"hello","x":"# + String(repeating: "[", count: 400)
+    + String(repeating: "]", count: 400) + "}"
+  #expect(HelperMessage.parse(line(deep)) == .failure(.malformed))
+  let oneTooDeep = #"{"v":1,"type":"hello","x":{"y":[[]]}}"#
+  #expect(HelperMessage.parse(line(oneTooDeep)) == .failure(.malformed))
+}
+
 @Test func networkConfigurationIsDottedQuadsAndASanePrefix() {
   let ok = HelperNetwork(
     address: "10.231.4.2", prefix: 24, gateway: "10.231.4.1", dns: ["10.231.4.1"])

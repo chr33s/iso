@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # (id, file, original text, replacement, swift test filter)
 FAULTS = [
     # iso-ci scale sets, shared-host scheduling and allocation supervisors.
+    ("macos-helper-nesting", "iso-sandbox/Sources/IsoMacProtocol/HelperProtocol.swift",
+     "    guard !JSONNesting.exceeds(line, limit: HelperProtocol.maxNesting) else {",
+     "    guard true else {",
+     "parseRefusesNestingDeeperThanAMessage"),
     ("ci-nonelastic-idle-runners", "iso-ci/Sources/IsoCICore/GitHub/ScaleSetListener.swift",
      "      if !info.elastic && scaleSet.minRunners > 0 {", "      if false {",
      "idleRunnersNeedAnElasticScaleSet"),
