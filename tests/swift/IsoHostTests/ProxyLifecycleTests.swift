@@ -496,9 +496,9 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   #expect(
     readFile(root + "/argv")
       == "add-generic-password\n-U\n-s\niso-openai-dev\n-a\nopenai\n-w\nsk-x\n")
-  #expect(ProxyProvisioning.shellQuote("a b") == "'a b'")
-  #expect(ProxyProvisioning.shellQuote("a'b") == "'a'\\''b'")
-  #expect(ProxyProvisioning.shellQuote("") == "''")
+  #expect(shellWord("a b") == "'a b'")
+  #expect(shellWord("a'b") == "'a'\\''b'")
+  #expect(shellWord("") == "''")
 
   try writeFile(tool, "#!/bin/sh\nexit 45\n", mode: 0o755)
   let refused = try #require(throws: (any Error).self) {

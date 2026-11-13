@@ -2,7 +2,8 @@
 // IsoPolicy: the default-deny permit/forbid evaluator, sliding-window
 // admissions and single-use approvals shared by the host CLI and the
 // credential proxy (docs/design/iso-policy.md); IsoGitIndex: the inert Git
-// index reader shared by the host and iso-ci. Libraries only: no runtime
+// index reader shared by the host and iso-ci; IsoShell: the one shell, YAML
+// and per-scalar quoting implementation the host and iso-ci share. Libraries only: no runtime
 // process, no networking, no subprocesses, no third-party dependencies.
 import PackageDescription
 
@@ -17,10 +18,13 @@ let package = Package(
   products: [
     .library(name: "IsoPolicy", targets: ["IsoPolicy"]),
     .library(name: "IsoGitIndex", targets: ["IsoGitIndex"]),
+    .library(name: "IsoShell", targets: ["IsoShell"]),
   ],
   targets: [
     .target(name: "IsoPolicy", swiftSettings: strictMemorySafety),
     .target(name: "IsoGitIndex", swiftSettings: strictMemorySafety),
+    .target(name: "IsoShell", swiftSettings: strictMemorySafety),
+    .testTarget(name: "IsoShellTests", dependencies: ["IsoShell"]),
     .testTarget(name: "IsoGitIndexTests", dependencies: ["IsoGitIndex"]),
     .testTarget(
       name: "IsoPolicyTests", dependencies: ["IsoPolicy"], resources: [.copy("Fixtures")]),

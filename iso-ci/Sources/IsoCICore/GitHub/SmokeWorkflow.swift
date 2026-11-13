@@ -1,4 +1,5 @@
 import Foundation
+import IsoShell
 
 /// The onboarding smoke workflow (spec section 8), generated for operator
 /// review only: iso-ci never commits, pushes or edits workflows.

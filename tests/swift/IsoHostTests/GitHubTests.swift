@@ -229,11 +229,11 @@ private let assignmentConfig = #"""
   }
 
   @Test func shellQuotingIsOneWordAndSplitInvertsIt() {
-    #expect(KeychainReference.quote("trailofbits-iso") == "trailofbits-iso")
-    #expect(KeychainReference.quote("/tmp/foo.txt") == "/tmp/foo.txt")
-    #expect(KeychainReference.quote("a b") == "'a b'")
-    #expect(KeychainReference.quote("a'b") == "'a'\\''b'")
-    #expect(KeychainReference.quote("") == "''")
+    #expect(shellWord("trailofbits-iso") == "trailofbits-iso")
+    #expect(shellWord("/tmp/foo.txt") == "/tmp/foo.txt")
+    #expect(shellWord("a b") == "'a b'")
+    #expect(shellWord("a'b") == "'a'\\''b'")
+    #expect(shellWord("") == "''")
     #expect(KeychainReference.split("a '' b") == ["a", "", "b"])
     #expect(KeychainReference.split("'a b' c") == ["a b", "c"])
     #expect(KeychainReference.split(#"'a'\''b'"#) == ["a'b"])
@@ -244,7 +244,7 @@ private let assignmentConfig = #"""
       }
       let text = String(String.UnicodeScalarView(scalars))
       #expect(
-        KeychainReference.split(KeychainReference.quote(text)) == [text], "\(text.debugDescription)"
+        KeychainReference.split(shellWord(text)) == [text], "\(text.debugDescription)"
       )
     }
   }

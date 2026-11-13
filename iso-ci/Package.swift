@@ -24,6 +24,7 @@ let package = Package(
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "IsoGitIndex", package: "iso-policy"),
+        .product(name: "IsoShell", package: "iso-policy"),
       ],
       linkerSettings: [.linkedLibrary("sqlite3")]),
     .executableTarget(

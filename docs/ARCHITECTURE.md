@@ -45,8 +45,10 @@ is the [`iso-policy/`](../iso-policy) package, never a process of its own. Its
 `IsoPolicy` library (the default-deny policy evaluator, sliding-window
 admissions and single-use approvals) is linked by both `iso` and `iso-proxy`
 ([`policy.md`](policy.md), [`design/iso-policy.md`](design/iso-policy.md)); its
-`IsoGitIndex` library, the inert Git index reader, is linked by `iso` and the
-separately installed `iso-ci`. `iso` resolves
+`IsoGitIndex` library, the inert Git index reader, and its `IsoShell`
+library, the one per-scalar shell and YAML quoting implementation
+(`shellEscape`, `RemoteCommand`), are linked by `iso` and the separately
+installed `iso-ci`. `iso` resolves
 `iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable, and
 `iso-sandbox` finds `iso-macos-helper` beside itself. A missing `iso-egress`
 blocks only filtered boots.
@@ -86,7 +88,7 @@ iso/
 │                            #   Linux displays (LinuxDisplay, LinuxDesktop; kernel/ builds the desktop kernel)
 ├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
 ├── iso-egress/             # Swift filtered-egress companion: destination policy, leases, CONNECT
-├── iso-policy/             # shared libraries: IsoPolicy (evaluator), IsoGitIndex (inert index reader)
+├── iso-policy/             # shared libraries: IsoPolicy (evaluator), IsoGitIndex (inert index reader), IsoShell (quoting)
 ├── iso-ci/                 # separately installed GitHub Actions companion; speaks iso.host/v1
 ├── skills/                  # the distributable `iso` agent skill
 ├── experiments/             # spikes; not shipped (macos-vz-context-probe builds the macOS guest qualification fixture)

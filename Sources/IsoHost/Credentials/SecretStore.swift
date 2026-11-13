@@ -50,7 +50,7 @@ package struct KeychainReference: Equatable, Sendable, CustomStringConvertible {
   }
 
   package var description: String {
-    "cmd:security find-generic-password -s \(Self.quote(service)) -a \(Self.quote(account)) -w"
+    "cmd:security find-generic-password -s \(shellWord(service)) -a \(shellWord(account)) -w"
   }
 
   /// The Keychain item a stored reference reads, or nil for any command not
@@ -67,20 +67,7 @@ package struct KeychainReference: Equatable, Sendable, CustomStringConvertible {
     return KeychainReference(service: words[3], account: words[5])
   }
 
-  /// POSIX quoting that `split` inverts: plain words pass through, anything
-  /// else (including the empty string) is single-quoted.
-  static func quote(_ value: String) -> String {
-    let plain = value.unicodeScalars.allSatisfy { scalar in
-      switch scalar {
-      case "a"..."z", "A"..."Z", "0"..."9", "-", "_", ".", "/", ":", "=": true
-      default: false
-      }
-    }
-    if !value.isEmpty && plain { return value }
-    return shellEscape(value)
-  }
-
-  /// Shell words for the constructs `quote` emits (single quotes and
+  /// Shell words for the constructs `shellWord` emits (single quotes and
   /// backslash escapes); nil on an unterminated quote.
   static func split(_ text: String) -> [String]? {
     var words: [String] = []

@@ -24,7 +24,9 @@ let package = Package(
     .package(path: "iso-policy"),
   ],
   targets: [
-    .target(name: "IsoCore", swiftSettings: strictMemorySafety),
+    .target(
+      name: "IsoCore", dependencies: [.product(name: "IsoShell", package: "iso-policy")],
+      swiftSettings: strictMemorySafety),
     .target(
       name: "IsoConfiguration",
       dependencies: ["IsoCore", .product(name: "IsoPolicy", package: "iso-policy")],

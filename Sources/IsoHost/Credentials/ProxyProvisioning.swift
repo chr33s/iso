@@ -24,19 +24,9 @@ package enum ProxyProvisioning {
     vm.map { "\(provider.keychainService)-\($0)" } ?? provider.keychainService
   }
 
-  static func shellQuote(_ text: String) -> String {
-    let safe =
-      !text.isEmpty
-      && text.unicodeScalars.allSatisfy {
-        ("a"..."z").contains($0) || ("A"..."Z").contains($0) || ("0"..."9").contains($0)
-          || "-_./:=".unicodeScalars.contains($0)
-      }
-    return safe ? text : shellEscape(text)
-  }
-
   package static func reference(service: String, account: String) -> CredentialReference {
     CredentialReference(
-      "cmd:security find-generic-password -s \(shellQuote(service)) -a \(shellQuote(account)) -w")!
+      "cmd:security find-generic-password -s \(shellWord(service)) -a \(shellWord(account)) -w")!
   }
 
   /// `security add-generic-password -U`. The secret rides argv (the

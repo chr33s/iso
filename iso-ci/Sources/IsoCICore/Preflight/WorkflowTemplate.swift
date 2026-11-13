@@ -1,4 +1,5 @@
 import Foundation
+import IsoShell
 
 package struct CompatibilityDiagnostic: Sendable, Equatable, Hashable, Codable,
   CustomStringConvertible

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IsoShell
 
 package enum GitHookKind: String, Sendable, Equatable, Codable, CaseIterable {
   case preCommit = "pre-commit"
@@ -161,7 +162,7 @@ package enum GitHooks {
   }
 
   static func shellQuote(_ value: String) -> String {
-    shellSingleQuoted(value)
+    shellEscape(value)
   }
 
   // MARK: Hooks directory

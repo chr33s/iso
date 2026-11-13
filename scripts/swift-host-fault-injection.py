@@ -1926,6 +1926,10 @@ FAULTS = [
      "directPullIsRefusedUnderEnforcementAndUnevaluatedInShadow"),
     ('policy-approval-prompt', 'Sources/IsoHost/Policy/WorkspacePolicy.swift', '    if evaluation.requiresApproval {', '    if false {', 'confirmedExactStageAppliesOnceThroughTheVerifiedDirectory'),
     # IsoPolicy library: decision, quota and approval semantics.
+    ("shell-escape-per-scalar", "iso-policy/Sources/IsoShell/Shell.swift",
+     r'''  "'" + replacingScalars(value) { $0 == "'" ? "'\\''" : nil } + "'"''',
+     r'''  "'" + value.replacing("'", with: "'\\''") + "'"''',
+     "shellEscapeSurvivesACombiningMarkAfterAnApostrophe"),
     ("policy-window-boundary", "iso-policy/Sources/IsoPolicy/SlidingWindow.swift",
      "now - slots[head] >= window", "now - slots[head] > window",
      "windowBoundaryIsExclusive"),

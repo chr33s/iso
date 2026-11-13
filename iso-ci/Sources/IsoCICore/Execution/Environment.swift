@@ -1,4 +1,5 @@
 import Foundation
+import IsoShell
 
 /// A profile with every reference resolved and its digests computed, as
 /// admitted for one allocation.
@@ -157,5 +158,5 @@ package func shellQuote(_ word: String) -> String {
   {
     return word
   }
-  return shellSingleQuoted(word)
+  return shellEscape(word)
 }
