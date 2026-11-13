@@ -39,3 +39,13 @@ private func acquiresWithin(_ timeout: Duration, _ fd: Int32) -> Bool {
   }
   return true
 }
+
+@Test func lockFilesAreCreatedOwnerOnly() throws {
+  let path = FileManager.default.temporaryDirectory.appending(path: "iso-lock-\(UUID())").path
+  defer { unlink(path) }
+  let lock = try FileLock(path: path)
+  lock.release()
+  var status = stat()
+  #expect(stat(path, &status) == 0)
+  #expect(status.st_mode & 0o777 == 0o600)
+}

@@ -17,12 +17,12 @@ package struct HostError: Error, Equatable, Sendable, CustomStringConvertible {
 package final class FileLock: Sendable {
   private let descriptor: Mutex<Int32?>
 
-  /// Blocks until `path` is locked, creating it (mode 0644) if needed.
+  /// Blocks until `path` is locked, creating it (mode 0600) if needed.
   package init(path: String) throws(HostError) {
     let parent = (path as NSString).deletingLastPathComponent
     if !parent.isEmpty { try AtomicFile.createMissingDirectories(parent) }
     // The lock file carries no content; ownership is attached to its descriptor.
-    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw .posix("Failed to create lock file", path) }
     while flock(fd, LOCK_EX) != 0 {
       let code = errno
@@ -93,7 +93,7 @@ package final class FileLock: Sendable {
     -> FileLock?
   {
     let path = siblingPath(of: target)
-    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
+    let fd = unsafe open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o600)
     guard fd >= 0 else {
       let code = errno
       if code == ENOENT { return nil }

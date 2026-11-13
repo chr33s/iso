@@ -303,7 +303,7 @@ package struct ProxyLauncher: Sendable {
   ) throws {
     guard let isoExecutable else { throw HostError("Failed to locate the iso executable") }
     let logPath = instance.directory + "/egress-lease.log"
-    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
     guard log >= 0 else { throw HostError.posix("Failed to create egress lease log", logPath) }
     defer { close(log) }
     var child = try DetachedChild.spawn(
@@ -332,7 +332,7 @@ package struct ProxyLauncher: Sendable {
         return String(cString: pointer)
       } ?? binary
     let logPath = Self.logPath(instance, "egress")
-    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
     guard log >= 0 else { throw HostError.posix("Failed to create egress log", logPath) }
     defer { close(log) }
     var child: DetachedChild
@@ -408,7 +408,7 @@ package struct ProxyLauncher: Sendable {
         return String(cString: pointer)
       } ?? binary
     let logPath = Self.logPath(instance, name)
-    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
     guard log >= 0 else { throw HostError.posix("Failed to create proxy log", logPath) }
     defer { close(log) }
     // sandbox-exec applies the profile, then replaces itself with the proxy
@@ -592,7 +592,7 @@ package struct ProxyLauncher: Sendable {
     defer { try? FileManager.default.removeItem(atPath: controlDirectory) }
     let controlPath = controlDirectory + "/ssh.sock"
     let logPath = Self.forwardLogPath(instance, name)
-    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+    let log = open(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
     guard log >= 0 else { throw HostError.posix("Failed to create proxy tunnel log", logPath) }
     defer { close(log) }
 
@@ -643,7 +643,7 @@ package struct ProxyLauncher: Sendable {
           .save(instance, name: name)
         try AtomicFile.write(
           Array(String(master.pid).utf8), to: Self.forwardPIDPath(instance, name),
-          mode: .atMost(0o644))
+          mode: .atMost(0o600))
       } catch {
         throw ContextError(
           "Failed to write proxy tunnel pid file \(Self.forwardPIDPath(instance, name))",
@@ -690,7 +690,7 @@ package struct ProxyLauncher: Sendable {
       throw HostError("The \(label) (pid \(pid)) exited before it could be recorded")
     }
     try identity.save(forPIDFile: pidPath)
-    try AtomicFile.write(Array(String(pid).utf8), to: pidPath, mode: .atMost(0o644))
+    try AtomicFile.write(Array(String(pid).utf8), to: pidPath, mode: .atMost(0o600))
   }
 
   enum RecordedProcess {

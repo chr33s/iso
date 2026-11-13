@@ -449,7 +449,7 @@ private let withoutBundle = Release(
       == canonicalJSON("{\n  \"last_checked_at\": 42,\n  \"latest_known_version\": \"v1.2.3\"\n}"))
   var status = stat()
   stat(path, &status)
-  #expect(status.st_mode & 0o777 == 0o644)
+  #expect(status.st_mode & 0o777 == 0o600)
   #expect(
     UpdateCheck.readState(home: home)
       == UpdateState(lastCheckedAt: 42, latestKnownVersion: "v1.2.3"))

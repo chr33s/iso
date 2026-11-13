@@ -85,7 +85,7 @@ package enum UpdateCheck {
     guard let path = statePath(home: home) else {
       throw HostError("Cannot determine state directory")
     }
-    try ReplaceFile.write(Array(state.rendered.utf8), to: path, newFileMode: 0o644)
+    try ReplaceFile.write(Array(state.rendered.utf8), to: path, newFileMode: 0o600)
   }
 
   /// Best-effort: an unwritable state directory just means the next run
