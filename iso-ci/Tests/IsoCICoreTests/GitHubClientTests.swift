@@ -560,5 +560,8 @@ private func der(_ tag: UInt8, _ body: [UInt8]) -> [UInt8] {
     #expect(parsed["on"]?["workflow_dispatch"] != nil)
     let grouped = try YAML.parse(SmokeWorkflow.generate(labels: labels, runnerGroup: "ci's group"))
     #expect(grouped["jobs"]?["smoke"]?["runs-on"]?["group"]?.scalar?.value == "ci's group")
+    let marked = "ci'\u{301}s group"
+    let combining = try YAML.parse(SmokeWorkflow.generate(labels: labels, runnerGroup: marked))
+    #expect(combining["jobs"]?["smoke"]?["runs-on"]?["group"]?.scalar?.value == marked)
   }
 }

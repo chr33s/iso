@@ -353,6 +353,23 @@ import Testing
     #expect(shellQuote("it's") == "'it'\\''s'")
     #expect(GuestCommand(["echo", "$HOME"]).rendered == "echo '$HOME'")
   }
+
+  /// An apostrophe followed by a combining mark is one `Character` but still
+  /// closes a quoted shell word, so quoting must escape it per scalar.
+  @Test func shellQuotingSurvivesACombiningMarkAfterAnApostrophe() throws {
+    let value = "x'\u{301}; echo injected #"
+    for quoted in [shellQuote(value), GitHooks.shellQuote(value)] {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = ["-c", "printf '%s' " + quoted]
+      let output = Pipe()
+      process.standardOutput = output
+      try process.run()
+      let bytes = output.fileHandleForReading.readDataToEndOfFile()
+      process.waitUntilExit()
+      #expect(String(decoding: bytes, as: UTF8.self) == value)
+    }
+  }
 }
 
 @Suite struct WireValidationTests {

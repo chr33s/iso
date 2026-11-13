@@ -40,7 +40,7 @@ package enum SmokeWorkflow {
   }
 
   static func yamlQuoted(_ text: String) -> String {
-    "'" + text.replacingOccurrences(of: "'", with: "''") + "'"
+    yamlSingleQuoted(text)
   }
 }
 

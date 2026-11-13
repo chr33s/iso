@@ -157,5 +157,5 @@ package func shellQuote(_ word: String) -> String {
   {
     return word
   }
-  return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+  return shellSingleQuoted(word)
 }

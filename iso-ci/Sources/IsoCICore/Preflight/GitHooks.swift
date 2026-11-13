@@ -161,7 +161,7 @@ package enum GitHooks {
   }
 
   static func shellQuote(_ value: String) -> String {
-    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    shellSingleQuoted(value)
   }
 
   // MARK: Hooks directory

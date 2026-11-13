@@ -113,6 +113,11 @@ import Testing
       try TemplateConverter.segments("it's {a} ${{ matrix.os }}/${{ matrix.node }}"))
     #expect(composed == "format('it''s {{a}} {0}/{1}', matrix.os, matrix.node)")
     #expect(try ExpressionEvaluator.evaluate(composed!, contexts) == .string("it's {a} linux/20"))
+    // A combining mark after `'` or `}` must not end the escape.
+    let marked = "x'\u{301}}\u{301} "
+    let combining = try #require(
+      TemplateConverter.composed(try TemplateConverter.segments(marked + "${{ matrix.os }}")))
+    #expect(try ExpressionEvaluator.evaluate(combining, contexts) == .string(marked + "linux"))
   }
 
   @Test func fieldContextAvailability() {

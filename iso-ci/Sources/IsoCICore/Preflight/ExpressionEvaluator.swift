@@ -347,7 +347,9 @@ package enum ExpressionEvaluator {
 
   package static func format(_ template: String, _ arguments: [String]) throws(CIError) -> String {
     var out = ""
-    let characters = Array(template)
+    // Per scalar, as the lexer reads the string: a brace followed by a
+    // combining mark is still a brace.
+    let characters = Array(template.unicodeScalars)
     var index = 0
     while index < characters.count {
       let c = characters[index]
@@ -359,8 +361,8 @@ package enum ExpressionEvaluator {
         }
         var end = index + 1
         var digits = ""
-        while end < characters.count, characters[end].isNumber, digits.count < 4 {
-          digits.append(characters[end])
+        while end < characters.count, ("0"..."9").contains(characters[end]), digits.count < 4 {
+          digits.unicodeScalars.append(characters[end])
           end += 1
         }
         guard !digits.isEmpty, end < characters.count, characters[end] == "}",
@@ -378,7 +380,7 @@ package enum ExpressionEvaluator {
         out.append("}")
         index += 2
       } else {
-        out.append(c)
+        out.unicodeScalars.append(c)
         index += 1
       }
       guard out.utf8.count <= maxStringBytes else { throw fail("format() result is too large") }

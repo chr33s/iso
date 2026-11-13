@@ -160,8 +160,14 @@ package struct TemplateConverter {
     for segment in segments {
       switch segment {
       case .literal(let text):
-        template += text.replacingOccurrences(of: "{", with: "{{")
-          .replacingOccurrences(of: "}", with: "}}").replacingOccurrences(of: "'", with: "''")
+        template += replacingScalars(text) { scalar in
+          switch scalar {
+          case "{": "{{"
+          case "}": "}}"
+          case "'": "''"
+          default: nil
+          }
+        }
       case .expression:
         template += "{\(placeholder)}"
         placeholder += 1

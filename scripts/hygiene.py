@@ -5,7 +5,10 @@
 
 Checks what the former pre-commit-hooks checked, without rewriting files:
 trailing whitespace, a missing final newline, YAML that does not parse (via
-`yq`), files over 500 KiB, and leftover merge-conflict markers. By default it
+`yq`), files over 500 KiB, leftover merge-conflict markers, and Swift that
+escapes a quote with `replacingOccurrences` (it matches whole `Character`s,
+so a quote followed by a combining mark escapes unchanged; escape per scalar
+with `shellEscape` or iso-ci's `replacingScalars`). By default it
 checks the files staged for commit; `--all` checks every tracked file, and
 explicit paths check just those. Whenever a `Package.swift` is among the
 checked files, it also requires every manifest to pin a shared dependency at
@@ -24,6 +27,7 @@ CONFLICT_MARKERS = (b"<<<<<<< ", b">>>>>>> ")
 # Fuzz inputs and vendored LLVM sources keep
 # their original bytes.
 EXEMPT = ("fuzz/corpus/", "fuzz/libfuzzer/")
+QUOTE_REPLACE = re.compile(rb'replacingOccurrences\(of: "(\'|\\"|\\\\|\{|\})"')
 
 
 def git(*args):
@@ -62,6 +66,11 @@ def check(path):
             problems.append(f"line {number}: trailing whitespace")
         if line.startswith(CONFLICT_MARKERS) or line == b"=======":
             problems.append(f"line {number}: merge-conflict marker")
+    if path.endswith(".swift"):
+        for number, line in enumerate(lines, 1):
+            if QUOTE_REPLACE.search(line):
+                problems.append(
+                    f"line {number}: quote escaped with replacingOccurrences; escape per Unicode scalar")
     if data and not data.endswith(b"\n"):
         problems.append("no newline at end of file")
     if path.endswith((".yml", ".yaml")):
