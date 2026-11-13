@@ -78,11 +78,7 @@ package enum StateStore {
   }
 
   package static func ensurePrivateDirectory(_ path: String) throws(HostError) {
-    do {
-      try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
-    } catch {
-      throw HostError("Failed to create \(path)")
-    }
+    try AtomicFile.createMissingDirectories(path)
     guard chmod(path, 0o700) == 0 else { throw .posix("Failed to restrict", path) }
   }
 
@@ -725,11 +721,7 @@ extension Instance {
     _ config: IsoConfig, name: InstanceName?, image: ImageName, workspacePath: String?
   ) throws -> Instance {
     let root = config.instancesDirectory.path
-    do {
-      try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-    } catch {
-      throw ContextError("Failed to create directory \(root)", cause: error)
-    }
+    try AtomicFile.createMissingDirectories(root)
     let lock = try FileLock(path: root + "/.lock")
     defer { lock.release() }
     let reservations = try InstanceStore.reservations(config)

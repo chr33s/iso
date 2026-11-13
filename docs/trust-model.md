@@ -247,7 +247,11 @@ user `env_forward` entries, and the VM SSH key. The invariants:
 - **Secret files stay `0600`, dirs `0700`.** isolate stores secrets only in the
   macOS Keychain; there is no plaintext-file or other fallback store. All
   managed writes go through `AtomicFile` / `StateStore`, which never relax
-  permissions.
+  permissions. A missing parent directory is created `0700`, and the
+  configuration file is written `0600` (it may hold a literal `api_key`), so
+  a fresh `~/.iso` is private. An existing directory keeps its mode, and an
+  existing configuration file is narrowed to `0600` the next time iso edits
+  it.
 - **Secrets stay out of logs.** `Secret<T>` (`Sources/IsoCore/Units.swift`)
   and `EnvForward` render as `<redacted>` in descriptions, debug output, and
   reflection; subprocess descriptions redact secret arguments. Configuration

@@ -177,13 +177,7 @@ package enum UpdateCheck {
 enum ReplaceFile {
   static func write(_ bytes: [UInt8], to path: String, newFileMode: mode_t) throws(HostError) {
     let parent = (path as NSString).deletingLastPathComponent
-    if !parent.isEmpty {
-      do {
-        try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
-      } catch {
-        throw HostError("Failed to create directory \(parent)")
-      }
-    }
+    if !parent.isEmpty { try AtomicFile.createMissingDirectories(parent) }
     var existing = stat()
     let mode = stat(path, &existing) == 0 ? existing.st_mode & 0o7777 : newFileMode
     let temporary = AtomicFile.temporaryPath(for: path)

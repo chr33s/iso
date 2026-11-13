@@ -45,9 +45,6 @@ extension IsoConfig {
 /// A verified GitHub edit of the configuration document.
 package struct GitHubConfigEdit: Sendable {
   package let bytes: [UInt8]
-  /// Some `github.pat.*.token` is a literal rather than a `cmd:` reference;
-  /// the file is then written owner-only.
-  package let holdsLiteralToken: Bool
 }
 
 /// Structural edits of the `github` member: a non-object `github` becomes an
@@ -131,14 +128,6 @@ extension ConfigEditor {
     if existing != nil && edited.semanticallyEquals(original) { return nil }
     let bytes = try encodeVerified(
       edited, format: format, path: path, environment: environment, limits: limits)
-    return GitHubConfigEdit(bytes: bytes, holdsLiteralToken: holdsLiteralToken(edited))
-  }
-
-  static func holdsLiteralToken(_ document: JSONValue) -> Bool {
-    guard case .object(let entries)? = document["github"]?["pat"] else { return false }
-    return entries.values.contains { entry in
-      if case .string(let token)? = entry["token"] { return !token.hasPrefix("cmd:") }
-      return false
-    }
+    return GitHubConfigEdit(bytes: bytes)
   }
 }

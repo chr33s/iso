@@ -22,7 +22,7 @@ package enum ConfigStore {
     if lstat(path, &status) == 0 { return false }
     let contents = format == .jsonc ? ConfigTemplate.jsonc : "{}\n"
     do {
-      try AtomicFile.createExclusive(Array(contents.utf8), at: path, mode: 0o644)
+      try AtomicFile.createExclusive(Array(contents.utf8), at: path, mode: 0o600)
     } catch  where lstat(path, &status) == 0 {
       return false
     }
@@ -40,7 +40,7 @@ package enum ConfigStore {
       existing: existing, format: format, path: path, provider: provider, credential: credential,
       auth: auth,
       environment: environment)
-    // A `cmd:` reference is not itself secret: 0644 as before, never widened.
-    try AtomicFile.write(updated, to: path, mode: .atMost(0o644))
+    // Owner-only: the file may also hold a literal `api_key`.
+    try AtomicFile.write(updated, to: path, mode: .atMost(0o600))
   }
 }

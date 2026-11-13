@@ -829,7 +829,7 @@ private let assignmentConfig = #"""
     guard case .pat(let pat)? = written.github else { throw HostError("mode") }
     #expect(pat.skip.isEmpty)
     #expect(written.sshPort == 2222)
-    #expect(fileMode(path) == 0o644)
+    #expect(fileMode(path) == 0o600)
     #expect(
       stubs.calls("security")
         == ["add-generic-password -U -s iso-github-pat -a acme/parent -w github_pat_SYNTHETIC"])

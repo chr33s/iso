@@ -237,6 +237,18 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   #expect(leftovers.isEmpty)
 }
 
+@Test func missingParentDirectoriesAreCreatedOwnerOnly() throws {
+  let directory = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  chmod(directory, 0o755)
+  try AtomicFile.write(Array("a".utf8), to: directory + "/a/b/state.json", mode: .atMost(0o600))
+  _ = try FileLock(path: directory + "/c/.lock")
+  try StateStore.ensurePrivateDirectory(directory + "/d/e")
+  for created in ["/a", "/a/b", "/c", "/d", "/d/e"] { #expect(mode(directory + created) == 0o700) }
+  // An existing directory keeps its mode.
+  #expect(mode(directory) == 0o755)
+}
+
 @Test func atomicWriteTakesTheModeOfASymlinkTarget() throws {
   let directory = try temporaryDirectory()
   defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -313,6 +325,9 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   let path = directory + "/nested/config.jsonc"
   #expect(try ConfigStore.createTemplate(at: path, format: .jsonc))
   #expect(try String(contentsOfFile: path, encoding: .utf8) == ConfigTemplate.jsonc)
+  // It may come to hold a literal `api_key`: owner-only, in an owner-only directory.
+  #expect(mode(path) == 0o600)
+  #expect(mode(directory + "/nested") == 0o700)
   try Data("{\"ssh_port\": 2}".utf8).write(to: URL(fileURLWithPath: path))
   #expect(try ConfigStore.createTemplate(at: path, format: .jsonc) == false)
   #expect(try String(contentsOfFile: path, encoding: .utf8) == "{\"ssh_port\": 2}")
@@ -332,7 +347,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   defer { try? FileManager.default.removeItem(atPath: directory) }
   let path = directory + "/config.jsonc"
   try Data("{\"ssh_port\": 2222} // keep".utf8).write(to: URL(fileURLWithPath: path))
-  // An explicit, non-default mode: edits keep it whatever the runner's umask.
+  // An explicit, non-default mode: edits narrow it to owner-only, never widen it.
   #expect(chmod(path, 0o640) == 0)
   let environment = ConfigEnvironment(home: directory, variables: [:])
   try await withThrowingTaskGroup(of: Void.self) { group in
@@ -350,7 +365,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   #expect(config.sshPort == 2222)
   #expect(config.proxy.anthropic != nil)
   #expect(config.proxy.openai != nil)
-  #expect(mode(path) == 0o640)
+  #expect(mode(path) == 0o600)
 }
 
 @Test func failedEditLeavesTheFileUntouched() throws {

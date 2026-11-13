@@ -4,6 +4,23 @@ import Foundation
 /// set its mode, then `rename(2)` over the target. On any failure the
 /// temporary file is removed and the previous target is left intact.
 package enum AtomicFile {
+  /// Creates each missing component of `path` owner-only (`0700`), so iso
+  /// state never lands in a directory others can list or read. Existing
+  /// directories keep their mode.
+  package static func createMissingDirectories(_ path: String) throws(HostError) {
+    var missing: [String] = []
+    var current = path
+    var status = stat()
+    while !current.isEmpty, current != "/", unsafe stat(current, &status) != 0 {
+      missing.append(current)
+      current = (current as NSString).deletingLastPathComponent
+    }
+    for directory in missing.reversed() where unsafe mkdir(directory, 0o700) != 0 && errno != EEXIST
+    {
+      throw HostError.posix("Failed to create directory", directory)
+    }
+  }
+
   package enum ModePolicy: Sendable, Equatable {
     /// Keep an existing file's mode; new files get `mode`.
     case preserveExisting(default: mode_t)
@@ -16,13 +33,7 @@ package enum AtomicFile {
     throws(HostError)
   {
     let parent = (path as NSString).deletingLastPathComponent
-    if !parent.isEmpty {
-      do {
-        try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
-      } catch {
-        throw HostError("Failed to create directory \(parent)")
-      }
-    }
+    if !parent.isEmpty { try AtomicFile.createMissingDirectories(parent) }
     // The mode of what the path names (following a symlink, as Rust's
     // `fs::metadata` does): a dotfiles link to a 0600 file must not come
     // back as a link-mode (0755) regular file.
@@ -62,13 +73,7 @@ package enum AtomicFile {
     throws(HostError)
   {
     let parent = (path as NSString).deletingLastPathComponent
-    if !parent.isEmpty {
-      do {
-        try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
-      } catch {
-        throw HostError("Failed to create directory \(parent)")
-      }
-    }
+    if !parent.isEmpty { try AtomicFile.createMissingDirectories(parent) }
     let temporary = temporaryPath(for: path)
     let fd = unsafe open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard fd >= 0 else { throw .posix("Failed to write temp file", temporary) }

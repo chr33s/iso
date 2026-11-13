@@ -62,8 +62,8 @@ package struct ConfigTarget: Sendable, Equatable {
 
 extension ConfigStore {
   /// Locked read-modify-write of the `github` member (see `upsertProxy`).
-  /// The file is owner-only when any PAT token is a literal, 0644 otherwise,
-  /// and never widened. An unchanged document is not rewritten.
+  /// The file is written owner-only, like every configuration write. An
+  /// unchanged document is not rewritten.
   static func editGitHub(
     at target: ConfigTarget,
     _ edit: ([UInt8]?) throws(ConfigError) -> GitHubConfigEdit?
@@ -74,7 +74,7 @@ extension ConfigStore {
       target.path, limit: JSONLimits.configuration.maxBytes)
     guard let updated = try edit(existing) else { return }
     try AtomicFile.write(
-      updated.bytes, to: target.path, mode: .atMost(updated.holdsLiteralToken ? 0o600 : 0o644))
+      updated.bytes, to: target.path, mode: .atMost(0o600))
   }
 
   package static func upsertPAT(

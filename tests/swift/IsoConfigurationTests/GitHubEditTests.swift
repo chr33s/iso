@@ -41,7 +41,6 @@ private func skip(_ text: String?, _ repo: RepoSlug = ab) throws -> GitHubConfig
   let edit = try upsert(nil, token: "cmd:cat ./t.txt")
   #expect(try pat(edit).entries[ab]?.expose() == "cmd:cat ./t.txt")
   #expect(try document(edit)["github"]?["mode"] == .string("pat"))
-  #expect(edit?.holdsLiteralToken == false)
 }
 
 @Test func patUpsertPreservesOtherKeysAndUpgradesStringModes() throws {
@@ -99,14 +98,6 @@ private func skip(_ text: String?, _ repo: RepoSlug = ab) throws -> GitHubConfig
   #expect(try pat(try skip(#"{"github": "off"}"#)).skip == [ab])
   // A malformed `skip` fails validation, so the file is not edited at all.
   #expect(throws: ConfigError.self) { try skip(#"{"github": {"mode": "pat", "skip": "garbage"}}"#) }
-}
-
-@Test func literalTokensAreDetectedForTheFileMode() throws {
-  #expect(try upsert(nil, token: "github_pat_literal")?.holdsLiteralToken == true)
-  #expect(
-    try upsert(#"{"github": {"pat": {"c/d": {"token": "github_pat_other"}}}}"#)?
-      .holdsLiteralToken == true)
-  #expect(ConfigEditor.holdsLiteralToken(.object(["ssh_port": .number(.integer(22))])) == false)
 }
 
 @Test func invalidDocumentsAreNotEdited() {
