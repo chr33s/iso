@@ -837,6 +837,20 @@ private func makeArchive(_ root: String, files: [String: String]) throws -> Stri
     try resolver.resolvedFeature(
       request, manifestDigest: sampleDigest, metadata: nil, blobPath: missing)
   }
+
+  // A member that expands past its bound is refused while it is read into
+  // memory; nothing is extracted on the host.
+  let inflated = try makeArchive(
+    root + "/c",
+    files: [
+      "devcontainer-feature.json": "{}",
+      "install.sh": String(repeating: "#", count: FeatureResolver.installScriptLimit + 1),
+    ])
+  let error = #expect(throws: HostError.self) {
+    try resolver.resolvedFeature(
+      request, manifestDigest: sampleDigest, metadata: nil, blobPath: inflated)
+  }
+  #expect(error?.message.contains("larger than") == true)
 }
 
 // MARK: - Registry and GitHub fetches through stub executables

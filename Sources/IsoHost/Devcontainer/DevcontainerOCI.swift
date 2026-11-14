@@ -224,31 +224,19 @@ package struct FeatureResolver: Sendable {
   ) throws -> ResolvedFeature {
     let id = metadata?.id ?? metadata?.name ?? request.rawID
     let archive = try Self.readBounded(blobPath, limit: Self.layerLimit, what: "feature layer")
-    let directory: TemporaryDirectory
-    do { directory = try TemporaryDirectory(prefix: "iso-feature-check-") } catch {
-      throw ContextError("Failed to create feature validation directory", cause: error)
-    }
-    defer { directory.remove() }
-    let extracted = directory.path + "/feature"
-    guard mkdir(extracted, 0o700) == 0 else {
-      throw ContextError(
-        "Failed to create feature extraction target", cause: HostError(ioErrorText(errno)))
-    }
+    // Layer content is untrusted. Members are read straight from the archive
+    // into bounded memory, so nothing is extracted on the host: a
+    // decompression bomb cannot fill the disk, and a link or special member
+    // yields no content.
     do {
-      try run("tar", ["-xzf", blobPath, "-C", extracted])
+      _ = try member(blobPath, "devcontainer-feature.json", limit: Self.manifestLimit)
     } catch {
-      throw ContextError("Failed to extract devcontainer feature layer", cause: error)
+      throw ContextError(
+        "feature layer does not contain a readable devcontainer-feature.json", cause: error)
     }
-    let installPath = extracted + "/install.sh"
-    guard FileManager.default.fileExists(atPath: extracted + "/devcontainer-feature.json") else {
-      throw HostError("feature layer does not contain devcontainer-feature.json")
-    }
-    // Layer content is untrusted: a symlinked or special `install.sh` could
-    // read a host file or never end.
     guard
       let script = String(
-        validating: try Self.readBounded(
-          installPath, limit: Self.installScriptLimit, what: "feature install.sh"),
+        validating: try member(blobPath, "install.sh", limit: Self.installScriptLimit),
         as: UTF8.self)
     else { throw HostError("feature install.sh is not valid UTF-8") }
     guard !script.trimmingUnicodeWhitespace().isEmpty else {
@@ -340,7 +328,11 @@ package struct FeatureResolver: Sendable {
       "https://\(FeatureRequest.registryHost)/v2/\(reference.repository)/blobs/sha256:\(expected.hash.rawValue)"
     do {
       try run(
-        "curl", ["-fsSL", "-H", "Authorization: Bearer \(token)", url, "-o", output],
+        "curl",
+        [
+          "-fsSL", "-H", "Authorization: Bearer \(token)", url, "-o", output, "--max-filesize",
+          "\(Self.layerLimit)",
+        ],
         redacted: [1, 2])
     } catch {
       throw ContextError("Failed to download feature layer \(digest)", cause: error)
@@ -432,6 +424,33 @@ package struct FeatureResolver: Sendable {
     guard termination == .exited(0) else {
       throw HostError("\(description) exited with \(exitStatusText(termination))")
     }
+  }
+
+  /// One archive member's content, at most `limit` bytes, read with
+  /// `tar -xO` into memory rather than onto the host disk.
+  func member(_ archive: String, _ name: String, limit: Int) throws -> [UInt8] {
+    let arguments = ["-xOzf", archive, name]
+    let description = Self.describe("tar", arguments, redacted: [])
+    diagnostics?.debug("Running (capture): \(description)")
+    let path: String
+    do { path = try executable("tar") } catch {
+      throw ContextError("Failed to execute \(description)", cause: error)
+    }
+    let output: ProcessRunner.Output
+    do {
+      output = try runner.capture(
+        .init(
+          executable: path, arguments: arguments, environment: environment,
+          deadline: Self.deadline, outputLimit: limit))
+    } catch .outputLimitExceeded {
+      throw HostError("feature \(name) is larger than \(limit) bytes")
+    } catch {
+      throw ContextError("Failed to execute \(description)", cause: HostError("\(error)"))
+    }
+    guard output.termination == .exited(0) else {
+      throw HostError("\(description) exited with \(exitStatusText(output.termination))")
+    }
+    return output.stdout
   }
 
   func capture(_ name: String, _ arguments: [String]) throws -> String {
