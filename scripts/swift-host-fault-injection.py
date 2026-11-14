@@ -1172,6 +1172,7 @@ FAULTS = [
      "growthGuardStopsATransferThatOutgrowsTheBudget"),
     ('stage-conspicuous-husky', 'Sources/IsoHost/Workspace/WorkspaceStage.swift', 'if components.contains(".husky")', 'if components.contains(".husky-none")', 'conspicuousPathsIgnoreCase|sensitivePathsNeedExactNamedGrants'),
     ('stage-conspicuous-envrc', 'Sources/IsoHost/Workspace/WorkspaceStage.swift', 'if components.last == ".envrc"', 'if components.last == ".envrc-none"', 'conspicuousPathsIgnoreCase|sensitivePathsNeedExactNamedGrants'),
+    ('stage-sensitive-directory-link', 'Sources/IsoHost/Workspace/WorkspaceStage.swift', 'if let reason = classify(path + "/tasks.json") {', 'if let reason = Optional<String>.none {', 'sensitivePathsNeedExactNamedGrants'),
     ('stage-conspicuous-vscode', 'Sources/IsoHost/Workspace/WorkspaceStage.swift', 'if components.suffix(2) == [".vscode", "tasks.json"]', 'if components.suffix(2) == [".vscode", "tasks-none.json"]', 'conspicuousPathsIgnoreCase|sensitivePathsNeedExactNamedGrants'),
     ('stage-conspicuous-hooks', 'Sources/IsoHost/Workspace/WorkspaceStage.swift', '          issue("\\(path): symlink points into git administration")\n          break', '          _ = path', 'linksIntoGitAdministrationAreRefused'),
     ("audit-append", "Sources/IsoHost/State/BoundaryAudit.swift",

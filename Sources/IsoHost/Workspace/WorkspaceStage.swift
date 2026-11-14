@@ -589,12 +589,15 @@ enum SensitivePaths {
   }
 
   /// A link is also sensitive when its target resolves, lexically from its
-  /// directory, to a sensitive path.
+  /// directory, to a sensitive path, or when a path reached through it as a
+  /// directory would be one (`.vscode -> vs` aliases `vs/tasks.json`).
   static func classify(_ path: String, new: StageObject) -> String? {
     if let reason = classify(path) { return reason }
-    guard case .symlink(let target) = new,
-      let resolved = StageBuilder.resolve(link: path, target: target)
-    else { return nil }
+    guard case .symlink(let target) = new else { return nil }
+    if let reason = classify(path + "/tasks.json") {
+      return "link to a directory where \(reason)"
+    }
+    guard let resolved = StageBuilder.resolve(link: path, target: target) else { return nil }
     return classify(resolved).map { "link to a path where \($0)" }
   }
 }

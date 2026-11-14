@@ -598,14 +598,19 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
     [
       ".envrc": "export A=1\n", "app/.husky/pre-commit": "#!/bin/sh\n",
       "x/.vscode/tasks.json": "{}", "plain.txt": "p",
-    ], links: ["trap": ".envrc"])
+      "vs/tasks.json": "{}",
+    ], links: ["trap": ".envrc", ".vscode": "vs"])
   #expect(
     manifest.sensitivePaths == [
-      ".envrc", "app/.husky", "app/.husky/pre-commit", "trap", "x/.vscode/tasks.json",
+      ".envrc", ".vscode", "app/.husky", "app/.husky/pre-commit", "trap", "x/.vscode/tasks.json",
     ])
   for (operands, kind) in [
     ([] as [String], ReturnError.Kind.missingSensitiveGrant),
     ([".envrc", "app/.husky", "app/.husky/pre-commit", "trap"], .missingSensitiveGrant),
+    (
+      [".envrc", "app/.husky", "app/.husky/pre-commit", "trap", "x/.vscode/tasks.json"],
+      .missingSensitiveGrant
+    ),
   ] {
     #expect(returnError { _ = try f.apply(manifest.id, sensitive: operands) }?.kind == kind)
   }
