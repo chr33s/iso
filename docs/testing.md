@@ -54,7 +54,9 @@ python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
 Use a separate `--scratch-path` per sanitizer so instrumented builds do not
 invalidate `.build`. The `Nightly` workflow
 (`.github/workflows/nightly.yml`) runs the three sanitizer suites and the
-fault-injection check on a schedule; they are not per-push gates. The package tests use synthetic credentials and isolated
+fault-injection check on a schedule; they are not per-push gates. A
+scheduled run is skipped when no commit outside `docs/` and Markdown landed in
+the previous 26 hours; a manual dispatch always runs. The package tests use synthetic credentials and isolated
 temporary state; they never touch `~/.iso`.
 
 `swift test` builds debug, where `SSHClient.ToolLookup.default` is

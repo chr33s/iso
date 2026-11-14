@@ -15,8 +15,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A scheduled run is skipped when nothing but docs changed since the last
+  # one (26 h, so a late cron start does not skip a day); a manual run
+  # always proceeds.
+  changes:
+    name: Code changed since the last nightly
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Look for code commits in the last 26 hours
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT" != schedule ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          commits="$(git log --since="26 hours ago" --format=%H -- . ':(exclude)docs/**' ':(exclude)*.md')"
+          if [[ -n "$commits" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No code commits in the last 26 hours; skipping the nightly gates." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   sanitizers:
     name: Host tests (${{ matrix.sanitizer }} sanitizer)
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     runs-on: xcode-27
     timeout-minutes: 90
     strategy:
@@ -50,6 +84,8 @@ jobs:
   # into shards that together cover every fault.
   fault-injection:
     name: Host fault injection (${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     runs-on: xcode-27
     timeout-minutes: 90
     strategy:
@@ -72,6 +108,8 @@ jobs:
 
   proxy-mutations:
     name: Credential proxy mutations
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     runs-on: xcode-27
     timeout-minutes: 60
     steps:
