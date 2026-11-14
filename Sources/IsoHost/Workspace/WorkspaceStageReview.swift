@@ -80,12 +80,14 @@ package struct StageReview {
     return lines
   }
 
-  /// The exact command that applies this stage, naming every sensitive
-  /// path it needs.
+  /// The command that applies this stage, naming every sensitive path it
+  /// needs. Guest-named paths are neutralized for display, so a path with a
+  /// control or format character shows as `?` rather than spoofing the hint.
   package func applyCommand(instance: String) -> String {
-    (["iso pull \(instance) --apply --stage-id \(manifest.id)"]
-      + manifest.sensitivePaths.map { "--approve-sensitive \(shellEscape($0))" })
-      .joined(separator: " ")
+    neutralizeControls(
+      (["iso pull \(instance) --apply --stage-id \(manifest.id)"]
+        + manifest.sensitivePaths.map { "--approve-sensitive \(shellEscape($0))" })
+        .joined(separator: " "))
   }
 
   /// Unified-style diffs for small UTF-8 text files. With `markOmitted`, every
