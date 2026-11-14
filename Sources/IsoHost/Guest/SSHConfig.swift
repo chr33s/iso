@@ -40,7 +40,11 @@ package struct SSHConfigFile: Sendable {
           User \(target.user)
           IdentityFile \(SSHTarget.quoteValue(target.keyPath))
           IdentitiesOnly yes
-      \(hostKeys)    LogLevel ERROR
+      \(hostKeys)    ForwardX11 no
+          ForwardX11Trusted no
+          PermitLocalCommand no
+          LogLevel ERROR
+      Host *
       \(SSHConfigBlocks.markerEnd)
       """
   }
@@ -77,7 +81,11 @@ package struct SSHConfigFile: Sendable {
     let cleaned = SSHConfigBlocks.removeNamedMarkerBlock(existing, host: host)
     let block = Self.block(target, instance)
     try target.requireHandoff()
-    try write(cleaned.isEmpty ? block + "\n" : cleaned + "\n" + block + "\n")
+    // OpenSSH keeps the first value it obtains for each keyword, so the
+    // block goes first: an earlier user `Host *` (ForwardAgent, relaxed host
+    // key checking) must not override it. Its trailing `Host *` returns the
+    // user's leading global options to global scope.
+    try write(cleaned.isEmpty ? block + "\n" : block + "\n" + cleaned)
     diagnostics.log(.info, "Updated SSH config at \(path)")
     return SSHAlias(host: host, configPath: path)
   }

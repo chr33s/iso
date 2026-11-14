@@ -100,7 +100,11 @@ private func transfer() -> WorkspaceTransfer {
           UpdateHostKeys no
           ForwardAgent no
           IdentityAgent none
+          ForwardX11 no
+          ForwardX11Trusted no
+          PermitLocalCommand no
           LogLevel ERROR
+      Host *
       # iso END
       """)
   let upstream =
@@ -126,6 +130,16 @@ private func transfer() -> WorkspaceTransfer {
   #expect(try String(contentsOfFile: file.path, encoding: .utf8) == block + "\n")
   try file.remove(try instance(directory))
   #expect(try String(contentsOfFile: file.path, encoding: .utf8) == "")
+  // The block precedes existing user entries, so a user `Host *` cannot
+  // override its pinning; leading global options keep global scope.
+  let user = "ServerAliveInterval 60\nHost *\n    ForwardAgent yes\n"
+  try Data(user.utf8).write(to: URL(fileURLWithPath: file.path))
+  try file.update(try target(), try instance(directory))
+  #expect(try String(contentsOfFile: file.path, encoding: .utf8) == block + "\n" + user)
+  try file.update(try target(), try instance(directory))
+  #expect(try String(contentsOfFile: file.path, encoding: .utf8) == block + "\n" + user)
+  try file.remove(try instance(directory))
+  #expect(try String(contentsOfFile: file.path, encoding: .utf8) == user)
   try Data("Host iso-test\n".utf8).write(to: URL(fileURLWithPath: file.path))
   #expect(throws: (any Error).self) { try file.update(try target(), try instance(directory)) }
 }

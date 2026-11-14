@@ -329,7 +329,10 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   `GlobalKnownHostsFile=/dev/null`, `HostKeyAlias=<machine>.iso`,
   `UpdateHostKeys=no`, `ForwardAgent=no`, `IdentityAgent=none`, and
   `IdentitiesOnly=yes`, so isolate's guest-facing SSH authenticates with its own
-  key file and never consults the host agent. The SSH processes' environment
+  key file and never consults the host agent. The `~/.ssh/config` block also
+  sets `ForwardX11=no`, `ForwardX11Trusted=no` and `PermitLocalCommand=no`,
+  and it is written before every user entry, because OpenSSH keeps the first
+  value it obtains: an earlier user `Host *` must not override it. The SSH processes' environment
   keeps `SSH_AUTH_SOCK` (an absolute path only, never in `SendEnv`) for one
   purpose: SSH to an enrolled execution host, whose key may be usable only
   through the operator's agent, including a guest session's ProxyCommand

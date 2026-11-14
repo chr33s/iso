@@ -242,12 +242,20 @@ Host iso-my-instance
     UpdateHostKeys no
     ForwardAgent no
     IdentityAgent none
+    ForwardX11 no
+    ForwardX11Trusted no
+    PermitLocalCommand no
     LogLevel ERROR
+Host *
 # iso END
 ```
 
 The block pins the guest's host key: a changed key is refused rather than
-accepted. The `iso-` prefix and markers identify managed entries. An explicit
+accepted. isolate writes it at the top of the file, because OpenSSH keeps the
+first value it finds for each option: a user `Host *` with `ForwardAgent yes`
+or relaxed host-key checking placed earlier would otherwise override the
+block. The trailing `Host *` keeps any global options at the start of your
+file global. The `iso-` prefix and markers identify managed entries. An explicit
 user-defined alias with the same name is refused.
 
 Each run of `iso editor`, `iso code` or `iso zed` replaces the existing block for that instance, or creates one if none exists. To install the same block without launching an editor — for plain `ssh`/`scp`/`rsync` — use [`iso ssh-config`](commands.md#ssh-config).
