@@ -92,12 +92,13 @@ swift_module() { # name, sources...
 link_target() { # target, entrypoint
   xcrun swiftc "${SWIFT_FLAGS[@]}" -I "$BUILD" "$2" \
     "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoConfiguration.a" "$BUILD/libIsoPolicy.a" \
-    "$BUILD/libIsoCore.a" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
+    "$BUILD/libIsoCore.a" "$BUILD/libIsoShell.a" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
 }
 
 cmd_build() {
   mkdir -p "$BUILD"
   build_libfuzzer
+  swift_module IsoShell "$ROOT"/iso-policy/Sources/IsoShell/*.swift
   swift_module IsoCore "$ROOT"/Sources/IsoCore/*.swift
   swift_module IsoPolicy "$ROOT"/iso-policy/Sources/IsoPolicy/*.swift
   swift_module IsoConfiguration "$ROOT"/Sources/IsoConfiguration/*.swift
@@ -110,7 +111,7 @@ cmd_build() {
 
 # SHA-256 over every Swift input and this script (compiler flags), so a stale build is rebuilt.
 sources_stamp() {
-  (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh Sources/IsoCore/*.swift \
+  (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh iso-policy/Sources/IsoShell/*.swift Sources/IsoCore/*.swift \
     iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift \
     fuzz/Targets/*.swift fuzz/Entrypoints/*.swift) | shasum -a 256 | cut -d' ' -f1
 }
