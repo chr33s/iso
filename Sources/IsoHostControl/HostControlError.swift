@@ -131,10 +131,11 @@ package struct HostControlError: Error, Equatable, Sendable, CustomStringConvert
   }
 }
 
-/// C0/C1 controls, DEL, and bidirectional overrides/isolates: never shown raw.
+/// C0/C1 controls, DEL, and every Unicode bidirectional control (marks,
+/// embeddings, overrides, isolates): never shown raw.
 func isDisplayControl(_ scalar: Unicode.Scalar) -> Bool {
   switch scalar.value {
-  case 0..<0x20, 0x7F...0x9F, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069: true
-  default: false
+  case 0..<0x20, 0x7F...0x9F: true
+  default: scalar.properties.isBidiControl
   }
 }
