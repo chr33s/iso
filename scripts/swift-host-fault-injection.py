@@ -8,6 +8,7 @@ working tree is never modified. Exit status is non-zero if any fault survives.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -2322,6 +2323,8 @@ def shard(value):
 
 
 def main():
+    # Manifests keep warnings-as-errors off for scratch builds (see Package.swift).
+    os.environ["ISO_MUTATION_BUILD"] = "1"
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--only", choices=[f[0] for f in FAULTS], help="run a single fault id")
     parser.add_argument("--shard", type=shard, metavar="INDEX/COUNT",

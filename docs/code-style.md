@@ -40,7 +40,9 @@ a bug through.
   code, off for host and CLI.
 - Every warning is an error in every target of every package: each manifest
   ends with a loop adding `.treatAllWarnings(as: .error)`, so new targets get
-  it too. SwiftPM does not apply it to remote dependencies.
+  it too. SwiftPM does not apply it to remote dependencies. The mutation
+  scripts set `ISO_MUTATION_BUILD=1` for their scratch builds, which turns it
+  off: a deliberate fault may leave a value unused.
 - Commit every `Package.resolved`; build and test with
   `--force-resolved-versions` so an unexpected resolution change fails.
   Add a dependency only with a reviewed reason; the host depends only on

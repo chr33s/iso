@@ -60,6 +60,10 @@ let package = Package(
 
 // Warnings in this package's own targets fail the build; SwiftPM does not
 // apply this to remote dependencies. See docs/code-style.md.
-for target in package.targets {
-  target.swiftSettings = [.treatAllWarnings(as: .error)] + (target.swiftSettings ?? [])
+// The mutation scripts' scratch builds set ISO_MUTATION_BUILD: a deliberate
+// fault may leave a value unused, and that warning must not hide the test.
+if Context.environment["ISO_MUTATION_BUILD"] == nil {
+  for target in package.targets {
+    target.swiftSettings = [.treatAllWarnings(as: .error)] + (target.swiftSettings ?? [])
+  }
 }

@@ -9,6 +9,7 @@ full Muter sweep.
 """
 
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -51,6 +52,8 @@ def run_tests(package):
 
 
 def main():
+    # Manifests keep warnings-as-errors off for scratch builds (see Package.swift).
+    os.environ["ISO_MUTATION_BUILD"] = "1"
     with tempfile.TemporaryDirectory(prefix="iso-proxy-mutation-") as directory:
         scratch = Path(directory)
         # The proxy package resolves ../iso-policy, and its tests read the

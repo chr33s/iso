@@ -5,6 +5,7 @@ Runs only local numeric-resolution, stalled-worker and socket fixtures. No publi
 provider traffic, VM, or production policy bypass. Compile failures do not count.
 """
 import argparse
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -185,6 +186,8 @@ def run_tests(package, test_filter):
 
 
 def main():
+    # Manifests keep warnings-as-errors off for scratch builds (see Package.swift).
+    os.environ["ISO_MUTATION_BUILD"] = "1"
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--only', choices=[fault[0] for fault in FAULTS])
     parser.add_argument('--verbose', action='store_true')
