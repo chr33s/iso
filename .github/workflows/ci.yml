@@ -56,9 +56,6 @@ jobs:
       - name: Shell lint
         run: mise run lint-shell
 
-      - name: Code-style rules (Semgrep)
-        run: mise run semgrep
-
       - name: Release legal notices
         run: |
           python3 tests/test-release-legal.py
@@ -103,6 +100,25 @@ jobs:
 
       - name: SwiftPM pins unchanged
         run: git diff --exit-code -- '*Package.resolved'
+
+  # Semgrep code-style rules (.semgrep/rules). Its own job so the PyPI install
+  # runs in parallel with the Swift build; only its tools are installed.
+  semgrep:
+    name: Code-style rules
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+          install_args: python uv semgrep
+
+      - name: Semgrep rule fixtures and scan
+        run: mise run semgrep
 
   # Independent of the host job: each builds its own package, so they run in
   # parallel on separate runners. Release calls this workflow and needs all.
