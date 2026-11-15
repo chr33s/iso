@@ -38,6 +38,9 @@ LIBFUZZER_MANIFEST_SHA256="0b52df7b0808e66eb5efdd5c3fbcaf72335279ba90e1f26e04f4c
 DEFAULT_LIBFUZZER_SRC="$ROOT/fuzz/libfuzzer"
 LIBFUZZER_SRC="${ISO_LIBFUZZER_SRC:-$DEFAULT_LIBFUZZER_SRC}"
 
+# libFuzzer and the Swift targets share one deployment target.
+FUZZ_TARGET_TRIPLE=arm64-apple-macosx27.0
+
 MAX_LEN=65536
 TIMEOUT_SECONDS=10
 RSS_LIMIT_MB=2048
@@ -46,7 +49,7 @@ MALLOC_LIMIT_MB=1024
 # shellcheck disable=SC2054 # The comma is part of one flag value.
 SWIFT_FLAGS=(
   -O -g -parse-as-library -swift-version 6 -package-name iso
-  -target arm64-apple-macosx27.0
+  -target "$FUZZ_TARGET_TRIPLE"
   -sanitize=address
   -sanitize-coverage=edge,trace-cmp
   -Xllvm -sanitizer-coverage-inline-8bit-counters
@@ -70,23 +73,25 @@ build_libfuzzer() {
   [[ -d "$LIBFUZZER_SRC" ]] || die "libFuzzer sources not found at $LIBFUZZER_SRC
 Set ISO_LIBFUZZER_SRC to an LLVM compiler-rt/lib/fuzzer checkout matching
 LIBFUZZER_MANIFEST_SHA256."
-  local actual
+  local actual stamp
   actual="$(libfuzzer_manifest "$LIBFUZZER_SRC")"
   [[ "$actual" == "$LIBFUZZER_MANIFEST_SHA256" ]] \
     || die "libFuzzer source manifest mismatch: $actual (expected $LIBFUZZER_MANIFEST_SHA256)"
+  # The deployment target is part of the cache key, so a target change rebuilds.
+  stamp="$actual $FUZZ_TARGET_TRIPLE"
   if [[ -f "$BUILD/libFuzzer.a" && -f "$BUILD/libFuzzer.sha256" \
-    && "$(cat "$BUILD/libFuzzer.sha256")" == "$actual" ]]; then
+    && "$(cat "$BUILD/libFuzzer.sha256")" == "$stamp" ]]; then
     return
   fi
   mkdir -p "$BUILD/libfuzzer-obj"
   local source
   for source in "$LIBFUZZER_SRC"/*.cpp; do
     case "$source" in *Windows*|*Fuchsia*|*Linux*) continue ;; esac
-    xcrun clang++ -std=c++17 -O2 -fPIC -c "$source" -o "$BUILD/libfuzzer-obj/$(basename "$source" .cpp).o"
+    xcrun clang++ -std=c++17 -O2 -fPIC -target "$FUZZ_TARGET_TRIPLE" -c "$source" -o "$BUILD/libfuzzer-obj/$(basename "$source" .cpp).o"
   done
   rm -f "$BUILD/libFuzzer.a"
   xcrun libtool -static -no_warning_for_no_symbols -o "$BUILD/libFuzzer.a" "$BUILD"/libfuzzer-obj/*.o
-  echo "$actual" > "$BUILD/libFuzzer.sha256"
+  echo "$stamp" > "$BUILD/libFuzzer.sha256"
 }
 
 swift_module() { # name, sources...
