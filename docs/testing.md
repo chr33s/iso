@@ -1575,6 +1575,33 @@ for the spec's mandatory deny/method/path/header/equality regressions and the
 three explicit HTTP parser limits. `mise run check-proxy`, release preflight
 and the nightly workflow run it.
 
+## Property tests
+
+`tests/swift/IsoPropertyTesting` (a test-only target in no product) is a
+seeded SplitMix64 generator with scalar classes weighted toward quoting,
+control, bidi, combining and path syntax, plus `checkProperty`, which runs a
+property over generated inputs and reports the first failure with its case
+seed. Properties run in the ordinary `swift test` suite (`PropertyTests.swift`
+in `IsoCoreTests` and `IsoHostTests`):
+
+- `RemoteCommand`/`shellEscape`/`shellWord` against a POSIX word-splitting
+  model (one literal word per argument, no unquoted metacharacter) and
+  against the real `/bin/sh`.
+- `neutralizeControls`/`sanitizeForDisplay` and `HostControlError.sanitize`
+  (no control, format or bidi scalar survives; the latter is the longest
+  neutralized prefix within its byte limit).
+- `IPv4Address` against an independent grammar; `RepoSlug.parse` over every
+  GitHub URL form of a generated valid slug and with one hostile scalar
+  inserted; `OutputJSON` scalar-exact round trips.
+- `StageBuilder.staysInside`/`resolve` against the filesystem (`realpath`
+  over created directories) and `Instance.sanitizedBasename` always yielding
+  a valid instance name, including the `uniqueName` suffix.
+
+Iteration counts and the base seed are fixed, so CI is repeatable. Reproduce
+a reported failure with `ISO_PROPERTY_CASE=0x… swift test --filter <test>`;
+run a longer campaign with `ISO_PROPERTY_SCALE=50` or another base seed with
+`ISO_PROPERTY_SEED`.
+
 ## Fuzzing
 
 Fuzzing is reserved for parsers of **untrusted or user-editable input** — it

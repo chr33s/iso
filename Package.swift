@@ -74,8 +74,13 @@ let package = Package(
     .testTarget(
       name: "IsoFuzzReplayTests", dependencies: ["IsoFuzzHarnesses"],
       path: "tests/swift/IsoFuzzReplayTests"),
+    // Seeded generators shared by the property tests; test-only, in no product.
+    .target(
+      name: "IsoPropertyTesting", path: "tests/swift/IsoPropertyTesting",
+      swiftSettings: strictMemorySafety),
     .testTarget(
-      name: "IsoCoreTests", dependencies: ["IsoCore"], path: "tests/swift/IsoCoreTests"),
+      name: "IsoCoreTests", dependencies: ["IsoCore", "IsoPropertyTesting"],
+      path: "tests/swift/IsoCoreTests"),
     .testTarget(
       name: "IsoConfigurationTests",
       dependencies: ["IsoConfiguration", .product(name: "IsoPolicy", package: "iso-policy")],
@@ -83,7 +88,8 @@ let package = Package(
     .testTarget(
       name: "IsoHostTests",
       dependencies: [
-        "IsoHost", "IsoHostControl", .product(name: "IsoPolicy", package: "iso-policy"),
+        "IsoHost", "IsoHostControl", "IsoPropertyTesting",
+        .product(name: "IsoPolicy", package: "iso-policy"),
       ],
       path: "tests/swift/IsoHostTests"),
     .testTarget(
