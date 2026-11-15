@@ -21,6 +21,12 @@ layers are:
   host parsers. CI runs a bounded smoke; longer campaigns are manual.
 - **Integration tests** — real Apple Containerization VMs. Manual; run for
   guest-visible and lifecycle changes.
+- **Static analysis** (`.github/workflows/codeql.yml`) — CodeQL
+  `security-extended` data-flow queries over the host, `iso-proxy` and
+  `iso-egress` builds, on pushes to `main`, pull requests and weekly; results
+  appear under code scanning. Not a release gate. CodeQL documents Swift
+  support only through 6.3, so a failed extraction on the pinned 6.4 toolchain
+  is a tool limit, not a finding.
 
 The credential proxy (`iso-proxy/`) and the Apple runtime (`iso-sandbox/`)
 are separate Swift packages with their own tests (below).

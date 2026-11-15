@@ -1,0 +1,55 @@
+name: CodeQL
+
+# Static data-flow analysis of the Swift host and the two network-facing
+# companions (credential proxy, filtered egress) with the security-extended
+# query suite; results go to GitHub code scanning. Not called by release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze Swift
+    runs-on: xcode-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.7
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: swift
+          build-mode: manual
+          queries: security-extended
+
+      # Every swiftc invocation in this step is traced into the database. The
+      # root build also compiles iso-policy; iso-sandbox (VM runtime) is left
+      # out to bound the macOS runner time.
+      - name: Build traced packages
+        run: |
+          swift build --force-resolved-versions
+          swift build --package-path iso-proxy --force-resolved-versions
+          swift build --package-path iso-egress --force-resolved-versions
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: "/language:swift"
