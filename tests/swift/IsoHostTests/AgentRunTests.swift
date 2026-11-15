@@ -190,25 +190,23 @@ private func handoffFailure(
   #expect(EgressLease.ownerLockHeld(at: lock.path) == false)
   #expect(
     EgressLease.ownerLockHeld(at: directory.appending(path: "missing.lock").path) == false)
+  // The child reports once it holds the lock, so a slow interpreter start on
+  // a loaded runner cannot race a fixed polling deadline.
   let child = Process()
   child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
   child.arguments = [
     "-c",
-    "import fcntl,time,sys; f=open(sys.argv[1],'a+'); fcntl.flock(f,fcntl.LOCK_EX); time.sleep(5)",
+    "import fcntl,time,sys; f=open(sys.argv[1],'a+'); fcntl.flock(f,fcntl.LOCK_EX); "
+      + "print('locked', flush=True); time.sleep(60)",
     lock.path,
   ]
+  let ready = Pipe()
+  child.standardOutput = ready
   try child.run()
   defer { child.terminate() }
-  let deadline = Date().addingTimeInterval(2)
-  var held = false
-  while Date() < deadline {
-    if EgressLease.ownerLockHeld(at: lock.path) {
-      held = true
-      break
-    }
-    usleep(20_000)
-  }
-  #expect(held)
+  let line = String(decoding: ready.fileHandleForReading.readData(ofLength: 7), as: UTF8.self)
+  #expect(line == "locked\n")
+  #expect(EgressLease.ownerLockHeld(at: lock.path))
 }
 
 @Test func egressLeaseClosesAtTheSessionDeadline() throws {
