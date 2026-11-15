@@ -46,12 +46,13 @@ jobs:
       # out to bound the macOS runner time. The CodeQL tracer cannot launch
       # SwiftPM's /usr/bin/sandbox-exec ("Bad CPU type in executable"), so
       # manifests are evaluated unsandboxed here; this job checks out only
-      # this repository and pinned dependencies.
+      # this repository and pinned dependencies. `--arch arm64` keeps traced
+      # dependency modules from being emitted for x86_64.
       - name: Build traced packages
         run: |
-          swift build --disable-sandbox --force-resolved-versions
-          swift build --disable-sandbox --package-path iso-proxy --force-resolved-versions
-          swift build --disable-sandbox --package-path iso-egress --force-resolved-versions
+          swift build --disable-sandbox --arch arm64 --force-resolved-versions
+          swift build --disable-sandbox --arch arm64 --package-path iso-proxy --force-resolved-versions
+          swift build --disable-sandbox --arch arm64 --package-path iso-egress --force-resolved-versions
 
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
