@@ -350,6 +350,8 @@ extension AppleBackend {
     ]
     let probe = try runtime.exec(
       machine, timeout: 60,
+      // A constant script; the paths arrive as positional parameters.
+      // nosemgrep: iso.host-shell
       [
         "/bin/sh", "-c",
         #"for p; do case "$p" in /etc/*) test -f "$p" ;; *) test -x "$p" ;; esac || printf '%s\n' "$p"; done"#,

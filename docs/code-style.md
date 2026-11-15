@@ -11,7 +11,9 @@ These are isolate's project-specific Swift conventions for the host package
 packages (`iso-proxy/`, `iso-egress/`, `iso-sandbox/`). The focus is on **using the type
 system to eliminate error states**, not on formatting, which `swift format`
 owns. The conventions and design lenses in the shared
-[`review`](../.agents/skills/review/SKILL.md) workflow enforce these; the
+[`review`](../.agents/skills/review/SKILL.md) workflow enforce these, and
+the Semgrep rules in [`.semgrep/`](../.semgrep/README.md) (`mise run semgrep`)
+check the mechanical ones; the
 [architecture doc](ARCHITECTURE.md) shows where the patterns already live.
 
 Apply these patterns when they pay for themselves; skip them when a primitive is

@@ -553,6 +553,8 @@ package enum InteractiveSSH {
   /// screen behind; undo both. No-op unless stdout is a terminal.
   static func restoreTerminal(_ client: SSHClient) {
     guard isatty(1) == 1 else { return }
+    // Resets the terminal the attached session drew on; not command output.
+    // nosemgrep: iso.library-stdout
     FileHandle.standardOutput.write(Data("\u{1b}[?1049l\u{1b}[?25h\u{1b}[?7h\u{1b}[0m".utf8))
     _ = try? client.runner.attached(
       .init(

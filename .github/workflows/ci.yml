@@ -56,6 +56,9 @@ jobs:
       - name: Shell lint
         run: mise run lint-shell
 
+      - name: Code-style rules (Semgrep)
+        run: mise run semgrep
+
       - name: Release legal notices
         run: |
           python3 tests/test-release-legal.py

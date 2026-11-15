@@ -17,6 +17,7 @@ package enum ReleaseSigners {
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGpguyE19BveEWHxNaowpmslcC3WE4BKZlXl4dgSmOmx"
   ]
 
+  // `keys` are pinned literals; ReleaseSignatureTests parses every one.
   static var trusted: [SignerKey] { keys.map { try! SignerKey(parsing: $0) } }
 }
 

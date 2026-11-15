@@ -158,6 +158,7 @@ package struct VMConfig: Sendable, Equatable {
   package let templateSize: GiB
 
   package static let defaults = VMConfig(
+    // 4096 MiB is a valid MiB and above VmMemory's 128 MiB minimum; 8 is a valid GiB.
     vcpuCount: 2, memory: try! VmMemory(MiB(4096)!), templateSize: GiB(8)!)
 }
 

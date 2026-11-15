@@ -54,6 +54,8 @@ package struct VSCodeEditorProvider: EditorProvider {
     let source = try Self.remoteSSHSource(home: context.hostHome)
     let destination = enclave.extensions + "/" + (source as NSString).lastPathComponent
     do {
+      // Copies the host's Remote - SSH extension into the per-session enclave, not iso state.
+      // nosemgrep: iso.state-write
       try FileManager.default.copyItem(atPath: source, toPath: destination)
     } catch {
       throw ContextError("Failed to copy the Remote - SSH extension from \(source)", cause: error)

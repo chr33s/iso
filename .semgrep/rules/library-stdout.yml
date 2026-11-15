@@ -1,0 +1,29 @@
+# docs/code-style.md "Processes, files and output": stdout carries command
+# output and --json only, written by the CLI layer.
+# Regex matching; see .semgrep/README.md.
+rules:
+  - id: iso.library-stdout
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Library modules do not write to stdout: it carries command output and
+      --json only, written by IsoCLI. Send diagnostics, prompts and progress
+      to stderr through Diagnostics / OutputStreams. See docs/code-style.md
+      "Processes, files and output".
+    patterns:
+      - pattern-either:
+          # A call, not a member (`diagnostics.print(...)`) or a declaration.
+          - pattern-regex: '(?<![\w.])(?<!func )(print|debugPrint|dump|putchar)\('
+          - pattern-regex: '\bFileHandle\.standardOutput\b'
+          - pattern-regex: '\bfputs\([^\n]*,\s*stdout\s*\)'
+      # Line comments.
+      - pattern-not-regex: '//[^\n]*'
+    paths:
+      include:
+        - /Sources/IsoCore/**/*.swift
+        - /Sources/IsoConfiguration/**/*.swift
+        - /Sources/IsoSecrets/**/*.swift
+        - /Sources/IsoHost/**/*.swift
+        - /Sources/IsoHostControl/**/*.swift
+        - /iso-policy/Sources/**/*.swift
+        - /.semgrep/rules/library-stdout.swift

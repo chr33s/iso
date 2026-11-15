@@ -31,6 +31,7 @@ package struct ScryptParameters: Sendable, Equatable {
 
   /// The release default: N = 2^17, r = 8, p = 1, a fresh 16-byte salt.
   package static func fresh() -> ScryptParameters {
+    // 2^17 is within 2^15...2^20, r = 8, p = 1, and a 16-byte salt is in saltRange.
     try! ScryptParameters(n: 1 << 17, r: 8, p: 1, salt: randomBytes(16))
   }
 }

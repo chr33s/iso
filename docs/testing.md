@@ -34,6 +34,7 @@ Linux hosts are not.
 swift build --force-resolved-versions
 swift test --force-resolved-versions          # IsoCore/Configuration/Host/CLI + corpus replay
 mise run lint                                 # swift format lint --strict, every package
+mise run semgrep                              # code-style rules (.semgrep/README.md)
 swift test --sanitize=address --scratch-path .build-asan     # also:
 swift test --sanitize=thread --scratch-path .build-tsan
 swift test --sanitize=undefined --scratch-path .build-ubsan

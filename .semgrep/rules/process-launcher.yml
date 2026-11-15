@@ -1,0 +1,35 @@
+# docs/code-style.md "Processes, files and output": one subprocess launcher.
+# Regex matching; see .semgrep/README.md.
+rules:
+  - id: iso.process-launcher
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Child processes start through ProcessRunner (capture, stream, attached,
+      pipeline), never Process, posix_spawn, system, fork or exec* directly.
+      See docs/code-style.md "Processes, files and output".
+    patterns:
+      - pattern-either:
+          # A call (or `Foundation.Process(`), not a member
+          # (`Font.system(size:)`) or a declaration.
+          - pattern-regex: '(?:(?<![\w.])|(?<=\bFoundation\.))(?<!func )(Process|posix_spawnp?|system|v?fork|exec[lv][pe]?)\('
+      # Line comments.
+      - pattern-not-regex: '//[^\n]*'
+    paths:
+      include:
+        - /Sources/**/*.swift
+        - /iso-policy/Sources/**/*.swift
+        - /iso-proxy/Sources/**/*.swift
+        - /iso-egress/Sources/**/*.swift
+        - /iso-ci/Sources/**/*.swift
+        - /.semgrep/rules/process-launcher.swift
+      exclude:
+        # The launchers themselves.
+        - /Sources/IsoHost/Processes/ProcessRunner.swift
+        - /Sources/IsoHost/Processes/DetachedChild.swift
+        - /iso-ci/Sources/IsoCICore/Execution/Subprocess.swift
+        - /iso-ci/Sources/IsoCICore/Preflight/DataPlane/DataPlaneSupervisor.swift
+        - /iso-ci/Sources/IsoCICore/Preflight/DataPlane/DataPlaneChild.swift
+        # Sandbox self-tests that expect exec to be refused.
+        - /iso-proxy/Sources/IsoProxy/Jail.swift
+        - /iso-egress/Sources/IsoEgress/Jail.swift

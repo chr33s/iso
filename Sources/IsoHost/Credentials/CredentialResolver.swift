@@ -118,6 +118,8 @@ package struct CredentialResolver: Sendable {
     do {
       output = try runner.capture(
         .init(
+          // The user-authored `cmd:` reference is the one intentional host shell.
+          // nosemgrep: iso.host-shell
           executable: "/bin/sh", arguments: ["-c", command], environment: environment,
           deadline: Self.timeout, outputLimit: 1 << 20))
     } catch .timedOut {

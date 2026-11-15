@@ -37,6 +37,10 @@ shellcheck = "0.11.0"
 # its checksum and provenance. Configuration: .github/jactionlint.yaml.
 jactionlint = "2.4.0"
 zizmor = "1.31.1"
+# Semgrep code-style rules (.semgrep/rules); `mise run semgrep`. Installed from
+# PyPI into a uv-managed virtualenv on the pinned Python, so uv is pinned too.
+uv = "0.13.6"
+semgrep = "1.183.0"
 # Apple `container` CLI: builds the guest images (`iso setup`) and serves the
 # integration suites. Its service still has to be started once
 # (`container system start`).
@@ -53,6 +57,14 @@ run = "swift format lint --recursive --strict Package.swift Sources tests/swift 
 [tasks.lint-shell]
 description = "shellcheck over every tracked shell script"
 run = "git ls-files -z '*.sh' | xargs -0 shellcheck"
+
+[tasks.semgrep]
+description = "Semgrep code-style rules: rule fixtures, then every package's Swift sources"
+run = """
+semgrep --test --metrics=off --disable-version-check .semgrep/rules
+semgrep scan --metrics=off --disable-version-check --error --quiet --config .semgrep/rules \
+  Sources iso-policy/Sources iso-proxy/Sources iso-egress/Sources iso-ci/Sources
+"""
 
 [tasks.build]
 description = "Build the Swift host"
@@ -113,4 +125,4 @@ sh iso-ci/scripts/test-dataplane-jail.sh "$bin"
 
 [tasks.check-all]
 description = "Local checks for every package; VM integration is a separate gate"
-depends = ["check", "check-policy", "check-runtime", "check-proxy", "check-egress", "check-ci"]
+depends = ["check", "semgrep", "check-policy", "check-runtime", "check-proxy", "check-egress", "check-ci"]

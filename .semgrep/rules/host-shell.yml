@@ -1,0 +1,33 @@
+# docs/code-style.md "Processes, files and output": no shell interpolation.
+# Generic (token) matching with C++ comments ignored; see .semgrep/README.md.
+rules:
+  - id: iso.host-shell
+    languages: [generic]
+    options:
+      generic_comment_style: cpp
+    severity: ERROR
+    message: >-
+      A `sh -c` / `bash -c` argv interprets its script as shell. Pass an
+      explicit argv (or build guest commands with RemoteCommand, `.arg` for
+      every dynamic value). The only intentional host shell is the
+      user-authored `cmd:` credential reference; an iso-authored constant
+      script that takes its values as positional parameters needs a
+      `nosemgrep` comment saying so. See docs/code-style.md.
+    pattern-either:
+      - pattern: '["/bin/sh", "-c", ...]'
+      - pattern: '["/bin/bash", "-c", ...]'
+      - pattern: '["/bin/zsh", "-c", ...]'
+      - pattern: '["sh", "-c", ...]'
+      - pattern: '["bash", "-c", ...]'
+      - pattern: '["/usr/bin/env", "sh", "-c", ...]'
+      - pattern: '["/usr/bin/env", "bash", "-c", ...]'
+      - pattern: 'executable: "/bin/sh", arguments: ["-c", ...]'
+      - pattern: 'executable: "/bin/bash", arguments: ["-c", ...]'
+      - pattern: 'executable: "/bin/zsh", arguments: ["-c", ...]'
+    paths:
+      include:
+        - /Sources/**/*.swift
+        - /iso-policy/Sources/**/*.swift
+        - /iso-proxy/Sources/**/*.swift
+        - /iso-egress/Sources/**/*.swift
+        - /.semgrep/rules/host-shell.swift

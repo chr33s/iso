@@ -1,0 +1,38 @@
+# docs/code-style.md "Processes, files and output": state writes go through
+# StateStore / AtomicFile (temporary sibling, fsync, rename, mode kept).
+# Generic (token) matching with C++ comments ignored; see .semgrep/README.md.
+rules:
+  - id: iso.state-write
+    languages: [generic]
+    options:
+      generic_comment_style: cpp
+    severity: ERROR
+    message: >-
+      Host file writes go through StateStore / AtomicFile under the resource's
+      FileLock, not Foundation's write(to:), createFile, copyItem, moveItem or
+      a writing FileHandle. A write that is not iso state needs a `nosemgrep`
+      comment saying why. See docs/code-style.md "Processes, files and output".
+    pattern-either:
+      - pattern: '.write(to: ...)'
+      - pattern: '.write(toFile: ...)'
+      - pattern: '.createFile(atPath: ...)'
+      - pattern: '.copyItem(atPath: ...)'
+      - pattern: '.copyItem(at: ...)'
+      - pattern: '.moveItem(atPath: ...)'
+      - pattern: '.moveItem(at: ...)'
+      - pattern: '.replaceItem(at: ...)'
+      - pattern: '.replaceItemAt(...)'
+      - pattern: 'FileHandle(forWritingAtPath: ...)'
+      - pattern: 'FileHandle(forWritingTo: ...)'
+      - pattern: 'FileHandle(forUpdatingAtPath: ...)'
+      - pattern: 'FileHandle(forUpdating: ...)'
+    paths:
+      include:
+        - /Sources/**/*.swift
+        - /iso-policy/Sources/**/*.swift
+        - /iso-proxy/Sources/**/*.swift
+        - /iso-egress/Sources/**/*.swift
+        - /.semgrep/rules/state-write.swift
+      exclude:
+        - /Sources/IsoCore/AtomicFile.swift
+        - /Sources/IsoHost/State/StateStore.swift

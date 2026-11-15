@@ -1,0 +1,32 @@
+# docs/code-style.md "Error design": no traps on untrusted input; where a trap
+# is genuinely unreachable, a comment must say why the invariant holds.
+#
+# Regex matching: Semgrep's Swift parser does not distinguish `try!` from
+# `try`; see .semgrep/README.md.
+rules:
+  - id: iso.unexplained-trap
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      `try!` / `as!` trap at run time. Throw or handle the error instead; where
+      the trap is genuinely unreachable, put a `//` comment on the line
+      directly above saying why the invariant holds. A validating initializer
+      applied to a single string or integer literal needs no comment. See
+      docs/code-style.md "Error design".
+    patterns:
+      - pattern-either:
+          - pattern-regex: '\btry!'
+          - pattern-regex: '\bas!'
+      # A validating initializer over one literal: `try! GuestUser("ubuntu")`.
+      - pattern-not-regex: '\btry!\s+[A-Za-z_][A-Za-z0-9_.]*\(\s*("[^"\\\n]*"|[0-9]+)\s*\)'
+      # The invariant is stated on the line directly above (a Semgrep test
+      # annotation or a bare suppression is not a statement of it).
+      - pattern-not-regex: '(?m)^[ \t]*//(?![ \t]*(ruleid|ok|todoruleid|todook|nosemgrep)\b)[^\n]*\n[^\n]*\b(try|as)!'
+    paths:
+      include:
+        - /Sources/**/*.swift
+        - /iso-policy/Sources/**/*.swift
+        - /iso-proxy/Sources/**/*.swift
+        - /iso-egress/Sources/**/*.swift
+        - /iso-ci/Sources/**/*.swift
+        - /.semgrep/rules/unexplained-trap.swift

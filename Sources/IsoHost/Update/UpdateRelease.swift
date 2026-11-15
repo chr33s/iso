@@ -172,6 +172,7 @@ package enum Checksums {
   }
 
   package static func of(_ bytes: [UInt8]) -> SHA256Hex {
+    // sha256Hex is 64 lowercase hex digits by construction.
     try! SHA256Hex(sha256Hex(bytes))
   }
 }
