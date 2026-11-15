@@ -928,6 +928,13 @@ alias for it); [`.github/jactionlint.yaml`](../.github/jactionlint.yaml) declare
 that label. Opt-in RSS, live provider TLS/credentials, VM integration and live-validation
 requirements remain separate gates; this CI job does not replace them.
 
+The `Scorecard` workflow (`.github/workflows/scorecard.yml`) runs
+[OpenSSF Scorecard](https://github.com/ossf/scorecard) on pushes to `main`,
+weekly, and on branch-protection changes. It uploads SARIF to code scanning
+and publishes results to the public Scorecard API (`publish_results`). It is
+advisory, not a merge gate. With the default `GITHUB_TOKEN`, the
+Branch-Protection check reports only what that token can read.
+
 ### Historical AsyncHTTPClient TLS cancellation audit
 
 The pinned AsyncHTTPClient 1.36.2 leaves connection establishment running when
