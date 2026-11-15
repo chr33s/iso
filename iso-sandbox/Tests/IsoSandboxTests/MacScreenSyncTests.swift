@@ -18,6 +18,7 @@ private func frame(_ width: Int, _ height: Int, set: [(x: Int, y: Int)] = []) ->
   return px
 }
 
+@discardableResult
 private func sample(_ grid: inout DamageGrid, _ px: [UInt8]) throws -> UInt64 {
   try px.withUnsafeBytes { try grid.sample($0) }
 }

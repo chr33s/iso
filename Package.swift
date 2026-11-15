@@ -92,3 +92,9 @@ let package = Package(
   ],
   swiftLanguageModes: [.v6]
 )
+
+// Warnings in this package's own targets fail the build; SwiftPM does not
+// apply this to remote dependencies. See docs/code-style.md.
+for target in package.targets {
+  target.swiftSettings = [.treatAllWarnings(as: .error)] + (target.swiftSettings ?? [])
+}

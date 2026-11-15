@@ -39,7 +39,7 @@ package final class ProtocolTrace: Sendable {
     state = Mutex(State(fd: fd, written: UInt64(status.st_size)))
   }
 
-  deinit { state.withLock { close($0.fd) } }
+  deinit { _ = state.withLock { close($0.fd) } }
 
   /// Appends one record. Field names `tick` and `type` are reserved.
   package func record(_ type: String, pool: Name? = nil, fields: [String: JSONValue] = [:]) {

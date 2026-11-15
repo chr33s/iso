@@ -36,6 +36,9 @@ a bug through.
   `iso-egress` gets the setting too; test, test-support and benchmark targets
   do not. A new root target follows its layer: on for core and configuration
   code, off for host and CLI.
+- Every warning is an error in every target of every package: each manifest
+  ends with a loop adding `.treatAllWarnings(as: .error)`, so new targets get
+  it too. SwiftPM does not apply it to remote dependencies.
 - Commit every `Package.resolved`; build and test with
   `--force-resolved-versions` so an unexpected resolution change fails.
   Add a dependency only with a reviewed reason; the host depends only on

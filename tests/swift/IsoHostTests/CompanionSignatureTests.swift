@@ -48,7 +48,7 @@ import Testing
   chmod(root, 0o775)
   #expect(throws: HostError.self) { try CompanionSignature.verify(signed, signer: .adHoc) }
   chmod(root, 0o755)
-  try CompanionSignature.verify(signed, signer: .adHoc)
+  _ = try CompanionSignature.verify(signed, signer: .adHoc)
   #expect(throws: HostError.self) {
     try CompanionSignature.verify(root + "/missing", signer: .adHoc)
   }
