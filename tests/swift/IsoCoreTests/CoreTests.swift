@@ -218,16 +218,24 @@ func rejectsOtherURLs(_ url: String) {
 
 @Test(arguments: [
   "plain", "", "it's", "a'\u{301};echo INJECTED;'\u{301}b", "x'\u{200D}y", "'\u{301}", "''",
+  "caf\u{E9}'s",
 ])
 func shellEscapeRoundTripsThroughSh(_ value: String) throws {
+  // The script goes in on stdin: Foundation `Process` arguments are
+  // decomposed to NFD, which would change precomposed values.
   let process = Process()
   process.executableURL = URL(fileURLWithPath: "/bin/sh")
-  process.arguments = ["-c", "printf %s " + shellEscape(value)]
+  let input = Pipe()
   let pipe = Pipe()
+  process.standardInput = input
   process.standardOutput = pipe
   try process.run()
+  input.fileHandleForWriting.write(Data(("printf %s " + shellEscape(value) + "\n").utf8))
+  try input.fileHandleForWriting.close()
   let output = pipe.fileHandleForReading.readDataToEndOfFile()
   process.waitUntilExit()
   #expect(process.terminationStatus == 0)
-  #expect(String(decoding: output, as: UTF8.self) == value)
+  // Scalar-wise: `String ==` treats NFC and NFD as equal.
+  #expect(
+    Array(String(decoding: output, as: UTF8.self).unicodeScalars) == Array(value.unicodeScalars))
 }
