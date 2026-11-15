@@ -1644,6 +1644,19 @@ reproduce it with `scripts/fuzz.sh replay <target> <artifact>`.
   decoding, domain validation and structural/domain round trips of accepted
   configurations; text placed in a secret-bearing field never appears in an
   error.
+- `GuestJSON` — the order-preserving JSON parser and printers (`OrderedJSON`)
+  for guest-authored Claude settings, plugin manifests and import snapshots.
+  Properties: compact and pretty round trips with key order kept, canonical
+  compact output, nesting within `maxDepth`, guest values absent from errors.
+- `CodexTOML` — the Codex `config.toml` parser and printer, which read the
+  guest copy and write the merged document back. Properties: print/parse round
+  trip (whole document and each top-level entry alone), canonical printing,
+  error lines within the document, guest values absent from errors.
+
+The IsoHost targets compile only the self-contained parser sources listed in
+`HOST_PARSER_SOURCES` in `scripts/fuzz.sh` as a partial `IsoHost` module; the
+full target needs IsoSecrets (swift-crypto), which the fuzz build does not
+compile.
 
 The ordinary `swift test` suite replays `fuzz/corpus/` through the same
 harness bodies (`IsoFuzzReplayTests`); that is regression coverage, not
@@ -1652,5 +1665,9 @@ fuzzing. Promote a minimized, synthetic reproducer into
 campaign records are in the
 [release validation](release-validation.md).
 
-The untrusted-input parsers added later (devcontainer JSON, guest JSON, Codex
-TOML) have unit and sanitizer coverage but no fuzz target yet.
+The devcontainer JSON parser (`DevcontainerJSON`, `ParsedDevcontainer`) has
+unit and sanitizer coverage but no fuzz target: its structural parser depends
+on `DevcontainerModel.swift`, whose errors come from `AppleBackend.swift` and
+`Workspace.swift`, so it cannot be compiled without the rest of IsoHost. The
+shared JSONC scanner it runs first is fuzzed under the devcontainer policy by
+`JSONCToJSON`.

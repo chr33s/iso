@@ -357,7 +357,8 @@ check on `main`; check its latest run before tagging.
    - `swift test --sanitize=address --scratch-path .build-asan` (and
      `thread`, `undefined`) when host code changed.
    - `scripts/fuzz.sh run <target> 600` when it changed a parser of
-     user-editable input (`ParseRepoSlug`, `JSONCToJSON`, `ConfigLoad`).
+     user-editable or guest-authored input (`ParseRepoSlug`, `JSONCToJSON`,
+     `ConfigLoad`, `GuestJSON`, `CodexTOML`).
 
 7. **Open the bump PR** (`Sources/IsoHost/Update/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `main`. Never push the bump straight to `main`.

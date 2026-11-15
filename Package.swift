@@ -69,7 +69,7 @@ let package = Package(
     // libFuzzer entrypoints; the replay test runs the corpus through them in
     // ordinary builds. Not part of any product.
     .target(
-      name: "IsoFuzzHarnesses", dependencies: ["IsoCore", "IsoConfiguration"],
+      name: "IsoFuzzHarnesses", dependencies: ["IsoCore", "IsoConfiguration", "IsoHost"],
       path: "fuzz/Targets", swiftSettings: strictMemorySafety),
     .testTarget(
       name: "IsoFuzzReplayTests", dependencies: ["IsoFuzzHarnesses"],

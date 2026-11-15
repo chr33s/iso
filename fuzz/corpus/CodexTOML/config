@@ -1,0 +1,5 @@
+model = "gpt-example"
+approval_policy = "never"
+
+[projects."/home/user/work"]
+trust_level = "trusted"

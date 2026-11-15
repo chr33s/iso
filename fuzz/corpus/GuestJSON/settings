@@ -1,0 +1,5 @@
+{
+  "hasCompletedOnboarding": true,
+  "theme": "dark",
+  "projects": {"/home/user/w": {"allowedTools": ["Bash", "Edit"]}}
+}

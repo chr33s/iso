@@ -15,7 +15,7 @@ private func inputs(_ target: String) throws -> [URL] {
     .sorted { $0.path < $1.path }
 }
 
-@Test(arguments: ["ParseRepoSlug", "JSONCToJSON", "ConfigLoad"])
+@Test(arguments: ["ParseRepoSlug", "JSONCToJSON", "ConfigLoad", "GuestJSON", "CodexTOML"])
 func corpusReplays(_ target: String) throws {
   let files = try inputs(target)
   #expect(!files.isEmpty, "empty corpus for \(target)")
@@ -24,6 +24,8 @@ func corpusReplays(_ target: String) throws {
     switch target {
     case "ParseRepoSlug": ParseRepoSlugHarness.run(bytes)
     case "JSONCToJSON": JSONCToJSONHarness.run(bytes)
+    case "GuestJSON": GuestJSONHarness.run(bytes)
+    case "CodexTOML": CodexTOMLHarness.run(bytes)
     default: ConfigLoadHarness.run(bytes)
     }
   }

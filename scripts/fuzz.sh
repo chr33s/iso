@@ -16,12 +16,20 @@
 # (or `ISO_LIBFUZZER_SRC`), verified against LIBFUZZER_MANIFEST_SHA256, with
 # the pinned Xcode `clang++`. Targets are built with the pinned `swiftc`,
 # AddressSanitizer and SanitizerCoverage. Production sources are compiled from
-# this revision; harness bodies live in fuzz/Targets.
+# this revision (IsoHost only in part, see HOST_PARSER_SOURCES); harness bodies
+# live in fuzz/Targets.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/fuzz/.build"
-TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad)
+TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad GuestJSON CodexTOML)
+# The self-contained IsoHost parsers, compiled as a partial `IsoHost` module:
+# the full target needs IsoSecrets (swift-crypto), which this build does not compile.
+HOST_PARSER_SOURCES=(
+  Sources/IsoHost/Support/ParserStack.swift
+  Sources/IsoHost/Support/OrderedJSON.swift
+  Sources/IsoHost/Guest/CodexTOML.swift
+)
 
 # LLVM libFuzzer at commit a47b42eb9f9b (release/22.x), vendored in
 # fuzz/libfuzzer (see its README). SHA-256 over the sorted `shasum -a 256`
@@ -91,8 +99,8 @@ swift_module() { # name, sources...
 
 link_target() { # target, entrypoint
   xcrun swiftc "${SWIFT_FLAGS[@]}" -I "$BUILD" "$2" \
-    "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoConfiguration.a" "$BUILD/libIsoPolicy.a" \
-    "$BUILD/libIsoCore.a" "$BUILD/libIsoShell.a" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
+    "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoHost.a" "$BUILD/libIsoConfiguration.a" \
+    "$BUILD/libIsoPolicy.a" "$BUILD/libIsoCore.a" "$BUILD/libIsoShell.a" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
 }
 
 cmd_build() {
@@ -102,6 +110,7 @@ cmd_build() {
   swift_module IsoCore "$ROOT"/Sources/IsoCore/*.swift
   swift_module IsoPolicy "$ROOT"/iso-policy/Sources/IsoPolicy/*.swift
   swift_module IsoConfiguration "$ROOT"/Sources/IsoConfiguration/*.swift
+  swift_module IsoHost "${HOST_PARSER_SOURCES[@]/#/$ROOT/}"
   swift_module IsoFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
   local t
   for t in "${TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
@@ -112,7 +121,7 @@ cmd_build() {
 # SHA-256 over every Swift input and this script (compiler flags), so a stale build is rebuilt.
 sources_stamp() {
   (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh iso-policy/Sources/IsoShell/*.swift Sources/IsoCore/*.swift \
-    iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift \
+    iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift "${HOST_PARSER_SOURCES[@]}" \
     fuzz/Targets/*.swift fuzz/Entrypoints/*.swift) | shasum -a 256 | cut -d' ' -f1
 }
 

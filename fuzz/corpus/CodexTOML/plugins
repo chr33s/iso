@@ -1,0 +1,9 @@
+[plugins.example]
+enabled = true
+version = 3
+
+[[plugins.example.hooks]]
+name = "a"
+
+[[plugins.example.hooks]]
+name = "b"

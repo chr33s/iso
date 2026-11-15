@@ -9,7 +9,7 @@ import Foundation
 /// read only to carry its plugin and project tables across a rewrite. Values
 /// are data only, never executed or used as a host path. Tables print with
 /// sorted keys, like the Rust `toml` crate.
-indirect enum TOMLValue: Equatable, Sendable {
+package indirect enum TOMLValue: Equatable, Sendable {
   case string(String)
   case integer(Int64)
   case float(Double)
@@ -27,7 +27,7 @@ indirect enum TOMLValue: Equatable, Sendable {
     return tables.count == elements.count ? tables : nil
   }
 
-  static func == (a: TOMLValue, b: TOMLValue) -> Bool {
+  package static func == (a: TOMLValue, b: TOMLValue) -> Bool {
     switch (a, b) {
     case (.string(let x), .string(let y)): x == y
     case (.integer(let x), .integer(let y)): x == y
@@ -41,16 +41,16 @@ indirect enum TOMLValue: Equatable, Sendable {
   }
 }
 
-struct TOMLTable: Equatable, Sendable {
+package struct TOMLTable: Equatable, Sendable {
   private(set) var entries: [String: TOMLValue] = [:]
 
   init() {}
 
-  init(_ pairs: [(String, TOMLValue)]) {
+  package init(_ pairs: [(String, TOMLValue)]) {
     for (key, value) in pairs { entries[key] = value }
   }
 
-  subscript(key: String) -> TOMLValue? {
+  package subscript(key: String) -> TOMLValue? {
     get { entries[key] }
     set { entries[key] = newValue }
   }
@@ -61,7 +61,7 @@ struct TOMLTable: Equatable, Sendable {
   @discardableResult
   mutating func remove(_ key: String) -> TOMLValue? { entries.removeValue(forKey: key) }
 
-  var sortedKeys: [String] {
+  package var sortedKeys: [String] {
     entries.keys.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
   }
 }
@@ -69,7 +69,7 @@ struct TOMLTable: Equatable, Sendable {
 // MARK: - Printing
 
 extension TOMLTable {
-  var document: String {
+  package var document: String {
     var out = ""
     writeBody(&out, path: [])
     return out
@@ -168,14 +168,14 @@ enum TOMLWriter {
 
 // MARK: - Parsing
 
-struct TOMLParseError: Error, CustomStringConvertible, Equatable {
+package struct TOMLParseError: Error, CustomStringConvertible, Equatable {
   let message: String
-  let line: Int
-  var description: String { "TOML parse error at line \(line): \(message)" }
+  package let line: Int
+  package var description: String { "TOML parse error at line \(line): \(message)" }
 }
 
 extension TOMLTable {
-  static func parse(_ text: String) throws(TOMLParseError) -> TOMLTable {
+  package static func parse(_ text: String) throws(TOMLParseError) -> TOMLTable {
     try withParserStack { () throws(TOMLParseError) in
       var parser = TOMLParser(bytes: Array(text.utf8))
       return try parser.document()

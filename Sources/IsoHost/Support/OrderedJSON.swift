@@ -3,7 +3,7 @@ import IsoCore
 
 /// Guest settings retain document key order during a merge. Parsing is bounded:
 /// input arrives size-limited from capture and nesting is capped at `maxDepth`.
-indirect enum OrderedJSON: Equatable, Sendable {
+package indirect enum OrderedJSON: Equatable, Sendable {
   case null
   case bool(Bool)
   case int(Int64)
@@ -13,10 +13,10 @@ indirect enum OrderedJSON: Equatable, Sendable {
   case array([OrderedJSON])
   case object(Members)
 
-  static let maxDepth = 128
+  package static let maxDepth = 128
 
   /// Replacing or removing a key preserves the relative order of other keys.
-  struct Members: Equatable, Sendable {
+  package struct Members: Equatable, Sendable {
     private(set) var keys: [String] = []
     private var values: [String: OrderedJSON] = [:]
 
@@ -58,9 +58,9 @@ indirect enum OrderedJSON: Equatable, Sendable {
       return previous
     }
 
-    var pairs: [(String, OrderedJSON)] { keys.map { ($0, values[$0]!) } }
+    package var pairs: [(String, OrderedJSON)] { keys.map { ($0, values[$0]!) } }
 
-    static func == (a: Members, b: Members) -> Bool {
+    package static func == (a: Members, b: Members) -> Bool {
       a.values == b.values
     }
   }
@@ -78,13 +78,13 @@ indirect enum OrderedJSON: Equatable, Sendable {
 
   // MARK: - Printing
 
-  var compact: String {
+  package var compact: String {
     var out = ""
     writeCompact(&out)
     return out
   }
 
-  var pretty: String { pretty(indent: 0) }
+  package var pretty: String { pretty(indent: 0) }
 
   private func pretty(indent: Int) -> String {
     let padding = String(repeating: "  ", count: indent)
@@ -146,12 +146,12 @@ indirect enum OrderedJSON: Equatable, Sendable {
 
   // MARK: - Parsing
 
-  struct ParseError: Error, CustomStringConvertible {
+  package struct ParseError: Error, CustomStringConvertible {
     let message: String
-    var description: String { message }
+    package var description: String { message }
   }
 
-  static func parse(_ text: String) throws(ParseError) -> OrderedJSON {
+  package static func parse(_ text: String) throws(ParseError) -> OrderedJSON {
     try withParserStack { () throws(ParseError) in try parseOnCurrentStack(text) }
   }
 
