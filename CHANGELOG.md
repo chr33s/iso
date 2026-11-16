@@ -8,6 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.10.0
+
 ### Added
 
 - **Audit of boots that ended on their own:** `boundary.guest_computer_use`
