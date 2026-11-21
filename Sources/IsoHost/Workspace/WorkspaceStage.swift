@@ -851,10 +851,16 @@ struct StageBuilder {
     // readdir returns nil both at the end and on error; only errno tells
     // them apart, and a short listing would silently drop guest changes.
     errno = 0
+    // A dirent is only as long as its name: copying the fixed 1024-byte
+    // `d_name` reads past the record (and past readdir's buffer for the last
+    // entry), so only `d_namlen` bytes are read in place.
+    guard let nameOffset = MemoryLayout<dirent>.offset(of: \dirent.d_name) else {
+      throw HostError.posix("Failed to read directory", path)
+    }
     while let entry = readdir(stream) {
-      let name = withUnsafeBytes(of: entry.pointee.d_name) { raw in
-        Array(raw.prefix(Int(entry.pointee.d_namlen)))
-      }
+      let name = Array(
+        UnsafeRawBufferPointer(
+          start: UnsafeRawPointer(entry) + nameOffset, count: Int(entry.pointee.d_namlen)))
       if name != [0x2E] && name != [0x2E, 0x2E] { out.append(name) }
       errno = 0
     }
