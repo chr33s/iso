@@ -1600,7 +1600,11 @@ seeded SplitMix64 generator with scalar classes weighted toward quoting,
 control, bidi, combining and path syntax, plus `checkProperty`, which runs a
 property over generated inputs and reports the first failure with its case
 seed. Properties run in the ordinary `swift test` suite (`PropertyTests.swift`
-in `IsoCoreTests` and `IsoHostTests`):
+in `IsoCoreTests`, `IsoConfigurationTests` and `IsoHostTests`, plus
+`LifecycleModelTests.swift` and `CodexTOMLPropertyTests.swift`). The companion
+packages cannot depend on that target, so `iso-policy`, `iso-egress` and
+`iso-proxy` each carry a minimal copy (`PropertyCheck.swift`, same base seed
+and environment variables) in their test targets:
 
 - `RemoteCommand`/`shellEscape`/`shellWord` against a POSIX word-splitting
   model (one literal word per argument, no unquoted metacharacter) and
@@ -1613,7 +1617,45 @@ in `IsoCoreTests` and `IsoHostTests`):
   inserted; `OutputJSON` scalar-exact round trips.
 - `StageBuilder.staysInside`/`resolve` against the filesystem (`realpath`
   over created directories) and `Instance.sanitizedBasename` always yielding
-  a valid instance name, including the `uniqueName` suffix.
+  a valid instance name, including the `uniqueName` suffix. The containment
+  oracle splits on bytes and generates combining and prepended marks next to
+  `/`, which a `Character`-based split would merge with the separator.
+- Configuration: generated valid documents survive `ConfigEditor.encode` and
+  reload to an equal, scalar-exact snapshot; JSONC comments, whitespace and
+  escapes never change it; trailing commas are refused anywhere; the
+  load-time refusals (relative `data_dir`, guest-placed `vault:`, Codex `sse`
+  and `env` renames) are never accepted and name their field.
+- `NameFolding`: idempotent NFC keys, case/normalization/HFS+-ignorable
+  equivalence, never weaker than `lowercased()`, per-component on paths;
+  `DestinationListing`, `ProtectedPaths`, `SensitivePaths`,
+  `LocalSecretNames` and `ArchiveValidator.key` treat every same-entry
+  spelling as colliding.
+- Codex `config.toml`: printed tables parse back exactly and canonically,
+  every string and key scalar survives quoting, and hand-written spellings
+  (literal and multi-line strings, radix integers, headers, dotted keys,
+  comments, CRLF) parse to the same table.
+- The instance lifecycle against a reference state model: seeded operation
+  sequences with injected runtime failures and killed creates and receives
+  drive `ProjectLifecycle`/`AppleBackend` over the stateful fake runtime;
+  after every step each instance's directory, journal, machine record, fence
+  and retained returns, and the runtime's sandboxes, match the model; a
+  destroyed instance is never recreated, even through a stale handle; no lock
+  or lease stays held.
+- `iso-policy`: `PolicyCompiler` validity, static evaluation, rate-limit
+  windows and approvals against a naive reference model of
+  `docs/design/iso-policy.md`, order-free idempotent compilation with
+  canonical round trips, and a forbid that only narrows.
+- `iso-egress`: `RelayRing` against a FIFO model (zero, negative and
+  over-capacity limits, short and failed transfers, growth, wrap-around);
+  `Tunnel.pump` over scripted short reads, EAGAIN/EINTR, EOF and short writes
+  (exact bytes in order, reads within queue room, half-close after drain,
+  budget released); `ExactHostname`, `EgressAllowlist`, `HeadTerminator` and
+  `ConnectParser`/`ConnectGate` against independent models.
+- `iso-proxy`: `RequestTarget` against RFC 3986 origin form;
+  `UpstreamClient.request` only for `POST` to an exact operation path at the
+  fixed https authority, with the guest's target as the request line byte for
+  byte; `HeaderPolicy` against an RFC 9110 `Connection` model; `Capability`
+  decoding, `verifies` and `authorizes` over near-miss tokens and header sets.
 
 Iteration counts and the base seed are fixed, so CI is repeatable. Reproduce
 a reported failure with `ISO_PROPERTY_CASE=0x… swift test --filter <test>`;

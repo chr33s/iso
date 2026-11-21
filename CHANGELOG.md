@@ -10,6 +10,18 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Security
 
+- **Returned paths that hide a `/`:** a combining mark or joiner right
+  after a `/` (or a prepended mark right before it) joins the separator into
+  one Swift `Character`, so the host split such paths differently from the
+  kernel. A guest could return a symlink such as `d/up -> ../\u{301}/../../x`
+  that review counted as inside the workspace but that resolves outside it,
+  and archive validation accepted `../\u{301}x` members and link targets.
+  `iso pull`, returns and archive validation now refuse any name, link target
+  or member that joins a `/` into a neighbouring character.
+- **`iso diff` shows returned text exactly:** returned file content is split
+  at every line feed and compared byte for byte. A returned `\r\n` could
+  print an unmarked line that looked like unchanged context, and canonically
+  equivalent edits (`;` to U+037E, NFC to NFD) showed as no change.
 - **Workspace returns fold names like APFS:** returned names were compared
   with NFC plus `lowercased()`, which misses folds such as `ſ` (U+017F) → `s`.
   A guest could chain a symlink out of the destination on `iso pull`, or slip
@@ -41,6 +53,22 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Fixed
 
+- Reviewing a pulled workspace no longer reads past each directory entry's
+  name (an out-of-bounds heap read AddressSanitizer reported).
+- A workspace-return operation (`iso pull`, `--discard`, apply), grant write,
+  proxy override or Claude plugin record racing `iso destroy` no longer
+  recreates the destroyed instance's directory, which made every later
+  `iso up` refuse to allocate.
+- The credential proxy refuses request targets containing bytes the upstream
+  URL parse would percent-encode (`"` `<` `>` `[` `]` `^` `` ` `` `{` `|` `}`);
+  it had forwarded a re-encoded target (`%2F` became `%252F`), so the
+  provider saw a different query than the guest sent.
+- `iso audit` text output replaces every control character and line or
+  paragraph separator in recorded values; a newline followed by a combining
+  mark could break a listing line.
+- An agent definition's `working_directory` is refused when a `/` is joined
+  to a neighbouring combining or prepended mark, which hid `..` from the
+  component check.
 - `iso start` refuses a fenced instance until `iso stop` reconciles it.
 - A restart that fails after a concurrent `iso destroy` no longer recreates
   the instance directory (which blocked every new instance).
@@ -84,6 +112,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Changed
 
+- Tests: seeded property tests now cover the configuration loader,
+  `NameFolding`, Codex TOML, the instance lifecycle (against a state model),
+  the iso-policy evaluator, iso-egress relaying and CONNECT parsing, and
+  iso-proxy request targets, headers and capabilities.
 - Performance: workspace re-staging and case-variant link checks are linear;
   audit `--follow` decodes only appended records; the host supervisor indexes
   pending work instead of rescanning its ledger; remote run results download
