@@ -6,8 +6,11 @@ package struct RequestTarget: Sendable {
 
   package init(_ raw: String) throws {
     let bytes = Array(raw.utf8)
+    // Only RFC 3986 path and query characters. The Foundation URL parse that
+    // builds the upstream request percent-encodes any other byte, and then
+    // every `%`, so the forwarded query would differ from the guest's.
     guard bytes.first == 47, !raw.hasPrefix("//"),
-      bytes.allSatisfy({ $0 > 32 && $0 < 127 && $0 != 35 && $0 != 92 })
+      bytes.allSatisfy({ $0 > 32 && $0 < 127 && !Self.outsideURI.contains($0) })
     else { throw PolicyError.invalidTarget }
     // Percent escapes must be syntactically complete. They stay encoded;
     // encoded path variants will fail exact operation matching.
@@ -25,6 +28,9 @@ package struct RequestTarget: Sendable {
     self.raw = raw
     path = String(raw.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
   }
+
+  /// Visible ASCII that RFC 3986 allows in neither a path nor a query.
+  private static let outsideURI = Set("#\\\"<>[]^`{|}".utf8)
 
   private static func hex(_ byte: UInt8) -> Bool {
     (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)

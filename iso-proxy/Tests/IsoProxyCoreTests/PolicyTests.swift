@@ -87,6 +87,18 @@ private let wrong = String(repeating: "b", count: 64)
   }
 }
 
+/// Foundation's URL parse, which builds the upstream request, percent-encodes
+/// these bytes and then every `%` in the target (`?"%2F` went upstream as
+/// `?%22%252F`), so they are refused before authorization.
+@Test func requestTargetRefusesBytesTheUpstreamURLWouldRewrite() throws {
+  for byte in "\"<>[]^`{|}" {
+    #expect(throws: PolicyError.self) { try RequestTarget("/v1/messages?x=%2F\(byte)") }
+    #expect(throws: PolicyError.self) { try RequestTarget("/v1/messages\(byte)") }
+  }
+  let kept = "/v1/messages?a=%2F&b=(x)!*'~:@/?$+,;=-._"
+  #expect(try RequestTarget(kept).raw == kept)
+}
+
 @Test func headerRemovalAndInjection() throws {
   let hopNames = [
     "Connection", "proxy-connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",

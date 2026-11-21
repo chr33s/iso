@@ -52,6 +52,22 @@ private func proxyConfig() throws -> ProxyConfig {
   #expect(tls.additionalTrustRoots.isEmpty)
 }
 
+/// Every query byte the target accepts survives the upstream URL parse
+/// unchanged, so the forwarded request line is the authorized one; a byte
+/// Foundation would re-encode (double-encoding each `%`) is refused.
+@Test func upstreamRequestLineIsTheAuthorizedTarget() throws {
+  let config = try proxyConfig()
+  let target = "/v1/messages?a=%2F&b=(x)!*'~:@/?$+,;=-._"
+  let head = HTTPRequestHead(version: .http1_1, method: .POST, uri: target)
+  let request = try UpstreamClient.request(head: head, config: config, body: .bytes([]))
+  let parts = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
+  #expect(parts.percentEncodedPath + "?" + (parts.percentEncodedQuery ?? "") == target)
+  let rewritten = HTTPRequestHead(version: .http1_1, method: .POST, uri: "/v1/messages?\"%2F")
+  #expect(throws: PolicyError.self) {
+    try UpstreamClient.request(head: rewritten, config: config, body: .bytes([]))
+  }
+}
+
 @Test func uploadWaitsForEachWriteAndCancels() throws {
   let loop = EmbeddedEventLoop()
   let upload = UploadStream(eventLoop: loop)
