@@ -104,7 +104,7 @@ extension ProxyState {
     do {
       try AtomicFile.write(
         Array(OutputJSON.object(members).rendered().dropLast().utf8), to: instance.proxyStatePath,
-        mode: .atMost(0o600))
+        mode: .atMost(0o600), parents: .mustExist)
     } catch {
       throw ContextError("Failed to write proxy.json", cause: error)
     }

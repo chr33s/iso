@@ -1506,6 +1506,14 @@ private func fakeLifecycle(_ install: FakeInstallation) -> ProjectLifecycle {
       instance, revoked: [], environment: [try EnvVarName("KEEP"): .literal("1")], forwards: [],
       fresh: ["KEEP"])
   }
+  #expect(throws: (any Error).self) {
+    try ProxyState.setOverride(
+      instance, provider: .openai, credential: try #require(CredentialReference("cmd:exit 92")),
+      auth: .bearer)
+  }
+  #expect(throws: (any Error).self) {
+    try ClaudeImport.CopiedPlugins.save(["copied@skills-dir"], instance)
+  }
   #expect(!FileManager.default.fileExists(atPath: instance.directory))
   _ = try Instance.allocate(
     install.config, name: InstanceName("next"), image: .default, workspacePath: nil)

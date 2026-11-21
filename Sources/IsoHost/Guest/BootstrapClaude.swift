@@ -113,7 +113,7 @@ enum ClaudeImport {
 
     static func save(_ ids: Set<String>, _ instance: Instance) throws {
       let sorted = ids.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
-      try StateStore.writeControlFile(CopiedPlugins(pluginIDs: sorted), to: path(instance))
+      try StateStore.writeInstanceFile(CopiedPlugins(pluginIDs: sorted), to: path(instance))
     }
   }
 
