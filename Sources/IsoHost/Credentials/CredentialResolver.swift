@@ -97,7 +97,9 @@ package struct CredentialResolver: Sendable {
   /// provider proxy credentials and GitHub PATs.
   package func resolveAllowingStored(_ value: Secret<String>) throws -> Secret<String> {
     let raw = value.expose()
-    if raw.hasPrefix("vault:") { return try resolveStored(String(raw.dropFirst(6))) }
+    if SecretName.isVaultReference(raw) {
+      return try resolveStored(String(raw.dropFirst(SecretName.referencePrefix.count)))
+    }
     return try resolve(value)
   }
 
@@ -106,11 +108,7 @@ package struct CredentialResolver: Sendable {
   /// provider credential must never be (embedded-secrets §31.1).
   package func resolve(_ value: Secret<String>) throws(HostError) -> Secret<String> {
     let raw = value.expose()
-    if raw.hasPrefix("vault:") {
-      throw HostError(
-        "`vault:` references are supported for proxy.<provider>.credential and github.pat tokens only; this value would be placed in the guest"
-      )
-    }
+    if SecretName.isVaultReference(raw) { throw HostError(SecretName.guestPlacementRefusal) }
     guard raw.hasPrefix("cmd:") else { return value }
     let command = String(raw.dropFirst(4)).trimmingUnicodeWhitespace()
     guard !command.isEmpty else { throw HostError("Empty command after 'cmd:' prefix") }

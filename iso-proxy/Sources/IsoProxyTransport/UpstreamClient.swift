@@ -9,20 +9,25 @@ import NIOSSL
 /// externally owned event loop group. No caller environment is consulted.
 package final class UpstreamClient: Sendable {
   private let group: MultiThreadedEventLoopGroup
+  /// Built once from `tlsConfiguration()` and shared by every upstream
+  /// connection; each connection still verifies the chain and hostname.
+  private let tls: NIOSSLContext
   private let work = UpstreamWork()
   private let resolutions = Capacity(Limits.requests)
   private let resolutionFactory: BoundedResolver.Factory
   private let socketCapacity: Capacity
 
-  package convenience init(group: MultiThreadedEventLoopGroup) {
-    self.init(group: group, resolutionFactory: { NIORandomizedDNSResolver(loop: $0) })
+  package convenience init(group: MultiThreadedEventLoopGroup) throws {
+    try self.init(group: group, resolutionFactory: { NIORandomizedDNSResolver(loop: $0) })
   }
 
-  // Internal resolver seam for deterministic cancellation/admission tests.
+  // Internal resolver and trust seam for deterministic cancellation,
+  // admission and fixture tests. Production always uses system trust.
   init(
-    group: MultiThreadedEventLoopGroup, socketCapacity: Capacity = Capacity(Limits.connections),
-    resolutionFactory: @escaping BoundedResolver.Factory
-  ) {
+    group: MultiThreadedEventLoopGroup, socketCapacity: Capacity = Capacity(Limits.upstreamSockets),
+    tls: NIOSSLContext? = nil, resolutionFactory: @escaping BoundedResolver.Factory
+  ) throws {
+    self.tls = try tls ?? NIOSSLContext(configuration: Self.tlsConfiguration())
     self.socketCapacity = socketCapacity
     self.resolutionFactory = resolutionFactory
     self.group = group
@@ -34,7 +39,7 @@ package final class UpstreamClient: Sendable {
     do {
       return try work.start {
         let task = OwnedHTTPRequest(
-          request: request, relay: relay, eventLoop: eventLoop,
+          request: request, relay: relay, eventLoop: eventLoop, tls: tls,
           resolver: BoundedResolver(
             eventLoop: eventLoop, capacity: resolutions, factory: resolutionFactory),
           socketCapacity: socketCapacity)
@@ -94,9 +99,9 @@ package final class UpstreamClient: Sendable {
     let loop = group.next()
     let (connection, completed) = try await loop.submit { [self] in
       try work.start {
-        let connection = try CancellableTLSConnection(
+        let connection = CancellableTLSConnection(
           host: provider.hostname, port: provider.port, serverHostname: provider.hostname,
-          configuration: Self.tlsConfiguration(), eventLoop: loop,
+          context: tls, eventLoop: loop,
           resolver: BoundedResolver(
             eventLoop: loop, capacity: resolutions, factory: resolutionFactory),
           socketCapacity: socketCapacity)

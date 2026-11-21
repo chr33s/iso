@@ -119,7 +119,7 @@ package enum ArchiveValidator {
       if type != "5", name.hasSuffix("/") {
         throw reject("non-directory member \(debugQuoted(name)) has a directory name")
       }
-      let normalized = fold(try normalize(name, limits: limits))
+      let normalized = try key(try normalize(name, limits: limits))
       let kind: Character =
         switch type {
         case "0", "\0", "7": "f"
@@ -146,7 +146,7 @@ package enum ArchiveValidator {
       case "l":
         try checkSymlink(link, member: normalized, parent: parent, seen: seen, limits: limits)
       case "h":
-        let target = fold(try normalize(link, limits: limits))
+        let target = try key(try normalize(link, limits: limits))
         guard seen.kind(of: target.split(separator: "/")) == "f" else {
           throw reject("hard link \(debugQuoted(normalized)) names no earlier regular file")
         }
@@ -220,9 +220,17 @@ package enum ArchiveValidator {
   }
 
   /// The key members are compared by: the default APFS volume is case- and
-  /// normalization-insensitive, so `a` and `A` name the same file.
-  static func fold(_ path: String) -> String {
-    path.precomposedStringWithCanonicalMapping.lowercased()
+  /// normalization-insensitive, so `a` and `A` (or `ſ` and `s`) name the same file.
+  static func fold(_ path: String) -> String { NameFolding.key(path) }
+
+  /// The folded key of a normalized path. Folding drops ignorable code points,
+  /// so a component made only of them would vanish from the key: refused.
+  static func key(_ normalized: String) throws(HostControlError) -> String {
+    let folded = fold(normalized)
+    guard !folded.split(separator: "/", omittingEmptySubsequences: false).contains("") else {
+      throw reject("member \(debugQuoted(normalized)) has a component that folds to nothing")
+    }
+    return folded
   }
 
   /// A symlink target must be relative, never climb with `..`, and never pass through an

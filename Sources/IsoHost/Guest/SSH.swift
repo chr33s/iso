@@ -5,6 +5,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 
 /// SSH connection to a guest whose host key was pinned at enrollment,
 /// looked up under a stable alias rather than the (reassignable) address.
@@ -221,14 +222,16 @@ package struct SSHClient: Sendable {
 
   /// stdout of `command` on the guest; stderr is discarded. Nil when ssh
   /// fails, times out, or prints non-UTF-8 output.
-  package func capture(_ target: SSHTarget, _ command: String) -> String? {
+  package func capture(
+    _ target: SSHTarget, _ command: String, deadline: Duration = Self.captureDeadline
+  ) -> String? {
     guard let ssh = sshExecutable(), (try? target.requireHandoff()) != nil else { return nil }
     guard
       let output = try? runner.capture(
         .init(
           executable: ssh, arguments: target.sshOptions + [target.address, command],
           environment: environment,
-          deadline: Self.captureDeadline)),
+          deadline: deadline)),
       output.termination == .exited(0)
     else { return nil }
     return String(validating: output.stdout, as: UTF8.self)
@@ -318,8 +321,37 @@ package struct ResourceUsage: Sendable, Equatable {
     }
   }
 
-  package static func query(_ ssh: SSHClient, _ target: SSHTarget) -> ResourceUsage? {
-    ssh.capture(target, command).map(parse)
+  /// A status probe, not a transfer: a guest that holds its session open
+  /// costs `iso status` this long, not the general capture deadline.
+  package static let queryDeadline: Duration = .seconds(15)
+
+  package static func query(
+    _ ssh: SSHClient, _ target: SSHTarget, deadline: Duration = queryDeadline
+  ) -> ResourceUsage? {
+    ssh.capture(target, command, deadline: deadline).map(parse)
+  }
+
+  /// One probe per target, run together, so a slow guest delays a listing by
+  /// one deadline rather than adding to every other instance's. Nil targets
+  /// (instances not running) and failed probes yield nil, in input order.
+  package static func query(
+    _ ssh: SSHClient, _ targets: [SSHTarget?], deadline: Duration = queryDeadline
+  ) -> [ResourceUsage?] {
+    // A thread per probe: each mostly waits on its ssh, and a shared pool's
+    // width (small under load) would serialize them again.
+    let results = Mutex([ResourceUsage?](repeating: nil, count: targets.count))
+    let done = DispatchGroup()
+    for (index, target) in targets.enumerated() {
+      guard let target else { continue }
+      done.enter()
+      Thread.detachNewThread {
+        let usage = query(ssh, target, deadline: deadline)
+        results.withLock { $0[index] = usage }
+        done.leave()
+      }
+    }
+    done.wait()
+    return results.withLock { $0 }
   }
 }
 

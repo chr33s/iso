@@ -26,6 +26,8 @@ package struct RunPreview: Sendable, Equatable, Encodable {
   package var terminal: AgentTerminalMode
   package var preparationRequired: Bool
   package var egress: EgressMode
+  /// The filtered allowlist (port 443); empty unless `egress` is filtered.
+  package var approvedHosts: [String] = []
   package var proxyMode: ProxyMode
   package var pullMode: WorkspacePullMode
   package var recordedEgress: String?
@@ -120,7 +122,7 @@ package struct RunPreview: Sendable, Equatable, Encodable {
         pullMode: pullMode.rawValue), forKey: .desiredPolicy)
     try values.encode(
       recordedEgress.map { RecordedPolicyOutput(egress: $0) }, forKey: .recordedPolicy)
-    try values.encode([String](), forKey: .approvedHosts)
+    try values.encode(approvedHosts, forKey: .approvedHosts)
     try values.encode(networkHints.map(\.rawValue), forKey: .networkHints)
     try values.encode(unresolved, forKey: .unresolved)
     try values.encode(cleanupIntent, forKey: .cleanupIntent)
@@ -135,8 +137,8 @@ extension RunPreview {
     action: RunAction, instanceName: String?, match: String, definition: AgentDefinition,
     source: AgentDefinitionSource, definitionHash: String, adapter: AgentAdapterContract,
     environment: ResolvedAgentEnvironment, workingDirectory: GuestPath, terminal: AgentTerminalMode,
-    preparationRequired: Bool, egress: EgressMode, proxyMode: ProxyMode,
-    pullMode: WorkspacePullMode,
+    preparationRequired: Bool, egress: EgressMode, approvedHosts: [String] = [],
+    proxyMode: ProxyMode, pullMode: WorkspacePullMode,
     recordedEgress: String?, networkHints: [ExactHostname], unresolved: [String],
     cleanupIntent: String,
     ask: Bool, blockedReason: String?
@@ -147,7 +149,8 @@ extension RunPreview {
       definitionHash: definitionHash, adapter: adapter, environment: environment,
       workingDirectory: workingDirectory, terminal: terminal,
       preparationRequired: preparationRequired,
-      egress: egress, proxyMode: proxyMode, pullMode: pullMode, recordedEgress: recordedEgress,
+      egress: egress, approvedHosts: approvedHosts, proxyMode: proxyMode, pullMode: pullMode,
+      recordedEgress: recordedEgress,
       networkHints: networkHints, unresolved: unresolved, cleanupIntent: cleanupIntent, ask: ask,
       blockedReason: blockedReason)
   }
@@ -166,7 +169,7 @@ package enum SessionSummary {
       "Live host mounts: none",
       "Provider: \(bound(facts.provider))",
       "Raw provider forwarding: \(bound(facts.rawForwarding))",
-      "Network: \(facts.egress)    Approved destinations: none (filtered egress is not enabled)",
+      "Network: \(facts.egress)    Approved destinations: \(approvedDestinations(facts))",
       "Host services: may remain reachable",
       "Return policy: \(facts.pullMode)",
       "Lifecycle: \(facts.lifecycle)    TTL: \(bound(facts.ttl))",
@@ -184,6 +187,20 @@ package enum SessionSummary {
     }
     lines.append("This summary is not a live readiness proof.")
     return lines
+  }
+
+  /// What the egress mode lets the guest reach, as recorded, never a fixed
+  /// reassurance: open egress is unrestricted, filtered names its allowlist.
+  static func approvedDestinations(_ facts: Facts) -> String {
+    switch facts.egress {
+    case EgressMode.open.rawValue: return "any (egress is open)"
+    case EgressMode.filtered.rawValue:
+      guard !facts.approvedHosts.isEmpty else { return "none (empty allowlist)" }
+      let preview = facts.approvedHosts.prefix(4).map { bound($0) }.joined(separator: ", ")
+      return
+        "\(facts.approvedHosts.count), port 443: \(preview)\(facts.approvedHosts.count > 4 ? ", …" : "")"
+    default: return "none"
+    }
   }
 
   package static func bound(_ text: String, limit: Int = 160) -> String {
@@ -209,6 +226,8 @@ package enum SessionSummary {
     package var rawForwarding: String
     package var rawForwardingWarning: String?
     package var egress: String
+    /// The filtered allowlist; empty for any other egress mode.
+    package var approvedHosts: [String] = []
     package var pullMode: String
     package var lifecycle: String
     package var ttl: String

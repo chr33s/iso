@@ -78,6 +78,18 @@ enum Parse {
     Secret(try string(value, path))
   }
 
+  /// A secret placed in the guest (agent `api_key`, MCP headers): `cmd:` or
+  /// a literal, never `vault:`, which credential resolution refuses too.
+  static func guestSecret(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError)
+    -> Secret<String>
+  {
+    let value = try secret(value, path)
+    guard !SecretName.isVaultReference(value.expose()) else {
+      throw FieldError(path, SecretName.guestPlacementRefusal)
+    }
+    return value
+  }
+
   static func bool(_ value: JSONValue, _ path: [JSONPathComponent]) throws(FieldError) -> Bool {
     guard case .bool(let bool) = value else {
       throw FieldError(path, "expected a boolean, found \(value.typeName)")
@@ -252,7 +264,10 @@ enum ConfigDecoder {
     ])
     let defaultDataDir = HostPath(expanding: "~/.iso", home: env.home ?? ".")
     let dataDir = try r.defaulted("data_dir", defaultDataDir) { v, p throws(FieldError) in
-      HostPath(expanding: try Parse.string(v, p), home: env.home)
+      let raw = try Parse.string(v, p)
+      return try Parse.domain(p) { () throws(ValidationError) in
+        try HostPath.stateDirectory(expanding: raw, home: env.home)
+      }
     }
     var revoked: [String] = []
     let preset: SecurityPreset? =
@@ -289,8 +304,10 @@ enum ConfigDecoder {
         let s = try ObjectReader(v, at: p)
         return SetupConfig(promptForPAT: try s.defaulted("prompt_for_pat", true, Parse.bool))
       },
-      claude: try agent(r, "claude", env: env, apiKeyVariable: "ANTHROPIC_API_KEY"),
-      codex: try agent(r, "codex", env: env, apiKeyVariable: "OPENAI_API_KEY"),
+      claude: try agent(
+        r, "claude", env: env, apiKeyVariable: "ANTHROPIC_API_KEY", mcp: .claude),
+      codex: try agent(
+        r, "codex", env: env, apiKeyVariable: "OPENAI_API_KEY", mcp: .codex),
       codexAuth: try r.defaulted("codex", .apiKey) { v, p throws(FieldError) in
         try ObjectReader(v, at: p).defaulted("auth", .apiKey) { v, p throws(FieldError) in
           try Parse.stringEnum(v, p, [CodexAuthMode.apiKey, .chatgpt])
@@ -617,8 +634,17 @@ enum ConfigDecoder {
     return try mode(explicitMode ?? implied, entries: entries ?? [:], skip: skip ?? [])
   }
 
+  /// The agent CLI that registers an agent's MCP servers. Codex has stdio and
+  /// streamable HTTP only (an `sse` entry would silently run as streamable
+  /// HTTP), and it passes a variable through only under its own name (`env_vars`).
+  enum MCPRegistrar {
+    case claude
+    case codex
+  }
+
   static func agent(
-    _ r: ObjectReader, _ key: String, env: ConfigEnvironment, apiKeyVariable: String
+    _ r: ObjectReader, _ key: String, env: ConfigEnvironment, apiKeyVariable: String,
+    mcp: MCPRegistrar
   ) throws(FieldError) -> AgentConfig {
     // An absent section takes the key from the environment; a present
     // section without `api_key` does not (baseline serde default semantics).
@@ -630,7 +656,7 @@ enum ConfigDecoder {
     let path = r.child(key)
     let a = try ObjectReader(value, at: path)
     return AgentConfig(
-      apiKey: try a.optional("api_key", Parse.secret),
+      apiKey: try a.optional("api_key", Parse.guestSecret),
       envForward: try a.defaulted("env_forward", []) { v, p throws(FieldError) in
         try Parse.array(v, p, Parse.envVarName)
       },
@@ -643,7 +669,27 @@ enum ConfigDecoder {
         try Parse.array(v, p, Parse.string)
       },
       mcpServers: try a.defaulted("mcp_servers", [:]) { v, p throws(FieldError) in
-        try Parse.map(v, p, mcpServer)
+        try Parse.map(v, p) { v, p throws(FieldError) in
+          let server = try mcpServer(v, p)
+          guard mcp == .codex else { return server }
+          switch server {
+          case .sse:
+            throw FieldError(
+              p + [.key("type")],
+              "\(key) cannot register an SSE MCP server (it supports stdio and streamable HTTP); use \"type\": \"http\" for a server that serves streamable HTTP"
+            )
+          case .stdio(_, _, let env):
+            let renames = env.filter { $0.key != $0.value }
+            if let renamed = renames.sorted(by: { $0.key < $1.key }).first {
+              throw FieldError(
+                p + [.key("env"), .key(renamed.key.rawValue)],
+                "\(key) passes a variable to an MCP server only under its own name; map \(renamed.key) to \(renamed.key) (not \(renamed.value)) and forward it with env_forward"
+              )
+            }
+          case .http: break
+          }
+          return server
+        }
       },
       // Host agent-home imports are off unless a root is named (IMPORT-01).
       configDirectory: try a.defaulted("config_dir", .disabled) { v, p throws(FieldError) in
@@ -698,7 +744,7 @@ enum ConfigDecoder {
       return out
     }
     let headers = try r.defaulted("headers", [:]) { v, p throws(FieldError) in
-      try Parse.map(v, p, Parse.secret)
+      try Parse.map(v, p, Parse.guestSecret)
     }
     switch transport {
     case nil, "stdio":

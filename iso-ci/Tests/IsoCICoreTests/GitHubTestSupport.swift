@@ -41,6 +41,8 @@ final class GitHubFakeRunners: RunnerService {
     var runners: [Int64: GitHubRunnerInfo] = [:]
     var nextID: Int64 = 100
     var jobs: [GitHubJobInfo] = []
+    /// Active-job walks the reconciler started.
+    var activeSearches = 0
     var jobDetails: [Int64: GitHubJobInfo] = [:]
     var jitCalls: [(name: String, labels: [String])] = []
     var deleted: [Int64] = []
@@ -132,20 +134,21 @@ final class GitHubFakeRunners: RunnerService {
     return try outcome.get()
   }
 
-  func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
+  func activeJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
     let outcome: Result<[GitHubJobInfo], CIError> = state.withLock { state in
       if let failure = state.lookupFailure { return .failure(failure) }
+      state.activeSearches += 1
       return .success(state.jobs)
     }
-    return try outcome.get()
+    return JobSearch(try outcome.get())
   }
 
-  func completedJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
+  func completedJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
     let outcome: Result<[GitHubJobInfo], CIError> = state.withLock { state in
       if let failure = state.lookupFailure { return .failure(failure) }
       return .success(state.jobDetails.values.filter { $0.status == "completed" })
     }
-    return try outcome.get()
+    return JobSearch(try outcome.get())
   }
 
   func job(repository: RepositoryName, id: Int64) throws(CIError) -> GitHubJobInfo {

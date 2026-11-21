@@ -86,6 +86,22 @@ import Testing
     #expect(allocation.phase == "idle")
   }
 
+  /// An idle runner (GitHub reports it not busy) costs no job walk, however
+  /// many passes run; a busy one is bound once, and then only its own job
+  /// is read.
+  @Test func onlyABusyUnboundRunnerStartsAJobWalk() throws {
+    let h = try GitHubReconcilerHarness()
+    for _ in 0..<5 { h.reconciler.reconcile() }
+    #expect(h.runners.state.withLock { $0.activeSearches } == 0)
+    let allocation = try #require(try h.open().first)
+    h.runners.assign(jobID: 4, toRunnerNamed: allocation.runnerName!, repository: h.repository)
+    h.reconciler.reconcile()
+    #expect(try h.store.allocation(allocation.id)?.job?.jobID == 4)
+    #expect(h.runners.state.withLock { $0.activeSearches } == 1)
+    for _ in 0..<3 { h.reconciler.reconcile() }
+    #expect(h.runners.state.withLock { $0.activeSearches } == 1)
+  }
+
   /// Regression: lost JIT response. The registration exists but its reply
   /// was lost: no blind retry; the exact owned registration is found by
   /// name in the right scope, removed by id, and only then re-requested.

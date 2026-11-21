@@ -28,7 +28,7 @@ package enum ServiceAdoption {
   }
 
   package static func write(_ instance: Instance, _ id: InstanceID) throws(HostError) {
-    try StateStore.writeControlFile(Marker(instanceID: id), to: path(instance))
+    try StateStore.writeInstanceFile(Marker(instanceID: id), to: path(instance))
   }
 
   package static func remove(_ instance: Instance) { unlink(path(instance)) }

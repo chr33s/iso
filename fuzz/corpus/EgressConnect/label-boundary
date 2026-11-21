@@ -1,0 +1,2 @@
+CONNECT evil-jobs.example.org:443 HTTP/1.1
+Proxy-Authorization: Basic aXNvOnNlY3JldA==

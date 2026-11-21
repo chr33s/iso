@@ -13,8 +13,7 @@ import Testing
   let termination = try ProcessRunner().stream(
     .init(
       executable: "/bin/sh", arguments: ["-c", "printf out; printf err >&2; exit 2"],
-      environment: [:], deadline: .seconds(5)),
-    deadline: .seconds(5)
+      environment: [:], deadline: .seconds(5))
   ) { (stream, bytes) throws(ProcessRunner.Failure) in collected[stream, default: []] += bytes }
   #expect(termination == .exited(2))
   #expect(collected[.stdout] == Array("out".utf8))
@@ -26,8 +25,7 @@ import Testing
     try ProcessRunner().stream(
       .init(
         executable: "/bin/sh", arguments: ["-c", "echo x; sleep 30"], environment: [:],
-        deadline: .seconds(60)),
-      deadline: nil
+        deadline: .unbounded)
     ) { (_, _) throws(ProcessRunner.Failure) in throw .io(errno: EPIPE) }
   }
   #expect(ContinuousClock.now - start < .seconds(5))
@@ -52,8 +50,7 @@ import Testing
   var chunks: [ArraySlice<UInt8>] = []
   let termination = try ProcessRunner().stream(
     .init(
-      executable: "/bin/cat", arguments: [], environment: [:], deadline: .seconds(5), input: input),
-    deadline: .seconds(5)
+      executable: "/bin/cat", arguments: [], environment: [:], deadline: .seconds(5), input: input)
   ) { (stream, bytes) throws(ProcessRunner.Failure) in
     #expect(stream == .stdout)
     chunks.append(bytes)
@@ -106,6 +103,39 @@ import Testing
     load1m: 1.5, memUsedMiB: 512, memTotalMiB: 2048, diskUsedMiB: 5000, diskTotalMiB: 20000
   ).display
   #expect(display == "Load: 1.50  Mem: 512/2048 MiB (25%)  Disk: 5000/20000 MiB (25%)")
+}
+
+/// A guest that holds its status session open costs one short probe deadline,
+/// and the probes of a listing run together rather than adding up.
+@Test func statusUsageProbesAreBoundedAndConcurrent() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  try writeFile(
+    guest.root + "/bin/ssh",
+    """
+    #!/bin/sh
+    case " $* " in
+      *"@10.231.9."*) exec sleep 60 ;;
+    esac
+    printf '0.50 0.40 0.30 1/42 1234\nMemTotal: 2048000 kB\nMemAvailable: 1024000 kB\n'
+
+    """, mode: 0o755)
+  func target(_ host: String) -> SSHTarget {
+    SSHTarget(
+      host: host, port: 22, user: .default, keyPath: guest.root + "/key",
+      knownHosts: guest.root + "/known_hosts", alias: "iso-\(host).iso")
+  }
+  #expect(ResourceUsage.queryDeadline <= .seconds(15))
+  let start = ContinuousClock.now
+  let usage = ResourceUsage.query(
+    guest.client, [target("10.231.9.1"), nil, target("10.231.9.2"), target("10.231.1.2")],
+    deadline: .seconds(3))
+  let elapsed = ContinuousClock.now - start
+  #expect(usage.count == 4)
+  #expect(usage[0] == nil && usage[1] == nil && usage[2] == nil)
+  #expect(usage[3]?.load1m == 0.5)
+  // Two stalled guests one after the other would take at least 6 s.
+  #expect(elapsed < .milliseconds(5500), "\(elapsed)")
 }
 
 @Test func resourceUsagePercentagesDoNotTrapOnGuestControlledValues() {

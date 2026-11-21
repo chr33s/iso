@@ -111,7 +111,8 @@ package struct ModelState: Sendable, Equatable {
       return
     }
     do {
-      try AtomicFile.write(Array(rendered.utf8), to: path, mode: .atMost(0o600))
+      try AtomicFile.write(
+        Array(rendered.utf8), to: path, mode: .atMost(0o600), parents: .mustExist)
     } catch {
       throw ContextError("Failed to write model.json", cause: error)
     }

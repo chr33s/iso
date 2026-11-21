@@ -23,23 +23,18 @@ package struct DevcontainerTranslatorInputs: Sendable {
   package var cliPostStart: String?
   package var cliGuestEnvKeys: [EnvVarName]
   package var cliForwardPorts: [PortForward]
-  package var cliMounts: [Mount]
   package var cliProfiles: [String]
   /// `setup --guest-user`; makes `remoteUser` overridden (setup only).
   package var cliGuestUser: GuestUser?
   /// The image's persisted guest user (start only). A different
   /// `remoteUser` skips `containerEnv`.
   package var persistedGuestUser: GuestUser?
-  /// `--workspace` or `--git-repo` was given, which excludes devcontainer
-  /// `mounts` (start only).
-  package var cliWorkspaceOrGitRepo: Bool
 
   package init(
     cliVcpus: UInt8? = nil, cliMemory: VmMemory? = nil, cliDisk: GiB? = nil,
     cliPostStart: String? = nil, cliGuestEnvKeys: [EnvVarName] = [],
-    cliForwardPorts: [PortForward] = [], cliMounts: [Mount] = [], cliProfiles: [String] = [],
-    cliGuestUser: GuestUser? = nil, persistedGuestUser: GuestUser? = nil,
-    cliWorkspaceOrGitRepo: Bool = false
+    cliForwardPorts: [PortForward] = [], cliProfiles: [String] = [],
+    cliGuestUser: GuestUser? = nil, persistedGuestUser: GuestUser? = nil
   ) {
     self.cliVcpus = cliVcpus
     self.cliMemory = cliMemory
@@ -47,11 +42,9 @@ package struct DevcontainerTranslatorInputs: Sendable {
     self.cliPostStart = cliPostStart
     self.cliGuestEnvKeys = cliGuestEnvKeys
     self.cliForwardPorts = cliForwardPorts
-    self.cliMounts = cliMounts
     self.cliProfiles = cliProfiles
     self.cliGuestUser = cliGuestUser
     self.persistedGuestUser = persistedGuestUser
-    self.cliWorkspaceOrGitRepo = cliWorkspaceOrGitRepo
   }
 }
 
@@ -67,9 +60,12 @@ package struct DevcontainerTranslation: Sendable {
   package var postStart: String?
   package var guestEnvironment: [(name: EnvVarName, value: String)] = []
   package var forwardPorts: [PortForward] = []
-  package var mounts: [Mount] = []
   package var ociFeatureRequests: [FeatureRequest] = []
   package var ociFeatures: [ResolvedFeature] = []
+  /// Registry Features (`features.<id>`) that cannot be installed: an
+  /// invalid reference or options, or a fetch or verification failure.
+  /// Setup refuses to continue without them.
+  package var featureFailures: [String] = []
   package var profiles: [String] = []
   /// `remoteUser` when no `--guest-user` overrode it (setup only).
   package var guestUser: GuestUser?
@@ -80,6 +76,8 @@ package struct DevcontainerTranslation: Sendable {
 
 package enum Devcontainer {
   package static let defaultRelativePath = ".devcontainer/devcontainer.json"
+  /// The largest devcontainer.json (local or fetched) iso reads.
+  package static let maxFileBytes = 1 << 20
 
   package static func preferencesPath(_ config: IsoConfig) -> String {
     config.stateRoot.appending("devcontainer_preferences.json").path
@@ -138,7 +136,11 @@ package enum Devcontainer {
 
     if let ports = raw.forwardPorts { translateForwardPorts(ports, inputs, stage, &t) }
     if let features = raw.features { translateFeatures(features, inputs, stage, &t) }
-    if let mounts = raw.mounts { translateMounts(mounts, inputs, stage, &t) }
+    if let mounts = raw.mounts, !mounts.isEmpty {
+      t.report.push(
+        "mounts", .unsupported, .devcontainer, "\(mounts.count) entries",
+        "not applied; iso copies only the project (use --mount HOST[:GUEST] for a one-time copy)")
+    }
     if let user = raw.remoteUser { translateRemoteUser(user, inputs, stage, &t) }
 
     if let image = raw.image {
@@ -399,47 +401,9 @@ package enum Devcontainer {
           )
         }
       } catch {
+        t.featureFailures.append(rawID)
         t.report.push(key, .invalid, .devcontainer, options.rendered, topMessage(error))
       }
-    }
-  }
-
-  static func translateMounts(
-    _ mounts: [DevcontainerJSON], _ inputs: DevcontainerTranslatorInputs,
-    _ stage: DevcontainerStage, _ t: inout DevcontainerTranslation
-  ) {
-    let key = "mounts"
-    guard !mounts.isEmpty else { return }
-    if stage == .setup {
-      t.report.push(
-        key, .applied, .devcontainer, "\(mounts.count) entries", "applied at start time")
-      return
-    }
-    if !inputs.cliMounts.isEmpty {
-      t.report.push(
-        key, .overridden, .cli, "\(inputs.cliMounts.count) CLI --mount entries",
-        "CLI --mount conflicts with --workspace and replaces devcontainer mounts")
-      return
-    }
-    if inputs.cliWorkspaceOrGitRepo {
-      t.report.push(
-        key, .unsupported, .devcontainer, "\(mounts.count) entries",
-        "iso --mount is mutually exclusive with --workspace/--git-repo in v1; drop those flags to use devcontainer mounts"
-      )
-      return
-    }
-    var applied: [String] = []
-    for entry in mounts {
-      do {
-        let mount = try parseMountEntry(entry)
-        applied.append("\(mount.hostPath)->\(mount.guestPath)")
-        t.mounts.append(mount)
-      } catch {
-        t.report.push(key, .invalid, .devcontainer, entry.rendered, topMessage(error))
-      }
-    }
-    if !applied.isEmpty {
-      t.report.push(key, .applied, .devcontainer, applied.joined(separator: ", "))
     }
   }
 
@@ -466,64 +430,6 @@ package enum Devcontainer {
     case .string(let spec): return try PortForward.parse(spec)
     default: throw HostError("expected port number or 'GUEST[:HOST]' string")
     }
-  }
-
-  static func parseMountEntry(_ value: DevcontainerJSON) throws -> Mount {
-    switch value.value {
-    case .string(let spec): return try parseMountString(spec)
-    case .object(let members):
-      let fields = mergedMembers(members)
-      func field(_ name: String) -> String? { fields.last { $0.key == name }?.value.string }
-      guard let type = field("type") else { throw HostError("mount object requires 'type'") }
-      guard type == "bind" else {
-        throw HostError("unsupported mount type '\(type)' (iso supports 'bind' only in v1)")
-      }
-      guard let source = field("source") else {
-        throw HostError("mount object requires 'source'")
-      }
-      guard let target = field("target") else {
-        throw HostError("mount object requires 'target'")
-      }
-      let guest = try GuestPath.absolute(target)
-      return try Mount(host: source, guest: guest)
-    default: throw HostError("expected mount string or object")
-    }
-  }
-
-  /// Native `HOST[:GUEST]` or Docker's `type=bind,source=...,target=...`.
-  static func parseMountString(_ spec: String) throws -> Mount {
-    guard spec.contains("=") else { return try Mount.parse(spec) }
-    var type: String?
-    var source: String?
-    var target: String?
-    for rawPart in spec.split(separator: ",", omittingEmptySubsequences: false) {
-      let part = String(rawPart).trimmingUnicodeWhitespace()
-      if part.isEmpty { continue }
-      let name: String
-      let value: String?
-      if let equals = part.firstIndex(of: "=") {
-        name = String(part[..<equals]).trimmingUnicodeWhitespace()
-        value = String(part[part.index(after: equals)...]).trimmingUnicodeWhitespace()
-      } else {
-        name = part
-        value = nil
-      }
-      switch name {
-      case "type": type = value
-      case "source", "src": source = value
-      case "target", "dst", "destination": target = value
-      case "readonly", "ro", "consistency", "bind-propagation": break
-      default: throw HostError("unsupported mount field '\(name)'")
-      }
-    }
-    let kind = type ?? "bind"
-    guard kind == "bind" else {
-      throw HostError("unsupported mount type '\(kind)' (iso supports 'bind' only in v1)")
-    }
-    guard let source else { throw HostError("mount string missing source=...") }
-    guard let target else { throw HostError("mount string missing target=...") }
-    let guest = try GuestPath.absolute(target)
-    return try Mount(host: source, guest: guest)
   }
 
   static let featureProfileIDs: Set<String> = ["python", "node", "c", "fuzz", "rust", "go"]
@@ -560,11 +466,11 @@ package enum Devcontainer {
     var found: [Discovered] = []
     if let workspace {
       let candidate = joinPath(workspace, defaultRelativePath)
-      if isFile(candidate) { found.append(Discovered(path: candidate, origin: .workspace)) }
+      if isCandidate(candidate) { found.append(Discovered(path: candidate, origin: .workspace)) }
     }
     for mount in mounts {
       let candidate = joinPath(mount.hostPath, defaultRelativePath)
-      if isFile(candidate) { found.append(Discovered(path: candidate, origin: .mount)) }
+      if isCandidate(candidate) { found.append(Discovered(path: candidate, origin: .mount)) }
     }
     return found
   }
@@ -618,8 +524,11 @@ func joinPath(_ base: String, _ component: String) -> String {
   return base.hasSuffix("/") ? base + component : base + "/" + component
 }
 
-/// Rust `Path::is_file`: follows symlinks.
-func isFile(_ path: String) -> Bool {
+/// A regular file or a symlink at `path`, not followed: a symlinked
+/// devcontainer.json is found and then refused by its reader, never skipped
+/// silently or read through.
+func isCandidate(_ path: String) -> Bool {
   var status = stat()
-  return stat(path, &status) == 0 && (status.st_mode & S_IFMT) == S_IFREG
+  guard lstat(path, &status) == 0 else { return false }
+  return status.st_mode & S_IFMT == S_IFREG || status.st_mode & S_IFMT == S_IFLNK
 }

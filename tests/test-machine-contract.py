@@ -141,6 +141,14 @@ def main():
 
         status, stdout, stderr = run(binary, ["status", "nobody", "--output", "json", "--quiet"], home)
         check("--quiet discards stderr", status == 1 and stderr == "" and document(stdout)["ok"] is False, stderr)
+        status, stdout, stderr = run(binary, ["secrets", "--output", "json", "--quiet"], home)
+        check("--quiet discards a command group's stderr",
+              status == 2 and stderr == "" and document(stdout)["ok"] is False, stderr)
+        for args in (["up", "--help", "--output", "json"], ["help", "up", "--output", "json"],
+                     ["--output", "json", "secrets", "--help"]):
+            status, stdout, stderr = run(binary, args, home)
+            check("iso " + " ".join(args) + " prints help and exits 0",
+                  status == 0 and "USAGE:" in stdout and "api_version" not in stdout, stdout + stderr)
 
         for args in (["list"], ["list", "--json"], ["status", "--json"]):
             legacy = run(binary, args, home)

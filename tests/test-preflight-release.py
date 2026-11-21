@@ -449,15 +449,28 @@ esac
 
 class ReleaseBinaryTests(unittest.TestCase):
     def test_signing_checkout_includes_every_file_the_signer_reads(self):
-        workflow = (ROOT / '.github/workflows/release.yml').read_text()
-        block = re.search(
-            r"  sign-macos:\n.*?          sparse-checkout: \|\n(.*?)\n          sparse-checkout-cone-mode",
-            workflow, re.S)[1]
-        checkout = {line.strip() for line in block.splitlines()}
         signer = (ROOT / 'scripts/macos-sign-notarize.sh').read_text()
         read = set(re.findall(r'\$\{root\}/([\w./-]+)', signer))
         self.assertIn('scripts/enhanced-security.entitlements', read)
-        self.assertLessEqual(read | {'scripts/macos-sign-notarize.sh'}, checkout)
+        for name in ('release.yml', 'candidate.yml'):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / '.github/workflows' / name).read_text()
+                block = re.search(
+                    r"  sign-macos:\n.*?          sparse-checkout: \|\n(.*?)\n          sparse-checkout-cone-mode",
+                    workflow, re.S)[1]
+                checkout = {line.strip() for line in block.splitlines()}
+                self.assertLessEqual(read | {'scripts/macos-sign-notarize.sh'}, checkout)
+
+    def test_only_the_signing_jobs_hold_the_signing_secrets(self):
+        # Build and test code runs in the other jobs, and a child process can
+        # read its parent's environment, so scrubbing subprocesses is no guard.
+        for name in ('release.yml', 'candidate.yml'):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / '.github/workflows' / name).read_text()
+                jobs = re.split(r"\n  (?=[\w-]+:\n)", workflow[workflow.index("\njobs:\n"):])[1:]
+                holders = {job.split(":", 1)[0] for job in jobs if "secrets." in job}
+                self.assertEqual(holders, {'sign-macos'})
+                self.assertNotIn('--sign', workflow)
 
     def test_release_source_gate_rejects_commit_outside_main(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
@@ -580,6 +593,17 @@ class ReleaseBinaryTests(unittest.TestCase):
         publish = publish[publish.index('      - name: Download all artifacts'):]
         pattern = re.search(r"          pattern: (\S+)\n", publish)[1]
         self.assertFalse(fnmatch.fnmatchcase(uploaded[1], pattern))
+
+    def test_every_ubuntu_base_pin_names_one_digest(self):
+        # Dependabot bumps only the Dockerfiles; a partial bump fails here.
+        pins = ['Sources/IsoHost/Guest/ImageBuild.swift', 'iso-sandbox/kernel/Dockerfile',
+                'tests/fixtures/apple-sandbox/image/Dockerfile', 'tests/integration-apple-sandbox.sh']
+        digests = {}
+        for path in pins:
+            found = set(re.findall(r'ubuntu:24\.04@sha256:([0-9a-f]{64})', (ROOT / path).read_text()))
+            self.assertTrue(found, path)
+            digests[path] = found
+        self.assertEqual(len(set().union(*digests.values())), 1, digests)
 
     def test_the_kernel_script_checks_its_pins_and_engine(self):
         script = ROOT / 'scripts/build-desktop-kernel.sh'

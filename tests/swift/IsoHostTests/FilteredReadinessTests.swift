@@ -95,7 +95,7 @@ func filteredReadinessRejectsForgeryReplayAndFraming(change: String) throws {
   #expect(!subprocess.arguments.joined().contains(capability.expose()))
   #expect(!subprocess.arguments.joined().contains(probeNonce))
   #expect(subprocess.environment["OPENAI_API_KEY"] == nil)
-  #expect(subprocess.deadline == .seconds(5))
+  #expect(subprocess.deadline == .after(.seconds(5)))
   #expect(subprocess.outputLimit == 1024)
   #expect(subprocess.overflow == .fail)
 }

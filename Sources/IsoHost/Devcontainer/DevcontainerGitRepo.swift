@@ -73,12 +73,9 @@ package struct GitRepoDevcontainerDiscovery: Sendable {
       return Self.normalize(token.expose())
     }
     let ambient = GitHubSourceAuth.ambient(auth)
-    return Self.selectHostToken(
-      gh: ambient.gh ? ghAuthToken() : nil, env: ambient.env ? environment["GITHUB_TOKEN"] : nil)
-  }
-
-  static func selectHostToken(gh: String?, env: String?) -> String? {
-    gh.flatMap(normalize) ?? env.flatMap(normalize)
+    return GitHubSourceAuth.hostToken(
+      env: ambient.env ? environment["GITHUB_TOKEN"] : nil,
+      gh: { ambient.gh ? ghAuthToken() : nil })
   }
 
   static func normalize(_ token: String) -> String? {
@@ -90,7 +87,8 @@ package struct GitRepoDevcontainerDiscovery: Sendable {
     guard let gh = findExecutable("gh"),
       let output = try? runner.capture(
         .init(
-          executable: gh, arguments: ["auth", "token"], environment: environment,
+          executable: gh, arguments: GitHubSourceAuth.ghTokenArguments,
+          environment: environment,
           deadline: Self.deadline)),
       output.termination == .exited(0),
       let text = String(validating: output.stdout, as: UTF8.self)

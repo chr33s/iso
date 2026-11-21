@@ -23,6 +23,7 @@ package enum HostService {
     guard let ownership = try FileLock.attempt(path: store.serviceLockPath) else {
       throw HostError("another host-control service already owns \(root(config))")
     }
+    raiseDescriptorLimit()
     let backend = AppleBackend(
       config: config, environment: environment, executable: nil, diagnostics: diagnostics)
     // Activation-only first: a prepared migration completes (or stays
@@ -56,12 +57,14 @@ package enum HostService {
     throws -> Int32
   {
     let paths = try ensureRunning(config: config, configPath: configPath)
-    // The remote socket marks every request on this stream as SSH-originated.
-    guard let socket = connectUnix(paths.remote) else {
-      throw HostError("the host-control service is not accepting connections")
-    }
-    defer { close(socket) }
     while let frame = Socket.readLine(0, limit: HostWire.maxRequestFrame) {
+      // One service connection per frame: a quiet bridge holds no service
+      // slot and never meets its read deadline. The remote socket marks every
+      // request on it as SSH-originated.
+      guard let socket = connectUnix(paths.remote) else {
+        throw HostError("the host-control service is not accepting connections")
+      }
+      defer { close(socket) }
       guard (try? AtomicFile.writeAll(socket, frame + [UInt8(ascii: "\n")], "control")) != nil,
         let reply = Socket.readLine(socket, limit: HostWire.maxResponseFrame),
         (try? AtomicFile.writeAll(1, reply + [UInt8(ascii: "\n")], "stdout")) != nil
@@ -102,14 +105,43 @@ package enum HostService {
     return 0
   }
 
+  /// launchd starts jobs with a 256-descriptor soft limit; a relay stream holds about
+  /// three (its socket and the connector's pipes), so the relay cap needs more.
+  static func raiseDescriptorLimit(to wanted: rlim_t = 4_096) {
+    var limit = rlimit()
+    guard getrlimit(RLIMIT_NOFILE, &limit) == 0, limit.rlim_cur < wanted else { return }
+    limit.rlim_cur = min(wanted, limit.rlim_max)
+    _ = setrlimit(RLIMIT_NOFILE, &limit)
+  }
+
   // MARK: - User service
 
   static func label(_ hostID: HostID) -> String {
     "dev.iso.host-control." + hostID.rawValue.replacingOccurrences(of: "-", with: "").prefix(12)
   }
 
-  /// Starts the per-user service when its socket is not answering and returns its socket
-  /// paths. The plist lives in the data root, loaded into the background user domain.
+  /// What a running service is to this executable.
+  package enum RunningService: Equatable, Sendable {
+    /// It runs this build.
+    case current
+    /// Another executable defines the job; it is left running.
+    case otherInstallation
+    /// This executable defines the job but the service runs another build
+    /// (iso was updated or reinstalled): it is restarted.
+    case stale
+  }
+
+  /// `running` is the service's reported build, nil when it predates reporting one.
+  package static func classify(
+    running: String?, ours: String, jobProgram: String?, executable: String
+  ) -> RunningService {
+    if running == ours { return .current }
+    return jobProgram == executable ? .stale : .otherInstallation
+  }
+
+  /// Starts the per-user service when its socket is not answering, or restarts it when this
+  /// executable's job runs an older build, and returns its socket paths. The plist lives in
+  /// the data root, loaded into the background user domain. A restart begins a new epoch.
   package static func ensureRunning(config: IsoConfig, configPath: String?) throws
     -> HostControlPaths
   {
@@ -117,15 +149,22 @@ package enum HostService {
     let store = try OperationStore(root: root(config))
     let installation = try store.installation(owner: owner.id, now: WireTime(Date()))
     let paths = try HostControlPaths(hostID: installation.hostID)
-    if let fd = connectUnix(paths.control) {
-      close(fd)
-      return paths
-    }
     guard let executable = Bundle.main.executablePath, executable.hasPrefix("/") else {
       throw HostError("cannot resolve the iso executable path")
     }
-    let label = label(installation.hostID)
     let plist = store.root + "/service.plist"
+    if let state = runningService(paths: paths, plist: plist, executable: executable) {
+      guard state == .stale else { return paths }
+      // One frontend restarts it; the others find the new build when they get the lock.
+      let restart = try FileLock(path: store.locksDirectory + "/restart.lock")
+      defer { restart.release() }
+      switch runningService(paths: paths, plist: plist, executable: executable) {
+      case .current?, .otherInstallation?: return paths
+      case .stale?: try stop(config: config)
+      case nil: break
+      }
+    }
+    let label = label(installation.hostID)
     let log = store.root + "/service.log"
     let arguments =
       [executable] + (configPath.map { ["--config", $0] } ?? [])
@@ -175,11 +214,52 @@ package enum HostService {
     throw HostError("the host-control service did not start; see \(log)")
   }
 
+  /// Nil when nothing answers the control socket. A service that cannot be asked
+  /// its build for another reason is treated as current: only a reported (or
+  /// refused) build question restarts it.
+  static func runningService(paths: HostControlPaths, plist: String, executable: String)
+    -> RunningService?
+  {
+    guard let fd = connectUnix(paths.control) else { return nil }
+    close(fd)
+    let running: String?
+    do {
+      running = try HostControlClient(transport: LocalHostTransport(paths: paths), expected: nil)
+        .hello(clientBuild: IsoBuild.current.versionString, includeBuild: true).build
+    } catch  where error.code == .invalidRequest {
+      // A service older than build reporting refuses the question.
+      running = nil
+    } catch {
+      return .current
+    }
+    let state = classify(
+      running: running, ours: IsoBuild.current.versionString, jobProgram: jobProgram(plist),
+      executable: executable)
+    if state == .otherInstallation {
+      FileHandle.standardError.write(
+        Data(
+          "warning: the host-control service runs \(running ?? "an older build") from another iso installation; leaving it running\n"
+            .utf8))
+    }
+    return state
+  }
+
+  /// The executable the job's plist starts (written by ``ensureRunning(config:configPath:)``).
+  static func jobProgram(_ plist: String) -> String? {
+    guard let bytes = try? StateStore.readControlFile(plist),
+      let document = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil)
+        as? [String: Any],
+      let arguments = document["ProgramArguments"] as? [String]
+    else { return nil }
+    return arguments.first
+  }
+
   /// Unloads the service and waits for it to release the ownership lock; until then it
   /// still answers its socket and ``ensureRunning(config:configPath:)`` would reach the
   /// exiting service.
   package static func stop(config: IsoConfig, waitingForExit: Duration = .seconds(10)) throws {
-    let owner = try Owner.load(config)
+    // Without an owner no installation, and so no service, can be this root's.
+    guard let owner = try? Owner.load(config) else { return }
     let store = try OperationStore(root: root(config))
     guard let installation = try store.loadInstallation(), installation.ownerID == owner.id else {
       return
@@ -306,7 +386,7 @@ package struct SessionDescriptor: Codable, Sendable {
       .init(
         executable: ssh,
         arguments: managementSSHArguments(alias: sshAlias, agent: agentPath, .relay),
-        environment: SSHClient.transportEnvironment(environment), deadline: .seconds(0)),
+        environment: SSHClient.transportEnvironment(environment), deadline: .unbounded),
       preamble: preamble)
     if case .exited(let code) = termination { return code }
     return 1
@@ -323,11 +403,11 @@ extension HostService {
   ) throws -> Int32 {
     let request = ProcessRunner.Request(
       executable: ssh, arguments: managementSSHArguments(alias: alias, agent: agent, entry),
-      environment: SSHClient.transportEnvironment(environment), deadline: .seconds(0))
+      environment: SSHClient.transportEnvironment(environment), deadline: .unbounded)
     switch entry {
     case .serve:
       // ssh inherits stdio (and stderr, for its own diagnostics).
-      return try ProcessRunner().attached(request, inheritStdin: true, deadline: nil).exitStatus
+      return try ProcessRunner().attached(request, inheritStdin: true).exitStatus
     case .relay:
       guard let preamble = Socket.readLine(input, limit: RelayPreamble.maxBytes) else {
         throw HostError("missing relay preamble")

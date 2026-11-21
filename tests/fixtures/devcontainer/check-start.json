@@ -128,24 +128,10 @@
     },
     {
       "key": "mounts",
-      "status": "invalid",
+      "status": "unsupported",
       "source": "devcontainer",
-      "value": "{\"source\":\"v\",\"target\":\"/c\",\"type\":\"volume\"}",
-      "note": "unsupported mount type 'volume' (iso supports 'bind' only in v1)"
-    },
-    {
-      "key": "mounts",
-      "status": "invalid",
-      "source": "devcontainer",
-      "value": "/nonexistent:/x",
-      "note": "Mount host path does not exist: /nonexistent"
-    },
-    {
-      "key": "mounts",
-      "status": "applied",
-      "source": "devcontainer",
-      "value": "/private/tmp->/b",
-      "note": ""
+      "value": "3 entries",
+      "note": "not applied; iso copies only the project (use --mount HOST[:GUEST] for a one-time copy)"
     },
     {
       "key": "remoteUser",

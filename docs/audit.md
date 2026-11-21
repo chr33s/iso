@@ -139,7 +139,8 @@ holds owner-only bounded JSONL segments (`seg-<first sequence>.jsonl`, 4 MiB),
 `journal.json`, one `checkpoint.json`, `capture-degraded.json` while capture is
 refused, and the `.lock` / `.capture-degraded.lock` files. Writers append under
 the store lock and wait at most two seconds for it; a record they cannot place
-is counted as refused. Readers take no lock. Files are opened without following symlinks and parsed
+is counted as refused. Readers take no lock. A follower decodes each segment's bytes once and
+then only what was appended since its last poll. Files are opened without following symlinks and parsed
 with size bounds.
 
 Retention keeps up to **7 days and 128 MiB** (checkpoint headroom included);
@@ -151,9 +152,10 @@ leaves redundant segments that readers skip. A run whose last event is older
 than 7 days expires as a whole with its detail and is counted in
 `coverage.retained.expired_runs`; a run kept by the size budget alone keeps its
 summary (`opener_retained: false`). A run with any event still retained is
-never expired. At most 4096 run summaries and 64 gaps are kept in the
-checkpoint; past that the oldest runs expire (counted) and the oldest gaps are
-dropped. If a checkpoint cannot be published, valid history is kept and new
+never expired. At most 4096 run summaries, and no more than fit the
+checkpoint's 8 MiB headroom, are kept, and at most 64 gaps; past that the
+oldest runs expire (counted) and the oldest gaps are dropped. A run expired by
+these bounds can still have retained events; they no longer join a summary. If a checkpoint cannot be published, valid history is kept and new
 capture is refused (degraded) instead.
 
 Failure rules:

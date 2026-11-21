@@ -285,7 +285,10 @@ extension MCPServer {
       if !args.isEmpty { members.append(("args", .array(args.map(OrderedJSON.string)))) }
       if !env.isEmpty {
         let pairs = Self.sorted(Dictionary(uniqueKeysWithValues: env.map { ($0.rawValue, $1) }))
-        members.append(("env", .object(.init(pairs.map { ($0, .string($1.rawValue)) }))))
+        // Claude sets `env` values literally but expands `${NAME}` when it starts
+        // the server, so each key reads the named variable from Claude's session.
+        // The name is a validated identifier; no value is written.
+        members.append(("env", .object(.init(pairs.map { ($0, .string("${\($1.rawValue)}")) }))))
       }
       return .object(.init(members))
     case .http(let url, let headers): return Self.remoteJSON("http", url, headers)
@@ -306,28 +309,29 @@ extension MCPServer {
     return .object(.init(members))
   }
 
-  /// The Codex `[mcp_servers.<name>]` table.
-  var toml: TOMLValue {
+  /// The Codex `[mcp_servers.<name>]` table. Codex infers the transport from
+  /// `command` or `url` and reads headers from `http_headers`; it has no SSE
+  /// transport, which configuration loading refuses for `codex.mcp_servers`.
+  func codexTOML(name: String) throws(HostError) -> TOMLValue {
     switch self {
     case .stdio(let command, let args, let env):
       var table = TOMLTable([("command", .string(command))])
       if !args.isEmpty { table["args"] = .array(args.map(TOMLValue.string)) }
+      // Codex's `env` sets literal values; `env_vars` passes the session's own
+      // variable through. Configuration loading allows only same-name mappings.
       if !env.isEmpty {
-        table["env"] = .table(TOMLTable(env.map { ($0.rawValue, .string($1.rawValue)) }))
+        table["env_vars"] = .array(env.values.sorted().map { .string($0.rawValue) })
       }
       return .table(table)
-    case .http(let url, let headers): return Self.remoteTOML("http", url, headers)
-    case .sse(let url, let headers): return Self.remoteTOML("sse", url, headers)
+    case .http(let url, let headers):
+      var table = TOMLTable([("url", .string(Self.urlText(url)))])
+      if !headers.isEmpty {
+        table["http_headers"] = .table(TOMLTable(headers.map { ($0, .string($1.expose())) }))
+      }
+      return .table(table)
+    case .sse:
+      throw HostError(
+        "Codex MCP server '\(name)' uses SSE, which Codex cannot register; use \"type\": \"http\"")
     }
-  }
-
-  static func remoteTOML(_ kind: String, _ url: URL, _ headers: [String: Secret<String>])
-    -> TOMLValue
-  {
-    var table = TOMLTable([("type", .string(kind)), ("url", .string(urlText(url)))])
-    if !headers.isEmpty {
-      table["headers"] = .table(TOMLTable(headers.map { ($0, .string($1.expose())) }))
-    }
-    return .table(table)
   }
 }

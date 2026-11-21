@@ -16,6 +16,9 @@ set -euo pipefail
 #                                         # (override with SKILL_DIRS=dir1:dir2)
 
 REPO="chr33s/iso"
+# Every gh call names this host: unpinned, gh follows GH_HOST or a sole
+# configured host, which may be a GitHub Enterprise Server.
+PINNED_HOST="github.com"
 BINARY="iso"
 BUNDLE="attestations.jsonl"
 # The only workflow whose attestations count; candidate.yml also attests.
@@ -70,7 +73,7 @@ target_triple() {
 
 latest_version() {
     if has gh; then
-        gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null && return
+        gh release view --repo "${PINNED_HOST}/${REPO}" --json tagName -q .tagName 2>/dev/null && return
     fi
     local url="https://api.github.com/repos/${REPO}/releases/latest"
     # Auth header on stdin (`-H @-`) keeps $GITHUB_TOKEN off argv (/proc, `set -x`).
@@ -89,7 +92,7 @@ download_asset() {
 
     if has gh; then
         info "Downloading ${filename} (via gh)..."
-        gh release download "$VERSION" --repo "$REPO" --pattern "$filename" --dir "$(dirname "$dest")" 2>/dev/null \
+        gh release download "$VERSION" --repo "${PINNED_HOST}/${REPO}" --pattern "$filename" --dir "$(dirname "$dest")" 2>/dev/null \
             && return
         info "gh download failed, falling back to curl..."
     fi
@@ -146,10 +149,10 @@ verify_checksum() {
 verify_attestation() {
     local file="$1"
     if ! has gh; then
-        info "Note: \`gh\` not installed — skipped cryptographic attestation verification."
-        info "The download was verified against the published \`SHA256SUMS\` checksum, which"
-        info "is the same assurance level as most \`curl | bash\` installers. For end-to-end"
-        info "Sigstore verification, install \`gh\` (https://cli.github.com) and re-run, or"
+        info "Note: \`gh\` not installed — skipped Sigstore build-provenance verification."
+        info "The download was verified against \`SHA256SUMS\`, whose signature by a release"
+        info "key listed in this installer was checked. For build provenance as well,"
+        info "install \`gh\` (https://cli.github.com) and re-run, or"
         info "verify manually: \`gh attestation verify <tarball> --repo ${REPO} \\"
         info "  --bundle ${BUNDLE}\` against the ${BUNDLE} asset from the same release."
         return 0
@@ -162,6 +165,7 @@ verify_attestation() {
         --cert-identity "https://github.com/${REPO}/${SIGNER_WORKFLOW}@refs/tags/${VERSION}"
         --source-ref "refs/tags/${VERSION}"
         --deny-self-hosted-runners
+        --hostname "$PINNED_HOST"
     )
     # Prefer the release's bundle: without --bundle, `gh` attaches its stored token, which 403s
     # without org SSO on anonymously readable data. See the `iso update` trust chain in

@@ -57,7 +57,7 @@ package enum CUService {
       r.session = id
       r.binding = binding
     case .frame:
-      let f = try screen.frame(session: req.session)
+      let f = try await screen.frame(session: req.session)
       r.frame = MacFrameInfo(
         frameId: f.id, seq: f.seq, width: screen.width, height: screen.height,
         bootId: f.binding.bootId, guestBoot: f.binding.guestBoot,

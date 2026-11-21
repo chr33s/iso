@@ -309,6 +309,37 @@ private let binding = CUBinding(
   #expect(throws: Never.self) { try v(r) }
 }
 
+/// A guest chooses every integer of an action: the extremes are refused, never
+/// trapped on (`abs(Int.min)` would end the owner and its VM).
+@Test func actionIntegersAtTheirExtremesAreRefusedNotTrapped() {
+  let v = { (r: CUActionRequest) in try r.validated(width: 100, height: 100) }
+  for extreme in [Int.min, Int.min + 1, Int.max] {
+    var r = CUActionRequest(kind: "scroll")
+    r.x = 1
+    r.y = 1
+    r.dx = extreme
+    #expect(throws: SandboxError.self) { try v(r) }
+    r.dx = 1
+    r.dy = extreme
+    #expect(throws: SandboxError.self) { try v(r) }
+    r = CUActionRequest(kind: "click")
+    r.x = 1
+    r.y = 1
+    r.count = extreme
+    #expect(throws: SandboxError.self) { try v(r) }
+    r = CUActionRequest(kind: "key")
+    r.keyCode = extreme
+    #expect(throws: SandboxError.self) { try v(r) }
+  }
+  var r = CUActionRequest(kind: "scroll")
+  r.x = 1
+  r.y = 1
+  r.dx = -CUActionRequest.maxScroll
+  #expect(throws: Never.self) { try v(r) }
+  r.dx = -CUActionRequest.maxScroll - 1
+  #expect(throws: SandboxError.self) { try v(r) }
+}
+
 @Test func handshakeRejectsMalformedHellosAndAMissingHostKey() {
   let nonce = String(repeating: "c", count: 32)
   var h = HelperMessage(type: .enrolled)

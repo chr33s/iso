@@ -183,6 +183,78 @@ private func der(_ tag: UInt8, _ body: [UInt8]) -> [UInt8] {
     #expect(throws: CIError.self) { try auth.jwt() }
   }
 
+  /// Job correlation reads every active run (no first-twenty blind spot),
+  /// lazily: a run's jobs are fetched only until the runner's job is found,
+  /// and each at most once per walk, across an organization's repositories.
+  @Test func jobCorrelationReadsRunsLazilyWithoutABlindSpot() throws {
+    let app = try GitHubTestApp.make()
+    let clock = TestClock()
+    let http = ScriptedGitHubHTTP()
+    http.on { request in
+      guard request.method == .post, request.url.path == "/app/installations/7/access_tokens" else {
+        return nil
+      }
+      return GitHubHTTPResponse(
+        status: 201,
+        body: Array(
+          #"{"token":"ghs_t","expires_at":"\#(isoDate(clock.now() + 3_600))"}"#.utf8))
+    }
+    let repositories = (1...25).map { #"{"id":\#($0),"full_name":"octo/r\#($0)"}"# }
+    http.route(
+      .get, "/installation/repositories",
+      json: #"{"repositories":[\#(repositories.joined(separator: ","))]}"#)
+    http.on { request in
+      let parts = request.url.path.split(separator: "/").map(String.init)
+      guard request.method == .get, parts.count == 5, parts[3] == "actions", parts[4] == "runs"
+      else { return nil }
+      let status = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "status" }?.value
+      // Thirty in-progress runs in octo/demo, one in each organization repository.
+      let count = parts[2] == "demo" ? 30 : 1
+      let base = parts[2] == "demo" ? 0 : (Int(parts[2].dropFirst()) ?? 0) * 100
+      let runs = (1...count).map { #"{"id":\#(base + $0),"status":"in_progress"}"# }
+      let body = status == "in_progress" ? runs.joined(separator: ",") : ""
+      return GitHubHTTPResponse(status: 200, body: Array(#"{"workflow_runs":[\#(body)]}"#.utf8))
+    }
+    http.on { request in
+      let parts = request.url.path.split(separator: "/").map(String.init)
+      guard request.method == .get, parts.count == 7, parts[6] == "jobs", let run = Int(parts[5])
+      else { return nil }
+      return GitHubHTTPResponse(
+        status: 200,
+        body: Array(
+          #"{"jobs":[{"id":\#(run * 10),"run_id":\#(run),"status":"in_progress","runner_name":"runner-\#(run)"}]}"#
+            .utf8))
+    }
+    let api = GitHubAPI(http: http, sleeper: RecordingGitHubSleeper())
+    let client = GitHubInstallationClient(
+      api: api,
+      auth: GitHubAppAuth(app: app.record, credentials: app.credentials, api: api, clock: clock),
+      installationID: 7)
+    let runners = InstallationRunnerService(client: client)
+    func reads(_ suffix: String) -> Int {
+      http.requests.filter { $0.url.path.hasSuffix(suffix) }.count
+    }
+
+    let search = try runners.activeJobs(scope: .repository(try RepositoryName("octo/demo")))
+    #expect(reads("/jobs") == 0)
+    #expect(try search.first { $0.runnerName == "runner-2" }?.id == 20)
+    #expect(reads("/jobs") == 2)
+    #expect(try search.first { $0.runnerName == "runner-27" }?.id == 270)
+    #expect(reads("/jobs") == 27)
+    #expect(try search.first { $0.runnerName == "runner-1" }?.id == 10)
+    #expect(reads("/jobs") == 27)
+    #expect(try search.first { $0.runnerName == "nobody" } == nil)
+    #expect(reads("/jobs") == 30)
+
+    // Past the twentieth repository; later repositories are never listed.
+    let organization = try runners.activeJobs(scope: .organization("octo", runnerGroup: "ci"))
+    #expect(
+      try organization.first { $0.runnerName == "runner-2201" }?.repository.rawValue == "octo/r22")
+    #expect(reads("/octo/r22/actions/runs") == 2)
+    #expect(reads("/octo/r23/actions/runs") == 0)
+  }
+
   @Test func credentialReferencesAreValidated() throws {
     let store = MemoryCredentialStore()
     #expect(throws: CIError.self) { try store.store([1], reference: "../escape key") }
@@ -193,8 +265,107 @@ private func der(_ tag: UInt8, _ body: [UInt8]) -> [UInt8] {
   }
 }
 
+/// A one-request loopback HTTP server that answers with `head`, then
+/// streams `bodyBytes` bytes and records how many it could send before the
+/// client closed the connection.
+private final class StreamingLoopbackServer: @unchecked Sendable {
+  let port: UInt16
+  let sent = Mutex(0)
+  let finished = DispatchSemaphore(value: 0)
+
+  init(head: String, bodyBytes: Int) throws {
+    let listener = socket(AF_INET, SOCK_STREAM, 0)
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let bound = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    guard listener >= 0, bound == 0, listen(listener, 1) == 0 else {
+      throw CIError(.internalError, "cannot listen on loopback")
+    }
+    var actual = sockaddr_in()
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &actual) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &length) }
+    }
+    port = UInt16(bigEndian: actual.sin_port)
+    Thread.detachNewThread { [self] in
+      defer {
+        close(listener)
+        finished.signal()
+      }
+      let client = accept(listener, nil, nil)
+      guard client >= 0 else { return }
+      defer { close(client) }
+      var on: Int32 = 1
+      setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+      var request: [UInt8] = []
+      var chunk = [UInt8](repeating: 0, count: 4_096)
+      while !request.suffix(4).elementsEqual([13, 10, 13, 10]) {
+        let count = chunk.withUnsafeMutableBytes { read(client, $0.baseAddress, $0.count) }
+        guard count > 0 else { return }
+        request += chunk[0..<count]
+      }
+      guard writeAll(client, Array(head.utf8)) else { return }
+      let block = [UInt8](repeating: 0x61, count: 64 << 10)
+      var total = 0
+      while total < bodyBytes {
+        let part = Array(block.prefix(min(block.count, bodyBytes - total)))
+        guard writeAll(client, part) else { return }
+        total += part.count
+        sent.withLock { $0 = total }
+      }
+    }
+  }
+
+  var url: URL { URL(string: "http://127.0.0.1:\(port)/repos/octo/demo")! }
+}
+
 @Suite struct GitHubAPITests {
   private let token = RedactedSecret("ghs_test")
+
+  /// The transport stops receiving once a reply passes its byte cap: a
+  /// stream far larger than the cap is aborted, not buffered and then
+  /// refused; a declared oversized length is refused before its body; a
+  /// reply within the cap arrives whole.
+  @Test func responseBodiesAreCappedWhileTheyStream() throws {
+    let total = 256 << 20
+    let streaming = try StreamingLoopbackServer(
+      head: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+      bodyBytes: total)
+    let transport = URLSessionGitHubHTTP()
+    do {
+      _ = try transport.send(
+        GitHubHTTPRequest(method: .get, url: streaming.url, maxResponseBytes: 1 << 20))
+      Issue.record("an over-cap stream was accepted")
+    } catch {
+      #expect(error.code == .githubUnavailable)
+      #expect(error.message.contains("size limit"))
+    }
+    #expect(streaming.finished.wait(timeout: .now() + 60) == .success)
+    #expect(streaming.sent.withLock { $0 } < total / 2)
+
+    let declared = try StreamingLoopbackServer(
+      head: "HTTP/1.1 200 OK\r\nContent-Length: \(64 << 20)\r\nConnection: close\r\n\r\n",
+      bodyBytes: 0)
+    #expect(throws: CIError.self) {
+      _ = try transport.send(
+        GitHubHTTPRequest(method: .get, url: declared.url, maxResponseBytes: 1 << 20))
+    }
+    _ = declared.finished.wait(timeout: .now() + 60)
+
+    let small = try StreamingLoopbackServer(
+      head: "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n",
+      bodyBytes: 1_000)
+    let reply = try transport.send(
+      GitHubHTTPRequest(method: .get, url: small.url, maxResponseBytes: 1_000))
+    #expect(reply.status == 200 && reply.body.count == 1_000)
+    _ = small.finished.wait(timeout: .now() + 60)
+  }
 
   @Test func paginationIsCappedAndSameOriginOnly() throws {
     let http = ScriptedGitHubHTTP()

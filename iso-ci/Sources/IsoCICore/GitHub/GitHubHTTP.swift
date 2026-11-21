@@ -30,16 +30,24 @@ package struct GitHubHTTPRequest: Sendable {
   package var headers: [String: String]
   package var body: [UInt8]?
   package var timeoutSeconds: Double
+  /// The most response-body bytes the transport receives; past it the
+  /// transfer is aborted and the request fails.
+  package var maxResponseBytes: Int
+
+  /// Every API and Actions service reply fits; only archive downloads ask
+  /// for more.
+  package static let defaultMaxResponseBytes = 8 << 20
 
   package init(
     method: GitHubHTTPMethod, url: URL, headers: [String: String] = [:], body: [UInt8]? = nil,
-    timeoutSeconds: Double = 30
+    timeoutSeconds: Double = 30, maxResponseBytes: Int = Self.defaultMaxResponseBytes
   ) {
     self.method = method
     self.url = url
     self.headers = headers
     self.body = body
     self.timeoutSeconds = timeoutSeconds
+    self.maxResponseBytes = maxResponseBytes
   }
 }
 
@@ -70,10 +78,12 @@ package struct GitHubThreadSleeper: GitHubSleeper {
   package func sleep(seconds: Double) { Thread.sleep(forTimeInterval: seconds) }
 }
 
-/// URLSession transport with a bounded response body. Redirects are not
-/// followed, so an Authorization header never reaches another origin.
+/// URLSession transport that streams the response body and aborts the
+/// transfer once it passes the request's `maxResponseBytes` (a declared
+/// larger `Content-Length` is refused before any body arrives), so no reply
+/// is held in memory beyond that bound. Redirects are not followed, so an
+/// Authorization header never reaches another origin.
 package final class URLSessionGitHubHTTP: GitHubHTTP {
-  package static let maxBody = 8 << 20
   private let session: URLSession
 
   private final class NoRedirect: NSObject, URLSessionTaskDelegate {
@@ -83,6 +93,64 @@ package final class URLSessionGitHubHTTP: GitHubHTTP {
       newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
     ) {
       completionHandler(nil)
+    }
+  }
+
+  /// One task's receiver: accumulates at most `limit` body bytes.
+  private final class BoundedReceiver: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    struct Received {
+      var response: HTTPURLResponse?
+      var body: [UInt8] = []
+      var exceeded = false
+      var error: (any Error)?
+    }
+
+    let limit: Int
+    let received = Mutex(Received())
+    let done = DispatchSemaphore(value: 0)
+
+    init(limit: Int) { self.limit = limit }
+
+    func urlSession(
+      _ session: URLSession, task: URLSessionTask,
+      willPerformHTTPRedirection response: HTTPURLResponse,
+      newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+      completionHandler(nil)
+    }
+
+    func urlSession(
+      _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+      completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+      let declared = response.expectedContentLength
+      let exceeded = declared > Int64(limit)
+      received.withLock {
+        $0.response = response as? HTTPURLResponse
+        $0.exceeded = exceeded
+      }
+      completionHandler(exceeded ? .cancel : .allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+      let exceeded = received.withLock { state -> Bool in
+        guard !state.exceeded else { return true }
+        guard state.body.count + data.count <= limit else {
+          state.exceeded = true
+          state.body = []
+          return true
+        }
+        state.body += data
+        return false
+      }
+      if exceeded { dataTask.cancel() }
+    }
+
+    func urlSession(
+      _ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?
+    ) {
+      received.withLock { $0.error = error }
+      done.signal()
     }
   }
 
@@ -99,42 +167,31 @@ package final class URLSessionGitHubHTTP: GitHubHTTP {
     urlRequest.httpMethod = request.method.rawValue
     for (name, value) in request.headers { urlRequest.setValue(value, forHTTPHeaderField: name) }
     if let body = request.body { urlRequest.httpBody = Data(body) }
-    let outcome = Mutex<Result<GitHubHTTPResponse, CIError>?>(nil)
-    let done = DispatchSemaphore(value: 0)
-    let task = session.dataTask(with: urlRequest) { data, response, error in
-      let result: Result<GitHubHTTPResponse, CIError>
-      if let error {
-        result = .failure(
-          CIError(
-            .githubUnavailable, "GitHub request failed: \((error as NSError).localizedDescription)")
-        )
-      } else if let http = response as? HTTPURLResponse {
-        let bytes = data.map(Array.init) ?? []
-        if bytes.count > Self.maxBody {
-          result = .failure(CIError(.githubUnavailable, "GitHub response exceeded its size limit"))
-        } else {
-          var headers: [String: String] = [:]
-          for (key, value) in http.allHeaderFields {
-            if let key = key as? String, let value = value as? String { headers[key] = value }
-          }
-          result = .success(
-            GitHubHTTPResponse(status: http.statusCode, headers: headers, body: bytes))
-        }
-      } else {
-        result = .failure(CIError(.githubUnavailable, "GitHub returned no HTTP response"))
-      }
-      outcome.withLock { $0 = result }
-      done.signal()
-    }
+    let receiver = BoundedReceiver(limit: max(0, request.maxResponseBytes))
+    let task = session.dataTask(with: urlRequest)
+    task.delegate = receiver
     task.resume()
-    if done.wait(timeout: .now() + request.timeoutSeconds + 5) == .timedOut {
+    if receiver.done.wait(timeout: .now() + request.timeoutSeconds + 5) == .timedOut {
       task.cancel()
       throw CIError(.githubUnavailable, "GitHub request timed out")
     }
-    guard let result = outcome.withLock({ $0 }) else {
-      throw CIError(.githubUnavailable, "GitHub request produced no result")
+    let received = receiver.received.withLock { $0 }
+    // Checked first: an aborted transfer also completes with a cancellation.
+    guard !received.exceeded else {
+      throw CIError(.githubUnavailable, "GitHub response exceeded its size limit")
     }
-    return try result.get()
+    if let error = received.error {
+      throw CIError(
+        .githubUnavailable, "GitHub request failed: \((error as NSError).localizedDescription)")
+    }
+    guard let http = received.response else {
+      throw CIError(.githubUnavailable, "GitHub returned no HTTP response")
+    }
+    var headers: [String: String] = [:]
+    for (key, value) in http.allHeaderFields {
+      if let key = key as? String, let value = value as? String { headers[key] = value }
+    }
+    return GitHubHTTPResponse(status: http.statusCode, headers: headers, body: received.body)
   }
 }
 

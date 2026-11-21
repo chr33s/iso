@@ -176,7 +176,8 @@ package struct DevcontainerResolver: Sendable {
     if !isLocal { translation.applied?.source = .remoteContents }
     translation.report.ignoredPaths = losers
 
-    if options.input == .discover && !options.dryRun {
+    let prompts = options.input == .discover && !options.dryRun
+    if prompts {
       guard prompter.isInteractive else {
         if isLocal {
           throw HostFailure(
@@ -193,8 +194,20 @@ package struct DevcontainerResolver: Sendable {
           "Found \(displayPath) but stdin is not a TTY.\nRun interactively to confirm the remote file, pass --no-devcontainer to ignore it, or pass --devcontainer <local-path> to apply an explicit file.\niso reads a subset of devcontainer.json — see docs/devcontainer.md for the supported keys."
         )
       }
-      // The preview: every requested workspace, mount, environment, port,
-      // resource and command effect. Accepting it authorizes guest setup
+    }
+    // Features are resolved before any acceptance, so the preview names the
+    // digest and `install.sh` hash that setup would run.
+    resolveFeatureRequests(&translation)
+    if !options.dryRun && !translation.featureFailures.isEmpty {
+      errorSink(translation.report.render() + "\n")
+      translation.previewed = true
+      throw HostError(
+        "\(displayPath) requests devcontainer Features that cannot be installed: \(translation.featureFailures.joined(separator: ", ")) (see the report above). Fix or remove them, or pass --no-devcontainer; setup did not start."
+      )
+    }
+    if prompts {
+      // The preview: every requested workspace, environment, port, resource,
+      // Feature and command effect. Accepting it authorizes guest setup
       // only; it grants no host capability beyond the configuration's.
       errorSink(translation.report.render() + "\n")
       translation.previewed = true
@@ -214,8 +227,6 @@ package struct DevcontainerResolver: Sendable {
         return nil
       }
     }
-
-    resolveFeatureRequests(&translation)
     return translation
   }
 
@@ -257,6 +268,7 @@ package struct DevcontainerResolver: Sendable {
         )
         translation.ociFeatures.append(feature)
       case .failure(let error):
+        translation.featureFailures.append(request.rawID)
         translation.report.push(
           key, .invalid, .devcontainer, request.rawID,
           "failed to resolve OCI feature: \(oneLine(error))")

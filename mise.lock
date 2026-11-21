@@ -87,7 +87,20 @@ version = "6.4.0"
 backend = "core:swift"
 specifiers = ["6.4.0"]
 
+[tools.swift.options]
+swift_platform = "ubuntu24.04"
+
+[tools.swift."platforms.linux-x64"]
+checksum = "sha256:69f7b2b4dbce6090b6c92194b71149a057e16269093b5a9dded38afc4a05094e"
+url = "https://download.swift.org/swift-6.4.0-release/ubuntu2404/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-ubuntu24.04.tar.gz"
+
+[[tools.swift]]
+version = "6.4.0"
+backend = "core:swift"
+specifiers = ["6.4.0"]
+
 [tools.swift."platforms.macos-arm64"]
+checksum = "sha256:8fd03185b98fe27f54a54631c2449decf75d5b466ce8e34abbd414141063c6aa"
 url = "https://download.swift.org/swift-6.4.0-release/xcode/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-osx.pkg"
 
 [[tools.uv]]

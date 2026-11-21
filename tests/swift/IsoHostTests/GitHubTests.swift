@@ -282,7 +282,9 @@ private let assignmentConfig = #"""
       #expect(text.contains("-w <redacted> exited with exit status: 36"))
       #expect(!text.contains("SYNTHETIC"))
     }
-    keychain.delete(KeychainReference(service: "iso-github-pat", account: "o-r"))
+    #expect(
+      keychain.delete(KeychainReference(service: "iso-github-pat", account: "o-r"))
+        == .failed("security delete-generic-password exited with exit status: 36"))
     #expect(stubs.calls("security").last == "delete-generic-password -s iso-github-pat -a o-r")
   }
 
@@ -468,14 +470,51 @@ private let assignmentConfig = #"""
     #expect(!logs.text.contains("SYNTH"))
   }
 
-  @Test func hostTokenSelectionPrefersGhAndTrims() {
-    #expect(GitHubTokens.selectHostToken(gh: "gh-token", env: "env-token") == "gh-token")
-    #expect(GitHubTokens.selectHostToken(gh: nil, env: "env-token") == "env-token")
-    #expect(GitHubTokens.selectHostToken(gh: "   \n", env: "env-token") == "env-token")
-    #expect(GitHubTokens.selectHostToken(gh: "  gh-token\n", env: nil) == "gh-token")
-    #expect(GitHubTokens.selectHostToken(gh: nil, env: "\tenv-token  ") == "env-token")
-    #expect(GitHubTokens.selectHostToken(gh: nil, env: nil) == nil)
-    #expect(GitHubTokens.selectHostToken(gh: " ", env: "\n") == nil)
+  @Test func hostTokenSelectionPrefersGitHubTokenAndTrims() {
+    let select = { (env: String?, gh: String?) in
+      GitHubSourceAuth.hostToken(env: env, gh: { gh })
+    }
+    #expect(select("env-token", "gh-token") == "env-token")
+    #expect(select(nil, "gh-token") == "gh-token")
+    #expect(select("   \n", "gh-token") == "gh-token")
+    #expect(select(nil, "  gh-token\n") == "gh-token")
+    #expect(select("\tenv-token  ", nil) == "env-token")
+    #expect(select(nil, nil) == nil)
+    #expect(select("\n", " ") == nil)
+    // `gh` is not run when `GITHUB_TOKEN` already answers.
+    #expect(
+      GitHubSourceAuth.hostToken(
+        env: "env-token",
+        gh: {
+          Issue.record("ran gh")
+          return nil
+        }) == "env-token")
+  }
+
+  /// `gh auth token` without `--hostname` answers for `GH_HOST` or a sole
+  /// configured host; the stub, like gh, hands out the Enterprise token then.
+  @Test func ambientGhTokensAreGitHubDotComsOnly() throws {
+    let stubs = try Stubs()
+    defer { stubs.remove() }
+    try stubs.script(
+      "gh",
+      #"""
+      printf '%s\n' "$*" >> "$(dirname "$0")/gh.argv"
+      case " $* " in
+        *" --hostname github.com "*) echo gho_GITHUB_DOT_COM ;;
+        *) echo ghe_ENTERPRISE_SECRET ;;
+      esac
+      """#)
+    let environment = stubs.environment.merging(["GH_HOST": "ghe.example.invalid"]) { $1 }
+    let tokens = GitHubTokens(
+      environment: environment, diagnostics: Diagnostics(verbosity: 0, sink: { _ in }))
+    #expect(try tokens.guestToken(.auto, repo: nil)?.expose() == "gho_GITHUB_DOT_COM")
+    #expect(
+      try tokens.cloneToken(.auto, url: "https://github.com/else/where", assigned: nil)?.expose()
+        == "gho_GITHUB_DOT_COM")
+    #expect(HostTools(environment: environment).ghAuthToken()?.expose() == "gho_GITHUB_DOT_COM")
+    #expect(stubs.calls("gh").allSatisfy { $0 == "auth token --hostname github.com" })
+    #expect(stubs.calls("gh").count == 3)
   }
 
   @Test func cloneTokensHonourAssignmentThenPATThenOnlyExplicitAmbientModes() throws {
@@ -512,7 +551,11 @@ private let assignmentConfig = #"""
       #expect(try tokens.cloneToken(mode, url: other, assigned: nil) == nil)
     }
     #expect(try tokens.cloneToken(.env, url: other, assigned: nil)?.expose() == "host-token")
-    #expect(try tokens.cloneToken(.auto, url: other, assigned: nil) != nil)
+    // `auto` takes `GITHUB_TOKEN` before `gh`, as the session token does.
+    try stubs.write("gho_gh_login", "gh.token")
+    #expect(try tokens.cloneToken(.auto, url: other, assigned: nil)?.expose() == "host-token")
+    #expect(try tokens.guestToken(.auto, repo: nil)?.expose() == "host-token")
+    #expect(stubs.calls("gh").isEmpty)
     #expect(GitHubSourceAuth.ambient(.env) == (false, true))
     #expect(GitHubSourceAuth.ambient(nil) == (false, false))
   }
@@ -950,6 +993,7 @@ private let assignmentConfig = #"""
     let text = #"""
       {"github": {"mode": "pat", "pat": {
         "acme/kc": {"token": "cmd:security find-generic-password -s iso-github-pat -a legacy-kc -w"},
+        "acme/gone": {"token": "cmd:security find-generic-password -s iso-github-pat -a acme/gone -w"},
         "acme/other": {"token": "cmd:security find-generic-password -s someone-else -a acme/other -w"},
         "acme/op": {"token": "cmd:op item get 'acme' --fields password --reveal"},
         "acme/file": {"token": "cmd:cat \#(stubs.root)/github-pat/acme-file.txt"}}}}
@@ -964,14 +1008,34 @@ private let assignmentConfig = #"""
     let console = ScriptedConsole([])
     let github = host(stubs, console: console, logs: logs)
     var cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
+    // A failed delete keeps the entry, so the token is never left unreferenced.
+    try stubs.write("51", "security.exit")
+    let failure = try #require(throws: HostError.self) {
+      try github.forgetPAT(cfg, target: target, repo: slug("acme/kc"))
+    }
+    #expect(failure.message.contains("Could not delete the Keychain item for 'acme/kc'"))
+    #expect(
+      failure.message.contains(
+        "security delete-generic-password -s iso-github-pat -a legacy-kc"))
+    cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
+    #expect(cfg.github?.patEntry(slug("acme/kc")) != nil)
+    #expect(console.output.text.isEmpty)
+    try FileManager.default.removeItem(atPath: stubs.bin + "/security.exit")
+    try FileManager.default.removeItem(atPath: stubs.bin + "/security.argv")
     try github.forgetPAT(cfg, target: target, repo: slug("acme/kc"))
     #expect(stubs.calls("security") == ["delete-generic-password -s iso-github-pat -a legacy-kc"])
     #expect(console.output.text.hasPrefix("Removed PAT entry for acme/kc.\nnote: the token itself"))
+    // An item already gone (exit 44, errSecItemNotFound) is not a failure.
+    try stubs.write("44", "security.exit")
+    cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
+    try github.forgetPAT(cfg, target: target, repo: slug("acme/gone"))
+    #expect(logs.text.contains("No Keychain item was stored for 'acme/gone'"))
+    try FileManager.default.removeItem(atPath: stubs.bin + "/security.exit")
     for repo in ["acme/op", "acme/file", "acme/other"] {
       cfg = try ConfigLoader.load(.file(path: path, format: .jsonc), environment: .empty)
       try github.forgetPAT(cfg, target: target, repo: slug(repo))
     }
-    #expect(stubs.calls("security").count == 1)
+    #expect(stubs.calls("security").count == 2)
     #expect(logs.text.contains("Storage backend not recognised"))
     #expect(
       FileManager.default.fileExists(atPath: secretFile), "opaque references are never deleted")

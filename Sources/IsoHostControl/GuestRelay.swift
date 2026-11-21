@@ -112,15 +112,18 @@ package struct RelayPreamble: Sendable, Equatable {
 
 extension HostSupervisor {
   /// Serves one relay connection: preamble, admission against a live grant, status line,
-  /// then raw bytes to the endpoint from native proof. Closes `client`.
-  package func serveRelay(client: Int32) {
+  /// then raw bytes to the endpoint from native proof. Closes `client`. A preamble not
+  /// received within `preambleDeadline` ends the connection; the admitted stream has none.
+  package func serveRelay(client: Int32, preambleDeadline: Duration? = nil) {
     defer { close(client) }
     func status(_ error: HostControlError?) -> Bool {
       var b = WireBuilder()
       if let error { b.set("error", error.wire) } else { b.set("ok", true) }
       return (try? AtomicFile.writeAll(client, HostWire.frame(b.value), "relay")) != nil
     }
+    Socket.setReceiveTimeout(client, preambleDeadline)
     guard let line = Socket.readLine(client, limit: RelayPreamble.maxBytes) else { return }
+    Socket.setReceiveTimeout(client, nil)
     let guest: ProcessRunner.PipedChild
     let session: SessionID
     do throws(HostControlError) {
@@ -168,7 +171,7 @@ package enum GuestConnector {
         return try ProcessRunner().piped(
           .init(
             executable: connector.executable, arguments: connector.arguments, environment: [:],
-            deadline: .seconds(0)))
+            deadline: .unbounded))
       } catch {
         throw HostControlError(.hostUnreachable, "the guest connector could not start")
       }
@@ -185,7 +188,7 @@ package enum GuestConnector {
       return try ProcessRunner().piped(
         .init(
           executable: nc, arguments: ["-G", "10", address, port], environment: [:],
-          deadline: .seconds(0)))
+          deadline: .unbounded))
     } catch {
       throw HostControlError(.hostUnreachable, "the guest connector could not start")
     }
@@ -194,9 +197,41 @@ package enum GuestConnector {
 
 package enum Socket {
   /// Reads one `\n`-terminated line (without it), at most `limit` bytes.
-  /// Nil on EOF, error or an oversized line.
+  /// Nil on EOF, error, a receive timeout or an oversized line. Never consumes
+  /// a byte past the newline (a relay's raw stream may follow it): a socket is
+  /// peeked in chunks and consumed up to the newline; any other descriptor is
+  /// read a byte at a time.
   package static func readLine(_ fd: Int32, limit: Int) -> [UInt8]? {
     var line: [UInt8] = []
+    var chunk = [UInt8](repeating: 0, count: max(1, min(limit, RelayRegistry.chunk)))
+    while true {
+      let want = min(chunk.count, limit - line.count)
+      let peeked = chunk.withUnsafeMutableBytes { recv(fd, $0.baseAddress, want, MSG_PEEK) }
+      if peeked < 0 {
+        if errno == EINTR { continue }
+        if errno == ENOTSOCK { return readLineByByte(fd, limit: limit, prefix: line) }
+        return nil
+      }
+      guard peeked > 0 else { return nil }
+      let newline = chunk[0..<peeked].firstIndex(of: UInt8(ascii: "\n"))
+      let take = newline.map { $0 + 1 } ?? peeked
+      var consumed = 0
+      while consumed < take {
+        let count = chunk[consumed...].withUnsafeMutableBytes {
+          recv(fd, $0.baseAddress, take - consumed, 0)
+        }
+        if count < 0 && errno == EINTR { continue }
+        guard count > 0 else { return nil }
+        consumed += count
+      }
+      if let newline { return line + chunk[0..<newline] }
+      line += chunk[0..<peeked]
+      guard line.count < limit else { return nil }
+    }
+  }
+
+  private static func readLineByByte(_ fd: Int32, limit: Int, prefix: [UInt8]) -> [UInt8]? {
+    var line = prefix
     var byte: UInt8 = 0
     while true {
       let count = read(fd, &byte, 1)
@@ -206,6 +241,14 @@ package enum Socket {
       line.append(byte)
       guard line.count < limit else { return nil }
     }
+  }
+
+  /// `SO_RCVTIMEO` for every later read on `fd`; nil clears it.
+  package static func setReceiveTimeout(_ fd: Int32, _ timeout: Duration?) {
+    let (seconds, attoseconds) = (timeout ?? .zero).components
+    var value = timeval(
+      tv_sec: Int(seconds), tv_usec: Int32(attoseconds / 1_000_000_000_000))
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
   }
 
   package static func splice(_ a: Int32, _ b: Int32) {

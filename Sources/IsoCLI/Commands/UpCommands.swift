@@ -72,7 +72,7 @@ func applyEgressOverride(_ config: IsoConfig, _ options: EgressOptions) throws -
   guard options.isSet else { return config }
   let resolved = options.egress ?? config.egress
   if !options.allowHost.isEmpty, resolved != .filtered {
-    throw HostError(
+    throw UsageError(
       "--allow-host requires an effective filtered egress; it does not change none or open to filtered"
     )
   }
@@ -231,8 +231,7 @@ struct Start: MachineCommand {
     let guestUser = Devcontainer.persistedGuestUser(lifecycle.config, image: .default)
     let inputs = DevcontainerTranslatorInputs(
       cliPostStart: boot.postStart, cliGuestEnvKeys: boot.guestEnvironment.map(\.0),
-      cliForwardPorts: boot.forwardPort, persistedGuestUser: guestUser,
-      cliWorkspaceOrGitRepo: workspace != nil)
+      cliForwardPorts: boot.forwardPort, persistedGuestUser: guestUser)
     let options = DevcontainerOptions(
       input: devcontainerArguments.input, dryRun: true, workspace: workspace,
       githubAuth: lifecycle.config.github,

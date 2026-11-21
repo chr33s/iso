@@ -276,6 +276,36 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   #expect(error.message.contains("needs the openai credential proxy"))
 }
 
+/// `iso run --rm` cleanup forgets the disposable VM's own `iso proxy setup
+/// --vm` item once the instance is destroyed.
+@Test func disposableCleanupForgetsTheVMsOwnProxyCredential() throws {
+  let root = try scratchDirectory("workflow-rm-keychain")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(root)
+  var workflow = try runWorkflow(lifecycle, workspace: root, remove: true)
+  let owner = try Owner.loadOrInit(lifecycle.config)
+  let record = try RunSessionStore.create(
+    lifecycle.config, name: try InstanceName("disposable"), workspace: root, owner: owner)
+  let instance = try Instance.allocate(
+    lifecycle.config, name: record.intendedName, image: .default, workspacePath: root)
+  try RunSessionStore.writeMarker(instance, record)
+  try ProxyState.setOverride(
+    instance, provider: .openai,
+    credential: ProxyProvisioning.reference(service: "iso-openai-disposable", account: "openai"),
+    auth: .bearer)
+  let security = root + "/security"
+  try writeFile(
+    security,
+    "#!/bin/sh\n[ -d \"\(instance.directory)\" ] && echo still-there >> \"\(root)/argv\"\nprintf '%s\\n' \"$*\" >> \"\(root)/argv\"\n",
+    mode: 0o755)
+  workflow.keychain = Keychain(security: security, environment: [:])
+  var session: RunSessionRecord? = record
+  try workflow.finishCleanup(&session, agent: "exited 0", report: { _ in })
+  #expect(!FileManager.default.fileExists(atPath: instance.directory))
+  #expect(
+    readFile(root + "/argv") == "delete-generic-password -s iso-openai-disposable -a openai\n")
+}
+
 /// READY-01 for `iso run --rm`: the selected agent's own broker is required
 /// before the disposable VM is created, not after it boots.
 @Test func aDisposableRunRefusesAnUnbrokeredAgentBeforeAnyVM() throws {

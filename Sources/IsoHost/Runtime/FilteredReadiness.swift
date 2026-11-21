@@ -42,7 +42,7 @@ enum FilteredReadiness {
     func persistVerificationKey(_ instance: Instance) throws {
       try AtomicFile.write(
         Array(verificationKey.encoded.utf8), to: FilteredReadiness.keyPath(instance),
-        mode: .atMost(0o600))
+        mode: .atMost(0o600), parents: .mustExist)
     }
   }
 

@@ -61,6 +61,7 @@ struct HooksInstall: ParsableCommand {
         "snapshot": .string(snapshot.rawValue), "timeout_seconds": .integer(Int64(timeout)),
       ]
       if let hooksPath = plan.setsHooksPath { value["sets_hooks_path"] = .string(hooksPath) }
+      if !plan.activates.isEmpty { value["enables"] = .array(plan.activates.map(JSONValue.string)) }
       if let backup = plan.backupPath { value["backup"] = .string(backup) }
       Output.emit(.object(value), json: global.json) { _ in
         let verb = dryRun ? "Would write" : (plan.existing == .managed ? "Updated" : "Installed")
@@ -71,6 +72,11 @@ struct HooksInstall: ParsableCommand {
         if let hooksPath = plan.setsHooksPath {
           Output.line(
             "\(dryRun ? "Would set" : "Set") git config --local core.hooksPath \(hooksPath)")
+        }
+        if !plan.activates.isEmpty {
+          Output.line(
+            "\(dryRun ? "Would also enable" : "Also enabled") the hooks already in \(plan.hooksDirectory): \(plan.activates.joined(separator: ", ")) (Git runs them on this Mac)"
+          )
         }
         Output.line(
           "On \(branch), \(hook.rawValue) runs \(workflow) (\(snapshot.rawValue) snapshot, \(timeout) s limit); other branches skip it. Bypass once with --no-verify."
@@ -182,14 +188,25 @@ struct HooksUninstall: ParsableCommand {
         "removed": .array(result.removed.map(JSONValue.string)),
         "restored": .array(result.restored.map(JSONValue.string)),
         "skipped_unmanaged": .array(result.skipped.map(JSONValue.string)),
-        "unset_hooks_path": .bool(result.unsetHooksPath),
+        "unset_hooks_path": .bool(result.hooksPath == .unset),
+        "kept_hooks_path": {
+          guard case .kept(_, let hooks) = result.hooksPath else { return .null }
+          return .array(hooks.map(JSONValue.string))
+        }(),
       ]
       Output.emit(value, json: global.json) { _ in
         if result.removed.isEmpty { Output.line("No iso-ci hooks to remove") }
         for path in result.removed { Output.line("Removed \(path)") }
         for path in result.restored { Output.line("Restored the previous hook at \(path)") }
         for path in result.skipped { Output.line("Left \(path): not managed by iso-ci") }
-        if result.unsetHooksPath { Output.line("Unset core.hooksPath (iso-ci had set it)") }
+        switch result.hooksPath {
+        case .unset: Output.line("Unset core.hooksPath (iso-ci had set it)")
+        case .kept(let directory, let hooks):
+          Output.line(
+            "Left core.hooksPath set (iso-ci had set it): \(directory) still holds \(hooks.joined(separator: ", ")), which Git keeps running. Remove them, or run `git config --local --unset core.hooksPath` to stop using that directory."
+          )
+        case .notOwned: break
+        }
       }
     }
   }

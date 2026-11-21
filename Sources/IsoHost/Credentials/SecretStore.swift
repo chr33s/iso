@@ -148,7 +148,7 @@ package struct Keychain: Sendable {
         .init(
           executable: security, arguments: visible + [secret.expose()], environment: environment,
           deadline: .seconds(300)),
-        inheritStdin: false, deadline: nil)
+        inheritStdin: false)
     } catch {
       throw ContextError(
         "Failed to write secret to macOS Keychain",
@@ -162,13 +162,41 @@ package struct Keychain: Sendable {
     return KeychainReference(service: service, account: account.rawValue)
   }
 
-  /// Remove the item a reference names; best-effort, a missing item is not
-  /// an error.
-  package func delete(_ item: KeychainReference) {
-    _ = try? runner.capture(
-      .init(
-        executable: security,
-        arguments: ["delete-generic-password", "-s", item.service, "-a", item.account],
-        environment: environment, deadline: .seconds(60), overflow: .drain))
+  /// `security` exits with the low byte of its `OSStatus`; 44 is
+  /// `errSecItemNotFound` (-25300).
+  static let itemNotFoundStatus: Int32 = 44
+
+  /// Remove the item a reference names. A missing item and a failed delete
+  /// are distinct: after `.failed` the secret may still be stored.
+  package func delete(_ item: KeychainReference) -> KeychainDeletion {
+    let output: ProcessRunner.Output
+    do {
+      output = try runner.capture(
+        .init(
+          executable: security,
+          arguments: ["delete-generic-password", "-s", item.service, "-a", item.account],
+          environment: environment, deadline: .seconds(60), overflow: .drain))
+    } catch {
+      return .failed("security could not run: \(error)")
+    }
+    switch output.termination {
+    case .exited(0): return .deleted
+    case .exited(Self.itemNotFoundStatus): return .missing
+    case let other: return .failed("security delete-generic-password exited with \(other)")
+    }
+  }
+}
+
+package enum KeychainDeletion: Equatable, Sendable {
+  case deleted
+  case missing
+  /// The item may still be stored; the reason names no secret.
+  case failed(String)
+}
+
+extension KeychainReference {
+  /// The command that removes this item by hand.
+  package var deleteCommand: String {
+    "security delete-generic-password -s \(shellWord(service)) -a \(shellWord(account))"
   }
 }

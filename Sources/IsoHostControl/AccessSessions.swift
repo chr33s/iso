@@ -78,14 +78,12 @@ package final class AccessSessions: Sendable {
     _ request: AccessOpenRequest, binding: Binding, vmExpiresAt: WireTime?
   ) throws(HostControlError) -> AccessGrant {
     try check(epoch: request.expectedEpoch)
-    sweep()
     let verifier = request.bearer.verifier
     let now = clock.now()
     if let expiry = vmExpiresAt, WireTime(now) >= expiry {
       throw HostControlError(.sessionExpired, "the VM's deadline has passed")
     }
-    let result = state.withLock { (state) -> Result<AccessGrant, HostControlError> in
-      expireLocked(&state)
+    let result = withExpiry { (state) -> Result<AccessGrant, HostControlError> in
       if let existing = state.sessions[request.session] {
         guard existing.binding == binding, existing.verifier == verifier else {
           return .failure(
@@ -131,9 +129,7 @@ package final class AccessSessions: Sendable {
     policy: SHA256Hex
   ) throws(HostControlError) -> AccessGrant {
     try check(epoch: expected)
-    sweep()
-    let result = state.withLock { (state) -> Result<AccessGrant, HostControlError> in
-      expireLocked(&state)
+    let result = withExpiry { (state) -> Result<AccessGrant, HostControlError> in
       guard var entry = state.sessions[session], entry.verifier == bearer.verifier else {
         return .failure(HostControlError(.sessionExpired, "unknown session"))
       }
@@ -175,8 +171,7 @@ package final class AccessSessions: Sendable {
   }
 
   package func keyInUse(instance: InstanceID, key: SHA256Hex) -> Bool {
-    sweep()
-    return state.withLock { state in
+    withExpiry { state in
       state.sessions.values.contains {
         $0.phase == .live && $0.binding.instance.instanceID == instance
           && $0.binding.clientKey == key
@@ -188,9 +183,7 @@ package final class AccessSessions: Sendable {
     throws(HostControlError) -> Binding
   {
     try check(epoch: expected)
-    sweep()
-    let result = state.withLock { (state) -> Result<Binding, HostControlError> in
-      expireLocked(&state)
+    let result = withExpiry { (state) -> Result<Binding, HostControlError> in
       guard let entry = state.sessions[session], entry.verifier == bearer.verifier,
         entry.phase == .live
       else { return .failure(HostControlError(.sessionExpired, "no live grant for this session")) }
@@ -200,8 +193,7 @@ package final class AccessSessions: Sendable {
   }
 
   package func hasLiveSession(instance: InstanceID) -> Bool {
-    sweep()
-    return state.withLock { state in
+    withExpiry { state in
       state.sessions.values.contains {
         $0.phase == .live && $0.binding.instance.instanceID == instance
       }
@@ -209,8 +201,7 @@ package final class AccessSessions: Sendable {
   }
 
   package func isLive(_ session: SessionID) -> Bool {
-    sweep()
-    return state.withLock { state in state.sessions[session]?.phase == .live }
+    withExpiry { state in state.sessions[session]?.phase == .live }
   }
 
   package func revoke(instance: InstanceID) {
@@ -230,8 +221,7 @@ package final class AccessSessions: Sendable {
   /// at sub-second cadence so relays close within the two-second budget.
   @discardableResult
   package func sweep() -> [SessionID] {
-    let ids = state.withLock { state in expireLocked(&state) }
-    if !ids.isEmpty { revoked(ids) }
+    let (ids, _) = expiring { _ in }
     return ids
   }
 
@@ -243,7 +233,22 @@ package final class AccessSessions: Sendable {
 
   // MARK: - Locked helpers
 
-  @discardableResult
+  /// Runs `body` under the registry lock after expiring lapsed leases. Every
+  /// expired session is revoked once the lock is released, whichever entry
+  /// point noticed the lapse.
+  private func withExpiry<T>(_ body: (inout State) -> T) -> T {
+    expiring(body).result
+  }
+
+  private func expiring<T>(_ body: (inout State) -> T) -> (expired: [SessionID], result: T) {
+    let (expired, result) = state.withLock { state in
+      let expired = expireLocked(&state)
+      return (expired, body(&state))
+    }
+    if !expired.isEmpty { revoked(expired) }
+    return (expired, result)
+  }
+
   private func expireLocked(_ state: inout State) -> [SessionID] {
     let now = clock.monotonic()
     let wall = WireTime(clock.now())

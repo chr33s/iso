@@ -7,12 +7,27 @@ import Synchronization
 /// stderr together so neither pipe blocks the child, bounds what it keeps,
 /// enforces a deadline, and reaps the child and closes descriptors on every path.
 package struct ProcessRunner: Sendable {
+  /// When a child that has not finished is killed (`timedOut`). Every mode
+  /// enforces the request's own deadline; `unbounded` is an explicit choice
+  /// for interactive sessions and transfers that ssh bounds.
+  package enum Deadline: Sendable, Equatable {
+    case after(Duration)
+    case unbounded
+
+    var duration: Duration? {
+      switch self {
+      case .after(let duration): duration
+      case .unbounded: nil
+      }
+    }
+  }
+
   package struct Request: Sendable {
     package var executable: String
     package var arguments: [String]
     package var environment: [String: String]
     package var workingDirectory: String?
-    package var deadline: Duration
+    package var deadline: Deadline
     package var outputLimit: Int
     package var overflow: OverflowPolicy
     /// Polled while the child runs; `true` kills it (`cancelled`). Only long
@@ -29,7 +44,7 @@ package struct ProcessRunner: Sendable {
 
     package init(
       executable: String, arguments: [String], environment: [String: String],
-      workingDirectory: String? = nil, deadline: Duration, outputLimit: Int = 1 << 20,
+      workingDirectory: String? = nil, deadline: Deadline, outputLimit: Int = 1 << 20,
       overflow: OverflowPolicy = .fail, input: [UInt8]? = nil
     ) {
       self.input = input
@@ -40,6 +55,25 @@ package struct ProcessRunner: Sendable {
       self.deadline = deadline
       self.outputLimit = outputLimit
       self.overflow = overflow
+    }
+
+    /// A request killed `deadline` after it starts.
+    package init(
+      executable: String, arguments: [String], environment: [String: String],
+      workingDirectory: String? = nil, deadline: Duration, outputLimit: Int = 1 << 20,
+      overflow: OverflowPolicy = .fail, input: [UInt8]? = nil
+    ) {
+      self.init(
+        executable: executable, arguments: arguments, environment: environment,
+        workingDirectory: workingDirectory, deadline: .after(deadline), outputLimit: outputLimit,
+        overflow: overflow, input: input)
+    }
+
+    /// The same request with another deadline.
+    package func with(deadline: Deadline) -> Self {
+      var copy = self
+      copy.deadline = deadline
+      return copy
     }
   }
 
@@ -79,8 +113,7 @@ package struct ProcessRunner: Sendable {
   package func capture(_ request: Request) throws(Failure) -> Output {
     var buffers: [[UInt8]] = [[], []]
     var truncated = false
-    let termination = try pump(request, deadline: request.deadline) {
-      (stream, bytes) throws(Failure) in
+    let termination = try pump(request) { (stream, bytes) throws(Failure) in
       let room = request.outputLimit - buffers[stream.rawValue].count
       if bytes.count > room {
         guard request.overflow == .drain else { throw .outputLimitExceeded }
@@ -100,13 +133,12 @@ package struct ProcessRunner: Sendable {
   }
 
   /// Streaming mode: each chunk goes to `onOutput` as it arrives, with no
-  /// buffering beyond one read. `deadline` nil means none (log following).
+  /// buffering beyond one read (`unbounded` for log following).
   /// A throwing sink stops the run; the child is then killed and reaped.
   package func stream(
-    _ request: Request, deadline: Duration?,
-    onOutput: (Stream, ArraySlice<UInt8>) throws(Failure) -> Void
+    _ request: Request, onOutput: (Stream, ArraySlice<UInt8>) throws(Failure) -> Void
   ) throws(Failure) -> Termination {
-    try pump(request, deadline: deadline) { (stream, bytes) throws(Failure) in
+    try pump(request) { (stream, bytes) throws(Failure) in
       // Public sinks receive owned slices that they may retain after this read.
       let owned = bytes.withUnsafeBufferPointer { Array($0) }
       try onOutput(stream, owned[...])
@@ -116,9 +148,9 @@ package struct ProcessRunner: Sendable {
   /// Spawn, drain both pipes concurrently until EOF, then reap. The child's
   /// process group is killed on every early exit.
   private func pump(
-    _ request: Request, deadline: Duration?,
-    sink: (Stream, Span<UInt8>) throws(Failure) -> Void
+    _ request: Request, sink: (Stream, Span<UInt8>) throws(Failure) -> Void
   ) throws(Failure) -> Termination {
+    let deadline = request.deadline.duration
     var stdoutPipe: [Int32] = [-1, -1]
     var stderrPipe: [Int32] = [-1, -1]
     guard pipe(&stdoutPipe) == 0 else { throw .spawn(errno: errno) }
@@ -220,13 +252,12 @@ package struct ProcessRunner: Sendable {
 
   /// Attached mode for interactive and pass-through commands: stdout/stderr are the
   /// caller's, stdin is the caller's (`inherit`) or `input`, and the child stays in
-  /// the caller's process group to keep its TTY and job control. `deadline`
-  /// replaces `request.deadline` (nil: none, for sessions and transfers); at the
-  /// deadline the child is killed (`timedOut`).
-  package func attached(_ request: Request, inheritStdin: Bool, deadline: Duration?)
-    throws(Failure) -> Termination
-  {
+  /// the caller's process group to keep its TTY and job control. At
+  /// `request.deadline` the child is killed (`timedOut`); sessions and
+  /// transfers pass `unbounded`.
+  package func attached(_ request: Request, inheritStdin: Bool) throws(Failure) -> Termination {
     let start = ContinuousClock.now
+    let deadline = request.deadline.duration
     var stdinPipe: [Int32] = [-1, -1]
     if let input = request.input {
       guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
@@ -301,7 +332,10 @@ package struct ProcessRunner: Sendable {
     }
   }
 
+  /// The child lives until `terminate`, so its request must be `unbounded`:
+  /// a deadline this mode could not enforce is refused (`EINVAL`), not ignored.
   package func piped(_ request: Request) throws(Failure) -> PipedChild {
+    guard request.deadline == .unbounded else { throw .spawn(errno: EINVAL) }
     var stdinPipe: [Int32] = [-1, -1]
     var stdoutPipe: [Int32] = [-1, -1]
     guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
@@ -366,11 +400,13 @@ package struct ProcessRunner: Sendable {
 
   /// Like `attached`, but stdin is a pipe that first receives `preamble` (a
   /// secret-bearing first line, never argv) and then this process's stdin until
-  /// EOF. Used by the relay helper `ssh` runs as ProxyCommand.
+  /// EOF. Used by the relay helper `ssh` runs as ProxyCommand. The child is
+  /// killed at `request.deadline` (`timedOut`).
   package func relayed(
     _ request: Request, preamble: [UInt8], input: Int32 = 0, output: Int32 = 1,
     errorOutput: Int32 = 2
   ) throws(Failure) -> Termination {
+    let start = ContinuousClock.now
     var stdinPipe: [Int32] = [-1, -1]
     guard pipe(&stdinPipe) == 0 else { throw .spawn(errno: errno) }
     _ = fcntl(stdinPipe[1], F_SETFD, FD_CLOEXEC)
@@ -401,7 +437,7 @@ package struct ProcessRunner: Sendable {
       }
     }
     pump.start()
-    return child.waitIndefinitely()
+    return try wait(&child, request, deadline: request.deadline.duration, since: start)
   }
 
   private func wait(
@@ -446,11 +482,14 @@ package struct ProcessRunner: Sendable {
   }
 
   /// `producer`'s stdout feeds `consumer`'s stdin through a kernel pipe; both
-  /// stderr streams drain concurrently and are kept up to `outputLimit`. No
-  /// deadline: a transfer takes as long as the data, and `ssh` bounds a dead
-  /// connection. Both children are reaped before returning.
+  /// stderr streams drain concurrently and are kept up to `outputLimit`. Both
+  /// are killed at the earlier of their deadlines (`timedOut`); a transfer
+  /// that `ssh` bounds passes `unbounded`. Both children are reaped before
+  /// returning.
   package func pipeline(_ producer: Request, _ consumer: Request) throws(Failure) -> PipelineOutput
   {
+    let start = ContinuousClock.now
+    let deadline = [producer.deadline.duration, consumer.deadline.duration].compactMap { $0 }.min()
     var link: [Int32] = [-1, -1]
     var producerErr: [Int32] = [-1, -1]
     var consumerErr: [Int32] = [-1, -1]
@@ -494,10 +533,19 @@ package struct ProcessRunner: Sendable {
     let cancellations = [producer.isCancelled, consumer.isCancelled].compactMap { $0 }
     let isCancelled: (() -> Bool)? =
       cancellations.isEmpty ? nil : { cancellations.contains { $0() } }
+    /// Milliseconds until the deadline, clamped for `poll`; nil without one.
+    func remaining() throws(Failure) -> Int32? {
+      guard let deadline else { return nil }
+      let left = deadline - (ContinuousClock.now - start)
+      guard left > .zero else { throw .timedOut }
+      return Int32(clamping: left.milliseconds)
+    }
     while ends.contains(where: { $0 >= 0 }) {
       if isCancelled?() == true { throw .cancelled }
+      var timeout = try remaining() ?? -1
+      if isCancelled != nil { timeout = timeout < 0 ? 50 : min(timeout, 50) }
       var fds = ends.map { pollfd(fd: $0, events: Int16(POLLIN), revents: 0) }
-      if poll(&fds, nfds_t(fds.count), isCancelled == nil ? -1 : 50) < 0 {
+      if poll(&fds, nfds_t(fds.count), timeout) < 0 {
         if errno == EINTR { continue }
         throw .io(errno: errno)
       }
@@ -521,16 +569,18 @@ package struct ProcessRunner: Sendable {
         }
       }
     }
-    // A child can close its stderr and keep writing: cancellation stays
-    // polled until both have exited, not just until their streams end.
+    // A child can close its stderr and keep writing: cancellation and the
+    // deadline stay polled until both have exited, not just until their
+    // streams end.
     var producerResult: Termination? = nil
     var consumerResult: Termination? = nil
     while producerResult == nil || consumerResult == nil {
       if isCancelled?() == true { throw .cancelled }
+      _ = try remaining()
       if producerResult == nil { producerResult = producerChild.wait(until: .zero) }
       if consumerResult == nil { consumerResult = consumerChild.wait(until: .zero) }
       if producerResult == nil || consumerResult == nil {
-        if isCancelled == nil {
+        if isCancelled == nil && deadline == nil {
           if producerResult == nil { producerResult = producerChild.waitIndefinitely() }
           if consumerResult == nil { consumerResult = consumerChild.waitIndefinitely() }
         } else {
@@ -613,12 +663,15 @@ struct ChildProcess: ~Copyable {
   init(pid: pid_t, ownsGroup: Bool = true) {
     self.pid = pid
     self.ownsGroup = ownsGroup
-    if ownsGroup { ChildGroups.register(pid) }
+    ChildGroups.register(pid, kind)
   }
+
+  /// How a terminating signal to iso reaches this child.
+  var kind: ChildGroups.Kind { ownsGroup ? .group : .attached }
 
   mutating func markReaped() {
     reaped = true
-    if ownsGroup { ChildGroups.unregister(pid) }
+    ChildGroups.unregister(pid, kind)
   }
 
   mutating func wait(until remaining: Duration) -> ProcessRunner.Termination? {

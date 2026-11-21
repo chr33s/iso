@@ -88,19 +88,24 @@ enum TerminalPrompt {
   /// restores the terminal on every signal (Ctrl-C included). A non-TTY
   /// stdin is read as one plain line.
   static func secret() throws -> Secret<String> {
+    guard let token = try optionalSecret("Paste token") else { throw HostError("No token entered") }
+    return token
+  }
+
+  /// `secret()` for an optional credential: nil for an empty reply.
+  static func optionalSecret(_ prompt: String) throws -> Secret<String>? {
     let reply: String?
     if isatty(0) == 1 {
       reply = String(
         decoding: try TerminalInput.hidden(
-          "Paste token", unavailable: "Could not read the token from the terminal"
+          prompt, unavailable: "Could not read the token from the terminal"
         ).expose(), as: UTF8.self)
     } else {
-      FileHandle.standardError.write(Data("Paste token: ".utf8))
+      FileHandle.standardError.write(Data("\(prompt): ".utf8))
       reply = readReply()
     }
     let token = (reply ?? "").trimmingUnicodeWhitespace()
-    guard !token.isEmpty else { throw HostError("No token entered") }
-    return Secret(token)
+    return token.isEmpty ? nil : Secret(token)
   }
 }
 
@@ -430,17 +435,27 @@ struct ModelCommand: ParsableCommand {
     return lines
   }
 
-  static func promptEndpoint(_ tool: String) throws -> LocalModel? {
-    guard TerminalPrompt.confirm("Configure a local model for \(tool)?") else { return nil }
-    guard let url = TerminalPrompt.line("\(tool) host URL (e.g. http://localhost:11434)") else {
+  /// The terminal readers `promptEndpoint` uses.
+  struct EndpointPrompts {
+    var confirm: (String) -> Bool = TerminalPrompt.confirm
+    var line: (String) -> String? = TerminalPrompt.line
+    /// The auth token is a credential, so it is read with echo off.
+    var secret: (String) throws -> Secret<String>? = TerminalPrompt.optionalSecret
+  }
+
+  static func promptEndpoint(_ tool: String, prompts: EndpointPrompts = EndpointPrompts()) throws
+    -> LocalModel?
+  {
+    guard prompts.confirm("Configure a local model for \(tool)?") else { return nil }
+    guard let url = prompts.line("\(tool) host URL (e.g. http://localhost:11434)") else {
       throw HostError("\(tool) host URL is required")
     }
-    guard let model = TerminalPrompt.line("\(tool) model name") else {
+    guard let model = prompts.line("\(tool) model name") else {
       throw HostError("\(tool) model name is required")
     }
-    let token = TerminalPrompt.line("\(tool) auth token (optional — press enter to skip)")
+    let token = try prompts.secret("\(tool) auth token (optional — press enter to skip)")
     do {
-      return try LocalModel(hostURL: url, model: model, authToken: token.map(Secret.init))
+      return try LocalModel(hostURL: url, model: model, authToken: token)
     } catch {
       throw HostError("invalid \(tool) host URL '\(url)': \(error.message)")
     }

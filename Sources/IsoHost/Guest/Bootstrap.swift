@@ -754,7 +754,7 @@ package struct AgentBootstrap: Sendable {
       throw ContextError("Failed to stage marketplace '\(source)'", cause: error)
     }
     do {
-      try client.copy(session.target, local: snapshot, remote: remote, recursive: true)
+      try client.copy(session.target, locals: [snapshot], remote: remote, recursive: true)
     } catch {
       throw ContextError("Failed to copy marketplace '\(source)' to guest", cause: error)
     }
@@ -770,17 +770,14 @@ package struct AgentBootstrap: Sendable {
       return
     }
     try client.exec(target, RemoteCommand().literal("mkdir -p ~/\(subdirectory)"))
-    let guestDirectory = GuestPath("./\(subdirectory)")
-    for entry in entries {
-      let path = staging.path + "/" + entry
-      var isDirectory: ObjCBool = false
-      _ = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
-      do {
-        try client.copy(
-          target, local: path, remote: guestDirectory, recursive: isDirectory.boolValue)
-      } catch {
-        throw ContextError("Failed to copy \(path) to guest", cause: error)
-      }
+    // One scp for every entry; `-r` leaves the plain files as files.
+    let paths = entries.map { staging.path + "/" + $0 }
+    let recursive = paths.contains { HostFiles.isDirectory($0) }
+    do {
+      try client.copy(
+        target, locals: paths, remote: GuestPath("./\(subdirectory)"), recursive: recursive)
+    } catch {
+      throw ContextError("Failed to copy \(label) config to guest", cause: error)
     }
     diagnostics.log(.info, "Copied \(label) config into guest")
   }

@@ -188,17 +188,19 @@ private let sampleDigest =
   let ports = try translate(
     #"{ "forwardPorts": [3000] }"#, .init(cliForwardPorts: [try PortForward.parse("3000")]))
   #expect(rows(ports, "forwardPorts").map(\.status) == [.overridden])
-  let mounts = try translate(
-    #"{ "mounts": [{ "type": "volume", "source": "v", "target": "/b" }] }"#)
-  #expect(rows(mounts, "mounts").map(\.status) == [.invalid])
+  #expect(rows(try translate(#"{ "mounts": [] }"#), "mounts").isEmpty)
 }
 
-@Test func mountsUnsupportedWithWorkspaceFlag() throws {
-  let t = try translate(
-    #"{ "mounts": [{ "type": "bind", "source": "/a", "target": "/b" }] }"#,
-    .init(cliWorkspaceOrGitRepo: true))
-  #expect(rows(t, "mounts").first?.status == .unsupported)
-  #expect(t.mounts.isEmpty)
+/// No command applies devcontainer `mounts` (iso copies only the project),
+/// so neither stage may report them as applied.
+@Test func mountsAreUnsupportedInEveryStage() throws {
+  let text = #"{ "mounts": [{ "type": "bind", "source": "/tmp", "target": "/b" }, "/tmp:/c"] }"#
+  for stage in [DevcontainerStage.setup, .start] {
+    let mounts = rows(try translate(text, .init(), stage), "mounts")
+    #expect(mounts.map(\.status) == [.unsupported])
+    #expect(mounts.first?.value == "2 entries")
+    #expect(mounts.first?.note.contains("--mount") == true)
+  }
 }
 
 @Test func translationRecordsAppliedPathAndHash() throws {
@@ -362,38 +364,6 @@ private func parseError(_ text: String) -> String? {
         == "expected '<decimal><unit>' (e.g. '4GB') or bare bytes; got 'GB': cannot parse float from empty string"
     )
   }
-}
-
-// MARK: - Mounts
-
-@Test func mountStringAndObjectForms() throws {
-  let directory = try temporaryDirectory()
-  defer { try? FileManager.default.removeItem(atPath: directory) }
-  #expect(
-    try Devcontainer.parseMountString("type=bind,source=\(directory),target=/b").guestPath.rawValue
-      == "/b")
-  #expect(
-    try Devcontainer.parseMountString("source=\(directory),target=/b,readonly").guestPath.rawValue
-      == "/b")
-  #expect(throws: (any Error).self) {
-    try Devcontainer.parseMountString("type=volume,source=v,target=/b")
-  }
-  #expect(try Devcontainer.parseMountString("\(directory):/g").guestPath.rawValue == "/g")
-  let object = try DevcontainerJSON.parse(
-    #"{"type": "bind", "source": "\#(directory)", "target": "/b"}"#)
-  #expect(try Devcontainer.parseMountEntry(object).hostPath == directory)
-  let volume = try DevcontainerJSON.parse(#"{"type": "volume", "source": "/v", "target": "/b"}"#)
-  #expect(throws: (any Error).self) { try Devcontainer.parseMountEntry(volume) }
-  do { _ = try Devcontainer.parseMountEntry(volume) } catch {
-    #expect(topMessage(error).contains("unsupported mount type"))
-  }
-  let string = DevcontainerJSON(.string("\(directory):/g"))
-  #expect(try Devcontainer.parseMountEntry(string).guestPath.rawValue == "/g")
-}
-
-@Test func missingMountHostReportsTopLevelMessage() throws {
-  let t = try translate(#"{ "mounts": ["/nonexistent-iso-dc:/x"] }"#)
-  #expect(rows(t, "mounts").first?.note == "Mount host path does not exist: /nonexistent-iso-dc")
 }
 
 // MARK: - Report
@@ -739,6 +709,7 @@ private func sampleFeature(archive: [UInt8] = Array("archive-bytes".utf8)) throw
 @Test func installSnippetMatchesTheBaselineText() throws {
   let feature = try sampleFeature()
   let delimiter = "ISO_FEATURE_ARCHIVE_\(sha256("echo install").prefix(16))"
+  let script = "ISO_FEATURE_SCRIPT_\(sha256("echo install").prefix(16))"
   #expect(
     feature.installSnippet == """
 
@@ -751,6 +722,10 @@ private func sampleFeature(archive: [UInt8] = Array("archive-bytes".utf8)) throw
       YXJjaGl2ZS1ieXRlcw==
       \(delimiter)
       tar -xzf "$archive" -C "$feature_dir"
+      rm -rf "$feature_dir/install.sh"
+      base64 -d > "$feature_dir/install.sh" <<'\(script)'
+      \(Data("echo \"$VERSION\"".utf8).base64EncodedString())
+      \(script)
       chmod +x "$feature_dir/install.sh"
       export _REMOTE_USER="$GUEST_USER"
       export _REMOTE_USER_HOME="/home/$GUEST_USER"
@@ -926,15 +901,22 @@ private func stubCurl(_ directory: String, script: String) throws {
       "-fsSL -H Authorization: Bearer SYNTHETIC https://ghcr.io/v2/devcontainers/features/hello/blobs/\(layerDigest) -o /"
     ))
 
-  // A layer that does not hash to its descriptor is refused.
+  // A layer that does not hash to its descriptor is refused: a dry run
+  // reports it, and setup stops instead of continuing without it.
   try write("", root + "/tamper")
   let tampered = try #require(
     try resolver.collect(
-      DevcontainerOptions(input: .explicit(root + "/devcontainer.json"), dryRun: false),
+      DevcontainerOptions(input: .explicit(root + "/devcontainer.json"), dryRun: true),
       inputs: .init(), stage: .setup))
   #expect(tampered.ociFeatures.isEmpty)
+  #expect(tampered.featureFailures == ["ghcr.io/devcontainers/features/hello:1"])
   #expect(
-    rows(tampered, "features.ghcr.io/devcontainers/features/hello:1").first?.status != .applied)
+    rows(tampered, "features.ghcr.io/devcontainers/features/hello:1").first?.status == .invalid)
+  #expect(throws: HostError.self) {
+    try resolver.collect(
+      DevcontainerOptions(input: .explicit(root + "/devcontainer.json"), dryRun: false),
+      inputs: .init(), stage: .setup)
+  }
 }
 
 @Test func failedFeatureResolutionIsAnInvalidRowWithRedactedArgv() throws {
@@ -999,10 +981,48 @@ private func stubCurl(_ directory: String, script: String) throws {
       == "https://api.github.com/repos/owner/repo/contents/.devcontainer/devcontainer.json")
   let (status, body) = try GitRepoDevcontainerDiscovery.statusAndBody("{\"name\":\"x\"}\n200")
   #expect(status == 200 && body == "{\"name\":\"x\"}")
+}
+
+/// `auto` discovery takes `GITHUB_TOKEN` first, then `gh`'s github.com
+/// token; the stub, like gh, answers an unpinned call with `GH_HOST`'s.
+@Test func gitRepoDiscoveryAutoPrefersGitHubTokenThenGitHubDotComGh() throws {
+  let root = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try stubCurl(
+    root,
+    script: """
+      /bin/cat >> "$STUB_LOG.stdin"
+      printf '{"name":"remote"}\\n200'
+      """)
+  let gh = root + "/gh"
+  try write(
+    """
+    #!/bin/sh
+    printf '%s\\n' "$*" >> "$STUB_LOG.gh"
+    case " $* " in
+      *" --hostname github.com "*) echo gho_GITHUB_DOT_COM ;;
+      *) echo ghe_ENTERPRISE_SECRET ;;
+    esac
+    """, gh)
+  chmod(gh, 0o755)
+  var environment = ["PATH": root, "STUB_LOG": root + "/log", "GH_HOST": "ghe.example.invalid"]
+  _ = try GitRepoDevcontainerDiscovery(environment: environment)
+    .discover("https://github.com/owner/repo.git", auth: .auto)
   #expect(
-    GitRepoDevcontainerDiscovery.selectHostToken(gh: " ghp_abc \n", env: "ghp_env") == "ghp_abc")
-  #expect(GitRepoDevcontainerDiscovery.selectHostToken(gh: "   ", env: " ghp_env\n") == "ghp_env")
-  #expect(GitRepoDevcontainerDiscovery.selectHostToken(gh: "", env: " ") == nil)
+    try String(contentsOfFile: root + "/log.stdin", encoding: .utf8)
+      == "Authorization: token gho_GITHUB_DOT_COM\n")
+  #expect(
+    try String(contentsOfFile: root + "/log.gh", encoding: .utf8)
+      == "auth token --hostname github.com\n")
+  environment["GITHUB_TOKEN"] = " ghp_SET_FOR_ISO \n"
+  _ = try GitRepoDevcontainerDiscovery(environment: environment)
+    .discover("https://github.com/owner/repo.git", auth: .auto)
+  #expect(
+    try String(contentsOfFile: root + "/log.stdin", encoding: .utf8)
+      == "Authorization: token gho_GITHUB_DOT_COM\nAuthorization: token ghp_SET_FOR_ISO\n")
+  #expect(
+    try String(contentsOfFile: root + "/log.gh", encoding: .utf8)
+      == "auth token --hostname github.com\n")
 }
 
 // MARK: - Resolution flow
@@ -1174,4 +1194,198 @@ private func resolver(_ prompter: FakePrompter, _ sink: Sink) -> DevcontainerRes
   #expect(throws: (any Error).self) {
     try FeatureResolver.readBounded(root + "/install.sh", limit: 4, what: "x")
   }
+}
+
+// MARK: - Feature preview, failure and installed script
+
+/// A stub GHCR serving one Feature archive; returns the manifest digest.
+private func stubFeatureRegistry(_ root: String, archive: String) throws -> String {
+  let layerDigest = "sha256:" + sha256Hex(Array(FileManager.default.contents(atPath: archive)!))
+  let manifest = #"{"layers":[{"digest":""# + layerDigest + #""}]}"#
+  let manifestDigest = "sha256:" + sha256Hex(Array(manifest.utf8))
+  try write(manifest, root + "/manifest.json")
+  try stubCurl(
+    root,
+    script: """
+      out=""; hdr=""; prev=""
+      for a in "$@"; do
+        case "$prev" in -o) out="$a";; -D) hdr="$a";; esac
+        prev="$a"
+      done
+      case "$*" in
+        *token*) printf '{"token":"SYNTHETIC"}';;
+        */manifests/*) printf 'Docker-Content-Digest: \(manifestDigest)\\r\\n' > "$hdr"
+          cp '\(root)/manifest.json' "$out";;
+        */blobs/*) cp '\(archive)' "$out";;
+      esac
+      """)
+  return manifestDigest
+}
+
+private func featureResolver(_ root: String, _ prompter: FakePrompter, _ sink: Sink)
+  -> DevcontainerResolver
+{
+  DevcontainerResolver(
+    environment: ["PATH": root + ":/usr/bin:/bin", "STUB_LOG": root + "/log"],
+    diagnostics: Diagnostics(verbosity: 0) { _ in }, prompter: prompter,
+    errorSink: { sink.append($0) })
+}
+
+/// DEV-01: the user accepts the digest and `install.sh` hash of every
+/// registry Feature before setup, not after.
+@Test func theInteractivePreviewNamesEachFeatureDigestAndScriptHash() throws {
+  let root = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let archive = try makeArchive(
+    root, files: ["devcontainer-feature.json": "{}", "install.sh": "echo hi\n"])
+  let manifestDigest = try stubFeatureRegistry(root, archive: archive)
+  try write(
+    #"{"features": {"ghcr.io/devcontainers/features/hello:1": {}}}"#,
+    root + "/project/.devcontainer/devcontainer.json")
+  let sink = Sink()
+  let shownAtPrompt = Sink()
+  let prompter = FakePrompter(interactive: true, onPrompt: { shownAtPrompt.append(sink.value) })
+  let t = try #require(
+    try featureResolver(root, prompter, sink).resolve(
+      DevcontainerOptions(input: .discover, dryRun: false, workspace: root + "/project"),
+      inputs: .init(), stage: .setup))
+  #expect(t.ociFeatures.count == 1)
+  #expect(shownAtPrompt.value.contains("features.ghcr.io/devcontainers/features/hello:1"))
+  #expect(shownAtPrompt.value.contains(manifestDigest))
+  #expect(shownAtPrompt.value.contains("install.sh sha256 \(sha256("echo hi\n"))"))
+}
+
+/// A registry Feature that cannot be installed is shown with its reason and
+/// stops setup before any prompt; a dry run only reports it.
+@Test func aFeatureThatCannotBeInstalledStopsSetupAfterShowingWhy() throws {
+  let root = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try stubCurl(
+    root, script: #"case "$*" in *token*) printf '{"token":"SYNTHETIC"}';; *) exit 22;; esac"#)
+  let file = root + "/project/.devcontainer/devcontainer.json"
+  try write(#"{"features": {"ghcr.io/devcontainers/features/hello:1": {}}}"#, file)
+  let sink = Sink()
+  let prompted = Sink()
+  let prompter = FakePrompter(interactive: true, onPrompt: { prompted.append("asked") })
+  let resolver = featureResolver(root, prompter, sink)
+  let error = #expect(throws: HostError.self) {
+    try resolver.collect(
+      DevcontainerOptions(input: .discover, dryRun: false, workspace: root + "/project"),
+      inputs: .init(), stage: .setup)
+  }
+  #expect(error?.message.contains("ghcr.io/devcontainers/features/hello:1") == true)
+  #expect(prompted.value.isEmpty)
+  #expect(sink.value.contains("failed to resolve OCI feature"))
+
+  #expect(throws: HostError.self) {
+    try resolver.collect(
+      DevcontainerOptions(input: .explicit(file), dryRun: false), inputs: .init(), stage: .setup)
+  }
+  let dry = try #require(
+    try resolver.collect(
+      DevcontainerOptions(input: .explicit(file), dryRun: true), inputs: .init(), stage: .setup))
+  #expect(dry.featureFailures == ["ghcr.io/devcontainers/features/hello:1"])
+
+  // An invalid registry reference stops setup too, without any fetch.
+  try write(#"{"features": {"ghcr.io/devcontainers/features/go@sha256:nope": {}}}"#, file)
+  #expect(throws: HostError.self) {
+    try featureResolver("/nonexistent", FakePrompter(interactive: false), Sink()).collect(
+      DevcontainerOptions(input: .explicit(file), dryRun: false), inputs: .init(), stage: .setup)
+  }
+}
+
+/// The guest runs the `install.sh` bytes iso hashed and reported, whatever
+/// the archive holds at that name (here a duplicate member that is a
+/// symlink to another script).
+@Test func theInstalledScriptIsTheHashedScript() throws {
+  let root = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try write("{}", root + "/a/devcontainer-feature.json")
+  try write("echo BENIGN\n", root + "/a/install.sh")
+  try write("echo EVIL\n", root + "/a/evil.sh")
+  try FileManager.default.createDirectory(atPath: root + "/b", withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(
+    atPath: root + "/b/install.sh", withDestinationPath: "evil.sh")
+  func tar(_ arguments: [String]) throws -> ProcessRunner.Output {
+    let output = try ProcessRunner().capture(
+      .init(
+        executable: "/usr/bin/tar", arguments: arguments, environment: ["PATH": "/usr/bin:/bin"],
+        deadline: .seconds(30)))
+    #expect(output.termination == .exited(0))
+    return output
+  }
+  _ = try tar([
+    "-cf", root + "/f.tar", "-C", root + "/a", "install.sh", "devcontainer-feature.json", "evil.sh",
+  ])
+  _ = try tar(["-rf", root + "/f.tar", "-C", root + "/b", "install.sh"])
+  let gzip = try ProcessRunner().capture(
+    .init(
+      executable: "/usr/bin/gzip", arguments: ["-c", root + "/f.tar"],
+      environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(30)))
+  try Data(gzip.stdout).write(to: URL(fileURLWithPath: root + "/f.tgz"))
+  let request = try #require(
+    try FeatureRequest.parse(
+      rawID: "ghcr.io/devcontainers/features/sample:1", options: DevcontainerJSON(.object([]))))
+  let resolved = try FeatureResolver(environment: ["PATH": "/usr/bin:/bin"]).resolvedFeature(
+    request, manifestDigest: sampleDigest, metadata: nil, blobPath: root + "/f.tgz")
+  #expect(resolved.installScript == "echo BENIGN\n")
+  #expect(resolved.installed.installScriptHash.rawValue == sha256("echo BENIGN\n"))
+  let run = try ProcessRunner().capture(
+    .init(
+      executable: "/bin/sh", arguments: ["-c", resolved.installSnippet],
+      environment: ["PATH": "/usr/bin:/bin", "GUEST_USER": "dev", "TMPDIR": root + "/"],
+      deadline: .seconds(30)))
+  let output = String(decoding: run.stdout, as: UTF8.self)
+  #expect(run.termination == .exited(0))
+  #expect(output.contains("BENIGN"))
+  #expect(!output.contains("EVIL"))
+}
+
+// MARK: - Bounded devcontainer.json reads
+
+/// devcontainer.json comes from a repository: it is read only as a bounded
+/// regular file, never through a symlink, never from a FIFO or device.
+@Test func devcontainerFilesAreReadOnlyAsBoundedRegularFiles() throws {
+  let root = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try write(#"{"name": "x"}"#, root + "/real.json")
+  #expect(try ParsedDevcontainer.load(root + "/real.json").path == root + "/real.json")
+
+  try FileManager.default.createSymbolicLink(
+    atPath: root + "/link.json", withDestinationPath: root + "/real.json")
+  let link = #expect(throws: (any Error).self) { try ParsedDevcontainer.load(root + "/link.json") }
+  #expect(link.map { "\($0)".contains("symbolic link") } == true)
+
+  try FileManager.default.createSymbolicLink(
+    atPath: root + "/zero.json", withDestinationPath: "/dev/zero")
+  #expect(throws: (any Error).self) { try ParsedDevcontainer.load(root + "/zero.json") }
+  mkfifo(root + "/fifo.json", 0o600)
+  let fifo = #expect(throws: (any Error).self) { try ParsedDevcontainer.load(root + "/fifo.json") }
+  #expect(fifo.map { "\($0)".contains("not a regular file") } == true)
+
+  let large = String(repeating: " ", count: Devcontainer.maxFileBytes) + "{}"
+  try write(large, root + "/large.json")
+  let read = #expect(throws: (any Error).self) { try ParsedDevcontainer.load(root + "/large.json") }
+  #expect(
+    read.map { "\($0)".hasPrefix("Failed to read") && "\($0)".contains("larger than") } == true)
+  #expect(throws: (any Error).self) { try ParsedDevcontainer(path: "remote", text: large) }
+
+  // Discovery finds a symlinked file so that its refusal is visible.
+  try FileManager.default.createDirectory(
+    atPath: root + "/p/.devcontainer", withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(
+    atPath: root + "/p/.devcontainer/devcontainer.json", withDestinationPath: "/dev/zero")
+  #expect(Devcontainer.discover(workspace: root + "/p", mounts: []).count == 1)
+  #expect(throws: (any Error).self) {
+    try resolver(FakePrompter(interactive: false), Sink()).collect(
+      DevcontainerOptions(input: .discover, dryRun: true, workspace: root + "/p"),
+      inputs: .init(), stage: .setup)
+  }
+
+  // A file that became a symlink after it was applied is compared, not read through.
+  let state = DevcontainerState(
+    applied: AppliedDevcontainer(
+      path: root + "/p/.devcontainer/devcontainer.json", contentHash: sha256("{}"),
+      source: .localFile))
+  #expect(throws: (any Error).self) { try state.changedWarning(instanceName: "demo") }
 }

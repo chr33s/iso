@@ -112,7 +112,7 @@ package struct ProxyLauncher: Sendable {
     do {
       try AtomicFile.write(
         Array(token.expose().utf8), to: Self.tokenPath(instance, provider.rawValue),
-        mode: .atMost(0o600))
+        mode: .atMost(0o600), parents: .mustExist)
     } catch {
       stop(instance, provider: provider)
       throw ContextError(
@@ -227,9 +227,10 @@ package struct ProxyLauncher: Sendable {
     }
     do {
       try AtomicFile.write(
-        Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600))
+        Array(capability.utf8), to: EgressPorts.capabilityPath(instance), mode: .atMost(0o600),
+        parents: .mustExist)
       try readinessIdentity.persistVerificationKey(instance)
-      try StateStore.writeControlFile(
+      try StateStore.writeInstanceFile(
         FilteredHandoff.BootPolicy(bootID: boot.bootID, policyHash: policy.policyHash),
         to: FilteredHandoff.policyPath(instance))
     } catch {
@@ -643,7 +644,7 @@ package struct ProxyLauncher: Sendable {
           .save(instance, name: name)
         try AtomicFile.write(
           Array(String(master.pid).utf8), to: Self.forwardPIDPath(instance, name),
-          mode: .atMost(0o600))
+          mode: .atMost(0o600), parents: .mustExist)
       } catch {
         throw ContextError(
           "Failed to write proxy tunnel pid file \(Self.forwardPIDPath(instance, name))",
@@ -690,7 +691,8 @@ package struct ProxyLauncher: Sendable {
       throw HostError("The \(label) (pid \(pid)) exited before it could be recorded")
     }
     try identity.save(forPIDFile: pidPath)
-    try AtomicFile.write(Array(String(pid).utf8), to: pidPath, mode: .atMost(0o600))
+    try AtomicFile.write(
+      Array(String(pid).utf8), to: pidPath, mode: .atMost(0o600), parents: .mustExist)
   }
 
   enum RecordedProcess {
@@ -766,15 +768,10 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
+  /// The command line `ps -ww -o command=` would print for `pid`, read in
+  /// process from the kernel rather than by spawning `ps` on every check.
   static func commandLine(_ pid: Int32) -> String? {
-    guard
-      let output = try? ProcessRunner().capture(
-        .init(
-          executable: "/bin/ps", arguments: ["-ww", "-o", "command=", "-p", String(pid)],
-          environment: [:], deadline: .seconds(10), outputLimit: 64 << 10, overflow: .drain)),
-      output.termination.succeeded
-    else { return nil }
-    return String(decoding: output.stdout, as: UTF8.self).trimmingUnicodeWhitespace()
+    ProcessIdentity.arguments(pid)?.joined(separator: " ").trimmingUnicodeWhitespace()
   }
 
   func stopTunnel(_ instance: Instance, _ name: String, label: String) {
@@ -842,7 +839,7 @@ package struct ProxyLauncher: Sendable {
       }
       try AtomicFile.write(
         Array(Self.modelTunnelSpec(target, tunnel).utf8), to: Self.modelSpecPath(instance, port),
-        mode: .atMost(0o600))
+        mode: .atMost(0o600), parents: .mustExist)
     }
   }
 

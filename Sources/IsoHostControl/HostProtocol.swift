@@ -339,7 +339,9 @@ package struct ClientPublicKey: Sendable, Equatable {
 }
 
 package enum HostRequestBody: Sendable, Equatable {
-  case hello(protocols: [String], clientBuild: String)
+  /// `includeBuild` asks for the service's build in the result; only the
+  /// local frontend's version check sets it, so older clients never see it.
+  case hello(protocols: [String], clientBuild: String, includeBuild: Bool = false)
   case hostCapabilities
   case vmList(cursor: InstanceID?, limit: UInt32)
   case vmInspect(QualifiedInstance)
@@ -373,6 +375,8 @@ package enum HostRequestBody: Sendable, Equatable {
   case localCapability(HostMethod, QualifiedInstance, expectedGeneration: UInt64)
 
   package static let maxArtifactChunk = 32 << 10
+  /// `artifact.read` length: its base64 reply still fits one response frame.
+  package static let maxArtifactReadChunk = 512 << 10
 
   package var method: HostMethod {
     switch self {
@@ -421,9 +425,10 @@ package enum HostRequestBody: Sendable, Equatable {
   package var params: JSONValue {
     var b = WireBuilder()
     switch self {
-    case .hello(let protocols, let build):
+    case .hello(let protocols, let build, let includeBuild):
       b.set("protocols", .array(protocols.map { .string($0) }))
       b.set("client_build", build)
+      if includeBuild { b.set("include_build", true) }
     case .hostCapabilities:
       break
     case .vmList(let cursor, let limit):
@@ -533,7 +538,12 @@ package enum HostRequestBody: Sendable, Equatable {
       for item in protocols { names.append(try WireObject.string(item, field: "params.protocols")) }
       let build = try r.string("client_build")
       guard build.utf8.count <= 128 else { throw .invalidRequest("params.client_build too long") }
-      self = .hello(protocols: names, clientBuild: build)
+      var includeBuild = false
+      if let raw = r.raw("include_build") {
+        guard raw == .bool(true) else { throw .invalidRequest("params.include_build must be true") }
+        includeBuild = true
+      }
+      self = .hello(protocols: names, clientBuild: build, includeBuild: includeBuild)
     case .hostCapabilities:
       self = .hostCapabilities
     case .vmList:
@@ -678,8 +688,8 @@ package enum HostRequestBody: Sendable, Equatable {
       let handle = try r.parsed("handle", ArtifactHandle.init)
       let offset = try r.unsigned("offset", as: UInt64.self)
       let length = try r.unsigned("length", as: UInt32.self)
-      guard (1...UInt32(Self.maxArtifactChunk)).contains(length) else {
-        throw .invalidRequest("params.length must be 1-32768")
+      guard (1...UInt32(Self.maxArtifactReadChunk)).contains(length) else {
+        throw .invalidRequest("params.length must be 1-\(Self.maxArtifactReadChunk)")
       }
       self = .artifactRead(handle: handle, offset: offset, length: length)
     case .diagnosticsRead:

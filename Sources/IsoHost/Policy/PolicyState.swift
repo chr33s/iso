@@ -31,7 +31,7 @@ package enum PolicyInstanceIdentity {
   static func loadOrCreate(_ instance: Instance) throws(HostError) -> String {
     if let existing = try load(instance) { return existing }
     let id = randomHex(16)
-    try StateStore.writeControlFile(Record(recordVersion: 1, instanceID: id), to: path(instance))
+    try StateStore.writeInstanceFile(Record(recordVersion: 1, instanceID: id), to: path(instance))
     return id
   }
 }
@@ -71,7 +71,10 @@ package struct PolicyBinding: Codable, Equatable, Sendable {
   /// Serializes binding writes, launch claims and governed applies for one
   /// instance; the first lock in the apply order (policy → workspace → stage).
   package static func lock(_ instance: Instance) throws(HostError) -> FileLock {
-    try FileLock(path: instance.directory + "/.policy.lock")
+    // `.policy.lock`, never recreating a destroyed instance's directory.
+    guard let lock = try FileLock.siblingInExistingDirectory(of: instance.directory + "/policy")
+    else { throw HostError("Instance '\(instance.name)' no longer exists") }
+    return lock
   }
 
   /// The verified snapshot; nil for an `off` binding. Any inconsistency is
@@ -121,7 +124,7 @@ package struct PolicyBinding: Codable, Equatable, Sendable {
   }
 
   func save(_ instance: Instance) throws(HostError) {
-    try StateStore.writeControlFile(self, to: Self.path(instance))
+    try StateStore.writeInstanceFile(self, to: Self.path(instance))
   }
 
   static func isHex(_ text: String, count: Int) -> Bool {

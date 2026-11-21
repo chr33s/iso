@@ -162,8 +162,9 @@
   // only) or "enforce". Fixed per VM boot: edits apply at the next boot.
   // Enforcing provider actions requires proxy.mode "required"; enforcing
   // workspace.pull.apply requires workspace.pull.mode "stage". Quotas count
-  // admitted proxy requests and reset at each new boot; approvals are an
-  // inline confirmation at `iso pull --apply`.
+  // admitted proxy requests per provider and instance (a guard listing both
+  // providers gives each its own max_requests) and reset at each new boot;
+  // approvals are an inline confirmation at `iso pull --apply`.
   // "policy": {
   //   "version": 1,
   //   "mode": "enforce",

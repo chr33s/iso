@@ -187,6 +187,43 @@ import Testing
         scope: scope, key: "deps-Linux-abc", version: "v1", subject: "a3", limit: 64) == nil)
   }
 
+  /// A dirty, patched or secret-mapped run restores entries clean runs
+  /// published, but what it saves stays in its own run: never shared, never
+  /// visible to another run.
+  @Test func confinedRunsRestoreSharedEntriesButPublishOnlyToTheirOwnRun() throws {
+    let objects = try Self.store()
+    func scope(_ run: String?) -> ObjectStore.CacheScope {
+      ObjectStore.CacheScope(
+        repository: "octo/demo", authority: "validation", platform: "linux/arm64",
+        imageDigest: "i", toolchain: "t", inputDigest: "lock", confinedToRun: run)
+    }
+    let shared = scope(nil)
+    let dirty = scope("run-1")
+    let other = scope("run-2")
+    func publish(_ scope: ObjectStore.CacheScope, _ key: String, _ body: String) throws {
+      let reserved = try #require(
+        try objects.cacheReserve(scope: scope, key: key, version: "v1", subject: "s", limit: 64))
+      try objects.write(reserved.upload, offset: 0, bytes: Array(body.utf8))
+      _ = try objects.cacheCommit(
+        reservation: reserved.reservation, subject: "s", expectedSize: UInt64(body.utf8.count))
+    }
+    try publish(shared, "deps-clean", "clean")
+    #expect(try objects.cacheLookup(scope: dirty, keys: ["deps-clean"], version: "v1") != nil)
+    #expect(try objects.cacheLookup(scope: dirty, keys: ["x", "deps-"], version: "v1") != nil)
+    try publish(dirty, "deps-dirty", "dirty")
+    #expect(try objects.cacheLookup(scope: dirty, keys: ["deps-dirty"], version: "v1") != nil)
+    #expect(try objects.cacheLookup(scope: shared, keys: ["deps-dirty"], version: "v1") == nil)
+    #expect(try objects.cacheLookup(scope: other, keys: ["deps-dirty"], version: "v1") == nil)
+    // The run's own entry wins over the shared one under the same key.
+    try publish(dirty, "deps-clean", "mine")
+    #expect(
+      try objects.cacheLookup(scope: dirty, keys: ["deps-clean"], version: "v1")?.digest
+        == Digest(hashing: Array("mine".utf8)))
+    #expect(
+      try objects.cacheLookup(scope: shared, keys: ["deps-clean"], version: "v1")?.digest
+        == Digest(hashing: Array("clean".utf8)))
+  }
+
   @Test func artifactNamesAndRunScoping() throws {
     let objects = try Self.store()
     for name in ["../x", "a/b", "", "c:d", "x\u{0}"] {

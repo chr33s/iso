@@ -118,7 +118,9 @@ Touch ID and user-presence prompts remain unsupported.
 - At most **2** connections at once; further ones are closed at accept. One
   request at a time per connection. An idle connection is kept until the
   guest closes it. Requests run on the owner's main actor, serialized with
-  host computer-use requests.
+  host computer-use requests. A frame's PNG is encoded off the main actor;
+  frames, host and guest alike, are captured and encoded one at a time in
+  the order asked.
 
 ### 5.2 Wire protocol
 

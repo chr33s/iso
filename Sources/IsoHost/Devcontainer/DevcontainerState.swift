@@ -157,15 +157,11 @@ package struct AppliedDevcontainer: Sendable, Equatable, Codable {
     ])
   }
 
+  /// The hash of the file now at `path`, read like the original (bounded,
+  /// regular, not through a symlink); nil when it is gone.
   func currentHash() throws -> String? {
     guard source == .localFile else { return nil }
-    guard let handle = FileHandle(forReadingAtPath: path) else {
-      if errno == ENOENT { return nil }
-      throw ContextError("Failed to read \(path)", cause: HostError(ioErrorText(errno)))
-    }
-    defer { try? handle.close() }
-    let data = (try? handle.readToEnd()) ?? Data()
-    return sha256Hex(Array(data))
+    return try readRegularFile(path).map(sha256Hex)
   }
 }
 
@@ -179,7 +175,7 @@ package struct DevcontainerState: Sendable, Equatable {
     do {
       try AtomicFile.write(
         Array(json.dropLast().utf8), to: instance.devcontainerStatePath,
-        mode: .preserveExisting(default: 0o600))
+        mode: .preserveExisting(default: 0o600), parents: .mustExist)
     } catch {
       throw ContextError("Failed to write devcontainer_state.json", cause: error)
     }
@@ -203,11 +199,11 @@ package struct DevcontainerState: Sendable, Equatable {
     guard applied.source == .localFile else { return nil }
     guard let current = try applied.currentHash() else {
       return
-        "devcontainer.json previously applied to instance '\(instanceName)' is no longer readable at \(applied.path). The existing VM was not changed. Destroy and recreate it to apply creation-time devcontainer changes such as features, hostRequirements, mounts, image/build, or remoteUser."
+        "devcontainer.json previously applied to instance '\(instanceName)' is no longer readable at \(applied.path). The existing VM was not changed. Destroy and recreate it to apply creation-time devcontainer changes such as features, hostRequirements, image/build, or remoteUser."
     }
     if current == applied.contentHash { return nil }
     return
-      "devcontainer.json changed since instance '\(instanceName)' was created: \(applied.path). The existing VM was not changed. Destroy and recreate it to apply creation-time devcontainer changes such as features, hostRequirements, mounts, image/build, or remoteUser. Restart-time values from the old file, including containerEnv, forwardPorts, and postStartCommand, are not re-applied automatically."
+      "devcontainer.json changed since instance '\(instanceName)' was created: \(applied.path). The existing VM was not changed. Destroy and recreate it to apply creation-time devcontainer changes such as features, hostRequirements, image/build, or remoteUser. Restart-time values from the old file, including containerEnv, forwardPorts, and postStartCommand, are not re-applied automatically."
   }
 
   package static func warnIfChanged(_ instance: Instance, diagnostics: Diagnostics) {

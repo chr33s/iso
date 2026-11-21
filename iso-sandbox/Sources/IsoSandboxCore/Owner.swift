@@ -474,17 +474,24 @@ package enum Owner {
     let out = BufferWriter()
     let err = BufferWriter()
     let input = stdin.map(DataReader.init)
-    let process = try await container.exec("x" + UUID().uuidString.prefix(12).lowercased()) { c in
-      c.arguments = argv
-      c.environmentVariables = ["PATH=\(LinuxProcessConfiguration.defaultPath)", "HOME=/root"]
-      c.workingDirectory = "/"
-      c.user = .init()
-      c.capabilities = .allCapabilities
-      c.stdout = out
-      c.stderr = err
-      c.stdin = input
+    let name = "x" + UUID().uuidString.prefix(12).lowercased()
+    let agent = GuestAgentDeadline.shared
+    // Creating dials the guest agent.
+    let create: @Sendable () async throws -> LinuxProcess = {
+      try await container.exec(name) { c in
+        c.arguments = argv
+        c.environmentVariables = ["PATH=\(LinuxProcessConfiguration.defaultPath)", "HOME=/root"]
+        c.workingDirectory = "/"
+        c.user = .init()
+        c.capabilities = .allCapabilities
+        c.stdout = out
+        c.stderr = err
+        c.stdin = input
+      }
     }
-    let status = try await runGuestProcess(process, timeout: timeout)
+    // A process created after its deadline is deleted: no exec will start it.
+    let process = try await agent.call("create", late: { try? await $0.delete() }, create)
+    let status = try await runGuestProcess(process, timeout: timeout, agent: agent)
     return ControlResponse(ok: true, exitCode: status.exitCode, stdout: out.data, stderr: err.data)
   }
 

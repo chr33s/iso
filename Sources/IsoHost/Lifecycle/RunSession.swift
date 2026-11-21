@@ -163,7 +163,7 @@ package enum RunSessionStore {
       lifecycle: .disposable, sessionID: record.sessionID,
       ownerID: record.ownerID, creationOperationID: record.creationOperationID,
       intendedName: record.intendedName)
-    try StateStore.writeControlFile(marker, to: DisposableMarker.path(instance))
+    try StateStore.writeInstanceFile(marker, to: DisposableMarker.path(instance))
   }
 
   package enum CleanupDecision: Equatable {

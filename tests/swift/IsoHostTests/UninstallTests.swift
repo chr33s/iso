@@ -183,8 +183,24 @@ private struct UninstallFixture {
         "  data dir:  \(fixture.state) (0 instance(s), 0 image(s))",
         "Removed iso SSH config blocks",
         "Keeping \(fixture.state); reinstall iso to manage existing instances.",
-        "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | sh",
+        "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash",
       ])
+  }
+
+  /// The host-control launchd job is unloaded while its binary still exists,
+  /// on both the keep-data and purge paths.
+  @Test func servicesStopBeforeTheBinaryIsRemoved() throws {
+    for options in [Uninstaller.Options(yes: true, keepData: true), .init(yes: true, purge: true)] {
+      let fixture = try UninstallFixture()
+      defer { fixture.remove() }
+      var uninstaller = try fixture.uninstaller(log: DiagnosticsLog())
+      let stops = Mutex<[Bool]>([])
+      let binary = fixture.binary
+      uninstaller.stopServices = { stops.withLock { $0.append(pathExists(binary)) } }
+      try uninstaller.run(options)
+      #expect(stops.withLock { $0 } == [true])
+      #expect(!pathExists(fixture.binary))
+    }
   }
 
   @Test func purgeRemovesOwnedStateAndPreservesConfig() throws {
@@ -205,6 +221,33 @@ private struct UninstallFixture {
       log.contains(
         "Config at \(fixture.home)/.iso/config.jsonc is outside the data directory and was not removed"
       ))
+  }
+
+  /// `--purge` deletes each destroyed VM's own `proxy setup --vm` item, and
+  /// only after the instance is gone.
+  @Test func purgeForgetsEachDestroyedVMsOwnProxyCredential() throws {
+    let fixture = try UninstallFixture()
+    defer { fixture.remove() }
+    let directory = fixture.state + "/instances/dev"
+    try writeUpdateFile(directory + "/instance.json", #"{"name":"dev","index":0}"#)
+    try writeUpdateFile(
+      directory + "/proxy.json",
+      #"{"anthropic": {"credential": "cmd:security find-generic-password -s iso-anthropic-dev -a anthropic -w", "auth": "api_key"}, "openai": {"credential": "cmd:security find-generic-password -s mine -a openai -w"}}"#
+    )
+    let security = fixture.root + "/security"
+    try writeUpdateFile(
+      security,
+      "#!/bin/sh\n[ -d \"\(directory)\" ] && echo still-there >> \"\(fixture.root)/argv\"\nprintf '%s\\n' \"$*\" >> \"\(fixture.root)/argv\"\n",
+      mode: 0o755)
+    let log = DiagnosticsLog()
+    var uninstaller = try fixture.uninstaller(log: log)
+    uninstaller.keychain = Keychain(security: security, environment: [:])
+    try uninstaller.run(.init(yes: true, purge: true))
+    #expect(!pathExists(directory))
+    #expect(
+      readText(fixture.root + "/argv")
+        == "delete-generic-password -s iso-anthropic-dev -a anthropic\n")
+    #expect(log.contains("Removed the per-VM proxy credential iso-anthropic-dev from the Keychain"))
   }
 
   @Test func companionExecutablesAreRemovedWithTheBinary() throws {

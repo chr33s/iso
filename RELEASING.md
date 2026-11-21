@@ -78,9 +78,11 @@ that runs it. It requires Apple Silicon macOS 27+.
   bounded smoke, the `iso-proxy` and `iso-sandbox` package tests, the
   host-only install/update/uninstall suites and regression scripts, and
   `zizmor`.
-- **`candidate.yml`** builds a signed same-revision candidate with
-  `scripts/build-release.py --release --test --sign` in the `release`
-  environment and attests it.
+- **`candidate.yml`** builds and tests a same-revision candidate with
+  `scripts/build-release.py --release --test`, then, as `release.yml` does,
+  signs and notarizes it in a separate `sign-macos` job in the `release`
+  environment that runs no build or test code, and attests the signed
+  archive in a third job.
 - **`desktop-kernel.yml`**, called by the candidate and release workflows,
   builds `vmlinux-desktop` on an arm64 Linux runner with Docker
   (`scripts/build-desktop-kernel.sh --engine docker --pinned`) and hands it
@@ -181,7 +183,11 @@ notarization is `Accepted`. A browser-downloaded archive then runs without
 ticket, so Gatekeeper checks notarization online on first launch.
 
 Only the signing script sees the signing secrets; the builder removes them from
-every other `main` and helper subprocess. With `--sign`, it first calls the
+every other `main` and helper subprocess. That keeps them out of child
+environments, not out of reach: a process can read its parent's environment
+(`ps -E`), so build and test code running under `--sign` could still read them.
+The workflows therefore never use `--sign`; their `sign-macos` jobs hold the
+secrets and run only `scripts/macos-sign-notarize.sh`. With `--sign`, it first calls the
 script's `--check-env` mode before staging or building. This checks that every
 required variable is nonempty and the base64 certificate decodes to a readable
 PKCS#12 file with the supplied password. Certificate trust, the signing identity,
@@ -358,7 +364,8 @@ check on `main`; check its latest run before tagging.
      `thread`, `undefined`) when host code changed.
    - `scripts/fuzz.sh run <target> 600` when it changed a parser of
      user-editable or guest-authored input (`ParseRepoSlug`, `JSONCToJSON`,
-     `ConfigLoad`, `GuestJSON`, `CodexTOML`).
+     `ConfigLoad`, `GuestJSON`, `CodexTOML`, `EgressConnect`, `EgressHead`,
+     `ProxyRequestTarget`, `ProxyHeaders`, `ProxyCapability`).
 
 7. **Open the bump PR** (`Sources/IsoHost/Update/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `main`. Never push the bump straight to `main`.

@@ -10,6 +10,11 @@ import IsoCore
 /// here is configurable except the test-only API base override.
 package enum UpdateChannel {
   package static let repository = "chr33s/iso"
+  /// Every `gh` call names this host: unpinned, `gh` follows `GH_HOST` or a
+  /// sole configured host, possibly a GitHub Enterprise Server.
+  package static let host = "github.com"
+  /// `[HOST/]OWNER/REPO` for `gh release download --repo`.
+  package static let hostRepository = "\(host)/\(repository)"
   package static let defaultAPIBase = "https://api.github.com"
   package static let bundleAsset = "attestations.jsonl"
   package static let checksumAsset = "SHA256SUMS"
@@ -255,6 +260,7 @@ enum Provenance: Equatable {
       "--cert-identity", UpdateChannel.signerIdentity(tag: tag), "--source-ref",
       "refs/tags/\(tag)", "--deny-self-hosted-runners",
     ]
+    arguments += ["--hostname", UpdateChannel.host]
     if let bundle { arguments += ["--bundle", bundle] }
     return arguments
   }

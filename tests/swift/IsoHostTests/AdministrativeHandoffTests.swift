@@ -38,7 +38,7 @@ private enum AdministrativeOperation: CaseIterable, Sendable {
     case .succeeds:
       guard guest.client.succeeds(target, command) else { throw HostError("probe refused") }
     case .copy:
-      try guest.client.copy(target, local: guest.root + "/source", remote: GuestPath("./copy"))
+      try guest.client.copy(target, locals: [guest.root + "/source"], remote: GuestPath("./copy"))
     case .wait:
       try guest.client.waitUntilReady(
         target, timeout: .milliseconds(100), diagnostics: guest.sink.diagnostics)

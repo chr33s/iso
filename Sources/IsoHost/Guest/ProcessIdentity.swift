@@ -42,12 +42,39 @@ struct ProcessIdentity: Codable, Equatable, Sendable {
     return String(decoding: path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
 
+  /// The process's argument vector as the kernel holds it (`KERN_PROCARGS2`,
+  /// the record `ps -o command` prints), read in process; nil once it has
+  /// exited or when it is not this user's.
+  static func arguments(_ pid: Int32) -> [String]? {
+    guard pid > 0 else { return nil }
+    var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+    var size = 0
+    guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0, size > 4 else { return nil }
+    var buffer = [UInt8](repeating: 0, count: size)
+    guard sysctl(&mib, UInt32(mib.count), &buffer, &size, nil, 0) == 0, size > 4 else {
+      return nil
+    }
+    let bytes = buffer.prefix(size)
+    // `argc`, the executable path and its NUL padding, then `argc` strings.
+    let argc = bytes.prefix(4).enumerated().reduce(0) { $0 | Int($1.element) << (8 * $1.offset) }
+    var index = bytes.index(bytes.startIndex, offsetBy: 4)
+    while index < bytes.endIndex, bytes[index] != 0 { index += 1 }
+    while index < bytes.endIndex, bytes[index] == 0 { index += 1 }
+    var arguments: [String] = []
+    while arguments.count < argc, index < bytes.endIndex {
+      let end = bytes[index...].firstIndex(of: 0) ?? bytes.endIndex
+      arguments.append(String(decoding: bytes[index..<end], as: UTF8.self))
+      index = min(end + 1, bytes.endIndex)
+    }
+    return arguments.count == argc ? arguments : nil
+  }
+
   static func path(forPIDFile pidPath: String) -> String {
     (pidPath.hasSuffix(".pid") ? String(pidPath.dropLast(4)) : pidPath) + ".identity.json"
   }
 
   func save(forPIDFile pidPath: String) throws {
-    try StateStore.writeControlFile(self, to: Self.path(forPIDFile: pidPath))
+    try StateStore.writeInstanceFile(self, to: Self.path(forPIDFile: pidPath))
   }
 
   static func load(forPIDFile pidPath: String) -> ProcessIdentity? {

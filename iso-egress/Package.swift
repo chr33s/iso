@@ -19,6 +19,13 @@ let package = Package(
     .executableTarget(
       name: "IsoEgress", dependencies: ["IsoEgressCore"], swiftSettings: strictMemorySafety),
     .testTarget(name: "IsoEgressCoreTests", dependencies: ["IsoEgressCore"]),
+    // Fuzz harness bodies. `scripts/fuzz.sh` links them with libFuzzer
+    // entrypoints in ../fuzz/Entrypoints; the replay test runs the committed
+    // corpus (../fuzz/corpus) through them. Not part of any product.
+    .target(
+      name: "IsoEgressFuzzHarnesses", dependencies: ["IsoEgressCore"], path: "Fuzz",
+      swiftSettings: strictMemorySafety),
+    .testTarget(name: "IsoEgressFuzzReplayTests", dependencies: ["IsoEgressFuzzHarnesses"]),
   ],
   swiftLanguageModes: [.v6]
 )

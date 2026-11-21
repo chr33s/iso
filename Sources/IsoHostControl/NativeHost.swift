@@ -122,10 +122,16 @@ package struct AppleNativeHost: NativeHost {
 
   let backend: AppleBackend
   let egress: any FilteredEgressCompanion
+  /// Where `delete` removes the VM's own `iso proxy setup --vm` items.
+  let keychain: Keychain
 
   /// The service's backend is the sole writer of adopted instances.
-  package init(backend: AppleBackend, egress: (any FilteredEgressCompanion)? = nil) {
+  package init(
+    backend: AppleBackend, egress: (any FilteredEgressCompanion)? = nil,
+    keychain: Keychain? = nil
+  ) {
     self.backend = backend.asServiceWriter()
+    self.keychain = keychain ?? Keychain(environment: backend.environment)
     self.egress =
       egress
       ?? ProcessEgressCompanion(
@@ -273,9 +279,11 @@ package struct AppleNativeHost: NativeHost {
     guard name.belongs(to: owner) else { throw .failed("runtime object is not owned") }
     if let instance = try instance(id) {
       egress.stop(instance)
+      let credentials = ProxyState.ownedKeychainItems(instance)
       do { try backend.destroyInstance(instance) } catch {
         throw .uncertain(HostControlError.sanitize("\(error)"))
       }
+      ProxyState.forget(credentials, keychain: keychain, diagnostics: backend.diagnostics)
       return
     }
     let runtime = try runtime()

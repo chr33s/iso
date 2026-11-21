@@ -83,6 +83,8 @@ package struct EditorEnclave: Sendable {
       let owner = (try? String(contentsOfFile: root + "/owner", encoding: .utf8))
         .flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
       if let owner, owner > 0, kill(owner, 0) == 0 || errno == EPERM { continue }
+      // An editor of a session whose iso was killed may still run.
+      EditorSessionSweep.end(session: root)
       try? FileManager.default.removeItem(atPath: root)
     }
   }

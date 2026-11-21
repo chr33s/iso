@@ -16,6 +16,8 @@ package struct RunWorkflow {
   package let forwarded: [String]
   package let configPath: String?
   package let audit: AuditInvocation?
+  /// Where `--rm` cleanup removes the VM's own `iso proxy setup --vm` items.
+  package var keychain: Keychain
 
   package init(
     lifecycle: ProjectLifecycle, agent: AgentDefinitionID, workspace: String?, name: InstanceName?,
@@ -34,6 +36,7 @@ package struct RunWorkflow {
     self.forwarded = forwarded
     self.configPath = configPath
     self.audit = audit
+    keychain = Keychain(environment: lifecycle.context.environment.variables)
   }
 
   package enum Event {
@@ -390,9 +393,11 @@ package struct RunWorkflow {
       }
     case .destroy(let name):
       let instance = try InstanceStore.resolve(context.config, name: name)
+      let credentials = ProxyState.ownedKeychainItems(instance)
       lifecycle.agents.proxies.stopAll(instance)
       do {
         try context.backend.destroyInstance(instance)
+        ProxyState.forget(credentials, keychain: keychain, diagnostics: diagnostics)
         record.state = .completed
         record.cleanupOutcome = "destroyed"
         try RunSessionStore.save(record, config: context.config)

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read command contracts against a synthetic state tree and bounded fake runtime.
 
-Run with --swift .build/debug/iso. JSON output is compared structurally;
-state, runtime operations and rendered image contents remain checked.
+Run with --swift .build/debug/iso. Exit status must equal the fixture's; JSON
+output is compared structurally; state, runtime operations and rendered image
+contents remain checked.
 """
 
 import argparse
@@ -219,7 +220,7 @@ def main():
             expected = golden[label]
             expected = (expected["exit"], expected["stdout"], "(contract fixture)")
             swift = portable(run(os.path.abspath(args.swift), command, home, swift_config))
-            same_status = (expected[0] == 0) == (swift[0] == 0) and (expected[0] != 2 or swift[0] == 2)
+            same_status = expected[0] == swift[0]
             same_stdout = output_value(expected[1]) == output_value(swift[1])
             if same_status and same_stdout:
                 print(f"ok    {label}")

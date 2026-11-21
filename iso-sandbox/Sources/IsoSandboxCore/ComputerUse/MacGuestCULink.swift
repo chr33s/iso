@@ -68,7 +68,9 @@ package final class MacGuestCULink: NSObject, VZVirtioSocketListenerDelegate, @u
     var reader = LineReader(fd: fd, limit: GuestCUProtocol.maxRequest)
     while case .line(let line) = reader.next() {
       let response = respond(to: line)
-      let sent = BoundedWrite.all(
+      // A frame reply is megabytes. This thread is the descriptor's only reader
+      // and writer (the VZ connection retained beside it does no I/O on it).
+      let sent = BoundedWrite.allNonBlocking(
         fd, Array(response.encodedLine()),
         deadline: ContinuousClock.now + .seconds(GuestCUProtocol.writeDeadline))
       // A guest that stops reading loses the connection, not the owner.
@@ -189,7 +191,7 @@ extension MacGuestCULink {
         r.session = id
         return r
       case .frame:
-        let f = try screen.frame(session: request.session, origin: .guest)
+        let f = try await screen.frame(session: request.session, origin: .guest)
         var r = GuestCUResponse(ok: true)
         r.frame = GuestCUFrame(
           frameId: f.id, width: screen.width, height: screen.height, png: f.png)

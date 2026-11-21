@@ -50,7 +50,7 @@ package struct PortForwards: Sendable {
     do {
       try AtomicFile.write(
         Array(String(json.rendered().dropLast()).utf8), to: path,
-        mode: .preserveExisting(default: 0o600))
+        mode: .preserveExisting(default: 0o600), parents: .mustExist)
     } catch {
       throw ContextError("Failed to write forwards.json", cause: error)
     }

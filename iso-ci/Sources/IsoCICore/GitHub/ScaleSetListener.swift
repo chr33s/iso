@@ -560,11 +560,11 @@ package struct ScaleSetRunnerService: RunnerService {
     try base.deleteRunner(scope: scope, id: id)
   }
 
-  package func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
+  package func activeJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
     try base.activeJobs(scope: scope)
   }
 
-  package func completedJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
+  package func completedJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
     try base.completedJobs(scope: scope)
   }
 

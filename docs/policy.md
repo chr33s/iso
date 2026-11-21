@@ -86,6 +86,14 @@ A rate guard counts requests **admitted** by the proxy in a sliding window
 stays counted even if its upload stalls, the client disconnects or the
 provider fails. A denied request is never forwarded and never counted.
 
+Each instance runs one proxy per provider, and each proxy keeps its own window
+for every guard that matches it. `resources` and `instances` choose which
+proxies apply a guard; they do not pool a budget. A guard with
+`"resources": ["provider:anthropic", "provider:openai"]` and `"max_requests":
+100` admits up to 100 Anthropic **and** 100 OpenAI requests per window, and a
+guard that names several instances (or none) limits each instance on its own.
+There is no combined cross-provider or cross-instance budget.
+
 | Result | Guest sees |
 |---|---|
 | no permit, or a forbid | `403` |
@@ -128,6 +136,8 @@ workspace returns cannot be governed by an enforcing policy.
   tokens or spend; they are not a billing limit.
 - Quotas live in proxy memory and reset at every new VM boot; there is no
   cross-boot or cross-host budget.
+- A quota is per provider and instance: a guard naming several providers or
+  instances gives each its own `max_requests`.
 - Enforcing boots trade proxy recovery for that bounded state: a dead or
   re-applied proxy is not relaunched until the next boot.
 - Approvals need an inline confirmation at the host terminal for each apply;

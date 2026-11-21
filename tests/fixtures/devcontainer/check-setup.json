@@ -86,10 +86,10 @@
     },
     {
       "key": "mounts",
-      "status": "applied",
+      "status": "unsupported",
       "source": "devcontainer",
       "value": "3 entries",
-      "note": "applied at start time"
+      "note": "not applied; iso copies only the project (use --mount HOST[:GUEST] for a one-time copy)"
     },
     {
       "key": "remoteUser",

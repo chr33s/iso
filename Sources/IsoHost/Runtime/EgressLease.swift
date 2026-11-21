@@ -67,8 +67,9 @@ package enum EgressLease {
   }
 
   /// What the lease has observed of its companion and egress tunnel; each is
-  /// required only once seen alive (startup spawns the lease first). A `ps` probe
-  /// can fail transiently, so only `missLimit` consecutive misses count as loss.
+  /// required only once seen alive (startup spawns the lease first). A process
+  /// probe can fail transiently, so only `missLimit` consecutive misses count as
+  /// loss.
   package struct Supervision: Equatable, Sendable {
     package static let missLimit = 3
     package private(set) var companionSeen = false

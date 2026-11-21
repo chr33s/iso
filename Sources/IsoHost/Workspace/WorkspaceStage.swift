@@ -550,24 +550,9 @@ enum StageManifestValidator {
 }
 
 /// Raw Git administration (RET-05): `.git` at any component, any object
-/// type, including the spellings APFS resolves to it.
+/// type, including the spellings APFS or Git's HFS rules resolve to it.
 enum ProtectedPaths {
-  /// Code points HFS+/APFS ignore in names, which Git also treats as
-  /// equivalent (`is_hfs_dotgit`).
-  static let ignorable: Set<UInt32> = Set(
-    [0x200C, 0x200D, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0xFEFF]
-      + Array(0x206A...0x206F))
-
-  /// A name folded the way a case-insensitive APFS volume compares it.
-  static func folded(_ name: String) -> String {
-    var scalars = String.UnicodeScalarView()
-    for scalar in name.unicodeScalars where !ignorable.contains(scalar.value) {
-      scalars.append(scalar)
-    }
-    return String(scalars).precomposedStringWithCanonicalMapping.lowercased()
-  }
-
-  static func isReservedName(_ name: String) -> Bool { folded(name) == ".git" }
+  static func isReservedName(_ name: String) -> Bool { NameFolding.key(name) == ".git" }
 
   static func isReserved(_ path: String) -> Bool {
     path.split(separator: "/").contains { isReservedName(String($0)) }
@@ -579,7 +564,7 @@ enum ProtectedPaths {
 /// ordinarily named file, and approved source stays untrusted.
 enum SensitivePaths {
   static func classify(_ path: String) -> String? {
-    let components = path.split(separator: "/").map { ProtectedPaths.folded(String($0)) }
+    let components = path.split(separator: "/").map { NameFolding.key(String($0)) }
     if components.contains(".husky") { return "git hook runs on the host" }
     if components.last == ".envrc" { return "direnv runs .envrc on the host" }
     if components.suffix(2) == [".vscode", "tasks.json"] {
@@ -616,7 +601,13 @@ struct StageBuilder {
   private(set) var excludedCount: UInt64 = 0
   /// Staged objects by path, for final-tree link checks.
   private(set) var staged: [String: StageObject] = [:]
-  private var stagedFolded: Set<String> = []
+  /// Each staged path as the destination folds it, and whether a staged
+  /// symlink has that spelling: a differently spelled link component is
+  /// found in one lookup.
+  private var stagedFolded: [String: Bool] = [:]
+  /// Destination directories listed for spelling checks, each read once per
+  /// build (nil: not a directory there).
+  private(set) var listings: [String: DestinationListing?] = [:]
   /// Staged links, checked for chains once the whole tree is known.
   private(set) var links: [(path: String, target: String)] = []
 
@@ -793,9 +784,14 @@ struct StageBuilder {
 
   private mutating func record(_ path: String, _ new: StageObject) throws {
     staged[path] = new
-    stagedFolded.insert(destination.foldPath(path))
+    let key = destination.foldPath(path)
+    if case .symlink = new {
+      stagedFolded[key] = true
+    } else if stagedFolded[key] == nil {
+      stagedFolded[key] = false
+    }
     let old = try destination.object(path)
-    if old != .absent, let spelling = try destination.spellingMismatch(path) {
+    if old != .absent, let spelling = try spellingMismatch(path) {
       issue("\(path): differs only in case or normalization from the host's \(spelling)")
       return
     }
@@ -825,6 +821,23 @@ struct StageBuilder {
         sensitive: SensitivePaths.classify(path, new: new)))
   }
 
+  /// The host's own spelling of `path`'s last component when it differs from the
+  /// staged one but names the same entry on this volume. Each destination
+  /// directory is listed once, however many staged entries it holds.
+  private mutating func spellingMismatch(_ path: String) throws -> String? {
+    var components = path.split(separator: "/").map(String.init)
+    guard let name = components.popLast() else { return nil }
+    let parent = components.joined(separator: "/")
+    let listing: DestinationListing?
+    if let cached = listings[parent] {
+      listing = cached
+    } else {
+      listing = try destination.listing(parent)
+      listings[parent] = .some(listing)
+    }
+    return listing?.spellingMismatch(name)
+  }
+
   /// Directory entries other than `.` and `..`, as raw bytes.
   static func names(_ directory: Int32, path: String) throws -> [[UInt8]] {
     let copy = dup(directory)
@@ -850,10 +863,16 @@ struct StageBuilder {
   }
 
   static func validName(_ name: [UInt8]) -> String? {
-    guard !name.isEmpty, !name.contains(where: { $0 < 0x20 || $0 == 0x7F || $0 == 0x2F }),
-      let text = String(validating: name, as: UTF8.self)
+    guard !name.isEmpty, !name.contains(0x2F), let text = String(validating: name, as: UTF8.self),
+      !hasControl(text)
     else { return nil }
     return text
+  }
+
+  /// A C0, DEL or C1 control character (U+0000–U+001F, U+007F–U+009F): never
+  /// part of a returned name or link target.
+  static func hasControl(_ text: String) -> Bool {
+    text.unicodeScalars.contains { $0.value < 0x20 || (0x7F...0x9F).contains($0.value) }
   }
 
   static func linkTarget(_ directory: Int32, _ name: String, path: String) throws -> String? {
@@ -874,6 +893,8 @@ struct StageBuilder {
     for (path, target) in links {
       var stack = path.split(separator: "/").map(String.init)
       _ = stack.popLast()
+      // The same components as the destination volume folds them, in step.
+      var folded = stack.map(destination.fold)
       for component in target.split(separator: "/").map(String.init) {
         if component == "." { continue }
         if component == ".." {
@@ -882,6 +903,7 @@ struct StageBuilder {
             issue("\(path): symlink points outside the workspace")
             break
           }
+          _ = folded.popLast()
           continue
         }
         if ProtectedPaths.isReservedName(component) {
@@ -889,8 +911,9 @@ struct StageBuilder {
           break
         }
         stack.append(component)
+        folded.append(destination.fold(component))
         let through = stack.joined(separator: "/")
-        if try finalObjectIsLink(through) {
+        if try finalObjectIsLink(through, folded: folded.joined(separator: "/")) {
           issue("\(path): symlink target passes through another symlink (\(through))")
           break
         }
@@ -898,19 +921,17 @@ struct StageBuilder {
     }
   }
 
-  private func finalObjectIsLink(_ path: String) throws -> Bool {
+  /// Whether the planned final tree has a link at `path` (`folded` is its
+  /// destination-folded spelling): a staged entry by either spelling, else the
+  /// preserved destination.
+  private func finalObjectIsLink(_ path: String, folded: String) throws -> Bool {
     if let object = staged[path] {
       if case .symlink = object { return true }
       return false
     }
-    if stagedFolded.contains(destination.foldPath(path)) { return linkFolded(path) }
+    if let link = stagedFolded[folded] { return link }
     if case .symlink = try destination.object(path) { return true }
     return false
-  }
-
-  private func linkFolded(_ path: String) -> Bool {
-    let key = destination.foldPath(path)
-    return staged.contains { destination.foldPath($0.key) == key && $0.value.kindName == "symlink" }
   }
 
   /// The lexical resolution of `target` from `link`'s directory, nil when it
@@ -931,9 +952,7 @@ struct StageBuilder {
   /// A relative target that, resolved lexically from the link's directory,
   /// never climbs above the workspace root.
   static func staysInside(link path: String, target: String) -> Bool {
-    guard !target.isEmpty, !target.hasPrefix("/"),
-      !target.utf8.contains(where: { $0 < 0x20 || $0 == 0x7F })
-    else { return false }
+    guard !target.isEmpty, !target.hasPrefix("/"), !hasControl(target) else { return false }
     var depth = path.split(separator: "/").count - 1
     for component in target.split(separator: "/", omittingEmptySubsequences: true) {
       switch component {

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Lifecycle contracts against a stateful fake runtime, including interrupted journals.
 
-Run with --swift .build/debug/iso. JSON output is compared structurally;
-state, runtime operations and rendered image contents remain checked.
+Run with --swift .build/debug/iso. Exit status must equal the fixture's; JSON
+output is compared structurally; state, runtime operations and rendered image
+contents remain checked.
 """
 
 import argparse
@@ -329,7 +330,7 @@ def main():
             state = snapshot(home, normalizer)
             expected = golden["steps"][label]
             problems = []
-            if (expected["exit"] == 0) != (swift[0] == 0):
+            if expected["exit"] != swift[0]:
                 problems.append(f"exit expected={expected['exit']} swift={swift[0]}")
             if output_value(expected["stdout"]) != output_value(normalizer.text(swift[1])):
                 problems.append("stdout differs")

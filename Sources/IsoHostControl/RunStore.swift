@@ -78,9 +78,12 @@ package struct RunStore: Sendable {
   }
 
   let root: String
+  /// Told of every run record written (the supervisor's active-run index).
+  let written: (@Sendable (Record) -> Void)?
 
-  package init(root: String) throws(HostError) {
+  package init(root: String, written: (@Sendable (Record) -> Void)? = nil) throws(HostError) {
     self.root = root
+    self.written = written
     try StateStore.ensurePrivateDirectory(root)
   }
 
@@ -97,6 +100,7 @@ package struct RunStore: Sendable {
 
   package func save(_ record: Record) throws(HostError) {
     try StateStore.writeControlFile(record, to: path(record.runID))
+    written?(record)
   }
 
   /// Only for a run whose creation was never accepted (no parent operation).
@@ -200,7 +204,7 @@ package struct RunObservation: Sendable, Equatable {
     liveRetentionUntil = try r.optionalUnsigned("live_retention_until", as: UInt64.self).map(
       WireTime.init(seconds:))
     recoveryUsed = try r.bool("recovery_used")
-    disposition = try r.optionalString("disposition")
+    disposition = try r.optionalString("disposition").map { HostControlError.sanitize($0) }
     try r.finish()
   }
 }

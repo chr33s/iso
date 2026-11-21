@@ -18,15 +18,16 @@ jobs:
       contents: read
     uses: $/.github/workflows/desktop-kernel.yml
 
+  # Builds and tests the candidate unsigned. It holds no signing secret: build
+  # scripts, dependencies and tests run here, and a child process can read
+  # its parent's environment, so removing secrets from subprocesses would not
+  # keep them away from this code.
   candidate:
     needs: [ci, kernel]
     runs-on: xcode-27
     timeout-minutes: 120
-    environment: release
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,7 +37,7 @@ jobs:
       # another workflow run must not feed a release build.
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
           cache: false
 
       # Built by the `kernel` job; build-release.py checks it against the
@@ -47,7 +48,51 @@ jobs:
           name: desktop-kernel
           path: ${{ runner.temp }}/desktop-kernel
 
-      - name: Build, test, sign, and notarize same-revision Swift candidate
+      - name: Build and test same-revision Swift candidate
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/build-release.py --release --test \
+            --expected-revision "$REVISION" --desktop-kernel "$RUNNER_TEMP/desktop-kernel" \
+            --out "$RUNNER_TEMP/candidate"
+
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-candidate
+          path: |
+            ${{ runner.temp }}/candidate/iso-*-aarch64-apple-darwin.tar.gz
+            ${{ runner.temp }}/candidate/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  # Developer ID signing and notarization, as in release.yml: this job runs
+  # no repository code other than the signing script, and the signing secrets
+  # are set only on the step that runs it.
+  sign-macos:
+    needs: candidate
+    runs-on: xcode-27
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/macos-sign-notarize.sh
+            scripts/enhanced-security.entitlements
+            iso-sandbox/iso-sandbox.entitlements
+          sparse-checkout-cone-mode: false
+
+      - name: Download unsigned candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-candidate
+
+      - name: Sign and notarize
+        shell: bash
         env:
           REVISION: ${{ github.sha }}
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -57,40 +102,91 @@ jobs:
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
           NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
         run: |
-          python3 scripts/build-release.py --release --test --sign \
-            --expected-revision "$REVISION" --desktop-kernel "$RUNNER_TEMP/desktop-kernel" \
-            --out "$RUNNER_TEMP/candidate"
-          echo "TARBALL=$(ls "$RUNNER_TEMP"/candidate/iso-*-aarch64-apple-darwin.tar.gz)" >> "$GITHUB_ENV"
-
-      - name: Check archive contents and signatures
-        run: |
-          mkdir "$RUNNER_TEMP/iso-candidate"
-          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/iso-candidate"
-          cd "$RUNNER_TEMP"/iso-candidate/iso-*-aarch64-apple-darwin
+          name="iso-${REVISION::12}-aarch64-apple-darwin"
+          mkdir staging
+          tar -xzf "${name}.tar.gz" -C staging
+          rm "${name}.tar.gz"
+          scripts/macos-sign-notarize.sh "staging/${name}"
+          # BUILD.json records the unsigned binaries; describe the signed ones.
+          manifest="staging/${name}/BUILD.json"
           for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
-            test -x "$binary"
-            test "$(shasum -a 256 "$binary" | cut -d' ' -f1)" = "$(jq -r ".binaries[\"$binary\"]" BUILD.json)"
-            codesign --verify --strict "$binary"
-            spctl --assess --type open --context context:primary-signature --verbose=2 "$binary"
+            sha="$(shasum -a 256 "staging/${name}/${binary}" | cut -d' ' -f1)"
+            jq --arg b "$binary" --arg s "$sha" '.binaries[$b] = $s' "$manifest" > "$manifest.new"
+            mv "$manifest.new" "$manifest"
           done
-          jq -e '.release_build and .developer_id_signed and .tested and (.source_dirty | not)' BUILD.json
-          ./iso --version
-          ./iso-sandbox version
+          jq '.developer_id_signed = true' "$manifest" > "$manifest.new"
+          mv "$manifest.new" "$manifest"
+
+      # The signed binaries run only in this step, which carries no signing or
+      # notary secret.
+      - name: Check signatures, archive and checksum the signed candidate
+        shell: bash
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          name="iso-${REVISION::12}-aarch64-apple-darwin"
+          (
+            cd "staging/${name}"
+            for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
+              test -x "$binary"
+              test "$(shasum -a 256 "$binary" | cut -d' ' -f1)" = "$(jq -r ".binaries[\"$binary\"]" BUILD.json)"
+              codesign --verify --strict "$binary"
+              spctl --assess --type open --context context:primary-signature --verbose=2 "$binary"
+            done
+            jq -e '.release_build and .developer_id_signed and .tested and (.source_dirty | not)' BUILD.json
+            ./iso --version
+            ./iso-sandbox version
+          )
+          COPYFILE_DISABLE=1 tar -czf "${name}.tar.gz" -C staging "${name}"
+          # The kernel source tarball is unchanged by signing; keep its line.
+          grep -E "^[0-9a-f]{64}  iso-${REVISION::12}-vmlinux-desktop-source\.tar\.gz$" SHA256SUMS > SHA256SUMS.signed
+          shasum -a 256 "${name}.tar.gz" >> SHA256SUMS.signed
+          mv SHA256SUMS.signed SHA256SUMS
+
+      - name: Upload signed candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-candidate
+          path: |
+            iso-*-aarch64-apple-darwin.tar.gz
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  # Attests the signed archive; runs no repository code.
+  attest:
+    needs: sign-macos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download signed candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-candidate
+          path: candidate
+
+      - name: Check the archive against SHA256SUMS
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          cd candidate
+          grep -E "^[0-9a-f]{64}  iso-${REVISION::12}-aarch64-apple-darwin\.tar\.gz$" SHA256SUMS | sha256sum -c -
 
       - name: Attest candidate archive
         id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ env.TARBALL }}
+          subject-path: candidate/iso-*-aarch64-apple-darwin.tar.gz
 
       - name: Prepare verification files
         env:
           BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          cd "$RUNNER_TEMP/candidate"
-          shasum -a 256 -c SHA256SUMS
-          jq -c . "$BUNDLE_PATH" > "$RUNNER_TEMP/attestations.jsonl"
-          test -s "$RUNNER_TEMP/attestations.jsonl"
+          jq -c . "$BUNDLE_PATH" > candidate/attestations.jsonl
+          test -s candidate/attestations.jsonl
 
       # This is an opt-in candidate artifact. It does not publish a release,
       # or change the stable install/update channel.
@@ -98,6 +194,7 @@ jobs:
         with:
           name: iso-candidate-${{ github.sha }}-aarch64-apple-darwin
           path: |
-            ${{ env.TARBALL }}
-            ${{ runner.temp }}/candidate/SHA256SUMS
-            ${{ runner.temp }}/attestations.jsonl
+            candidate/iso-*-aarch64-apple-darwin.tar.gz
+            candidate/SHA256SUMS
+            candidate/attestations.jsonl
+          if-no-files-found: error

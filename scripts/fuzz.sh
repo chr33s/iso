@@ -22,7 +22,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/fuzz/.build"
-TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad GuestJSON CodexTOML)
+TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad GuestJSON CodexTOML
+  EgressConnect EgressHead ProxyRequestTarget ProxyHeaders ProxyCapability)
 # The self-contained IsoHost parsers, compiled as a partial `IsoHost` module:
 # the full target needs IsoSecrets (swift-crypto), which this build does not compile.
 HOST_PARSER_SOURCES=(
@@ -103,9 +104,17 @@ swift_module() { # name, sources...
 }
 
 link_target() { # target, entrypoint
+  local libs
+  case "$1" in
+    # Companion targets link only the companion core they fuzz.
+    Egress*) libs=(IsoEgressFuzzHarnesses IsoEgressCore) ;;
+    Proxy*) libs=(IsoProxyFuzzHarnesses IsoProxyCore IsoPolicy) ;;
+    *) libs=(IsoFuzzHarnesses IsoHost IsoConfiguration IsoPolicy IsoCore IsoShell) ;;
+  esac
+  local archives=() lib
+  for lib in "${libs[@]}"; do archives+=("$BUILD/lib$lib.a"); done
   xcrun swiftc "${SWIFT_FLAGS[@]}" -I "$BUILD" "$2" \
-    "$BUILD/libIsoFuzzHarnesses.a" "$BUILD/libIsoHost.a" "$BUILD/libIsoConfiguration.a" \
-    "$BUILD/libIsoPolicy.a" "$BUILD/libIsoCore.a" "$BUILD/libIsoShell.a" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
+    "${archives[@]}" "$BUILD/libFuzzer.a" -lc++ -o "$BUILD/$1"
 }
 
 cmd_build() {
@@ -117,6 +126,10 @@ cmd_build() {
   swift_module IsoConfiguration "$ROOT"/Sources/IsoConfiguration/*.swift
   swift_module IsoHost "${HOST_PARSER_SOURCES[@]/#/$ROOT/}"
   swift_module IsoFuzzHarnesses "$ROOT"/fuzz/Targets/*.swift
+  swift_module IsoEgressCore "$ROOT"/iso-egress/Sources/IsoEgressCore/*.swift
+  swift_module IsoEgressFuzzHarnesses "$ROOT"/iso-egress/Fuzz/*.swift
+  swift_module IsoProxyCore "$ROOT"/iso-proxy/Sources/IsoProxyCore/*.swift
+  swift_module IsoProxyFuzzHarnesses "$ROOT"/iso-proxy/Fuzz/*.swift
   local t
   for t in "${TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
   sources_stamp > "$BUILD/targets.sha256"
@@ -127,7 +140,8 @@ cmd_build() {
 sources_stamp() {
   (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh iso-policy/Sources/IsoShell/*.swift Sources/IsoCore/*.swift \
     iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift "${HOST_PARSER_SOURCES[@]}" \
-    fuzz/Targets/*.swift fuzz/Entrypoints/*.swift) | shasum -a 256 | cut -d' ' -f1
+    fuzz/Targets/*.swift fuzz/Entrypoints/*.swift iso-egress/Sources/IsoEgressCore/*.swift \
+    iso-egress/Fuzz/*.swift iso-proxy/Sources/IsoProxyCore/*.swift iso-proxy/Fuzz/*.swift) | shasum -a 256 | cut -d' ' -f1
 }
 
 ensure_built() { # target

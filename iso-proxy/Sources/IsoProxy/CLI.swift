@@ -29,9 +29,14 @@ struct ProxyMain {
         try await selftest()
         return
       }
+      // Before stdin: a limit the proxy cannot meet refuses startup before
+      // the credential is read.
+      if let previous = try DescriptorLimit.raise(to: Limits.descriptors) {
+        log("iso-proxy raised the open-file limit from \(previous) to \(Limits.descriptors)")
+      }
       let config = try readConfig()
       let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
-      let upstream = UpstreamClient(group: group)
+      let upstream = try UpstreamClient(group: group)
       let connections = ConnectionRegistry()
       do {
         let server = try await Server.bind(
@@ -56,6 +61,9 @@ struct ProxyMain {
       }
     } catch let failure as Jail.Failure {
       log("iso-proxy confinement failure: \(failure)")
+      exit(1)
+    } catch let failure as DescriptorLimit.Failure {
+      log("iso-proxy startup failure: \(failure)")
       exit(1)
     } catch {
       // Never render error payloads: decoders, HTTP clients and system APIs may
@@ -84,7 +92,7 @@ struct ProxyMain {
 
   private static func selftest() async throws {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    let upstream = UpstreamClient(group: group)
+    let upstream = try UpstreamClient(group: group)
     do {
       log("iso-proxy self-test: probing Anthropic TLS")
       try await upstream.probeTLS(provider: .anthropic)

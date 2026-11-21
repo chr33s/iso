@@ -167,7 +167,7 @@ package struct EditorLauncher: Sendable {
           executable: executable, arguments: strategy.arguments, environment: spawnEnvironment,
           deadline: deadline)
         do {
-          let termination = try runner.attached(request, inheritStdin: true, deadline: deadline)
+          let termination = try runner.attached(request, inheritStdin: true)
           if termination.succeeded { return }
           diagnostics.debug("\(strategy.name) exited with \(termination)")
           tried.append("\(strategy.name) exited with \(termination)")

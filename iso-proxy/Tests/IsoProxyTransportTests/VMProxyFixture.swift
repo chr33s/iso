@@ -36,7 +36,7 @@ final class VMProxyFixture: XCTestCase {
     let ca = try NIOSSLCertificate.fromDERFile(caPath)
     var tls = UpstreamClient.tlsConfiguration()
     tls.additionalTrustRoots = [.certificates([ca])]
-    let fixtureTLS = tls
+    let fixtureTLS = try NIOSSLContext(configuration: tls)
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let registry = ConnectionRegistry()
     let loop = group.next()
@@ -61,7 +61,7 @@ final class VMProxyFixture: XCTestCase {
             StreamingBridge(config: config) { request, relay, eventLoop in
               let task = OwnedHTTPRequest(
                 request: request, relay: relay, eventLoop: eventLoop,
-                tlsConfiguration: fixtureTLS, connectHost: "127.0.0.1")
+                tls: fixtureTLS, connectHost: "127.0.0.1")
               task.futureResult.whenFailure { error in
                 // This synthetic-credential fixture runs only under the test harness.
                 // Report transport failures before the guest's 502 triggers cleanup.

@@ -19,12 +19,22 @@ package struct SecretName: Hashable, Comparable, Sendable, CustomStringConvertib
     rawValue = text
   }
 
+  package static let referencePrefix = "vault:"
+
+  /// Why a field whose value is placed in the guest refuses `vault:`.
+  package static let guestPlacementRefusal =
+    "`vault:` references are supported for proxy.<provider>.credential and github.pat tokens only; this value would be placed in the guest"
+
+  /// Whether `text` is written as a `vault:` reference, valid name or not.
+  /// The one test for refusing it where a value is placed in the guest:
+  /// configuration loading and credential resolution both use it.
+  package static func isVaultReference(_ text: String) -> Bool { text.hasPrefix(referencePrefix) }
+
   /// The name a `vault:<name>` reference points at; nil for any other text
   /// and for an invalid name.
   package static func vaultReference(_ text: String) -> SecretName? {
-    let prefix = "vault:"
-    guard text.hasPrefix(prefix) else { return nil }
-    return try? SecretName(String(text.dropFirst(prefix.count)))
+    guard isVaultReference(text) else { return nil }
+    return try? SecretName(String(text.dropFirst(referencePrefix.count)))
   }
 
   static func alphanumeric(_ byte: UInt8) -> Bool {

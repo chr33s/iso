@@ -393,6 +393,15 @@ package final class ProjectLifecycle {
     do {
       try backend.stopUnproven(instance)
     } catch {
+      var status = stat()
+      guard lstat(instance.directory, &status) == 0 else {
+        // Removed by another command (`iso destroy`) meanwhile: there is
+        // nothing to fence, and recording a fence would recreate it.
+        diagnostics.warn(
+          "Instance '\(instance.name)' no longer exists (it was removed during the restart); nothing to stop or fence"
+        )
+        return
+      }
       diagnostics.warn(
         "Could not confirm that '\(instance.name)' stopped (\(oneLine(error))); it is fenced until `iso stop \(instance.name)` succeeds"
       )

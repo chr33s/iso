@@ -122,8 +122,10 @@ package enum ConfigLoader {
 
   /// Reads a regular file, at most `limit + 1` bytes (so an oversized file
   /// is detected without reading all of it); nil when it does not exist.
+  /// Opened non-blocking, so a FIFO or device fails the regular-file check
+  /// instead of waiting in `open` for a writer; regular-file reads ignore it.
   package static func readSnapshot(_ path: String, limit: Int) throws(ConfigError) -> [UInt8]? {
-    let descriptor = unsafe open(path, O_RDONLY | O_CLOEXEC)
+    let descriptor = unsafe open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK)
     if descriptor < 0 {
       let code = errno
       if code == ENOENT { return nil }

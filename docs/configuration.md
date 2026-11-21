@@ -31,7 +31,7 @@ after hand edits.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `data_dir` | string (path) | `~/.iso` | Directory for VM artifacts: images, instances, keys. |
+| `data_dir` | string (path) | `~/.iso` | Directory for VM artifacts: images, instances, keys. Must be absolute or start with `~/`; a relative or empty value is rejected, so the state root never depends on the working directory. |
 | `ssh_port` | integer | `22` | Accepted and validated (must be > 0) for compatibility, but unused: iso always connects to guest port 22. |
 | `github` | string or object | unset (treated as `"off"`) | GitHub authentication strategy. See [GitHub auth](#github-auth). |
 | `security` | object | unset | `{"preset": "networked" | "provider-only" | "offline", "revoked_grant_ids": [...]}`, both members optional. `preset` sets defaults for the hardening settings; see [security presets](#security-presets). `revoked_grant_ids` lists saved instance grants to withdraw, by the 16-lowercase-hex IDs `iso policy effective` shows; duplicates are rejected, and an ID no instance records only draws a warning. See [`iso policy effective`](commands.md#policy-effective). |
@@ -50,7 +50,7 @@ The `github` field determines how isolate obtains a `GITHUB_TOKEN` for the guest
 
 | Value | Behavior |
 |-------|----------|
-| `"auto"` | Checks `$GITHUB_TOKEN` first. Falls back to `gh auth token` if unset. |
+| `"auto"` | Checks `$GITHUB_TOKEN` first. Falls back to `gh auth token --hostname github.com` if unset: the GitHub CLI's github.com token, never a `GH_HOST` or GitHub Enterprise Server token. A one-shot `--git-repo` clone and devcontainer discovery use the same order. |
 | `"env"` | Reads `$GITHUB_TOKEN` from the environment only. Warns if unset. |
 | `"off"` | No GitHub token forwarding. |
 | `"pat"` | Uses a per-repo fine-grained PAT recorded under `github.pat`. GitHub enforces the permissions and repositories selected for that token. |
@@ -88,7 +88,7 @@ A fine-grained PAT is scoped to specific repositories, so a token for the parent
 
 Discovery makes outbound network calls:
 
-- It fetches `.gitmodules` from the parent's default branch via the GitHub Contents API. Before you paste a token, it tries `gh auth token` (if `gh` is installed and authenticated) and otherwise falls back to an anonymous request, which can read the file when the parent repo is public. A `404` (no `.gitmodules`, or a private parent that an unauthenticated request can't see) is treated as a successful empty result — there is simply nothing to suggest. Only when both attempts fail to reach a definitive answer (e.g. rate-limited or a network error) does discovery defer until after you paste the token, using that token instead. A `gh auth token` value read here is used only for this fetch — it is never persisted or forwarded into the guest.
+- It fetches `.gitmodules` from the parent's default branch via the GitHub Contents API. Before you paste a token, it tries `gh auth token --hostname github.com` (if `gh` is installed and authenticated to github.com) and otherwise falls back to an anonymous request, which can read the file when the parent repo is public. A `404` (no `.gitmodules`, or a private parent that an unauthenticated request can't see) is treated as a successful empty result — there is simply nothing to suggest. Only when both attempts fail to reach a definitive answer (e.g. rate-limited or a network error) does discovery defer until after you paste the token, using that token instead. A `gh auth token` value read here is used only for this fetch — it is never persisted or forwarded into the guest.
 - For each candidate submodule it makes an anonymous `GET /repos/<slug>` to detect public repos. Public submodules clone without a token, so they are dropped from the suggestions. Unauthenticated GitHub API requests share a 60/hour per-IP rate limit, so a repo that can't be confirmed public (404, rate-limited, or a network error) is treated as private and kept in the suggestions.
 
 The remaining (private) submodules are routed by resource owner:
@@ -342,12 +342,12 @@ Definition fields:
 |-------|------|-------------|
 | `command` | string | Command to run (stdio servers). |
 | `args` | array of strings | Arguments for the command (stdio servers). Default: `[]`. |
-| `type` | string | Server type: `"http"` or `"sse"` (HTTP servers). Omit for stdio. |
+| `type` | string | Server type: `"http"` or `"sse"` (HTTP servers). Omit for stdio. `"sse"` is Claude-only: Codex has no SSE transport, so a `codex.mcp_servers` entry with it is refused when the configuration loads. |
 | `url` | string | Server URL (HTTP servers). |
-| `env` | object | Environment variable mappings. Keys are the names the server expects; values are the host env var names to read. Default: `{}`. |
+| `env` | object | Environment variable mappings. Keys are the names the server expects; values are the names of variables in the agent session to read (list them in `env_forward` to bring a host value into the session). Default: `{}`. Claude gets each entry as `"KEY": "${NAME}"`, which Claude Code expands when it starts the server; an unset variable stays the literal `${NAME}` and Claude reports it in its MCP diagnostics. Under `codex.mcp_servers` each key must map to itself: Codex passes the variable from the agent session to the server only under its own name (`env_vars`), so list it in `env_forward` too. A renaming entry is refused when the configuration loads. |
 | `headers` | object | HTTP headers to send (HTTP servers). Default: `{}`. |
 
-Servers are registered with `claude mcp add-json` at user scope; each definition is passed to it on stdin, not in its arguments.
+Servers are registered with `claude mcp add-json` at user scope; each definition is passed to it on stdin, not in its arguments. Codex servers are written to the guest `~/.codex/config.toml` in Codex's own keys: `command`/`args` plus `env_vars` (the `env` names, passed through from the session) for stdio, and `url` plus `http_headers` for HTTP (streamable HTTP).
 
 ## `codex` section
 
@@ -445,8 +445,9 @@ the instance's `proxy.json`, not in the config file).
 `proxy.<provider>.credential` and `github.pat` tokens also accept
 `vault:<name>`, read from [`iso secrets`](commands.md#secrets) when the value
 is needed. Fields whose value is placed in the guest (`claude.api_key`,
-`codex.api_key`, MCP headers) refuse `vault:`, so a stored provider credential
-never lands in the guest.
+`codex.api_key`, MCP headers) refuse `vault:` when the configuration loads
+(so `iso validate` reports it) and again when a value is resolved, so a stored
+provider credential never lands in the guest.
 
 Both objects take the same fields:
 

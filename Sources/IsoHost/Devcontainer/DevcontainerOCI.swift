@@ -139,7 +139,10 @@ package struct ResolvedFeature: Sendable, Equatable {
   }
 
   /// Provisioning-script fragment that unpacks the archive embedded as
-  /// base64 and runs its `install.sh` with the options exported.
+  /// base64 and runs its `install.sh` with the options exported. Whatever
+  /// the archive extracts at `install.sh` (a duplicate member, a symlink, a
+  /// directory) is replaced by the exact bytes iso hashed and reported, so
+  /// the reported hash names the script that runs.
   package var installSnippet: String {
     var out = "\necho '  [guest] Installing devcontainer Feature '"
     out += shellEscape(installed.reference) + "\n"
@@ -147,11 +150,17 @@ package struct ResolvedFeature: Sendable, Equatable {
     out += "feature_dir=$(mktemp -d)\n"
     out += "trap 'rm -rf \"$feature_dir\"' EXIT\n"
     out += "archive=\"$feature_dir/feature.tgz\"\n"
-    let delimiter = "ISO_FEATURE_ARCHIVE_\(installed.installScriptHash.rawValue.prefix(16))"
+    let tag = installed.installScriptHash.rawValue.prefix(16)
+    let delimiter = "ISO_FEATURE_ARCHIVE_\(tag)"
     out += "base64 -d > \"$archive\" <<'\(delimiter)'\n"
     out += Data(archive).base64EncodedString() + "\n"
     out += delimiter + "\n"
     out += "tar -xzf \"$archive\" -C \"$feature_dir\"\n"
+    out += "rm -rf \"$feature_dir/install.sh\"\n"
+    let scriptDelimiter = "ISO_FEATURE_SCRIPT_\(tag)"
+    out += "base64 -d > \"$feature_dir/install.sh\" <<'\(scriptDelimiter)'\n"
+    out += Data(installScript.utf8).base64EncodedString() + "\n"
+    out += scriptDelimiter + "\n"
     out += "chmod +x \"$feature_dir/install.sh\"\n"
     out += "export _REMOTE_USER=\"$GUEST_USER\"\n"
     out += "export _REMOTE_USER_HOME=\"/home/$GUEST_USER\"\n"
@@ -417,7 +426,7 @@ package struct FeatureResolver: Sendable {
       termination = try runner.attached(
         .init(
           executable: path, arguments: arguments, environment: environment,
-          deadline: Self.deadline), inheritStdin: false, deadline: nil)
+          deadline: Self.deadline), inheritStdin: false)
     } catch {
       throw ContextError("Failed to execute \(description)", cause: HostError("\(error)"))
     }

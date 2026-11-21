@@ -24,9 +24,9 @@ package enum ProxyProvisioning {
     vm.map { "\(provider.keychainService)-\($0)" } ?? provider.keychainService
   }
 
+  /// `KeychainReference`'s form, so a stored override parses back to its item.
   package static func reference(service: String, account: String) -> CredentialReference {
-    CredentialReference(
-      "cmd:security find-generic-password -s \(shellWord(service)) -a \(shellWord(account)) -w")!
+    CredentialReference(KeychainReference(service: service, account: account).description)!
   }
 
   /// `security add-generic-password -U`. The secret rides argv (the

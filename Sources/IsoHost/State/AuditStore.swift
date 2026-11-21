@@ -491,34 +491,79 @@ package struct AuditStore: Sendable {
       case .vm, .journal: break
       }
     }
-    var expired: UInt64 = current?.expiredRuns ?? 0
-    var expiredThrough = current?.expiredThrough
-    var kept: [AuditRunSummary] = []
-    let ordered = reducer.runs.values.sorted(by: AuditRunSummary.newestFirst)
-    for run in ordered {
-      let old = ((try? Date(run.lastRecordedAt, strategy: .iso8601)) ?? .distantPast) < cutoff
-      if (old && !later.contains(run.auditRunID)) || kept.count >= retention.maxRetainedRuns {
-        expired += 1
-        expiredThrough = max(expiredThrough ?? run.startedAt, run.startedAt)
-      } else {
-        kept.append(run)
-      }
-    }
     let gaps = Array(
       ((current?.gaps ?? []) + retained.health.filter { ($0.afterSequence ?? 0) < boundary }
         + reducer.recordedGaps).suffix(
           retention.maxRetainedGaps))
-    let checkpoint = AuditCheckpoint(
-      schema: AuditCheckpoint.schema, journalID: journal, throughSequence: boundary,
+    let (_, bytes) = try Self.checkpoint(
+      journal: journal, through: boundary,
       throughRecordedAt: covered.last?.recordedAt ?? current?.throughRecordedAt,
-      createdAt: utcTimestamp(now), runs: kept, gaps: gaps, expiredRuns: expired,
-      expiredThrough: expiredThrough)
-    let bytes = try StateStore.encode(checkpoint, path: checkpointPath)
-    guard bytes.count <= retention.checkpointHeadroom else {
-      throw HostError("audit checkpoint would exceed its headroom; history kept")
+      createdAt: utcTimestamp(now),
+      runs: reducer.runs.values.sorted(by: AuditRunSummary.newestFirst), gaps: gaps,
+      previous: current, retention: retention
+    ) { run in
+      let old = ((try? Date(run.lastRecordedAt, strategy: .iso8601)) ?? .distantPast) < cutoff
+      return old && !later.contains(run.auditRunID)
     }
     try AtomicFile.write(bytes, to: checkpointPath, mode: .atMost(0o600))
     for segment in segments[..<retire] { try StateStore.removeIfPresent(segment.path) }
+  }
+
+  /// The checkpoint through `boundary` and its file bytes. `runs` is newest
+  /// first; each is kept while it is under the run cap and its compact
+  /// encoding still fits the headroom, so a checkpoint of any history always
+  /// fits. The rest, and every run `expires` names, expire and are counted.
+  static func checkpoint(
+    journal: AuditJournalID, through boundary: UInt64, throughRecordedAt: String?,
+    createdAt: String, runs ordered: [AuditRunSummary], gaps: [AuditGap],
+    previous: AuditCheckpoint?, retention: AuditRetention,
+    expires: (AuditRunSummary) -> Bool
+  ) throws -> (AuditCheckpoint, [UInt8]) {
+    func make(_ runs: [AuditRunSummary], expired: UInt64, through: String?) -> AuditCheckpoint {
+      AuditCheckpoint(
+        schema: AuditCheckpoint.schema, journalID: journal, throughSequence: boundary,
+        throughRecordedAt: throughRecordedAt, createdAt: createdAt, runs: runs, gaps: gaps,
+        expiredRuns: expired, expiredThrough: through)
+    }
+    // Compact JSON is additive: a run adds its own encoding and one comma.
+    // The remainder is sized with the widest expiry fields it can carry.
+    let widest = ([previous?.expiredThrough].compactMap { $0 } + ordered.map(\.startedAt))
+      .max { $0.utf8.count < $1.utf8.count }
+    var room =
+      retention.checkpointHeadroom - 1
+      - (try compact(make([], expired: .max, through: widest))).count
+    var expired = previous?.expiredRuns ?? 0
+    var expiredThrough = previous?.expiredThrough
+    var kept: [AuditRunSummary] = []
+    var full = false
+    for run in ordered {
+      if !full, !expires(run), kept.count < retention.maxRetainedRuns {
+        let size = try compact(run).count + (kept.isEmpty ? 0 : 1)
+        if size <= room {
+          room -= size
+          kept.append(run)
+          continue
+        }
+        // Older runs never displace a newer one.
+        full = true
+      }
+      expired += 1
+      expiredThrough = max(expiredThrough ?? run.startedAt, run.startedAt)
+    }
+    let checkpoint = make(kept, expired: expired, through: expiredThrough)
+    let bytes = try compact(checkpoint) + [0x0A]
+    guard bytes.count <= retention.checkpointHeadroom else {
+      throw HostError("audit checkpoint would exceed its headroom; history kept")
+    }
+    return (checkpoint, bytes)
+  }
+
+  static func compact(_ value: some Encodable) throws -> [UInt8] {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    do { return Array(try encoder.encode(value)) } catch {
+      throw HostError("Failed to serialize the audit checkpoint")
+    }
   }
 
   func fileSize(_ path: String) -> Int {
@@ -579,10 +624,20 @@ package struct AuditStore: Sendable {
   /// nil). Lock-free: a segment retired mid-read is retried once from the
   /// newer checkpoint.
   package func snapshot(through limit: UInt64? = nil) throws(AuditReadError) -> AuditSnapshot {
+    var cache = AuditSegmentCache()
+    return try snapshot(through: limit, cache: &cache)
+  }
+
+  /// `snapshot(through:)` that decodes only what `cache` has not seen:
+  /// segments only grow, so a repeated read (a follower's poll) decodes the
+  /// records appended since the last one.
+  package func snapshot(through limit: UInt64? = nil, cache: inout AuditSegmentCache)
+    throws(AuditReadError) -> AuditSnapshot
+  {
     var retried = false
     while true {
       do {
-        return try snapshot(through: limit, journalCheck: nil, requireHead: true)
+        return try snapshot(through: limit, journalCheck: nil, requireHead: true, cache: &cache)
       } catch let error as AuditReadError {
         throw error
       } catch is SegmentVanished where !retried {
@@ -602,6 +657,15 @@ package struct AuditStore: Sendable {
   func snapshot(through limit: UInt64?, journalCheck: AuditJournalID?, requireHead: Bool) throws
     -> AuditSnapshot
   {
+    var cache = AuditSegmentCache()
+    return try snapshot(
+      through: limit, journalCheck: journalCheck, requireHead: requireHead, cache: &cache)
+  }
+
+  func snapshot(
+    through limit: UInt64?, journalCheck: AuditJournalID?, requireHead: Bool,
+    cache: inout AuditSegmentCache
+  ) throws -> AuditSnapshot {
     guard try Self.realDirectoryExists(root) else {
       return AuditSnapshot(
         journalID: nil, checkpoint: nil, head: 0, events: [], health: [], degraded: nil)
@@ -628,23 +692,17 @@ package struct AuditStore: Sendable {
         degraded: degradedGap())
     }
     let through = checkpoint?.throughSequence ?? 0
-    let decoder = JSONDecoder()
     var events: [AuditEvent] = []
     var health: [AuditGap] = []
     var previous = through
     var reachedLimit = false
+    cache.retain(segments.map(\.path))
     for (index, segment) in segments.enumerated() {
       if index + 1 < segments.count, segments[index + 1].first <= through + 1 { continue }
       if let limit, segment.first > limit { break }
-      let bytes = try readSegment(segment.path)
-      var lines = bytes.split(separator: 0x0A, omittingEmptySubsequences: false)
-      let terminated = lines.last?.isEmpty ?? true
-      lines.removeLast()
+      let (lines, terminated) = try decodedLines(segment.path, cache: &cache)
       for line in lines {
-        guard line.count <= AuditEvent.maxEncodedBytes,
-          let event = try? decoder.decode(AuditEvent.self, from: Data(line)),
-          event.journalID == journal
-        else {
+        guard let event = line, event.journalID == journal else {
           health.append(.init(reason: .unparseableRecord, afterSequence: previous))
           continue
         }
@@ -683,6 +741,46 @@ package struct AuditStore: Sendable {
       health: health, degraded: degradedGap())
   }
 
+  /// The segment's complete lines, decoded (nil for one that does not
+  /// parse), and whether it ends on a line boundary. Bytes `cache` already
+  /// decoded for this same file are not read again.
+  func decodedLines(_ path: String, cache: inout AuditSegmentCache) throws -> (
+    [AuditEvent?], Bool
+  ) {
+    // Absent: retired by a concurrent writer after it was listed.
+    guard let fd = try openRegularFile(path, O_RDONLY) else { throw SegmentVanished() }
+    defer { close(fd) }
+    var status = stat()
+    guard fstat(fd, &status) == 0 else { throw HostError.posix("Failed to inspect", path) }
+    let identity = AuditSegmentCache.Identity(device: status.st_dev, inode: status.st_ino)
+    var current = AuditSegmentCache.Entry(identity: identity)
+    if let cached = cache.entries[path], cached.identity == identity,
+      cached.consumed <= Int(status.st_size)
+    {
+      current = cached
+    }
+    guard lseek(fd, off_t(current.consumed), SEEK_SET) == off_t(current.consumed) else {
+      throw HostError.posix("Failed to seek", path)
+    }
+    let bytes = try StateStore.readBounded(
+      fd, path: path,
+      limit: retention.segmentBytes + 2 * AuditEvent.maxEncodedBytes - current.consumed,
+      tooLarge: "\(path) is larger than an audit segment")
+    var lines = bytes.split(separator: 0x0A, omittingEmptySubsequences: false)
+    // The last piece is the bytes after the final newline: empty, or a
+    // record still being written, which is read again next time.
+    let tail = lines.removeLast()
+    let decoder = JSONDecoder()
+    for line in lines {
+      current.lines.append(
+        line.count <= AuditEvent.maxEncodedBytes
+          ? try? decoder.decode(AuditEvent.self, from: Data(line)) : nil)
+      current.consumed += line.count + 1
+    }
+    cache.entries[path] = current
+    return (current.lines, tail.isEmpty)
+  }
+
   /// An unreadable marker still means capture was refused.
   func degradedGap() -> AuditGap? {
     let marker: DegradedMarker?
@@ -698,5 +796,32 @@ package struct AuditStore: Sendable {
     let segments = (try? listSegments()) ?? []
     let last = segments.last.map { "\($0.first):\($0.size)" } ?? "-"
     return "\(segments.count)/\(segments.first?.first ?? 0)/\(last)/\(fileSize(checkpointPath))"
+  }
+}
+
+/// Decoded segment records kept between reads of one reader (a follower).
+/// A segment is identified by its file, never only its name, so a replaced
+/// journal or a retired segment is read afresh.
+package struct AuditSegmentCache: Sendable {
+  struct Identity: Equatable, Sendable {
+    let device: dev_t
+    let inode: ino_t
+  }
+
+  struct Entry: Sendable {
+    let identity: Identity
+    /// Bytes through the last newline decoded so far.
+    var consumed = 0
+    var lines: [AuditEvent?] = []
+  }
+
+  var entries: [String: Entry] = [:]
+
+  package init() {}
+
+  /// Forgets segments no longer listed.
+  mutating func retain(_ paths: [String]) {
+    let listed = Set(paths)
+    entries = entries.filter { listed.contains($0.key) }
   }
 }

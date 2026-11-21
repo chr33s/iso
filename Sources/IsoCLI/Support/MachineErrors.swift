@@ -146,16 +146,21 @@ struct MachineFailure: Encodable, Sendable {
 
   /// The most precise typed class along the error's context chain, outermost
   /// first; untyped failures are `OPERATION_FAILED`.
-  init(_ error: any Error) {
+  init(_ error: any Error) { self.init(error, direct: true) }
+
+  /// `direct`: `error` is what the command threw, so a validation error is
+  /// its usage error (`run` exits 2 for it). As a cause, a validation error
+  /// judged other data (host state, a guest reply), not an argument.
+  private init(_ error: any Error, direct: Bool) {
     if let partial = error as? PartialDestroy {
-      let cause = MachineFailure(partial.cause)
+      let cause = MachineFailure(partial.cause, direct: false)
       self.init(
         code: cause.code, message: cause.message,
         details: .partialDestroy(destroyed: partial.destroyed, cause: cause.details))
       return
     }
     if let after = error as? FailureAfterLifecycle {
-      let cause = MachineFailure(after.cause)
+      let cause = MachineFailure(after.cause, direct: false)
       self.init(
         code: cause.code, message: cause.message,
         details: .after(after.lifecycle, cause.details))
@@ -167,20 +172,23 @@ struct MachineFailure: Encodable, Sendable {
       return
     }
     var next: (any Error)? = error
+    var usage = direct
     while let current = next {
-      if let (code, details) = Self.classify(current) {
+      if let (code, details) = Self.classify(current, usage: usage) {
         self.init(code: code, message: message, details: details)
         return
       }
       next = current.contextError?.cause
+      usage = false
     }
     self.init(code: .operationFailed, message: message, details: nil)
   }
 
-  static func classify(_ error: any Error) -> (MachineErrorCode, MachineErrorDetails?)? {
+  static func classify(_ error: any Error, usage: Bool) -> (MachineErrorCode, MachineErrorDetails?)?
+  {
     switch error {
     case is ArgumentParser.ValidationError, is IsoCore.ValidationError:
-      return (.invalidArgument, nil)
+      return usage ? (.invalidArgument, nil) : nil
     case let failure as HostFailure:
       return classify(failure.reason)
     case let unhealthy as InstanceUnhealthy:

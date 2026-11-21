@@ -67,10 +67,10 @@ package struct HostTools: Sendable {
     return text
   }
 
-  /// `gh auth token`, trimmed; nil when `gh` is missing, fails, or prints
-  /// nothing. Used for host-side requests and one-shot clones only.
+  /// `gh`'s github.com token, trimmed; nil when `gh` is missing, fails, or
+  /// prints nothing. Used for host-side requests, one-shot clones and `auto`.
   package func ghAuthToken() -> Secret<String>? {
-    guard let raw = try? capture("gh", ["auth", "token"]) else { return nil }
+    guard let raw = try? capture("gh", GitHubSourceAuth.ghTokenArguments) else { return nil }
     let token = raw.trimmingUnicodeWhitespace()
     return token.isEmpty ? nil : Secret(token)
   }

@@ -240,6 +240,35 @@ func configurationOverlaysPreserveFilteredDestinations(overlay: String) throws {
   }
 }
 
+/// Codex has stdio and streamable HTTP only: an SSE entry is refused for
+/// Codex and kept for Claude, which can register it. Codex also passes a
+/// variable only under its own name, so a renaming `env` entry is refused.
+@Test func codexRefusesSSEMCPServers() throws {
+  let renamed = try #require(
+    fieldError(
+      #"{"codex": {"mcp_servers": {"s": {"command": "x", "env": {"API_KEY": "HOST_KEY"}}}}}"#))
+  #expect(renamed.field == "codex.mcp_servers.s.env.API_KEY")
+  let same = try load(
+    #"{"codex": {"mcp_servers": {"s": {"command": "x", "env": {"API_KEY": "API_KEY"}}}}}"#)
+  #expect(same.codex.mcpServers["s"] != nil)
+  #expect(
+    try load(
+      #"{"claude": {"mcp_servers": {"s": {"command": "x", "env": {"API_KEY": "HOST_KEY"}}}}}"#
+    ).claude.mcpServers["s"] != nil)
+  let sse = #"{"type": "sse", "url": "https://sse.example/stream"}"#
+  let claude = try load("{\"claude\": {\"mcp_servers\": {\"e\": \(sse)}}}")
+  #expect(
+    claude.claude.mcpServers["e"]
+      == .sse(url: URL(string: "https://sse.example/stream")!, headers: [:]))
+  let refused = try #require(fieldError("{\"codex\": {\"mcp_servers\": {\"e\": \(sse)}}}"))
+  #expect(refused.field == "codex.mcp_servers.e.type")
+  #expect(refused.reason.contains("SSE"))
+  let http = try load(
+    #"{"codex": {"mcp_servers": {"h": {"type": "http", "url": "https://h.example/"}}}}"#)
+  #expect(
+    http.codex.mcpServers["h"] == .http(url: URL(string: "https://h.example/")!, headers: [:]))
+}
+
 @Test func localModelInvariants() throws {
   let c = try load(
     #"{"codex": {"local_model": {"host_url": "https://lan.example:8443/v1/", "model": "m"}}}"#)
@@ -693,4 +722,102 @@ enum ACLFixture {
     process.waitUntilExit()
     return process.terminationStatus == 0
   }
+}
+
+// MARK: - State root, guest-placed secrets, non-regular files
+
+@Test func dataDirMustBeAbsoluteAfterTildeExpansion() throws {
+  #expect(try load(#"{"data_dir": "~/state"}"#).dataDirectory.path == "/home/fixture/state")
+  #expect(try load(#"{"data_dir": "/srv/iso"}"#).dataDirectory.path == "/srv/iso")
+  // A relative root would follow the working directory; "" would put
+  // state, secrets and agents directly under `/`.
+  for raw in ["", "relative/dir", "./iso", "~user/iso"] {
+    let error = fieldError(#"{"data_dir": "\#(raw)"}"#)
+    #expect(error?.field == "data_dir", "\(raw)")
+    #expect(error?.reason.hasPrefix("must be an absolute path or start with ~/") == true, "\(raw)")
+  }
+  // With no home to expand `~` against, it is refused rather than kept relative.
+  #expect(throws: ConfigError.self) { try load(#"{"data_dir": "~/state"}"#, environment: .empty) }
+}
+
+@Test func guestPlacedSecretsRefuseVaultReferencesWhenLoaded() throws {
+  for (text, field) in [
+    (#"{"claude": {"api_key": "vault:anthropic"}}"#, "claude.api_key"),
+    (#"{"codex": {"api_key": "vault:"}}"#, "codex.api_key"),
+    (
+      #"{"claude": {"mcp_servers": {"a": {"type": "http", "url": "https://mcp.example.com", "headers": {"Authorization": "vault:mcp"}}}}}"#,
+      "claude.mcp_servers.a.headers.Authorization"
+    ),
+  ] {
+    let error = fieldError(text)
+    #expect(error?.field == field, "\(text)")
+    #expect(error?.reason == SecretName.guestPlacementRefusal, "\(text)")
+  }
+  #expect(SecretName.isVaultReference("vault:bad name"))
+  #expect(!SecretName.isVaultReference("cmd:printf vault:x"))
+  let accepted = try load(
+    #"{"claude": {"api_key": "cmd:printf k", "mcp_servers": {"a": {"type": "sse", "url": "https://mcp.example.com", "headers": {"X": "literal"}}}}, "codex": {"api_key": "sk-literal"}}"#
+  )
+  #expect(accepted.claude.apiKey?.expose() == "cmd:printf k")
+  #expect(accepted.codex.apiKey?.expose() == "sk-literal")
+}
+
+private final class ReadOutcome: @unchecked Sendable {
+  // Written once before the semaphore is signalled, read after the wait.
+  var text: String?
+}
+
+@Test func aFIFOIsRefusedWithoutWaitingForAWriter() throws {
+  let directory = FileManager.default.temporaryDirectory.appending(
+    path: "iso-fifo-\(UUID().uuidString)"
+  ).path
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let fifo = directory + "/config.jsonc"
+  #expect(mkfifo(fifo, 0o600) == 0)
+  let outcome = ReadOutcome()
+  let done = DispatchSemaphore(value: 0)
+  DispatchQueue.global().async {
+    do {
+      _ = try ConfigLoader.readSnapshot(fifo, limit: JSONLimits.configuration.maxBytes)
+      outcome.text = "read"
+    } catch {
+      outcome.text = "\(error)"
+    }
+    done.signal()
+  }
+  if done.wait(timeout: .now() + 10) == .timedOut {
+    Issue.record("opening a FIFO configuration waited for a writer")
+    // Release the blocked open so the test run can finish.
+    let writer = open(fifo, O_WRONLY | O_NONBLOCK)
+    if writer >= 0 { close(writer) }
+    _ = done.wait(timeout: .now() + 10)
+  }
+  #expect(outcome.text?.hasSuffix("not a regular file") == true, "\(outcome.text ?? "nil")")
+}
+
+/// The commented template member beginning with `marker`, uncommented (one
+/// line, or through its closing `// },`).
+private func uncommentedTemplateMember(_ marker: String) throws -> String {
+  let template = ConfigTemplate.jsonc
+  let start = try #require(template.range(of: marker))
+  let lineEnd = template[start.upperBound...].firstIndex(of: "\n") ?? template.endIndex
+  let end =
+    template[start.lowerBound..<lineEnd].hasSuffix("{")
+    ? try #require(template.range(of: "// },", range: start.upperBound..<template.endIndex))
+      .upperBound
+    : lineEnd
+  return template[start.lowerBound..<end].split(separator: "\n").map {
+    $0.trimmingCharacters(in: .whitespaces).dropFirst(3)
+  }.joined(separator: "\n").trimmingCharacters(
+    in: .whitespaces.union(CharacterSet(charactersIn: ",")))
+}
+
+@Test func templateExamplesKeepTheSecureDefaults() throws {
+  // Uncommenting an example to fill in credentials must not relax DEF-01.
+  let proxy = try uncommentedTemplateMember(#"// "proxy": {"#)
+  #expect(try load("{\(proxy)}").proxy.mode == .required)
+  let github = try uncommentedTemplateMember(#"// "github": ""#)
+  #expect(try load("{\(github)}").github == .off)
+  #expect(ConfigTemplate.jsonc.contains(#""off" by default"#))
 }

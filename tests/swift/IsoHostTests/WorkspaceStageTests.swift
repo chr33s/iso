@@ -113,6 +113,9 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(!StageBuilder.staysInside(link: "a", target: "/b"))
   #expect(!StageBuilder.staysInside(link: "a", target: ""))
   #expect(!StageBuilder.staysInside(link: "a", target: "x/../../b"))
+  // C1 controls, like C0 and DEL, never appear in an accepted target.
+  #expect(!StageBuilder.staysInside(link: "a", target: "b\u{9B}c"))
+  #expect(!StageBuilder.staysInside(link: "a", target: "b\u{85}"))
 }
 
 @Test func destinationLinksAreReplacedNotFollowed() throws {
@@ -167,6 +170,10 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(StageBuilder.validName([0x61, 0x1B]) == nil)
   #expect(StageBuilder.validName([0x61, 0x7F]) == nil)
   #expect(StageBuilder.validName([]) == nil)
+  // C1 controls (U+0080-U+009F), as UTF-8: CSI and NEL.
+  #expect(StageBuilder.validName([0x61, 0xC2, 0x9B]) == nil)
+  #expect(StageBuilder.validName([0x61, 0xC2, 0x85]) == nil)
+  #expect(StageBuilder.validName([0x61, 0xC2, 0xA0]) == "a\u{A0}")
 }
 
 @Test func budgetsAbortStaging() throws {
@@ -346,6 +353,71 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   )
 }
 
+/// APFS folds U+017F LATIN SMALL LETTER LONG S to `s`, which `lowercased()`
+/// does not: `a/b/\u{17F}` is the link `a/b/s` there, so `notes.md` would
+/// resolve outside the destination.
+@Test func symlinkChainsAreDetectedUnderFullCaseFolding() throws {
+  let f = try Fixture()
+  defer { f.cleanup() }
+  try f.write("secret", "host\n", in: f.outside)
+  try f.link("a/b/s", to: "../..", in: f.tree)
+  try f.link("notes.md", to: "a/b/\u{17F}/../outside/secret", in: f.tree)
+  try f.link("k", to: ".", in: f.tree)
+  try f.link("y", to: "\u{212A}/..", in: f.tree)
+  let manifest = try f.build()
+  #expect(!manifest.applicable)
+  for link in ["notes.md", "y"] {
+    #expect(
+      manifest.issues.contains {
+        $0.hasPrefix("\(link):") && $0.contains("passes through another symlink")
+      })
+  }
+  #expect(throws: ReturnError.self) { try StageApplier(manifest: manifest, tree: f.tree).apply() }
+  #expect(!FileManager.default.fileExists(atPath: f.destination + "/notes.md"))
+}
+
+/// A link component that only folds to a staged path costs one lookup, not a
+/// scan of every staged entry.
+@Test func caseVariantLinkTargetsStayCheap() throws {
+  let f = try Fixture()
+  defer { f.cleanup() }
+  for index in 0..<2_000 { try f.write("a/f\(index)", "", in: f.tree) }
+  let target = Array(repeating: "A/..", count: 200).joined(separator: "/")
+  for index in 0..<40 { try f.link("l\(index)", to: target, in: f.tree) }
+  let start = ContinuousClock.now
+  let manifest = try f.build()
+  #expect(ContinuousClock.now - start < .seconds(10))
+  #expect(manifest.applicable)
+}
+
+/// A guest name that only folds (U+017F) to the host's existing entry is
+/// refused, and the spelling check lists each destination directory once.
+@Test func fullCaseFoldingSpellingsOfHostEntriesAreIssues() throws {
+  let f = try Fixture()
+  defer { f.cleanup() }
+  try f.write("docs/a.txt", "a", in: f.destination)
+  try f.write("doc\u{17F}/b.txt", "b", in: f.tree)
+  try f.write(".vscode/settings.json", "{}", in: f.destination)
+  try f.write(".v\u{17F}code/tasks.json", "{}", in: f.tree)
+  let manifest = try f.build()
+  #expect(!manifest.applicable)
+  #expect(
+    manifest.issues.contains {
+      $0.hasPrefix("doc\u{17F}:") && $0.contains("differs only in case") && $0.hasSuffix("docs")
+    })
+  #expect(manifest.issues.contains { $0.hasPrefix(".v\u{17F}code:") && $0.hasSuffix(".vscode") })
+
+  let flat = try Fixture()
+  defer { flat.cleanup() }
+  for index in 0..<300 {
+    try flat.write("d/f\(index)", "x", in: flat.tree)
+    try flat.write("d/f\(index)", "x", in: flat.destination)
+  }
+  var builder = try StageBuilder(tree: flat.tree, destination: flat.destination, limits: .defaults)
+  _ = try builder.build(id: "0badf00d0badf00d", instance: "test")
+  #expect(Set(builder.listings.keys) == ["", "d"])
+}
+
 @Test func stageLockSerializesUsersAndSurvivesStageRemoval() throws {
   let f = try Fixture()
   defer { f.cleanup() }
@@ -439,6 +511,10 @@ private final class LockedBox: @unchecked Sendable {
   #expect(StageReview.conspicuous(".husky/pre-commit") != nil)
   #expect(StageReview.conspicuous(".vscode/tasks.json") != nil)
   #expect(StageReview.conspicuous(".vscode/settings.json") == nil)
+  // Full case folding, as APFS compares names: U+017F is `s`, U+212A is `k`.
+  #expect(StageReview.conspicuous(".v\u{17F}code/ta\u{17F}ks.json") != nil)
+  #expect(StageReview.conspicuous(".hu\u{17F}\u{212A}y/pre-commit") != nil)
+  #expect(SensitivePaths.classify(".v\u{17F}code", new: .symlink(target: "vs")) != nil)
   // Code points APFS ignores still spell `.git`.
   #expect(ProtectedPaths.isReservedName(".g\u{200C}it"))
   #expect(ProtectedPaths.isReservedName(".GI\u{FEFF}T"))

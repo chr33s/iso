@@ -23,22 +23,17 @@ final class CancellableTLSConnection: Sendable {
   private let socketCapacity: Capacity?
   var established: EventLoopFuture<Channel> { completion.futureResult }
 
-  convenience init(provider: Provider, eventLoop: EventLoop) throws {
-    try self.init(
-      host: provider.hostname, port: 443, serverHostname: provider.hostname,
-      configuration: UpstreamClient.tlsConfiguration(), eventLoop: eventLoop)
-  }
-
-  // Internal fixture seam. Startup configuration cannot select these values.
+  /// `context` is shared: production passes the one `UpstreamClient` built
+  /// from `UpstreamClient.tlsConfiguration()`. The host and context are an
+  /// internal fixture seam; startup configuration cannot select them.
   init(
-    host: String, port: Int, serverHostname: String, configuration: TLSConfiguration,
+    host: String, port: Int, serverHostname: String, context tls: NIOSSLContext,
     eventLoop: EventLoop, timeout: TimeAmount = .seconds(Int64(Limits.establishmentSeconds)),
     resolver: (Resolver & Sendable)? = nil, socketCapacity: Capacity? = nil,
     application: @escaping @Sendable (Channel) throws -> Void = { _ in }
-  ) throws {
+  ) {
     self.resolver = resolver
     self.socketCapacity = socketCapacity
-    let tls = try NIOSSLContext(configuration: configuration)
     completion = eventLoop.makePromise(of: Channel.self)
     let deadline = eventLoop.scheduleTask(in: timeout) { [weak self] () -> Void in
       self?.fail(Failure.establishmentTimeout)

@@ -26,6 +26,8 @@ first.
    behavior, and the `swift test` filter that must catch it.
 2. When the diff edits code an existing fault targets, update that entry's
    original text; a missing anchor fails the run.
+   `python3 scripts/swift-host-fault-injection.py --check-anchors` checks
+   every anchor in seconds without building (CI runs it on every push).
 3. Run the affected faults, redirecting output to a file (do not pipe a long
    run through `head` or `grep`):
    `python3 scripts/swift-host-fault-injection.py --only <id>`, or the whole

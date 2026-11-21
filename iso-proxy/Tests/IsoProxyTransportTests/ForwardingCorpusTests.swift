@@ -104,7 +104,7 @@ private func runForwardCase(_ item: ForwardCase, fixtures: URL) async throws -> 
   }
   let destination = item.dnsFailure == true ? "iso-proxy-test.invalid" : "127.0.0.1"
   clientConfig.dnsOverride = ["api.anthropic.com": destination, "api.openai.com": destination]
-  let transportTLS = try #require(clientConfig.tlsConfiguration)
+  let transportTLS = try NIOSSLContext(configuration: #require(clientConfig.tlsConfiguration))
   let observed = NIOLockedValueBox<[ObservedRequest]>([])
   let stalledPeerClosed = NIOLockedValueBox(false)
   var servers: [Channel] = []
@@ -145,7 +145,7 @@ private func runForwardCase(_ item: ForwardCase, fixtures: URL) async throws -> 
                 headers: request.headers, body: request.body)
               let task = OwnedHTTPRequest(
                 request: local, relay: relay, eventLoop: loop,
-                tlsConfiguration: transportTLS, connectHost: destination)
+                tls: transportTLS, connectHost: destination)
               task.futureResult.whenFailure { error in
                 if item.dnsFailure == true {
                   if let connection = error as? NIOConnectionError {

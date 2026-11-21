@@ -52,8 +52,20 @@ package enum StateStore {
     }
   }
 
-  package static func writeControlFile(_ value: some Encodable, to path: String) throws(HostError) {
-    try AtomicFile.write(try encode(value, path: path), to: path, mode: .atMost(0o600))
+  package static func writeControlFile(
+    _ value: some Encodable, to path: String, parents: AtomicFile.Parents = .createMissing
+  ) throws(HostError) {
+    try AtomicFile.write(
+      try encode(value, path: path), to: path, mode: .atMost(0o600), parents: parents)
+  }
+
+  /// State inside an instance directory: the directory must still exist, so a
+  /// write racing `destroy` fails instead of recreating a half instance that
+  /// would block every later allocation.
+  package static func writeInstanceFile(_ value: some Encodable, to path: String)
+    throws(HostError)
+  {
+    try writeControlFile(value, to: path, parents: .mustExist)
   }
 
   package static func encode(_ value: some Encodable, path: String) throws(HostError) -> [UInt8] {
@@ -452,13 +464,13 @@ package struct Journal: Sendable, Equatable, Codable {
     let journal = Journal(
       schemaVersion: StateSchema.version, backend: StateSchema.backend, ownerID: owner.id,
       machineID: machine, op: op)
-    try StateStore.writeControlFile(journal, to: path(instance))
+    try StateStore.writeInstanceFile(journal, to: path(instance))
     return journal
   }
 
   package mutating func advance(_ instance: Instance, _ op: JournalOp) throws {
     self.op = op
-    try StateStore.writeControlFile(self, to: Self.path(instance))
+    try StateStore.writeInstanceFile(self, to: Self.path(instance))
   }
 
   package static func complete(_ instance: Instance) throws {
@@ -661,7 +673,7 @@ package enum InstanceStore {
 
 extension MachineSidecar {
   package func save(_ instance: Instance) throws {
-    try StateStore.writeControlFile(self, to: Self.path(instance))
+    try StateStore.writeInstanceFile(self, to: Self.path(instance))
   }
 
   package static func load(_ instance: Instance) throws -> MachineSidecar {

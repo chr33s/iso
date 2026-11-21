@@ -104,7 +104,7 @@ func slowGuestBoundsResidentMemoryAndUpstreamProgress() async throws {
   var settings = UpstreamClient.configuration()
   settings.tlsConfiguration?.additionalTrustRoots = [.certificates([ca])]
   settings.dnsOverride = ["api.anthropic.com": "127.0.0.1"]
-  let transportTLS = try #require(settings.tlsConfiguration)
+  let transportTLS = try NIOSSLContext(configuration: #require(settings.tlsConfiguration))
   let providerChildren = ConnectionRegistry()
   let proxyChildren = ConnectionRegistry()
   let guests = ConnectionRegistry()
@@ -151,7 +151,7 @@ func slowGuestBoundsResidentMemoryAndUpstreamProgress() async throws {
                 method: request.method, headers: request.headers, body: request.body)
               return OwnedHTTPRequest(
                 request: local, relay: relay, eventLoop: loop,
-                tlsConfiguration: transportTLS, connectHost: "127.0.0.1")
+                tls: transportTLS, connectHost: "127.0.0.1")
             })
         }
       }

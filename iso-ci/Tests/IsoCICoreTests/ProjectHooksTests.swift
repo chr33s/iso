@@ -210,7 +210,7 @@ import Testing
     let removed = try GitHooks.uninstall(repository, hooks: GitHookKind.allCases, git: writer)
     #expect(removed.removed == [repo + "/.githooks/pre-commit"])
     #expect(removed.restored == [repo + "/.githooks/pre-commit"])
-    #expect(!removed.unsetHooksPath)
+    #expect(removed.hooksPath == .kept(directory: repo + "/.githooks", hooks: ["pre-commit"]))
     #expect(
       try String(contentsOfFile: repo + "/.githooks/pre-commit", encoding: .utf8).contains("mine"))
   }
@@ -227,10 +227,103 @@ import Testing
     repository = try GitHooks.repository(containing: repo)
     #expect(repository.ownedHooksPath == ".githooks")
     let result = try GitHooks.uninstall(repository, hooks: GitHookKind.allCases, git: writer)
-    #expect(result.unsetHooksPath)
+    #expect(result.hooksPath == .unset)
     let after = try GitHooks.repository(containing: repo)
     #expect(after.hooksPathSource == .none && after.ownedHooksPath == nil)
     #expect(!FileManager.default.fileExists(atPath: repo + "/.githooks"))
+  }
+
+  /// A committed `.githooks` symlink (or any link on the way to the hooks
+  /// directory) never carries the hook write outside the working tree.
+  @Test func installWritesOnlyIntoARealDirectoryInsideTheWorkingTree() throws {
+    defer { cleanup() }
+    let repo = try makeRepository()
+    let outside = root + "/outside-bin"
+    try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      atPath: repo + "/.githooks", withDestinationPath: "../outside-bin")
+    try git(["add", "-A"], repo)
+    try git(["commit", "-qm", "linked hooks"], repo)
+    let settings = ManagedHookSettings(hook: .preCommit)
+    var repository = try GitHooks.repository(containing: repo)
+    for force in [false, true] {
+      #expect(throws: CIError.self) {
+        try GitHooks.planInstall(
+          repository: repository, settings: settings, directory: nil, force: force)
+      }
+    }
+    try FileManager.default.createDirectory(
+      atPath: repo + "/tools", withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      atPath: repo + "/tools/hooks", withDestinationPath: outside)
+    #expect(throws: CIError.self) {
+      try GitHooks.planInstall(
+        repository: repository, settings: settings, directory: "tools/hooks/ci", force: true)
+    }
+    // A plan made before the link appeared is checked again at install.
+    let plan = try GitHooks.planInstall(
+      repository: repository, settings: settings, directory: "ci-hooks", force: false)
+    try FileManager.default.createSymbolicLink(
+      atPath: repo + "/ci-hooks", withDestinationPath: outside)
+    #expect(throws: CIError.self) {
+      try GitHooks.install(plan, git: try GitCommandConfigWriter(root: repo))
+    }
+    // A relative core.hooksPath that leaves the working tree is refused too.
+    try git(["config", "--local", "core.hooksPath", "../outside-bin"], repo)
+    repository = try GitHooks.repository(containing: repo)
+    #expect(repository.hooksPathSource == .local)
+    #expect(throws: CIError.self) {
+      try GitHooks.planInstall(
+        repository: repository, settings: settings, directory: nil, force: true)
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: outside).isEmpty)
+  }
+
+  /// Pointing core.hooksPath at a directory starts every hook already in
+  /// it: install names them and refuses unless forced, and uninstall says
+  /// why it leaves core.hooksPath set while they remain.
+  @Test func installRefusesToEnableHooksAlreadyInTheNewHooksDirectory() throws {
+    defer { cleanup() }
+    let repo = try makeRepository()
+    let marker = root + "/ran"
+    try write(
+      repo + "/.githooks/post-checkout", "#!/bin/sh\necho ran > '\(marker)'\n", mode: 0o755)
+    try write(repo + "/.githooks/helper.sh", "#!/bin/sh\n", mode: 0o755)
+    try write(repo + "/.githooks/post-merge", "#!/bin/sh\n", mode: 0o644)
+    try git(["add", "-A"], repo)
+    try git(["commit", "-qm", "project hooks"], repo)
+    let writer = try GitCommandConfigWriter(root: repo)
+    let settings = ManagedHookSettings(hook: .preCommit)
+    var repository = try GitHooks.repository(containing: repo)
+    do {
+      _ = try GitHooks.planInstall(
+        repository: repository, settings: settings, directory: nil, force: false)
+      Issue.record("install enabled post-checkout without --force")
+    } catch {
+      #expect(error.code == .conflict)
+      #expect(error.message.contains("post-checkout"))
+      #expect(!error.message.contains("helper.sh") && !error.message.contains("post-merge"))
+    }
+    #expect(try git(["config", "--local", "core.hooksPath"], repo).status != 0)
+    let forced = try GitHooks.planInstall(
+      repository: repository, settings: settings, directory: nil, force: true)
+    #expect(forced.activates == ["post-checkout"])
+    try GitHooks.install(forced, git: writer)
+    try git(["checkout", "-q", "-b", "other"], repo)
+    #expect(FileManager.default.fileExists(atPath: marker))
+    // Already the configured directory: nothing new is enabled.
+    repository = try GitHooks.repository(containing: repo)
+    #expect(
+      try GitHooks.planInstall(
+        repository: repository, settings: settings, directory: nil, force: false
+      ).activates.isEmpty)
+    let removed = try GitHooks.uninstall(repository, hooks: GitHookKind.allCases, git: writer)
+    #expect(
+      removed.hooksPath == .kept(directory: repo + "/.githooks", hooks: ["post-checkout"]))
+    #expect(
+      String(
+        decoding: try git(["config", "--local", "core.hooksPath"], repo).stdout, as: UTF8.self)
+        == ".githooks\n")
   }
 
   @Test func aUserHooksPathIsNotBypassedSilently() throws {

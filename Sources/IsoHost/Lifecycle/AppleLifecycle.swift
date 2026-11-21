@@ -391,6 +391,9 @@ extension AppleBackend {
     let identity = try runtime.requireQualified()
     let lock = try InstanceStore.lock(instance)
     defer { lock.release() }
+    // LIFE-01: a fenced instance gets no boot (and so no bootstrap or
+    // workload) until `iso stop` reconciles it.
+    try HandoffFence.require(instance)
     try recoverJournal(runtime, instance)
     var sidecar = try ownedSidecar(instance)
     if sidecar.kind == .macos {

@@ -115,7 +115,9 @@ identifiers persisted in host state), `Units.swift` (memory/disk quantities,
 vCPU counts, the bootable RAM floor), `GitRepoURL.swift` (clone URL plus its
 `owner/repo` slug), `RemoteCommand.swift` (injection-safe guest shell commands
 and `GuestPath`), `JSONOutput` (Foundation encoding of typed output) with
-`OutputJSON` for dynamic configuration/guest documents, and the state-write primitives
+`OutputJSON` for dynamic configuration/guest documents, `NameFolding.swift` (the one
+case-insensitive file-name comparison key, shared by workspace returns and the
+host-control archive validator), and the state-write primitives
 `AtomicFile.swift` and `FileLock.swift` (with `HostError`), shared with
 modules that must not depend on `IsoHost`.
 

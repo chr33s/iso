@@ -239,6 +239,29 @@ package enum ConnectParser {
   }
 }
 
+/// The blank line (`\r\n\r\n`) that ends a CONNECT head; later bytes belong
+/// to the tunnel.
+package enum HeadTerminator {
+  static let bytes: [UInt8] = [13, 10, 13, 10]
+
+  /// How many bytes of `next` extend `head` through the first terminator, or
+  /// all of `next` when none ends inside it. `head` must not already end
+  /// with a terminator.
+  package static func take(after head: [UInt8], next: ArraySlice<UInt8>) -> Int {
+    var matched = 0
+    for byte in head.suffix(3) { matched = step(matched, byte) }
+    for (offset, byte) in next.enumerated() {
+      matched = step(matched, byte)
+      if matched == bytes.count { return offset + 1 }
+    }
+    return next.count
+  }
+
+  private static func step(_ matched: Int, _ byte: UInt8) -> Int {
+    byte == bytes[matched] ? matched + 1 : (byte == 13 ? 1 : 0)
+  }
+}
+
 package struct DenialError: Error, Equatable {
   package let denial: Denial
   package init(_ denial: Denial) { self.denial = denial }
@@ -375,20 +398,7 @@ package enum ConnectGate {
       let peeked = unsafe recv(client, &buffer, room, MSG_DONTWAIT | MSG_PEEK)
       if peeked < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
       guard peeked > 0 else { return [] }
-      let delimiter: [UInt8] = [13, 10, 13, 10]
-      var matched = 0
-      for byte in head.suffix(3) {
-        matched = byte == delimiter[matched] ? matched + 1 : (byte == 13 ? 1 : 0)
-      }
-      var take = peeked
-      for index in 0..<peeked {
-        let byte = buffer[index]
-        matched = byte == delimiter[matched] ? matched + 1 : (byte == 13 ? 1 : 0)
-        if matched == delimiter.count {
-          take = index + 1
-          break
-        }
-      }
+      let take = HeadTerminator.take(after: head, next: buffer[0..<peeked])
       // `take` is at most what was peeked, so it fits the buffer too.
       let received = unsafe recv(client, &buffer, take, MSG_DONTWAIT)
       if received < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }

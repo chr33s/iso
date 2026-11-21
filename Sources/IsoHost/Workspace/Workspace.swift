@@ -96,7 +96,7 @@ package struct WorkspaceState: Sendable, Equatable {
     do {
       try AtomicFile.write(
         Array(String(json.rendered().dropLast()).utf8), to: instance.workspaceStatePath,
-        mode: .preserveExisting(default: 0o600))
+        mode: .preserveExisting(default: 0o600), parents: .mustExist)
     } catch {
       throw ContextError("Failed to write workspace.json", cause: error)
     }
@@ -250,9 +250,12 @@ package struct WorkspaceTransfer: Sendable {
     tarEnvironment["COPYFILE_DISABLE"] = "1"
     let extract = RemoteCommand().literal("tar xf - -C ").arg(guest.rawValue)
     try target.requireHandoff()
+    // A transfer takes as long as the data; ssh bounds a dead connection.
     let output = try runner.pipeline(
-      request(try tool("tar"), tarArguments, environment: tarEnvironment),
-      request(try client.ssh(), target.sshOptions + [target.address, extract.rendered]))
+      request(try tool("tar"), tarArguments, environment: tarEnvironment)
+        .with(deadline: .unbounded),
+      request(try client.ssh(), target.sshOptions + [target.address, extract.rendered])
+        .with(deadline: .unbounded))
     // The remote side exiting early (disk full, unwritable target) shows up
     // as local tar dying on a closed pipe; the cause is in ssh's stderr.
     if output.producer == .signaled(SIGPIPE) {
@@ -283,7 +286,9 @@ package struct WorkspaceTransfer: Sendable {
     let excludes = (defaultExcludes + [returnGitExclude]).map { "--exclude=\($0)" } + ["--sparse"]
     let command = RemoteCommand().literal("tar cf - -C ").arg(guest.rawValue)
       .literal(" \(excludes.joined(separator: " ")) .")
+    // A transfer takes as long as the data; ssh bounds a dead connection.
     var producer = request(receivers.ssh, target.sshOptions + [target.address, command.rendered])
+      .with(deadline: .unbounded)
     producer.isCancelled = cancel
     // Confined: the stream decides what bsdtar writes, never where.
     let (receiver, arguments) = try receivers.tarCommand(
@@ -292,7 +297,8 @@ package struct WorkspaceTransfer: Sendable {
         "--no-mac-metadata",
       ], writableTree: attempt.tree)
     var consumer = request(
-      receiver, arguments, environment: receivers.environment(client.environment))
+      receiver, arguments, environment: receivers.environment(client.environment)
+    ).with(deadline: .unbounded)
     consumer.inheritedDescriptors = [attempt.writerDescriptor]
     try target.requireHandoff()
     let output = try runner.pipeline(producer, consumer)

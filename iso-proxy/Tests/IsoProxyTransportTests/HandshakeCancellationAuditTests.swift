@@ -4,6 +4,7 @@ import IsoProxyCore
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOPosix
+import NIOSSL
 import Testing
 
 @testable import IsoProxyTransport
@@ -88,6 +89,7 @@ func bridgeCancellationClosesStalledTLSHandshake(provider: Provider) async throw
     }
   }.bind(host: "127.0.0.1", port: 0).get()
   let port = try #require(upstream.localAddress?.port)
+  let systemTLS = try NIOSSLContext(configuration: UpstreamClient.tlsConfiguration())
   let token = String(repeating: "a", count: 64)
   let config = try ProxyConfig(
     json: JSONSerialization.data(withJSONObject: [
@@ -108,7 +110,8 @@ func bridgeCancellationClosesStalledTLSHandshake(provider: Provider) async throw
               url: "https://\(provider.hostname):\(port)\(path)", method: request.method,
               headers: request.headers, body: request.body)
             return OwnedHTTPRequest(
-              request: local, relay: relay, eventLoop: loop, connectHost: "127.0.0.1")
+              request: local, relay: relay, eventLoop: loop, tls: systemTLS,
+              connectHost: "127.0.0.1")
           })
       }
     }

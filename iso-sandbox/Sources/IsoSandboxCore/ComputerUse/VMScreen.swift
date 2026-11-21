@@ -1,7 +1,9 @@
 import AppKit
 import CryptoKit
 import Foundation
+import ImageIO
 import IsoMacProtocol
+import UniformTypeIdentifiers
 import Virtualization
 
 /// The owner's computer-use surface (Gates C–H), for macOS and Linux guests
@@ -226,24 +228,49 @@ package final class VMScreen {
     return made
   }
 
-  package func frame(session: String?, origin: CUOrigin = .host) throws -> Frame {
+  /// Frames are captured and encoded one at a time, in the order they were asked for: the encode
+  /// runs off the main actor, and this bounds the captured images waiting for it to one.
+  private let framing = SerialGate()
+
+  package func frame(session: String?, origin: CUOrigin = .host) async throws -> Frame {
+    await framing.enter()
+    defer { framing.leave() }
+    // Checked once this frame's turn has come: a hold may have begun while it waited.
     if origin == .guest { try control.requireGuest(session, at: Date()) }
     let bound = try check(session)
     // A copy: later renders into the context do not change it.
     guard let image = try render().makeImage() else { throw SandboxError("no frame image") }
+    let timestamp = Date()
+    // Sampled with this render: others (the live view, waits) render while the PNG is encoded.
+    let damageSeq = damage.seq
     // A uniform frame is how a missing framebuffer looks in the view cache:
     // refuse it.
     if capture.refusesUniformFrames, let range = Self.channelRange(image), range <= 3 {
       throw SandboxError(
         "blank frame (channel range \(range)): framebuffer not observed", refusal: .blankFrame)
     }
-    guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
-    else { throw SandboxError("png encoding failed") }
+    let png = try await Self.png(image)
     let (id, seq) = table.recordFrame(bound)
     return Frame(
       id: id, seq: seq, png: png,
       sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(), binding: bound,
-      timestamp: Date(), damageSeq: damage.seq)
+      timestamp: timestamp, damageSeq: damageSeq)
+  }
+
+  /// `image` as PNG, encoded off the main actor (tens of milliseconds for a busy screen) with
+  /// ImageIO, which is safe on any thread.
+  @concurrent
+  nonisolated static func png(_ image: CGImage) async throws -> Data {
+    let out = NSMutableData()
+    guard
+      let destination = CGImageDestinationCreateWithData(
+        out, UTType.png.identifier as CFString, 1, nil)
+    else { throw SandboxError("png encoding failed") }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+      throw SandboxError("png encoding failed")
+    }
+    return out as Data
   }
 
   // MARK: live view
@@ -604,6 +631,32 @@ package final class VMScreen {
 /// Who asked for a frame or an action: a host control-socket client or the
 /// guest's computer-use channel.
 package enum CUOrigin: Sendable { case host, guest }
+
+/// Admits one holder at a time, in the order they asked; `leave` hands the gate to the next.
+@MainActor
+final class SerialGate {
+  private var held = false
+  private var waiting: [CheckedContinuation<Void, Never>] = []
+
+  /// Holders waiting for their turn.
+  var queued: Int { waiting.count }
+
+  func enter() async {
+    guard held else {
+      held = true
+      return
+    }
+    await withCheckedContinuation { waiting.append($0) }
+  }
+
+  func leave() {
+    if waiting.isEmpty {
+      held = false
+    } else {
+      waiting.removeFirst().resume()
+    }
+  }
+}
 
 /// AppKit pulls a titled window back onto a screen when it is ordered
 /// front; this window must stay where it is put.

@@ -112,7 +112,9 @@ package struct Updater: Sendable {
       throw ContextError("Current version \(build.version) is not valid semver", cause: error)
     }
     let requested = try options.pinnedVersion.map(UpdateChannel.normalizeTag)
-    let release = try requested.map { try fetchByTag($0) } ?? fetchLatest()
+    // One credential probe serves the metadata request and every download.
+    let strategy = authStrategy()
+    let release = try requested.map { try fetchByTag($0, strategy) } ?? fetchLatest(strategy)
     try release.requireCanonicalTag(requested: requested)
     let target: SemanticVersion
     do { target = try SemanticVersion(parsing: UpdateChannel.stripV(release.tag)) } catch {
@@ -140,12 +142,12 @@ package struct Updater: Sendable {
       diagnostics.log(.info, "Update cancelled")
       return
     }
-    try performUpdate(release, triple: triple)
+    try performUpdate(release, triple: triple, strategy: strategy)
     diagnostics.log(.info, "iso updated to \(target)")
     UpdateCheck.persist(tag: release.tag, home: home, now: now(), diagnostics: diagnostics)
   }
 
-  func performUpdate(_ release: Release, triple: String) throws {
+  func performUpdate(_ release: Release, triple: String, strategy: AuthStrategy) throws {
     let work = try TemporaryDirectory(prefix: ".tmp")
     defer { work.remove() }
     let tarballName = UpdateChannel.assetName(tag: release.tag, triple: triple)
@@ -171,12 +173,14 @@ package struct Updater: Sendable {
 
     diagnostics.log(.info, "Downloading \(tarballName)")
     try downloadAsset(
-      tag: release.tag, name: tarballName, url: tarballAsset.url, destination: tarball)
+      tag: release.tag, name: tarballName, url: tarballAsset.url, destination: tarball,
+      strategy: strategy)
     try downloadAsset(
-      tag: release.tag, name: UpdateChannel.checksumAsset, url: sumsAsset.url, destination: sums)
+      tag: release.tag, name: UpdateChannel.checksumAsset, url: sumsAsset.url, destination: sums,
+      strategy: strategy)
     try downloadAsset(
       tag: release.tag, name: UpdateChannel.signatureAsset, url: signatureAsset.url,
-      destination: signature)
+      destination: signature, strategy: strategy)
 
     let sumsText = try verifiedChecksums(sums, signature: signature)
     guard let expected = Checksums.parse(sumsText, file: tarballName) else {
@@ -256,14 +260,18 @@ package struct Updater: Sendable {
 
   // MARK: Metadata
 
-  package func fetchLatest() throws -> Release {
-    do { return try fetchReleaseMetadata("latest") } catch {
+  package func fetchLatest() throws -> Release { try fetchLatest(nil) }
+
+  /// `strategy` is the caller's credential probe; nil probes here, after the
+  /// source-override refusal.
+  func fetchLatest(_ strategy: AuthStrategy?) throws -> Release {
+    do { return try fetchReleaseMetadata("latest", strategy: strategy) } catch {
       throw ContextError("Failed to fetch latest release metadata", cause: error)
     }
   }
 
-  func fetchByTag(_ tag: String) throws -> Release {
-    do { return try fetchReleaseMetadata("tags/\(tag)") } catch {
+  func fetchByTag(_ tag: String, _ strategy: AuthStrategy) throws -> Release {
+    do { return try fetchReleaseMetadata("tags/\(tag)", strategy: strategy) } catch {
       throw ContextError("Failed to fetch release metadata for \(tag)", cause: error)
     }
   }
@@ -275,17 +283,24 @@ package struct Updater: Sendable {
     }
   }
 
-  /// Strategy chosen per call so `GITHUB_TOKEN` / `gh auth` changes apply.
-  func fetchReleaseMetadata(_ suffix: String, repository: String = UpdateChannel.repository)
-    throws -> Release
-  {
+  /// `iso update` passes its one `strategy`; the background check and the
+  /// Codex lookup probe per call, after the source-override refusal.
+  func fetchReleaseMetadata(
+    _ suffix: String, repository: String = UpdateChannel.repository,
+    strategy: AuthStrategy? = nil
+  ) throws -> Release {
     try requireNoSourceOverride()
     let path = "repos/\(repository)/releases/\(suffix)"
     let body: String
-    switch authStrategy() {
+    switch strategy ?? authStrategy() {
     case .gh:
       do {
-        body = try tools.capture("gh", ["api", path, "-H", "Accept: application/vnd.github+json"])
+        body = try tools.capture(
+          "gh",
+          [
+            "api", "--hostname", UpdateChannel.host, path, "-H",
+            "Accept: application/vnd.github+json",
+          ])
       } catch { throw ContextError("gh api \(path) failed", cause: error) }
     case .curlBearer(let token):
       body = try curlCapture("\(apiBase)/\(path)", token: token)
@@ -299,7 +314,7 @@ package struct Updater: Sendable {
     let overridden = apiBaseOverridden
     let hasGh = !overridden && tools.exists("gh")
     let authed =
-      hasGh && tools.statusOK("gh", ["auth", "status", "--hostname", "github.com"])
+      hasGh && tools.statusOK("gh", ["auth", "status", "--hostname", UpdateChannel.host])
     return .select(
       apiBaseOverridden: overridden, hasGh: hasGh, ghAuthenticated: authed,
       token: environment["GITHUB_TOKEN"])
@@ -323,21 +338,28 @@ package struct Updater: Sendable {
 
   // MARK: Downloads
 
-  func downloadAsset(tag: String, name: String, url: String, destination: String) throws {
-    switch authStrategy() {
+  func downloadAsset(
+    tag: String, name: String, url: String, destination: String, strategy: AuthStrategy
+  ) throws {
+    switch strategy {
     case .gh: try ghReleaseDownload(tag: tag, name: name, destination: destination)
     case .curlBearer(let token): try curlDownload(url, destination: destination, token: token)
     case .curlBare: try curlDownload(url, destination: destination, token: nil)
     }
   }
 
+  /// A stalled transfer (under 1 KiB/s for a minute) fails; a slow but
+  /// moving one may take up to `UpdateTools.downloadDeadline`.
+  static let curlStallBound = ["--speed-limit", "1024", "--speed-time", "60"]
+
   func curlDownload(_ url: String, destination: String, token: String?) throws {
-    var arguments = ["-fsSL"] + curlProtocols
+    var arguments = ["-fsSL"] + curlProtocols + Self.curlStallBound
     if token != nil { arguments += ["-H", "@-"] }
     do {
       try tools.run(
         "curl", arguments + [url, "-o", destination],
-        input: token.map { Array("Authorization: token \($0)\n".utf8) })
+        input: token.map { Array("Authorization: token \($0)\n".utf8) },
+        deadline: .after(UpdateTools.downloadDeadline))
     } catch { throw ContextError("curl download from \(url) failed", cause: error) }
   }
 
@@ -346,9 +368,9 @@ package struct Updater: Sendable {
       try tools.run(
         "gh",
         [
-          "release", "download", tag, "--repo", UpdateChannel.repository, "--pattern", name,
+          "release", "download", tag, "--repo", UpdateChannel.hostRepository, "--pattern", name,
           "--output", destination, "--clobber",
-        ])
+        ], deadline: .after(UpdateTools.downloadDeadline))
     } catch {
       throw ContextError(
         "gh release download \(tag) --pattern \(name) -> \(destination) failed", cause: error)
@@ -475,6 +497,8 @@ struct UpdateTools: Sendable {
   static let captureLimit = 16 << 20
   static let captureDeadline: Duration = .seconds(600)
   static let probeDeadline: Duration = .seconds(120)
+  /// Release downloads: stall-bounded, so this only caps a pathological one.
+  static let downloadDeadline: Duration = .seconds(3600)
 
   func which(_ name: String) -> String? {
     for directory in (environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
@@ -498,23 +522,28 @@ struct UpdateTools: Sendable {
     return path
   }
 
-  private func request(_ path: String, _ arguments: [String], input: [UInt8]?, deadline: Duration)
-    -> ProcessRunner.Request
-  {
+  private func request(
+    _ path: String, _ arguments: [String], input: [UInt8]?, deadline: ProcessRunner.Deadline
+  ) -> ProcessRunner.Request {
     ProcessRunner.Request(
       executable: path, arguments: arguments, environment: environment, deadline: deadline,
       outputLimit: Self.captureLimit, input: input)
   }
 
-  func run(_ program: String, _ arguments: [String], input: [UInt8]? = nil) throws {
+  /// `deadline` defaults to `captureDeadline`; an interactive step (a `sudo`
+  /// password prompt) passes `unbounded`.
+  func run(
+    _ program: String, _ arguments: [String], input: [UInt8]? = nil,
+    deadline: ProcessRunner.Deadline = .after(captureDeadline)
+  ) throws {
     let describe = Self.describe(program, arguments)
     diagnostics.debug("Running: \(describe)")
     let path = try resolve(program, describe)
     let termination: ProcessRunner.Termination
     do {
       termination = try runner.attached(
-        request(path, arguments, input: input, deadline: Self.captureDeadline),
-        inheritStdin: input == nil, deadline: nil)
+        request(path, arguments, input: input, deadline: deadline),
+        inheritStdin: input == nil)
     } catch {
       throw ContextError("Failed to execute \(describe)", cause: HostError("\(error)"))
     }
@@ -528,7 +557,7 @@ struct UpdateTools: Sendable {
     let output: ProcessRunner.Output
     do {
       output = try runner.capture(
-        request(path, arguments, input: input, deadline: Self.captureDeadline))
+        request(path, arguments, input: input, deadline: .after(Self.captureDeadline)))
     } catch {
       throw ContextError("Failed to execute \(describe)", cause: HostError("\(error)"))
     }
@@ -545,7 +574,7 @@ struct UpdateTools: Sendable {
     diagnostics.debug("Running (status_ok): \(Self.describe(program, arguments))")
     guard let path = which(program),
       let output = try? runner.capture(
-        request(path, arguments, input: nil, deadline: Self.probeDeadline))
+        request(path, arguments, input: nil, deadline: .after(Self.probeDeadline)))
     else { return false }
     return output.termination.succeeded
   }

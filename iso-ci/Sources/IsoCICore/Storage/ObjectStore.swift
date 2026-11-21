@@ -347,6 +347,18 @@ package final class ObjectStore: Sendable {
       self.confinedToRun = confinedToRun
     }
 
+    /// The shared partition a confined scope also restores from (entries
+    /// only clean runs without secrets publish); nil for a shared scope.
+    /// Restoring from it is read-only: a confined run still publishes only
+    /// into its own partition (`cacheReserve`).
+    package var shared: CacheScope? {
+      guard confinedToRun != nil else { return nil }
+      return CacheScope(
+        repository: repository, authority: authority, platform: platform,
+        imageDigest: imageDigest, toolchain: toolchain, inputDigest: inputDigest,
+        confinedToRun: nil)
+    }
+
     package var fingerprint: String {
       let value: JSONValue = [
         "repository": .string(repository), "authority": .string(authority),
@@ -366,12 +378,24 @@ package final class ObjectStore: Sendable {
   /// Actions restore semantics within one scope: the primary key matches
   /// exactly; each restore key then matches exactly or as a prefix, newest
   /// entry first. The version must match exactly.
+  /// Searches the scope's own entries, then a confined scope's shared
+  /// partition, the way a branch's cache falls back to its base branch.
   package func cacheLookup(scope: CacheScope, keys: [String], version: String) throws(CIError)
     -> CacheEntry?
   {
     guard !keys.isEmpty, keys.count <= Self.maxRestoreKeys + 1, keys.allSatisfy(Self.validCacheKey)
     else { throw CIError.invalid("invalid cache keys") }
-    let fingerprint = scope.fingerprint
+    for partition in [scope] + [scope.shared].compactMap({ $0 }) {
+      if let hit = try cacheLookup(partition.fingerprint, keys: keys, version: version) {
+        return hit
+      }
+    }
+    return nil
+  }
+
+  private func cacheLookup(_ fingerprint: String, keys: [String], version: String)
+    throws(CIError) -> CacheEntry?
+  {
     for (index, key) in keys.enumerated() {
       if let row = try db.query(
         "SELECT * FROM cache_entries WHERE scope = ? AND key = ? AND version = ?",

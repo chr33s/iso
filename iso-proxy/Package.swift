@@ -55,6 +55,13 @@ let package = Package(
     .testTarget(
       name: "IsoProxyCoreTests",
       dependencies: ["IsoProxyCore", .product(name: "IsoPolicy", package: "iso-policy")]),
+    // Fuzz harness bodies. `scripts/fuzz.sh` links them with libFuzzer
+    // entrypoints in ../fuzz/Entrypoints; the replay test runs the committed
+    // corpus (../fuzz/corpus) through them. Not part of any product.
+    .target(
+      name: "IsoProxyFuzzHarnesses", dependencies: ["IsoProxyCore"], path: "Fuzz",
+      swiftSettings: strictMemorySafety),
+    .testTarget(name: "IsoProxyFuzzReplayTests", dependencies: ["IsoProxyFuzzHarnesses"]),
   ],
   swiftLanguageModes: [.v6]
 )

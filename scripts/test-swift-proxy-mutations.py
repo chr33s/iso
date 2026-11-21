@@ -64,6 +64,9 @@ def main():
             shutil.copytree(ROOT / package, scratch / package, ignore=build_output)
         shutil.copytree(ROOT / "tests/fixtures/credential-proxy",
                         scratch / "tests/fixtures/credential-proxy")
+        # The fuzz corpus replay test reads ../fuzz/corpus.
+        for target in ("ProxyRequestTarget", "ProxyHeaders", "ProxyCapability"):
+            shutil.copytree(ROOT / "fuzz/corpus" / target, scratch / "fuzz/corpus" / target)
         profile = Path("Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb")
         (scratch / profile.parent).mkdir(parents=True)
         shutil.copy2(ROOT / profile, scratch / profile)

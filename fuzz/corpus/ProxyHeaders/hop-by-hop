@@ -1,0 +1,5 @@
+Transfer-Encoding:chunked
+TE:trailers
+Upgrade:h2c
+Proxy-Authorization:Basic x
+Trailer:x

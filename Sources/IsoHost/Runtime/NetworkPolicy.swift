@@ -76,7 +76,7 @@ package struct NetworkPolicy: Sendable, Equatable {
   package static func save(
     _ config: IsoConfig, _ instance: Instance, brokered: BrokeredNetworkPolicy?
   ) throws {
-    try StateStore.writeControlFile(make(config, brokered: brokered), to: path(instance))
+    try StateStore.writeInstanceFile(make(config, brokered: brokered), to: path(instance))
   }
 
   package static func load(_ instance: Instance) throws -> NetworkPolicy? {

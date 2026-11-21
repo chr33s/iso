@@ -122,7 +122,7 @@ import Testing
 @Test func guestCancellationCannotQueueMoreThan256UnderlyingLookups() async throws {
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
   let workers = NIOLockedValueBox<[HeldDNS]>([])
-  let upstream = UpstreamClient(group: group) { loop in
+  let upstream = try UpstreamClient(group: group) { loop in
     let worker = HeldDNS(loop: loop)
     workers.withLockedValue { $0.append(worker) }
     return worker

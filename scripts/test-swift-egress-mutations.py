@@ -172,6 +172,14 @@ FAULTS = [
      'relayHardWriteErrorTerminatesInsteadOfDroppingAndContinuing'),
     ('relay-no-sigpipe', 'var noSignal: Int32 = 1', 'var noSignal: Int32 = 0',
      'relayHalfCloseDrainsAndStillAllowsTheOppositeResponse'),
+    ('relay-ring-wrap', 'let end = (start + count) % storage.count', 'let end = start + count',
+     'relayRingKeepsOrderAcrossWrapGrowthAndPartialSends'),
+    ('relay-ring-growth-order', 'next += storage[0..<(count - head)]', 'next += storage[0..<0]',
+     'relayRingKeepsOrderAcrossWrapGrowthAndPartialSends'),
+    ('relay-ring-failed-read', 'if wrote > 0 { count += wrote }', 'count += wrote',
+     'relayRingCountsOnlyWhatTheSocketMoved'),
+    ('connect-terminator-carry', 'for byte in head.suffix(3) { matched = step(matched, byte) }', '',
+     'connectHeadTerminatorSpansReadsAndStopsAtTheFirst'),
     ('relay-paused-hangup',
      'for index in 0..<2 where fds[index].events == 0 { fds[index].fd = -1 }',
      'for index in 0..<2 where fds[index].events == 0 { _ = index }',
@@ -210,6 +218,7 @@ def main():
                         'Dial.swift' if ident == 'session-dns-slot' else
                         'EgressSession.swift' if ident.startswith('session-') else
                         'PublicConnector.swift' if ident.startswith('connector-') else
+                        'RelayRing.swift' if ident.startswith('relay-ring-') else
                         'RelayQueue.swift' if ident in ('relay-budget-reservation', 'relay-pressure-budget', 'relay-pressure-direction') else
                         'Readiness.swift' if ident.startswith('readiness-') else
                         'Policy.swift' if ident.startswith(('connect-', 'address-')) else

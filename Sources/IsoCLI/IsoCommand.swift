@@ -35,20 +35,16 @@ struct IsoCommand: ParsableCommand {
     ChildGroups.installTerminationHandlers()
     do {
       var command = try parseAsRoot()
-      let global = GlobalOptions.parsed(in: command)
-      // A group command carries no options of its own; its argv still asks.
-      if global?.output == .jsonl
-        || (global == nil && GlobalOptions.requests(.jsonl, CommandLine.arguments))
-      {
+      let session = SessionRequest(command, arguments: CommandLine.arguments)
+      switch session.output {
+      case .text: break
+      case .jsonl:
         guard command is any StreamCommand else {
           throw ArgumentParser.ValidationError("--output jsonl is supported only by `iso audit`")
         }
-        try MachineSession.begin(quiet: global?.quiet ?? false)
-      }
-      if global?.output == .json
-        || (global == nil && GlobalOptions.requests(.json, CommandLine.arguments))
-      {
-        try MachineSession.begin(quiet: global?.quiet ?? false)
+        try MachineSession.begin(quiet: session.quiet)
+      case .json:
+        try MachineSession.begin(quiet: session.quiet)
         guard command is any MachineCommand else {
           return try rejectUnsupportedMachineOutput(command)
         }

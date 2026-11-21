@@ -127,7 +127,7 @@ private func bodyLimit(provider: String, declared: Int?, fixtures: URL) async th
   var clientConfig = UpstreamClient.configuration()
   clientConfig.tlsConfiguration?.additionalTrustRoots = [.certificates([ca])]
   clientConfig.dnsOverride = ["api.\(provider).com": "127.0.0.1"]
-  let transportTLS = try #require(clientConfig.tlsConfiguration)
+  let transportTLS = try NIOSSLContext(configuration: #require(clientConfig.tlsConfiguration))
   let proxyChildren = ConnectionRegistry()
   let upstreamChildren = ConnectionRegistry()
   let guests = ConnectionRegistry()
@@ -171,7 +171,7 @@ private func bodyLimit(provider: String, declared: Int?, fixtures: URL) async th
                 method: request.method, headers: request.headers, body: request.body)
               return OwnedHTTPRequest(
                 request: local, relay: relay, eventLoop: loop,
-                tlsConfiguration: transportTLS, connectHost: "127.0.0.1")
+                tls: transportTLS, connectHost: "127.0.0.1")
             })
         }
       }

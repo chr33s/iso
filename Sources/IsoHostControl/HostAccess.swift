@@ -70,10 +70,13 @@ extension HostSupervisor {
       guestUser: user, clientPublicKey: request.clientKey, filteredPolicy: filtered)
     let grant = try sessions.open(
       request, binding: binding, vmExpiresAt: instance.expiresAt.map(WireTime.init(seconds:)))
-    // Authorizing the session key is idempotent, so a replayed open repeats it safely.
+    // Authorizing the session key is idempotent, so a replayed open repeats it safely. It
+    // runs after any removal queued before this session was registered.
     do {
-      try native.authorizeClientKey(
-        instance.instanceID, runtime: instance.runtimeID, key: request.clientKey)
+      try keyQueue(instance.instanceID).sync {
+        try native.authorizeClientKey(
+          instance.instanceID, runtime: instance.runtimeID, key: request.clientKey)
+      }
     } catch {
       _ = try? sessions.close(session: request.session, bearer: request.bearer, epoch: epoch)
       throw HostControlError(.hostRuntimeUnqualified, "the client key could not be authorized")

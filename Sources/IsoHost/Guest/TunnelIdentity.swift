@@ -23,7 +23,7 @@ struct TunnelIdentity: Codable, Equatable {
   }
 
   func save(_ instance: Instance, name: String) throws {
-    try StateStore.writeControlFile(self, to: Self.path(instance, name))
+    try StateStore.writeInstanceFile(self, to: Self.path(instance, name))
   }
 
   static func load(_ instance: Instance, _ name: String) -> TunnelIdentity? {
@@ -43,8 +43,8 @@ struct TunnelIdentity: Codable, Equatable {
     return identity
   }
 
-  /// `ps` names this master: `ssh` started with exactly this control path
-  /// and destination.
+  /// The kernel's command line names this master: `ssh` started with exactly
+  /// this control path and destination.
   func matches(commandLine: String) -> Bool {
     let words = commandLine.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
     guard let first = words.first, (first as NSString).lastPathComponent == "ssh" else {

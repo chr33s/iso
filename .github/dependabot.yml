@@ -27,3 +27,32 @@ updates:
       swift:
         patterns: ["*"]
     open-pull-requests-limit: 5
+
+  # The website's build and deploy tooling (www/package-lock.json).
+  - package-ecosystem: npm
+    directory: /www
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      www:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  # The digest-pinned Ubuntu base of the desktop kernel's build image and the
+  # VM-suite fixture image. The same digest is pinned in
+  # Sources/IsoHost/Guest/ImageBuild.swift and tests/integration-apple-sandbox.sh,
+  # which Dependabot does not edit: tests/test-preflight-release.py fails until
+  # they agree. A new kernel build image also needs a rebuilt, re-pinned
+  # kernel (KernelPin.desktopAllowed) before the next release.
+  - package-ecosystem: docker
+    directories: ["/iso-sandbox/kernel", "/tests/fixtures/apple-sandbox/image"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]
+    open-pull-requests-limit: 5

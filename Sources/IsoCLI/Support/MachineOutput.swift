@@ -60,6 +60,11 @@ extension GlobalOptions {
       }
   }
 
+  /// `--quiet` before any `--`.
+  static func requestsQuiet(_ arguments: [String]) -> Bool {
+    arguments.dropFirst().prefix { $0 != "--" }.contains("--quiet")
+  }
+
   /// Command-local `--json` keeps its legacy shape and cannot be mixed with
   /// the versioned contract.
   func rejectLegacyJSON(_ json: Bool) throws {
@@ -74,6 +79,37 @@ extension GlobalOptions {
       throw ArgumentParser.ValidationError(
         "--dry-run cannot be combined with --output json; use --dry-run --json for the plan")
     }
+  }
+}
+
+/// The output mode and `--quiet` a parsed command runs with, decided before
+/// `main` opens any session.
+struct SessionRequest: Equatable {
+  let output: OutputFormat
+  let quiet: Bool
+
+  init(output: OutputFormat, quiet: Bool) {
+    self.output = output
+    self.quiet = quiet
+  }
+
+  init(_ command: any ParsableCommand, arguments: [String]) {
+    // Argument Parser's built-in help (`--help`, `-h`, `iso help`) is not in
+    // iso's command tree; it prints its text and exits 0 in every mode.
+    guard commandPath(type(of: command), under: IsoCommand.self) != nil else {
+      self.init(output: .text, quiet: false)
+      return
+    }
+    if let global = GlobalOptions.parsed(in: command) {
+      self.init(output: global.output, quiet: global.quiet)
+      return
+    }
+    // A group (or a command without its own options) was given the root's;
+    // its argv still asks.
+    let output: OutputFormat =
+      GlobalOptions.requests(.jsonl, arguments)
+      ? .jsonl : GlobalOptions.requests(.json, arguments) ? .json : .text
+    self.init(output: output, quiet: GlobalOptions.requestsQuiet(arguments))
   }
 }
 

@@ -98,7 +98,10 @@ private func parse<T>(_ argv: [String], as: T.Type = T.self) throws -> T {
 @Test func egressOverrideKeepsAllowHostRule() throws {
   let config = try ConfigLoader.load(.defaultsOnly(defaultPath: "/c.jsonc"), environment: .empty)
   let none: Up = try parse(["up", "--egress", "none", "--allow-host", "a.example"])
-  #expect(throws: (any Error).self) { try applyEgressOverride(config, none.project.egressOptions) }
+  // A flag combination, so a usage error (exit 2), as in text mode's other checks.
+  #expect(throws: ArgumentParser.ValidationError.self) {
+    try applyEgressOverride(config, none.project.egressOptions)
+  }
   let filtered: Up = try parse(["up", "--egress", "filtered", "--allow-host", "a.example"])
   #expect(try applyEgressOverride(config, filtered.project.egressOptions).egress == .filtered)
   let plain: Up = try parse(["up"])
@@ -457,4 +460,19 @@ private struct VisibleGroup: ParsableCommand {
     "--editor-security", "sandboxed", "--editor-allow", "clipboard",
   ]).resolve(unsafe)
   #expect(widened == EditorConfig(security: .sandboxed, allow: [.clipboard]))
+}
+
+@Test func vCPUCountsAreParsedAsNonZeroEverywhere() throws {
+  for bad in [
+    ["up", "--vcpus", "0"], ["code", "--vcpus", "0"], ["setup", "--vcpus", "0"],
+    ["resize", "--vcpus", "0"], ["up", "--vcpus", "256"], ["setup", "--vcpus", "x"],
+  ] {
+    #expect(throws: (any Error).self, "\(bad)") { try IsoCommand.parseAsRoot(bad) }
+  }
+  let up: Up = try parse(["up", "--vcpus", "4"])
+  #expect(up.project.vcpus == 4)
+  let setup: Setup = try parse(["setup", "--vcpus", "255"])
+  #expect(setup.vcpus == 255)
+  let resize: Resize = try parse(["resize", "--vcpus", "1"])
+  #expect(resize.vcpus == 1)
 }

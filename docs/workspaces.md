@@ -179,11 +179,14 @@ applied:
   of its target, the last one included, is checked against the planned final
   tree: a target through or onto another link, or into `.git`, makes the stage
   inapplicable.
-- File names must be UTF-8 without control characters. Two names that the
-  destination volume treats as one (case or Unicode normalization), or a
-  name that differs only in that way from the host's existing entry, make the
-  stage inapplicable. A case-insensitive staging volume can already merge some
-  guest names before inspection; only the received tree is validated.
+- File names and link targets must be UTF-8 without control characters
+  (C0, DEL or C1). Two names that the destination volume treats as one (case
+  or Unicode normalization), or a name that differs only in that way from the
+  host's existing entry, make the stage inapplicable. Names are compared by
+  Unicode case folding, not lowercasing, so `ſ` (U+017F) counts as `s`; the
+  same comparison finds `.git` and the execution-sensitive paths below. A
+  case-insensitive staging volume can already merge some guest names before
+  inspection; only the received tree is validated.
 - A host directory replaced by a file or link, or a file or link replaced by a
   directory, is reported for you to resolve.
 - Only permission bits up to `0755` are installed: no owner, setuid/setgid,

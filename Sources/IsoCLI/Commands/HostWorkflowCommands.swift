@@ -327,8 +327,8 @@ struct HostForward: ParsableCommand {
         let termination = try ProcessRunner().attached(
           .init(
             executable: ssh, arguments: arguments,
-            environment: SSHClient.transportEnvironment(env.environment), deadline: .seconds(0)),
-          inheritStdin: false, deadline: nil)
+            environment: SSHClient.transportEnvironment(env.environment), deadline: .unbounded),
+          inheritStdin: false)
         if !termination.succeeded { throw ExitCode(termination.exitStatus) }
       }
     }
@@ -492,8 +492,8 @@ struct HostRun: ParsableCommand {
               "-T", target.address,
               "mkdir -p ~/\(runResultsDirectory) && " + InteractiveSSH.render(command),
             ],
-            environment: SSHClient.transportEnvironment(env.environment), deadline: .seconds(0)),
-          inheritStdin: true, deadline: nil)
+            environment: SSHClient.transportEnvironment(env.environment), deadline: .unbounded),
+          inheritStdin: true)
         let code = termination.exitStatus
         // Complete while the session still holds the run's lease, so the
         // host exports before it stops rather than treating this as a loss.

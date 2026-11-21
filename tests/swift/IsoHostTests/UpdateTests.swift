@@ -156,7 +156,7 @@ private let releaseBuild = IsoBuild(version: "0.6.0", kind: .release, versionStr
   let pinned = [
     "attestation", "verify", "/tmp/iso.tar.gz", "--repo", "chr33s/iso", "--cert-identity",
     "https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/v1.2.3",
-    "--source-ref", "refs/tags/v1.2.3", "--deny-self-hosted-runners",
+    "--source-ref", "refs/tags/v1.2.3", "--deny-self-hosted-runners", "--hostname", "github.com",
   ]
   #expect(
     Provenance.verifyArguments(tarball: "/tmp/iso.tar.gz", bundle: nil, tag: "v1.2.3") == pinned)
@@ -614,13 +614,28 @@ private struct UpdateFixture {
     if [ -n "$dest" ]; then cp "$path" "$dest"; else cat "$path"; fi
     """
 
+  /// Like gh, an unpinned call goes to `GH_HOST`, where this release is absent.
   static let gh = """
     #!/bin/sh
     printf 'gh' >>"$STUB_LOG"; for a in "$@"; do printf ' %s' "$a" >>"$STUB_LOG"; done; echo >>"$STUB_LOG"
-    case "$1 $2" in
-      "auth status") exit 1 ;;
-      "attestation verify") exit "${GH_VERIFY_EXIT:-0}" ;;
+    case " $* " in
+      *" --hostname github.com "*|*" --repo github.com/"*) ;;
+      *) [ -n "$GH_HOST" ] && exit 4 ;;
     esac
+    case "$1 $2" in
+      "auth status") [ "${GH_AUTHED:-0}" = 1 ] || exit 1; exit 0 ;;
+      "attestation verify") exit "${GH_VERIFY_EXIT:-0}" ;;
+      "release download")
+        name=""; dest=""
+        while [ $# -gt 0 ]; do
+          case "$1" in --pattern) shift; name="$1" ;; --output) shift; dest="$1" ;; esac
+          shift
+        done
+        exec cp "$FIXTURE/$name" "$dest" ;;
+    esac
+    if [ "$1" = api ]; then
+      for a in "$@"; do case "$a" in repos/*) exec cat "$FIXTURE/$a" ;; esac; done
+    fi
     exit 2
     """
 
@@ -764,15 +779,18 @@ private let untouched = [
     #expect(
       fixture.calls == [
         "curl -fsSL -H Accept: application/vnd.github+json http://fixture/repos/chr33s/iso/releases/latest",
-        "curl -fsSL http://fixture/\(fixture.tarballName) -o " + fixture.calls[1].components(
-          separatedBy: " -o "
-        ).last!,
-        "curl -fsSL http://fixture/SHA256SUMS -o " + fixture.calls[2].components(
-          separatedBy: " -o "
-        ).last!,
-        "curl -fsSL http://fixture/SHA256SUMS.sig -o " + fixture.calls[3].components(
-          separatedBy: " -o "
-        ).last!,
+        "curl -fsSL --speed-limit 1024 --speed-time 60 http://fixture/\(fixture.tarballName) -o "
+          + fixture.calls[1].components(
+            separatedBy: " -o "
+          ).last!,
+        "curl -fsSL --speed-limit 1024 --speed-time 60 http://fixture/SHA256SUMS -o "
+          + fixture.calls[2].components(
+            separatedBy: " -o "
+          ).last!,
+        "curl -fsSL --speed-limit 1024 --speed-time 60 http://fixture/SHA256SUMS.sig -o "
+          + fixture.calls[3].components(
+            separatedBy: " -o "
+          ).last!,
       ])
     #expect(fixture.calls[1].hasSuffix("/" + fixture.tarballName))
   }
@@ -1012,14 +1030,14 @@ private let untouched = [
     let verify = try #require(fixture.calls.first { $0.hasPrefix("gh attestation verify") })
     #expect(
       verify.contains(
-        " --repo chr33s/iso --cert-identity https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/v9.9.9 --source-ref refs/tags/v9.9.9 --deny-self-hosted-runners --bundle "
+        " --repo chr33s/iso --cert-identity https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/v9.9.9 --source-ref refs/tags/v9.9.9 --deny-self-hosted-runners --hostname github.com --bundle "
       ))
     #expect(verify.hasSuffix("/attestations.jsonl"))
     // The bundle is fetched with a bare curl: no header, no token on stdin.
     let bundleFetch = try #require(fixture.calls.first { $0.contains("attestations.jsonl -o") })
     #expect(
       bundleFetch.hasPrefix(
-        "curl -fsSL --proto =https --proto-redir =https https://github.com/chr33s/iso/releases/download/v9.9.9/attestations.jsonl -o "
+        "curl -fsSL --proto =https --proto-redir =https --speed-limit 1024 --speed-time 60 https://github.com/chr33s/iso/releases/download/v9.9.9/attestations.jsonl -o "
       ))
     #expect(
       readText(fixture.log + ".stdin")?.components(separatedBy: "\n").filter { !$0.isEmpty }.count
@@ -1028,6 +1046,33 @@ private let untouched = [
     try fixture.updater(["GITHUB_TOKEN": "ghp_secret"], log: DiagnosticsLog()).run(
       .init(skipConfirm: true))
     #expect(fixture.installed == fullRelease)
+  }
+
+  /// One `gh auth status` probe serves metadata and every download, and each
+  /// `gh` call names github.com, so `GH_HOST` cannot redirect the update.
+  @Test func theGhTransportIsProbedOnceAndPinnedToGitHubDotCom() throws {
+    let fixture = try UpdateFixture(withGh: true)
+    defer { fixture.remove() }
+    try fixture.publish(
+      fullRelease, bundle: #"{"bundle": 1}"#,
+      base: "https://github.com/chr33s/iso/releases/download/v9.9.9")
+    try fixture.updater(
+      ["GH_AUTHED": "1", "GH_HOST": "ghe.example.invalid"], log: DiagnosticsLog()
+    )
+    .run(.init(skipConfirm: true))
+    #expect(fixture.installed == fullRelease)
+    let gh = fixture.calls.filter { $0.hasPrefix("gh ") }
+    #expect(
+      gh.filter { $0.hasPrefix("gh auth status") } == ["gh auth status --hostname github.com"])
+    #expect(
+      gh.contains(
+        "gh api --hostname github.com repos/chr33s/iso/releases/latest -H Accept: application/vnd.github+json"
+      ))
+    let downloads = gh.filter { $0.hasPrefix("gh release download") }
+    #expect(downloads.count == 3)
+    #expect(downloads.allSatisfy { $0.contains(" --repo github.com/chr33s/iso ") })
+    let verify = try #require(gh.first { $0.hasPrefix("gh attestation verify") })
+    #expect(verify.contains(" --hostname github.com --bundle "))
   }
 
   @Test func attestationFallsBackToTheAPIAndNamesWhy() throws {

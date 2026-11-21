@@ -81,7 +81,7 @@ enum LocalSecretNames {
 
   /// Why `path` is omitted, nil when it is not a secret name.
   static func match(_ path: String) -> String? {
-    let components = path.split(separator: "/").map { ProtectedPaths.folded(String($0)) }
+    let components = path.split(separator: "/").map { NameFolding.key(String($0)) }
     guard let last = components.last else { return nil }
     for directory in [".aws", ".ssh", ".gnupg"]
     where components.dropLast().contains(directory)

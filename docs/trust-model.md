@@ -80,10 +80,10 @@ Saved start-time grants (guest environment entries, port forwards) carry IDs
 and provenance in `<instance>/grants.json`; `security.revoked_grant_ids`
 withdraws one before the next handoff and the tombstone persists. A restart
 that fails after boot is stopped with its disk kept; if the stop cannot be
-confirmed the instance is fenced (`handoff-fence.json`) and gets no workload
-until `iso stop` succeeds. A discovered devcontainer is parsed once and its
-translated effects are shown before you accept it; accepting grants no host
-capability.
+confirmed the instance is fenced (`handoff-fence.json`) and gets no boot or
+workload until `iso stop` succeeds. A discovered devcontainer is parsed once
+and its translated effects are shown before you accept it; accepting grants no
+host capability.
 
 ## Taint sources (treat as untrusted)
 
@@ -230,8 +230,12 @@ user `env_forward` entries, and the VM SSH key. The invariants:
   Debug builds skip these checks.
 - **Source retrieval uses only selected credentials.** A guest clone and
   host devcontainer discovery share one decision (`GitHubSourceAuth`): an
-  assigned or matching PAT entry, else `gh auth token` / `GITHUB_TOKEN` only
-  when `github` explicitly selects `auto` (both) or `env` (the variable).
+  assigned or matching PAT entry, else `GITHUB_TOKEN` / `gh auth token`, in
+  that order, only when `github` explicitly selects `auto` (both) or `env`
+  (the variable). Every `gh` call names `github.com` (`--hostname`, or
+  `--repo github.com/…`): unpinned, `gh` answers for `GH_HOST` or a sole
+  configured host, and a GitHub Enterprise Server token must reach neither
+  github.com nor a guest.
   With `off`, an unset mode, `--no-github`, or PAT mode without a matching
   entry, the request is anonymous; a missing scope never widens to an
   ambient credential. A clone token is guest-visible while the clone runs;
@@ -359,6 +363,12 @@ Design and status: [design/local-and-remote-hosts-spec.md](design/local-and-remo
   Unix sockets in a private (`0700`, owner-checked) per-user temporary
   directory; every connection's peer uid must equal the service's. There is no
   TCP listener. A non-blocking `service.lock` gives one service per data root.
+  Each socket has its own connection budget (control 64, remote 64, relay 256,
+  the relay-stream cap), so open relay streams never take the slots renewal,
+  stop and destroy need; a connection that sends no frame (or relay preamble)
+  within 10 seconds is closed. A frontend whose own executable defines the
+  launchd job restarts a service running another build (a new epoch; live
+  grants end); `iso uninstall` unloads the job.
 - **Remote frontend.** A client reaches a remote Mac only as
   `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no
   -o ClearAllForwardings=yes -- ALIAS 'AGENT_PATH' host-agent serve|relay --stdio`.
@@ -405,6 +415,9 @@ Design and status: [design/local-and-remote-hosts-spec.md](design/local-and-remo
   epoch. A restart creates a new epoch and invalidates every grant. Issued
   session ids are never evicted within an epoch (cap 65,536). Leases last 30
   seconds and never outlive the VM's deadline; one client key controls a boot.
+  An expiry noticed by any registry call revokes the session's streams. Guest
+  key authorization and removal for an instance run in order, and a removal
+  is skipped when a live session still uses the key.
 - **Relay, not jump host.** Guest streams go through a worker-owned byte relay
   to the endpoint taken from current native proof; the client cannot name a
   destination. Revocation, expiry, stop and destroy shut down the relay's
@@ -493,7 +506,11 @@ an authenticated peer asks the editor to do. Design record:
     instance (running, same isolation-gate result, pinned target and filtered
     handoff identity), and two consecutive failures, a closed tunnel, Ctrl-C
     or the editor quitting end the session. Ending kills the editor's process
-    tree, closes the tunnel, removes the key from `authorized_keys` (best
+    tree and group, then every process of this user that the session's
+    profile still confines, found with `sandbox_check` by a Mach-name rule
+    only that profile grants (`EditorSessionSweep`), so a helper that left
+    the tree with `setsid` is ended too; a later session does the same for
+    the enclave of an `iso` that was killed. It closes the tunnel, removes the key from `authorized_keys` (best
     effort: the guest may keep the line, but the private key is gone) and
     deletes the enclave.
   - `editor.allow` / `--editor-allow` widen the profile explicitly:
@@ -512,6 +529,13 @@ Residual risks in `sandboxed` mode, recorded rather than fixed:
   AppKit requires to show a window; opening apps and URLs still fails
   without the LaunchServices database.
 - The global and accessibility preference domains are readable.
+- The sweep relies on the private `sandbox_check` SPI (called with the
+  arm64 variadic convention). Where it is missing the sandboxed editor does
+  not start. A confined process survives the session only while `iso` is
+  killed outright; the next sandboxed session ends it. Processes launchd
+  starts on the editor's behalf are not under the editor's profile and are
+  outside the sweep; the Mach allowlist is what keeps the editor from
+  starting them.
 - `internet` allows any HTTPS destination, including LAN and loopback
   services on port 443; Seatbelt cannot filter by host.
 - The Mach allowlist and filesystem paths were derived on macOS 27 with
@@ -861,10 +885,14 @@ exposure, and isolate verifies the effective configuration anyway
   guest-controlled text never does. The owner's control socket is `0600` in a
   `0700` per-user directory and checks the peer UID. It handles at most 64
   connections at once (each in-flight `exec` holds one), a request line must
-  arrive within 30 s, and every `exec` is bounded: 600 s when no timeout is
-  given, at most 24 h. Guest-authored maintenance output (`e2fsck` on a
-  guest-written disk) is truncated and has control characters replaced
-  before it reaches a log or error.
+  arrive within 30 s, and every `exec` is bounded: its wait 600 s when no
+  timeout is given, at most 24 h, and each of its other guest-agent calls
+  (create, start, kill, delete) 30 s. Past a call's deadline the owner stops
+  waiting and frees the connection; the call may still complete in the
+  guest, and while 16 such calls are unanswered no new one is made.
+  Guest-authored maintenance output (`e2fsck` on a guest-written disk) is
+  truncated and has control characters replaced before it reaches a log or
+  error.
 - **Host-key pinning and re-enrollment.** A changed key fails with
   `APPLE_HOST_KEY_CHANGED`. The only path that replaces a pin is a start after
   `iso restore`: isolate replaced the disk itself, and the restore removed the
@@ -902,8 +930,9 @@ exposure, and isolate verifies the effective configuration anyway
   every bootstrap, and every boot first closes those recorded for the
   previous boot. A tunnel the current model config no longer needs is
   closed, so switching local mode off really removes the guest's path to the
-  host server. Tunnel PIDs are only trusted or signalled while `ps` still
-  reports them as an `ssh` process.
+  host server. Tunnel PIDs are only trusted or signalled while the kernel's
+  argument vector for the PID (`KERN_PROCARGS2`, read in process) still names
+  that `ssh` process.
 - **Ownership.** Sandboxes and committed disks are named
   `iso-<owner8>-<random16>`. Nothing is deleted unless the local owner record
   and the instance record both match, and the runtime refuses to delete a
@@ -1200,6 +1229,11 @@ reuse the macOS guests' computer-use paths above, with these differences:
 Self-update (`Update.swift`, `UpdateRelease.swift`) must preserve, in order:
 
 1. Metadata from the pinned `chr33s/iso` GitHub repo (compile-time const).
+   Every `gh` call names `github.com` (`gh api --hostname`, `gh release
+   download --repo github.com/chr33s/iso`, `gh attestation verify
+   --hostname`) so `GH_HOST` cannot redirect it, and `iso update` probes
+   `gh auth status` once and uses that transport for metadata and every
+   download.
 2. `normalizeTag` — the version tag is validated as semver **before** it enters
    the API URL path (path-traversal guard).
 3. **Mandatory signature.** `SHA256SUMS.sig` must be present and must be an

@@ -108,7 +108,7 @@ The `github` field controls how isolate obtains a `GITHUB_TOKEN` for the guest. 
 
 | Value    | Behavior |
 |----------|----------|
-| `"auto"` | Check the `GITHUB_TOKEN` env var first. If unset, run `gh auth token` on the host to extract a token from the GitHub CLI. |
+| `"auto"` | Check the `GITHUB_TOKEN` env var first. If unset, run `gh auth token --hostname github.com` on the host to extract the GitHub CLI's github.com token (never a `GH_HOST` or GitHub Enterprise Server token). |
 | `"env"`  | Require `GITHUB_TOKEN` in the host environment. Warns if missing. |
 | `"off"`  | Skip GitHub token forwarding entirely. This is the default when `github` is unset. |
 | `"pat"`  | Use a per-repo fine-grained PAT from `github.pat`. GitHub enforces the permissions and repositories selected for that token. Run `iso github setup-pat --repo owner/name` to add an entry; see [configuration.md](configuration.md#fine-grained-pat-github-pat) for the full reference. |
@@ -177,8 +177,11 @@ From host `settings.json`, isolate selects only:
   installed by this import.
 - Boolean `enabledPlugins` entries whose exact IDs belong to copied,
   discoverable skills-directory plugins, including IDs recorded from previous
-  copies retained by the overlay. Absent entries leave guest choices or
-  Claude's manifest/default enablement in effect; isolate never synthesizes `true`.
+  copies retained by the overlay. Those IDs are recorded on the host
+  (`<instance>/claude_import.json`), never read from the guest, so guest content
+  cannot choose which host preferences are exported. Absent entries leave guest
+  choices or Claude's manifest/default enablement in effect; isolate never
+  synthesizes `true`.
 
 Explicit imported values override the corresponding guest user preferences.
 Unrelated guest settings and plugin entries survive. Isolate's managed permissions,
@@ -194,7 +197,9 @@ again, according to the restored guest preference or Claude's default.
 An absent host `settings.json` is an empty preference set; malformed settings or
 invalid relevant preference types stop bootstrap before any Claude invocation.
 
-Isolate retains a narrow `~/.claude/iso-import.json` snapshot for recovery, and
+Isolate retains a narrow `~/.claude/iso-import.json` snapshot of the last imported
+preferences for recovery (a `pluginIds` list written by an older isolate is
+ignored), and
 `_isoImportedPreferences` ownership metadata in guest `settings.json` for atomic
 restoration of previous values. Imported preferences are applied before transferring staged extensions and before onboarding,
 marketplace/plugin installation, or MCP registration, including after the existing
@@ -288,7 +293,7 @@ Three server types are supported: stdio, HTTP and SSE (`"type": "sse"`, a remote
 }
 ```
 
-Server definitions can include an `env` map for environment variable name mappings passed through to the MCP server configuration.
+Server definitions can include an `env` map from the name the server expects to the name of a variable in the Claude session. Isolate registers each entry as `"KEY": "${NAME}"`, which Claude Code expands when it starts the server, so the value comes from the guest session's own environment; forward a host value into it with `env_forward`. An unset variable stays the literal `${NAME}`, and Claude reports it in its MCP diagnostics.
 
 ## Bootstrap sequence
 

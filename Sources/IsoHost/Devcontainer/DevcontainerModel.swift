@@ -315,6 +315,9 @@ package struct ParsedDevcontainer: Sendable {
     self.path = path
     contentHash = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     do {
+      guard text.utf8.count <= Devcontainer.maxFileBytes else {
+        throw HostError("it is larger than \(Devcontainer.maxFileBytes) bytes")
+      }
       let scanned = try JSONCScanner.strip(Array(text.utf8), policy: .devcontainer)
       let source = DevcontainerSource(bytes: scanned)
       raw = try withParserStack { () throws(DevcontainerJSONError) in
@@ -332,16 +335,39 @@ package struct ParsedDevcontainer: Sendable {
   }
 }
 
-func readUTF8File(_ path: String) throws -> String {
-  guard let handle = FileHandle(forReadingAtPath: path) else {
-    throw ContextError("Failed to read \(path)", cause: HostError(ioErrorText(errno)))
+/// `path` as a regular file of at most `limit` bytes, opened without
+/// following a symlink at its final component and without blocking on a
+/// FIFO; nil when nothing is there. The file may come from a repository.
+func readRegularFile(_ path: String, limit: Int = Devcontainer.maxFileBytes) throws -> [UInt8]? {
+  let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+  guard fd >= 0 else {
+    let code = errno
+    if code == ENOENT { return nil }
+    if code == ELOOP {
+      throw ContextError(
+        "Failed to read \(path)",
+        cause: HostError("it is a symbolic link, which iso does not follow"))
+    }
+    throw ContextError("Failed to read \(path)", cause: HostError(ioErrorText(code)))
   }
-  defer { try? handle.close() }
-  let data: Data
-  do { data = try handle.readToEnd() ?? Data() } catch {
+  defer { close(fd) }
+  var status = stat()
+  guard fstat(fd, &status) == 0, status.st_mode & S_IFMT == S_IFREG else {
+    throw ContextError("Failed to read \(path)", cause: HostError("it is not a regular file"))
+  }
+  do {
+    return try StateStore.readBounded(
+      fd, path: path, limit: limit, tooLarge: "it is larger than \(limit) bytes")
+  } catch {
     throw ContextError("Failed to read \(path)", cause: error)
   }
-  guard let text = String(validating: Array(data), as: UTF8.self) else {
+}
+
+func readUTF8File(_ path: String) throws -> String {
+  guard let data = try readRegularFile(path) else {
+    throw ContextError("Failed to read \(path)", cause: HostError(ioErrorText(ENOENT)))
+  }
+  guard let text = String(validating: data, as: UTF8.self) else {
     throw ContextError(
       "Failed to read \(path)", cause: HostError("stream did not contain valid UTF-8"))
   }

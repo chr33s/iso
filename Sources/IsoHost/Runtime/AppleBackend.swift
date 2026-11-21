@@ -535,7 +535,7 @@ package enum HandoffFence {
   }
 
   package static func set(_ instance: Instance, reason: String) throws(HostError) {
-    try StateStore.writeControlFile(Record(reason: reason, at: utcTimestamp()), to: path(instance))
+    try StateStore.writeInstanceFile(Record(reason: reason, at: utcTimestamp()), to: path(instance))
   }
 
   package static func clear(_ instance: Instance) throws(HostError) {

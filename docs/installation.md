@@ -23,9 +23,11 @@ curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 `install.sh` verifies the maintainer signature on the release's `SHA256SUMS`
 (`SHA256SUMS.sig`), the downloaded tarball's SHA-256 against it and, when the
 [GitHub CLI](https://cli.github.com/) is installed, its Sigstore
-build-provenance attestation. `iso update` runs the
-same verification, except that it treats the checksum as mandatory and refuses
-to install without it. To verify a tarball by hand, download
+build-provenance attestation. Both the signature and the checksum are
+mandatory. `iso update` runs the same verification and also refuses revoked
+archives and, without `--allow-downgrade`, older releases. Every `gh` call
+either one makes names `github.com`, whatever `GH_HOST` says. To verify a
+tarball by hand, download
 `attestations.jsonl` from the same release and pass `--bundle` (this needs no
 GitHub credential):
 

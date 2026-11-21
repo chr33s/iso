@@ -879,3 +879,147 @@ extension AuditEvent {
     if case .recordingGap(let gap) = data { gap } else { nil }
   }
 }
+
+// MARK: - Checkpoint size and incremental reads
+
+/// A run summary as a real invocation produces it, with every field set.
+private func fullRunSummary(_ store: AuditStore) throws -> AuditRunSummary {
+  let run = AuditRunID.generate()
+  let session = try HexID(String(repeating: "e", count: 32))
+  try store.append(.requested(run, request(instance: "my-project-feature-branch")))
+  try store.append(
+    .environment(
+      run,
+      AuditFacts.Environment(
+        action: .created, instanceName: "my-project-feature-branch", vmID: vmA, bootID: bootA,
+        image: "default", guestOS: "linux", workspace: .copy,
+        egress: .init(mode: "filtered", transport: "brokered"),
+        policy: .init(mode: "enforce", digest: "sha256:" + String(repeating: "c", count: 64)),
+        proxiedProviders: ["anthropic", "openai"],
+        requested: .init(egress: "filtered", proxyMode: "required", sessionTTLSeconds: 3600),
+        agent: .init(
+          definitionID: "claude", source: .builtin,
+          definitionHash: String(repeating: "d", count: 64), adapterID: "claude-code",
+          adapterContractVersion: 1),
+        disposableSessionID: session)))
+  try store.append(
+    .handoff(run, .init(transport: "ssh", pty: true, forwardedVariables: ["GITHUB_TOKEN", "TERM"])))
+  try store.append(.transportEnded(run, .init(transport: "ssh", termination: .exited(0))))
+  try store.append(.cleanup(run, .init(sessionID: session, outcome: .destroyed)))
+  var reducer = AuditReducer(checkpoint: nil)
+  for event in try store.snapshot().events { reducer.apply(event) }
+  return try #require(reducer.runs[run])
+}
+
+/// The run cap's worth of full summaries never makes the checkpoint
+/// unpublishable: the oldest that do not fit the headroom expire instead.
+@Test func aCheckpointOfTheRunCapAlwaysFitsItsHeadroom() throws {
+  let store = temporaryStore()
+  defer { remove(store) }
+  let template = try fullRunSummary(store)
+  let retention = AuditRetention.standard
+  let runs = (0..<retention.maxRetainedRuns).map { index in
+    var run = AuditRunSummary(
+      auditRunID: .generate(),
+      startedAt: utcTimestamp(Date(timeIntervalSince1970: 1_900_000_000 - Double(index))),
+      request: template.request, lastSequence: template.lastSequence,
+      lastRecordedAt: template.lastRecordedAt)
+    run.environment = template.environment
+    run.handoff = template.handoff
+    run.transportEnded = template.transportEnded
+    run.cleanup = template.cleanup
+    return run
+  }
+  let gaps = Array(
+    repeating: AuditGap(reason: .tornRecord, afterSequence: 1, beforeSequence: 3),
+    count: retention.maxRetainedGaps)
+  let (checkpoint, bytes) = try AuditStore.checkpoint(
+    journal: .generate(), through: 9, throughRecordedAt: nil, createdAt: utcTimestamp(),
+    runs: runs, gaps: gaps, previous: nil, retention: retention
+  ) { _ in false }
+  #expect(bytes.count <= retention.checkpointHeadroom)
+  #expect(!checkpoint.runs.isEmpty)
+  #expect(checkpoint.runs.count + Int(checkpoint.expiredRuns) == runs.count)
+  #expect(
+    checkpoint.runs.map(\.auditRunID) == runs.prefix(checkpoint.runs.count).map(\.auditRunID))
+  #expect(checkpoint.expiredThrough == runs[checkpoint.runs.count].startedAt)
+  #expect(try JSONDecoder().decode(AuditCheckpoint.self, from: Data(bytes)) == checkpoint)
+
+  // Small summaries are bounded by the run cap alone.
+  let small = runs.map { run in
+    AuditRunSummary(
+      auditRunID: run.auditRunID, startedAt: run.startedAt, request: template.request,
+      lastSequence: 1, lastRecordedAt: run.startedAt)
+  }
+  var capped = retention
+  capped.maxRetainedRuns = 100
+  let (few, _) = try AuditStore.checkpoint(
+    journal: .generate(), through: 9, throughRecordedAt: nil, createdAt: utcTimestamp(),
+    runs: small, gaps: [], previous: nil, retention: capped
+  ) { _ in false }
+  #expect(few.runs.count == 100 && few.expiredRuns == UInt64(small.count - 100))
+}
+
+/// Retirement keeps working when the retained summaries outgrow the
+/// headroom: it expires the oldest runs rather than refusing capture.
+@Test func retentionExpiresTheOldestRunsWhenSummariesOutgrowTheHeadroom() throws {
+  var retention = small
+  retention.checkpointHeadroom = 2500
+  let store = temporaryStore(retention)
+  defer { remove(store) }
+  var runs: [AuditRunID] = []
+  for index in 0..<4 {
+    let run = AuditRunID.generate()
+    runs.append(run)
+    let now = Date(timeIntervalSince1970: 1_900_000_000 + Double(index))
+    try store.append(.requested(run, request(instance: "run-\(index)")), now: now)
+    try store.append(.environment(run, environment("run-\(index)")), now: now)
+  }
+  for _ in 0..<60 { try store.append(boundary(vmB, nil)) }
+  let snapshot = try store.snapshot()
+  let checkpoint = try #require(snapshot.checkpoint)
+  #expect(snapshot.degraded == nil)
+  #expect(store.fileSize(store.checkpointPath) <= retention.checkpointHeadroom)
+  #expect((1..<4).contains(checkpoint.runs.count))
+  #expect(checkpoint.runs.count + Int(checkpoint.expiredRuns) == 4)
+  #expect(checkpoint.runs.map(\.auditRunID) == Array(runs.reversed().prefix(checkpoint.runs.count)))
+}
+
+/// A follower's repeated snapshot equals a fresh one across appends, a
+/// torn tail, rotation and retirement, and does not decode again what it
+/// already decoded.
+@Test func aRepeatedSnapshotDecodesOnlyWhatWasAppended() throws {
+  let store = temporaryStore(small)
+  defer { remove(store) }
+  var cache = AuditSegmentCache()
+  func same() throws {
+    let cached = try store.snapshot(cache: &cache)
+    let fresh = try store.snapshot()
+    #expect(cached.events.map(\.eventID) == fresh.events.map(\.eventID))
+    #expect(cached.head == fresh.head && cached.health == fresh.health)
+    #expect(cached.through == fresh.through)
+  }
+  let run = AuditRunID.generate()
+  try store.append(.requested(run, request()))
+  try same()
+  for _ in 0..<3 { try store.append(boundary(vmA, bootA)) }
+  try same()
+  // A record still being written is read once it is complete.
+  let last = try #require(try store.listSegments().last)
+  let fd = open(last.path, O_WRONLY | O_APPEND)
+  #expect(write(fd, "{\"partial\"", 10) == 10)
+  close(fd)
+  try same()
+  for _ in 0..<60 { try store.append(boundary(vmA, bootA)) }
+  try same()
+
+  // Bytes already decoded are not decoded again: rewriting the first
+  // retained record in place is seen by a fresh read only.
+  let first = try #require(try store.listSegments().last)
+  _ = try store.snapshot(cache: &cache)
+  let rewrite = open(first.path, O_WRONLY)
+  #expect(pwrite(rewrite, "x", 1, 0) == 1)
+  close(rewrite)
+  #expect(try store.snapshot().health.contains { $0.reason == .unparseableRecord })
+  #expect(try !store.snapshot(cache: &cache).health.contains { $0.reason == .unparseableRecord })
+}

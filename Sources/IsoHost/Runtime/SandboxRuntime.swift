@@ -141,10 +141,10 @@ package struct ProcessRuntimeExecutor: RuntimeExecutor {
     var sinkError: (any Error)?
     var request = ProcessRunner.Request(
       executable: binary, arguments: arguments, environment: environment,
-      deadline: deadline ?? .zero)
+      deadline: deadline.map(ProcessRunner.Deadline.after) ?? .unbounded)
     if cancellable { request.isCancelled = { Shutdown.isRequested } }
     do {
-      return try runner.stream(request, deadline: deadline) {
+      return try runner.stream(request) {
         (stream, bytes) throws(ProcessRunner.Failure) in
         do { try onOutput(stream, bytes) } catch {
           sinkError = error

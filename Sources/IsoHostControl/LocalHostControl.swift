@@ -49,17 +49,45 @@ package struct HostControlPaths: Sendable, Equatable {
 /// The supervisor's private Unix-socket listeners. Every connection's peer
 /// must be this user; nothing listens on the network.
 package final class LocalHostServer: Sendable {
-  package static let maxConnections = 64
+  /// Each listener has its own connection budget (spec 9.4), so long-lived
+  /// relay streams never take the slots control requests (renewals, stop,
+  /// destroy) need.
+  package struct Limits: Sendable, Equatable {
+    package var control: Int
+    package var remote: Int
+    /// Admitted streams are capped again by ``RelayRegistry``.
+    package var relay: Int
+    /// How long a connection may take to send its next frame, or a relay its
+    /// preamble, before the service closes it. Admitted relay streams have
+    /// no idle timeout.
+    package var readDeadline: Duration
+
+    package static let standard = Limits(
+      control: 64, remote: 64, relay: RelayRegistry.maxStreams, readDeadline: .seconds(10))
+
+    func connections(_ kind: Kind) -> Int {
+      switch kind {
+      case .control: control
+      case .remote: remote
+      case .relay: relay
+      }
+    }
+  }
 
   let supervisor: HostSupervisor
   let paths: HostControlPaths
   let diagnostics: Diagnostics
-  private let connections = Mutex(0)
+  let limits: Limits
+  private let connections = Mutex<[Kind: Int]>([:])
 
-  package init(supervisor: HostSupervisor, paths: HostControlPaths, diagnostics: Diagnostics) {
+  package init(
+    supervisor: HostSupervisor, paths: HostControlPaths, diagnostics: Diagnostics,
+    limits: Limits = .standard
+  ) {
     self.supervisor = supervisor
     self.paths = paths
     self.diagnostics = diagnostics
+    self.limits = limits
   }
 
   /// Bound sockets. Provenance comes from which socket accepted a stream,
@@ -129,9 +157,9 @@ package final class LocalHostServer: Sendable {
         close(client)
         continue
       }
-      let admitted = connections.withLock { count in
-        guard count < Self.maxConnections else { return false }
-        count += 1
+      let admitted = connections.withLock { counts in
+        guard counts[kind, default: 0] < limits.connections(kind) else { return false }
+        counts[kind, default: 0] += 1
         return true
       }
       guard admitted else {
@@ -139,9 +167,9 @@ package final class LocalHostServer: Sendable {
         continue
       }
       Thread.detachNewThread { [self] in
-        defer { connections.withLock { $0 -= 1 } }
+        defer { connections.withLock { $0[kind, default: 0] -= 1 } }
         switch kind {
-        case .relay: supervisor.serveRelay(client: client)
+        case .relay: supervisor.serveRelay(client: client, preambleDeadline: limits.readDeadline)
         case .control: serveControl(client, transport: .local)
         case .remote: serveControl(client, transport: .ssh)
         }
@@ -153,6 +181,8 @@ package final class LocalHostServer: Sendable {
   /// correlated closes the stream with a bounded stderr diagnostic.
   func serveControl(_ client: Int32, transport: HostTransportKind) {
     defer { close(client) }
+    // An idle stream is closed after the deadline instead of holding a slot.
+    Socket.setReceiveTimeout(client, limits.readDeadline)
     while let frame = Socket.readLine(client, limit: HostWire.maxRequestFrame) {
       let response: HostResponse
       do {
@@ -267,10 +297,13 @@ package struct HostControlClient: Sendable {
     self.expected = expected
   }
 
-  package func hello(clientBuild: String) throws(HostControlError) -> HelloResult {
+  package func hello(clientBuild: String, includeBuild: Bool = false) throws(HostControlError)
+    -> HelloResult
+  {
     let request = HostRequest(
       hostID: nil, ownerID: nil,
-      body: .hello(protocols: HostProtocol.supported, clientBuild: clientBuild))
+      body: .hello(
+        protocols: HostProtocol.supported, clientBuild: clientBuild, includeBuild: includeBuild))
     let result = try HelloResult(wire: try call(request))
     guard result.protocolVersion == HostProtocol.v1 else {
       throw HostControlError(.hostProtocolIncompatible, "the host selected an unknown protocol")

@@ -7,6 +7,7 @@ import Foundation
 import IsoConfiguration
 import IsoCore
 import IsoHost
+import IsoHostControl
 
 // MARK: - update
 
@@ -80,6 +81,11 @@ struct Uninstall: ParsableCommand {
           PortForwards(client: client, diagnostics: diagnostics).teardown(instance, target)
         }
         proxies.stopAll(instance)
+      }
+      uninstaller.stopServices = {
+        do { try HostService.stop(config: config.config) } catch {
+          diagnostics.warn("Failed to stop the host-control service (non-fatal): \(error)")
+        }
       }
       try uninstaller.run(Uninstaller.Options(yes: yes, keepData: keepData, purge: purge))
     }

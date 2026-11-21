@@ -531,7 +531,10 @@ runner version and workflow digest; the first complete upload of a key wins,
 and incomplete uploads are never visible. Only a run of a clean tree without
 mapped secrets saves shared cache entries: a run with uncommitted, included
 untracked or patched content, or with `--secret`, keeps its cache entries to
-itself, so a later run of the clean base never restores them. Artifacts are scoped to their run and
+itself, so a later run of the clean base never restores them. Such a run still
+restores shared entries (its own first, the way a branch falls back to its
+base branch), so a pre-commit hook's staged run starts from the clean cache.
+Artifacts are scoped to their run and
 can be downloaded only by jobs that depend on the producing job.
 
 Job and service containers need their images. With the template's
@@ -602,13 +605,22 @@ Existing hooks are not overwritten silently. `install` refuses:
 - a `core.hooksPath` from your user or system Git configuration, which a local
   setting would bypass for this repository;
 - `--directory` that differs from a `core.hooksPath` the repository already
-  sets.
+  sets;
+- pointing `core.hooksPath` at a directory that already holds hooks Git runs
+  (for example a committed `.githooks/post-checkout`), which would start
+  running on your Mac. The refusal names them, and `--dry-run --force` lists
+  them; `--force` enables them along with iso-ci's hook;
+- a hooks directory in the working tree (`.githooks`, `--directory`, or a
+  relative `core.hooksPath`) that is a symlink, sits below one, or leaves the
+  working tree. `--force` does not override this.
 
 To use a hook manager instead (pre-commit, lefthook, husky), call
 `iso-ci run .github/workflows/ci.yml --snapshot staged --follow --timeout
 1800` from its configuration. `uninstall` removes only hooks iso-ci wrote, and
 unsets `core.hooksPath` only when iso-ci set it and the directory holds no
-other hook.
+other hook Git runs. When such hooks remain, it names them and leaves
+`core.hooksPath` set; run `git config --local --unset core.hooksPath` to stop
+Git running them.
 
 What each hook checks:
 

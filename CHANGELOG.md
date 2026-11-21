@@ -8,6 +8,95 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Security
+
+- **Workspace returns fold names like APFS:** returned names were compared
+  with NFC plus `lowercased()`, which misses folds such as `ſ` (U+017F) → `s`.
+  A guest could chain a symlink out of the destination on `iso pull`, or slip
+  `.vſcode/tasks.json` past sensitive-path withholding. One shared full Unicode
+  case fold (`IsoCore.NameFolding`) is now used by every return and archive
+  check; C1 control characters in names and link targets are refused.
+- **Guest computer use cannot crash the owner:** a scroll with `dx`/`dy` equal
+  to `Int.min` trapped in `abs` and killed the sandbox owner and its VM; it is
+  now refused as an invalid action.
+- **GitHub tokens stay on github.com:** `gh auth token`, `gh api`,
+  `gh release download` and `gh attestation verify` (in iso and `install.sh`)
+  pin github.com, so `GH_HOST` or a sole GitHub Enterprise Server login can no
+  longer put an Enterprise token into the guest or send it to api.github.com.
+  `github: "auto"` clones and devcontainer discovery now prefer `GITHUB_TOKEN`.
+- **iso-ci hooks:** `hooks install` refuses a hooks directory that is a symlink
+  or lies outside the working tree, names any committed hooks that setting
+  `core.hooksPath` would enable and refuses them without `--force`; `uninstall`
+  says when and why it leaves `core.hooksPath` set.
+- **Sandboxed editor:** when a session ends, every process its sandbox
+  confines is ended, including ones that called `setsid()`.
+- **Devcontainer Features:** `iso setup` resolves Features before its preview
+  and shows each digest and `install.sh` SHA-256; a Feature that cannot be
+  installed stops setup, and the guest runs exactly the hashed `install.sh`.
+  devcontainer.json is read only as a regular file of at most 1 MiB.
+- **Release candidates:** signing and notarization run in their own job, so
+  the build-and-test job never holds the signing secrets.
+- **Secrets in output:** `--env` parse errors no longer print the value, and
+  the local-model auth token prompt no longer echoes.
+
+### Fixed
+
+- `iso start` refuses a fenced instance until `iso stop` reconciles it.
+- A restart that fails after a concurrent `iso destroy` no longer recreates
+  the instance directory (which blocked every new instance).
+- Subprocess deadlines are always enforced (devcontainer Feature downloads,
+  `iso update` steps, Keychain writes); `iso update` downloads fail when
+  stalled and are capped at 1 h. An attached `ssh` ends when iso gets SIGTERM.
+- Host service: each socket has its own connection budget, idle connections
+  close after 10 s, a lease that lapses during renewal or relay admission
+  closes its relays, closing a session no longer removes the next session's
+  guest key, and a service still running an old build is restarted on the
+  first `iso host` request after an update; `iso uninstall` unloads it.
+- Codex MCP servers get `http_headers` and `env_vars` (Codex ignored `headers`
+  and read `env` literally); `type: "sse"` and renaming `env` entries are
+  refused for Codex. Claude MCP `env` entries are registered as `${NAME}` so
+  servers receive the value, not the name.
+- Bootstrap and hook SSH commands no longer consume stdin piped to `iso run`.
+- `iso status` probes guest usage with a 15 s deadline, concurrently.
+- The Claude plugin IDs that select imported host preferences are kept on the
+  host, not in the guest.
+- Guest-agent calls of an `exec` have a 30 s host-side deadline.
+- The audit checkpoint always fits its headroom; the oldest runs expire
+  instead of capture being refused.
+- `iso destroy`, `iso uninstall --purge`, host-control delete and
+  `iso run --rm` delete the VM's `iso proxy setup --vm` Keychain items;
+  `iso github forget-pat` fails and keeps the entry when the delete fails.
+- `--help`/`iso help` with `--output json` print help; `--quiet` reaches group
+  commands; `INVALID_ARGUMENT` means only a command's own usage error;
+  `destroy` reports instances it removed even when later cleanup fails.
+- `data_dir` must be absolute; `vault:` in guest-placed secrets is refused at
+  load; a FIFO config path no longer hangs; the template's proxy and GitHub
+  examples keep the secure defaults.
+- devcontainer `mounts` are reported unsupported (they were never applied);
+  the `iso run` summary reports the filtered-egress allowlist.
+- iso-proxy raises its open-file limit to what its connection limits need.
+- iso-ci: GitHub responses are capped while streaming, action archives up to
+  64 MiB import, and confined preflight runs restore shared clean cache
+  entries.
+- CI checks every fault-injection anchor on each push; the nightly skips only
+  when nothing but docs changed since its last successful run. Contract
+  scripts compare exact exit codes.
+
+### Changed
+
+- Performance: workspace re-staging and case-variant link checks are linear;
+  audit `--follow` decodes only appended records; the host supervisor indexes
+  pending work instead of rescanning its ledger; remote run results download
+  in 512 KiB chunks; frame PNGs are encoded off the owner's main actor; the
+  egress relay uses a ring buffer; iso-proxy builds one TLS context per
+  process; egress and tunnel identity checks read process arguments in
+  process instead of running `ps`; iso-ci looks up jobs only for busy runners.
+- Fuzz targets cover the egress CONNECT parser and the proxy's request
+  target, header policy and capability parsers.
+- mise 2026.11.9 is the minimum; the Swift toolchain download is
+  checksum-pinned in `mise.lock`. Dependabot covers `www/` and the
+  Dockerfiles.
+
 ## v0.10.0
 
 ### Added

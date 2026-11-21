@@ -238,6 +238,12 @@ package enum GitHooks {
     package let hookPath: String
     package let existing: Existing
     package let setsHooksPath: String?
+    /// Hooks already in `hooksDirectory` that Git starts running once
+    /// `setsHooksPath` points there (empty when core.hooksPath stays).
+    package let activates: [String]
+    /// The working-tree-relative hooks directory, checked again before any
+    /// write; nil for an absolute or `~` core.hooksPath the operator chose.
+    package let repositoryDirectory: String?
     package let backupPath: String?
     package let content: String
   }
@@ -262,7 +268,7 @@ package enum GitHooks {
       }
     }
     var setsHooksPath: String?
-    let hooksDirectory: String
+    var hooksDirectory: String
     switch repository.hooksPathSource {
     case .local:
       let current = repository.hooksDirectory
@@ -298,6 +304,25 @@ package enum GitHooks {
       setsHooksPath = directory ?? defaultDirectory
       hooksDirectory = resolve(setsHooksPath!, root: root)
     }
+    // A relative hooks directory is working-tree content: a committed
+    // symlink there must never send the hook write outside the repository.
+    let relative =
+      setsHooksPath
+      ?? repository.hooksPath.flatMap { $0.hasPrefix("/") || $0.hasPrefix("~") ? nil : $0 }
+    if let relative {
+      hooksDirectory = try repositoryDirectory(relative, root: root)
+    }
+    // Pointing core.hooksPath at a directory starts every hook already in
+    // it, so a committed hook would run on this Mac at the next checkout.
+    let activates =
+      setsHooksPath == nil
+      ? [] : hooksGitRuns(in: hooksDirectory).filter { $0 != settings.hook.rawValue }
+    guard activates.isEmpty || force else {
+      throw CIError(
+        .conflict,
+        "setting core.hooksPath to \(setsHooksPath ?? "") would also enable the hooks already in \(hooksDirectory) (\(activates.joined(separator: ", "))), and Git would run them on this Mac; review them, then pass --force to enable them"
+      )
+    }
     let hookPath = hooksDirectory + "/" + settings.hook.rawValue
     let existing = try existingHook(hookPath)
     var backupPath: String?
@@ -318,12 +343,16 @@ package enum GitHooks {
     return InstallPlan(
       repository: repository, settings: settings, hooksDirectory: hooksDirectory,
       hookPath: hookPath, existing: existing, setsHooksPath: setsHooksPath,
-      backupPath: backupPath, content: script(settings))
+      activates: activates, repositoryDirectory: relative, backupPath: backupPath,
+      content: script(settings))
   }
 
   /// Carries out `plan`. `git` sets `core.hooksPath` in the repository's own
   /// configuration when the plan needs it.
   package static func install(_ plan: InstallPlan, git: GitConfigWriter) throws(CIError) {
+    if let relative = plan.repositoryDirectory {
+      _ = try repositoryDirectory(relative, root: plan.repository.layout.root)
+    }
     do {
       try FileManager.default.createDirectory(
         atPath: plan.hooksDirectory, withIntermediateDirectories: true)
@@ -373,15 +402,27 @@ package enum GitHooks {
 
   // MARK: Uninstall
 
+  /// What uninstall did with `core.hooksPath`.
+  package enum HooksPathOutcome: Sendable, Equatable {
+    /// iso-ci did not set it, so it is not iso-ci's to change.
+    case notOwned
+    /// iso-ci had set it and unset it.
+    case unset
+    /// iso-ci had set it, but these hooks remain in its directory and Git
+    /// keeps running them while it stays set.
+    case kept(directory: String, hooks: [String])
+  }
+
   package struct UninstallResult: Sendable, Equatable {
     package var removed: [String] = []
     package var restored: [String] = []
     package var skipped: [String] = []
-    package var unsetHooksPath = false
+    package var hooksPath = HooksPathOutcome.notOwned
   }
 
   /// Removes the managed `hooks` (restoring any backup), and unsets the
-  /// `core.hooksPath` iso-ci set once its directory holds no other hook.
+  /// `core.hooksPath` iso-ci set once its directory holds no other hook Git
+  /// runs; otherwise the result names the hooks that keep it set.
   package static func uninstall(
     _ repository: Repository, hooks: [GitHookKind], git: GitConfigWriter
   ) throws(CIError) -> UninstallResult {
@@ -408,12 +449,17 @@ package enum GitHooks {
       }
     }
     if repository.hooksPathSource == .local, let owned = repository.ownedHooksPath,
-      owned == repository.hooksPath, activeHooks(in: directory).isEmpty
+      owned == repository.hooksPath
     {
-      try git.unset("core.hooksPath")
-      try git.unset(ownedHooksPathKey)
-      rmdir(directory)  // only when empty
-      result.unsetHooksPath = true
+      let remaining = hooksGitRuns(in: directory)
+      if remaining.isEmpty {
+        try git.unset("core.hooksPath")
+        try git.unset(ownedHooksPathKey)
+        rmdir(directory)  // only when empty
+        result.hooksPath = .unset
+      } else {
+        result.hooksPath = .kept(directory: directory, hooks: remaining)
+      }
     }
     return result
   }
@@ -438,6 +484,61 @@ package enum GitHooks {
       else { return false }
       return access(directory + "/" + name, X_OK) == 0
     }.sorted()
+  }
+
+  /// Hook names Git runs (githooks(5)); any other file in a hooks
+  /// directory is never started by Git.
+  package static let gitHookNames: Set<String> = [
+    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
+    "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout",
+    "post-merge", "pre-push", "pre-receive", "update", "proc-receive", "post-receive",
+    "post-update", "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite",
+    "sendemail-validate", "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist",
+    "p4-post-changelist", "p4-pre-submit", "post-index-change",
+  ]
+
+  /// The hooks in `directory` Git would run: executable files (or links to
+  /// them) under one of Git's hook names.
+  static func hooksGitRuns(in directory: String) -> [String] {
+    gitHookNames.filter { name in
+      var status = stat()
+      let path = directory + "/" + name
+      return stat(path, &status) == 0 && status.st_mode & S_IFMT == S_IFREG
+        && access(path, X_OK) == 0
+    }.sorted()
+  }
+
+  /// The absolute path of a working-tree-relative hooks directory, refused
+  /// when it leaves the working tree or any existing component is a symlink
+  /// or not a directory (a committed `.githooks` link would otherwise carry
+  /// the hook write anywhere). Missing components are created by install.
+  static func repositoryDirectory(_ relative: String, root: String) throws(CIError) -> String {
+    let parts = relative.split(separator: "/").filter { $0 != "." }
+    guard !parts.isEmpty, !parts.contains("..") else {
+      throw CIError(
+        .conflict,
+        "the hooks directory \(relative) is outside the working tree; iso-ci writes hooks only inside the repository"
+      )
+    }
+    var path = root
+    for part in parts {
+      path += "/" + part
+      var status = stat()
+      guard lstat(path, &status) == 0 else {
+        guard errno == ENOENT else { throw CIError.storage("cannot inspect \(path)") }
+        break
+      }
+      switch status.st_mode & S_IFMT {
+      case S_IFDIR: continue
+      case S_IFLNK:
+        throw CIError(
+          .conflict,
+          "\(path) is a symlink; iso-ci writes hooks only into a real directory inside the working tree"
+        )
+      default: throw CIError(.conflict, "\(path) is not a directory")
+      }
+    }
+    return root + "/" + parts.joined(separator: "/")
   }
 
   static func writeExecutable(_ bytes: [UInt8], to path: String) throws(CIError) {

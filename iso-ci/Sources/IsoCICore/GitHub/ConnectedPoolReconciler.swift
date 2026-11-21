@@ -128,7 +128,9 @@ package final class ConnectedPoolReconciler: Sendable {
     var githubHealthy = true
     var hostsDown: Set<Name> = []
     var refusedHosts: Set<Name> = []
-    var jobs: [GitHubJobInfo]?
+    /// This pass's lazy job walks, shared by every allocation in it.
+    var jobs: JobSearch?
+    var finishedJobs: JobSearch?
     var runnerInfo: [AllocationID: GitHubRunnerInfo] = [:]
     var groupID: Int64?
   }
@@ -401,18 +403,20 @@ package final class ConnectedPoolReconciler: Sendable {
           && allocation.runnerExitStatus == nil)
     else { return }
     guard pass.githubHealthy else { return }
-    if pass.jobs == nil {
-      do { pass.jobs = try runners.activeJobs(scope: pool.scope) } catch {
-        githubFailure(error, "job correlation", pass: &pass)
-        return
-      }
+    // GitHub marks a runner busy once it has taken a job, and this pass
+    // already read the runner: an idle one has no job to look for. A job
+    // that starts and ends between two passes is found when the runner's
+    // exit is observed (`finishedJob`).
+    if let info = pass.runnerInfo[id], !info.busy { return }
+    let found: GitHubJobInfo?
+    do {
+      if pass.jobs == nil { pass.jobs = try runners.activeJobs(scope: pool.scope) }
+      found = try pass.jobs?.first(where: { Self.ranOn($0, allocation) })
+    } catch {
+      githubFailure(error, "job correlation", pass: &pass)
+      return
     }
-    guard
-      let job = pass.jobs?.first(where: {
-        ($0.runnerID != nil && $0.runnerID == allocation.runnerID)
-          || ($0.runnerName != nil && $0.runnerName == allocation.runnerName)
-      })
-    else { return }
+    guard let job = found else { return }
     update(id) {
       $0.job = job.reference
       $0.assignedAt = $0.assignedAt ?? clock.now()
@@ -424,6 +428,12 @@ package final class ConnectedPoolReconciler: Sendable {
       data: [
         "repository": job.repository.rawValue, "run": String(job.runID), "job": String(job.id),
       ])
+  }
+
+  /// GitHub's own runner_id/runner_name observation names this allocation.
+  static func ranOn(_ job: GitHubJobInfo, _ allocation: AllocationRecord) -> Bool {
+    (job.runnerID != nil && job.runnerID == allocation.runnerID)
+      || (job.runnerName != nil && job.runnerName == allocation.runnerName)
   }
 
   private func observeRunnerProcess(
@@ -486,17 +496,17 @@ package final class ConnectedPoolReconciler: Sendable {
     guard pass.githubHealthy, allocation.runnerID != nil || allocation.runnerName != nil else {
       return nil
     }
-    let jobs: [GitHubJobInfo]
-    do { jobs = try runners.completedJobs(scope: pool.scope) } catch {
+    let found: GitHubJobInfo?
+    do {
+      if pass.finishedJobs == nil {
+        pass.finishedJobs = try runners.completedJobs(scope: pool.scope)
+      }
+      found = try pass.finishedJobs?.first(where: { Self.ranOn($0, allocation) })
+    } catch {
       githubFailure(error, "finished job correlation", pass: &pass)
       return nil
     }
-    guard
-      let job = jobs.first(where: {
-        ($0.runnerID != nil && $0.runnerID == allocation.runnerID)
-          || ($0.runnerName != nil && $0.runnerName == allocation.runnerName)
-      })
-    else { return nil }
+    guard let job = found else { return nil }
     _ = try? store.event(
       "allocation:\(allocation.id)", "allocation.assigned",
       "GitHub reports job \(job.id) finished on this runner",

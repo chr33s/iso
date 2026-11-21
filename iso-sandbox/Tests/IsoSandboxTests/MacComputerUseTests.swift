@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
 
 @testable import IsoSandboxCore
@@ -138,4 +140,58 @@ private func request(_ kind: String, _ build: (inout CUActionRequest) -> Void = 
   let wait = MacSandboxes.replyTimeout(MacControlRequest(op: .cuAct, action: longest))
   let typing = Double(CUActionRequest.maxText * 4) * 0.012
   #expect(wait >= typing + 60)
+}
+
+// MARK: frame encoding
+
+@MainActor private final class GateLog {
+  var order: [Int] = []
+  var inside = 0
+  var most = 0
+}
+
+/// Frames are encoded off the main actor, one at a time and in the order asked: the gate holds
+/// later frames, so at most one captured image waits for its encode.
+@MainActor @Test func theFrameGateAdmitsOneHolderAtATimeInTheOrderAsked() async {
+  let gate = SerialGate()
+  let log = GateLog()
+  await gate.enter()
+  var tasks: [Task<Void, Never>] = []
+  for i in 0..<4 {
+    tasks.append(
+      Task { @MainActor in
+        await gate.enter()
+        log.inside += 1
+        log.most = max(log.most, log.inside)
+        log.order.append(i)
+        await Task.yield()
+        log.inside -= 1
+        gate.leave()
+      })
+    for _ in 0..<100 where gate.queued < i + 1 { await Task.yield() }
+  }
+  #expect(log.order.isEmpty)
+  gate.leave()
+  for t in tasks { await t.value }
+  #expect(log.order == [0, 1, 2, 3])
+  #expect(log.most == 1)
+  #expect(gate.queued == 0)
+  // Free again: the next holder enters at once.
+  await gate.enter()
+  gate.leave()
+}
+
+@Test func framesAreEncodedAsPNGsOfTheirOwnSize() async throws {
+  let ctx = try #require(
+    CGContext(
+      data: nil, width: 64, height: 40, bitsPerComponent: 8, bytesPerRow: 64 * 4,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+  ctx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+  ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 40))
+  let png = try await VMScreen.png(try #require(ctx.makeImage()))
+  let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+  #expect(CGImageSourceGetType(source) as String? == "public.png")
+  let decoded = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+  #expect(decoded.width == 64 && decoded.height == 40)
 }

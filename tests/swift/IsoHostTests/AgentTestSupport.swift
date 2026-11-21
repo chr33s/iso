@@ -156,18 +156,28 @@ struct FakeGuest {
       # ssh sees only the guest transport environment: find the stub root
       # from this script's own path.
       S="$(cd "$(dirname "$0")/.." && pwd)"
-      n=$#
-      eval "src=\${$((n-1))}"
-      eval "remote=\${$n}"
+      # Options, then one or more sources, then the remote destination.
+      sources=""; remote=""; skip=""
+      for a in "$@"; do
+        if [ -n "$skip" ]; then skip=""; continue; fi
+        case "$a" in
+          -S|-o|-F|-i|-P) skip=1 ;;
+          -*) ;;
+          *) [ -n "$remote" ] && sources="$sources$remote
+      "; remote="$a" ;;
+        esac
+      done
       dest="${remote#*:}"
       case "$dest" in
         "~/"*) dest="$S/home/${dest#\~/}" ;;
         "./"*) dest="$S/home/${dest#./}" ;;
         *) dest="$S/home/$dest" ;;
       esac
-      printf 'scp %s -> %s\n' "$src" "$remote" >> "$S/scp.log"
-      mkdir -p "$(dirname "$dest")"
-      if [ -d "$dest" ]; then cp -R "$src" "$dest/"; else cp -R "$src" "$dest"; fi
+      printf '%s' "$sources" | while IFS= read -r src; do
+        printf 'scp %s -> %s\n' "$src" "$remote" >> "$S/scp.log"
+        mkdir -p "$(dirname "$dest")"
+        if [ -d "$dest" ]; then cp -R "$src" "$dest/"; else cp -R "$src" "$dest"; fi
+      done
       """#, mode: 0o755)
     try writeFile(
       root + "/guestbin/claude",

@@ -20,7 +20,7 @@ Use devcontainer.json at <path>? [Y/n]
 
 After your reply (or non-interactive escape hatches, below), isolate prints a per-key report showing exactly which devcontainer.json keys took effect, which were overridden by CLI flags, and which are unsupported.
 
-When a local `devcontainer.json` is applied while creating a VM, isolate records the file path and SHA-256 content hash in the instance state. Later `iso up` reconnects and `iso start` restarts compare the current file at that path with the recorded hash. If it changed or disappeared, isolate prints an informational warning and leaves the existing VM unchanged. Destroy and recreate the VM to apply creation-time changes such as `features`, `hostRequirements`, `mounts`, `image`/`build`, or `remoteUser`. Start-time values from the old file, including `containerEnv`, `forwardPorts`, and `postStartCommand`, are not re-applied automatically on restart.
+When a local `devcontainer.json` is applied while creating a VM, isolate records the file path and SHA-256 content hash in the instance state. Later `iso up` reconnects and `iso start` restarts compare the current file at that path with the recorded hash. If it changed or disappeared, isolate prints an informational warning and leaves the existing VM unchanged. Destroy and recreate the VM to apply creation-time changes such as `features`, `hostRequirements`, `image`/`build`, or `remoteUser`. Start-time values from the old file, including `containerEnv`, `forwardPorts`, and `postStartCommand`, are not re-applied automatically on restart.
 
 ## Non-interactive escape hatches
 
@@ -69,9 +69,13 @@ CLI flags > `devcontainer.json` > defaults. The reporting table marks overrides 
 | `hostRequirements.cpus` | `--vcpus` | |
 | `hostRequirements.memory` | `--mem` | Accepts `4GB`/`4GiB`-style values |
 | `hostRequirements.storage` | `--disk` | Start-time only; accepts `16GB`/`16GiB`-style values |
-| `mounts` | `--mount` | Docker `type=bind,source=...,target=...` strings and objects supported; non-bind types are rejected |
+| `mounts` | warn and skip | Not applied: iso copies only the project. Pass `--mount HOST[:GUEST]` to copy another directory once |
 | `remoteUser` | `--guest-user` at setup time | Baked into the image at setup; start reports a mismatch and skips `containerEnv` if the image uses a different guest user |
 | `image`, `build`, `dockerComposeFile`, `customizations`, `name` | warn and skip | isolate manages its own rootfs |
+
+## How the file is read
+
+`devcontainer.json` comes from the repository, so isolate reads it only as a regular file of at most 1 MiB, never through a symlink at its final path component and never from a FIFO or device. A symlinked `.devcontainer/devcontainer.json` is discovered and refused with an error; pass `--devcontainer` with the file it points to, or `--no-devcontainer`. A fetched remote file has the same size bound, and so does the later comparison against the recorded hash.
 
 ## JSON with comments
 
@@ -83,7 +87,9 @@ For public `ghcr.io/devcontainers/features/<name>[:tag|@digest]` entries that do
 
 Feature option values must be strings, numbers, booleans, or `null`. They are exposed to the Feature script as uppercased environment variables, along with `_REMOTE_USER` and `_REMOTE_USER_HOME`.
 
-Treat Feature install scripts as untrusted project-provided code. isolate reads `install.sh` as a bounded regular file without following symlinks. The report prints the resolved digest and `install.sh` SHA-256 before setup continues; use `--dry-run` or `iso devcontainer check <path> --stage setup` to inspect this without building an image.
+Treat Feature install scripts as untrusted project-provided code. isolate reads `install.sh` from the verified layer into bounded memory and never extracts the layer on the host. After the guest unpacks the layer, the provisioning step replaces whatever the archive holds at `install.sh` with exactly those bytes, so the reported SHA-256 names the script that runs.
+
+Features are resolved before you are asked to apply a discovered file: the preview lists each Feature with its resolved digest and `install.sh` SHA-256. A registry Feature that cannot be installed (an invalid reference or option, or a fetch or digest failure) is shown in the report and stops setup before the prompt; fix or remove it, or pass `--no-devcontainer`. `--dry-run` and `iso devcontainer check <path> --stage setup` show the same report without building an image or stopping. Resolution fetches from GHCR, so it happens even when you then decline the file.
 
 ## Out of scope in v1
 

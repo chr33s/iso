@@ -8,12 +8,14 @@
 # the Virtualization framework the runtime links against. The pinned Swift
 # toolchain matches the Swift 6.4 that Xcode 27 ships.
 
-min_version = "2026.10.7"
+min_version = "2026.11.9"
 
 # mise.lock pins each tool's download URL and checksum (and its GitHub
-# attestation where the registry has one). The exception is `swift`: its
-# entry (core swift backend) records only the toolchain package URL, so the
-# lockfile does not hash the compiler download. Regenerate it with
+# attestation where the registry has one), the Swift toolchain package
+# included; `mise install --locked` (which jdx/mise-action passes) refuses a
+# download that does not match. min_version and every workflow's
+# jdx/mise-action `version:` stay at a release that reads this lockfile
+# layout (2026.11.9 records the swift checksums). Regenerate it with
 # `mise lock --platform macos-arm64,linux-x64` after changing a pin.
 [settings]
 lockfile = true

@@ -24,10 +24,16 @@ package struct OperationStore: Sendable {
 
   package let root: String
   package let limits: Limits
+  /// Told of every operation record written (the supervisor's pending index).
+  let written: (@Sendable (OperationRecord) -> Void)?
 
-  package init(root: String, limits: Limits = .standard) throws(HostError) {
+  package init(
+    root: String, limits: Limits = .standard,
+    written: (@Sendable (OperationRecord) -> Void)? = nil
+  ) throws(HostError) {
     self.root = root
     self.limits = limits
+    self.written = written
     for directory in [
       root, operationsDirectory, instancesDirectory, tombstonesDirectory, reservationsDirectory,
       locksDirectory,
@@ -127,6 +133,7 @@ package struct OperationStore: Sendable {
 
   package func saveOperation(_ record: OperationRecord) throws(HostError) {
     try write(record, operationPath(record.operationID))
+    written?(record)
   }
 
   package func operationIDs() -> [HostOperationID] {

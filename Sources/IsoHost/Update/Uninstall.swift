@@ -33,6 +33,11 @@ package struct Uninstaller {
   let runner: ProcessRunner
   /// Per-instance teardown before destroy (port forwards, credential proxy).
   package var teardown: (Instance) -> Void = { _ in }
+  /// Where `--purge` deletes each destroyed VM's own proxy credentials.
+  package var keychain: Keychain
+  /// Unloads services this build started (the host-control launchd job)
+  /// before its binary goes.
+  package var stopServices: () -> Void = {}
 
   var config: IsoConfig { backend.config }
   var diagnostics: Diagnostics { backend.diagnostics }
@@ -51,6 +56,7 @@ package struct Uninstaller {
     self.stdinIsTerminal = stdinIsTerminal
     self.confirm = confirm
     self.runner = runner
+    keychain = Keychain(environment: environment, runner: runner)
   }
 
   /// The directory `--purge` may remove wholesale: backend state only.
@@ -71,6 +77,7 @@ package struct Uninstaller {
       diagnostics.log(.info, "Uninstall cancelled")
       return
     }
+    stopServices()
     if try decideRemoveData(options) {
       try purgeAllData()
       // Decide containment while the data directory still exists to
@@ -99,7 +106,7 @@ package struct Uninstaller {
     try removeSelfBinary(binaryPath)
     diagnostics.log(
       .info,
-      "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | sh"
+      "iso uninstalled. To reinstall: curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash"
     )
   }
 
@@ -150,8 +157,10 @@ package struct Uninstaller {
   func purgeAllData() throws {
     for instance in try listInstances() {
       diagnostics.log(.info, "Destroying instance '\(instance.name)'")
+      let credentials = ProxyState.ownedKeychainItems(instance)
       teardown(instance)
       try backend.destroyInstance(instance)
+      ProxyState.forget(credentials, keychain: keychain, diagnostics: diagnostics)
       try SSHConfigBlocks.remove(
         host: SSHConfigBlocks.host(for: instance.name), instanceName: instance.name.rawValue,
         at: SSHConfigBlocks.path(home: home), diagnostics: diagnostics)
@@ -190,7 +199,8 @@ package struct Uninstaller {
 
   func sudoRemove(_ directory: String) throws {
     let tools = UpdateTools(environment: environment, runner: runner, diagnostics: diagnostics)
-    try tools.run("sudo", ["rm", "-rf", directory])
+    // sudo may wait on a password prompt for as long as the user takes.
+    try tools.run("sudo", ["rm", "-rf", directory], deadline: .unbounded)
   }
 
   func removeSelfBinary(_ path: String) throws {

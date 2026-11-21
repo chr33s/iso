@@ -24,7 +24,7 @@ struct Setup: ParsableCommand {
       "Deprecated; has no effect and never accepts a discovered devcontainer.json (answer the prompt, or pass --devcontainer PATH or --no-devcontainer)"
   )
   var yes = false
-  @Option(help: "Number of vCPUs (overrides config)") var vcpus: UInt8?
+  @Option(help: "Number of vCPUs (overrides config)", transform: parseVCPUCount) var vcpus: UInt8?
   @Option(help: "Memory in MiB (overrides config)", transform: parseMemory) var mem: VmMemory?
   @Flag(help: "Force rebuild of the machine image") var rebuild = false
   @Option(
@@ -106,7 +106,6 @@ struct Setup: ParsableCommand {
         global,
         override: { $0.overridingVM(vcpus: vcpus, memory: mem, templateSize: templateSize) },
         intent: loadIntent)
-      if vcpus == 0 { throw HostError("--vcpus must be > 0") }
       for warning in try context.config.validated() { context.diagnostics.warn(warning) }
       if guest == .macos, let ipsw {
         let shutdown = Shutdown.install()
@@ -169,6 +168,15 @@ func splitCommas(_ text: String) -> [String] {
 
 func parseMemory(_ text: String) throws -> VmMemory {
   do { return try VmMemory.parseCLI(text) } catch { throw UsageError("\(error)") }
+}
+
+/// A `--vcpus` count: 1-255, like `vm.vcpu_count`.
+func parseVCPUCount(_ text: String) throws -> UInt8 {
+  guard let count = parseUnsigned(text, as: UInt8.self) else {
+    throw UsageError("--vcpus expects an integer 1-255, got \(debugQuoted(text))")
+  }
+  guard count > 0 else { throw UsageError("--vcpus must be > 0") }
+  return count
 }
 
 func parseGiB(_ text: String) throws -> GiB {
@@ -253,37 +261,64 @@ struct Destroy: MachineCommand {
       let shutdown = Shutdown.install()
       defer { shutdown.restore() }
       if all {
-        var destroyed: [MachineRemovedInstance] = []
-        do {
-          for instance in try context.listInstances() {
-            try destroy(context, instance)
-            destroyed.append(MachineRemovedInstance(instance))
-          }
-        } catch  where !destroyed.isEmpty {
-          throw PartialDestroy(destroyed: destroyed, cause: error)
-        }
-        context.backend.destroyShared()
-        for suffix in ["", ".pub"] {
-          try? FileManager.default.removeItem(atPath: context.config.sshKeyPath.path + suffix)
-        }
-        try? FileManager.default.removeItem(atPath: context.config.instancesDirectory.path)
-        try context.sshConfigFile().removeAll()
+        let destroyed = try DestroySequence.run(
+          try context.listInstances(), remove: { try remove(context, $0) },
+          cleanup: { try cleanup(context, $0) },
+          finish: {
+            context.backend.destroyShared()
+            for suffix in ["", ".pub"] {
+              try? FileManager.default.removeItem(atPath: context.config.sshKeyPath.path + suffix)
+            }
+            try? FileManager.default.removeItem(atPath: context.config.instancesDirectory.path)
+            try context.sshConfigFile().removeAll()
+          })
         context.diagnostics.log(.info, "All resources cleaned up")
         return .all(destroyed)
       }
       let instance = try InstanceStore.resolve(context.config, name: name)
-      try destroy(context, instance)
+      _ = try DestroySequence.run(
+        [instance], remove: { try remove(context, $0) }, cleanup: { try cleanup(context, $0) })
       return .one(MachineRemovedInstance(instance))
     }
   }
 
-  func destroy(_ context: CommandContext, _ instance: Instance) throws {
+  func remove(_ context: CommandContext, _ instance: Instance) throws {
     context.diagnostics.log(.info, "Destroying instance '\(instance.name)'")
+    let credentials = ProxyState.ownedKeychainItems(instance)
     context.teardownForwards(instance)
     context.agents.proxies.stopAll(instance)
     try context.backend.destroyInstance(instance)
+    ProxyState.forget(
+      credentials, keychain: Keychain(environment: context.environment.variables),
+      diagnostics: context.diagnostics)
+  }
+
+  func cleanup(_ context: CommandContext, _ instance: Instance) throws {
     try context.sshConfigFile().remove(instance)
     context.diagnostics.log(.info, "Instance '\(instance.name)' destroyed")
+  }
+}
+
+/// `destroy`'s accounting. An instance counts as destroyed once `remove`
+/// deleted it, before its `cleanup` (its `~/.ssh/config` block) or `finish`
+/// can fail; a failure after any removal is a `PartialDestroy` naming them.
+enum DestroySequence {
+  static func run(
+    _ instances: [Instance], remove: (Instance) throws -> Void,
+    cleanup: (Instance) throws -> Void, finish: () throws -> Void = {}
+  ) throws -> [MachineRemovedInstance] {
+    var destroyed: [MachineRemovedInstance] = []
+    do {
+      for instance in instances {
+        try remove(instance)
+        destroyed.append(MachineRemovedInstance(instance))
+        try cleanup(instance)
+      }
+      try finish()
+    } catch  where !destroyed.isEmpty {
+      throw PartialDestroy(destroyed: destroyed, cause: error)
+    }
+    return destroyed
   }
 }
 
@@ -303,7 +338,7 @@ struct Resize: ParsableCommand {
     transform: parseDiskSize)
   var disk: DiskSize?
   @Option(help: "New memory in MiB (minimum 128)", transform: parseMemory) var mem: VmMemory?
-  @Option(help: "New vCPU count") var vcpus: UInt8?
+  @Option(help: "New vCPU count", transform: parseVCPUCount) var vcpus: UInt8?
   @Flag(help: "Start the instance after applying the change instead of leaving it stopped")
   var start = false
 
@@ -311,7 +346,6 @@ struct Resize: ParsableCommand {
     if disk == nil && mem == nil && vcpus == nil {
       throw UsageError("at least one of --disk, --mem or --vcpus is required")
     }
-    if vcpus == 0 { throw UsageError("--vcpus must be > 0") }
   }
 
   func run() throws {

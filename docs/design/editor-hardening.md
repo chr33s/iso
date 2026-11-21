@@ -759,6 +759,8 @@ Invalidate the running proof / stop the VM while the editor is connected.
 
 Verify the editor process tree is terminated, its ephemeral identity is revoked, and reconnection cannot occur without creating a new qualified session.
 
+A process can leave the tree and process group (`fork`, then `setsid`) but never its Seatbelt sandbox, so the session also ends every process its profile confines: `EditorSessionSweep` asks `sandbox_check` whether each process of the user is sandboxed, may look up a Mach name under the session's `SESSION/` prefix (granted only by this session's profile) and may not look up a sibling name outside it (granted by any broader profile). Members are stopped until none is left running, re-confirmed, then killed. Residual risk: the SPI is private (a build where it is missing refuses the sandboxed editor), and a process launchd starts for the editor is outside the profile and the sweep. `theSessionSweepEndsDetachedConfinedProcessesOnly` exercises the sweep against the real profile.
+
 ### 18.10 Sandbox inheritance test
 
 Enumerate the full editor process tree (Electron/Zed helpers, SSH, extension processes). Every process must remain under the intended Seatbelt policy. Attempt known re-launch mechanisms and verify they cannot create an unsandboxed child.

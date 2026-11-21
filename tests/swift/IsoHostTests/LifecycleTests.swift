@@ -389,7 +389,7 @@ struct FakeInstallation {
   attached.isCancelled = { true }
   let start = ContinuousClock.now
   #expect(throws: ProcessRunner.Failure.cancelled) {
-    try ProcessRunner().attached(attached, inheritStdin: false, deadline: nil)
+    try ProcessRunner().attached(attached, inheritStdin: false)
   }
   var producer = ProcessRunner.Request(
     executable: "/bin/sh", arguments: ["-c", "sleep 30"], environment: [:], deadline: .seconds(60))
@@ -414,7 +414,7 @@ struct FakeInstallation {
   let started = ContinuousClock.now
   request.isCancelled = { ContinuousClock.now - started > .milliseconds(400) }
   #expect(throws: ProcessRunner.Failure.cancelled) {
-    try ProcessRunner().attached(request, inheritStdin: false, deadline: nil)
+    try ProcessRunner().attached(request, inheritStdin: false)
   }
   Thread.sleep(forTimeInterval: 2.5)
   #expect(!FileManager.default.fileExists(atPath: marker))
@@ -1409,4 +1409,78 @@ private func capturing(_ install: FakeInstallation) -> (AppleBackend, CapturedLi
   let events = try BoundaryAudit.load(instance).compactMap { $0["event"] as? String }
   #expect(events.contains("host_security_reduced"))
   #expect(!events.contains("mac_coreai_attached"))
+}
+
+private func fakeLifecycle(_ install: FakeInstallation) -> ProjectLifecycle {
+  let environment = ConfigEnvironment(
+    home: install.root,
+    variables: ["HOME": install.root, "PATH": "\(install.root)/bin:/usr/bin:/bin"])
+  return ProjectLifecycle(
+    context: CommandContext(
+      environment: environment, config: install.config, backend: install.backend,
+      output: SilentOutput(), diagnostics: Diagnostics(verbosity: 0) { _ in },
+      ssh: SSHClient(environment: environment.variables, tools: .searchPath)),
+    noGitHub: true, secretResolver: NoSecrets(), executable: nil,
+    prepareGitHub: { config, _, _, _ in config })
+}
+
+/// LIFE-01: a fenced instance whose sandbox has since stopped is not booted by
+/// `iso start`; only `iso stop` reconciles it, after which it starts.
+@Test func aFencedInstanceIsNotStartedUntilAStopReconcilesIt() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("fencedstart"), image: .default, workspacePath: nil)
+  let lifecycle = fakeLifecycle(install)
+  let options = BootOptions(
+    noAgents: true, noPrompt: true,
+    configTarget: ConfigTarget(path: install.root + "/c.jsonc", format: .jsonc))
+  try lifecycle.startInstance(instance, CreationRequest(boot: options))
+  _ = try backend.runtime().stop(try MachineSidecar.load(instance).machineID)
+  try HandoffFence.set(instance, reason: "restart cleanup unconfirmed")
+
+  let refused = try #require(throws: HostError.self) {
+    try lifecycle.restart(instance, RestartRequest(boot: options))
+  }
+  #expect(refused.message.contains("is fenced"))
+  #expect(!backend.isRunning(instance))
+  #expect(FileManager.default.fileExists(atPath: HandoffFence.path(instance)))
+
+  try lifecycle.stop(instance)
+  #expect(!FileManager.default.fileExists(atPath: HandoffFence.path(instance)))
+  try lifecycle.restart(instance, RestartRequest(boot: options))
+  #expect(try backend.asRunning(instance) != nil)
+  try backend.stopUnproven(instance)
+  try backend.destroyInstance(instance)
+}
+
+/// A restart that fails after another command destroyed the instance leaves
+/// nothing behind: no recreated directory that would block every allocation.
+@Test func aRestartRollbackAfterDestroyLeavesNoInstanceBehind() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let backend = install.backend
+  try backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("raced"), image: .default, workspacePath: nil)
+  let lifecycle = fakeLifecycle(install)
+  let options = BootOptions(
+    noAgents: true, noPrompt: true,
+    configTarget: ConfigTarget(path: install.root + "/c.jsonc", format: .jsonc))
+  try lifecycle.startInstance(instance, CreationRequest(boot: options))
+  try backend.destroyInstance(instance)
+  lifecycle.rollBackRestart(instance, cause: HostError("guest gone"))
+  #expect(throws: HostError.self) { try HandoffFence.set(instance, reason: "late") }
+  BoundaryAudit.record(instance, .stop)
+  ComputerUseAudit.record(instance, boot: String(repeating: "a", count: 32), [.stop])
+  #expect(!FileManager.default.fileExists(atPath: instance.directory))
+  let other = try Instance.allocate(
+    install.config, name: InstanceName("unrelated"), image: .default, workspacePath: nil)
+  #expect(FileManager.default.fileExists(atPath: other.directory))
 }

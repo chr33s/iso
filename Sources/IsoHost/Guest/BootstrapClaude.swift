@@ -64,14 +64,15 @@ enum ClaudeImport {
     init() {}
   }
 
-  /// `~/.claude/iso-import.json`: the last imported preferences and every
-  /// bundle identity ever copied (copied bundles outlive their source).
+  /// `~/.claude/iso-import.json`: the last imported preferences, which a later
+  /// refresh undoes. It is guest-written, so it never selects host data: the
+  /// copied bundle identities live in host state (`CopiedPlugins`).
   struct Snapshot: Equatable {
     var preferences = Preferences()
-    var pluginIDs: Set<String> = []
 
     init() {}
 
+    /// A `pluginIds` list from an older iso is accepted and ignored.
     init?(_ value: OrderedJSON) {
       guard case .object(let members) = value else { return nil }
       for (key, value) in members.pairs {
@@ -80,27 +81,39 @@ enum ClaudeImport {
           guard let preferences = Preferences(value) else { return nil }
           self.preferences = preferences
         case "pluginIds":
-          guard case .array(let ids) = value else { return nil }
-          for id in ids {
-            guard case .string(let text) = id else { return nil }
-            pluginIDs.insert(text)
+          guard case .array(let ids) = value, ids.allSatisfy({ $0.stringValue != nil }) else {
+            return nil
           }
         default: return nil
         }
       }
     }
 
-    var json: OrderedJSON {
-      .object(
-        .init([
-          ("preferences", preferences.json),
-          (
-            "pluginIds",
-            .array(
-              pluginIDs.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }.map(
-                OrderedJSON.string))
-          ),
-        ]))
+    var json: OrderedJSON { .object(.init([("preferences", preferences.json)])) }
+  }
+
+  /// `<instance>/claude_import.json`: every skills-directory bundle identity iso
+  /// has copied into the guest (copied bundles outlive their source). Host state,
+  /// so only identities iso copied select host `enabledPlugins` values.
+  struct CopiedPlugins: Codable, Equatable {
+    var schemaVersion: UInt32 = 1
+    var pluginIDs: [String] = []
+
+    static func path(_ instance: Instance) -> String { instance.directory + "/claude_import.json" }
+
+    static func load(_ instance: Instance) throws -> Set<String> {
+      let path = path(instance)
+      guard let bytes = try StateStore.readControlFile(path) else { return [] }
+      let record = try StateStore.decode(CopiedPlugins.self, bytes, path: path)
+      guard record.schemaVersion == 1 else {
+        throw HostError("\(path) has unsupported schema version \(record.schemaVersion)")
+      }
+      return Set(record.pluginIDs)
+    }
+
+    static func save(_ ids: Set<String>, _ instance: Instance) throws {
+      let sorted = ids.sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
+      try StateStore.writeControlFile(CopiedPlugins(pluginIDs: sorted), to: path(instance))
     }
   }
 
@@ -378,15 +391,16 @@ extension AgentBootstrap {
       }
     }
 
-    let staged = try prepareClaudeImport(session.target)
-    defer { staged?.remove() }
+    let prepared = try prepareClaudeImport(session.target, instance: instance)
+    defer { prepared?.staged.remove() }
     let modelState = try ModelState.loadOrDefault(instance)
     let proxy = try startAgentProxy(
       instance, provider: .anthropic, modelState: modelState, target: session.target)
     do {
       let localEnv = try claudeLocalEnv(modelState, proxy: proxy)
-      try writeManagedClaudeSettings(session.target, localEnv: localEnv)
-      if let staged {
+      try writeManagedClaudeSettings(
+        session.target, localEnv: localEnv, imported: prepared?.preferences)
+      if let staged = prepared?.staged {
         try copyStaged(staged, target: session.target, to: ".claude", label: "Claude")
       }
       try seedClaudeOnboarding(session, claudeBinary: claudeBinary)
@@ -429,7 +443,11 @@ extension AgentBootstrap {
     return snapshot
   }
 
-  func prepareClaudeImport(_ target: SSHTarget) throws -> StagingDirectory? {
+  /// The staged import and the preferences just recorded in the guest snapshot,
+  /// or nil when no source is configured.
+  func prepareClaudeImport(_ target: SSHTarget, instance: Instance) throws -> (
+    staged: StagingDirectory, preferences: ClaudeImport.Preferences
+  )? {
     guard
       let source = configSourceDirectory(
         config.claude.configDirectory, defaultName: ".claude", label: "claude.config_dir")
@@ -450,26 +468,32 @@ extension AgentBootstrap {
       throw ContextError("Failed to stage Claude config files", cause: error)
     }
     do {
+      // An invalid guest snapshot still stops bootstrap; only its preferences
+      // are kept, and the selection below is host state.
       var snapshot = try readImportSnapshot(target)
-      snapshot.pluginIDs.formUnion(try ClaudeImport.skillsPluginIDs(staged.path))
+      let copied = try ClaudeImport.CopiedPlugins.load(instance)
+        .union(try ClaudeImport.skillsPluginIDs(staged.path))
+      try ClaudeImport.CopiedPlugins.save(copied, instance)
       snapshot.preferences = try ClaudeImport.preferences(
-        settings: reads["settings.json"], pluginIDs: snapshot.pluginIDs)
-      try client.exec(target, RemoteCommand().literal("mkdir -p ~/.claude"))
+        settings: reads["settings.json"], pluginIDs: copied)
       try client.exec(
         target,
         RemoteCommand().literal(
-          "t=\"$(mktemp ~/.claude/iso-import.json.XXXXXX)\" && cat > \"$t\" && mv \"$t\" ~/.claude/iso-import.json"
+          "mkdir -p ~/.claude && t=\"$(mktemp ~/.claude/iso-import.json.XXXXXX)\" && cat > \"$t\" && mv \"$t\" ~/.claude/iso-import.json"
         ), stdin: Array(snapshot.json.compact.utf8))
+      return (staged, snapshot.preferences)
     } catch {
       staged.remove()
       throw error
     }
-    return staged
   }
 
-  func writeManagedClaudeSettings(_ target: SSHTarget, localEnv: [String: String]) throws {
-    try client.exec(target, RemoteCommand().literal("mkdir -p ~/.claude"))
-    let imported = try readImportSnapshot(target).preferences
+  /// `imported` is what this bootstrap just recorded; without an import source
+  /// the guest snapshot's last imported preferences are reapplied.
+  func writeManagedClaudeSettings(
+    _ target: SSHTarget, localEnv: [String: String], imported: ClaudeImport.Preferences? = nil
+  ) throws {
+    let imported = try imported ?? readImportSnapshot(target).preferences
     let existing = Result<String, any Error> {
       try client.captureChecked(
         target, RemoteCommand().literal("cat ~/.claude/settings.json 2>/dev/null || true"))
@@ -480,7 +504,7 @@ extension AgentBootstrap {
       try client.exec(
         target,
         RemoteCommand().literal(
-          "t=\"$(mktemp ~/.claude/settings.json.XXXXXX)\" && cat > \"$t\" && mv \"$t\" ~/.claude/settings.json"
+          "mkdir -p ~/.claude && t=\"$(mktemp ~/.claude/settings.json.XXXXXX)\" && cat > \"$t\" && mv \"$t\" ~/.claude/settings.json"
         ), stdin: Array(merged.utf8))
     } catch {
       throw ContextError("Failed to write managed ~/.claude/settings.json in guest", cause: error)

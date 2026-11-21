@@ -38,7 +38,7 @@ package struct WizardConsole: Sendable {
         let termination = try? tools.runner.attached(
           .init(
             executable: executable, arguments: [argument], environment: tools.environment,
-            deadline: HostTools.deadline), inheritStdin: true, deadline: HostTools.deadline)
+            deadline: HostTools.deadline), inheritStdin: true)
       else { return false }
       return termination.succeeded
     }
@@ -349,7 +349,8 @@ package struct GitHubHost: Sendable {
 
   /// Remove the entry (no skip marker) and, when its reference is a
   /// Keychain item in iso's PAT service, exactly the item it names. Any
-  /// other reference is the user's own and is left alone.
+  /// other reference is the user's own and is left alone. A failed delete
+  /// keeps the entry, so the stored token is never left unreferenced.
   package func forgetPAT(_ config: IsoConfig, target: ConfigTarget, repo: RepoSlug) throws {
     guard let entry = config.github?.patEntry(repo) else {
       throw HostError(
@@ -358,7 +359,16 @@ package struct GitHubHost: Sendable {
     if let item = KeychainReference.parse(entry.expose()),
       item.service == SecretStore.githubPATService
     {
-      keychain.delete(item)
+      switch keychain.delete(item) {
+      case .deleted: break
+      case .missing:
+        diagnostics.log(
+          .info, "No Keychain item was stored for '\(repo)'; removing the entry only.")
+      case .failed(let reason):
+        throw HostError(
+          "Could not delete the Keychain item for '\(repo)' (\(reason)); the PAT entry was kept. Unlock the login keychain and retry, or delete the item yourself (`\(item.deleteCommand)`) and then retry."
+        )
+      }
     } else {
       diagnostics.log(
         .info,

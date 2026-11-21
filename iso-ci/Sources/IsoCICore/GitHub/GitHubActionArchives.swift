@@ -28,10 +28,12 @@ extension GitHubAPI {
         string:
           "https://codeload.github.com/\(repository.owner)/\(repository.name)/tar.gz/\(commit)")
     else { throw CIError.invalid("invalid archive URL") }
+    // The transport stops receiving past `limit`, so the archive bound is
+    // the one the caller chose, not the API reply bound.
     let response = try http.send(
       GitHubHTTPRequest(
         method: .get, url: target, headers: ["User-Agent": IsoCIVersion.clientBuild],
-        timeoutSeconds: 120))
+        timeoutSeconds: 120, maxResponseBytes: limit))
     guard response.status == 200 else {
       throw CIError(.githubRefused, "archive download returned HTTP \(response.status)")
     }

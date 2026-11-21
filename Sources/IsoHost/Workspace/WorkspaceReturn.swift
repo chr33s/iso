@@ -350,7 +350,7 @@ struct StageDestinationView {
   let path: String
   let binding: DestinationBinding
   private let root: Descriptor?
-  let caseSensitive: Bool
+  let volume: NameFolding.Volume
 
   init(_ destination: ReturnDestination, _ verified: VerifiedDestination) {
     path = destination.path
@@ -358,10 +358,10 @@ struct StageDestinationView {
     switch verified {
     case .existing(let root):
       self.root = root
-      caseSensitive = fpathconf(root.fd, _PC_CASE_SENSITIVE) == 1
+      volume = Self.volume(root.fd)
     case .absent(let parent, _):
       root = nil
-      caseSensitive = fpathconf(parent.fd, _PC_CASE_SENSITIVE) == 1
+      volume = Self.volume(parent.fd)
     }
   }
 
@@ -372,12 +372,14 @@ struct StageDestinationView {
     self.init(destination, try destination.open())
   }
 
+  /// Case-insensitive unless the volume says not.
+  static func volume(_ fd: Int32) -> NameFolding.Volume {
+    fpathconf(fd, _PC_CASE_SENSITIVE) == 1 ? .caseSensitive : .caseInsensitive
+  }
+
   /// A name as the destination volume compares it: always normalization-
   /// insensitive on APFS, and case-insensitive unless the volume says not.
-  func fold(_ name: String) -> String {
-    caseSensitive
-      ? name.precomposedStringWithCanonicalMapping : ProtectedPaths.folded(name)
-  }
+  func fold(_ name: String) -> String { NameFolding.key(name, on: volume) }
 
   func foldPath(_ path: String) -> String {
     path.split(separator: "/").map { fold(String($0)) }.joined(separator: "/")
@@ -404,21 +406,12 @@ struct StageDestinationView {
     return directory >= 0 ? Descriptor(directory) : nil
   }
 
-  /// The host's own spelling of `path`'s last component when it differs
-  /// from the staged one but names the same entry on this volume.
-  func spellingMismatch(_ path: String) throws -> String? {
-    var components = path.split(separator: "/").map(String.init)
-    guard let name = components.popLast(),
-      let parent = openDirectory(components.joined(separator: "/"))
-    else { return nil }
-    let names = try StageBuilder.names(parent.fd, path: self.path)
-    if names.contains(Array(name.utf8)) { return nil }
-    let key = fold(name)
-    for raw in names {
-      let other = String(decoding: raw, as: UTF8.self)
-      if fold(other) == key { return neutralizeControls(other) }
-    }
-    return nil
+  /// The entries of the directory `relative` (empty: the root), read once;
+  /// nil when it does not exist there as a directory.
+  func listing(_ relative: String) throws -> DestinationListing? {
+    guard let directory = openDirectory(relative) else { return nil }
+    return DestinationListing(
+      names: try StageBuilder.names(directory.fd, path: path), volume: volume)
   }
 
   /// Entries of `directory` that APFS or Git would treat as `.git`.
@@ -448,6 +441,33 @@ struct StageDestinationView {
     let bytes = try StateStore.readBounded(
       fd, path: self.path + "/" + relative, limit: limit, tooLarge: "\(relative) grew while read")
     return (bytes.count <= limit ? bytes : nil, digest)
+  }
+}
+
+/// One destination directory's entries for spelling checks: the exact names
+/// and, for each folded key, the host's first spelling in byte order.
+struct DestinationListing {
+  private let volume: NameFolding.Volume
+  private let exact: Set<[UInt8]>
+  private let spellings: [String: String]
+
+  init(names: [[UInt8]], volume: NameFolding.Volume) {
+    self.volume = volume
+    exact = Set(names)
+    var spellings: [String: String] = [:]
+    for raw in names {
+      let name = String(decoding: raw, as: UTF8.self)
+      let key = NameFolding.key(name, on: volume)
+      if spellings[key] == nil { spellings[key] = name }
+    }
+    self.spellings = spellings
+  }
+
+  /// The host's own spelling when it differs from `name` but names the same
+  /// entry on this volume.
+  func spellingMismatch(_ name: String) -> String? {
+    guard !exact.contains(Array(name.utf8)) else { return nil }
+    return spellings[NameFolding.key(name, on: volume)].map(neutralizeControls)
   }
 }
 

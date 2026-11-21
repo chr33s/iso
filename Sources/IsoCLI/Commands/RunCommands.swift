@@ -226,6 +226,7 @@ extension RunWorkflow {
       adapter: planned.adapter, environment: planned.environment,
       workingDirectory: planned.workingDirectory, terminal: planned.terminal,
       preparationRequired: resolution.preparationRequired, egress: context.config.egress,
+      approvedHosts: NetworkPolicy.make(context.config).allowedHosts,
       proxyMode: context.config.proxy.mode, pullMode: context.config.workspacePull.mode,
       recordedEgress: nil, networkHints: planned.networkHints, unresolved: unresolved,
       cleanupIntent: remove ? "destroy" : "retain", ask: ask,
@@ -236,7 +237,7 @@ extension RunWorkflow {
     -> SessionSummary.Facts
   {
     let raw = rawForwarding()
-    return SessionSummary.Facts(
+    var facts = SessionSummary.Facts(
       instanceName: instanceName ?? "(new)", displayName: planned.definition.displayName,
       definitionID: planned.definition.id.rawValue, definitionHash: planned.definitionHash,
       source: planned.source == .builtin ? "builtin" : "installed",
@@ -254,6 +255,9 @@ extension RunWorkflow {
       }
         ?? "none",
       networkHints: planned.networkHints.map(\.rawValue), discardsGuestChanges: remove)
+    // The handoff enforces that a running boot's allowlist is this one.
+    facts.approvedHosts = NetworkPolicy.make(context.config).allowedHosts
+    return facts
   }
 
   func rawForwarding() -> (summary: String, warning: String?) {

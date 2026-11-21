@@ -142,8 +142,21 @@ package struct PreparedGuestCommand: Sendable {
   ) throws -> (arguments: [String], environment: [String: String]) {
     // A fixed escape character keeps `Enter ~.` working whatever the
     // user's ssh config says.
-    let arguments =
-      target.sshOptions + options + (pty ? ["-e", "~", "-t"] : []) + [target.address, remote]
+    try launch(target, base: base, flags: pty ? ["-e", "~", "-t"] : [])
+  }
+
+  /// An administrative command's launch: `ssh -n` never reads the host's
+  /// stdin, which belongs to the workload that may run after it.
+  func administrativeLaunch(_ target: SSHTarget, base: [String: String]) throws -> (
+    arguments: [String], environment: [String: String]
+  ) {
+    try launch(target, base: base, flags: ["-n"])
+  }
+
+  private func launch(_ target: SSHTarget, base: [String: String], flags: [String]) throws -> (
+    arguments: [String], environment: [String: String]
+  ) {
+    let arguments = target.sshOptions + options + flags + [target.address, remote]
     let environment = environment(base)
     let size =
       arguments.reduce(0) { $0 + $1.utf8.count + 1 }
@@ -200,13 +213,13 @@ package struct WorkloadSession: Sendable {
     _ client: SSHClient, _ request: ProcessRunner.Request, inheritStdin: Bool
   ) throws -> ProcessRunner.Termination {
     guard let supervision else {
-      return try client.runner.attached(request, inheritStdin: inheritStdin, deadline: nil)
+      return try client.runner.attached(request, inheritStdin: inheritStdin)
     }
     let supervisor = SessionSupervisor(revalidate: revalidate, interval: supervision)
     var supervised = request
     supervised.isCancelled = { supervisor.lost }
     let result = Result {
-      try client.runner.attached(supervised, inheritStdin: inheritStdin, deadline: nil)
+      try client.runner.attached(supervised, inheritStdin: inheritStdin)
     }
     let failure = supervisor.finish()
     if case .failure = result, let failure, !Shutdown.isRequested {
@@ -285,6 +298,9 @@ extension SSHTarget {
 
 /// Guest commands over the pinned transport. The rendered remote command
 /// never carries a secret; those travel on stdin or in forwarded variables.
+/// These are administrative commands: none reads the host's stdin (`ssh -n`,
+/// `/dev/null`), so input piped to iso still reaches the workload launched
+/// after bootstrap. Only `InteractiveSSH` attaches it.
 extension SSHClient {
   func ssh() throws -> String {
     guard let ssh = sshExecutable() else {
@@ -305,18 +321,20 @@ extension SSHClient {
   package func exec(_ target: SSHTarget, _ command: RemoteCommand) throws {
     try target.requireHandoff()
     let termination = try runner.attached(
-      request(try ssh(), target.sshOptions + [target.address, command.rendered]),
-      inheritStdin: true, deadline: nil)
+      request(try ssh(), target.sshOptions + ["-n", target.address, command.rendered])
+        .with(deadline: .unbounded),
+      inheritStdin: false)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
   package func exec(_ session: SSHSession, _ command: RemoteCommand) throws {
-    let launch = try session.env.prepare(command.rendered, terminal: .requested).launch(
-      session.target, base: environment, pty: false)
+    let launch = try session.env.prepare(command.rendered, terminal: .requested)
+      .administrativeLaunch(session.target, base: environment)
     try session.target.requireHandoff()
     let termination = try runner.attached(
-      request(try ssh(), launch.arguments, environment: launch.environment),
-      inheritStdin: true, deadline: nil)
+      request(try ssh(), launch.arguments, environment: launch.environment)
+        .with(deadline: .unbounded),
+      inheritStdin: false)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
@@ -327,8 +345,9 @@ extension SSHClient {
       session.target, base: environment, pty: false)
     try session.target.requireHandoff()
     let termination = try runner.attached(
-      request(try ssh(), launch.arguments, environment: launch.environment, input: stdin),
-      inheritStdin: false, deadline: nil)
+      request(try ssh(), launch.arguments, environment: launch.environment, input: stdin)
+        .with(deadline: .unbounded),
+      inheritStdin: false)
     guard termination.succeeded else { throw HostError("SSH command failed: \(command)") }
   }
 
@@ -338,7 +357,7 @@ extension SSHClient {
     let arguments = target.sshOptions + [target.address, command.rendered]
     try target.requireHandoff()
     let termination = try runner.attached(
-      request(ssh, arguments, input: stdin), inheritStdin: false, deadline: nil)
+      request(ssh, arguments, input: stdin).with(deadline: .unbounded), inheritStdin: false)
     guard termination.succeeded else {
       throw ContextError(
         "SSH command failed: \(command)",
@@ -379,8 +398,10 @@ extension SSHClient {
     return text
   }
 
+  /// `locals` (absolute host paths) into `remote`, which must be a guest
+  /// directory when there is more than one.
   package func copy(
-    _ target: SSHTarget, local: String, remote: GuestPath, recursive: Bool = false
+    _ target: SSHTarget, locals: [String], remote: GuestPath, recursive: Bool = false
   ) throws {
     guard let scp = executable(named: "scp") else { throw HostError("Failed to run scp") }
     try target.requireHandoff()
@@ -388,10 +409,12 @@ extension SSHClient {
       request(
         scp,
         target.scpOptions(ssh: try ssh()) + (recursive ? ["-r"] : [])
-          + [local, "\(target.address):\(remote)"]),
-      inheritStdin: true, deadline: nil)
+          + locals + ["\(target.address):\(remote)"]
+      ).with(deadline: .unbounded),
+      inheritStdin: false)
     guard termination.succeeded else {
-      throw HostError("\(recursive ? "scp -r" : "scp") failed: \(local) -> \(remote)")
+      throw HostError(
+        "\(recursive ? "scp -r" : "scp") failed: \(locals.joined(separator: ", ")) -> \(remote)")
     }
   }
 
@@ -474,8 +497,9 @@ package enum InteractiveSSH {
     audit?.handoff(pty: allocatePTY, forwarded: session.env.names)
     do {
       let termination = try workload.attached(
-        client, client.request(ssh, launch.arguments, environment: launch.environment),
-        inheritStdin: inheritStdin)
+        client,
+        client.request(ssh, launch.arguments, environment: launch.environment)
+          .with(deadline: .unbounded), inheritStdin: inheritStdin)
       audit?.transportEnded(termination)
       return termination
     } catch {
@@ -559,7 +583,7 @@ package enum InteractiveSSH {
     _ = try? client.runner.attached(
       .init(
         executable: "/bin/stty", arguments: ["sane"], environment: client.environment,
-        deadline: .seconds(10)), inheritStdin: true, deadline: nil)
+        deadline: .seconds(10)), inheritStdin: true)
   }
 }
 

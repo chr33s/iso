@@ -83,7 +83,7 @@ extension HostSupervisor {
   /// Run admissions a crash left half-written: a run whose parent operation is missing, or
   /// a never-started child with no run record. Called under the admission lock.
   func repairUnacceptedRuns() {
-    for id in runs.runIDs() {
+    for id in liveRuns() {
       guard let run = try? runs.load(id), run.phase == .reserved,
         let parent = run.activeOperation, parent == run.createdBy
       else { continue }
@@ -93,16 +93,16 @@ extension HostSupervisor {
       discardUnacceptedRun(id, child: run.createOperation, instance: run.instanceID)
       try? store.consume(.finalize(parent))
     }
-    for id in store.operationIDs() {
-      guard let child = try? store.loadOperation(id), let run = child.runID,
-        child.method == HostMethod.vmCreate.rawValue, child.state == .accepted,
+    for child in nonterminalOperations() {
+      guard let run = child.runID, child.method == HostMethod.vmCreate.rawValue,
+        child.state == .accepted,
         child.substep == nil, let instance = child.instanceID,
         (try? store.loadInstance(instance))?.lifecycle == .creating
       else { continue }
       let missing: Bool
       do { missing = try runs.load(run) == nil } catch { continue }
       guard missing else { continue }
-      discardUnacceptedRun(run, child: id, instance: child.instanceID)
+      discardUnacceptedRun(run, child: child.operationID, instance: child.instanceID)
     }
   }
 

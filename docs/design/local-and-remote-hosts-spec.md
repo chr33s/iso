@@ -532,7 +532,7 @@ Every response includes protocol, request_id, host_id, owner_id, daemon_epoch, a
 
 | Method | Essential input | Result and behavior |
 | --- | --- | --- |
-| hello | Supported protocol versions; client build metadata | Host/owner/epoch, selected protocol, runtime qualification summary, supported guest operations |
+| hello | Supported protocol versions; client build metadata; optional `include_build: true` | Host/owner/epoch, selected protocol, runtime qualification summary, supported guest operations; the service `build` only when asked (the local frontend's version check), so older clients never see it |
 | host.capabilities | Params exactly `{}` | Capability names (`run-retention-1`; `net-handoff-1` only while the transport is brokered, the runtime is brokered-capable and NET-HANDOFF-1 evidence is current), the run network policies, the qualification report, retention caps and limits. Read-only; recomputed per call |
 | vm.list | Cursor; limit 1–200 | Authoritative records plus observations, deterministic order within a snapshot |
 | vm.inspect | Full qualified instance ref | Current snapshot or typed failure; no guest credentials |
@@ -765,6 +765,12 @@ Proposed production constants:
 | Maximum relay streams per installation | 256 |
 | Control connection/hello timeout | 10 seconds |
 | Per-relay user-space queued data | Bounded, maximum 1 MiB per direction |
+
+Implemented: each service socket has its own connection budget (control 64,
+remote 64, relay 256), the service raises its descriptor soft limit so the
+relay budget is reachable, and the 10-second deadline applies to every frame
+and relay preamble the service waits for. Admitted relay streams have no idle
+timeout. `artifact.read` accepts up to 512 KiB per call.
 
 These are new defaults to qualify. The existing worker-local egress renewal/expiry timing remains unchanged (one-second renewal/two-second lease).
 

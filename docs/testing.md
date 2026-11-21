@@ -62,8 +62,10 @@ Use a separate `--scratch-path` per sanitizer so instrumented builds do not
 invalidate `.build`. The `Nightly` workflow
 (`.github/workflows/nightly.yml`) runs the three sanitizer suites and the
 fault-injection check on a schedule; they are not per-push gates. A
-scheduled run is skipped when no commit outside `docs/` and Markdown landed in
-the previous 26 hours; a manual dispatch always runs. The package tests use synthetic credentials and isolated
+scheduled run is skipped when nothing outside `docs/` and Markdown differs
+between the commit of the last successful nightly on `main` and the current
+one, so a failed run repeats every night until it passes; a manual dispatch
+always runs. The package tests use synthetic credentials and isolated
 temporary state; they never touch `~/.iso`.
 
 `swift test` builds debug, where `SSHClient.ToolLookup.default` is
@@ -794,6 +796,7 @@ that still passes without that behavior is not coverage.
 python3 scripts/swift-host-fault-injection.py                 # every fault
 python3 scripts/swift-host-fault-injection.py --only scanner-strings --verbose
 python3 scripts/swift-host-fault-injection.py --shard 2/4      # every fourth fault, from the second
+python3 scripts/swift-host-fault-injection.py --check-anchors  # anchors only, in seconds (CI, every push)
 ```
 
 The whole list takes over two hours on one machine. `--shard INDEX/COUNT`
@@ -817,7 +820,8 @@ ownership/lock/atomic-write checks, process cleanup, update verification — add
 an entry that removes that behavior and names the test that must catch it. Add
 it in the same change as the behavior. When refactoring code a fault targets,
 update the fault's original text so it still applies (a stale entry fails the
-run). The [`mutation-check`](../.agents/skills/mutation-check/SKILL.md) skill
+run, and `--check-anchors` in the CI host job fails the push that made it
+stale). The [`mutation-check`](../.agents/skills/mutation-check/SKILL.md) skill
 walks this workflow.
 
 Entries whose source is under `iso-sandbox/` or `iso-policy/` run that
@@ -1133,7 +1137,7 @@ and expects refused handoffs, `unhealthy` status and listing, and recovery
 after `iso model set remote NAME`.
 
 `tunnelIdentityNamesOnlyTheRecordedMaster` starts two fake tunnel masters
-whose `ps` command lines carry their control paths and destination, as real
+whose kernel command lines carry their control paths and destination, as real
 masters do: the recorded identity verifies for its own guest and no other,
 pointing the PID file or identity at the other live master fails, and stopping
 the tunnel removes the identity. Four `tunnel-identity-*` faults remove the
@@ -1666,6 +1670,32 @@ reproduce it with `scripts/fuzz.sh replay <target> <artifact>`.
   guest copy and write the merged document back. Properties: print/parse round
   trip (whole document and each top-level entry alone), canonical printing,
   error lines within the document, guest values absent from errors.
+
+- `EgressConnect` — the filtered-egress CONNECT parser and gate
+  (`ConnectParser.parse`, `ConnectGate.decide`) on guest-sent heads.
+  Properties: an accepted head has one blank line, at its end; the host
+  revalidates as a lowercase exact name on port 443; a tunnel opens only with
+  the capability, to an allowlisted name on a label boundary.
+- `EgressHead` — the CONNECT head terminator scan (`HeadTerminator`) under
+  input-chosen read sizes, and `ConnectGate.readHead` over a socket pair.
+  Properties: the head ends at the first `\r\n\r\n` and the tunnel bytes
+  after it stay unread.
+- `ProxyRequestTarget` — the credential proxy's `RequestTarget` and
+  `OperationPolicy`. Properties: origin-form visible ASCII only; an allowed
+  target keeps the fixed provider host and exact path through the Foundation
+  URL parse the forwarder uses.
+- `ProxyHeaders` — `HeaderPolicy` on guest request and upstream response
+  fields. Properties: hop-by-hop and `Connection`-named fields removed, other
+  fields kept in order, exactly one provider host and one injected credential.
+- `ProxyCapability` — capability decoding and request authentication.
+  Property: only the exact lowercase 64-hex token, as `Bearer` or
+  `x-api-key` and never duplicated, authorizes.
+
+The companion targets compile `IsoEgressCore` or `IsoProxyCore` (with
+`IsoPolicy`) from source, and their harness bodies live in `iso-egress/Fuzz/`
+and `iso-proxy/Fuzz/` (the `IsoEgressFuzzHarnesses` and
+`IsoProxyFuzzHarnesses` package targets); each companion's
+`*FuzzReplayTests` replays their corpus in its own `swift test`.
 
 The IsoHost targets compile only the self-contained parser sources listed in
 `HOST_PARSER_SOURCES` in `scripts/fuzz.sh` as a partial `IsoHost` module; the

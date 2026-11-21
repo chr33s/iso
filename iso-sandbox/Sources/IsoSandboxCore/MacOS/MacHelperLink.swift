@@ -353,4 +353,22 @@ package enum BoundedWrite {
     }
     return true
   }
+
+  /// Bytes per write of ``allNonBlocking(_:_:deadline:)``: a guest computer-use frame is megabytes,
+  /// which 512-byte writes take thousands of system calls to send.
+  package static let replyChunk = 64 * 1024
+
+  /// `all` in ``replyChunk`` writes, with `fd` non-blocking for the call so that a write larger
+  /// than the free buffer cannot block past `deadline`. For a descriptor no other thread uses
+  /// meanwhile: its mode is restored before return, for this thread's next blocking read, and a
+  /// failure to restore it is a failure.
+  package static func allNonBlocking(
+    _ fd: Int32, _ bytes: [UInt8], deadline: ContinuousClock.Instant
+  ) -> Bool {
+    let flags = fcntl(fd, F_GETFL)
+    guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { return false }
+    let sent = all(fd, bytes, deadline: deadline, chunk: replyChunk)
+    let restored = fcntl(fd, F_SETFL, flags) == 0
+    return sent && restored
+  }
 }

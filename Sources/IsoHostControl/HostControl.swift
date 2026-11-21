@@ -269,7 +269,8 @@ package struct OperationReceipt: Sendable, Equatable {
     generation = try r.optionalUnsigned("generation")
     bootID = try r.optionalParsed("boot_id", BootID.init)
     expiresAt = try r.optionalUnsigned("expires_at", as: UInt64.self).map(WireTime.init(seconds:))
-    outcome = try r.optionalString("outcome")
+    // Host-authored text reaches this client's terminal: neutralized here.
+    outcome = try r.optionalString("outcome").map { HostControlError.sanitize($0) }
     cancelRequested = try r.bool("cancel_requested")
     guard try r.bool("historical") else { throw .invalidRequest("receipt must be historical") }
     try r.finish()
@@ -285,10 +286,13 @@ package struct HelloResult: Sendable, Equatable {
   package let runtime: RuntimeQualification
   package let methods: [HostMethod]
   package let guestOperations: [GuestOS]
+  /// The service's own build, only when the hello asked for it.
+  package let build: String?
 
   package init(
     protocolVersion: String, hostID: HostID, ownerID: OwnerID, epoch: DaemonEpoch,
-    runtime: RuntimeQualification, methods: [HostMethod], guestOperations: [GuestOS]
+    runtime: RuntimeQualification, methods: [HostMethod], guestOperations: [GuestOS],
+    build: String? = nil
   ) {
     self.protocolVersion = protocolVersion
     self.hostID = hostID
@@ -297,6 +301,7 @@ package struct HelloResult: Sendable, Equatable {
     self.runtime = runtime
     self.methods = methods
     self.guestOperations = guestOperations
+    self.build = build
   }
 
   package var wire: JSONValue {
@@ -308,6 +313,7 @@ package struct HelloResult: Sendable, Equatable {
     b.set("runtime", runtime.wire)
     b.set("methods", .array(methods.map { .string($0.rawValue) }))
     b.set("guest_os", .array(guestOperations.map { .string($0.rawValue) }))
+    if let build { b.set("build", build) }
     return b.value
   }
 
@@ -333,6 +339,7 @@ package struct HelloResult: Sendable, Equatable {
       }
     }
     guestOperations = guests
+    build = try r.optionalString("build").map { HostControlError.sanitize($0, limit: 128) }
     try r.finish()
   }
 }

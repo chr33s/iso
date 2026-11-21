@@ -30,7 +30,7 @@ package enum EnclaveStoreError: Error, Equatable, CustomStringConvertible {
     case .incomplete(let path):
       "\(path) exists but store.v1.json does not: an interrupted `iso secrets init`, or a store file lost from this directory. Restore store.v1.json from a backup of this Mac, or, if there is none, remove the leftover device key files and run `iso secrets init` again."
     case .unsafePermissions(let path):
-      "Refusing to use \(path): it must be owned by you and not group- or world-writable (files must be regular files)"
+      "Refusing to use \(path): it must be owned by you, the store directory with no group or other access (0700) and each file a regular file not writable by group or others"
     case .malformed(let reason): "Invalid iso secret store: \(reason)"
     case .unlockFailed: "Unable to unlock the iso secrets store"
     case .enclaveKeyUnavailable:

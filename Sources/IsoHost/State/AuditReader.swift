@@ -555,10 +555,12 @@ package struct AuditReader: Sendable {
     var lastHead: UInt64?
     var external = after != nil
     var delivered = Set<AuditEventID>()
+    // Each poll decodes only the records appended since the last one.
+    var cache = AuditSegmentCache()
     while !stop() {
       let fingerprint = store.fingerprint()
       do {
-        let folded = try read(selection, after: cursor, mode: .follow)
+        let folded = try read(selection, after: cursor, mode: .follow, cache: &cache)
         var first = true
         var exhausted = false
         while !exhausted {
@@ -597,6 +599,14 @@ package struct AuditReader: Sendable {
   func read(_ selection: AuditSelection, after cursor: AuditCursor?, mode: Mode)
     throws(AuditReadError) -> Folded
   {
+    var cache = AuditSegmentCache()
+    return try read(selection, after: cursor, mode: mode, cache: &cache)
+  }
+
+  func read(
+    _ selection: AuditSelection, after cursor: AuditCursor?, mode: Mode,
+    cache: inout AuditSegmentCache
+  ) throws(AuditReadError) -> Folded {
     if let cursor {
       guard cursor.selection == selection.digest else {
         throw .invalidCursor("it belongs to a different selection")
@@ -605,7 +615,8 @@ package struct AuditReader: Sendable {
         throw .invalidCursor("a follow cursor resumes only with --follow")
       }
     }
-    let snapshot = try store.snapshot(through: cursor?.kind == .fixed ? cursor?.head : nil)
+    let snapshot = try store.snapshot(
+      through: cursor?.kind == .fixed ? cursor?.head : nil, cache: &cache)
     if let cursor {
       let expired = AuditReadError.cursorExpired(snapshot.bounds)
       guard snapshot.journalID == cursor.journalID else { throw expired }
@@ -661,7 +672,7 @@ package struct AuditReader: Sendable {
           } ?? candidates.endIndex
       }
       let (taken, more) = try bounded(
-        candidates[start...].map { AuditItem.run(view($0)) }, limit: limit,
+        candidates[start...].lazy.map { AuditItem.run(view($0)) }, limit: limit,
         byteBudget: byteBudget)
       var nextCursor: AuditCursor?
       if more, case .run(let last)? = taken.last {
@@ -694,10 +705,13 @@ package struct AuditReader: Sendable {
           throw .resetRequired
         }
       }
-      let selected = snapshot.events.lazy.filter { $0.sequence > after }.compactMap {
-        event in AuditReducer.relationship(event, to: run).map { AuditItem.event($0, event) }
-      }
-      let (taken, more) = try bounded(Array(selected), limit: limit, byteBudget: byteBudget)
+      // Events are in sequence order: start at the first one after the
+      // position and stop once the page is full.
+      let selected = snapshot.events[Self.firstIndex(in: snapshot.events, after: after)...].lazy
+        .compactMap { event in
+          AuditReducer.relationship(event, to: run).map { AuditItem.event($0, event) }
+        }
+      let (taken, more) = try bounded(selected, limit: limit, byteBudget: byteBudget)
       var nextCursor: AuditCursor?
       if more, case .event(_, let last)? = taken.last {
         nextCursor = next(.fixed, .sequence(last.sequence), context: context)
@@ -719,9 +733,21 @@ package struct AuditReader: Sendable {
       AuditSelection.hex(boot + "|" + sessions.joined(separator: ",")).prefix(16))
   }
 
+  /// The index of the first event whose sequence is after `sequence`.
+  static func firstIndex(in events: [AuditEvent], after sequence: UInt64) -> Int {
+    var low = 0
+    var high = events.count
+    while low < high {
+      let middle = low + (high - low) / 2
+      if events[middle].sequence <= sequence { low = middle + 1 } else { high = middle }
+    }
+    return low
+  }
+
   /// At most `limit` items within `byteBudget`, and whether more remain.
-  func bounded(_ items: [AuditItem], limit: Int, byteBudget: Int) throws(AuditReadError)
-    -> ([AuditItem], Bool)
+  /// Reads `items` only as far as it must to say so.
+  func bounded(_ items: some Sequence<AuditItem>, limit: Int, byteBudget: Int)
+    throws(AuditReadError) -> ([AuditItem], Bool)
   {
     var taken: [AuditItem] = []
     var bytes = 0

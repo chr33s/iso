@@ -196,7 +196,7 @@ The `github` field controls how isolate obtains a `GITHUB_TOKEN` for the guest. 
 
 | Value    | Behavior |
 |----------|----------|
-| `"auto"` | Check the `GITHUB_TOKEN` env var first. If unset, run `gh auth token` on the host to extract a token from the GitHub CLI. |
+| `"auto"` | Check the `GITHUB_TOKEN` env var first. If unset, run `gh auth token --hostname github.com` on the host to extract the GitHub CLI's github.com token (never a `GH_HOST` or GitHub Enterprise Server token). |
 | `"env"`  | Require `GITHUB_TOKEN` in the host environment. Warns if missing. |
 | `"off"`  | Skip GitHub token forwarding entirely. This is the default when `github` is unset. |
 
@@ -227,7 +227,7 @@ setting it to `false` disables copying, and `null` is rejected.
 
 `mcp_servers` maps server names to their definitions. isolate merges these definitions into the guest `~/.codex/config.toml` under `mcp_servers`.
 
-Definitions use the same schema as Claude integration:
+Definitions use the same schema as Claude integration, written in Codex's keys: a stdio server keeps `command` and `args`, and its `env` names become `env_vars`, which Codex passes from its session to the server under the same name (so each `env` key must map to itself and be listed in `env_forward`; a renaming entry is refused); an `http` server becomes `url` with its resolved `headers` under `http_headers` (Codex infers streamable HTTP from `url` and has no `type` key). Codex has no SSE transport, so `"type": "sse"` under `codex.mcp_servers` is refused when the configuration loads; use `"http"` for a server that also serves streamable HTTP.
 
 ```jsonc
 {

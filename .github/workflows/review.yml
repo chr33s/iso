@@ -22,9 +22,11 @@ permissions:
   contents: read
 
 jobs:
-  # No model credential. The mention, author-association, and PR checks read
-  # the comment only through expressions, never through a shell. Bot-authored
-  # comments (an agent's own progress updates) never start a review.
+  # No model credential: it sees only whether each agent's key is configured,
+  # and a request for an agent without one is skipped with a notice. The
+  # mention, author-association, and PR checks read the comment only through
+  # expressions, never through a shell. Bot-authored comments (an agent's own
+  # progress updates) never start a review.
   gate:
     name: Authorize review request
     if: |
@@ -56,15 +58,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLAUDE: ${{ contains(github.event.comment.body, '@claude') }}
           CODEX: ${{ contains(github.event.comment.body, '@codex') }}
+          # Booleans only; the key values never reach this job.
+          CLAUDE_KEY_SET: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          CODEX_KEY_SET: ${{ secrets.OPENAI_API_KEY != '' }}
           PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          {
-            echo "claude=$CLAUDE"
-            echo "codex=$CODEX"
-            echo "pr_number=$PR_NUMBER"
-          } >> "$GITHUB_OUTPUT"
+          # A requested agent runs only when its key is configured.
+          run_agent() { # agent, requested, key set, secret name
+            if [[ "$2" == true && "$3" != true ]]; then
+              message="@$1 review skipped: the $4 secret is not configured for this repository."
+              echo "::notice title=Review skipped::$message"
+              echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [[ "$2" == true && "$3" == true ]]; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          run_agent claude "$CLAUDE" "$CLAUDE_KEY_SET" ANTHROPIC_API_KEY
+          run_agent codex "$CODEX" "$CODEX_KEY_SET" OPENAI_API_KEY
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           gh pr view "$PR_NUMBER" --repo "$REPO" --json baseRefName,isCrossRepository \
             --jq '"base_branch=" + .baseRefName, "untrusted=" + (.isCrossRepository | tostring)' \
             >> "$GITHUB_OUTPUT"

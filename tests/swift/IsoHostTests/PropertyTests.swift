@@ -99,13 +99,13 @@ private struct ContainmentOracle {
       }))
   if let oracleError { Issue.record("containment oracle failed: \(oracleError)") }
 
-  // Absolute targets and control bytes are refused whatever they resolve to.
+  // Absolute targets and C0, DEL and C1 controls are refused whatever they resolve to.
   expectHolds(
     checkProperty(
       "StageBuilder.staysInside refuses", iterations: 400,
       generate: { rng -> String in
         var target = rng.path(maxComponents: 4, names + ["."])
-        let control = String(rng.scalar([.c0Control]))
+        let control = String(rng.scalar([.c0Control, .c1Control]))
         switch rng.below(3) {
         case 0: target = "/" + target
         case 1: target += rng.element([control, "\u{7F}"])

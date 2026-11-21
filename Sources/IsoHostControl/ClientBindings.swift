@@ -662,8 +662,8 @@ package enum RemoteAgent: String, Sendable {
     let termination = try ProcessRunner().attached(
       .init(
         executable: ssh, arguments: launch.arguments, environment: launch.environment,
-        deadline: .seconds(0)),
-      inheritStdin: true, deadline: nil)
+        deadline: .unbounded),
+      inheritStdin: true)
     if case .exited(let code) = termination { return code }
     return 1
   }
@@ -807,11 +807,21 @@ package enum RemoteRunResults {
       throw HostControlError(.resultsUnavailable, "the run has no committed results")
     }
     var bytes: [UInt8] = []
+    // Each remote call is its own SSH connection: read in large chunks. A host
+    // older than this client refuses them; it is read at its own size.
+    var length = UInt32(HostRequestBody.maxArtifactReadChunk)
     while true {
-      let chunk = try client.call(
-        .artifactRead(
-          handle: handle, offset: UInt64(bytes.count),
-          length: UInt32(HostRequestBody.maxArtifactChunk)))
+      let chunk: JSONValue
+      do {
+        chunk = try client.call(
+          .artifactRead(handle: handle, offset: UInt64(bytes.count), length: length))
+      } catch
+        where error.code == .invalidRequest && bytes.isEmpty
+        && length > UInt32(HostRequestBody.maxArtifactChunk)
+      {
+        length = UInt32(HostRequestBody.maxArtifactChunk)
+        continue
+      }
       guard case .string(let text)? = chunk["data"], let data = Data(base64Encoded: text) else {
         throw HostControlError.invalidRequest("malformed artifact chunk")
       }

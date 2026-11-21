@@ -29,11 +29,27 @@ package enum AtomicFile {
     case atMost(mode_t)
   }
 
-  package static func write(_ bytes: [UInt8], to path: String, mode policy: ModePolicy)
-    throws(HostError)
-  {
+  /// What a write does when the directory above its target is missing.
+  package enum Parents: Sendable, Equatable {
+    /// Create each missing component owner-only.
+    case createMissing
+    /// Fail instead: state inside a directory another process may remove
+    /// (an instance destroyed while a command still runs) is never recreated
+    /// by a late write.
+    case mustExist
+  }
+
+  package static func write(
+    _ bytes: [UInt8], to path: String, mode policy: ModePolicy,
+    parents: Parents = .createMissing
+  ) throws(HostError) {
     let parent = (path as NSString).deletingLastPathComponent
-    if !parent.isEmpty { try AtomicFile.createMissingDirectories(parent) }
+    if !parent.isEmpty {
+      switch parents {
+      case .createMissing: try AtomicFile.createMissingDirectories(parent)
+      case .mustExist: try requireDirectory(parent)
+      }
+    }
     // The mode of what the path names (following a symlink, as Rust's
     // `fs::metadata` does): a dotfiles link to a 0600 file must not come
     // back as a link-mode (0755) regular file.
@@ -66,6 +82,16 @@ package enum AtomicFile {
       throw .posix("Failed to rename \(temporary) ->", path)
     }
     published = true
+  }
+
+  /// `path` names an existing directory (not through a final symlink).
+  package static func requireDirectory(_ path: String) throws(HostError) {
+    var status = stat()
+    // The C path is borrowed for this call; lstat writes one initialized value.
+    guard unsafe lstat(path, &status) == 0 else { throw .posix("Missing directory", path) }
+    guard (status.st_mode & S_IFMT) == S_IFDIR else {
+      throw HostError("\(path) is not a directory")
+    }
   }
 
   /// Create `path` only if nothing (not even a dangling symlink) exists there.

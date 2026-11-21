@@ -326,7 +326,7 @@ extension AgentBootstrap {
     var tables: [String: TOMLValue] = [:]
     for (name, server) in MCPServer.sorted(config.codex.mcpServers) {
       tables[name] = try server.resolvingHeaders(resolver, label: "Codex MCP server", name: name)
-        .toml
+        .codexTOML(name: name)
     }
     return tables
   }

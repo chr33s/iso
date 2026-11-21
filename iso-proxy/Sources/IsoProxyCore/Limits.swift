@@ -1,6 +1,12 @@
 package enum Limits {
   package static let connections = 256
   package static let requests = 256
+  /// Upstream TCP sockets, shared by forwarded requests and TLS probes.
+  package static let upstreamSockets = connections
+  /// Open descriptors the limits above can hold at once: every guest
+  /// connection and upstream socket, plus a reserve for the listener, event
+  /// loops, resolver lookups and standard streams.
+  package static let descriptors = connections + upstreamSockets + 64
   package static let headerFieldBytes = 16 * 1024
   package static let headerBlockBytes = 64 * 1024
   package static let headerCount = 128

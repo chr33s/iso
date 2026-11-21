@@ -179,7 +179,8 @@ package struct GuestEnvState: Sendable, Equatable {
     ])
     do {
       try AtomicFile.write(
-        Array(json.rendered().dropLast().utf8), to: path, mode: .atMost(0o600))
+        Array(json.rendered().dropLast().utf8), to: path, mode: .atMost(0o600),
+        parents: .mustExist)
     } catch {
       throw ContextError("Failed to write guest_env.json", cause: error)
     }
@@ -196,15 +197,18 @@ package struct GuestEnvState: Sendable, Equatable {
     devcontainer.merging(envFile) { _, file in file }.merging(cli) { _, cli in cli }
   }
 
+  /// Errors never repeat the value, which may be a secret; an invalid key is
+  /// shown sanitized, as `EnvFile` does.
   package static func parseCLIArgument(_ entry: String) throws -> (EnvVarName, EnvValue) {
     guard let equals = entry.firstIndex(of: "=") else {
-      throw HostError("--env expects KEY=VALUE, got '\(entry)' (missing '=')")
+      throw HostError("--env expects KEY=VALUE (missing '=')")
     }
+    let key = String(entry[..<equals])
     let name: EnvVarName
     do {
-      name = try EnvVarName(String(entry[..<equals]))
+      name = try EnvVarName(key)
     } catch {
-      throw ContextError("--env KEY is invalid (got '\(entry)')", cause: error)
+      throw ContextError("--env key '\(sanitizeForDisplay(key))' is invalid", cause: error)
     }
     do {
       return (name, try EnvValue.parse(String(entry[entry.index(after: equals)...])))

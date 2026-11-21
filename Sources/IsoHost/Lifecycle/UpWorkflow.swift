@@ -64,10 +64,8 @@ package struct UpWorkflow {
     DevcontainerTranslatorInputs(
       cliVcpus: request.vcpus, cliMemory: request.mem, cliDisk: request.disk,
       cliPostStart: request.postStart, cliGuestEnvKeys: request.guestEnvironment.map(\.0),
-      cliForwardPorts: request.forwardPort, cliMounts: request.extraMount,
-      cliProfiles: target?.profiles ?? [],
-      persistedGuestUser: Devcontainer.persistedGuestUser(lifecycle.config, image: effectiveImage),
-      cliWorkspaceOrGitRepo: true)
+      cliForwardPorts: request.forwardPort, cliProfiles: target?.profiles ?? [],
+      persistedGuestUser: Devcontainer.persistedGuestUser(lifecycle.config, image: effectiveImage))
   }
 
   package var resolver: DevcontainerResolver {
@@ -282,7 +280,7 @@ package struct UpWorkflow {
     }
     options.boot.postStartOverride = request.postStart ?? translation?.postStart
     options.mounts =
-      try ValidatedMounts(rule, leading + (translation?.mounts ?? []) + request.extraMount).mounts
+      try ValidatedMounts(rule, leading + request.extraMount).mounts
     options.excludeGit = request.excludeGit
     options.appliedDevcontainer = translation?.applied
     return options

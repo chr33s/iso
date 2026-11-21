@@ -116,6 +116,39 @@ private func workloadLaunchesKeepTheirStdinPolicy(launch: WorkloadLaunch) throws
   #expect(readFile(seen) == expected)
 }
 
+/// Administrative commands (bootstrap steps, hooks) run `ssh -n` on
+/// `/dev/null`: input piped to iso belongs to the workload launched after them.
+/// Commands given their own input and workloads do not get `-n`.
+@Test func administrativeCommandsNeverReadTheHostsStdin() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let seen = guest.root + "/stdin"
+  try writeFile(
+    guest.root + "/bin/ssh",
+    """
+    #!/bin/sh
+    case " $* " in *" -n "*) n=n ;; *) n=- ;; esac
+    if [ /dev/stdin -ef /dev/null ]; then s=null; else s=other; fi
+    echo "$n $s" >> '\(seen)'
+    cat > /dev/null
+
+    """, mode: 0o755)
+  let client = guest.client
+  try client.exec(guest.target, RemoteCommand().literal("true"))
+  var session = SSHSession(target: guest.target)
+  try client.exec(session, RemoteCommand().literal("true"))
+  session.env.set("GUEST_VAR", Secret("1"))
+  try client.exec(session, RemoteCommand().literal("true"))
+  try client.exec(guest.target, RemoteCommand().literal("cat"), stdin: Array("x".utf8))
+  try client.exec(session, RemoteCommand().literal("cat"), stdin: Array("x".utf8))
+  #expect(rustLines(readFile(seen) ?? "") == ["n null", "n null", "n null", "- other", "- other"])
+
+  try FileManager.default.removeItem(atPath: seen)
+  let workload = try WorkloadSession(session: SSHSession(target: guest.target), supervision: nil) {}
+  try InteractiveSSH.runCommand(client, workload, ["true"], diagnostics: guest.sink.diagnostics)
+  #expect(rustLines(readFile(seen) ?? "").map { $0.prefix(1) } == ["-"])
+}
+
 @Test func workloadExitStatusNeverFallsThroughToSuccess() {
   #expect(WorkloadExit(.exited(7)).status == 7)
   #expect(WorkloadExit(.exited(2)).description == "Remote command exited with status 2")

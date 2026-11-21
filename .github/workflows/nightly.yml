@@ -15,13 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A scheduled run is skipped when nothing but docs changed since the last
-  # one (26 h, so a late cron start does not skip a day); a manual run
-  # always proceeds.
+  # A scheduled run is skipped when nothing but docs changed between the
+  # commit of the last successful nightly on main and this one; a manual run
+  # always proceeds. Comparing trees, not commit dates, covers commits pushed
+  # long after they were made and merges of older branches, and a failed run
+  # is retried every night until one passes.
   changes:
-    name: Code changed since the last nightly
+    name: Code changed since the last nightly success
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # Find the last successful run of this workflow.
     outputs:
       changed: ${{ steps.check.outputs.changed }}
     steps:
@@ -30,21 +35,28 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Look for code commits in the last 26 hours
+      - name: Compare with the last successful nightly
         id: check
         env:
           EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
         run: |
           if [[ "$EVENT" != schedule ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          commits="$(git log --since="26 hours ago" --format=%H -- . ':(exclude)docs/**' ':(exclude)*.md')"
-          if [[ -n "$commits" ]]; then
+          last="$(gh api "repos/$REPO/actions/workflows/nightly.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // ""')" || last=""
+          if [[ ! "$last" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$last^{commit}" 2> /dev/null; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
+            echo "No usable last successful nightly; running the nightly gates." >> "$GITHUB_STEP_SUMMARY"
+          elif git diff --quiet "$last" HEAD -- . ':(exclude)docs/**' ':(exclude)*.md'; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No code commits in the last 26 hours; skipping the nightly gates." >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing but docs changed since the last successful nightly (${last::12}); skipping the nightly gates." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
   sanitizers:
@@ -64,7 +76,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       - name: Host tests under the ${{ matrix.sanitizer }} sanitizer
         shell: bash
@@ -99,7 +111,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       - name: Tests detect every injected fault in this shard
         env:
@@ -119,7 +131,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       - name: Proxy tests kill every policy and parser-limit mutation
         run: python3 scripts/test-swift-proxy-mutations.py

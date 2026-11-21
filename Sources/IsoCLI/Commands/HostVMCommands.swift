@@ -283,8 +283,8 @@ struct HostShell: ParsableCommand {
           executable: ssh,
           arguments: ["-F", session.sshConfigPath, command.isEmpty ? "-t" : "-T", session.sshAlias]
             + remoteCommand,
-          environment: SSHClient.transportEnvironment(env.environment), deadline: .seconds(0)),
-        inheritStdin: true, deadline: nil)
+          environment: SSHClient.transportEnvironment(env.environment), deadline: .unbounded),
+        inheritStdin: true)
       if let failure = session.failure { env.output.error("session ended: \(failure.message)") }
       if !termination.succeeded { throw ExitCode(termination.exitStatus) }
     }

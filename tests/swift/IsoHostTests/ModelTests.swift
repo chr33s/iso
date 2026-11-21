@@ -238,6 +238,16 @@ private func tunnel(_ guest: UInt16, _ host: String, _ port: UInt16) -> ReverseT
   }
   #expect("\(missing)".contains("missing '='"))
   #expect(throws: (any Error).self) { try GuestEnvState.parseCLIArgument("1X=v") }
+  // The value may be a secret: neither error repeats it.
+  let bare = try #require(throws: (any Error).self) {
+    try GuestEnvState.parseCLIArgument("sk-secret-value")
+  }
+  #expect(!"\(bare)".contains("sk-secret-value"))
+  let invalid = try #require(throws: (any Error).self) {
+    try GuestEnvState.parseCLIArgument("MY-KEY=sk-secret-value")
+  }
+  #expect(!"\(invalid)".contains("sk-secret-value"))
+  #expect(oneLine(invalid).contains("'MY-KEY'"))
 }
 
 @Test func guestEnvStateRequiresCurrentVersionAndTypedEntries() throws {

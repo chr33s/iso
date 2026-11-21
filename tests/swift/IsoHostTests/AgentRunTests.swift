@@ -461,3 +461,37 @@ private func agentConfig(_ root: String) throws -> IsoConfig {
   #expect(PortForwards.controlPath(try instance(deep + "/one")) == path)
   #expect(PortForwards.controlPath(try instance(deep + "/two")) != path)
 }
+
+/// The summary and preview name the approved destinations the egress mode
+/// actually grants, not a fixed "none".
+@Test func summariesReportTheFilteredAllowlist() throws {
+  var facts = SessionSummary.Facts(
+    instanceName: "dev", displayName: "Claude Code", definitionID: "claude",
+    definitionHash: "sha256:abc", source: "builtin", adapterID: "claude", contractVersion: 1,
+    image: "default", environmentOrigin: "default", workspace: "recorded",
+    workingDirectory: "/workspace", terminal: "pty", provider: "anthropic", rawForwarding: "none",
+    rawForwardingWarning: nil, egress: "filtered", pullMode: "stage", lifecycle: "persistent",
+    ttl: "none", networkHints: [], discardsGuestChanges: false)
+  facts.approvedHosts = ["api.github.com", "registry.npmjs.org"]
+  let network = try #require(SessionSummary.lines(facts).first { $0.hasPrefix("Network:") })
+  #expect(
+    network.contains("Approved destinations: 2, port 443: api.github.com, registry.npmjs.org"))
+  #expect(!network.contains("not enabled"))
+  facts.egress = "open"
+  facts.approvedHosts = []
+  #expect(SessionSummary.lines(facts).contains { $0.contains("Approved destinations: any") })
+
+  let definition = AgentCatalog.builtins[0]
+  let plan = try AgentLaunchPlanner.plan(
+    definition: definition, source: .builtin, definitionHash: "sha256:abc", cliImage: nil,
+    cliProfiles: [], ask: false)
+  let preview = RunPreview.make(
+    action: .unresolved, instanceName: "dev", match: "workspace", definition: definition,
+    source: .builtin, definitionHash: plan.definitionHash, adapter: plan.adapter,
+    environment: plan.environment, workingDirectory: plan.workingDirectory, terminal: plan.terminal,
+    preparationRequired: false, egress: .filtered, approvedHosts: ["api.github.com"],
+    proxyMode: .required, pullMode: .stage, recordedEgress: nil, networkHints: [],
+    unresolved: [], cleanupIntent: "retain", ask: false, blockedReason: nil)
+  #expect(
+    try jsonObject(JSONOutput.render(preview))["approved_hosts"] as? [String] == ["api.github.com"])
+}

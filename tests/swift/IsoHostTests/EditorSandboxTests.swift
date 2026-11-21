@@ -568,3 +568,83 @@ private struct SessionFixture {
   #expect(try !plan([], egress: .none).fileTransfer)
   #expect(try !plan([.internet], egress: .open).fileTransfer)
 }
+
+// MARK: - Detached editor processes
+
+/// A process of the session's profile that left the editor's tree and
+/// process group (fork, `setsid`) is still found and ended; processes of no
+/// sandbox or of another session's sandbox are left alone.
+@Test func theSessionSweepEndsDetachedConfinedProcessesOnly() throws {
+  #expect(EditorSessionSweep.available)
+  let root = try scratchDirectory("sweep")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let session = try EditorEnclave.create(in: root)
+  let other = try EditorEnclave.create(in: root)
+  let profile = EditorSandboxPolicy(
+    tunnelPort: 1, forwardPort: nil, terminal: false, machServicePrefix: "x.", capabilities: []
+  ).profile
+  // perl forks, the child calls setsid, records its pid and sleeps; the
+  // parent exits, so the survivor is in no tree or group iso knows.
+  let escape =
+    "use POSIX; if (fork() == 0) { close(STDIN); close(STDOUT); close(STDERR); POSIX::setsid(); open(my $f, '>', $ARGV[0]); print $f $$; close($f); sleep 60; } exit 0;"
+  let confined = try ProcessRunner().capture(
+    .init(
+      executable: "/usr/bin/sandbox-exec",
+      arguments: ["-p", profile]
+        + EditorSandboxPolicy.parameters(app: "/usr/bin", session: session.root, prefix: "x.")
+        + ["/usr/bin/perl", "-e", escape, session.root + "/escaped.pid"],
+      environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(30)))
+  #expect(confined.termination == .exited(0))
+  let deadline = ContinuousClock.now + .seconds(10)
+  while readFile(session.root + "/escaped.pid") == nil, ContinuousClock.now < deadline {
+    Thread.sleep(forTimeInterval: 0.05)
+  }
+  let escaped = try #require(
+    readFile(session.root + "/escaped.pid").flatMap {
+      pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))
+    })
+  var unrelated = try DetachedChild.spawn(
+    executable: "/bin/sleep", arguments: ["60"], environment: [:], stdin: .null, stderr: 2)
+  var neighbour = try DetachedChild.spawn(
+    executable: "/usr/bin/sandbox-exec",
+    arguments: ["-p", profile]
+      + EditorSandboxPolicy.parameters(app: "/bin", session: other.root, prefix: "x.")
+      + ["/bin/sleep", "60"],
+    environment: [:], stdin: .null, stderr: 2)
+  defer {
+    unrelated.kill()
+    neighbour.kill()
+    kill(escaped, SIGKILL)
+  }
+  while !EditorSessionSweep.isMember(neighbour.pid, session: other.root),
+    ContinuousClock.now < deadline
+  {
+    Thread.sleep(forTimeInterval: 0.05)
+  }
+  #expect(kill(escaped, 0) == 0)
+  #expect(EditorSessionSweep.isMember(escaped, session: session.root))
+  #expect(!EditorSessionSweep.isMember(unrelated.pid, session: session.root))
+  #expect(!EditorSessionSweep.isMember(neighbour.pid, session: session.root))
+  #expect(EditorSessionSweep.end(session: session.root) == 1)
+  let gone = ContinuousClock.now + .seconds(5)
+  while kill(escaped, 0) == 0, ContinuousClock.now < gone { Thread.sleep(forTimeInterval: 0.05) }
+  #expect(kill(escaped, 0) != 0)
+  #expect(!unrelated.hasExited() && !neighbour.hasExited())
+}
+
+@Test func aSessionEndsEveryConfinedProcessOnEveryExit() throws {
+  let fixture = try SessionFixture()
+  defer { fixture.guest.remove() }
+  try FileManager.default.createDirectory(
+    atPath: fixture.guest.root + "/s", withIntermediateDirectories: true)
+  let swept = Mutex<[String]>([])
+  for mode in ["quit", "3"] {
+    try fixture.mode(mode)
+    var session = fixture.session()
+    session.endConfined = { root in swept.withLock { $0.append(root) } }
+    _ = try? session.run()
+  }
+  let roots = swept.withLock { $0 }
+  #expect(roots.count == 2)
+  #expect(roots.allSatisfy { $0.hasPrefix(fixture.guest.root + "/s/" + EditorEnclave.prefix) })
+}

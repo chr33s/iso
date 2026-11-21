@@ -164,7 +164,8 @@ with `iso proxy setup --openai --vm <name>` (or `--anthropic --vm <name>`). The
 override is stored in that instance's state (`<inst.dir>/proxy.json`), not in a
 growing config object, and its Keychain item is namespaced separately
 (`iso-openai-<vm>`). A per-VM override must be a `cmd:` or `vault:` reference. Literal credentials
-are rejected when loading the state file.
+are rejected when loading the state file. `iso destroy <vm>`, `iso uninstall --purge`, a host-control delete and `iso run --rm` cleanup delete
+the `iso-<provider>-<vm>` items the override names; any other reference is left alone.
 
 Resolution per provider is **override → default → off**: the per-VM override
 wins, else the config default, else the proxy is off for that provider. This is
@@ -232,7 +233,11 @@ The proxy itself is new attack surface, mitigated by a fixed per-route upstream
 verification against macOS system trust, a required capability token, and
 resource limits. Each proxy allows at most 256 accepted guest TCP connections
 and 256 concurrent requests; excess connections are closed immediately, so
-idle sockets cannot bypass the request limit. The listener binds only host
+idle sockets cannot bypass the request limit. Before reading its startup
+document the proxy raises its open-file soft limit to the 576 descriptors
+those limits and its upstream sockets need (a launchd default of 256 would cap
+them lower); a hard limit below that refuses startup with a message naming
+both numbers. The listener binds only host
 loopback and is reverse-tunnelled
 to exactly one guest — never a non-loopback interface, never the LAN. The host
 starts the proxy only on a free port and sends the credential only after
@@ -318,9 +323,10 @@ the stable `iso-proxy` name understood by existing updaters. The archive
 BUILD.json (source revision and
 binary digests), with a `SHA256SUMS` beside it. Local checksums do not
 establish release provenance. Signing and notarization are a separate,
-explicit `--sign` stage used by the **Release candidate** workflow, which
-requires a clean exact revision, verifies binary signatures, and attests its
-candidate archive.
+explicit `--sign` stage (it requires a clean exact revision). The **Release
+candidate** workflow instead signs in its own job, as the release workflow
+does, so build and test code never shares a job with the signing secrets; it
+then verifies binary signatures and attests its candidate archive.
 
 The `chr33s/iso` release workflow requires tagged commits from `main` and
 packages the host, credential proxy, egress companion, signed runtime and macOS guest helper together on macOS. Only

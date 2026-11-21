@@ -443,3 +443,94 @@ private struct PassphraseRequired: SecretReferenceResolver {
       == ["name": "b", "destroyed": [["name": "project-a", "image": "default"]]] as NSDictionary)
   #expect("\(PartialDestroy(destroyed: removed, cause: HostError("boom")))" == "boom")
 }
+
+// MARK: - Sessions, usage classification and destroy accounting
+
+private func session(_ argv: [String]) throws -> SessionRequest {
+  SessionRequest(try IsoCommand.parseAsRoot(argv), arguments: ["iso"] + argv)
+}
+
+@Test func helpNeverOpensAMachineSession() throws {
+  for argv in [
+    ["up", "--help", "--output", "json"], ["--output", "json", "secrets", "--help"],
+    ["help", "up", "--output", "json"], ["audit", "-h", "--output", "jsonl"],
+  ] {
+    #expect(try session(argv) == SessionRequest(output: .text, quiet: false), "\(argv)")
+  }
+  #expect(
+    try session(["status", "--output", "json"]) == SessionRequest(output: .json, quiet: false))
+}
+
+@Test func quietReachesCommandsWithoutTheirOwnOptions() throws {
+  for argv in [
+    ["secrets", "--output", "json", "--quiet"], ["--output", "json", "--quiet", "policy"],
+    ["completions", "bash", "--output", "json", "--quiet"],
+    ["status", "--output", "json", "--quiet"],
+  ] {
+    #expect(try session(argv) == SessionRequest(output: .json, quiet: true), "\(argv)")
+  }
+  #expect(try session(["secrets", "--output", "json"]).quiet == false)
+  #expect(try session(["secrets", "--output", "jsonl", "--quiet"]).output == .jsonl)
+  #expect(!GlobalOptions.requestsQuiet(["iso", "exec", "--", "x", "--quiet"]))
+}
+
+@Test func onlyTheThrownValidationErrorIsAUsageError() throws {
+  // What the command threw is its usage error (`run` exits 2 for it); a
+  // validation failure found as a cause judged other data, such as a corrupt
+  // `github_pat.json`, and the command exits 1.
+  #expect(MachineFailure(IsoCore.ValidationError("bad")).code == .invalidArgument)
+  #expect(MachineFailure(ArgumentParser.ValidationError("bad")).code == .invalidArgument)
+  for nested in [
+    ContextError("Invalid github_pat.json", cause: IsoCore.ValidationError("bad slug")),
+    ContextError("outer", cause: ArgumentParser.ValidationError("bad")),
+  ] as [any Error] {
+    #expect(MachineFailure(nested).code == .operationFailed, "\(nested)")
+  }
+  let removed = [MachineRemovedInstance(try instance("project-a"))]
+  #expect(
+    MachineFailure(PartialDestroy(destroyed: removed, cause: IsoCore.ValidationError("x"))).code
+      == .operationFailed)
+  // A typed class further down the chain still wins.
+  #expect(
+    MachineFailure(
+      ContextError("a", cause: ContextError("b", cause: HostFailure(.instanceNotFound, "x")))
+    ).code == .instanceNotFound)
+}
+
+private struct CleanupFailed: Error {}
+
+@Test func destroyCountsAnInstanceOnceItsStateIsGone() throws {
+  let a = try instance("project-a")
+  let b = try instance("project-b")
+  var removed: [String] = []
+  func remove(_ instance: Instance) throws { removed.append(instance.name.rawValue) }
+  // The ssh-config cleanup fails after the VM and state are gone.
+  let one = try #require(throws: PartialDestroy.self) {
+    try DestroySequence.run([a], remove: remove, cleanup: { _ in throw CleanupFailed() })
+  }
+  #expect(one.destroyed == [MachineRemovedInstance(a)])
+  #expect(one.cause is CleanupFailed)
+  // --all: the second removal fails; the first is reported.
+  let second = try #require(throws: PartialDestroy.self) {
+    try DestroySequence.run(
+      [a, b],
+      remove: { instance in
+        if instance.name == b.name { throw HostError("disk busy") }
+        try remove(instance)
+      }, cleanup: { _ in })
+  }
+  #expect(second.destroyed == [MachineRemovedInstance(a)])
+  // The shared cleanup after every instance is gone names them all.
+  let shared = try #require(throws: PartialDestroy.self) {
+    try DestroySequence.run(
+      [a, b], remove: remove, cleanup: { _ in }, finish: { throw CleanupFailed() })
+  }
+  #expect(shared.destroyed == [MachineRemovedInstance(a), MachineRemovedInstance(b)])
+  // Nothing removed: the failure stays as it is.
+  #expect(throws: HostError.self) {
+    try DestroySequence.run([a], remove: { _ in throw HostError("refused") }, cleanup: { _ in })
+  }
+  #expect(
+    try DestroySequence.run([a, b], remove: remove, cleanup: { _ in })
+      == [MachineRemovedInstance(a), MachineRemovedInstance(b)])
+}

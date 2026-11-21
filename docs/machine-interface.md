@@ -32,8 +32,8 @@ Text output (the default, `--output text`) is unchanged. The command-local
 
 Any other command (including a command group such as `secrets`) given
 `--output json` prints an `UNSUPPORTED_MACHINE_OUTPUT` error document whose
-`command` is the full path (`secrets list`) and exits 2. `--help` and
-`--version` still print their text and exit 0. That includes the workload streams (`shell`,
+`command` is the full path (`secrets list`) and exits 2. `--help` (and
+`iso help`) and `--version` still print their text and exit 0. That includes the workload streams (`shell`,
 `exec`, `logs`, `claude`, `codex`, `run`), whose stdout belongs to the guest.
 `up --dry-run` and `start --dry-run` keep their own `--json` preview and refuse
 `--output json`. `iso audit` accepts `--output json` only with `--runs` or
@@ -66,13 +66,16 @@ control characters replaced and a 4 KiB bound; never branch on it.
   and nothing else. In machine mode everything else that would reach fd 1
   (progress, child processes, warnings) is sent to stderr.
 - **stderr** carries diagnostics only and is outside the protocol. `--quiet`
-  (only valid with `--output json` or `jsonl`) discards it entirely.
+  (only valid with `--output json` or `jsonl`) discards it entirely, for a
+  command group's refusal too.
 - Exit status: `0` success, `1` operational failure (after the error
   document), `2` usage failure. A usage error that Argument Parser reports
   before the command runs (an unknown flag, `--json` with `--output json`,
   `--quiet` without it) is text on stderr with an empty stdout. A validation
   error raised while the command runs prints an `INVALID_ARGUMENT` document
-  first and keeps the exit status text mode gives it.
+  first and keeps the exit status text mode gives it (2). A validation failure
+  found only as the cause of another error (a corrupt state file, say) is not a
+  usage error and takes that error's code.
 
 ## Non-interactive
 
@@ -240,9 +243,12 @@ running instance selected by name or `--workspace` is
 
 `{"lifecycle": {"action": "destroyed"}, "instance": {"name", "image"}}`, with
 identifiers captured before deletion. `--all` returns `"instances": [...]`.
-If `--all` fails partway, the error document keeps the failure's own code and
+If it fails partway, the error document keeps the failure's own code and
 details and adds `"destroyed": [{"name", "image"}, ...]` for the instances it
-had already removed; `details` stays `null` when nothing was removed.
+had already removed; `details` stays `null` when nothing was removed. An
+instance counts as removed once its VM and state are deleted, so a later
+cleanup failure (its `~/.ssh/config` block, or `--all`'s shared files) still
+lists it.
 
 ### ssh-config
 

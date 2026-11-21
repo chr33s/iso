@@ -110,6 +110,28 @@ import Testing
       // Only an empty directory may name the root.
       ("root file", tarArchive([("./", [1])])),
       ("root link", tarArchive([], extra: [tarHeader(name: "./", size: 0, type: "2", link: "x")])),
+      // U+017F folds to `s` on APFS, which `lowercased()` misses.
+      ("long-s duplicate", tarArchive([("s", [1]), ("\u{17F}", [2])])),
+      (
+        "file beneath a long-s link",
+        tarHeader(name: "s", size: 0, type: "2", link: "d") + tarArchive([("\u{17F}/x", [1])])
+      ),
+      (
+        "chain through a long-s link",
+        tarArchive(
+          [("d/f", [1])],
+          extra: [
+            tarHeader(name: "s", size: 0, type: "2", link: "d"),
+            tarHeader(name: "l", size: 0, type: "2", link: "\u{17F}/f"),
+          ])
+      ),
+      // A component of ignorable code points folds to nothing.
+      (
+        "ignorable-only hard-link target",
+        tarArchive(
+          [("a/b", [1])], extra: [tarHeader(name: "h", size: 0, type: "1", link: "a/\u{200C}/b")])
+      ),
+      ("ignorable-only name", tarArchive([("\u{200C}", [1])])),
     ]
     for (label, bytes) in hostile {
       #expect(throws: HostControlError.self, "\(label)") {

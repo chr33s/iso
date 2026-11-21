@@ -259,15 +259,27 @@ struct Status: MachineCommand {
   {
     if let name {
       let instance = try InstanceStore.resolve(context.config, name: name)
-      return .one(try status(context, instance, depth: depth))
+      let pending = try status(context, instance, depth: depth)
+      return .one(
+        pending.row.with(usage: pending.probe.flatMap { ResourceUsage.query(context.ssh, $0) }))
     }
-    return .all(try context.listInstances().map { listedStatus(context, $0) })
+    // States first, one instance at a time; then every running guest's usage
+    // together, so a guest that stalls its probe costs one probe deadline.
+    let pending = try context.listInstances().map { listedStatus(context, $0) }
+    let usage = ResourceUsage.query(context.ssh, pending.map(\.probe))
+    return .all(zip(pending, usage).map { $0.row.with(usage: $1) })
+  }
+
+  /// A row whose guest usage is still to be probed over `probe`.
+  struct PendingRow {
+    let row: Row
+    let probe: SSHTarget?
   }
 
   struct Row {
     let instance: Instance
     let state: InstanceState
-    let usage: ResourceUsage?
+    var usage: ResourceUsage?
     /// Why an unhealthy instance failed its readiness proof.
     var reason: String? = nil
     /// The runtime's description of a running instance (detailed depth only).
@@ -275,6 +287,12 @@ struct Status: MachineCommand {
     /// Set only for a brokered instance: its creation-time transport and,
     /// when running and gate-approved, the effective boot's state.
     var brokered: BrokeredStatus? = nil
+
+    func with(usage: ResourceUsage?) -> Row {
+      var row = self
+      row.usage = usage
+      return row
+    }
   }
 
   struct BrokeredStatus {
@@ -298,38 +316,41 @@ struct Status: MachineCommand {
       effective: running.flatMap { try? context.backend.brokeredView($0) })
   }
 
+  /// The instance's state; a running guest's usage is left to the caller's probe.
   static func status(_ context: CommandContext, _ instance: Instance, depth: Depth = .summary)
-    throws -> Row
+    throws -> PendingRow
   {
     let running: AppleBackend.Running?
     do {
       running = try context.backend.asRunning(instance)
     } catch let failure as InstanceUnhealthy {
-      return Row(
-        instance: instance, state: .unhealthy, usage: nil, reason: failure.reason,
-        brokered: brokeredStatus(context, instance, running: nil))
+      return PendingRow(
+        row: Row(
+          instance: instance, state: .unhealthy, usage: nil, reason: failure.reason,
+          brokered: brokeredStatus(context, instance, running: nil)), probe: nil)
     }
     if let running {
       let detail = depth == .detailed ? try context.backend.describe(running) : nil
-      return Row(
-        instance: instance, state: .running,
-        usage: ResourceUsage.query(context.ssh, running.target), detail: detail,
-        brokered: brokeredStatus(context, instance, running: running))
+      return PendingRow(
+        row: Row(
+          instance: instance, state: .running, usage: nil, detail: detail,
+          brokered: brokeredStatus(context, instance, running: running)), probe: running.target)
     }
     // Stopped: re-probe only for its error side (journal, booting).
     if depth == .summary { _ = try context.backend.probeRunning(instance) }
-    return Row(
-      instance: instance, state: .stopped, usage: nil,
-      brokered: brokeredStatus(context, instance, running: nil))
+    return PendingRow(
+      row: Row(
+        instance: instance, state: .stopped, usage: nil,
+        brokered: brokeredStatus(context, instance, running: nil)), probe: nil)
   }
 
-  static func listedStatus(_ context: CommandContext, _ instance: Instance) -> Row {
+  static func listedStatus(_ context: CommandContext, _ instance: Instance) -> PendingRow {
     do {
       return try status(context, instance)
     } catch {
       context.diagnostics.warn(
         "Could not determine the state of '\(instance.name)': \(oneLine(error))")
-      return Row(instance: instance, state: .unknown, usage: nil)
+      return PendingRow(row: Row(instance: instance, state: .unknown, usage: nil), probe: nil)
     }
   }
 }

@@ -513,6 +513,54 @@ func companionProfilesAreNarrow(binary: String, profile: String) throws {
   }
 }
 
+/// Destroy forgets exactly the per-VM items `proxy setup --vm` wrote and the
+/// override still names; a user-authored reference is never deleted, and a
+/// failed delete is a warning with the manual command.
+@Test func destroyForgetsOnlyThePerVMKeychainItemsIsoWrote() throws {
+  let root = try scratchDirectory("vmkeychain")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let instance = try testInstance(root + "/dev")
+  #expect(ProxyState.ownedKeychainItems(instance).isEmpty)
+  let owned = ProxyProvisioning.reference(service: "iso-anthropic-dev", account: "anthropic")
+  try ProxyState.setOverride(instance, provider: .anthropic, credential: owned, auth: .apiKey)
+  let shared = CredentialReference(
+    "cmd:security find-generic-password -s iso-openai -a openai -w")!
+  try ProxyState.setOverride(instance, provider: .openai, credential: shared, auth: .bearer)
+  let items = ProxyState.ownedKeychainItems(instance)
+  #expect(items == [KeychainReference(service: "iso-anthropic-dev", account: "anthropic")])
+  // Another VM's item named by this override is not this VM's to delete.
+  try writeFile(
+    instance.proxyStatePath,
+    #"{"anthropic": {"credential": "cmd:security find-generic-password -s iso-anthropic-prod -a anthropic -w"}}"#
+  )
+  #expect(ProxyState.ownedKeychainItems(instance).isEmpty)
+  try writeFile(instance.proxyStatePath, "{")
+  #expect(ProxyState.ownedKeychainItems(instance).isEmpty)
+
+  let tool = root + "/security"
+  try writeFile(
+    tool,
+    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"\(root)/argv\"\nexit $(cat \"\(root)/exit\" 2>/dev/null || echo 0)\n",
+    mode: 0o755)
+  let keychain = Keychain(security: tool, environment: [:])
+  let log = LogSink()
+  ProxyState.forget(items, keychain: keychain, diagnostics: log.diagnostics)
+  #expect(readFile(root + "/argv") == "delete-generic-password -s iso-anthropic-dev -a anthropic\n")
+  #expect(log.text.contains("Removed the per-VM proxy credential iso-anthropic-dev"))
+  try writeFile(root + "/exit", "44")
+  #expect(keychain.delete(items[0]) == .missing)
+  try writeFile(root + "/exit", "36")
+  #expect(
+    keychain.delete(items[0])
+      == .failed("security delete-generic-password exited with exit status: 36"))
+  ProxyState.forget(items, keychain: keychain, diagnostics: log.diagnostics)
+  #expect(
+    log.text.contains(
+      "delete it with `security delete-generic-password -s iso-anthropic-dev -a anthropic`"))
+  let unrunnable = Keychain(security: root + "/missing", environment: [:]).delete(items[0])
+  #expect(unrunnable != .deleted && unrunnable != .missing)
+}
+
 @Test func recordedPIDsAreSignalledOnlyWhileTheyNameTheProcess() {
   #expect(ProxyLauncher.RecordedProcess.isSSH("/usr/bin/ssh -N -T host"))
   #expect(!ProxyLauncher.RecordedProcess.isSSH("/bin/zsh -c ssh"))

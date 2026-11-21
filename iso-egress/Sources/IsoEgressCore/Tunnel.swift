@@ -50,7 +50,7 @@ package enum Tunnel {
 
   private enum Phase { case reading, draining, finished }
   private struct Direction {
-    var queue: [UInt8] = []
+    var queue = RelayRing()
     var phase: Phase = .reading
   }
   private enum Transfer {
@@ -74,7 +74,6 @@ package enum Tunnel {
     var reads = 0
     var last = Monotonic.now()
     let idleLimit = Monotonic.nanoseconds(idle)
-    var buffer = [UInt8](repeating: 0, count: 16 * 1024)
     while alive() {
       if let maxReads, reads >= maxReads { return }
       let now = Monotonic.now()
@@ -121,8 +120,7 @@ package enum Tunnel {
         ).allowed
         guard room > 0 else { continue }
         switch unsafe take(
-          sockets[index], into: &directions[index].queue, room: room, buffer: &buffer, read: read,
-          budget: budget)
+          sockets[index], into: &directions[index].queue, room: room, read: read, budget: budget)
         {
         case .progress(let count):
           reads += 1
@@ -146,13 +144,14 @@ package enum Tunnel {
   }
 
   private static func flush(
-    _ queue: inout [UInt8], to fd: Int32, write: (Int32, UnsafeRawPointer, Int) -> Int,
+    _ queue: inout RelayRing, to fd: Int32, write: (Int32, UnsafeRawPointer, Int) -> Int,
     budget: RelayBudget
   ) -> Transfer {
     var error: Int32 = 0
-    let count = queue.withUnsafeBytes { raw -> Int in
+    // The ring consumes what was written; nothing shifts.
+    let count = unsafe queue.send { raw -> Int in
       guard let base = raw.baseAddress else { return 0 }
-      // Writes at most the queue's own byte count from its base.
+      // Writes at most the lent region's own byte count from its base.
       let wrote = unsafe write(fd, base, raw.count)
       error = errno
       return wrote
@@ -162,22 +161,25 @@ package enum Tunnel {
       return .failed
     }
     guard count > 0 else { return .failed }
-    queue.removeFirst(count)
     budget.release(count)
     return .progress(count)
   }
 
+  /// The most one read takes from a socket.
+  static let readChunk = 16 * 1024
+
   private static func take(
-    _ fd: Int32, into queue: inout [UInt8], room: Int, buffer: inout [UInt8],
+    _ fd: Int32, into queue: inout RelayRing, room: Int,
     read: (Int32, UnsafeMutableRawPointer, Int) -> Int, budget: RelayBudget
   ) -> Transfer {
-    let reserved = budget.reserve(min(room, buffer.count))
+    let reserved = budget.reserve(min(room, readChunk))
     if reserved == 0 { return .blocked }
     var error: Int32 = 0
-    let count = buffer.withUnsafeMutableBytes { raw -> Int in
+    // The socket reads straight into the ring's free space: one copy.
+    let count = unsafe queue.receive(upTo: reserved) { raw -> Int in
       guard let base = raw.baseAddress else { return -1 }
-      // `reserved` never exceeds buffer.count (see the reservation above).
-      let got = unsafe read(fd, base, reserved)
+      // Reads at most the lent region's byte count, which is at most `reserved`.
+      let got = unsafe read(fd, base, raw.count)
       error = errno
       return got
     }
@@ -191,7 +193,6 @@ package enum Tunnel {
       return .end
     }
     budget.release(reserved - count)
-    queue.append(contentsOf: buffer.prefix(count))
     return .progress(count)
   }
 }

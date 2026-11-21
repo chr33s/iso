@@ -264,6 +264,27 @@ private func parse(_ s: String) -> Result<GuestCURequest, GuestCURequest.ParseEr
   #expect(throws: (any Error).self) { try MacGuestCULink.hostAction(bad) }
 }
 
+/// The line a guest process can write to vsock 7802: it parses, and the owner
+/// must refuse it as an invalid action instead of trapping (which ended the owner and its VM).
+@Test func extremeGuestIntegersAreRefusedAsInvalidActionsNotTrapped() throws {
+  for (field, value) in [
+    ("dx", "-9223372036854775808"), ("dy", "-9223372036854775808"),
+    ("dx", "9223372036854775807"), ("dy", "9223372036854775807"),
+  ] {
+    let line =
+      #"{"op":"act","session":"s","basedOnFrame":"f","action":{"kind":"scroll","x":10,"y":10,"#
+      + #""\#(field)":\#(value)}}"#
+    guard case .success(let request) = GuestCURequest.parse(Array(line.utf8)),
+      let action = request.action
+    else {
+      Issue.record("\(field)=\(value) did not parse")
+      continue
+    }
+    let host = try MacGuestCULink.hostAction(action)
+    #expect(throws: SandboxError.self) { try host.validated(width: 1920, height: 1200) }
+  }
+}
+
 @Test func theLinkRefusesMalformedAndOverLimitRequestsBeforeTheScreen() {
   let calls = Counter()
   let link = MacGuestCULink(
@@ -322,6 +343,50 @@ private final class LogLines: @unchecked Sendable {
   #expect(!link.accept(fd: pairs[2][0], retaining: nil))
   #expect(link.connectionCount == 2)
   for p in pairs { close(p[1]) }
+}
+
+/// A frame reply is written in large non-blocking chunks; the link must then read the next
+/// request on a blocking descriptor again, or the connection ends after the first frame.
+@Test func aMegabyteFrameReplyArrivesWholeAndTheLinkReadsTheNextRequest() throws {
+  let png = Data((0..<(1 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+  let link = MacGuestCULink(
+    frameRate: 10, log: { _ in },
+    handle: { request in
+      var r = GuestCUResponse(ok: true)
+      if request.op == .frame {
+        r.frame = GuestCUFrame(frameId: "f", width: 1920, height: 1200, png: png)
+      }
+      return r
+    })
+  var fds: [Int32] = [0, 0]
+  #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+  let guest = fds[1]
+  defer { close(guest) }
+  var timeout = timeval(tv_sec: 10, tv_usec: 0)
+  setsockopt(guest, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  // A link that dropped the connection must fail this test, not kill it with SIGPIPE.
+  var one: Int32 = 1
+  setsockopt(guest, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+  #expect(link.accept(fd: fds[0], retaining: nil))
+  func send(_ line: String) {
+    let bytes = Array((line + "\n").utf8)
+    #expect(bytes.withUnsafeBytes { write(guest, $0.baseAddress, $0.count) } == bytes.count)
+  }
+  var reader = LineReader(fd: guest, limit: GuestCUProtocol.maxResponse)
+  send(#"{"op":"frame","session":"s"}"#)
+  guard case .line(let first) = reader.next() else {
+    Issue.record("no frame reply")
+    return
+  }
+  #expect(try JSONDecoder().decode(GuestCUResponse.self, from: Data(first)).frame?.png == png)
+  // The owner is reading again by now; the next request finds it blocking.
+  Thread.sleep(forTimeInterval: 0.2)
+  send(#"{"op":"status"}"#)
+  guard case .line(let second) = reader.next() else {
+    Issue.record("the link stopped reading after a large reply")
+    return
+  }
+  #expect(try JSONDecoder().decode(GuestCUResponse.self, from: Data(second)).ok)
 }
 
 @Test func guestFrameRatesAreBounded() throws {

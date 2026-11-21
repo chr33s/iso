@@ -30,7 +30,10 @@ struct ProjectArguments: ParsableArguments {
   @Option(
     help: "Clone a git repository into /workspace instead of copying a local project directory")
   var gitRepo: String?
-  @Option(help: "Number of vCPUs (overrides config when creating a new instance)") var vcpus: UInt8?
+  @Option(
+    help: "Number of vCPUs (overrides config when creating a new instance)",
+    transform: parseVCPUCount)
+  var vcpus: UInt8?
   @Option(
     help: "Memory in MiB (overrides config when creating a new instance)", transform: parseMemory)
   var mem: VmMemory?

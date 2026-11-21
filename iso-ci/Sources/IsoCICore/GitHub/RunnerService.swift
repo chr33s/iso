@@ -16,19 +16,58 @@ package protocol RunnerService: Sendable {
   func runners(scope: GitHubRunnerScope, named name: String) throws(CIError) -> [GitHubRunnerInfo]
   func runner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> GitHubRunnerInfo?
   func deleteRunner(scope: GitHubRunnerScope, id: Int64) throws(CIError) -> Bool
-  /// Queued and in-progress jobs visible in the scope, bounded; used only to
-  /// correlate jobs with runners through runner_id/runner_name.
-  func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo]
-  /// Jobs of the newest completed runs in the scope, bounded; used only to
-  /// bind a job that started and finished between two passes to the exact
-  /// runner that ran it.
-  func completedJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo]
+  /// Jobs of the scope's in-progress, then queued, runs, read lazily: a run's
+  /// jobs are fetched only while the search has not found what it looks
+  /// for. Used only to correlate jobs with runners through
+  /// runner_id/runner_name.
+  func activeJobs(scope: GitHubScope) throws(CIError) -> JobSearch
+  /// Jobs of the newest completed runs in the scope, read lazily; used only
+  /// to bind a job that started and finished between two passes to the
+  /// exact runner that ran it.
+  func completedJobs(scope: GitHubScope) throws(CIError) -> JobSearch
   func job(repository: RepositoryName, id: Int64) throws(CIError) -> GitHubJobInfo
 }
 
+/// A lazy walk over GitHub jobs, shared by every lookup in one pass: each
+/// batch (one run's jobs) is fetched at most once, and only until a lookup
+/// finds its job. GitHub offers no runner-to-job lookup (a runner record
+/// carries no job; jobs are listed per run), so the walk visits runs.
+package final class JobSearch {
+  private let next: () throws(CIError) -> [GitHubJobInfo]?
+  private var seen: [GitHubJobInfo] = []
+  private var exhausted = false
+
+  /// `next` returns the following batch, or nil once there is none.
+  package init(next: @escaping () throws(CIError) -> [GitHubJobInfo]?) { self.next = next }
+
+  package convenience init(_ jobs: [GitHubJobInfo]) {
+    var pending = Optional(jobs)
+    self.init { () throws(CIError) -> [GitHubJobInfo]? in
+      defer { pending = nil }
+      return pending
+    }
+  }
+
+  /// The first job matching `match`, fetching further batches only as
+  /// needed. A batch that fails to load ends the walk with that error.
+  package func first(where match: (GitHubJobInfo) -> Bool) throws(CIError) -> GitHubJobInfo? {
+    if let hit = seen.first(where: match) { return hit }
+    while !exhausted {
+      guard let batch = try next() else {
+        exhausted = true
+        break
+      }
+      seen += batch
+      if let hit = batch.first(where: match) { return hit }
+    }
+    return nil
+  }
+}
+
 package final class InstallationRunnerService: RunnerService {
-  package static let maxCorrelationRepositories = 20
-  package static let maxCorrelationRuns = 20
+  /// Completed runs searched per repository for a job that finished
+  /// between two passes (newest first).
+  package static let maxCompletedRuns = 20
 
   let client: GitHubInstallationClient
 
@@ -74,32 +113,45 @@ package final class InstallationRunnerService: RunnerService {
       scope: scope, id: id, token: try client.token(.runnerAdministration(scope)))
   }
 
-  package func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
-    let token = try client.token(.actionsRead(Self.repository(scope)))
-    var jobs: [GitHubJobInfo] = []
-    for repository in try correlationRepositories(scope, token: token) {
+  /// A busy runner's job is in an in-progress run, so those are read
+  /// first; queued runs cover a run whose status GitHub has not updated.
+  package func activeJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
+    try search(scope) { (repository, token) throws(CIError) in
       var runs: [GitHubRunInfo] = []
       for status in ["in_progress", "queued"] {
-        runs += try client.api.workflowRuns(repository: repository, status: status, token: token)
+        runs += try self.client.api.workflowRuns(
+          repository: repository, status: status, token: token)
       }
-      for run in runs.prefix(Self.maxCorrelationRuns) {
-        jobs += try client.api.jobs(repository: repository, runID: run.id, token: token)
-      }
+      return runs
     }
-    return jobs
   }
 
-  package func completedJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
-    let token = try client.token(.actionsRead(Self.repository(scope)))
-    var jobs: [GitHubJobInfo] = []
-    for repository in try correlationRepositories(scope, token: token) {
-      let runs = try client.api.workflowRuns(
-        repository: repository, status: "completed", newest: Self.maxCorrelationRuns, token: token)
-      for run in runs {
-        jobs += try client.api.jobs(repository: repository, runID: run.id, token: token)
-      }
+  package func completedJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
+    try search(scope) { (repository, token) throws(CIError) in
+      try self.client.api.workflowRuns(
+        repository: repository, status: "completed", newest: Self.maxCompletedRuns, token: token)
     }
-    return jobs
+  }
+
+  /// Walks the scope's repositories, listing each one's runs only when the
+  /// search reaches it, then each run's jobs one batch at a time.
+  private func search(
+    _ scope: GitHubScope,
+    runs list: @escaping (RepositoryName, RedactedSecret) throws(CIError) -> [GitHubRunInfo]
+  ) throws(CIError) -> JobSearch {
+    let token = try client.token(.actionsRead(Self.repository(scope)))
+    var repositories: [RepositoryName]?
+    var pending: [(RepositoryName, Int64)] = []
+    return JobSearch { [self] () throws(CIError) -> [GitHubJobInfo]? in
+      if repositories == nil { repositories = try correlationRepositories(scope, token: token) }
+      while pending.isEmpty {
+        guard let repository = repositories?.first else { return nil }
+        repositories?.removeFirst()
+        pending = try list(repository, token).map { (repository, $0.id) }
+      }
+      let (repository, run) = pending.removeFirst()
+      return try client.api.jobs(repository: repository, runID: run, token: token)
+    }
   }
 
   static func repository(_ scope: GitHubScope) -> RepositoryName? {
@@ -114,7 +166,7 @@ package final class InstallationRunnerService: RunnerService {
     case .repository(let repository): return [repository]
     case .organization:
       return try client.api.installationRepositories(token: token).repositories
-        .prefix(Self.maxCorrelationRepositories).compactMap { try? RepositoryName($0.fullName) }
+        .compactMap { try? RepositoryName($0.fullName) }
     }
   }
 
@@ -154,11 +206,11 @@ package struct OfflineRunnerService: RunnerService {
     throw unavailable()
   }
 
-  package func activeJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
+  package func activeJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
     throw unavailable()
   }
 
-  package func completedJobs(scope: GitHubScope) throws(CIError) -> [GitHubJobInfo] {
+  package func completedJobs(scope: GitHubScope) throws(CIError) -> JobSearch {
     throw unavailable()
   }
 

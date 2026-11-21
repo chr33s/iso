@@ -13,7 +13,8 @@ import Testing
     try await withTLSFixture { group, port, received, closed in
       let connection = try CancellableTLSConnection(
         host: "127.0.0.1", port: port, serverHostname: provider.hostname,
-        configuration: UpstreamClient.tlsConfiguration(), eventLoop: group.next())
+        context: NIOSSLContext(configuration: UpstreamClient.tlsConfiguration()),
+        eventLoop: group.next())
       try await waitForTLSObservation(received)
       connection.cancel()
       connection.cancel()
@@ -32,7 +33,8 @@ import Testing
   try await withTLSFixture { group, port, received, closed in
     let connection = try CancellableTLSConnection(
       host: "127.0.0.1", port: port, serverHostname: Provider.anthropic.hostname,
-      configuration: UpstreamClient.tlsConfiguration(), eventLoop: group.next(),
+      context: NIOSSLContext(configuration: UpstreamClient.tlsConfiguration()),
+      eventLoop: group.next(),
       timeout: .milliseconds(250))
     try await waitForTLSObservation(received)
     do {
@@ -62,7 +64,8 @@ import Testing
       configuration.additionalTrustRoots = [.certificates([ca])]
       let connection = try CancellableTLSConnection(
         host: "127.0.0.1", port: port, serverHostname: provider.hostname,
-        configuration: configuration, eventLoop: group.next(), timeout: .seconds(1))
+        context: NIOSSLContext(configuration: configuration), eventLoop: group.next(),
+        timeout: .seconds(1))
       let channel = try await connection.established.get()
       #expect(channel.isActive)
       try await Task.sleep(for: .milliseconds(1100))
@@ -79,7 +82,7 @@ import Testing
       let connection = try CancellableTLSConnection(
         host: "127.0.0.1", port: port,
         serverHostname: trusted ? "wrong-host.invalid" : Provider.anthropic.hostname,
-        configuration: configuration, eventLoop: group.next())
+        context: NIOSSLContext(configuration: configuration), eventLoop: group.next())
       do {
         _ = try await connection.established.get()
         Issue.record("untrusted certificate or wrong hostname accepted")
@@ -102,7 +105,8 @@ import Testing
   let port = try #require(server.localAddress?.port)
   let connection = try CancellableTLSConnection(
     host: "deferred.invalid", port: port, serverHostname: Provider.anthropic.hostname,
-    configuration: UpstreamClient.tlsConfiguration(), eventLoop: loop, resolver: resolver)
+    context: NIOSSLContext(configuration: UpstreamClient.tlsConfiguration()), eventLoop: loop,
+    resolver: resolver)
   connection.cancel()
   do {
     _ = try await connection.established.get()
@@ -199,7 +203,8 @@ private final class TLSFixtureObserver: ChannelInboundHandler {
     let captured = NIOLockedValueBox<(any Channel)?>(nil)
     let connection = try CancellableTLSConnection(
       host: "127.0.0.1", port: port, serverHostname: Provider.anthropic.hostname,
-      configuration: UpstreamClient.tlsConfiguration(), eventLoop: group.next(),
+      context: NIOSSLContext(configuration: UpstreamClient.tlsConfiguration()),
+      eventLoop: group.next(),
       socketCapacity: capacity,
       application: { channel in
         captured.withLockedValue { $0 = channel }

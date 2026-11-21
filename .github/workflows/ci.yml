@@ -35,7 +35,7 @@ jobs:
       # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       # The pre-commit gates (mise.toml `check`) over every tracked file.
       - name: Hygiene, format, build, and tests
@@ -46,6 +46,11 @@ jobs:
           mise run build
           mise run test
           git diff --exit-code -- Package.resolved
+
+      # The nightly fault-injection run edits these anchors; a stale one fails
+      # the push that made it stale instead of the next nightly.
+      - name: Fault-injection anchors
+        run: python3 scripts/swift-host-fault-injection.py --check-anchors
 
       - name: IsoPolicy library tests
         run: mise run check-policy
@@ -102,10 +107,12 @@ jobs:
         run: git diff --exit-code -- '*Package.resolved'
 
   # Semgrep code-style rules (.semgrep/rules). Its own job so the PyPI install
-  # runs in parallel with the Swift build; only its tools are installed.
+  # runs in parallel with the Swift build; only its tools are installed. It
+  # reads source text only, so it runs on Linux and leaves the macOS runners
+  # to the jobs that build Swift (mise.lock pins python and uv for linux-x64).
   semgrep:
     name: Code-style rules
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,7 +121,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
           install_args: python uv semgrep
 
       - name: Semgrep rule fixtures and scan
@@ -133,7 +140,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       - name: iso-sandbox build and unit tests
         run: swift test --package-path iso-sandbox --force-resolved-versions --no-parallel
@@ -152,7 +159,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       - name: Filtered-egress unit and confined lease gates
         run: mise run check-egress
@@ -171,7 +178,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       # Fixture and unit tests only: no live GitHub, VM or runner qualification.
       - name: iso-ci companion build and tests
@@ -191,7 +198,7 @@ jobs:
 
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       # libFuzzer is built from the vendored, hash-checked fuzz/libfuzzer sources.
       - name: Fuzz corpus replay and bounded smoke
@@ -213,7 +220,7 @@ jobs:
       # ones the pre-commit hook uses. Xcode supplies the macOS SDK and codesign.
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          version: 2026.10.7
+          version: 2026.11.9
 
       - name: Swift proxy offline E2E gates
         shell: bash

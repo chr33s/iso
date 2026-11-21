@@ -27,7 +27,9 @@ package enum ComputerUseAudit {
     guard !events.isEmpty else { return }
     let path = path(instance)
     do {
-      let lock = try FileLock.sibling(of: path)
+      guard let lock = try FileLock.siblingInExistingDirectory(of: path) else {
+        throw HostError("instance '\(instance.name)' no longer exists")
+      }
       defer { lock.release() }
       var boots =
         try StateStore.readControlFile(path).flatMap {
@@ -36,7 +38,7 @@ package enum ComputerUseAudit {
       guard !boots.contains(boot) else { return }
       for event in events { BoundaryAudit.record(instance, event, diagnostics: diagnostics) }
       boots.append(boot)
-      try StateStore.writeControlFile(Record(boots: Array(boots.suffix(limit))), to: path)
+      try StateStore.writeInstanceFile(Record(boots: Array(boots.suffix(limit))), to: path)
     } catch {
       diagnostics?.debug("computer-use audit for boot \(boot) not recorded (non-fatal): \(error)")
     }

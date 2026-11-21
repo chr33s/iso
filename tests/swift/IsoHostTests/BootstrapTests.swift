@@ -516,7 +516,7 @@ private func stageCodex(
     source + "/config.toml",
     "model = \"gpt-5\"\n\n[mcp_servers.legacy]\ncommand = \"legacy-server\"\n")
   let sentry = MCPServer.http(url: URL(string: "https://mcp.sentry.dev/mcp")!, headers: [:])
-  var staged = try stageCodex(source: source, mcp: ["sentry": sentry.toml])
+  var staged = try stageCodex(source: source, mcp: ["sentry": try sentry.codexTOML(name: "sentry")])
   var config = try #require(readFile(staged.path + "/config.toml"))
   #expect(config.contains("model = \"gpt-5\""))
   #expect(config.contains("[mcp_servers.sentry]"))
@@ -690,7 +690,9 @@ private func stageCodex(
 @Test func mcpDefinitionsSerializeInSerdeOrder() throws {
   let stdio = MCPServer.stdio(
     command: "npx", args: ["-y", "srv"], env: [try EnvVarName("B"): try EnvVarName("HOST_B")])
-  #expect(stdio.json.compact == #"{"command":"npx","args":["-y","srv"],"env":{"B":"HOST_B"}}"#)
+  // Claude expands `${HOST_B}` from its session when it starts the server.
+  #expect(
+    stdio.json.compact == #"{"command":"npx","args":["-y","srv"],"env":{"B":"${HOST_B}"}}"#)
   let http = MCPServer.http(
     url: URL(string: "https://mcp.example.com")!,
     headers: ["X-B": Secret("2"), "Auth": Secret("cmd:printf tok")])
@@ -705,6 +707,45 @@ private func stageCodex(
       CredentialResolver(environment: ["PATH": "/usr/bin:/bin"]), label: "MCP server", name: "ex")
   }
   #expect("\(error)".contains("Failed to resolve header 'A' for MCP server 'ex'"))
+}
+
+/// Codex reads `url` and `http_headers`; a `headers` table or `type` key is
+/// ignored, which registered header-bearing servers without their headers.
+@Test func codexMCPDefinitionsUseCodexKeys() throws {
+  let http = MCPServer.http(
+    url: URL(string: "https://mcp.example.com/mcp")!,
+    headers: ["Authorization": Secret("cmd:printf 'Bearer tok'"), "X-Region": Secret("eu")])
+  let resolved = try http.resolvingHeaders(
+    CredentialResolver(environment: ["PATH": "/usr/bin:/bin"]), label: "Codex MCP server",
+    name: "private")
+  let staged = try stageCodex(mcp: ["private": try resolved.codexTOML(name: "private")])
+  defer { staged.remove() }
+  let document = try #require(readFile(staged.path + "/config.toml"))
+  let server = try #require(
+    TOMLTable.parse(document)["mcp_servers"]?.tableValue?["private"]?.tableValue)
+  #expect(server.sortedKeys == ["http_headers", "url"])
+  #expect(server["url"] == .string("https://mcp.example.com/mcp"))
+  let headers = try #require(server["http_headers"]?.tableValue)
+  #expect(headers["Authorization"] == .string("Bearer tok"))
+  #expect(headers["X-Region"] == .string("eu"))
+
+  let stdio = MCPServer.stdio(command: "srv", args: ["-v"], env: [:])
+  #expect(
+    try stdio.codexTOML(name: "s")
+      == .table(TOMLTable([("command", .string("srv")), ("args", .array([.string("-v")]))])))
+  // Codex's `env` is literal; a forwarded variable passes through `env_vars`.
+  let key = try EnvVarName("SERVER_KEY")
+  let other = try EnvVarName("A_TOKEN")
+  let mapped = MCPServer.stdio(command: "srv", args: [], env: [key: key, other: other])
+  #expect(
+    try mapped.codexTOML(name: "s")
+      == .table(
+        TOMLTable([
+          ("command", .string("srv")),
+          ("env_vars", .array([.string("A_TOKEN"), .string("SERVER_KEY")])),
+        ])))
+  let sse = MCPServer.sse(url: URL(string: "https://x.example/sse")!, headers: [:])
+  #expect(throws: HostError.self) { try sse.codexTOML(name: "events") }
 }
 
 // MARK: - End to end against the fake guest
@@ -735,7 +776,7 @@ private func stageCodex(
   #expect(guest.guestFile(".claude/CLAUDE.md") == "host instructions")
   #expect(
     guest.guestFile(".claude/iso-import.json")
-      == #"{"preferences":{"outputStyle":"host"},"pluginIds":[]}"#)
+      == #"{"preferences":{"outputStyle":"host"}}"#)
   #expect(guest.guestFile(".claude.json")?.contains("\"hasCompletedOnboarding\": true") == true)
   #expect(guest.guestFile(".iso/marketplaces/claude/market/marketplace.json") == "{}")
   let calls = guest.log("guest-calls.log")
@@ -755,6 +796,45 @@ private func stageCodex(
   try guest.bootstrap(config).bootstrapAgents(session, instance: instance, mode: .restart)
   #expect(!guest.log("guest-calls.log").contains { $0.contains("plugin") })
   #expect(guest.sink.text.contains("Codex bootstrap refreshed"))
+}
+
+/// `iso-import.json` is guest-written: its plugin IDs must never choose which
+/// host `enabledPlugins` values reach the guest. Only bundles iso copied do,
+/// recorded in host state, and they keep their preference once the source is gone.
+@Test func guestPluginIDsNeverSelectHostPreferences() throws {
+  let guest = try FakeGuest()
+  defer { guest.remove() }
+  let hostClaude = guest.root + "/hosthome/.claude"
+  try pluginFixture(hostClaude, "copied", #"{"name":"copied"}"#)
+  try writeFile(
+    hostClaude + "/settings.json",
+    #"{"enabledPlugins":{"copied@skills-dir":true,"private@corp-market":false}}"#)
+  try writeFile(
+    guest.home + "/.claude/iso-import.json",
+    #"{"preferences":{},"pluginIds":["private@corp-market"]}"#)
+  let config = try testConfig(
+    #""claude": {"config_dir": "~/.claude"}"#, home: guest.root + "/hosthome")
+  let instance = try testInstance(guest.root + "/instance")
+  let session = SSHSession(target: guest.target)
+  try guest.bootstrap(config).bootstrapClaude(session, instance: instance, mode: .restart)
+  var settings = try OrderedJSON.parse(try #require(guest.guestFile(".claude/settings.json")))
+  #expect(settings["enabledPlugins"]?["copied@skills-dir"] == .bool(true))
+  #expect(settings["enabledPlugins"]?["private@corp-market"] == nil)
+  #expect(
+    guest.guestFile(".claude/iso-import.json")
+      == #"{"preferences":{"enabledPlugins":{"copied@skills-dir":true}}}"#)
+  #expect(try ClaudeImport.CopiedPlugins.load(instance) == ["copied@skills-dir"])
+  // One snapshot read, one standalone `mkdir` (before the copy) and one scp.
+  let commands = guest.log("commands.log")
+  #expect(commands.filter { $0.contains("iso-import.json; then cat") }.count == 1)
+  #expect(commands.filter { $0 == "mkdir -p ~/.claude" }.count == 1)
+  #expect(guest.guestFile(".claude/skills/copied/.claude-plugin/plugin.json") != nil)
+
+  try FileManager.default.removeItem(atPath: hostClaude + "/skills/copied")
+  try guest.bootstrap(config).bootstrapClaude(session, instance: instance, mode: .restart)
+  settings = try OrderedJSON.parse(try #require(guest.guestFile(".claude/settings.json")))
+  #expect(settings["enabledPlugins"]?["copied@skills-dir"] == .bool(true))
+  #expect(settings["enabledPlugins"]?["private@corp-market"] == nil)
 }
 
 @Test func missingCLIsAndGuestSupportFailExplicitly() throws {

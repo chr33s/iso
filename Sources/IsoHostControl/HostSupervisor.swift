@@ -53,7 +53,13 @@ package final class HostSupervisor: Sendable {
   let settings: Settings
   let diagnostics: Diagnostics
   let state = Mutex(State())
+  /// Records that may still need work: periodic passes read these, not the
+  /// whole (never compacted) history.
+  let pendingOperations: PendingRecords<HostOperationID>
+  let activeRuns: PendingRecords<RunID>
   private let queue = DispatchQueue(label: "iso.host.supervisor", attributes: .concurrent)
+  /// One serial queue per instance for its guest key changes (see ``keyQueue(_:)``).
+  private let keyQueues = Mutex<[InstanceID: DispatchQueue]>([:])
 
   /// Opens the installation under `root` for `owner`. The caller holds the
   /// service-ownership lock for this supervisor's lifetime.
@@ -61,7 +67,13 @@ package final class HostSupervisor: Sendable {
     root: String, owner: OwnerID, native: any NativeHost, clock: any HostClock = SystemHostClock(),
     settings: Settings = Settings(), diagnostics: Diagnostics = Diagnostics(verbosity: 0)
   ) throws(HostError) {
-    store = try OperationStore(root: root, limits: settings.ledger)
+    let pendingOperations = PendingRecords<HostOperationID>()
+    let activeRuns = PendingRecords<RunID>()
+    self.pendingOperations = pendingOperations
+    self.activeRuns = activeRuns
+    store = try OperationStore(
+      root: root, limits: settings.ledger,
+      written: { if !$0.state.isTerminal { pendingOperations.insert($0.operationID) } })
     installation = try store.installation(owner: owner, now: WireTime(clock.now()))
     epoch = .generate()
     let relays = RelayRegistry()
@@ -70,22 +82,33 @@ package final class HostSupervisor: Sendable {
       epoch: epoch, clock: clock, limits: settings.access,
       revoked: { ids in relays.close(sessions: ids) })
     artifacts = try ArtifactStore(root: root + "/artifacts", clock: clock)
-    runs = try RunStore(root: root + "/runs")
+    runs = try RunStore(
+      root: root + "/runs", written: { if $0.phase != .destroyed { activeRuns.insert($0.runID) } })
     self.native = native
     self.clock = clock
     self.settings = settings
     self.diagnostics = diagnostics
-    // Nonterminal image work from a previous lifetime keeps its image busy.
+    // The one full scan of a lifetime seeds the indexes; nonterminal image
+    // work from a previous lifetime keeps its image busy.
     var images: [ImageName: HostOperationID] = [:]
     for id in store.operationIDs() {
-      guard let record = try? store.loadOperation(id), !record.state.isTerminal,
-        record.method == HostMethod.imageEnsure.rawValue,
+      // An unreadable record is kept: a later pass may read it.
+      guard let record = try? store.loadOperation(id) else {
+        pendingOperations.insert(id)
+        continue
+      }
+      guard !record.state.isTerminal else { continue }
+      pendingOperations.insert(id)
+      guard record.method == HostMethod.imageEnsure.rawValue,
         let value = try? HostWire.parse(Array(record.params.utf8), limits: HostWire.requestLimits),
         case .imageEnsure(let request)? = try? HostRequestBody(method: .imageEnsure, params: value)
       else { continue }
       images[request.image] = id
     }
     state.withLock { $0.imagesBusy = images }
+    for id in runs.runIDs() where (try? runs.load(id))?.phase != .destroyed {
+      activeRuns.insert(id)
+    }
   }
 
   var hostID: HostID { installation.hostID }
@@ -96,16 +119,15 @@ package final class HostSupervisor: Sendable {
 
   package func start() {
     repairUnacceptedAdmissions()
-    for id in store.operationIDs() {
-      guard let record = try? store.loadOperation(id), !record.state.isTerminal else { continue }
+    for record in nonterminalOperations() {
       if record.state == .running {
         var reconciling = record
         reconciling.state = .reconciling
         try? store.saveOperation(reconciling)
       }
-      dispatch(id)
+      dispatch(record.operationID)
     }
-    for id in runs.runIDs() { reconcileRun(id) }
+    for id in liveRuns() { reconcileRun(id) }
     guard settings.dispatch == .background else { return }
     // After a worker restart or reboot, commit boots that ended while the
     // service was down before the first request is admitted.
@@ -141,11 +163,39 @@ package final class HostSupervisor: Sendable {
 
   package func runPending() {
     repairUnacceptedAdmissions()
-    for id in store.operationIDs() {
-      guard let record = try? store.loadOperation(id), !record.state.isTerminal else { continue }
-      execute(id)
+    for record in nonterminalOperations() { execute(record.operationID) }
+    for id in liveRuns() { reconcileRun(id) }
+  }
+
+  /// The nonterminal operations, read from the pending index. A record read
+  /// terminal or missing leaves the index (terminal is final); an unreadable
+  /// one stays for a later pass.
+  func nonterminalOperations() -> [OperationStore.OperationRecord] {
+    var records: [OperationStore.OperationRecord] = []
+    for id in pendingOperations.snapshot() {
+      let record: OperationStore.OperationRecord?
+      do { record = try store.loadOperation(id) } catch { continue }
+      guard let record, !record.state.isTerminal else {
+        pendingOperations.remove(id)
+        continue
+      }
+      records.append(record)
     }
-    for id in runs.runIDs() { reconcileRun(id) }
+    return records
+  }
+
+  /// Runs not yet destroyed, read from the active-run index; a destroyed or
+  /// missing run leaves it.
+  func liveRuns() -> [RunID] {
+    activeRuns.snapshot().filter { id in
+      let run: RunStore.Record?
+      do { run = try runs.load(id) } catch { return true }
+      guard let run, run.phase != .destroyed else {
+        activeRuns.remove(id)
+        return false
+      }
+      return true
+    }
   }
 
   /// The instance's active operation, or nil when the pointer is stale: admissions write
@@ -217,11 +267,8 @@ package final class HostSupervisor: Sendable {
 
   func reconcileAll() {
     repairUnacceptedAdmissions()
-    for id in store.operationIDs() {
-      guard let record = try? store.loadOperation(id), !record.state.isTerminal else { continue }
-      dispatch(id)
-    }
-    for id in runs.runIDs() { reconcileRun(id) }
+    for record in nonterminalOperations() { dispatch(record.operationID) }
+    for id in liveRuns() { reconcileRun(id) }
   }
 
   func dispatch(_ id: HostOperationID) {
@@ -252,11 +299,11 @@ package final class HostSupervisor: Sendable {
   func route(_ request: HostRequest, transport: HostTransportKind) throws(HostControlError)
     -> JSONValue
   {
-    if case .hello(let protocols, _) = request.body {
+    if case .hello(let protocols, _, let includeBuild) = request.body {
       guard protocols.contains(HostProtocol.v1) else {
         throw HostControlError(.hostProtocolIncompatible, "no common protocol version")
       }
-      return hello(transport: transport).wire
+      return hello(transport: transport, includeBuild: includeBuild).wire
     }
     guard request.hostID == hostID else {
       throw HostControlError(.hostIdentityChanged, "request names a different host installation")
@@ -305,12 +352,15 @@ package final class HostSupervisor: Sendable {
     case .accessClose(let session, let bearer, let epoch):
       let binding = try sessions.close(session: session, bearer: bearer, epoch: epoch)
       let instance = binding.instance
-      if !sessions.keyInUse(instance: instance.instanceID, key: binding.clientKey) {
-        // Hygiene only: revocation already closed the streams.
-        queue.async { [self] in
-          native.removeClientKey(
-            instance.instanceID, runtime: instance.runtimeID, key: binding.clientPublicKey)
+      // Hygiene only: revocation already closed the streams. Ordered with
+      // authorizations and re-checked when it runs, so a session opened since
+      // keeps its key.
+      keyQueue(instance.instanceID).async { [self] in
+        guard !sessions.keyInUse(instance: instance.instanceID, key: binding.clientKey) else {
+          return
         }
+        native.removeClientKey(
+          instance.instanceID, runtime: instance.runtimeID, key: binding.clientPublicKey)
       }
       var b = WireBuilder()
       b.set("session_id", session)
@@ -354,11 +404,11 @@ package final class HostSupervisor: Sendable {
     }
   }
 
-  package func hello(transport: HostTransportKind) -> HelloResult {
+  package func hello(transport: HostTransportKind, includeBuild: Bool = false) -> HelloResult {
     HelloResult(
       protocolVersion: HostProtocol.v1, hostID: hostID, ownerID: ownerID, epoch: epoch,
       runtime: native.qualification(), methods: Self.methods(for: transport),
-      guestOperations: [.linux])
+      guestOperations: [.linux], build: includeBuild ? IsoBuild.current.versionString : nil)
   }
 
   /// Methods this supervisor actually dispatches: stopped-VM maintenance only
@@ -374,6 +424,17 @@ package final class HostSupervisor: Sendable {
   }
 
   // MARK: - Helpers
+
+  /// Guest `authorized_keys` changes of one instance run in order here, so a
+  /// late removal can never undo a newer authorization or race its append.
+  func keyQueue(_ instance: InstanceID) -> DispatchQueue {
+    keyQueues.withLock { queues in
+      if let queue = queues[instance] { return queue }
+      let queue = DispatchQueue(label: "iso.host.keys")
+      queues[instance] = queue
+      return queue
+    }
+  }
 
   func loadOperation(_ id: HostOperationID) throws(HostControlError)
     -> OperationStore.OperationRecord?
@@ -479,4 +540,18 @@ extension Duration {
     let (whole, fraction) = components
     return TimeInterval(whole) + TimeInterval(fraction) / 1e18
   }
+}
+
+/// Ids whose records may still need work: every qualifying write adds one, and
+/// a pass drops it once the record reads final. Periodic reconciliation reads
+/// these instead of rescanning the whole history under the admission lock.
+package final class PendingRecords<ID: Hashable & Comparable & Sendable>: Sendable {
+  private let ids = Mutex<Set<ID>>([])
+
+  package init() {}
+
+  func insert(_ id: ID) { _ = ids.withLock { $0.insert(id) } }
+  func remove(_ id: ID) { _ = ids.withLock { $0.remove(id) } }
+  /// Sorted, so passes visit records in a stable order.
+  func snapshot() -> [ID] { ids.withLock { $0.sorted() } }
 }

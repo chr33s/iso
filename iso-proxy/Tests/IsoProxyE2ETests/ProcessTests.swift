@@ -204,6 +204,64 @@ struct IsoProxyProcessE2ETests {
     try redacted(child.output(), secrets: [secret, token, privateKey])
   }
 
+  /// Starts the confined proxy under `ulimit` so the open-file limit a
+  /// launchd-started host would pass is reproduced. The shell applies the
+  /// fixed limit and execs sandbox-exec with the paths as positional arguments.
+  private func limited(
+    _ ulimit: StaticString, binary: URL, input: Int32, evidence: Evidence, name: String
+  ) throws -> TestProcessRunner {
+    try TestProcessRunner(
+      executable: URL(fileURLWithPath: "/bin/sh"),
+      arguments: [
+        "-c", "ulimit \(ulimit) || exit 97; exec \"$@\"", "sh",
+        "/usr/bin/sandbox-exec", "-D", "PROXY_BIN=\(binary.path)", "-f",
+        proxyRepository.appendingPathComponent(
+          "Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb"
+        ).path, binary.path,
+      ],
+      input: input, evidence: evidence, name: name)
+  }
+
+  @Test func openFileLimitIsRaisedToTheDocumentedLimits() async throws {
+    let evidence = try Evidence("descriptors")
+    let port = try freePort()
+    let input = try inputFile(
+      JSONSerialization.data(withJSONObject: config(port: port)), evidence: evidence, name: "proxy")
+    defer { try? input.close() }
+    let child = try limited(
+      "-S -n 256", binary: proxyBinary(), input: input.fileDescriptor,
+      evidence: evidence, name: "proxy")
+    defer { child.cleanup() }
+    try await ready(child, port: port)
+    try check(
+      try String(decoding: child.output(), as: UTF8.self).contains(
+        "iso-proxy raised the open-file limit from 256 to 576"), "soft limit was not raised")
+    child.terminate()
+    try check(try await child.wait() == 0, "proxy did not terminate cleanly")
+    try redacted(child.output())
+  }
+
+  @Test func openFileHardLimitBelowTheNeedRefusesBeforeStdin() async throws {
+    let evidence = try Evidence("descriptor-refusal")
+    let stdin = Pipe()
+    defer {
+      try? stdin.fileHandleForWriting.close()
+      try? stdin.fileHandleForReading.close()
+    }
+    let child = try limited(
+      "-n 300", binary: proxyBinary(), input: stdin.fileHandleForReading.fileDescriptor,
+      evidence: evidence, name: "proxy")
+    defer { child.cleanup() }
+    // stdin stays open and empty: a proxy that read it would wait, not exit.
+    let status = try await child.wait()
+    try check(status != 0 && status != 97, "a 300-descriptor hard limit was accepted")
+    try check(
+      try String(decoding: child.output(), as: UTF8.self).contains(
+        "iso-proxy startup failure: open-file hard limit 300 is below the 576 descriptors"),
+      "refusal does not name the limit")
+    try redacted(child.output())
+  }
+
   @Test(.enabled(if: ProcessInfo.processInfo.environment["ISO_PROXY_LIVE_TLS_GATE"] == "1"))
   func productionSystemTLSRequiresTrustdPermission() async throws {
     let evidence = try Evidence("live-system-tls")

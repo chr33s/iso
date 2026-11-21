@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import Synchronization
 import Testing
 
 @testable import IsoHost
@@ -85,7 +86,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
     .init(
       executable: "/bin/sh", arguments: ["-c", "cat > '\(file)'; exit 5"],
       environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(5), input: Array("token".utf8)),
-    inheritStdin: false, deadline: nil)
+    inheritStdin: false)
   #expect(termination == .exited(5))
   #expect(termination.description == "exit status: 5")
   #expect(ProcessRunner.Termination.signaled(9).description == "signal: 9 (SIGKILL)")
@@ -94,12 +95,128 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
 
 @Test func attachedModeKillsAChildAtItsDeadline() throws {
   let request = ProcessRunner.Request(
-    executable: "/bin/sleep", arguments: ["30"], environment: [:], deadline: .seconds(30))
+    executable: "/bin/sleep", arguments: ["30"], environment: [:], deadline: .milliseconds(200))
   let start = ContinuousClock.now
   #expect(throws: ProcessRunner.Failure.timedOut) {
-    try ProcessRunner().attached(request, inheritStdin: false, deadline: .milliseconds(200))
+    try ProcessRunner().attached(request, inheritStdin: false)
   }
   #expect(ContinuousClock.now - start < .seconds(10))
+}
+
+/// Every mode enforces the request's own deadline: a caller that sets one
+/// is never silently unbounded (`unbounded` is the explicit opt-out).
+@Test func everyModeHonoursTheRequestDeadline() throws {
+  let sleeper = ProcessRunner.Request(
+    executable: "/bin/sleep", arguments: ["30"], environment: [:], deadline: .milliseconds(200))
+  let start = ContinuousClock.now
+  #expect(throws: ProcessRunner.Failure.timedOut) {
+    try ProcessRunner().attached(sleeper, inheritStdin: false)
+  }
+  var input: [Int32] = [-1, -1]
+  #expect(pipe(&input) == 0)
+  defer { close(input[1]) }
+  #expect(throws: ProcessRunner.Failure.timedOut) {
+    try ProcessRunner().relayed(sleeper, preamble: Array("x\n".utf8), input: input[0])
+  }
+  let consumer = ProcessRunner.Request(
+    executable: "/bin/cat", arguments: [], environment: [:], deadline: .unbounded)
+  #expect(throws: ProcessRunner.Failure.timedOut) {
+    try ProcessRunner().pipeline(sleeper, consumer)
+  }
+  #expect(throws: ProcessRunner.Failure.timedOut) {
+    try ProcessRunner().stream(sleeper) { (_, _) throws(ProcessRunner.Failure) in }
+  }
+  #expect(ContinuousClock.now - start < .seconds(10))
+  // A connection-lifetime child cannot enforce one, so it refuses it.
+  #expect(throws: ProcessRunner.Failure.spawn(errno: EINVAL)) {
+    try ProcessRunner().piped(sleeper)
+  }
+  let unbounded = try ProcessRunner().attached(
+    .init(
+      executable: "/bin/sh", arguments: ["-c", "exit 3"], environment: [:], deadline: .unbounded),
+    inheritStdin: false)
+  #expect(unbounded == .exited(3))
+}
+
+/// Attached children share iso's process group, so a signal sent to iso's pid
+/// alone never reaches them: they are registered and forwarded to by pid.
+@Test func attachedChildrenAreRegisteredAndReceiveForwardedSignals() throws {
+  let directory = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let marker = directory + "/pid"
+  let result = Mutex<Result<ProcessRunner.Termination, ProcessRunner.Failure>?>(nil)
+  let thread = Thread {
+    let outcome = Result { () throws(ProcessRunner.Failure) in
+      try ProcessRunner().attached(
+        .init(
+          executable: "/bin/sh", arguments: ["-c", "echo $$ > '\(marker)'; exec sleep 30"],
+          environment: ["PATH": "/usr/bin:/bin"], deadline: .seconds(20)),
+        inheritStdin: false)
+    }
+    result.withLock { $0 = outcome }
+  }
+  thread.start()
+  var pid: pid_t?
+  let waitStart = ContinuousClock.now
+  while pid == nil, ContinuousClock.now - waitStart < .seconds(5) {
+    pid = (try? String(contentsOfFile: marker, encoding: .utf8)).flatMap {
+      pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    if pid == nil { usleep(10_000) }
+  }
+  let child = try #require(pid)
+  #expect(ChildGroups.live(.attached).contains(child))
+  #expect(!ChildGroups.live(.group).contains(child))
+  // What the termination handler does, with tables holding only this child
+  // so no other test's children are signalled.
+  let groups = ChildGroups.Table.allocate()
+  let attached = ChildGroups.Table.allocate()
+  attached.slots[0] = child
+  ChildGroups.forward(SIGTERM, groups: groups, attached: attached)
+  let deadline = ContinuousClock.now + .seconds(10)
+  while result.withLock({ $0 }) == nil, ContinuousClock.now < deadline { usleep(10_000) }
+  #expect(try result.withLock({ $0 })?.get() == .signaled(SIGTERM))
+  #expect(!ChildGroups.live(.attached).contains(child))
+}
+
+/// The in-process kernel read is what `ps -ww -o command=` printed, so tunnel
+/// and lease identity checks keep their meaning without spawning `ps`.
+@Test func kernelCommandLinesMatchPSWithoutSpawningIt() throws {
+  let directory = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let argv = ["/bin/sleep", "29.5"]
+  let child = try ProcessRunner().piped(
+    .init(
+      executable: argv[0], arguments: Array(argv.dropFirst()), environment: [:],
+      deadline: .unbounded))
+  defer { child.terminate() }
+  #expect(ProcessIdentity.arguments(child.pid) == argv)
+  let ps = try sh("/bin/ps -ww -o command= -p \(child.pid)")
+  let printed = String(decoding: ps.stdout, as: UTF8.self).trimmingUnicodeWhitespace()
+  #expect(ProxyLauncher.commandLine(child.pid) == printed)
+  #expect(ProxyLauncher.commandLine(child.pid) == "/bin/sleep 29.5")
+  child.terminate()
+  #expect(ProcessIdentity.arguments(child.pid) == nil)
+  #expect(ProxyLauncher.commandLine(-1) == nil)
+}
+
+/// State inside a directory another process may remove is never written by
+/// recreating that directory.
+@Test func aMustExistWriteNeverRecreatesItsDirectory() throws {
+  let directory = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(atPath: directory) }
+  let gone = directory + "/instance"
+  #expect(throws: HostError.self) {
+    try AtomicFile.write(
+      Array("a".utf8), to: gone + "/state.json", mode: .atMost(0o600), parents: .mustExist)
+  }
+  #expect(throws: HostError.self) {
+    try StateStore.writeInstanceFile(["a": 1], to: gone + "/state.json")
+  }
+  #expect(!FileManager.default.fileExists(atPath: gone))
+  try FileManager.default.createDirectory(atPath: gone, withIntermediateDirectories: false)
+  try StateStore.writeInstanceFile(["a": 1], to: gone + "/state.json")
+  #expect(FileManager.default.fileExists(atPath: gone + "/state.json"))
 }
 
 @Test func remoteCommandEscapesArgumentsOnce() throws {
@@ -119,7 +236,7 @@ private func sh(_ script: String, deadline: Duration = .seconds(5), limit: Int =
   _ = try ProcessRunner().stream(
     .init(
       executable: "/bin/sh", arguments: ["-c", "echo $$"], environment: [:],
-      deadline: .seconds(5)), deadline: .seconds(5)
+      deadline: .seconds(5))
   ) { _, bytes in
     if let pid = pid_t(
       String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))

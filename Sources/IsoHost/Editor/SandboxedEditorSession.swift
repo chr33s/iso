@@ -19,6 +19,8 @@ package struct SandboxedEditorSession {
   var supervision: Duration = SessionSupervisor.interval
   var enclaveParent: () throws -> String = { try EditorEnclave.sessionsDirectory() }
   var sandboxExec = "/usr/bin/sandbox-exec"
+  /// Ends every process the session's profile confines, wherever it went.
+  var endConfined: (String) -> Void = { EditorSessionSweep.end(session: $0) }
 
   enum End {
     case exited
@@ -31,10 +33,20 @@ package struct SandboxedEditorSession {
     // Signals set a flag, so deferred cleanup always runs.
     let guardian = Shutdown.install()
     defer { guardian.restore() }
+    // Without the sandbox query a detached editor process could outlive
+    // the session, so the session does not start.
+    guard EditorSessionSweep.available else {
+      throw HostError(
+        "This macOS does not offer the sandbox query iso uses to end every editor process; the sandboxed editor cannot run"
+      )
+    }
     let parent = try enclaveParent()
     EditorEnclave.removeStale(in: parent)
     let enclave = try EditorEnclave.create(in: parent)
     defer { enclave.remove() }
+    // After the tree and group are killed: a process that detached from
+    // both (setsid) still carries the session's sandbox.
+    defer { endConfined(enclave.root) }
     try enclave.pinHostKey(from: guest.knownHosts)
     let publicKey = try enclave.generateIdentity(runner: ssh.runner)
     let tunnelPort = try Self.freeLoopbackPort()

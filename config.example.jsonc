@@ -7,13 +7,14 @@
 // Uncomment members to override defaults; an empty object gives the defaults.
 // Trailing commas are not accepted. Run `iso validate` to check the file.
 {
-  // "data_dir": "~/.iso",        // VM artifacts: images, instances, keys
+  // "data_dir": "~/.iso",        // absolute or ~/: images, instances, keys
 
-  // GitHub auth strategy: a string ("auto", "env", "off", "pat") or an object
-  // with per-repo PAT entries. `iso github setup-pat --repo owner/name`
-  // populates it; `iso github assign-pat --vm NAME --repo owner/name` selects
-  // an entry for one VM.
-  // "github": "auto",
+  // GitHub auth strategy, "off" by default (no token reaches the guest): a
+  // string ("auto", "env", "off", "pat") or an object with per-repo PAT entries.
+  // "auto" and "env" forward the host's own token; prefer "pat".
+  // `iso github setup-pat --repo owner/name` populates it; `iso github
+  // assign-pat --vm NAME --repo owner/name` selects an entry for one VM.
+  // "github": "off",
   // "github": {
   //   "mode": "pat",
   //   "skip": ["owner/big-repo"],   // repos to skip the auto-prompt for
@@ -80,7 +81,8 @@
   // reference here. Credentials must be `cmd:` or `vault:NAME` (iso secrets)
   // references; literal values are rejected. Cannot be combined with codex auth "chatgpt".
   // "proxy": {
-  //   "mode": "auto",             // "required": never forward a raw provider key;
+  //   "mode": "required",         // the default: never forward a raw provider key;
+  //                               // "auto": forward providers without an upstream;
   //                               // "off": start no proxy
   //   "anthropic": {
   //     "credential": "cmd:security find-generic-password -s iso-anthropic -a anthropic -w",
@@ -162,8 +164,9 @@
   // only) or "enforce". Fixed per VM boot: edits apply at the next boot.
   // Enforcing provider actions requires proxy.mode "required"; enforcing
   // workspace.pull.apply requires workspace.pull.mode "stage". Quotas count
-  // admitted proxy requests and reset at each new boot; approvals are an
-  // inline confirmation at `iso pull --apply`.
+  // admitted proxy requests per provider and instance (a guard listing both
+  // providers gives each its own max_requests) and reset at each new boot;
+  // approvals are an inline confirmation at `iso pull --apply`.
   // "policy": {
   //   "version": 1,
   //   "mode": "enforce",

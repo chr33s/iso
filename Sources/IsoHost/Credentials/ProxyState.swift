@@ -85,6 +85,48 @@ package struct ProxyState: Sendable, Equatable {
   }
 }
 
+extension ProxyState {
+  /// The Keychain items `iso proxy setup --vm` wrote for `instance` that its
+  /// `proxy.json` still names: exactly service `iso-<provider>-<vm>` and
+  /// account `<provider>`. Any other reference is the user's own. Read
+  /// before destroy removes the instance directory; an unreadable file
+  /// names none.
+  package static func ownedKeychainItems(_ instance: Instance) -> [KeychainReference] {
+    guard let bytes = try? StateStore.readControlFile(instance.proxyStatePath),
+      case .object(let members)? = try? ConfigLoader.parse(
+        bytes, format: .json, path: instance.proxyStatePath, limits: .configuration)
+    else { return [] }
+    return ProxyProvider.allCases.compactMap { provider in
+      guard case .object(let entry)? = members[provider.rawValue],
+        case .string(let credential)? = entry["credential"],
+        let item = KeychainReference.parse(credential),
+        item.service == ProxyProvisioning.service(for: provider, vm: instance.name),
+        item.account == provider.rawValue
+      else { return nil }
+      return item
+    }
+  }
+
+  /// Delete `items` once their instance is destroyed. A failure is a
+  /// warning naming the manual command, never a reason to keep the VM.
+  package static func forget(
+    _ items: [KeychainReference], keychain: Keychain, diagnostics: Diagnostics
+  ) {
+    for item in items {
+      switch keychain.delete(item) {
+      case .deleted:
+        diagnostics.log(
+          .info, "Removed the per-VM proxy credential \(item.service) from the Keychain")
+      case .missing: break
+      case .failed(let reason):
+        diagnostics.warn(
+          "Could not remove the per-VM proxy credential \(item.service) from the Keychain (\(reason)); delete it with `\(item.deleteCommand)`"
+        )
+      }
+    }
+  }
+}
+
 /// `iso proxy status` resolution, with credentials redacted.
 package enum ProxyResolution: Sendable, Equatable {
   case off

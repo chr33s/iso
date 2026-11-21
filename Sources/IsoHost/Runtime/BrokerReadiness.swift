@@ -29,7 +29,8 @@ enum BrokerReadiness {
     func persistVerificationKey(_ instance: Instance, provider: ProxyProvider) throws {
       try AtomicFile.write(
         Array(identity.verificationKey.encoded.utf8),
-        to: BrokerReadiness.keyPath(instance, provider: provider), mode: .atMost(0o600))
+        to: BrokerReadiness.keyPath(instance, provider: provider), mode: .atMost(0o600),
+        parents: .mustExist)
     }
   }
 

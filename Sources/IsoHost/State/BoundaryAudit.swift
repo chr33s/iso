@@ -225,13 +225,16 @@ package enum BoundaryAudit {
     let line = Array((event.json(at: now).compactRendered() + "\n").utf8)
     let path = path(instance)
     do {
-      let lock = try FileLock.sibling(of: path)
+      // An instance destroyed while this command ran is not recreated by it.
+      guard let lock = try FileLock.siblingInExistingDirectory(of: path) else {
+        throw HostError("instance '\(instance.name)' no longer exists")
+      }
       defer { lock.release() }
       var size = stat()
       if lstat(path, &size) == 0, Int(size.st_size) + line.count > maxBytes {
         let existing = try readAll(path)
         let keep = Array(existing.suffix(maxBytes / 2).drop(while: { $0 != 0x0A }).dropFirst())
-        try AtomicFile.write(keep, to: path, mode: .atMost(0o600))
+        try AtomicFile.write(keep, to: path, mode: .atMost(0o600), parents: .mustExist)
       }
       let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
       guard fd >= 0 else { throw HostError.posix("Failed to open", path) }

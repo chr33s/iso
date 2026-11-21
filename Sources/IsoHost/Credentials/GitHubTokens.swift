@@ -88,9 +88,9 @@ package struct GitHubTokens: Sendable {
     if let assigned { return try patToken(github, repo: assigned) }
     if let slug = Self.clonePATSlug(github, url: url) { return try patToken(github, repo: slug) }
     let ambient = GitHubSourceAuth.ambient(github)
-    return Self.selectHostToken(
-      gh: ambient.gh ? tools.ghAuthToken()?.expose() : nil,
-      env: ambient.env ? tools.environment["GITHUB_TOKEN"] : nil
+    return GitHubSourceAuth.hostToken(
+      env: ambient.env ? tools.environment["GITHUB_TOKEN"] : nil,
+      gh: { ambient.gh ? tools.ghAuthToken()?.expose() : nil }
     ).map(Secret.init)
   }
 
@@ -98,15 +98,6 @@ package struct GitHubTokens: Sendable {
     guard case .pat? = github, let slug = RepoSlug.parse(url: url), github?.patEntry(slug) != nil
     else { return nil }
     return slug
-  }
-
-  /// Prefer `gh`, then `GITHUB_TOKEN`; each trimmed, blank means absent.
-  static func selectHostToken(gh: String?, env: String?) -> String? {
-    let normalize = { (value: String) -> String? in
-      let trimmed = value.trimmingUnicodeWhitespace()
-      return trimmed.isEmpty ? nil : trimmed
-    }
-    return gh.flatMap(normalize) ?? env.flatMap(normalize)
   }
 }
 
@@ -313,7 +304,8 @@ package struct GitHubAssignment: Equatable, Sendable {
     try validate(config)
     // serde_json's compact form; a slug needs no escaping.
     try AtomicFile.write(
-      Array("{\"repo\":\"\(repo)\"}".utf8), to: Self.path(instance), mode: .atMost(0o600))
+      Array("{\"repo\":\"\(repo)\"}".utf8), to: Self.path(instance), mode: .atMost(0o600),
+      parents: .mustExist)
   }
 
   package static func remove(_ instance: Instance) throws {
@@ -427,11 +419,29 @@ package struct HostGitHubTokens: GitHubTokenSource {
 /// devcontainer discovery: ambient host credentials are used only when the mode
 /// explicitly selects them; missing scope is a refusal or anonymous request.
 package enum GitHubSourceAuth {
+  /// `gh auth token` for github.com. Without `--hostname`, `gh` answers for
+  /// `GH_HOST` or a sole configured host, which can be a GitHub Enterprise
+  /// Server whose token must reach neither github.com nor a guest.
+  package static let ghTokenArguments = ["auth", "token", "--hostname", "github.com"]
+
   package static func ambient(_ github: GitHubAuth?) -> (gh: Bool, env: Bool) {
     switch github {
     case .auto?: (true, true)
     case .env?: (false, true)
     case .off?, .pat?, nil: (false, false)
     }
+  }
+
+  /// `GITHUB_TOKEN`, else `gh`'s github.com token: the documented `auto`
+  /// order, which the session token also follows, so a token the user set
+  /// for iso is never passed over for `gh`'s broader login. Each is trimmed
+  /// and blank means absent; `gh` runs only when `GITHUB_TOKEN` gives none.
+  package static func hostToken(env: String?, gh: () -> String?) -> String? {
+    normalized(env) ?? normalized(gh())
+  }
+
+  static func normalized(_ token: String?) -> String? {
+    guard let trimmed = token?.trimmingUnicodeWhitespace(), !trimmed.isEmpty else { return nil }
+    return trimmed
   }
 }

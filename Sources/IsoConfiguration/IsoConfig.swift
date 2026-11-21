@@ -22,6 +22,19 @@ package struct HostPath: Hashable, Sendable, CustomStringConvertible {
 
   package init(absolute path: String) { self.path = path }
 
+  /// A directory iso keeps state in: absolute once `~` is expanded, so the
+  /// state root never depends on the working directory (and `""` cannot
+  /// put it under `/`).
+  package static func stateDirectory(expanding raw: String, home: String?) throws(ValidationError)
+    -> HostPath
+  {
+    let path = HostPath(expanding: raw, home: home)
+    guard path.path.hasPrefix("/") else {
+      throw ValidationError("must be an absolute path or start with ~/, got \(debugQuoted(raw))")
+    }
+    return path
+  }
+
   package func appending(_ component: String) -> HostPath {
     HostPath(absolute: path.hasSuffix("/") ? path + component : path + "/" + component)
   }

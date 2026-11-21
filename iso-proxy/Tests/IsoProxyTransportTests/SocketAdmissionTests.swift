@@ -27,7 +27,7 @@ func productionClientSharesSocketBudgetUntilPhysicalClose(limit: Int, shutdown: 
     StaticSocketResolver(loop: loop, address: address)
   }
   let upstream =
-    limit == Limits.connections
+    try limit == Limits.connections
     ? UpstreamClient(group: group, resolutionFactory: factory)
     : UpstreamClient(group: group, socketCapacity: Capacity(limit), resolutionFactory: factory)
   let token = String(repeating: "a", count: 64)
@@ -165,7 +165,7 @@ func tlsProbeCancellationReleasesItsOwnedSocketForBothProviders(shutdown: Bool) 
     }
   }.bind(host: "127.0.0.1", port: 0).get()
   let address = try SocketAddress(ipAddress: "127.0.0.1", port: #require(server.localAddress?.port))
-  let upstream = UpstreamClient(group: group, socketCapacity: Capacity(1)) { loop in
+  let upstream = try UpstreamClient(group: group, socketCapacity: Capacity(1)) { loop in
     StaticSocketResolver(loop: loop, address: address)
   }
   do {

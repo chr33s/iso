@@ -194,6 +194,40 @@ private func option(_ call: [String], _ name: String) -> String? {
   }
 }
 
+/// A host-control delete forgets the VM's own `iso proxy setup --vm` item
+/// once the instance is gone, and leaves a user-authored reference alone.
+@Test func aHostControlDeleteForgetsTheVMsOwnProxyCredential() throws {
+  let install = try installed()
+  defer { install.remove() }
+  let id = InstanceID.generate()
+  let instance = try Instance.allocate(
+    install.config, name: AppleNativeHost.instanceName(id), image: .default, workspacePath: nil)
+  try install.backend.createAndStart(instance, diskGiB: nil)
+  let sidecar = try install.backend.ownedSidecar(instance)
+  let service = "iso-anthropic-\(instance.name)"
+  try ProxyState.setOverride(
+    instance, provider: .anthropic,
+    credential: ProxyProvisioning.reference(service: service, account: "anthropic"),
+    auth: .apiKey)
+  try ProxyState.setOverride(
+    instance, provider: .openai,
+    credential: CredentialReference("cmd:security find-generic-password -s mine -a openai -w")!,
+    auth: .bearer)
+  let security = install.root + "/security"
+  try Data(
+    "#!/bin/sh\n[ -d \"\(instance.directory)\" ] && echo still-there >> \"\(install.root)/argv\"\nprintf '%s\\n' \"$*\" >> \"\(install.root)/argv\"\n"
+      .utf8
+  ).write(to: URL(fileURLWithPath: security))
+  chmod(security, 0o755)
+  let native = AppleNativeHost(
+    backend: install.backend, keychain: Keychain(security: security, environment: [:]))
+  try native.delete(id, runtime: sidecar.machineID, owner: sidecar.ownerID)
+  #expect(!FileManager.default.fileExists(atPath: instance.directory))
+  #expect(
+    (try? String(contentsOfFile: install.root + "/argv", encoding: .utf8))
+      == "delete-generic-password -s \(service) -a anthropic\n")
+}
+
 @Test func theAdvertisedRunPolicyIsTheDigestAFreshHostRunBootsUnder() throws {
   let install = try installed()
   defer { install.remove() }

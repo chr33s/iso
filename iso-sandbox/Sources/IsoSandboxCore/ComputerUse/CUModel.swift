@@ -79,6 +79,9 @@ package struct CUActionRequest: Codable, Sendable {
   package static let maxPath = 1000
   package static let maxText = 4096
   package static let maxScroll = 10_000
+  /// The scroll deltas accepted. A range, not `abs(_:) <= maxScroll`: `abs(Int.min)` traps, and a
+  /// guest chooses `dx` and `dy`.
+  package static let scrollRange = -maxScroll...maxScroll
 
   /// Refuses (never clamps) anything outside the contract.
   package func validated(width: Int, height: Int) throws -> CUAction {
@@ -111,7 +114,7 @@ package struct CUActionRequest: Codable, Sendable {
     case "scroll":
       let sx = dx ?? 0
       let sy = dy ?? 0
-      guard abs(sx) <= Self.maxScroll, abs(sy) <= Self.maxScroll, sx != 0 || sy != 0 else {
+      guard Self.scrollRange.contains(sx), Self.scrollRange.contains(sy), sx != 0 || sy != 0 else {
         throw SandboxError("scroll needs a non-zero dx or dy within ±\(Self.maxScroll)")
       }
       return .scroll(try here(), dx: sx, dy: sy)

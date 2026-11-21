@@ -89,7 +89,7 @@ private func exerciseUpstreamDisconnect(
                 headers: request.headers, body: request.body)
               return OwnedHTTPRequest(
                 request: local, relay: relay, eventLoop: loop,
-                tlsConfiguration: tls.client, connectHost: "127.0.0.1")
+                tls: tls.client, connectHost: "127.0.0.1")
             })
         }
       }

@@ -100,7 +100,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--mount` | Mount `DIR` at `/workspace` instead of using `--copy` |
 | `--extra-mount <spec>` | Additional host directory to mount into the guest (`HOST_PATH[:GUEST_PATH]`, repeatable; specify a guest path other than `/workspace` when using `--copy`) |
 | `--git-repo <url>` | Clone a git repository into `/workspace` instead of copying a local project directory |
-| `--vcpus <N>` | Number of vCPUs when creating a new instance |
+| `--vcpus <N>` | Number of vCPUs when creating a new instance (1-255; `0` is a usage error) |
 | `--mem <MiB>` | Memory in MiB when creating a new instance |
 | `--disk <GiB>` | Instance disk size when creating a new instance |
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
@@ -116,7 +116,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--devcontainer <path>` | Explicit path to a `devcontainer.json` to use (skips discovery and prompt) |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation |
 | `--egress <mode>` | Egress mode when creating an instance: `open`, `none`, or `filtered` |
-| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered` |
+| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered`; with any other effective egress it is a usage error (exit 2) |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any VM work |
 | `--json` | With `--dry-run`, emit the resolved plan as JSON on stdout (`{ report, profiles, guest_user, vm }`) instead of the text report on stderr |
 
@@ -175,7 +175,7 @@ iso setup [FLAGS]
 |------|-------------|
 | `--config-only` | Only create the JSONC configuration template, then exit |
 | `-y`, `--yes` | Deprecated; has no effect and prints a warning. It never trusts a discovered `devcontainer.json`: pass `--devcontainer PATH` to use one or `--no-devcontainer` to ignore it |
-| `--vcpus <N>` | Number of vCPUs (overrides config) |
+| `--vcpus <N>` | Number of vCPUs (overrides config; 1-255, `0` is a usage error) |
 | `--mem <MiB>` | Memory in MiB (overrides config) |
 | `--rebuild` | Force rebuild of template rootfs |
 | `--profile <list>` | Install profiles, repeatable or comma-separated: `python`, `node`, `c`, `fuzz`, `rust`, `go`, `desktop`. An empty name (`a,,b`) is refused |
@@ -272,7 +272,7 @@ instances, pass the instance name.
 | `--devcontainer <path>` | Dry-run translation aid; normal restarts reject devcontainer creation options. |
 | `--no-devcontainer` | Ignore any discovered `devcontainer.json` for this invocation (escape hatch for CI). |
 | `--egress <mode>` | Egress mode when creating an instance: `open`, `none`, or `filtered` |
-| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered` |
+| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered`; with any other effective egress it is a usage error (exit 2) |
 | `--dry-run` | Translate `devcontainer.json` and print the report, then exit before any VM work. |
 | `--json` | With `--dry-run`, emit the resolved plan as JSON on stdout instead of the text report on stderr. |
 
@@ -422,7 +422,7 @@ With the global `--output json`, prints one `iso.machine/v1` document instead; s
 
 ### `destroy`
 
-Stop the VM and remove its resources: disk, config, and SSH entries. Images are preserved unless you pass `--all`.
+Stop the VM and remove its resources: disk, config, SSH entries, and the Keychain items `iso proxy setup --vm` stored for it (a per-VM override that names any other item is left alone; a failed delete is a warning with the command to run). Images are preserved unless you pass `--all`.
 
 ```
 iso destroy [NAME] [FLAGS]
@@ -460,7 +460,7 @@ With the global `--output json`, prints one `iso.machine/v1` document instead; s
 
 ### `status`
 
-Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance. A running filtered instance whose live readiness proof fails, including the guest-loopback proofs, is reported as `unhealthy` (with the failed proof as its reason in the named text report and machine output); the command still succeeds, while commands that need the guest refuse it.
+Print instance status. Without a name, lists every instance with its state, image, backend, and resource usage (for running instances). Usage is read over SSH with a 15-second deadline, every running instance at once, so a guest that does not answer shows no usage instead of delaying the listing. An instance whose state cannot be probed is listed as `unknown` with a warning, rather than failing the whole listing. With a name, prints detailed status for that instance. A running filtered instance whose live readiness proof fails, including the guest-loopback proofs, is reported as `unhealthy` (with the failed proof as its reason in the named text report and machine output); the command still succeeds, while commands that need the guest refuse it.
 
 ```
 iso status [NAME]
@@ -520,7 +520,7 @@ iso run <agent> [--workspace DIR] [--name NAME]
 | `--image <name>` | Image for a new instance. Mutually exclusive with `--profile` |
 | `--profile <list>` | Profile set for a new instance, repeatable or comma-separated. Replaces a definition's environment selector |
 | `--egress <mode>` | Egress mode when creating an instance: `open`, `none`, or `filtered` |
-| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered` |
+| `--allow-host <host>` | Exact host to approve for a filtered boot, repeatable. Does not change `none` or `open` to `filtered`; with any other effective egress it is a usage error (exit 2) |
 | `--prepare` | Authorize image preparation. Preparation uses the host network and receives neither the workspace nor provider credentials |
 | `--rm` | Create a new disposable instance and destroy it after the agent exits. Never attaches cleanup to an existing VM |
 | `--ask` | Use the adapter's permission prompts instead of its default bypass |
@@ -1179,7 +1179,7 @@ iso uninstall [FLAGS]
 |------|-------------|
 | `-y`, `--yes` | Skip interactive confirmation prompts. Removes data unless `--keep-data` is set. |
 | `--keep-data` | Remove only the binary; preserve `<data_dir>/backends/apple-container-v1/` and the update-check state. Conflicts with `--purge`. |
-| `--purge` | Also destroy owned instances and remove `<data_dir>/backends/apple-container-v1/` and the update-check state without prompting; the config and `secrets/` are kept. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
+| `--purge` | Also destroy owned instances (with their `iso proxy setup --vm` Keychain items, as `destroy` does) and remove `<data_dir>/backends/apple-container-v1/` and the update-check state without prompting; the config, `secrets/` and Keychain items the config names are kept. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
 
 Without `--yes`, the command prints a summary (binary path, data directory, instance and image counts) and asks for confirmation. A second prompt asks whether to also remove the data directory unless `--keep-data` or `--purge` is set. Non-interactive runs require `--yes`.
 
@@ -1226,7 +1226,7 @@ iso github <subcommand>
 | `setup-pat [--repo owner/name]` | Run the wizard end-to-end: open the GitHub PAT-creation form, validate the pasted token against `api.github.com`, store it in the macOS Keychain (no fallback store), and write a `github.pat["owner/repo"]` entry that references it with `cmd:`. The repo is auto-detected from `git remote get-url origin` when `--repo` is omitted. |
 | `rotate-pat --repo owner/name` | Re-run the wizard for an existing entry (FGPATs expire — max 1 year). |
 | `status [--vm NAME] [--probe] [--json]` | List configured entries and whether they are stored in the macOS Keychain. By default the `cmd:` reference is *not* resolved (so no Keychain or other prompt fires). Pass `--probe` to also resolve each entry (one secret-store unlock covers every `vault:` entry) and report whether the secret store still serves it. Pass `--json` for machine-readable output. |
-| `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references isolate's Keychain item, delete that item. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want isolate to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
+| `forget-pat --repo owner/name` | Drop the `github.pat["owner/repo"]` entry and, when it references isolate's Keychain item, delete that item. If the delete fails (for example a locked keychain), the entry is kept and the command fails with the manual `security delete-generic-password` command; an item that is already gone is reported and the entry removed. A user-authored `cmd:` reference is left for you to clean up. Does **not** add a skip marker — use the auto-prompt's `never` answer if you want isolate to stop asking about this repo. Does **not** revoke the PAT on GitHub. |
 
 ```
 iso github setup-pat --repo chr33s/iso

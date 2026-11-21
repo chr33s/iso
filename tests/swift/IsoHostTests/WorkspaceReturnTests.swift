@@ -460,7 +460,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   let attempt = try ReceiveAttempt(f.location)
   // A writer that inherited the lease and outlives the receive call.
   var request = ProcessRunner.Request(
-    executable: "/bin/sleep", arguments: ["3"], environment: [:], deadline: .seconds(10))
+    executable: "/bin/sleep", arguments: ["3"], environment: [:], deadline: .unbounded)
   request.inheritedDescriptors = [attempt.writerDescriptor]
   let writer = try ProcessRunner().piped(request)
   defer { writer.terminate() }
@@ -656,7 +656,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
   let attempt = try ReceiveAttempt(f.location)
   lock.release()
   var request = ProcessRunner.Request(
-    executable: "/bin/sleep", arguments: ["3"], environment: [:], deadline: .seconds(10))
+    executable: "/bin/sleep", arguments: ["3"], environment: [:], deadline: .unbounded)
   request.inheritedDescriptors = [attempt.writerDescriptor]
   let writer = try ProcessRunner().piped(request)
   defer { writer.terminate() }
@@ -669,7 +669,7 @@ func theConfinedTarReceiverWritesOnlyBeneathItsTree() throws {
 /// descriptor numbers again: by then another thread may own them.
 @Test func terminatingAPipedChildTwiceClosesNothingElse() throws {
   let child = try ProcessRunner().piped(
-    .init(executable: "/bin/sleep", arguments: ["5"], environment: [:], deadline: .seconds(10)))
+    .init(executable: "/bin/sleep", arguments: ["5"], environment: [:], deadline: .unbounded))
   let numbers = [child.input, child.output]
   child.terminate()
   // Take the freed numbers, as a concurrent test would (unless a parallel

@@ -280,3 +280,27 @@ private func startOptions(_ context: CommandContext) throws -> BootOptions {
   }
   #expect(!"\(reached)".contains("no provider proxy is configured"))
 }
+
+@Test func aPromptedLocalModelTokenIsReadWithEchoOff() throws {
+  var lines: [String] = []
+  var secrets: [String] = []
+  var prompts = ModelCommand.EndpointPrompts()
+  prompts.confirm = { _ in true }
+  prompts.line = { prompt in
+    lines.append(prompt)
+    return prompt.contains("host URL") ? "http://localhost:11434" : "qwen"
+  }
+  prompts.secret = { prompt in
+    secrets.append(prompt)
+    return Secret("local-token")
+  }
+  let endpoint = try #require(try ModelCommand.promptEndpoint("Claude", prompts: prompts))
+  #expect(endpoint.authToken?.expose() == "local-token")
+  #expect(endpoint.model == "qwen")
+  // The token never goes through the echoing line reader.
+  #expect(lines.count == 2)
+  #expect(!lines.contains { $0.contains("auth token") })
+  #expect(secrets == ["Claude auth token (optional — press enter to skip)"])
+  prompts.secret = { _ in nil }
+  #expect(try ModelCommand.promptEndpoint("Codex", prompts: prompts)?.authToken == nil)
+}

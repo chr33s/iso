@@ -23,8 +23,7 @@ final class OwnedHTTPRequest: Sendable {
   }
 
   init(
-    request: HTTPClient.Request, relay: ResponseRelay, eventLoop: EventLoop,
-    tlsConfiguration: TLSConfiguration = UpstreamClient.tlsConfiguration(),
+    request: HTTPClient.Request, relay: ResponseRelay, eventLoop: EventLoop, tls: NIOSSLContext,
     connectHost: String? = nil, resolver: (Resolver & Sendable)? = nil,
     socketCapacity: Capacity? = nil
   ) {
@@ -50,9 +49,9 @@ final class OwnedHTTPRequest: Sendable {
       }
       let head = HTTPRequestHead(
         version: .http1_1, method: request.method, uri: uri, headers: headers)
-      value.connection = try CancellableTLSConnection(
+      value.connection = CancellableTLSConnection(
         host: connectHost ?? request.host, port: request.port, serverHostname: request.host,
-        configuration: tlsConfiguration, eventLoop: eventLoop, resolver: resolver,
+        context: tls, eventLoop: eventLoop, resolver: resolver,
         socketCapacity: socketCapacity,
         application: { channel in
           var limits = NIOHTTPDecoderLimitConfiguration()
