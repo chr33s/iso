@@ -1484,3 +1484,29 @@ private func fakeLifecycle(_ install: FakeInstallation) -> ProjectLifecycle {
     install.config, name: InstanceName("unrelated"), image: .default, workspacePath: nil)
   #expect(FileManager.default.fileExists(atPath: other.directory))
 }
+
+/// A return or grant writer holding a handle from before `iso destroy` fails
+/// instead of recreating the instance directory, a stray that would refuse
+/// every later allocation.
+@Test func returnAndGrantWritersNeverRecreateADestroyedInstance() throws {
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("gone"), image: .default, workspacePath: nil)
+  try install.backend.destroyInstance(instance)
+  let location = StageLocation(instance)
+  #expect(throws: HostError.self) { _ = try location.lock() }
+  #expect(throws: HostError.self) { _ = try location.loadSelectedLocked() }
+  let transfer = WorkspaceTransfer(
+    client: SSHClient(environment: [:], tools: .searchPath),
+    diagnostics: Diagnostics(verbosity: 0) { _ in })
+  #expect(throws: HostError.self) { _ = try transfer.discardStage(instance) }
+  #expect(throws: HostError.self) {
+    _ = try GrantLedger.reconcile(
+      instance, revoked: [], environment: [try EnvVarName("KEEP"): .literal("1")], forwards: [],
+      fresh: ["KEEP"])
+  }
+  #expect(!FileManager.default.fileExists(atPath: instance.directory))
+  _ = try Instance.allocate(
+    install.config, name: InstanceName("next"), image: .default, workspacePath: nil)
+}

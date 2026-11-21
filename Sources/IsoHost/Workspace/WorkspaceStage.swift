@@ -253,9 +253,16 @@ package struct StageLocation: Sendable {
   }
 
   /// Serializes receive, apply, discard and destroy of one instance's
-  /// stages across iso processes.
+  /// stages across iso processes. `.stage.lock` lives in the instance
+  /// directory, which `destroy` removes while holding it: locking never
+  /// recreates that directory, and a waiter whose instance was destroyed
+  /// fails instead of acting on it.
   package func lock() throws(HostError) -> FileLock {
-    try FileLock(path: (root as NSString).deletingLastPathComponent + "/.stage.lock")
+    let instance = (root as NSString).deletingLastPathComponent
+    guard let lock = try FileLock.siblingInExistingDirectory(of: instance + "/stage") else {
+      throw HostError("The instance at \(neutralizeControls(instance)) no longer exists")
+    }
+    return lock
   }
 
   func locked<T>(_ body: () throws(HostError) -> T) throws(HostError) -> T {

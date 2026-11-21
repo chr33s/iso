@@ -66,13 +66,18 @@ package struct GrantLedger: Codable, Equatable, Sendable {
     return ids
   }
 
+  /// Never recreates a destroyed instance's directory as a stray that would
+  /// block every later allocation, even when `destroy` races the write.
   func save(_ instance: Instance) throws {
-    // Writing would recreate a destroyed instance's directory as a stray.
-    var status = stat()
-    guard lstat(instance.directory, &status) == 0, status.st_mode & S_IFMT == S_IFDIR else {
-      throw HostError("Instance '\(instance.name)' no longer exists")
+    do {
+      try StateStore.writeInstanceFile(self, to: Self.path(instance))
+    } catch {
+      var status = stat()
+      guard lstat(instance.directory, &status) == 0 else {
+        throw HostError("Instance '\(instance.name)' no longer exists")
+      }
+      throw error
     }
-    try StateStore.writeControlFile(self, to: Self.path(instance))
   }
 
   static func scope(_ name: EnvVarName) -> String { name.rawValue }
