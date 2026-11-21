@@ -691,6 +691,14 @@ struct StageBuilder {
         issue("\(prefix)\(shown): unsupported file name (not UTF-8, or has control characters)")
         continue
       }
+      // A leading combining mark (or a trailing prepended one on the parent)
+      // joins a `/` into one `Character`, hiding it from every
+      // `Character`-based split of this path that follows.
+      guard slashesAreWholeCharacters(prefix + text) else {
+        try count(prefix + shown)
+        issue("\(prefix)\(shown): unsupported file name (joins a '/' into the next character)")
+        continue
+      }
       let path = prefix + text
       try count(path)
       var info = stat()

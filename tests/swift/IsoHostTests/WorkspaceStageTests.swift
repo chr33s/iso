@@ -120,6 +120,26 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(!StageBuilder.staysInside(link: "a", target: "/\u{301}/../etc"))
 }
 
+/// A staged name that joins the `/` before it (a leading combining mark) or
+/// after it (a parent ending in a prepended mark) is refused while walking:
+/// a `Character` split would read `d/\u{301}x` as one component, and the
+/// kernel would resolve it through the host's own `d` link.
+@Test func stagedNamesJoiningASeparatorAreRefusedWhileWalking() throws {
+  let f = try Fixture()
+  defer { f.cleanup() }
+  try f.link("d", to: f.outside, in: f.destination)
+  try f.write("\u{301}x", "host\n", in: f.outside)
+  try f.write("d/\u{301}x", "guest\n", in: f.tree)
+  try f.write("p\u{600}/b", "guest\n", in: f.tree)
+  let manifest = try f.build()
+  #expect(!manifest.applicable)
+  for path in ["d/\u{301}x", "p\u{600}/b"] {
+    #expect(manifest.issues.contains { $0.hasPrefix(path + ":") && $0.contains("joins a '/'") })
+    #expect(!manifest.changes.contains { $0.path == path })
+  }
+  try StageManifestValidator.validate(manifest)
+}
+
 @Test func linkContainmentIsLexical() {
   #expect(StageBuilder.staysInside(link: "a", target: "b"))
   #expect(StageBuilder.staysInside(link: "x/y/a", target: "../../b"))
@@ -339,6 +359,23 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(hunks.filter { $0.hasPrefix(" ") }.count == 6)
   #expect(hunks.contains("-10") && hunks.contains("+ten"))
   #expect(StageReview.hunks(old: old, new: old).isEmpty)
+}
+
+/// Guest content cannot forge diff lines: `\r\n` is one `Character`, so a
+/// `Character` split kept it inside a line and printed a second, unmarked
+/// line; and canonically equivalent lines are still different bytes.
+@Test func diffLinesSplitAtEveryLineFeedAndCompareBytes() throws {
+  let new = try #require(StageReview.lines(Array("ok\nadded\r\n unchanged-looking\n".utf8)))
+  #expect(new == ["ok", "added\r", " unchanged-looking"])
+  let hunks = StageReview.hunks(old: ["ok"], new: new)
+  #expect(hunks.allSatisfy { !$0.unicodeScalars.contains("\n") })
+  #expect(hunks.contains("+ unchanged-looking"))
+  // `String` equality would match these, so compare the rendered bytes.
+  let equivalent = StageReview.hunks(old: ["x;", "e\u{301}"], new: ["x\u{37E}", "\u{E9}"])
+    .map { Array($0.utf8) }
+  for line in ["-x;", "+x\u{37E}", "-e\u{301}", "+\u{E9}"] {
+    #expect(equivalent.contains(Array(line.utf8)), "\(line.debugDescription)")
+  }
 }
 
 @Test func symlinkChainsCannotEscape() throws {

@@ -64,6 +64,16 @@ import Testing
   #expect(throws: AgentDefinitionError.self) {
     try AgentDefinitionDecoder.decode(Array(traversal.utf8), path: "d.json", format: .json)
   }
+  // A `/` joined into one `Character` hides `..` from a `Character` split:
+  // `/w/../\u{301}x` (the kernel reads `..`) and `/w\u{600}/..` (`\u{600}` prepends).
+  for hidden in [#"/w/..\/́x"#, #"/w؀/.."#] {
+    let document = """
+      {"schema_version":1,"id":"repo-helper","display_name":"n","launch":{"argv":["t"],"working_directory":"\(hidden)"},"auth_adapter":"none"}
+      """
+    #expect(throws: AgentDefinitionError.self, "\(hidden)") {
+      try AgentDefinitionDecoder.decode(Array(document.utf8), path: "d.json", format: .json)
+    }
+  }
   let duplicate = """
     {"schema_version":1,"id":"repo-helper","id":"other","display_name":"n","launch":{"argv":["t"]},"auth_adapter":"none"}
     """

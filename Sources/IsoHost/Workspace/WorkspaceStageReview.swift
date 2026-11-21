@@ -190,11 +190,13 @@ package struct StageReview {
     return (bytes, digest)
   }
 
+  /// Split at every LF byte: `\r\n` is one `Character`, so a `Character`
+  /// split would keep it inside a line and print an unmarked line.
   static func lines(_ bytes: [UInt8]) -> [String]? {
-    guard !bytes.contains(0), let text = String(validating: bytes, as: UTF8.self) else {
-      return nil
+    guard !bytes.contains(0), String(validating: bytes, as: UTF8.self) != nil else { return nil }
+    var lines = bytes.split(separator: 0x0A, omittingEmptySubsequences: false).map {
+      String(decoding: $0, as: UTF8.self)
     }
-    var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     if lines.last == "" { lines.removeLast() }
     return lines
   }
@@ -212,7 +214,9 @@ package struct StageReview {
     guard old.count + new.count <= maxDiffLines else {
       return ["(diff skipped: more than \(maxDiffLines) lines)"]
     }
-    let difference = new.difference(from: old)
+    // Compared as bytes: `String` equality is canonical equivalence, which
+    // would show `;` replaced by U+037E (or NFC by NFD) as unchanged.
+    let difference = new.map { Array($0.utf8) }.difference(from: old.map { Array($0.utf8) })
     var removed = Set<Int>()
     var inserted = Set<Int>()
     for change in difference {

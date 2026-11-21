@@ -364,6 +364,9 @@ private func validateWorkingDirectory(_ raw: String, _ path: [JSONPathComponent]
   for scalar in raw.unicodeScalars where scalar.value < 0x20 || scalar.value == 0x7F {
     throw FieldError(path, "contains a control character")
   }
+  guard slashesAreWholeCharacters(raw) else {
+    throw FieldError(path, "joins a '/' into the next character")
+  }
   let parts = raw.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
   guard parts.first == "" else { throw FieldError(path, "must be an absolute guest path") }
   for part in parts.dropFirst() {
