@@ -8,6 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+## v0.11.0
+
 ### Security
 
 - **Returned paths that hide a `/`:** a combining mark or joiner right
@@ -112,6 +114,17 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Changed
 
+- **Upgrade notes — configurations now refused at load:** a relative or
+  empty `data_dir`; a `vault:` value in `claude.api_key`, `codex.api_key` or
+  an MCP header; `type: "sse"` under `codex.mcp_servers`; and a
+  `codex.mcp_servers` `env` entry that maps a key to a different name. Each
+  refusal names the field. devcontainer `mounts` are now reported as
+  unsupported, and the first `iso host` request after updating restarts a
+  host service that is still running the old build, ending its live sessions.
+- **Upgrade notes — the credential proxy refuses more request targets:** a
+  guest request whose target contains a raw `"` `<` `>` `[` `]` `^` `` ` ``
+  `{` `|` or `}` now gets a 400 instead of being forwarded re-encoded;
+  percent-encode those bytes in the client.
 - Tests: seeded property tests now cover the configuration loader,
   `NameFolding`, Codex TOML, the instance lifecycle (against a state model),
   the iso-policy evaluator, iso-egress relaying and CONNECT parsing, and
