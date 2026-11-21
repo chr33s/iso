@@ -132,6 +132,20 @@ import Testing
           [("a/b", [1])], extra: [tarHeader(name: "h", size: 0, type: "1", link: "a/\u{200C}/b")])
       ),
       ("ignorable-only name", tarArchive([("\u{200C}", [1])])),
+      // A combining mark after `/` makes one `Character` of both, hiding the
+      // separator from `Character`-based checks but not from the extractor.
+      ("traversal behind a combining mark", tarArchive([("../\u{301}x", [1])])),
+      ("absolute behind a combining mark", tarArchive([("/\u{301}/../etc/passwd", [1])])),
+      (
+        "symlink escape behind a combining mark",
+        tarArchive([], extra: [tarHeader(name: "l", size: 0, type: "2", link: "../\u{301}x")])
+      ),
+      // Folding drops U+202A, leaving the combining mark right after `/`.
+      (
+        "file beneath a link once folded",
+        tarHeader(name: "s", size: 0, type: "2", link: "d")
+          + tarArchive([("s/\u{202A}\u{301}x", [1])])
+      ),
     ]
     for (label, bytes) in hostile {
       #expect(throws: HostControlError.self, "\(label)") {

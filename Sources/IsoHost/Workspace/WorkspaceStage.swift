@@ -958,7 +958,9 @@ struct StageBuilder {
   /// A relative target that, resolved lexically from the link's directory,
   /// never climbs above the workspace root.
   static func staysInside(link path: String, target: String) -> Bool {
-    guard !target.isEmpty, !target.hasPrefix("/"), !hasControl(target) else { return false }
+    guard !target.isEmpty, slashesAreWholeCharacters(target), !target.hasPrefix("/"),
+      !hasControl(target)
+    else { return false }
     var depth = path.split(separator: "/").count - 1
     for component in target.split(separator: "/", omittingEmptySubsequences: true) {
       switch component {

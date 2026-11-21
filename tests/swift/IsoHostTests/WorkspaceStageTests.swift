@@ -105,6 +105,21 @@ private func operations(_ manifest: StageManifest) -> [String: StageOperation] {
   #expect(!FileManager.default.fileExists(atPath: f.destination + "/d"))
 }
 
+/// `/` followed by a combining mark is one `Character`, so a `Character`
+/// split read `../\u{301}/../../outside` as three components climbing one
+/// level; the kernel climbs three (through the guest's `\u{301}` directory).
+@Test func symlinksHidingASeparatorInACombiningCharacterMakeTheStageInapplicable() throws {
+  let f = try Fixture()
+  defer { f.cleanup() }
+  try f.write("\u{301}/keep", "x\n", in: f.tree)
+  try f.link("d/up", to: "../\u{301}/../../outside", in: f.tree)
+  let manifest = try f.build()
+  #expect(!manifest.applicable)
+  #expect(manifest.issues.contains { $0.contains("d/up") && $0.contains("outside the workspace") })
+  #expect(!StageBuilder.staysInside(link: "a/l", target: "../\u{301}x"))
+  #expect(!StageBuilder.staysInside(link: "a", target: "/\u{301}/../etc"))
+}
+
 @Test func linkContainmentIsLexical() {
   #expect(StageBuilder.staysInside(link: "a", target: "b"))
   #expect(StageBuilder.staysInside(link: "x/y/a", target: "../../b"))

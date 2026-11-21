@@ -36,3 +36,13 @@ package enum NameFolding {
     }
   }
 }
+
+/// Whether `split(separator: "/")`, `hasPrefix("/")` and `hasSuffix("/")` see
+/// every `/` in `path`. They compare `Character`s, and a combining mark or
+/// joiner right after `/` joins it into one `Character`: they read
+/// `../\u{301}x` as one component where the kernel reads `..` then `\u{301}x`.
+/// Guest-authored paths that fail are refused, so `Character`-based path
+/// code stays exact on the rest.
+package func slashesAreWholeCharacters(_ path: String) -> Bool {
+  path.allSatisfy { $0 == "/" || !$0.unicodeScalars.contains("/") }
+}

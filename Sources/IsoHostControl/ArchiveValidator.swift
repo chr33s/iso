@@ -205,6 +205,9 @@ package enum ArchiveValidator {
     guard !path.isEmpty, path.utf8.count <= limits.maxPathBytes else {
       throw reject("member name is empty or too long")
     }
+    guard slashesAreWholeCharacters(path) else {
+      throw reject("member \(debugQuoted(path)) combines a '/' with the next character")
+    }
     guard !path.hasPrefix("/") else { throw reject("absolute member \(debugQuoted(path))") }
     guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else {
       throw reject("member name contains a control character")
@@ -227,6 +230,10 @@ package enum ArchiveValidator {
   /// so a component made only of them would vanish from the key: refused.
   static func key(_ normalized: String) throws(HostControlError) -> String {
     let folded = fold(normalized)
+    // Dropping an ignorable can leave a combining mark right after a `/`.
+    guard slashesAreWholeCharacters(folded) else {
+      throw reject("member \(debugQuoted(normalized)) folds a '/' into the next character")
+    }
     guard !folded.split(separator: "/", omittingEmptySubsequences: false).contains("") else {
       throw reject("member \(debugQuoted(normalized)) has a component that folds to nothing")
     }
@@ -240,6 +247,9 @@ package enum ArchiveValidator {
   ) throws(HostControlError) {
     guard !target.isEmpty, !target.hasPrefix("/"), target.utf8.count <= limits.maxPathBytes else {
       throw reject("symlink \(debugQuoted(member)) has an absolute or empty target")
+    }
+    guard slashesAreWholeCharacters(target) else {
+      throw reject("symlink \(debugQuoted(member)) target combines a '/' with the next character")
     }
     var depth = member.split(separator: "/").count - 1
     // Once a prefix names no earlier member, no longer prefix can either.
