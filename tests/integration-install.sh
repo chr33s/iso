@@ -209,7 +209,7 @@ for artifact in iso-cu-mcp vmlinux-desktop; do
     fi
 done
 
-SIGNER_PIN="--cert-identity https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/${VERSION} --source-ref refs/tags/${VERSION} --deny-self-hosted-runners"
+SIGNER_PIN="--cert-identity https://github.com/chr33s/iso/.github/workflows/release.yml@refs/tags/${VERSION} --source-ref refs/tags/${VERSION} --deny-self-hosted-runners --hostname github.com"
 if grep -qF -- "--repo chr33s/iso ${SIGNER_PIN} --bundle " "$GH_LOG"; then
     pass "gh verifies the tarball with the downloaded bundle"
 else
