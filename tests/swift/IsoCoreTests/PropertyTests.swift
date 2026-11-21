@@ -324,3 +324,143 @@ private func difference(_ decoded: OutputJSON, _ expected: GeneratedJSON) -> Str
         return nil
       }))
 }
+
+// MARK: - Name folding
+
+/// Scalars whose case folding, normalization or ignorability differs from
+/// ASCII `lowercased()`: long s, Kelvin and Angstrom signs, sharp s, dotted
+/// and dotless i, final sigma, ligatures, titlecase digraphs, Cherokee (which
+/// folds to uppercase), Deseret (astral), ypogegrammeni, and HFS+ ignorables.
+private let foldingScalars: [Unicode.Scalar] = [
+  "\u{17F}", "\u{212A}", "\u{212B}", "\u{DF}", "\u{1E9E}", "\u{130}", "\u{131}", "\u{3A3}",
+  "\u{3C3}", "\u{3C2}", "\u{FB01}", "\u{FB06}", "\u{1C5}", "\u{1C4}", "\u{13A0}", "\u{AB70}",
+  "\u{10400}", "\u{10428}", "\u{345}", "\u{1FB3}", "\u{1F80}", "\u{307}", "\u{301}", "\u{323}",
+  "\u{C5}", "\u{E5}", "\u{FF21}", "\u{FF41}", "\u{390}", "\u{1E9B}", "\u{200C}", "\u{200D}",
+  "\u{200E}", "\u{202E}", "\u{206A}", "\u{206F}", "\u{FEFF}", "\u{2060}", "s", "S", "k", "K",
+  "i", "I", "g", "G", ".", "/",
+]
+
+private let ignorableScalars = NameFolding.ignorable.sorted().compactMap(Unicode.Scalar.init)
+
+private func foldingName(_ rng: inout PropertyRNG, maxScalars: Int = 10) -> String {
+  var out = String.UnicodeScalarView()
+  for _ in 0..<rng.int(0...maxScalars) {
+    out.append(rng.oneIn(2) ? rng.element(foldingScalars) : rng.scalar(ScalarClass.all))
+  }
+  return String(out)
+}
+
+private func scalarValues(_ text: String) -> [UInt32] { text.unicodeScalars.map(\.value) }
+
+/// `name` with ASCII letters flipped in case, HFS+ ignorables inserted, and
+/// `s`, `k` and `å` respelled as scalars a case-insensitive volume equates.
+private func caseVariant(_ name: String, _ rng: inout PropertyRNG) -> String {
+  var out = String.UnicodeScalarView()
+  for scalar in name.unicodeScalars {
+    if rng.oneIn(4) { out.append(rng.element(ignorableScalars)) }
+    switch scalar {
+    case "s" where rng.oneIn(2), "S" where rng.oneIn(2): out.append("\u{17F}")
+    case "k" where rng.oneIn(2), "K" where rng.oneIn(2): out.append("\u{212A}")
+    case "\u{E5}" where rng.oneIn(2): out.append("\u{212B}")
+    case _ where scalar.isASCII && scalar.properties.isAlphabetic && rng.oneIn(2):
+      let text = String(scalar)
+      out.append(
+        contentsOf: (text == text.uppercased() ? text.lowercased() : text.uppercased())
+          .unicodeScalars)
+    default: out.append(scalar)
+    }
+  }
+  return String(out)
+}
+
+@Test func nameFoldingIsIdempotentAndYieldsTheVolumeNormalForm() {
+  expectHolds(
+    checkProperty(
+      "NameFolding.key idempotent and NFC", iterations: 2000,
+      generate: { foldingName(&$0) },
+      property: { name in
+        for volume in [NameFolding.Volume.caseInsensitive, .caseSensitive] {
+          let key = NameFolding.key(name, on: volume)
+          guard scalarValues(NameFolding.key(key, on: volume)) == scalarValues(key) else {
+            return "\(volume) key is not a fixed point"
+          }
+          guard scalarValues(key.precomposedStringWithCanonicalMapping) == scalarValues(key) else {
+            return "\(volume) key is not NFC"
+          }
+        }
+        let folded = NameFolding.key(name)
+        if folded.unicodeScalars.contains(where: { NameFolding.ignorable.contains($0.value) }) {
+          return "case-insensitive key keeps an ignorable code point"
+        }
+        // Case-insensitive folding is coarser than the case-sensitive key.
+        guard
+          scalarValues(NameFolding.key(NameFolding.key(name, on: .caseSensitive)))
+            == scalarValues(folded)
+        else { return "folding the case-sensitive key changes the result" }
+        return nil
+      }))
+}
+
+@Test func nameFoldingEquatesEveryCanonicalAndCaseSpelling() {
+  expectHolds(
+    checkProperty(
+      "NameFolding.key equivalences", iterations: 2000,
+      generate: { rng -> (String, String) in
+        let name = foldingName(&rng)
+        return (name, caseVariant(name, &rng))
+      },
+      property: { (name: String, variant: String) -> String? in
+        for volume in [NameFolding.Volume.caseInsensitive, .caseSensitive] {
+          let key = scalarValues(NameFolding.key(name, on: volume))
+          for spelling in [
+            name.decomposedStringWithCanonicalMapping, name.precomposedStringWithCanonicalMapping,
+          ] where scalarValues(NameFolding.key(spelling, on: volume)) != key {
+            return "\(volume) key depends on normalization"
+          }
+        }
+        let key = scalarValues(NameFolding.key(name))
+        guard scalarValues(NameFolding.key(variant)) == key else {
+          return "case/ignorable variant \(printable(variant)) folds differently"
+        }
+        // Never weaker than the NFC + lowercased() comparison it replaced.
+        let lowered = name.precomposedStringWithCanonicalMapping.lowercased()
+        guard scalarValues(NameFolding.key(lowered)) == key else {
+          return "lowercased spelling folds differently"
+        }
+        // A case-sensitive volume keeps ASCII case distinct.
+        let flipped = String(
+          String.UnicodeScalarView(
+            name.unicodeScalars.map { $0 == "s" ? "S" : $0 == "S" ? "s" : $0 }))
+        if flipped != name,
+          scalarValues(NameFolding.key(flipped, on: .caseSensitive))
+            == scalarValues(NameFolding.key(name, on: .caseSensitive))
+        {
+          return "case-sensitive key equates s and S"
+        }
+        return nil
+      }))
+}
+
+@Test func nameFoldingMapsPathsComponentByComponent() {
+  // ArchiveValidator folds whole paths; the return checks fold each component.
+  expectHolds(
+    checkProperty(
+      "NameFolding.key per component", iterations: 1000,
+      generate: { rng in (0..<rng.int(1...4)).map { _ in foldingName(&rng, maxScalars: 6) } },
+      property: { (components: [String]) -> String? in
+        let path = components.joined(separator: "/")
+        let separators = path.unicodeScalars.count { $0 == "/" }
+        for volume in [NameFolding.Volume.caseInsensitive, .caseSensitive] {
+          let whole = NameFolding.key(path, on: volume)
+          let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+            .map { NameFolding.key(String($0), on: volume) }.joined(separator: "/")
+          guard scalarValues(whole) == scalarValues(parts) else {
+            return "\(volume) whole-path key differs from the per-component key"
+          }
+          guard whole.unicodeScalars.count(where: { $0 == "/" }) == separators else {
+            return "\(volume) folding changed the number of separators"
+          }
+        }
+        return nil
+      }))
+}

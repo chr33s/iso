@@ -83,7 +83,10 @@ let package = Package(
       path: "tests/swift/IsoCoreTests"),
     .testTarget(
       name: "IsoConfigurationTests",
-      dependencies: ["IsoConfiguration", .product(name: "IsoPolicy", package: "iso-policy")],
+      dependencies: [
+        "IsoConfiguration", "IsoPropertyTesting",
+        .product(name: "IsoPolicy", package: "iso-policy"),
+      ],
       path: "tests/swift/IsoConfigurationTests", resources: [.copy("Fixtures")]),
     .testTarget(
       name: "IsoHostTests",
