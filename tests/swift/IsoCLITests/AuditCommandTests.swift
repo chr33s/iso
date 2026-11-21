@@ -274,6 +274,14 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(AuditText.details(.object([("name", .string("a\u{1b}[31m\nb"))])) == "  name=a?[31m?b")
 }
 
+/// A combining mark after `\n` hid it from `replacingOccurrences(of: "\n")`;
+/// every line break, control and format scalar becomes `?`.
+@Test func cleanLeavesNoLineBreakOrControlScalar() {
+  let cleaned = AuditText.clean(
+    "a\n\u{301}b\r\nc\t\u{301}d\u{85}e\u{2028}f\u{2029}g\u{9B}h\u{202E}i")
+  #expect(Array(cleaned.unicodeScalars) == Array("a?\u{301}b??c?\u{301}d?e?f?g?h?i".unicodeScalars))
+}
+
 @Test func anExportThatFailsAfterItsFirstPagePublishesNothing() throws {
   let (store, run, root) = try populated(context: 4)
   defer { try? FileManager.default.removeItem(atPath: root) }

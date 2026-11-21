@@ -593,10 +593,17 @@ enum AuditText {
   }
 
   /// One display line: control and format characters, newlines included,
-  /// become `?`.
+  /// and line or paragraph separators become `?`. Replaced per scalar:
+  /// `replacingOccurrences(of: "\n")` misses a `\n` a combining mark follows.
   static func clean(_ text: String) -> String {
-    neutralizeControls(text).replacingOccurrences(of: "\n", with: "?")
-      .replacingOccurrences(of: "\t", with: "?")
+    String(
+      String.UnicodeScalarView(
+        neutralizeControls(text).unicodeScalars.map { scalar in
+          switch scalar.properties.generalCategory {
+          case .control, .lineSeparator, .paragraphSeparator: "?"
+          default: scalar
+          }
+        }))
   }
 
   /// The human live view: the summary once, then each newly selected event
