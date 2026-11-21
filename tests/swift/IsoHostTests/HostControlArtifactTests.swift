@@ -135,6 +135,8 @@ import Testing
       // A combining mark after `/` makes one `Character` of both, hiding the
       // separator from `Character`-based checks but not from the extractor.
       ("traversal behind a combining mark", tarArchive([("../\u{301}x", [1])])),
+      // A joiner folding drops: only the check before folding sees it.
+      ("traversal behind a joiner", tarArchive([("../\u{200D}x", [1])])),
       ("absolute behind a combining mark", tarArchive([("/\u{301}/../etc/passwd", [1])])),
       (
         "symlink escape behind a combining mark",
