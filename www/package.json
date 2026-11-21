@@ -19,8 +19,8 @@
     "check": "npm test && npm run sync && blume validate --strict && blume check && blume build && python3 scripts/check-built-site.py"
   },
   "devDependencies": {
-    "blume": "2.2.3",
+    "blume": "2.2.7",
     "github-slugger": "2.0.0",
-    "wrangler": "4.151.0"
+    "wrangler": "4.162.0"
   }
 }
