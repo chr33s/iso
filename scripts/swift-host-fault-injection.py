@@ -930,7 +930,9 @@ FAULTS = [
     ("update-complete-companions", "Sources/IsoHost/Update/Update.swift",
      'guard isRegularArtifact(extractDirectory + "/" + egressName) else {',
      "guard true else {",
-     "missingCompanionsPreserveTheInstall"),
+     # The BUILD.json check refuses a missing egress first in a full update,
+     # so the guard's own test calls replaceSiblingRuntime directly.
+     "runtimeReplacementRequiresAllCompanions"),
     ("update-regular-artifacts", "Sources/IsoHost/Update/Update.swift",
      "return lstat(path, &status) == 0 && (status.st_mode & S_IFMT) == S_IFREG",
      "return stat(path, &status) == 0 && (status.st_mode & S_IFMT) == S_IFREG",
