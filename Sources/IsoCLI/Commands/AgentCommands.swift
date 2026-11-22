@@ -50,7 +50,8 @@ extension CommandContext {
         requestedInstance: name?.rawValue, permissionMode: permissionMode,
         isoVersion: IsoVersion.string))
     try audit.during(.connect) {
-      let agents = self.agents
+      // An agent launch fails without its inference session (`required`).
+      let agents = self.agents.withStrictInference()
       let (running, session) = try agents.openSession(
         backend, name: name, instances: listInstances())
       audit.environment(

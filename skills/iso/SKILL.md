@@ -183,7 +183,7 @@ ones outside the loop above fall into four groups:
   commands (`iso inference init|provision|deprovision|restart-backend|
   requalify|stop`), the editors (`iso code`, `iso zed`,
   `iso editor`), and `iso completions`.
-- **Only on request (rule 6):** `iso model set`, `iso inference attach|revoke`, `iso agent add`,
+- **Only on request (rule 6):** `iso model set`, `iso inference attach|detach|revoke`, `iso agent add`,
   `iso agent update`, `iso devcontainer ignore|clear`, `iso ssh-config`.
 - **Remote hosts:** `iso host …` drives VMs on an enrolled Mac. Use it only
   when the user asked for a remote host; the same rules apply.

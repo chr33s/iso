@@ -37,12 +37,19 @@ package struct BackendVerification: Sendable, Equatable {
   package var jobPID: Int32?
   /// An unauthenticated request was refused (401). nil when untested.
   package var authenticated: Bool?
+  /// A managed backend answered the launcher's challenge with an HMAC of
+  /// its token: the listener on the port is the job iso installed, not a
+  /// squatter that merely refuses requests. nil when untested.
+  package var challenged: Bool?
   /// Kernel-reported sandbox state of the managed job; nil when unknown.
   package var confined: Bool?
+
+  package init() {}
 
   /// Run-as, authentication and confinement all verified.
   package var isolationVerified: Bool {
     runAs.passed == true && authenticated == true && confined == true
+      && (!managed || challenged == true)
   }
 
   package var json: OutputJSON {
@@ -54,6 +61,7 @@ package struct BackendVerification: Sendable, Equatable {
       ("backend_managed", .bool(managed)),
       ("job_pid", jobPID.map { .int(Int64($0)) } ?? .null),
       ("backend_authenticated", optional(authenticated)),
+      ("backend_challenge_verified", optional(challenged)),
       ("backend_confined", optional(confined)),
       ("backend_isolation_verified", .bool(isolationVerified)),
     ])
@@ -61,8 +69,11 @@ package struct BackendVerification: Sendable, Equatable {
 }
 
 package enum BackendChecks {
-  /// Observe a backend without failing.
-  package static func verify(name: String, backend: InferenceBackendConfig) -> BackendVerification {
+  /// Observe a backend without failing. `token` is a managed backend's
+  /// Keychain token, for its challenge.
+  package static func verify(
+    name: String, backend: InferenceBackendConfig, token: Secret<String>? = nil
+  ) -> BackendVerification {
     var result = BackendVerification()
     result.reachable = InferenceController.backendAccepts(port: backend.port)
     result.exposedAddresses = InferenceController.exposedAddresses(port: backend.port)
@@ -88,12 +99,24 @@ package enum BackendChecks {
     if result.reachable, backend.requiresToken {
       result.authenticated = BackendProbe.status(port: backend.port, token: nil) == 401
     }
+    if result.reachable, result.managed, let token {
+      result.challenged = BackendProbe.answersChallenge(port: backend.port, token: token)
+    }
     return result
   }
 
   /// The preflight (§10, §20.1): fails with a stable code before any VM work.
-  package static func enforce(name: String, backend: InferenceBackendConfig) throws {
-    let result = verify(name: name, backend: backend)
+  package static func enforce(
+    name: String, backend: InferenceBackendConfig, token: Secret<String>? = nil
+  ) throws {
+    try require(name: name, backend: backend, verify(name: name, backend: backend, token: token))
+  }
+
+  /// The failures of an observed backend, with stable codes. A check that
+  /// could not complete fails, as one that failed.
+  static func require(
+    name: String, backend: InferenceBackendConfig, _ result: BackendVerification
+  ) throws {
     try InferenceController.requireSafeBinding(
       port: backend.port, reachable: result.reachable, exposedAddresses: result.exposedAddresses)
     if case .failed(let account, let reason) = result.runAs {
@@ -106,15 +129,24 @@ package enum BackendChecks {
         "INFERENCE_BACKEND_UNSAFE_OWNER: managed backend '\(name)' answers without its token; run `iso inference provision \(name)` again"
       )
     }
-    if managed.confinement == .seatbelt, result.confined == false {
+    guard result.challenged == true else {
       throw HostError(
-        "INFERENCE_BACKEND_UNSAFE_OWNER: managed backend '\(name)' is configured for Seatbelt but its process is not sandboxed; run `iso inference provision \(name)` again"
+        "INFERENCE_BACKEND_UNSAFE_OWNER: the listener on 127.0.0.1:\(backend.port) did not prove it holds managed backend '\(name)''s token (another process may hold the port, or the job is not running); run `iso inference restart-backend \(name)` or `iso inference provision \(name)`"
+      )
+    }
+    if managed.confinement == .seatbelt, result.confined != true {
+      throw HostError(
+        "INFERENCE_BACKEND_UNSAFE_OWNER: managed backend '\(name)' is configured for Seatbelt but its process is \(result.confined == false ? "not sandboxed" : "not verifiably sandboxed"); run `iso inference provision \(name)` again"
       )
     }
   }
 
   /// `managedJob` is the launchd label and the pid it reported, if any.
-  static func verifyRunAs(_ account: String, port: UInt16, managedJob: (String, Int32?)?) throws {
+  /// `listeners` lists this user's listeners on a port (nil when it cannot).
+  static func verifyRunAs(
+    _ account: String, port: UInt16, managedJob: (String, Int32?)?,
+    listeners: (UInt16) -> [Int32]? = ownListeners
+  ) throws {
     guard let entry = getpwnam(account) else {
       throw HostError("the account \(account) does not exist")
     }
@@ -124,7 +156,11 @@ package enum BackendChecks {
     }
     // `lsof` run unprivileged lists only this user's processes: any listener
     // it finds on the port is ours, so the backend is not isolated from us.
-    if let own = ownListeners(port: port), !own.isEmpty {
+    // Without that listing nothing is verified.
+    guard let own = listeners(port) else {
+      throw HostError("could not list this user's listeners on port \(port) (lsof failed)")
+    }
+    if !own.isEmpty {
       throw HostError(
         "127.0.0.1:\(port) is served by this user's process (pid \(own.map(String.init).joined(separator: ", ")))"
       )

@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import IsoConfiguration
@@ -172,6 +173,10 @@ package struct SystemTools: Sendable {
   package var chown: @Sendable (String, uid_t, gid_t) -> Int32 = { path, uid, gid in
     Darwin.lchown(path, uid, gid)
   }
+  /// Never follows a final symbolic link.
+  package var chmod: @Sendable (String, mode_t) -> Int32 = { path, mode in
+    Darwin.fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW)
+  }
 
   package init() {}
 }
@@ -269,11 +274,14 @@ package struct ManagedBackendProvisioner: Sendable {
     try makeDirectory(layout.backendsDirectory, 0o755, 0, 0)
     try makeDirectory(layout.directory, 0o755, 0, 0)
     try makeDirectory(layout.cache, 0o700, uid, gid)
-    try makeDirectory(layout.logs, 0o700, uid, gid)
+    // launchd opens the log as root: a root-owned directory and file, so
+    // the role account cannot point it elsewhere with a link.
+    try makeDirectory(layout.logs, 0o755, 0, 0)
+    try write([], to: layout.logs + "/backend.log", 0o600, 0, 0, keepContents: true)
     try write(Array(plan.token.expose().utf8), to: layout.token, 0o640, 0, gid)
     try write(Array(ManagedBackend.launcherSource.utf8), to: layout.launcher, 0o644, 0, 0)
     try write(Array(ManagedBackend.profileSource.utf8), to: layout.profile, 0o644, 0, 0)
-    let python = try runtime(plan, layout: layout)
+    let python = try runtime(plan, layout: layout, uid: uid, gid: gid)
     try installModel(plan, layout: layout, python: python.launch, uid: uid, gid: gid)
     let arguments = ManagedBackend.programArguments(
       plan, layout: layout, python: python, tools: tools)
@@ -351,30 +359,66 @@ package struct ManagedBackendProvisioner: Sendable {
   /// The interpreter the job runs. A configured interpreter must be
   /// root-owned and unwritable by others, since the job runs it as the role
   /// account; `install` builds a root-owned virtualenv instead.
-  func runtime(_ plan: ManagedBackendPlan, layout: ManagedBackendLayout) throws -> PythonRuntime {
+  func runtime(_ plan: ManagedBackendPlan, layout: ManagedBackendLayout, uid: uid_t, gid: gid_t)
+    throws -> PythonRuntime
+  {
     switch plan.runtime {
     case .python(let path):
+      // Root runs the interpreter below, so first the file it would run
+      // and its directory must be root-owned; then its prefixes.
+      guard let resolved = canonicalPath(path.path) else {
+        throw HostError.posix("Failed to resolve", path.path)
+      }
+      try requireRootOwned(resolved)
+      try requireRootOwned((resolved as NSString).deletingLastPathComponent, recursive: false)
       let python = try inspect(path.path)
       for root in Self.outermost([python.executable, python.prefix, python.basePrefix]) {
         try requireRootOwned(root)
       }
       return python
     case .install(let version):
-      if !FileManager.default.fileExists(atPath: layout.venv + "/bin/python") {
-        try runChecked(tools.systemPython, ["-m", "venv", layout.venv])
-      }
-      log("Installing mlx-lm==\(version) into \(layout.venv) (network)")
-      try runChecked(
-        layout.venv + "/bin/python",
+      try requireRootOwned(tools.systemPython)
+      // The download and any package code run as the role account in a
+      // staging directory it owns, binary wheels only; root then takes the
+      // tree over before anything runs it as root or as the job.
+      let staging = layout.directory + "/venv.staging"
+      try? FileManager.default.removeItem(atPath: staging)
+      try makeDirectory(staging, 0o700, uid, gid)
+      log(
+        "Installing mlx-lm==\(version) into \(layout.venv) as \(ManagedBackendConfig.roleAccount) (network)"
+      )
+      try runAsRole(layout, [tools.systemPython, "-I", "-m", "venv", staging])
+      try runAsRole(
+        layout,
         [
-          "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "mlx-lm==\(version)",
-        ],
-        deadline: .seconds(3600))
-      try restrict(layout.venv, allowLinks: true)
+          staging + "/bin/python", "-I", "-m", "pip", "install", "--disable-pip-version-check",
+          "--no-input", "--no-cache-dir", "--only-binary", ":all:", "mlx-lm==\(version)",
+        ], deadline: .seconds(3600))
+      try restrict(staging, allowLinks: true)
+      try? FileManager.default.removeItem(atPath: layout.venv)
+      guard rename(staging, layout.venv) == 0 else {
+        throw HostError.posix("Failed to place", layout.venv)
+      }
       let python = try inspect(layout.venv + "/bin/python")
       try requireRootOwned(python.basePrefix)
       return python
     }
+  }
+
+  /// `argv` as the role account, with a scrubbed environment and its cache
+  /// as home: package and model downloads never run as root.
+  func runAsRole(
+    _ layout: ManagedBackendLayout, _ argv: [String], deadline: Duration = .seconds(600)
+  )
+    throws
+  {
+    try runChecked(
+      tools.sudo,
+      [
+        "-u", ManagedBackendConfig.roleAccount, "--", "/usr/bin/env", "-i", "HOME=\(layout.cache)",
+        "PATH=/usr/bin:/bin", "HF_HOME=\(layout.cache)/huggingface", "PIP_NO_CACHE_DIR=1",
+      ] + argv,
+      deadline: deadline)
   }
 
   /// The resolved executable, `sys.prefix` (a venv's packages) and
@@ -394,10 +438,12 @@ package struct ManagedBackendProvisioner: Sendable {
       basePrefix: lines[1])
   }
 
-  /// Every entry under `path` belongs to root (or the privileged account)
-  /// and is not group- or world-writable.
-  func requireRootOwned(_ path: String) throws {
-    for (entry, info) in try Self.entries(under: path) where (info.st_mode & S_IFMT) != S_IFLNK {
+  /// Every entry under `path` (just `path` without `recursive`) belongs to
+  /// root (or the privileged account) and is not group- or world-writable.
+  func requireRootOwned(_ path: String, recursive: Bool = true) throws {
+    let entries: [(path: String, info: stat)] =
+      recursive ? try Self.entries(under: path) : [(path, try Self.lstatEntry(path))]
+    for (entry, info) in entries where (info.st_mode & S_IFMT) != S_IFLNK {
       guard info.st_uid == 0 || info.st_uid == tools.privilegedUID, info.st_mode & 0o022 == 0
       else {
         throw HostError(
@@ -413,11 +459,13 @@ package struct ManagedBackendProvisioner: Sendable {
     if let walker = FileManager.default.enumerator(atPath: path) {
       while let next = walker.nextObject() as? String { paths.append(path + "/" + next) }
     }
-    return try paths.map { entry in
-      var info = stat()
-      guard lstat(entry, &info) == 0 else { throw HostError.posix("Failed to inspect", entry) }
-      return (entry, info)
-    }
+    return try paths.map { entry in (entry, try lstatEntry(entry)) }
+  }
+
+  static func lstatEntry(_ entry: String) throws -> stat {
+    var info = stat()
+    guard lstat(entry, &info) == 0 else { throw HostError.posix("Failed to inspect", entry) }
+    return info
   }
 
   /// The paths not inside another of them, so each tree is walked once.
@@ -442,14 +490,9 @@ package struct ManagedBackendProvisioner: Sendable {
       log("Fetching \(repository)@\(revision) as \(ManagedBackendConfig.roleAccount) (network)")
       let script =
         "import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3])"
-      try runChecked(
-        tools.sudo,
-        [
-          "-u", ManagedBackendConfig.roleAccount, "--", "/usr/bin/env", "-i",
-          "HOME=\(layout.cache)",
-          "HF_HOME=\(layout.cache)/huggingface", python, "-I", "-c", script, repository, revision,
-          staging,
-        ], deadline: .seconds(3600))
+      try runAsRole(
+        layout, [python, "-I", "-c", script, repository, revision, staging],
+        deadline: .seconds(3600))
     }
     try restrict(staging)
     try? FileManager.default.removeItem(atPath: layout.model)
@@ -459,18 +502,30 @@ package struct ManagedBackendProvisioner: Sendable {
   }
 
   /// Root-owned, world-readable, nothing writable by others; no symlinks
-  /// in model weights (a venv's interpreter links are allowed).
+  /// in model weights (a venv's interpreter links are allowed). The tree
+  /// was written by the role account, which may still have a process
+  /// running, so nothing here follows a link: ownership is taken first
+  /// (`lchown`), which ends the role's ability to change the tree; a second
+  /// walk over the now root-owned tree sets modes with `fchmodat(…,
+  /// AT_SYMLINK_NOFOLLOW)` and checks ownership, catching entries created
+  /// during the first walk.
   func restrict(_ path: String, allowLinks: Bool = false) throws {
+    for (entry, _) in try Self.entries(under: path) where tools.chown(entry, 0, 0) != 0 {
+      throw HostError.posix("Failed to take ownership of", entry)
+    }
     for (entry, info) in try Self.entries(under: path) {
       if (info.st_mode & S_IFMT) == S_IFLNK {
         guard allowLinks else {
           throw HostError("model directories may not contain symbolic links (\(entry))")
         }
-        _ = tools.chown(entry, 0, 0)
+        guard tools.chown(entry, 0, 0) == 0 else {
+          throw HostError.posix("Failed to take ownership of", entry)
+        }
         continue
       }
       let directory = (info.st_mode & S_IFMT) == S_IFDIR
-      guard tools.chown(entry, 0, 0) == 0, chmod(entry, directory ? 0o755 : 0o644) == 0
+      guard info.st_uid == 0 || info.st_uid == tools.privilegedUID || tools.chown(entry, 0, 0) == 0,
+        tools.chmod(entry, directory ? 0o755 : 0o644) == 0
       else { throw HostError.posix("Failed to restrict", entry) }
     }
   }
@@ -481,6 +536,9 @@ package struct ManagedBackendProvisioner: Sendable {
       if let status = BackendProbe.status(port: port, token: token), status == 200 {
         guard BackendProbe.status(port: port, token: nil) == 401 else {
           throw HostError("the backend answers without its token")
+        }
+        guard BackendProbe.answersChallenge(port: port, token: token) else {
+          throw HostError("the listener on 127.0.0.1:\(port) does not answer the token challenge")
         }
         return
       }
@@ -532,8 +590,13 @@ package struct ManagedBackendProvisioner: Sendable {
     }
   }
 
-  func write(_ bytes: [UInt8], to path: String, _ mode: mode_t, _ uid: uid_t, _ gid: gid_t) throws {
-    try AtomicFile.write(bytes, to: path, mode: .atMost(mode))
+  func write(
+    _ bytes: [UInt8], to path: String, _ mode: mode_t, _ uid: uid_t, _ gid: gid_t,
+    keepContents: Bool = false
+  ) throws {
+    var info = stat()
+    let regular = lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG
+    if !(keepContents && regular) { try AtomicFile.write(bytes, to: path, mode: .atMost(mode)) }
     guard chmod(path, mode) == 0, tools.chown(path, uid, gid) == 0 else {
       throw HostError.posix("Failed to own", path)
     }
@@ -567,6 +630,64 @@ package struct ManagedBackendProvisioner: Sendable {
 
 /// Minimal HTTP probes of a backend on 127.0.0.1.
 enum BackendProbe {
+  /// The launcher's unauthenticated challenge (`GET /iso/challenge/<nonce>`):
+  /// the body must be the hex HMAC-SHA256 of the nonce under the token. A
+  /// squatter on the port cannot answer it, and the probe sends no secret.
+  static func answersChallenge(port: UInt16, token: Secret<String>) -> Bool {
+    let nonce = randomHex(32)
+    guard let (status, body) = get(port: port, path: "/iso/challenge/" + nonce), status == 200
+    else { return false }
+    let expected = HMAC<SHA256>.authenticationCode(
+      for: Data(nonce.utf8), using: SymmetricKey(data: Data(token.expose().utf8)))
+    let hex = expected.map { String(format: "%02x", $0) }.joined()
+    let answer = String(decoding: body, as: UTF8.self).trimmingUnicodeWhitespace()
+    return answer.utf8.count == hex.utf8.count
+      && zip(answer.utf8, hex.utf8).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+  }
+
+  /// A bounded `GET` to 127.0.0.1: status and up to 4 KiB of body.
+  static func get(port: UInt16, path: String, budget: Int = 10) -> (Int, [UInt8])? {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    var one: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+    var timeout = timeval(tv_sec: budget, tv_usec: 0)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    var address = sockaddr_in()
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = port.bigEndian
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let connected = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    guard connected == 0 else { return nil }
+    let request = Array(
+      "GET \(path) HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".utf8)
+    guard request.withUnsafeBytes({ send(fd, $0.baseAddress, $0.count, 0) }) == request.count
+    else { return nil }
+    var response: [UInt8] = []
+    var chunk = [UInt8](repeating: 0, count: 1024)
+    while response.count < 8 << 10 {
+      let count = chunk.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
+      if count < 0 && errno == EINTR { continue }
+      guard count > 0 else { break }
+      response += chunk.prefix(count)
+    }
+    let separator: [UInt8] = [0x0D, 0x0A, 0x0D, 0x0A]
+    guard let end = response.indices.first(where: { response[$0...].starts(with: separator) })
+    else { return nil }
+    let head = String(decoding: response[..<end], as: UTF8.self)
+    let parts = head.split(separator: " ", maxSplits: 2)
+    guard parts.count >= 2, parts[0].hasPrefix("HTTP/1."), let status = Int(parts[1]) else {
+      return nil
+    }
+    return (status, Array(response[(end + 4)...].prefix(4 << 10)))
+  }
+
   /// The status of `GET /v1/models`, with or without the bearer token; nil
   /// when nothing answers within 10 seconds.
   static func status(port: UInt16, token: Secret<String>?) -> Int? {

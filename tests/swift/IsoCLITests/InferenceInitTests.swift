@@ -1,6 +1,7 @@
 import Foundation
 import IsoConfiguration
 import IsoCore
+import IsoHost
 import Testing
 
 @testable import IsoCLI
@@ -58,5 +59,48 @@ private func initSettings(python: String? = "/opt/py/bin/python3", install: Stri
     _ = try ConfigEditor.applyDefaults(
       existing: nil, format: .jsonc, path: "c", settings: privileged, force: false,
       environment: environment)
+  }
+}
+
+/// K1: the input bound fits the 32k context, the body bound the input, and
+/// the stream-close drain covers that input's prefill at the qualified rate.
+@Test func inferenceInitBoundsInputToTheContextWindow() throws {
+  let (bytes, _) = try ConfigEditor.applyDefaults(
+    existing: nil, format: .jsonc, path: "c", settings: try initSettings(), force: false,
+    environment: environment)
+  let config = try ConfigLoader.decode(
+    try ConfigLoader.parse(bytes, format: .jsonc, path: "c", limits: .configuration), path: "c",
+    environment: environment)
+  let resolved = try #require(config.inference.resolve(InferenceServiceName("local-chat")))
+  #expect(resolved.service.maxContextTokens == 32_768)
+  #expect(resolved.profile.maxInputBytes == 128 << 10)
+  #expect(resolved.profile.maxInputBytes <= 4 * resolved.service.maxContextTokens)
+  #expect(resolved.profile.maxRequestBodyBytes == 256 << 10)
+  // 32k tokens of prefill at about 3.3k tokens/s.
+  let prefillMilliseconds = resolved.profile.maxInputBytes / 4 * 1000 / 3_300
+  #expect(resolved.profile.streamCloseDrainMilliseconds >= prefillMilliseconds)
+  #expect(config.network.transport == .vmnet)
+}
+
+/// K10: provisioning passes only with run-as, authentication and the token
+/// challenge verified; `confinement: "none"` exempts only the sandbox.
+@Test func provisioningVerificationExemptsOnlyConfinement() {
+  var result = BackendVerification()
+  result.runAs = .verified(account: "_isoinference")
+  result.authenticated = true
+  result.challenged = true
+  result.confined = false
+  #expect(InferenceProvision.passed(result, confinement: .none))
+  #expect(!InferenceProvision.passed(result, confinement: .seatbelt))
+  result.confined = true
+  #expect(InferenceProvision.passed(result, confinement: .seatbelt))
+  for change in [
+    { (r: inout BackendVerification) in r.authenticated = false }, { $0.authenticated = nil },
+    { $0.challenged = nil }, { $0.runAs = .notConfigured },
+    { $0.runAs = .failed(account: "_isoinference", reason: "x") },
+  ] as [(inout BackendVerification) -> Void] {
+    var bad = result
+    change(&bad)
+    #expect(!InferenceProvision.passed(bad, confinement: .none))
   }
 }

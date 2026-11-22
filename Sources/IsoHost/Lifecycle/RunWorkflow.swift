@@ -346,7 +346,10 @@ package struct RunWorkflow {
         context.config, instance: running.instance, modelState: state)
     }
     try lifecycle.agents.requireSelectedProvider(running.instance, adapter: planned.adapter)
-    var ssh = try lifecycle.agents.workloadSession(for: running, backend: context.backend)
+    // A model adapter reaches its guarded service or nothing: no session
+    // without one under `inference.mode = "required"`.
+    var ssh = try lifecycle.agents.withStrictInference(planned.adapter.providerName != nil)
+      .workloadSession(for: running, backend: context.backend)
     var defaults: [String] = []
     for item in planned.defaults where !ssh.env.contains(item.name.rawValue) {
       ssh.env.set(item.name.rawValue, Secret(item.value))

@@ -70,22 +70,39 @@ struct InferenceProvision: ParsableCommand {
       let keychain = Keychain(environment: context.environment.variables)
       try keychain.requireAvailable()
       let token = Secret(randomHex(32))
-      _ = try keychain.store(
-        service: ManagedBackendConfig.keychainService, account: account, secret: token)
       let plan = try ManagedBackendPlan(name: name, backend: config, token: token)
-      context.output.out(
+      context.diagnostics.log(
+        .info,
         "Provisioning '\(backend)' as \(ManagedBackendConfig.roleAccount); sudo will ask for your password."
       )
       try PrivilegedStep.run("provision-system", [], input: plan.encoded)
-      let result = BackendChecks.verify(name: backend, backend: config)
+      // Only now does the root token file hold this token: a cancelled or
+      // failed root step leaves the Keychain and the running backend in step.
+      do {
+        _ = try keychain.store(
+          service: ManagedBackendConfig.keychainService, account: account, secret: token)
+      } catch {
+        throw ContextError(
+          "The backend was provisioned with a new token, but storing it in the Keychain failed; run `iso inference provision \(backend)` again",
+          cause: error)
+      }
+      let result = BackendChecks.verify(name: backend, backend: config, token: token)
       context.output.write(result.json.rendered())
-      guard
-        result.isolationVerified
-          || config.managed?.confinement == ManagedBackendConfig.Confinement.none
-      else {
+      guard Self.passed(result, confinement: config.managed?.confinement ?? .seatbelt) else {
         throw HostError("the provisioned backend did not pass verification; see the report above")
       }
     }
+  }
+}
+
+extension InferenceProvision {
+  /// Run-as, authentication and the token challenge must pass; only
+  /// confinement is exempt, for `confinement: "none"`.
+  static func passed(_ result: BackendVerification, confinement: ManagedBackendConfig.Confinement)
+    -> Bool
+  {
+    result.runAs.passed == true && result.authenticated == true && result.challenged == true
+      && (confinement == .none || result.confined == true)
   }
 }
 
@@ -185,7 +202,9 @@ struct InferenceInit: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "init",
     abstract:
-      "Write hardened inference defaults: required mode, offline preset, session TTL, a confined managed MLX backend and a chat service"
+      "Write hardened inference defaults: required mode, offline preset, session TTL, a confined managed MLX backend and a chat service",
+    discussion:
+      "Pass exactly one of --python or --install, and either --model or both --model-repo and --model-revision. A key already set to a different value aborts the edit unless --force. The configuration is rewritten as strict JSON: comments and formatting are not kept."
   )
 
   @OptionGroup var global: GlobalOptions
@@ -251,10 +270,13 @@ struct InferenceInit: ParsableCommand {
       "input_overhead": .object([
         "per_request_bytes": .number(.integer(4096)), "per_message_bytes": .number(.integer(64)),
       ]),
-      "max_input_bytes": .string("4MiB"),
+      "max_input_bytes": .number(.integer(QualifiedMLXLM.maxInputBytes)),
+      "max_request_body_bytes": .number(.integer(QualifiedMLXLM.maxRequestBodyBytes)),
     ])
     return [
       (["security", "preset"], .string("offline")),
+      // The runtime relays the gateway only into vmnet Linux guests.
+      (["network", "transport"], .string("vmnet")),
       (["limits", "session_ttl"], .string("8h")),
       (["inference", "mode"], .string("required")),
       (["inference", "qualification_profiles", "mlx-lm-0.31"], profile),
@@ -271,7 +293,7 @@ struct InferenceInit: ParsableCommand {
         .object([
           "backend": .string(backend), "upstream_model": .string("default_model"),
           "frontend_apis": .array([.string(InferenceAPI.openAIChat.rawValue)]),
-          "max_context_tokens": .number(.integer(32768)),
+          "max_context_tokens": .number(.integer(QualifiedMLXLM.contextTokens)),
           "default_output_tokens": .number(.integer(2048)),
           "max_output_tokens": .number(.integer(4096)),
         ])
@@ -286,6 +308,20 @@ struct InferenceInit: ParsableCommand {
 /// prompt is processed, not rejected or cut.
 enum QualifiedMLXLM {
   static let completionEvidence = CompletionEvidenceMode.streamClose
-  static let streamCloseDrainMilliseconds: Int64 = 10_000
   static let contextOverflow = ContextOverflowMode.accept
+  /// The `local-chat` service's context window.
+  static let contextTokens: Int64 = 32_768
+  /// The input bound matching that window: at about 4 bytes per token, a
+  /// prompt of 32k tokens is about 128 KiB. Anything larger only buys
+  /// prefill the model cannot use (`context_overflow` is `accept`, so the
+  /// gateway's bound is the only limit).
+  static let maxInputBytes: Int64 = 4 * contextTokens
+  /// The input plus room for the request's own framing and parameters.
+  static let maxRequestBodyBytes: Int64 = 2 * maxInputBytes
+  /// How long a closed stream keeps its slot: the prefill of the largest
+  /// admitted prompt, which mlx-lm cannot interrupt. 32k tokens at the
+  /// slowest prefill this release line was qualified for (about 3.3k
+  /// tokens/s) take 10 s; a slower model needs a larger value, or a smaller
+  /// `max_input_bytes`. Until it passes, the slot stays counted (§9.3).
+  static let streamCloseDrainMilliseconds: Int64 = 10_000
 }

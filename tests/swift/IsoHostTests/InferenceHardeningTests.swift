@@ -140,11 +140,18 @@ private struct FakeSystem {
     try writeFile(
       root + "/backend.py",
       """
-      import sys
+      import hashlib, hmac, sys
       from http.server import BaseHTTPRequestHandler, HTTPServer
       token = open(sys.argv[2]).read().strip()
       class H(BaseHTTPRequestHandler):
           def do_GET(self):
+              if self.path.startswith("/iso/challenge/"):
+                  body = hmac.new(token.encode(), self.path.rsplit("/", 1)[1].encode(), hashlib.sha256).hexdigest().encode()
+                  self.send_response(200)
+                  self.send_header("content-length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+                  return
               ok = \(requireToken ? "" : "True or ")self.headers.get("Authorization") == "Bearer " + token
               self.send_response(200 if ok else 401)
               self.send_header("content-length", "0")
@@ -213,7 +220,8 @@ private func mode(_ path: String) -> mode_t {
   #expect(readFile(layout.token) == token && mode(layout.token) == 0o640)
   #expect(
     mode(layout.launcher) == 0o644 && readFile(layout.launcher) == EmbeddedInference.launcher)
-  #expect(mode(layout.cache) == 0o700 && mode(layout.logs) == 0o700)
+  #expect(mode(layout.cache) == 0o700 && mode(layout.logs) == 0o755)
+  #expect(mode(layout.logs + "/backend.log") == 0o600, "root-owned: launchd opens it as root")
   #expect(readFile(layout.model + "/model.safetensors") == "weights")
   #expect(mode(layout.model + "/model.safetensors") == 0o644 && mode(layout.model) == 0o755)
   #expect(FileManager.default.fileExists(atPath: layout.plist))
@@ -330,4 +338,196 @@ private func mode(_ path: String) -> mode_t {
   try provisioner.requireRootOwned("/usr/bin/true")
   let runtime = try provisioner.inspect("/usr/bin/python3")
   #expect(runtime.executable.hasPrefix("/") && runtime.prefix == runtime.basePrefix)
+}
+
+/// H2: without the listing of this user's listeners, `run_as` is not
+/// verified.
+@Test func runAsFailsClosedWhenListenersCannotBeListed() throws {
+  #expect(throws: HostError.self) {
+    try BackendChecks.verifyRunAs("nobody", port: 1, managedJob: nil, listeners: { _ in nil })
+  }
+  try BackendChecks.verifyRunAs("nobody", port: 1, managedJob: nil, listeners: { _ in [] })
+}
+
+private func managedBackend(_ confinement: String = "seatbelt") throws -> InferenceBackendConfig {
+  let config = try testConfig(
+    #"""
+    "inference": {
+      "mode": "required",
+      "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain",
+        "context_overflow": "truncate", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+        "max_input_bytes": 1024}},
+      "backends": {"mlx-main": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
+        "qualification_profile": "p",
+        "managed": {"server": "mlx-lm", "python": "/opt/py/bin/python3", "model": "/models/m",
+          "confinement": "\#(confinement)"}}},
+      "services": {"s": {"backend": "mlx-main", "upstream_model": "default_model",
+        "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}
+    }
+    """#)
+  return try #require(config.inference.backends["mlx-main"])
+}
+
+/// H7: a managed backend must prove the listener is its job (the token
+/// challenge) and, under Seatbelt, be verifiably sandboxed; an unknown answer
+/// fails like a wrong one.
+@Test func managedBackendChecksFailClosed() throws {
+  let backend = try managedBackend()
+  var good = BackendVerification()
+  good.reachable = true
+  good.managed = true
+  good.runAs = .verified(account: "_isoinference")
+  good.authenticated = true
+  good.challenged = true
+  good.confined = true
+  try BackendChecks.require(name: "mlx-main", backend: backend, good)
+  #expect(good.isolationVerified)
+  for change in [
+    { (v: inout BackendVerification) in v.authenticated = nil },
+    { $0.authenticated = false }, { $0.challenged = nil }, { $0.challenged = false },
+    { $0.confined = nil }, { $0.confined = false },
+    { $0.runAs = .failed(account: "_isoinference", reason: "x") },
+  ] as [(inout BackendVerification) -> Void] {
+    var bad = good
+    change(&bad)
+    #expect(throws: HostError.self) {
+      try BackendChecks.require(name: "mlx-main", backend: backend, bad)
+    }
+  }
+  // `confinement: "none"` exempts only the sandbox check.
+  var open = good
+  open.confined = false
+  try BackendChecks.require(name: "mlx-main", backend: try managedBackend("none"), open)
+  open.challenged = nil
+  #expect(throws: HostError.self) {
+    try BackendChecks.require(name: "mlx-main", backend: try managedBackend("none"), open)
+  }
+}
+
+/// The challenge is answered only by a holder of the token, and the probe
+/// sends no token.
+@Test func theBackendChallengeNeedsTheToken() throws {
+  let root = try scratchDirectory("challenge")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let port = try TCPListener(address: "127.0.0.1")
+  let chosen = port.port
+  port.close()
+  try writeFile(
+    root + "/server.py",
+    """
+    import hashlib, hmac, sys
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    key = sys.argv[2].encode()
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert "Authorization" not in self.headers
+            body = hmac.new(key, self.path.rsplit("/", 1)[1].encode(), hashlib.sha256).hexdigest().encode()
+            self.send_response(200)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a): pass
+    HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+    """)
+  let server = Process()
+  server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+  server.arguments = [root + "/server.py", String(chosen), token]
+  try server.run()
+  defer { server.terminate() }
+  for _ in 0..<100 where !InferenceController.backendAccepts(port: chosen) { usleep(50_000) }
+  #expect(BackendProbe.answersChallenge(port: chosen, token: Secret(token)))
+  #expect(
+    !BackendProbe.answersChallenge(port: chosen, token: Secret(String(repeating: "d", count: 64))))
+}
+
+/// The H8 race: the role account swaps a weight file for a link to a file it
+/// wants root to chmod while root walks the tree. Nothing follows the link.
+@Test func restrictingATreeNeverFollowsASwappedLink() throws {
+  let root = try scratchDirectory("restrict")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let outside = root + "/outside"
+  try writeFile(outside, "secret", mode: 0o600)
+  try writeFile(root + "/weights/model.safetensors", "weights", mode: 0o600)
+  var tools = SystemTools()
+  tools.privilegedUID = getuid()
+  tools.chown = { path, _, _ in
+    if path.hasSuffix("/model.safetensors") {
+      unlink(path)
+      symlink(outside, path)
+    }
+    return 0
+  }
+  let provisioner = ManagedBackendProvisioner(tools: tools, log: { _ in })
+  #expect(throws: HostError.self) { try provisioner.restrict(root + "/weights") }
+  #expect(mode(outside) == 0o600)
+  try? provisioner.restrict(root + "/weights", allowLinks: true)
+  #expect(mode(outside) == 0o600)
+}
+
+/// A configured interpreter is checked before root runs it: a user-owned
+/// one never executes.
+@Test func aUserOwnedInterpreterIsNeverRunAsRoot() throws {
+  let root = try scratchDirectory("python")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try writeFile(root + "/bin/python3", "#!/bin/sh\ntouch \"\(root)/ran\"\n", mode: 0o755)
+  var tools = SystemTools()
+  tools.privilegedUID = 0
+  let provisioner = ManagedBackendProvisioner(tools: tools, log: { _ in })
+  let layout = ManagedBackendLayout(name: mlxMain, prefix: root)
+  #expect(throws: HostError.self) {
+    _ = try provisioner.runtime(
+      plan(
+        runtime: .python(HostPath(absolute: root + "/bin/python3")),
+        model: .directory(HostPath(absolute: "/m"))),
+      layout: layout, uid: 400, gid: 400)
+  }
+  #expect(!FileManager.default.fileExists(atPath: root + "/ran"))
+}
+
+/// H1: `install` downloads as the role account, binary wheels only, never
+/// as root, and root then owns the tree.
+@Test func installRunsPipAsTheRoleAccount() throws {
+  let root = try scratchDirectory("install")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let log = root + "/sudo.log"
+  // A stand-in sudo: logs its argv, then makes the venv the real one would.
+  try writeFile(
+    root + "/sudo",
+    """
+    #!/bin/sh
+    echo "$*" >> "\(log)"
+    for last; do :; done
+    case "$*" in
+      *" -m venv "*) mkdir -p "$last/bin" && ln -sf /usr/bin/python3 "$last/bin/python" ;;
+    esac
+    exit 0
+    """, mode: 0o755)
+  var tools = SystemTools()
+  tools.sudo = root + "/sudo"
+  tools.privilegedUID = getuid()
+  tools.chown = { _, _, _ in 0 }
+  let provisioner = ManagedBackendProvisioner(tools: tools, log: { _ in })
+  let layout = ManagedBackendLayout(name: mlxMain, prefix: root)
+  try FileManager.default.createDirectory(
+    atPath: layout.directory, withIntermediateDirectories: true)
+  _ = try? provisioner.runtime(
+    plan(runtime: .install(version: "0.31.3"), model: .directory(HostPath(absolute: "/m"))),
+    layout: layout, uid: getuid(), gid: getgid())
+  let calls = readFile(log) ?? ""
+  #expect(calls.contains("-u _isoinference -- /usr/bin/env -i"))
+  #expect(calls.contains("-m pip install"))
+  #expect(calls.contains("--only-binary :all:"))
+  #expect(
+    calls.components(separatedBy: "\n").filter { $0.contains("pip install") }
+      .allSatisfy { $0.contains("-u _isoinference") })
+}
+
+/// The provisioner's chmod never follows a final link.
+@Test func theRestrictChmodDoesNotFollowLinks() throws {
+  let root = try scratchDirectory("nofollow")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  try writeFile(root + "/outside", "secret", mode: 0o600)
+  symlink(root + "/outside", root + "/link")
+  _ = SystemTools().chmod(root + "/link", 0o644)
+  #expect(mode(root + "/outside") == 0o600)
 }

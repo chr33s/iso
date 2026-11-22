@@ -61,6 +61,10 @@ package struct AgentBootstrap: Sendable {
   /// The inference gateway controller; required when
   /// `inference.mode = "required"`.
   package let inference: InferenceController?
+  /// An agent launch: a session that cannot get its inference session
+  /// fails. Otherwise (shells, exec, hooks, bootstrap) it warns and goes on
+  /// without inference variables, so agents still reach no model.
+  package var strictInference = false
 
   package init(
     config: IsoConfig, client: SSHClient, environment: [String: String], home: String?,
@@ -448,6 +452,7 @@ package struct AgentBootstrap: Sendable {
   package func openSession(
     _ backend: AppleBackend, name: InstanceName?, instances: [Instance]
   ) throws -> (AppleBackend.Running, WorkloadSession) {
+    reconcileInferenceMode(instances)
     let running = try backend.resolveRunning(name, instances: instances)
     return (running, try workloadSession(for: running, backend: backend))
   }
@@ -641,8 +646,12 @@ package struct AgentBootstrap: Sendable {
       try github.configureGuest(client, session)
     }
     if inferenceRequired {
-      // Raw model tunnels never coexist with guarded inference (AT-21).
+      // Raw model tunnels never coexist with guarded inference (AT-21), and
+      // the guest bridge is (re)enabled on each agent bootstrap (§22.4).
       proxies.stopModelTunnels(instance)
+      if let inference, try !inference.requestedServices(instance).isEmpty {
+        try installInferenceBridge(session.target)
+      }
     } else {
       let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
       try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
@@ -682,7 +691,15 @@ package struct AgentBootstrap: Sendable {
         name, .stdio(command: server.command, args: server.args, env: [:])),
       client: client, environment: environment, home: home, resolver: resolver, proxies: proxies,
       github: github, diagnostics: diagnostics, secrets: secrets, placement: placement,
-      inference: inference)
+      inference: inference
+    ).withStrictInference(strictInference)
+  }
+
+  /// This bootstrap for an agent launch (`strictInference`).
+  package func withStrictInference(_ strict: Bool = true) -> AgentBootstrap {
+    var copy = self
+    copy.strictInference = strict
+    return copy
   }
 
   // MARK: - Shared helpers

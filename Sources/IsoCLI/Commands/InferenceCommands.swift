@@ -14,7 +14,8 @@ struct InferenceCommand: ParsableCommand {
     commandName: "inference",
     abstract: "Manage the guarded local inference gateway (`iso-inference`)",
     subcommands: [
-      InferenceStatus.self, InferenceDoctor.self, InferenceAttach.self, InferenceRevoke.self,
+      InferenceStatus.self, InferenceDoctor.self, InferenceAttach.self, InferenceDetach.self,
+      InferenceRevoke.self,
       InferenceRequalify.self, InferenceStop.self, InferenceInit.self, InferenceProvision.self,
       InferenceDeprovision.self, InferenceRestartBackend.self, InferenceProvisionSystem.self,
       InferenceDeprovisionSystem.self, InferenceRestartSystem.self,
@@ -63,29 +64,46 @@ struct InferenceStatus: ParsableCommand {
       let context = try CommandContext.load(global)
       let controller = try context.requireInferenceController()
       let instance = try name.map { try InstanceStore.resolve(context.config, name: $0) }
-      let gateway = try? controller.inspect(instance)
+      let state = controller.probe()
+      let gateway: [String: JSONValue]? =
+        if case .verified = state { try controller.inspect(instance) } else { nil }
+      let checks = Self.hostChecks(context, controller)
       if json {
         var members: [(String, OutputJSON)] = [
           ("mode", .string(context.config.inference.mode.rawValue)),
           ("egress", .string(context.config.egress.rawValue)),
           ("gateway_running", .bool(gateway != nil)),
+          ("gateway_state", .string(Self.stateName(state))),
         ]
+        if case .unverified(let pid, _, let reason) = state {
+          members.append(
+            (
+              "gateway_unverified",
+              .object([
+                ("pid", .int(Int64(pid))), ("reason", .string(reason)),
+              ])
+            ))
+        }
         if let gateway {
           for key in ["gateway", "sessions", "backends"] {
             if let value = gateway[key] { members.append((key, inferenceJSON(value))) }
           }
         }
-        members.append(("host_checks", Self.hostChecks(context).json))
+        members.append(("host_checks", checks.json))
         context.output.write(OutputJSON.object(members).rendered())
         return
       }
       let out = { (line: String) in context.output.out(neutralizeControls(line)) }
       out("Inference mode: \(context.config.inference.mode.rawValue)")
       out("Egress:         \(context.config.egress.rawValue)")
-      for (name, result) in Self.hostChecks(context).results {
+      for (name, result) in checks.results {
         out(
-          "Backend host:   \(name) run_as \(result.runAs.account ?? "-") verified \(Self.flag(result.runAs.passed)) authenticated \(Self.flag(result.authenticated)) confined \(Self.flag(result.confined)) isolation_verified \(result.isolationVerified)"
+          "Backend host:   \(name) run_as \(result.runAs.account ?? "-") verified \(Self.flag(result.runAs.passed)) authenticated \(Self.flag(result.authenticated)) challenge \(Self.flag(result.challenged)) confined \(Self.flag(result.confined)) isolation_verified \(result.isolationVerified)"
         )
+      }
+      if case .unverified(let pid, _, let reason) = state {
+        out("Gateway:        UNVERIFIED (pid \(pid)): \(reason)")
+        throw ExitCode(1)
       }
       guard let gateway else {
         out("Gateway:        not running")
@@ -156,11 +174,28 @@ struct InferenceStatus: ParsableCommand {
   }
 
   /// What this host process can verify about each backend (spec §20.8).
-  static func hostChecks(_ context: CommandContext) -> HostChecks {
+  /// A managed backend's challenge needs its Keychain token; one that
+  /// cannot be read leaves the challenge unverified.
+  static func hostChecks(_ context: CommandContext, _ controller: InferenceController)
+    -> HostChecks
+  {
     HostChecks(
       results: context.config.inference.backends.sorted { $0.key < $1.key }.map { name, backend in
-        (name, BackendChecks.verify(name: name, backend: backend))
+        let token: Secret<String>? =
+          switch Result(catching: { try controller.backendToken(backend, name) }) {
+          case .success(let token): token
+          case .failure: nil
+          }
+        return (name, BackendChecks.verify(name: name, backend: backend, token: token))
       })
+  }
+
+  static func stateName(_ state: InferenceController.GatewayState) -> String {
+    switch state {
+    case .notRunning: "not_running"
+    case .verified: "running"
+    case .unverified: "unverified"
+    }
   }
 
   static func flag(_ value: Bool?) -> String { value.map { $0 ? "true" : "false" } ?? "-" }
@@ -204,15 +239,23 @@ struct InferenceDoctor: ParsableCommand {
           "mode", inference.mode == .required, else: .warn,
           ok: "inference.mode = \"required\"",
           otherwise: "inference.mode = \"off\": no guarded inference"))
-      do {
-        _ = try controller.connect(start: false)
+      switch controller.probe() {
+      case .verified:
         checks.append(Check("gateway", .ok, "running and verified as this user's iso-inference"))
-      } catch {
+      case .notRunning:
+        checks.append(Check("gateway", .ok, "not running; it starts on demand"))
+      case .unverified(let pid, _, let reason):
         checks.append(
-          Check("gateway", .warn, "not running (\(oneLine(error))); it starts on demand"))
+          Check(
+            "gateway", .fail,
+            "pid \(pid) on the control socket failed verification: \(reason); `iso inference stop --force` stops a same-user gateway"
+          ))
       }
+      let hostChecks = InferenceStatus.hostChecks(context, controller)
       for (name, backend) in inference.backends.sorted(by: { $0.key < $1.key }) {
-        let host = BackendChecks.verify(name: name, backend: backend)
+        let host =
+          hostChecks.results.first { $0.0 == name }?.1
+          ?? BackendChecks.verify(name: name, backend: backend)
         checks.append(
           .passing(
             "backend \(name) reachable", host.reachable, else: .warn,
@@ -246,6 +289,13 @@ struct InferenceDoctor: ParsableCommand {
         }
         if let managed = backend.managed {
           checks.append(
+            .passing(
+              "backend \(name) identity", host.challenged == true, else: .fail,
+              ok: "the listener answered the launcher's token challenge",
+              otherwise:
+                "the listener did not prove it holds the managed token (another process may hold the port)"
+            ))
+          checks.append(
             Check(
               "backend \(name) confinement",
               host.confined == true ? .ok : managed.confinement == .none ? .warn : .fail,
@@ -260,7 +310,7 @@ struct InferenceDoctor: ParsableCommand {
             ))
         }
       }
-      if let gateway = try? controller.inspect(nil),
+      if case .verified = controller.probe(), let gateway = try? controller.inspect(nil),
         case .array(let backends)? = gateway["backends"]
       {
         for case .object(let backend) in backends {
@@ -386,6 +436,34 @@ struct InferenceAttach: ParsableCommand {
   }
 }
 
+struct InferenceDetach: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "detach",
+    abstract:
+      "Remove an instance's `iso inference attach` grant; its next session carries no ISO_INFERENCE_* variables"
+  )
+
+  @OptionGroup var global: GlobalOptions
+  @Argument(help: "Instance name", transform: parseInstanceName) var name: InstanceName
+
+  func run() throws {
+    try IsoCLI.run {
+      let context = try CommandContext.load(global)
+      let instance = try InstanceStore.resolve(context.config, name: name)
+      guard try InferenceAttachGrant.remove(instance) else {
+        context.output.out("'\(name)' has no attach grant.")
+        return
+      }
+      // The grant's service may still be in the running session: revoke it,
+      // so the next command registers only what remains.
+      if context.config.inference.mode == .required {
+        try context.requireInferenceController().revoke(instance)
+      }
+      context.output.out("Removed the attach grant of '\(name)'.")
+    }
+  }
+}
+
 struct InferenceRevoke: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "revoke",
@@ -400,6 +478,7 @@ struct InferenceRevoke: ParsableCommand {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
       let instance = try InstanceStore.resolve(context.config, name: name)
+      // Throws unless the gateway confirmed the revocation or is not running.
       try context.requireInferenceController().revokeManually(instance)
       context.output.out("Revoked inference access for '\(name)'.")
     }
@@ -449,12 +528,25 @@ struct InferenceStop: ParsableCommand {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
       let controller = try context.requireInferenceController()
-      guard (try? controller.connect(start: false)) != nil else {
+      switch controller.probe() {
+      case .notRunning:
         context.output.out("The inference gateway is not running.")
-        return
+      case .verified:
+        try controller.stopGateway(force: force)
+        context.output.out("Stopped the inference gateway.")
+      case .unverified(let pid, let sameUser, let reason):
+        // It cannot be asked to stop over the control protocol. A same-user
+        // process can be signalled; another account's never is.
+        guard force, sameUser else {
+          throw HostError(
+            "pid \(pid) serves the inference control socket but failed verification (\(reason))\(sameUser ? "; pass --force to terminate it (its sessions end with it)" : "; it runs as another user, so iso will not signal it")"
+          )
+        }
+        guard kill(pid, SIGTERM) == 0 else {
+          throw HostError.posix("Failed to terminate", "pid \(pid)")
+        }
+        context.output.out("Terminated the unverified gateway process \(pid).")
       }
-      try controller.stopGateway(force: force)
-      context.output.out("Stopped the inference gateway.")
     }
   }
 }

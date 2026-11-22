@@ -398,12 +398,13 @@ extension AgentBootstrap {
       instance, provider: .anthropic, modelState: modelState, target: session.target)
     do {
       if inferenceRequired {
-        if let (current, _) = try inferenceSession(instance, target: session.target) {
+        if let (current, _) = try optionalInferenceSession(instance, target: session.target) {
           try writeClaudeInferenceSettings(
             instance, target: session.target, session: current, imported: prepared?.preferences)
         } else {
+          // No session: settings that reach no model, never the cloud.
           try writeManagedClaudeSettings(
-            session.target, localEnv: [:], imported: prepared?.preferences)
+            session.target, localEnv: claudeInferenceEnv(nil), imported: prepared?.preferences)
         }
       } else {
         let localEnv = try claudeLocalEnv(modelState, proxy: proxy)

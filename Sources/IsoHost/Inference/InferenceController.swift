@@ -66,6 +66,16 @@ package struct InferenceAttachGrant: Sendable, Equatable {
     return InferenceAttachGrant(service: try InferenceServiceName(service), api: parsedAPI)
   }
 
+  /// Removes the grant; false when there was none.
+  @discardableResult
+  package static func remove(_ instance: Instance) throws -> Bool {
+    guard unlink(path(instance)) == 0 else {
+      if errno == ENOENT { return false }
+      throw HostError.posix("Failed to remove", path(instance))
+    }
+    return true
+  }
+
   package func save(_ instance: Instance) throws {
     let json = OutputJSON.object([
       ("service", .string(service.rawValue)), ("api", .string(api.rawValue)),
@@ -100,6 +110,9 @@ package struct InferenceController: Sendable {
   let relayDirectory: String
   /// Sessions this command established or verified (shared by copies).
   let sessions = SessionMemo()
+  /// Checks the control socket's peer before anything is sent; production
+  /// uses `verifyPeer`, tests a stand-in gateway in this process.
+  let peerCheck: (@Sendable (ControlSocket.Peer) throws -> Void)?
 
   package init(
     config: IsoConfig, environment: [String: String], resolver: CredentialResolver,
@@ -117,8 +130,10 @@ package struct InferenceController: Sendable {
     config: IsoConfig, environment: [String: String], resolver: CredentialResolver,
     diagnostics: Diagnostics, isoExecutable: String?, proxies: ProxyLauncher,
     boot: @escaping @Sendable (Instance) throws -> InferenceBoot, sandboxExec: String,
-    stateDirectory: String, relayDirectory: String
+    stateDirectory: String, relayDirectory: String,
+    peerCheck: (@Sendable (ControlSocket.Peer) throws -> Void)? = nil
   ) {
+    self.peerCheck = peerCheck
     self.config = config
     self.environment = environment
     self.resolver = resolver
@@ -150,7 +165,14 @@ package struct InferenceController: Sendable {
     var names = Set<InferenceServiceName>()
     if let service = config.claude.localService { names.insert(service) }
     if let service = config.codex.localService { names.insert(service) }
-    if let grant = try InferenceAttachGrant.load(instance) { names.insert(grant.service) }
+    if let grant = try InferenceAttachGrant.load(instance) {
+      guard config.inference.services[grant.service] != nil else {
+        throw HostError(
+          "the attach grant of '\(instance.name)' (\(InferenceAttachGrant.path(instance))) names service '\(grant.service)', which inference.services no longer defines; run `iso inference detach \(instance.name)` or attach another service"
+        )
+      }
+      names.insert(grant.service)
+    }
     return names.sorted()
   }
 
@@ -165,14 +187,23 @@ package struct InferenceController: Sendable {
 
   /// The instance's live session, established if needed. nil when the
   /// instance requests no service. `fresh` is true when a new session (and
-  /// so a new capability) was just created.
-  package func ensureSession(_ instance: Instance, target: SSHTarget) throws -> (
-    session: InferenceSession, fresh: Bool
-  )? {
-    guard config.inference.mode == .required else { return nil }
+  /// so a new capability) was just created. `configureGuest` writes the
+  /// guest's bridge and agent configuration for a new session before it is
+  /// activated (§12.2 step 6 before 7), so a failure or crash between them
+  /// leaves no active session the guest is not set up for.
+  package func ensureSession(
+    _ instance: Instance, target: SSHTarget,
+    configureGuest: (InferenceSession) throws -> Void = { _ in }
+  ) throws -> (session: InferenceSession, fresh: Bool)? {
+    guard config.inference.mode == .required else {
+      // A mode change disables admission first (§12.4): a session recorded
+      // under `required` is revoked once the configuration says `off`.
+      try revokeRecorded(instance)
+      return nil
+    }
     let services = try requestedServices(instance)
     guard !services.isEmpty else {
-      revoke(instance)
+      try revoke(instance)
       return nil
     }
     // A manual revocation withholds inference only: shells and commands
@@ -188,12 +219,17 @@ package struct InferenceController: Sendable {
     if let remembered = sessions.session(instance, fingerprint: fingerprint) {
       return (remembered, false)
     }
+    // One establisher per instance: concurrent commands must not revoke
+    // each other's sessions or remove each other's state.
+    let lock = try FileLock.sibling(of: Self.statePath(instance))
+    defer { lock.release() }
     if let current = current(instance), current.fingerprint == fingerprint {
       remember(instance, current.session, fingerprint: fingerprint, owner: current.owner)
       return (current.session, false)
     }
     let (session, owner) = try establish(
-      instance, target: target, services: services, fingerprint: fingerprint)
+      instance, target: target, services: services, fingerprint: fingerprint,
+      configureGuest: configureGuest)
     remember(instance, session, fingerprint: fingerprint, owner: owner)
     return (session, true)
   }
@@ -209,16 +245,14 @@ package struct InferenceController: Sendable {
         fingerprint: fingerprint, session: session, ownerPID: owner.pid, ownerStart: owner.start))
   }
 
-  /// §12.2 steps 3–7. Every failure revokes the partial session.
+  /// §12.2 steps 3–7, under the instance's session lock. Every failure
+  /// revokes the partial session.
   func establish(
-    _ instance: Instance, target: SSHTarget, services: [InferenceServiceName], fingerprint: String
+    _ instance: Instance, target: SSHTarget, services: [InferenceServiceName], fingerprint: String,
+    configureGuest: (InferenceSession) throws -> Void
   ) throws -> (InferenceSession, owner: (pid: Int32, start: String)) {
     let resolved = try services.map(resolved)
-    for (name, backend) in Set(resolved.map(\.backendName)).sorted().compactMap({ name in
-      config.inference.backends[name].map { (name, $0) }
-    }) {
-      try BackendChecks.enforce(name: name, backend: backend)
-    }
+    try enforceBackends(resolved)
     try ensureGatewayCovers(Set(resolved.map(\.backend.port)))
     let bootInfo = try boot(instance)
     let socket = try relaySocketName(bootInfo.relaySocket, instance: instance)
@@ -226,7 +260,7 @@ package struct InferenceController: Sendable {
       throw HostError("cannot read the sandbox owner process for '\(instance.name)'")
     }
     // The old capability first: a replaced session must not linger.
-    revoke(instance)
+    try revoke(instance)
     let nonce = randomHex(16)
     let registration = try registrationMessage(
       instance, resolved: resolved, boot: (bootInfo.ownerPID, ownerStart), nonce: nonce,
@@ -238,8 +272,11 @@ package struct InferenceController: Sendable {
       registered["socket"] == .string(socket)
     else { throw HostError("iso-inference returned an incomplete registration") }
     let token = Secret(capability)
+    let session = InferenceSession(
+      sessionID: sessionID, epoch: epoch, token: token, services: services)
     do {
       try verifyRegistered(instance, sessionID: sessionID, nonce: nonce)
+      try configureGuest(session)
       // The session lives as long as the owner process that carries the
       // instance's relay: its exit (VM stop) revokes the session.
       var activation: [(String, OutputJSON)] = [
@@ -266,6 +303,8 @@ package struct InferenceController: Sendable {
             ("services", .array(services.map { .string($0.rawValue) })),
           ]).rendered().utf8), to: Self.statePath(instance), mode: .atMost(0o600))
     } catch {
+      // Already failing: the revocation is best effort, and the gateway also
+      // revokes an inactive session when the owner exits.
       _ = try? control([
         ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
         ("session_id", .string(sessionID)),
@@ -279,10 +318,31 @@ package struct InferenceController: Sendable {
       .info,
       "Inference gateway session active for '\(instance.name)' (guest → 127.0.0.1:\(Self.guestPort) over the sandbox relay; services \(services.map(\.rawValue).joined(separator: ", ")))"
     )
-    return (
-      InferenceSession(sessionID: sessionID, epoch: epoch, token: token, services: services),
-      (bootInfo.ownerPID, ownerStart)
-    )
+    return (session, (bootInfo.ownerPID, ownerStart))
+  }
+
+  /// Each backend the services use passes the §10/§20 checks, with its
+  /// credential for the managed-backend challenge.
+  func enforceBackends(_ resolved: [ResolvedInferenceService]) throws {
+    for name in Set(resolved.map(\.backendName)).sorted() {
+      guard let backend = config.inference.backends[name] else { continue }
+      try BackendChecks.enforce(
+        name: name, backend: backend, token: try backendToken(backend, name))
+    }
+  }
+
+  /// A managed backend's Keychain token, for its challenge (§20.3).
+  package func backendToken(_ backend: InferenceBackendConfig, _ name: String) throws
+    -> Secret<String>?
+  {
+    guard backend.managed != nil, let reference = Self.credential(backend, name: name) else {
+      return nil
+    }
+    do { return try resolver.resolve(reference) } catch {
+      throw ContextError(
+        "Failed to read the token of managed inference backend '\(name)' from the Keychain (fail-closed)",
+        cause: error)
+    }
   }
 
   /// The relay socket's file name, when the isolation gate verified it in
@@ -343,24 +403,35 @@ package struct InferenceController: Sendable {
     )
   }
 
-  /// Revoke at the gateway (when it runs), stop the forward and remove the
-  /// capability. Idempotent and best effort: the forward's exit alone also
-  /// revokes the session at the gateway (§12.3).
-  package func revoke(_ instance: Instance) {
+  /// Revoke the instance's session at the gateway and remove the host-side
+  /// capability. Idempotent. A gateway that is not running holds no session
+  /// (a restarted one starts a new epoch), so that counts as revoked; any
+  /// other failure (peer verification, protocol version, timeout, refusal)
+  /// throws and keeps the state, because the session may still be active.
+  package func revoke(_ instance: Instance) throws {
     sessions.forget(instance)
-    _ = try? control([
-      ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
-      ("instance", .object(instanceKey(instance))),
-    ])
+    do {
+      _ = try control([
+        ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
+        ("instance", .object(instanceKey(instance))),
+      ])
+    } catch is InferenceGatewayNotRunning {}
     removeState(instance)
   }
 
+  /// `revoke`, when a session is recorded for the instance.
+  func revokeRecorded(_ instance: Instance) throws {
+    guard FileManager.default.fileExists(atPath: Self.statePath(instance)) else { return }
+    try revoke(instance)
+  }
+
   /// `iso inference revoke`: as `revoke`, and the instance stays revoked
-  /// until the VM restarts or a new grant is attached.
+  /// until the VM restarts or a new grant is attached. The marker is written
+  /// first, so no command re-establishes a session while the revocation runs.
   package func revokeManually(_ instance: Instance) throws {
-    revoke(instance)
     try AtomicFile.write(
       Array("revoked\n".utf8), to: Self.revokedPath(instance), mode: .atMost(0o600))
+    try revoke(instance)
   }
 
   package func isManuallyRevoked(_ instance: Instance) -> Bool {
@@ -534,8 +605,11 @@ package struct InferenceController: Sendable {
   }
 
   /// Every non-loopback address the backend port answers on.
-  package static func exposedAddresses(port: UInt16) -> [String] {
-    Socket.nonLoopbackAddresses().filter {
+  /// `addresses` are the host's non-loopback addresses (injected by tests).
+  package static func exposedAddresses(
+    port: UInt16, addresses: [String] = Socket.nonLoopbackAddresses()
+  ) -> [String] {
+    addresses.filter {
       Socket.connects(host: $0, port: port, timeoutMilliseconds: 300)
     }
   }
@@ -549,7 +623,13 @@ package struct InferenceController: Sendable {
         "iso-inference not found next to iso at \((isoExecutable as NSString).deletingLastPathComponent) (fail-closed; no raw or cloud fallback). An update from iso v0.11.x or earlier installs no iso-inference: run `iso update --force` once, or rerun install.sh; a source build needs scripts/build-release.py"
       )
     }
-    return Self.realPath(candidate)
+    // As for the runtime: owned by root or this user, unwritable by others
+    // down to `/`, and (release builds) signed like iso.
+    do {
+      return try proxies.verifyCompanion(try TrustedExecutable.verify(candidate).path).path
+    } catch {
+      throw ContextError("Refusing to start \(candidate) (fail-closed)", cause: error)
+    }
   }
 
   static func realPath(_ path: String) -> String { canonicalPath(path) ?? path }
@@ -602,15 +682,38 @@ package struct InferenceController: Sendable {
 
   var socketPath: String { stateDirectory + "/control.sock" }
 
+  /// What answers on the control socket, without starting anything.
+  package enum GatewayState: Sendable, Equatable {
+    case notRunning
+    case verified(pid: Int32)
+    /// Something answers that fails peer verification or speaks another
+    /// control protocol version; `pid` is the peer's, `sameUser` whether it
+    /// runs as this user.
+    case unverified(pid: Int32, sameUser: Bool, reason: String)
+  }
+
+  package func probe() -> GatewayState {
+    guard let peer = try? ControlSocket.peer(socketPath) else { return .notRunning }
+    do {
+      try checkPeer(peer)
+      _ = try inspect(nil)
+      return .verified(pid: peer.pid)
+    } catch is InferenceGatewayNotRunning {
+      return .notRunning
+    } catch {
+      return .unverified(pid: peer.pid, sameUser: peer.uid == getuid(), reason: "\(error)")
+    }
+  }
+
   /// A verified connection check: the socket's peer is this user's
   /// `iso-inference` binary beside this `iso`. With `start`, launches it.
   @discardableResult
   package func connect(start: Bool) throws -> Int32 {
     if let peer = try? ControlSocket.peer(socketPath) {
-      try verifyPeer(peer)
+      try checkPeer(peer)
       return peer.pid
     }
-    guard start else { throw HostError("the inference gateway is not running") }
+    guard start else { throw InferenceGatewayNotRunning(reason: "nothing serves \(socketPath)") }
     let binary = try locateBinary()
     let directory = try prepareStateDirectory()
     let relay = try prepareRelayDirectory()
@@ -620,18 +723,22 @@ package struct InferenceController: Sendable {
     defer { close(log) }
     let ports = backendPorts
     guard !ports.isEmpty else { throw HostError("inference configuration names no backend") }
-    var child = try DetachedChild.spawn(
-      executable: sandboxExec,
-      arguments: [
-        "-D", "INFERENCE_BIN=\(binary)", "-D", "STATE_DIR=\(directory)", "-D",
-        "RELAY_DIR=\(relay)", "-p", SeatbeltProfile.inference(backendPorts: ports), binary,
-        "--state-dir", directory, "--relay-dir", relay,
-      ] + ports.flatMap { ["--backend-port", String($0)] }, environment: [:], stdin: .null,
-      stderr: log)
+    // The gateway holds a socket per guest connection across every VM: it
+    // inherits a descriptor limit raised toward the hard limit.
+    var child = try Self.withRaisedFileLimit(Self.gatewayFileLimit) {
+      try DetachedChild.spawn(
+        executable: sandboxExec,
+        arguments: [
+          "-D", "INFERENCE_BIN=\(binary)", "-D", "STATE_DIR=\(directory)", "-D",
+          "RELAY_DIR=\(relay)", "-p", SeatbeltProfile.inference(backendPorts: ports), binary,
+          "--state-dir", directory, "--relay-dir", relay,
+        ] + ports.flatMap { ["--backend-port", String($0)] }, environment: [:], stdin: .null,
+        stderr: log)
+    }
     let deadline = ContinuousClock.now + Self.startTimeout
     while ContinuousClock.now < deadline {
       if let peer = try? ControlSocket.peer(socketPath) {
-        try verifyPeer(peer)
+        try checkPeer(peer)
         return peer.pid
       }
       if let status = child.poll(), status != .exited(3) {
@@ -643,6 +750,21 @@ package struct InferenceController: Sendable {
     }
     throw HostError(
       "iso-inference did not start within 5s (fail-closed).\n\(ProxyLauncher.readLog(logPath))")
+  }
+
+  static let gatewayFileLimit: rlim_t = 8192
+
+  /// `body` with this process's soft descriptor limit raised to `limit`
+  /// (or the hard limit), restored afterwards; a child spawned in `body`
+  /// keeps the raised limit.
+  static func withRaisedFileLimit<T>(_ limit: rlim_t, _ body: () throws -> T) rethrows -> T {
+    var saved = rlimit()
+    guard getrlimit(RLIMIT_NOFILE, &saved) == 0, saved.rlim_cur < limit else { return try body() }
+    var raised = saved
+    raised.rlim_cur = min(limit, saved.rlim_max)
+    _ = setrlimit(RLIMIT_NOFILE, &raised)
+    defer { _ = setrlimit(RLIMIT_NOFILE, &saved) }
+    return try body()
   }
 
   /// Every backend port in the configuration: the only loopback ports the
@@ -672,14 +794,31 @@ package struct InferenceController: Sendable {
     }
   }
 
-  func verifyPeer(_ peer: ControlSocket.Peer) throws {
+  func checkPeer(_ peer: ControlSocket.Peer) throws {
+    if let peerCheck { return try peerCheck(peer) }
+    try Self.verifyPeer(
+      peer, expected: try locateBinary(), socketPath: socketPath,
+      executablePath: HostProcess.executablePath, sandboxed: BackendChecks.isSandboxed)
+  }
+
+  /// The peer runs as this user, is the `iso-inference` beside this `iso`,
+  /// and is sandboxed (the kernel's answer: the gateway checks its own
+  /// confinement at startup, and this refuses one started without it).
+  static func verifyPeer(
+    _ peer: ControlSocket.Peer, expected: String, socketPath: String,
+    executablePath: (Int32) -> String?, sandboxed: (Int32) -> Bool?
+  ) throws {
     guard peer.uid == getuid() else {
       throw HostError("the inference control socket is served by another user — refusing to use it")
     }
-    let expected = try locateBinary()
-    guard let path = HostProcess.executablePath(peer.pid), Self.realPath(path) == expected else {
+    guard let path = executablePath(peer.pid), Self.realPath(path) == expected else {
       throw HostError(
-        "a different iso-inference (pid \(peer.pid)) serves \(socketPath); stop it with `iso inference stop` and retry"
+        "a different program (pid \(peer.pid)) serves \(socketPath), not \(expected); stop it with `iso inference stop --force` and retry"
+      )
+    }
+    guard sandboxed(peer.pid) == true else {
+      throw HostError(
+        "iso-inference (pid \(peer.pid)) is not running under its Seatbelt profile; stop it with `iso inference stop --force` and retry (fail-closed)"
       )
     }
   }
@@ -699,16 +838,17 @@ package struct InferenceController: Sendable {
     let reply: [UInt8]
     do {
       reply = try ControlSocket.exchange(
-        socketPath, body, timeoutSeconds: Self.controlTimeoutSeconds, verify: verifyPeer)
+        socketPath, body, timeoutSeconds: Self.controlTimeoutSeconds, verify: checkPeer)
     } catch let error as ControlSocket.Unreachable {
-      throw HostError("the inference gateway is not running (\(error.reason))")
+      throw InferenceGatewayNotRunning(reason: error.reason)
     }
     guard
       case .object(let members) = try ConfigLoader.parse(
         reply, format: .json, path: "iso-inference", limits: .configuration)
     else { throw HostError("iso-inference sent a malformed reply") }
-    guard members["version"].flatMap(Self.integer) == Int64(Self.controlVersion) else {
-      throw HostError("iso-inference speaks an unsupported control protocol version")
+    let version = members["version"].flatMap(Self.integer)
+    guard version == Int64(Self.controlVersion) else {
+      throw InferenceGatewayIncompatible(version: version, expected: Self.controlVersion)
     }
     guard members["ok"] == .bool(true) else {
       let code: String =
@@ -746,5 +886,22 @@ package struct InferenceController: Sendable {
     case .number(.unsigned(let n)): Int64(exactly: n)
     default: nil
     }
+  }
+}
+
+/// No gateway accepts connections on the control socket: it holds no
+/// session (a started one begins a new epoch).
+package struct InferenceGatewayNotRunning: Error, CustomStringConvertible {
+  let reason: String
+  package var description: String { "the inference gateway is not running (\(reason))" }
+}
+
+/// The running gateway speaks another control protocol version, as an
+/// iso-inference left running across `iso update` does.
+package struct InferenceGatewayIncompatible: Error, CustomStringConvertible {
+  let version: Int64?
+  let expected: UInt64
+  package var description: String {
+    "the running iso-inference speaks control protocol \(version.map(String.init) ?? "unknown"), not \(expected) (it predates this iso, as after `iso update`); its sessions cannot be managed. Run `iso inference stop --force` (revokes them), then retry"
   }
 }

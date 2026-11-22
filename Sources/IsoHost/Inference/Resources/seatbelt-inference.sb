@@ -15,10 +15,11 @@
 ;; must be allowed. No other program can be executed.
 (allow process-exec* (literal (param "INFERENCE_BIN")))
 
-;; Reads: system libraries and data, the gateway binary and its state
-;; directory. Metadata stays readable for path resolution; the root
-;; directory itself is read by the runtime at startup. Guest strings never
-;; become paths.
+;; Reads: system libraries and data, the gateway binary and its state and
+;; relay directories. Metadata (stat, not contents) stays readable
+;; everywhere: path canonicalization and dyld need it, and it reveals names
+;; and sizes only. The root directory itself is read by the runtime at
+;; startup. Guest strings never become paths.
 (allow file-read-metadata)
 (allow file-read*
   (literal "/")
@@ -38,7 +39,9 @@
 (allow process-info* (target self))
 ;; The instance's sandbox owner process, which carries the vsock relay:
 ;; identity (proc_pidinfo) at activation and its exit notification
-;; (§12.3, §22). Read-only process metadata.
+;; (§12.3, §22). Seatbelt cannot name that PID in advance, so this allows
+;; read-only process metadata (start time, owner, path) for any process;
+;; it grants no signal, task port or memory access.
 (allow process-info-pidinfo)
 (allow mach-lookup (global-name "com.apple.system.logger"))
 

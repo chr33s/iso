@@ -226,11 +226,14 @@ extension AgentBootstrap {
       let codex = config.codex
       let source = configSourceDirectory(
         codex.configDirectory, defaultName: ".codex", label: "codex.config_dir")
+      // Under `required` a Codex service gets the gateway table, with or
+      // without a session (never the OpenAI default provider).
       let local =
         inferenceRequired
-        ? try inferenceSession(instance, target: session.target).flatMap {
-          codexInferenceTable($0.session)
-        }
+        ? (config.codex.localService == nil
+          ? nil
+          : codexInferenceTable(
+            try optionalInferenceSession(instance, target: session.target)?.session))
         : try codexProviderTable(modelState, proxy: proxy)
       if local != nil && !modelState.codexMaterialized {
         modelState.codexMaterialized = true

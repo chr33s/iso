@@ -8,6 +8,8 @@ Checks the bearer check, Origin refusal, model pinning, memory limits, the
 loopback bind and the version gate. No MLX, model or network is needed.
 """
 
+import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -107,13 +109,13 @@ def fake_modules(root, version):
     (root / "mlx/core.py").write_text(FAKE_CORE)
 
 
-def request(port, method="POST", headers=None, body=None):
+def request(port, method="POST", headers=None, body=None, path="/v1/chat/completions"):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     data = json.dumps(body).encode() if body is not None else None
-    connection.request(method, "/v1/chat/completions", body=data, headers=headers or {})
+    connection.request(method, path, body=data, headers=headers or {})
     response = connection.getresponse()
-    response.read()
-    return response.status, dict(response.getheaders())
+    text = response.read()
+    return response.status, dict(response.getheaders()), text
 
 
 def main():
@@ -146,10 +148,21 @@ def main():
         check("a browser Origin is refused (401)",
               request(port, headers=dict(good, origin="https://evil.example"), body=payload)[0] == 401)
         check("OPTIONS is refused", request(port, method="OPTIONS", headers=good)[0] == 401)
-        status, headers = request(port, headers=good, body=payload)
+        status, headers, _ = request(port, headers=good, body=payload)
         check("the right token is served", status == 200)
         check("no CORS headers are sent", not any(k.lower().startswith("access-control") for k in headers))
         check("GET also needs the token", request(port, method="GET")[0] == 401)
+        nonce = "5a" * 32
+        status, headers, body = request(port, method="GET", path="/iso/challenge/" + nonce)
+        expected = hmac.new(TOKEN.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+        check("the challenge answers the token's HMAC of the nonce without the token",
+              status == 200 and body.decode() == expected)
+        check("the challenge never echoes the token", TOKEN.encode() not in body)
+        check("a malformed challenge needs the token",
+              request(port, method="GET", path="/iso/challenge/xyz")[0] == 401)
+        check("a challenge with a browser Origin is refused",
+              request(port, method="GET", path="/iso/challenge/" + nonce,
+                      headers={"origin": "https://evil.example"})[0] == 401)
         records = [json.loads(line) for line in record.read_text().splitlines()]
         loads = [r["load"] for r in records if "load" in r]
         check("every load is pinned to the default model",

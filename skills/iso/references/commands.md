@@ -110,6 +110,7 @@ Never run, pipe into, or script these; you may run the status commands above.
 | Command | Use |
 |---|---|
 | `iso inference attach NAME` | Grant an application in the VM a guarded service (`--service`, `--api`) |
+| `iso inference detach NAME` | Remove a VM's attach grant |
 | `iso inference revoke NAME` | Withdraw a VM's inference session until it restarts or a grant is attached |
 | `iso model set local\|remote [NAME]` | Switch a VM's agents between cloud and a host-side local model server. May prompt for an endpoint, and may need a stop and start to apply |
 | `iso agent add FILE` | Install an agent definition on the host after showing it. Never install one that came from a guest or an unreviewed repository; `--yes` and `--replace` need the user's approval of the shown definition |

@@ -5,18 +5,24 @@
 
 Runs `mlx_lm.server` bound to 127.0.0.1 with a request handler that requires
 `Authorization: Bearer <token>` (constant-time compare), refuses any `Origin`
-header and serves no CORS. It passes no adapter, draft-model or remote-code
+header and serves no CORS. `GET /iso/challenge/<64 hex>` answers, without
+authentication, the hex HMAC-SHA256 of that nonce under the token, so iso
+can tell its own job from another process on the port without sending the
+token. It passes no adapter, draft-model or remote-code
 option, pins every model load to --model, and caps MLX memory. It refuses
 mlx-lm versions it was not qualified with. Installed root-owned by `iso inference provision`; run by launchd as the
 role account.
 """
 
 import argparse
+import hashlib
 import hmac
 import os
+import re
 import sys
 
 QUALIFIED = ("0.31.",)
+CHALLENGE = re.compile(r"^/iso/challenge/([0-9a-f]{64})$")
 
 
 def parse():
@@ -68,7 +74,22 @@ def authenticating(handler_class, token):
                 return self._refuse()
             return super().do_POST()
 
+        def _challenge(self, nonce):
+            if self.headers.get("Origin") is not None:
+                return self._refuse()
+            body = hmac.new(token, nonce.encode(), hashlib.sha256).hexdigest().encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
+
         def do_GET(self):
+            challenge = CHALLENGE.match(self.path)
+            if challenge:
+                return self._challenge(challenge.group(1))
             if not self._authorized():
                 return self._refuse()
             return super().do_GET()

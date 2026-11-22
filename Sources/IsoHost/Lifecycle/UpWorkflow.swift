@@ -201,10 +201,11 @@ package struct UpWorkflow {
   package func rejectRestartOnlyInputs(_ instance: Instance) throws {
     if request.noAgents || request.noGithub || !request.forwardPort.isEmpty
       || request.postStart != nil || !request.guestEnvironment.isEmpty || request.envFile != nil
+      || request.modelMode != nil
     {
       throw HostFailure(
         .instanceIncompatible(instance.name),
-        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, and --env-file only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso \(request.command)` with those options."
+        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, --env-file and --model-mode only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso \(request.command)` with those options."
       )
     }
     try rejectEgressChange(instance)

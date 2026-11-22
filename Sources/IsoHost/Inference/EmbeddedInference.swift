@@ -22,10 +22,11 @@ enum EmbeddedInference {
     ;; must be allowed. No other program can be executed.
     (allow process-exec* (literal (param "INFERENCE_BIN")))
 
-    ;; Reads: system libraries and data, the gateway binary and its state
-    ;; directory. Metadata stays readable for path resolution; the root
-    ;; directory itself is read by the runtime at startup. Guest strings never
-    ;; become paths.
+    ;; Reads: system libraries and data, the gateway binary and its state and
+    ;; relay directories. Metadata (stat, not contents) stays readable
+    ;; everywhere: path canonicalization and dyld need it, and it reveals names
+    ;; and sizes only. The root directory itself is read by the runtime at
+    ;; startup. Guest strings never become paths.
     (allow file-read-metadata)
     (allow file-read*
       (literal "/")
@@ -45,7 +46,9 @@ enum EmbeddedInference {
     (allow process-info* (target self))
     ;; The instance's sandbox owner process, which carries the vsock relay:
     ;; identity (proc_pidinfo) at activation and its exit notification
-    ;; (§12.3, §22). Read-only process metadata.
+    ;; (§12.3, §22). Seatbelt cannot name that PID in advance, so this allows
+    ;; read-only process metadata (start time, owner, path) for any process;
+    ;; it grants no signal, task port or memory access.
     (allow process-info-pidinfo)
     (allow mach-lookup (global-name "com.apple.system.logger"))
 
@@ -76,18 +79,24 @@ enum EmbeddedInference {
 
     Runs `mlx_lm.server` bound to 127.0.0.1 with a request handler that requires
     `Authorization: Bearer <token>` (constant-time compare), refuses any `Origin`
-    header and serves no CORS. It passes no adapter, draft-model or remote-code
+    header and serves no CORS. `GET /iso/challenge/<64 hex>` answers, without
+    authentication, the hex HMAC-SHA256 of that nonce under the token, so iso
+    can tell its own job from another process on the port without sending the
+    token. It passes no adapter, draft-model or remote-code
     option, pins every model load to --model, and caps MLX memory. It refuses
     mlx-lm versions it was not qualified with. Installed root-owned by `iso inference provision`; run by launchd as the
     role account.
     """
 
     import argparse
+    import hashlib
     import hmac
     import os
+    import re
     import sys
 
     QUALIFIED = ("0.31.",)
+    CHALLENGE = re.compile(r"^/iso/challenge/([0-9a-f]{64})$")
 
 
     def parse():
@@ -139,7 +148,22 @@ enum EmbeddedInference {
                     return self._refuse()
                 return super().do_POST()
 
+            def _challenge(self, nonce):
+                if self.headers.get("Origin") is not None:
+                    return self._refuse()
+                body = hmac.new(token, nonce.encode(), hashlib.sha256).hexdigest().encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = True
+
             def do_GET(self):
+                challenge = CHALLENGE.match(self.path)
+                if challenge:
+                    return self._challenge(challenge.group(1))
                 if not self._authorized():
                     return self._refuse()
                 return super().do_GET()

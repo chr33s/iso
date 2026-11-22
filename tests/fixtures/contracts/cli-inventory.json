@@ -328,6 +328,9 @@
   "inference deprovision": [
     "<backend>"
   ],
+  "inference detach": [
+    "<name>"
+  ],
   "inference doctor": [
     "--json"
   ],

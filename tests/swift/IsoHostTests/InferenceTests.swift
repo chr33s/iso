@@ -133,7 +133,7 @@ private let session = InferenceSession(
   #expect(env["ANTHROPIC_MODEL"] == "local-claude")
   #expect(env["ANTHROPIC_SMALL_FAST_MODEL"] == "local-claude")
   #expect(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "65536")
-  let table = try #require(agents.codexInferenceTable(session))
+  let table = agents.codexInferenceTable(session)
   let rendered = table.document
   #expect(rendered.contains(#"base_url = "http://127.0.0.1:11788/v1""#))
   #expect(rendered.contains(#"model = "local-codex""#))
@@ -212,14 +212,23 @@ private let session = InferenceSession(
   let closed = loopback.port
   loopback.close()
   #expect(throws: HostError.self) { try InferenceController.checkBackend(port: closed) }
-  // A wildcard bind is reachable on the host's other addresses.
-  guard !Socket.nonLoopbackAddresses().filter({ !$0.contains(":") }).isEmpty else { return }
+  // A wildcard bind answers on every address the probe is given, whatever
+  // interfaces this Mac has: here 127.0.0.1 stands in for a LAN address.
   let wildcard = try TCPListener(address: "0.0.0.0")
   defer { wildcard.close() }
+  let exposed = InferenceController.exposedAddresses(
+    port: wildcard.port, addresses: ["127.0.0.1"])
+  #expect(exposed == ["127.0.0.1"])
   let error = try #require(throws: HostError.self) {
-    try InferenceController.checkBackend(port: wildcard.port)
+    try InferenceController.requireSafeBinding(
+      port: wildcard.port, reachable: true, exposedAddresses: exposed)
   }
   #expect(error.message.contains("INFERENCE_BACKEND_UNSAFE_BIND"))
+  // A loopback-only listener answers on none of them.
+  let only = try TCPListener(address: "127.0.0.1")
+  defer { only.close() }
+  #expect(
+    InferenceController.exposedAddresses(port: only.port, addresses: ["192.0.2.1"]).isEmpty)
 }
 
 @Test func controlErrorsCarryTheGatewayCode() throws {
