@@ -137,16 +137,6 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
         policyHash: egress.policyHash) : nil
     var providers: [String] = []
     let routed = try guestEnvironment.map(GuestEnvState.providerSecrets)
-    // Guarded inference reaches the gateway through the runtime's socket
-    // relay, not a stream: no provider broker and no raw model tunnel.
-    if config.inference.mode == .required {
-      let secrets = try routed ?? GuestEnvState.tryLoad(instance)?.providerSecrets() ?? [:]
-      if let secret = secrets.values.sorted(by: { $0.variable < $1.variable }).first {
-        throw AgentBootstrap.inferenceRefusesProviderSecret(secret)
-      }
-      return BrokeredNetworkPolicy(
-        publicEgress: publicEgress, providerGrants: [], localServices: [])
-    }
     for provider in ProxyProvider.allCases {
       let granted: Bool
       if let routed {

@@ -185,7 +185,7 @@ package struct ProxyLauncher: Sendable {
     }
     guard let runtime else {
       throw HostError(
-        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.version)")
+        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity) or later")
     }
     let boot = try runtime.requireFilteredBoot(sidecar.machineID, sidecar.kind)
     guard boot.ownerPID == ownerPID else {

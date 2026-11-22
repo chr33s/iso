@@ -315,7 +315,7 @@ package struct SandboxRuntime: Sendable {
       let live, let bootID
     else {
       throw .unqualified(
-        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.version) and a live boot id for \(name); this runtime is protocol \(advertisedProtocol)"
+        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity) or later and a live boot id for \(name); this runtime is protocol \(advertisedProtocol)"
       )
     }
     return FilteredBoot(

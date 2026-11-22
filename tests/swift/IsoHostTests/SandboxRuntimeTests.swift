@@ -44,19 +44,17 @@ final class ScriptedRuntime: RuntimeExecutor {
 }
 
 let qualifiedVersion =
-  #"{"name":"iso-sandbox","version":"0.5.0","protocol":6,"containerization":"0.54.0"}"#
+  #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#
 
 @Test func qualificationAcceptsOnlyTheValidatedRuntime() throws {
   let good = try RuntimeProtocol.parseVersion(Array(qualifiedVersion.utf8))
   #expect(try SandboxRuntime.qualify(good).hasPrefix("iso-sandbox 0.5.0"))
   let current =
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":6,"containerization":"0.54.0"}"#
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#
   #expect(
     try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(current.utf8))).contains(
-      "protocol 6"))
+      "protocol 5"))
   for bad in [
-    // Protocol 5 has no inference relay (`--inference-relay`).
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#,
     #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.54.0"}"#,
     #"{"name":"container","version":"1","protocol":4,"containerization":"0.54.0"}"#,
     #"{"name":"iso-sandbox","version":"0.3.0","protocol":3,"containerization":"0.54.0"}"#,
@@ -64,9 +62,9 @@ let qualifiedVersion =
     #"{"name":"iso-sandbox","version":"1","protocol":1,"containerization":"0.54.0"}"#,
     #"{"name":"iso-sandbox","version":"1","protocol":4,"containerization":"0.46.0"}"#,
     // The current protocol does not excuse another containerization release.
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":6,"containerization":"0.46.0"}"#,
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.46.0"}"#,
     // Nor the previously pinned one.
-    #"{"name":"iso-sandbox","version":"0.1.0","protocol":6,"containerization":"0.45.0"}"#,
+    #"{"name":"iso-sandbox","version":"0.1.0","protocol":5,"containerization":"0.45.0"}"#,
   ] {
     #expect(throws: RuntimeError.self) {
       try SandboxRuntime.qualify(RuntimeProtocol.parseVersion(Array(bad.utf8)))
@@ -82,8 +80,8 @@ let qualifiedVersion =
   let name = try MachineName("iso-0a1b2c3d-00112233445566ff")
   let protocol4 =
     #"{"name":"iso-sandbox","version":"0.4.0","protocol":4,"containerization":"0.54.0"}"#
-  let protocol6 =
-    #"{"name":"iso-sandbox","version":"0.6.0","protocol":6,"containerization":"0.54.0"}"#
+  let protocol5 =
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0"}"#
   func runtime(_ version: String, _ inspect: [String: Any]) -> SandboxRuntime {
     let text = String(
       data: try! JSONSerialization.data(withJSONObject: inspect), encoding: .utf8)!
@@ -99,18 +97,18 @@ let qualifiedVersion =
   live["bootId"] = ""
   object["live"] = live
   #expect(throws: RuntimeError.self) {
-    try runtime(protocol6, object).requireFilteredBoot(name, .linux)
+    try runtime(protocol5, object).requireFilteredBoot(name, .linux)
   }
   live["bootId"] = "abc"
   object["live"] = live
-  let boot = try runtime(protocol6, object).requireFilteredBoot(name, .linux)
+  let boot = try runtime(protocol5, object).requireFilteredBoot(name, .linux)
   #expect(boot.bootID == "abc")
   #expect(boot.ownerPID == 81564)
   #expect(boot.livePath == "/state/runtime/sandboxes/\(name.rawValue)/live.json")
   #expect(RuntimeProtocol.filteredBootAllowed(advertised: 4, bootID: "abc") == false)
-  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 6, bootID: "") == false)
-  // Only the current protocol: protocol 5 has the boot identity but no relay.
-  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "abc") == false)
+  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "") == false)
+  // Later protocols keep the boot identity (protocol 6 adds the relay).
+  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "abc"))
   #expect(RuntimeProtocol.filteredBootAllowed(advertised: 6, bootID: "abc"))
 }
 
@@ -151,7 +149,7 @@ let qualifiedVersion =
     }
   }
   let runtime = SandboxRuntime(executor: executor, root: "/state/runtime", settings: .defaults)
-  #expect(try runtime.requireQualified().contains("protocol 6"))
+  #expect(try runtime.requireQualified().contains("protocol 5"))
   #expect(try runtime.list() == [ListedSandbox(id: "iso-a", status: .crashed)])
   do {
     _ = try runtime.images()

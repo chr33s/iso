@@ -1,7 +1,7 @@
 import Foundation
 import IsoCore
 
-/// Typed parsers for `iso-sandbox` JSON output (protocol 6). Runtime output
+/// Typed parsers for `iso-sandbox` JSON output (protocol 5). Runtime output
 /// is untrusted: records decode into closed types, identifiers are checked
 /// against the one requested, and the gate's effective config rejects unknown
 /// fields, so a runtime growing a host-facing setting fails closed. Diagnostic
@@ -348,7 +348,7 @@ package struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 
 package enum RuntimeProtocol {
   /// Protocol advertised by this checkout's runtime.
-  package static let version: UInt32 = 6
+  package static let version: UInt32 = 5
   /// The protocol that introduced the live boot identity filtered egress
   /// binds to; every later protocol keeps it.
   package static let bootIdentity: UInt32 = 5
@@ -359,10 +359,10 @@ package enum RuntimeProtocol {
   /// connector, on protocol 5 (vmnet output is unchanged by it).
   package static let brokeredFeature = "brokered-transport"
 
-  /// Filtered egress needs the current protocol (which carries the boot
-  /// identity since protocol 5) and a non-empty live boot id.
+  /// Filtered egress needs protocol 5 or later (the live boot id) and a
+  /// non-empty live boot id.
   package static func filteredBootAllowed(advertised: UInt32, bootID: String?) -> Bool {
-    advertised == version && !(bootID?.isEmpty ?? true)
+    advertised >= bootIdentity && !(bootID?.isEmpty ?? true)
   }
 
   static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], _ what: String)

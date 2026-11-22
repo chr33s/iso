@@ -7,8 +7,8 @@ set -uo pipefail
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity brokered
-#           persistence resources growth snapshots recovery concurrency display iso
-#           inference
+#           relay persistence resources growth snapshots recovery concurrency display
+#           iso inference
 #   ISO_TEST_DESKTOP_KERNEL=PATH: a pinned desktop kernel
 #   (scripts/build-desktop-kernel.sh) for the display phase, which skips
 #   without it.
@@ -313,8 +313,8 @@ else
     fail "iso-sandbox builds and signs" "see $WORK/build.log"
     summary
 fi
-check "version reports protocol 6 on containerization 0.54.0" \
-    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "6 0.54.0"
+check "version reports protocol 5 on containerization 0.54.0" \
+    test "$("$SANDBOX" version | jq -r '"\(.protocol) \(.containerization)"')" = "5 0.54.0"
 # The runtime keys its init filesystem by containerization release.
 INITFS="initfs-0.54.0.ext4"
 if "$CONTAINER" build --platform linux/arm64 -t "$IMAGE" "$FIXTURES/image" >"$WORK/image.log" 2>&1 &&
@@ -467,6 +467,128 @@ if want exposure; then
     [[ -n "$(guest "$A" sh -c "grep -rlsF '$CANARY' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null | head -1")" ]] && leaked+=" guest"
     check "a secret in the caller's environment reaches no runtime process, log, or guest" test -z "$leaked"
     skip "host services on the NAT gateway" "reachable by design; see docs/trust-model.md"
+fi
+
+# The inference relay (docs/design/secure-local-inference-spec.md §22),
+# driven through the runtime directly with a stand-in gateway on the derived
+# host socket: recovery without a gateway (AT-31), late reads (64 KiB and
+# 8 MiB), a symlinked host socket (AT-33), 400 connections against the cap
+# of 32 (AT-32) and `start --inference-relay on|off|omitted`.
+if want relay; then
+    echo ""
+    echo "=== Phase: relay ==="
+    R="$(name r)"
+    RG="/var/lib/iso-inference/gateway.sock"
+    # A stand-in gateway. `send N`: each connection gets N bytes, then the
+    # server closes at once (it does not wait for the guest to read them).
+    # `hold`: each connection is accepted and kept open, unread.
+    cat >"$WORK/relay-gateway.py" <<'PY'
+import os, socket, sys, threading
+path, mode = sys.argv[1], sys.argv[2]
+size = int(sys.argv[3]) if mode == "send" else 0
+try:
+    os.unlink(path)
+except FileNotFoundError:
+    pass
+s = socket.socket(socket.AF_UNIX)
+s.bind(path)
+os.chmod(path, 0o600)
+s.listen(128)
+body = bytes(range(256)) * (size // 256)
+held = []
+def serve(c):
+    if mode == "hold":
+        held.append(c)
+        return
+    try:
+        c.sendall(body)
+    finally:
+        c.close()
+while True:
+    c, _ = s.accept()
+    threading.Thread(target=serve, args=(c,), daemon=True).start()
+PY
+    gateway() {
+        python3 "$WORK/relay-gateway.py" "$@" &
+        RELAY_GW=$!
+        for _ in $(seq 50); do [[ -S "$1" ]] && return 0; sleep 0.1; done
+        return 1
+    }
+    gateway_stop() { kill "$RELAY_GW" 2>/dev/null; wait "$RELAY_GW" 2>/dev/null; rm -f "$1"; }
+    # Bytes one guest connection receives; `$1` seconds pass before the guest reads.
+    relayed() { guest "$R" socat -u "UNIX-CONNECT:$RG" "SYSTEM:sleep $1; wc -c" | tr -d ' \n'; }
+
+    check "create --inference-relay" sbx create "$R" --image "$IMAGE" --cpus 1 --memory-mib 1024 \
+        --disk-gib 4 --owner "$RUN" --inference-relay
+    check "a brokered sandbox refuses the relay" refuses sbx create "$(name rb)" --image "$IMAGE" \
+        --cpus 1 --memory-mib 1024 --disk-gib 4 --owner "$RUN" --network brokered --inference-relay
+    check "relay sandbox boots" boot "$R"
+    eff="$(sbx inspect "$R" | jq -c .effective)"
+    host="$(jq -r .inferenceRelay.host <<<"$eff")"
+    # shellcheck disable=SC2016 # jq program text.
+    check "inspect reports one relay: derived host socket, fixed guest path, cap 32" \
+        jq -e --arg d "$(getconf DARWIN_USER_TEMP_DIR)iso-sbx/inference/" --arg g "$RG" \
+        '.socketRelays == 1 and (.inferenceRelay.host | startswith($d)) and (.inferenceRelay.host | endswith(".sock")) and .inferenceRelay.guest == $g and .inferenceRelay.maxConnections == 32 and all(.mounts[]; .destination != $g)' <<<"$eff"
+    check "the relay directory is 0700 and owned by the user" \
+        test "$(stat -f '%Lp %u' "$(dirname "$host")")" = "700 $(id -u)"
+    check "the guest sees the relay socket" guest "$R" test -S "$RG"
+
+    # AT-31 / R1: no gateway, then a gateway.
+    check "with no gateway socket a guest connection carries nothing" test "$(relayed 0)" = 0
+    gateway "$host" send 65536
+    check "the relay recovers once the gateway socket exists" test "$(relayed 0)" = 65536
+    # S2 (#933 guest splice): the gateway writes and closes while the guest is
+    # behind; every byte still arrives before EOF, for a body that fits in the
+    # buffers in flight and for one that does not.
+    check "a guest reading late gets the whole 64 KiB answer" test "$(relayed 3)" = 65536
+    gateway_stop "$host"
+    gateway "$host" send $((8 << 20))
+    check "a guest reading late gets the whole 8 MiB answer" test "$(relayed 3)" = $((8 << 20))
+    gateway_stop "$host"
+
+    # AT-33: a symlink at the host path is not followed.
+    real="$(dirname "$host")/relay-test-real.sock"
+    gateway "$real" send 65536
+    ln -s "$real" "$host"
+    check "a symlink at the host socket path is refused" test "$(relayed 0)" = 0
+    rm -f "$host"
+    gateway_stop "$real"
+
+    # AT-32 / R2-R3: 400 concurrent guest connections against a gateway that
+    # holds every connection; at most 32 reach it, and the owner's descriptors
+    # return to baseline once the gateway lets go.
+    owner="$(sbx inspect "$R" | jq -r .live.pid)"
+    base="$(lsof -p "$owner" 2>/dev/null | wc -l | tr -d ' ')"
+    gateway "$host" hold
+    # shellcheck disable=SC2016 # Expand in the guest.
+    guest "$R" sh -c 'for i in $(seq 400); do (timeout 20 socat -u UNIX-CONNECT:'"$RG"' /dev/null &) ; done; sleep 5' >/dev/null
+    gwconns="$(lsof -a -p "$RELAY_GW" -U 2>/dev/null | grep -c "$host" || true)"
+    peak="$(lsof -p "$owner" 2>/dev/null | wc -l | tr -d ' ')"
+    check "at most 32 of 400 connections reach the gateway (got $gwconns)" test "$gwconns" -le 33
+    check "the owner stays within its descriptor budget (base $base, peak $peak)" test "$peak" -le $((base + 2 * 32 + 16))
+    gateway_stop "$host"
+    sleep 6
+    after="$(lsof -p "$owner" 2>/dev/null | wc -l | tr -d ' ')"
+    check "the owner's descriptors return to baseline (base $base, after $after)" test "$after" -le $((base + 5))
+    check "the control channel still answers" guest "$R" true
+    gateway "$host" send 65536
+    check "the relay still relays after the flood" test "$(relayed 0)" = 65536
+    gateway_stop "$host"
+
+    # start --inference-relay off|on: per boot; omitted keeps the record.
+    sbx stop "$R" >/dev/null
+    check "start --inference-relay off boots without the relay" sbx start "$R" --inference-relay off
+    check "no relay is reported or present when off" \
+        test "$(sbx inspect "$R" | jq -c '[.record.inferenceRelay, .effective.inferenceRelay, .effective.socketRelays]')" = '[null,null,0]'
+    check "the guest has no relay socket when off" refuses guest "$R" test -S "$RG"
+    sbx stop "$R" >/dev/null
+    check "start --inference-relay on boots with the relay again" sbx start "$R" --inference-relay on
+    sbx stop "$R" >/dev/null
+    check "start without --inference-relay keeps it" sbx start "$R"
+    check "the kept relay is reported" test "$(sbx inspect "$R" | jq -r .effective.socketRelays)" = 1
+    check "start refuses an unknown --inference-relay value" refuses sbx start "$R" --inference-relay maybe
+    sbx stop "$R" >/dev/null
+    sbx delete "$R" --owner "$RUN" >/dev/null
 fi
 
 if want identity; then

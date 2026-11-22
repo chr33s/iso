@@ -27,6 +27,7 @@ private func document(
 ) -> String {
   """
   {
+    "network": {"transport": "vmnet"},
     "inference": {
       "mode": "\(mode)",
       "qualification_profiles": {
@@ -236,4 +237,15 @@ private func document(
   let unknownBackend = document().replacingOccurrences(
     of: #""backend": "mlx-main""#, with: #""backend": "missing""#)
   #expect(fieldError(unknownBackend)?.field == "inference.services.local-coder.backend")
+}
+
+@Test func requiredModeNeedsTheVmnetTransport() {
+  let brokered = document().replacingOccurrences(
+    of: #""network": {"transport": "vmnet"},"#, with: "")
+  let refused = fieldError(brokered)
+  #expect(refused?.field == "network.transport")
+  #expect(refused?.reason.contains("vmnet") == true)
+  #expect(fieldError(document()) == nil)
+  // Off, the brokered default is unaffected.
+  #expect(fieldError(#"{"inference": {"mode": "off"}}"#) == nil)
 }

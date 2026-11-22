@@ -434,7 +434,7 @@ private let desktopManifest = manifest(
 
 @Test func createPassesTheDisplayToTheRuntimeOnlyForDesktopImages() throws {
   let version =
-    #"{"name":"iso-sandbox","version":"0.5.0","protocol":6,"containerization":"0.54.0","features":["linux-display"]}"#
+    #"{"name":"iso-sandbox","version":"0.5.0","protocol":5,"containerization":"0.54.0","features":["linux-display"]}"#
   func createArguments(_ image: ImageManifest, guestComputerUse: MacGuestComputerUse?) throws
     -> [String]
   {

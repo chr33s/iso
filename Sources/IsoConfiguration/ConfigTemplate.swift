@@ -103,11 +103,12 @@ package enum ConfigTemplate {
       // },
 
       // Guarded local inference through the host `iso-inference` gateway
-      // (docs/configuration.md#inference). With "required", agents use only these
+      // (docs/configuration.md#inference-section). With "required", agents use only these
       // services: no cloud credential, credential proxy or raw model tunnel. Linux
-      // guests only. The backend is a server on 127.0.0.1 (yours, or one
+      // guests on vmnet only. The backend is a server on 127.0.0.1 (yours, or one
       // `iso inference provision` manages); its profile records what you qualified.
       // `iso inference init` writes a hardened mlx-lm setup.
+      // Needs "network": { "transport": "vmnet" } (the relay is vmnet-only).
       // "inference": {
       //   "mode": "required",
       //   "qualification_profiles": {

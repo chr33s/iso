@@ -170,20 +170,7 @@ func gateRejectsEachExposureNetworkAndIdentityChange(_ label: String) throws {
     encoding: .utf8)
   let package = try String(
     contentsOf: root.appending(path: "iso-sandbox/Package.swift"), encoding: .utf8)
-  // MERGE: the runtime's protocol 6 (the inference relay) lands with the
-  // iso-sandbox half of this change. Until its sources record `inferenceRelay`
-  // they still say 5; from then on the pins must match exactly. Remove this
-  // allowance once both halves are merged.
-  let runtimeRelays = try FileManager.default.subpathsOfDirectory(
-    atPath: root.appending(path: "iso-sandbox/Sources/IsoSandboxCore").path
-  ).contains { file in
-    file.hasSuffix(".swift")
-      && (try? String(
-        contentsOf: root.appending(path: "iso-sandbox/Sources/IsoSandboxCore/\(file)"),
-        encoding: .utf8))?.contains("inferenceRelay") == true
-  }
-  let runtimeProtocol = runtimeRelays ? RuntimeProtocol.version : RuntimeProtocol.version - 1
-  #expect(layout.contains("package let protocolVersion = \(runtimeProtocol)\n"))
+  #expect(layout.contains("package let protocolVersion = \(RuntimeProtocol.version)\n"))
   #expect(
     layout.contains(
       "package let containerizationVersion = \"\(SandboxRuntime.containerization)\"\n")
