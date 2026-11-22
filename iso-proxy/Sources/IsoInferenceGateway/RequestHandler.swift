@@ -5,13 +5,21 @@ import NIOCore
 import NIOHTTP1
 
 /// One guest connection: one request, then close (§8.1). All state lives on
-/// the connection's event loop; scheduler callbacks hop onto it.
+/// the connection's event loop; scheduler, normalizer and timer callbacks
+/// hop onto it.
+///
+/// Two lifetimes meet here. The client side ends when the socket closes;
+/// the connection's slots are released then, and only then, by the close
+/// future. The work side ends when the backend's work settles (completion
+/// evidence, §9.2), which can be after the client has gone. The handler
+/// holds no reference to its channel context once the pipeline removes it,
+/// so it is freed as soon as the work side is done too.
 final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
 
   enum Phase {
-    case head, body, queued, active, cancelling, done
+    case head, body, normalizing, queued, active, cancelling, done
   }
 
   enum Cancellation {
@@ -21,29 +29,48 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     case closing
   }
 
+  /// What the handler keeps of a normalized request once its body has gone
+  /// upstream.
+  struct Plan {
+    let api: FrontendAPI
+    let grant: ServiceGrant
+    let clientStreams: Bool
+    let upstreamStreams: Bool
+    let inputBound: Int
+    let requestBytes: Int
+
+    var backend: BackendPolicy { grant.backend }
+  }
+
   private let gateway: Gateway
   private let session: GatewaySession
   private let wireBudget: HeaderWireBudget
+  private let eventLoop: EventLoop
+  private let timing: GatewayTiming
   private var context: ChannelHandlerContext?
   private var phase = Phase.head
-  private var slots: [SlotPool.Slot] = []
   private var api: FrontendAPI?
   private var expected = 0
   private var body: [UInt8] = []
+  /// The normalized upstream body, from normalization until dispatch.
+  private var pending: [UInt8]?
   private var bufferLease: ByteBudget.Lease?
   private var readDeadline: Scheduled<Void>?
   private var queueDeadline: Scheduled<Void>?
   private var keepAlive: RepeatedTask?
   private var firstOutput: Scheduled<Void>?
   private var generation: Scheduled<Void>?
-  private var request: NormalizedRequest?
+  private var plan: Plan?
   private var ticket: Scheduler.Ticket?
   private var upstream: UpstreamCall?
   private var translator: StreamTranslator?
   private var parser = SSEParser(maxEventBytes: SessionLimits.responseBytes)
   private var upstreamStatus: HTTPResponseStatus?
+  /// Error bodies and token counts: bounded, never relayed verbatim.
   private var upstreamBody: [UInt8] = []
   private var upstreamBytes = 0
+  /// Set when the backend's stream could not be translated at its end.
+  private var streamFailure: InferenceError?
   private var responseStarted = false
   private var clientGone = false
   private var cancellation: Cancellation?
@@ -53,48 +80,82 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
   private var dispatchedAt: ContinuousClock.Instant?
   private var generationEnd: ContinuousClock.Instant?
 
-  init(gateway: Gateway, session: GatewaySession, wireBudget: HeaderWireBudget) {
+  init(
+    gateway: Gateway, session: GatewaySession, wireBudget: HeaderWireBudget, eventLoop: EventLoop
+  ) {
     self.gateway = gateway
     self.session = session
     self.wireBudget = wireBudget
+    self.eventLoop = eventLoop
+    timing = gateway.timing
+    gateway.liveHandlers.add(1, ordering: .relaxed)
+  }
+
+  deinit {
+    // Accounting for tests and status only; no resource is released here.
+    gateway.liveHandlers.subtract(1, ordering: .relaxed)
   }
 
   private var loopBound: NIOLoopBound<RequestHandler> {
-    NIOLoopBound(self, eventLoop: context!.eventLoop)
+    NIOLoopBound(self, eventLoop: eventLoop)
   }
 
   // MARK: Connection
 
   func handlerAdded(context: ChannelHandlerContext) {
     self.context = context
-    guard !session.failures.tripped, let shared = gateway.sharedConnections.acquire(),
-      let own = session.connections.acquire(), session.track(context.channel)
-    else {
-      phase = .done
-      context.close(promise: nil)
-      return
+    guard !session.failures.tripped, let shared = gateway.sharedConnections.acquire() else {
+      return refuseConnection(context)
     }
-    slots = [shared, own]
-    arm(&readDeadline, seconds: SessionLimits.headerReadSeconds) { handler in
+    guard let own = session.connections.acquire() else {
+      shared.release()
+      return refuseConnection(context)
+    }
+    // Both slots are held until the socket closes, however it closes: an
+    // idle, slow or non-reading client is always counted (§9.1).
+    context.channel.closeFuture.whenComplete { _ in
+      own.release()
+      shared.release()
+    }
+    guard session.track(context.channel) else { return refuseConnection(context) }
+    arm(&readDeadline, after: timing.headerRead) { handler in
       handler.fail(
         InferenceError(.requestInvalid, "request header timeout"), status: .requestTimeout)
     }
   }
 
+  private func refuseConnection(_ context: ChannelHandlerContext) {
+    phase = .done
+    clientGone = true
+    context.close(promise: nil)
+  }
+
+  func handlerRemoved(context: ChannelHandlerContext) {
+    // The context holds this handler; dropping it here breaks that cycle.
+    // Backend work that is still draining keeps the handler alive through
+    // the scheduler until it settles.
+    self.context = nil
+    clientGone = true
+    cancelClientTimers()
+  }
+
   func channelInactive(context: ChannelHandlerContext) {
     clientGone = true
-    readDeadline?.cancel()
-    keepAlive?.cancel()
+    cancelClientTimers()
     switch phase {
     case .head, .body:
       phase = .done
-      release()
+      releaseBuffers()
+    case .normalizing:
+      // `normalized` sees the phase and releases the buffers.
+      phase = .done
     case .queued:
       queueDeadline?.cancel()
       // Otherwise dispatch raced ahead; `dispatched` finishes it unsent.
       if let ticket, gateway.scheduler.withdraw(ticket) {
         phase = .done
-        release()
+        settled = true
+        releaseBuffers()
       }
     case .active:
       beginCancellation()
@@ -111,6 +172,11 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     let status: HTTPResponseStatus =
       (error as? HTTPParserError) == .headerOverflow ? .requestHeaderFieldsTooLarge : .badRequest
     fail(InferenceError(.requestInvalid, "malformed HTTP request"), status: status)
+  }
+
+  private func cancelClientTimers() {
+    readDeadline?.cancel()
+    keepAlive?.cancel()
   }
 
   // MARK: Request
@@ -177,8 +243,10 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       guard length <= limit else {
         return fail(InferenceError(.requestTooLarge, "request body exceeds \(limit) bytes"))
       }
-      guard let lease = gateway.buffers.reserve(length) else {
-        return fail(InferenceError(.capacity, "gateway request buffers are exhausted"))
+      // The session's share first, then the shared budget: one session
+      // cannot hold the buffers every session needs (§9.1).
+      guard let lease = gateway.buffers.reserve(length, alsoFrom: session.buffers) else {
+        return fail(InferenceError(.capacity, "request buffers are exhausted"))
       }
       bufferLease = lease
       expected = length
@@ -189,7 +257,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       }
     }
     phase = .body
-    arm(&readDeadline, seconds: SessionLimits.bodyReadSeconds) { handler in
+    arm(&readDeadline, after: timing.bodyRead) { handler in
       handler.fail(InferenceError(.requestInvalid, "request body timeout"), status: .requestTimeout)
     }
     if hasBody, expected > 0,
@@ -208,14 +276,38 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
         status: .ok, body: Normalizer.discovery(session.grants(for: api)),
         contentType: "application/json")
     }
-    let normalized: NormalizedRequest
-    do {
-      normalized = try Normalizer.normalize(api: api, body: body, grants: session.grants(for: api))
-    } catch {
-      return fail(error)
+    // A request that reaches this point costs a rate token whether or not
+    // its body normalizes, so malformed bodies cannot be parsed at will.
+    let permit: Scheduler.Permit
+    do { permit = try gateway.scheduler.permit(session: session.id) } catch { return fail(error) }
+    phase = .normalizing
+    let body = self.body
+    self.body = []
+    let grants = session.grants(for: api)
+    let bound = loopBound
+    let loop = eventLoop
+    // Parsing and validation of a large body take long enough to stall
+    // every connection on this event loop; they run on the normalizer pool.
+    gateway.normalizers.submit {
+      let result = Result { () throws(InferenceError) -> NormalizedRequest in
+        try Normalizer.normalize(api: api, body: body, grants: grants)
+      }
+      loop.execute { bound.value.normalized(result, permit: permit) }
     }
-    body = []
-    request = normalized
+  }
+
+  private func normalized(
+    _ result: Result<NormalizedRequest, InferenceError>, permit: Scheduler.Permit
+  ) {
+    guard phase == .normalizing, !clientGone else {
+      phase = .done
+      return releaseBuffers()
+    }
+    let normalized: NormalizedRequest
+    switch result {
+    case .success(let request): normalized = request
+    case .failure(let error): return fail(error)
+    }
     if normalized.clamped {
       gateway.audit.record(
         "limit_clamped",
@@ -224,10 +316,16 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
           "output_tokens": .int(Int64(normalized.outputTokens)),
         ])
     }
+    plan = Plan(
+      api: normalized.api, grant: normalized.grant, clientStreams: normalized.clientStreams,
+      upstreamStreams: normalized.upstreamStreams, inputBound: normalized.inputBound,
+      requestBytes: normalized.upstreamBody.count)
+    pending = normalized.upstreamBody
     translator = StreamTranslator(
-      api: api, alias: normalized.grant.alias, maxEventBytes: SessionLimits.responseBytes)
+      api: normalized.api, alias: normalized.grant.alias,
+      maxEventBytes: SessionLimits.responseBytes)
     let bound = loopBound
-    let loop = context!.eventLoop
+    let loop = eventLoop
     let backend = gateway.backendPolicy(normalized.grant.backend.id) ?? normalized.grant.backend
     let work = Scheduler.Work(
       session: session.id, backend: backend.id, backendMaxActive: backend.maxActive,
@@ -236,31 +334,29 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       cancel: { reason in loop.execute { bound.value.cancelled(reason) } })
     phase = .queued
     do {
-      switch try gateway.scheduler.admit(work) {
+      switch try gateway.scheduler.admit(work, permit: permit) {
       case .dispatched(let ticket): self.ticket = ticket
       case .queued(let ticket):
         self.ticket = ticket
         armQueue()
       }
     } catch {
-      phase = .body
       fail(error)
     }
   }
 
   private func armQueue() {
-    arm(&queueDeadline, seconds: SessionLimits.queueWaitSeconds) { handler in
+    arm(&queueDeadline, after: timing.queueWait) { handler in
       guard handler.phase == .queued, let ticket = handler.ticket,
         handler.gateway.scheduler.withdraw(ticket)
       else { return }
+      handler.settled = true
       handler.fail(InferenceError(.deadline, "queue wait exceeded"))
     }
-    guard request?.clientStreams == true, let context else { return }
+    guard plan?.clientStreams == true else { return }
     let bound = loopBound
-    keepAlive = context.eventLoop.scheduleRepeatedTask(
-      initialDelay: .seconds(Int64(SessionLimits.keepAliveSeconds)),
-      delay: .seconds(Int64(SessionLimits.keepAliveSeconds))
-    ) { task in
+    let interval = TimeAmount(timing.keepAlive)
+    keepAlive = eventLoop.scheduleRepeatedTask(initialDelay: interval, delay: interval) { task in
       let handler = bound.value
       guard handler.phase == .queued, !handler.clientGone else { return task.cancel() }
       handler.startStream()
@@ -271,48 +367,51 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
   // MARK: Dispatch
 
   private func dispatched() {
-    guard let ticket, let request else { return }
+    guard let ticket else { return }
     queueDeadline?.cancel()
     keepAlive?.cancel()
-    guard phase == .queued, !clientGone else {
-      // Withdrawn or gone before anything was sent upstream.
+    guard phase == .queued, !clientGone, !settled, let plan, let body = pending else {
+      // Refused, cancelled or gone before anything was sent upstream. The
+      // scheduler may have started it anyway (a cancellation can arrive
+      // first), so its slot is returned here; `finish` ignores a ticket it
+      // no longer holds.
       gateway.scheduler.finish(ticket, outputTokens: 0)
-      release()
-      return
+      settled = true
+      if phase == .queued { phase = .done }
+      return releaseBuffers()
     }
-    let backend = request.grant.backend
+    let backend = plan.backend
     do { try gateway.journal.dispatched(backend.id) } catch {
+      settled = true
       gateway.scheduler.finish(ticket, outputTokens: 0)
       return fail(InferenceError(.backendUnavailable, "cannot record outstanding work"))
     }
     phase = .active
+    pending = nil
     dispatchedAt = .now
-    generationEnd = .now + .seconds(SessionLimits.generationSeconds)
+    generationEnd = .now + timing.generation
     var headers = HTTPHeaders([
       ("host", backend.id.description), ("content-type", "application/json"),
-      ("content-length", String(request.upstreamBody.count)), ("accept-encoding", "identity"),
+      ("content-length", String(body.count)), ("accept-encoding", "identity"),
       ("connection", "close"),
-      ("accept", request.upstreamStreams ? "text/event-stream" : "application/json"),
+      ("accept", plan.upstreamStreams ? "text/event-stream" : "application/json"),
     ])
-    if request.api == .anthropicMessages || request.api == .anthropicCountTokens {
+    if plan.api == .anthropicMessages || plan.api == .anthropicCountTokens {
       headers.add(name: "anthropic-version", value: "2023-06-01")
     }
     if let credential = backend.credential {
       headers.add(name: "authorization", value: "Bearer " + credential.expose())
     }
-    let call = UpstreamCall(eventLoop: context!.eventLoop, delegate: self)
+    let call = UpstreamCall(eventLoop: eventLoop, delegate: self)
     upstream = call
-    arm(&firstOutput, seconds: SessionLimits.firstOutputSeconds) { handler in
+    arm(&firstOutput, after: timing.firstOutput) { handler in
       handler.timedOut("time to first output exceeded")
     }
-    arm(&generation, seconds: SessionLimits.generationSeconds) { handler in
-      handler.generationExpired()
-    }
+    arm(&generation, after: timing.generation) { handler in handler.generationExpired() }
     call.start(
       port: backend.id.port,
-      head: HTTPRequestHead(
-        version: .http1_1, method: .POST, uri: request.upstreamPath, headers: headers),
-      body: request.upstreamBody)
+      head: HTTPRequestHead(version: .http1_1, method: .POST, uri: plan.api.path, headers: headers),
+      body: body)
   }
 
   private func cancelled(_ reason: CancelReason) {
@@ -324,8 +423,10 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       }
     switch phase {
     case .queued:
+      // The scheduler already removed the queued entry.
       queueDeadline?.cancel()
       keepAlive?.cancel()
+      settled = true
       fail(error)
     case .active:
       clientError(error)
@@ -340,7 +441,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     upstreamStatus = head.status
     guard phase == .active, head.status == .ok else { return }
     let type = head.headers.first(name: "content-type")?.lowercased() ?? ""
-    let wanted = request?.upstreamStreams == true ? "text/event-stream" : "application/json"
+    let wanted = plan?.upstreamStreams == true ? "text/event-stream" : "application/json"
     if !type.hasPrefix(wanted) {
       upstreamStatus = .badGateway
     }
@@ -353,20 +454,20 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       clientError(InferenceError(.upstreamInvalid, "backend response exceeds the byte limit"))
       return beginCancellation()
     }
-    guard let status = upstreamStatus, status == .ok, request?.upstreamStreams == true else {
-      // Error bodies and token counts: bounded, never relayed verbatim.
+    guard let status = upstreamStatus, status == .ok, let plan, plan.upstreamStreams else {
       if upstreamBody.count < 64 << 10 {
         upstreamBody.append(
           contentsOf: buffer.readableBytesView.prefix((64 << 10) - upstreamBody.count))
       }
       return
     }
-    guard cancellation == nil else { return }
+    guard cancellation == nil, var translator = translator.take() else { return }
+    defer { self.translator = translator }
     do {
       for event in try parser.feed(buffer.readableBytesView) {
-        guard let emitted = try translator!.consume(event) else { continue }
-        if translator!.sawOutput { firstOutput?.cancel() }
-        if request!.clientStreams {
+        guard let emitted = try translator.consume(event) else { continue }
+        if translator.sawOutput { firstOutput?.cancel() }
+        if plan.clientStreams {
           startStream()
           write(emitted)
         }
@@ -389,7 +490,10 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
   }
 
   func upstreamEnd() {
-    // The backend finished its response: completion evidence (§9.2).
+    // The backend finished its response: completion evidence (§9.2). Any
+    // bytes left without a trailing blank line are an incomplete event;
+    // they are translated first, so their usage counts when settling.
+    if cancellation == nil { flushStream() }
     settle()
     guard cancellation == nil else { return finishClient() }
     respondToCompletion()
@@ -411,7 +515,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     }
     // The backend ended the connection before a complete response. Its work
     // is over unless the profile says closure proves nothing.
-    if request?.grant.backend.profile.evidence == CompletionEvidence.none {
+    if plan?.backend.profile.evidence == CompletionEvidence.none {
       markUncertain()
     } else {
       settle()
@@ -422,8 +526,21 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     finishClient()
   }
 
+  private func flushStream() {
+    guard upstreamStatus == .ok, plan?.upstreamStreams == true,
+      var translator = translator.take()
+    else { return }
+    defer { self.translator = translator }
+    do {
+      for event in try parser.feed([0x0A, 0x0A]) { _ = try translator.consume(event) }
+    } catch {
+      streamFailure = InferenceError(.upstreamInvalid, "backend sent an invalid event stream")
+    }
+  }
+
   private func respondToCompletion() {
-    guard let request, var translator else { return finishClient() }
+    defer { translator = nil }
+    guard let plan, let translator else { return finishClient() }
     guard let status = upstreamStatus, status == .ok else {
       let code = upstreamStatus?.code ?? 0
       let error =
@@ -433,7 +550,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       clientError(error)
       return finishClient()
     }
-    if !request.upstreamStreams {
+    if !plan.upstreamStreams {
       do {
         let body = try CountTokensResponse.translate(upstreamBody)
         return respond(status: .ok, body: body, contentType: "application/json")
@@ -442,17 +559,13 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
         return finishClient()
       }
     }
-    // Any bytes left without a trailing blank line are an incomplete event.
-    do {
-      for event in try parser.feed([0x0A, 0x0A]) { _ = try translator.consume(event) }
-      self.translator = translator
-    } catch {
-      clientError(InferenceError(.upstreamInvalid, "backend sent an invalid event stream"))
+    if let streamFailure {
+      clientError(streamFailure)
       return finishClient()
     }
     switch translator.outcome {
     case .completed?:
-      if request.clientStreams {
+      if plan.clientStreams {
         finishClient()
       } else {
         do {
@@ -463,7 +576,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
         }
       }
     case .failed?:
-      if !request.clientStreams {
+      if !plan.clientStreams {
         clientError(InferenceError(.upstreamInvalid, "backend reported an error"))
       }
       finishClient()
@@ -494,26 +607,28 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
 
   /// §9.2: the backend's completion-evidence procedure.
   private func beginCancellation() {
-    guard phase == .active, cancellation == nil, !settled, let request else { return }
+    guard phase == .active, cancellation == nil, !settled, let plan else { return }
     phase = .cancelling
     firstOutput?.cancel()
-    let profile = request.grant.backend.profile
+    let profile = plan.backend.profile
     switch profile.evidence {
     case .drain:
       cancellation = .draining
       // Drain within the remaining generation time, but never less than
       // the cancellation grace when the deadline itself triggered this.
       let remaining = generationEnd.map { $0 - ContinuousClock.now } ?? .zero
-      let grace = Duration.seconds(SessionLimits.cancellationGraceSeconds)
-      arm(&generation, after: max(remaining, grace)) { handler in handler.generationExpired() }
+      arm(&generation, after: max(remaining, timing.cancellationGrace)) { handler in
+        handler.generationExpired()
+      }
       upstream?.read()
     case .streamClose:
       cancellation = .closing
       upstream?.close()
-      let bound = loopBound
-      context?.eventLoop.scheduleTask(
-        in: .milliseconds(Int64(profile.streamCloseDrainMilliseconds))
-      ) { bound.value.settle() }
+      // Closing the stream stops generation; the qualified drain interval
+      // covers work the backend cannot interrupt (prefill).
+      arm(&generation, after: .milliseconds(profile.streamCloseDrainMilliseconds)) { handler in
+        handler.settle()
+      }
     case .none, .explicit:
       cancellation = .closing
       upstream?.close()
@@ -523,52 +638,60 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
   }
 
   private func settle() {
-    guard !settled, let ticket, let request else { return }
+    guard !settled, let ticket, let plan else { return }
     settled = true
     generation?.cancel()
     firstOutput?.cancel()
     let usage = translator?.usage ?? Usage()
     gateway.scheduler.finish(ticket, outputTokens: usage.outputTokens)
-    gateway.journal.settled(request.grant.backend.id)
-    if let input = usage.inputTokens, input > request.inputBound {
-      gateway.scheduler.quarantine(request.grant.backend.id, .qualificationFailure)
-      gateway.audit.record(
-        "backend_quarantined",
-        [
-          "backend": .int(Int64(request.grant.backend.id.port)),
-          "reason": .string("qualification-failure"),
-        ])
+    gateway.journal.settled(plan.backend.id)
+    // Reported usage above the input bound breaks the qualification's
+    // byte-bound property; a completed stream that reports none cannot be
+    // checked at all (§8.4.1).
+    let completed = translator?.outcome == .completed && plan.upstreamStreams
+    if let input = usage.inputTokens, input > plan.inputBound {
+      quarantine(plan, reason: "input usage above the bound")
+    } else if completed, usage.inputTokens == nil {
+      quarantine(plan, reason: "no input usage")
     }
     gateway.audit.record(
       "request_completed",
       [
-        "session": .string(session.id), "alias": .string(request.grant.alias),
-        "api": .string(request.api.rawValue),
-        "request_bytes": .int(Int64(request.upstreamBody.count)),
+        "session": .string(session.id), "alias": .string(plan.grant.alias),
+        "api": .string(plan.api.rawValue), "request_bytes": .int(Int64(plan.requestBytes)),
         "response_bytes": .int(Int64(upstreamBytes)),
         "input_tokens": usage.inputTokens.map { .int(Int64($0)) } ?? .null,
         "output_tokens": usage.outputTokens.map { .int(Int64($0)) } ?? .null,
         "cancelled": .bool(cancellation != nil),
-        "milliseconds": .int(
-          dispatchedAt.map { ContinuousClock.now - $0 }.map {
-            $0.components.seconds * 1000 + $0.components.attoseconds / 1_000_000_000_000_000
-          } ?? 0),
+        "milliseconds": .int(dispatchedAt.map { milliseconds(ContinuousClock.now - $0) } ?? 0),
       ])
-    release()
+    upstream = nil
+    upstreamBody = []
+    releaseBuffers()
+  }
+
+  private func quarantine(_ plan: Plan, reason detail: String) {
+    gateway.scheduler.quarantine(plan.backend.id, .qualificationFailure)
+    gateway.audit.record(
+      "backend_quarantined",
+      [
+        "backend": .int(Int64(plan.backend.id.port)), "reason": .string("qualification-failure"),
+        "detail": .string(detail),
+      ])
   }
 
   private func markUncertain() {
-    guard !settled, let ticket, let request else { return }
+    guard !settled, let ticket, let plan else { return }
     settled = true
     generation?.cancel()
     gateway.scheduler.markUncertain(ticket)
     gateway.audit.record(
       "backend_quarantined",
       [
-        "backend": .int(Int64(request.grant.backend.id.port)),
+        "backend": .int(Int64(plan.backend.id.port)),
         "reason": .string("uncertain-cancellation"),
       ])
-    release()
+    releaseBuffers()
   }
 
   // MARK: Client output
@@ -602,7 +725,7 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
   }
 
   /// An error for the guest: a JSON response before streaming starts, the
-  /// protocol's error event after.
+  /// protocol's error event after. Each rejection is audited here once.
   private func clientError(_ error: InferenceError) {
     gateway.audit.rejected(session: session.id, code: error.code)
     guard !clientGone, let context, phase != .done else { return }
@@ -650,22 +773,28 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     guard !clientGone, let context else { return }
     clientGone = true
     let channel = context.channel
+    // A guest that stops reading cannot keep the socket: the close deadline
+    // ends it whether or not the response was flushed.
+    let deadline = eventLoop.scheduleTask(in: TimeAmount(timing.close)) {
+      channel.close(promise: nil)
+    }
+    channel.closeFuture.whenComplete { _ in deadline.cancel() }
     context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
       channel.close(promise: nil)
     }
   }
 
-  /// Refuse before any work was admitted.
+  /// Refuse before any work was dispatched.
   private func fail(_ error: InferenceError, status: HTTPResponseStatus? = nil) {
-    guard phase == .head || phase == .body || phase == .queued else { return }
+    guard [.head, .body, .normalizing, .queued].contains(phase) else { return }
     readDeadline?.cancel()
-    gateway.audit.rejected(session: session.id, code: error.code)
     if clientGone {
+      gateway.audit.rejected(session: session.id, code: error.code)
       phase = .done
-      release()
-      return
+      return releaseBuffers()
     }
     if let status {
+      gateway.audit.rejected(session: session.id, code: error.code)
       responseStarted = true
       let head = HTTPResponseHead(
         version: .http1_1, status: status,
@@ -675,25 +804,17 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
       clientError(error)
     }
     phase = .done
-    release()
+    releaseBuffers()
     finishClient()
   }
 
-  /// Buffers go once the request is parsed or abandoned; connection slots
-  /// go only when no admitted work is outstanding for this connection.
-  private func release() {
+  /// Buffers go once the request is refused, settled or abandoned.
+  /// Connection slots are not released here but when the socket closes.
+  private func releaseBuffers() {
     bufferLease?.release()
     bufferLease = nil
     body = []
-    guard settled || ticket == nil || phase == .done else { return }
-    for slot in slots { slot.release() }
-    slots = []
-  }
-
-  private func arm(
-    _ slot: inout Scheduled<Void>?, seconds: Int, _ action: @escaping (RequestHandler) -> Void
-  ) {
-    arm(&slot, after: .seconds(seconds), action)
+    pending = nil
   }
 
   private func arm(
@@ -701,13 +822,14 @@ final class RequestHandler: ChannelInboundHandler, UpstreamDelegate {
     _ action: @escaping (RequestHandler) -> Void
   ) {
     slot?.cancel()
-    guard let context else { return }
-    let bound = NIOLoopBound((self, action), eventLoop: context.eventLoop)
-    let nanoseconds =
-      duration.components.seconds * 1_000_000_000 + duration.components.attoseconds / 1_000_000_000
-    slot = context.eventLoop.scheduleTask(in: .nanoseconds(max(nanoseconds, 0))) {
+    let bound = NIOLoopBound((self, action), eventLoop: eventLoop)
+    slot = eventLoop.scheduleTask(in: TimeAmount(duration)) {
       let (handler, action) = bound.value
       action(handler)
     }
   }
+}
+
+func milliseconds(_ duration: Duration) -> Int64 {
+  duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000
 }

@@ -22,13 +22,19 @@ package final class Gateway: Sendable {
   package let epoch: String
   package let pid = getpid()
   let group: EventLoopGroup
-  let scheduler: Scheduler
-  let buffers: ByteBudget
-  let sharedConnections = SlotPool(SessionLimits.sharedConnections)
+  package let scheduler: Scheduler
+  package let buffers: ByteBudget
+  package let sharedConnections: SlotPool
   let journal: Journal
-  let audit: AuditLog
+  package let audit: AuditLog
+  package let timing: GatewayTiming
+  let normalizers = NormalizerPool(threads: 2)
+  /// Live request handlers, for the leak tests and diagnostics.
+  package let liveHandlers = Atomic<Int>(0)
+  /// Serializes binding and removing session socket files (§22.4).
+  let sockets = Mutex(())
   let started = ContinuousClock.now
-  let sessions = Mutex<[String: GatewaySession]>([:])
+  package let sessions = Mutex<[String: GatewaySession]>([:])
   let backends = Mutex<[BackendID: BackendPolicy]>([:])
   let idleSince = Mutex<ContinuousClock.Instant?>(ContinuousClock.now)
   let ticker: Mutex<DispatchSourceTimer?> = Mutex(nil)
@@ -46,8 +52,12 @@ package final class Gateway: Sendable {
   package init(
     group: EventLoopGroup, journal: Journal, audit: AuditLog, limits: GlobalLimits = .defaults,
     relayDirectory: String, backendPorts: Set<UInt16>? = nil,
-    transportCommand: String = "iso-sandbox", onExit: @escaping @Sendable () -> Void
+    transportCommand: String = "iso-sandbox", timing: GatewayTiming = .standard,
+    sharedConnections: Int = SessionLimits.sharedConnections,
+    onExit: @escaping @Sendable () -> Void
   ) {
+    self.timing = timing
+    self.sharedConnections = SlotPool(sharedConnections)
     self.relayDirectory = relayDirectory
     self.backendPorts = backendPorts
     self.transportCommand = transportCommand
@@ -87,6 +97,7 @@ package final class Gateway: Sendable {
         revoke(session, reason: "session-deadline")
       }
     }
+    audit.flush()
     let idle = sessions.withLock { $0.isEmpty } && !scheduler.hasWork
     let exit = idleSince.withLock { since -> Bool in
       guard idle else {
@@ -114,11 +125,17 @@ package final class Gateway: Sendable {
   package func register(_ registration: ControlProtocol.Registration) throws(InferenceError)
     -> Registered
   {
-    try adoptBackends(registration.grants)
-    scheduler.tighten(registration.limits)
-    buffers.tighten(to: scheduler.limits.maxRequestBufferBytes)
+    try checkBackends(registration.grants)
+    let live = sessions.withLock { Array($0.values) }
+    // A socket name is the runtime's hash of one instance's sandbox: another
+    // instance's live session never gives it up (§22.4).
+    if live.contains(where: {
+      $0.socketName == registration.socket && $0.instance != registration.instance
+    }) {
+      throw InferenceError(.policyDenied, "the session socket belongs to another instance")
+    }
     // One session per instance: a new registration replaces the old one.
-    for old in sessions.withLock({ $0.values.filter { $0.instance == registration.instance } }) {
+    for old in live where old.instance == registration.instance {
       revoke(old, reason: "replaced")
     }
     let token = randomHex(32)
@@ -128,23 +145,19 @@ package final class Gateway: Sendable {
     }
     let session = GatewaySession(
       id: randomHex(16), registration: registration, capability: capability,
-      registered: ContinuousClock.now)
-    let path = relayDirectory + "/" + registration.socket
-    let listener: Channel
-    do {
-      listener = try SessionListener.bind(gateway: self, session: session, path: path, group: group)
-        .wait()
-    } catch {
-      throw InferenceError(.backendUnavailable, "cannot bind a session socket")
-    }
-    // The C path is borrowed for the call only.
-    guard unsafe chmod(path, 0o600) == 0 else {
+      registered: ContinuousClock.now,
+      failures: FailureWindow(limit: SessionLimits.authFailuresPerMinute))
+    let (listener, socket) = try bind(session, name: registration.socket)
+    do { try adoptBackends(registration.grants) } catch {
       listener.close(promise: nil)
-      throw InferenceError(.backendUnavailable, "cannot restrict the session socket")
+      removeSocket(socket)
+      throw error
     }
+    scheduler.tighten(registration.limits)
+    buffers.tighten(to: scheduler.limits.maxRequestBufferBytes)
     session.state.withLock {
       $0.listener = listener
-      $0.socketPath = path
+      $0.socket = socket
     }
     sessions.withLock { $0[session.id] = session }
     scheduler.addSession(session.id)
@@ -160,10 +173,49 @@ package final class Gateway: Sendable {
       policyDigest: session.policyDigest)
   }
 
-  /// Backends are identified by port. A second registration naming the same
-  /// port must agree on the qualification profile; its concurrency limit can
-  /// only tighten the shared one.
-  func adoptBackends(_ grants: [ServiceGrant]) throws(InferenceError) {
+  /// Binds the session socket (`0600`) and records which file it is, so
+  /// revocation removes that file and no later one.
+  private func bind(_ session: GatewaySession, name: String) throws(InferenceError) -> (
+    Channel, BoundSocket
+  ) {
+    let path = relayDirectory + "/" + name
+    let result: Result<(Channel, BoundSocket), InferenceError> = sockets.withLock { _ in
+      let listener: Channel
+      do {
+        listener = try SessionListener.bind(
+          gateway: self, session: session, path: path, group: group
+        ).wait()
+      } catch {
+        return .failure(InferenceError(.backendUnavailable, "cannot bind a session socket"))
+      }
+      // The C path is borrowed for the call only.
+      guard unsafe chmod(path, 0o600) == 0, let socket = BoundSocket(path: path) else {
+        listener.close(promise: nil)
+        return .failure(InferenceError(.backendUnavailable, "cannot restrict the session socket"))
+      }
+      return .success((listener, socket))
+    }
+    return try result.get()
+  }
+
+  /// Unlinks the session's socket file if it is still the one it bound.
+  func removeSocket(_ socket: BoundSocket) {
+    sockets.withLock { _ in socket.removeIfUnchanged() }
+  }
+
+  /// Session sockets a previous gateway process left behind. Run at startup,
+  /// under the startup lock, before any registration: only this gateway
+  /// binds sockets in the relay directory.
+  package func removeStaleSessionSockets() {
+    guard let names = try? listDirectory(relayDirectory) else { return }
+    for name in names where ControlProtocol.Registration.isSocketName(name) {
+      BoundSocket.removeStale(relayDirectory + "/" + name)
+    }
+  }
+
+  /// Backends must be in the launch profile's port list, and a port already
+  /// registered must keep its qualification profile and credential.
+  func checkBackends(_ grants: [ServiceGrant]) throws(InferenceError) {
     if let allowed = backendPorts,
       let outside = grants.first(where: { !allowed.contains($0.backend.id.port) })
     {
@@ -172,26 +224,48 @@ package final class Gateway: Sendable {
         "backend \(outside.backend.id) is outside this gateway's confinement; restart the gateway"
       )
     }
+    let known = backends.withLock { $0 }
+    if let conflict = Self.merged(known, grants).error { throw conflict }
+  }
+
+  /// Backends are identified by port. A second registration naming the same
+  /// port must agree on the qualification profile; its concurrency limit can
+  /// only tighten the shared one. All grants are adopted, or none.
+  func adoptBackends(_ grants: [ServiceGrant]) throws(InferenceError) {
     let conflict: InferenceError? = backends.withLock { known in
-      for grant in grants {
-        let incoming = grant.backend
-        if let existing = known[incoming.id] {
-          guard existing.profile == incoming.profile,
-            existing.credential?.expose() == incoming.credential?.expose()
-          else {
-            return InferenceError(
+      let merged = Self.merged(known, grants)
+      if merged.error == nil { known = merged.backends }
+      return merged.error
+    }
+    if let conflict { throw conflict }
+  }
+
+  /// `known` with `grants` adopted, or the first conflict (with the grants
+  /// before it adopted, which callers then discard).
+  static func merged(_ known: [BackendID: BackendPolicy], _ grants: [ServiceGrant]) -> (
+    backends: [BackendID: BackendPolicy], error: InferenceError?
+  ) {
+    var result = known
+    for grant in grants {
+      let incoming = grant.backend
+      if let existing = result[incoming.id] {
+        guard existing.profile == incoming.profile,
+          existing.credential?.expose() == incoming.credential?.expose()
+        else {
+          return (
+            result,
+            InferenceError(
               .modelUnqualified,
               "backend \(incoming.id) is already registered with a different qualification profile or credential"
             )
-          }
-          if incoming.maxActive < existing.maxActive { known[incoming.id] = incoming }
-        } else {
-          known[incoming.id] = incoming
+          )
         }
+        if incoming.maxActive < existing.maxActive { result[incoming.id] = incoming }
+      } else {
+        result[incoming.id] = incoming
       }
-      return nil
     }
-    if let conflict { throw conflict }
+    return (result, nil)
   }
 
   func backendPolicy(_ id: BackendID) -> BackendPolicy? { backends.withLock { $0[id] } }
@@ -204,6 +278,11 @@ package final class Gateway: Sendable {
       session.phase == .inactive
     else { throw InferenceError(.sessionRevoked, "no inactive session with that id") }
     let binding = activation.transport
+    // The transport is the registration's sandbox owner (§22.4): the boot
+    // identity the host registered, not whatever process activation names.
+    guard binding.pid == session.boot.ownerPID, binding.start == session.boot.ownerStart else {
+      throw InferenceError(.policyDenied, "the transport is not the registered sandbox owner")
+    }
     guard isTransport(binding) else {
       throw InferenceError(.policyDenied, "the transport process does not match")
     }
@@ -263,23 +342,25 @@ package final class Gateway: Sendable {
   /// Disable admission, drop queued work, cancel active work, close the
   /// listener and every connection. Idempotent.
   func revoke(_ session: GatewaySession, reason: String) {
-    let taken = session.state.withLock { state -> (Channel?, DispatchSourceProcess?, [Channel])? in
+    let taken = session.state.withLock {
+      state -> (Channel?, DispatchSourceProcess?, BoundSocket?, [Channel])? in
       guard !isRevoked(state.phase) else { return nil }
       state.phase = .revoked(reason)
       defer {
         state.listener = nil
         state.watch = nil
+        state.socket = nil
       }
-      return (state.listener, state.watch, Array(state.channels.values))
+      return (state.listener, state.watch, state.socket, Array(state.channels.values))
     }
-    guard let (listener, watch, channels) = taken else { return }
+    guard let (listener, watch, socket, channels) = taken else { return }
     sessions.withLock { _ = $0.removeValue(forKey: session.id) }
     watch?.cancel()
     scheduler.removeSession(session.id, reason: .sessionRevoked)
-    // The socket file stays: a closed listener refuses the relay's
-    // connections, and the instance's next registration replaces the file.
-    // Unlinking here could race that registration, which reuses the name.
     listener?.close(promise: nil)
+    // Removed only while it is still this session's file: a registration
+    // that reuses the name binds under the same lock and gets a new file.
+    if let socket { removeSocket(socket) }
     for channel in channels { channel.close(promise: nil) }
     audit.record("session_revoked", ["session": .string(session.id), "reason": .string(reason)])
   }
@@ -309,6 +390,7 @@ package final class Gateway: Sendable {
     }
     guard first else { return }
     ticker.withLock { $0?.cancel() }
+    normalizers.stop()
     onExit()
   }
 
@@ -319,7 +401,7 @@ package final class Gateway: Sendable {
       .sorted { $0.id < $1.id }
     let sessionList: [JSON] = live.map { session in
       let (phase, socket, transport, deadline) = session.state.withLock {
-        ($0.phase, $0.socketPath, $0.transport, $0.deadline)
+        ($0.phase, $0.socket?.path, $0.transport, $0.deadline)
       }
       return .object(
         JSONObject([
@@ -335,6 +417,8 @@ package final class Gateway: Sendable {
           "aliases": .array(session.grants.keys.sorted().map(JSON.string)),
           "apis": .array(session.apis.map(\.rawValue).sorted().map(JSON.string)),
           "transport_pid": transport.map { .int(Int64($0.pid)) } ?? .null,
+          "connections": .int(
+            Int64(session.connections.capacity - session.connections.available)),
           "deadline_seconds": deadline.map { .int(max(0, ($0 - now).components.seconds)) } ?? .null,
         ]))
     }
@@ -378,6 +462,9 @@ package final class Gateway: Sendable {
               "max_queued_requests": .int(Int64(limits.maxQueuedRequests)),
               "max_request_buffer_bytes": .int(Int64(limits.maxRequestBufferBytes)),
               "connections_per_session": .int(Int64(SessionLimits.connections)),
+              "shared_connections": .int(Int64(sharedConnections.capacity)),
+              "request_buffer_bytes_per_session": .int(
+                Int64(SessionLimits.requestBufferBytesPerSession)),
               "queued_per_session": .int(Int64(SessionLimits.queuedPerSession)),
               "requests_per_minute": .int(Int64(SessionLimits.requestsPerMinute)),
               "generated_tokens_per_minute": .int(Int64(SessionLimits.generatedTokensPerMinute)),
@@ -406,7 +493,10 @@ enum SessionListener {
     -> EventLoopFuture<Channel>
   {
     ServerBootstrap(group: group)
-      .serverChannelOption(ChannelOptions.backlog, value: Int32(SessionLimits.connections))
+      // The runtime relays up to 32 guest connections per session (§22.3,
+      // R2); a smaller backlog would refuse simultaneous dials the relay
+      // still counts. Connections over the session's 16 are closed unread.
+      .serverChannelOption(ChannelOptions.backlog, value: Int32(SessionLimits.relayedConnections))
       .childChannelOption(ChannelOptions.autoRead, value: true)
       .childChannelOption(
         ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16 * 1024)
@@ -424,7 +514,9 @@ enum SessionListener {
             HTTPResponseEncoder(),
             ByteToMessageHandler(
               HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes, limitConfiguration: limits)),
-            RequestHandler(gateway: gateway, session: session, wireBudget: wireBudget),
+            RequestHandler(
+              gateway: gateway, session: session, wireBudget: wireBudget,
+              eventLoop: channel.eventLoop),
           ])
         }
       }

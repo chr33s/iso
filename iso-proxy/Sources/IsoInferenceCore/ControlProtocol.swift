@@ -329,7 +329,8 @@ package enum ControlProtocol {
       overheadPerRequestBytes: try p.bounded("overhead_per_request_bytes", 0...(1 << 20)),
       overheadPerMessageBytes: try p.bounded("overhead_per_message_bytes", 0...(1 << 16)),
       maxInputBytes: try p.bounded("max_input_bytes", 1...(64 << 20)),
-      maxRequestBodyBytes: try p.bounded("max_request_body_bytes", 1024...(64 << 20)),
+      maxRequestBodyBytes: try p.bounded(
+        "max_request_body_bytes", 1024...SessionLimits.requestBufferBytesPerSession),
       tokenCounter: try p.enumeration("token_counter", TokenCounter.self))
     if profile.evidence == .explicit {
       throw InferenceError(

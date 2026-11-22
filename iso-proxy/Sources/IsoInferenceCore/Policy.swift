@@ -127,7 +127,18 @@ package struct GlobalLimits: Sendable, Equatable {
 /// release; status reports them.
 package enum SessionLimits {
   package static let connections = 16
+  /// Each session's share of the shared request-buffer budget; also the
+  /// largest request body a grant may declare, so one request always fits.
+  package static let requestBufferBytesPerSession = 16 << 20
+  /// A finished response's socket closes after this long, flushed or not.
+  package static let closeSeconds = 10
+  /// Open descriptors the gateway may need: every shared connection and its
+  /// upstream socket, session listeners, the control socket, the journal,
+  /// the audit log and a reserve.
+  package static let descriptors = 1024
   package static let sharedConnections = 128
+  /// Guest connections the sandbox runtime relays to one session at once.
+  package static let relayedConnections = 32
   package static let headerBytes = 32 * 1024
   package static let headerFields = 64
   package static let jsonDepth = 32

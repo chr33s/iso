@@ -29,7 +29,7 @@ package final class GatewaySession: Sendable {
     var deadline: ContinuousClock.Instant?
     var watch: DispatchSourceProcess?
     var listener: Channel?
-    var socketPath: String?
+    var socket: BoundSocket?
     var channels: [ObjectIdentifier: Channel] = [:]
   }
 
@@ -41,14 +41,18 @@ package final class GatewaySession: Sendable {
   package let grants: [String: ServiceGrant]
   package let apis: Set<FrontendAPI>
   package let registered: ContinuousClock.Instant
+  /// The registration's socket file name in the relay directory.
+  package let socketName: String
   let capability: Capability
-  let connections = SlotPool(SessionLimits.connections)
-  let failures = FailureWindow(limit: SessionLimits.authFailuresPerMinute)
+  package let connections = SlotPool(SessionLimits.connections)
+  /// This session's share of the gateway's request-buffer budget (§9.1).
+  package let buffers = ByteBudget(SessionLimits.requestBufferBytesPerSession)
+  let failures: FailureWindow
   let state = Mutex(State())
 
   init(
     id: String, registration: ControlProtocol.Registration, capability: Capability,
-    registered: ContinuousClock.Instant
+    registered: ContinuousClock.Instant, failures: FailureWindow
   ) {
     self.id = id
     instance = registration.instance
@@ -57,13 +61,15 @@ package final class GatewaySession: Sendable {
     policyDigest = registration.policyDigest
     grants = Dictionary(uniqueKeysWithValues: registration.grants.map { ($0.alias, $0) })
     apis = Set(registration.grants.flatMap(\.apis))
+    socketName = registration.socket
     self.capability = capability
     self.registered = registered
+    self.failures = failures
   }
 
   package var phase: Phase { state.withLock { $0.phase } }
   /// The bound session socket, until revocation.
-  package var socketPath: String? { state.withLock { $0.socketPath } }
+  package var socketPath: String? { state.withLock { $0.socket?.path } }
 
   /// Whether a request may be admitted now.
   func admits(at instant: ContinuousClock.Instant) -> Bool {

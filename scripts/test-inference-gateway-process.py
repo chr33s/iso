@@ -154,6 +154,11 @@ def main():
     check("a group- or world-readable state directory is refused", wide.returncode == 1)
     os.chmod(state, 0o700)
 
+    # A session socket left by a crashed gateway is removed at startup.
+    stale = relay / "0123456789abcdef.sock"
+    leftover = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    leftover.bind(str(stale))
+    leftover.close()
     gateway = subprocess.Popen(confined, stderr=subprocess.PIPE)
     for _ in range(100):
         if (state / "control.sock").exists():
@@ -161,8 +166,22 @@ def main():
         time.sleep(0.05)
     mode = stat.S_IMODE(os.stat(state / "control.sock").st_mode)
     check("the control socket is owner-only (0600)", mode == 0o600)
+    check("a stale session socket is removed at startup", not stale.exists())
     second = subprocess.run(confined, capture_output=True, timeout=30)
     check("a second gateway exits on the startup lock (status 3)", second.returncode == 3)
+
+    # The transport is the instance's sandbox owner, whose command is
+    # `iso-sandbox`; a tiny sleeper built under that name stands in for it
+    # (copies and symlinks of /bin/sleep keep the name `sleep`).
+    owner_binary = state.parent / (state.name + "-bin") / "iso-sandbox"
+    owner_binary.parent.mkdir()
+    subprocess.run(["/usr/bin/cc", "-x", "c", "-", "-o", str(owner_binary)], check=True,
+                   input=b"#include <stdlib.h>\n#include <unistd.h>\n"
+                         b"int main(int c, char **v) { sleep(atoi(v[1])); return 0; }\n")
+    owner = subprocess.Popen([str(owner_binary), "60"])
+    # Another process under the same name, which is not this boot's owner.
+    impostor = subprocess.Popen([str(owner_binary), "60"])
+    time.sleep(0.5)
 
     profile = {"name": "p", "protocol": "openai-chat", "completion_evidence": "drain",
                "stream_close_drain_ms": 100, "context_overflow": "reject",
@@ -171,7 +190,8 @@ def main():
     def registration(port):
         return {
             "version": 2, "op": "register_session", "instance": {"data_root": "/x", "name": "dev"},
-            "boot": {"owner_pid": 1, "owner_start": "1.0"}, "nonce": "0" * 32,
+            "boot": {"owner_pid": owner.pid, "owner_start": process_start(owner.pid)},
+            "nonce": "0" * 32,
             "socket": "8e84b04d471a546a.sock",
             "global_limits": {"max_active_requests": 2, "max_queued_requests": 32,
                               "max_request_buffer_bytes": 67108864},
@@ -197,16 +217,6 @@ def main():
     body = json.dumps({"model": "local-coder", "messages": [{"role": "user", "content": "hi"}]}).encode()
     check("an inactive session refuses requests", http(session_socket, token, body)[0] == 401)
 
-    # The transport is the instance's sandbox owner, whose command is
-    # `iso-sandbox`; a tiny sleeper built under that name stands in for it
-    # (copies and symlinks of /bin/sleep keep the name `sleep`).
-    owner_binary = state.parent / (state.name + "-bin") / "iso-sandbox"
-    owner_binary.parent.mkdir()
-    subprocess.run(["/usr/bin/cc", "-x", "c", "-", "-o", str(owner_binary)], check=True,
-                   input=b"#include <stdlib.h>\n#include <unistd.h>\n"
-                         b"int main(int c, char **v) { sleep(atoi(v[1])); return 0; }\n")
-    owner = subprocess.Popen([str(owner_binary), "60"])
-    time.sleep(0.5)
     sleeper = subprocess.Popen(["/bin/sleep", "60"])
     def activation(pid, **extra):
         return {"version": 2, "op": "activate_session", "session_id": registered["session_id"],
@@ -216,6 +226,10 @@ def main():
     wrong = control(state, activation(sleeper.pid))
     check("activation refuses a transport that is not the sandbox owner", wrong.get("ok") is False)
     sleeper.kill()
+    wrong = control(state, activation(impostor.pid))
+    check("activation refuses an iso-sandbox process that is not the registered owner",
+          wrong.get("ok") is False)
+    impostor.kill()
     activated = control(state, activation(owner.pid, deadline_seconds=3600))
     check("activation binds the session to the sandbox owner process", activated.get("ok") is True)
 
@@ -235,6 +249,7 @@ def main():
     except OSError:
         refused = True
     check("a revoked session's socket refuses connections", refused)
+    check("revocation removes the session socket file", not session_socket.exists())
 
     busy = control(state, {"version": 2, "op": "shutdown", "force": False})
     check("shutdown succeeds with no sessions", busy.get("ok") is True)

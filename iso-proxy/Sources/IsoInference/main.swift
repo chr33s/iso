@@ -1,7 +1,9 @@
 import Darwin
 import Dispatch
 import Foundation
+import IsoInferenceCore
 import IsoInferenceGateway
+import IsoProxyCore
 import NIOPosix
 
 /// `iso-inference --state-dir DIR --relay-dir DIR --backend-port PORT...
@@ -105,6 +107,12 @@ func main() -> Exit {
     close(lock)
     return errno == EWOULDBLOCK ? .alreadyRunning : .failure
   }
+  // Every shared connection, its upstream socket and the session listeners
+  // must fit; a launchd default of 256 would not hold them.
+  do { try DescriptorLimit.raise(to: SessionLimits.descriptors) } catch {
+    log("cannot raise the open-file limit: \(error)")
+    return .failure
+  }
   let done = DispatchSemaphore(value: 0)
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
   let gateway: Gateway
@@ -115,6 +123,7 @@ func main() -> Exit {
     gateway = Gateway(
       group: group, journal: journal, audit: audit, relayDirectory: relayDirectory,
       backendPorts: ports, onExit: { done.signal() })
+    gateway.removeStaleSessionSockets()
     control = try ControlServer(path: stateDirectory + "/control.sock", gateway: gateway)
   } catch {
     log("startup failed: \(error)")
@@ -127,7 +136,10 @@ func main() -> Exit {
     source.resume()
     return source
   }
-  Thread { control.run() }.start()
+  // Control frames are parsed on this thread; its stack bounds their nesting.
+  let controlThread = Thread { control.run() }
+  controlThread.stackSize = 8 << 20
+  controlThread.start()
   gateway.startTicker()
   log("ready (epoch \(gateway.epoch))")
   done.wait()

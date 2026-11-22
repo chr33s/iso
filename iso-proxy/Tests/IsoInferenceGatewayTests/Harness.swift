@@ -34,6 +34,7 @@ final class FakeBackend: Sendable {
   private let script: Mutex<Script>
   private let recorded = Mutex<[Recorded]>([])
   private let finished = Mutex(0)
+  private let hangsEnded = Mutex(0)
   private let closed = Mutex(false)
 
   init(_ script: Script) throws {
@@ -73,6 +74,8 @@ final class FakeBackend: Sendable {
   var requests: [Recorded] { recorded.withLock { $0 } }
   /// Connections whose script ran to completion (the backend "finished").
   var completed: Int { finished.withLock { $0 } }
+  /// `streamThenHang` connections the gateway closed.
+  var closedWhileHanging: Int { hangsEnded.withLock { $0 } }
 
   private func serve(_ connection: Int32) {
     defer { close(connection) }
@@ -114,6 +117,7 @@ final class FakeBackend: Sendable {
       for event in events { guard send(connection, chunked(event)) else { return } }
       var byte: UInt8 = 0
       while recv(connection, &byte, 1, 0) > 0 {}
+      hangsEnded.withLock { $0 += 1 }
     case .json(let status, let text):
       let response =
         "HTTP/1.1 \(status) X\r\ncontent-type: application/json\r\ncontent-length: \(text.utf8.count)\r\nconnection: close\r\n\r\n\(text)"
@@ -253,10 +257,15 @@ final class Harness: @unchecked Sendable {
   /// Short, so session socket paths fit `sun_path`.
   let relayDirectory: String
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
+  /// The audit log's clock, advanced by tests that check aggregation.
+  let auditClock = TestClock()
   let gateway: Gateway
   var transports: [Process] = []
 
-  init(journalSeed: [UInt16: Int] = [:], backendPorts: Set<UInt16>? = nil) throws {
+  init(
+    journalSeed: [UInt16: Int] = [:], backendPorts: Set<UInt16>? = nil,
+    timing: GatewayTiming = .standard, sharedConnections: Int = SessionLimits.sharedConnections
+  ) throws {
     signal(SIGPIPE, SIG_IGN)
     directory = NSTemporaryDirectory() + "iso-inference-test-" + UUID().uuidString
     try FileManager.default.createDirectory(
@@ -270,13 +279,17 @@ final class Harness: @unchecked Sendable {
     try FileManager.default.createDirectory(
       atPath: relayDirectory, withIntermediateDirectories: false,
       attributes: [.posixPermissions: 0o700])
+    let clock = auditClock
     gateway = Gateway(
-      group: group, journal: journal, audit: AuditLog(path: directory + "/audit.log"),
+      group: group, journal: journal,
+      audit: AuditLog(path: directory + "/audit.log") { clock.now },
       relayDirectory: relayDirectory, backendPorts: backendPorts, transportCommand: "sleep",
-      onExit: {})
+      timing: timing, sharedConnections: sharedConnections, onExit: {})
   }
 
   deinit {
+    try? gateway.prepareShutdown(force: true)
+    gateway.stop()
     for process in transports where process.isRunning { process.terminate() }
     try? group.syncShutdownGracefully()
     try? FileManager.default.removeItem(atPath: directory)
@@ -305,13 +318,15 @@ final class Harness: @unchecked Sendable {
     _ grants: [ServiceGrant], name: String = "dev", deadlineSeconds: Int64? = nil,
     activate: Bool = true
   ) throws -> Session {
+    // The transport stands in for the instance's sandbox owner, whose
+    // identity is the registration's boot identity.
+    let (process, binding) = try spawnTransport()
     let registration = ControlProtocol.Registration(
       instance: .init(dataRoot: directory, name: name),
-      boot: BootIdentity(ownerPID: 1, ownerStart: ProcessStart(seconds: 1, microseconds: 0)),
+      boot: BootIdentity(ownerPID: binding.pid, ownerStart: binding.start),
       nonce: String(repeating: "0", count: 32), limits: .defaults, grants: grants,
       socket: Self.socketName(name))
     let registered = try gateway.register(registration)
-    let (process, binding) = try spawnTransport()
     if activate {
       try gateway.activate(
         ControlProtocol.Activation(
@@ -330,6 +345,21 @@ final class Harness: @unchecked Sendable {
       ($0 ^ UInt64($1)) &* 1_099_511_628_211
     }
     return String(hash, radix: 16) + ".sock"
+  }
+
+  func gatewaySession(_ id: String) -> GatewaySession? {
+    gateway.sessions.withLock { $0[id] }
+  }
+
+  /// The audit records written so far, with the held rejection counts flushed.
+  func auditRecords(advancing: Duration = .seconds(11)) throws -> [JSONObject] {
+    auditClock.advance(advancing)
+    gateway.audit.flush()
+    let text = try String(contentsOfFile: directory + "/audit.log", encoding: .utf8)
+    return try text.split(separator: "\n").map {
+      try #require(
+        try JSONParser.parse(Array($0.utf8), limits: .init(maxBytes: 1 << 20, maxDepth: 8)).object)
+    }
   }
 
   func backend(_ port: UInt16) -> JSONObject? {
@@ -382,3 +412,49 @@ let chatEvents = [
 
 let chatBody =
   #"{"model":"local-coder","messages":[{"role":"user","content":"hello"}],"stream":true}"#
+
+/// A manually advanced clock.
+final class TestClock: Sendable {
+  private let offset = Mutex<Duration>(.zero)
+  let base = ContinuousClock.now
+  func advance(_ duration: Duration) { offset.withLock { $0 += duration } }
+  var now: ContinuousClock.Instant { base + offset.withLock { $0 } }
+}
+
+extension RawClient {
+  /// Sends a request head (and `body`) without reading the response.
+  static func open(
+    _ socket: String, method: String = "POST", target: String = "/v1/chat/completions",
+    token: String?, body: String = chatBody, contentLength: Int? = nil,
+    extraHeaders: [(String, String)] = []
+  ) -> Int32 {
+    let fd = connect(socket)
+    var head = "\(method) \(target) HTTP/1.1\r\nhost: x\r\n"
+    if let token { head += "authorization: Bearer \(token)\r\n" }
+    if method == "POST" {
+      head += "content-type: application/json\r\n"
+      head += "content-length: \(contentLength ?? body.utf8.count)\r\n"
+    }
+    for (name, value) in extraHeaders { head += "\(name): \(value)\r\n" }
+    sendAll(fd, Array((head + "\r\n" + body).utf8))
+    return fd
+  }
+
+  /// Reads until the end of the first response head; "" when the peer
+  /// closed first.
+  static func readHead(_ fd: Int32) -> String {
+    var data: [UInt8] = []
+    var byte: UInt8 = 0
+    while findHeadEnd(data) == nil, recv(fd, &byte, 1, 0) == 1 { data.append(byte) }
+    return String(decoding: data, as: UTF8.self)
+  }
+
+  static func status(_ fd: Int32) -> Int {
+    defer { close(fd) }
+    return readAll(fd).status
+  }
+}
+
+func discoveryGrant(_ port: UInt16) -> ServiceGrant {
+  grant(.openAIChat, port: port, apis: [.openAIChat, .modelDiscovery])
+}

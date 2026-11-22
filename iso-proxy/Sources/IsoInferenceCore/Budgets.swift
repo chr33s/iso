@@ -1,60 +1,82 @@
+import IsoPolicy
 import Synchronization
 
-/// A shared byte budget (the gateway request-buffer budget, §9.1). A lease
-/// holds its bytes until released or destroyed.
+/// A byte budget (the gateway's shared request-buffer budget and each
+/// session's share of it, §9.1). A lease holds its bytes until it is
+/// released. Release is explicit: a lease that is dropped unreleased keeps
+/// its bytes, so a missed release shows up as lost capacity, not as a
+/// silent recovery that depends on object lifetimes.
 package final class ByteBudget: Sendable {
-  private let available: Mutex<Int>
-  private let capacity: Mutex<Int>
-
-  package init(_ bytes: Int) {
-    available = Mutex(bytes)
-    capacity = Mutex(bytes)
+  private struct State {
+    var capacity: Int
+    var free: Int
   }
+  private let state: Mutex<State>
 
-  package func reserve(_ bytes: Int) -> Lease? {
-    let granted = available.withLock { free -> Bool in
-      guard bytes >= 0, bytes <= free else { return false }
-      free -= bytes
-      return true
+  package init(_ bytes: Int) { state = Mutex(State(capacity: bytes, free: bytes)) }
+
+  /// Reserve `bytes` from this budget and, when given, from `inner` too:
+  /// both or neither.
+  package func reserve(_ bytes: Int, alsoFrom inner: ByteBudget? = nil) -> Lease? {
+    guard take(bytes) else { return nil }
+    guard let inner else { return Lease([(self, bytes)]) }
+    guard inner.take(bytes) else {
+      give(bytes)
+      return nil
     }
-    return granted ? Lease(budget: self, bytes: bytes) : nil
+    return Lease([(self, bytes), (inner, bytes)])
   }
 
   /// Registrations may tighten the budget; outstanding leases stay valid.
   package func tighten(to bytes: Int) {
-    let reduction = capacity.withLock { current -> Int in
-      guard bytes < current else { return 0 }
-      defer { current = bytes }
-      return current - bytes
+    state.withLock { state in
+      guard bytes < state.capacity else { return }
+      state.free -= state.capacity - bytes
+      state.capacity = bytes
     }
-    if reduction > 0 { available.withLock { $0 -= reduction } }
   }
 
-  package var free: Int { available.withLock { $0 } }
+  package var free: Int { state.withLock { $0.free } }
+  package var capacity: Int { state.withLock { $0.capacity } }
 
-  fileprivate func release(_ bytes: Int) { available.withLock { $0 += bytes } }
+  private func take(_ bytes: Int) -> Bool {
+    state.withLock { state in
+      guard bytes >= 0, bytes <= state.free else { return false }
+      state.free -= bytes
+      return true
+    }
+  }
+
+  fileprivate func give(_ bytes: Int) { state.withLock { $0.free += bytes } }
 
   package final class Lease: Sendable {
-    private let owner: Mutex<(ByteBudget, Int)?>
-    init(budget: ByteBudget, bytes: Int) { owner = Mutex((budget, bytes)) }
+    private let owners: Mutex<[(ByteBudget, Int)]>
+    init(_ owners: [(ByteBudget, Int)]) { self.owners = Mutex(owners) }
+
+    /// Returns the bytes once; later calls do nothing.
     package func release() {
-      let taken = owner.withLock { value -> (ByteBudget, Int)? in
-        defer { value = nil }
-        return value
+      let taken = owners.withLock { owners in
+        defer { owners = [] }
+        return owners
       }
-      if let (budget, bytes) = taken { budget.release(bytes) }
+      for (budget, bytes) in taken { budget.give(bytes) }
     }
-    deinit { release() }
   }
 }
 
-/// A counted slot pool (connections per session and shared).
+/// A counted slot pool (connections per session and shared). Like a
+/// `ByteBudget` lease, a slot returns only when released.
 package final class SlotPool: Sendable {
-  private let available: Mutex<Int>
-  package init(_ count: Int) { available = Mutex(count) }
+  private let free: Mutex<Int>
+  package let capacity: Int
+
+  package init(_ count: Int) {
+    capacity = count
+    free = Mutex(count)
+  }
 
   package func acquire() -> Slot? {
-    let granted = available.withLock { free -> Bool in
+    let granted = free.withLock { free -> Bool in
       guard free > 0 else { return false }
       free -= 1
       return true
@@ -62,50 +84,55 @@ package final class SlotPool: Sendable {
     return granted ? Slot(pool: self) : nil
   }
 
-  fileprivate func release() { available.withLock { $0 += 1 } }
+  package var available: Int { free.withLock { $0 } }
+
+  fileprivate func give() { free.withLock { $0 += 1 } }
 
   package final class Slot: Sendable {
     private let pool: Mutex<SlotPool?>
     init(pool: SlotPool) { self.pool = Mutex(pool) }
+
+    /// Returns the slot once; later calls do nothing.
     package func release() {
       let owner = pool.withLock { value -> SlotPool? in
         defer { value = nil }
         return value
       }
-      owner?.release()
+      owner?.give()
     }
-    deinit { release() }
   }
 }
 
 /// Cheap per-listener rejection of repeated authentication failures, so
-/// unauthorized traffic cannot allocate unbounded work (§9.1).
+/// unauthorized traffic cannot allocate unbounded work (§9.1): IsoPolicy's
+/// sliding window over the last minute, on the monotonic clock.
 package final class FailureWindow: Sendable {
-  private let events: Mutex<[ContinuousClock.Instant]>
-  private let limit: Int
-  private let now: @Sendable () -> ContinuousClock.Instant
+  private let window: Mutex<SlidingWindow>
+  private let now: @Sendable () -> UInt64?
 
   package init(
-    limit: Int, now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
+    limit: Int,
+    now: @escaping @Sendable () -> UInt64? = { SystemMonotonicClock().nanoseconds() }
   ) {
-    events = Mutex([])
-    self.limit = limit
+    window = Mutex(SlidingWindow(capacity: limit, windowSeconds: 60))
     self.now = now
   }
 
   package func record() {
-    let instant = now()
-    events.withLock { list in
-      list.removeAll { instant - $0 >= .seconds(60) }
-      if list.count < limit * 2 { list.append(instant) }
+    guard let instant = now() else { return }
+    window.withLock { window in
+      window.evict(now: instant)
+      if !window.isFull { window.admit(instant) }
     }
   }
 
+  /// True once `limit` failures fall within the last minute. An unusable
+  /// clock counts as tripped.
   package var tripped: Bool {
-    let instant = now()
-    return events.withLock { list in
-      list.removeAll { instant - $0 >= .seconds(60) }
-      return list.count >= limit
+    guard let instant = now() else { return true }
+    return window.withLock { window in
+      window.evict(now: instant)
+      return window.isFull
     }
   }
 }

@@ -124,21 +124,43 @@ package final class Scheduler: Sendable {
     }
   }
 
-  /// Admit work or reject it without side effects on the ledger.
-  package func admit(_ work: Work) throws(InferenceError) -> Admission {
+  /// Proof that one request took a token from its session's rate bucket.
+  /// Taken before the body is normalized, so requests that fail
+  /// normalization or admission still count toward the rate (§9.1).
+  package struct Permit: Sendable {
+    let session: String
+  }
+
+  /// Take one request token from `session`'s bucket.
+  package func permit(session name: String) throws(InferenceError) -> Permit {
+    let instant = now()
+    let result: Result<Permit, InferenceError> = state.withLock { state in
+      guard var session = state.sessions[name] else {
+        return .failure(InferenceError(.sessionRevoked, "session is not active"))
+      }
+      Self.refill(&session, at: instant)
+      guard session.tokens >= 1 else {
+        return .failure(InferenceError(.capacity, "request rate limit reached"))
+      }
+      session.tokens -= 1
+      state.sessions[name] = session
+      return .success(Permit(session: name))
+    }
+    return try result.get()
+  }
+
+  /// Admit work or reject it without further side effects on the ledger;
+  /// the permit's token stays spent either way.
+  package func admit(_ work: Work, permit: Permit) throws(InferenceError) -> Admission {
     let instant = now()
     let result: Result<(Admission, [Entry]), InferenceError> = state.withLock { state in
-      guard var session = state.sessions[work.session] else {
+      guard permit.session == work.session, var session = state.sessions[work.session] else {
         return .failure(InferenceError(.sessionRevoked, "session is not active"))
       }
       if let reason = state.backends[work.backend]?.quarantine {
         return .failure(
           InferenceError(
             .backendQuarantined, "backend \(work.backend) is quarantined (\(reason.rawValue))"))
-      }
-      Self.refill(&session, at: instant)
-      guard session.tokens >= 1 else {
-        return .failure(InferenceError(.capacity, "request rate limit reached"))
       }
       session.reservations.removeAll { instant - $0.at >= .seconds(60) }
       let reserved = session.reservations.reduce(0) { $0 + $1.tokens }
@@ -156,7 +178,6 @@ package final class Scheduler: Sendable {
         }
       }
       state.nextID += 1
-      session.tokens -= 1
       session.reservations.append((ticket.id, instant, work.outputTokens))
       let entry = Entry(ticket: ticket, work: work, enqueued: instant)
       if canRun {

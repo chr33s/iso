@@ -63,11 +63,14 @@ let package = Package(
     .target(
       name: "IsoProxyFuzzHarnesses", dependencies: ["IsoProxyCore", "IsoInferenceCore"],
       path: "Fuzz", swiftSettings: strictMemorySafety),
-    .testTarget(name: "IsoProxyFuzzReplayTests", dependencies: ["IsoProxyFuzzHarnesses"]),
+    .testTarget(
+      name: "IsoProxyFuzzReplayTests", dependencies: ["IsoProxyFuzzHarnesses", "IsoInferenceCore"]),
     // iso-inference: request policy, scheduling and the control protocol
     // (no I/O), the NIO gateway, and the executable.
     .target(
-      name: "IsoInferenceCore", dependencies: ["IsoProxyCore"], swiftSettings: strictMemorySafety),
+      name: "IsoInferenceCore",
+      dependencies: ["IsoProxyCore", .product(name: "IsoPolicy", package: "iso-policy")],
+      swiftSettings: strictMemorySafety),
     .target(
       name: "IsoInferenceGateway",
       dependencies: [

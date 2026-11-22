@@ -10,14 +10,43 @@ import Synchronization
 package final class ControlServer: Sendable {
   static let ioTimeoutSeconds = 5
 
+  /// What the accept loop does after a failed `accept`.
+  package enum AcceptFailure: Equatable {
+    /// Interrupted: try again at once.
+    case retry
+    /// Out of descriptors, buffers or memory, or the peer gave up: try
+    /// again after a pause, so the control plane survives a burst of load.
+    case backOff
+    /// The listener itself is unusable: the gateway stops, since nothing
+    /// could revoke or register sessions any more.
+    case fatal
+  }
+
+  package static func classify(_ code: Int32) -> AcceptFailure {
+    switch code {
+    case EINTR: .retry
+    case EMFILE, ENFILE, ECONNABORTED, ENOBUFS, ENOMEM, EAGAIN: .backOff
+    default: .fatal
+    }
+  }
+
   private let path: String
   private let gateway: Gateway
   private let listener: Int32
   private let closed = Mutex(false)
+  /// `accept` on the listener: the connection, or -1 and the errno. A test seam.
+  private let accept: @Sendable (Int32) -> (fd: Int32, error: Int32)
 
-  package init(path: String, gateway: Gateway) throws {
+  package init(
+    path: String, gateway: Gateway,
+    accept: @escaping @Sendable (Int32) -> (fd: Int32, error: Int32) = { listener in
+      let fd = Darwin.accept(listener, nil, nil)
+      return (fd, fd < 0 ? errno : 0)
+    }
+  ) throws {
     self.path = path
     self.gateway = gateway
+    self.accept = accept
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw GatewayError.startup("cannot create the control socket") }
     var address = sockaddr_un()
@@ -49,14 +78,27 @@ package final class ControlServer: Sendable {
   }
 
   package func run() {
+    var pause: UInt32 = 10_000
     while !closed.withLock({ $0 }) {
-      let connection = accept(listener, nil, nil)
-      if connection < 0 {
-        if errno == EINTR { continue }
+      let (connection, error) = accept(listener)
+      guard connection < 0 else {
+        pause = 10_000
+        serve(connection)
+        close(connection)
+        continue
+      }
+      if closed.withLock({ $0 }) { return }
+      switch Self.classify(error) {
+      case .retry: continue
+      case .backOff:
+        diagnostic("control socket accept failed (errno \(error)); retrying")
+        usleep(pause)
+        pause = min(pause * 2, 1_000_000)
+      case .fatal:
+        diagnostic("control socket accept failed (errno \(error)); stopping")
+        gateway.stop()
         return
       }
-      serve(connection)
-      close(connection)
     }
   }
 

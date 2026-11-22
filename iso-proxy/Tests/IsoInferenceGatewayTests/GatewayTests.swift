@@ -151,27 +151,28 @@ import Testing
   @Test func activationChecksTheTransportIdentity() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
+    let (_, owner) = try harness.spawnTransport()
     let registered = try harness.gateway.register(
       ControlProtocol.Registration(
         instance: .init(dataRoot: harness.directory, name: "x"),
-        boot: BootIdentity(ownerPID: 1, ownerStart: ProcessStart(seconds: 1, microseconds: 0)),
+        boot: BootIdentity(ownerPID: owner.pid, ownerStart: owner.start),
         nonce: String(repeating: "0", count: 32), limits: .defaults,
         grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("x")))
-    let (_, binding) = try harness.spawnTransport()
+    func activate(_ binding: TransportBinding, epoch: String? = nil) throws {
+      try harness.gateway.activate(
+        .init(
+          sessionID: registered.sessionID, epoch: epoch ?? harness.gateway.epoch,
+          transport: binding, deadlineSeconds: nil))
+    }
+    // Another live process with the right command and owner is still not
+    // the registered sandbox owner (§22.4).
+    let (_, other) = try harness.spawnTransport()
+    #expect(throws: InferenceError.self) { try activate(other) }
     let wrongStart = TransportBinding(
-      pid: binding.pid, start: ProcessStart(seconds: binding.start.seconds + 1, microseconds: 0))
-    #expect(throws: InferenceError.self) {
-      try harness.gateway.activate(
-        .init(
-          sessionID: registered.sessionID, epoch: harness.gateway.epoch, transport: wrongStart,
-          deadlineSeconds: nil))
-    }
-    #expect(throws: InferenceError.self) {
-      try harness.gateway.activate(
-        .init(
-          sessionID: registered.sessionID, epoch: "stale-epoch", transport: binding,
-          deadlineSeconds: nil))
-    }
+      pid: owner.pid, start: ProcessStart(seconds: owner.start.seconds + 1, microseconds: 0))
+    #expect(throws: InferenceError.self) { try activate(wrongStart) }
+    #expect(throws: InferenceError.self) { try activate(owner, epoch: "stale-epoch") }
+    try activate(owner)
   }
 
   @Test func sessionDeadlineRevokes() throws {

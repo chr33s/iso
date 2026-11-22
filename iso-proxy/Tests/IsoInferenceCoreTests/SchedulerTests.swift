@@ -17,6 +17,13 @@ final class Log: Sendable {
   var all: [String] { entries.withLock { $0 } }
 }
 
+extension Scheduler {
+  /// A permit and an admission together, as the gateway takes them.
+  func admit(_ work: Work) throws(InferenceError) -> Admission {
+    try admit(work, permit: permit(session: work.session))
+  }
+}
+
 private func work(
   _ session: String, _ label: String, backend: UInt16 = 1, maxActive: Int = 1, tokens: Int = 100,
   log: Log
@@ -184,8 +191,43 @@ private func makeScheduler(_ clock: TestClock, active: Int = 2, queued: Int = 32
   budget.tighten(to: 40)
   #expect(budget.reserve(41) == nil && budget.reserve(40) != nil)
   let pool = SlotPool(1)
-  var slot = pool.acquire()
+  let slot = pool.acquire()
   #expect(slot != nil && pool.acquire() == nil)
-  slot = nil
+  slot?.release()
+  slot?.release()
+  #expect(pool.available == 1)
   #expect(pool.acquire() != nil)
+}
+
+/// Leases and slots return only when released: dropping one unreleased
+/// keeps its capacity out, so a missed release is visible.
+@Test func capacityReturnsOnlyOnRelease() {
+  let budget = ByteBudget(100)
+  do { _ = budget.reserve(60) }
+  #expect(budget.free == 40)
+  let pool = SlotPool(2)
+  do { _ = pool.acquire() }
+  #expect(pool.available == 1)
+}
+
+@Test func sessionShareAndSharedBudgetReserveTogether() {
+  let shared = ByteBudget(100)
+  let session = ByteBudget(30)
+  let lease = shared.reserve(30, alsoFrom: session)
+  #expect(lease != nil && shared.free == 70 && session.free == 0)
+  // The session's share is spent: the shared budget is untouched by a refusal.
+  #expect(shared.reserve(1, alsoFrom: session) == nil && shared.free == 70)
+  lease?.release()
+  #expect(shared.free == 100 && session.free == 30)
+}
+
+@Test func failureWindowTripsAtTheLimitAndExpires() {
+  let clock = Mutex<UInt64>(1)
+  let window = FailureWindow(limit: 3) { clock.withLock { $0 } }
+  for _ in 0..<2 { window.record() }
+  #expect(!window.tripped)
+  window.record()
+  #expect(window.tripped)
+  clock.withLock { $0 += 60_000_000_000 }
+  #expect(!window.tripped)
 }
