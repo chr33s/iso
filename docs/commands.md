@@ -1133,8 +1133,14 @@ Release tags come from `main`. The updater requires a maintainer signature on
 the release's `SHA256SUMS` (`SHA256SUMS.sig`), verifies the platform tarball's
 SHA-256 against it and, when `gh` is installed, its repository build-provenance
 attestation.
-The updater installs the bundled `iso-sandbox`, `iso-proxy`, `iso-inference`,
-`iso-egress` and `iso-macos-helper` before replacing the host. It installs the Linux `desktop`
+The release's `BUILD.json` names its binaries with their SHA-256 digests.
+Before replacing anything, the updater requires every listed binary to be a
+regular file matching its digest and `iso`, `iso-sandbox`, `iso-proxy`,
+`iso-egress` and `iso-macos-helper` to be listed. It installs every listed
+companion before replacing the host: the ones above, `iso-inference` when the
+release lists it (an installed copy is removed when it does not), and any
+companion added after the running iso, so a newer release is never left
+partially installed. It installs the Linux `desktop`
 images' `iso-cu-mcp` and `vmlinux-desktop` when the release carries them and
 removes the installed copies when it does not, so neither stays beside a
 runtime from another release. Each file replacement is atomic; the set of files is not a single
@@ -1145,9 +1151,10 @@ The updater that runs is the installed one. v0.9.0 and earlier do not know
 the two `desktop` files, so an update from one of them installs neither and
 `iso setup --profile desktop` then fails asking for a reinstall. Run
 `iso update --force` once after such an update (or rerun `install.sh`): the
-new updater installs them. Likewise v0.11.x and earlier do not know
-`iso-inference`, so an update from one of them installs none; run
-`iso update --force` once after such an update (or rerun `install.sh`).
+new updater installs them. Likewise v0.11.x and earlier neither read
+`BUILD.json` nor know `iso-inference`, so an update from one of them installs
+no gateway; run `iso update --force` once after such an update (or rerun
+`install.sh`). Later updaters install whatever companions a release lists.
 
 No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `iso update` uses it, which helps avoid GitHub API rate limits.
 
