@@ -548,7 +548,8 @@ generated bearer token, root-owned code and weights, and a Seatbelt profile.
 
 A managed backend's name becomes its launchd label and directory, so it may
 not start with `.`. `iso inference init` writes this configuration with
-hardened defaults.
+hardened defaults. It never sets `network.transport`: `required` runs on
+either transport.
 
 **`services.<name>`**: the name is the model alias the guest uses.
 

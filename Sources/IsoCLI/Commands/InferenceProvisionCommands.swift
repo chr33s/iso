@@ -204,7 +204,7 @@ struct InferenceInit: ParsableCommand {
     abstract:
       "Write hardened inference defaults: required mode, offline preset, session TTL, a confined managed MLX backend and a chat service",
     discussion:
-      "Pass exactly one of --python or --install, and either --model or both --model-repo and --model-revision. A key already set to a different value aborts the edit unless --force. The configuration is rewritten as strict JSON: comments and formatting are not kept."
+      "Pass exactly one of --python or --install, and either --model or both --model-repo and --model-revision. network.transport is left as configured: required mode runs on brokered and vmnet. A key already set to a different value aborts the edit unless --force. The configuration is rewritten as strict JSON: comments and formatting are not kept."
   )
 
   @OptionGroup var global: GlobalOptions
@@ -274,9 +274,9 @@ struct InferenceInit: ParsableCommand {
       "max_request_body_bytes": .number(.integer(QualifiedMLXLM.maxRequestBodyBytes)),
     ])
     return [
+      // `network.transport` is left as configured: `required` runs on the
+      // brokered default and on vmnet (spec §22.4, §22.9).
       (["security", "preset"], .string("offline")),
-      // The runtime relay (spec §22.4); `required` also runs on brokered.
-      (["network", "transport"], .string("vmnet")),
       (["limits", "session_ttl"], .string("8h")),
       (["inference", "mode"], .string("required")),
       (["inference", "qualification_profiles", "mlx-lm-0.31"], profile),

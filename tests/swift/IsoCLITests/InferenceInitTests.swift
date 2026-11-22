@@ -79,7 +79,25 @@ private func initSettings(python: String? = "/opt/py/bin/python3", install: Stri
   // 32k tokens of prefill at about 3.3k tokens/s.
   let prefillMilliseconds = resolved.profile.maxInputBytes / 4 * 1000 / 3_300
   #expect(resolved.profile.streamCloseDrainMilliseconds >= prefillMilliseconds)
-  #expect(config.network.transport == .vmnet)
+}
+
+/// init leaves `network.transport` alone: a new configuration keeps the
+/// brokered default, and a chosen transport stays chosen, even with --force.
+@Test func inferenceInitLeavesTheTransportAlone() throws {
+  #expect(!(try initSettings()).contains { $0.0.first == "network" })
+  func transport(_ existing: String?, force: Bool = false) throws -> NetworkTransport {
+    let (bytes, changed) = try ConfigEditor.applyDefaults(
+      existing: existing.map { Array($0.utf8) }, format: .jsonc, path: "c",
+      settings: try initSettings(), force: force, environment: environment)
+    #expect(!changed.contains { $0.hasPrefix("network") })
+    return try ConfigLoader.decode(
+      try ConfigLoader.parse(bytes, format: .jsonc, path: "c", limits: .configuration), path: "c",
+      environment: environment
+    ).network.transport
+  }
+  #expect(try transport(nil) == .brokered)
+  #expect(try transport(#"{"network": {"transport": "brokered"}}"#) == .brokered)
+  #expect(try transport(#"{"network": {"transport": "vmnet"}}"#, force: true) == .vmnet)
 }
 
 /// K10: provisioning passes only with run-as, authentication and the token
