@@ -8,6 +8,50 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+### Added
+
+- **Guarded local inference:** `iso-inference`, a per-user host gateway,
+  puts a policy boundary between guests and a host-side local model server.
+  With `inference.mode: "required"` and an agent's `local_model: { "service":
+  NAME }`, each running VM gets one gateway session with a fresh capability.
+  The gateway accepts only the service's granted API routes (Chat
+  Completions, Responses, Anthropic Messages) and a closed set of request
+  fields, rebuilds each request for a fixed loopback backend and model,
+  clamps output limits, and enforces per-session and shared budgets. Under
+  `required`, no provider credential, credential proxy or raw model tunnel
+  reaches the guest, and no failure falls back to a raw endpoint or the
+  cloud. It is for Linux guests on `network.transport: "vmnet"`; the default
+  brokered transport and macOS guests are refused. See the
+  [`inference` section](docs/configuration.md#inference-section) and the
+  [design](docs/design/secure-local-inference-spec.md).
+- **`iso inference` commands** ([reference](docs/commands.md#inference)):
+  `status`, `doctor`, `attach`/`detach` (a service grant for applications,
+  exposed as `ISO_INFERENCE_BASE_URL`, `ISO_INFERENCE_MODEL` and
+  `ISO_INFERENCE_TOKEN`), `revoke`, `requalify [--restart]`,
+  `stop [--force]`, and `init`, which writes a hardened configuration for a
+  managed mlx-lm backend. `provision`, `deprovision` and `restart-backend`
+  manage that backend: a confined LaunchDaemon running as the
+  `_isoinference` role account, authenticated with a token kept in the login
+  Keychain, each with one `sudo` step. `iso uninstall` stops the gateway and
+  names any managed backends left to deprovision.
+- **Apple runtime protocol 6:** `iso-sandbox create --inference-relay` and
+  `start --inference-relay on|off` relay the gateway's per-sandbox Unix
+  socket into a Linux guest over vsock (host port 7803, at most 32
+  connections at once, refused for brokered sandboxes), and `inspect`
+  reports it. iso requires protocol 6. In the guest, a systemd socket on
+  `127.0.0.1:11788` bridges to the relayed socket.
+- **Release archives** carry `iso-inference`.
+
+### Changed
+
+- **Install and update:** `install.sh` and `iso update` install the binaries
+  the release's `BUILD.json` lists. Each listed binary must match its
+  recorded digest, and `iso`, `iso-sandbox`, `iso-macos-helper`, `iso-proxy`
+  and `iso-egress` must be listed. `iso-inference` is installed when listed
+  and an installed copy is removed when not; a listed companion the
+  installer does not know is installed too. After updating from v0.11.x or
+  earlier, run `iso update --force` once to install the gateway.
+
 ## v0.11.0
 
 ### Security

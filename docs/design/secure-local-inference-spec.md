@@ -1,8 +1,8 @@
 # Secure Host MLX Inference for iso
 
 **Status:** Implementation specification  
-**Version:** 0.6.0  
-**Date:** October 1, 2026  
+**Version:** 0.7.0  
+**Date:** November 22, 2026  
 **Repository:** `chr33s/iso`  
 **Design baseline:** commit `1784c5648f65d8d7bc1c901635cc33f11f80382e`  
 **Repository path:** `docs/design/secure-local-inference-spec.md`
@@ -17,6 +17,8 @@
 
 **Changes in 0.6.0:** vsock session transport (§22), implemented with the relay fixes vendored. A spike on real hardware showed that containerization 0.45.0 can relay a host Unix socket into the guest over vsock, fast and bound to the VM. It also showed that the relay dies permanently after one failed host connect, and that a guest can exhaust the owner process's descriptors. §22 sets the relay requirements, the runtime and `IsolationGate` changes, and a systemd guest bridge. SSH stays until the relay is fixed.
 
+**Changes in 0.7.0 (port onto `main`):** the relay runs in iso-sandbox itself, on containerization 0.54.0's public API, with no vendored containerization source (§22.3); runtime protocol 6 adds `--inference-relay`. The relay is for Linux guests on the vmnet transport only, so `inference.mode: required` needs `network.transport: vmnet` (§11.3). The guest bridge moves to port 11788, since 10788 + index is filtered egress's guest port on `main` (§22.4). The managed launcher answers an authenticated challenge (§20.3). Paths are `main`'s (§14, §19).
+
 > This specification is implemented through §20, and §22; §21 is a design. §19 records which acceptance tests have evidence and which claims remain open. It does not claim a qualified real MLX deployment: qualification profiles are owner decisions, and §17 lists what they must establish. Source review is not a substitute for the hardware and adversarial tests defined here.
 
 ## 1. Decision and security objective
@@ -25,7 +27,7 @@ Expose host-side MLX inference through a **host-enforced inference gateway**, us
 
 The guest receives a capability to request a bounded set of inference operations against approved model aliases. It does not receive authority to select host destinations, load arbitrary models or adapters, retrieve host files, run host tools, or obtain backend credentials.
 
-Use SSH for the first implementation. A dedicated vsock inference channel may be considered separately; it is not required for this design and must not reuse the privileged runtime control channel.
+Use SSH for the first implementation. A dedicated vsock inference channel may be considered separately; it is not required for this design and must not reuse the privileged runtime control channel. (§22 later replaced the SSH transport with such a channel: a vsock relay into a per-instance host Unix socket, separate from the runtime control channel.)
 
 **The gateway enforces an API boundary, not complete host isolation.** An already-running MLX process remains part of the trusted computing base. Request deadlines do not prove that GPU computation stopped. This specification distinguishes mandatory gateway guarantees from separately qualified backend guarantees.
 
@@ -377,7 +379,7 @@ For initial attachment, accept only an explicit `http://127.0.0.1:<unprivileged-
 
 Before attachment, the controller MUST establish that the selected backend has no listener for the same service on wildcard or reachable non-loopback interfaces. A backend reachable directly from the guest defeats the gateway policy. The check runs without elevated privileges: attempt TCP connections to the backend port on every non-loopback host address the guest can reach (each vmnet host address and each configured interface address); any accepted connection fails attachment with `INFERENCE_BACKEND_UNSAFE_BIND`. Inspection is a startup guard, not proof that another trusted host process cannot expose it later; `iso inference doctor` repeats it.
 
-The gateway's own session listeners are verified the same way `iso-proxy` verifies its listener: the controller confirms the gateway is the port's sole listener before the reverse forward is established.
+The gateway's own session listeners are verified the same way `iso-proxy` verifies its listener: the controller confirms the gateway is the port's sole listener before the reverse forward is established. (Since §22 session listeners are Unix sockets in the relay directory, and there is no forward.)
 
 Require vetted, preloaded model assets. No request may trigger arbitrary asset retrieval. A local-backend credential, when required, must be resolved by the host and delivered over the host control channel; never reuse a guest capability as backend authorization.
 
@@ -474,6 +476,8 @@ To use Claude, select a service granting `anthropic-messages` and, if required b
 
 Under `required`, every agent launched through iso must have an authorized guarded service. An unconfigured agent fails locally; it must not retain the existing possibility of silently using a cloud endpoint. Suppress managed cloud-provider credential forwarding and cloud-auth file staging on this path, independently of `proxy.mode`. Reject conflicting provider-credential declarations in `env_forward`, `guest_env`, `--env`, environment files, and persisted environment overrides; do not merely remove the automatically discovered key.
 
+`inference.mode = "required"` needs `network.transport = "vmnet"`: the runtime relays the gateway only into vmnet Linux sandboxes (§22), and a brokered VM's one host channel is its SSH stream. Because `brokered` is the default transport, a configuration under `required` must select `vmnet` explicitly; loading refuses it otherwise. A macOS guest is refused before boot, as are `--model-mode remote` and `iso model set remote`. Loading also refuses what the gateway's registration would: a qualification profile's `max_request_body_bytes` above 16 MiB (the per-session request-buffer share, §9.1), and a service whose `max_output_tokens` exceeds its `max_context_tokens` (unset, it defaults to the smaller of 8192 and the context).
+
 Existing raw local endpoints continue to function only when guarded inference is off, with documentation that they provide transport rather than inference policy. Upgrading configuration is explicit; do not silently reinterpret legacy authentication tokens as gateway capabilities.
 
 The `offline` preset remains recommended, but its existing override behavior remains unchanged. Status must show the effective egress policy. Open-egress sessions cannot claim protection against general exfiltration, and even no-egress sessions retain the existing host-service exposure. Changing an existing instance's egress mode still requires recreation under the baseline contract. See the [configuration reference][repo-config].
@@ -518,20 +522,20 @@ The controller MUST:
 1. Resolve trusted host configuration and selected service before credential staging.
 2. Verify VM identity, boot generation, host-key pin, and the existing isolation gate.
 3. Validate backend binding and qualification; start or connect to the matching gateway service.
-4. Register an inactive session and receive the already-bound listener and fresh capability.
-5. Confirm the gateway is the listener port's sole listener, then establish a fresh fixed reverse-SSH forward for this session (a guarded forward is never kept across sessions the way raw model tunnels are). Verify the registration nonce, gateway epoch, and ownership of the retained listener over the host control protocol; a generic HTTP response or guest-reported readiness is not sufficient.
-6. Write managed guest configuration and remove stale managed local/cloud authentication material from prior modes.
-7. Activate authorization, passing the forward process identity and the host session deadline (§12.3), and only then launch the client.
+4. Revoke the instance's earlier session, then register an inactive session on the instance's relay socket (§22.4) and receive the already-bound listener and fresh capability.
+5. Verify over the host control protocol that the gateway reports the registered session, inactive, with its registration nonce; a generic HTTP response or guest-reported readiness is not sufficient. (Before §22 this step also confirmed the listener port's sole listener and established a fresh reverse-SSH forward.)
+6. Write managed guest configuration — the guest bridge, Claude's managed settings and, when a Codex service is configured, Codex's provider table (so a `--no-agents` boot gets them with its first session) — and remove stale managed cloud authentication.
+7. Activate authorization, passing the transport process identity and the host session deadline (§12.3), then persist the session. Steps 3–7 run under a per-instance lock beside the session state, so concurrent commands share one session. Any failure revokes the partial session.
 
 Steps 1 and 3 also run as a preflight before `up`/`start` boot the VM: the gateway binary must exist, and every requested backend must accept on 127.0.0.1 and on no non-loopback host address. A bad backend therefore costs no boot.
 
-Any failure revokes the partial session, closes the tunnel, removes newly staged capability state, and returns an error. Do not publish an unusable endpoint and allow the client to select another provider.
+Any failure revokes the partial session, removes newly staged capability state, and returns an error. Do not publish an unusable endpoint and allow the client to select another provider.
 
 Cleanup cannot erase secrets an earlier compromised guest already copied. For strict migration from a previously credential-bearing VM, recommend a fresh instance. The feature controls iso-managed delivery; it does not claim to scrub arbitrary user-provided files or intentionally supplied secrets.
 
 ### 12.3 Session liveness and expiry
 
-The CLI may exit while the VM remains running, so session liveness must not depend on the controller. No separate guardian process and no lease-renewal protocol are introduced. The gateway itself binds each active session to two host-side facts supplied at activation:
+The CLI may exit while the VM remains running, so session liveness must not depend on the controller. (Since §22 the transport process is the instance's sandbox owner, `iso-sandbox`, not an `ssh` forward; the bullets below describe the mechanism, which is unchanged.) No separate guardian process and no lease-renewal protocol are introduced. The gateway itself binds each active session to two host-side facts supplied at activation:
 
 - **Transport process.** The session's reverse-forward `ssh` process, identified by PID plus process start time, and confirmed to name `ssh` and to be owned by the same user. The gateway watches it with a kqueue `EVFILT_PROC`/`NOTE_EXIT` filter registered at activation, after re-checking the identity; if the process has already exited or its identity does not match, activation fails. When the process exits, the gateway revokes the session. The forward's `ExitOnForwardFailure` and `ServerAlive*` options (§2) bound how long a forward outlives a dead guest session, so VM stop, crash, or network loss revoke the session within that bound.
 - **Session deadline.** The host session deadline from `limits.session_ttl`, as enforced by the sandbox owner. The gateway measures it with a monotonic clock that counts host sleep, so wall-clock rollback cannot extend it.
@@ -542,9 +546,11 @@ A restarted gateway issues a new epoch, starts with no active sessions, and does
 
 ### 12.4 Teardown and mode changes
 
-On explicit stop, destroy, mode change, or revoke: disable gateway admission first, remove queued work, initiate active cancellation, then tear down SSH forwarding and remove capability files. Teardown is idempotent.
+On explicit stop, destroy, mode change, or revoke: disable gateway admission first, remove queued work, initiate active cancellation, then remove capability files (since §22 there is no inference forward to tear down). Teardown is idempotent.
 
 Switching local services creates a fresh policy/session capability and revokes the old one. `iso inference revoke` withholds inference from the instance until the VM restarts or a grant is attached. Shells and commands keep working, and agents reach no model. A revoked service must not reappear merely because `iso shell` or an agent launcher reconnects. Runtime failure and TTL expiry trigger equivalent revocation through the gateway's transport-process watch and deadline check (§12.3); the controller removes remaining host-side state on next contact.
+
+Only shells, commands and hooks continue without a session (with a warning and no inference variables); `iso claude`, `iso codex` and model-adapter `iso run` fail. Without a session Claude's settings and Codex's provider table still name the guest bridge, with a token the gateway refuses, never a cloud default. `iso inference revoke` records the revocation before asking the gateway, and reports a failure unless the gateway confirms it or is not running. A mode change on a running VM: `required` → `off` revokes the recorded session before the next handoff; `off` → `required` stops the instance's credential proxies and raw model tunnels; handoffs are then refused until restart (the relay does not match the configuration).
 
 ## 13. Error and audit contract
 
@@ -579,13 +585,13 @@ Existing paths below are their locations on `main` after its restructuring (the 
 | `Sources/IsoConfiguration/ConfigTemplate.swift`, `config.example.jsonc` | Document guarded service configuration without implying legacy URL routes receive policy protection. |
 | `Sources/IsoHost/Guest/ModelState.swift` | Persist service references; generate frontend-specific guest configuration; avoid legacy URL planning for guarded services. |
 | `Sources/IsoHost/Guest/ProxyLifecycle.swift` | Reuse fixed reverse-forward mechanics, not the cloud upstream policy; prevent duplicate raw-model tunnels. |
-| Proposed `Sources/IsoHost/InferenceLifecycle.swift` | Registration, sole-listener and readiness verification, capability provisioning, transaction rollback, and handing the forward process identity to the gateway. |
+| `Sources/IsoHost/Inference/` (proposed as `InferenceLifecycle.swift`; implemented as `InferenceController.swift` and its siblings, §19) | Registration, relay-socket and readiness verification, capability provisioning, transaction rollback, and handing the transport process identity (the sandbox owner since §22) to the gateway. |
 | `Sources/IsoHost/Guest/Bootstrap.swift`, guest-session integration | Resolve local mode early, suppress cloud credentials, remove stale managed state, enforce required-mode launches. |
 | `Sources/IsoCLI/Commands/AgentCommands.swift` and new inference commands | Status, model selection, application grants, revoke, doctor, and mode preflight. |
 | `iso-proxy/` package | Extract the reusable transport, framing, capability, and route-allowlist code into libraries shared with the new executable; the cloud proxy's behavior and tests are unchanged. |
 | Proposed `iso-inference` executable (in the `iso-proxy` package) | Field tables, typed adapters, input bound, shared scheduler, completion-evidence handling, control protocol, transport-process watch, session listeners, and audit events. |
 | New gateway confinement profile | Minimized host rights; no changes to the existing cloud proxy profile's authority. |
-| Runtime owner / isolation gate | No new guest-visible mounts, relays, or ports. |
+| Runtime owner / isolation gate | No new guest-visible mounts, relays, or ports. (Since §22: exactly the inference relay, and nothing else.) |
 | Host, gateway, and hardware test suites | Unit, parser fuzz, lifecycle fault injection, backend qualification, and root-guest boundary tests. |
 | Documentation and release scripts | Package the adjacent companion binary; document security guarantees, limits, new commands, and qualification evidence. |
 
@@ -638,7 +644,7 @@ Do not announce secure Codex or Claude local inference before that client's adap
 
 **Direct SSH tunnel to raw MLX:** Retain as a documented legacy transport option. It does not provide this policy boundary and is rejected under guarded required mode.
 
-**Dedicated vsock service:** Designed in §22 as a relay into a host Unix socket. It is blocked on the relay defects recorded there. Reconsider only as a separate data-plane transport after the HTTP policy and lifecycle are stable. It would need new runtime qualification and isolation-gate treatment, and must not expose the existing privileged control channel. The current contract deliberately excludes host socket relay exposure. See the [trust model][repo-trust].
+**Dedicated vsock service:** Implemented in §22 as a relay into a per-instance host Unix socket, run by the iso-sandbox owner (runtime protocol 6), with its own runtime qualification and isolation-gate treatment. It does not expose the privileged runtime control channel. It replaced the SSH transport for inference. See the [trust model][repo-trust].
 
 **VM-network listener plus host firewall:** Deferred. It adds host-network policy and deployment requirements without replacing request authorization. Authentication and API policy would still be required.
 
@@ -657,8 +663,10 @@ The release evidence MUST identify exact revisions and hardware, distinguish gat
 Where each part is implemented:
 
 - Gateway: `iso-proxy/Sources/IsoInferenceCore` (policy), `IsoInferenceGateway` (NIO transport, control socket, liveness) and the `iso-inference` executable (`IsoInference`). Fuzz harness bodies: `iso-proxy/Fuzz/Inference*.swift`; confined-process check: `scripts/test-inference-gateway-process.py`.
-- Controller: `Sources/IsoHost/InferenceLifecycle.swift` and `BootstrapInference.swift`.
-- Configuration: `Sources/IsoConfiguration/Inference*.swift`.
+- Controller: `Sources/IsoHost/Inference/`: `InferenceController.swift` (sessions, gateway launch and control), `InferenceProcesses.swift` (control-socket client, peer and process identity), `InferenceBackendChecks.swift` (§10 and §20 checks), `ManagedBackend.swift` (the root provisioning step), `InferenceSeatbelt.swift`, `InferenceWiring.swift`, and `EmbeddedInference.swift`, generated from `Inference/Resources/` (the gateway and backend profiles and `inference-launcher.py`). Guest configuration: `Sources/IsoHost/Guest/BootstrapInference.swift`, with the bridge script `scripts/guest/inference-bridge.sh`. Relay check: `Sources/IsoHost/Runtime/IsolationGate.swift`.
+- CLI: `Sources/IsoCLI/Commands/InferenceCommands.swift` and `InferenceProvisionCommands.swift`.
+- Configuration: `Sources/IsoConfiguration/InferenceConfig.swift` and `InferenceDecoding.swift`.
+- Runtime relay: `iso-sandbox/Sources/IsoSandboxCore/InferenceRelay.swift`.
 
 Evidence was gathered on macOS 27, Apple Silicon, Swift 6.4. "Scripted backend" means `tests/fixtures/inference-backend.py`, or the in-process fake in `IsoInferenceGatewayTests`. The acceptance tests below ran against scripted backends. The managed-backend measurements after the table used a real MLX server.
 
@@ -667,7 +675,7 @@ Evidence was gathered on macOS 27, Apple Silicon, Swift 6.4. "Scripted backend" 
 | AT-01 | Enforced | Controller preflight and `iso inference doctor` probe every non-loopback host address (`InferenceTests.backendBindingChecks`). The VM phase shows the backend is unreachable directly from the guest. Session listeners are owner-only Unix sockets in the relay directory; the gateway listens on no TCP port (the process test). |
 | AT-02 | Enforced | `GatewayTests.deniedRequestsNeverReachTheBackend`: session B's token fails on session A's listener. |
 | AT-03 | Enforced | Missing, wrong, inactive, revoked and stale-epoch tokens fail before the backend sees anything (`GatewayTests`, the process test). A new boot gets a new session. |
-| AT-04 | Enforced | Pinned SSH options, the forwarding acknowledgment, the sole-listener check, the registration nonce, and the transport identity, which must be the registration's sandbox owner (`activationChecksTheTransportIdentity`, the process test's refusals of a non-`iso-sandbox` process and of another `iso-sandbox` process). |
+| AT-04 | Enforced | The relay socket name check, the registration nonce, and the transport identity, which must be the registration's sandbox owner (`activationChecksTheTransportIdentity`, the process test's refusals of a non-`iso-sandbox` process and of another `iso-sandbox` process). |
 | AT-05, AT-06 | Enforced | Exact routes and queries (`routesAndQueries`). Absolute-form targets, other routes and queries are refused (`deniedRequestsNeverReachTheBackend`). The upstream is a fixed port with no proxy, redirect or decompression. |
 | AT-07 | Enforced | Field tables (`hostSelectedAndUnknownFieldsAreRejected`, `responsesRejectsStatefulAndHostedFeatures`), duplicate keys (`rejectsHostileDocuments`); gateway mutants killed. |
 | AT-08, AT-22 | Enforced | Strict parser and header table tests; slow headers and bodies (408), oversized headers (431), HTTP/1.0 (505), pipelined bytes and the connection caps through the real listener (`GatewayTests`). libFuzzer targets `InferenceRequest`, `InferenceStream`, `InferenceControl` and `InferenceHeaders`; the corpus replay test checks that each stream seed is relayed by the translator it is named for. Fuzzing found two relay defects in the stream translators, fixed in 0.3.0; their inputs are kept as regression seeds. |
@@ -675,7 +683,7 @@ Evidence was gathered on macOS 27, Apple Silicon, Swift 6.4. "Scripted backend" 
 | AT-10 | Enforced (single root) | Scheduler fairness, queue bounds and the shared active limit (`SchedulerTests`, `secondRequestQueuesBehindTheBackendLimit`). All data roots share one gateway through the fixed per-user state directory. No test runs two data roots at once. |
 | AT-11, AT-12 | Enforced | `clientDisconnectDrainsBeforeReleasingTheSlot`, `streamCloseReleasesAfterTheDrainInterval` and `noEvidenceBackendIsQuarantinedOnCancellation`; the "drain releases on disconnect" and stream-close mutants are killed. No code path kills a backend. |
 | AT-13 | Enforced | `crashJournalQuarantinesAtStartup`. |
-| AT-14 | Enforced | Transport exit, session deadline and host revoke (`GatewayTests`, the process test); the VM phase adds forward kill and `iso inference revoke`. |
+| AT-14 | Enforced | Transport exit, session deadline and host revoke (`GatewayTests`, the process test); the VM phase adds `iso stop`, a stopped and restarted gateway, and `iso inference revoke`. |
 | AT-15 | Enforced | Preflight refuses a missing binary, an unreachable backend or an unsafe bind before boot. Configuration refuses unqualified protocols. No fallback path exists. Host faults are detected (`swift-host-fault-injection.py`, `inference-*`). |
 | AT-16 | Enforced | Provider variables are withheld and refused under `required` (`requiredModeWithholdsEveryProviderCredential`, VM canary). Audit and errors carry no prompt, backend body or capability (`backendErrorsAreSanitized`, the process test). |
 | AT-17 | Scripted backend only | The recorded Claude Code 2.1.285 and Codex CLI 0.159.2 requests pass the field tables (`NormalizerTests`). In the VM phase (`./tests/run-integration.sh --only inference`), the guest's own Claude Code and Codex each complete a turn through the gateway against scripted backends (36/36 checks, re-run after the host-hardening changes). Not evidence of tool use against a real model. |
@@ -703,7 +711,7 @@ The attached backend of §9.2 and §10 remains supported. This section adds cont
 `inference.backends.<name>.run_as` names a macOS account. Before registration the controller verifies all of the following:
 
 1. The account exists, and its UID is not the invoking user's.
-2. No process of the invoking user listens on the backend port (`lsof` lists only the caller's own processes). A listener that accepts connections but belongs to nobody the caller can see belongs to another account.
+2. No process of the invoking user listens on the backend port (`lsof` lists only the caller's own processes). A listener that accepts connections but belongs to nobody the caller can see belongs to another account. A listing that cannot be made (`lsof` fails) fails the check.
 3. For a managed backend (§20.2), the launchd job `system/com.iso.inference.<name>` reports a running PID owned by `run_as`.
 
 Failure is `INFERENCE_BACKEND_UNSAFE_OWNER`, before any VM work. A backend running as the invoking user can read that user's keys, Keychain and iso state; `run_as` removes that exposure. Loopback is still shared across accounts, which is why §20.3 authenticates the backend.
@@ -726,15 +734,17 @@ A managed backend implies `run_as: "_isoinference"`. Its credential is implicit 
 Provisioning is the only privileged step. `iso inference provision <name>` runs as the user: it validates the configuration, generates the backend token and stores it in the login Keychain (service `iso-inference-backend`, account `<name>`). It then runs `sudo <iso> inference provision-system` with a plan on stdin. The root step, using argv only, never a shell:
 
 1. Creates the hidden role account `_isoinference`, a UID in 400–499 with shell `/usr/bin/false` and home `/var/empty`, if it is missing.
-2. Creates `/Library/Application Support/iso-inference/backends/<name>/`, owned by root and `0755`. Inside it: `model/` (root-owned, read-only to the role), `cache/` and `logs/` (owned by the role, `0700`), `token` (`root:_isoinference`, `0640`), `launcher.py` and `profile.sb` (root, `0644`), and `venv/` when `install` is used (root-owned).
+2. Creates `/Library/Application Support/iso-inference/backends/<name>/`, owned by root and `0755`. Inside it: `model/` (root-owned, read-only to the role), `cache/` (owned by the role, `0700`), `logs/` and `logs/backend.log` (root-owned, since launchd opens the log as root), `token` (`root:_isoinference`, `0640`), `launcher.py` and `profile.sb` (root, `0644`), and `venv/` when `install` is used (root-owned).
 3. Copies or fetches the model into `model/`. A fetch runs as the role account, offline apart from the pinned download.
+
+   `install` creates the virtual environment and runs pip (`--only-binary :all:`) as the role account in `venv.staging/`; root then takes the tree over (`lchown` first, then `fchmodat(AT_SYMLINK_NOFOLLOW)` in a second walk that also checks ownership) and renames it to `venv/`. A model fetch is taken over the same way. A configured `python` is checked root-owned before root runs it. The Keychain copy of the token is written only after the root step succeeds.
 4. Writes `/Library/LaunchDaemons/com.iso.inference.<name>.plist`, then bootstraps it. The job runs with `UserName` `_isoinference`, `KeepAlive`, `ProcessType Background`, a positive `Nice`, `LowPriorityIO`, and the environment `HF_HUB_OFFLINE=1`, `HOME=<cache>`. With confinement it runs `sandbox-exec -f profile.sb`. The job binds `127.0.0.1:<port>` only.
 
 `iso inference deprovision <name>` reverses these steps (`sudo`). It removes the role account when no managed backend remains. `iso inference restart-backend <name>` runs `sudo launchctl kickstart -k`, and `iso inference requalify <name> --restart` combines that with requalification. A managed backend is killable by iso, so a quarantine after a hung generation can be cleared with evidence: the job was restarted.
 
 ### 20.3 Backend authentication
 
-The launcher (`launcher.py`, from iso) starts `mlx_lm.server` with a handler that requires `Authorization: Bearer <token>`, compared in constant time. It rejects any `Origin` header and serves no CORS. It sets `mx.set_memory_limit` and clamps `mx.set_wired_limit` to `memory_limit`. It passes no adapter, draft-model or remote-code option. The gateway sends the Keychain token as the backend credential. Other local processes, other accounts and any path that reaches loopback therefore cannot use the backend without the gateway. The launcher is pinned to the `mlx-lm` versions it was qualified with (currently 0.31.x). Any other version refuses to start.
+The launcher (`launcher.py`, from iso) starts `mlx_lm.server` with a handler that requires `Authorization: Bearer <token>`, compared in constant time. It rejects any `Origin` header and serves no CORS. It sets `mx.set_memory_limit` and clamps `mx.set_wired_limit` to `memory_limit`. It passes no adapter, draft-model or remote-code option. The gateway sends the Keychain token as the backend credential. Other local processes, other accounts and any path that reaches loopback therefore cannot use the backend without the gateway. The launcher also answers `GET /iso/challenge/<64 hex>` without authentication, with `hex(HMAC-SHA256(token, nonce))`. Before each session, and in provisioning and `doctor`, iso checks the answer with the Keychain token, so the listener on the port is the job iso installed, not a squatter that merely answers 401. The probe sends no token. The launcher is pinned to the `mlx-lm` versions it was qualified with (currently 0.31.x). Any other version refuses to start.
 
 ### 20.4 Backend confinement
 
@@ -748,23 +758,23 @@ The launcher (`launcher.py`, from iso) starts `mlx_lm.server` with a handler tha
 
 A configured `python` must be root-owned and not group- or world-writable, down to its executable, `sys.prefix` and `sys.base_prefix`. Otherwise the invoking user could change code that the role account runs. `install` builds a root-owned virtual environment instead.
 
-Provisioning qualifies the profile: the job must answer an authenticated health request within a deadline. A crash-looping job fails provisioning, with no fallback to `"none"`. Status reports `backend_confined` from the kernel (`sandbox_check` on the job's PID), not from configuration.
+Provisioning qualifies the profile: the job must answer an authenticated health request within a deadline. A crash-looping job fails provisioning, with no fallback to `"none"`. Status reports `backend_confined` from the kernel (`sandbox_check` on the job's PID), not from configuration; an unknown answer fails a `seatbelt` backend like `false`.
 
 ### 20.5 Gateway confinement per port
 
-The gateway profile is generated at launch. It allows outbound connections only to `localhost:<p>` for each backend port in the configuration, and reads only of the system libraries, the binary and `STATE_DIR`. The gateway refuses a registration naming any other port (`INFERENCE_BACKEND_UNAVAILABLE`). The controller then restarts an idle gateway with the union of ports, or asks the user to stop an active one. The jail self-test also requires a denied loopback port.
+The gateway profile is generated at launch. It allows outbound connections only to `localhost:<p>` for each backend port in the configuration; reads of the system libraries, the binary, `STATE_DIR` and `RELAY_DIR`; writes and Unix-socket bind and inbound only under `STATE_DIR` and `RELAY_DIR`, and no TCP bind; metadata reads on any path (path resolution) and read-only process metadata on any process (the sandbox owner's identity and exit). The controller refuses a gateway peer the kernel does not report sandboxed. The gateway refuses a registration naming any other port (`INFERENCE_BACKEND_UNAVAILABLE`). The controller then restarts an idle gateway with the union of ports, or asks the user to stop an active one. The jail self-test also requires a denied loopback port.
 
 ### 20.6 Hardened defaults (`iso inference init`)
 
 `iso inference init (--python P | --install V) (--model DIR | --model-repo R --model-revision C) [--backend N] [--port P] [--memory-limit B]` writes a configuration with the following, then prints what it changed:
 
-- `inference.mode = "required"` and `security.preset = "offline"` (so `egress: "none"`);
+- `inference.mode = "required"`, `security.preset = "offline"` (so `egress: "none"`) and `network.transport = "vmnet"` (§11.3);
 - `limits.session_ttl = "8h"`;
-- the `mlx-lm-0.31` qualification profile with the §19 values;
+- the `mlx-lm-0.31` qualification profile with the §19 values, `max_input_bytes` 128 KiB (about 4 bytes per token of the 32k-token `local-chat` context), `max_request_body_bytes` 256 KiB and `stream_close_drain_ms` 10000 (the prefill of a 32k-token prompt at about 3.3k tokens/s);
 - a managed backend with confinement on and `max_active_requests: 1`;
 - a `local-chat` service (`openai-chat`, 32768-token context, 2048 default and 4096 maximum output tokens). mlx-lm serves Chat Completions only, so Claude Code and Codex need a backend that speaks their own protocol.
 
-Existing values are never overwritten silently: a conflicting key fails with a list of the conflicts unless `--force` is given.
+Existing values are never overwritten silently: a key already set to a different value aborts the edit, listing the conflicts, unless `--force` is given. The file is rewritten as strict JSON (comments and formatting are not kept).
 
 ### 20.7 Host listener audit
 
@@ -776,11 +786,14 @@ Existing values are never overwritten silently: a conflicting key fails with a l
 
 - `backend_run_as_verified`
 - `backend_authenticated` (an unauthenticated probe is refused)
+- `backend_challenge_verified` (a managed backend answered the challenge of §20.3)
 - `backend_confined` (kernel-reported)
 - `backend_managed`
 - `gateway_egress_ports`
 
-`backend_isolation_verified` is true only when run-as, authentication and confinement are all verified.
+`backend_isolation_verified` is true only when run-as, authentication and confinement are all verified (and, for a managed backend, the challenge).
+
+`iso inference status` and `doctor` distinguish a gateway that is not running from one that fails verification or speaks another control protocol: `doctor` fails, and `stop --force` terminates a same-user one.
 
 ### 20.9 Tests
 
@@ -1010,11 +1023,11 @@ Each step is its own change, with refactors before behavior:
 
 ## 22. vsock session transport
 
-**Status: implemented, with the relay fixes vendored (§22.3).** Before this section, the guest reached its gateway session through a pinned `ssh -R` forward to a per-session listener on host loopback (§5, §12). The forward is replaced by a vsock relay into a per-instance host Unix socket, and the SSH forward path for inference is removed. The trust-model change in §22.6 was approved. This branch does not merge to `main` until upstream releases the vendored fixes.
+**Status: implemented on containerization 0.54.0, with the relay run by iso-sandbox itself (§22.3); no containerization source is vendored.** Before this section, the guest reached its gateway session through a pinned `ssh -R` forward to a per-session listener on host loopback (§5, §12). The forward is replaced by a vsock relay into a per-instance host Unix socket, and the SSH forward path for inference is removed. The trust-model change in §22.6 was approved. The relay is for Linux guests on the vmnet transport only: the runtime refuses it for a brokered sandbox (whose one host channel is its SSH stream), so `inference.mode: required` needs `network.transport: vmnet` (§11.3), and iso refuses `required` for macOS guests.
 
 ### 22.1 Why
 
-| | `ssh -R` (current) | vsock → host Unix socket |
+| | `ssh -R` (before §22) | vsock → host Unix socket |
 |---|---|---|
 | Host exposure | One TCP listener on loopback per session. Any local process can connect; only the capability stops it. | No host TCP. A `0600` socket in a `0700` per-user directory, reachable only through the instance VM's vsock device. |
 | Session identity | Built by iso: sole-listener check, `ssh` PID and start time, kqueue watch, forward identity. | Given by the VM: a connection can only come from that instance. The capability remains as defense in depth. |
@@ -1031,7 +1044,7 @@ This was run on October 1, 2026, on macOS 27, Apple Silicon. iso-sandbox protoco
 | Guest socket path | ❌ When placed under `/run`, it is hidden: the relay mounts it at container start, and systemd then mounts a fresh tmpfs over `/run`. A path outside `/run` (`/var/lib/iso-inference/gateway.sock`) works. |
 | Guest socket permissions | Created as `0000 root:root`. A non-root guest user is refused. The relay's `permissions` option needs `SystemPackage`, which iso-sandbox does not import yet. The bridge below makes this moot. |
 | Throughput | 20,000 SSE events in about 28 ms. An 8 MiB request body in 23 ms. 100 sequential requests in 262 ms, including `curl` start-up. |
-| Guest TCP bridge | ✅ A systemd socket unit on `127.0.0.1:10788` with `systemd-socket-proxyd` (present in the guest image) reaches the relay for root and non-root users, and streams. `socat` is absent from iso's guest image. |
+| Guest TCP bridge | ✅ A systemd socket unit on `127.0.0.1:10788` (the spike's port; the shipped bridge uses 11788, §22.4) with `systemd-socket-proxyd` (present in the guest image) reaches the relay for root and non-root users, and streams. `socat` is absent from iso's guest image. |
 | Host socket briefly absent | ❌ One guest connection while the host socket was missing (as when the gateway is not running) **permanently killed the relay** for the VM's lifetime. Later connections were reset, even though the host server answered directly. |
 | 400 concurrent guest connections | ❌ The owner process went from 35 to 383 open descriptors, above its soft limit of 256, and stayed at 381 after every client exited. The relay died again. The owner's control channel (`exec`, `stop`) still answered. |
 | Public API | `LinuxContainer` exposes `dialVsock` (host to guest) but not a host-side `listen`. iso-sandbox therefore cannot run its own relay without a containerization change. |
@@ -1059,15 +1072,15 @@ It can be satisfied in either of two ways:
 - With 400 concurrent guest connections, the owner peaked at 99 descriptors and returned to its baseline of 35 (R2, R3).
 - The relay and the owner's control channel kept working.
 
-**Vendored.** `iso-sandbox/Vendor/containerization` is 0.45.0 plus the host-side relay change from `8b8cd7e` and this patch (`iso-sandbox/Vendor/patches/`), with tests trimmed to `UnixSocketRelayTests`. The guest agent stays the pinned `vminit:0.45.0` image, since both fixes are host-only. `VENDORED.md` records the provenance, and the removal step: point at the upstream release that contains both fixes, bump the `vminit` pin, and re-run the VM suite.
+**On containerization 0.54.0.** 0.54.0 contains upstream `8b8cd7e` (#933), which fixes R1/R3 in the host relay and also the guest half: vminitd 0.45.0's splice dropped bytes still buffered when the host side reached EOF (a truncated stream when the gateway closes while the guest reader is behind) and spun on `EAGAIN` on the shared epoll thread; 0.54.0's `OSFile+Splice.swift` drains pending bytes before reporting EOF and returns `.again`. R2 is not upstream, so iso-sandbox does not use the framework's socket relay: `LinuxContainer.withVirtualMachineInstance` exposes the instance's `listen(port)` and `dialAgent()`, and the owner runs the relay itself (the "iso-owned relay" option above): host vsock 7803, the cap and the dial checks in the owner, the guest end created by vminitd's `proxyVsock` under `/run/iso-inference/` and bind-mounted at the guest path. No containerization source is vendored; the `vminit:0.54.0` pin carries the guest fix.
 
 ### 22.4 Design
 
-**Runtime (iso-sandbox, protocol 5)**
+**Runtime (iso-sandbox, protocol 6)**
 
-- **Record.** `SandboxRecord.inferenceRelay`, a boolean, defaults to false. It is set by `create --inference-relay`, and by `start --inference-relay on|off` for each boot. `start` records it under the runtime's mutation guard after clearing a crashed owner's state. The record holds no path.
+- **Record.** `SandboxRecord.inferenceRelay`, a boolean, defaults to false. It is set by `create --inference-relay`, and by `start --inference-relay on|off` for each boot. A brokered sandbox cannot set it. `start` records it under the runtime's mutation guard after clearing a crashed owner's state. The record holds no path.
 - **Host path.** The runtime derives it the way it derives the owner's control socket: `<per-user temp>/iso-sbx/inference/<hash of the sandbox directory>.sock`. The owner creates `iso-sbx/inference` as a `0700` directory owned by the user, and verifies it like the control-socket directory. The guest path is the constant `/var/lib/iso-inference/gateway.sock`, placed outside systemd's `/run` tmpfs (§22.2).
-- **Relay.** The owner configures exactly one `.into` relay, with `maxConnections: 32`.
+- **Relay.** The owner relays the gateway's socket itself, at most 32 connections at once (§22.3). One arriving at the limit, after a halt began or past the session deadline is closed before the gateway is dialed. Each dial requires the derived socket to be a socket node (not a symlink) owned by the user, in the `0700` relay directory, with a same-user peer. Only bytes are copied, through one 64 KiB buffer per direction with back-pressure. A connection ends when the gateway's side ends (after every byte it sent is written), when the guest stops reading for 30 seconds, or at a halt.
 - **Reporting.** `inspect` reports it as `inferenceRelay: {host, guest, maxConnections}`, alongside `socketRelays`.
 
 **Gateway**
@@ -1082,15 +1095,15 @@ It can be satisfied in either of two ways:
 - `InferenceBoot` carries the relay host path read from `inspect`.
 - The controller refuses a path whose directory is not `<per-user temp>/iso-sbx/inference`, or whose name is not a 1–16 hex digit hash. It registers with that name and activates with the owner identity. No forward is created, and no loopback listener check is needed.
 - The session state records the owner's PID and start time. The per-command session memo and `current()` check that process instead of a forward.
-- iso creates the sandbox with the relay when `inference.mode == "required"`, and passes `start --inference-relay on|off` when the mode has changed since. Unchanged starts keep their exact runtime arguments.
+- iso requires runtime protocol 6 with containerization 0.54.0. It creates the sandbox with the relay when `inference.mode == "required"`, refuses `required` on the brokered transport, and passes `start --inference-relay on|off` only when the mode has changed since. Unchanged starts keep their exact runtime arguments.
 - `IsolationGate` accepts zero relays, or exactly the inference relay with the derived host path, the constant guest path and a cap of 32. The relay is accepted only when the configuration requires inference. A running boot whose relay does not match the configuration (the mode changed while it ran) is refused with a restart hint.
-- The bridge is installed when a session is created. If the install fails, the session is revoked, so the next command registers again and retries the install.
+- The bridge is (re)enabled on each agent bootstrap and installed before a new session is activated. If the install fails, the session is revoked, so the next command registers again and retries the install.
 - The control protocol is version 2: registrations name a `socket` instead of receiving a port.
 
 **Guest (bootstrap)**
 
-- iso installs `iso-inference.socket` (`ListenStream=127.0.0.1:10788`) and `iso-inference.service` (`systemd-socket-proxyd /var/lib/iso-inference/gateway.sock`). It enables the socket on each agent bootstrap.
-- The guest port is fixed at 10788 for every instance, since each VM has one. Agents use `http://127.0.0.1:10788` as before.
+- iso installs `iso-inference.socket` (`ListenStream=127.0.0.1:11788`) and `iso-inference.service` (`systemd-socket-proxyd /var/lib/iso-inference/gateway.sock`) with `scripts/guest/inference-bridge.sh`. It enables the socket on each agent bootstrap.
+- The guest port is fixed at 11788 for every instance, since each VM has one. It is not 10788: on `main`, 10788 + instance index is filtered egress's guest port. Agents use `http://127.0.0.1:11788`.
 
 **Removed**
 
@@ -1109,7 +1122,7 @@ It can be satisfied in either of two ways:
 - The runtime contract changes from "no field for a socket relay" to "at most one socket relay, into the fixed guest path, from the instance's own inference socket".
 - `IsolationGate.Ready` requires either zero relays, or exactly that one: guest path equal to the constant, host path equal to the path iso computed for the instance.
 - `docs/trust-model.md` records the relay as a host exposure that is bounded (R1–R5) and authenticated (the capability).
-- The VM isolation suite is re-run with the relay present. The runtime's protocol version is bumped, and iso requires the new version before enabling the transport.
+- The VM isolation suite is re-run with the relay present. The runtime's protocol version is bumped (to 6), and iso requires the new version before enabling the transport.
 
 ### 22.7 Acceptance tests
 
@@ -1122,14 +1135,16 @@ It can be satisfied in either of two ways:
 | AT-34 | Instance A cannot reach instance B's session through the relay, even with B's capability, because each instance has its own socket. |
 | AT-35 | Stopping the VM revokes the session, bound to the owner process. SSH remains usable for shells, and no `ssh -R` is created for inference. |
 
+Automated in `tests/integration-apple-sandbox.sh`: the `relay` phase (the runtime with a stand-in gateway: AT-31, AT-32, AT-33, late reads, `--inference-relay` on, off and omitted, and a brokered sandbox's refusal) and the `inference` phase (end to end: AT-30, the gateway stopped then restarted, 400 guest connections with the owner's descriptor count back within 5 of baseline, and revocation on `iso stop`).
+
 ### 22.8 Delivery
 
-1. The relay fix (§22.3), upstream or through an exposed `listen`. Then pin the containerization release.
+1. The relay fix (§22.3), upstream or through an exposed `listen`. Then pin the containerization release (0.54.0, through `withVirtualMachineInstance`).
 2. iso-sandbox: the record field, validation, the owner relay, `inspect`, and a protocol bump.
 3. iso: Unix-socket session listeners in the gateway, the controller's transport identity bound to the owner process, the guest bridge units, `IsolationGate`, the trust-model update, and the integration phase.
 4. Remove the `ssh -R` inference path.
 
-Steps 1 (vendored), 2, 3 and 4 are implemented on this branch. The branch merges once the upstream release lands.
+Steps 1–4 are implemented: step 1 on containerization 0.54.0 with the relay in iso-sandbox, and no vendored source.
 
 ## Source references
 

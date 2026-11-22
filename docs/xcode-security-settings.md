@@ -6,8 +6,8 @@ is built with SwiftPM, not an Xcode project. Each Xcode setting is therefore
 mapped to what SwiftPM and `codesign` can express: entitlements, the hardened
 runtime and the build triple.
 
-Shipped executables: `iso`, `iso-proxy`, `iso-egress`, `iso-sandbox`,
-`iso-macos-helper`. Each is signed with the hardened runtime. `iso-macos-helper`
+Shipped executables: `iso`, `iso-proxy`, `iso-inference`, `iso-egress`,
+`iso-sandbox`, `iso-macos-helper`. Each is signed with the hardened runtime. `iso-macos-helper`
 runs inside macOS guests. `iso-ci` (built from source, unsigned) and
 `IsoPolicyBench` (not shipped) are out of scope.
 
@@ -41,7 +41,8 @@ none of these entitlements.
 
 Strict memory safety (`.strictMemorySafety()` as an error) is SwiftPM's
 nearest equivalent to the extra diagnostic settings. It is on in the shared
-core, configuration, policy, proxy and egress targets listed in
+core, configuration, policy, proxy, inference gateway and egress targets
+listed in
 [code style](code-style.md#toolchain-and-formatting).
 
 ## Disabled settings

@@ -6,13 +6,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Installation
 
-Install a release, verify its provenance, or build all five executables from source.
+Install a release, verify its provenance, or build all six executables from source.
 
 ## Install
 
 The release channel is `chr33s/iso`, built from tagged commits on `main`. Its
-macOS archives install `iso`, `iso-proxy`, `iso-egress`, `iso-sandbox` and
-`iso-macos-helper` together, with the Linux `desktop` images' guest files
+macOS archives install `iso`, `iso-proxy`, `iso-inference`, `iso-egress`,
+`iso-sandbox` and `iso-macos-helper` together, with the Linux `desktop` images' guest files
 `iso-cu-mcp` and `vmlinux-desktop`; see [Apple prerequisites](backends.md). Install the
 latest release:
 
@@ -26,7 +26,15 @@ curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 build-provenance attestation. Both the signature and the checksum are
 mandatory. `iso update` runs the same verification and also refuses revoked
 archives and, without `--allow-downgrade`, older releases. Every `gh` call
-either one makes names `github.com`, whatever `GH_HOST` says. To verify a
+either one makes names `github.com`, whatever `GH_HOST` says. Before
+changing the install, both check the archive against its `BUILD.json`: every
+binary it lists must be a regular file matching its recorded SHA-256, and
+`iso`, `iso-sandbox`, `iso-macos-helper`, `iso-proxy` and `iso-egress` must
+be listed. `iso-inference` is installed when the release lists it, and an
+installed copy is removed when it does not (v0.11.x and earlier carry no
+gateway). A listed binary the installer does not know, a companion added
+after it, is installed too, so an older installer never leaves a newer
+release partially installed. To verify a
 tarball by hand, download
 `attestations.jsonl` from the same release and pass `--bundle` (this needs no
 GitHub credential):
@@ -67,13 +75,14 @@ python3 scripts/build-release.py --release
 ```
 
 This is the one release build entrypoint. It builds `iso` (this package),
-`iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` from a staged
+`iso-proxy`, `iso-inference`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` from a staged
 copy of the checkout, signs each ad hoc with the hardened runtime and the
 Enhanced Security entitlements, builds the Linux `desktop` images' guest files
 `iso-cu-mcp` and `vmlinux-desktop`, and writes `iso-<revision>-aarch64-apple-darwin.tar.gz` plus `SHA256SUMS` under
 `.build/release-archive/`. Add `--test` to run every package's tests first.
 Extract the archive and install its executables and the two guest files in the
-same directory on `PATH`. A missing `iso-egress` blocks only filtered boots.
+same directory on `PATH`. A missing `iso-egress` blocks only filtered boots,
+and a missing `iso-inference` only `inference.mode: "required"`.
 
 For a development build of the host CLI alone:
 
@@ -88,7 +97,8 @@ A source build updates by pulling and rebuilding; an installed release
 updates with [`iso update`](commands.md#update) from `chr33s/iso`. After
 updating from v0.9.0 or earlier, run `iso update --force` once: those
 updaters do not install `iso-cu-mcp` and `vmlinux-desktop`, which the
-`desktop` profile needs.
+`desktop` profile needs. Likewise run it once after updating from v0.11.x or
+earlier, whose updaters neither read `BUILD.json` nor install `iso-inference`.
 
 
 Continue with [getting started](getting-started.md#first-run).

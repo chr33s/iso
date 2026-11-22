@@ -1,8 +1,8 @@
 # Release validation
 
-A release is qualified against its exact source revision and the five binaries
-in its archive: `iso`, `iso-sandbox`, `iso-proxy`, `iso-egress`, and
-`iso-macos-helper`. Results
+A release is qualified against its exact source revision and the six binaries
+in its archive: `iso`, `iso-sandbox`, `iso-proxy`, `iso-inference`,
+`iso-egress`, and `iso-macos-helper`. Results
 from earlier revisions do not qualify a changed candidate. This document lists
 required evidence; it does not claim that any unexecuted gate has passed.
 
@@ -23,10 +23,13 @@ Before publication, record the revision, toolchain, commands and results for:
   streaming and token counting, OpenAI Responses, disconnect/recovery, and
   successful Claude/Codex guest tool use. Model and credential approval is
   separate from ordinary local regression testing.
+- The inference gateway gates (`mise run check-inference`: the confined
+  `iso-inference` process and the managed-backend launcher) and, for a claim
+  about guarded local inference, the `relay` and `inference` VM phases.
 - Filtered-egress qualification, including NET-20/F1 and the adversarial cases
   in [testing](testing.md). Partial local observations do not qualify this
   mode for a release claim.
-- A same-revision hosted candidate: archive checksum, all five binary digests,
+- A same-revision hosted candidate: archive checksum, all six binary digests,
   clean source metadata, Developer ID signatures, notarization, and pinned
   workflow attestation. Validate clean-machine install, run, update and
   uninstall. Local ad-hoc signing is not hosted distribution evidence.

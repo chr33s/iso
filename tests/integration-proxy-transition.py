@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--iso", "--swift-host", dest="iso", type=Path,
                         help="use this prebuilt iso host instead of building it with swift build")
     parser.add_argument("--prebuilt", type=Path, metavar="DIR",
-                        help="use iso, iso-proxy, iso-egress, iso-sandbox and iso-macos-helper from "
+                        help="use iso, iso-proxy, iso-egress, iso-inference, iso-sandbox and iso-macos-helper from "
                              "this release bundle instead of building them (a worker Mac without Xcode)")
     live = parser.add_argument_group("live agent tool use (H-07; real credentials, billed)")
     live.add_argument("--live-agents", action="store_true",

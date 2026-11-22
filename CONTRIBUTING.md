@@ -42,8 +42,8 @@ swift build --force-resolved-versions
 
 The host CLI lands at `.build/debug/iso` (`-c release` for
 `.build/release/iso`). A usable installation also needs `iso-proxy`,
-`iso-egress`, `iso-sandbox` and `iso-macos-helper` beside it;
-`python3 scripts/build-release.py` builds all five and assembles the same archive layout the installer and `iso update` use (see
+`iso-inference`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` beside it;
+`python3 scripts/build-release.py` builds all six and assembles the same archive layout the installer and `iso update` use (see
 [RELEASING.md](RELEASING.md)).
 
 ## Pre-commit hook

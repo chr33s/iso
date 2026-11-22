@@ -28,8 +28,8 @@ Install the latest release. The installer verifies the release's signed
 curl -fsSL https://raw.githubusercontent.com/chr33s/iso/main/install.sh | bash
 ```
 
-It installs all five executables into one directory on `PATH`: `iso`,
-`iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper`, with the Linux
+It installs all six executables into one directory on `PATH`: `iso`,
+`iso-proxy`, `iso-inference`, `iso-egress`, `iso-sandbox` and `iso-macos-helper`, with the Linux
 `desktop` images' guest files `iso-cu-mcp` and `vmlinux-desktop`. To build from
 source instead, with Xcode 27:
 
@@ -39,7 +39,7 @@ cd iso
 python3 scripts/build-release.py --release
 ```
 
-and install the same five executables from the archive in
+and install the same six executables from the archive in
 `.build/release-archive/` into one directory on `PATH`. See
 [prerequisites](docs/getting-started.md#prerequisites),
 [build instructions](docs/installation.md#build-from-source) and

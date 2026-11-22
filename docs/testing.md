@@ -590,6 +590,16 @@ what unit tests cannot:
   completes; a restart fences the previous boot's connector; a guest that
   stops its adapter loses SSH with no network fallback; and a guest wedging
   its own shutdown is stopped within the owner's bounded grace;
+- the inference relay (the `relay` phase), through the runtime with a
+  stand-in gateway on the derived host socket: a brokered sandbox refuses
+  the relay; `inspect` reports the derived host socket, fixed guest path and
+  cap of 32; with no gateway a guest connection carries nothing, and the
+  relay recovers once the socket exists (AT-31); a guest reading late still
+  gets the whole 64 KiB and 8 MiB answers; a symlink at the host path is
+  refused (AT-33); of 400 concurrent connections at most 32 reach the
+  gateway, the owner's descriptors return to within 5 of baseline and the
+  control channel still answers (AT-32); `start --inference-relay off` and
+  `on` change it for the boot, and omitting the flag keeps it;
 - a Linux display (the `display` phase, only with
   `ISO_TEST_DESKTOP_KERNEL` set to a pinned desktop kernel from
   `scripts/build-desktop-kernel.sh`): `init` refuses the qualified kernel as
@@ -662,8 +672,9 @@ Further brokered qualification harnesses:
 previous successful `iso-sandbox init` pulled, so the run does not depend on
 reaching ghcr.io; the seed is not re-verified.
 
-Phases: `setup disks machine isolation exposure identity brokered persistence
-resources growth snapshots recovery concurrency display iso`. The `iso` phase also
+Phases: `setup disks machine isolation exposure identity brokered relay
+persistence resources growth snapshots recovery concurrency display iso
+inference`. The `iso` phase also
 creates a brokered instance (`network.transport: "brokered"`, `egress:
 "none"`) and checks its NIC-less record, workspace copy and pull over the
 stream, machine-status network digest, refusal under a vmnet configuration,
@@ -1774,9 +1785,24 @@ reproduce it with `scripts/fuzz.sh replay <target> <artifact>`.
 - `ProxyCapability` — capability decoding and request authentication.
   Property: only the exact lowercase 64-hex token, as `Bearer` or
   `x-api-key` and never duplicated, authorizes.
+- `InferenceRequest` — guest request bodies through the inference gateway's
+  parser, field tables and normalizer (the first byte selects the API).
+  Property: an accepted request rebuilds into a JSON object that names only
+  the host-selected model, streams upstream and carries no host-selected knob.
+- `InferenceStream` — backend event streams through the gateway's SSE parser
+  and stream translators, with input-chosen chunk boundaries. Property:
+  relayed events are well-formed SSE whose JSON never names the upstream
+  model.
+- `InferenceControl` — control-socket frames through the production parser
+  and decoder. Property: an accepted request re-encodes and decodes to the
+  same operation.
+- `InferenceHeaders` — a request line and header lines through the gateway's
+  route and header tables. Property: an accepted head names one exact route
+  and carries no framing, browser or upgrade header, at most one
+  `Content-Type`, and a JSON one whenever the route takes a body.
 
-The companion targets compile `IsoEgressCore` or `IsoProxyCore` (with
-`IsoPolicy`) from source, and their harness bodies live in `iso-egress/Fuzz/`
+The companion targets compile `IsoEgressCore`, or `IsoProxyCore` and
+`IsoInferenceCore`, from source with `IsoPolicy`, and their harness bodies live in `iso-egress/Fuzz/`
 and `iso-proxy/Fuzz/` (the `IsoEgressFuzzHarnesses` and
 `IsoProxyFuzzHarnesses` package targets); each companion's
 `*FuzzReplayTests` replays their corpus in its own `swift test`.

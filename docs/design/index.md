@@ -35,6 +35,10 @@ and [trust model](../trust-model.md) for supported behavior.
   `iso.audit/v1` store, reader and JSONL stream, implementation notes, and the
   evidence for each essential check.
 - [Credential proxy proposal](issue-411-injecting-proxy.md).
+- [Secure local inference](secure-local-inference-spec.md): the
+  host-enforced inference gateway (`iso-inference`) — policy, scheduling and
+  the vsock session transport. Implemented through §20 and §22; §21
+  (engine-neutral backends) is a design.
 - [Sandboxy-inspired features](sandboxy-inspired-features-spec.md): draft
   proposal only; it records no implementation or qualification.
 
