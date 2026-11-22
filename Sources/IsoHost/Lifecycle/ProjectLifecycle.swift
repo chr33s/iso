@@ -52,7 +52,24 @@ package final class ProjectLifecycle {
       proxies: ProxyLauncher(
         environment: context.environment.variables, resolver: resolver, diagnostics: diagnostics,
         isoExecutable: executable),
-      github: tokens, diagnostics: diagnostics, secrets: secrets)
+      github: tokens, diagnostics: diagnostics, secrets: secrets,
+      inference: context.inferenceController(
+        resolver: resolver, isoExecutable: executable, config: config))
+  }
+
+  /// Records `--model-mode` before any preflight that depends on it, so a
+  /// fresh offline VM can select local inference without a cloud boot.
+  package func applyModelMode(_ instance: Instance, _ mode: ModelMode?) throws {
+    guard let mode else { return }
+    if config.inference.mode == .required, mode == .remote {
+      throw HostError(
+        "inference.mode = \"required\" allows only guarded local inference; --model-mode remote is refused"
+      )
+    }
+    var state = try ModelState.loadOrDefault(instance)
+    guard state.mode != mode else { return }
+    state.mode = mode
+    try state.save(instance, diagnostics: diagnostics)
   }
 
   package func listInstances() throws -> [Instance] { try context.listInstances() }
@@ -195,9 +212,11 @@ package final class ProjectLifecycle {
     // Busy host ports fail before any VM cost.
     let forwardSet = PortForward.merge(config: config.forwardPorts, cli: options.boot.forwardPorts)
     try PortForwards.checkCollisions(forwardSet)
+    try applyModelMode(instance, options.boot.modelMode)
     try agents.requireProviderProxy(
       instance, noAgents: options.boot.noAgents,
       guestEnvironment: options.boot.persistedGuestEnvironment)
+    try agents.preflightInference(instance, noAgents: options.boot.noAgents)
     try backend.createAndStart(
       instance, diskGiB: options.disk.map { UInt64($0.value) },
       guestEnvironment: options.boot.persistedGuestEnvironment)
@@ -359,8 +378,10 @@ package final class ProjectLifecycle {
       guestEnvironment, instance: instance, repo: repo, noAgents: options.noAgents)
     foldGuestEnvironment(guestEnvironment)
     _ = try GitHubAssignment.active(config, instance, githubDisabled: githubDisabled)
+    try applyModelMode(instance, options.modelMode)
     try agents.requireProviderProxy(
       instance, noAgents: options.noAgents, guestEnvironment: guestEnvironment)
+    try agents.preflightInference(instance, noAgents: options.noAgents)
     try backend.startExisting(instance, guestEnvironment: guestEnvironment)
     let target: SSHTarget
     do {

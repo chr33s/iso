@@ -411,8 +411,15 @@ private let withoutBundle = Release(
   }
   #expect(!pathExists(install + "/iso-sandbox"))
   try writeUpdateFile(extract + "/iso-macos-helper", "helper")
+  #expect(throws: HostError("Release is missing the iso-inference companion")) {
+    try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
+  }
+  #expect(!pathExists(install + "/iso-sandbox"))
+  try writeUpdateFile(extract + "/iso-inference", "gateway")
   try SelfReplace.replaceSiblingRuntime(extract, currentExecutable: install + "/iso")
   #expect(readText(install + "/iso-sandbox") == "runtime")
+  try SelfReplace.replaceSiblingInference(extract, currentExecutable: install + "/iso")
+  #expect(readText(install + "/iso-inference") == "gateway")
 }
 
 @Test func unwritableInstallDirectoryIsReported() throws {
@@ -647,7 +654,7 @@ private struct UpdateFixture {
     for (name, text) in [
       ("iso", "installed-iso"), ("iso-proxy", "installed-proxy"),
       ("iso-sandbox", "installed-runtime"), ("iso-egress", "installed-egress"),
-      ("iso-macos-helper", "installed-helper"),
+      ("iso-macos-helper", "installed-helper"), ("iso-inference", "installed-inference"),
     ] {
       try writeUpdateFile(install + "/" + name, text, mode: 0o755)
     }
@@ -753,11 +760,12 @@ enum FixtureSignature { case trusted, untrusted, missing }
 
 private let fullRelease = [
   "iso": "new-iso", "iso-proxy": "new-proxy", "iso-sandbox": "new-runtime",
-  "iso-egress": "new-egress", "iso-macos-helper": "new-helper",
+  "iso-egress": "new-egress", "iso-macos-helper": "new-helper", "iso-inference": "new-inference",
 ]
 private let untouched = [
   "iso": "installed-iso", "iso-proxy": "installed-proxy", "iso-sandbox": "installed-runtime",
   "iso-egress": "installed-egress", "iso-macos-helper": "installed-helper",
+  "iso-inference": "installed-inference",
 ]
 
 /// Serialized: these spawn many short-lived processes, and the process-wide
@@ -861,6 +869,7 @@ private let untouched = [
       ("iso-proxy", "Release is missing the iso-proxy companion"),
       ("iso-egress", "Release is missing the iso-egress companion"),
       ("iso-macos-helper", "Release is missing the iso-macos-helper guest agent"),
+      ("iso-inference", "Release is missing the iso-inference companion"),
       ("iso", "Extracted binary not found at"),
     ] {
       var members = fullRelease
@@ -877,7 +886,9 @@ private let untouched = [
   }
 
   @Test(
-    arguments: ["iso", "iso-sandbox", "iso-proxy", "iso-egress", "iso-macos-helper"], [false, true])
+    arguments: [
+      "iso", "iso-sandbox", "iso-proxy", "iso-egress", "iso-macos-helper", "iso-inference",
+    ], [false, true])
   func nonRegularReleaseMembersPreserveTheInstall(_ artifact: String, _ symlink: Bool) throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }

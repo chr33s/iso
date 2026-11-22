@@ -220,6 +220,7 @@ struct Start: MachineCommand {
           forwardPorts: boot.forwardPort,
           configTarget: try global.configTarget(context.environment),
           postStartOverride: boot.postStart))
+      options.boot.modelMode = boot.modelMode
       options.boot.persistedGuestEnvironment = try lifecycle.mergeRuntimeGuestEnvironment(
         cli: boot.guestEnvironment, envFile: boot.envFile, devcontainer: nil)
       try lifecycle.restart(instance, options)

@@ -248,7 +248,7 @@ def main():
         if args.prebuilt:
             phase(f"Use the prebuilt bundle {args.prebuilt}")
             (work / "bin").mkdir(parents=True, exist_ok=True)
-            for name in ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]:
+            for name in ["iso", "iso-proxy", "iso-egress", "iso-inference", "iso-sandbox", "iso-macos-helper"]:
                 shutil.copy2(args.prebuilt / name, work / "bin" / name)
         else:
             phase("Build private runtime")

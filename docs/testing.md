@@ -19,11 +19,16 @@ layers are:
   mutation testing for the host.
 - **Fuzzing** (`scripts/fuzz.sh`) — coverage-guided libFuzzer campaigns for the
   host parsers. CI runs a bounded smoke; longer campaigns are manual.
+- **Inference gateway gates** (`mise run check-inference`) —
+  `scripts/test-inference-gateway-process.py` runs the built `iso-inference`
+  under its Seatbelt profile, and `tests/test-inference-launcher.py` runs the
+  managed-backend launcher. CI gate (credential-proxy job); also run by
+  `scripts/preflight-release.sh` and `build-release.py --test`.
 - **Integration tests** — real Apple Containerization VMs. Manual; run for
   guest-visible and lifecycle changes.
 - **Static analysis** (`.github/workflows/codeql.yml`) — CodeQL
-  `security-extended` data-flow queries over the host, `iso-proxy` and
-  `iso-egress` builds, on pushes to `main`, pull requests and weekly; results
+  `security-extended` data-flow queries over the host, `iso-proxy` (credential
+  proxy and inference gateway) and `iso-egress` builds, on pushes to `main`, pull requests and weekly; results
   appear under code scanning. Not a release gate. CodeQL documents Swift
   support only through 6.3, so a failed extraction on the pinned 6.4 toolchain
   is a tool limit, not a finding.
@@ -55,7 +60,7 @@ python3 tests/test-machine-contract.py --swift .build/debug/iso   # --output jso
 python3 tests/test-audit-contract.py --swift .build/debug/iso     # audit JSONL over real pipes, locks, hostile records
 python3 tests/test-cli-surface.py --swift .build/debug/iso   # help, inventory, machine list, completions, agent skill
 python3 scripts/swift-host-fault-injection.py # critical tests fail under injected faults
-python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/*
+python3 scripts/generate-embedded-resources.py  # after editing scripts/guest/* or Sources/IsoHost/Inference/Resources/*
 ```
 
 Use a separate `--scratch-path` per sanitizer so instrumented builds do not
@@ -1592,6 +1597,43 @@ The targeted `scripts/test-swift-proxy-mutations.py` remains a separate check
 for the spec's mandatory deny/method/path/header/equality regressions and the
 three explicit HTTP parser limits. `mise run check-proxy`, release preflight
 and the nightly workflow run it.
+
+## Inference gateway (`iso-inference`)
+
+The gateway lives in the `iso-proxy` package (executable `iso-inference`).
+When changing it, or the host side (`Sources/IsoHost/Inference/`,
+`Sources/IsoHost/Guest/BootstrapInference.swift`,
+`Sources/IsoConfiguration/Inference*.swift`), run:
+
+```bash
+swift test --package-path iso-proxy --force-resolved-versions   # gateway policy and transport
+python3 scripts/test-inference-gateway-process.py               # confined binary, stand-in sandbox owner
+python3 tests/test-inference-launcher.py                        # managed-backend launcher, stand-in mlx_lm
+python3 scripts/swift-host-fault-injection.py --only inference-unsafe-bind   # and the other inference-* faults
+./tests/run-integration.sh --only inference                     # real VM, Claude Code and Codex
+```
+
+- **Host unit tests** (`InferenceTests`, `InferenceHardeningTests`,
+  `InferenceConfigTests`, `InferenceInitTests`) cover configuration decoding,
+  credential withholding, the gateway session's registration, nonce and
+  activation against a fake control-socket gateway, the relay-socket check,
+  backend binding, `run_as` and managed-backend checks, and provisioning
+  against fake `dscl` and `launchctl`, with no root access.
+- **The launcher test** runs `Sources/IsoHost/Inference/Resources/inference-launcher.py`
+  against stand-in `mlx_lm` and `mlx` modules. It checks the bearer check,
+  `Origin` refusal, model pinning, the loopback bind, memory limits and the
+  version gate.
+- **The VM phase** (`inference` in `tests/integration-apple-sandbox.sh`)
+  boots a VM with `inference.mode = "required"` against two scripted host
+  backends (`tests/fixtures/inference-backend.py`). It checks capability
+  enforcement from the guest, that the backend is unreachable directly, that
+  Claude Code and Codex each complete a turn, the guest bridge and relayed
+  socket with no gateway TCP listener, revocation on `iso stop` and
+  `iso inference revoke`, and the unsafe-bind refusal.
+
+Not covered by automated tests: qualifying a real MLX server and model, and
+the root provisioning step on a real system. Qualification values are owner
+decisions recorded in `inference.qualification_profiles`.
 
 ## Property tests
 

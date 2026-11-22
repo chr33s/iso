@@ -8,6 +8,8 @@ import IsoPolicy
 /// models and off mode do not authorize or require a provider broker.
 enum BrokerReadiness {
   static func requiredProviders(_ instance: Instance, config: IsoConfig) throws -> [ProxyProvider] {
+    // Guarded inference starts no provider broker.
+    guard config.inference.mode == .off else { return [] }
     guard try ModelState.loadOrDefault(instance).mode == .remote else { return [] }
     return try ProxyProvider.allCases.filter {
       try ProxyState.effectiveUpstream(instance, $0, config: config.proxy) != nil

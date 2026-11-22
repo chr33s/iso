@@ -606,6 +606,13 @@ package enum RemoteAgent: String, Sendable {
         "Codex ChatGPT account auth keeps its token in the guest; remote hosts support only client-held credentials"
       )
     }
+    // The gateway serves guests on this Mac only, through its runtime's
+    // socket relay; a remote agent would fall back to a cloud broker.
+    if config.inference.mode == .required {
+      throw HostError(
+        "inference.mode = \"required\" runs agents only on this Mac's instances, through the local inference gateway; remote-host agents are refused"
+      )
+    }
     // A client broker is relaunched per run, which would reset an enforcing
     // boot's quota; it has no boot-bound policy state to claim.
     if config.policy?.enforcesProviderActions == true {

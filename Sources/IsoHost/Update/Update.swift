@@ -9,7 +9,7 @@ import IsoCore
 /// archive, `SHA256SUMS` and its signature, verify the signature against the
 /// compiled-in signers, the checksum and (with `gh`) the Sigstore attestation,
 /// extract into a private temp directory, then replace the runtime, macOS guest
-/// helper, proxy, egress companion and finally this binary. Any failure before a
+/// helper, proxy, egress companion, inference gateway and finally this binary. Any failure before a
 /// replacement leaves every installed binary untouched.
 package struct Updater: Sendable {
   package struct Options: Sendable, Equatable {
@@ -221,6 +221,7 @@ package struct Updater: Sendable {
       extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingProxy(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingEgress(extractDirectory, currentExecutable: currentExecutable)
+    try SelfReplace.replaceSiblingInference(extractDirectory, currentExecutable: currentExecutable)
     guard let currentExecutable else {
       throw HostError("Failed to resolve current executable path")
     }
@@ -585,6 +586,7 @@ struct UpdateTools: Sendable {
 package enum SelfReplace {
   static let proxyName = "iso-proxy"
   static let egressName = "iso-egress"
+  static let inferenceName = "iso-inference"
   static let runtimeName = "iso-sandbox"
   static let guestHelperName = "iso-macos-helper"
   /// Linux `desktop` images' guest files (docs/design/linux-desktop-virtio-gpu.md
@@ -592,7 +594,7 @@ package enum SelfReplace {
   /// `iso-sandbox init` installs.
   static let linuxGuestNames = [BuildContext.computerUseMCP, BuildContext.desktopKernel]
   static let companionNames =
-    [runtimeName, guestHelperName, proxyName, egressName] + linuxGuestNames
+    [runtimeName, guestHelperName, proxyName, egressName, inferenceName] + linuxGuestNames
 
   static func join(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : directory + "/" + name
@@ -720,6 +722,9 @@ package enum SelfReplace {
     guard isRegularArtifact(extractDirectory + "/" + guestHelperName) else {
       throw HostError("Release is missing the iso-macos-helper guest agent")
     }
+    guard isRegularArtifact(extractDirectory + "/" + inferenceName) else {
+      throw HostError("Release is missing the iso-inference companion")
+    }
     let directory = try installDirectory(currentExecutable)
     try atomicReplace(runtime, over: join(directory, runtimeName))
   }
@@ -774,5 +779,18 @@ package enum SelfReplace {
     }
     let directory = try installDirectory(currentExecutable)
     try atomicReplace(egress, over: join(directory, egressName))
+  }
+
+  /// Replace the inference gateway sibling from the same verified archive.
+  /// `replaceSiblingRuntime` has already required it.
+  package static func replaceSiblingInference(
+    _ extractDirectory: String, currentExecutable: String?
+  ) throws {
+    let gateway = extractDirectory + "/" + inferenceName
+    guard isRegularArtifact(gateway) else {
+      throw HostError("Release is missing the iso-inference companion")
+    }
+    let directory = try installDirectory(currentExecutable)
+    try atomicReplace(gateway, over: join(directory, inferenceName))
   }
 }

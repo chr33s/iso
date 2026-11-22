@@ -23,6 +23,8 @@ package struct UpRequest {
   package var noAgents = false
   package var noGithub = false
   package var noPrompt = false
+  /// `--model-mode`, recorded before the provider preflight.
+  package var modelMode: ModelMode?
   /// `--egress` or `--allow-host` was given; the effective policy is in the
   /// lifecycle's configuration.
   package var egressRequested = false
@@ -225,10 +227,12 @@ package struct UpWorkflow {
   }
 
   package func bootOptions() throws -> BootOptions {
-    BootOptions(
+    var options = BootOptions(
       noAgents: request.noAgents, noPrompt: request.noPrompt, forwardPorts: request.forwardPort,
       configTarget: request.configTarget,
       postStartOverride: request.postStart)
+    options.modelMode = request.modelMode
+    return options
   }
 
   package func restart(_ instance: Instance) throws {

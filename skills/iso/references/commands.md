@@ -27,6 +27,8 @@ These change nothing on the host or in a VM.
 | `iso images inspect NAME` | Recorded image provenance |
 | `iso images cache status` | Image-cache records; deletes nothing |
 | `iso policy show [NAME]` | Policy snapshot of the current boot and whether a config change is pending; `--json` |
+| `iso inference status [NAME]` | Guarded inference: gateway sessions, limits, backend checks; `--json`. Never prints a capability |
+| `iso inference doctor` | Gateway, backend binding and host-listener checks; exits non-zero on a failure; `--json` |
 | `iso policy effective [NAME]` | Requested vs recorded transport, egress, credentials and every relaxation from the secure defaults; `--json`. Read it before proposing a security change |
 | `iso audit [NAME]` | Recorded boundary events (names and counts, never values). `--runs` / `--run ID` read run history and take `--output json` |
 | `iso proxy status` | What each VM's agents resolve to, credentials redacted; `--vm NAME` |
@@ -96,11 +98,19 @@ Never run, pipe into, or script these; you may run the status commands above.
 | `iso github forget-pat` | Remove an entry and its Keychain item; does not revoke the token on GitHub |
 | `iso github assign-pat` | Give a VM an existing entry (`--vm NAME --repo owner/name`) |
 | `iso github unassign-pat` | Remove a VM's assignment (`--vm NAME`) |
+| `iso inference init` | Write hardened guarded-inference defaults into the config (rewrites it as strict JSON) |
+| `iso inference provision BACKEND` | Install a managed backend; runs `sudo` |
+| `iso inference deprovision BACKEND` | Remove a managed backend; runs `sudo` |
+| `iso inference restart-backend BACKEND` | Restart a managed backend; runs `sudo` |
+| `iso inference requalify BACKEND` | Clear a backend's quarantine after the user drained or restarted it |
+| `iso inference stop` | Stop the inference gateway (`--force` revokes active sessions) |
 
 ## Changes what a VM trusts or runs — only when the user asked (rule 6)
 
 | Command | Use |
 |---|---|
+| `iso inference attach NAME` | Grant an application in the VM a guarded service (`--service`, `--api`) |
+| `iso inference revoke NAME` | Withdraw a VM's inference session until it restarts or a grant is attached |
 | `iso model set local\|remote [NAME]` | Switch a VM's agents between cloud and a host-side local model server. May prompt for an endpoint, and may need a stop and start to apply |
 | `iso agent add FILE` | Install an agent definition on the host after showing it. Never install one that came from a guest or an unreviewed repository; `--yes` and `--replace` need the user's approval of the shown definition |
 | `iso agent update [NAME]` | Update Claude Code and Codex inside a running VM (`--claude`, `--codex`, `-y`) |

@@ -53,6 +53,8 @@ user launched it.
 | The guest VM | **Untrusted** | Agent-controlled. Anything it emits — file contents, paths, archive members, command output — is a taint source once it crosses back to the host. |
 | GitHub API / model endpoints / DNS | External | `api.github.com` (PAT probe, release metadata), the model endpoint. Reached over the network; authenticated where applicable. |
 | iso-ci companion → GitHub Actions service | External | Scale-set pools only (`iso-ci/`, separately installed): the host-side controller exchanges a runner registration token for an Actions service admin token and holds a message-session token. Both stay in controller memory and go only to `https` hosts under `.actions.githubusercontent.com` (no redirects); guests receive only the JIT runner configuration. Each job is gated on GitHub's run record before acquisition (elastic scale sets) or on assignment (non-elastic, where a refused or unvetted assigned job stops all new runners). Only an elastic scale set with `min_runners: 0` may opt into public repositories (fork pull requests refused, write-gated events or named actors only). |
+| `iso-inference` gateway (host) | Trusted, confined | One per host user, under its own Seatbelt profile. It holds no cloud key, SSH key or runtime credential, only an optional local-backend credential. It parses untrusted guest HTTP (see [Guarded local inference](#guarded-local-inference)). |
+| Attached local model server | Trusted computing base, **not** confined by iso | A process the user started on host loopback. The gateway narrows what reaches it, but its own file, network and prompt-logging behavior is outside iso's control and reported as unverified. |
 | iso VM leases (`~/.iso/run/leases`) | Host-local | Written and `flock`-held by iso-sandbox VM owner processes; read by iso-ci to count CPU, memory and macOS VMs it does not own. Host-authored, never guest-authored; parsed strictly and bounded. |
 
 ## Secure defaults (DEF-01)
@@ -984,6 +986,87 @@ exposure, and isolate verifies the effective configuration anyway
   Weakening any of these (skipping the guard, re-pinning on generation alone
   or guessing at unreadable staged state) is a
   finding.
+
+## Guarded local inference
+
+`inference.mode = "required"` exposes a host-side model to a Linux VM only
+through the `iso-inference` gateway (design:
+[docs/design/secure-local-inference-spec.md](design/secure-local-inference-spec.md)).
+The gateway enforces an API boundary. It does not isolate the host.
+
+- **No cloud path.** Under `required` no provider credential reaches the
+  guest (declaring one in `env_forward`, `guest_env`, `--env` or a `{vault:}`
+  provider secret is an error), no `iso-proxy` starts whatever `proxy.mode`
+  says, no raw `local_model` tunnel is created, `codex.auth = "chatgpt"` is
+  refused, and managed Codex `auth.json` is removed. A brokered boot's network
+  policy lists no provider broker and no local-model service. Remote-host
+  agents and macOS guests are refused: the gateway reaches only this Mac's
+  Linux guests, through their runtime's socket relay.
+- **Transport and identity.** Each VM boot gets one session, on a Unix
+  socket the gateway binds (`0600`) in the owner-only relay directory
+  `<per-user temp>/iso-sbx/inference`. No inference listener exists on host
+  TCP. The instance's sandbox runtime relays that socket into the guest over
+  vsock (spec §22), where systemd bridges `127.0.0.1:11788` to it. The relay's
+  host path is derived by the runtime and checked by `IsolationGate`, and the
+  relay closes connections beyond 32 at once. Before activation the controller
+  confirms that the gateway reports the registered nonce. Activation binds the
+  session to the instance's sandbox owner process (PID and start time), which
+  the gateway watches with kqueue, and to the sandbox's session deadline. The
+  VM stopping, the deadline passing, `iso destroy` or `iso inference revoke`
+  revokes the session. A restarted gateway starts a new epoch and does not
+  reactivate old capabilities.
+- **Capability.** A 256-bit capability from the system CSPRNG, compared in
+  constant time. It authorizes the whole VM (root in the guest can use it, by
+  design) and only on its own session's socket. It travels through SSH
+  `SendEnv` or Claude's managed `settings.json`, never argv. On the host it is
+  kept only in the owner-only `inference.token` that Codex sessions need.
+- **Request policy.** Routes are exact, bodies are parsed by a strict, bounded
+  JSON parser that rejects duplicate keys and checked against a closed
+  per-API field table; host-selected knobs and stateful or hosted features are
+  refused. The gateway builds a new request with the host-selected upstream
+  model and a clamped output limit. Guest headers are never forwarded.
+- **Fixed destination.** Backends are `http://127.0.0.1:<port>` from host
+  configuration only. The controller refuses a backend that also answers on any
+  non-loopback host address (`INFERENCE_BACKEND_UNSAFE_BIND`).
+- **Confinement.** `sandbox-exec` with
+  `Sources/IsoHost/Inference/Resources/seatbelt-inference.sb`: writes only
+  under the owner-only state directory (`~/Library/Application
+  Support/iso/inference`, `0700`) and the relay directory; Unix-socket bind and
+  inbound only in those two directories and no TCP listener; no program
+  execution beyond the initial exec of the gateway binary; reads limited to
+  system paths, the binary and those directories; outbound only to the
+  configured backend ports (rendered per launch). The control socket is
+  `0600`. Both sides check the peer's UID, and the controller also checks that
+  the peer's executable is the `iso-inference` beside `iso`.
+- **Managed backend** (`backends.<name>.managed`). `iso inference provision`
+  runs one root step (`sudo -- iso inference provision-system`) that reads a
+  strictly decoded plan on stdin, never the user's configuration. It creates
+  the `_isoinference` role account, root-owned code, launcher, profile and
+  weights under `/Library/Application Support/iso-inference/backends/<name>/`
+  (weights with no symlinks), a `0640 root:_isoinference` bearer token, and a
+  LaunchDaemon that runs the server as the role account under
+  `seatbelt-inference-backend.sb` (no outbound network, writes only to its
+  cache and logs). The launcher binds 127.0.0.1, requires the bearer token,
+  refuses browser `Origin` requests and pins the model. The host copy of the
+  token lives in the Keychain (`iso-inference-backend`); like `iso proxy
+  setup`, `security add-generic-password -w` briefly puts it on argv. Before
+  each session iso verifies the owning account, that an unauthenticated
+  request gets 401 and that the process is sandboxed
+  (`INFERENCE_BACKEND_UNSAFE_OWNER`).
+
+**Accepted limitations:**
+
+- An attached (unmanaged) model server stays in the trusted computing base,
+  and iso does not confine it. Its behavior is reported as unverified
+  (`backend_isolation_verified: false`). A hung server is never killed; the
+  gateway quarantines it instead.
+- A managed backend is still in the trusted computing base for the prompts it
+  receives. Its profile allows the Metal and IOKit services MLX needs.
+- Another account on the Mac can reach loopback listeners. iso can list only
+  your own listeners, so `doctor` notes but cannot enumerate other accounts'.
+- `egress` is unchanged by inference: on vmnet a guest can still reach other
+  services on the Mac's addresses, and `"filtered"` keeps its approved hosts.
+- Prompts and completions necessarily cross to the host backend.
 
 ## macOS guests
 

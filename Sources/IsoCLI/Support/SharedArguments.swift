@@ -41,6 +41,12 @@ struct BootArguments: ParsableArguments {
       "A `.env` file of guest env vars (`KEY=value`, `{vault:NAME}` references). Parsed strictly; never run by a shell",
       valueName: "PATH"))
   var envFile: String?
+  @Option(
+    name: .customLong("model-mode"),
+    help: ArgumentHelp(
+      "Select cloud (`remote`) or host-side local models (`local`) before agent bootstrap",
+      valueName: "MODE"))
+  var modelMode: ModelMode?
 }
 
 /// An explicit `devcontainer.json`, or none at all; neither means discovery.
