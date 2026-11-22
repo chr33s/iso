@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the targeted Swift proxy policy and parser-limit mutations.
+"""Exercise the targeted Swift proxy and inference gateway policy and parser-limit mutations.
 
 Mutations are applied to a scratch copy of iso-proxy (with the iso-policy
 dependency and the proxy test fixtures it reads), so the working tree is never
@@ -12,6 +12,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,12 +44,43 @@ MUTATIONS = [
      "limits.maxHeaderFieldCount = Limits.headerCount", "limits.maxHeaderFieldCount = 256"),
 ]
 
+# iso-inference (docs/design/secure-local-inference-spec.md §15). Each runs
+# only the inference test targets; the credential proxy mutants above skip them.
+INFERENCE_TESTS = ["IsoInferenceCoreTests", "IsoInferenceGatewayTests", "IsoProxyFuzzReplayTests"]
+INFERENCE_MUTATIONS = [
+    ("inference capability bypassed", "IsoInferenceGateway/RequestHandler.swift",
+     "guard session.capability.authorizes(headers) else {",
+     "guard session.capability.authorizes(headers) || true else {"),
+    ("inference inactive session admitted", "IsoInferenceGateway/RequestHandler.swift",
+     "guard session.admits(at: .now) else {", "guard session.admits(at: .now) || true else {"),
+    ("inference unknown field dropped", "IsoInferenceCore/Schema.swift",
+     "throw InferenceError(.unsupported, \"field '\\(field)' is not supported\")", "continue"),
+    ("inference denied field dropped", "IsoInferenceCore/Schema.swift",
+     "throw InferenceError(.policyDenied, \"field '\\(field)' is not permitted\")", "continue"),
+    ("inference duplicate keys accepted", "IsoInferenceCore/JSON.swift",
+     "guard seen.insert(key).inserted else { throw .duplicateKey }", "_ = seen.insert(key)"),
+    ("inference query allowlist removed", "IsoInferenceCore/Protocols.swift",
+     "guard api.allowedQueries.contains(String(pieces[1])) else { return nil }", ""),
+    ("inference upstream model not rewritten", "IsoInferenceCore/Normalizer.swift",
+     "document[\"model\"] = .string(grant.upstreamModel)", ""),
+    ("inference transport start ignored", "IsoInferenceGateway/Gateway.swift",
+     "&& identity.start == binding.start", ""),
+    ("inference drain releases on disconnect", "IsoInferenceGateway/RequestHandler.swift",
+     "      cancellation = .draining\n", "      cancellation = .draining\n      settle()\n"),
+    ("inference session socket name unchecked", "IsoInferenceCore/ControlProtocol.swift",
+     "guard Registration.isSocketName(socket) else {", "guard true else {"),
+    ("inference backend port outside the launch list", "IsoInferenceGateway/Gateway.swift",
+     "if let allowed = backendPorts,", "if let allowed = backendPorts, allowed.isEmpty,"),
+]
 
-def run_tests(package):
-    return subprocess.run(
-        ["swift", "test", "--package-path", str(package)],
-        capture_output=True, text=True, timeout=180,
-    )
+
+def run_tests(package, filters=(), skips=()):
+    command = ["swift", "test", "--package-path", str(package)]
+    for name in filters:
+        command += ["--filter", name]
+    for name in skips:
+        command += ["--skip", name]
+    return subprocess.run(command, capture_output=True, text=True, timeout=180)
 
 
 def main():
@@ -65,7 +97,8 @@ def main():
         shutil.copytree(ROOT / "tests/fixtures/credential-proxy",
                         scratch / "tests/fixtures/credential-proxy")
         # The fuzz corpus replay test reads ../fuzz/corpus.
-        for target in ("ProxyRequestTarget", "ProxyHeaders", "ProxyCapability"):
+        for target in ("ProxyRequestTarget", "ProxyHeaders", "ProxyCapability",
+                       "InferenceRequest", "InferenceStream", "InferenceControl"):
             shutil.copytree(ROOT / "fuzz/corpus" / target, scratch / "fuzz/corpus" / target)
         profile = Path("Sources/IsoHost/Guest/Resources/seatbelt-proxy.sb")
         (scratch / profile.parent).mkdir(parents=True)
@@ -82,14 +115,19 @@ def run_mutations(package):
     baseline = run_tests(package)
     if baseline.returncode:
         raise SystemExit("Baseline failed:\n" + baseline.stdout + baseline.stderr)
-    for name, filename, before, after in MUTATIONS:
+    selected = [(m, (), ("IsoInference",)) for m in MUTATIONS]
+    selected += [(m, INFERENCE_TESTS, ()) for m in INFERENCE_MUTATIONS]
+    # An optional argument selects mutations whose name contains it.
+    if len(sys.argv) > 1:
+        selected = [entry for entry in selected if sys.argv[1] in entry[0][0]]
+    for (name, filename, before, after), filters, skips in selected:
         path = sources / filename
         original = path.read_text()
         if original.count(before) != 1:
             raise SystemExit(f"Mutation no longer matches exactly once: {name}")
         try:
             path.write_text(original.replace(before, after, 1))
-            result = run_tests(package)
+            result = run_tests(package, filters, skips)
             output = result.stdout + result.stderr
             if result.returncode == 0:
                 raise SystemExit(f"SURVIVED: {name}")

@@ -1,0 +1,6 @@
+event: response.created
+data: {"type": "response.created", "response": {"model": "upstream/model"}}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"model": "upstream/model", "usage": {"input_tokens": 1, "output_tokens": 1}}}
+

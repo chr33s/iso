@@ -10,7 +10,9 @@ let package = Package(
   name: "iso-proxy",
   platforms: [.macOS("27.0")],
   products: [
-    .executable(name: "iso-proxy", targets: ["IsoProxy"])
+    .executable(name: "iso-proxy", targets: ["IsoProxy"]),
+    // The per-user inference gateway (docs/design/secure-local-inference-spec.md).
+    .executable(name: "iso-inference", targets: ["IsoInference"]),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-nio.git", exact: "2.104.0"),
@@ -59,9 +61,39 @@ let package = Package(
     // entrypoints in ../fuzz/Entrypoints; the replay test runs the committed
     // corpus (../fuzz/corpus) through them. Not part of any product.
     .target(
-      name: "IsoProxyFuzzHarnesses", dependencies: ["IsoProxyCore"], path: "Fuzz",
-      swiftSettings: strictMemorySafety),
+      name: "IsoProxyFuzzHarnesses", dependencies: ["IsoProxyCore", "IsoInferenceCore"],
+      path: "Fuzz", swiftSettings: strictMemorySafety),
     .testTarget(name: "IsoProxyFuzzReplayTests", dependencies: ["IsoProxyFuzzHarnesses"]),
+    // iso-inference: request policy, scheduling and the control protocol
+    // (no I/O), the NIO gateway, and the executable.
+    .target(
+      name: "IsoInferenceCore", dependencies: ["IsoProxyCore"], swiftSettings: strictMemorySafety),
+    .target(
+      name: "IsoInferenceGateway",
+      dependencies: [
+        "IsoInferenceCore", "IsoProxyCore", "IsoProxyTransport",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+      ], swiftSettings: strictMemorySafety),
+    .executableTarget(
+      name: "IsoInference",
+      dependencies: [
+        "IsoInferenceCore", "IsoInferenceGateway", "IsoProxyCore",
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ], swiftSettings: strictMemorySafety),
+    .testTarget(
+      name: "IsoInferenceCoreTests", dependencies: ["IsoInferenceCore", "IsoProxyCore"],
+      resources: [.copy("Fixtures")]),
+    .testTarget(
+      name: "IsoInferenceGatewayTests",
+      dependencies: [
+        "IsoInferenceGateway", "IsoInferenceCore", "IsoProxyCore",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+      ]),
   ],
   swiftLanguageModes: [.v6]
 )

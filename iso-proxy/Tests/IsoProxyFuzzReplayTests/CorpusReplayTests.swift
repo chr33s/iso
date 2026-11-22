@@ -7,7 +7,10 @@ import Testing
 private let corpusRoot = URL(fileURLWithPath: #filePath)
   .deletingLastPathComponent().appending(path: "../../../fuzz/corpus").standardized
 
-@Test(arguments: ["ProxyRequestTarget", "ProxyHeaders", "ProxyCapability"])
+@Test(arguments: [
+  "ProxyRequestTarget", "ProxyHeaders", "ProxyCapability", "InferenceRequest", "InferenceStream",
+  "InferenceControl",
+])
 func corpusReplays(_ target: String) throws {
   let files = try FileManager.default.contentsOfDirectory(
     at: corpusRoot.appending(path: target), includingPropertiesForKeys: nil
@@ -20,6 +23,9 @@ func corpusReplays(_ target: String) throws {
     case "ProxyRequestTarget": ProxyRequestTargetHarness.run(bytes)
     case "ProxyHeaders": ProxyHeadersHarness.run(bytes)
     case "ProxyCapability": ProxyCapabilityHarness.run(bytes)
+    case "InferenceRequest": InferenceRequestHarness.run(bytes)
+    case "InferenceStream": InferenceStreamHarness.run(bytes)
+    case "InferenceControl": InferenceControlHarness.run(bytes)
     default: Issue.record("unknown target \(target)")
     }
   }
