@@ -4,21 +4,28 @@ import NIOHTTP1
 
 /// Bounds whitespace and separators that the HTTP decoder excludes from its
 /// metadata accounting. NIO alone determines when a request head is complete.
-final class HeaderWireBudget: ChannelInboundHandler {
-  typealias InboundIn = ByteBuffer
-  typealias InboundOut = ByteBuffer
+/// The inference gateway shares it with its own, smaller budget.
+package final class HeaderWireBudget: ChannelInboundHandler {
+  package typealias InboundIn = ByteBuffer
+  package typealias InboundOut = ByteBuffer
 
   private enum State {
     case headers(Int)
     case body, awaitingResponse, failed
   }
-  private var state = State.headers(Limits.headerWireBytes)
+  private let budget: Int
+  private var state: State
 
-  func headReceived() { state = .body }
-  func requestEnded() { state = .awaitingResponse }
-  func beginNextRequest() { state = .headers(Limits.headerWireBytes) }
+  package init(budget: Int = Limits.headerWireBytes) {
+    self.budget = budget
+    state = .headers(budget)
+  }
 
-  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+  package func headReceived() { state = .body }
+  package func requestEnded() { state = .awaitingResponse }
+  package func beginNextRequest() { state = .headers(budget) }
+
+  package func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     var buffer = unwrapInboundIn(data)
     while buffer.readableBytes > 0 {
       switch state {

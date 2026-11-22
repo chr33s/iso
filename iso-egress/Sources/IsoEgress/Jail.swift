@@ -1,7 +1,8 @@
 // Derived from trailofbits/coop.
 // Modified by chr33s: ported/adapted for the Swift implementation.
 // SPDX-License-Identifier: Apache-2.0
-// Mirrors iso-proxy/Sources/IsoProxy/Jail.swift; the packages share no code.
+// Mirrors iso-proxy's Jail (Sources/IsoProxy/Jail.swift over IsoProxyCore/JailProbes.swift);
+// the packages share no code.
 
 import Darwin
 import Foundation
