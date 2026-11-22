@@ -1,0 +1,13 @@
+POST /v1/responses
+x-codex-beta-features: xxxxxxxxxxxxxxxxxxxx
+x-codex-window-id: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+x-codex-turn-metadata: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+x-client-request-id: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+session-id: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+thread-id: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+accept: text/event-stream
+content-type: application/json
+originator: codex_exec
+user-agent: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+host: 127.0.0.1:18731
+content-length: 0

@@ -23,7 +23,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/fuzz/.build"
 TARGETS=(ParseRepoSlug JSONCToJSON ConfigLoad GuestJSON CodexTOML
-  EgressConnect EgressHead ProxyRequestTarget ProxyHeaders ProxyCapability)
+  EgressConnect EgressHead ProxyRequestTarget ProxyHeaders ProxyCapability
+  InferenceRequest InferenceStream InferenceControl InferenceHeaders)
 # The self-contained IsoHost parsers, compiled as a partial `IsoHost` module:
 # the full target needs IsoSecrets (swift-crypto), which this build does not compile.
 HOST_PARSER_SOURCES=(
@@ -108,7 +109,8 @@ link_target() { # target, entrypoint
   case "$1" in
     # Companion targets link only the companion core they fuzz.
     Egress*) libs=(IsoEgressFuzzHarnesses IsoEgressCore) ;;
-    Proxy*) libs=(IsoProxyFuzzHarnesses IsoProxyCore IsoPolicy) ;;
+    # The inference gateway's parsers share the proxy package's harness module.
+    Proxy*|Inference*) libs=(IsoProxyFuzzHarnesses IsoInferenceCore IsoProxyCore IsoPolicy) ;;
     *) libs=(IsoFuzzHarnesses IsoHost IsoConfiguration IsoPolicy IsoCore IsoShell) ;;
   esac
   local archives=() lib
@@ -129,6 +131,7 @@ cmd_build() {
   swift_module IsoEgressCore "$ROOT"/iso-egress/Sources/IsoEgressCore/*.swift
   swift_module IsoEgressFuzzHarnesses "$ROOT"/iso-egress/Fuzz/*.swift
   swift_module IsoProxyCore "$ROOT"/iso-proxy/Sources/IsoProxyCore/*.swift
+  swift_module IsoInferenceCore "$ROOT"/iso-proxy/Sources/IsoInferenceCore/*.swift
   swift_module IsoProxyFuzzHarnesses "$ROOT"/iso-proxy/Fuzz/*.swift
   local t
   for t in "${TARGETS[@]}"; do link_target "$t" "$ROOT/fuzz/Entrypoints/$t.swift"; done
@@ -141,7 +144,8 @@ sources_stamp() {
   (cd "$ROOT" && shasum -a 256 scripts/fuzz.sh iso-policy/Sources/IsoShell/*.swift Sources/IsoCore/*.swift \
     iso-policy/Sources/IsoPolicy/*.swift Sources/IsoConfiguration/*.swift "${HOST_PARSER_SOURCES[@]}" \
     fuzz/Targets/*.swift fuzz/Entrypoints/*.swift iso-egress/Sources/IsoEgressCore/*.swift \
-    iso-egress/Fuzz/*.swift iso-proxy/Sources/IsoProxyCore/*.swift iso-proxy/Fuzz/*.swift) | shasum -a 256 | cut -d' ' -f1
+    iso-egress/Fuzz/*.swift iso-proxy/Sources/IsoProxyCore/*.swift iso-proxy/Sources/IsoInferenceCore/*.swift \
+    iso-proxy/Fuzz/*.swift) | shasum -a 256 | cut -d' ' -f1
 }
 
 ensure_built() { # target

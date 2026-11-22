@@ -1,0 +1,12 @@
+event: response.created
+data: {"type": "response.created", "response": {"model": "upstream/model"}}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "model": "upstream/model", "item": {"type": "message"}}
+
+event: response.output_text.delta
+data: {"type": "response.output_text.delta", "model": "upstream/model", "delta": "x"}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"model": "upstream/model", "usage": {"input_tokens": 1, "output_tokens": 1}}}
+

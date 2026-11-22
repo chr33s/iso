@@ -1,0 +1,197 @@
+import Darwin
+import IsoInferenceCore
+import Synchronization
+
+/// The owner-only control socket (§5.1, §7). One request per connection,
+/// served serially on a dedicated thread: control traffic is rare, and
+/// operations such as registration block on a listener bind. Peers must be
+/// the gateway's own user (`getpeereid`); the socket is `0600` in a `0700`
+/// directory and is never relayed into a guest.
+package final class ControlServer: Sendable {
+  static let ioTimeoutSeconds = 5
+
+  /// What the accept loop does after a failed `accept`.
+  package enum AcceptFailure: Equatable {
+    /// Interrupted: try again at once.
+    case retry
+    /// Out of descriptors, buffers or memory, or the peer gave up: try
+    /// again after a pause, so the control plane survives a burst of load.
+    case backOff
+    /// The listener itself is unusable: the gateway stops, since nothing
+    /// could revoke or register sessions any more.
+    case fatal
+  }
+
+  package static func classify(_ code: Int32) -> AcceptFailure {
+    switch code {
+    case EINTR: .retry
+    case EMFILE, ENFILE, ECONNABORTED, ENOBUFS, ENOMEM, EAGAIN: .backOff
+    default: .fatal
+    }
+  }
+
+  private let path: String
+  private let gateway: Gateway
+  private let listener: Int32
+  private let closed = Mutex(false)
+  /// `accept` on the listener: the connection, or -1 and the errno. A test seam.
+  private let accept: @Sendable (Int32) -> (fd: Int32, error: Int32)
+
+  package init(
+    path: String, gateway: Gateway,
+    accept: @escaping @Sendable (Int32) -> (fd: Int32, error: Int32) = { listener in
+      let fd = Darwin.accept(listener, nil, nil)
+      return (fd, fd < 0 ? errno : 0)
+    }
+  ) throws {
+    self.path = path
+    self.gateway = gateway
+    self.accept = accept
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { throw GatewayError.startup("cannot create the control socket") }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
+      close(fd)
+      throw GatewayError.startup("control socket path is too long")
+    }
+    // sun_path is a fixed inline array; the path and its NUL fit (checked above).
+    withUnsafeMutableBytes(of: &address.sun_path) { raw in
+      unsafe raw.copyBytes(from: bytes)
+      unsafe raw[bytes.count] = 0
+    }
+    address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    // The caller holds the startup lock, so a leftover socket is stale.
+    unsafe unlink(path)
+    // One sockaddr_un viewed as a sockaddr of its exact length, for this call only.
+    let bound = withUnsafePointer(to: &address) {
+      unsafe $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        unsafe bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+      }
+    }
+    guard bound == 0, unsafe chmod(path, 0o600) == 0, listen(fd, 16) == 0 else {
+      close(fd)
+      throw GatewayError.startup("cannot bind the control socket")
+    }
+    listener = fd
+  }
+
+  package func run() {
+    var pause: UInt32 = 10_000
+    while !closed.withLock({ $0 }) {
+      let (connection, error) = accept(listener)
+      guard connection < 0 else {
+        pause = 10_000
+        serve(connection)
+        close(connection)
+        continue
+      }
+      if closed.withLock({ $0 }) { return }
+      switch Self.classify(error) {
+      case .retry: continue
+      case .backOff:
+        diagnostic("control socket accept failed (errno \(error)); retrying")
+        usleep(pause)
+        pause = min(pause * 2, 1_000_000)
+      case .fatal:
+        diagnostic("control socket accept failed (errno \(error)); stopping")
+        gateway.stop()
+        return
+      }
+    }
+  }
+
+  package func stop() {
+    closed.withLock { $0 = true }
+    shutdown(listener, SHUT_RDWR)
+    close(listener)
+    unsafe unlink(path)
+  }
+
+  private func serve(_ fd: Int32) {
+    var uid: uid_t = 0
+    var gid: gid_t = 0
+    // getpeereid and setsockopt each borrow one local value for the call.
+    guard unsafe getpeereid(fd, &uid, &gid) == 0, uid == getuid() else { return }
+    var timeout = timeval(tv_sec: Self.ioTimeoutSeconds, tv_usec: 0)
+    unsafe setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    unsafe setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    var one: Int32 = 1
+    unsafe setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+    guard let header = readExactly(fd, 4), let length = ControlProtocol.frameLength(header),
+      let body = readExactly(fd, length)
+    else { return }
+    var stop = false
+    let response: JSONObject
+    do {
+      let request = try ControlProtocol.decodeRequest(ControlProtocol.parseFrame(body))
+      (response, stop) = try handle(request)
+    } catch {
+      response = ControlProtocol.failure(error)
+    }
+    writeAll(fd, ControlProtocol.frame(response))
+    if stop { gateway.stop() }
+  }
+
+  private func handle(_ request: ControlProtocol.Request) throws(InferenceError) -> (
+    JSONObject, Bool
+  ) {
+    switch request {
+    case .register(let registration):
+      let registered = try gateway.register(registration)
+      return (
+        ControlProtocol.success(
+          JSONObject([
+            "session_id": .string(registered.sessionID), "epoch": .string(gateway.epoch),
+            "socket": .string(registered.socket),
+            "capability": .string(registered.capability.expose()),
+            "gateway_pid": .int(Int64(gateway.pid)),
+            "policy_digest": .string(registered.policyDigest),
+          ])), false
+      )
+    case .activate(let activation):
+      try gateway.activate(activation)
+      return (ControlProtocol.success(), false)
+    case .revoke(let revocation):
+      let count = gateway.revoke(revocation)
+      return (ControlProtocol.success(JSONObject(["revoked": .int(Int64(count))])), false)
+    case .inspect(let instance):
+      return (ControlProtocol.success(gateway.inspect(instance)), false)
+    case .requalify(let backend):
+      try gateway.requalify(backend)
+      return (ControlProtocol.success(), false)
+    case .shutdown(let force):
+      try gateway.prepareShutdown(force: force)
+      return (ControlProtocol.success(), true)
+    }
+  }
+}
+
+func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
+  var buffer = [UInt8](repeating: 0, count: count)
+  var offset = 0
+  while offset < count {
+    // recv writes at most count bytes into the borrowed tail of the buffer.
+    let received = buffer[offset...].withUnsafeMutableBytes {
+      unsafe recv(fd, $0.baseAddress, $0.count, 0)
+    }
+    if received < 0 && errno == EINTR { continue }
+    guard received > 0 else { return nil }
+    offset += received
+  }
+  return buffer
+}
+
+func writeAll(_ fd: Int32, _ bytes: [UInt8]) {
+  var offset = 0
+  while offset < bytes.count {
+    // send reads at most count bytes of the borrowed tail of the frame.
+    let sent = bytes[offset...].withUnsafeBytes {
+      unsafe send(fd, $0.baseAddress, $0.count, MSG_NOSIGNAL)
+    }
+    if sent < 0 && errno == EINTR { continue }
+    guard sent > 0 else { return }
+    offset += sent
+  }
+}
