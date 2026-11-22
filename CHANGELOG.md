@@ -27,7 +27,13 @@ SPDX-License-Identifier: Apache-2.0
   over one fixed `ssh -R 127.0.0.1:11788:<session socket>` forward on the
   instance's pinned SSH connection, started after the guest is configured
   and closed by every revocation; the gateway binds the session to that
-  forward's process. Agents use `http://127.0.0.1:11788` on both. See the
+  forward's process. The forward is always `/usr/bin/ssh` (never an `ssh`
+  from `PATH`, in debug builds too) and holds at most 32 guest connections
+  at once: the gateway accepts 16 per session and a `forward` session's
+  socket has a listen backlog of 16. A forward that exits revokes the
+  instance as `iso inference revoke` does, until the VM restarts or `iso
+  inference attach` grants it again; iso never silently registers a new
+  session over a new forward. Agents use `http://127.0.0.1:11788` on both. See the
   [`inference` section](docs/configuration.md#inference-section) and the
   [design](docs/design/secure-local-inference-spec.md).
 - **`iso inference` commands** ([reference](docs/commands.md#inference)):
@@ -35,7 +41,7 @@ SPDX-License-Identifier: Apache-2.0
   exposed as `ISO_INFERENCE_BASE_URL`, `ISO_INFERENCE_MODEL` and
   `ISO_INFERENCE_TOKEN`), `revoke`, `requalify [--restart]`,
   `stop [--force]`, and `init`, which writes a hardened configuration for a
-  managed mlx-lm backend. `provision`, `deprovision` and `restart-backend`
+  managed mlx-lm backend and leaves `network.transport` as configured. `provision`, `deprovision` and `restart-backend`
   manage that backend: a confined LaunchDaemon running as the
   `_isoinference` role account, authenticated with a token kept in the login
   Keychain, each with one `sudo` step. `iso uninstall` stops the gateway and

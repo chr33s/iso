@@ -1649,8 +1649,12 @@ python3 scripts/swift-host-fault-injection.py --only inference-unsafe-bind   # a
   enforcement and a Claude Code turn through the forward, that the backend
   port and an unrelated host loopback port are unreachable from the guest,
   that `iso inference revoke` closes an open guest stream and the forward, a
-  fresh session and forward after a restart, and that the forward's exit
-  revokes its session. It has not yet been run on hardware.
+  fresh session and forward after a restart, that one forward holds at most
+  32 guest connections, and that the forward's exit revokes its session and
+  leaves the VM revoked (a shell still runs and is told to restart or attach,
+  and no command starts a new session or forward) until `iso inference
+  attach`. Its `iso` runs with the caller's `PATH`: the forward is
+  `/usr/bin/ssh` regardless. It has not yet been run on hardware.
 
 Not covered by automated tests: qualifying a real MLX server and model, and
 the root provisioning step on a real system. Qualification values are owner

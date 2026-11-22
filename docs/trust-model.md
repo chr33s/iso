@@ -1050,11 +1050,18 @@ The gateway enforces an API boundary. It does not isolate the host.
   the session to that `ssh` process (this user's, at its recorded start
   time, whose executable is `/usr/bin/ssh`) and to the sandbox owner, and
   either exit revokes it. iso closes the forward first on every revocation
-  and on stop or destroy. A dead forward's session is never reused: the next
-  command registers a new session with a new capability, and nothing falls
-  back to a relay, a raw endpoint or the cloud. The guest's `sshd` owns the
-  guest listener, so guest root can end or squat it after the forward ends;
-  that only denies its own inference. Release builds pin the system `ssh`.
+  and on stop or destroy. A forward that dies during its boot revokes the
+  instance as `iso inference revoke` does: no command registers a new session
+  or starts a new forward until the VM restarts (`iso stop`, then `iso
+  start`) or `iso inference attach` grants it again. Meanwhile agents fail
+  closed and shells run without inference, and nothing falls back to a relay,
+  a raw endpoint or the cloud. The guest's `sshd` owns the guest listener, so
+  guest root can end or squat it after the forward ends; that only denies its
+  own inference. iso always runs the forward as `/usr/bin/ssh`, in debug and
+  release builds, never an `ssh` from `PATH`. The forward holds at most 32
+  guest connections to its session at once, like the relay: the gateway
+  accepts 16 (closing any beyond them unread) and the session socket's listen
+  backlog of 16 refuses the rest, so `ssh` closes that guest channel.
 - **Capability.** A 256-bit capability from the system CSPRNG, compared in
   constant time. It authorizes the whole VM (root in the guest can use it, by
   design) and only on its own session's socket. It travels through SSH
