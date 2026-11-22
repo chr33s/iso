@@ -147,7 +147,7 @@ iso controller
 
 ### 5.1 Process model
 
-Introduce a companion executable, provisionally `iso-inference`, separate from the `iso` CLI, VM owner, and cloud `iso-proxy`. It is built from the same package as `iso-proxy` and reuses its transport and verification libraries (`IsoProxyTransport`, and the capability-token and route-allowlist pieces of `IsoProxyCore`): loopback listening, constant-time token comparison, connection and request bounds, and HTTP framing. It does not reuse the cloud proxy's upstream policy, TLS trust configuration, Seatbelt profile, or process. Security-relevant HTTP parsing therefore has one implementation and one fuzz corpus.
+Introduce a companion executable, provisionally `iso-inference`, separate from the `iso` CLI, VM owner, and cloud `iso-proxy`. It is built from the same package as `iso-proxy` and reuses its verification pieces rather than copies of them: the constant-time capability check (`Capability`), origin-form target validation (`RequestTarget`), the header wire budget (`HeaderWireBudget`, with the gateway's smaller budget) and the confinement probes (`JailProbes`), with NIO's HTTP/1.1 decoder for framing. The authentication-failure window is `IsoPolicy`'s `SlidingWindow`. It does not reuse the cloud proxy's upstream policy, TLS trust configuration, Seatbelt profile, or process.
 
 Run one gateway service per host user, with an independent loopback listener for each VM boot session. A single service maintains shared admission accounting across its sessions and backend aliases. Other users and software remain outside those budgets.
 
@@ -165,7 +165,7 @@ Use a versioned, owner-only Unix-domain socket for control. The gateway MUST che
 
 A session is identified by host-derived instance identity, VM boot generation, gateway epoch, and a fresh session identifier. Do not identify it by a guest-provided header, guest IP, model name, or bearer token alone.
 
-Bind a session listener to `127.0.0.1:0` and retain the bound socket before reporting its allocated port. Never probe a free port, close it, and assume ownership later. Do not use address/port reuse to share a listener with another process.
+Bind a session listener and retain the bound socket before reporting it. Never probe a free port, close it, and assume ownership later. Do not use address/port reuse to share a listener with another process. (Since §22, session listeners are Unix sockets in the relay directory, not `127.0.0.1:0`; the SSH paragraph below describes the transport §22 replaced.)
 
 The SSH destination is fixed to that listener. A request arriving on session B's listener is evaluated exclusively against B's authorization state, even if it presents session A's otherwise valid token. Do not multiplex all VM authority solely by bearer token on one shared guest-facing port.
 
@@ -179,7 +179,7 @@ The controller chooses a free, unprivileged guest port and establishes the rever
 | INV-02 | Guest bytes cannot choose a backend address, port, URL, credential, executable, model path, or adapter path. |
 | INV-03 | Authentication is bound to the receiving listener, VM boot generation, gateway epoch, a live bound transport process, and the host session deadline. |
 | INV-04 | Capability material never appears in argv, diagnostics, audit records, URLs, repository files, or world-readable state. |
-| INV-05 | Frontend and upstream method/path/body schemas are closed allowlists. Unknown behavior is rejected rather than transparently forwarded. |
+| INV-05 | Frontend and upstream method/path/body schemas are closed allowlists. Unknown behavior is rejected rather than transparently forwarded. The only forwarded values not checked member by member are JSON Schema bodies (tool `input_schema`/`parameters`, structured-output `schema`) and tool-call input the model produced in an earlier turn; both are bounded in size. |
 | INV-06 | No function call produced by a model is executed on the host. Tool names, schemas, arguments, and results remain untrusted data. |
 | INV-07 | Request and queue admission is atomic across sessions. Disconnecting does not free capacity for still-running backend work. |
 | INV-08 | No failure causes fallback to a raw model endpoint, a cloud provider, or legacy credential forwarding. |
@@ -256,13 +256,13 @@ For Responses, reject persistent conversation identifiers, `previous_response_id
 
 #### 8.3.1 Field disposition
 
-Each adapter version carries a closed, versioned field table covering request bodies (at every nesting level that accepts objects) and request headers. Every field has exactly one disposition:
+Each adapter version carries a closed, versioned field table covering request bodies (at every nesting level that accepts objects, except the bounded opaque values named in INV-05) and request headers. Every field has exactly one disposition:
 
 | Disposition | Meaning | Examples |
 |---|---|---|
 | `forward` | Validated against its schema and bounds, then copied into the constructed upstream request. | Messages, system content, function-tool definitions, bounded sampling parameters. |
 | `rewrite` | Replaced with a host-derived value. | `model` (alias → upstream ID), output limit (§8.4), `stream` (§8.1 step 8), Responses `store: false`. |
-| `drop` | Accepted, shape-checked, bounded in size, and not forwarded. Used for fields with no local meaning whose removal cannot widen authority. | Prompt-cache hints, request metadata, client beta/feature headers, thinking or reasoning controls the backend profile does not support. |
+| `drop` | Accepted, type-checked (the JSON type the table names: object, array, string or boolean), bounded in size, and not forwarded. The members of a dropped object or array are not validated individually. Used for fields with no local meaning whose removal cannot widen authority. | Prompt-cache hints, request metadata, client beta/feature headers, thinking or reasoning controls the backend profile does not support. |
 | `reject` | Request fails with `403` or `422` before backend dispatch. | Fields listed in §8.3 and §8.4, and every field absent from the table. |
 
 Unknown fields are rejected, so the table must cover every field a qualified client version sends. The table is derived from recorded fixtures of each qualified client version (§8.5); a client update that introduces a new field requires a table update and requalification. `drop` is never inferred: a field is dropped only when the table names it. Dropped fields remain untrusted and still count toward body and depth limits.
@@ -280,7 +280,7 @@ Output length is handled differently because agent clients request limits above 
 - Absent: use the service's `default_output_tokens`.
 - Present and within the service ceiling: use it.
 - Present and above the ceiling: clamp to `max_output_tokens` and send that value upstream. Record the clamp as a `limit_clamped` audit event. The input bound (§8.4.1) is not subtracted: it overestimates tokens, so subtracting it would shrink the output allowance of requests that fit the context window. Context-window fit is the backend's responsibility (§8.4.1).
-- Non-positive, non-integer, or conflicting (two frontend fields disagreeing): reject with `400`.
+- Non-positive, non-integer, or conflicting (two frontend fields disagreeing): reject with `400`. Integer fields take JSON integer syntax: `1.0`, `1e3` and text that only rounds to an integer are refused, and the gateway forwards the integer in canonical form.
 
 Always set the upstream output limit explicitly; never rely on an upstream default. When generation stops at the clamped limit, report the protocol's length-limit stop reason (for example `max_tokens` or `length`), never a normal completion.
 
@@ -316,16 +316,16 @@ These values require validation on supported hardware and representative coding 
 
 | Budget | Proposed default | Enforcement |
 |---|---:|---|
-| Connections | 16 per session; 128 shared | Count accepted idle and active sockets. |
+| Connections | 16 per session; 128 shared | Count accepted idle and active sockets: both slots are held until the socket closes. A finished response's socket is closed after 10 seconds whether or not the client has read it. |
 | HTTP headers | 32 KiB total; 64 fields | Reject before body buffering. |
-| Request body | 4 MiB, or fixture-derived if larger | Reserve memory before reading; stop at the limit. |
+| Request body | 4 MiB, or fixture-derived if larger; at most 16 MiB | Reserve memory before reading; stop at the limit. |
 | JSON nesting | 32 levels | Enforce during parsing. |
-| Gateway request-buffer budget | 64 MiB shared | Includes queued normalized payloads; parser expansion also requires a bounded memory design. |
+| Gateway request-buffer budget | 64 MiB shared; 16 MiB per session | A request reserves its declared length from its session's share and the shared budget together, and holds it until its work settles, so queued normalized payloads are included. Parsing is bounded separately: at most one JSON value per 32 bytes of the size limit (plus 4,096), on one of two normalizer threads. |
 | Input bound (`max_input_bytes`) | Fixture-derived | Byte bound of §8.4.1, including tool schemas. Context-window fit is enforced by the backend. |
 | Output tokens | 4,096 default; 8,192 configurable ceiling | Clamp larger requests (§8.4); reserve the effective allowance before dispatch and enforce it in the upstream request. |
 | Active generation | 1 per backend; 2 shared | One authoritative scheduler across all listeners. No per-session active cap below the backend cap. |
 | Queued generation | 8 per session; 32 shared | Covers concurrent agent requests (§2.1); reject excess work; no hidden unbounded queue. |
-| Request rate | 30 accepted requests/minute/session; burst 8 | Token bucket, including repeated short requests. |
+| Request rate | 30 requests/minute/session; burst 8 | Token bucket, including repeated short requests. A request takes its token when its body is complete, before normalization, so requests that fail validation or admission count too. |
 | Generated-token allowance | 32,768 tokens per rolling minute/session | Reserve the effective maximum; reconcile after verified completion. |
 | Queue wait | 300 seconds | Expire before dispatch. At least one full generation deadline, so a request queued behind one maximal generation is not rejected. |
 | Header/body read | 5 / 15 seconds | Deadlines do not reset indefinitely on trickled bytes. |
@@ -367,7 +367,7 @@ Persist a secret-free dirty/outstanding-work marker before dispatch. After a gat
 
 ### 9.3 What resource isolation can be claimed
 
-The first release may claim bounded gateway memory, bounded admitted concurrency, request limits, and admission cessation after uncertainty. It MUST NOT claim a hard GPU-time or total-host-memory cap for an unmanaged MLX process.
+The first release may claim bounded gateway memory, bounded admitted concurrency, request limits, and admission cessation after uncertainty. Gateway memory is bounded by: the request-buffer budget (request bodies and normalized payloads); two normalization parse trees at a time, each bounded by its value count; per request, at most 16 MiB of backend response (§9.1, response bytes), held by at most the shared active limit of requests plus their connections; and connection, header and session counts. It MUST NOT claim a hard GPU-time or total-host-memory cap for an unmanaged MLX process.
 
 A future owned-backend mode may add process supervision, an independently enforced kill deadline, constrained memory/cache configuration, and restart recovery. Such claims require tests demonstrating actual cessation of work, not just an HTTP error or disappearance of output.
 
@@ -567,21 +567,21 @@ Use stable internal error codes including `INFERENCE_AUTH_INVALID`, `INFERENCE_P
 
 Extend host audit events with registration, activation, revocation, denied operations, limit rejections, output-limit clamps, transport-process revocations, qualification changes, and quarantine. Record host-assigned instance/session/request IDs, authorized aliases, normalized operation codes, byte/token counts, durations, and reason codes. Do not record prompts, completions, tool arguments, capability values, backend credentials, raw attacker paths, or arbitrary headers.
 
-Logs MUST be bounded, owner-only, and resistant to log injection. Handle repeated rejections with aggregation. Backend logging is a separate qualification check: the inspected MLX snapshot can log request bodies on some errors or at debug level, so gateway redaction alone does not establish end-to-end prompt privacy. See [MLX server source][mlx-server].
+Logs MUST be bounded, owner-only, and resistant to log injection. Handle repeated rejections with aggregation: the gateway writes the first rejection of a code in a session at once, counts later ones for 10 seconds, and writes that count when the window ends, so a session adds at most two rejection records per code per window. Error events a backend sends inside a stream reach the guest as the gateway's own fixed error, in the protocol's shape. Backend logging is a separate qualification check: the inspected MLX snapshot can log request bodies on some errors or at debug level, so gateway redaction alone does not establish end-to-end prompt privacy. See [MLX server source][mlx-server].
 
 ## 14. Repository integration map
 
-Existing paths below refer to the inspected baseline. New names are proposed and may change without changing the security contract.
+Existing paths below are their locations on `main` after its restructuring (the inspected baseline had them directly under `Sources/IsoHost` and `Sources/IsoCLI`). New names are proposed and may change without changing the security contract.
 
 | Area | Work |
 |---|---|
 | `Sources/IsoConfiguration/ConfigDecoding.swift` and configuration model types | Add inference schema, closed endpoint union, limit validation, and error redaction. |
 | `Sources/IsoConfiguration/ConfigTemplate.swift`, `config.example.jsonc` | Document guarded service configuration without implying legacy URL routes receive policy protection. |
-| `Sources/IsoHost/ModelState.swift` | Persist service references; generate frontend-specific guest configuration; avoid legacy URL planning for guarded services. |
-| `Sources/IsoHost/ProxyLifecycle.swift` | Reuse fixed reverse-forward mechanics, not the cloud upstream policy; prevent duplicate raw-model tunnels. |
+| `Sources/IsoHost/Guest/ModelState.swift` | Persist service references; generate frontend-specific guest configuration; avoid legacy URL planning for guarded services. |
+| `Sources/IsoHost/Guest/ProxyLifecycle.swift` | Reuse fixed reverse-forward mechanics, not the cloud upstream policy; prevent duplicate raw-model tunnels. |
 | Proposed `Sources/IsoHost/InferenceLifecycle.swift` | Registration, sole-listener and readiness verification, capability provisioning, transaction rollback, and handing the forward process identity to the gateway. |
-| `Sources/IsoHost/Bootstrap.swift`, guest-session integration | Resolve local mode early, suppress cloud credentials, remove stale managed state, enforce required-mode launches. |
-| `Sources/IsoCLI/AgentCommands.swift` and new inference commands | Status, model selection, application grants, revoke, doctor, and mode preflight. |
+| `Sources/IsoHost/Guest/Bootstrap.swift`, guest-session integration | Resolve local mode early, suppress cloud credentials, remove stale managed state, enforce required-mode launches. |
+| `Sources/IsoCLI/Commands/AgentCommands.swift` and new inference commands | Status, model selection, application grants, revoke, doctor, and mode preflight. |
 | `iso-proxy/` package | Extract the reusable transport, framing, capability, and route-allowlist code into libraries shared with the new executable; the cloud proxy's behavior and tests are unchanged. |
 | Proposed `iso-inference` executable (in the `iso-proxy` package) | Field tables, typed adapters, input bound, shared scheduler, completion-evidence handling, control protocol, transport-process watch, session listeners, and audit events. |
 | New gateway confinement profile | Minimized host rights; no changes to the existing cloud proxy profile's authority. |
@@ -656,7 +656,7 @@ The release evidence MUST identify exact revisions and hardware, distinguish gat
 
 Where each part is implemented:
 
-- Gateway: `iso-proxy/Sources/IsoInferenceCore` (policy), `IsoInferenceGateway` (NIO transport, control socket, liveness) and the `iso-inference` executable.
+- Gateway: `iso-proxy/Sources/IsoInferenceCore` (policy), `IsoInferenceGateway` (NIO transport, control socket, liveness) and the `iso-inference` executable (`IsoInference`). Fuzz harness bodies: `iso-proxy/Fuzz/Inference*.swift`; confined-process check: `scripts/test-inference-gateway-process.py`.
 - Controller: `Sources/IsoHost/InferenceLifecycle.swift` and `BootstrapInference.swift`.
 - Configuration: `Sources/IsoConfiguration/Inference*.swift`.
 
@@ -664,16 +664,16 @@ Evidence was gathered on macOS 27, Apple Silicon, Swift 6.4. "Scripted backend" 
 
 | ID | Status | Evidence |
 |---|---|---|
-| AT-01 | Enforced | Controller preflight and `iso inference doctor` probe every non-loopback host address (`InferenceTests.backendBindingChecks`). The VM phase shows the backend is unreachable directly from the guest. Session listeners bind `127.0.0.1:0` only. |
+| AT-01 | Enforced | Controller preflight and `iso inference doctor` probe every non-loopback host address (`InferenceTests.backendBindingChecks`). The VM phase shows the backend is unreachable directly from the guest. Session listeners are owner-only Unix sockets in the relay directory; the gateway listens on no TCP port (the process test). |
 | AT-02 | Enforced | `GatewayTests.deniedRequestsNeverReachTheBackend`: session B's token fails on session A's listener. |
 | AT-03 | Enforced | Missing, wrong, inactive, revoked and stale-epoch tokens fail before the backend sees anything (`GatewayTests`, the process test). A new boot gets a new session. |
-| AT-04 | Enforced | Pinned SSH options, the forwarding acknowledgment, the sole-listener check, the registration nonce, and the transport identity (`activationChecksTheTransportIdentity`, the process test's non-`ssh` refusal). |
+| AT-04 | Enforced | Pinned SSH options, the forwarding acknowledgment, the sole-listener check, the registration nonce, and the transport identity, which must be the registration's sandbox owner (`activationChecksTheTransportIdentity`, the process test's refusals of a non-`iso-sandbox` process and of another `iso-sandbox` process). |
 | AT-05, AT-06 | Enforced | Exact routes and queries (`routesAndQueries`). Absolute-form targets, other routes and queries are refused (`deniedRequestsNeverReachTheBackend`). The upstream is a fixed port with no proxy, redirect or decompression. |
 | AT-07 | Enforced | Field tables (`hostSelectedAndUnknownFieldsAreRejected`, `responsesRejectsStatefulAndHostedFeatures`), duplicate keys (`rejectsHostileDocuments`); gateway mutants killed. |
-| AT-08, AT-22 | Enforced | Strict parser and header table tests. libFuzzer targets `InferenceRequest`, `InferenceStream` and `InferenceControl` ran 5-minute campaigns each. Fuzzing found two relay defects in the stream translators, fixed in 0.3.0; their inputs are kept as regression seeds. |
-| AT-09 | Enforced | Output clamp, input bound and byte budget (`outputLimitNormalization`, `inputBoundIsEnforced`, `byteBudgetAndSlots`). |
+| AT-08, AT-22 | Enforced | Strict parser and header table tests; slow headers and bodies (408), oversized headers (431), HTTP/1.0 (505), pipelined bytes and the connection caps through the real listener (`GatewayTests`). libFuzzer targets `InferenceRequest`, `InferenceStream`, `InferenceControl` and `InferenceHeaders`; the corpus replay test checks that each stream seed is relayed by the translator it is named for. Fuzzing found two relay defects in the stream translators, fixed in 0.3.0; their inputs are kept as regression seeds. |
+| AT-09 | Enforced | Output clamp, input bound, value-count bound and byte budgets (`outputLimitNormalization`, `inputBoundIsEnforced`, `parseTreeIsBoundedByTheValueCount`, `oneSessionCannotTakeTheWholeBufferBudget`). Usage above the bound, and a completed stream with no input usage, quarantine the backend. |
 | AT-10 | Enforced (single root) | Scheduler fairness, queue bounds and the shared active limit (`SchedulerTests`, `secondRequestQueuesBehindTheBackendLimit`). All data roots share one gateway through the fixed per-user state directory. No test runs two data roots at once. |
-| AT-11, AT-12 | Enforced | `clientDisconnectDrainsBeforeReleasingTheSlot` and `noEvidenceBackendIsQuarantinedOnCancellation`; the "drain releases on disconnect" mutant is killed. No code path kills a backend. |
+| AT-11, AT-12 | Enforced | `clientDisconnectDrainsBeforeReleasingTheSlot`, `streamCloseReleasesAfterTheDrainInterval` and `noEvidenceBackendIsQuarantinedOnCancellation`; the "drain releases on disconnect" and stream-close mutants are killed. No code path kills a backend. |
 | AT-13 | Enforced | `crashJournalQuarantinesAtStartup`. |
 | AT-14 | Enforced | Transport exit, session deadline and host revoke (`GatewayTests`, the process test); the VM phase adds forward kill and `iso inference revoke`. |
 | AT-15 | Enforced | Preflight refuses a missing binary, an unreachable backend or an unsafe bind before boot. Configuration refuses unqualified protocols. No fallback path exists. Host faults are detected (`swift-host-fault-injection.py`, `inference-*`). |
@@ -1073,9 +1073,9 @@ It can be satisfied in either of two ways:
 **Gateway**
 
 - `iso-inference` is launched with `--relay-dir <per-user temp>/iso-sbx/inference`, and its Seatbelt profile allows creating, binding and accepting Unix sockets under that directory only (`RELAY_DIR`).
-- A registration names its socket (`socket`: 1–16 lowercase hex characters, the runtime's hash, plus `.sock`). The gateway binds `RELAY_DIR/<socket>` (`0600`), replacing any stale file. One session per instance means one socket per instance.
+- A registration names its socket (`socket`: 1–16 lowercase hex characters, the runtime's hash, plus `.sock`). The gateway binds `RELAY_DIR/<socket>` (`0600`). It refuses a name that another instance's live session holds, removes the file when the session is revoked (only while it is still the file it bound), and removes stale session sockets at startup. One session per instance means one socket per instance.
 - Session listeners on TCP are removed. The capability remains required on every request.
-- Activation binds the session to the instance's sandbox owner process. The PID and start time come from the registration's boot identity, and the command must be `iso-sandbox`. The owner's exit revokes the session through the existing kqueue watch.
+- Activation binds the session to the instance's sandbox owner process. Its PID and start time must equal the registration's boot identity, and the command must be `iso-sandbox`; any other process is refused. The owner's exit revokes the session through the existing kqueue watch.
 
 **Host (iso)**
 
