@@ -434,7 +434,11 @@ private func managedBackend(_ confinement: String = "seatbelt") throws -> Infere
   server.arguments = [root + "/server.py", String(chosen), token]
   try server.run()
   defer { server.terminate() }
-  for _ in 0..<100 where !InferenceController.backendAccepts(port: chosen) { usleep(50_000) }
+  // A loaded machine can take a while to start the interpreter.
+  let deadline = ContinuousClock.now + .seconds(60)
+  while !InferenceController.backendAccepts(port: chosen), ContinuousClock.now < deadline {
+    usleep(100_000)
+  }
   #expect(BackendProbe.answersChallenge(port: chosen, token: Secret(token)))
   #expect(
     !BackendProbe.answersChallenge(port: chosen, token: Secret(String(repeating: "d", count: 64))))

@@ -87,6 +87,25 @@ struct Uninstall: ParsableCommand {
           diagnostics.warn("Failed to stop the host-control service (non-fatal): \(error)")
         }
       }
+      if let home = environment.home {
+        let gateway = InferenceController(
+          config: config.config, environment: environment.variables, resolver: resolver,
+          diagnostics: diagnostics, isoExecutable: CommandLine.executablePath, proxies: proxies,
+          home: home, boot: { _ in throw HostError("no instance is started by uninstall") })
+        uninstaller.stopInferenceGateway = {
+          switch gateway.probe() {
+          case .notRunning: break
+          case .verified:
+            do { try gateway.stopGateway(force: true) } catch {
+              diagnostics.warn("Failed to stop the inference gateway (non-fatal): \(error)")
+            }
+          case .unverified(let pid, _, let reason):
+            diagnostics.warn(
+              "pid \(pid) serves the inference control socket but failed verification (\(reason)); stop it yourself"
+            )
+          }
+        }
+      }
       try uninstaller.run(Uninstaller.Options(yes: yes, keepData: keepData, purge: purge))
     }
   }
