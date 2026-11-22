@@ -330,6 +330,25 @@ import Testing
     #expect(readsEOF(peer))
     #expect(gateway.accepted == 1)
   }
+
+  /// S5: the owner keeps the relay directory and the gateway's socket from the temporary-
+  /// directory cleaner (the sandboxed gateway cannot), without following a symlink.
+  @Test func theOwnerKeepsTheRelayDirectoryAndSocketFresh() throws {
+    let dir = FakeGateway.directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let gateway = try FakeGateway(in: dir, name: "g.sock", serve: .hold)
+    defer { gateway.stop() }
+    let target = dir.appendingPathComponent("target")
+    #expect(FileManager.default.createFile(atPath: target.path, contents: Data()))
+    let linked = dir.appendingPathComponent("l.sock")
+    #expect(symlink(target.path, linked.path) == 0)
+    let old = Date(timeIntervalSince1970: 1_000_000)
+    for item in [dir, gateway.path, target] { #expect(setTimes(item, old)) }
+    try InferenceRelay.Endpoint(host: gateway.path).prepare()
+    try InferenceRelay.Endpoint(host: linked).prepare()
+    #expect(try eventually { modified(gateway.path) > old && modified(dir) > old })
+    #expect(modified(target) == old)
+  }
 }
 
 // MARK: - helpers
@@ -368,6 +387,18 @@ private func eventually(timeout: Duration = .seconds(5), _ condition: () -> Bool
     Thread.sleep(forTimeInterval: 0.01)
   }
   return condition()
+}
+
+private func setTimes(_ url: URL, _ date: Date) -> Bool {
+  let seconds = Int(date.timeIntervalSince1970)
+  var times = [timeval(tv_sec: seconds, tv_usec: 0), timeval(tv_sec: seconds, tv_usec: 0)]
+  return lutimes(url.path, &times) == 0
+}
+
+private func modified(_ url: URL) -> Date {
+  var st = stat()
+  guard lstat(url.path, &st) == 0 else { return .distantPast }
+  return Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
 }
 
 /// A machine whose guest agent takes every signal and does nothing.

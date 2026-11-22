@@ -63,9 +63,12 @@ package enum InferenceRelay {
     }
 
     /// Creates the host directory, or verifies an existing one, as the control socket's: a real
-    /// directory owned by this user and closed to everyone else.
+    /// directory owned by this user and closed to everyone else. Then keeps it and the gateway's
+    /// socket from the temporary-directory cleaner for the owner's life (the gateway is sandboxed
+    /// and cannot touch them).
     package func prepare() throws {
       try ControlSocket.prepareDirectory(for: host)
+      ControlSocket.keepFresh([host.deletingLastPathComponent(), host])
     }
   }
 

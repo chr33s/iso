@@ -276,17 +276,26 @@ package enum ControlSocket {
     guard rc == 0 else { throw SandboxError("bind \(path.path): \(errno)") }
     chmod(path.path, 0o600)
     guard Darwin.listen(fd, 16) == 0 else { throw SandboxError("listen: \(errno)") }
-    // macOS deletes items in the per-user temporary directory that go unused
-    // for days; touch the socket and its directory so a long-running
-    // sandbox keeps its channel.
+    keepFresh([path, path.deletingLastPathComponent()])
+    return fd
+  }
+
+  /// macOS deletes items in the per-user temporary directory that go unused
+  /// for days, so a long-running sandbox touches the sockets and directories
+  /// it relies on: now, then hourly, for the owner's life.
+  static func keepFresh(_ items: [URL], every interval: TimeInterval = 3600) {
     Thread.detachNewThread {
       while true {
-        Thread.sleep(forTimeInterval: 3600)
-        utimes(path.path, nil)
-        utimes(path.deletingLastPathComponent().path, nil)
+        touch(items)
+        Thread.sleep(forTimeInterval: interval)
       }
     }
-    return fd
+  }
+
+  /// Sets each item's access and modification times to now. A symlink's own
+  /// times are set, never its target's; a missing item is skipped.
+  static func touch(_ items: [URL]) {
+    for item in items { lutimes(item.path, nil) }
   }
 
   /// Accepts forever on a detached thread, passing each connection from the
