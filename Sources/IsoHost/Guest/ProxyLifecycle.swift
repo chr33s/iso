@@ -165,7 +165,9 @@ package struct ProxyLauncher: Sendable {
     for provider in ProxyProvider.allCases { stop(instance, provider: provider) }
     stopEgress(instance)
     stopModelTunnels(instance)
-    // The sandbox owner's exit revokes the gateway session (spec §22).
+    // The sandbox owner's exit revokes the gateway session (spec §22); a
+    // brokered boot's forward is closed with it.
+    stopInferenceForward(instance)
     unlink(InferenceController.statePath(instance))
     unlink(InferenceController.tokenPath(instance))
   }
@@ -600,6 +602,17 @@ package struct ProxyLauncher: Sendable {
     _ instance: Instance, name: String, target: SSHTarget, guestPort: UInt16,
     hostAddress: IPv4Address, hostPort: UInt16
   ) throws {
+    try spawnReverseForward(
+      instance, name: name, target: target, guestPort: guestPort,
+      destination: "\(hostAddress):\(hostPort)")
+  }
+
+  /// `spawnReverseForward` to `destination`: `ADDRESS:PORT` on the host, or
+  /// the absolute path of a host Unix socket.
+  func spawnReverseForward(
+    _ instance: Instance, name: String, target: SSHTarget, guestPort: UInt16,
+    destination: String
+  ) throws {
     stopTunnel(instance, name, label: "stale proxy tunnel")
     let client = SSHClient(environment: environment)
     guard let ssh = client.sshExecutable() else {
@@ -651,7 +664,7 @@ package struct ProxyLauncher: Sendable {
           executable: ssh,
           arguments: target.sshOptions + [
             "-S", controlPath, "-O", "forward", "-R",
-            "127.0.0.1:\(guestPort):\(hostAddress):\(hostPort)", target.address,
+            "127.0.0.1:\(guestPort):\(destination)", target.address,
           ], environment: SSHClient.transportEnvironment(environment), stdin: .null,
           stderr: log)
       } catch {
@@ -825,6 +838,56 @@ package struct ProxyLauncher: Sendable {
     for file in files where unlink(file) != 0 && errno != ENOENT {
       diagnostics.debug("Failed to remove pid file \(file) (non-fatal)")
     }
+  }
+
+  // MARK: Guarded inference forward (brokered)
+
+  static let inferenceTunnelName = "inference"
+
+  /// A brokered boot's guarded-inference forward (secure-local-inference
+  /// §22.9): exactly `ssh -R 127.0.0.1:11788:<socket>` over the instance's
+  /// pinned SSH connection, where `socket` is the gateway session socket iso
+  /// derived. It is the only forward to a host socket, never a dynamic one.
+  /// Returns the master's process identity (PID and start time), which the
+  /// gateway binds the session to.
+  package func startInferenceForward(_ instance: Instance, target: SSHTarget, socket: String)
+    throws -> (pid: Int32, start: String)
+  {
+    // ssh splits `-R` on `:`; a Unix socket path must also fit sun_path.
+    guard socket.hasPrefix("/"), socket.utf8.count < 104,
+      !socket.unicodeScalars.contains(where: {
+        $0 == ":" || $0.properties.isWhitespace || $0.properties.generalCategory == .control
+      })
+    else {
+      throw HostError(
+        "the inference session socket \(sanitizeForDisplay(socket)) cannot be forwarded by ssh (fail-closed)"
+      )
+    }
+    let name = Self.inferenceTunnelName
+    try spawnReverseForward(
+      instance, name: name, target: target, guestPort: InferenceController.guestPort,
+      destination: socket)
+    guard let identity = TunnelIdentity.load(instance, name), identity.isRunning(as: identity.pid),
+      let start = HostProcess.start(identity.pid)
+    else {
+      stopInferenceForward(instance)
+      throw HostError("the inference forward of '\(instance.name)' exited as it started")
+    }
+    return (identity.pid, start)
+  }
+
+  /// The forward's master, while it is still the process recorded for it.
+  package func inferenceForward(_ instance: Instance) -> (pid: Int32, start: String)? {
+    let name = Self.inferenceTunnelName
+    guard TunnelIdentity.verify(instance, name, address: nil),
+      let pid = TunnelIdentity.load(instance, name)?.pid, let start = HostProcess.start(pid)
+    else { return nil }
+    return (pid, start)
+  }
+
+  /// Closes the forward and every guest stream it carries (NET-08).
+  package func stopInferenceForward(_ instance: Instance) {
+    stopTunnel(instance, Self.inferenceTunnelName, label: "inference forward")
   }
 
   // MARK: Local-model tunnels

@@ -8,25 +8,58 @@ import Synchronization
 // (docs/design/secure-local-inference-spec.md §12, §22). One gateway runs
 // per host user under `sandbox-exec`, reached over an owner-only Unix
 // socket in a fixed per-user directory. Per VM boot session the controller
-// registers the instance's services on the Unix socket its sandbox runtime
-// relays into the guest over vsock, verifies the registration, and only then
-// activates the session, binding it to the sandbox owner process that
-// carries the relay. Any failure revokes the partial session: no raw
-// endpoint and no cloud credential is used instead.
+// registers the instance's services on a Unix socket, verifies the
+// registration, and only then activates the session, binding it to the
+// process that carries guest connections to that socket: on vmnet the
+// sandbox owner, which relays it into the guest over vsock; on brokered the
+// fixed `ssh -R` forward iso starts over the instance's SSH connection
+// (§22.9). Any failure revokes the partial session: no raw endpoint, no
+// other transport and no cloud credential is used instead.
+
+/// How guest connections reach an instance's gateway session (§22).
+package enum InferenceCarrier: Sendable, Equatable {
+  /// vmnet: the sandbox owner relays this host socket into the guest over
+  /// vsock, as the isolation gate verified; nil when the boot has none.
+  case relay(socket: String?)
+  /// brokered: iso's fixed reverse forward carries guest 127.0.0.1:11788 to
+  /// this host socket, which iso derives for the sandbox. `granted` is
+  /// whether the boot's gate-verified network policy carries the
+  /// `inference-gateway` grant (brokered spec 7.3).
+  case forward(socket: String, granted: Bool)
+}
+
+/// The gateway's transport kind (control protocol 3): which process
+/// activation binds the session to.
+package enum InferenceTransportKind: String, Sendable, Equatable {
+  case owner
+  case forward
+}
 
 /// What the controller needs about a running VM's boot.
 package struct InferenceBoot: Sendable {
   package let ownerPID: Int32
   package let deadline: Date?
-  /// The host end of the instance's vsock relay, verified by the isolation
-  /// gate; nil when the sandbox was booted without one.
-  package let relaySocket: String?
+  package let carrier: InferenceCarrier
 
-  package init(ownerPID: Int32, deadline: Date?, relaySocket: String?) {
+  package init(ownerPID: Int32, deadline: Date?, carrier: InferenceCarrier) {
     self.ownerPID = ownerPID
     self.deadline = deadline
-    self.relaySocket = relaySocket
+    self.carrier = carrier
   }
+
+  /// A vmnet boot whose relay's host end is `relaySocket`.
+  package init(ownerPID: Int32, deadline: Date?, relaySocket: String?) {
+    self.init(ownerPID: ownerPID, deadline: deadline, carrier: .relay(socket: relaySocket))
+  }
+}
+
+/// A process a session is bound to: its PID and kernel start time.
+package struct BoundProcess: Sendable, Equatable {
+  package let pid: Int32
+  package let start: String
+
+  /// Still the same process (a reused PID has another start time).
+  var isAlive: Bool { HostProcess.start(pid) == start }
 }
 
 /// An active gateway session for one instance.
@@ -36,8 +69,12 @@ package struct InferenceSession: Sendable, Equatable {
   package let token: Secret<String>
   /// Services granted, by alias.
   package let services: [InferenceServiceName]
+  /// What carries guest connections: the vmnet relay (with the guest
+  /// bridge) or the brokered forward (no guest bridge).
+  package var transport: InferenceTransportKind = .owner
 
-  /// The guest's bridge to the relayed gateway socket (§22).
+  /// The guest's loopback endpoint for the session, the same on both
+  /// transports: the bridge to the relayed socket, or the forward (§22).
   package var guestBaseURL: String { "http://127.0.0.1:\(InferenceController.guestPort)" }
 }
 
@@ -224,25 +261,22 @@ package struct InferenceController: Sendable {
     let lock = try FileLock.sibling(of: Self.statePath(instance))
     defer { lock.release() }
     if let current = current(instance), current.fingerprint == fingerprint {
-      remember(instance, current.session, fingerprint: fingerprint, owner: current.owner)
+      remember(instance, current.session, fingerprint: fingerprint, bound: current.bound)
       return (current.session, false)
     }
-    let (session, owner) = try establish(
+    let (session, bound) = try establish(
       instance, target: target, services: services, fingerprint: fingerprint,
       configureGuest: configureGuest)
-    remember(instance, session, fingerprint: fingerprint, owner: owner)
+    remember(instance, session, fingerprint: fingerprint, bound: bound)
     return (session, true)
   }
 
-  /// Remembered only with the exact owner process that carries the relay.
+  /// Remembered only with the exact processes the session is bound to: the
+  /// sandbox owner and, on brokered, the forward.
   func remember(
-    _ instance: Instance, _ session: InferenceSession, fingerprint: String,
-    owner: (pid: Int32, start: String)
+    _ instance: Instance, _ session: InferenceSession, fingerprint: String, bound: [BoundProcess]
   ) {
-    sessions.remember(
-      instance,
-      .init(
-        fingerprint: fingerprint, session: session, ownerPID: owner.pid, ownerStart: owner.start))
+    sessions.remember(instance, .init(fingerprint: fingerprint, session: session, bound: bound))
   }
 
   /// §12.2 steps 3–7, under the instance's session lock. Every failure
@@ -250,21 +284,23 @@ package struct InferenceController: Sendable {
   func establish(
     _ instance: Instance, target: SSHTarget, services: [InferenceServiceName], fingerprint: String,
     configureGuest: (InferenceSession) throws -> Void
-  ) throws -> (InferenceSession, owner: (pid: Int32, start: String)) {
+  ) throws -> (InferenceSession, bound: [BoundProcess]) {
     let resolved = try services.map(resolved)
     try enforceBackends(resolved)
     try ensureGatewayCovers(Set(resolved.map(\.backend.port)))
     let bootInfo = try boot(instance)
-    let socket = try relaySocketName(bootInfo.relaySocket, instance: instance)
+    let (socket, kind) = try sessionSocket(bootInfo.carrier, instance: instance)
     guard let ownerStart = HostProcess.start(bootInfo.ownerPID) else {
       throw HostError("cannot read the sandbox owner process for '\(instance.name)'")
     }
-    // The old capability first: a replaced session must not linger.
+    let owner = BoundProcess(pid: bootInfo.ownerPID, start: ownerStart)
+    // The old capability (and a brokered boot's old forward) first: a
+    // replaced session must not linger.
     try revoke(instance)
     let nonce = randomHex(16)
     let registration = try registrationMessage(
-      instance, resolved: resolved, boot: (bootInfo.ownerPID, ownerStart), nonce: nonce,
-      socket: socket)
+      instance, resolved: resolved, boot: (owner.pid, owner.start), nonce: nonce,
+      socket: socket, transport: kind)
     let registered = try control(registration)
     guard case .string(let sessionID)? = registered["session_id"],
       case .string(let epoch)? = registered["epoch"],
@@ -272,19 +308,32 @@ package struct InferenceController: Sendable {
       registered["socket"] == .string(socket)
     else { throw HostError("iso-inference returned an incomplete registration") }
     let token = Secret(capability)
-    let session = InferenceSession(
+    var session = InferenceSession(
       sessionID: sessionID, epoch: epoch, token: token, services: services)
+    session.transport = kind
+    var bound = [owner]
     do {
       try verifyRegistered(instance, sessionID: sessionID, nonce: nonce)
       try configureGuest(session)
-      // The session lives as long as the owner process that carries the
-      // instance's relay: its exit (VM stop) revokes the session.
+      // The session lives as long as the process that carries guest
+      // connections: the owner relaying it (its exit, a VM stop, revokes the
+      // session), or the brokered forward started only now, after the guest
+      // is configured (its exit, or the owner's, revokes it).
+      let carrier: BoundProcess
+      switch kind {
+      case .owner: carrier = owner
+      case .forward:
+        let forward = try proxies.startInferenceForward(
+          instance, target: target, socket: relayDirectory + "/" + socket)
+        carrier = BoundProcess(pid: forward.pid, start: forward.start)
+        bound.append(carrier)
+      }
       var activation: [(String, OutputJSON)] = [
         ("version", .uint(Self.controlVersion)), ("op", .string("activate_session")),
         ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
         (
           "transport",
-          .object([("pid", .int(Int64(bootInfo.ownerPID))), ("start", .string(ownerStart))])
+          .object([("pid", .int(Int64(carrier.pid))), ("start", .string(carrier.start))])
         ),
       ]
       if let deadline = bootInfo.deadline {
@@ -294,17 +343,28 @@ package struct InferenceController: Sendable {
       _ = try control(activation)
       try AtomicFile.write(
         Array(capability.utf8), to: Self.tokenPath(instance), mode: .atMost(0o600))
+      var state: [(String, OutputJSON)] = [
+        ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
+        ("owner_pid", .int(Int64(owner.pid))), ("owner_start", .string(owner.start)),
+        ("transport", .string(kind.rawValue)),
+      ]
+      if kind == .forward {
+        state += [
+          ("forward_pid", .int(Int64(carrier.pid))), ("forward_start", .string(carrier.start)),
+        ]
+      }
+      state += [
+        ("fingerprint", .string(fingerprint)),
+        ("services", .array(services.map { .string($0.rawValue) })),
+      ]
       try AtomicFile.write(
-        Array(
-          OutputJSON.object([
-            ("session_id", .string(sessionID)), ("epoch", .string(epoch)),
-            ("owner_pid", .int(Int64(bootInfo.ownerPID))), ("owner_start", .string(ownerStart)),
-            ("fingerprint", .string(fingerprint)),
-            ("services", .array(services.map { .string($0.rawValue) })),
-          ]).rendered().utf8), to: Self.statePath(instance), mode: .atMost(0o600))
+        Array(OutputJSON.object(state).rendered().utf8), to: Self.statePath(instance),
+        mode: .atMost(0o600))
     } catch {
-      // Already failing: the revocation is best effort, and the gateway also
-      // revokes an inactive session when the owner exits.
+      // Already failing: the forward closes first, so no guest connection
+      // reaches the partial session. The revocation is best effort, and the
+      // gateway also revokes an inactive session when the owner exits.
+      if kind == .forward { proxies.stopInferenceForward(instance) }
       _ = try? control([
         ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
         ("session_id", .string(sessionID)),
@@ -314,11 +374,12 @@ package struct InferenceController: Sendable {
         "Failed to establish the inference session for '\(instance.name)' (fail-closed; no raw or cloud fallback)",
         cause: error)
     }
+    let carried = kind == .owner ? "the sandbox relay" : "the SSH reverse forward"
     diagnostics.log(
       .info,
-      "Inference gateway session active for '\(instance.name)' (guest → 127.0.0.1:\(Self.guestPort) over the sandbox relay; services \(services.map(\.rawValue).joined(separator: ", ")))"
+      "Inference gateway session active for '\(instance.name)' (guest → 127.0.0.1:\(Self.guestPort) over \(carried); services \(services.map(\.rawValue).joined(separator: ", ")))"
     )
-    return (session, (bootInfo.ownerPID, ownerStart))
+    return (session, bound)
   }
 
   /// Each backend the services use passes the §10/§20 checks, with its
@@ -345,9 +406,29 @@ package struct InferenceController: Sendable {
     }
   }
 
+  /// The session socket's file name and the transport that carries it. A
+  /// vmnet boot needs the relay the isolation gate verified; a brokered boot
+  /// needs the inference grant in its gate-verified network policy. Either
+  /// way the socket is in the relay directory under the runtime's hash name.
+  func sessionSocket(_ carrier: InferenceCarrier, instance: Instance) throws -> (
+    String, InferenceTransportKind
+  ) {
+    switch carrier {
+    case .relay(let path):
+      return (try relaySocketName(path, instance: instance), .owner)
+    case .forward(let path, let granted):
+      guard granted else {
+        throw HostError(
+          "'\(instance.name)' was booted without the inference-gateway grant in its network policy; restart it (`iso stop`, then `iso start`) so its boot carries the inference forward (fail-closed)"
+        )
+      }
+      return (try relaySocketName(path, instance: instance), .forward)
+    }
+  }
+
   /// The relay socket's file name, when the isolation gate verified it in
-  /// the relay directory. A sandbox booted without a relay cannot carry a
-  /// session.
+  /// the relay directory (or iso derived it there for a brokered boot). A
+  /// sandbox booted without a relay cannot carry a session.
   func relaySocketName(_ path: String?, instance: Instance) throws -> String {
     guard let path else {
       throw HostError(
@@ -369,9 +450,10 @@ package struct InferenceController: Sendable {
   }
 
   /// The recorded session when the gateway still reports it active under
-  /// the same epoch and the sandbox owner it was bound to still runs.
+  /// the same epoch and the processes it was bound to still run: the sandbox
+  /// owner and, for a brokered boot, the forward iso recorded.
   func current(_ instance: Instance) -> (
-    session: InferenceSession, fingerprint: String, owner: (pid: Int32, start: String)
+    session: InferenceSession, fingerprint: String, bound: [BoundProcess]
   )? {
     guard let bytes = try? StateStore.readControlFile(Self.statePath(instance)),
       case .object(let state)? = try? ConfigLoader.parse(
@@ -381,6 +463,11 @@ package struct InferenceController: Sendable {
       let ownerPID = state["owner_pid"].flatMap(Self.integer).flatMap(Int32.init(exactly:)),
       case .string(let ownerStart)? = state["owner_start"],
       HostProcess.start(ownerPID) == ownerStart,
+      let bound = Self.boundProcesses(
+        state, owner: BoundProcess(pid: ownerPID, start: ownerStart),
+        forward: proxies.inferenceForward(instance).map {
+          BoundProcess(pid: $0.pid, start: $0.start)
+        }),
       case .array(let rawServices)? = state["services"],
       let tokenBytes = try? StateStore.readControlFile(Self.tokenPath(instance)),
       let token = String(validating: tokenBytes, as: UTF8.self),
@@ -396,11 +483,29 @@ package struct InferenceController: Sendable {
       guard case .string(let raw) = value else { return nil }
       return try? InferenceServiceName(raw)
     }
-    return (
-      InferenceSession(
-        sessionID: sessionID, epoch: epoch, token: Secret(token), services: services), fingerprint,
-      (ownerPID, ownerStart)
-    )
+    var session = InferenceSession(
+      sessionID: sessionID, epoch: epoch, token: Secret(token), services: services)
+    session.transport = bound.count > 1 ? .forward : .owner
+    return (session, fingerprint, bound)
+  }
+
+  /// The processes a recorded session is bound to. A forward session (one
+  /// whose record names `transport: "forward"`) needs its recorded forward
+  /// to be the live tunnel master iso started (`forward`), at the same start
+  /// time; a record without `transport` predates the brokered path.
+  static func boundProcesses(
+    _ state: [String: JSONValue], owner: BoundProcess, forward: BoundProcess?
+  ) -> [BoundProcess]? {
+    switch state["transport"] {
+    case nil, .string(InferenceTransportKind.owner.rawValue)?: return [owner]
+    case .string(InferenceTransportKind.forward.rawValue)?:
+      guard let pid = state["forward_pid"].flatMap(integer).flatMap(Int32.init(exactly:)),
+        case .string(let start)? = state["forward_start"],
+        let forward, forward == BoundProcess(pid: pid, start: start), forward.isAlive
+      else { return nil }
+      return [owner, forward]
+    default: return nil
+    }
   }
 
   /// Revoke the instance's session at the gateway and remove the host-side
@@ -410,6 +515,9 @@ package struct InferenceController: Sendable {
   /// throws and keeps the state, because the session may still be active.
   package func revoke(_ instance: Instance) throws {
     sessions.forget(instance)
+    // A brokered boot's forward closes first: it ends every guest stream to
+    // the session (NET-08), whether or not the gateway answers.
+    proxies.stopInferenceForward(instance)
     do {
       _ = try control([
         ("version", .uint(Self.controlVersion)), ("op", .string("revoke_session")),
@@ -470,14 +578,15 @@ package struct InferenceController: Sendable {
 
   func registrationMessage(
     _ instance: Instance, resolved: [ResolvedInferenceService], boot: (Int32, String),
-    nonce: String, socket: String
+    nonce: String, socket: String, transport: InferenceTransportKind
   ) throws -> [(String, OutputJSON)] {
     let limits = config.inference.globalLimits
     return [
       ("version", .uint(Self.controlVersion)), ("op", .string("register_session")),
       ("instance", .object(instanceKey(instance))),
       ("boot", .object([("owner_pid", .int(Int64(boot.0))), ("owner_start", .string(boot.1))])),
-      ("nonce", .string(nonce)), ("socket", .string(socket)), ("transport", .string("owner")),
+      ("nonce", .string(nonce)), ("socket", .string(socket)),
+      ("transport", .string(transport.rawValue)),
       (
         "global_limits",
         .object([

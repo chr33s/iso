@@ -275,7 +275,7 @@ struct InferenceInit: ParsableCommand {
     ])
     return [
       (["security", "preset"], .string("offline")),
-      // The runtime relays the gateway only into vmnet Linux guests.
+      // The runtime relay (spec §22.4); `required` also runs on brokered.
       (["network", "transport"], .string("vmnet")),
       (["limits", "session_ttl"], .string("8h")),
       (["inference", "mode"], .string("required")),

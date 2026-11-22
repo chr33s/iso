@@ -330,3 +330,65 @@ private func hostVM(_ install: FakeInstallation, _ native: AppleNativeHost, egre
   try native.start(id, runtime: machine, expiresAt: nil)
   #expect(!egress.calls.contains { $0.hasPrefix("start") })
 }
+
+/// `inference.mode: required` on brokered: the sandbox is created and
+/// started without the runtime relay (the runtime refuses one, NET-04), the
+/// boot's recorded policy carries the inference grant, and the controller's
+/// boot facts name iso's derived session socket for the fixed forward. A
+/// configuration without `required` is a policy change for that boot.
+@Test func requiredInferenceOnBrokeredBootsWithTheGrantAndNoRelay() throws {
+  let required =
+    brokeredNone
+    + #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+  let install = try installed(required)
+  defer { install.remove() }
+  let backend = install.backend
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("brkinf"), image: .default, workspacePath: nil)
+  try backend.createAndStart(instance, diskGiB: nil)
+  let calls = install.calls()
+  #expect(!calls.contains { $0.contains("--inference-relay") }, "\(calls)")
+  let record = try #require(try NetworkPolicy.load(instance)?.brokered)
+  #expect(record.localServices == [.inferenceGateway])
+  let start = try #require(calls.first { $0.first == "start" })
+  #expect(option(start, "--network-policy") == record.digest.rawValue)
+
+  let running = try #require(try backend.asRunning(instance))
+  #expect(running.ready.inferenceSocket == nil)
+  let boot = try backend.inferenceBoot(running)
+  #expect(boot.ownerPID == running.ready.ownerPID)
+  #expect(
+    boot.carrier
+      == .forward(
+        socket: IsolationGate.inferenceSocket(
+          runtimeRoot: try backend.runtime().root, sandbox: running.ready.sandbox),
+        granted: true))
+
+  // Without `required` the boot's policy no longer matches.
+  let root = install.root
+  let offConfig = try ConfigLoader.decode(
+    ConfigLoader.parse(
+      Array(
+        "{\(legacyProfile(#""data_dir": "\#(root)/data", "apple_container": {"binary": "\#(root)/bin/iso-sandbox", "builder": "\#(root)/bin/container", "kernel": "\#(root)/kernel", "boot_timeout_seconds": 5}"# + brokeredNone))}"
+          .utf8), format: .jsonc, path: "c", limits: .configuration),
+    path: "c", environment: .empty)
+  let error = try #require(throws: (any Error).self) {
+    try backend.reconfigured(offConfig).asRunning(instance)
+  }
+  #expect("\(error)".contains("POLICY_CHANGE_REQUIRES_RESTART"), "\(error)")
+  try backend.destroyInstance(instance)
+
+  // A boot without the grant never yields a granted carrier, whatever the
+  // configuration now says.
+  let plainBackend = backend.reconfigured(offConfig)
+  let plain = try Instance.allocate(
+    offConfig, name: InstanceName("brkplain"), image: .default, workspacePath: nil)
+  try plainBackend.createAndStart(plain, diskGiB: nil)
+  let ungranted = try #require(try plainBackend.asRunning(plain))
+  guard case .forward(_, let granted) = try backend.inferenceBoot(ungranted).carrier else {
+    Issue.record("a brokered boot was given a relay carrier")
+    return
+  }
+  #expect(!granted)
+  try plainBackend.destroyInstance(plain)
+}

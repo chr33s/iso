@@ -131,7 +131,7 @@ struct InferenceStatus: ParsableCommand {
         let instance: String =
           if case .object(let key)? = session["instance"] { text(key["name"]) } else { "?" }
         out.out(
-          "Session:        \(instance) \(text(session["state"])) aliases \(list(session["aliases"])) apis \(list(session["apis"])) transport_pid \(text(session["transport_pid"])) deadline_seconds \(text(session["deadline_seconds"]))"
+          "Session:        \(instance) \(text(session["state"])) aliases \(list(session["aliases"])) apis \(list(session["apis"])) transport \(text(session["transport_kind"])) transport_pid \(text(session["transport_pid"])) deadline_seconds \(text(session["deadline_seconds"]))"
         )
       }
     }

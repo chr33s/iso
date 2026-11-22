@@ -251,13 +251,21 @@ private func document(
   #expect(fieldError(unknownBackend)?.field == "inference.services.local-coder.backend")
 }
 
-@Test func requiredModeNeedsTheVmnetTransport() {
-  let brokered = document().replacingOccurrences(
-    of: #""network": {"transport": "vmnet"},"#, with: "")
-  let refused = fieldError(brokered)
-  #expect(refused?.field == "network.transport")
-  #expect(refused?.reason.contains("vmnet") == true)
-  #expect(fieldError(document()) == nil)
+/// `required` runs on either transport (spec §11.3): vmnet through the
+/// runtime's relay, the brokered default through iso's fixed SSH forward.
+@Test func requiredModeRunsOnEitherTransport() throws {
+  let vmnet = try load(document())
+  #expect(vmnet.network.transport == .vmnet && vmnet.inference.mode == .required)
+  for brokered in [
+    document().replacingOccurrences(of: #""network": {"transport": "vmnet"},"#, with: ""),
+    document().replacingOccurrences(
+      of: #""transport": "vmnet""#, with: #""transport": "brokered""#),
+  ] {
+    #expect(fieldError(brokered) == nil)
+    let config = try load(brokered)
+    #expect(config.network.transport == .brokered && config.inference.mode == .required)
+    #expect(config.claude.localService?.rawValue == "local-coder")
+  }
   // Off, the brokered default is unaffected.
   #expect(fieldError(#"{"inference": {"mode": "off"}}"#) == nil)
 }

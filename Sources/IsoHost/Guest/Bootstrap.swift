@@ -647,9 +647,12 @@ package struct AgentBootstrap: Sendable {
     }
     if inferenceRequired {
       // Raw model tunnels never coexist with guarded inference (AT-21), and
-      // the guest bridge is (re)enabled on each agent bootstrap (§22.4).
+      // the vmnet guest bridge is (re)enabled on each agent bootstrap
+      // (§22.4); a brokered guest has none (§22.9).
       proxies.stopModelTunnels(instance)
-      if let inference, try !inference.requestedServices(instance).isEmpty {
+      if config.network.transport == .vmnet, let inference,
+        try !inference.requestedServices(instance).isEmpty
+      {
         try installInferenceBridge(session.target)
       }
     } else {

@@ -358,14 +358,9 @@ extension ConfigDecoder {
   /// rewritten.
   static func requireInferenceCombinations(_ config: IsoConfig) throws(FieldError) {
     guard config.inference.mode == .required else { return }
-    // The runtime relays the gateway's socket into vmnet Linux sandboxes
-    // only; a brokered VM's one host channel is its SSH stream (NET-04).
-    if config.network.transport == .brokered {
-      throw FieldError(
-        [.key("network"), .key("transport")],
-        "inference.mode = \"required\" needs network.transport \"vmnet\": the sandbox runtime relays the inference gateway only into vmnet Linux guests; select \"network\": {\"transport\": \"vmnet\"} explicitly"
-      )
-    }
+    // Either transport carries the gateway session: vmnet through the
+    // runtime's vsock relay, brokered through iso's fixed SSH reverse forward
+    // (secure-local-inference §22.9). macOS guests are refused before boot.
     if config.codexAuth == .chatgpt {
       throw FieldError(
         [.key("codex"), .key("auth")],

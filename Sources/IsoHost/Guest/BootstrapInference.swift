@@ -25,7 +25,9 @@ extension AgentBootstrap {
         "inference.mode = \"required\" but this command has no inference controller (fail-closed)")
     }
     return try inference.ensureSession(instance, target: target) { session in
-      try installInferenceBridge(target)
+      // The bridge is the guest end of the vmnet relay; on brokered, the
+      // forward's sshd listener is, and nothing else binds the port.
+      if session.transport == .owner { try installInferenceBridge(target) }
       try writeManagedClaudeSettings(target, localEnv: claudeInferenceEnv(session))
       if config.codex.localService != nil {
         try writeCodexInferenceConfig(instance, target: target, session: session)
@@ -102,7 +104,7 @@ extension AgentBootstrap {
   }
 
   /// `127.0.0.1:11788` in the guest, bridged by systemd to the relayed
-  /// gateway socket (§22).
+  /// gateway socket (§22). vmnet only.
   func installInferenceBridge(_ target: SSHTarget) throws {
     do {
       try client.exec(

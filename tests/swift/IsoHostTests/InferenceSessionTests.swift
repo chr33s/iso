@@ -194,15 +194,21 @@ private struct Rig {
     }
   }
 
-  func controller(_ config: IsoConfig? = nil) throws -> InferenceController {
+  /// A brokered boot's carrier: the derived socket, and whether the boot's
+  /// network policy grants the forward.
+  func forward(granted: Bool = true) -> InferenceCarrier {
+    .forward(socket: relay + "/8e84.sock", granted: granted)
+  }
+
+  func controller(_ config: IsoConfig? = nil, carrier: InferenceCarrier? = nil) throws
+    -> InferenceController
+  {
     let resolver = CredentialResolver(environment: guest.environment)
-    let relay = self.relay
+    let carrier = carrier ?? .relay(socket: relay + "/8e84.sock")
     return InferenceController(
       config: try config ?? self.config, environment: guest.environment, resolver: resolver,
       diagnostics: guest.sink.diagnostics, isoExecutable: nil, proxies: guest.proxies(resolver),
-      boot: { _ in
-        InferenceBoot(ownerPID: getpid(), deadline: nil, relaySocket: relay + "/8e84.sock")
-      },
+      boot: { _ in InferenceBoot(ownerPID: getpid(), deadline: nil, carrier: carrier) },
       sandboxExec: "/usr/bin/false", stateDirectory: stateDirectory, relayDirectory: relay,
       peerCheck: { _ in })
   }
@@ -236,6 +242,9 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   let registration = try #require(rig.gateway.request("register_session"))
   #expect(registration["version"] as? Int == 3)
   #expect(registration["transport"] as? String == "owner")
+  // The relay is the owner's: no SSH forward is started for it.
+  #expect(rig.guest.log("tunnels.log").isEmpty)
+  #expect(result.session.transport == .owner)
   #expect(exists(InferenceController.statePath(rig.instance)))
   #expect(readFile(InferenceController.tokenPath(rig.instance)) == result.session.token.expose())
   // A later command reuses the recorded active session.
@@ -523,4 +532,221 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(AgentBootstrap.attachBaseURL(.anthropicCountTokens, session) == "http://127.0.0.1:11788")
   #expect(AgentBootstrap.attachBaseURL(.anthropicMessages, session) == "http://127.0.0.1:11788")
   #expect(AgentBootstrap.attachBaseURL(.openAIChat, session) == "http://127.0.0.1:11788/v1")
+}
+
+// MARK: - Brokered: the fixed SSH reverse forward (§22.9)
+
+/// Whether `pid` still runs; an exited child of this test process is
+/// reaped first (the forward master is one).
+private func isRunning(_ pid: Int32) -> Bool {
+  var status: Int32 = 0
+  _ = waitpid(pid, &status, WNOHANG)
+  return kill(pid, 0) == 0
+}
+
+/// The forward's master, as the tunnel identity records it.
+private func forwardMaster(_ rig: Rig) -> Int32? {
+  TunnelIdentity.load(rig.instance, ProxyLauncher.inferenceTunnelName)?.pid
+}
+
+/// The activation's transport binding.
+private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
+  let transport = rig.gateway.request("activate_session")?["transport"] as? [String: Any]
+  return (transport?["pid"] as? Int, transport?["start"] as? String)
+}
+
+/// A brokered session registers as `forward`, starts exactly the fixed
+/// reverse forward to its socket after the guest is configured and before
+/// activation, and activates bound to that forward's process (PID and start
+/// time), never the owner. No guest bridge is installed.
+@Test func brokeredSessionsBindTheFixedForwardStartedAfterTheGuestIsConfigured() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  var forwardedBeforeConfiguration = true
+  let result = try #require(
+    try rig.controller(carrier: rig.forward()).ensureSession(
+      rig.instance, target: rig.guest.target
+    ) { _ in
+      forwardedBeforeConfiguration = !rig.guest.log("tunnels.log").isEmpty
+    })
+  defer { if let pid = forwardMaster(rig) { kill(pid, SIGKILL) } }
+  #expect(!forwardedBeforeConfiguration)
+  #expect(result.fresh && result.session.transport == .forward)
+  let ops = rig.gateway.ops.filter { $0 != "inspect" }
+  #expect(ops == ["revoke_session", "register_session", "activate_session"], "\(ops)")
+  let registration = try #require(rig.gateway.request("register_session"))
+  #expect(registration["transport"] as? String == "forward")
+  #expect(registration["socket"] as? String == "8e84.sock")
+  // Exactly one static forward: guest 127.0.0.1:11788 to the session socket.
+  let forwards = rig.guest.log("tunnels.log").filter { $0.hasPrefix("forward ") }
+  #expect(forwards.count == 1, "\(forwards)")
+  let words = forwards.first?.split(separator: " ").map(String.init) ?? []
+  let spec = zip(words, words.dropFirst()).filter { $0.0 == "-R" }.map(\.1)
+  #expect(spec == ["127.0.0.1:11788:\(rig.relay)/8e84.sock"], "\(words)")
+  for line in rig.guest.log("tunnels.log") {
+    let flags = line.split(separator: " ").map(String.init)
+    #expect(!flags.contains("-D") && !flags.contains("-L"), "no dynamic or local forward: \(line)")
+  }
+  // Activation names the forward's master, not the sandbox owner.
+  let master = try #require(forwardMaster(rig))
+  #expect(master != getpid())
+  let bound = activationTransport(rig)
+  #expect(bound.pid == Int(master))
+  #expect(bound.start == HostProcess.start(master))
+  let state = try #require(readFile(InferenceController.statePath(rig.instance)))
+  #expect(state.contains(#""transport" : "forward""#), "\(state)")
+  #expect(state.contains(#""forward_pid" : \#(master)"#), "\(state)")
+  // A later command reuses it while the forward runs.
+  let again = try #require(
+    try rig.controller(carrier: rig.forward()).ensureSession(
+      rig.instance, target: rig.guest.target))
+  #expect(!again.fresh && again.session == result.session)
+}
+
+/// Revocation (iso inference revoke, mode off, a replaced session) closes
+/// the forward and revokes the session at the gateway; stop and destroy
+/// close it with the instance's other tunnels.
+@Test func revokingABrokeredSessionClosesItsForward() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let control = try rig.controller(carrier: rig.forward())
+  _ = try control.ensureSession(rig.instance, target: rig.guest.target)
+  let first = try #require(forwardMaster(rig))
+  #expect(isRunning(first))
+  try control.revokeManually(rig.instance)
+  #expect(waitUntil { !isRunning(first) }, "the forward outlived its revocation")
+  #expect(forwardMaster(rig) == nil)
+  #expect(rig.gateway.state.withLock { $0.sessions.isEmpty })
+  #expect(!exists(InferenceController.statePath(rig.instance)))
+
+  // Mode off revokes, and closes the forward, before anything else.
+  InferenceController.clearManualRevocation(rig.instance)
+  _ = try control.ensureSession(rig.instance, target: rig.guest.target)
+  let second = try #require(forwardMaster(rig))
+  let off = try testConfig(#""inference": {"mode": "off"}"#)
+  #expect(
+    try rig.controller(off, carrier: rig.forward()).ensureSession(
+      rig.instance, target: rig.guest.target) == nil)
+  #expect(waitUntil { !isRunning(second) })
+
+  // Stopping the instance's tunnels closes it too.
+  _ = try control.ensureSession(rig.instance, target: rig.guest.target)
+  let third = try #require(forwardMaster(rig))
+  rig.guest.proxies().stopAll(rig.instance)
+  #expect(waitUntil { !isRunning(third) })
+}
+
+/// The forward's death ends the recorded session (NET-08): neither the memo
+/// nor the record reuses it, and the next session is a fresh registration
+/// over a new forward, never another transport.
+@Test func aDeadForwardEndsTheRecordedSession() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let control = try rig.controller(carrier: rig.forward())
+  let first = try #require(try control.ensureSession(rig.instance, target: rig.guest.target))
+  let master = try #require(forwardMaster(rig))
+  #expect(control.current(rig.instance) != nil)
+  kill(master, SIGKILL)
+  #expect(waitUntil { !isRunning(master) })
+  #expect(control.current(rig.instance) == nil, "a recorded session without its forward")
+  let next = try #require(try control.ensureSession(rig.instance, target: rig.guest.target))
+  defer { if let pid = forwardMaster(rig) { kill(pid, SIGKILL) } }
+  #expect(next.fresh && next.session != first.session)
+  #expect(next.session.transport == .forward)
+  let registrations = rig.gateway.state.withLock { $0.requests }.compactMap {
+    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+  }.filter { $0["op"] as? String == "register_session" }
+  #expect(registrations.map { $0["transport"] as? String } == ["forward", "forward"])
+  #expect(try #require(forwardMaster(rig)) != master)
+}
+
+/// A brokered boot whose policy lacks the grant, a failing forward, or a
+/// refused activation leaves no session and no forward.
+@Test func aBrokeredSessionFailsClosed() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let ungranted = try #require(throws: (any Error).self) {
+    try rig.controller(carrier: rig.forward(granted: false)).ensureSession(
+      rig.instance, target: rig.guest.target)
+  }
+  #expect("\(ungranted)".contains("inference-gateway grant"))
+  #expect(!rig.gateway.ops.contains("register_session"))
+  #expect(rig.guest.log("tunnels.log").isEmpty)
+
+  try rig.guest.flag("forward-fails")
+  #expect(throws: (any Error).self) {
+    try rig.controller(carrier: rig.forward()).ensureSession(
+      rig.instance, target: rig.guest.target)
+  }
+  #expect(!rig.gateway.ops.contains("activate_session"))
+  #expect(rig.gateway.state.withLock { $0.sessions.isEmpty })
+  #expect(forwardMaster(rig) == nil)
+  unlink(rig.guest.root + "/flags/forward-fails")
+
+  rig.gateway.state.withLock {
+    $0.override["activate_session"] = ["ok": false, "code": "POLICY_DENIED", "message": "no"]
+  }
+  #expect(throws: (any Error).self) {
+    try rig.controller(carrier: rig.forward()).ensureSession(
+      rig.instance, target: rig.guest.target)
+  }
+  let master = activationTransport(rig).pid.map { Int32($0) }
+  #expect(master != nil)
+  #expect(waitUntil { master.map { !isRunning($0) } ?? false }, "a refused activation's forward")
+  #expect(forwardMaster(rig) == nil)
+  #expect(!exists(InferenceController.statePath(rig.instance)))
+  #expect(!exists(InferenceController.tokenPath(rig.instance)))
+}
+
+/// ssh splits `-R` on `:`, and a Unix socket path must fit sun_path: any
+/// other session socket is refused before a forward is requested.
+@Test func theForwardRefusesASocketSSHCannotCarry() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  for socket in [
+    "relative.sock", rig.relay + "/a:b.sock", rig.relay + "/a b.sock",
+    "/" + String(repeating: "a", count: 104),
+  ] {
+    #expect(throws: HostError.self) {
+      try rig.guest.proxies().startInferenceForward(
+        rig.instance, target: rig.guest.target, socket: socket)
+    }
+  }
+  #expect(rig.guest.log("tunnels.log").isEmpty)
+}
+
+/// Whether `condition` holds within five seconds.
+private func waitUntil(_ condition: () -> Bool) -> Bool {
+  let deadline = ContinuousClock.now + .seconds(5)
+  while ContinuousClock.now < deadline {
+    if condition() { return true }
+    usleep(20_000)
+  }
+  return condition()
+}
+
+/// The guest end differs by transport, its URL does not: a vmnet session
+/// installs the systemd bridge to the relayed socket, a brokered one
+/// installs nothing (the forward's sshd listener is the only one on 11788).
+/// Claude is pointed at http://127.0.0.1:11788 either way.
+@Test func onlyTheVmnetRelayInstallsAGuestBridge() throws {
+  for brokered in [false, true] {
+    let rig = try Rig()
+    defer { rig.remove() }
+    let agents = AgentBootstrap(
+      config: try rig.config, client: rig.guest.client, environment: rig.guest.environment,
+      home: rig.guest.root + "/hosthome",
+      resolver: CredentialResolver(environment: rig.guest.environment),
+      proxies: rig.guest.proxies(), github: NoGitHub(), diagnostics: rig.guest.sink.diagnostics,
+      inference: try rig.controller(carrier: brokered ? rig.forward() : nil))
+    let result = try #require(try agents.inferenceSession(rig.instance, target: rig.guest.target))
+    defer { if let pid = forwardMaster(rig) { kill(pid, SIGKILL) } }
+    #expect(result.session.transport == (brokered ? .forward : .owner))
+    #expect(result.session.guestBaseURL == "http://127.0.0.1:11788")
+    let bridged = (readFile(rig.guest.root + "/sudo-stdin") ?? "").contains("iso-inference.socket")
+    #expect(bridged == !brokered, "brokered \(brokered)")
+    let settings = rig.guest.guestFile(".claude/settings.json") ?? ""
+    #expect(settings.contains("http://127.0.0.1:11788"), "\(settings)")
+    #expect(settings.contains(result.session.token.expose()))
+  }
 }

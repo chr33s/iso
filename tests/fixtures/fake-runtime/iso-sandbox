@@ -365,6 +365,8 @@ def handle(words, args, root, state):
         elif option(args, "--network") == "brokered":
             sandboxes[sandbox_id]["network"] = "brokered"
         if "--inference-relay" in args:
+            if option(args, "--network") == "brokered":
+                fail("--inference-relay is not available with --network brokered")
             sandboxes[sandbox_id]["inferenceRelay"] = True
         write_disk(root, sandbox_id, size)
         return sandboxes[sandbox_id]
@@ -389,6 +391,8 @@ def handle(words, args, root, state):
         if relayed:
             if relayed not in ("on", "off"):
                 fail("--inference-relay takes on or off")
+            if relayed == "on" and sandbox.get("network") == "brokered":
+                fail("--inference-relay is not available with --network brokered")
             sandbox["inferenceRelay"] = relayed == "on"
         sandbox["status"] = "running"
         return inspect(root, sandbox)

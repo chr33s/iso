@@ -175,9 +175,10 @@ private let session = InferenceSession(
   #expect(services.map(\.rawValue) == ["local-claude", "local-codex"])
   let message = try control.registrationMessage(
     instance, resolved: services.map(control.resolved), boot: (1, "1.0"),
-    nonce: String(repeating: "0", count: 32), socket: "8e84.sock")
+    nonce: String(repeating: "0", count: 32), socket: "8e84.sock", transport: .owner)
   let rendered = OutputJSON.object(message).compactRendered()
   #expect(rendered.contains(#""socket":"8e84.sock""#))
+  #expect(rendered.contains(#""transport":"owner""#))
   #expect(rendered.contains(#""credential":"backend-secret""#))
   #expect(rendered.contains(#""upstream_model":"mlx/claude-ish""#))
   #expect(rendered.contains(#""completion_evidence":"drain""#))
@@ -342,8 +343,8 @@ final class UnixReplyServer: @unchecked Sendable {
   let instance = try testInstance(guest.root + "/instance")
   let memo = SessionMemo()
   let start = try #require(HostProcess.start(getpid()))
-  memo.remember(
-    instance, .init(fingerprint: "f", session: session, ownerPID: getpid(), ownerStart: start))
+  let owner = BoundProcess(pid: getpid(), start: start)
+  memo.remember(instance, .init(fingerprint: "f", session: session, bound: [owner]))
   #expect(memo.session(instance, fingerprint: "f") == session)
   #expect(memo.session(instance, fingerprint: "other") == nil, "changed grants re-register")
   // Claude's settings are written once per session per command.
@@ -351,7 +352,18 @@ final class UnixReplyServer: @unchecked Sendable {
   #expect(!memo.markClaudeSettings(instance, session: session))
   // An owner with another start time (a reused PID) is not the one remembered.
   memo.remember(
-    instance, .init(fingerprint: "f", session: session, ownerPID: getpid(), ownerStart: "0.0"))
+    instance,
+    .init(fingerprint: "f", session: session, bound: [BoundProcess(pid: getpid(), start: "0.0")]))
+  #expect(memo.session(instance, fingerprint: "f") == nil)
+  // A brokered session also needs its forward: a reused PID, or none at all,
+  // is not the one remembered.
+  memo.remember(
+    instance,
+    .init(
+      fingerprint: "f", session: session,
+      bound: [owner, BoundProcess(pid: getpid(), start: "0.0")]))
+  #expect(memo.session(instance, fingerprint: "f") == nil)
+  memo.remember(instance, .init(fingerprint: "f", session: session, bound: []))
   #expect(memo.session(instance, fingerprint: "f") == nil)
   memo.forget(instance)
   #expect(memo.session(instance, fingerprint: "f") == nil)

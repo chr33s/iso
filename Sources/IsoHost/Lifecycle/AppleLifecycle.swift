@@ -38,8 +38,12 @@ extension AppleBackend {
   }
 
   /// Guarded inference reaches the gateway through the sandbox's vsock
-  /// relay (secure-local-inference §22); nothing else asks for one.
-  var relaysInference: Bool { config.inference.mode == .required }
+  /// relay on vmnet (secure-local-inference §22); nothing else asks for one.
+  /// A brokered boot never relays: iso's SSH reverse forward carries its
+  /// session (§22.9), and the runtime refuses a brokered relay (NET-04).
+  var relaysInference: Bool {
+    config.inference.mode == .required && config.network.transport == .vmnet
+  }
 
   /// The pinned target for a gate-approved boot; a brokered one goes
   /// through this runtime's stream connector.

@@ -13,8 +13,8 @@ final class SessionMemo: Sendable {
   struct Entry: Sendable {
     let fingerprint: String
     let session: InferenceSession
-    let ownerPID: Int32
-    let ownerStart: String
+    /// The sandbox owner and, for a brokered boot, the forward.
+    let bound: [BoundProcess]
     var claudeSettingsWritten = false
   }
 
@@ -29,11 +29,11 @@ final class SessionMemo: Sendable {
     _ = entries.withLock { $0.removeValue(forKey: instance.directory) }
   }
 
-  /// The remembered session, while its owner process still runs.
+  /// The remembered session, while every process it is bound to still runs.
   func session(_ instance: Instance, fingerprint: String) -> InferenceSession? {
     guard let entry = entries.withLock({ $0[instance.directory] }),
       entry.fingerprint == fingerprint,
-      HostProcess.start(entry.ownerPID) == entry.ownerStart
+      !entry.bound.isEmpty, entry.bound.allSatisfy(\.isAlive)
     else { return nil }
     return entry.session
   }
