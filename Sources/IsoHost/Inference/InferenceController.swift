@@ -243,15 +243,10 @@ package struct InferenceController: Sendable {
       try revoke(instance)
       return nil
     }
-    // A manual revocation withholds inference only: shells and commands
-    // still work, and agents reach no model until the VM restarts or a grant
-    // is attached.
-    if isManuallyRevoked(instance) {
-      diagnostics.warn(
-        "inference access for '\(instance.name)' was revoked with `iso inference revoke`; restart the VM or run `iso inference attach` to grant it again"
-      )
-      return nil
-    }
+    // A manual revocation, or a brokered forward that exited, withholds
+    // inference only: shells and commands still work, and agents reach no
+    // model until the VM restarts or a grant is attached.
+    if withheld(instance) { return nil }
     let fingerprint = try registrationFingerprint(services)
     if let remembered = sessions.session(instance, fingerprint: fingerprint) {
       return (remembered, false)
@@ -260,6 +255,15 @@ package struct InferenceController: Sendable {
     // each other's sessions or remove each other's state.
     let lock = try FileLock.sibling(of: Self.statePath(instance))
     defer { lock.release() }
+    // Under the lock again: another command may have found the forward dead.
+    if withheld(instance) { return nil }
+    // A brokered session whose forward died during this boot is not
+    // replaced: the instance stays revoked until it restarts (§22.9).
+    if forwardDied(instance) {
+      try revokeManually(instance, reason: .forwardExited)
+      _ = withheld(instance)
+      return nil
+    }
     if let current = current(instance), current.fingerprint == fingerprint {
       remember(instance, current.session, fingerprint: fingerprint, bound: current.bound)
       return (current.session, false)
@@ -533,17 +537,71 @@ package struct InferenceController: Sendable {
     try revoke(instance)
   }
 
+  /// Why an instance is revoked until it restarts.
+  package enum Revocation: String, Sendable {
+    /// `iso inference revoke`.
+    case manual = "revoked"
+    /// The brokered boot's forward exited (§22.9).
+    case forwardExited = "forward-exited"
+  }
+
   /// `iso inference revoke`: as `revoke`, and the instance stays revoked
   /// until the VM restarts or a new grant is attached. The marker is written
   /// first, so no command re-establishes a session while the revocation runs.
-  package func revokeManually(_ instance: Instance) throws {
+  package func revokeManually(_ instance: Instance, reason: Revocation = .manual) throws {
     try AtomicFile.write(
-      Array("revoked\n".utf8), to: Self.revokedPath(instance), mode: .atMost(0o600))
+      Array("\(reason.rawValue)\n".utf8), to: Self.revokedPath(instance), mode: .atMost(0o600))
     try revoke(instance)
   }
 
   package func isManuallyRevoked(_ instance: Instance) -> Bool {
     FileManager.default.fileExists(atPath: Self.revokedPath(instance))
+  }
+
+  /// The recorded revocation, when there is one. An unreadable or unknown
+  /// marker still revokes (fail closed), as a manual one.
+  package static func revocation(_ instance: Instance) -> Revocation? {
+    guard FileManager.default.fileExists(atPath: revokedPath(instance)) else { return nil }
+    let text = (try? StateStore.readControlFile(revokedPath(instance))).map {
+      String(decoding: $0, as: UTF8.self).trimmingUnicodeWhitespace()
+    }
+    return text.flatMap(Revocation.init(rawValue:)) ?? .manual
+  }
+
+  /// True, with a warning naming the way out, while the instance is revoked.
+  func withheld(_ instance: Instance) -> Bool {
+    guard let revocation = Self.revocation(instance) else { return false }
+    let name = instance.name
+    switch revocation {
+    case .manual:
+      diagnostics.warn(
+        "inference access for '\(name)' was revoked with `iso inference revoke`; restart the VM or run `iso inference attach` to grant it again"
+      )
+    case .forwardExited:
+      diagnostics.warn(
+        "the inference forward of '\(name)' exited, so its gateway session was revoked; restart the VM (`iso stop \(name)`, then `iso start \(name)`) or run `iso inference attach \(name)` to grant inference again"
+      )
+    }
+    return true
+  }
+
+  /// The recorded session is a brokered one of the running boot (its
+  /// sandbox owner still runs) whose forward is no longer the live master
+  /// iso started for it.
+  func forwardDied(_ instance: Instance) -> Bool {
+    guard let bytes = try? StateStore.readControlFile(Self.statePath(instance)),
+      case .object(let state)? = try? ConfigLoader.parse(
+        bytes, format: .json, path: "inference.json", limits: .configuration),
+      state["transport"] == .string(InferenceTransportKind.forward.rawValue),
+      let ownerPID = state["owner_pid"].flatMap(Self.integer).flatMap(Int32.init(exactly:)),
+      case .string(let ownerStart)? = state["owner_start"],
+      HostProcess.start(ownerPID) == ownerStart
+    else { return false }
+    let forward = proxies.inferenceForward(instance).map {
+      BoundProcess(pid: $0.pid, start: $0.start)
+    }
+    return Self.boundProcesses(
+      state, owner: BoundProcess(pid: ownerPID, start: ownerStart), forward: forward) == nil
   }
 
   /// A VM restart or an explicit attach lifts a manual revocation.

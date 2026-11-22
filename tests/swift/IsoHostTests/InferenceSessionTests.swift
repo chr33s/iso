@@ -636,10 +636,12 @@ private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
   #expect(waitUntil { !isRunning(third) })
 }
 
-/// The forward's death ends the recorded session (NET-08): neither the memo
-/// nor the record reuses it, and the next session is a fresh registration
-/// over a new forward, never another transport.
-@Test func aDeadForwardEndsTheRecordedSession() throws {
+/// The forward's death ends the recorded session (NET-08) and revokes the
+/// instance until it restarts (§22.9): neither the memo nor the record
+/// reuses it, and no command registers a new session or starts a new
+/// forward. A restart or an attach lifts it; the next session is a fresh
+/// registration over a new forward, never another transport.
+@Test func aDeadForwardRevokesTheInstanceUntilItRestarts() throws {
   let rig = try Rig()
   defer { rig.remove() }
   let control = try rig.controller(carrier: rig.forward())
@@ -649,15 +651,86 @@ private func activationTransport(_ rig: Rig) -> (pid: Int?, start: String?) {
   kill(master, SIGKILL)
   #expect(waitUntil { !isRunning(master) })
   #expect(control.current(rig.instance) == nil, "a recorded session without its forward")
+  #expect(control.forwardDied(rig.instance))
+  let forwards = { rig.guest.log("tunnels.log").filter { $0.hasPrefix("forward ") }.count }
+  #expect(forwards() == 1)
+  #expect(try control.ensureSession(rig.instance, target: rig.guest.target) == nil)
+  #expect(InferenceController.revocation(rig.instance) == .forwardExited)
+  #expect(rig.gateway.state.withLock { $0.sessions.isEmpty })
+  #expect(!exists(InferenceController.statePath(rig.instance)))
+  let warning = rig.guest.sink.text
+  #expect(warning.contains("inference forward of '\(rig.instance.name)' exited"), "\(warning)")
+  #expect(warning.contains("iso stop \(rig.instance.name)"), "\(warning)")
+  #expect(warning.contains("iso inference attach \(rig.instance.name)"), "\(warning)")
+  // It holds for later commands, through a fresh controller (no memo).
+  let registrations = {
+    rig.gateway.state.withLock { $0.requests }.compactMap {
+      try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+    }.filter { $0["op"] as? String == "register_session" }
+  }
+  for _ in 0..<2 {
+    #expect(
+      try rig.controller(carrier: rig.forward()).ensureSession(
+        rig.instance, target: rig.guest.target) == nil)
+  }
+  #expect(registrations().count == 1, "a dead forward is never silently replaced")
+  #expect(forwards() == 1 && forwardMaster(rig) == nil)
+
+  // A restart (or an attach) lifts it, as for `iso inference revoke`.
+  InferenceController.clearManualRevocation(rig.instance)
   let next = try #require(try control.ensureSession(rig.instance, target: rig.guest.target))
   defer { if let pid = forwardMaster(rig) { kill(pid, SIGKILL) } }
   #expect(next.fresh && next.session != first.session)
   #expect(next.session.transport == .forward)
-  let registrations = rig.gateway.state.withLock { $0.requests }.compactMap {
-    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-  }.filter { $0["op"] as? String == "register_session" }
-  #expect(registrations.map { $0["transport"] as? String } == ["forward", "forward"])
+  #expect(registrations().map { $0["transport"] as? String } == ["forward", "forward"])
   #expect(try #require(forwardMaster(rig)) != master)
+}
+
+/// A revocation recorded while a command waits for the session lock (as a
+/// concurrent command that found the forward dead records it) holds: the
+/// waiting command registers nothing once it holds the lock.
+@Test func aRevocationRecordedWhileWaitingForTheLockHolds() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let control = try rig.controller(carrier: rig.forward())
+  let lock = try FileLock.sibling(of: InferenceController.statePath(rig.instance))
+  let result = Mutex<Result<Bool, any Error>?>(nil)
+  let group = DispatchGroup()
+  let instance = rig.instance
+  let target = rig.guest.target
+  DispatchQueue.global().async(group: group) {
+    let outcome = Result { try control.ensureSession(instance, target: target) == nil }
+    result.withLock { $0 = outcome }
+  }
+  usleep(500_000)
+  try AtomicFile.write(
+    Array("forward-exited\n".utf8), to: InferenceController.revokedPath(rig.instance),
+    mode: .atMost(0o600))
+  lock.release()
+  group.wait()
+  defer { if let pid = forwardMaster(rig) { kill(pid, SIGKILL) } }
+  #expect(try result.withLock { try $0?.get() } == true)
+  #expect(!rig.gateway.ops.contains("register_session"))
+  #expect(rig.guest.log("tunnels.log").isEmpty)
+}
+
+/// A forward record from a previous boot (its sandbox owner gone) is not a
+/// forward death: the new boot establishes its own session.
+@Test func aPreviousBootsForwardRecordIsNotAForwardDeath() throws {
+  let rig = try Rig()
+  defer { rig.remove() }
+  let control = try rig.controller(carrier: rig.forward())
+  _ = try control.ensureSession(rig.instance, target: rig.guest.target)
+  let master = try #require(forwardMaster(rig))
+  kill(master, SIGKILL)
+  #expect(waitUntil { !isRunning(master) })
+  let path = InferenceController.statePath(rig.instance)
+  let state = try #require(readFile(path))
+  let rewritten = state.replacingOccurrences(
+    of: #""owner_start" : ""#, with: #""owner_start" : "0."#)
+  #expect(rewritten != state)
+  try writeFile(path, rewritten)
+  #expect(!control.forwardDied(rig.instance))
 }
 
 /// A brokered boot whose policy lacks the grant, a failing forward, or a
