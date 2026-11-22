@@ -278,7 +278,9 @@ import Testing
     #expect(second.transport.isRunning)
   }
 
-  /// Activation of a forward session needs the registered owner running.
+  /// Activation of a forward session needs the registered owner running,
+  /// checked before any exit watch is armed: the refusal leaves the
+  /// registration inactive rather than taking the arm-race revocation path.
   @Test func forwardActivationNeedsTheRegisteredOwner() throws {
     let backend = try FakeBackend(.stream(chatEvents))
     let harness = try Harness()
@@ -295,6 +297,7 @@ import Testing
           sessionID: session.id, epoch: harness.gateway.epoch, transport: forward,
           deadlineSeconds: nil))
     }
+    #expect(harness.gatewaySession(session.id)?.phase == .inactive)
   }
 
   @Test func sessionDeadlineRevokes() throws {
