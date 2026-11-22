@@ -259,21 +259,35 @@ import Testing
     #expect(try eventually(timeout: .seconds(10)) { server.active == 0 })
   }
 
-  /// R1: with no gateway socket a guest connection is closed, and the next one is relayed once
-  /// the socket is back.
-  @Test func aMissingGatewayClosesOnlyThatConnection() throws {
+  /// R1 and AT-33: with no gateway socket, or with anything but a socket this user owns at its
+  /// path (a symlink to one included), a guest connection is closed without connecting, and the
+  /// next one is relayed once the socket is back.
+  @Test func onlyTheGatewaysOwnSocketIsDialedAndTheRelayRecovers() throws {
     let dir = FakeGateway.directory()
     defer { try? FileManager.default.removeItem(at: dir) }
+    let real = try FakeGateway(in: dir, name: "real.sock", serve: .hold)
+    defer { real.stop() }
     let path = dir.appendingPathComponent("g.sock")
-    try ControlSocket.prepareDirectory(for: path)
     let server = InferenceRelayServer(
       endpoint: .init(host: path), expiresAt: nil, log: { _ in })
     defer { server.shutdownAll() }
-    let (missing, peer) = try pair()
-    defer { close(peer) }
-    #expect(server.accept(missing))
-    #expect(readsEOF(peer))
-    #expect(try eventually { server.active == 0 })
+    func refused() throws -> Bool {
+      let (ours, theirs) = try pair()
+      defer { close(theirs) }
+      #expect(server.accept(ours))
+      return readsEOF(theirs)
+    }
+    #expect(try refused())
+    #expect(throws: SandboxError.self) { try InferenceRelay.dialGateway(path) }
+    #expect(symlink(real.path.path, path.path) == 0)
+    #expect(try refused())
+    #expect(throws: SandboxError.self) { try InferenceRelay.dialGateway(path) }
+    unlink(path.path)
+    #expect(FileManager.default.createFile(atPath: path.path, contents: Data()))
+    #expect(try refused())
+    unlink(path.path)
+    #expect(real.accepted == 0)
+    #expect(server.active == 0)
 
     let gateway = try FakeGateway(in: dir, name: "g.sock", serve: .hold)
     defer { gateway.stop() }
@@ -281,6 +295,9 @@ import Testing
     defer { close(theirs) }
     #expect(server.accept(ours))
     #expect(try eventually { gateway.accepted == 1 })
+    #expect(chmod(dir.path, 0o755) == 0)
+    defer { chmod(dir.path, 0o700) }
+    #expect(throws: SandboxError.self) { try InferenceRelay.dialGateway(path) }
   }
 
   /// No relayed connection outlives a halt or the boot's deadline, and none is accepted after.

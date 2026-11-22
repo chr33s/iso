@@ -69,10 +69,27 @@ package enum InferenceRelay {
     }
   }
 
-  /// A connected descriptor to the gateway's socket at `path`, owned by the caller, after
-  /// checking its directory as the control socket's.
+  /// A connected descriptor to the gateway's socket at `path`, owned by the caller.
+  /// The directory must be private to this user, the node itself (not a symlink to one) a socket
+  /// this user owns, and the peer must run as this user. Only this user can change the node
+  /// between the check and the connect.
   static func dialGateway(_ path: URL) throws -> Int32 {
-    try ControlSocket.connectClient(path, timeout: nil)
+    try ControlSocket.verifyDirectory(for: path)
+    var st = stat()
+    guard lstat(path.path, &st) == 0 else {
+      throw SandboxError("the gateway socket \(path.path) is absent")
+    }
+    guard (st.st_mode & S_IFMT) == S_IFSOCK, st.st_uid == getuid() else {
+      throw SandboxError("\(path.path) is not a socket owned by this user")
+    }
+    let fd = try ControlSocket.connectClient(path, timeout: nil)
+    var uid: uid_t = 0
+    var gid: gid_t = 0
+    guard getpeereid(fd, &uid, &gid) == 0, uid == getuid() else {
+      close(fd)
+      throw SandboxError("the gateway socket \(path.path) is served by another user")
+    }
+    return fd
   }
 
   /// Copies both ways between a guest connection and its gateway connection, each through one
