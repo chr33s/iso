@@ -189,6 +189,8 @@ EOF
 printf '#!/bin/sh\necho installed-iso-sandbox\n' >"$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
 printf '#!/bin/sh\necho installed-iso-egress\n' >"$TMPDIR/build/${FAKE_DIR}/iso-egress"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-egress"
+printf '#!/bin/sh\necho installed-iso-inference\n' >"$TMPDIR/build/${FAKE_DIR}/iso-inference"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-inference"
 printf '#!/bin/sh\necho installed-iso-macos-helper\n' >"$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-macos-helper"
 chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-sandbox"
@@ -196,6 +198,21 @@ chmod +x "$TMPDIR/build/${FAKE_DIR}/iso" "$TMPDIR/build/${FAKE_DIR}/iso-proxy"
 # Linux `desktop` images' guest files (optional members of a release).
 printf 'installed-iso-cu-mcp\n' >"$TMPDIR/build/${FAKE_DIR}/iso-cu-mcp"
 printf 'installed-vmlinux-desktop\n' >"$TMPDIR/build/${FAKE_DIR}/vmlinux-desktop"
+# BUILD.json as build-release.py writes it. A listed member that is absent or
+# not a regular file gets a digest nothing matches.
+RELEASE_BINARIES=(iso iso-proxy iso-inference iso-egress iso-sandbox iso-macos-helper)
+write_manifest() {
+    local names=("$@") entries="" name path digest
+    [[ ${#names[@]} -gt 0 ]] || names=("${RELEASE_BINARIES[@]}")
+    for name in "${names[@]}"; do
+        path="$TMPDIR/build/${FAKE_DIR}/$name"
+        digest=00
+        if [[ -f "$path" && ! -L "$path" ]]; then digest="$(sha_of "$path")"; fi
+        entries+="${entries:+,}\"${name}\":\"${digest}\""
+    done
+    printf '{"format":1,"binaries":{%s}}\n' "$entries" >"$TMPDIR/build/${FAKE_DIR}/BUILD.json"
+}
+write_manifest
 (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
 write_sums
 
@@ -257,6 +274,12 @@ if [[ "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress ]]; then
     pass "update installs the egress companion"
 else
     fail "update installs the egress companion"
+fi
+
+if [[ "$("$TMPDIR/bin/iso-inference" 2>/dev/null)" == installed-iso-inference ]]; then
+    pass "update installs the inference gateway"
+else
+    fail "update installs the inference gateway"
 fi
 
 for artifact in iso-cu-mcp vmlinux-desktop; do
@@ -391,6 +414,7 @@ else
 fi
 
 repack_release_fixture() {
+    write_manifest "$@"
     (cd "$TMPDIR/build" && tar -czf "$FIXTURE/${FAKE_TARBALL}" "$FAKE_DIR")
     write_sums
 }
@@ -398,20 +422,20 @@ repack_release_fixture() {
 seed_install() {
     cp "$RELEASE_BIN" "$ISO_BIN"
     original_host="$(sha_of "$ISO_BIN")"
-    for artifact in iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+    for artifact in iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
         printf '%s\n' "keep-$artifact" >"$TMPDIR/bin/$artifact"
     done
 }
 
 install_unchanged() {
     [[ "$(sha_of "$ISO_BIN")" == "$original_host" ]] || return 1
-    for artifact in iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+    for artifact in iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
         [[ "$(cat "$TMPDIR/bin/$artifact")" == "keep-$artifact" ]] || return 1
     done
 }
 
 echo "==> Test 6: every release binary is required before replacement"
-for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+for missing in iso iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
     mv "$TMPDIR/build/${FAKE_DIR}/$missing" "$TMPDIR/missing-backup"
     repack_release_fixture
     seed_install
@@ -426,6 +450,41 @@ for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
     fi
     mv "$TMPDIR/missing-backup" "$TMPDIR/build/${FAKE_DIR}/$missing"
 done
+
+echo "==> Test 6a: BUILD.json decides the gateway and newer companions"
+mv "$TMPDIR/build/${FAKE_DIR}/iso-inference" "$TMPDIR/inference-backup"
+repack_release_fixture iso iso-proxy iso-egress iso-sandbox iso-macos-helper
+seed_install
+if "$ISO_BIN" update --yes >"$TMPDIR/no-gateway.log" 2>&1 \
+    && [[ "$("$TMPDIR/bin/iso-proxy")" == "MARKER: fake-proxy-binary" \
+       && ! -e "$TMPDIR/bin/iso-inference" ]]; then
+    pass "a release that lists no iso-inference removes the installed gateway"
+else
+    fail "a release that lists no iso-inference removes the installed gateway" "$(tail -5 "$TMPDIR/no-gateway.log")"
+fi
+mv "$TMPDIR/inference-backup" "$TMPDIR/build/${FAKE_DIR}/iso-inference"
+printf '#!/bin/sh\necho installed-iso-future\n' >"$TMPDIR/build/${FAKE_DIR}/iso-future"
+chmod +x "$TMPDIR/build/${FAKE_DIR}/iso-future"
+repack_release_fixture "${RELEASE_BINARIES[@]}" iso-future
+seed_install
+if "$ISO_BIN" update --yes >"$TMPDIR/future.log" 2>&1 \
+    && [[ "$("$TMPDIR/bin/iso-future")" == installed-iso-future \
+       && "$("$TMPDIR/bin/iso-inference")" == installed-iso-inference ]]; then
+    pass "a listed companion the updater does not know is installed"
+else
+    fail "a listed companion the updater does not know is installed" "$(tail -5 "$TMPDIR/future.log")"
+fi
+rm -f "$TMPDIR/build/${FAKE_DIR}/iso-future" "$TMPDIR/bin/iso-future"
+repack_release_fixture iso iso-inference iso-egress iso-sandbox iso-macos-helper
+seed_install
+if ! "$ISO_BIN" update --yes >"$TMPDIR/unlisted-proxy.log" 2>&1 \
+    && grep -q "BUILD.json does not list iso-proxy" "$TMPDIR/unlisted-proxy.log" \
+    && install_unchanged; then
+    pass "a BUILD.json without iso-proxy preserves every installed binary"
+else
+    fail "a BUILD.json without iso-proxy preserves every installed binary" "$(tail -5 "$TMPDIR/unlisted-proxy.log")"
+fi
+repack_release_fixture
 
 echo "==> Test 7: symlink artifacts are rejected before replacement"
 mv "$TMPDIR/build/${FAKE_DIR}/iso-egress" "$TMPDIR/egress-backup"
@@ -447,6 +506,7 @@ if "$ISO_BIN" update --yes >"$TMPDIR/complete.log" 2>&1 \
        && "$("$TMPDIR/bin/iso-proxy")" == "MARKER: fake-proxy-binary" \
        && "$("$TMPDIR/bin/iso-sandbox")" == installed-iso-sandbox \
        && "$("$TMPDIR/bin/iso-egress")" == installed-iso-egress \
+       && "$("$TMPDIR/bin/iso-inference")" == installed-iso-inference \
        && "$("$TMPDIR/bin/iso-macos-helper")" == installed-iso-macos-helper ]]; then
     pass "complete release replaces every binary"
 else

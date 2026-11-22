@@ -192,6 +192,16 @@ run_swift_proxy() {
   python3 scripts/test-swift-proxy-mutations.py
 }
 
+# The iso-inference gateway under its Seatbelt profile and the managed-backend
+# launcher, as CI runs them.
+run_inference() {
+  if ! macos_27; then
+    warn "Inference gateway gates require macOS 27+ — run \`mise run check-inference\` before tagging"
+    return 0
+  fi
+  need_mise && mise run check-inference
+}
+
 run_swift_egress() {
   if ! macos_27; then
     warn "Swift egress validation requires macOS 27+ — run its package/lease gates before tagging"
@@ -257,6 +267,7 @@ step "VM integration harness regression tests" python3 tests/test-apple-integrat
 step "Proxy runner and fixture regression tests" run_proxy_fixtures
 step "Codex account wrapper regression tests" python3 tests/test-codex-account.py
 step "Swift proxy tests" run_swift_proxy
+step "Inference gateway and launcher gates" run_inference
 step "Swift egress tests and confined lease" run_swift_egress
 step "iso-sandbox tests" run_sandbox_tests
 step "iso-ci companion" run_ci_companion

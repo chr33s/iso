@@ -1,8 +1,9 @@
 name: CodeQL
 
-# Static data-flow analysis of the Swift host and the two network-facing
-# companions (credential proxy, filtered egress) with the security-extended
-# query suite; results go to GitHub code scanning. Not called by release.
+# Static data-flow analysis of the Swift host and the network-facing
+# companions (the iso-proxy package's credential proxy and inference gateway,
+# filtered egress) with the security-extended query suite; results go to
+# GitHub code scanning. Not called by release.
 on:
   push:
     branches: [main]

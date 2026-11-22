@@ -12,8 +12,10 @@ Stages, in order, each explicit:
             Sources/IsoHost/Update/BuildRevision.swift there. The working tree is
             never modified. `--expected-revision` requires a clean checkout
             of exactly that commit, before and after the build.
-2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`),
-            the filtered-egress companion (`iso-egress`), and the Apple
+2. build    the Swift host (`iso`), the credential proxy (`iso-proxy`)
+            and, from the same package, the local inference gateway
+            (`iso-inference`), the filtered-egress companion
+            (`iso-egress`), and the Apple
             runtime (`iso-sandbox`, with the macOS guest agent
             `iso-macos-helper`), plus the Linux `desktop` images' guest
             files: `iso-cu-mcp` (Static Linux SDK) and `vmlinux-desktop`
@@ -31,14 +33,17 @@ Stages, in order, each explicit:
             scripts/build-iso-sandbox.sh). `--release` builds
             with optimizations and `-D ISO_RELEASE_BUILD`, which makes
             `iso update` treat the binary as a release.
-3. test     (`--test`) every package's tests in the staging copy.
+3. test     (`--test`) every package's tests in the staging copy, then the
+            iso-inference gateway's confined-process gate against the
+            gateway just built and the managed-backend launcher test, as
+            `mise run check-inference` runs them in CI.
 4. sign     (`--sign`) Developer ID signing and notarization through
             scripts/macos-sign-notarize.sh. Only this stage sees the
             MACOS_*/NOTARY_* secrets (also checked before staging); every
             other subprocess has them removed.
 5. archive  `iso-<name>-aarch64-apple-darwin.tar.gz` holding the directory
             `iso-<name>-aarch64-apple-darwin/` (iso, iso-proxy,
-            iso-egress, iso-sandbox, iso-macos-helper, iso-cu-mcp,
+            iso-inference, iso-egress, iso-sandbox, iso-macos-helper, iso-cu-mcp,
             vmlinux-desktop, legal notices,
             the skills/iso agent skill, BUILD.json), the desktop kernel's
             corresponding source as `iso-<name>-vmlinux-desktop-source.tar.gz`,
@@ -65,9 +70,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIPLE = "aarch64-apple-darwin"
-BINARIES = ["iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper"]
+BINARIES = ["iso", "iso-proxy", "iso-inference", "iso-egress", "iso-sandbox", "iso-macos-helper"]
 # Signed here; build-iso-sandbox.sh signs iso-sandbox and iso-macos-helper.
-ADHOC_SIGNED = ["iso", "iso-proxy", "iso-egress"]
+ADHOC_SIGNED = ["iso", "iso-proxy", "iso-inference", "iso-egress"]
 # Linux guest files (ELF, not codesigned): checked by content instead.
 LINUX_GUEST_FILES = ["iso-cu-mcp", "vmlinux-desktop"]
 ENTITLEMENTS = "scripts/enhanced-security.entitlements"
@@ -162,7 +167,7 @@ def build(staging, configuration, release, prefix, desktop_kernel=None):
     common = ["-c", configuration, "--force-resolved-versions"]
     run(["swift", "build", *common, "--product", "iso", *flags], staging)
     host = Path(run(["swift", "build", *common, "--show-bin-path"], staging, capture=True).strip())
-    phase("Build iso-proxy")
+    phase("Build iso-proxy and iso-inference")
     proxy_package = staging / "iso-proxy"
     run(["swift", "build", "--package-path", proxy_package, *common], staging)
     proxy = Path(run(["swift", "build", "--package-path", proxy_package, *common, "--show-bin-path"],
@@ -182,13 +187,14 @@ def build(staging, configuration, release, prefix, desktop_kernel=None):
         "vmlinux-desktop": prefix / "kernel/vmlinux-desktop",
         "iso": host / "iso",
         "iso-proxy": proxy / "iso-proxy",
+        "iso-inference": proxy / "iso-inference",
         "iso-egress": egress / "iso-egress",
         "iso-sandbox": prefix / "bin/iso-sandbox",
         "iso-macos-helper": prefix / "bin/iso-macos-helper",
     }
 
 
-def test(staging):
+def test(staging, binaries):
     phase("Test iso (Swift host)")
     run(["swift", "test", "--force-resolved-versions"], staging)
     phase("Test iso-policy")
@@ -199,6 +205,10 @@ def test(staging):
     run(["swift", "test", "--package-path", staging / "iso-egress", "--force-resolved-versions"], staging)
     phase("Test iso-sandbox")
     run(["swift", "test", "--package-path", staging / "iso-sandbox", "--no-parallel"], staging)
+    phase("Inference gateway confined-process gate and managed-backend launcher")
+    run([sys.executable, staging / "scripts/test-inference-gateway-process.py",
+         "--binary", binaries["iso-inference"]], staging)
+    run([sys.executable, staging / "tests/test-inference-launcher.py"], staging)
 
 
 def adhoc_sign(directory, entitlements):
@@ -422,7 +432,7 @@ def main():
         binaries = build(staging, configuration, args.release, work / "runtime",
                          args.desktop_kernel and args.desktop_kernel.resolve())
         if args.test:
-            test(staging)
+            test(staging, binaries)
         bundle = work / "bundle" / name
         bundle.mkdir(parents=True)
         for binary, source in binaries.items():
@@ -430,7 +440,7 @@ def main():
         copy_legal_files(staging, bundle)
         copy_linux_guest_legal(work / "runtime", staging, bundle)
         copy_skill(staging, bundle)
-        phase("Ad-hoc sign iso, iso-proxy and iso-egress")
+        phase("Ad-hoc sign iso, iso-proxy, iso-inference and iso-egress")
         adhoc_sign(bundle, staging / ENTITLEMENTS)
         if args.sign:
             phase("Sign and notarize (Developer ID)")

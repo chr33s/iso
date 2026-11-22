@@ -17,8 +17,8 @@ are outside this fork's scope.
 The installer, updater, and repository provenance checks target `chr33s/iso`.
 Release tags must point to commits reachable from the `main` branch. A
 release is one archive, `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz`, holding
-the Swift host `iso`, the credential proxy `iso-proxy`, the egress companion
-`iso-egress`, the
+the Swift host `iso`, the credential proxy `iso-proxy`, the local inference
+gateway `iso-inference`, the egress companion `iso-egress`, the
 signed `iso-sandbox` runtime and its macOS guest helper `iso-macos-helper`, the
 Linux `desktop` images' guest files `iso-cu-mcp` and `vmlinux-desktop`, the
 `skills/iso/` [agent skill](docs/agent-skill.md), plus `BUILD.json`, `LICENSE`, `NOTICE`,
@@ -41,7 +41,8 @@ build entrypoint. Its stages are explicit and run in order:
    modified. `--expected-revision SHA` requires a clean checkout of exactly
    that commit, before and after the build.
 2. **build** — `iso` (release: optimized, `-D ISO_RELEASE_BUILD`, which makes
-   `iso update` treat the binary as a release), `iso-proxy`, `iso-egress`,
+   `iso update` treat the binary as a release), `iso-proxy` and
+   `iso-inference` (both from the `iso-proxy` package), `iso-egress`,
    `iso-sandbox` and `iso-macos-helper`, all with `--force-resolved-versions`.
    Each is signed ad hoc with the hardened runtime and the Enhanced Security
    entitlements in `scripts/enhanced-security.entitlements` (`iso-sandbox`
@@ -54,7 +55,9 @@ build entrypoint. Its stages are explicit and run in order:
    from `DIR` instead, after checking the kernel against
    `KernelPin.desktopAllowed` and the Linux tarball against its pinned
    SHA-256.
-3. **test** (`--test`) — every package's tests in the staging copy.
+3. **test** (`--test`) — every package's tests in the staging copy, then
+   the `iso-inference` gateway's confined-process gate against the gateway
+   just built and the managed-backend launcher test.
 4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
    signing and notarization; see [macOS signing](#macos-signing).
 5. **archive** — verifies `iso --version` and `iso-sandbox version`, writes
@@ -76,8 +79,9 @@ that runs it. It requires Apple Silicon macOS 27+.
 - **`ci.yml`** runs on pushes and pull requests: the Swift host
   format/build/test gates and Python host checks, fuzz corpus replay and a
   bounded smoke, the `iso-proxy` and `iso-sandbox` package tests, the
-  host-only install/update/uninstall suites and regression scripts, and
-  `zizmor`.
+  `iso-inference` gateway's confined-process gate and the managed-backend
+  launcher test (`mise run check-inference`), the host-only
+  install/update/uninstall suites and regression scripts, and `zizmor`.
 - **`candidate.yml`** builds and tests a same-revision candidate with
   `scripts/build-release.py --release --test`, then, as `release.yml` does,
   signs and notarizes it in a separate `sign-macos` job in the `release`
@@ -120,7 +124,7 @@ full commit SHA from the workflow run, then verify before extracting:
 
 The automated equivalent, run from the repository checkout, verifies the pinned
 attestation before extraction, rejects unsafe archive members, checks clean build
-metadata and all five executable hashes, and requires Developer ID signatures and
+metadata and all six executable hashes, and requires Developer ID signatures and
 notarized Gatekeeper assessments before running either version command:
 
 ```bash
@@ -151,7 +155,7 @@ set -e
 mkdir candidate
 tar -xzf "$ARCHIVE" -C candidate
 cd "candidate/iso-${REVISION:0:12}-aarch64-apple-darwin"
-for binary in iso iso-proxy iso-egress iso-sandbox iso-macos-helper; do
+for binary in iso iso-proxy iso-inference iso-egress iso-sandbox iso-macos-helper; do
   codesign --verify --strict "$binary"
 done
 # The Linux guest files are not Mach-O and carry no signature of their own.
@@ -165,7 +169,7 @@ cat BUILD.json
 `BUILD.json` must name the expected commit in `source_revision`, with
 `source_dirty: false`, `release_build: true`, `tested: true`, and
 `developer_id_signed: true`, and its `binaries` digests must match the
-extracted files. All five binaries stay
+extracted files. All six binaries stay
 together. Earlier downloads retain their original archive layout and signer
 workflow identity; use those original identities when verifying old artifacts.
 
@@ -174,8 +178,8 @@ workflow identity; use those original identities when verifying old artifacts.
 `scripts/build-release.py --sign` runs
 [`scripts/macos-sign-notarize.sh`](scripts/macos-sign-notarize.sh) on the
 staged bundle before `BUILD.json` and `SHA256SUMS` are written. It signs
-`iso`, `iso-proxy`, `iso-egress`, `iso-sandbox` and `iso-macos-helper` with a
-Developer ID Application certificate (hardened runtime, secure timestamp, the
+`iso`, `iso-proxy`, `iso-inference`, `iso-egress`, `iso-sandbox` and
+`iso-macos-helper` with a Developer ID Application certificate (hardened runtime, secure timestamp, the
 Enhanced Security entitlements; `iso-sandbox` keeps its virtualization
 entitlement), submits them to Apple's notary service, and fails unless
 notarization is `Accepted`. A browser-downloaded archive then runs without
@@ -292,7 +296,8 @@ anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 |-------|:---:|:---:|:---:|
 | `swift format lint --strict`, build, package tests | ✓ | ✓ | |
 | Python host behavior and CLI contract checks | ✓ | ✓ | |
-| Fuzz corpus replay + bounded smoke | ✓ | ✓ | |
+| Inference gateway confined-process and launcher gates (`mise run check-inference`) | ✓ | ✓ (preflight, `build-release.py --test`) | |
+| Fuzz corpus replay + bounded smoke | ✓ | ✓ (preflight `--fuzz`) | |
 | Host-only install/update/uninstall and regression suites | ✓ | ✓ | |
 | Version ↔ CHANGELOG ↔ tag agreement | | ✓ (`build-release.py --tag`, preflight) | |
 | Release archive (`build-release.py --release --test`) | | ✓ | |
@@ -365,7 +370,8 @@ check on `main`; check its latest run before tagging.
    - `scripts/fuzz.sh run <target> 600` when it changed a parser of
      user-editable or guest-authored input (`ParseRepoSlug`, `JSONCToJSON`,
      `ConfigLoad`, `GuestJSON`, `CodexTOML`, `EgressConnect`, `EgressHead`,
-     `ProxyRequestTarget`, `ProxyHeaders`, `ProxyCapability`).
+     `ProxyRequestTarget`, `ProxyHeaders`, `ProxyCapability`,
+     `InferenceRequest`, `InferenceStream`, `InferenceControl`).
 
 7. **Open the bump PR** (`Sources/IsoHost/Update/UpdateVersion.swift`, `CHANGELOG.md`), get it
    reviewed, and merge to `main`. Never push the bump straight to `main`.
@@ -392,7 +398,7 @@ check on `main`; check its latest run before tagging.
 
 10. **Verify the published release.** On the GitHub release page confirm:
    - `iso-vX.Y.Z-aarch64-apple-darwin.tar.gz` containing `iso`, `iso-proxy`,
-     `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `iso-cu-mcp`, `vmlinux-desktop`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
+     `iso-inference`, `iso-egress`, `iso-sandbox`, `iso-macos-helper`, `iso-cu-mcp`, `vmlinux-desktop`, `skills/iso/`, the legal files listed above and `BUILD.json`, plus release-level
      `SHA256SUMS`, `SHA256SUMS.sig`, `attestations.jsonl` and the desktop
      kernel's corresponding source, `iso-vX.Y.Z-vmlinux-desktop-source.tar.gz`,
    - the build-provenance attestation is attached,
@@ -420,7 +426,7 @@ check on `main`; check its latest run before tagging.
    download, so confirm the asset on the release page (step 10's first bullet)
    before concluding it is missing.
 
-   For a repeatable isolated install, five-binary replacement, version/signing
+   For a repeatable isolated install, six-binary replacement, version/signing
    check, and CLI uninstall, run:
 
    ```bash
@@ -432,9 +438,10 @@ check on `main`; check its latest run before tagging.
    stripped. The first-release path forces a same-version replacement; later
    releases can use `--from-version vA.B.C` for cross-version upgrade acceptance.
    A starting release whose updater predates `iso-cu-mcp` and
-   `vmlinux-desktop` (v0.9.0 and earlier) installs neither, so the script
-   then runs the documented second `iso update --force` and reports it as
-   `guest_files`.
+   `vmlinux-desktop` (v0.9.0 and earlier) installs neither, and one before
+   v0.12.0 installs no `iso-inference`, so the script then runs the
+   documented second `iso update --force` and reports it as `guest_files`
+   or `inference_gateway`.
    The install and update steps each download a full release and may take up
    to `--download-timeout` seconds (default 1800); other steps keep 300.
    It creates no VM and performs no provider calls. Run it on a clean supported

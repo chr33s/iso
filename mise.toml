@@ -54,7 +54,7 @@ run = "python3 scripts/hygiene.py"
 
 [tasks.lint]
 description = "swift format lint --strict over every Swift package"
-run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-ci/Package.swift iso-ci/Sources iso-ci/Tests scripts/verify-egress-readiness.swift experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
+run = "swift format lint --recursive --strict Package.swift Sources tests/swift fuzz/Targets fuzz/Entrypoints iso-sandbox/Package.swift iso-sandbox/Sources iso-sandbox/Tests iso-policy/Package.swift iso-policy/Sources iso-policy/Tests iso-policy/Benchmarks iso-proxy/Package.swift iso-proxy/Sources iso-proxy/Tests iso-proxy/Fuzz iso-egress/Package.swift iso-egress/Sources iso-egress/Tests iso-egress/Fuzz iso-ci/Package.swift iso-ci/Sources iso-ci/Tests scripts/verify-egress-readiness.swift experiments/macos-vz-context-probe/Package.swift experiments/macos-vz-context-probe/Sources"
 
 [tasks.lint-shell]
 description = "shellcheck over every tracked shell script"
@@ -101,6 +101,16 @@ python3 scripts/test-proxy-contract.py --swift "$proxy_bin_dir/iso-proxy"
 python3 scripts/test-swift-proxy-mutations.py
 """
 
+# The gateway's package tests run in check-proxy (same package).
+[tasks.check-inference]
+description = "Inference gateway confined-process gate and the managed-backend launcher (no VM, model or network)"
+run = """
+swift build --package-path iso-proxy --product iso-inference --force-resolved-versions
+inference_bin_dir="$(swift build --package-path iso-proxy --show-bin-path)"
+python3 scripts/test-inference-gateway-process.py --binary "$inference_bin_dir/iso-inference"
+python3 tests/test-inference-launcher.py
+"""
+
 [tasks.check-egress]
 description = "Filtered egress tests, confinement, lease, pressure, and mutation gates"
 run = """
@@ -127,4 +137,4 @@ sh iso-ci/scripts/test-dataplane-jail.sh "$bin"
 
 [tasks.check-all]
 description = "Local checks for every package; VM integration is a separate gate"
-depends = ["check", "semgrep", "check-policy", "check-runtime", "check-proxy", "check-egress", "check-ci"]
+depends = ["check", "semgrep", "check-policy", "check-runtime", "check-proxy", "check-inference", "check-egress", "check-ci"]

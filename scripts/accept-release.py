@@ -4,8 +4,9 @@
 No VMs or provider requests are made. Run on a clean supported Mac for clean-machine
 distribution evidence. A same-version forced update exercises first-release
 replacement; pass --from-version for a later cross-version upgrade acceptance.
-A starting release whose updater predates the Linux guest files gets the
-documented second forced update before the bundle is checked.
+A starting release whose updater predates the Linux guest files or the
+inference gateway gets the documented second forced update before the bundle
+is checked.
 """
 import argparse
 import json
@@ -16,10 +17,14 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARIES = ("iso", "iso-proxy", "iso-egress", "iso-sandbox", "iso-macos-helper")
+BINARIES = ("iso", "iso-proxy", "iso-inference", "iso-egress", "iso-sandbox", "iso-macos-helper")
 # Linux `desktop` images' guest files, installed beside the binaries. They are
 # not Mach-O, so they carry no signature or notarization of their own.
 GUEST_FILES = ("iso-cu-mcp", "vmlinux-desktop")
+# Members a starting release can predate: neither it nor its updater installs
+# them. The guest files came after v0.9.0 and the inference gateway after
+# v0.11.x; the documented step is one forced update by the new binary.
+LATER = {"guest_files": GUEST_FILES, "inference_gateway": ("iso-inference",)}
 
 
 def version(value):
@@ -47,12 +52,19 @@ def command(args, env, timeout=300):
     return result.stdout + result.stderr
 
 
-def check_bundle(work, tag, env, guest_files=True):
-    for name in GUEST_FILES if guest_files else ():
+def check_bundle(work, tag, env, later=True):
+    """`later=False`: the release may predate the LATER members, so an absent
+    one is skipped; one that is installed is still checked."""
+    optional = set() if later else {name for names in LATER.values() for name in names}
+    for name in GUEST_FILES:
+        if name in optional and not (work / "bin" / name).exists():
+            continue
         if not (work / "bin" / name).is_file():
             raise ValueError(f"installed bundle missing {name}")
     for binary in BINARIES:
         path = work / "bin" / binary
+        if binary in optional and not path.exists():
+            continue
         if not path.is_file() or not os.access(path, os.X_OK):
             raise ValueError(f"installed bundle missing {binary}")
         command(["/usr/bin/codesign", "--verify", "--strict", path], env)
@@ -75,18 +87,19 @@ def accept(work, initial, target, download_timeout):
     for marker in ("SHA256SUMS signature verified.", "Attestation verified against attestations.jsonl"):
         if marker not in installed:
             raise ValueError("installer did not confirm credential-free bundled verification")
-    # A starting release that predates the guest files installs none.
-    check_bundle(work, initial, env, guest_files=initial == target)
+    # A starting release that predates a LATER member installs none.
+    check_bundle(work, initial, env, later=initial == target)
     executable = work / "bin/iso"
     before = {name: (work / "bin" / name).stat().st_ino for name in BINARIES + GUEST_FILES
               if (work / "bin" / name).exists()}
     update = [executable, "update", "--version", target, "--force", "--yes"]
     command(update, env, timeout=download_timeout)
-    # An updater that predates the guest files (v0.9.0 and earlier) installs
-    # none. The documented step is one forced update by the new binary.
-    second_update = (not any(name in before for name in GUEST_FILES)
-                     and not all((work / "bin" / name).is_file() for name in GUEST_FILES))
-    if second_update:
+    # An updater that predates a LATER group installs none of it. The
+    # documented step is one forced update by the new binary.
+    missed = [group for group, names in LATER.items()
+              if not any(name in before for name in names)
+              and not all((work / "bin" / name).is_file() for name in names)]
+    if missed:
         command(update, env, timeout=download_timeout)
     check_bundle(work, target, env)
     if any((work / "bin" / name).stat().st_ino == inode for name, inode in before.items()):
@@ -98,8 +111,8 @@ def accept(work, initial, target, download_timeout):
     return {"installed": initial, "updated": target,
             "update_kind": "same-version replacement" if initial == target else "cross-version upgrade",
             "credential_free_install": True, "all_binaries_replaced": True,
-            "guest_files": ("installed by a second forced update; the starting updater predates them"
-                            if second_update else "installed by the update"),
+            **{group: ("installed by a second forced update; the starting updater predates them"
+                       if group in missed else "installed by the update") for group in LATER},
             "uninstall": "CLI removed", "vm_and_provider_acceptance": "not exercised"}
 
 

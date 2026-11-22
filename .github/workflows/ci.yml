@@ -232,6 +232,12 @@ jobs:
             swift test --package-path iso-proxy --force-resolved-versions
           python3 scripts/test-proxy-contract.py --swift "$bin_dir/iso-proxy"
 
+      # The iso-inference gateway (built above, same package) under its Seatbelt
+      # profile, and the host's managed-backend launcher against a stand-in
+      # mlx_lm. The gateway's unit tests ran in the package tests above.
+      - name: Inference gateway confined-process and launcher gates
+        run: mise run check-inference
+
   zizmor:
     name: Workflow security audit
     runs-on: ubuntu-24.04

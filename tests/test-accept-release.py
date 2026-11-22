@@ -16,7 +16,7 @@ SPEC.loader.exec_module(acceptance)
 
 class AcceptanceTests(unittest.TestCase):
     def check_fixture(self, *, missing=None, nonexecutable=None, version="iso 0.7.0 (abc123)\n",
-                      assessment="source=Notarized Developer ID", failure=None, guest_files=True):
+                      assessment="source=Notarized Developer ID", failure=None, later=True):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             (work / "bin").mkdir()
@@ -41,9 +41,12 @@ class AcceptanceTests(unittest.TestCase):
                 return ""
 
             with patch.object(acceptance, "command", side_effect=command):
-                acceptance.check_bundle(work, "v0.7.0", {}, guest_files=guest_files)
-            self.assertEqual(sum(call[0] == "/usr/bin/codesign" for call in calls), len(acceptance.BINARIES))
-            self.assertEqual(sum(call[0] == "/usr/sbin/spctl" for call in calls), len(acceptance.BINARIES))
+                acceptance.check_bundle(work, "v0.7.0", {}, later=later)
+            installed = [name for name in acceptance.BINARIES if name != missing]
+            self.assertEqual([Path(call[-1]).name for call in calls if call[0] == "/usr/bin/codesign"],
+                             installed)
+            self.assertEqual([Path(call[-1]).name for call in calls if call[0] == "/usr/sbin/spctl"],
+                             installed)
             self.assertEqual(calls[-2][1], "version")
             self.assertEqual(calls[-1][1], "--help")
 
@@ -57,12 +60,23 @@ class AcceptanceTests(unittest.TestCase):
             with self.subTest(binary=binary), self.assertRaisesRegex(ValueError, "missing"):
                 self.check_fixture(nonexecutable=binary)
 
-    def test_missing_guest_files_fail_unless_the_release_predates_them(self):
-        for name in acceptance.GUEST_FILES:
+    def test_every_release_binary_is_checked(self):
+        self.assertIn("iso-inference", acceptance.BINARIES)
+        self.assertEqual(acceptance.LATER["inference_gateway"], ("iso-inference",))
+
+    def test_missing_later_members_fail_unless_the_release_predates_them(self):
+        for name in acceptance.GUEST_FILES + ("iso-inference",):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "missing " + name):
                 self.check_fixture(missing=name)
             with self.subTest(name=name, predates=True):
-                self.check_fixture(missing=name, guest_files=False)
+                self.check_fixture(missing=name, later=False)
+        # Only the later members are optional for an older release.
+        for name in ("iso-proxy", "iso-egress"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "missing " + name):
+                self.check_fixture(missing=name, later=False)
+        # An installed later member is still checked.
+        with self.assertRaisesRegex(ValueError, "missing iso-inference"):
+            self.check_fixture(nonexecutable="iso-inference", later=False)
 
     def test_signature_or_assessment_failure_propagates(self):
         for tool in ("/usr/bin/codesign", "/usr/sbin/spctl"):
@@ -88,9 +102,10 @@ class AcceptanceTests(unittest.TestCase):
         self.assertNotIn("ISO_UPDATE_API_BASE_URL", env)
 
     def exercise(self, *, omit=None, replace=True, replace_guest_files=True, uninstall=True,
-                 initial="v0.7.0", old_updater=False, second_update_installs=True):
-        """`old_updater`: the starting release predates the guest files, so its
-        install has none and its updater (the first update) installs none."""
+                 initial="v0.7.0", predates=(), second_update_installs=True):
+        """`predates`: the LATER groups the starting release predates, so its
+        install has none of them and its updater (the first update) installs none."""
+        missing = {name for group in predates for name in acceptance.LATER[group]}
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             calls = []
@@ -101,22 +116,20 @@ class AcceptanceTests(unittest.TestCase):
                 timeouts.append(timeout)
                 self.assertEqual(env["HOME"], str(root / "home"))
                 if args[0] == "/bin/bash":
-                    names = acceptance.BINARIES
-                    if not old_updater:
-                        names += acceptance.GUEST_FILES
+                    names = [name for name in acceptance.BINARIES + acceptance.GUEST_FILES
+                             if name not in missing]
                     for name in names:
                         (root / "bin" / name).write_text("first")
                     markers = ["SHA256SUMS signature verified.",
                                "Attestation verified against attestations.jsonl"]
                     return "\n".join(marker for marker in markers if marker != omit)
                 if args[1] == "update" and replace:
-                    names = acceptance.BINARIES
                     updates = sum(call[1] == "update" for call in calls)
-                    if old_updater:
-                        if updates == 2 and second_update_installs:
-                            names += acceptance.GUEST_FILES
-                    elif replace_guest_files:
-                        names += acceptance.GUEST_FILES
+                    names = [name for name in acceptance.BINARIES
+                             if name not in missing or (updates == 2 and second_update_installs)]
+                    if replace_guest_files:
+                        names += [name for name in acceptance.GUEST_FILES
+                                  if name not in missing or (updates == 2 and second_update_installs)]
                     for name in names:
                         new = root / "bin" / (name + ".new")
                         new.write_text("second")
@@ -125,9 +138,12 @@ class AcceptanceTests(unittest.TestCase):
                     (root / "bin/iso").unlink()
                 return ""
 
-            def check_bundle(work, tag, env, guest_files=True):
-                # The real check's guest-file rule, without the signing tools.
-                for name in acceptance.GUEST_FILES if guest_files else ():
+            def check_bundle(work, tag, env, later=True):
+                # The real check's presence rule, without the signing tools.
+                optional = () if later else sum(acceptance.LATER.values(), ())
+                for name in acceptance.BINARIES + acceptance.GUEST_FILES:
+                    if name in optional and not (work / "bin" / name).exists():
+                        continue
                     if not (work / "bin" / name).is_file():
                         raise ValueError(f"installed bundle missing {name}")
 
@@ -135,10 +151,10 @@ class AcceptanceTests(unittest.TestCase):
                     patch.object(acceptance, "check_bundle", side_effect=check_bundle) as check:
                 report = acceptance.accept(root, initial, "v0.7.0", 1234)
             self.assertEqual(check.call_count, 2)
-            self.assertEqual(check.call_args_list[0].kwargs, {"guest_files": initial == "v0.7.0"})
+            self.assertEqual(check.call_args_list[0].kwargs, {"later": initial == "v0.7.0"})
             self.assertEqual(check.call_args_list[1].kwargs, {})
             updates = [call for call in calls if call[1] == "update"]
-            self.assertEqual(len(updates), 2 if old_updater else 1)
+            self.assertEqual(len(updates), 2 if predates else 1)
             for update in updates:
                 self.assertEqual(update[1:], ["update", "--version", "v0.7.0", "--force", "--yes"])
             self.assertIn("--keep-data", calls[-1])
@@ -150,19 +166,28 @@ class AcceptanceTests(unittest.TestCase):
         report = self.exercise()
         self.assertEqual(report["update_kind"], "same-version replacement")
         self.assertEqual(report["guest_files"], "installed by the update")
+        self.assertEqual(report["inference_gateway"], "installed by the update")
 
     def test_an_updater_that_predates_the_guest_files_gets_a_second_forced_update(self):
-        report = self.exercise(initial="v0.6.0", old_updater=True)
+        report = self.exercise(initial="v0.6.0", predates=("guest_files", "inference_gateway"))
         self.assertEqual(report["update_kind"], "cross-version upgrade")
         self.assertIn("second forced update", report["guest_files"])
+        self.assertIn("second forced update", report["inference_gateway"])
 
-    def test_guest_files_still_missing_after_the_second_update_fail(self):
-        with self.assertRaisesRegex(ValueError, "missing iso-cu-mcp"):
-            self.exercise(initial="v0.6.0", old_updater=True, second_update_installs=False)
+    def test_an_updater_that_predates_the_inference_gateway_gets_a_second_forced_update(self):
+        report = self.exercise(initial="v0.11.0", predates=("inference_gateway",))
+        self.assertIn("second forced update", report["inference_gateway"])
+        self.assertEqual(report["guest_files"], "installed by the update")
 
-    def test_a_cross_version_update_that_carries_the_guest_files_runs_once(self):
+    def test_later_members_still_missing_after_the_second_update_fail(self):
+        for group, name in (("guest_files", "iso-cu-mcp"), ("inference_gateway", "iso-inference")):
+            with self.subTest(group=group), self.assertRaisesRegex(ValueError, "missing " + name):
+                self.exercise(initial="v0.6.0", predates=(group,), second_update_installs=False)
+
+    def test_a_cross_version_update_that_carries_the_later_members_runs_once(self):
         report = self.exercise(initial="v0.6.0")
         self.assertEqual(report["guest_files"], "installed by the update")
+        self.assertEqual(report["inference_gateway"], "installed by the update")
 
     def test_missing_provenance_marker_fails(self):
         with self.assertRaisesRegex(ValueError, "bundled verification"):
