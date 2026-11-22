@@ -173,6 +173,24 @@ import Testing
     #expect(throws: InferenceError.self) { try activate(wrongStart) }
     #expect(throws: InferenceError.self) { try activate(owner, epoch: "stale-epoch") }
     try activate(owner)
+
+    // A boot identity whose PID now names another process (reuse): it
+    // matches itself, but not the live process's start time.
+    let (_, reused) = try harness.spawnTransport()
+    let stale = TransportBinding(
+      pid: reused.pid, start: ProcessStart(seconds: reused.start.seconds - 1, microseconds: 0))
+    let second = try harness.gateway.register(
+      ControlProtocol.Registration(
+        instance: .init(dataRoot: harness.directory, name: "y"),
+        boot: BootIdentity(ownerPID: stale.pid, ownerStart: stale.start),
+        nonce: String(repeating: "0", count: 32), limits: .defaults,
+        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("y")))
+    #expect(throws: InferenceError.self) {
+      try harness.gateway.activate(
+        .init(
+          sessionID: second.sessionID, epoch: harness.gateway.epoch, transport: stale,
+          deadlineSeconds: nil))
+    }
   }
 
   @Test func sessionDeadlineRevokes() throws {
