@@ -186,6 +186,79 @@ import Testing
     #expect(server.active == InferenceRelay.maxConnections)
   }
 
+  /// A guest can hold every slot with idle connections; the gateway closing one frees its slot
+  /// at once, without the guest doing anything.
+  @Test func aClosedGatewayConnectionFreesItsSlotWhileTheGuestIsIdle() throws {
+    let gateway = try FakeGateway(serve: .hold)
+    defer { gateway.stop() }
+    let server = gateway.server()
+    defer { server.shutdownAll() }
+    var guests: [Int32] = []
+    defer { for fd in guests { close(fd) } }
+    for _ in 0..<InferenceRelay.maxConnections {
+      let (ours, theirs) = try pair()
+      #expect(server.accept(ours))
+      guests.append(theirs)
+    }
+    #expect(try eventually { gateway.accepted == InferenceRelay.maxConnections })
+    gateway.closeOne()
+    #expect(try eventually { server.active == InferenceRelay.maxConnections - 1 })
+    let (ours, theirs) = try pair()
+    guests.append(theirs)
+    #expect(server.accept(ours))
+    #expect(try eventually { gateway.accepted == InferenceRelay.maxConnections + 1 })
+  }
+
+  /// The gateway answers, then closes while the guest is behind and still sending: every byte
+  /// it sent reaches the guest before the guest sees EOF (no truncated stream).
+  @Test func everyByteTheGatewaySentReachesAGuestThatIsBehind() throws {
+    let body = (0..<(192 << 10)).map { UInt8(truncatingIfNeeded: $0 &* 31) }
+    let gateway = try FakeGateway(serve: .answer(body))
+    defer { gateway.stop() }
+    let server = gateway.server()
+    defer { server.shutdownAll() }
+    let (ours, guest) = try pair()
+    defer { close(guest) }
+    var one: Int32 = 1
+    setsockopt(guest, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+    #expect(server.accept(ours))
+    #expect(Splice.writeAll(guest, Array("request\n".utf8)))
+    #expect(try eventually { gateway.answered == 1 })
+    // The gateway has written everything and closed; the guest has read nothing and sends more.
+    #expect(Splice.writeAll(guest, Array("pipelined\n".utf8)))
+    Thread.sleep(forTimeInterval: 0.2)
+    #expect(readAll(guest) == body)
+    #expect(try eventually { server.active == 0 })
+  }
+
+  /// The guest's EOF reaches the gateway as EOF, and the gateway can still answer.
+  @Test func theGuestsHalfCloseReachesTheGatewayWhichStillAnswers() throws {
+    let gateway = try FakeGateway(serve: .echoAfterEOF)
+    defer { gateway.stop() }
+    let server = gateway.server()
+    defer { server.shutdownAll() }
+    let (ours, guest) = try pair()
+    defer { close(guest) }
+    #expect(server.accept(ours))
+    #expect(Splice.writeAll(guest, Array("ping".utf8)))
+    shutdown(guest, SHUT_WR)
+    #expect(readAll(guest) == Array("ping".utf8))
+  }
+
+  /// A guest that stops reading while the gateway sends loses the connection after the stall.
+  @Test func aGuestThatStopsReadingLosesItsConnection() throws {
+    let gateway = try FakeGateway(serve: .flood)
+    defer { gateway.stop() }
+    let server = gateway.server(stallSeconds: 1)
+    defer { server.shutdownAll() }
+    let (ours, guest) = try pair()
+    defer { close(guest) }
+    #expect(server.accept(ours))
+    #expect(try eventually { gateway.accepted == 1 })
+    #expect(server.active == 1)
+    #expect(try eventually(timeout: .seconds(10)) { server.active == 0 })
+  }
+
   /// R1: with no gateway socket a guest connection is closed, and the next one is relayed once
   /// the socket is back.
   @Test func aMissingGatewayClosesOnlyThatConnection() throws {
@@ -396,8 +469,9 @@ private final class FakeGateway: Sendable {
     }
   }
 
-  func server() -> InferenceRelayServer {
-    InferenceRelayServer(endpoint: .init(host: path), expiresAt: nil, log: { _ in })
+  func server(stallSeconds: Int = InferenceRelay.stallSeconds) -> InferenceRelayServer {
+    InferenceRelayServer(
+      endpoint: .init(host: path), expiresAt: nil, stallSeconds: stallSeconds, log: { _ in })
   }
 
   func stop() {

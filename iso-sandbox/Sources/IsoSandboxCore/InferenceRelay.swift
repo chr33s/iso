@@ -24,6 +24,9 @@ package enum InferenceRelay {
   /// Connections relayed at once. One arriving at the limit is closed before the gateway is
   /// dialed, so a guest cannot exhaust the owner's descriptors.
   package static let maxConnections = 32
+  /// A write to the guest that makes no progress for this long ends its connection, so a guest
+  /// that stops reading cannot keep a slot after the gateway has closed.
+  static let stallSeconds = 30
   /// Bytes read per direction before they are written on; the only buffer.
   static let chunkBytes = 64 << 10
   /// `iso-sbx/inference` in the per-user temporary directory, beside the owners' control sockets.
@@ -73,14 +76,41 @@ package enum InferenceRelay {
   }
 
   /// Copies both ways between a guest connection and its gateway connection, each through one
-  /// ``chunkBytes`` buffer with back-pressure; each side's EOF is passed on as a write shutdown.
-  /// Returns once both directions have ended; the caller closes the descriptors.
-  static func relay(guest: Int32, gateway: Int32) {
+  /// ``chunkBytes`` buffer with back-pressure, until the gateway's side ends: only the gateway,
+  /// a stalled guest or an error ends a connection.
+  /// The guest's EOF, or a write the gateway no longer takes, is passed on as a write shutdown,
+  /// so whatever the gateway still sends reaches the guest. The gateway's EOF, once every byte it
+  /// sent has been written to the guest, ends the connection without waiting for the guest, so a
+  /// closed gateway socket frees its slot. So does a write to the guest that makes no progress for
+  /// `stallSeconds`, or a failed read or write on the gateway's side. Returns once both directions
+  /// have stopped; the caller closes the descriptors.
+  static func relay(guest: Int32, gateway: Int32, stallSeconds: Int) {
     var one: Int32 = 1
     for fd in [guest, gateway] {
       setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
     }
-    Splice.bidirectional(guest, gateway, chunk: chunkBytes)
+    ControlSocket.setSendTimeout(guest, TimeInterval(stallSeconds))
+    let upstream = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+      defer { upstream.signal() }
+      pump(from: guest, to: gateway)
+      shutdown(gateway, SHUT_WR)
+    }
+    pump(from: gateway, to: guest)
+    shutdown(guest, SHUT_RDWR)
+    shutdown(gateway, SHUT_RDWR)
+    upstream.wait()
+  }
+
+  /// Copies `source` to `destination` until `source` ends or fails, or a write to `destination`
+  /// fails or times out.
+  static func pump(from source: Int32, to destination: Int32) {
+    var buffer = [UInt8](repeating: 0, count: chunkBytes)
+    while true {
+      let count = buffer.withUnsafeMutableBytes { read(source, $0.baseAddress, $0.count) }
+      if count < 0 && errno == EINTR { continue }
+      guard count > 0, Splice.writeAll(destination, buffer[0..<count]) else { return }
+    }
   }
 }
 
@@ -100,15 +130,18 @@ package final class InferenceRelayServer: Sendable {
   /// The boot's deadline: no connection is relayed at or after it, whatever the owner's halt
   /// timing.
   package let expiresAt: Date?
+  let stallSeconds: Int
   private let log: @Sendable (String) -> Void
   private let state = Mutex(State())
 
   package init(
     endpoint: InferenceRelay.Endpoint, expiresAt: Date?,
+    stallSeconds: Int = InferenceRelay.stallSeconds,
     log: @escaping @Sendable (String) -> Void
   ) {
     self.endpoint = endpoint
     self.expiresAt = expiresAt
+    self.stallSeconds = stallSeconds
     self.log = log
   }
 
@@ -192,7 +225,7 @@ package final class InferenceRelayServer: Sendable {
       close(gateway)
       return
     }
-    InferenceRelay.relay(guest: guest, gateway: gateway)
+    InferenceRelay.relay(guest: guest, gateway: gateway, stallSeconds: stallSeconds)
   }
 
   private func finish(_ id: UInt64) {
