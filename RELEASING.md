@@ -55,7 +55,9 @@ build entrypoint. Its stages are explicit and run in order:
    from `DIR` instead, after checking the kernel against
    `KernelPin.desktopAllowed` and the Linux tarball against its pinned
    SHA-256.
-3. **test** (`--test`) — every package's tests in the staging copy.
+3. **test** (`--test`) — every package's tests in the staging copy, then
+   the `iso-inference` gateway's confined-process gate against the gateway
+   just built and the managed-backend launcher test.
 4. **sign** (`--sign`, requires `--release --expected-revision`) — Developer ID
    signing and notarization; see [macOS signing](#macos-signing).
 5. **archive** — verifies `iso --version` and `iso-sandbox version`, writes
@@ -294,7 +296,8 @@ anti-rollback refuses any older release unless `--allow-downgrade` is passed.
 |-------|:---:|:---:|:---:|
 | `swift format lint --strict`, build, package tests | ✓ | ✓ | |
 | Python host behavior and CLI contract checks | ✓ | ✓ | |
-| Fuzz corpus replay + bounded smoke | ✓ | ✓ | |
+| Inference gateway confined-process and launcher gates (`mise run check-inference`) | ✓ | ✓ (preflight, `build-release.py --test`) | |
+| Fuzz corpus replay + bounded smoke | ✓ | ✓ (preflight `--fuzz`) | |
 | Host-only install/update/uninstall and regression suites | ✓ | ✓ | |
 | Version ↔ CHANGELOG ↔ tag agreement | | ✓ (`build-release.py --tag`, preflight) | |
 | Release archive (`build-release.py --release --test`) | | ✓ | |

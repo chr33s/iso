@@ -33,7 +33,10 @@ Stages, in order, each explicit:
             scripts/build-iso-sandbox.sh). `--release` builds
             with optimizations and `-D ISO_RELEASE_BUILD`, which makes
             `iso update` treat the binary as a release.
-3. test     (`--test`) every package's tests in the staging copy.
+3. test     (`--test`) every package's tests in the staging copy, then the
+            iso-inference gateway's confined-process gate against the
+            gateway just built and the managed-backend launcher test, as
+            `mise run check-inference` runs them in CI.
 4. sign     (`--sign`) Developer ID signing and notarization through
             scripts/macos-sign-notarize.sh. Only this stage sees the
             MACOS_*/NOTARY_* secrets (also checked before staging); every
@@ -191,7 +194,7 @@ def build(staging, configuration, release, prefix, desktop_kernel=None):
     }
 
 
-def test(staging):
+def test(staging, binaries):
     phase("Test iso (Swift host)")
     run(["swift", "test", "--force-resolved-versions"], staging)
     phase("Test iso-policy")
@@ -202,6 +205,10 @@ def test(staging):
     run(["swift", "test", "--package-path", staging / "iso-egress", "--force-resolved-versions"], staging)
     phase("Test iso-sandbox")
     run(["swift", "test", "--package-path", staging / "iso-sandbox", "--no-parallel"], staging)
+    phase("Inference gateway confined-process gate and managed-backend launcher")
+    run([sys.executable, staging / "scripts/test-inference-gateway-process.py",
+         "--binary", binaries["iso-inference"]], staging)
+    run([sys.executable, staging / "tests/test-inference-launcher.py"], staging)
 
 
 def adhoc_sign(directory, entitlements):
@@ -425,7 +432,7 @@ def main():
         binaries = build(staging, configuration, args.release, work / "runtime",
                          args.desktop_kernel and args.desktop_kernel.resolve())
         if args.test:
-            test(staging)
+            test(staging, binaries)
         bundle = work / "bundle" / name
         bundle.mkdir(parents=True)
         for binary, source in binaries.items():

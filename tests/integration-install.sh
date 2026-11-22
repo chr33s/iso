@@ -77,11 +77,13 @@ sign_sums() {
         <"$FIXTURE/SHA256SUMS" >"$FIXTURE/SHA256SUMS.sig"
 }
 
+# SHA256SUMS listing one tarball (default: this release's), signed.
 write_sums() {
+    local tarball="${1:-$TARBALL}"
     if command -v sha256sum >/dev/null 2>&1; then
-        (cd "$FIXTURE" && sha256sum "$TARBALL" > SHA256SUMS)
+        (cd "$FIXTURE" && sha256sum "$tarball" > SHA256SUMS)
     else
-        (cd "$FIXTURE" && shasum -a 256 "$TARBALL" > SHA256SUMS)
+        (cd "$FIXTURE" && shasum -a 256 "$tarball" > SHA256SUMS)
     fi
     sign_sums
 }
@@ -335,7 +337,7 @@ install_unchanged() {
 }
 
 echo "==> Test 6: every release binary is required before replacement"
-for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+for missing in iso iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
     mv "$FIXTURE/$ARCHIVE_DIR/$missing" "$FIXTURE/missing-backup"
     repack_fixture
     seed_install
@@ -348,6 +350,31 @@ for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
     fi
     mv "$FIXTURE/missing-backup" "$FIXTURE/$ARCHIVE_DIR/$missing"
 done
+
+echo "==> Test 6a: a release before v0.12.0 installs without iso-inference"
+# Such a release predates the gateway. Its install removes an installed copy,
+# and a member that is not a regular file counts as absent.
+PRE_VERSION="v0.11.0"
+PRE_DIR="iso-${PRE_VERSION}-${TRIPLE}"
+cp -R "$FIXTURE/$ARCHIVE_DIR" "$FIXTURE/$PRE_DIR"
+for member in absent symlink; do
+    rm -f "$FIXTURE/$PRE_DIR/iso-inference"
+    [[ "$member" != symlink ]] || ln -s iso "$FIXTURE/$PRE_DIR/iso-inference"
+    (cd "$FIXTURE" && tar -czf "$PRE_DIR.tar.gz" "$PRE_DIR")
+    write_sums "$PRE_DIR.tar.gz"
+    seed_install
+    if VERSION="$PRE_VERSION" run_installer >"$TEST_ROOT/pre-inference-$member.log" 2>&1 \
+        && [[ "$("$INSTALL_DIR/iso")" == installed-iso \
+           && "$("$INSTALL_DIR/iso-proxy")" == installed-iso-proxy \
+           && ! -e "$INSTALL_DIR/iso-inference" && ! -L "$INSTALL_DIR/iso-inference" ]]; then
+        pass "$PRE_VERSION with iso-inference $member installs and removes the installed gateway"
+    else
+        fail "$PRE_VERSION with iso-inference $member installs and removes the installed gateway" \
+            "$(tail -10 "$TEST_ROOT/pre-inference-$member.log"; ls -l "$INSTALL_DIR")"
+    fi
+done
+rm -rf "${FIXTURE:?}/$PRE_DIR" "$FIXTURE/$PRE_DIR.tar.gz"
+write_sums
 
 echo "==> Test 7: symlink artifacts are rejected before replacement"
 mv "$FIXTURE/$ARCHIVE_DIR/iso-egress" "$FIXTURE/egress-backup"

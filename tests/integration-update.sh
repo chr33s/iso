@@ -419,7 +419,7 @@ install_unchanged() {
 }
 
 echo "==> Test 6: every release binary is required before replacement"
-for missing in iso iso-sandbox iso-proxy iso-egress iso-macos-helper; do
+for missing in iso iso-sandbox iso-proxy iso-inference iso-egress iso-macos-helper; do
     mv "$TMPDIR/build/${FAKE_DIR}/$missing" "$TMPDIR/missing-backup"
     repack_release_fixture
     seed_install

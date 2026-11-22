@@ -151,6 +151,8 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertFalse([c for c in calls if c.startswith(('build-release.py', 'run-integration.sh', 'fuzz.sh'))])
         self.assertFalse([c for c in calls if c.startswith('integration-filtered-broker-readiness.py')])
         self.assertFalse([c for c in calls if c.startswith(('cargo', 'rustup'))])
+        self.assertNotIn('mise run check-inference', calls)
+        self.assertIn('Inference gateway gates require macOS 27+', result.stdout)
         self.assertNotIn('Next: tag', result.stdout)
         self.assertIn('unrun gates before tagging', result.stdout)
 
@@ -171,6 +173,7 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
         self.assertIn('swift test --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('swift build --package-path iso-egress --force-resolved-versions', calls)
         self.assertIn('mise run check-ci', calls)
+        self.assertIn('mise run check-inference', calls)
         self.assertIn('test-swift-egress-jail.py', calls)
         self.assertIn('test-swift-egress-lease.py', calls)
         self.assertIn('test-swift-egress-mutations.py', calls)
@@ -190,6 +193,13 @@ if [[ "$1" == rev-parse ]]; then exit 1; fi
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('FAIL: Swift proxy', result.stdout)
                 self.assertIn('Preflight FAILED', result.stdout)
+
+    def test_inference_gate_failure_is_fatal(self):
+        self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
+        result = self.run_preflight('--quick', fail='mise run check-inference')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL: Inference gateway and launcher gates', result.stdout)
+        self.assertIn('Preflight FAILED', result.stdout)
 
     def test_egress_process_and_mutation_failures_are_fatal(self):
         self.executable('bin/sw_vers', '#!/bin/bash\necho 27.0\n')
@@ -564,7 +574,10 @@ class ReleaseBinaryTests(unittest.TestCase):
         lists = {}
         for path, variable in (('.github/workflows/release.yml', 'binary'),
                                ('.github/workflows/candidate.yml', 'binary'),
-                               ('RELEASING.md', 'binary')):
+                               ('RELEASING.md', 'binary'),
+                               # Each suite's "every release binary is required" case.
+                               ('tests/integration-install.sh', 'missing'),
+                               ('tests/integration-update.sh', 'missing')):
             loops = re.findall(rf'for {variable} in ([^;\n]+); do', (ROOT / path).read_text())
             self.assertTrue(loops, path)
             for index, words in enumerate(loops, 1):
@@ -579,6 +592,25 @@ class ReleaseBinaryTests(unittest.TestCase):
         for name, binaries in lists.items():
             with self.subTest(list=name):
                 self.assertEqual(binaries, expected)
+
+    def test_the_test_stage_runs_the_inference_gates_on_the_built_gateway(self):
+        staging = Path('/private/iso-release/src')
+        built = {'iso-inference': Path('/private/iso-release/proxy/release/iso-inference')}
+        commands = []
+
+        def run(argv, cwd, signing=False, capture=False):
+            commands.append(([str(a) for a in argv], cwd))
+
+        with mock.patch.object(RELEASE, 'run', side_effect=run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            RELEASE.test(staging, built)
+        gates = [([sys.executable, f'{staging}/scripts/test-inference-gateway-process.py',
+                   '--binary', str(built['iso-inference'])], staging),
+                 ([sys.executable, f'{staging}/tests/test-inference-launcher.py'], staging)]
+        # From the staged copy, after every package's tests.
+        self.assertEqual(commands[-2:], gates)
+        self.assertIn((['swift', 'test', '--package-path', f'{staging}/iso-proxy',
+                        '--force-resolved-versions'], staging), commands)
 
     def test_kernel_source_is_uploaded_where_the_publish_job_collects(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
@@ -833,6 +865,7 @@ class LinuxGuestFileTests(unittest.TestCase):
         for name, data in contents.items():
             (fixture / name).write_bytes(data)
         verified = []
+        tested = []
 
         def stage_source(staging, stamp):
             for relative in ('scripts/build-desktop-kernel.sh', 'iso-sandbox/kernel/desktop.config',
@@ -856,13 +889,16 @@ class LinuxGuestFileTests(unittest.TestCase):
                 mock.patch.object(RELEASE, 'source_state', return_value=('a' * 40, False)), \
                 mock.patch.object(RELEASE, 'stage_source', side_effect=stage_source), \
                 mock.patch.object(RELEASE, 'build', side_effect=build), \
+                mock.patch.object(RELEASE, 'test',
+                                  side_effect=lambda staging, binaries: tested.append(binaries)), \
                 mock.patch.object(RELEASE, 'copy_legal_files'), \
                 mock.patch.object(RELEASE, 'copy_skill'), \
                 mock.patch.object(RELEASE, 'adhoc_sign'), \
                 mock.patch.object(RELEASE, 'verify',
                                   side_effect=lambda bundle, *_: verified.append(
                                       sorted(p.name for p in bundle.iterdir() if p.is_file()))), \
-                mock.patch.object(sys, 'argv', ['build-release.py', '--release', '--out', str(out)]), \
+                mock.patch.object(sys, 'argv', ['build-release.py', '--release', '--test',
+                                              '--out', str(out)]), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(RELEASE.main(), 0)
 
@@ -871,6 +907,8 @@ class LinuxGuestFileTests(unittest.TestCase):
         source_asset = out / f"iso-{'a' * 12}-vmlinux-desktop-source.tar.gz"
         # The bundle is verified with every member in place, before BUILD.json.
         self.assertEqual(verified, [sorted(contents)])
+        # The test stage gets the binaries just built (it runs the gateway).
+        self.assertEqual(tested, [{name: fixture / name for name in contents}])
         with tarfile.open(archive) as tar:
             manifest = json.load(tar.extractfile(f'{name}/BUILD.json'))
             for member, data in contents.items():
@@ -881,6 +919,7 @@ class LinuxGuestFileTests(unittest.TestCase):
                          {member: digest(contents[member]) for member in RELEASE.LINUX_GUEST_FILES})
         self.assertEqual(manifest['binaries'],
                          {member: digest(contents[member]) for member in RELEASE.BINARIES})
+        self.assertIs(manifest['tested'], True)
         self.assertEqual(pins['source_asset'], source_asset.name)
         # Both published files are checksummed, so both are signed and verified.
         self.assertEqual((out / 'SHA256SUMS').read_text(),
