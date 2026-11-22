@@ -148,7 +148,8 @@ extension ConfigDecoder {
       overheadPerRequestBytes: overhead.0, overheadPerMessageBytes: overhead.1,
       maxInputBytes: try r.required("max_input_bytes", byteBounded(1...(64 << 20))),
       maxRequestBodyBytes: try r.defaulted(
-        "max_request_body_bytes", 4 << 20, byteBounded(1024...(64 << 20))),
+        // The gateway refuses a larger body ceiling (its per-session buffer share).
+        "max_request_body_bytes", 4 << 20, byteBounded(1024...(16 << 20))),
       tokenCounter: try r.defaulted("token_counter", .none) { v, p throws(FieldError) in
         try Parse.stringEnum(v, p, TokenCounterMode.allCases)
       })
@@ -294,11 +295,17 @@ extension ConfigDecoder {
     guard !apis.isEmpty, Set(apis).count == apis.count else {
       throw FieldError(r.child("frontend_apis"), "must list each granted API once")
     }
-    let maxOutput = try r.defaulted("max_output_tokens", 8_192, bounded(1...32_768))
+    let maxContext = try r.required("max_context_tokens", bounded(1...10_000_000))
+    let maxOutput = try r.defaulted(
+      "max_output_tokens", min(8_192, maxContext), bounded(1...32_768))
     let defaultOutput = try r.defaulted(
       "default_output_tokens", min(4_096, maxOutput), bounded(1...32_768))
     guard defaultOutput <= maxOutput else {
       throw FieldError(r.child("default_output_tokens"), "must not exceed max_output_tokens")
+    }
+    // The gateway refuses a registration whose output limit exceeds the context.
+    guard maxOutput <= maxContext else {
+      throw FieldError(r.child("max_output_tokens"), "must not exceed max_context_tokens")
     }
     let model = try r.required("upstream_model", Parse.string)
     guard !model.isEmpty, model.utf8.count <= 1024 else {
@@ -306,7 +313,7 @@ extension ConfigDecoder {
     }
     return InferenceServiceConfig(
       backend: try r.required("backend", Parse.string), upstreamModel: model, frontendAPIs: apis,
-      maxContextTokens: try r.required("max_context_tokens", bounded(1...10_000_000)),
+      maxContextTokens: maxContext,
       defaultOutputTokens: defaultOutput, maxOutputTokens: maxOutput,
       maxInputBytes: try r.optional("max_input_bytes", byteBounded(1...(64 << 20))))
   }

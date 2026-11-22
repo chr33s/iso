@@ -512,7 +512,7 @@ and model. The gateway enforces it; iso does not verify it.
 | `context_overflow` | string | required | What the backend does with an over-long prompt: `"reject"`, `"truncate"` or `"accept"` (processes it past its window; only `max_input_bytes` limits it). Shown in status. |
 | `input_overhead.per_request_bytes`, `.per_message_bytes` | integer | required | Chat-template overhead added to the byte bound on input tokens. |
 | `max_input_bytes` | byte count | required | Upper bound on the (byte-bounded) prompt size. Keep it near the model's context window: at about 4 bytes per token, a 32k-token window is about 128 KiB. |
-| `max_request_body_bytes` | byte count | `"4MiB"` | Largest request body accepted. |
+| `max_request_body_bytes` | byte count | `"4MiB"` | Largest request body accepted (1 KiB–16 MiB; the gateway gives each session a 16 MiB share of the request buffers). |
 | `token_counter` | string | `"none"` | `"backend"` allows `anthropic-count-tokens` through the backend's own endpoint. |
 
 **`backends.<name>`**:
@@ -553,7 +553,7 @@ hardened defaults.
 | `frontend_apis` | array | required | APIs granted: `"anthropic-messages"` (Claude Code), `"openai-responses"` (Codex), `"openai-chat"`, `"anthropic-count-tokens"`, `"model-discovery"`. Each must match the backend protocol. |
 | `max_context_tokens` | integer | required | The model's context window; Claude Code is told it through `CLAUDE_CODE_MAX_CONTEXT_TOKENS`. |
 | `default_output_tokens` | integer | `4096` | Output limit when a request sets none. |
-| `max_output_tokens` | integer | `8192` | Ceiling (≤ 32768). Larger requested limits are clamped, not rejected. |
+| `max_output_tokens` | integer | `8192`, or `max_context_tokens` when smaller | Ceiling (≤ 32768 and ≤ `max_context_tokens`). Larger requested limits are clamped, not rejected. |
 | `max_input_bytes` | byte count | unset | Tightens the profile's input bound. |
 
 Before a session starts, iso checks that the backend listens on 127.0.0.1 and

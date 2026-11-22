@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILE = ROOT / "Sources/IsoHost/Guest/Resources/seatbelt-inference.sb"
+PROFILE = ROOT / "Sources/IsoHost/Inference/Resources/seatbelt-inference.sb"
 failures = []
 
 

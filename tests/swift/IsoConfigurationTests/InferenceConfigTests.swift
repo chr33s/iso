@@ -146,6 +146,18 @@ private func document(
     with: #""max_context_tokens": 131072, "max_output_tokens": 100, "default_output_tokens": 200"#)
   #expect(
     fieldError(inverted)?.field == "inference.services.local-coder.default_output_tokens")
+  // Both refused by the gateway's register_session, so refused at load.
+  let outputOverContext = document().replacingOccurrences(
+    of: #""max_context_tokens": 131072"#,
+    with: #""max_context_tokens": 1024, "max_output_tokens": 2048, "default_output_tokens": 512"#)
+  #expect(
+    fieldError(outputOverContext)?.reason == "must not exceed max_context_tokens")
+  let hugeBody = document().replacingOccurrences(
+    of: #""max_input_bytes": "1MiB""#,
+    with: #""max_input_bytes": "1MiB", "max_request_body_bytes": "32MiB""#)
+  #expect(
+    fieldError(hugeBody)?.field
+      == "inference.qualification_profiles.mlx-reviewed.max_request_body_bytes")
 }
 
 @Test func backendCredentialMustBeAReference() {
