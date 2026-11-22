@@ -175,7 +175,10 @@ differ in steps 2, 4, 5 and 7:
 The runtime advertises this as the `brokered-transport` feature (since protocol
 5); vmnet output is unchanged. A brokered sandbox has no inference relay: the
 runtime refuses `create --inference-relay` and `start --inference-relay on` for
-it, and a brokered record that sets the relay does not decode.
+it, and a brokered record that sets the relay does not decode. A brokered
+instance under `inference.mode: "required"` reaches the gateway over iso's
+fixed SSH reverse forward instead
+([secure-local-inference §22.9](design/secure-local-inference-spec.md#229-brokered-transport-the-fixed-ssh-forward)).
 
 ### Inference relay
 

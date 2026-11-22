@@ -40,7 +40,7 @@ after hand edits.
 | `coreai` | object | unset (off) | Experimental, macOS guests only: paravirtualized Core AI accelerators. Weakens the host. See [coreai](#coreai). |
 | `policy` | object | unset | Default-deny authorization over provider credential use, proxied requests and staged workspace applies, with request-admission limits and inline approvals. `null` is an error; fixed per VM boot. See [`policy.md`](policy.md). |
 | `egress` | string | `"none"` | Guest network reach beyond the host: `"none"`, `"filtered"`, or `"open"` (needs `network.transport` `"vmnet"`). See [egress](#egress). |
-| `inference` | object | unset (`"mode": "off"`) | Guarded host-side local models through the `iso-inference` gateway; Linux guests on the vmnet transport only. See [`inference`](#inference-section). |
+| `inference` | object | unset (`"mode": "off"`) | Guarded host-side local models through the `iso-inference` gateway; Linux guests on either transport. See [`inference`](#inference-section). |
 | `network` | object | `{"transport": "brokered"}` | How new instances' VMs are connected: `"brokered"` (no network device) or `"vmnet"` (an explicit compatibility choice; required for macOS guests and open egress). See [network](#network). |
 | `editor` | object | `{"security": "sandboxed", "allow": []}` | How `iso code`, `iso zed` and `iso editor` run the local editor. See [editor](#editor). |
 | `post_start` | string | unset | Shell command run in the guest after every successful boot, before any interactive `shell` / agent launch. Failure is logged at `WARN` and does not fail startup. Override per invocation with `iso up --post-start <cmd>` or `iso start --post-start <cmd>`. |
@@ -419,9 +419,14 @@ Guarded local inference (the design is
 [docs/design/secure-local-inference-spec.md](design/secure-local-inference-spec.md)).
 With `"mode": "required"`, each running VM gets one session on the host
 `iso-inference` gateway: its own Unix socket on the host
-(`<per-user temp>/iso-sbx/inference/<hash>.sock`), relayed into the VM over
-vsock by the sandbox runtime and bridged to `127.0.0.1:11788` in the guest, and
-a fresh per-session capability. The gateway accepts only the granted API
+(`<per-user temp>/iso-sbx/inference/<hash>.sock`), reachable in the guest at
+`127.0.0.1:11788`, and a fresh per-session capability. On the vmnet transport
+the sandbox runtime relays the socket into the VM over vsock, and a systemd
+socket bridges the guest port to it. On the brokered transport (the default)
+the boot's network policy names one `inference-gateway` local service, and iso
+carries the guest port to the socket over one fixed SSH reverse forward
+(`ssh -R 127.0.0.1:11788:<socket>`) on the instance's pinned connection.
+Agents use the same URL on both. The gateway accepts only the granted API
 routes and a closed set of request fields for each API. It rebuilds each
 request for a fixed backend and model, clamps output limits, and enforces
 shared budgets. It never forwards the guest's headers, credentials or unknown
@@ -440,12 +445,13 @@ Under `required`:
   no fallback to a raw endpoint or the cloud. Shells and commands keep working
   without inference: `iso shell` and `iso exec` warn and open the session
   without inference variables when no session can be established;
-- the instance must be a Linux guest on the vmnet transport: the runtime
-  relays the gateway only into vmnet Linux sandboxes (a brokered VM's one host
-  channel is its SSH stream). `required` with `network.transport` `"brokered"`
-  (the default) is a configuration error, so set
-  `"network": {"transport": "vmnet"}`; a macOS guest is refused at
-  `up`/`start` and agent launch; remote-host agents are refused;
+- the instance must be a Linux guest, on either transport; a macOS guest is
+  refused at `up`/`start` and agent launch; remote-host agents are refused;
+- on the brokered transport, the forward is the boot's only local service: no
+  raw model tunnel or other host loopback port is granted. It starts after
+  the guest is configured. Revocation, a mode change, `iso stop` and
+  `iso destroy` close it, and the gateway revokes the session if it exits. The
+  next iso command then registers a new session over a new forward;
 - it does not change egress. Under `"filtered"` the guest keeps its approved
   CONNECT hosts (agents reach the bridge directly: `127.0.0.1` is in
   `NO_PROXY`), and on vmnet the guest can still reach services listening on
@@ -453,13 +459,13 @@ Under `required`:
   pairing.
 
 Changing `inference.mode` for a running instance takes effect at its next
-start: the running boot keeps the relay setting it was started with, and
-handoffs to it are refused until it is stopped and started again. Turning the
+start: the running boot keeps the relay setting (vmnet) or network policy
+(brokered) it was started with, and handoffs to it are refused until it is
+stopped and started again. Turning the
 mode off revokes the instance's gateway session first; turning it on stops the
 instance's credential proxies and raw model tunnels first.
 
 ```jsonc
-"network": { "transport": "vmnet" },
 "inference": {
   "mode": "required",
   "global_limits": { "max_active_requests": 2 },
@@ -893,8 +899,9 @@ guest's SSH adapter on vsock port 2222 (`iso-ssh-vsock.socket`, installed by
 - A local model must be served on the host's loopback (`127.0.0.1` or
   `localhost`), which iso tunnels in; any other endpoint is refused with
   `BROKERED_UNSUPPORTED`, since the guest cannot reach it directly.
-- Linux guests only, and not with `inference.mode: "required"` (the
-  inference relay needs vmnet). The image must carry the guest adapter: images built by
+- Linux guests only. Under `inference.mode: "required"` the policy's one local
+  service is the guarded gateway session (`inference-gateway`), carried over
+  a fixed SSH reverse forward ([`inference`](#inference-section)). The image must carry the guest adapter: images built by
   this version of `iso setup` do (`guest_adapters: ["vsock-ssh-v1"]` in the
   image manifest); older images are refused before any VM is created —
   rebuild with `iso setup --rebuild`. The runtime must advertise the

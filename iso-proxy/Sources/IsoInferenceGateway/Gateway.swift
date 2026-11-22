@@ -293,7 +293,7 @@ package final class Gateway: Sendable {
         throw InferenceError(.policyDenied, "the transport is not the registered sandbox owner")
       }
     case .forward:
-      // The host's reverse forward (§22.7): a live process of this user
+      // The host's reverse forward (§22.9): a live process of this user
       // running the system `ssh`, started when the binding says.
       guard isForward(binding) else {
         throw InferenceError(.policyDenied, "the transport is not this user's ssh forward")

@@ -764,8 +764,10 @@ visible exception, not general host access.
 - **Brokers keep their meaning.** The credential proxy, filtered-egress
   companion and local-model tunnels are the same processes and reverse
   tunnels as on vmnet, reached by the guest only on its own loopback through
-  the SSH connection. Provider credentials stay in the provider broker;
-  `egress: open` is invalid. A blind CONNECT to an approved host can still
+  the SSH connection. Under `inference.mode: "required"` the one local
+  service is instead the guarded-inference forward to the instance's gateway
+  session ([guarded local inference](#guarded-local-inference)). Provider
+  credentials stay in the provider broker; `egress: open` is invalid. A blind CONNECT to an approved host can still
   relay data to that host's operator; this is destination enforcement, not
   information-flow control.
 - **A wildcard approves an operator's domain, not a name.** An allowlist
@@ -801,7 +803,8 @@ exposure, and isolate verifies the effective configuration anyway
   its one relay, `inferenceRelay` (protocol 6), is a boolean whose host path
   the runtime derives (the inference gateway's socket, see
   [guarded local inference](#guarded-local-inference)). A brokered record
-  cannot set it. With the relay, the VM also gets the bind mount of the guest
+  cannot set it (a brokered boot carries its gateway session over iso's
+  SSH forward instead). With the relay, the VM also gets the bind mount of the guest
   agent's relay socket at `/var/lib/iso-inference/gateway.sock`. Its VM
   configuration is built in one function (`Owner.machineConfiguration`) with
   kernel pseudo-filesystems only. Its one network field, `network`, can only
@@ -1017,8 +1020,7 @@ The gateway enforces an API boundary. It does not isolate the host.
   refused, and managed Codex `auth.json` is removed. Without a session,
   Claude's managed settings and Codex's provider table still name the guest
   bridge (with a token the gateway refuses), never the providers' defaults.
-  Remote-host agents, macOS guests and the brokered transport are refused:
-  the runtime relays the gateway only into this Mac's vmnet Linux guests. A
+  Remote-host agents and macOS guests are refused. A
   mode change stops what the old mode admitted (the gateway session, or the
   credential proxies and raw tunnels) before a handoff.
 - **Transport and identity.** Each VM boot gets one session, on a Unix
@@ -1034,6 +1036,25 @@ The gateway enforces an API boundary. It does not isolate the host.
   VM stopping, the deadline passing, `iso destroy` or `iso inference revoke`
   revokes the session. A restarted gateway starts a new epoch and does not
   reactivate old capabilities.
+- **Brokered transport** (spec §22.9). A brokered VM has no relay (the
+  runtime refuses one, and the gate still requires zero). Its boot policy
+  names exactly one local service, `inference-gateway`. Its host end is the
+  fixed kind `inference-session`, never a path or port from configuration,
+  so the policy digest the runtime binds the boot to covers the grant, and
+  `required` on or off is a restart. iso starts one static `ssh -R
+  127.0.0.1:11788:<session socket>` forward over the instance's pinned SSH
+  connection, after the guest is configured and only for a boot whose
+  gate-matched policy carries the grant. The socket path is derived as for a
+  relay. There is no dynamic, SOCKS or local forward, no guest bridge, and no
+  raw model tunnel, so no other host port is reachable. The gateway binds
+  the session to that `ssh` process (this user's, at its recorded start
+  time, whose executable is `/usr/bin/ssh`) and to the sandbox owner, and
+  either exit revokes it. iso closes the forward first on every revocation
+  and on stop or destroy. A dead forward's session is never reused: the next
+  command registers a new session with a new capability, and nothing falls
+  back to a relay, a raw endpoint or the cloud. The guest's `sshd` owns the
+  guest listener, so guest root can end or squat it after the forward ends;
+  that only denies its own inference. Release builds pin the system `ssh`.
 - **Capability.** A 256-bit capability from the system CSPRNG, compared in
   constant time. It authorizes the whole VM (root in the guest can use it, by
   design) and only on its own session's socket. It travels through SSH
@@ -1056,8 +1077,8 @@ The gateway enforces an API boundary. It does not isolate the host.
   system paths, the binary and those directories; outbound only to the
   configured backend ports (rendered per launch); metadata reads (stat) on
   any path, for path resolution; and read-only process metadata
-  (`process-info-pidinfo`) on any process, because the sandbox owner it
-  watches cannot be named in the profile. The gateway checks its own
+  (`process-info-pidinfo`) on any process, because the sandbox owner and
+  the brokered forward it watches cannot be named in the profile. The gateway checks its own
   confinement at every start. The control socket is `0600`. Both sides check
   the peer's UID; the controller also checks that the peer's executable is
   the `iso-inference` beside `iso` (itself held to the runtime's owner and

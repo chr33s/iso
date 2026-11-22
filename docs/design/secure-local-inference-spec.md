@@ -19,6 +19,8 @@
 
 **Changes in 0.7.0 (port onto `main`):** the relay runs in iso-sandbox itself, on containerization 0.54.0's public API, with no vendored containerization source (§22.3); runtime protocol 6 adds `--inference-relay`. The relay is for Linux guests on the vmnet transport only, so `inference.mode: required` needs `network.transport: vmnet` (§11.3). The guest bridge moves to port 11788, since 10788 + index is filtered egress's guest port on `main` (§22.4). The managed launcher answers an authenticated challenge (§20.3). Paths are `main`'s (§14, §19).
 
+**Changes since 0.7.0:** `required` also runs on the brokered transport (§22.9). The boot's network policy names one `inference-gateway` local service, and iso carries the session over one fixed SSH reverse forward to the session socket. Control protocol 3 declares each session's transport kind, `owner` (vmnet) or `forward` (brokered), which fixes the process activation binds (§22.4, §22.9). Only macOS guests are still refused (§11.3).
+
 > This specification is implemented through §20, and §22; §21 is a design. §19 records which acceptance tests have evidence and which claims remain open. It does not claim a qualified real MLX deployment: qualification profiles are owner decisions, and §17 lists what they must establish. Source review is not a substitute for the hardware and adversarial tests defined here.
 
 ## 1. Decision and security objective
@@ -476,7 +478,7 @@ To use Claude, select a service granting `anthropic-messages` and, if required b
 
 Under `required`, every agent launched through iso must have an authorized guarded service. An unconfigured agent fails locally; it must not retain the existing possibility of silently using a cloud endpoint. Suppress managed cloud-provider credential forwarding and cloud-auth file staging on this path, independently of `proxy.mode`. Reject conflicting provider-credential declarations in `env_forward`, `guest_env`, `--env`, environment files, and persisted environment overrides; do not merely remove the automatically discovered key.
 
-`inference.mode = "required"` needs `network.transport = "vmnet"`: the runtime relays the gateway only into vmnet Linux sandboxes (§22), and a brokered VM's one host channel is its SSH stream. Because `brokered` is the default transport, a configuration under `required` must select `vmnet` explicitly; loading refuses it otherwise. A macOS guest is refused before boot, as are `--model-mode remote` and `iso model set remote`. Loading also refuses what the gateway's registration would: a qualification profile's `max_request_body_bytes` above 16 MiB (the per-session request-buffer share, §9.1), and a service whose `max_output_tokens` exceeds its `max_context_tokens` (unset, it defaults to the smaller of 8192 and the context).
+`inference.mode = "required"` runs on either transport for Linux guests: on `vmnet` the runtime relays the session socket into the guest (§22.4), and on `brokered` (the default) iso carries it over a fixed SSH reverse forward that the boot's network policy grants (§22.9). Agents use `http://127.0.0.1:11788` on both. A macOS guest is refused before boot, as are `--model-mode remote` and `iso model set remote`. Loading also refuses what the gateway's registration would: a qualification profile's `max_request_body_bytes` above 16 MiB (the per-session request-buffer share, §9.1), and a service whose `max_output_tokens` exceeds its `max_context_tokens` (unset, it defaults to the smaller of 8192 and the context).
 
 Existing raw local endpoints continue to function only when guarded inference is off, with documentation that they provide transport rather than inference policy. Upgrading configuration is explicit; do not silently reinterpret legacy authentication tokens as gateway capabilities.
 
@@ -762,13 +764,13 @@ Provisioning qualifies the profile: the job must answer an authenticated health 
 
 ### 20.5 Gateway confinement per port
 
-The gateway profile is generated at launch. It allows outbound connections only to `localhost:<p>` for each backend port in the configuration; reads of the system libraries, the binary, `STATE_DIR` and `RELAY_DIR`; writes and Unix-socket bind and inbound only under `STATE_DIR` and `RELAY_DIR`, and no TCP bind; metadata reads on any path (path resolution) and read-only process metadata on any process (the sandbox owner's identity and exit). The controller refuses a gateway peer the kernel does not report sandboxed. The gateway refuses a registration naming any other port (`INFERENCE_BACKEND_UNAVAILABLE`). The controller then restarts an idle gateway with the union of ports, or asks the user to stop an active one. The jail self-test also requires a denied loopback port.
+The gateway profile is generated at launch. It allows outbound connections only to `localhost:<p>` for each backend port in the configuration; reads of the system libraries, the binary, `STATE_DIR` and `RELAY_DIR`; writes and Unix-socket bind and inbound only under `STATE_DIR` and `RELAY_DIR`, and no TCP bind; metadata reads on any path (path resolution) and read-only process metadata on any process (the sandbox owner's identity and exit, and a brokered forward's identity, executable path and exit, §22.9). The controller refuses a gateway peer the kernel does not report sandboxed. The gateway refuses a registration naming any other port (`INFERENCE_BACKEND_UNAVAILABLE`). The controller then restarts an idle gateway with the union of ports, or asks the user to stop an active one. The jail self-test also requires a denied loopback port.
 
 ### 20.6 Hardened defaults (`iso inference init`)
 
 `iso inference init (--python P | --install V) (--model DIR | --model-repo R --model-revision C) [--backend N] [--port P] [--memory-limit B]` writes a configuration with the following, then prints what it changed:
 
-- `inference.mode = "required"`, `security.preset = "offline"` (so `egress: "none"`) and `network.transport = "vmnet"` (§11.3);
+- `inference.mode = "required"`, `security.preset = "offline"` (so `egress: "none"`) and `network.transport = "vmnet"` (the runtime relay, §22.4; `required` also runs on brokered, §22.9, which init does not select);
 - `limits.session_ttl = "8h"`;
 - the `mlx-lm-0.31` qualification profile with the §19 values, `max_input_bytes` 128 KiB (about 4 bytes per token of the 32k-token `local-chat` context), `max_request_body_bytes` 256 KiB and `stream_close_drain_ms` 10000 (the prefill of a 32k-token prompt at about 3.3k tokens/s);
 - a managed backend with confinement on and `max_active_requests: 1`;
@@ -1023,7 +1025,7 @@ Each step is its own change, with refactors before behavior:
 
 ## 22. vsock session transport
 
-**Status: implemented on containerization 0.54.0, with the relay run by iso-sandbox itself (§22.3); no containerization source is vendored.** Before this section, the guest reached its gateway session through a pinned `ssh -R` forward to a per-session listener on host loopback (§5, §12). The forward is replaced by a vsock relay into a per-instance host Unix socket, and the SSH forward path for inference is removed. The trust-model change in §22.6 was approved. The relay is for Linux guests on the vmnet transport only: the runtime refuses it for a brokered sandbox (whose one host channel is its SSH stream), so `inference.mode: required` needs `network.transport: vmnet` (§11.3), and iso refuses `required` for macOS guests.
+**Status: implemented on containerization 0.54.0, with the relay run by iso-sandbox itself (§22.3); no containerization source is vendored.** Before this section, the guest reached its gateway session through a pinned `ssh -R` forward to a per-session listener on host loopback (§5, §12). The forward is replaced by a vsock relay into a per-instance host Unix socket, and the SSH forward path for inference is removed. The trust-model change in §22.6 was approved. The relay is for Linux guests on the vmnet transport only: the runtime refuses it for a brokered sandbox (whose one host channel is its SSH stream). A brokered boot carries its session over a fixed SSH reverse forward instead (§22.9). iso refuses `required` for macOS guests.
 
 ### 22.1 Why
 
@@ -1095,10 +1097,10 @@ It can be satisfied in either of two ways:
 - `InferenceBoot` carries the relay host path read from `inspect`.
 - The controller refuses a path whose directory is not `<per-user temp>/iso-sbx/inference`, or whose name is not a 1–16 hex digit hash. It registers with that name and activates with the owner identity. No forward is created, and no loopback listener check is needed.
 - The session state records the owner's PID and start time. The per-command session memo and `current()` check that process instead of a forward.
-- iso requires runtime protocol 6 with containerization 0.54.0. It creates the sandbox with the relay when `inference.mode == "required"`, refuses `required` on the brokered transport, and passes `start --inference-relay on|off` only when the mode has changed since. Unchanged starts keep their exact runtime arguments.
+- iso requires runtime protocol 6 with containerization 0.54.0. It creates a vmnet sandbox with the relay when `inference.mode == "required"`, never asks for one on the brokered transport (§22.9), and passes `start --inference-relay on|off` only when the mode has changed since. Unchanged starts keep their exact runtime arguments.
 - `IsolationGate` accepts zero relays, or exactly the inference relay with the derived host path, the constant guest path and a cap of 32. The relay is accepted only when the configuration requires inference. A running boot whose relay does not match the configuration (the mode changed while it ran) is refused with a restart hint.
 - The bridge is (re)enabled on each agent bootstrap and installed before a new session is activated. If the install fails, the session is revoked, so the next command registers again and retries the install.
-- The control protocol is version 2: registrations name a `socket` instead of receiving a port.
+- The control protocol is version 3. Version 2 made registrations name a `socket` instead of receiving a port; version 3 adds `transport`, the session's kind: `owner` here, `forward` on brokered (§22.9). Requests of any other version are refused.
 
 **Guest (bootstrap)**
 
@@ -1107,7 +1109,7 @@ It can be satisfied in either of two ways:
 
 **Removed**
 
-- For inference: the `ssh -R` forward, its PID file and memo identity, the sole-listener check, per-index guest ports, and TCP session listeners.
+- For inference on vmnet: the `ssh -R` forward, its PID file and memo identity, the sole-listener check, per-index guest ports, and TCP session listeners. The brokered transport, which has no relay, uses a fixed forward to the session's Unix socket (§22.9), not a TCP listener.
 - SSH remains for shells, agent bootstrap and the legacy raw tunnels of `mode: off`.
 
 ### 22.5 Security properties
@@ -1133,7 +1135,7 @@ It can be satisfied in either of two ways:
 | AT-32 | 400 concurrent guest connections: at most 32 are relayed. The owner's descriptor count returns to within 5 of baseline afterwards. The relay and the owner's control channel keep working (R2, R3). |
 | AT-33 | A record whose relay host path lies outside the instance's inference directory, is a symlink, or names another instance's socket is refused by the runtime and by `IsolationGate`. |
 | AT-34 | Instance A cannot reach instance B's session through the relay, even with B's capability, because each instance has its own socket. |
-| AT-35 | Stopping the VM revokes the session, bound to the owner process. SSH remains usable for shells, and no `ssh -R` is created for inference. |
+| AT-35 | Stopping the VM revokes the session, bound to the owner process. SSH remains usable for shells, and no `ssh -R` is created for inference on vmnet. |
 
 Automated in `tests/integration-apple-sandbox.sh`: the `relay` phase (the runtime with a stand-in gateway: AT-31, AT-32, AT-33, late reads, `--inference-relay` on, off and omitted, and a brokered sandbox's refusal) and the `inference` phase (end to end: AT-30, the gateway stopped then restarted, 400 guest connections with the owner's descriptor count back within 5 of baseline, and revocation on `iso stop`).
 
@@ -1145,6 +1147,30 @@ Automated in `tests/integration-apple-sandbox.sh`: the `relay` phase (the runtim
 4. Remove the `ssh -R` inference path.
 
 Steps 1–4 are implemented: step 1 on containerization 0.54.0 with the relay in iso-sandbox, and no vendored source.
+
+### 22.9 Brokered transport: the fixed SSH forward
+
+**Status: implemented and unit-tested; not yet run on hardware (the `brokered-inference` integration phase is written but has not been run).** A brokered VM has no network device and no relay: its one host channel is the SSH stream through the runtime connector (brokered spec §4.1, NET-04). Brokered spec §4.3 plans an "explicit local-model bridge, when separately authorized" as a static reverse forward over that connection, and §7.3 makes it a named grant. This section is that bridge for the gateway.
+
+**Grant.** Under `required`, the brokered boot policy (`iso.network/v1`) has exactly one local service, `{"name": "inference-gateway", "guest_port": 11788, "host_endpoint": "inference-session"}`, and no raw model tunnel. `host_endpoint` is a fixed kind, not a path: decoding refuses any other name, port or kind, and any `host_address` or `host_port` beside it. The host path is derived by iso (below), so the policy digest covers the grant but no host path choice (NET-05). TCP local services keep their members, so their digests are unchanged. The grant is part of the digest the runtime binds the boot to: switching `required` on or off is a policy change that needs a restart (`POLICY_CHANGE_REQUIRES_RESTART`), and `iso policy effective`, `iso status` and the audit environment record name it.
+
+**Socket.** The session socket is the one a relay would use, `<per-user temp>/iso-sbx/inference/<hash of the sandbox directory>.sock`, derived by iso from the runtime root and sandbox name. The gateway binds it as for vmnet (§22.4). The runtime is never passed `--inference-relay` for a brokered sandbox, and the isolation gate still requires zero relays.
+
+**Lifecycle.** iso establishes a session in this order:
+
+1. It checks that the boot's network policy, the one the gate matched to the runtime's reported digest, carries the grant. Without it there is no session (fail closed, restart hint).
+2. It revokes the instance's previous session and closes its forward.
+3. It registers with `transport: "forward"`, checks the nonce, and writes the guest's agent configuration. No guest bridge is installed.
+4. It starts the forward: an `ssh` control master on the pinned target (`-F none`, no agent, no X11, no local command) and one `-O forward -R 127.0.0.1:11788:<session socket>`, which fails if anything already holds the guest port. That is the only forward to a host socket. There is no dynamic, SOCKS or local forward. The master's PID, control path and destination are recorded as for the other tunnels.
+5. It activates with the master's PID and start time, then records both in `inference.json`.
+
+Any failure closes the forward and revokes the partial session. Revocation always closes the forward first, which ends every guest stream (NET-08). That covers `iso inference revoke`, `inference.mode` turned off, a changed service grant (re-registration), `iso stop` and `iso destroy`. A recorded or remembered session counts only while both the owner and the recorded forward run with their recorded start times. The forward's death therefore ends the session at the gateway, and the next iso command registers a fresh session over a new forward with a new capability. Nothing falls back to a relay, a raw endpoint, another transport or a cloud provider (NET-09).
+
+**Gateway.** A `forward` registration's activation must name a live process of the gateway's user, whose start time is the declared one and whose executable (`proc_pidpath`) is `/usr/bin/ssh`. The sandbox owner or another program is refused. The registered sandbox owner must still be running. The gateway watches both processes, and either exit revokes the session. Every other check (epoch, nonce, inactive phase, capability, budgets) is unchanged.
+
+**Limits.** The forward is only as strong as the host's `ssh`. A release build always runs `/usr/bin/ssh`, and the gateway refuses any other executable. The guest's `sshd` owns the guest listener, so a root guest can stop it or bind another loopback listener after the forward ends. That only denies its own inference, since the capability is required on every request. The forward has no connection cap of its own (no R2, §22.3): `ssh` opens one gateway connection per guest channel, and the gateway's per-session connection and buffering limits (§9) bound them.
+
+**Tests.** Unit tests cover the grant and its digest, the forward set, the ordering, the binding, revocation, forward death and the absence of a relay flag. The gateway's tests cover `forward` activation, and its confined-process gate binds a real `/usr/bin/ssh`. Mutants and host faults cover each check. The `brokered-inference` phase of `tests/integration-apple-sandbox.sh` drives a real brokered VM: a request through the forward, an unrelated host loopback port that stays unreachable, and revocation closing an open stream.
 
 ## Source references
 

@@ -218,6 +218,8 @@ Broker code accepts hostile input and must remain bounded and confined. Keep pro
 
 A local-model grant resolves to a fixed host-side endpoint from administrator configuration. The guest sees only its capability and guest-local endpoint, never a generic host destination selector. Deny unrelated local ports even while this grant is active. Show the grant in effective policy and audit records; enforce service-specific authorization and resource budgets.
 
+Implemented for guarded inference ([secure-local-inference §22.9](secure-local-inference-spec.md#229-brokered-transport-the-fixed-ssh-forward)): under `inference.mode: "required"` the boot policy's one local service is `inference-gateway`, guest `127.0.0.1:11788`, whose host end is the fixed kind `inference-session` (the instance's `iso-inference` session socket, a path iso derives, not one configuration names). iso carries it over one static `ssh -R` forward to that socket, and the gateway enforces the service's capability, routes and budgets. No raw model tunnel, and so no other host loopback port, is granted on that boot.
+
 ### 7.4 Application and Docker compatibility
 
 Guest-local services and Docker networks may operate without an external VM NIC, but external pulls and dependency downloads require configured proxy paths. Configure guest applications, Docker daemon, containers, and builds individually. A container's loopback is not the guest VM's loopback; expose a job-local proxy endpoint on a selected guest-internal bridge where needed.[^n10]
@@ -520,6 +522,19 @@ root can stop it, which makes SSH unavailable and nothing else.
   and local services; `status --output json` adds `network` for brokered
   instances only; `capabilities` adds static `network_transports`
   ([machine interface](../machine-interface.md#status)).
+- Guarded inference (spec 7.3; [secure-local-inference
+  §22.9](secure-local-inference-spec.md#229-brokered-transport-the-fixed-ssh-forward)):
+  under `inference.mode: "required"` the boot policy carries exactly the
+  `inference-gateway` local service (`host_endpoint: "inference-session"`, no
+  host path) and no raw model tunnel. Existing TCP local-service encodings and
+  digests are unchanged. `ProxyLauncher` starts one static
+  `-R 127.0.0.1:11788:<session socket>` forward after the guest is configured.
+  The gateway (control protocol 3, kind `forward`) binds the session to that
+  `ssh` process and to the sandbox owner, and every revocation closes the
+  forward first. The runtime is never asked for its relay on a brokered
+  sandbox. `iso policy effective`, `iso status` and the audit environment
+  record name the grant. Unit-tested; the `brokered-inference` integration
+  phase has not been run on hardware.
 
 ### Requirement mapping
 

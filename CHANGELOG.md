@@ -20,8 +20,14 @@ SPDX-License-Identifier: Apache-2.0
   clamps output limits, and enforces per-session and shared budgets. Under
   `required`, no provider credential, credential proxy or raw model tunnel
   reaches the guest, and no failure falls back to a raw endpoint or the
-  cloud. It is for Linux guests on `network.transport: "vmnet"`; the default
-  brokered transport and macOS guests are refused. See the
+  cloud. It is for Linux guests on either transport; macOS guests are
+  refused. On `vmnet` the sandbox runtime relays the session into the guest
+  over vsock. On the default `brokered` transport the boot's network policy
+  names one `inference-gateway` local service, and iso carries the session
+  over one fixed `ssh -R 127.0.0.1:11788:<session socket>` forward on the
+  instance's pinned SSH connection, started after the guest is configured
+  and closed by every revocation; the gateway binds the session to that
+  forward's process. Agents use `http://127.0.0.1:11788` on both. See the
   [`inference` section](docs/configuration.md#inference-section) and the
   [design](docs/design/secure-local-inference-spec.md).
 - **`iso inference` commands** ([reference](docs/commands.md#inference)):
@@ -40,6 +46,11 @@ SPDX-License-Identifier: Apache-2.0
   connections at once, refused for brokered sandboxes), and `inspect`
   reports it. iso requires protocol 6. In the guest, a systemd socket on
   `127.0.0.1:11788` bridges to the relayed socket.
+- **Gateway control protocol 3:** `register_session` declares the session's
+  transport kind. `owner` (vmnet) activates bound to the registered sandbox
+  owner; `forward` (brokered) activates bound to a live `/usr/bin/ssh` of the
+  same user at the declared start time, while the owner still runs, and is
+  revoked when either exits. Version 2 requests are refused.
 - **Release archives** carry `iso-inference`.
 
 ### Changed
