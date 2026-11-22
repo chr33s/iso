@@ -128,15 +128,19 @@ package enum ArchiveValidator {
         case "1": "h"
         default: throw reject("unsupported member type in \(debugQuoted(normalized))")
         }
-      // `normalize` returned at least one component.
+      // `key` refuses a component that folds to nothing, so there is a leaf;
+      // refuse rather than trap on guest bytes if that ever stops holding.
       let components = normalized.split(separator: "/")
+      guard let leaf = components.last else {
+        throw reject("member \(debugQuoted(name)) has no name")
+      }
       // A member under a path that is not a directory would follow it.
       let parent = try seen.walk(components.dropLast()) { existing throws(HostControlError) in
         guard existing == "d" else {
           throw reject("member \(debugQuoted(normalized)) is beneath a non-directory")
         }
       }
-      if let parent, let previous = seen.kind(of: components[components.count - 1], under: parent) {
+      if let parent, let previous = seen.kind(of: leaf, under: parent) {
         // A directory may be repeated; anything else is a conflict.
         guard previous == "d" && kind == "d" else {
           throw reject("duplicate archive member \(debugQuoted(normalized))")

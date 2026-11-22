@@ -132,6 +132,10 @@ import Testing
           [("a/b", [1])], extra: [tarHeader(name: "h", size: 0, type: "1", link: "a/\u{200C}/b")])
       ),
       ("ignorable-only name", tarArchive([("\u{200C}", [1])])),
+      // Only the folded-key check sees this one: U+FEFF does not join the
+      // `/`, and the extractor writes `a/\u{FEFF}/b`, which folding alone
+      // would validate as `a/b`.
+      ("ignorable-only middle component", tarArchive([("a/\u{FEFF}/b", [1])])),
       // A combining mark after `/` makes one `Character` of both, hiding the
       // separator from `Character`-based checks but not from the extractor.
       ("traversal behind a combining mark", tarArchive([("../\u{301}x", [1])])),
