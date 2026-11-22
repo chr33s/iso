@@ -49,7 +49,8 @@ package enum FilteredHandoff {
 
     package var description: String {
       switch self {
-      case .runtimeIncompatible: "filtered egress requires runtime protocol 5"
+      case .runtimeIncompatible:
+        "filtered egress requires runtime protocol \(RuntimeProtocol.bootIdentity) or later"
       case .missingBoot: "missing boot policy; restart the instance"
       case .bootChanged: "boot id changed"
       case .policyChanged: "egress policy does not match this boot; restart the instance"
@@ -67,7 +68,7 @@ package enum FilteredHandoff {
     recordedPolicyHash: String?, wantedPolicyHash: String, ownerMatches: Bool
   ) -> Failure? {
     guard filtered else { return nil }
-    guard advertisedProtocol == RuntimeProtocol.bootIdentity else { return .runtimeIncompatible }
+    guard advertisedProtocol >= RuntimeProtocol.bootIdentity else { return .runtimeIncompatible }
     guard let recordedBootID, !recordedBootID.isEmpty else { return .missingBoot }
     guard recordedBootID == liveBootID else { return .bootChanged }
     guard recordedPolicyHash == wantedPolicyHash, !wantedPolicyHash.isEmpty else {

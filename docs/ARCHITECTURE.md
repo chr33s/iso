@@ -22,7 +22,7 @@ and the architectural invariants. For the security view of the same system, see
 
 ## Executables and packages
 
-A distribution holds five executables. The first four are host processes;
+A distribution holds six executables. The first five are host processes;
 `iso-macos-helper` runs inside macOS guests:
 
 | Executable | Package | Responsibility |
@@ -30,6 +30,7 @@ A distribution holds five executables. The first four are host processes;
 | `iso` | root [`Package.swift`](../Package.swift) | CLI, configuration, host state, workspace and agent orchestration |
 | `iso-sandbox` | [`iso-sandbox/`](../iso-sandbox) | Apple Containerization VM ownership and runtime operations; macOS guests (`iso-sandbox macos …`) on Virtualization.framework directly |
 | `iso-proxy` | [`iso-proxy/`](../iso-proxy) | Confined, credential-bearing provider transport |
+| `iso-inference` | [`iso-proxy/`](../iso-proxy) | Confined per-user gateway that exposes host-side local models to vmnet Linux VMs through per-session capabilities, reached over the runtime's vsock socket relay ([design](design/secure-local-inference-spec.md)) |
 | `iso-egress` | [`iso-egress/`](../iso-egress) | Confined CONNECT companion for filtered egress; no provider credentials |
 | `iso-macos-helper` | [`iso-sandbox/`](../iso-sandbox) | Guest agent that `iso-sandbox macos template build` installs in macOS templates; never runs on the host |
 
@@ -39,8 +40,9 @@ as a guest file for computer use; it never runs on the host. `iso-ci`
 ([`iso-ci/`](../iso-ci), [`ci.md`](ci.md)) is the separately installed GitHub
 Actions companion, which base iso never requires.
 
-The host drives the runtime over its JSON CLI and starts companions through
-their startup protocols; it never links those packages. The one shared code
+The host drives the runtime over its JSON CLI, starts companions through
+their startup protocols and talks to the inference gateway over its
+owner-only control socket; it never links those packages. The one shared code
 is the [`iso-policy/`](../iso-policy) package, never a process of its own. Its
 `IsoPolicy` library (the default-deny policy evaluator, sliding-window
 admissions and single-use approvals) is linked by both `iso` and `iso-proxy`
@@ -49,9 +51,10 @@ admissions and single-use approvals) is linked by both `iso` and `iso-proxy`
 library, the one per-scalar shell and YAML quoting implementation
 (`shellEscape`, `RemoteCommand`), are linked by `iso` and the separately
 installed `iso-ci`. `iso` resolves
-`iso-sandbox`, `iso-proxy`, and `iso-egress` beside its own executable, and
-`iso-sandbox` finds `iso-macos-helper` beside itself. A missing `iso-egress`
-blocks only filtered boots.
+`iso-sandbox`, `iso-proxy`, `iso-inference` and `iso-egress` beside its own
+executable, and `iso-sandbox` finds `iso-macos-helper` beside itself. A
+missing `iso-egress` blocks only filtered boots; a missing `iso-inference`
+blocks only `inference.mode = "required"` agent sessions.
 
 ## Layout
 
@@ -86,7 +89,7 @@ iso/
 │                            #   macOS guests (IsoSandboxCore/MacOS, IsoMacProtocol, iso-macos-helper);
 │                            #   computer use and the live view for both (IsoSandboxCore/ComputerUse);
 │                            #   Linux displays (LinuxDisplay, LinuxDesktop; kernel/ builds the desktop kernel)
-├── iso-proxy/              # Swift credential proxy: injection, policy, TLS, Seatbelt
+├── iso-proxy/              # Swift credential proxy and the iso-inference gateway (shared transport)
 ├── iso-egress/             # Swift filtered-egress companion: destination policy, leases, CONNECT
 ├── iso-policy/             # shared libraries: IsoPolicy (evaluator), IsoGitIndex (inert index reader), IsoShell (quoting)
 ├── iso-ci/                 # separately installed GitHub Actions companion; speaks iso.host/v1
@@ -154,8 +157,9 @@ key), `StoreFormat` (the AES-GCM envelope and its bounds) and `EnclaveStore`
 | Processes and signals | `ProcessRunner` (the one subprocess launcher: argv, environment, bounded capture, deadlines, process groups), `ChildGroups` (forward termination signals to child groups), `Shutdown` (sticky SIGINT/SIGTERM flag for interruptible operations) |
 | SSH and workspace | `SSH` (pinned-host-key connections), `GuestSession` (aliased `SendEnv` forwarding restored by a guest wrapper, minimal guest-bound environment, opaque workload sessions), `SSHConfig` (managed `~/.ssh/config` aliases), `Workspace` (copy/clone/sync, push/pull), `WorkspaceStage` / `WorkspaceStageApply` / `WorkspaceStageReview` (staged pulls), `PortForwards` (`ssh -L` session per VM) |
 | Editor providers | `SSHConnectionTarget` (alias, guest path and egress mode; no key material or workload state), `EditorProviderID` / `EditorProvider` (the closed set of compiled-in `code` and `zed` launch adapters, not a plugin ABI and not backends), `EditorLauncher` (strategy loop with a late handoff check and a deadline per spawn; `EditorChoice` selects exactly one provider or `iso editor`'s first-available order, and once a provider's editor fails no other is tried), `ProjectEditorWorkflow` (`iso code` / `iso zed`: `UpWorkflow`, then `SSHConfigFile.update`, then one provider). The default `sandboxed` path is `TrustedEditorApp` (fixed-path, signature-verified bundle), `EditorEnclave` (per-session HOME, profile and Ed25519 key), `EditorSandboxPolicy` (deny-by-default Seatbelt profile) and `SandboxedEditorSession` (guest key authorization, loopback `ssh -L` tunnel, `sandbox-exec` spawn and proof supervision until the editor exits); see [Local editors](trust-model.md#local-editors). Claude and Codex are managed workloads and stay on `AgentBootstrap` / `WorkloadSession`, never on this path |
-| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `AgentCatalog` / `AgentLaunchPlan` (definition catalog and reviewed adapter dispatch), `RunSession` (disposable-run ownership), `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyStartup` (startup wire encoding), `ProxyUpstreams` (provider selection), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
+| Guest bootstrap and state | `Bootstrap`, `BootstrapClaude`, `BootstrapCodex`, `BootstrapStaging`, `CodexTOML`, `AgentUpdate`, `AgentCatalog` / `AgentLaunchPlan` (definition catalog and reviewed adapter dispatch), `RunSession` (disposable-run ownership), `ProxyLifecycle` (proxy processes and reverse tunnels), `ProxyStartup` (startup wire encoding), `ProxyUpstreams` (provider selection), `BootstrapInference` (agent configuration under `inference.mode = "required"`), `ProxyState`, `ModelState`, `GuestEnvState`, `Profiles`, `SeatbeltProfile`, `EmbeddedResources` (generated from `scripts/guest/`) |
 | GitHub and secrets | `ProxyProvisioning` (Keychain-backed setup), `GitHubAPI`, `GitHubPAT`, `GitHubTokens`, `SecretStore` (Keychain provisioning only), `CredentialResolver` (just-in-time `cmd:` and `vault:` resolution) |
+| Guarded local inference | `Inference/InferenceController` (the `iso-inference` controller: launch under `sandbox-exec`, register on the instance's relay socket, verify the nonce, activate bound to the sandbox owner, revoke), `InferenceProcesses` (control-socket client, peer and process identity, reachability probes), `InferenceBackendChecks` (`run_as`, authentication, confinement and binding checks), `ManagedBackend` (the root provisioning step for a managed mlx-lm LaunchDaemon), `InferenceSeatbelt`, `EmbeddedInference` (generated from `Inference/Resources/`), `Guest/BootstrapInference` (agent and attach-grant configuration under `inference.mode = "required"`) |
 | Devcontainer | `Devcontainer`, `DevcontainerJSON`, `DevcontainerModel`, `DevcontainerResolve`, `DevcontainerReport`, `DevcontainerState`, `DevcontainerGitRepo`, `DevcontainerOCI` (digest-verified Features) |
 | Update and uninstall | `Update`, `UpdateRelease`, `UpdateVersion`, `UpdateCheck`, `BuildRevision`, `Uninstall` |
 | Audit | `BoundaryAudit` (`<instance>/audit.jsonl`: host-recorded boot policy, raw provider forwards, stops, workspace returns; `iso audit NAME`), `AuditEvent` (the typed `iso.audit/v1` event model), `AuditStore` (`<stateRoot>/audit/v1`: JSONL segments, one retention checkpoint, lock-free snapshots), `AuditReader` (run summaries, VM-context selection, cursors and coverage for every renderer), `AuditRecorder` (`AuditInvocation`, fed by `RunWorkflow`, the agent commands and `InteractiveSSH.attach`), `ComputerUseAudit` (`<instance>/computer-use-audited.json`: a boot's computer-use counts are recorded once, from `iso stop` or from the runtime's `endedBoots`). See [audit.md](audit.md) |
@@ -277,8 +281,11 @@ The lifecycle is **setup → up/start → shell → stop → destroy**. A first 
 4. **Forwards and state** — refresh an installed SSH alias, persist and spawn
    port forwards, persist `guest_env.json` and devcontainer state.
 5. **Bootstrap** — GitHub credential helper when a token is forwarded; Claude
-   and Codex configuration injection; provider proxies and local-model tunnels;
-   `postStartCommand`.
+   and Codex configuration injection; provider proxies and local-model tunnels,
+   or, under `inference.mode = "required"`, a verified `iso-inference` session
+   instead of both (register on the Unix socket the sandbox relays into the
+   guest over vsock, nonce check, activation bound to the sandbox owner
+   process, guest bridge on `127.0.0.1:11788`); `postStartCommand`.
 6. **Workspace** — `--workspace` copies via a tar pipe; `--git-repo` clones in
    the guest; mounts are a one-time sync (use `iso push` / `iso pull`).
 
@@ -312,7 +319,7 @@ fetch release metadata, download the platform archive, `SHA256SUMS` and
 `ReleaseSigners` (mandatory), the checksum (mandatory) and the Sigstore
 attestation, extract into a private
 temporary directory with path validation, then replace `iso-sandbox`,
-`iso-macos-helper`, `iso-proxy`, `iso-egress` and finally `iso`. Any failure before a replacement leaves every
+`iso-macos-helper`, `iso-proxy`, `iso-egress`, `iso-inference` and finally `iso`. Any failure before a replacement leaves every
 installed binary untouched; each replacement is atomic but the set is not a
 single transaction. Only release builds (`-D ISO_RELEASE_BUILD`, set by
 `scripts/build-release.py --release`) update themselves. A background notifier

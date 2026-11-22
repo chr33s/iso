@@ -304,3 +304,32 @@ private func startOptions(_ context: CommandContext) throws -> BootOptions {
   prompts.secret = { _ in nil }
   #expect(try ModelCommand.promptEndpoint("Codex", prompts: prompts)?.authToken == nil)
 }
+
+private let requiredInference = #"""
+  , "network": {"transport": "vmnet"},
+  "inference": {"mode": "required",
+    "qualification_profiles": {"p": {"protocol": "anthropic-messages", "completion_evidence": "drain",
+      "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+      "max_input_bytes": 1024}},
+    "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "anthropic-messages",
+      "qualification_profile": "p"}},
+    "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["anthropic-messages"],
+      "max_context_tokens": 1000}}},
+  "claude": {"local_model": {"service": "s"}}
+  """#
+
+/// K5: under `required`, `iso model set remote` is refused and records
+/// nothing; `show` lists the guarded services.
+@Test func requiredInferenceRefusesTheRemoteModel() throws {
+  let fixture = try CLIFixture(requiredInference)
+  defer { fixture.remove() }
+  let instance = try InstanceStore.resolve(fixture.context.config, name: nil)
+  let error = try #require(throws: HostError.self) {
+    try ModelCommand.setRemote(fixture.context, instance)
+  }
+  #expect(error.message.contains("is refused"))
+  #expect(try ModelState.tryLoad(instance) == nil)
+  try ModelCommand.status(fixture.context, instance)
+  #expect(fixture.streams.stdout.contains { $0.contains("guarded — s → b") })
+  #expect(fixture.streams.stdout.contains { $0.contains("Codex") && $0.contains("refused") })
+}

@@ -24,7 +24,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse, coreAI: coreAI)
+      computerUse: computerUse, coreAI: coreAI, inference: inference)
   }
 
   /// `--no-github`: auth off and PAT prompt disabled for this command; the
@@ -38,7 +38,7 @@ extension IsoConfig {
       workspacePull: workspacePull, egress: egress, egressFilter: egressFilter, limits: limits,
       securityPreset: securityPreset, editor: editor, execution: execution, policy: policy,
       network: network, workspaceInput: workspaceInput, revokedGrantIDs: revokedGrantIDs,
-      computerUse: computerUse, coreAI: coreAI)
+      computerUse: computerUse, coreAI: coreAI, inference: inference)
   }
 }
 

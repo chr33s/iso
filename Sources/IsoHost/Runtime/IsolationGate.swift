@@ -43,11 +43,16 @@ package enum IsolationGate {
     package let network: ExpectedNetwork
     /// Linux sandboxes: the display the instance was created with.
     package let display: ExpectedDisplay
+    /// Linux sandboxes: whether the boot must relay the inference gateway's
+    /// socket (secure-local-inference §22); otherwise it must relay nothing.
+    package let inferenceRelay: Bool
 
     package init(
       sandbox: MachineName, owner: OwnerID, runtimeRoot: String, resources: Resources,
-      egress: EgressMode, network: ExpectedNetwork = .vmnet, display: ExpectedDisplay = .headless
+      egress: EgressMode, network: ExpectedNetwork = .vmnet, display: ExpectedDisplay = .headless,
+      inferenceRelay: Bool = false
     ) {
+      self.inferenceRelay = inferenceRelay
       self.sandbox = sandbox
       self.owner = owner
       self.runtimeRoot = runtimeRoot
@@ -60,6 +65,39 @@ package enum IsolationGate {
     package var transport: NetworkTransport { network.transport }
   }
 
+  // MARK: Inference relay (secure-local-inference §22)
+
+  /// Where the runtime puts the relays' host sockets: `iso-sbx/inference`
+  /// in the per-user temporary directory, beside the owners' control
+  /// sockets. The gateway binds its session sockets here.
+  package static let relayDirectory: String = {
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let count = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+    let temporary =
+      count > 0 && count <= buffer.count
+      ? String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+      : NSTemporaryDirectory()
+    return (temporary.hasSuffix("/") ? temporary : temporary + "/") + "iso-sbx/inference"
+  }()
+  package static let relayGuestPath = "/var/lib/iso-inference/gateway.sock"
+  package static let relayMaxConnections = 32
+
+  /// The relay socket's file name for a sandbox directory: the FNV-1a-64
+  /// hash of its canonical path in lowercase hex, as the runtime derives it.
+  package static func relaySocketName(sandboxDirectory: String) -> String {
+    let hash = sandboxDirectory.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
+      ($0 ^ UInt64($1)) &* 1_099_511_628_211
+    }
+    return String(hash, radix: 16) + ".sock"
+  }
+
+  /// The host socket the runtime derives for a Linux `sandbox`.
+  package static func inferenceSocket(runtimeRoot: String, sandbox: MachineName) -> String {
+    relayDirectory + "/"
+      + relaySocketName(
+        sandboxDirectory: SandboxNamespace.directory(root: runtimeRoot, sandbox, .linux))
+  }
+
   /// Process-local proof that a sandbox's current boot passed the gate. Not
   /// `Codable`: it cannot be persisted, and it is re-established after every
   /// boot and before every hand-out.
@@ -70,10 +108,19 @@ package enum IsolationGate {
     /// How this boot is reached: its vmnet address, or the brokered
     /// connector bound to this boot and its verified digests.
     package let route: GuestRoute
-    fileprivate init(sandbox: MachineName, ownerPID: Int32, route: GuestRoute) {
+    /// When the owner halts this boot (`limits.session_ttl`), if ever.
+    package let sessionDeadline: Date?
+    /// The verified host end of the inference relay, if the boot has one.
+    package let inferenceSocket: String?
+    fileprivate init(
+      sandbox: MachineName, ownerPID: Int32, route: GuestRoute, sessionDeadline: Date?,
+      inferenceSocket: String?
+    ) {
       self.sandbox = sandbox
       self.ownerPID = ownerPID
       self.route = route
+      self.sessionDeadline = sessionDeadline
+      self.inferenceSocket = inferenceSocket
     }
 
     /// Nil for a brokered boot, which has no address.
@@ -159,6 +206,13 @@ package enum IsolationGate {
   {
     try verifyRecord(inspection, expected)
     let name = expected.sandbox
+    // The relay is set at each start from the configuration; a running boot
+    // must match it (checked after boot: `start` sets it, §22).
+    guard inspection.record.relaysInference == expected.inferenceRelay else {
+      throw .hostExposure(
+        "sandbox \(name) was booted \(inspection.record.relaysInference ? "with" : "without") the inference relay, but the configuration \(expected.inferenceRelay ? "requires" : "does not allow") it (inference.mode changed while it ran); restart it: `iso stop`, then `iso start`"
+      )
+    }
     guard inspection.status == .running else {
       throw .operationUncertain("sandbox \(name) is \(inspection.status.rawValue), not running")
     }
@@ -190,7 +244,8 @@ package enum IsolationGate {
         "sandbox \(name) booted \(effective.imageDigest) but records \(inspection.record.imageDigest)"
       )
     }
-    try verifyHostExposure(name, effective, runtimeRoot: expected.runtimeRoot)
+    try verifyHostExposure(
+      name, effective, runtimeRoot: expected.runtimeRoot, inferenceRelay: expected.inferenceRelay)
     try verifyDisplay(name, effective, expected.display)
     if case .vmnet(let ip) = route {
       try verifyNetwork(name, effective, ip, egress: expected.egress)
@@ -201,7 +256,10 @@ package enum IsolationGate {
         "sandbox \(name) runs \(argv) with nested virtualization \(effective.virtualization); expected /sbin/init without it"
       )
     }
-    return Ready(sandbox: name, ownerPID: live.pid, route: route)
+    return Ready(
+      sandbox: name, ownerPID: live.pid, route: route,
+      sessionDeadline: inspection.record.sessionDeadline,
+      inferenceSocket: effective.inferenceRelay?.host)
   }
 
   /// The brokered half of the gate (NET-01, NET-02): the live VM shows no network
@@ -248,15 +306,23 @@ package enum IsolationGate {
       networkDevices: brokered.networkDevices)
   }
 
-  static func verifyHostExposure(_ name: MachineName, _ effective: Effective, runtimeRoot: String)
-    throws(RuntimeError)
-  {
+  static func verifyHostExposure(
+    _ name: MachineName, _ effective: Effective, runtimeRoot: String, inferenceRelay: Bool
+  ) throws(RuntimeError) {
     guard !effective.sshAgentForwarding else {
       throw .hostExposure("sandbox \(name) forwards the host SSH agent")
     }
-    guard effective.socketRelays == 0, effective.publishedPorts == 0 else {
+    // At most one relay: the inference gateway's derived socket into the
+    // fixed guest path, capped, and only when the configuration asks.
+    let relay = EffectiveRelay(
+      host: inferenceSocket(runtimeRoot: runtimeRoot, sandbox: name), guest: relayGuestPath,
+      maxConnections: relayMaxConnections)
+    let relays =
+      effective.socketRelays == (inferenceRelay ? 1 : 0)
+      && effective.inferenceRelay == (inferenceRelay ? relay : nil)
+    guard relays, effective.publishedPorts == 0 else {
       throw .hostExposure(
-        "sandbox \(name) relays \(effective.socketRelays) sockets and publishes \(effective.publishedPorts) ports; expected none"
+        "sandbox \(name) relays \(effective.socketRelays) sockets (\(effective.inferenceRelay.map { sanitizeForDisplay($0.host) + " -> " + sanitizeForDisplay($0.guest) } ?? "none")) and publishes \(effective.publishedPorts) ports; expected \(inferenceRelay ? "only the inference relay \(relay.host) -> \(relay.guest)" : "none")"
       )
     }
     let rootfs = rootfsPath(runtimeRoot: runtimeRoot, sandbox: name)
@@ -481,6 +547,9 @@ extension IsolationGate {
     if case .confirmedThisBoot = helper, let pending = macPending(inspection) {
       throw .operationUncertain("sandbox \(name) is not ready: \(pending)")
     }
-    return Ready(sandbox: name, ownerPID: live.pid, route: .vmnet(ip))
+    // macOS guests have no inference relay (secure-local-inference §22).
+    return Ready(
+      sandbox: name, ownerPID: live.pid, route: .vmnet(ip),
+      sessionDeadline: inspection.record.sessionDeadline, inferenceSocket: nil)
   }
 }

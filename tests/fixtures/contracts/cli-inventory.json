@@ -58,6 +58,7 @@
     "--post-start",
     "--env",
     "--env-file",
+    "--model-mode",
     "--devcontainer",
     "--no-devcontainer",
     "--egress",
@@ -318,6 +319,52 @@
     "<name>",
     "--json"
   ],
+  "inference": [],
+  "inference attach": [
+    "<name>",
+    "--service",
+    "--api"
+  ],
+  "inference deprovision": [
+    "<backend>"
+  ],
+  "inference detach": [
+    "<name>"
+  ],
+  "inference doctor": [
+    "--json"
+  ],
+  "inference init": [
+    "--backend",
+    "--port",
+    "--model",
+    "--model-repo",
+    "--model-revision",
+    "--python",
+    "--install",
+    "--memory-limit",
+    "--force"
+  ],
+  "inference provision": [
+    "<backend>"
+  ],
+  "inference requalify": [
+    "<backend>",
+    "--restart"
+  ],
+  "inference restart-backend": [
+    "<backend>"
+  ],
+  "inference revoke": [
+    "<name>"
+  ],
+  "inference status": [
+    "<name>",
+    "--json"
+  ],
+  "inference stop": [
+    "--force"
+  ],
   "list": [
     "--json",
     "--all-hosts"
@@ -464,6 +511,7 @@
     "--post-start",
     "--env",
     "--env-file",
+    "--model-mode",
     "--devcontainer",
     "--no-devcontainer",
     "--dry-run",
@@ -504,6 +552,7 @@
     "--post-start",
     "--env",
     "--env-file",
+    "--model-mode",
     "--devcontainer",
     "--no-devcontainer",
     "--egress",
@@ -541,6 +590,7 @@
     "--post-start",
     "--env",
     "--env-file",
+    "--model-mode",
     "--devcontainer",
     "--no-devcontainer",
     "--egress",

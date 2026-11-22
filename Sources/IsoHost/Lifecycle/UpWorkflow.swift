@@ -23,6 +23,8 @@ package struct UpRequest {
   package var noAgents = false
   package var noGithub = false
   package var noPrompt = false
+  /// `--model-mode`, recorded before the provider preflight.
+  package var modelMode: ModelMode?
   /// `--egress` or `--allow-host` was given; the effective policy is in the
   /// lifecycle's configuration.
   package var egressRequested = false
@@ -199,10 +201,11 @@ package struct UpWorkflow {
   package func rejectRestartOnlyInputs(_ instance: Instance) throws {
     if request.noAgents || request.noGithub || !request.forwardPort.isEmpty
       || request.postStart != nil || !request.guestEnvironment.isEmpty || request.envFile != nil
+      || request.modelMode != nil
     {
       throw HostFailure(
         .instanceIncompatible(instance.name),
-        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, and --env-file only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso \(request.command)` with those options."
+        "Instance '\(instance.name)' is already running for this project. --no-agents, --no-github, --forward-port, --post-start, --env, --env-file and --model-mode only take effect during start or restart.\nRun `iso stop \(instance.name)` first, then repeat `iso \(request.command)` with those options."
       )
     }
     try rejectEgressChange(instance)
@@ -225,10 +228,12 @@ package struct UpWorkflow {
   }
 
   package func bootOptions() throws -> BootOptions {
-    BootOptions(
+    var options = BootOptions(
       noAgents: request.noAgents, noPrompt: request.noPrompt, forwardPorts: request.forwardPort,
       configTarget: request.configTarget,
       postStartOverride: request.postStart)
+    options.modelMode = request.modelMode
+    return options
   }
 
   package func restart(_ instance: Instance) throws {

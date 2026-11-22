@@ -15,6 +15,8 @@ package struct BootOptions {
   /// first start. A reprovision passes only what the config grants, so saved entries
   /// keep their provenance and a revoked one is not re-granted.
   package var freshGrantScopes: Set<String>? = nil
+  /// `--model-mode`: recorded before the offline/provider preflight.
+  package var modelMode: ModelMode? = nil
 
   package init(
     noAgents: Bool = false, noPrompt: Bool = false, forwardPorts: [PortForward] = [],

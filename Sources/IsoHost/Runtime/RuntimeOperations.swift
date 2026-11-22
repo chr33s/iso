@@ -40,10 +40,13 @@ extension SandboxRuntime {
 
   /// `transport` brokered creates a sandbox with no network device; the
   /// runtime must advertise ``RuntimeProtocol/brokeredFeature``.
+  /// `inferenceRelay` relays the inference gateway's socket into the guest
+  /// (secure-local-inference §22) for this and later boots.
   package func create(
     _ name: MachineName, source: Source, cpus: UInt32, memoryMiB: UInt64, diskGiB: UInt64,
     owner: OwnerID, egress: EgressMode, transport: NetworkTransport = .vmnet,
-    display: LinuxGuestDisplay? = nil, guestComputerUse: MacGuestComputerUse? = nil
+    display: LinuxGuestDisplay? = nil, guestComputerUse: MacGuestComputerUse? = nil,
+    inferenceRelay: Bool = false
   ) throws(RuntimeError) {
     var screen: [String] = []
     if display == .virtio {
@@ -73,22 +76,26 @@ extension SandboxRuntime {
         "--cpus", String(cpus), "--memory-mib", String(memoryMiB), "--disk-gib", String(diskGiB),
         "--owner",
         owner.rawValue,
-      ] + network + screen,
+      ] + network + screen + (inferenceRelay ? ["--inference-relay"] : []),
       deadline: createDeadline,
       limit: Self.jsonLimit, cancellable: true)
   }
 
   /// `expiresAt` bounds this boot's session (the owner halts the VM then).
   /// `networkPolicy`, for a brokered sandbox, is the digest every stream of
-  /// this boot must present.
+  /// this boot must present. `inferenceRelay`, when set, changes whether
+  /// this and later boots relay the inference gateway's socket (the runtime
+  /// records it under its mutation guard); nil keeps the record's value.
   package func start(
-    _ name: MachineName, expiresAt: Date? = nil, networkPolicy: SHA256Hex? = nil
+    _ name: MachineName, expiresAt: Date? = nil, networkPolicy: SHA256Hex? = nil,
+    inferenceRelay: Bool? = nil
   ) throws(RuntimeError) {
     _ = try checked(
       ["start"],
       [name.rawValue, "--wait-seconds", String(settings.bootTimeout.seconds)]
         + (expiresAt.map { ["--expires-at", String(Self.epochSeconds($0))] } ?? [])
-        + (networkPolicy.map { ["--network-policy", $0.rawValue] } ?? []),
+        + (networkPolicy.map { ["--network-policy", $0.rawValue] } ?? [])
+        + (inferenceRelay.map { ["--inference-relay", $0 ? "on" : "off"] } ?? []),
       deadline: bootDeadline + .seconds(10), limit: Self.jsonLimit, cancellable: true)
   }
 

@@ -128,6 +128,7 @@ struct ProjectArguments: ParsableArguments {
     request.noAgents = boot.noAgents
     request.noGithub = boot.noGithub
     request.noPrompt = boot.noPrompt
+    request.modelMode = boot.modelMode
     request.transport = mount ? .mount : .copy
     request.devcontainerInput = devcontainerArguments.input
     return request

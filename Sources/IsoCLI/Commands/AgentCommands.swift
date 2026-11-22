@@ -21,7 +21,9 @@ extension CommandContext {
         isoExecutable: CommandLine.executablePath),
       github: HostGitHubTokens(
         config: config, environment: environment.variables, diagnostics: diagnostics),
-      diagnostics: diagnostics, secrets: secretResolver)
+      diagnostics: diagnostics, secrets: secretResolver,
+      inference: inferenceController(
+        resolver: resolver, isoExecutable: CommandLine.executablePath))
   }
 }
 
@@ -48,7 +50,8 @@ extension CommandContext {
         requestedInstance: name?.rawValue, permissionMode: permissionMode,
         isoVersion: IsoVersion.string))
     try audit.during(.connect) {
-      let agents = self.agents
+      // An agent launch fails without its inference session (`required`).
+      let agents = self.agents.withStrictInference()
       let (running, session) = try agents.openSession(
         backend, name: name, instances: listInstances())
       audit.environment(
@@ -144,6 +147,7 @@ struct ClaudeCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      try context.agents.requireInferenceService(forClaude: true)
       // The managed settings default to bypass mode; --ask overrides it.
       let (ask, args) = splitAsk(ask, args)
       try context.auditedAttach(
@@ -176,6 +180,7 @@ struct ClaudeAgentsCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      try context.agents.requireInferenceService(forClaude: true)
       // An attachment to the guest's agent view; iso does not own the
       // background sessions it shows.
       try context.auditedAttach(
@@ -208,6 +213,7 @@ struct CodexCommand: ParsableCommand {
   func run() throws {
     try IsoCLI.run {
       let context = try CommandContext.load(global)
+      try context.agents.requireInferenceService(forClaude: false)
       let (ask, args) = splitAsk(ask, args)
       try context.auditedAttach(
         .codex, agent: "codex", name: name, permissionMode: ask ? .ask : .bypass
@@ -306,6 +312,9 @@ struct ModelCommand: ParsableCommand {
   }
 
   static func status(_ context: CommandContext, _ instance: Instance) throws {
+    if context.config.inference.mode == .required {
+      return try InferenceStatus.modelLines(context, instance)
+    }
     let state = try ModelState.loadOrDefault(instance)
     context.output.out("Instance: \(instance.name)")
     context.output.out("Mode:     \(state.mode.rawValue)")
@@ -330,6 +339,14 @@ struct ModelCommand: ParsableCommand {
 
   static func setLocal(_ context: CommandContext, _ instance: Instance) throws {
     let config = context.config
+    if config.inference.mode == .required {
+      // Guarded services are the only model path; there is nothing to prompt.
+      var state = try ModelState.loadOrDefault(instance)
+      state.mode = .local
+      try state.save(instance, diagnostics: context.diagnostics)
+      _ = try applyToRunning(context, instance)
+      return try InferenceStatus.modelLines(context, instance)
+    }
     var state = try ModelState.loadOrDefault(instance)
     state.mode = .local
     // Offer each tool that resolves no endpoint; a non-TTY declines.
@@ -351,6 +368,11 @@ struct ModelCommand: ParsableCommand {
   }
 
   static func setRemote(_ context: CommandContext, _ instance: Instance) throws {
+    if context.config.inference.mode == .required {
+      throw HostError(
+        "inference.mode = \"required\" allows only guarded local inference; `iso model set remote \(instance.name)` is refused"
+      )
+    }
     var state = try ModelState.loadOrDefault(instance)
     // Saved endpoints stay so a later `local` does not prompt again.
     state.mode = .remote

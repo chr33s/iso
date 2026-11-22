@@ -329,3 +329,54 @@ private func runWorkflow(_ lifecycle: ProjectLifecycle, workspace: String, remov
   #expect(sessions.first?.cleanupOutcome == "start failed")
   #expect(try InstanceStore.list(lifecycle.config).isEmpty)
 }
+
+private let requiredInference = #"""
+  "inference": {"mode": "required",
+    "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain",
+      "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+      "max_input_bytes": 1024}},
+    "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat",
+      "qualification_profile": "p"}},
+    "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"],
+      "max_context_tokens": 1000}}}
+  """#
+
+/// K5: `--model-mode remote` under `required` is refused before anything is
+/// recorded; `local` is recorded.
+@Test func requiredInferenceRefusesTheRemoteModelMode() throws {
+  let root = try scratchDirectory("workflow-model-mode")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(root, config: requiredInference)
+  let instance = try Instance.allocate(
+    lifecycle.config, name: try InstanceName("project"), image: .default, workspacePath: root)
+  let error = try #require(throws: HostError.self) {
+    try lifecycle.applyModelMode(instance, .remote)
+  }
+  #expect(error.message.contains("--model-mode remote is refused"))
+  #expect(try ModelState.loadOrDefault(instance).mode == .remote, "nothing recorded")
+  try lifecycle.applyModelMode(instance, .local)
+  #expect(try ModelState.loadOrDefault(instance).mode == .local)
+  // Off, either mode is recorded.
+  let off = try workflowFixture(root)
+  try off.applyModelMode(instance, .remote)
+  #expect(try ModelState.loadOrDefault(instance).mode == .remote)
+}
+
+/// K8: a running instance is reused only without boot-only options,
+/// `--model-mode` among them.
+@Test func aRunningInstanceRefusesModelModeLikeOtherBootOptions() throws {
+  let root = try scratchDirectory("workflow-running-mode")
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let lifecycle = try workflowFixture(root)
+  let instance = try Instance.allocate(
+    lifecycle.config, name: try InstanceName("project"), image: .default, workspacePath: root)
+  var request = UpRequest(configTarget: ConfigTarget(path: root + "/c.jsonc", format: .jsonc))
+  try UpWorkflow(request: request, lifecycle: lifecycle, target: nil)
+    .rejectRestartOnlyInputs(instance)
+  request.modelMode = .remote
+  let refusal = try #require(throws: HostFailure.self) {
+    try UpWorkflow(request: request, lifecycle: lifecycle, target: nil)
+      .rejectRestartOnlyInputs(instance)
+  }
+  #expect("\(refusal)".contains("--model-mode"))
+}

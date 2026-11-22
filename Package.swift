@@ -48,6 +48,9 @@ let package = Package(
       exclude: [
         "Guest/Resources/seatbelt-proxy.sb", "Guest/Resources/seatbelt-egress.sb",
         "Guest/Resources/desktop-pre.sh", "Guest/Resources/desktop-post.sh",
+        "Inference/Resources/seatbelt-inference.sb",
+        "Inference/Resources/seatbelt-inference-backend.sb",
+        "Inference/Resources/inference-launcher.py",
       ]),
     // The iso.host/v1 execution-host layer (wire, supervisor, service, client
     // bindings) over IsoHost; nothing in IsoHost may depend on it.

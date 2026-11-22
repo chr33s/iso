@@ -105,6 +105,7 @@ Use `--git-repo <url>` instead of `DIR` to clone a remote repository into
 | `--disk <GiB>` | Instance disk size when creating a new instance |
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
+| `--model-mode <local\|remote>` | Record the VM's model mode before the provider preflight, so a fresh `egress: "none"` VM can start on a local model without a cloud boot. Under `inference.mode = "required"` only `local` is accepted. |
 | `--image <name>` | Named image to use when creating a new instance (default: `default`) |
 | `--profile <list>` | Build or reuse a profile-derived image when creating a new instance, named from the sorted profiles (for example `node-python`). Repeatable or comma-separated; an empty name (`a,,b`) is refused |
 | `--exclude-git` | Deprecated, no effect: transfers into the guest never carry `.git` (a `--git-repo` clone keeps its own) |
@@ -264,6 +265,7 @@ instances, pass the instance name.
 | `--workspace <dir>` | Restart the stopped instance associated with this project path |
 | `--no-agents` | Skip injecting Claude Code and Codex credentials/config into the VM |
 | `--no-github` | Use `github = "off"` for this invocation and suppress the PAT setup prompt. See [scope and limitations](configuration.md#github-auth). |
+| `--model-mode <local\|remote>` | Record the VM's model mode before the provider preflight, so a fresh `egress: "none"` VM can start on a local model without a cloud boot. Under `inference.mode = "required"` only `local` is accepted. |
 | `--forward-port <spec>` | Forward a guest port to the host (`GUEST[:HOST]`, repeatable). Lives for the lifetime of the VM; torn down on `iso stop`. |
 | `--no-prompt` | Suppress the interactive prompt to set up a scoped GitHub PAT when one is missing for the resolved repo (see [`iso github setup-pat`](#github)). |
 | `--post-start <cmd>` | Shell command to run inside the guest after boot. Overrides the `post_start` configuration field. Failure is logged but does not fail the start. |
@@ -663,6 +665,11 @@ one on a local model and leave the other on cloud.
 
 `iso model set remote NAME` switches back to cloud defaults for both tools. Saved
 endpoints are kept, so a later `local` does not re-prompt.
+
+Under [`inference.mode = "required"`](configuration.md#inference-section) the
+guarded services are the only model path. `iso model show NAME` lists each
+tool's service, backend and profile, `iso model set local NAME` applies them,
+and `iso model set remote NAME` is refused.
 
 Switching never requires a VM restart — isolate rewrites the guest config live over
 SSH when the VM is running, or saves it to apply on the next start. An
@@ -1126,8 +1133,14 @@ Release tags come from `main`. The updater requires a maintainer signature on
 the release's `SHA256SUMS` (`SHA256SUMS.sig`), verifies the platform tarball's
 SHA-256 against it and, when `gh` is installed, its repository build-provenance
 attestation.
-The updater installs the bundled `iso-sandbox`, `iso-proxy`, `iso-egress` and
-`iso-macos-helper` before replacing the host. It installs the Linux `desktop`
+The release's `BUILD.json` names its binaries with their SHA-256 digests.
+Before replacing anything, the updater requires every listed binary to be a
+regular file matching its digest and `iso`, `iso-sandbox`, `iso-proxy`,
+`iso-egress` and `iso-macos-helper` to be listed. It installs every listed
+companion before replacing the host: the ones above, `iso-inference` when the
+release lists it (an installed copy is removed when it does not), and any
+companion added after the running iso, so a newer release is never left
+partially installed. It installs the Linux `desktop`
 images' `iso-cu-mcp` and `vmlinux-desktop` when the release carries them and
 removes the installed copies when it does not, so neither stays beside a
 runtime from another release. Each file replacement is atomic; the set of files is not a single
@@ -1138,7 +1151,10 @@ The updater that runs is the installed one. v0.9.0 and earlier do not know
 the two `desktop` files, so an update from one of them installs neither and
 `iso setup --profile desktop` then fails asking for a reinstall. Run
 `iso update --force` once after such an update (or rerun `install.sh`): the
-new updater installs them.
+new updater installs them. Likewise v0.11.x and earlier neither read
+`BUILD.json` nor know `iso-inference`, so an update from one of them installs
+no gateway; run `iso update --force` once after such an update (or rerun
+`install.sh`). Later updaters install whatever companions a release lists.
 
 No authentication is required. When [`gh`](https://cli.github.com/) is authenticated against `github.com` or `GITHUB_TOKEN` is set, `iso update` uses it, which helps avoid GitHub API rate limits.
 
@@ -1169,7 +1185,7 @@ See also the [`updates` section](configuration.md#updates-section) of the config
 
 ### `uninstall`
 
-Remove the isolate binary and the companion executables installed beside it (`iso-sandbox`, `iso-macos-helper`, `iso-proxy`, `iso-egress`, and the Linux `desktop` images' `iso-cu-mcp` and `vmlinux-desktop`) and, optionally, its data: owned instances are destroyed and `<data_dir>/backends/apple-container-v1/` and the update-check state are removed. The configuration file, the secret store (`<data_dir>/secrets/`) and other files under `<data_dir>` (default `~/.iso`) are kept. Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
+Remove the isolate binary and the companion executables installed beside it (`iso-sandbox`, `iso-macos-helper`, `iso-proxy`, `iso-inference`, `iso-egress`, and the Linux `desktop` images' `iso-cu-mcp` and `vmlinux-desktop`) and, optionally, its data: owned instances are destroyed and `<data_dir>/backends/apple-container-v1/` and the update-check state are removed. The configuration file, the secret store (`<data_dir>/secrets/`) and other files under `<data_dir>` (default `~/.iso`) are kept. Refuses to remove the binary when it lives in a build-output directory (`.build/debug/`, `.build/release/`, or `.build/<triple>/…`) so `swift run iso uninstall` does not delete your build artifact.
 
 ```
 iso uninstall [FLAGS]
@@ -1180,6 +1196,8 @@ iso uninstall [FLAGS]
 | `-y`, `--yes` | Skip interactive confirmation prompts. Removes data unless `--keep-data` is set. |
 | `--keep-data` | Remove only the binary; preserve `<data_dir>/backends/apple-container-v1/` and the update-check state. Conflicts with `--purge`. |
 | `--purge` | Also destroy owned instances (with their `iso proxy setup --vm` Keychain items, as `destroy` does) and remove `<data_dir>/backends/apple-container-v1/` and the update-check state without prompting; the config, `secrets/` and Keychain items the config names are kept. Conflicts with `--keep-data`. Pairs with `--yes` for CI. |
+
+The inference gateway is stopped first, and `--purge` (or answering yes to the data prompt) also removes its per-user state (`~/Library/Application Support/iso/inference`). Managed inference backends are root-owned and are not removed: the summary names each one; run `iso inference deprovision NAME` before uninstalling.
 
 Without `--yes`, the command prints a summary (binary path, data directory, instance and image counts) and asks for confirmation. A second prompt asks whether to also remove the data directory unless `--keep-data` or `--purge` is set. Non-interactive runs require `--yes`.
 
@@ -1276,6 +1294,44 @@ iso proxy setup --api-key
 iso proxy status
 iso proxy status --vm my-project
 ```
+
+### `inference`
+
+Manage the guarded local inference gateway (`iso-inference`). It runs once
+per host user under its own Seatbelt profile, starts on demand, and exits
+after 10 idle minutes. See the [`inference` configuration
+reference](configuration.md#inference-section) and the
+[design](design/secure-local-inference-spec.md).
+
+| Subcommand | Effect |
+|------------|--------|
+| `status [NAME] [--json]` | Mode, egress, gateway epoch, enforced limits, each session (state, aliases, APIs, owner PID, deadline) and each backend (profile, completion evidence, `backend_cancellation_verified`, `backend_isolation_verified`, active/queued work, quarantine), and the host checks below. No capability or credential is printed. |
+| `doctor [--json]` | Checks the gateway identity (a process on the control socket that fails verification or speaks another control protocol, as one left running across `iso update` does, is a failure), each backend's loopback reachability and absence from non-loopback addresses (`INFERENCE_BACKEND_UNSAFE_BIND`), the `run_as` account, authentication and confinement (`INFERENCE_BACKEND_UNSAFE_OWNER`), listeners your own account exposes, qualification limits, quarantines and egress. Exits non-zero on a failure. |
+| `attach NAME --service S --api A` | Grant an application in the VM a service and one of the APIs it grants. Sessions then carry `ISO_INFERENCE_BASE_URL` (without `/v1` for the Anthropic APIs, whose SDKs add it), `ISO_INFERENCE_MODEL` and `ISO_INFERENCE_TOKEN`. |
+| `detach NAME` | Remove the VM's attach grant and revoke its session; the next one carries only the agents' services. |
+| `revoke NAME` | Revoke the VM's session now. It stays revoked until the VM restarts or a grant is attached. Fails, and the session may still be active, unless the gateway confirms the revocation or is not running. |
+| `requalify BACKEND [--restart]` | Clear a quarantine after you drained or restarted the backend. The gateway never kills an attached backend; `--restart` restarts a managed backend first. |
+| `stop [--force]` | Stop the gateway; refused while sessions are active unless `--force`. A same-user process that fails verification (for example a gateway from before `iso update` that speaks an older control protocol) is terminated only with `--force`. |
+| `init (--python P \| --install V) (--model DIR \| --model-repo R --model-revision C) [--backend N] [--port P] [--memory-limit B] [--force]` | Write hardened defaults: `inference.mode = "required"`, the `offline` security preset, `network.transport = "vmnet"` (the relay is vmnet-only), an 8-hour session TTL, a managed mlx-lm backend and a `local-chat` service (32k-token context, `max_input_bytes` 128 KiB to match it). A key already set to a different value aborts the whole edit, naming the conflicts, unless `--force` replaces them. Rewrites the configuration as strict JSON: comments and formatting are dropped. |
+| `provision BACKEND` | Install a managed backend: the `_isoinference` role account, root-owned files under `/Library/Application Support/iso-inference/`, a bearer token (stored in the Keychain once the root step succeeded), and a Seatbelt-confined LaunchDaemon. With `install`, packages are downloaded as the role account, binary wheels only. Runs one step through `sudo`, then verifies the run-as account, authentication, the token challenge and (with `seatbelt`) the sandbox. |
+| `deprovision BACKEND` | Remove the LaunchDaemon, files and token (and the role account when no managed backend remains). Runs one step through `sudo`. |
+| `restart-backend BACKEND` | Restart a managed backend's LaunchDaemon. Runs one step through `sudo`. |
+
+```
+iso inference status
+iso inference doctor
+iso inference init --install 0.31.3 --model ~/models/Qwen3-4B-4bit
+iso inference provision mlx-main
+iso inference attach my-project --service local-chat --api openai-chat
+iso inference revoke my-project
+iso inference requalify mlx-main
+```
+
+A configured `--python` must be root-owned down to its prefixes (`/usr/bin/python3`
+qualifies; a Homebrew or user-installed Python does not), so `--install` is the
+usual choice. mlx-lm serves Chat Completions only, so the managed backend suits
+`attach` with `--api openai-chat`; Claude Code and Codex need a backend that
+speaks their protocol.
 
 ### `secrets`
 

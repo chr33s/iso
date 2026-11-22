@@ -9,7 +9,7 @@ import IsoCore
 /// archive, `SHA256SUMS` and its signature, verify the signature against the
 /// compiled-in signers, the checksum and (with `gh`) the Sigstore attestation,
 /// extract into a private temp directory, then replace the runtime, macOS guest
-/// helper, proxy, egress companion and finally this binary. Any failure before a
+/// helper, proxy, egress companion, inference gateway and finally this binary. Any failure before a
 /// replacement leaves every installed binary untouched.
 package struct Updater: Sendable {
   package struct Options: Sendable, Equatable {
@@ -214,6 +214,7 @@ package struct Updater: Sendable {
     }
     // Validate the complete archive before replacing its runtime. Companions
     // are replaced first; the running host is replaced last.
+    let listed = try SelfReplace.verifiedReleaseBinaries(extractDirectory)
     try SelfReplace.replaceSiblingRuntime(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingGuestHelper(
       extractDirectory, currentExecutable: currentExecutable)
@@ -221,6 +222,8 @@ package struct Updater: Sendable {
       extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingProxy(extractDirectory, currentExecutable: currentExecutable)
     try SelfReplace.replaceSiblingEgress(extractDirectory, currentExecutable: currentExecutable)
+    try SelfReplace.replaceListedCompanions(
+      extractDirectory, listed: listed, currentExecutable: currentExecutable)
     guard let currentExecutable else {
       throw HostError("Failed to resolve current executable path")
     }
@@ -585,6 +588,7 @@ struct UpdateTools: Sendable {
 package enum SelfReplace {
   static let proxyName = "iso-proxy"
   static let egressName = "iso-egress"
+  static let inferenceName = "iso-inference"
   static let runtimeName = "iso-sandbox"
   static let guestHelperName = "iso-macos-helper"
   /// Linux `desktop` images' guest files (docs/design/linux-desktop-virtio-gpu.md
@@ -592,7 +596,65 @@ package enum SelfReplace {
   /// `iso-sandbox init` installs.
   static let linuxGuestNames = [BuildContext.computerUseMCP, BuildContext.desktopKernel]
   static let companionNames =
-    [runtimeName, guestHelperName, proxyName, egressName] + linuxGuestNames
+    [runtimeName, guestHelperName, proxyName, egressName, inferenceName] + linuxGuestNames
+  /// Binaries every supported release carries: the host and its companions.
+  static let coreBinaryNames = ["iso", runtimeName, guestHelperName, proxyName, egressName]
+  /// Binaries an older supported release does not carry (the gateway arrived
+  /// after v0.11). A release that does not list one removes the installed copy.
+  static let optionalBinaryNames = [inferenceName]
+
+  /// The binaries the archive's `BUILD.json` lists. `build-release.py` writes
+  /// that map into every release since v0.3.0, and the signed `SHA256SUMS`
+  /// covers it through the tarball. Every listed binary must be a regular file
+  /// matching its recorded digest and every core binary must be listed, so a
+  /// release is checked as the complete set it says it is before anything is
+  /// replaced. A listed name this iso does not know is a companion added after
+  /// it; it is installed too (`replaceListedCompanions`).
+  package static func verifiedReleaseBinaries(_ extractDirectory: String) throws -> [String] {
+    let path = extractDirectory + "/BUILD.json"
+    guard isRegularArtifact(path) else {
+      throw HostError("Release has no regular BUILD.json manifest")
+    }
+    let bytes = try readBytes(path)
+    guard bytes.count <= manifestLimit,
+      let object = try? JSONSerialization.jsonObject(with: Data(bytes)) as? [String: Any],
+      let binaries = object["binaries"] as? [String: Any]
+    else { throw HostError("Release's BUILD.json has no binaries map") }
+    let names = binaries.keys.sorted()
+    for name in names {
+      // The name becomes an install path: plain binary names only.
+      guard let first = name.utf8.first, first != UInt8(ascii: "-"),
+        name.utf8.allSatisfy({
+          (0x61...0x7a).contains($0) || (0x30...0x39).contains($0) || $0 == 0x2d
+        })
+      else { throw HostError("Release's BUILD.json lists an invalid binary name") }
+      guard let digest = binaries[name] as? String else {
+        throw HostError("Release's BUILD.json has no digest for \(name)")
+      }
+      let file = extractDirectory + "/" + name
+      guard isRegularArtifact(file) else {
+        throw HostError("Release is missing the \(describe(name))")
+      }
+      guard try sha256Hex(fileAt: file) == digest else {
+        throw HostError("Release's \(name) does not match its BUILD.json digest")
+      }
+    }
+    for name in coreBinaryNames where binaries[name] == nil {
+      throw HostError("Release's BUILD.json does not list \(name)")
+    }
+    return names
+  }
+
+  /// BUILD.json is a few hundred bytes; anything this large is not one.
+  static let manifestLimit = 1 << 20
+
+  static func describe(_ name: String) -> String {
+    switch name {
+    case runtimeName: "iso-sandbox runtime"
+    case guestHelperName: "iso-macos-helper guest agent"
+    default: "\(name) companion"
+    }
+  }
 
   static func join(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : directory + "/" + name
@@ -774,5 +836,31 @@ package enum SelfReplace {
     }
     let directory = try installDirectory(currentExecutable)
     try atomicReplace(egress, over: join(directory, egressName))
+  }
+
+  /// Install the companions `verifiedReleaseBinaries` listed beyond the ones
+  /// replaced by name above: an optional binary the release carries (or, when
+  /// it does not, remove the installed copy another release left), and any
+  /// companion added after this iso, so an older updater never leaves a newer
+  /// release partially installed.
+  package static func replaceListedCompanions(
+    _ extractDirectory: String, listed: [String], currentExecutable: String?
+  ) throws {
+    let directory = try installDirectory(currentExecutable)
+    for name in optionalBinaryNames where !listed.contains(name) {
+      let installed = join(directory, name)
+      if unlink(installed) != 0, errno != ENOENT {
+        throw ContextError(
+          "Failed to remove \(installed), which this release does not carry",
+          cause: HostError(rustIOError(errno)))
+      }
+    }
+    for name in listed where !coreBinaryNames.contains(name) {
+      let source = extractDirectory + "/" + name
+      guard isRegularArtifact(source) else {
+        throw HostError("Release is missing the \(describe(name))")
+      }
+      try atomicReplace(source, over: join(directory, name))
+    }
   }
 }

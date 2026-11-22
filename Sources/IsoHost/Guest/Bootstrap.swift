@@ -58,13 +58,21 @@ package struct AgentBootstrap: Sendable {
   /// For `{vault:}` entries in `guest_env.json`; nil refuses them.
   let secrets: (any SecretReferenceResolver)?
   let placement: AgentPlacement
+  /// The inference gateway controller; required when
+  /// `inference.mode = "required"`.
+  package let inference: InferenceController?
+  /// An agent launch: a session that cannot get its inference session
+  /// fails. Otherwise (shells, exec, hooks, bootstrap) it warns and goes on
+  /// without inference variables, so agents still reach no model.
+  package var strictInference = false
 
   package init(
     config: IsoConfig, client: SSHClient, environment: [String: String], home: String?,
     resolver: CredentialResolver, proxies: ProxyLauncher, github: any GitHubTokenSource,
     diagnostics: Diagnostics, secrets: (any SecretReferenceResolver)? = nil,
-    placement: AgentPlacement = .local
+    placement: AgentPlacement = .local, inference: InferenceController? = nil
   ) {
+    self.inference = inference
     self.secrets = secrets
     self.placement = placement
     self.config = config
@@ -91,6 +99,9 @@ package struct AgentBootstrap: Sendable {
     case noEgress(ProxyProvider)
     /// ChatGPT account auth keeps Codex credentials in the guest keyring.
     case chatgptAuth
+    /// `inference.mode = "required"`: agents use only guarded local
+    /// services, so no provider credential has a use in the guest.
+    case inferenceRequired(ProxyProvider)
 
     var description: String {
       switch self {
@@ -98,9 +109,14 @@ package struct AgentBootstrap: Sendable {
       case .required: "proxy.mode = \"required\""
       case .noEgress: "egress = \"none\""
       case .chatgptAuth: AgentBootstrap.chatgptReason
+      case .inferenceRequired: "inference.mode = \"required\""
       }
     }
   }
+
+  /// `inference.mode = "required"`: guarded local services replace every
+  /// cloud path, whatever `proxy.mode` says.
+  var inferenceRequired: Bool { config.inference.mode == .required }
 
   /// Recognized provider variables withheld from the guest: a proxied provider's
   /// all of them; every provider's under `proxy.mode = "required"`, `egress =
@@ -113,6 +129,10 @@ package struct AgentBootstrap: Sendable {
     let noEgress = config.egress == .none
     var out: [String: WithholdReason] = [:]
     for (provider, proxied) in [(ProxyProvider.anthropic, proxyAnthropic), (.openai, proxyOpenAI)] {
+      if inferenceRequired {
+        for name in provider.recognizedVariables { out[name] = .inferenceRequired(provider) }
+        continue
+      }
       guard proxied || required || noEgress else { continue }
       for name in provider.recognizedVariables {
         out[name] =
@@ -130,6 +150,10 @@ package struct AgentBootstrap: Sendable {
   /// proxy-mode behavior).
   func refuse(_ name: String, from source: String, reason: WithholdReason) throws {
     switch reason {
+    case .inferenceRequired:
+      throw HostError(
+        "\(reason): \(source) entry '\(name)' would put a provider credential in the guest; agents use only guarded local inference services"
+      )
     case .required(let provider), .noEgress(let provider):
       throw HostError(
         "\(reason): \(source) entry '\(name)' would put a provider credential in the guest; remove it or configure `proxy.\(provider.rawValue)`"
@@ -213,6 +237,10 @@ package struct AgentBootstrap: Sendable {
     _ instance: Instance, _ provider: ProxyProvider, entries: [EnvVarName: EnvValue]
   ) throws -> Bool {
     let routed = try GuestEnvState.providerSecrets(entries)[provider]
+    if inferenceRequired {
+      if let routed { throw Self.inferenceRefusesProviderSecret(routed) }
+      return false
+    }
     guard config.proxy.mode != .off else {
       if let routed { throw ProxyState.unavailable(routed) }
       return false
@@ -228,6 +256,14 @@ package struct AgentBootstrap: Sendable {
   package func requireProviderProxy(
     _ instance: Instance, noAgents: Bool, guestEnvironment: [EnvVarName: EnvValue]
   ) throws {
+    // Guarded local inference replaces every cloud path; a provider secret
+    // declared for the proxy is refused instead.
+    if inferenceRequired {
+      for provider in ProxyProvider.allCases {
+        _ = try proxyConfigured(instance, provider, entries: guestEnvironment)
+      }
+      return
+    }
     guard !noAgents, config.proxy.mode == .required || config.egress == .none,
       try ModelState.loadOrDefault(instance).mode == .remote
     else { return }
@@ -251,6 +287,16 @@ package struct AgentBootstrap: Sendable {
   /// the selected adapter's own provider must be brokered; another provider's
   /// broker does not satisfy it. Adapters without a provider need none.
   package func requireSelectedProvider(_ instance: Instance, adapter: AgentAdapterContract) throws {
+    if inferenceRequired {
+      // The adapter reaches only its guarded service; a provider broker is
+      // never started for it.
+      switch adapter.id {
+      case AgentAdapterID.claude: try requireInferenceService(forClaude: true)
+      case AgentAdapterID.codex: try requireInferenceService(forClaude: false)
+      default: break
+      }
+      return
+    }
     guard let name = adapter.providerName, let provider = ProxyProvider(rawValue: name),
       config.proxy.mode == .required || config.egress == .none,
       try ModelState.loadOrDefault(instance).mode == .remote
@@ -338,7 +384,9 @@ package struct AgentBootstrap: Sendable {
           }
         }
       }
-      if let model {
+      if inferenceRequired {
+        try inferenceEnvironment(instance, target: target, into: &env)
+      } else if let model {
         if model.mode == .local, let endpoint = model.resolvedCodex(config.codex) {
           env.set(ModelRouting.codexLocalEnvKey, Secret(endpoint.authTokenOrDefault))
         } else if proxyOpenAI,
@@ -404,6 +452,7 @@ package struct AgentBootstrap: Sendable {
   package func openSession(
     _ backend: AppleBackend, name: InstanceName?, instances: [Instance]
   ) throws -> (AppleBackend.Running, WorkloadSession) {
+    reconcileInferenceMode(instances)
     let running = try backend.resolveRunning(name, instances: instances)
     return (running, try workloadSession(for: running, backend: backend))
   }
@@ -451,6 +500,9 @@ package struct AgentBootstrap: Sendable {
     runtime: SandboxRuntime? = nil, provision: (SSHTarget) throws -> Void = { _ in }
   ) throws -> SSHTarget {
     proxies.stopModelTunnels(instance)
+    // A VM (re)start is the host decision that lifts a manual revocation;
+    // the previous boot's session died with its sandbox owner.
+    InferenceController.clearManualRevocation(instance)
     try proxies.startEgress(instance, config: config, target: target, runtime: runtime)
     let preparation = try bootstrapRunning(instance, fallback: target, runtime: runtime)
     let preparationTarget = preparation?.target ?? target
@@ -593,8 +645,17 @@ package struct AgentBootstrap: Sendable {
       diagnostics.log(.info, "Configuring GitHub auth in guest")
       try github.configureGuest(client, session)
     }
-    let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
-    try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
+    if inferenceRequired {
+      // Raw model tunnels never coexist with guarded inference (AT-21), and
+      // the guest bridge is (re)enabled on each agent bootstrap (§22.4).
+      proxies.stopModelTunnels(instance)
+      if let inference, try !inference.requestedServices(instance).isEmpty {
+        try installInferenceBridge(session.target)
+      }
+    } else {
+      let tunnels = try LocalEndpoints.tunnels(ModelState.loadOrDefault(instance), config: config)
+      try proxies.syncModelTunnels(instance, target: session.target, wanted: tunnels)
+    }
     let agents = try withGuestComputerUse(instance)
     try agents.bootstrapClaude(session, instance: instance, mode: mode)
     try agents.bootstrapCodex(session, instance: instance, mode: mode)
@@ -629,7 +690,16 @@ package struct AgentBootstrap: Sendable {
       config: config.addingMCPServer(
         name, .stdio(command: server.command, args: server.args, env: [:])),
       client: client, environment: environment, home: home, resolver: resolver, proxies: proxies,
-      github: github, diagnostics: diagnostics, secrets: secrets, placement: placement)
+      github: github, diagnostics: diagnostics, secrets: secrets, placement: placement,
+      inference: inference
+    ).withStrictInference(strictInference)
+  }
+
+  /// This bootstrap for an agent launch (`strictInference`).
+  package func withStrictInference(_ strict: Bool = true) -> AgentBootstrap {
+    var copy = self
+    copy.strictInference = strict
+    return copy
   }
 
   // MARK: - Shared helpers
@@ -699,7 +769,7 @@ package struct AgentBootstrap: Sendable {
     _ instance: Instance, provider: ProxyProvider, modelState: ModelState, target: SSHTarget
   ) throws -> ProxyHandle? {
     let upstream =
-      modelState.mode == .remote
+      modelState.mode == .remote && !inferenceRequired
       ? try ProxyState.effectiveUpstream(instance, provider, config: config.proxy) : nil
     guard let upstream else {
       proxies.stop(instance, provider: provider)

@@ -159,10 +159,12 @@ private struct UninstallFixture {
     let backend = AppleBackend(
       config: config, environment: ["PATH": root + "/no-bin"], executable: nil,
       diagnostics: log.diagnostics)
-    return Uninstaller(
+    var uninstaller = Uninstaller(
       backend: backend, configPath: home + "/.iso/config.jsonc", home: home,
       binaryPath: binary ?? self.binary, environment: ["PATH": root + "/no-bin"],
       stdinIsTerminal: terminal, confirm: confirm)
+    uninstaller.managedBackendsRoot = root + "/managed-backends"
+    return uninstaller
   }
 }
 
@@ -201,6 +203,27 @@ private struct UninstallFixture {
       #expect(stops.withLock { $0 } == [true])
       #expect(!pathExists(fixture.binary))
     }
+  }
+
+  /// H12: the inference gateway stops before its binary goes, `--purge`
+  /// removes its per-user state, and managed backends' root parts are named
+  /// with the command that removes them.
+  @Test func uninstallStopsTheInferenceGatewayAndNamesManagedBackends() throws {
+    let fixture = try UninstallFixture()
+    defer { fixture.remove() }
+    let log = DiagnosticsLog()
+    var uninstaller = try fixture.uninstaller(log: log)
+    let gatewayState = InferenceController.stateDirectory(home: fixture.home)
+    try writeUpdateFile(gatewayState + "/audit.log", "x")
+    try FileManager.default.createDirectory(
+      atPath: uninstaller.managedBackendsRoot + "/mlx-main", withIntermediateDirectories: true)
+    let stopped = Mutex<[Bool]>([])
+    let binary = fixture.binary
+    uninstaller.stopInferenceGateway = { stopped.withLock { $0.append(pathExists(binary)) } }
+    try uninstaller.run(.init(yes: true, purge: true))
+    #expect(stopped.withLock { $0 } == [true])
+    #expect(!pathExists(gatewayState))
+    #expect(log.all.contains { $0.contains("iso inference deprovision mlx-main") })
   }
 
   @Test func purgeRemovesOwnedStateAndPreservesConfig() throws {

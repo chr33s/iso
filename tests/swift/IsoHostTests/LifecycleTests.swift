@@ -182,6 +182,74 @@ struct FakeInstallation {
   func remove() { try? FileManager.default.removeItem(atPath: root) }
 }
 
+/// `inference.mode = "required"`: the sandbox relays the gateway socket
+/// (§22), the gate accepts exactly that relay on every path that reaches a
+/// running instance, and a sandbox created without it gets it at its next
+/// start. The unguarded configuration refuses the relayed boot.
+@Test func requiredInferenceRelaysTheGatewaySocketThroughEveryGate() throws {
+  let required =
+    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+  let install = try FakeInstallation()
+  defer { install.remove() }
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("relay"), image: .default, workspacePath: nil)
+
+  // Created without inference: no relay.
+  try install.backend.createAndStart(instance, diskGiB: nil)
+  #expect(!install.calls().contains { $0.contains("--inference-relay") })
+  let plain = try #require(try install.backend.asRunning(instance))
+  #expect(plain.ready.inferenceSocket == nil)
+  try install.backend.stop(plain)
+  _ = install.calls()
+
+  // The configuration now requires inference: the start switches the relay
+  // on for this boot, and every gate accepts it.
+  let guarded = install.backend.reconfigured(
+    try emptyConfig(
+      #""data_dir": "\#(install.root)/data", "apple_container": {"binary": "\#(install.root)/bin/iso-sandbox", "builder": "\#(install.root)/bin/container", "kernel": "\#(install.root)/kernel", "boot_timeout_seconds": 5}"#
+        + required))
+  try guarded.startExisting(instance)
+  #expect(
+    install.calls().contains {
+      $0.first == "start" && $0.joined(separator: " ").contains("--inference-relay on")
+    })
+  let running = try #require(try guarded.asRunning(instance))
+  let socket = try #require(running.ready.inferenceSocket)
+  #expect(socket.hasPrefix(IsolationGate.relayDirectory + "/"))
+  _ = try guarded.sshTarget(instance)
+  // The unguarded configuration refuses the relayed boot.
+  #expect(throws: (any Error).self) { try install.backend.asRunning(instance) }
+  // An unchanged mode keeps the runtime's exact arguments.
+  try guarded.stop(running)
+  _ = install.calls()
+  try guarded.startExisting(instance)
+  #expect(
+    !install.calls().contains { $0.first == "start" && $0.contains("--inference-relay") })
+  try guarded.destroyInstance(instance)
+}
+
+/// A new instance under `required` is created with the relay.
+@Test func requiredInferenceCreatesTheSandboxWithTheRelay() throws {
+  let required =
+    #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+  let install = try FakeInstallation(extra: required)
+  defer { install.remove() }
+  try install.backend.setup(
+    SetupOptions(
+      rebuild: false, profiles: [], image: .default, guestUser: .default, builderTimeout: nil))
+  _ = install.calls()
+  let instance = try Instance.allocate(
+    install.config, name: InstanceName("created"), image: .default, workspacePath: nil)
+  try install.backend.createAndStart(instance, diskGiB: nil)
+  #expect(install.calls().contains { $0.first == "create" && $0.contains("--inference-relay") })
+  let running = try #require(try install.backend.asRunning(instance))
+  #expect(running.ready.inferenceSocket != nil)
+  try install.backend.destroyInstance(instance)
+}
+
 @Test func bootstrapCompletionDoesNotAdoptAReplacementProof() throws {
   let install = try FakeInstallation()
   defer { install.remove() }
@@ -1235,6 +1303,20 @@ private let macVM = #", "vm": {"vcpu_count": 4, "mem_size_mib": 8192}"#
   let vmnet = try FakeInstallation()
   defer { vmnet.remove() }
   try vmnet.backend.requireMacSupportedConfig()
+}
+
+/// The inference relay is a Linux runtime feature: `required` refuses a
+/// macOS guest rather than run it without a guarded path.
+@Test func requiredInferenceRefusesMacOSGuests() throws {
+  let required = try FakeInstallation(
+    extra:
+      #", "inference": {"mode": "required", "qualification_profiles": {"p": {"protocol": "openai-chat", "completion_evidence": "drain", "context_overflow": "reject", "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0}, "max_input_bytes": "1MiB"}}, "backends": {"b": {"base_url": "http://127.0.0.1:18080", "protocol": "openai-chat", "qualification_profile": "p"}}, "services": {"s": {"backend": "b", "upstream_model": "m", "frontend_apis": ["openai-chat"], "max_context_tokens": 1000}}}"#
+  )
+  defer { required.remove() }
+  let error = try #require(throws: HostError.self) {
+    try required.backend.requireMacSupportedConfig()
+  }
+  #expect(error.message.contains("Linux guests only"))
 }
 
 // MARK: - Paravirtualized Core AI (docs/design/paravirtualized-coreai.md)

@@ -415,6 +415,107 @@ private let withoutBundle = Release(
   #expect(readText(install + "/iso-sandbox") == "runtime")
 }
 
+/// A release directory whose BUILD.json lists `names` with their digests,
+/// as build-release.py writes it.
+func writeReleaseManifest(_ extract: String, _ names: [String], digests: [String: String] = [:])
+  throws
+{
+  var binaries: [String: String] = [:]
+  for name in names {
+    let path = extract + "/" + name
+    if !FileManager.default.fileExists(atPath: path) {
+      try writeUpdateFile(path, name, mode: 0o755)
+    }
+    binaries[name] = try digests[name] ?? sha256Hex(fileAt: path)
+  }
+  let manifest: [String: Any] = ["format": 1, "binaries": binaries, "linux_guest_files": [:]]
+  try JSONSerialization.data(withJSONObject: manifest).write(
+    to: URL(fileURLWithPath: extract + "/BUILD.json"))
+}
+
+let releaseBinaries = [
+  "iso", "iso-sandbox", "iso-macos-helper", "iso-proxy", "iso-egress", "iso-inference",
+]
+
+@Test func releaseManifestNamesTheCompleteSet() throws {
+  let extract = try temporaryDirectory("manifest")
+  defer { try? FileManager.default.removeItem(atPath: extract) }
+  #expect(throws: HostError("Release has no regular BUILD.json manifest")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try writeReleaseManifest(extract, releaseBinaries)
+  #expect(try SelfReplace.verifiedReleaseBinaries(extract) == releaseBinaries.sorted())
+
+  // A release before the gateway lists none, and is still complete.
+  let core = releaseBinaries.filter { $0 != "iso-inference" }
+  try writeReleaseManifest(extract, core)
+  #expect(try SelfReplace.verifiedReleaseBinaries(extract) == core.sorted())
+
+  try writeReleaseManifest(extract, releaseBinaries.filter { $0 != "iso-proxy" })
+  #expect(throws: HostError("Release's BUILD.json does not list iso-proxy")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try writeReleaseManifest(extract, releaseBinaries, digests: ["iso-inference": "00"])
+  #expect(throws: HostError("Release's iso-inference does not match its BUILD.json digest")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try writeReleaseManifest(extract, releaseBinaries)
+  try FileManager.default.removeItem(atPath: extract + "/iso-inference")
+  #expect(throws: HostError("Release is missing the iso-inference companion")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try FileManager.default.createSymbolicLink(
+    atPath: extract + "/iso-inference", withDestinationPath: "iso")
+  #expect(throws: HostError("Release is missing the iso-inference companion")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try FileManager.default.removeItem(atPath: extract + "/iso-inference")
+  try writeReleaseManifest(extract, releaseBinaries + ["iso.x"])
+  #expect(throws: HostError("Release's BUILD.json lists an invalid binary name")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try writeUpdateFile(extract + "/BUILD.json", #"{"binaries":{"iso":1}}"#)
+  #expect(throws: HostError("Release's BUILD.json has no digest for iso")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try writeUpdateFile(extract + "/BUILD.json", #"{"binaries":["iso"]}"#)
+  #expect(throws: HostError("Release's BUILD.json has no binaries map")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+  try FileManager.default.removeItem(atPath: extract + "/BUILD.json")
+  try FileManager.default.createSymbolicLink(
+    atPath: extract + "/BUILD.json", withDestinationPath: extract + "/iso")
+  #expect(throws: HostError("Release has no regular BUILD.json manifest")) {
+    try SelfReplace.verifiedReleaseBinaries(extract)
+  }
+}
+
+@Test func listedCompanionsAreInstalledAndUnlistedOptionalsRemoved() throws {
+  let extract = try temporaryDirectory("listed")
+  let install = try temporaryDirectory("listed-install")
+  defer {
+    try? FileManager.default.removeItem(atPath: extract)
+    try? FileManager.default.removeItem(atPath: install)
+  }
+  // A companion added after this iso is installed with the known ones.
+  try writeReleaseManifest(extract, releaseBinaries + ["iso-future"])
+  let listed = try SelfReplace.verifiedReleaseBinaries(extract)
+  try SelfReplace.replaceListedCompanions(
+    extract, listed: listed, currentExecutable: install + "/iso")
+  #expect(readText(install + "/iso-inference") == "iso-inference")
+  #expect(readText(install + "/iso-future") == "iso-future")
+  // Core binaries are replaced by their own steps, the host last.
+  #expect(!pathExists(install + "/iso"))
+  #expect(!pathExists(install + "/iso-proxy"))
+
+  // A release that does not list the gateway removes the installed copy.
+  try writeReleaseManifest(extract, releaseBinaries.filter { $0 != "iso-inference" })
+  try SelfReplace.replaceListedCompanions(
+    extract, listed: try SelfReplace.verifiedReleaseBinaries(extract),
+    currentExecutable: install + "/iso")
+  #expect(!pathExists(install + "/iso-inference"))
+}
+
 @Test func unwritableInstallDirectoryIsReported() throws {
   let install = try temporaryDirectory("ro")
   defer {
@@ -647,7 +748,7 @@ private struct UpdateFixture {
     for (name, text) in [
       ("iso", "installed-iso"), ("iso-proxy", "installed-proxy"),
       ("iso-sandbox", "installed-runtime"), ("iso-egress", "installed-egress"),
-      ("iso-macos-helper", "installed-helper"),
+      ("iso-macos-helper", "installed-helper"), ("iso-inference", "installed-inference"),
     ] {
       try writeUpdateFile(install + "/" + name, text, mode: 0o755)
     }
@@ -659,7 +760,7 @@ private struct UpdateFixture {
   func publish(
     _ members: [String: String], corruptSums: Bool = false, bundle: String? = nil,
     signature: FixtureSignature = .trusted, base: String = "http://fixture",
-    nonRegular: (name: String, symlink: Bool)? = nil
+    nonRegular: (name: String, symlink: Bool)? = nil, listed: [String] = releaseBinaries
   ) throws {
     let stage = root + "/stage"
     try? FileManager.default.removeItem(atPath: stage)
@@ -677,6 +778,15 @@ private struct UpdateFixture {
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)
       }
     }
+    // BUILD.json as build-release.py writes it; a listed member that is
+    // absent or not a regular file gets a digest nothing matches.
+    var binaries: [String: String] = [:]
+    for name in listed {
+      let path = stage + "/" + directoryName + "/" + name
+      binaries[name] = SelfReplace.isRegularArtifact(path) ? try sha256Hex(fileAt: path) : "00"
+    }
+    try JSONSerialization.data(withJSONObject: ["format": 1, "binaries": binaries]).write(
+      to: URL(fileURLWithPath: stage + "/" + directoryName + "/BUILD.json"))
     try FileManager.default.createDirectory(atPath: served, withIntermediateDirectories: true)
     let tar = Process()
     tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
@@ -753,11 +863,12 @@ enum FixtureSignature { case trusted, untrusted, missing }
 
 private let fullRelease = [
   "iso": "new-iso", "iso-proxy": "new-proxy", "iso-sandbox": "new-runtime",
-  "iso-egress": "new-egress", "iso-macos-helper": "new-helper",
+  "iso-egress": "new-egress", "iso-macos-helper": "new-helper", "iso-inference": "new-inference",
 ]
 private let untouched = [
   "iso": "installed-iso", "iso-proxy": "installed-proxy", "iso-sandbox": "installed-runtime",
   "iso-egress": "installed-egress", "iso-macos-helper": "installed-helper",
+  "iso-inference": "installed-inference",
 ]
 
 /// Serialized: these spawn many short-lived processes, and the process-wide
@@ -861,6 +972,7 @@ private let untouched = [
       ("iso-proxy", "Release is missing the iso-proxy companion"),
       ("iso-egress", "Release is missing the iso-egress companion"),
       ("iso-macos-helper", "Release is missing the iso-macos-helper guest agent"),
+      ("iso-inference", "Release is missing the iso-inference companion"),
       ("iso", "Extracted binary not found at"),
     ] {
       var members = fullRelease
@@ -876,8 +988,50 @@ private let untouched = [
     }
   }
 
+  @Test func releaseManifestDecidesTheOptionalAndNewerCompanions() throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    // A release that lists no gateway (one before it) removes the installed copy.
+    var members = fullRelease
+    members.removeValue(forKey: "iso-inference")
+    try fixture.publish(members, listed: releaseBinaries.filter { $0 != "iso-inference" })
+    try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+    #expect(!pathExists(fixture.install + "/iso-inference"))
+    #expect(readText(fixture.install + "/iso-proxy") == "new-proxy")
+    // A companion added after this iso is installed beside the others.
+    members = fullRelease
+    members["iso-future"] = "new-future"
+    try fixture.publish(members, listed: releaseBinaries + ["iso-future"])
+    try fixture.updater(log: DiagnosticsLog()).run(.init(force: true, skipConfirm: true))
+    #expect(readText(fixture.install + "/iso-future") == "new-future")
+    #expect(readText(fixture.install + "/iso-inference") == "new-inference")
+    #expect(readText(fixture.install + "/iso") == "new-iso")
+  }
+
+  @Test func aManifestThatDoesNotMatchTheArchivePreservesTheInstall() throws {
+    let fixture = try UpdateFixture()
+    defer { fixture.remove() }
+    for (listed, message) in [
+      (
+        releaseBinaries.filter { $0 != "iso-proxy" }, "Release's BUILD.json does not list iso-proxy"
+      ),
+      (releaseBinaries + ["iso-gone"], "Release is missing the iso-gone companion"),
+    ] {
+      try fixture.publish(fullRelease, listed: listed)
+      do {
+        try fixture.updater(log: DiagnosticsLog()).run(.init(skipConfirm: true))
+        Issue.record("installed with BUILD.json listing \(listed)")
+      } catch {
+        #expect("\(error)".contains(message))
+      }
+      #expect(fixture.installed == untouched)
+    }
+  }
+
   @Test(
-    arguments: ["iso", "iso-sandbox", "iso-proxy", "iso-egress", "iso-macos-helper"], [false, true])
+    arguments: [
+      "iso", "iso-sandbox", "iso-proxy", "iso-egress", "iso-macos-helper", "iso-inference",
+    ], [false, true])
   func nonRegularReleaseMembersPreserveTheInstall(_ artifact: String, _ symlink: Bool) throws {
     let fixture = try UpdateFixture()
     defer { fixture.remove() }

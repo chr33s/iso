@@ -166,9 +166,11 @@ private func handoffFailure(
 
 @Test func filteredHandoffBindsProtocolPolicyAndOwner() {
   #expect(handoffFailure() == nil)
-  for version: UInt32 in [0, 4, 6] {
+  for version: UInt32 in [0, 4] {
     #expect(handoffFailure(advertisedProtocol: version) == .runtimeIncompatible)
   }
+  // Later protocols keep the boot identity (protocol 6 adds the inference relay).
+  #expect(handoffFailure(advertisedProtocol: 6) == nil)
   #expect(handoffFailure(recordedPolicyHash: nil) == .policyChanged)
   #expect(handoffFailure(recordedPolicyHash: "other") == .policyChanged)
   #expect(handoffFailure(recordedPolicyHash: "", wantedPolicyHash: "") == .policyChanged)

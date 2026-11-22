@@ -7,7 +7,8 @@ set -uo pipefail
 #
 # Usage: tests/integration-apple-sandbox.sh [--only PHASE[,PHASE...]] [--keep]
 #   Phases: setup disks machine isolation exposure identity brokered
-#           persistence resources growth snapshots recovery concurrency display iso
+#           relay persistence resources growth snapshots recovery concurrency display
+#           iso inference
 #   ISO_TEST_DESKTOP_KERNEL=PATH: a pinned desktop kernel
 #   (scripts/build-desktop-kernel.sh) for the display phase, which skips
 #   without it.
@@ -16,7 +17,7 @@ set -uo pipefail
 #   killed at these percentages of the time an uninterrupted one took;
 #   ISO_KILL_FRACTIONS="25 50 75" the same for iso's.
 #
-# ISO_TEST_PREBUILT=DIR uses the iso, iso-egress, iso-sandbox,
+# ISO_TEST_PREBUILT=DIR uses the iso, iso-egress, iso-inference, iso-sandbox,
 # iso-macos-helper and iso-cu-mcp of a release bundle in DIR instead of building them, so a
 # worker Mac without Xcode can run the suite against the bundle it serves.
 #
@@ -36,7 +37,7 @@ CONTAINER="$(command -v container || true)"
 "$CONTAINER" --version
 PREBUILT="${ISO_TEST_PREBUILT:-}"
 if [[ -n "$PREBUILT" ]]; then
-    for binary in iso iso-egress iso-sandbox iso-macos-helper iso-cu-mcp; do
+    for binary in iso iso-egress iso-inference iso-sandbox iso-macos-helper iso-cu-mcp; do
         [[ -x "$PREBUILT/$binary" ]] || { echo "ISO_TEST_PREBUILT has no $binary" >&2; exit 1; }
     done
 fi
@@ -466,6 +467,128 @@ if want exposure; then
     [[ -n "$(guest "$A" sh -c "grep -rlsF '$CANARY' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null | head -1")" ]] && leaked+=" guest"
     check "a secret in the caller's environment reaches no runtime process, log, or guest" test -z "$leaked"
     skip "host services on the NAT gateway" "reachable by design; see docs/trust-model.md"
+fi
+
+# The inference relay (docs/design/secure-local-inference-spec.md §22),
+# driven through the runtime directly with a stand-in gateway on the derived
+# host socket: recovery without a gateway (AT-31), late reads (64 KiB and
+# 8 MiB), a symlinked host socket (AT-33), 400 connections against the cap
+# of 32 (AT-32) and `start --inference-relay on|off|omitted`.
+if want relay; then
+    echo ""
+    echo "=== Phase: relay ==="
+    R="$(name r)"
+    RG="/var/lib/iso-inference/gateway.sock"
+    # A stand-in gateway. `send N`: each connection gets N bytes, then the
+    # server closes at once (it does not wait for the guest to read them).
+    # `hold`: each connection is accepted and kept open, unread.
+    cat >"$WORK/relay-gateway.py" <<'PY'
+import os, socket, sys, threading
+path, mode = sys.argv[1], sys.argv[2]
+size = int(sys.argv[3]) if mode == "send" else 0
+try:
+    os.unlink(path)
+except FileNotFoundError:
+    pass
+s = socket.socket(socket.AF_UNIX)
+s.bind(path)
+os.chmod(path, 0o600)
+s.listen(128)
+body = bytes(range(256)) * (size // 256)
+held = []
+def serve(c):
+    if mode == "hold":
+        held.append(c)
+        return
+    try:
+        c.sendall(body)
+    finally:
+        c.close()
+while True:
+    c, _ = s.accept()
+    threading.Thread(target=serve, args=(c,), daemon=True).start()
+PY
+    gateway() {
+        python3 "$WORK/relay-gateway.py" "$@" &
+        RELAY_GW=$!
+        for _ in $(seq 50); do [[ -S "$1" ]] && return 0; sleep 0.1; done
+        return 1
+    }
+    gateway_stop() { kill "$RELAY_GW" 2>/dev/null; wait "$RELAY_GW" 2>/dev/null; rm -f "$1"; }
+    # Bytes one guest connection receives; `$1` seconds pass before the guest reads.
+    relayed() { guest "$R" socat -u "UNIX-CONNECT:$RG" "SYSTEM:sleep $1; wc -c" | tr -d ' \n'; }
+
+    check "create --inference-relay" sbx create "$R" --image "$IMAGE" --cpus 1 --memory-mib 1024 \
+        --disk-gib 4 --owner "$RUN" --inference-relay
+    check "a brokered sandbox refuses the relay" refuses sbx create "$(name rb)" --image "$IMAGE" \
+        --cpus 1 --memory-mib 1024 --disk-gib 4 --owner "$RUN" --network brokered --inference-relay
+    check "relay sandbox boots" boot "$R"
+    eff="$(sbx inspect "$R" | jq -c .effective)"
+    host="$(jq -r .inferenceRelay.host <<<"$eff")"
+    # shellcheck disable=SC2016 # jq program text.
+    check "inspect reports one relay: derived host socket, fixed guest path, cap 32" \
+        jq -e --arg d "$(getconf DARWIN_USER_TEMP_DIR)iso-sbx/inference/" --arg g "$RG" \
+        '.socketRelays == 1 and (.inferenceRelay.host | startswith($d)) and (.inferenceRelay.host | endswith(".sock")) and .inferenceRelay.guest == $g and .inferenceRelay.maxConnections == 32 and all(.mounts[]; .destination != $g)' <<<"$eff"
+    check "the relay directory is 0700 and owned by the user" \
+        test "$(stat -f '%Lp %u' "$(dirname "$host")")" = "700 $(id -u)"
+    check "the guest sees the relay socket" guest "$R" test -S "$RG"
+
+    # AT-31 / R1: no gateway, then a gateway.
+    check "with no gateway socket a guest connection carries nothing" test "$(relayed 0)" = 0
+    gateway "$host" send 65536
+    check "the relay recovers once the gateway socket exists" test "$(relayed 0)" = 65536
+    # S2 (#933 guest splice): the gateway writes and closes while the guest is
+    # behind; every byte still arrives before EOF, for a body that fits in the
+    # buffers in flight and for one that does not.
+    check "a guest reading late gets the whole 64 KiB answer" test "$(relayed 3)" = 65536
+    gateway_stop "$host"
+    gateway "$host" send $((8 << 20))
+    check "a guest reading late gets the whole 8 MiB answer" test "$(relayed 3)" = $((8 << 20))
+    gateway_stop "$host"
+
+    # AT-33: a symlink at the host path is not followed.
+    real="$(dirname "$host")/relay-test-real.sock"
+    gateway "$real" send 65536
+    ln -s "$real" "$host"
+    check "a symlink at the host socket path is refused" test "$(relayed 0)" = 0
+    rm -f "$host"
+    gateway_stop "$real"
+
+    # AT-32 / R2-R3: 400 concurrent guest connections against a gateway that
+    # holds every connection; at most 32 reach it, and the owner's descriptors
+    # return to baseline once the gateway lets go.
+    owner="$(sbx inspect "$R" | jq -r .live.pid)"
+    base="$(lsof -p "$owner" 2>/dev/null | wc -l | tr -d ' ')"
+    gateway "$host" hold
+    # shellcheck disable=SC2016 # Expand in the guest.
+    guest "$R" sh -c 'for i in $(seq 400); do (timeout 20 socat -u UNIX-CONNECT:'"$RG"' /dev/null &) ; done; sleep 5' >/dev/null
+    gwconns="$(lsof -a -p "$RELAY_GW" -U 2>/dev/null | grep -c "$host" || true)"
+    peak="$(lsof -p "$owner" 2>/dev/null | wc -l | tr -d ' ')"
+    check "at most 32 of 400 connections reach the gateway (got $gwconns)" test "$gwconns" -le 33
+    check "the owner stays within its descriptor budget (base $base, peak $peak)" test "$peak" -le $((base + 2 * 32 + 16))
+    gateway_stop "$host"
+    sleep 6
+    after="$(lsof -p "$owner" 2>/dev/null | wc -l | tr -d ' ')"
+    check "the owner's descriptors return to baseline (base $base, after $after)" test "$after" -le $((base + 5))
+    check "the control channel still answers" guest "$R" true
+    gateway "$host" send 65536
+    check "the relay still relays after the flood" test "$(relayed 0)" = 65536
+    gateway_stop "$host"
+
+    # start --inference-relay off|on: per boot; omitted keeps the record.
+    sbx stop "$R" >/dev/null
+    check "start --inference-relay off boots without the relay" sbx start "$R" --inference-relay off
+    check "no relay is reported or present when off" \
+        test "$(sbx inspect "$R" | jq -c '[.record.inferenceRelay, .effective.inferenceRelay, .effective.socketRelays]')" = '[null,null,0]'
+    check "the guest has no relay socket when off" refuses guest "$R" test -S "$RG"
+    sbx stop "$R" >/dev/null
+    check "start --inference-relay on boots with the relay again" sbx start "$R" --inference-relay on
+    sbx stop "$R" >/dev/null
+    check "start without --inference-relay keeps it" sbx start "$R"
+    check "the kept relay is reported" test "$(sbx inspect "$R" | jq -r .effective.socketRelays)" = 1
+    check "start refuses an unknown --inference-relay value" refuses sbx start "$R" --inference-relay maybe
+    sbx stop "$R" >/dev/null
+    sbx delete "$R" --owner "$RUN" >/dev/null
 fi
 
 if want identity; then
@@ -1915,6 +2038,189 @@ PY
     check "the runtime has no sandbox left" test "$(csbx list | jq length)" = 0
     check "the instance state is gone" test ! -e "$CSTATE/instances/e2e"
     check "the committed image can be deleted" iso images --delete e2e-snap
+fi
+
+# Guarded local inference (docs/design/secure-local-inference-spec.md §15, §22):
+# a real VM under `inference.mode = "required"` and `egress: "none"` reaches
+# two scripted host backends only through the iso-inference gateway, over the
+# runtime's vsock socket relay. Uses the per-user gateway location and stops
+# that gateway at the end, so no other iso-inference may be running for this
+# user. vmnet, so the direct-reachability probe has a host address to try.
+if want inference; then
+    echo ""
+    echo "=== Phase: inference ==="
+    kernel="$(readlink -f "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-arm64")"
+    ICFG="$WORK/iso-inference.jsonc"
+    iinf() { "$ISO" --config "$ICFG" "$@" </dev/null; }
+    free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+    guest_code() { iinf exec inf -- curl -s -o /dev/null -w '%{http_code}' "$@" 2>/dev/null; }
+    port_a="$(free_port)"
+    port_r="$(free_port)"
+    log_a="$WORK/backend-anthropic.jsonl"
+    log_r="$WORK/backend-responses.jsonl"
+    : >"$log_a"
+    : >"$log_r"
+    python3 tests/fixtures/inference-backend.py anthropic-messages 127.0.0.1 "$port_a" "$log_a" &
+    backend_a=$!
+    python3 tests/fixtures/inference-backend.py openai-responses 127.0.0.1 "$port_r" "$log_r" &
+    backend_r=$!
+    jq -n --arg data "$CDATA" --arg binary "$SANDBOX" --arg builder "$CONTAINER" \
+        --arg kernel "$kernel" --argjson pa "$port_a" --argjson pr "$port_r" '
+        def profile($p): {protocol: $p, completion_evidence: "drain", context_overflow: "reject",
+          input_overhead: {per_request_bytes: 4096, per_message_bytes: 64},
+          max_input_bytes: "2MiB"};
+        {data_dir: $data, github: "off", egress: "none", network: {transport: "vmnet"},
+         vm: {vcpu_count: 2, mem_size_mib: 2048, template_size_gib: 8},
+         apple_container: {binary: $binary, builder: $builder, kernel: $kernel},
+         inference: {mode: "required",
+           qualification_profiles: {anthropic: profile("anthropic-messages"),
+                                    responses: profile("openai-responses")},
+           backends: {
+             "fake-anthropic": {base_url: "http://127.0.0.1:\($pa)", protocol: "anthropic-messages",
+                                qualification_profile: "anthropic"},
+             "fake-responses": {base_url: "http://127.0.0.1:\($pr)", protocol: "openai-responses",
+                                qualification_profile: "responses"}},
+           services: {
+             "local-claude": {backend: "fake-anthropic", upstream_model: "fake/claude-upstream",
+                              frontend_apis: ["anthropic-messages"], max_context_tokens: 200000},
+             "local-codex": {backend: "fake-responses", upstream_model: "fake/codex-upstream",
+                             frontend_apis: ["openai-responses"], max_context_tokens: 200000}}},
+         claude: {config_dir: false, local_model: {service: "local-claude"}},
+         codex: {config_dir: false, local_model: {service: "local-codex"}}}' >"$ICFG"
+    if [[ ! -x "$ISO" ]]; then
+        swift build --product iso --force-resolved-versions --scratch-path "$WORK/swift-build" \
+            >"$WORK/iso-build.log" 2>&1 || fail "inference: iso builds" "see $WORK/iso-build.log"
+    fi
+    if { if [[ -n "$PREBUILT" ]]; then
+            cp -p "$PREBUILT/iso-inference" "$(dirname "$ISO")/iso-inference"
+        else
+            swift build --package-path iso-proxy --product iso-inference --force-resolved-versions \
+                --scratch-path "$WORK/proxy-build" &&
+                cp "$WORK/proxy-build/debug/iso-inference" "$(dirname "$ISO")/iso-inference"
+        fi; } >"$WORK/inference-build.log" 2>&1 &&
+        iinf setup -y >"$WORK/inference-setup.log" 2>&1; then
+        pass "inference: iso-inference is installed beside iso and the image is ready"
+    else
+        fail "inference: iso-inference is installed beside iso and the image is ready" \
+            "see $WORK/inference-build.log, $WORK/inference-setup.log"
+    fi
+    mkdir -p "$WORK/project-inf"
+    if ANTHROPIC_API_KEY="$CANARY" OPENAI_API_KEY="$CANARY" \
+        iinf up "$WORK/project-inf" --name inf --no-github >"$WORK/iso-up-inf.log" 2>&1; then
+        pass "inference: iso up boots with agents under inference.mode required"
+        state="$(iinf inference status inf --json)"
+        check "inference: the gateway reports one active session" \
+            test "$(jq -r '[.sessions[] | select(.state == "active")] | length' <<<"$state")" = 1
+        check "inference: status names the unverified backend isolation" \
+            test "$(jq -r '[.backends[].backend_isolation_verified] | unique | .[0]' <<<"$state")" = false
+        check "inference: no provider credential reaches the guest" \
+            refuses grep -q "$CANARY" <<<"$(iinf exec inf -- env 2>/dev/null)"
+        # shellcheck disable=SC2016 # Expand in the guest.
+        token="$(iinf exec inf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        check "inference: Claude's managed settings carry a 64-hex capability" test "${#token}" = 64
+        body='{"model":"local-claude","max_tokens":64000,"messages":[{"role":"user","content":"hi"}],"stream":true}'
+        url=http://127.0.0.1:11788/v1/messages
+        check "inference: a request without the capability is refused (401)" \
+            test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 401
+        before="$(wc -l <"$log_a" | tr -d ' ')"
+        reply="$(iinf exec inf -- curl -s -H "authorization: Bearer $token" -H 'content-type: application/json' \
+            -d "$body" "$url?beta=true" 2>/dev/null)"
+        check "inference: an authorized request streams the backend's reply under the alias" \
+            grep -q '"model":"local-claude"' <<<"$reply"
+        check "inference: the upstream model id never reaches the guest" \
+            refuses grep -q "fake/claude-upstream" <<<"$reply"
+        last="$(tail -1 "$log_a")"
+        check "inference: the backend received the host-selected model and a clamped limit" \
+            test "$(jq -r '"\(.body.model) \(.body.max_tokens) \(.body.stream)"' <<<"$last")" = "fake/claude-upstream 8192 true"
+        check "inference: a host-selected field is refused (403) before the backend" \
+            test "$(guest_code -H "authorization: Bearer $token" -H 'content-type: application/json' \
+                -d '{"model":"local-claude","max_tokens":10,"messages":[],"draft_model":"x"}' "$url")" = 403
+        check "inference: only the authorized request reached the backend" \
+            test "$(wc -l <"$log_a" | tr -d ' ')" = $((before + 1))
+        # shellcheck disable=SC2016 # Expand in the guest.
+        host_ip="$(iinf exec inf -- sh -c 'ip -4 -o addr show eth0 | awk "{print \$4}" | cut -d/ -f1 | sed "s/\.[0-9]*$/.1/"' 2>/dev/null)"
+        check "inference: the guest reports its host gateway address" \
+            grep -Eq '^10\.231\.[0-9]+\.1$' <<<"$host_ip"
+        check "inference: the backend is not reachable directly from the guest" \
+            refuses iinf exec inf -- timeout 5 bash -c "exec 3<>/dev/tcp/$host_ip/$port_a"
+        claude_out="$(iinf exec inf -- sh -c 'cd /tmp && timeout 180 ~/.local/bin/claude -p "say ok" 2>&1' 2>/dev/null)"
+        check "inference: Claude Code completes a turn through the gateway" grep -qx "ok" <<<"$claude_out"
+        codex_out="$(iinf exec inf -- sh -c 'cd /tmp && timeout 180 codex exec --skip-git-repo-check "say ok" </dev/null 2>&1' 2>/dev/null)"
+        check "inference: Codex completes a turn through the gateway" grep -q "^ok$" <<<"$codex_out"
+        check "inference: Codex asked for the host-selected model" \
+            grep -q '"model": "fake/codex-upstream"' <<<"$(jq -c . "$log_r" | sed 's/"model":/"model": /g')"
+        # The session reaches the guest through the sandbox's vsock relay
+        # (spec §22): a bridged guest port, a relayed socket, no host TCP.
+        check "inference: the guest bridge is a systemd socket on 127.0.0.1:11788" \
+            iinf exec inf -- systemctl is-active --quiet iso-inference.socket
+        check "inference: the gateway socket is relayed into the guest" \
+            iinf exec inf -- test -S /var/lib/iso-inference/gateway.sock
+        gateway_pid="$(iinf inference status inf --json | jq -r '.gateway.pid')"
+        check "inference: status reports the gateway's pid" grep -Eq '^[1-9][0-9]*$' <<<"$gateway_pid"
+        check "inference: the gateway holds no TCP listener" \
+            test -z "$(lsof -nP -a -p "$gateway_pid" -iTCP -sTCP:LISTEN -t 2>/dev/null)"
+        # AT-32: 400 concurrent guest connections; the owner relays at most 32
+        # and its descriptor count returns to baseline (R2, R3).
+        owner_pid="$(csbx inspect "$(machine_id inf)" | jq -r '.live.pid')"
+        check "inference: the sandbox owner's pid is known" grep -Eq '^[1-9][0-9]*$' <<<"$owner_pid"
+        fds_before="$(lsof -p "$owner_pid" 2>/dev/null | wc -l | tr -d ' ')"
+        # shellcheck disable=SC2016 # Expand in the guest.
+        iinf exec inf -- sh -c 'for i in $(seq 400); do (exec 3<>/dev/tcp/127.0.0.1/11788; sleep 3) & done; wait' \
+            >/dev/null 2>&1
+        sleep 2
+        fds_after="$(lsof -p "$owner_pid" 2>/dev/null | wc -l | tr -d ' ')"
+        check "inference: the owner's descriptors return to baseline after 400 connections" \
+            test "$fds_after" -le $((fds_before + 5))
+        check "inference: the relay still serves after the flood" \
+            test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 401
+        # AT-31: with the gateway stopped a guest connection fails; the next
+        # iso command restarts it and registers a fresh session (R1).
+        check "inference: the gateway stops" iinf inference stop --force
+        check "inference: a guest connection fails while it is down" \
+            test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 000
+        check "inference: the next command restarts it" test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
+        check "inference: and the relay serves again" \
+            test "$(guest_code -H 'content-type: application/json' -d "$body" "$url")" = 401
+        # shellcheck disable=SC2016 # Expand in the guest.
+        token="$(iinf exec inf -- sh -c 'grep -o "\"ANTHROPIC_AUTH_TOKEN\": *\"[0-9a-f]*\"" ~/.claude/settings.json | grep -o "[0-9a-f]\{64\}"' 2>/dev/null)"
+        # The sandbox owner's exit (VM stop) revokes the session; the next
+        # boot registers a fresh one.
+        check "inference: iso stop revokes the session" iinf stop inf
+        check "inference: and no session stays active" \
+            test "$(iinf inference status inf --json | jq -r '[.sessions[] | select(.state == "active")] | length')" = 0
+        check "inference: iso start establishes a fresh session" iinf start inf --no-github
+        check "inference: the next command runs" \
+            test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
+        check "inference: the old capability no longer works" \
+            test "$(guest_code -H "authorization: Bearer $token" -H 'content-type: application/json' \
+                -d "$body" "$url")" = 401
+        check "inference: iso inference revoke removes the session" iinf inference revoke inf
+        check "inference: a revoked VM still runs commands" test "$(iinf exec inf -- echo ok 2>/dev/null)" = ok
+        check "inference: and stays without a session" \
+            test "$(iinf inference status inf --json | jq -r '.sessions | length')" = 0
+        check "inference: iso stop succeeds" iinf stop inf
+        # A backend that also listens beyond loopback fails the start.
+        kill "$backend_a" 2>/dev/null
+        wait "$backend_a" 2>/dev/null
+        python3 tests/fixtures/inference-backend.py anthropic-messages 0.0.0.0 "$port_a" "$log_a" &
+        backend_a=$!
+        # Wait for the listener: a start before it exists fails as unavailable.
+        for _ in $(seq 100); do
+            python3 -c 'import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 0.2)' \
+                "$port_a" 2>/dev/null && break
+            sleep 0.1
+        done
+        unsafe_start="$("$ISO" --config "$ICFG" start inf --no-github 2>&1 </dev/null)" && started=1 || started=0
+        check "inference: a backend bound beyond loopback refuses the start" test "$started" = 0
+        check "inference: and says why" grep -q INFERENCE_BACKEND_UNSAFE_BIND <<<"$unsafe_start"
+        check "inference: doctor reports the unsafe bind" refuses iinf inference doctor
+        iinf destroy inf >/dev/null 2>&1
+    else
+        fail "inference: iso up boots with agents under inference.mode required" "see $WORK/iso-up-inf.log"
+    fi
+    kill "$backend_a" "$backend_r" 2>/dev/null
+    iinf inference stop --force >/dev/null 2>&1
+    rm -f "$(dirname "$ISO")/iso-inference"
 fi
 
 summary

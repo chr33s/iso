@@ -38,6 +38,12 @@ package struct Uninstaller {
   /// Unloads services this build started (the host-control launchd job)
   /// before its binary goes.
   package var stopServices: () -> Void = {}
+  /// Stops the per-user inference gateway (revoking its sessions) before
+  /// its binary goes.
+  package var stopInferenceGateway: () -> Void = {}
+  /// Root-owned parts of managed inference backends, which only
+  /// `iso inference deprovision` (sudo) removes.
+  package var managedBackendsRoot = ManagedBackendLayout.root
 
   var config: IsoConfig { backend.config }
   var diagnostics: Diagnostics { backend.diagnostics }
@@ -78,8 +84,15 @@ package struct Uninstaller {
       return
     }
     stopServices()
+    stopInferenceGateway()
     if try decideRemoveData(options) {
       try purgeAllData()
+      if let home {
+        // The gateway's per-user state: control socket, journal, audit log.
+        wipe(
+          InferenceController.stateDirectory(home: home),
+          failure: .warn("Failed to remove the inference gateway state"))
+      }
       // Decide containment while the data directory still exists to
       // canonicalize; afterwards the check cannot tell.
       let configKept = !Self.configPathIsUnderDataDirectory(configPath, ownedDataDirectory)
@@ -140,6 +153,17 @@ package struct Uninstaller {
     } else {
       diagnostics.log(.info, "  data dir:  \(ownedDataDirectory) (already absent)")
     }
+    for name in managedBackends() {
+      diagnostics.warn(
+        "managed inference backend '\(name)' (its LaunchDaemon, the _isoinference account, files under \(managedBackendsRoot) and its Keychain token) is not removed by uninstall; run `iso inference deprovision \(name)` first"
+      )
+    }
+  }
+
+  /// Names of the managed backends provisioned on this Mac.
+  func managedBackends() -> [String] {
+    ((try? FileManager.default.contentsOfDirectory(atPath: managedBackendsRoot)) ?? [])
+      .filter { !$0.hasPrefix(".") }.sorted()
   }
 
   /// Flags decide without prompting; otherwise the confirmer answers.

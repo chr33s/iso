@@ -165,6 +165,9 @@ package struct ProxyLauncher: Sendable {
     for provider in ProxyProvider.allCases { stop(instance, provider: provider) }
     stopEgress(instance)
     stopModelTunnels(instance)
+    // The sandbox owner's exit revokes the gateway session (spec §22).
+    unlink(InferenceController.statePath(instance))
+    unlink(InferenceController.tokenPath(instance))
   }
 
   /// Start the credential-free CONNECT companion for a filtered boot. A missing
@@ -182,7 +185,7 @@ package struct ProxyLauncher: Sendable {
     }
     guard let runtime else {
       throw HostError(
-        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity)")
+        "filtered egress requires iso-sandbox protocol \(RuntimeProtocol.bootIdentity) or later")
     }
     let boot = try runtime.requireFilteredBoot(sidecar.machineID, sidecar.kind)
     guard boot.ownerPID == ownerPID else {
@@ -456,21 +459,29 @@ package struct ProxyLauncher: Sendable {
     }
   }
 
-  /// After readiness: the listener on `port` is the proxy iso started.
-  static func requireListener(_ pid: pid_t, port: UInt16) throws {
+  /// PIDs of this user's processes listening on `address:port` (every
+  /// address when nil); nil when `lsof` cannot run.
+  static func listenerPIDs(address: String?, port: UInt16) -> [pid_t]? {
     guard
       let output = try? ProcessRunner().capture(
         .init(
           executable: "/usr/sbin/lsof",
-          arguments: ["-nP", "-a", "-iTCP@127.0.0.1:\(port)", "-sTCP:LISTEN", "-t"],
+          arguments: [
+            "-nP", "-a", "-iTCP\(address.map { "@" + $0 } ?? ""):\(port)", "-sTCP:LISTEN", "-t",
+          ],
           environment: [:], deadline: .seconds(10), outputLimit: 64 << 10, overflow: .drain))
-    else {
+    else { return nil }
+    return rustLines(String(decoding: output.stdout, as: UTF8.self)).compactMap {
+      pid_t($0.trimmingUnicodeWhitespace())
+    }
+  }
+
+  /// After readiness: the listener on `port` is the proxy iso started.
+  static func requireListener(_ pid: pid_t, port: UInt16) throws {
+    guard let listeners = listenerPIDs(address: "127.0.0.1", port: port) else {
       throw HostError(
         "could not confirm which process serves 127.0.0.1:\(port) — refusing to start the VM (fail-closed)"
       )
-    }
-    let listeners = rustLines(String(decoding: output.stdout, as: UTF8.self)).compactMap {
-      pid_t($0.trimmingUnicodeWhitespace())
     }
     guard listeners == [pid] else {
       throw HostError(
@@ -522,8 +533,17 @@ package struct ProxyLauncher: Sendable {
   /// A bounded, credential-free probe: the status line must be exactly an
   /// `HTTP/1.1 401` response.
   static func httpReady(port: UInt16, budget: Duration = .milliseconds(200)) -> Bool {
+    httpStatusLine(port: port, path: "/v1/messages", budget: budget)?
+      .starts(with: Array("HTTP/1.1 401 ".utf8)) ?? false
+  }
+
+  /// A bounded `GET` to 127.0.0.1: the response's status line (with CRLF),
+  /// or nil when nothing answers within `budget`.
+  static func httpStatusLine(
+    port: UInt16, path: String, headers: [String] = [], budget: Duration
+  ) -> [UInt8]? {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
-    guard fd >= 0 else { return false }
+    guard fd >= 0 else { return nil }
     defer { close(fd) }
     _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
     var one: Int32 = 1
@@ -545,31 +565,30 @@ package struct ProxyLauncher: Sendable {
       }
     }
     if connected != 0 {
-      guard errno == EINPROGRESS, wait(Int16(POLLOUT)) else { return false }
+      guard errno == EINPROGRESS, wait(Int16(POLLOUT)) else { return nil }
       var error: Int32 = 0
       var length = socklen_t(MemoryLayout<Int32>.size)
       guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0, error == 0 else {
-        return false
+        return nil
       }
     }
-    var request = Array(
-      "GET /v1/messages HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".utf8)[...]
+    let head = (["GET \(path) HTTP/1.1", "Host: localhost", "Connection: close"] + headers)
+      .map { $0 + "\r\n" }.joined()
+    var request = Array((head + "\r\n").utf8)[...]
     while !request.isEmpty {
-      guard wait(Int16(POLLOUT)) else { return false }
+      guard wait(Int16(POLLOUT)) else { return nil }
       let sent = request.withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
-      guard sent > 0 else { return false }
+      guard sent > 0 else { return nil }
       request = request.dropFirst(sent)
     }
     var status: [UInt8] = []
     var byte: UInt8 = 0
     while status.count < 128 {
-      guard wait(Int16(POLLIN)), recv(fd, &byte, 1, 0) == 1 else { return false }
+      guard wait(Int16(POLLIN)), recv(fd, &byte, 1, 0) == 1 else { return nil }
       status.append(byte)
-      if status.suffix(2) == [0x0D, 0x0A] {
-        return status.starts(with: Array("HTTP/1.1 401 ".utf8))
-      }
+      if status.suffix(2) == [0x0D, 0x0A] { return status }
     }
-    return false
+    return nil
   }
 
   // MARK: Reverse tunnels

@@ -165,6 +165,7 @@ iso policy effective NAME          # requested vs recorded egress, credentials, 
 iso policy show NAME               # the boot's policy and any pending change
 iso audit NAME                     # recorded boundary events (names, never values)
 iso proxy status --vm NAME         # which provider credentials resolve (redacted)
+iso inference status NAME          # guarded local inference sessions and backend checks
 iso profiles list                  # valid --profile names
 iso images                         # valid --image names
 iso devcontainer check PATH        # how a devcontainer.json would be applied
@@ -178,9 +179,11 @@ ones outside the loop above fall into four groups:
 
 - **The user runs them:** credential and identity commands (`iso proxy
   setup`, `iso secrets init|set|rm`, `iso github setup-pat|rotate-pat|
-  forget-pat|assign-pat|unassign-pat`), the editors (`iso code`, `iso zed`,
+  forget-pat|assign-pat|unassign-pat`), the inference backend and gateway
+  commands (`iso inference init|provision|deprovision|restart-backend|
+  requalify|stop`), the editors (`iso code`, `iso zed`,
   `iso editor`), and `iso completions`.
-- **Only on request (rule 6):** `iso model set`, `iso agent add`,
+- **Only on request (rule 6):** `iso model set`, `iso inference attach|detach|revoke`, `iso agent add`,
   `iso agent update`, `iso devcontainer ignore|clear`, `iso ssh-config`.
 - **Remote hosts:** `iso host …` drives VMs on an enrolled Mac. Use it only
   when the user asked for a remote host; the same rules apply.

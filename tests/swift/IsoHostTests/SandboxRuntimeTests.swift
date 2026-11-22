@@ -107,6 +107,9 @@ let qualifiedVersion =
   #expect(boot.livePath == "/state/runtime/sandboxes/\(name.rawValue)/live.json")
   #expect(RuntimeProtocol.filteredBootAllowed(advertised: 4, bootID: "abc") == false)
   #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "") == false)
+  // Later protocols keep the boot identity (protocol 6 adds the relay).
+  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 5, bootID: "abc"))
+  #expect(RuntimeProtocol.filteredBootAllowed(advertised: 6, bootID: "abc"))
 }
 
 /// The runtime's own owner call inside `inspect` is bounded at 10 s; the host

@@ -71,6 +71,11 @@ package struct SandboxRecord: Sendable, Equatable, Codable {
   package let expiresAt: String?
   /// `virtio_display` for a sandbox with a display; absent when headless.
   package var display: String? = nil
+  /// The inference gateway's socket is relayed into the guest
+  /// (secure-local-inference §22); absent means no relay.
+  package var inferenceRelay: Bool? = nil
+
+  package var relaysInference: Bool { inferenceRelay ?? false }
 
   /// The session deadline, if one is recorded and parses.
   package var sessionDeadline: Date? {
@@ -185,6 +190,29 @@ package struct EffectiveChannelPolicy: Sendable, Equatable, Codable {
   }
 }
 
+/// The inference relay the owner configured (secure-local-inference §22):
+/// the instance's host socket, relayed into the fixed guest path.
+package struct EffectiveRelay: Sendable, Equatable, Decodable {
+  package let host: String
+  package let guest: String
+  package let maxConnections: Int?
+
+  enum CodingKeys: String, CodingKey, CaseIterable { case host, guest, maxConnections }
+
+  package init(host: String, guest: String, maxConnections: Int?) {
+    self.host = host
+    self.guest = guest
+    self.maxConnections = maxConnections
+  }
+
+  package init(from decoder: any Decoder) throws {
+    let c = try StrictKeys.container(decoder, CodingKeys.self)
+    host = try c.decode(String.self, forKey: .host)
+    guest = try c.decode(String.self, forKey: .guest)
+    maxConnections = try c.decodeIfPresent(Int.self, forKey: .maxConnections)
+  }
+}
+
 /// A brokered sandbox's transport report: every member is required once
 /// any is present, so a partial report fails to decode.
 package struct EffectiveBrokered: Sendable, Equatable {
@@ -208,6 +236,8 @@ package struct Effective: Sendable, Equatable, Decodable {
   package let mounts: [EffectiveMount]
   package let interfaces: [EffectiveInterface]
   package let socketRelays: UInt32
+  /// The inference relay, when the boot has one (protocol 6).
+  package let inferenceRelay: EffectiveRelay?
   package let publishedPorts: UInt32
   package let sshAgentForwarding: Bool
   package let maskedPaths: [String]
@@ -221,7 +251,8 @@ package struct Effective: Sendable, Equatable, Decodable {
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case id, imageReference, imageDigest, cpus, memoryBytes, rootfs, mounts, interfaces
-    case socketRelays, publishedPorts, sshAgentForwarding, maskedPaths, readonlyPaths, initArgv
+    case socketRelays, inferenceRelay, publishedPorts, sshAgentForwarding, maskedPaths
+    case readonlyPaths, initArgv
     case virtualization
     case transport, networkDevices, socketDevices, channelPolicy, channelPolicyDigest
     case networkPolicy
@@ -239,6 +270,7 @@ package struct Effective: Sendable, Equatable, Decodable {
     mounts = try c.decode([EffectiveMount].self, forKey: .mounts)
     interfaces = try c.decode([EffectiveInterface].self, forKey: .interfaces)
     socketRelays = try c.decode(UInt32.self, forKey: .socketRelays)
+    inferenceRelay = try c.decodeIfPresent(EffectiveRelay.self, forKey: .inferenceRelay)
     publishedPorts = try c.decode(UInt32.self, forKey: .publishedPorts)
     sshAgentForwarding = try c.decode(Bool.self, forKey: .sshAgentForwarding)
     maskedPaths = try c.decode([String].self, forKey: .maskedPaths)
@@ -317,14 +349,20 @@ package struct MaintenanceArtifact: Sendable, Equatable, Decodable {
 package enum RuntimeProtocol {
   /// Protocol advertised by this checkout's runtime.
   package static let version: UInt32 = 5
+  /// The protocol that introduced the live boot identity filtered egress
+  /// binds to; every later protocol keeps it.
   package static let bootIdentity: UInt32 = 5
+  /// The protocol that introduced the inference relay (`create
+  /// --inference-relay`, `start --inference-relay on|off`).
+  package static let inferenceRelay: UInt32 = 6
   /// `version` capability for `create --network brokered` and its stream
   /// connector, on protocol 5 (vmnet output is unchanged by it).
   package static let brokeredFeature = "brokered-transport"
 
-  /// Filtered egress needs the current protocol and a non-empty live boot id.
+  /// Filtered egress needs protocol 5 or later (the live boot id) and a
+  /// non-empty live boot id.
   package static func filteredBootAllowed(advertised: UInt32, bootID: String?) -> Bool {
-    advertised == bootIdentity && !(bootID?.isEmpty ?? true)
+    advertised >= bootIdentity && !(bootID?.isEmpty ?? true)
   }
 
   static func decode<T: Decodable>(_ type: T.Type, _ bytes: [UInt8], _ what: String)
