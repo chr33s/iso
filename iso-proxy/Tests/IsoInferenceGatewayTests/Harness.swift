@@ -284,7 +284,8 @@ final class Harness: @unchecked Sendable {
       group: group, journal: journal,
       audit: AuditLog(path: directory + "/audit.log") { clock.now },
       relayDirectory: relayDirectory, backendPorts: backendPorts, transportCommand: "sleep",
-      timing: timing, sharedConnections: sharedConnections, onExit: {})
+      forwardExecutable: Self.forwardExecutable, timing: timing,
+      sharedConnections: sharedConnections, onExit: {})
   }
 
   deinit {
@@ -306,26 +307,44 @@ final class Harness: @unchecked Sendable {
     return (process, TransportBinding(pid: process.processIdentifier, start: identity.start))
   }
 
+  /// What stands in for the host's `ssh` reverse forward: a program other
+  /// than the owner's stand-in, so neither passes for the other.
+  static let forwardExecutable = "/usr/bin/tail"
+
+  func spawnForward() throws -> (Process, TransportBinding) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: Self.forwardExecutable)
+    process.arguments = ["-f", "/dev/null"]
+    try process.run()
+    transports.append(process)
+    let identity = try #require(ProcessIdentity.of(process.processIdentifier))
+    return (process, TransportBinding(pid: process.processIdentifier, start: identity.start))
+  }
+
   struct Session {
     let id: String
     /// The session socket's path.
     let socket: String
     let token: String
+    /// The bound process: the owner, or a `forward` session's forward.
     let transport: Process
+    /// The registration's sandbox owner.
+    let owner: Process
   }
 
   func session(
     _ grants: [ServiceGrant], name: String = "dev", deadlineSeconds: Int64? = nil,
-    activate: Bool = true
+    activate: Bool = true, transport kind: TransportKind = .owner
   ) throws -> Session {
-    // The transport stands in for the instance's sandbox owner, whose
-    // identity is the registration's boot identity.
-    let (process, binding) = try spawnTransport()
+    // The owner stands in for the instance's sandbox owner, whose identity
+    // is the registration's boot identity; a forward session binds a forward.
+    let (owner, ownerBinding) = try spawnTransport()
+    let (process, binding) = kind == .owner ? (owner, ownerBinding) : try spawnForward()
     let registration = ControlProtocol.Registration(
       instance: .init(dataRoot: directory, name: name),
-      boot: BootIdentity(ownerPID: binding.pid, ownerStart: binding.start),
+      boot: BootIdentity(ownerPID: ownerBinding.pid, ownerStart: ownerBinding.start),
       nonce: String(repeating: "0", count: 32), limits: .defaults, grants: grants,
-      socket: Self.socketName(name))
+      socket: Self.socketName(name), transport: kind)
     let registered = try gateway.register(registration)
     if activate {
       try gateway.activate(
@@ -335,8 +354,7 @@ final class Harness: @unchecked Sendable {
     }
     return Session(
       id: registered.sessionID, socket: relayDirectory + "/" + registered.socket,
-      token: registered.capability.expose(),
-      transport: process)
+      token: registered.capability.expose(), transport: process, owner: owner)
   }
 
   /// The runtime names a socket by a hex hash; one per instance name here.

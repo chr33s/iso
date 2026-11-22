@@ -93,7 +93,7 @@ package struct InferenceController: Sendable {
   package static let guestPort: UInt16 = 11788
   /// The gateway control protocol this host speaks (IsoInferenceCore's
   /// `ControlProtocol.version`).
-  static let controlVersion: UInt64 = 2
+  static let controlVersion: UInt64 = 3
   static let controlTimeoutSeconds = 15
   static let startTimeout: Duration = .seconds(5)
 
@@ -477,7 +477,7 @@ package struct InferenceController: Sendable {
       ("version", .uint(Self.controlVersion)), ("op", .string("register_session")),
       ("instance", .object(instanceKey(instance))),
       ("boot", .object([("owner_pid", .int(Int64(boot.0))), ("owner_start", .string(boot.1))])),
-      ("nonce", .string(nonce)), ("socket", .string(socket)),
+      ("nonce", .string(nonce)), ("socket", .string(socket)), ("transport", .string("owner")),
       (
         "global_limits",
         .object([

@@ -10,7 +10,7 @@ private func registration(_ grants: [ServiceGrant]) -> ControlProtocol.Registrat
     instance: key,
     boot: BootIdentity(ownerPID: 42, ownerStart: ProcessStart(seconds: 1, microseconds: 2)),
     nonce: String(repeating: "a", count: 32), limits: .defaults, grants: grants,
-    socket: "8e84b04d471a546a.sock")
+    socket: "8e84b04d471a546a.sock", transport: .forward)
 }
 
 private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProtocol.Request {
@@ -35,6 +35,7 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   }
   #expect(decoded.grants == [withSecret])
   #expect(decoded.instance == key)
+  #expect(decoded.transport == .forward)
   #expect(decoded.policyDigest == registration([withSecret]).policyDigest)
   // The digest never covers the credential.
   #expect(!registration([withSecret]).policyDigest.isEmpty)
@@ -66,14 +67,30 @@ private func roundTrip(_ request: ControlProtocol.Request) throws -> ControlProt
   let good = ControlProtocol.encode(.shutdown(force: false))
   var unknown = good
   unknown["extra"] = .bool(true)
-  // Version 1 (TCP session ports) is refused, as is any other.
+  // Version 2 (no transport kind) and version 1 (TCP session ports) are
+  // refused, as is any other.
   var version = good
   version["version"] = .int(ControlProtocol.version - 1)
+  var oldest = good
+  oldest["version"] = .int(1)
   var op = good
   op["op"] = .string("exec")
-  for message in [unknown, version, op] {
+  for message in [unknown, version, oldest, op] {
     #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(message) }
   }
+  #expect(ControlProtocol.version == 3)
+  // A registration names its transport kind, one of the two.
+  let registered = ControlProtocol.encode(.register(registration([grant(.openAIChat)])))
+  var noKind = registered
+  noKind["transport"] = nil
+  var otherKind = registered
+  otherKind["transport"] = .string("direct")
+  var versionTwo = registered
+  versionTwo["version"] = .int(2)
+  for message in [noKind, otherKind, versionTwo] {
+    #expect(throws: InferenceError.self) { try ControlProtocol.decodeRequest(message) }
+  }
+  _ = try ControlProtocol.decodeRequest(registered)
   #expect(ControlProtocol.frameLength([0x7F, 0, 0, 0]) == nil)
 
   // A grant whose API needs a different backend protocol is refused.

@@ -6,8 +6,9 @@ import IsoProxyCore
 /// are rejected; duplicate keys fail the parser.
 package enum ControlProtocol {
   /// 2: sessions are Unix sockets named by the registration (`socket`), not
-  /// TCP ports (§22).
-  package static let version: Int64 = 2
+  /// TCP ports (§22). 3: a registration declares its transport kind
+  /// (`owner` or `forward`), which fixes the process activation may bind.
+  package static let version: Int64 = 3
   package static let maxFrameBytes = 256 << 10
 
   package enum Request: Sendable {
@@ -35,12 +36,14 @@ package enum ControlProtocol {
     package let limits: GlobalLimits
     package let grants: [ServiceGrant]
     /// The session socket's file name in the gateway's relay directory: the
-    /// host end of the instance's vsock relay (§22).
+    /// host end of the instance's vsock relay or SSH forward (§22).
     package let socket: String
+    /// The process that carries guest connections to the socket.
+    package let transport: TransportKind
 
     package init(
       instance: InstanceKey, boot: BootIdentity, nonce: String, limits: GlobalLimits,
-      grants: [ServiceGrant], socket: String
+      grants: [ServiceGrant], socket: String, transport: TransportKind
     ) {
       self.instance = instance
       self.boot = boot
@@ -48,6 +51,7 @@ package enum ControlProtocol {
       self.limits = limits
       self.grants = grants
       self.socket = socket
+      self.transport = transport
     }
 
     /// 1–16 lowercase hex digits and `.sock`: the runtime's hash name. It
@@ -137,6 +141,7 @@ package enum ControlProtocol {
         ]))
       out["nonce"] = .string(registration.nonce)
       out["socket"] = .string(registration.socket)
+      out["transport"] = .string(registration.transport.rawValue)
       out["global_limits"] = .object(encode(registration.limits))
       out["grants"] = .array(
         registration.grants.map { .object(encode($0, includeCredential: true)) })
@@ -177,7 +182,8 @@ package enum ControlProtocol {
     switch try r.string("op", maxBytes: 64) {
     case "register_session":
       try r.only([
-        "version", "op", "instance", "boot", "nonce", "socket", "global_limits", "grants",
+        "version", "op", "instance", "boot", "nonce", "socket", "transport", "global_limits",
+        "grants",
       ])
       let socket = try r.string("socket", maxBytes: 32)
       guard Registration.isSocketName(socket) else {
@@ -205,7 +211,7 @@ package enum ControlProtocol {
           boot: BootIdentity(
             ownerPID: try boot.pid("owner_pid"), ownerStart: try boot.start("owner_start")),
           nonce: nonce, limits: try decodeLimits(r.object("global_limits")), grants: grants,
-          socket: socket))
+          socket: socket, transport: try r.enumeration("transport", TransportKind.self)))
     case "activate_session":
       try r.only(["version", "op", "session_id", "epoch", "transport", "deadline_seconds"])
       let transport = try r.object("transport")

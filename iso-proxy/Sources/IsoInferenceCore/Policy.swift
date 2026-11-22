@@ -185,6 +185,18 @@ package struct ProcessStart: Sendable, Equatable, CustomStringConvertible {
   package var description: String { "\(seconds).\(microseconds)" }
 }
 
+/// Which process carries a session's guest connections to its socket
+/// (§22), declared at registration: it fixes the process activation may bind.
+package enum TransportKind: String, Sendable, Equatable, CaseIterable {
+  /// The sandbox owner relays the socket into the guest over vsock (the vmnet
+  /// transport): activation binds the registration's boot identity itself.
+  case owner
+  /// The host's `ssh` reverse forward connects guest connections to the
+  /// socket (the brokered transport): activation binds that forward process,
+  /// and the registration's sandbox owner must still be running.
+  case forward
+}
+
 /// The transport process a session is bound to at activation (§12.3).
 package struct TransportBinding: Sendable, Equatable {
   package let pid: Int32

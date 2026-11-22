@@ -19,7 +19,7 @@ final class FakeGateway: Sendable {
     var epoch = "epoch-1"
     var next = 0
     var override: [String: [String: Any]] = [:]
-    var version = 2
+    var version = 3
     /// The backend ports it was "launched" for.
     var ports: [Int] = []
   }
@@ -132,6 +132,13 @@ final class FakeGateway: Sendable {
     return reply
   }
 
+  /// The first request with `op`, decoded.
+  func request(_ op: String) -> [String: Any]? {
+    state.withLock { $0.requests }.lazy.compactMap {
+      try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+    }.first { $0["op"] as? String == op }
+  }
+
   var ops: [String] {
     state.withLock { $0.requests }.compactMap {
       (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["op"] as? String
@@ -225,6 +232,10 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(configuredBeforeActivation)
   let ops = rig.gateway.ops.filter { $0 != "inspect" }
   #expect(ops == ["revoke_session", "register_session", "activate_session"], "\(ops)")
+  // Control protocol 3: the vmnet relay is carried by the sandbox owner.
+  let registration = try #require(rig.gateway.request("register_session"))
+  #expect(registration["version"] as? Int == 3)
+  #expect(registration["transport"] as? String == "owner")
   #expect(exists(InferenceController.statePath(rig.instance)))
   #expect(readFile(InferenceController.tokenPath(rig.instance)) == result.session.token.expose())
   // A later command reuses the recorded active session.
@@ -343,7 +354,7 @@ private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atP
   #expect(exists(InferenceController.statePath(rig.instance)))
   rig.gateway.state.withLock {
     $0.override = [:]
-    $0.version = 3
+    $0.version = 2
   }
   #expect(throws: InferenceGatewayIncompatible.self) { try control.revoke(rig.instance) }
   #expect(exists(InferenceController.statePath(rig.instance)))

@@ -187,12 +187,12 @@ def main():
                "stream_close_drain_ms": 100, "context_overflow": "reject",
                "overhead_per_request_bytes": 64, "overhead_per_message_bytes": 8,
                "max_input_bytes": 1048576, "max_request_body_bytes": 4194304, "token_counter": "none"}
-    def registration(port):
+    def registration(port, name="dev", socket="8e84b04d471a546a.sock", transport="owner"):
         return {
-            "version": 2, "op": "register_session", "instance": {"data_root": "/x", "name": "dev"},
+            "version": 3, "op": "register_session", "instance": {"data_root": "/x", "name": name},
             "boot": {"owner_pid": owner.pid, "owner_start": process_start(owner.pid)},
             "nonce": "0" * 32,
-            "socket": "8e84b04d471a546a.sock",
+            "socket": socket, "transport": transport,
             "global_limits": {"max_active_requests": 2, "max_queued_requests": 32,
                               "max_request_buffer_bytes": 67108864},
             "grants": [{"alias": "local-coder", "upstream_model": "real", "apis": ["openai-chat"],
@@ -218,10 +218,15 @@ def main():
     check("an inactive session refuses requests", http(session_socket, token, body)[0] == 401)
 
     sleeper = subprocess.Popen(["/bin/sleep", "60"])
-    def activation(pid, **extra):
-        return {"version": 2, "op": "activate_session", "session_id": registered["session_id"],
-                "epoch": registered["epoch"],
+    def activation(pid, session=None, **extra):
+        session = session or registered
+        return {"version": 3, "op": "activate_session", "session_id": session["session_id"],
+                "epoch": session["epoch"],
                 "transport": {"pid": pid, "start": process_start(pid)}, **extra}
+
+    version_two = dict(registration(backend_port, name="old", socket="0123.sock"), version=2)
+    check("a version 2 registration (no transport kind) is refused",
+          control(state, version_two).get("ok") is False)
 
     wrong = control(state, activation(sleeper.pid))
     check("activation refuses a transport that is not the sandbox owner", wrong.get("ok") is False)
@@ -239,9 +244,37 @@ def main():
     check("the backend saw the upstream model and no guest credential",
           received and received[-1][2]["model"] == "real" and "authorization" not in received[-1][1])
 
+    # A `forward` session (the brokered transport) binds the host's ssh
+    # reverse forward: the confined gateway reads the executable of a live
+    # /usr/bin/ssh (waiting on a silent ProxyCommand) and of nothing else.
+    forwarded = control(state, registration(
+        backend_port, name="brokered", socket="0abc.sock", transport="forward"))
+    check("a forward registration succeeds", forwarded.get("ok") is True)
+    ssh = subprocess.Popen(["/usr/bin/ssh", "-F", "none", "-o", "BatchMode=yes",
+                            "-o", "ProxyCommand=/bin/sleep 60", "forward.invalid"],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
+    other = subprocess.Popen(["/bin/sleep", "60"])
+    check("forward activation refuses a process that is not ssh",
+          control(state, activation(other.pid, forwarded)).get("ok") is False)
+    check("forward activation refuses the sandbox owner",
+          control(state, activation(owner.pid, forwarded)).get("ok") is False)
+    other.kill()
+    check("forward activation binds this user's /usr/bin/ssh",
+          control(state, activation(ssh.pid, forwarded)).get("ok") is True)
+    status, _ = http(relay / forwarded["socket"], forwarded["capability"], body)
+    check("a forward session serves an authorized request", status == 200)
+    ssh.kill()
+    ssh.wait()
+    time.sleep(1.5)
+    live = [s["session_id"] for s in control(state, {"version": 3, "op": "inspect"})["sessions"]]
+    check("the forward's exit revokes its session", forwarded["session_id"] not in live
+          and registered["session_id"] in live)
+
     owner.kill()
     time.sleep(1.5)
-    sessions = control(state, {"version": 2, "op": "inspect"})["sessions"]
+    sessions = control(state, {"version": 3, "op": "inspect"})["sessions"]
     check("the sandbox owner's exit revokes the session", sessions == [])
     try:
         http(session_socket, token, body)
@@ -251,7 +284,7 @@ def main():
     check("a revoked session's socket refuses connections", refused)
     check("revocation removes the session socket file", not session_socket.exists())
 
-    busy = control(state, {"version": 2, "op": "shutdown", "force": False})
+    busy = control(state, {"version": 3, "op": "shutdown", "force": False})
     check("shutdown succeeds with no sessions", busy.get("ok") is True)
     gateway.wait(timeout=10)
     check("the gateway exits cleanly", gateway.returncode == 0)

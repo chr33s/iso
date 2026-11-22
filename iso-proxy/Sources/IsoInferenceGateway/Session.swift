@@ -27,7 +27,8 @@ package final class GatewaySession: Sendable {
     var phase: Phase = .inactive
     var transport: TransportBinding?
     var deadline: ContinuousClock.Instant?
-    var watch: DispatchSourceProcess?
+    /// Exit watches on the bound process and, for a forward, the owner.
+    var watches: [DispatchSourceProcess] = []
     var listener: Channel?
     var socket: BoundSocket?
     var channels: [ObjectIdentifier: Channel] = [:]
@@ -36,6 +37,8 @@ package final class GatewaySession: Sendable {
   package let id: String
   package let instance: ControlProtocol.InstanceKey
   package let boot: BootIdentity
+  /// Which process activation may bind (§22).
+  package let transportKind: TransportKind
   package let nonce: String
   package let policyDigest: String
   package let grants: [String: ServiceGrant]
@@ -57,6 +60,7 @@ package final class GatewaySession: Sendable {
     self.id = id
     instance = registration.instance
     boot = registration.boot
+    transportKind = registration.transport
     nonce = registration.nonce
     policyDigest = registration.policyDigest
     grants = Dictionary(uniqueKeysWithValues: registration.grants.map { ($0.alias, $0) })

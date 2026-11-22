@@ -369,7 +369,8 @@ extension GatewayTests {
           instance: .init(dataRoot: harness.directory, name: "b"),
           boot: BootIdentity(ownerPID: owner.pid, ownerStart: owner.start),
           nonce: String(repeating: "1", count: 32), limits: .defaults,
-          grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("a")))
+          grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("a"),
+          transport: .owner))
     }
     // The first session's listener still answers.
     #expect(

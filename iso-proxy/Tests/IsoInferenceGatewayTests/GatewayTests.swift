@@ -157,7 +157,8 @@ import Testing
         instance: .init(dataRoot: harness.directory, name: "x"),
         boot: BootIdentity(ownerPID: owner.pid, ownerStart: owner.start),
         nonce: String(repeating: "0", count: 32), limits: .defaults,
-        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("x")))
+        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("x"),
+        transport: .owner))
     func activate(_ binding: TransportBinding, epoch: String? = nil) throws {
       try harness.gateway.activate(
         .init(
@@ -184,11 +185,114 @@ import Testing
         instance: .init(dataRoot: harness.directory, name: "y"),
         boot: BootIdentity(ownerPID: stale.pid, ownerStart: stale.start),
         nonce: String(repeating: "0", count: 32), limits: .defaults,
-        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("y")))
+        grants: [grant(.openAIChat, port: backend.port)], socket: Harness.socketName("y"),
+        transport: .owner))
     #expect(throws: InferenceError.self) {
       try harness.gateway.activate(
         .init(
           sessionID: second.sessionID, epoch: harness.gateway.epoch, transport: stale,
+          deadlineSeconds: nil))
+    }
+  }
+
+  /// A `forward` session (the brokered transport) binds the host's reverse
+  /// forward: this user's live `ssh` with the declared start, never the
+  /// owner or another program, while the registered owner still runs.
+  @Test func forwardActivationBindsTheDeclaredForward() throws {
+    let backend = try FakeBackend(.stream(chatEvents))
+    let harness = try Harness()
+    let session = try harness.session(
+      [grant(.openAIChat, port: backend.port)], activate: false, transport: .forward)
+    let ownerBinding = TransportBinding(
+      pid: session.owner.processIdentifier,
+      start: try #require(ProcessIdentity.of(session.owner.processIdentifier)).start)
+    let forward = TransportBinding(
+      pid: session.transport.processIdentifier,
+      start: try #require(ProcessIdentity.of(session.transport.processIdentifier)).start)
+    func activate(_ binding: TransportBinding) throws {
+      try harness.gateway.activate(
+        .init(
+          sessionID: session.id, epoch: harness.gateway.epoch, transport: binding,
+          deadlineSeconds: nil))
+    }
+    // The owner is not a forward; nor is another program, nor the forward
+    // under another start time.
+    #expect(throws: InferenceError.self) { try activate(ownerBinding) }
+    let (_, other) = try harness.spawnTransport()
+    #expect(throws: InferenceError.self) { try activate(other) }
+    let wrongStart = TransportBinding(
+      pid: forward.pid, start: ProcessStart(seconds: forward.start.seconds + 1, microseconds: 0))
+    #expect(throws: InferenceError.self) { try activate(wrongStart) }
+    #expect(harness.gatewaySession(session.id)?.phase == .inactive)
+    try activate(forward)
+    #expect(
+      RawClient.request(
+        socket: session.socket, target: "/v1/chat/completions", token: session.token, body: chatBody
+      ).status == 200)
+    let listed = try #require(harness.gateway.inspect(nil)["sessions"]?.array?.first?.object)
+    #expect(listed["transport_kind"]?.string == "forward")
+    #expect(listed["transport_pid"]?.number?.int64 == Int64(forward.pid))
+  }
+
+  /// The forward check itself: a process of another user, another start or
+  /// another executable is never the forward.
+  @Test func forwardProcessesMustBeThisUsersSystemSSH() {
+    let start = ProcessStart(seconds: 10, microseconds: 5)
+    let binding = TransportBinding(pid: 7, start: start)
+    let mine = ProcessIdentity(command: "ssh", uid: getuid(), start: start)
+    #expect(
+      Gateway.isForwardProcess(
+        mine, executable: "/usr/bin/ssh", binding: binding, expected: "/usr/bin/ssh", uid: getuid())
+    )
+    let cases: [(ProcessIdentity?, String?)] = [
+      (ProcessIdentity(command: "ssh", uid: getuid() &+ 1, start: start), "/usr/bin/ssh"),
+      (
+        ProcessIdentity(command: "ssh", uid: getuid(), start: .init(seconds: 10, microseconds: 6)),
+        "/usr/bin/ssh"
+      ),
+      (mine, "/opt/homebrew/bin/ssh"),
+      (mine, nil),
+      (nil, "/usr/bin/ssh"),
+    ]
+    for (index, (identity, executable)) in cases.enumerated() {
+      #expect(
+        !Gateway.isForwardProcess(
+          identity, executable: executable, binding: binding, expected: "/usr/bin/ssh",
+          uid: getuid()), "case \(index)")
+    }
+  }
+
+  /// A forward session ends with its forward, and with its boot: the
+  /// owner's exit revokes it while the forward still runs.
+  @Test func forwardSessionsEndWithTheForwardOrTheOwner() throws {
+    let backend = try FakeBackend(.stream(chatEvents))
+    let harness = try Harness()
+    let first = try harness.session(
+      [grant(.openAIChat, port: backend.port)], name: "a", transport: .forward)
+    first.transport.terminate()
+    #expect(eventually { harness.gatewaySession(first.id) == nil })
+    let second = try harness.session(
+      [grant(.openAIChat, port: backend.port)], name: "b", transport: .forward)
+    second.owner.terminate()
+    #expect(eventually { harness.gatewaySession(second.id) == nil })
+    #expect(second.transport.isRunning)
+  }
+
+  /// Activation of a forward session needs the registered owner running.
+  @Test func forwardActivationNeedsTheRegisteredOwner() throws {
+    let backend = try FakeBackend(.stream(chatEvents))
+    let harness = try Harness()
+    let session = try harness.session(
+      [grant(.openAIChat, port: backend.port)], activate: false, transport: .forward)
+    let forward = TransportBinding(
+      pid: session.transport.processIdentifier,
+      start: try #require(ProcessIdentity.of(session.transport.processIdentifier)).start)
+    session.owner.terminate()
+    session.owner.waitUntilExit()
+    #expect(throws: InferenceError.self) {
+      try harness.gateway.activate(
+        .init(
+          sessionID: session.id, epoch: harness.gateway.epoch, transport: forward,
           deadlineSeconds: nil))
     }
   }
