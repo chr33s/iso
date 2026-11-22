@@ -289,9 +289,27 @@ package enum AuditFacts {
     package struct Egress: Codable, Sendable, Equatable {
       package let mode: String
       package let transport: String
-      package init(mode: String, transport: String) {
+      /// The boot's named local-service grants (brokered), such as
+      /// `inference-gateway`; empty for vmnet.
+      package let localServices: [String]
+      package init(mode: String, transport: String, localServices: [String] = []) {
         self.mode = mode
         self.transport = transport
+        self.localServices = localServices
+      }
+
+      enum CodingKeys: String, CodingKey {
+        case mode, transport
+        case localServices = "local_services"
+      }
+
+      /// A record from before `local_services` names none.
+      package init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+          mode: try c.decode(String.self, forKey: .mode),
+          transport: try c.decode(String.self, forKey: .transport),
+          localServices: try c.decodeIfPresent([String].self, forKey: .localServices) ?? [])
       }
     }
 

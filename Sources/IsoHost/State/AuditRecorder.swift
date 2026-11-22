@@ -167,7 +167,11 @@ extension AgentBootstrap {
       vmID: identity.flatMap { try? HexID($0) }, bootID: binding.flatMap { try? HexID($0.bootID) },
       image: instance.image.rawValue, guestOS: running.sidecar.kind.rawValue,
       workspace: workspace,
-      egress: network.map { .init(mode: $0.mode, transport: $0.recordedTransport.rawValue) },
+      egress: network.map {
+        .init(
+          mode: $0.mode, transport: $0.recordedTransport.rawValue,
+          localServices: ($0.brokered?.localServices ?? []).map(\.name))
+      },
       policy: binding.map { .init(mode: $0.policyMode.rawValue, digest: $0.policyDigest) },
       proxiedProviders: (proxied ?? []).map(\.rawValue),
       requested: .init(

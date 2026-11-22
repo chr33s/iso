@@ -315,8 +315,15 @@ package struct HostCapabilitiesResult: Sendable, Equatable {
           var s = WireBuilder()
           s.set("name", service.name)
           s.set("guest_port", UInt64(service.guestPort))
-          s.set("host_address", service.hostAddress)
-          s.set("host_port", UInt64(service.hostPort))
+          switch service.host {
+          case .tcp(let address, let port):
+            s.set("host_address", address)
+            s.set("host_port", UInt64(port))
+          case .inferenceSession:
+            s.set(
+              "host_endpoint",
+              BrokeredNetworkPolicy.LocalService.HostEndpoint.inferenceSessionKind)
+          }
           return s.value
         }))
     b.set("channel_policy", policy.channelPolicy)

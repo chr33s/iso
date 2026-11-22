@@ -609,3 +609,108 @@ private func brokeredRunning(_ guest: FakeGuest, boot: String? = nil) throws -> 
     EgressClients.proxyURL(capability: "c0ffee", port: 10789) == "http://iso:c0ffee@127.0.0.1:10789"
   )
 }
+
+// MARK: - Guarded-inference grant
+
+/// `inference.mode: required` with a guarded Claude service, under the
+/// brokered transport (the forward the grant authorizes).
+private func requiredInference(egress: String = "none") throws -> IsoConfig {
+  try decode(
+    #"""
+    {"network": {"transport": "vmnet"}, "egress": "\#(egress)",
+     "inference": {"mode": "required",
+       "qualification_profiles": {"p": {"protocol": "anthropic-messages",
+         "completion_evidence": "drain", "context_overflow": "reject",
+         "input_overhead": {"per_request_bytes": 0, "per_message_bytes": 0},
+         "max_input_bytes": 1024}},
+       "backends": {"b": {"base_url": "http://127.0.0.1:18080",
+         "protocol": "anthropic-messages", "qualification_profile": "p"}},
+       "services": {"s": {"backend": "b", "upstream_model": "m",
+         "frontend_apis": ["anthropic-messages"], "max_context_tokens": 1000}}},
+     "claude": {"local_model": {"service": "s"}}}
+    """#
+  ).overridingTransport(.brokered)
+}
+
+/// spec 7.3: a brokered boot under `required` carries exactly one named
+/// local service, the inference gateway session, and none otherwise; it is
+/// part of the digest, so turning the mode on or off needs a new boot.
+@Test func theInferenceGrantIsInTheBrokeredPolicyExactlyUnderRequired() throws {
+  try withInstance(#"{"network":{"transport":"brokered"},"egress":"none"}"#) { instance, off in
+    let required = try requiredInference()
+    // A raw local model the model state still names is never a grant here.
+    var model = ModelState()
+    model.mode = .local
+    model.claudeEndpoint = try LocalModel(
+      hostURL: "http://127.0.0.1:11434", model: "m", authToken: nil)
+    try model.save(instance)
+    let granted = try BrokeredNetworkPolicy.resolve(required, instance)
+    #expect(granted.localServices == [.inferenceGateway])
+    #expect(granted.grantsInference)
+    #expect(
+      BrokeredNetworkPolicy.LocalService.inferenceGateway.guestPort
+        == InferenceController.guestPort)
+    let plain = try BrokeredNetworkPolicy.resolve(off, instance)
+    #expect(!plain.grantsInference)
+    #expect(plain.localServices.map(\.name) == ["claude-local-model"])
+    #expect(granted.digest != plain.digest)
+
+    // Booted without the grant: `required` is a policy change, and back.
+    try NetworkPolicy.save(off, instance)
+    for (config, booted) in [(required, off), (off, required)] {
+      try NetworkPolicy.save(booted, instance)
+      let error = try #require(throws: HostError.self) {
+        try NetworkPolicy.enforce(instance, config: config)
+      }
+      #expect(error.message.hasPrefix("POLICY_CHANGE_REQUIRES_RESTART"))
+      try NetworkPolicy.enforce(instance, config: booted)
+    }
+    let recorded = try #require(try NetworkPolicy.load(instance))
+    #expect(recorded.brokered?.grantsInference == true)
+    // `iso policy effective` names the boot's grant.
+    let report = EffectivePolicyReport.text(
+      EffectivePolicyReport.json(required, instance: instance))
+    #expect(report.contains("  local_services: inference-gateway"), "\(report)")
+  }
+}
+
+/// A TCP service keeps its original canonical members (so existing digests
+/// hold); the inference grant records a fixed kind, no host path, and
+/// decodes only as itself.
+@Test func localServiceEncodingKeepsTCPAndFixesTheInferenceGrant() throws {
+  let encoder = JSONEncoder()
+  encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+  func encoded(_ service: BrokeredNetworkPolicy.LocalService) throws -> String {
+    String(decoding: try encoder.encode(service), as: UTF8.self)
+  }
+  let tcp = BrokeredNetworkPolicy.LocalService(
+    name: "ollama", guestPort: 11_434, hostAddress: "127.0.0.1", hostPort: 11_434)
+  #expect(
+    try encoded(tcp)
+      == #"{"guest_port":11434,"host_address":"127.0.0.1","host_port":11434,"name":"ollama"}"#)
+  #expect(
+    try encoded(.inferenceGateway)
+      == #"{"guest_port":11788,"host_endpoint":"inference-session","name":"inference-gateway"}"#)
+  // The TCP digest is the one advertised before the grant existed.
+  let policy = BrokeredNetworkPolicy(
+    publicEgress: nil, providerGrants: [], localServices: [tcp],
+    channelPolicy: try SHA256Hex(runtimeChannelDigest))
+  #expect(
+    policy.digest.rawValue == "5df18ab2bd4005dcf900ffff342f0025949b61ba4d1133a255b2a68d67cf0177")
+
+  func decoded(_ json: String) throws -> BrokeredNetworkPolicy.LocalService {
+    try JSONDecoder().decode(BrokeredNetworkPolicy.LocalService.self, from: Data(json.utf8))
+  }
+  #expect(try decoded(try encoded(.inferenceGateway)) == .inferenceGateway)
+  #expect(try decoded(try encoded(tcp)) == tcp)
+  for refused in [
+    #"{"guest_port":11789,"host_endpoint":"inference-session","name":"inference-gateway"}"#,
+    #"{"guest_port":11788,"host_endpoint":"inference-session","name":"other"}"#,
+    #"{"guest_port":11788,"host_endpoint":"/tmp/x.sock","name":"inference-gateway"}"#,
+    #"{"guest_port":11788,"host_endpoint":"inference-session","name":"inference-gateway","host_address":"127.0.0.1","host_port":1}"#,
+    #"{"guest_port":11788,"host_endpoint":"inference-session","name":"inference-gateway","host_port":1}"#,
+    #"{"guest_port":11788,"name":"inference-gateway"}"#,
+  ] {
+    #expect(throws: DecodingError.self) { try decoded(refused) }
+  }
+}

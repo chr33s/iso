@@ -336,7 +336,10 @@ private func instance() throws -> Instance {
   #expect(
     fields["unknown"]
       == .array(
-        ["transport", "egress", "grants", "pending_revocations", "revoked", "coreai"].map(
+        [
+          "transport", "egress", "local_services", "grants", "pending_revocations", "revoked",
+          "coreai",
+        ].map(
           OutputJSON.string)))
   let text = EffectivePolicyReport.text(EffectivePolicyReport.json(unlimited, instance: instance))
   #expect(text.contains("  session_ttl_seconds: unlimited"))

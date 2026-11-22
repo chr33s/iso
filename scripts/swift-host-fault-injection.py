@@ -2612,6 +2612,16 @@ FAULTS = [
      "guestComputerUse: guestComputerUse, inferenceRelay: relaysInference)",
      "guestComputerUse: guestComputerUse, inferenceRelay: false)",
      "requiredInferenceCreatesTheSandboxWithTheRelay"),
+    # The brokered transport's guarded-inference grant (brokered spec 7.3):
+    # in the boot policy exactly under `required`, and only as the fixed grant.
+    ("brokered-inference-grant", "Sources/IsoHost/Runtime/BrokeredTransport.swift",
+     "    if config.inference.mode == .required {\n      return BrokeredNetworkPolicy(",
+     "    if false {\n      return BrokeredNetworkPolicy(",
+     "theInferenceGrantIsInTheBrokeredPolicyExactlyUnderRequired"),
+    ("brokered-inference-grant-fixed", "Sources/IsoHost/Runtime/BrokeredTransport.swift",
+     "      guard kind == HostEndpoint.inferenceSessionKind, !c.contains(.hostAddress),",
+     "      guard !kind.isEmpty, !c.contains(.hostAddress),",
+     "localServiceEncodingKeepsTCPAndFixesTheInferenceGrant"),
     # Guarded inference sessions (secure-local-inference spec §12, §20).
     ("inference-unsafe-bind", "Sources/IsoHost/Inference/InferenceController.swift",
      "Socket.connects(host: $0, port: port, timeoutMilliseconds: 300)",

@@ -63,19 +63,48 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
     }
   }
 
-  /// An explicit host-loopback service reached through a fixed reverse
-  /// tunnel (local models). Named and visible; never a general host route.
+  /// An explicit host-side service reached through a fixed reverse tunnel
+  /// (spec 7.3, NET-12): named and visible; never a general host route.
   package struct LocalService: Sendable, Equatable, Codable {
+    /// Where the tunnel's host end connects. Neither form is a host path or
+    /// destination a guest or project file can choose (NET-05).
+    package enum HostEndpoint: Sendable, Equatable {
+      /// A host-loopback model server from the operator's model configuration.
+      case tcp(address: String, port: UInt16)
+      /// The instance's `iso-inference` session socket. iso derives its path
+      /// from the runtime's own state; the policy records only this kind.
+      case inferenceSession
+
+      package static let inferenceSessionKind = "inference-session"
+    }
+
     package let name: String
     package let guestPort: UInt16
-    package let hostAddress: String
-    package let hostPort: UInt16
+    package let host: HostEndpoint
 
     package init(name: String, guestPort: UInt16, hostAddress: String, hostPort: UInt16) {
+      self.init(name: name, guestPort: guestPort, host: .tcp(address: hostAddress, port: hostPort))
+    }
+
+    private init(name: String, guestPort: UInt16, host: HostEndpoint) {
       self.name = name
       self.guestPort = guestPort
-      self.hostAddress = hostAddress
-      self.hostPort = hostPort
+      self.host = host
+    }
+
+    /// The guarded-inference grant of a brokered boot under
+    /// `inference.mode: required` (secure-local-inference §22.9): guest
+    /// 127.0.0.1:11788 to the instance's gateway session, nothing else.
+    package static let inferenceGateway = LocalService(
+      name: "inference-gateway", guestPort: InferenceController.guestPort,
+      host: .inferenceSession)
+
+    /// The host end, as `iso status` shows it.
+    package var hostDescription: String {
+      switch host {
+      case .tcp(let address, let port): "host \(address):\(port)"
+      case .inferenceSession: "the instance's inference gateway session"
+      }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -83,6 +112,48 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
       case guestPort = "guest_port"
       case hostAddress = "host_address"
       case hostPort = "host_port"
+      case hostEndpoint = "host_endpoint"
+    }
+
+    /// A TCP service keeps its original members, so its canonical encoding
+    /// and the policy digest are unchanged; the inference grant has a fixed
+    /// kind in their place.
+    package func encode(to encoder: any Encoder) throws {
+      var c = encoder.container(keyedBy: CodingKeys.self)
+      try c.encode(name, forKey: .name)
+      try c.encode(guestPort, forKey: .guestPort)
+      switch host {
+      case .tcp(let address, let port):
+        try c.encode(address, forKey: .hostAddress)
+        try c.encode(port, forKey: .hostPort)
+      case .inferenceSession:
+        try c.encode(HostEndpoint.inferenceSessionKind, forKey: .hostEndpoint)
+      }
+    }
+
+    /// One form or the other, never both; the inference grant decodes only
+    /// as the fixed grant, so no stored policy names another port or name.
+    package init(from decoder: any Decoder) throws {
+      let c = try decoder.container(keyedBy: CodingKeys.self)
+      let name = try c.decode(String.self, forKey: .name)
+      let guestPort = try c.decode(UInt16.self, forKey: .guestPort)
+      guard let kind = try c.decodeIfPresent(String.self, forKey: .hostEndpoint) else {
+        self.init(
+          name: name, guestPort: guestPort,
+          host: .tcp(
+            address: try c.decode(String.self, forKey: .hostAddress),
+            port: try c.decode(UInt16.self, forKey: .hostPort)))
+        return
+      }
+      guard kind == HostEndpoint.inferenceSessionKind, !c.contains(.hostAddress),
+        !c.contains(.hostPort), name == Self.inferenceGateway.name,
+        guestPort == Self.inferenceGateway.guestPort
+      else {
+        throw DecodingError.dataCorruptedError(
+          forKey: .hostEndpoint, in: c,
+          debugDescription: "must be the fixed inference-gateway grant")
+      }
+      self = Self.inferenceGateway
     }
   }
 
@@ -151,6 +222,13 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
       }
       if granted { providers.append(provider.rawValue) }
     }
+    // Guarded inference reaches no raw model endpoint (INV-01): its one
+    // local service is the gateway session, over the fixed forward.
+    if config.inference.mode == .required {
+      return BrokeredNetworkPolicy(
+        publicEgress: publicEgress, providerGrants: providers,
+        localServices: [.inferenceGateway])
+    }
     let model = try ModelState.loadOrDefault(instance)
     var services: [LocalService] = []
     for (name, endpoint) in [
@@ -189,6 +267,9 @@ package struct BrokeredNetworkPolicy: Sendable, Equatable, Codable {
       localServices: try c.decode([LocalService].self, forKey: .localServices),
       channelPolicy: try c.decode(SHA256Hex.self, forKey: .channelPolicy))
   }
+
+  /// Whether this boot may carry the guarded-inference forward.
+  package var grantsInference: Bool { localServices.contains(.inferenceGateway) }
 
   /// sha256 of the canonical (sorted-key) encoding.
   package var digest: SHA256Hex {

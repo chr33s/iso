@@ -343,7 +343,7 @@ package final class AppleBackend: Sendable {
           Network policy: \(route.networkPolicy) (channel \(route.channelPolicy))
           Egress: \(policy.map { $0.publicEgress.map { "\($0.profile) to \($0.allowedHosts.count) approved hosts on port 443" } ?? "none" } ?? "unavailable")
           Provider brokers: \(policy.map { $0.providerGrants.isEmpty ? "none" : $0.providerGrants.joined(separator: ", ") } ?? "unavailable")
-          Local services: \(policy.map { $0.localServices.isEmpty ? "none" : $0.localServices.map { "\($0.name) (guest 127.0.0.1:\($0.guestPort) -> host \($0.hostAddress):\($0.hostPort))" }.joined(separator: ", ") } ?? "unavailable")
+          Local services: \(policy.map { $0.localServices.isEmpty ? "none" : $0.localServices.map { "\($0.name) (guest 127.0.0.1:\($0.guestPort) -> \($0.hostDescription))" }.joined(separator: ", ") } ?? "unavailable")
           vCPUs: \(inspection.record.cpus)
           Memory: \(inspection.record.memoryBytes / (1 << 20)) MiB
           Disk: \(Self.gib(inspection.disk.logicalBytes)) GiB (\(Self.gib(inspection.disk.allocatedBytes)) GiB allocated)

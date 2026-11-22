@@ -277,18 +277,12 @@ struct MachineBrokeredNetwork: Encodable {
     }
   }
 
+  /// A TCP service names its host address and port; the inference grant
+  /// names only its fixed `host_endpoint` kind (no host path).
   struct LocalService: Encodable {
-    let name: String
-    let guestPort: UInt16
-    let hostAddress: String
-    let hostPort: UInt16
+    let service: BrokeredNetworkPolicy.LocalService
 
-    enum CodingKeys: String, CodingKey {
-      case name
-      case guestPort = "guest_port"
-      case hostAddress = "host_address"
-      case hostPort = "host_port"
-    }
+    func encode(to encoder: any Encoder) throws { try service.encode(to: encoder) }
   }
 
   enum CodingKeys: String, CodingKey {
@@ -310,11 +304,7 @@ struct MachineBrokeredNetwork: Encodable {
               PublicEgress(profile: $0.profile, allowedHosts: $0.allowedHosts)
             }),
           providerGrants: view.policy.providerGrants,
-          localServices: view.policy.localServices.map {
-            LocalService(
-              name: $0.name, guestPort: $0.guestPort, hostAddress: $0.hostAddress,
-              hostPort: $0.hostPort)
-          })
+          localServices: view.policy.localServices.map(LocalService.init))
       })
   }
 }

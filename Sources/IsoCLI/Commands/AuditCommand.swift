@@ -481,7 +481,12 @@ enum AuditText {
         "  Instance:    \(environment.instanceName) (\(environment.action.rawValue); \(identity))")
       lines.append("  Image:       \(environment.image) (\(environment.guestOS))")
       lines.append("  Workspace:   \(environment.workspace.rawValue)")
-      let egress = environment.egress.map { "\($0.mode) (\($0.transport))" } ?? "not recorded"
+      let egress =
+        environment.egress.map {
+          "\($0.mode) (\($0.transport))"
+            + ($0.localServices.isEmpty
+              ? "" : "; local services \($0.localServices.joined(separator: ", "))")
+        } ?? "not recorded"
       lines.append(
         "  Egress:      \(egress); requested \(environment.requested.egress)")
       let proxied =

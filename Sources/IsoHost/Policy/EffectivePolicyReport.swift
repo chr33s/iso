@@ -97,9 +97,15 @@ package enum EffectivePolicyReport {
     var unknown: [String] = []
     do {
       if let policy = try NetworkPolicy.load(instance) {
+        // The boot's named local-service grants (brokered only), such as
+        // the guarded-inference forward (spec 7.3).
         members += [
           ("transport", .string(policy.recordedTransport.rawValue)),
           ("egress", .string(policy.mode)),
+          (
+            "local_services",
+            .array((policy.brokered?.localServices ?? []).map { .string($0.name) })
+          ),
         ]
         if policy.recordedTransport != config.network.transport {
           conflicts.append(
@@ -112,12 +118,12 @@ package enum EffectivePolicyReport {
           )
         }
       } else {
-        members += [("transport", .null), ("egress", .null)]
-        unknown += ["transport", "egress"]
+        members += [("transport", .null), ("egress", .null), ("local_services", .null)]
+        unknown += ["transport", "egress", "local_services"]
       }
     } catch {
-      members += [("transport", .null), ("egress", .null)]
-      unknown += ["transport", "egress"]
+      members += [("transport", .null), ("egress", .null), ("local_services", .null)]
+      unknown += ["transport", "egress", "local_services"]
       conflicts.append("the network policy record is unreadable or corrupt")
     }
     do {

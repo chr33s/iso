@@ -219,7 +219,11 @@ what the configuration asks for now (a mismatch is refused, never converted).
 `effective` is `null` unless the instance is running and passed the gate on
 this call; it is an observation of that boot, not a credential, and the next
 handoff re-verifies it. `public_egress` is `null` for `egress: "none"`.
-`local_services` entries are `{"name", "guest_port", "host_address", "host_port"}`.
+`local_services` entries are `{"name", "guest_port", "host_address", "host_port"}`
+for a host-loopback model server, or, under `inference.mode: "required"`,
+exactly `{"name": "inference-gateway", "guest_port": 11788, "host_endpoint":
+"inference-session"}`: the instance's guarded-inference gateway session, whose
+host path iso derives and never reports.
 
 ### up
 

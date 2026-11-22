@@ -422,3 +422,38 @@ private func view(_ arguments: [String]) throws -> Audit.View {
   #expect(!GlobalOptions.requests(.jsonl, ["iso", "exec", "--", "x", "--output", "jsonl"]))
   #expect(!GlobalOptions.requests(.jsonl, ["iso", "secrets", "--output", "json"]))
 }
+
+/// A brokered boot's named local-service grants, such as the guarded
+/// inference forward, are shown with its egress; a record from before they
+/// were recorded names none.
+@Test func textShowsTheBootsLocalServiceGrants() throws {
+  let root = scratch()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let store = AuditStore(root: root + "/audit/v1")
+  let run = AuditRunID.generate()
+  try store.append(
+    .requested(
+      run,
+      .init(
+        command: .run, role: .managed, lifecycle: .persistent, requestedAgent: "claude",
+        requestedInstance: nil, permissionMode: .bypass, isoVersion: "iso test")))
+  try store.append(
+    .environment(
+      run,
+      .init(
+        action: .attached, instanceName: "my-project", vmID: vm, bootID: boot, image: "default",
+        guestOS: "linux", workspace: .copy,
+        egress: .init(mode: "none", transport: "brokered", localServices: ["inference-gateway"]),
+        policy: nil, proxiedProviders: [],
+        requested: .init(egress: "none", proxyMode: "auto", sessionTTLSeconds: nil), agent: nil,
+        disposableSessionID: nil)))
+  let lines = AuditText.detail(try AuditReader(store: store).page(.run(run), after: nil))
+  #expect(
+    lines.contains(
+      "  Egress:      none (brokered); local services inference-gateway; requested none"),
+    "\(lines)")
+  let old = try JSONDecoder().decode(
+    AuditFacts.Environment.Egress.self, from: Data(#"{"mode":"none","transport":"vmnet"}"#.utf8))
+  #expect(old == .init(mode: "none", transport: "vmnet"))
+  #expect(old.localServices.isEmpty)
+}
